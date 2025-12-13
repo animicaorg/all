@@ -26,8 +26,8 @@ Where `alg` can be an int alg_id or a canonical name:
 Backends
 --------
 This module dispatches to:
-- pq.py.algs.dilithium3.sign(secret_key: bytes, message: bytes) -> bytes
-- pq.py.algs.sphincs_shake_128s.sign(secret_key: bytes, message: bytes) -> bytes
+- pq.py.algs.dilithium3.sign(sk: bytes, msg: bytes) -> bytes
+- pq.py.algs.sphincs_shake_128s.sign(sk: bytes, msg: bytes) -> bytes
 
 Both receive the canonical SignBytes (prehash) as message.
 
@@ -43,6 +43,7 @@ Security notes
 """
 
 from dataclasses import dataclass
+import inspect
 from typing import Optional, Union, Literal, Tuple
 
 from pq.py.utils.hash import sha3_256, sha3_512
@@ -224,9 +225,31 @@ def _backend_sign(alg_name: str, sk: bytes, msg: bytes) -> bytes:
             f"Install/build PQ backend (e.g., liboqs) and ensure wrappers are importable. ({e})"
         ) from e
 
-    if not hasattr(backend, "sign"):
-        raise NotImplementedError(f"Backend {backend.__name__} lacks .sign(secret_key, message)")
-    return backend.sign(secret_key=sk, message=msg)  # type: ignore[arg-type]
+    sign_fn = getattr(backend, "sign", None)
+    if not callable(sign_fn):
+        raise NotImplementedError(
+            f"Backend {backend.__name__} lacks callable sign(sk, msg) implementation"
+        )
+
+    # Defensive: ensure the backend matches the expected (sk, msg) signature to avoid
+    # surprising keyword-only mismatches (regression from liboqs-python 0.12.0 -> 0.15.x).
+    try:
+        sig = inspect.signature(sign_fn)
+        params = list(sig.parameters.values())
+        if len(params) != 2:
+            raise TypeError(
+                f"Backend {backend.__name__}.sign expected 2 parameters (sk, msg), got {len(params)}"
+            )
+    except (TypeError, ValueError):
+        # Some callables (e.g., Cython) may not expose signatures; fall back to a direct call.
+        pass
+
+    try:
+        return sign_fn(sk, msg)
+    except TypeError as e:
+        raise TypeError(
+            f"Calling {backend.__name__}.sign(sk, msg) failed: {e}."
+        ) from e
 
 
 # --------------------------------------------------------------------------------------

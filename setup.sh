@@ -155,18 +155,12 @@ PY
     fi
   done
   [[ -n "$OQS_LIB" ]] || die "Could not locate liboqs shared library under $OQS_PREFIX"
+  OQS_LIB_DIR="$(dirname "$OQS_LIB")"
+  export OQS_INSTALL_PATH="$OQS_PREFIX"
   log "Using liboqs: $OQS_LIB"
 
-  # Install matching liboqs-python
-  OQS_PY_REQUESTED="$OQS_TAG"
-  if ! OQS_PY_TAG=$(select_tag "https://github.com/open-quantum-safe/liboqs-python.git" "$OQS_PY_REQUESTED"); then
-    die "Could not determine liboqs-python tag"
-  fi
-  log "liboqs-python tag selected: $OQS_PY_TAG"
-  if ! python -m pip install --no-deps --no-build-isolation "git+https://github.com/open-quantum-safe/liboqs-python.git@$OQS_PY_TAG"; then
-    log "WARN: git install of liboqs-python failed; falling back to PyPI"
-    run python -m pip install -U liboqs-python
-  fi
+  # Install liboqs-python aligned with liboqs 0.15.x
+  run python -m pip install -U "liboqs-python>=0.15.0,<0.16.0"
 
   # Patch venv activate (REPLACE any old animica-liboqs block)
   ACT="$ROOT_DIR/.venv/bin/activate"
@@ -176,7 +170,10 @@ PY
 # >>> animica-liboqs >>>
 export OQS_INSTALL_PATH='$OQS_PREFIX'
 export LIBOQS_PATH='$OQS_LIB'
-export LD_LIBRARY_PATH='$OQS_PREFIX/lib:$OQS_PREFIX/lib64:'"\${LD_LIBRARY_PATH:-}"
+export LD_LIBRARY_PATH='$OQS_LIB_DIR:$OQS_PREFIX/lib:$OQS_PREFIX/lib64:'"\${LD_LIBRARY_PATH:-}"
+if [ ! -f "\${LIBOQS_PATH}" ]; then
+  echo "[animica] ERROR: LIBOQS_PATH=\${LIBOQS_PATH} is missing; re-run setup.sh --with-pq" >&2
+fi
 # <<< animica-liboqs <<<
 ACTEOF
 
@@ -186,14 +183,41 @@ ACTEOF
   # shellcheck disable=SC1091
   source "$ROOT_DIR/.venv/bin/activate"
 
+  if [[ ! -f "${LIBOQS_PATH:-}" ]]; then
+    die "LIBOQS_PATH=${LIBOQS_PATH:-unset} does not exist after activation"
+  fi
+
   log "PQ sanity check (enabled sig mechanisms)"
-  LD_LIBRARY_PATH="$OQS_PREFIX/lib:$OQS_PREFIX/lib64:${LD_LIBRARY_PATH:-}" LIBOQS_PATH="$OQS_LIB" python - <<'PY'
-import oqs, json
+  LD_LIBRARY_PATH="$OQS_LIB_DIR:$OQS_PREFIX/lib:$OQS_PREFIX/lib64:${LD_LIBRARY_PATH:-}" LIBOQS_PATH="$OQS_LIB" OQS_INSTALL_PATH="$OQS_PREFIX" python - <<'PY'
+import os
+import subprocess
+import sys
+
+try:
+    import oqs
+except Exception as e:  # pragma: no cover - diagnostic
+    print("Failed to import oqs:", e)
+    print("LIBOQS_PATH:", os.environ.get("LIBOQS_PATH"))
+    print("LD_LIBRARY_PATH:", os.environ.get("LD_LIBRARY_PATH"))
+    raise
+
 mechs = list(getattr(oqs, "get_enabled_sig_mechanisms", lambda: [])())
 print("oqs version:", getattr(oqs, "__version__", "unknown"))
 print("enabled sig mechanisms:", len(mechs))
 print("sample:", [m for m in mechs if ("DILITHIUM" in m.upper() or "ML-DSA" in m.upper())][:20])
 if len(mechs) == 0:
+    print("No enabled PQ signature mechanisms; diagnostics:")
+    print("  LIBOQS_PATH=", os.environ.get("LIBOQS_PATH"))
+    print("  OQS_INSTALL_PATH=", os.environ.get("OQS_INSTALL_PATH"))
+    print("  LD_LIBRARY_PATH=", os.environ.get("LD_LIBRARY_PATH"))
+    ext_path = getattr(oqs, "__file__", "<unknown>")
+    print("  oqs extension path=", ext_path)
+    if ext_path not in (None, "<unknown>"):
+        try:
+            out = subprocess.check_output(["ldd", ext_path], text=True)
+            print("  ldd oqs extension:\n" + out)
+        except Exception as ldd_err:  # pragma: no cover - diagnostics only
+            print("  ldd error:", ldd_err)
     raise SystemExit("No enabled PQ signature mechanisms (liboqs build failed)")
 PY
 fi
