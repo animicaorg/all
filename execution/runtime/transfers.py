@@ -45,6 +45,7 @@ if TYPE_CHECKING:
 # ------------------------------------------------------------------------------
 
 DEFAULT_INTRINSIC_TRANSFER = 21_000  # sane default; may be overridden by gas.table
+ADDRESS_LEN = 32  # Animica uses 32-byte addresses (matches core/types/tx.py)
 
 
 # ------------------------------------------------------------------------------
@@ -294,9 +295,10 @@ def _split_fee(base_price: int, gas_price: int, gas_used: int) -> Tuple[int, int
 def _make_transfer_log(sender: bytes, recipient: bytes, amount: int) -> LogEvent:
     data = int(amount).to_bytes(max(1, (int(amount).bit_length() + 7) // 8), "big")
     # topics are raw bytes; "transfer" tag is a small, explicit domain tag.
+    # Use 32-byte addresses in topics (Animica native format)
     return LogEvent(
         address=recipient,
-        topics=[b"transfer", sender.rjust(20, b"\x00"), recipient.rjust(20, b"\x00")],
+        topics=[b"transfer", sender.rjust(ADDRESS_LEN, b"\x00"), recipient.rjust(ADDRESS_LEN, b"\x00")],
         data=data,
     )
 
@@ -340,13 +342,20 @@ def apply_transfer(
     -------
     ApplyResult
     """
-    sender = _as_bytes(getattr(tx_env, "sender", None), expect_len=20)
-    if len(sender) != 20:
-        raise ExecError("TxEnv.sender must be 20 bytes")
+    # Animica uses 32-byte addresses (not 20-byte EVM addresses)
+    # Accept both 20-byte (for backwards compatibility) and 32-byte addresses
+    sender = _as_bytes(getattr(tx_env, "sender", None), expect_len=None)
+    if len(sender) not in (20, 32):
+        raise ExecError(f"TxEnv.sender must be 20 or 32 bytes, got {len(sender)}")
+    # Pad 20-byte addresses to 32 bytes for Animica state DB
+    if len(sender) == 20:
+        sender = sender.rjust(ADDRESS_LEN, b"\x00")
 
-    to = _as_bytes(_get(tx, "to", "recipient", "to_address"), expect_len=20)
-    if len(to) == 0:
-        # No recipient → nothing to transfer (treat as revert)
+    to = _as_bytes(_get(tx, "to", "recipient", "to_address"), expect_len=None)
+    
+    # Check for empty or zero address before padding
+    if len(to) == 0 or to == b"\x00" * len(to):
+        # No recipient or zero address → nothing to transfer (treat as revert)
         return ApplyResult(
             status=TxStatus.REVERT,
             gas_used=0,
@@ -354,6 +363,12 @@ def apply_transfer(
             state_root=_maybe_state_root(state),
             receipt=None,
         )
+    
+    # Pad 20-byte addresses to 32 bytes for Animica state DB
+    if len(to) not in (20, ADDRESS_LEN):
+        raise ExecError(f"Recipient address must be 20 or {ADDRESS_LEN} bytes, got {len(to)}")
+    if len(to) == 20:
+        to = to.rjust(ADDRESS_LEN, b"\x00")
 
     amount = _as_int(_get(tx, "value", "amount"), default=0)
     gas_limit = _as_int(_get(tx, "gas", "gas_limit", "gasLimit"), default=0)
@@ -395,8 +410,11 @@ def apply_transfer(
     _set_balance(state, sender, new_sender_balance)
 
     # Tip → coinbase
-    coinbase = _as_bytes(getattr(block_env, "coinbase", b"\x00" * 20), expect_len=20)
-    if tip_fee_part > 0 and any(coinbase):
+    coinbase = _as_bytes(getattr(block_env, "coinbase", b"\x00" * ADDRESS_LEN), expect_len=None)
+    # Pad 20-byte addresses to 32 bytes for Animica state DB
+    if len(coinbase) == 20:
+        coinbase = coinbase.rjust(ADDRESS_LEN, b"\x00")
+    if tip_fee_part > 0 and any(coinbase) and coinbase != b"\x00" * ADDRESS_LEN:
         _ensure_account(state, coinbase)
         cb_bal = _get_balance(state, coinbase)
         _set_balance(state, coinbase, cb_bal + tip_fee_part)
@@ -405,7 +423,10 @@ def apply_transfer(
     if base_fee_part > 0:
         treasury = getattr(block_env, "treasury", None)
         if isinstance(treasury, (bytes, bytearray, str)):
-            t_addr = _as_bytes(treasury, expect_len=20)
+            t_addr = _as_bytes(treasury, expect_len=None)
+            # Pad 20-byte addresses to 32 bytes for Animica state DB
+            if len(t_addr) == 20:
+                t_addr = t_addr.rjust(ADDRESS_LEN, b"\x00")
             if any(t_addr):
                 _ensure_account(state, t_addr)
                 t_bal = _get_balance(state, t_addr)
