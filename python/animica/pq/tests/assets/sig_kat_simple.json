@@ -1,0 +1,18 @@
+{
+  "algorithm": "ML-DSA-65",
+  "description": "Simple deterministic KAT for ML-DSA-65",
+  "test_vectors": [
+    {
+      "count": 0,
+      "seed": "00000000000000000000000000000000000000000000000000000000000000",
+      "message": "48656c6c6f2c20416e696d696361",
+      "comment": "Zero seed, message='Hello, Animica'"
+    },
+    {
+      "count": 1,
+      "seed": "01010101010101010101010101010101010101010101010101010101010101",
+      "message": "",
+      "comment": "All-ones seed, empty message"
+    }
+  ]
+}

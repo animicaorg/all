@@ -1,94 +1,250 @@
-"""Post-quantum signature abstraction for Animica.
+"""Post-quantum cryptography API for Animica.
 
-The goal of this module is to present a tiny, well-defined API for PQ
-operations while hiding optional liboqs/liboqs-python plumbing. When a real
-backend is unavailable the code falls back to a deterministic, insecure fake
-implementation that is only enabled when ``ANIMICA_UNSAFE_PQ_FAKE=1``.
+This module provides a unified API for post-quantum cryptographic operations:
+- KEM (Key Encapsulation Mechanism): ML-KEM-768 (Kyber768)
+- Digital Signatures: ML-DSA-65 (Dilithium3)
+
+Uses pure-Python implementations by default (ANIMICA_PQ_MODE=pure).
+Can be disabled with ANIMICA_PQ_MODE=disabled for testing fallback behavior.
+
+No compiled dependencies (no liboqs/oqs required).
 """
 
 from __future__ import annotations
 
-import hashlib
 import os
-from typing import Protocol, Tuple
+from typing import Tuple
 
-ALG_ID_SPHINCS_SHAKE_128S = 0x1002
-ALG_NAME = "sphincs_shake_128s"
+# Algorithm identifiers
+ALG_ID_ML_KEM_768 = 0x2001
+ALG_ID_ML_DSA_65 = 0x2002
+ALG_ID_SPHINCS_SHAKE_128S = 0x1002  # Legacy, for compatibility
+
+ALG_NAME_KEM = "ml_kem_768"
+ALG_NAME_SIG = "ml_dsa_65"
+ALG_NAME = "ml_dsa_65"  # Default signature algorithm
 
 
-class PQBackend(Protocol):
-    """Minimal interface expected by CLI and RPC."""
+def is_available() -> bool:
+    """Check if PQ cryptography is available.
+    
+    Returns:
+        True if PQ is available (mode != 'disabled'), False otherwise
+    """
+    mode = os.environ.get("ANIMICA_PQ_MODE", "pure").lower()
+    return mode != "disabled"
 
+
+def get_mode() -> str:
+    """Get current PQ mode.
+    
+    Returns:
+        'pure' (pure-Python implementation) or 'disabled'
+    """
+    return os.environ.get("ANIMICA_PQ_MODE", "pure").lower()
+
+
+# ============================================================================
+# KEM (Key Encapsulation Mechanism) - ML-KEM-768
+# ============================================================================
+
+def kem_keygen(seed: bytes = None) -> Tuple[bytes, bytes]:
+    """Generate ML-KEM-768 keypair.
+    
+    Args:
+        seed: Optional 64-byte seed for deterministic generation (testing only).
+              If None, uses os.urandom().
+    
+    Returns:
+        (encapsulation_key, decapsulation_key) tuple
+        - encapsulation_key (public key): 1184 bytes
+        - decapsulation_key (secret key): 2400 bytes
+    
+    Raises:
+        RuntimeError: If PQ is disabled
+    """
+    if not is_available():
+        raise RuntimeError("PQ cryptography is disabled (ANIMICA_PQ_MODE=disabled)")
+    
+    from animica._vendor.kyber_py import Kyber768
+    sk, pk = Kyber768.keygen(seed)
+    return pk, sk  # Return (public, secret) matching conventional order
+
+
+def kem_encaps(encapsulation_key: bytes, seed: bytes = None) -> Tuple[bytes, bytes]:
+    """Encapsulate to generate shared secret.
+    
+    Args:
+        encapsulation_key: Public key (1184 bytes)
+        seed: Optional 32-byte seed for deterministic encapsulation (testing only).
+              If None, uses os.urandom().
+    
+    Returns:
+        (shared_secret, ciphertext) tuple
+        - shared_secret: 32 bytes
+        - ciphertext: 1088 bytes
+    
+    Raises:
+        RuntimeError: If PQ is disabled
+    """
+    if not is_available():
+        raise RuntimeError("PQ cryptography is disabled (ANIMICA_PQ_MODE=disabled)")
+    
+    from animica._vendor.kyber_py import Kyber768
+    ct, ss = Kyber768.encaps(encapsulation_key, seed)
+    return ss, ct  # Return (shared_secret, ciphertext)
+
+
+def kem_decaps(decapsulation_key: bytes, ciphertext: bytes) -> bytes:
+    """Decapsulate to recover shared secret.
+    
+    Args:
+        decapsulation_key: Secret key (2400 bytes)
+        ciphertext: Ciphertext (1088 bytes)
+    
+    Returns:
+        shared_secret (32 bytes)
+    
+    Raises:
+        RuntimeError: If PQ is disabled
+    """
+    if not is_available():
+        raise RuntimeError("PQ cryptography is disabled (ANIMICA_PQ_MODE=disabled)")
+    
+    from animica._vendor.kyber_py import Kyber768
+    return Kyber768.decaps(decapsulation_key, ciphertext)
+
+
+# ============================================================================
+# Digital Signatures - ML-DSA-65
+# ============================================================================
+
+def sig_keygen(seed: bytes = None) -> Tuple[bytes, bytes]:
+    """Generate ML-DSA-65 keypair.
+    
+    Args:
+        seed: Optional 32-byte seed for deterministic generation (testing only).
+              If None, uses os.urandom().
+    
+    Returns:
+        (public_key, secret_key) tuple
+        - public_key: 1952 bytes
+        - secret_key: 4000 bytes
+    
+    Raises:
+        RuntimeError: If PQ is disabled
+    """
+    if not is_available():
+        raise RuntimeError("PQ cryptography is disabled (ANIMICA_PQ_MODE=disabled)")
+    
+    from animica._vendor.dilithium_py import Dilithium3
+    sk, pk = Dilithium3.keygen(seed)
+    return pk, sk  # Return (public, secret)
+
+
+def sig_sign(secret_key: bytes, message: bytes, seed: bytes = None) -> bytes:
+    """Sign a message with ML-DSA-65.
+    
+    Args:
+        secret_key: Secret key (4000 bytes)
+        message: Message to sign
+        seed: Optional randomness for signing (hedged by default)
+    
+    Returns:
+        signature (3293 bytes)
+    
+    Raises:
+        RuntimeError: If PQ is disabled
+    """
+    if not is_available():
+        raise RuntimeError("PQ cryptography is disabled (ANIMICA_PQ_MODE=disabled)")
+    
+    from animica._vendor.dilithium_py import Dilithium3
+    return Dilithium3.sign(secret_key, message, seed)
+
+
+def sig_verify(public_key: bytes, message: bytes, signature: bytes) -> bool:
+    """Verify a signature with ML-DSA-65.
+    
+    Args:
+        public_key: Public key (1952 bytes)
+        message: Message that was signed
+        signature: Signature to verify (3293 bytes)
+    
+    Returns:
+        True if signature is valid, False otherwise
+    
+    Raises:
+        RuntimeError: If PQ is disabled
+    """
+    if not is_available():
+        raise RuntimeError("PQ cryptography is disabled (ANIMICA_PQ_MODE=disabled)")
+    
+    from animica._vendor.dilithium_py import Dilithium3
+    return Dilithium3.verify(public_key, message, signature)
+
+
+# ============================================================================
+# Legacy compatibility (for existing code using get_backend pattern)
+# ============================================================================
+
+class PQBackend:
+    """Compatibility wrapper for existing code."""
+    
     def keygen(self) -> Tuple[bytes, bytes]:
-        ...
-
+        """Generate keypair. Returns (public_key, secret_key)."""
+        return sig_keygen()
+    
     def sign(self, secret_key: bytes, message: bytes) -> bytes:
-        ...
-
+        """Sign message."""
+        return sig_sign(secret_key, message)
+    
     def verify(self, public_key: bytes, message: bytes, signature: bytes) -> bool:
-        ...
-
-
-class _FakeBackend:
-    def keygen(self) -> Tuple[bytes, bytes]:
-        seed = b"animica-pq-fake"
-        sk = hashlib.sha256(seed + b"sk").digest()
-        pk = hashlib.sha256(b"animica-pq-fake-pk|" + sk).digest()
-        return pk, sk
-
-    def sign(self, secret_key: bytes, message: bytes) -> bytes:
-        # Derive the public key the same way as keygen so verification can be
-        # performed using only the public key (matching real PQ schemes).
-        pk = hashlib.sha256(b"animica-pq-fake-pk|" + secret_key).digest()
-
-        # Deterministic, obviously insecure signature used only for local dev.
-        sig = hashlib.sha512(b"animica-pq-fake-sig|" + pk + b"|" + message).digest()
-        return sig + sig  # keep length large to resemble real PQ signatures
-
-    def verify(self, public_key: bytes, message: bytes, signature: bytes) -> bool:
-        expected = hashlib.sha512(
-            b"animica-pq-fake-sig|" + public_key + b"|" + message
-        ).digest()
-        return signature == expected + expected
-
-
-class _OQSBackend:
-    def __init__(self) -> None:
-        import oqs  # type: ignore
-
-        self._sig = oqs.Signature("SPHINCS+-shake-128s")
-
-    def keygen(self) -> Tuple[bytes, bytes]:
-        pk, sk = self._sig.generate_keypair()
-        return pk, sk
-
-    def sign(self, secret_key: bytes, message: bytes) -> bytes:
-        return self._sig.sign(message, secret_key)
-
-    def verify(self, public_key: bytes, message: bytes, signature: bytes) -> bool:
-        return self._sig.verify(message, signature, public_key)
+        """Verify signature."""
+        return sig_verify(public_key, message, signature)
 
 
 def get_backend() -> Tuple[PQBackend, str]:
-    """Select the best available PQ backend.
-
-    Returns (backend, label)
+    """Get PQ backend for compatibility with existing code.
+    
+    Returns:
+        (backend, label) tuple
     """
-
-    if os.environ.get("ANIMICA_UNSAFE_PQ_FAKE") == "1":
-        return _FakeBackend(), "fake"
-
-    try:
-        return _OQSBackend(), "oqs"
-    except Exception:
-        # Last resort is the fake backend, but guard with env toggle to make it
-        # obvious in logs/tests.
-        return _FakeBackend(), "fake"
+    mode = get_mode()
+    if mode == "disabled":
+        # Return a dummy backend that raises on use
+        class DisabledBackend:
+            def keygen(self):
+                raise RuntimeError("PQ is disabled")
+            def sign(self, *args):
+                raise RuntimeError("PQ is disabled")
+            def verify(self, *args):
+                raise RuntimeError("PQ is disabled")
+        return DisabledBackend(), "disabled"  # type: ignore
+    
+    return PQBackend(), "pure"
 
 
 __all__ = [
+    # Algorithm IDs
+    "ALG_ID_ML_KEM_768",
+    "ALG_ID_ML_DSA_65",
     "ALG_ID_SPHINCS_SHAKE_128S",
+    "ALG_NAME_KEM",
+    "ALG_NAME_SIG",
     "ALG_NAME",
+    # Status
+    "is_available",
+    "get_mode",
+    # KEM API
+    "kem_keygen",
+    "kem_encaps",
+    "kem_decaps",
+    # Signature API
+    "sig_keygen",
+    "sig_sign",
+    "sig_verify",
+    # Legacy compatibility
     "PQBackend",
     "get_backend",
 ]
