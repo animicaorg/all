@@ -156,6 +156,7 @@ class TestDilithium3TxSigningWithNormalization:
         )
         
         # Signatures should be identical since keys are equivalent
+        # sig1 and sig2 are pq.py.sign.Signature objects with .sig attribute containing raw bytes
         assert sig1.sig == sig2.sig, "Canonical and legacy keys produced different signatures"
     
     def test_tx_cli_flow_with_canonical_key(self, tmp_path: Path):
@@ -270,7 +271,3 @@ class TestDilithium3TxSigningWithNormalization:
         )
         
         assert valid, "Local verification failed for legacy 4032-byte key"
-
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
