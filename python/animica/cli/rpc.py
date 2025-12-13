@@ -48,6 +48,38 @@ def _ensure_rpc_available() -> None:
         raise typer.Exit(1)
 
 
+def call_rpc(method: str, params: Any, rpc_url: Optional[str] = None) -> Any:
+    """
+    Helper function to make RPC calls from other CLI modules.
+    
+    Args:
+        method: JSON-RPC method name
+        params: Method parameters (list or dict)
+        rpc_url: Optional RPC URL override
+        
+    Returns:
+        Result from the RPC call
+        
+    Raises:
+        Exception: If the RPC call fails
+    """
+    url = _resolve_rpc_url(rpc_url)
+    
+    if HAVE_RPC:
+        client = RpcClient(url, timeout=10.0)
+        return client.request(method, params)
+    else:
+        import httpx
+        
+        payload = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params}
+        resp = httpx.post(url, json=payload, timeout=10.0)
+        resp.raise_for_status()
+        parsed = resp.json()
+        if "error" in parsed:
+            raise RuntimeError(parsed.get("error"))
+        return parsed.get("result")
+
+
 @app.command()
 def call(
     method: str = typer.Argument(..., help="JSON-RPC method name"),
