@@ -44,7 +44,25 @@ if not HAVE_PQ:
 WALLET_FILE_ENV = "ANIMICA_WALLETS_FILE"
 _RPC_ENV = "ANIMICA_RPC_URL"
 
-app = typer.Typer(help="Wallet helper for creating, listing, and inspecting Animica addresses.")
+app = typer.Typer(
+    help=(
+        "Wallet helper for creating, listing, and inspecting Animica addresses. "
+        "For testnet funds use `animica faucet request <address>`; the wallet CLI"
+        " does not request funds."
+    )
+)
+
+
+@app.command("request")
+def wallet_request_alias() -> None:
+    """Guide users to the faucet when they try `animica wallet request`."""
+
+    typer.echo(
+        "Wallet funds are requested via `animica faucet request <address>`; "
+        "the wallet command does not contact the faucet.",
+        err=True,
+    )
+    raise typer.Exit(code=1)
 
 
 @dataclass
