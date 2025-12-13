@@ -84,15 +84,18 @@ def parse_address(addr: str) -> bytes:
         # CRITICAL: Bech32 payload format is: alg_id (2 bytes) || digest (32 bytes)
         # State DB stores accounts by 32-byte digest only, matching how rewards are credited.
         # Strip the 2-byte alg_id prefix to get the 32-byte digest.
-        if len(payload_bytes) >= 34:
+        if len(payload_bytes) == 34:
             # Standard format: alg_id (2 bytes) + digest (32 bytes)
             return payload_bytes[2:34]
         elif len(payload_bytes) == 32:
             # Already just the digest (legacy or system address)
             return payload_bytes
         else:
-            # Pad/truncate to 32 bytes as fallback
-            return payload_bytes[:32].ljust(32, b"\x00")
+            # Invalid payload length - reject rather than silently fixing
+            raise ValueError(
+                f"Invalid Bech32 payload length: expected 32 or 34 bytes, got {len(payload_bytes)} bytes. "
+                f"Address format may be corrupted."
+            )
     except Exception:
         # Try higher-level codec if available
         try:
@@ -102,8 +105,13 @@ def parse_address(addr: str) -> bytes:
             # State DB stores accounts by 32-byte digest, matching how rewards are credited.
             # The full Bech32 payload is (alg_id || digest), but state DB uses digest as key.
             digest_bytes = bytes(rec.digest) if not isinstance(rec.digest, bytes) else rec.digest  # type: ignore[attr-defined]
-            # Ensure exactly 32 bytes (pad or truncate if needed)
-            return digest_bytes[:32].ljust(32, b"\x00")  # type: ignore[attr-defined]
+            # Validate digest is exactly 32 bytes (address corruption check)
+            if len(digest_bytes) != 32:
+                raise ValueError(
+                    f"Invalid digest length: expected 32 bytes, got {len(digest_bytes)} bytes. "
+                    f"Address may be corrupted."
+                )
+            return digest_bytes  # type: ignore[attr-defined]
         except Exception as e:
             raise ValueError(f"Invalid address format: {s}") from e
 
