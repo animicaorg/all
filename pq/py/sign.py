@@ -270,7 +270,7 @@ def _is_dilithium3_alg(alg_name: str) -> bool:
     return name_lower in ("dilithium3", "ml-dsa-65", "mldsa65")
 
 
-def _backend_sign(alg_name: str, sk: bytes, msg: bytes) -> bytes:
+def _backend_sign(alg_name: str, sk: bytes, msg: bytes, pk: bytes | None = None) -> bytes:
     """
     Call the algorithm-specific signer. `msg` is already canonical SignBytes
     (a fixed-length digest), so backends should treat it as an opaque byte string.
@@ -303,10 +303,14 @@ def _backend_sign(alg_name: str, sk: bytes, msg: bytes) -> bytes:
         pass
 
     try:
+        if pk is not None:
+            return sign_fn(sk, msg, pk)  # type: ignore[misc]
         return sign_fn(sk, msg)
     except TypeError:
         # As a last resort, try keyword arguments for backends that renamed parameters
         try:
+            if pk is not None:
+                return sign_fn(secret_key=sk, message=msg, pk=pk)  # type: ignore[arg-type]
             return sign_fn(secret_key=sk, message=msg)  # type: ignore[arg-type]
         except Exception as e:
             raise TypeError(
@@ -348,6 +352,7 @@ def sign_detached(
     chain_id: Optional[int] = None,
     context: bytes = b"",
     prehash: PrehashKind = "sha3-512",
+    pk: bytes | None = None,
 ) -> Signature:
     """
     Produce a detached signature envelope with strong domain separation.
@@ -361,7 +366,7 @@ def sign_detached(
         context=context,
         prehash=prehash,
     )
-    sig = _backend_sign(alg_name, sk, ph)
+    sig = _backend_sign(alg_name, sk, ph, pk)
     domain_str = domain.decode("utf-8", "replace") if isinstance(domain, (bytes, bytearray)) else str(domain)
     return Signature(
         alg_id=alg_id,
@@ -381,6 +386,7 @@ def sign_attached(
     chain_id: Optional[int] = None,
     context: bytes = b"",
     prehash: PrehashKind = "sha3-512",
+    pk: bytes | None = None,
 ) -> SignedMessage:
     """
     Return the original message plus a detached signature envelope.
@@ -395,6 +401,7 @@ def sign_attached(
             chain_id=chain_id,
             context=context,
             prehash=prehash,
+            pk=pk,
         ),
     )
 
