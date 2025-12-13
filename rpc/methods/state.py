@@ -95,7 +95,13 @@ def _svc_balance(addr: str, *, tag: str = "latest") -> int:
         pass
 
     # Fallback: raw StateDB with manual address parsing
-    sdb = getattr(deps, "state_db", None)
+    # CRITICAL: state_db is stored in the RpcContext, not as a module attribute
+    try:
+        ctx = deps.get_ctx()
+        sdb = ctx.state_db
+    except Exception:
+        sdb = None
+    
     if sdb is not None:
         # Parse address (bech32m or hex) to bytes
         try:
@@ -143,7 +149,13 @@ def _svc_nonce(addr: str, *, tag: str = "latest") -> int:
         pass
 
     # Fallback: raw StateDB with manual address parsing
-    sdb = getattr(deps, "state_db", None)
+    # CRITICAL: state_db is stored in the RpcContext, not as a module attribute
+    try:
+        ctx = deps.get_ctx()
+        sdb = ctx.state_db
+    except Exception:
+        sdb = None
+    
     if sdb is not None:
         # Parse address (bech32m or hex) to bytes
         try:
