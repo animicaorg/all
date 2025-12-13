@@ -553,6 +553,50 @@ def _execute_transactions(
     return receipts
 
 
+def _normalize_tx_envelope(decoded: dict) -> dict:
+    """
+    Normalize transaction envelope format to core format.
+    
+    Handles two formats:
+    1. Core format: {"tx": {...}, "sigs": [...]}  (no change needed)
+    2. RPC envelope format: {"body": {...}, "sig": {...}} or {"body": {...}, "sigs": [...]}
+    
+    Returns dict in core format.
+    """
+    if "body" in decoded:
+        # RPC envelope: convert body → tx, and sig/sigs → sigs
+        normalized = {"tx": decoded["body"]}
+        if "sigs" in decoded:
+            normalized["sigs"] = decoded["sigs"]
+        elif "sig" in decoded:
+            # Single sig: wrap in array
+            normalized["sigs"] = [decoded["sig"]]
+        else:
+            normalized["sigs"] = []
+        return normalized
+    else:
+        # Already in core format or flat format
+        return decoded
+
+
+def _construct_tx_from_dict(normalized: dict) -> Tx | None:
+    """
+    Try to construct a Tx instance from a normalized dict.
+    
+    Tries multiple constructor methods in order:
+    1. Tx.from_obj() (preferred)
+    2. Tx.from_dict() (fallback)
+    
+    Returns Tx instance or None if no constructor available.
+    """
+    if hasattr(Tx, "from_obj"):
+        return Tx.from_obj(normalized)  # type: ignore[attr-defined]
+    elif hasattr(Tx, "from_dict"):
+        return Tx.from_dict(normalized)  # type: ignore[attr-defined]
+    else:
+        return None
+
+
 def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
     """
     Mine a single block with proof-of-work.
@@ -602,7 +646,7 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
                 try:
                     decoded, obj = tx_methods._decode_tx(raw)  # type: ignore[attr-defined]
                     # Accept both Tx instances and dict/obj that can be used as Tx
-                    # _decode_tx may return (Tx, dict) or (dict, dict) depending on availability of Tx constructors
+                    # _decode_tx returns (Tx, dict) when Tx.from_obj succeeds, or (dict, dict) when falling back to dict
                     if isinstance(decoded, Tx):
                         txs.append(decoded)
                         included_hashes.append(tx_hash_hex)
@@ -613,27 +657,11 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
                         # 2. RPC envelope format: {"body": {...}, "sig": {...}} or {"body": {...}, "sigs": [...]}
                         try:
                             # Normalize RPC envelope format to core format if needed
-                            if "body" in decoded:
-                                # RPC envelope: convert body → tx, and sig/sigs → sigs
-                                normalized = {"tx": decoded["body"]}
-                                if "sigs" in decoded:
-                                    normalized["sigs"] = decoded["sigs"]
-                                elif "sig" in decoded:
-                                    # Single sig: wrap in array
-                                    normalized["sigs"] = [decoded["sig"]]
-                                else:
-                                    normalized["sigs"] = []
-                            else:
-                                # Already in core format or flat format
-                                normalized = decoded
+                            normalized = _normalize_tx_envelope(decoded)
                             
-                            # Try to construct Tx
-                            if hasattr(Tx, "from_obj"):
-                                tx_obj = Tx.from_obj(normalized)  # type: ignore[attr-defined]
-                                txs.append(tx_obj)
-                                included_hashes.append(tx_hash_hex)
-                            elif hasattr(Tx, "from_dict"):
-                                tx_obj = Tx.from_dict(normalized)  # type: ignore[attr-defined]
+                            # Try to construct Tx using available constructor methods
+                            tx_obj = _construct_tx_from_dict(normalized)
+                            if tx_obj is not None:
                                 txs.append(tx_obj)
                                 included_hashes.append(tx_hash_hex)
                             else:

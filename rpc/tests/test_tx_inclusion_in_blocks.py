@@ -151,6 +151,13 @@ def test_tx_included_in_mined_block():
     print(f"✓ Transaction {tx_hash} included in block {block_height}")
 
 
+def _parse_balance_result(result_value: str | int) -> int:
+    """Helper to parse balance result value (handles hex strings and integers)."""
+    if isinstance(result_value, str):
+        return int(result_value, 16) if result_value.startswith("0x") else int(result_value)
+    return int(result_value)
+
+
 def test_balance_updated_after_tx_mined():
     """Test that balances are updated after transaction is mined."""
     client, cfg, _ = new_test_client()
@@ -165,7 +172,7 @@ def test_balance_updated_after_tx_mined():
     
     # Get initial recipient balance
     initial_balance_result = rpc_call(client, "state.getBalance", [recipient_hex])
-    initial_balance = int(initial_balance_result["result"], 16) if initial_balance_result["result"].startswith("0x") else int(initial_balance_result["result"])
+    initial_balance = _parse_balance_result(initial_balance_result["result"])
     
     print(f"Initial recipient balance: {initial_balance} nANM")
     
@@ -178,7 +185,7 @@ def test_balance_updated_after_tx_mined():
     
     # Get final recipient balance
     final_balance_result = rpc_call(client, "state.getBalance", [recipient_hex])
-    final_balance = int(final_balance_result["result"], 16) if final_balance_result["result"].startswith("0x") else int(final_balance_result["result"])
+    final_balance = _parse_balance_result(final_balance_result["result"])
     
     print(f"Final recipient balance: {final_balance} nANM")
     
