@@ -208,7 +208,8 @@ def make_block_env(
         if coinbase is not None
         else _first_present(head, ("coinbase", "miner", "proposer"))
     )
-    cb = _as_bytes(cb_src, expect_len=20) if cb_src is not None else b"\x00" * 20
+    # Animica uses 32-byte addresses (not 20-byte EVM addresses)
+    cb = _as_bytes(cb_src, expect_len=32) if cb_src is not None else b"\x00" * 32
 
     chain_id = _as_int(_get(chain_params, "chain_id", "chainId"), default=0)
 
@@ -298,13 +299,14 @@ def make_tx_env(
         )
     )
 
+    # Animica uses 32-byte addresses (not 20-byte EVM addresses)
     snd = _as_bytes(
         (
             sender
             if sender is not None
             else _first_present(tx, ("from", "sender", "from_address"))
         ),
-        expect_len=20,
+        expect_len=32,
     )
     nn = _as_int(
         nonce if nonce is not None else _first_present(tx, ("nonce",)), default=0
@@ -315,12 +317,12 @@ def make_tx_env(
         "gas_price": gp,
         "base_price": bp,
         "tip_price": max(0, gp - bp),
-        "sender": snd if snd else b"\x00" * 20,
+        "sender": snd if snd else b"\x00" * 32,
         "nonce": nn,
         # Optional/bonus info if supported by TxContext:
         "block_height": getattr(block_env, "height", 0),
         "block_timestamp": getattr(block_env, "timestamp", 0),
-        "coinbase": getattr(block_env, "coinbase", b"\x00" * 20),
+        "coinbase": getattr(block_env, "coinbase", b"\x00" * 32),
     }
     return _make_dataclass(TxContext, values)
 
