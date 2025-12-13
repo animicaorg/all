@@ -255,8 +255,9 @@ def test_mining_multiple_txs_in_single_block():
     # Send 3 transactions with sequential nonces
     tx_hashes = []
     for nonce in range(3):
-        # Use different recipients (deterministic test addresses)
-        recipient_hex = f"0x{nonce:064x}"
+        # Use different recipients (deterministic test addresses with high entropy)
+        # Prefix with a marker to avoid collision with real addresses
+        recipient_hex = f"0xdeadbeef{nonce:056x}"
         raw_hex, tx_hash = _build_signed_transfer(
             client, cfg, sender_kp, recipient_hex,
             nonce=nonce, value=100_000_000  # 0.1 ANM each
