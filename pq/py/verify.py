@@ -1,84 +1,52 @@
+
 from __future__ import annotations
 
-"""
-verify.py — Verification aligned with spec/domains.yaml domain-tag SignBytes.
+from typing import Any, Dict, Optional, Tuple, Union
 
-Verifies the same bytes produced by pq/py/sign.py:
-  SignBytes = DomainTag || context? || msg
-"""
+import oqs  # type: ignore
 
-from typing import Optional
+from pq.py.sign import (  # type: ignore
+    _enabled_mechs,
+    _normalize_alg,
+    _normalize_domain_path,
+    _pick_sig_mech,
+    _apply_prehash,
+    build_sign_bytes,
+)
 
-from pq.py.registry import ALG_NAME
-from pq.py.sign import PrehashKind, Signature, build_sign_bytes
-
-
-def _backend_verify(alg_name: str, pk: bytes, msg: bytes, sig: bytes) -> bool:
-    try:
-        if alg_name == "dilithium3":
-            from pq.py.algs import dilithium3 as backend
-        elif alg_name.startswith("sphincs"):
-            from pq.py.algs import sphincs_shake_128s as backend
-        else:
-            raise NotImplementedError(f"Signature backend not wired for {alg_name}")
-    except Exception:
-        return False
-
-    if not hasattr(backend, "verify"):
-        # If backend doesn't expose verify, treat as failure rather than guessing.
-        return False
-
-    return bool(backend.verify(pk, msg, sig))  # type: ignore[arg-type]
+DILITHIUM3_ID = 0x1001
 
 
 def verify_detached(
-    msg: bytes,
-    sig: Signature,
-    pk: bytes,
+    message: bytes,
+    sig_env: Dict[str, Any],
+    public_key: bytes,
     *,
-    domain: Optional[str] = None,
     chain_id: Optional[int] = None,
     context: bytes = b"",
-    prehash: Optional[PrehashKind] = None,
-    strict_domain: bool = True,
-    strict_prehash: bool = True,
-    strict_alg: bool = True,
 ) -> bool:
-    if strict_alg and ALG_NAME.get(sig.alg_id) != sig.alg_name:
+    alg_id = int(sig_env.get("alg", 0))
+    prehash = sig_env.get("prehash", "sha3-256")
+    domain = str(sig_env.get("domain", "tx"))
+
+    if chain_id is None:
+        chain_id = int(sig_env.get("chain_id", 0))
+
+    _, alg_name = _normalize_alg(alg_id)
+    mech = _pick_sig_mech(alg_name)
+
+    sign_bytes = build_sign_bytes(
+        message,
+        chain_id=int(chain_id),
+        domain=domain,
+        alg_name=alg_name,
+        context=context,
+    )
+    to_verify = _apply_prehash(sign_bytes, prehash)
+
+    s = oqs.Signature(mech)
+    sig = sig_env.get("sig", b"")
+    if isinstance(sig, str):
+        # do not auto-decode hex/base64 here; caller should pass bytes
         return False
-
-    dom = domain if domain is not None else sig.domain
-    if strict_domain and domain is not None and domain != sig.domain:
-        return False
-
-    ph: PrehashKind = prehash if prehash is not None else sig.prehash
-    if strict_prehash and prehash is not None and prehash != sig.prehash:
-        return False
-
-    try:
-        sign_bytes = build_sign_bytes(
-            bytes(msg),
-            domain=dom,
-            chain_id=chain_id,
-            alg_id=sig.alg_id,
-            context=context,
-            prehash=ph,
-        )
-    except Exception:
-        return False
-
-    return _backend_verify(sig.alg_name, pk, sign_bytes, sig.sig)
-
-
-def verify_attached(
-    signed: "object",
-    pk: bytes,
-    **kwargs,
-) -> bool:
-    # duck-typed: expects `signed.message` and `signed.signature`
-    try:
-        msg = getattr(signed, "message")
-        sig = getattr(signed, "signature")
-    except Exception:
-        return False
-    return verify_detached(msg, sig, pk, **kwargs)
+    return bool(s.verify(to_verify, bytes(sig), bytes(public_key)))
