@@ -370,12 +370,3 @@ def new_pool(ttl_seconds: int = 300, max_items: int = 50_000) -> PendingPool:
     Quick factory to create a pending pool.
     """
     return PendingPool(ttl_seconds=ttl_seconds, max_items=max_items)
-
-
-# --------------------------------------------------------------------------------------
-# Global pool instance (for RPC methods)
-# --------------------------------------------------------------------------------------
-
-# Create a global pool instance that can be used by RPC methods
-# This is initialized on module load with reasonable defaults
-pool: PendingPool = new_pool(ttl_seconds=300, max_items=50_000)
