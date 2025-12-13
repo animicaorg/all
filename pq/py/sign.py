@@ -1,254 +1,345 @@
-
 from __future__ import annotations
 
-import ctypes
-import hashlib
-import os
+"""
+sign.py — Uniform, domain-separated signing API for Animica PQ cryptography.
+
+Design goals
+------------
+- One function to sign bytes with any supported PQ signature algorithm.
+- Strong domain separation (explicit "what am I signing?" context).
+- Canonical "SignBytes" prehash (SHA3-512 over length-delimited fields).
+- Minimal, portable envelope (alg_id + signature bytes), ready for CBOR/JSON.
+- Zero surprises: the exact same prehashing is used by verification.
+
+Public API
+----------
+- sign_detached(msg, alg, sk, *, domain="generic", chain_id=None, context=b"", prehash="sha3-512")
+      -> Signature
+- sign_attached(msg, alg, sk, **kwargs)
+      -> SignedMessage (includes original msg + detached envelope)
+- build_sign_bytes(msg, *, domain, chain_id, alg_id, context=b"", prehash="sha3-512")
+      -> bytes  (what gets signed)
+
+Where `alg` can be an int alg_id or a canonical name:
+  "dilithium3", "sphincs_shake_128s" (see pq/py/registry.py).
+
+Backends
+--------
+This module dispatches to:
+- pq.py.algs.dilithium3.sign(secret_key: bytes, message: bytes) -> bytes
+- pq.py.algs.sphincs_shake_128s.sign(secret_key: bytes, message: bytes) -> bytes
+
+Both receive the canonical SignBytes (prehash) as message.
+
+Security notes
+--------------
+- Domain separation is *mandatory*. Use specific domains like:
+    "tx/sign", "header/proposer", "p2p/identity", "da/receipt", etc.
+  These should align with spec/domains.yaml at the repo root.
+- The canonical SignBytes includes (domain, chain_id?, alg_id, context?, msg).
+  All fields are length-delimited to avoid ambiguity.
+- We prehash with SHA3-512 to a fixed 64-byte digest, then sign that digest.
+  This aligns behavior across algorithms and makes signatures size-predictable.
+"""
+
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Iterable, Literal, Optional, Tuple
+from typing import Optional, Union, Literal, Tuple
 
-Prehash = Literal["none", "sha3-256", "sha256"]
+from pq.py.utils.hash import sha3_256, sha3_512
+from pq.py.registry import (
+    ALG_ID,
+    ALG_NAME,
+    is_known_alg_id,
+    is_sig_alg_id,
+)
 
-# Animica PQ algorithm IDs (chain-level identifiers)
-DILITHIUM3_ID = 0x1001
+# --------------------------------------------------------------------------------------
+# Small helpers: varint, field encoding, alg normalization
+# --------------------------------------------------------------------------------------
 
-# Mechanism preference lists.
-# We try multiple names because liboqs/liboqs-python naming varies across versions.
-MECH_PREFS = {
-    DILITHIUM3_ID: (
-        "Dilithium3",
-        "DILITHIUM_3",
-        "ML-DSA-65",
-        "MLDSA65",
-        "MLDSA_65",
-    ),
-}
-
-# -------------------------- liboqs loader helpers --------------------------
-
-
-def _first_existing(paths: Iterable[Path]) -> Optional[Path]:
-    for p in paths:
-        try:
-            if p.exists():
-                return p
-        except Exception:
-            continue
-    return None
-
-
-def _resolve_liboqs_from_env() -> Optional[Path]:
-    """
-    Accepts either:
-      - LIBOQS_PATH=/path/to/liboqs.so
-      - LIBOQS_PATH=/prefix (we search prefix/lib*/liboqs.so*)
-    Also supports OQS_INSTALL_PATH similarly.
-    """
-    candidates: list[Path] = []
-
-    for key in ("LIBOQS_PATH", "OQS_INSTALL_PATH"):
-        val = os.environ.get(key, "").strip()
-        if not val:
-            continue
-        p = Path(val)
-
-        # If user mistakenly set /usr/local (a directory), search within it.
-        if p.is_dir():
-            candidates.extend(
-                [
-                    p / "lib" / "liboqs.so",
-                    p / "lib" / "liboqs.so.0",
-                    p / "lib64" / "liboqs.so",
-                    p / "lib64" / "liboqs.so.0",
-                    p / "lib" / "liboqs.so.0.0.0",
-                    p / "lib64" / "liboqs.so.0.0.0",
-                ]
-            )
+def _uvarint(n: int) -> bytes:
+    """LEB128 uvarint (little endian base-128) for compact, unambiguous ints."""
+    if n < 0:
+        raise ValueError("uvarint expects non-negative int")
+    out = bytearray()
+    while True:
+        b = n & 0x7F
+        n >>= 7
+        if n:
+            out.append(b | 0x80)
         else:
-            # File path; accept as-is.
-            candidates.append(p)
+            out.append(b)
+            break
+    return bytes(out)
 
-    # Also try repo-local .deps (common in Animica setup)
-    repo_root = Path(__file__).resolve().parents[2]  # .../pq/py -> repo
-    deps_prefix = repo_root / ".deps" / "liboqs-install"
-    candidates.extend(
-        [
-            deps_prefix / "lib" / "liboqs.so",
-            deps_prefix / "lib" / "liboqs.so.0",
-            deps_prefix / "lib64" / "liboqs.so",
-            deps_prefix / "lib64" / "liboqs.so.0",
-        ]
+
+def _len_bytes(b: bytes) -> bytes:
+    """Length prefix for a bytes field (uvarint length || bytes)."""
+    return _uvarint(len(b)) + b
+
+
+def _norm_domain(domain: Union[str, bytes]) -> bytes:
+    if isinstance(domain, bytes):
+        return domain
+    if isinstance(domain, str):
+        d = domain.strip()
+        if not d:
+            raise ValueError("domain must be non-empty")
+        return d.encode("utf-8")
+    raise TypeError("domain must be str|bytes")
+
+
+def _normalize_domain_path(domain: Union[str, bytes]) -> str:
+    """Normalize domain as a slash-delimited path for diagnostics."""
+    if isinstance(domain, (bytes, bytearray)):
+        domain = domain.decode("utf-8", "replace")
+    return str(domain).strip()
+
+
+def _normalize_alg(alg: Union[int, str]) -> Tuple[int, str]:
+    if isinstance(alg, int):
+        if not is_known_alg_id(alg) or not is_sig_alg_id(alg):
+            raise ValueError(f"Unknown or non-signature alg_id: 0x{alg:02x}")
+        return alg, ALG_NAME[alg]
+    if isinstance(alg, str):
+        name = alg.strip().lower()
+        if name not in ALG_ID:
+            raise ValueError(f"Unknown algorithm name: {alg!r}")
+        alg_id = ALG_ID[name]
+        if not is_sig_alg_id(alg_id):
+            raise ValueError(f"Algorithm {name!r} is not a signature algorithm")
+        return alg_id, name
+    raise TypeError("alg must be int (alg_id) or str (name)")
+
+
+# --------------------------------------------------------------------------------------
+# Canonical SignBytes
+# --------------------------------------------------------------------------------------
+
+PrehashKind = Literal["sha3-512", "sha3-256"]
+
+
+def build_sign_bytes(
+    msg: bytes,
+    *,
+    domain: Union[str, bytes],
+    chain_id: Optional[int],
+    alg_id: int,
+    context: bytes = b"",
+    prehash: PrehashKind = "sha3-512",
+) -> bytes:
+    """
+    Construct canonical SignBytes for Animica PQ signatures.
+
+    Layout before prehash:
+      TAG        = "animica:sign/v1"
+      DOMAIN     = domain (bytes)
+      CHAIN_ID?  = if provided (uvarint)
+      ALG_ID     = uvarint(alg_id)
+      CONTEXT    = freeform domain-specific bytes (e.g., tx-kind, header fields)
+      MESSAGE    = the original message bytes
+
+      sign_bytes_raw =
+          len(TAG)||TAG
+        ||len(DOMAIN)||DOMAIN
+        ||len(CHAIN_ID_enc)?? (0 length if None)
+        ||len(ALG_ID_enc)||ALG_ID_enc
+        ||len(CONTEXT)||CONTEXT
+        ||len(MESSAGE)||MESSAGE
+
+    We then compute PH = SHA3-512(sign_bytes_raw) (or SHA3-256 if selected),
+    and *that* digest is what gets signed by the PQ algorithm.
+    """
+    tag = b"animica:sign/v1"
+    domain_b = _norm_domain(domain)
+    if chain_id is None:
+        chain_enc = b""
+    else:
+        chain_enc = _uvarint(chain_id)
+
+    alg_enc = _uvarint(alg_id)
+
+    raw = (
+        _len_bytes(tag)
+        + _len_bytes(domain_b)
+        + _len_bytes(chain_enc)
+        + _len_bytes(alg_enc)
+        + _len_bytes(context)
+        + _len_bytes(msg)
     )
 
-    return _first_existing(candidates)
+    if prehash == "sha3-512":
+        return sha3_512(raw)
+    elif prehash == "sha3-256":
+        return sha3_256(raw)
+    else:
+        raise ValueError(f"Unsupported prehash: {prehash}")
 
 
-def _preload_liboqs_best_effort() -> None:
-    """
-    Best-effort preload so that liboqs-python binds to the intended liboqs.
-    Never hard-fails; callers can still fall back to ed25519-fallback elsewhere.
-    """
-    path = _resolve_liboqs_from_env()
-    if not path:
-        return
-    try:
-        ctypes.CDLL(str(path), mode=ctypes.RTLD_GLOBAL)
-    except Exception as e:
-        # Keep this message very close to what you saw, but do not kill execution.
-        print(f"Failed to load liboqs from LIBOQS_PATH {path.parent}: {path.parent}: {e}")
+# --------------------------------------------------------------------------------------
+# Signature & SignedMessage envelopes
+# --------------------------------------------------------------------------------------
 
+@dataclass(frozen=True)
+class Signature:
+    alg_id: int
+    alg_name: str
+    domain: str
+    prehash: PrehashKind
+    sig: bytes
 
-# -------------------------- signing + verification --------------------------
+    def __repr__(self) -> str:
+        return (
+            f"Signature(alg={self.alg_name}/0x{self.alg_id:02x}, "
+            f"domain={self.domain!r}, prehash={self.prehash}, sig[:8]={self.sig[:8].hex()}…)"
+        )
 
 
 @dataclass(frozen=True)
-class PQSig:
-    alg_id: int
-    mech: str
-    prehash: Prehash
-    domain: str
-    chain_id: int
-    public_key: bytes
-    signature: bytes
+class SignedMessage:
+    message: bytes
+    signature: Signature
 
 
-def _hash_message(msg: bytes, prehash: Prehash) -> bytes:
-    if prehash == "none":
-        return msg
-    if prehash == "sha3-256":
-        return hashlib.sha3_256(msg).digest()
-    if prehash == "sha256":
-        return hashlib.sha256(msg).digest()
-    raise ValueError(f"Unknown prehash: {prehash}")
+# --------------------------------------------------------------------------------------
+# Backend dispatcher
+# --------------------------------------------------------------------------------------
 
 
-def _select_mech(alg_id: int, enabled: list[str]) -> str:
-    prefs = MECH_PREFS.get(alg_id)
-    if not prefs:
-        raise ValueError(f"Unsupported PQ alg_id: {alg_id}")
-
-    enabled_upper = {m.upper(): m for m in enabled}
-    for want in prefs:
-        # direct match (case-insensitive)
-        got = enabled_upper.get(want.upper())
-        if got:
-            return got
-
-        # fuzzy match
-        for m in enabled:
-            if want.upper() in m.upper():
-                return m
-
-    raise ValueError(
-        f"No supported mechanism enabled for alg_id={hex(alg_id)}. "
-        f"Enabled mechanisms sample={enabled[:20]}"
-    )
-
-
-def _new_signature_obj(oqs_mod, mech: str, secret_key: Optional[bytes] = None):
+def _backend_sign(alg_name: str, sk: bytes, msg: bytes) -> bytes:
     """
-    liboqs-python Signature() constructor differs slightly across versions.
-    Try several patterns.
+    Call the algorithm-specific signer. `msg` is already canonical SignBytes
+    (a fixed-length digest), so backends should treat it as an opaque byte string.
     """
-    Sig = oqs_mod.Signature
-
-    if secret_key is None:
-        return Sig(mech)
-
-    # Try keyword first
     try:
-        return Sig(mech, secret_key=secret_key)
-    except TypeError:
-        pass
+        if alg_name == "dilithium3":
+            from pq.py.algs import dilithium3 as backend
+        elif alg_name == "sphincs_shake_128s":
+            from pq.py.algs import sphincs_shake_128s as backend
+        else:
+            raise NotImplementedError(f"Signature backend not wired for {alg_name}")
+    except Exception as e:  # pragma: no cover - defensive
+        raise NotImplementedError(
+            f"Signature backend for {alg_name} not available. "
+            f"Install/build PQ backend (e.g., liboqs) and ensure wrappers are importable. ({e})"
+        ) from e
 
-    # Try positional secret_key
-    try:
-        return Sig(mech, secret_key)
-    except TypeError:
-        pass
-
-    # Try create empty + import_secret_key if available
-    s = Sig(mech)
-    if hasattr(s, "import_secret_key"):
-        s.import_secret_key(secret_key)  # type: ignore[attr-defined]
-        return s
-
-    raise TypeError("liboqs-python Signature() does not accept secret_key on this version")
+    if not hasattr(backend, "sign"):
+        raise NotImplementedError(f"Backend {backend.__name__} lacks .sign(secret_key, message)")
+    return backend.sign(secret_key=sk, message=msg)  # type: ignore[arg-type]
 
 
-def pq_sign_detached(
+# --------------------------------------------------------------------------------------
+# Public API
+# --------------------------------------------------------------------------------------
+
+
+def sign_detached(
     msg: bytes,
+    alg: Union[int, str],
+    sk: bytes,
     *,
-    alg_id: int,
-    secret_key: bytes,
-    public_key: bytes,
-    domain: str,
-    chain_id: int,
-    prehash: Prehash = "none",
-) -> PQSig:
+    domain: Union[str, bytes] = b"generic",
+    chain_id: Optional[int] = None,
+    context: bytes = b"",
+    prehash: PrehashKind = "sha3-512",
+) -> Signature:
     """
-    Signs msg with OQS Signature.
-
-    IMPORTANT: We intentionally sign the *canonical CBOR bytes* passed in by the caller.
-    We only apply optional prehashing here.
+    Produce a detached signature envelope with strong domain separation.
     """
-    if not isinstance(chain_id, int):
-        raise ValueError("chain_id must be an int")
-
-    _preload_liboqs_best_effort()
-
-    import oqs  # type: ignore
-
-    enabled = list(oqs.get_enabled_sig_mechanisms())
-    mech = _select_mech(alg_id, enabled)
-
-    to_sign = _hash_message(msg, prehash)
-
-    s = _new_signature_obj(oqs, mech, secret_key=secret_key)
-    sig = s.sign(to_sign)
-
-    # Local verification guardrail (this catches secret_key/public_key mismatch immediately)
-    ok = s.verify(to_sign, sig, public_key)
-    if not ok:
-        raise ValueError("Local PQ signature verification failed (secret_key/public_key mismatch?)")
-
-    return PQSig(
-        alg_id=alg_id,
-        mech=mech,
-        prehash=prehash,
+    alg_id, alg_name = _normalize_alg(alg)
+    ph = build_sign_bytes(
+        msg,
         domain=domain,
         chain_id=chain_id,
-        public_key=public_key,
-        signature=sig,
+        alg_id=alg_id,
+        context=context,
+        prehash=prehash,
+    )
+    sig = _backend_sign(alg_name, sk, ph)
+    domain_str = domain.decode("utf-8", "replace") if isinstance(domain, (bytes, bytearray)) else str(domain)
+    return Signature(
+        alg_id=alg_id,
+        alg_name=alg_name,
+        domain=domain_str,
+        prehash=prehash,
+        sig=sig,
     )
 
 
-# Back-compat for older imports
-sign_detached = pq_sign_detached
-
-
-def pq_verify_detached(
+def sign_attached(
     msg: bytes,
+    alg: Union[int, str],
+    sk: bytes,
     *,
-    alg_id: int,
-    public_key: bytes,
-    signature: bytes,
-    chain_id: int,
-    domain: str,
-    prehash: Prehash = "none",
-) -> bool:
-    _preload_liboqs_best_effort()
-    import oqs  # type: ignore
+    domain: Union[str, bytes] = b"generic",
+    chain_id: Optional[int] = None,
+    context: bytes = b"",
+    prehash: PrehashKind = "sha3-512",
+) -> SignedMessage:
+    """
+    Return the original message plus a detached signature envelope.
+    """
+    return SignedMessage(
+        message=msg,
+        signature=sign_detached(
+            msg,
+            alg,
+            sk,
+            domain=domain,
+            chain_id=chain_id,
+            context=context,
+            prehash=prehash,
+        ),
+    )
 
-    enabled = list(oqs.get_enabled_sig_mechanisms())
-    mech = _select_mech(alg_id, enabled)
 
-    to_verify = _hash_message(msg, prehash)
-    v = _new_signature_obj(oqs, mech, secret_key=None)
-    return bool(v.verify(to_verify, signature, public_key))
+# Back-compat aliases used across the repo
+pq_sign_detached = sign_detached
+sign = sign_detached
 
 
-verify_detached = pq_verify_detached
+# CLI helper
+
+def _parse_hex_arg(s: str) -> bytes:
+    if not s.startswith("hex:"):
+        raise ValueError("expected hex:…")
+    return bytes.fromhex(s[4:].replace("_", "").replace(" ", ""))
 
 
+def _main() -> None:  # pragma: no cover
+    import sys
+
+    args = sys.argv[1:]
+    if len(args) < 3 or args[0] in ("-h", "--help"):
+        print(
+            "Usage: python -m pq.py.sign <alg> <hex:sk> <hex:msg> [domain] [chain_id]\n"
+            "  alg     = dilithium3 | sphincs_shake_128s | <alg_id int>\n"
+            "  hex:sk  = secret key hex (backend-specific length)\n"
+            "  hex:msg = message bytes hex (will be domain-prehashed before signing)\n"
+            "  domain  = optional domain string (default 'generic')\n"
+            "  chain_id= optional integer chain id (default none)\n"
+        )
+        sys.exit(0)
+
+    alg_raw = args[0]
+    alg_val: Union[int, str] = int(alg_raw) if alg_raw.isdigit() else alg_raw
+    sk = _parse_hex_arg(args[1])
+    msg = _parse_hex_arg(args[2])
+    domain = args[3] if len(args) > 3 else "generic"
+    chain_id = int(args[4]) if len(args) > 4 else None
+
+    try:
+        sig = sign_detached(msg, alg_val, sk, domain=domain, chain_id=chain_id)
+    except Exception as e:
+        print("sign failed:", e)
+        sys.exit(2)
+
+    print("alg:", sig.alg_name, f"(0x{sig.alg_id:02x})")
+    print("domain:", sig.domain)
+    print("prehash:", sig.prehash)
+    print("sig:", sig.sig.hex())
+
+
+if __name__ == "__main__":  # pragma: no cover
+    _main()
