@@ -23,8 +23,14 @@ _sizes: Dict[str, int] = {"pk": 1184, "sk": 2400, "ct": 1088, "ss": 32}
 
 try:
     # Import pure-Python implementation from vendored animica._vendor
+    # Use absolute imports after adjusting path to find animica package
     import sys
-    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../../"))
+    import os
+    # Add parent directory (repo root) to path to find animica package
+    repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../"))
+    if repo_root not in sys.path:
+        sys.path.insert(0, repo_root)
+    
     from animica._vendor.kyber_py import Kyber768 as _Kyber768Impl
     
     _PURE_PYTHON_OK = True

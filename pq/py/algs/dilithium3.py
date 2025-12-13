@@ -24,8 +24,14 @@ _sizes: Dict[str, int] = {"pk": 1952, "sk": 4000, "sig": 3293}
 
 try:
     # Import pure-Python implementation from vendored animica._vendor
+    # Use absolute imports after adjusting path to find animica package
     import sys
-    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../../"))
+    import os
+    # Add parent directory (repo root) to path to find animica package
+    repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../"))
+    if repo_root not in sys.path:
+        sys.path.insert(0, repo_root)
+    
     from animica._vendor.dilithium_py import Dilithium3 as _Dilithium3Impl
     
     _PURE_PYTHON_OK = True
