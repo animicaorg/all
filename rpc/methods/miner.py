@@ -13,6 +13,8 @@ from typing import Any, Dict, Tuple
 
 from core.types.block import Block
 from core.types.header import Header
+from core.types.tx import Tx
+from core.utils.merkle import merkle_root
 from mining.adapters.core_chain import CoreChainAdapter
 from rpc import deps
 from rpc.methods import method
@@ -390,6 +392,33 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
     """
     ctx = _ctx()
     adapter = _adapter()
+    txs: list[Tx] = []
+    included_hashes: list[str] = []
+
+    # Collect pending transactions from the best available source (mempool → fallback cache)
+    try:
+        txs = list(adapter.get_mempool_snapshot(limit=1000))
+    except Exception:
+        log.debug("mempool snapshot unavailable; falling back to in-process cache")
+
+    if not txs:
+        try:
+            from rpc.methods import tx as tx_methods
+
+            pending_map = getattr(tx_methods, "_FALLBACK_PENDING", {}) or {}
+            for tx_hash_hex, raw in pending_map.items():
+                try:
+                    decoded, _ = tx_methods._decode_tx(raw)  # type: ignore[attr-defined]
+                    if isinstance(decoded, Tx):
+                        txs.append(decoded)
+                        included_hashes.append(tx_hash_hex)
+                except Exception:
+                    log.warning(
+                        "failed to decode pending tx from fallback cache; dropping",
+                        extra={"hash": tx_hash_hex},
+                    )
+        except Exception:
+            pass
     head = adapter.get_head()
     parent_height = int(head.get("height") or 0)
     parent_hash_val = head.get("hash") or head.get("hash_hex")
@@ -432,8 +461,21 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
             extra=b"",
         )
 
-    # Build child header template (nonce will be updated in mining loop)
+    # Build child header template (nonce will be updated in mining loop). Update the
+    # txsRoot to reflect any pending transactions we plan to include.
     header_template = _build_child_header(parent_height, parent_hash_bytes, parent_header)
+
+    if txs:
+        try:
+            leaves = [tx.hash() for tx in txs]
+            txs_root = merkle_root(leaves) if leaves else ZERO32
+            from dataclasses import replace
+
+            header_template = replace(header_template, txsRoot=txs_root)
+        except Exception as e:
+            log.warning("failed to set txsRoot from pending txs; mining empty block", extra={"err": str(e)})
+            txs = []
+            included_hashes = []
     
     # Compute target from theta
     theta_micro = header_template.thetaMicro
@@ -478,13 +520,27 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
         if block_hash_int <= target:
             # Found a valid block!
             block = Block.from_components(
-                header=header, txs=(), proofs=(), receipts=None, verify=True
+                header=header, txs=txs, proofs=(), receipts=None, verify=True
             )
             accepted = adapter.submit_block(block)
             if accepted:
                 _record_local_block(header.height, "0x" + block_hash_bytes.hex(), header)
                 # Apply block reward to specified payout address (or default miner address)
                 reward_amount = _apply_block_reward(ctx, header.height, payout_address)
+
+                # Evict successfully mined fallback-pool txs so they are not re-mined repeatedly
+                if included_hashes:
+                    try:
+                        from rpc.methods import tx as tx_methods
+
+                        cache = getattr(tx_methods, "_FALLBACK_PENDING", {}) or {}
+                        ts_cache = getattr(tx_methods, "_FALLBACK_PENDING_TS", {}) or {}
+                        for h in included_hashes:
+                            cache.pop(h, None)
+                            ts_cache.pop(h, None)
+                    except Exception:
+                        pass
+
                 log.debug(
                     f"Mined block at height {header.height} with nonce {nonce_val} "
                     f"(hash {block_hash_int} <= target {target}), reward={reward_amount} nANM"
