@@ -14,6 +14,9 @@ import hashlib
 from typing import Tuple
 
 # ML-DSA-65 parameters
+DILITHIUM_Q = 8380417  # prime modulus
+DILITHIUM_N = 256      # polynomial degree
+
 DILITHIUM_K = 6  # rows in A
 DILITHIUM_L = 5  # columns in A
 DILITHIUM_ETA = 4
@@ -22,9 +25,6 @@ DILITHIUM_BETA = 196
 DILITHIUM_GAMMA1 = 1 << 19
 DILITHIUM_GAMMA2 = (DILITHIUM_Q - 1) // 32
 DILITHIUM_OMEGA = 55
-
-DILITHIUM_Q = 8380417  # prime modulus
-DILITHIUM_N = 256      # polynomial degree
 
 # Size constants (bytes)
 DILITHIUM_PUBLICKEYBYTES = 1952
@@ -53,11 +53,10 @@ class Dilithium3:
         
         # In a real implementation, this would do lattice math.
         # For this reference, we derive deterministic keys from the seed.
-        sk_seed = hashlib.shake_256(b"dilithium3_sk|" + seed).digest(DILITHIUM_SECRETKEYBYTES)
-        pk_seed = hashlib.shake_256(b"dilithium3_pk|" + seed).digest(DILITHIUM_PUBLICKEYBYTES)
-        
-        sk = sk_seed
-        pk = pk_seed
+        # Store the seed in the first 32 bytes of sk so we can derive pk during signing
+        pk = hashlib.shake_256(b"dilithium3_pk|" + seed).digest(DILITHIUM_PUBLICKEYBYTES)
+        sk_rest = hashlib.shake_256(b"dilithium3_sk|" + seed).digest(DILITHIUM_SECRETKEYBYTES - 32)
+        sk = seed + sk_rest
         
         assert len(sk) == DILITHIUM_SECRETKEYBYTES
         assert len(pk) == DILITHIUM_PUBLICKEYBYTES

@@ -4,15 +4,15 @@
   "test_vectors": [
     {
       "count": 0,
-      "seed": "00000000000000000000000000000000000000000000000000000000000000",
+      "seed": "0000000000000000000000000000000000000000000000000000000000000000",
       "message": "48656c6c6f2c20416e696d696361",
-      "comment": "Zero seed, message='Hello, Animica'"
+      "comment": "Zero seed, message='Hello, Animica' (32 bytes)"
     },
     {
       "count": 1,
-      "seed": "01010101010101010101010101010101010101010101010101010101010101",
+      "seed": "0101010101010101010101010101010101010101010101010101010101010101",
       "message": "",
-      "comment": "All-ones seed, empty message"
+      "comment": "All-ones seed, empty message (32 bytes)"
     }
   ]
 }
