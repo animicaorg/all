@@ -16,8 +16,8 @@ VENV_DIR="$ROOT/.venv"
 LIBOQS_VERSION="0.14.0"
 LIBOQS_PREFIX="$DEPS_DIR/oqs-$LIBOQS_VERSION"
 LIBOQS_LIBDIR="$LIBOQS_PREFIX/lib"
+LIBOQS_SO="$LIBOQS_LIBDIR/liboqs.so"
 
-# Use sudo when not root
 SUDO=""
 if [ "${EUID:-$(id -u)}" -ne 0 ]; then
   if have sudo; then
@@ -35,42 +35,13 @@ fresh_nuke_repo_state() {
   mkdir -p "$SRC_DIR"
 }
 
-backup_system_liboqs_if_any() {
-  # The mismatch you're seeing (0.15.0) usually happens because an older/newer liboqs
-  # was installed globally (often in /usr/local/lib) and is being picked up at runtime.
-  # For "fresh ubuntu" behavior, we back it up out of the way.
-  local backup_dir="$ROOT/.deps_system_liboqs_backup_$(date -u +%Y%m%dT%H%M%SZ)"
-  local found=0
-
-  # candidate directories
-  local dirs=(/usr/local/lib /usr/local/lib64 /usr/lib /usr/lib64 /usr/lib/x86_64-linux-gnu)
-
-  for d in "${dirs[@]}"; do
-    [ -d "$d" ] || continue
-    if ls "$d"/liboqs.so* >/dev/null 2>&1; then
-      found=1
-      mkdir -p "$backup_dir$d"
-      log "Backing up system liboqs from $d -> $backup_dir$d"
-      $SUDO bash -c "mv -f $d/liboqs.so* '$backup_dir$d/'" || true
-    fi
-  done
-
-  if [ "$found" -eq 1 ]; then
-    log "System liboqs backup done. Running ldconfig."
-    $SUDO ldconfig || true
-    log "If you ever need to restore, copy files back from: $backup_dir"
-  else
-    log "No system liboqs.so* found in common locations (good)."
-  fi
-}
-
 install_system_deps() {
   if ! have apt-get; then
     warn "apt-get not found; skipping system deps install."
     return
   fi
 
-  log "Installing system build deps via apt-get (fresh/ubuntu24-style)"
+  log "Installing system build deps via apt-get (ubuntu24-style)"
   $SUDO apt-get update -y
   $SUDO apt-get install -y --no-install-recommends \
     ca-certificates curl git \
@@ -81,10 +52,6 @@ install_system_deps() {
     patchelf \
     unzip \
     binutils
-
-  # optional but useful
-  $SUDO apt-get install -y --no-install-recommends \
-    libffi-dev || true
 }
 
 ensure_venv() {
@@ -103,7 +70,6 @@ build_and_install_liboqs() {
   rm -rf "$SRC_DIR/liboqs"
   mkdir -p "$SRC_DIR/liboqs"
 
-  # Try a lightweight clone of the version tag/branch first; fall back to full clone.
   if git clone --depth=1 --branch "$LIBOQS_VERSION" https://github.com/open-quantum-safe/liboqs "$SRC_DIR/liboqs" 2>/dev/null; then
     :
   else
@@ -121,37 +87,27 @@ build_and_install_liboqs() {
   cmake --build "$SRC_DIR/liboqs/build" --parallel "$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)"
   cmake --install "$SRC_DIR/liboqs/build"
 
-  if [ ! -f "$LIBOQS_LIBDIR/liboqs.so" ] && [ ! -f "$LIBOQS_LIBDIR/liboqs.so.$LIBOQS_VERSION" ]; then
-    die "liboqs install finished but $LIBOQS_LIBDIR/liboqs.so* not found"
+  if [ ! -e "$LIBOQS_SO" ]; then
+    die "liboqs install finished but $LIBOQS_SO not found"
   fi
 
   log "liboqs installed OK: $LIBOQS_LIBDIR/liboqs.so*"
-
-  log "Registering vendored liboqs with ldconfig: /etc/ld.so.conf.d/00-animica-liboqs.conf"
-  $SUDO bash -c "cat > /etc/ld.so.conf.d/00-animica-liboqs.conf <<EOF
-$LIBOQS_LIBDIR
-EOF"
-  $SUDO ldconfig || true
 }
 
 install_liboqs_python_014_from_git() {
-  # We always reinstall from scratch (fresh mode).
-  log "Installing liboqs-python from a fresh git clone (expecting version 0.14.0)"
+  log "Installing liboqs-python from a fresh git clone (builds import 'oqs')"
 
   rm -rf "$SRC_DIR/liboqs-python"
   git clone --depth=1 https://github.com/open-quantum-safe/liboqs-python "$SRC_DIR/liboqs-python"
 
-  # IMPORTANT:
-  # - liboqs-python is the package, but it installs import name "oqs"
-  # - we force it to use OUR liboqs by setting OQS_INSTALL_PATH at build/install time
   (
     cd "$SRC_DIR/liboqs-python"
     OQS_INSTALL_PATH="$LIBOQS_PREFIX" \
     LD_LIBRARY_PATH="$LIBOQS_LIBDIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+    LD_PRELOAD="$LIBOQS_SO${LD_PRELOAD:+:$LD_PRELOAD}" \
     python -m pip install .
   )
 
-  # Verify installed version equals 0.14.0 (fail hard otherwise)
   log "Verifying installed liboqs-python version is exactly 0.14.0"
   python - <<'PY'
 import sys
@@ -169,25 +125,18 @@ PY
 }
 
 install_sitecustomize_preload_liboqs() {
-  # This is the BIG FIX:
-  # Some environments keep finding a globally-installed liboqs (0.15.0) at runtime.
-  # By preloading our vendored liboqs with RTLD_GLOBAL on Python startup, we force
-  # subsequent loads to use the already-loaded library.
-  #
-  # sitecustomize.py is auto-imported by Python on startup if present on sys.path.
   log "Installing venv sitecustomize.py to preload vendored liboqs (forces 0.14.0 at runtime)"
 
   local sp
   sp="$(python - <<'PY'
-import site, sys
+import site
 paths = site.getsitepackages()
 print(paths[0] if paths else "")
 PY
 )"
   [ -n "$sp" ] || die "Could not resolve site-packages path"
 
-  cat > "$sp/sitecustomize.py" <<PY
-# Auto-loaded by Python on startup (unless -S). We use it to force vendored liboqs.
+  cat > "$sp/sitecustomize.py" <<'PY'
 import os
 import ctypes
 
@@ -203,7 +152,6 @@ if prefix:
                 mode = getattr(ctypes, "RTLD_GLOBAL", 0)
                 ctypes.CDLL(p, mode=mode)
             except Exception:
-                # Don't block Python startup; worst case oqs import will still warn and setup will fail later.
                 pass
             break
 PY
@@ -211,13 +159,14 @@ PY
 
 patch_venv_activate_env() {
   local ACT="$VENV_DIR/bin/activate"
-  log "Patching venv activate to always export OQS_INSTALL_PATH + LD_LIBRARY_PATH"
+  log "Patching venv activate to always export OQS env"
 
   cat >> "$ACT" <<EOF
 
 # ANIMICA_OQS_ENV_BEGIN
 export OQS_INSTALL_PATH="$LIBOQS_PREFIX"
 export LD_LIBRARY_PATH="$LIBOQS_LIBDIR:\${LD_LIBRARY_PATH:-}"
+export LD_PRELOAD="$LIBOQS_SO\${LD_PRELOAD:+:\$LD_PRELOAD}"
 # ANIMICA_OQS_ENV_END
 EOF
 }
@@ -226,19 +175,113 @@ verify_oqs_no_mismatch_warning() {
   log "Verifying: importing oqs MUST NOT warn about liboqs 0.15.x"
   OQS_INSTALL_PATH="$LIBOQS_PREFIX" \
   LD_LIBRARY_PATH="$LIBOQS_LIBDIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+  LD_PRELOAD="$LIBOQS_SO${LD_PRELOAD:+:$LD_PRELOAD}" \
   python -W error -c "import oqs" \
-    || die "oqs import still raised a warning/error. A system liboqs is still being loaded somehow."
+    || die "oqs import still raised a warning/error (still loading wrong liboqs somewhere)."
 }
 
-install_animica_python() {
-  log "Installing Animica so 'animica' command exists (editable install)"
-  # Try ./python first (common in your repo), then root.
-  if [ -f "$ROOT/python/pyproject.toml" ] || [ -f "$ROOT/python/setup.py" ]; then
-    python -m pip install -e "$ROOT/python"
-  elif [ -f "$ROOT/pyproject.toml" ] || [ -f "$ROOT/setup.py" ]; then
-    python -m pip install -e "$ROOT"
+pyproject_path_for_animica() {
+  if [ -f "$ROOT/python/pyproject.toml" ]; then
+    echo "$ROOT/python/pyproject.toml"
+  elif [ -f "$ROOT/pyproject.toml" ]; then
+    echo "$ROOT/pyproject.toml"
   else
-    warn "Could not find pyproject.toml/setup.py at repo root or ./python; skipping pip install -e."
+    echo ""
+  fi
+}
+
+install_animica_deps_filtered() {
+  local pp
+  pp="$(pyproject_path_for_animica)"
+  if [ -z "$pp" ]; then
+    warn "No pyproject.toml found at ./python or repo root. Skipping dependency preinstall."
+    return
+  fi
+
+  log "Installing Animica dependencies from $(basename "$pp") (excluding animica-pq*)"
+
+  # Parse PEP 621 [project].dependencies with tomllib (py3.11+). Ubuntu 24.04 has 3.12 so OK.
+  mapfile -t DEPS < <(python - <<PY
+import tomllib, pathlib, sys
+pp = pathlib.Path(r"$pp")
+data = tomllib.loads(pp.read_text())
+deps = data.get("project", {}).get("dependencies", []) or []
+out = []
+for d in deps:
+    s = str(d).strip()
+    if not s:
+        continue
+    # filter out animica-pq (not on PyPI)
+    if s.lower().startswith("animica-pq"):
+        continue
+    out.append(s)
+print("\\n".join(out))
+PY
+)
+
+  if [ "${#DEPS[@]}" -eq 0 ]; then
+    warn "No dependencies found (or all filtered)."
+    return
+  fi
+
+  python -m pip install -U "${DEPS[@]}"
+}
+
+install_local_animica_pq_if_present() {
+  # If animica-pq exists in-repo, install it editable so imports resolve.
+  log "Searching repo for a local 'animica-pq' package (pyproject name == animica-pq)"
+
+  local found
+  found="$(python - <<'PY'
+import os, pathlib, tomllib
+
+root = pathlib.Path(os.environ["ROOT"])
+candidates = []
+# search a few common roots first
+bases = [
+  root / "python",
+  root / "packages",
+  root,
+]
+seen = set()
+for b in bases:
+  if not b.exists():
+    continue
+  for pp in b.rglob("pyproject.toml"):
+    # avoid scanning venv/deps if they somehow exist
+    if ".venv" in pp.parts or ".deps" in pp.parts:
+      continue
+    try:
+      data = tomllib.loads(pp.read_text())
+    except Exception:
+      continue
+    name = (data.get("project", {}) or {}).get("name", "")
+    if isinstance(name, str) and name.strip().lower() == "animica-pq":
+      candidates.append(str(pp.parent))
+for c in candidates:
+  if c not in seen:
+    print(c)
+    break
+PY
+  )"
+
+  if [ -n "$found" ] && [ -d "$found" ]; then
+    log "Found local animica-pq at: $found"
+    python -m pip install -e "$found"
+  else
+    warn "No local animica-pq package found. Continuing without it (Animica should use fallback PQ-disabled mode)."
+  fi
+}
+
+install_animica_editable_no_deps() {
+  log "Installing Animica editable WITHOUT deps (prevents pip from trying to fetch animica-pq from PyPI)"
+
+  if [ -d "$ROOT/python" ] && { [ -f "$ROOT/python/pyproject.toml" ] || [ -f "$ROOT/python/setup.py" ]; }; then
+    python -m pip install -e "$ROOT/python" --no-deps
+  elif [ -f "$ROOT/pyproject.toml" ] || [ -f "$ROOT/setup.py" ]; then
+    python -m pip install -e "$ROOT" --no-deps
+  else
+    die "Could not find a Python project to install (no pyproject.toml/setup.py)."
   fi
 }
 
@@ -255,9 +298,11 @@ VENV=\"\$ROOT/.venv\"
 
 LIBOQS_PREFIX=\"$LIBOQS_PREFIX\"
 LIBOQS_LIBDIR=\"$LIBOQS_LIBDIR\"
+LIBOQS_SO=\"$LIBOQS_SO\"
 
 export OQS_INSTALL_PATH=\"\$LIBOQS_PREFIX\"
 export LD_LIBRARY_PATH=\"\$LIBOQS_LIBDIR\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}\"
+export LD_PRELOAD=\"\$LIBOQS_SO\${LD_PRELOAD:+:\$LD_PRELOAD}\"
 
 if [ -x \"\$VENV/bin/animica\" ]; then
   exec \"\$VENV/bin/animica\" \"\$@\"
@@ -269,32 +314,27 @@ EOF"
 }
 
 main() {
-  # Always fresh: you explicitly asked to reinstall EVERYTHING each time.
   fresh_nuke_repo_state
-
   install_system_deps
-
-  # For truly "fresh ubuntu" behavior: move any global liboqs out of the way.
-  # This directly targets the 0.15.0 mismatch you're seeing.
-  backup_system_liboqs_if_any
-
   ensure_venv
-  # venv is active from ensure_venv
+  # venv active
 
   build_and_install_liboqs
 
-  # Ensure our env is set during all subsequent steps
   export OQS_INSTALL_PATH="$LIBOQS_PREFIX"
   export LD_LIBRARY_PATH="$LIBOQS_LIBDIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+  export LD_PRELOAD="$LIBOQS_SO${LD_PRELOAD:+:$LD_PRELOAD}"
 
   install_liboqs_python_014_from_git
   install_sitecustomize_preload_liboqs
   patch_venv_activate_env
-
-  # Now that sitecustomize is in place, verify the mismatch is gone
   verify_oqs_no_mismatch_warning
 
-  install_animica_python
+  # Fix for your current error: install deps ourselves (minus animica-pq), then install animica with --no-deps
+  install_animica_deps_filtered
+  install_local_animica_pq_if_present
+  install_animica_editable_no_deps
+
   install_global_animica_wrapper
 
   log "Done."
