@@ -12,6 +12,9 @@ from rpc.methods import method
 
 log = logging.getLogger(__name__)
 _PQ_VERIFY_DEBUG = os.environ.get("ANIMICA_PQ_VERIFY_DEBUG") == "1"
+_PQ_VERIFY_OPTIONAL = os.environ.get("ANIMICA_PQ_VERIFY_OPTIONAL") == "1" or (
+    os.environ.get("ANIMICA_SKIP_PQ_VERIFY") == "1"
+)
 _RPC_DEBUG = os.environ.get("ANIMICA_RPC_DEBUG") == "1"
 
 # ——— Optional deps (be tolerant during early bring-up) ———
@@ -135,7 +138,7 @@ def _jsonify(obj: t.Any) -> t.Any:
 def _error_data(kind: str, exc: BaseException, where: str, hint: str) -> dict:
     data: dict[str, t.Any] = {
         "kind": kind,
-        "detail": str(exc),
+        "cause": str(exc),
         "where": where,
         "hint": hint,
     }
@@ -539,7 +542,23 @@ def _validate_chain_id(obj: dict) -> int:
 
 def _verify_pq_signature(tx_like: t.Any, obj: dict, *, chain_id: int) -> None:
     if _pq_verify is None:
-        raise rpc_errors.InternalError("PQ verification unavailable")
+        # Allow developers to bypass PQ verification when liboqs/omni PQ backend
+        # is unavailable (e.g., during local bring-up or in minimal CI images).
+        if _PQ_VERIFY_OPTIONAL:
+            log.warning(
+                "PQ verification unavailable; skipping due to ANIMICA_PQ_VERIFY_OPTIONAL/ANIMICA_SKIP_PQ_VERIFY",
+            )
+            return
+
+        raise rpc_errors.InternalError(
+            "PQ verification unavailable",
+            **_error_data(
+                "pq_verify",
+                RuntimeError("Missing pq.py.verify backend (liboqs not installed?)"),
+                "_verify_pq_signature",
+                "Install liboqs/oqs-python or set ANIMICA_PQ_VERIFY_OPTIONAL=1 to bypass in dev",
+            ),
+        )
     alg_id, pub, sig, domain, prehash = _extract_sig(obj)
 
     # Get the raw message (CBOR body) to verify
