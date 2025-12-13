@@ -347,11 +347,10 @@ def mine_blocks(
         raise typer.Exit(2)
     
     # Resolve address: positional takes precedence over --address option
-    final_address = None
-    if address and address.strip():
-        final_address = address.strip()
-    elif address_opt and address_opt.strip():
-        final_address = address_opt.strip()
+    # Strip once and reuse
+    address_stripped = address.strip() if address else None
+    address_opt_stripped = address_opt.strip() if address_opt else None
+    final_address = address_stripped or address_opt_stripped
     
     # Validate and resolve address (label or raw Bech32)
     if not final_address:
@@ -457,6 +456,8 @@ def mine_blocks(
                     reward_anm = block_reward / COIN_UNIT
                     
                     # Verbose output: show transaction details
+                    # Max number of tx hashes to display in verbose mode
+                    MAX_VERBOSE_TX_DISPLAY = 5
                     tx_info = ""
                     if verbose:
                         try:
@@ -467,8 +468,8 @@ def mine_blocks(
                                 tx_info = f", txs: {tx_count}"
                                 if tx_count > 0:
                                     # List tx hashes if there are any
-                                    tx_hashes = block_result["transactions"][:5]  # Show first 5
-                                    tx_info += f" ({', '.join(str(h)[:10] + '...' for h in tx_hashes)}{'...' if tx_count > 5 else ''})"
+                                    tx_hashes = block_result["transactions"][:MAX_VERBOSE_TX_DISPLAY]
+                                    tx_info += f" ({', '.join(str(h)[:10] + '...' for h in tx_hashes)}{'...' if tx_count > MAX_VERBOSE_TX_DISPLAY else ''})"
                         except Exception:
                             # Ignore errors in verbose mode - don't fail mining for this
                             pass
