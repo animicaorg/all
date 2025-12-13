@@ -5,214 +5,250 @@ import ctypes
 import hashlib
 import os
 from dataclasses import dataclass
-from typing import Any, Dict, Literal, Optional, Tuple
+from pathlib import Path
+from typing import Iterable, Literal, Optional, Tuple
 
-PrehashKind = Literal["none", "sha3-256"]
+Prehash = Literal["none", "sha3-256", "sha256"]
 
-# Animica algorithm IDs (keep stable; these are baked into addresses/tx envelopes)
+# Animica PQ algorithm IDs (chain-level identifiers)
 DILITHIUM3_ID = 0x1001
 
-# The *actual* liboqs mechanism name we want for Dilithium3.
-# NOTE: liboqs 0.15+ removed Dilithium; for Animica "dilithium3" you must use liboqs 0.14.x.
-OQS_MECH_FOR_DILITHIUM3 = "Dilithium3"
+# Mechanism preference lists.
+# We try multiple names because liboqs/liboqs-python naming varies across versions.
+MECH_PREFS = {
+    DILITHIUM3_ID: (
+        "Dilithium3",
+        "DILITHIUM_3",
+        "ML-DSA-65",
+        "MLDSA65",
+        "MLDSA_65",
+    ),
+}
+
+# -------------------------- liboqs loader helpers --------------------------
 
 
-def _debug(msg: str) -> None:
-    if os.environ.get("ANIMICA_PQ_DEBUG", ""):
-        print(msg)
-
-
-def _find_shared_lib_in_dir(d: str) -> Optional[str]:
-    # Search common library filenames and locations
-    cands = [
-        os.path.join(d, "liboqs.so"),
-        os.path.join(d, "liboqs.dylib"),
-        os.path.join(d, "liboqs.dll"),
-        os.path.join(d, "lib", "liboqs.so"),
-        os.path.join(d, "lib", "liboqs.dylib"),
-        os.path.join(d, "lib64", "liboqs.so"),
-        os.path.join(d, "bin", "liboqs.dll"),
-    ]
-    # also accept version-suffixed .so.*
-    for sub in ("", "lib", "lib64"):
-        p = os.path.join(d, sub)
-        if os.path.isdir(p):
-            try:
-                for name in os.listdir(p):
-                    if name.startswith("liboqs.so."):
-                        cands.append(os.path.join(p, name))
-            except Exception:
-                pass
-
-    for p in cands:
-        if os.path.isfile(p):
-            return p
+def _first_existing(paths: Iterable[Path]) -> Optional[Path]:
+    for p in paths:
+        try:
+            if p.exists():
+                return p
+        except Exception:
+            continue
     return None
 
 
-def _ensure_liboqs_loaded() -> None:
+def _resolve_liboqs_from_env() -> Optional[Path]:
     """
-    Best-effort preload of liboqs into the process.
-
-    Accepts:
-      - LIBOQS_PATH as a FILE (liboqs.so) OR as a DIRECTORY (we'll search inside)
-      - OQS_INSTALL_PATH similarly (dir)
+    Accepts either:
+      - LIBOQS_PATH=/path/to/liboqs.so
+      - LIBOQS_PATH=/prefix (we search prefix/lib*/liboqs.so*)
+    Also supports OQS_INSTALL_PATH similarly.
     """
-    path = os.environ.get("LIBOQS_PATH") or ""
-    if not path:
-        path = os.environ.get("OQS_INSTALL_PATH") or ""
+    candidates: list[Path] = []
 
+    for key in ("LIBOQS_PATH", "OQS_INSTALL_PATH"):
+        val = os.environ.get(key, "").strip()
+        if not val:
+            continue
+        p = Path(val)
+
+        # If user mistakenly set /usr/local (a directory), search within it.
+        if p.is_dir():
+            candidates.extend(
+                [
+                    p / "lib" / "liboqs.so",
+                    p / "lib" / "liboqs.so.0",
+                    p / "lib64" / "liboqs.so",
+                    p / "lib64" / "liboqs.so.0",
+                    p / "lib" / "liboqs.so.0.0.0",
+                    p / "lib64" / "liboqs.so.0.0.0",
+                ]
+            )
+        else:
+            # File path; accept as-is.
+            candidates.append(p)
+
+    # Also try repo-local .deps (common in Animica setup)
+    repo_root = Path(__file__).resolve().parents[2]  # .../pq/py -> repo
+    deps_prefix = repo_root / ".deps" / "liboqs-install"
+    candidates.extend(
+        [
+            deps_prefix / "lib" / "liboqs.so",
+            deps_prefix / "lib" / "liboqs.so.0",
+            deps_prefix / "lib64" / "liboqs.so",
+            deps_prefix / "lib64" / "liboqs.so.0",
+        ]
+    )
+
+    return _first_existing(candidates)
+
+
+def _preload_liboqs_best_effort() -> None:
+    """
+    Best-effort preload so that liboqs-python binds to the intended liboqs.
+    Never hard-fails; callers can still fall back to ed25519-fallback elsewhere.
+    """
+    path = _resolve_liboqs_from_env()
     if not path:
         return
-
     try:
-        if os.path.isdir(path):
-            lib = _find_shared_lib_in_dir(path)
-            if not lib:
-                raise FileNotFoundError(f"No liboqs shared library found inside dir: {path}")
-            path = lib
-
-        if not os.path.isfile(path):
-            raise FileNotFoundError(f"LIBOQS_PATH does not exist as a file: {path}")
-
-        _debug(f"[pq] Preloading liboqs: {path}")
-        ctypes.CDLL(path, mode=ctypes.RTLD_GLOBAL)
+        ctypes.CDLL(str(path), mode=ctypes.RTLD_GLOBAL)
     except Exception as e:
-        # Non-fatal, but extremely helpful to print once
-        print(f"Failed to load liboqs from LIBOQS_PATH {os.environ.get('LIBOQS_PATH','')}: {e}")
+        # Keep this message very close to what you saw, but do not kill execution.
+        print(f"Failed to load liboqs from LIBOQS_PATH {path.parent}: {path.parent}: {e}")
+
+
+# -------------------------- signing + verification --------------------------
 
 
 @dataclass(frozen=True)
-class Signature:
+class PQSig:
     alg_id: int
-    alg_name: str
+    mech: str
+    prehash: Prehash
     domain: str
-    prehash: PrehashKind
     chain_id: int
-    pk: bytes
-    sig: bytes
+    public_key: bytes
+    signature: bytes
 
 
-def _normalize_alg(alg: str | int) -> Tuple[int, str]:
-    if isinstance(alg, int):
-        if alg == DILITHIUM3_ID:
-            return (DILITHIUM3_ID, "dilithium3")
-        raise ValueError(f"Unknown alg id: {alg}")
-
-    a = alg.strip().lower().replace("_", "-")
-    if a in ("dilithium3", "dilithium-3"):
-        return (DILITHIUM3_ID, "dilithium3")
-    raise ValueError(f"Unknown alg name: {alg}")
-
-
-def build_domain_tag(*, chain_id: int, domain: str) -> bytes:
-    """
-    Domain separation + chain binding.
-
-    Keep this format stable once shipped; node verification must match.
-    """
-    if not isinstance(chain_id, int):
-        raise TypeError("chain_id must be int")
-    if not domain or not isinstance(domain, str):
-        raise TypeError("domain must be non-empty str")
-
-    # "animica" + NUL + u32be(chain_id) + NUL + domain(utf-8) + NUL
-    cid = int(chain_id) & 0xFFFFFFFF
-    return b"animica\x00" + cid.to_bytes(4, "big") + b"\x00" + domain.encode("utf-8") + b"\x00"
-
-
-def build_sign_bytes(
-    msg: bytes,
-    *,
-    domain: str,
-    chain_id: Optional[int],
-    prehash: PrehashKind = "none",
-    context: bytes = b"",
-) -> bytes:
-    if not isinstance(msg, (bytes, bytearray, memoryview)):
-        raise TypeError("msg must be bytes-like")
-
-    if chain_id is None:
-        raise ValueError("chain_id is required for Animica domain-tag signing")
-
-    if context and not isinstance(context, (bytes, bytearray, memoryview)):
-        raise TypeError("context must be bytes-like")
-
-    domain_tag = build_domain_tag(chain_id=int(chain_id), domain=domain)
-
-    payload = bytes(msg)
+def _hash_message(msg: bytes, prehash: Prehash) -> bytes:
+    if prehash == "none":
+        return msg
     if prehash == "sha3-256":
-        payload = hashlib.sha3_256(payload).digest()
-    elif prehash != "none":
-        raise ValueError(f"Unknown prehash: {prehash}")
-
-    # domain_tag || context_len(u16be) || context || payload
-    ctx = bytes(context)
-    if len(ctx) > 65535:
-        raise ValueError("context too large")
-    return domain_tag + len(ctx).to_bytes(2, "big") + ctx + payload
+        return hashlib.sha3_256(msg).digest()
+    if prehash == "sha256":
+        return hashlib.sha256(msg).digest()
+    raise ValueError(f"Unknown prehash: {prehash}")
 
 
-def _oqs_mech_for_alg(alg_id: int) -> str:
-    # For now we only support Dilithium3 under the dilithium3 alg_id.
-    if alg_id == DILITHIUM3_ID:
-        return OQS_MECH_FOR_DILITHIUM3
-    raise ValueError(f"No oqs mechanism mapping for alg_id={alg_id}")
+def _select_mech(alg_id: int, enabled: list[str]) -> str:
+    prefs = MECH_PREFS.get(alg_id)
+    if not prefs:
+        raise ValueError(f"Unsupported PQ alg_id: {alg_id}")
+
+    enabled_upper = {m.upper(): m for m in enabled}
+    for want in prefs:
+        # direct match (case-insensitive)
+        got = enabled_upper.get(want.upper())
+        if got:
+            return got
+
+        # fuzzy match
+        for m in enabled:
+            if want.upper() in m.upper():
+                return m
+
+    raise ValueError(
+        f"No supported mechanism enabled for alg_id={hex(alg_id)}. "
+        f"Enabled mechanisms sample={enabled[:20]}"
+    )
+
+
+def _new_signature_obj(oqs_mod, mech: str, secret_key: Optional[bytes] = None):
+    """
+    liboqs-python Signature() constructor differs slightly across versions.
+    Try several patterns.
+    """
+    Sig = oqs_mod.Signature
+
+    if secret_key is None:
+        return Sig(mech)
+
+    # Try keyword first
+    try:
+        return Sig(mech, secret_key=secret_key)
+    except TypeError:
+        pass
+
+    # Try positional secret_key
+    try:
+        return Sig(mech, secret_key)
+    except TypeError:
+        pass
+
+    # Try create empty + import_secret_key if available
+    s = Sig(mech)
+    if hasattr(s, "import_secret_key"):
+        s.import_secret_key(secret_key)  # type: ignore[attr-defined]
+        return s
+
+    raise TypeError("liboqs-python Signature() does not accept secret_key on this version")
 
 
 def pq_sign_detached(
     msg: bytes,
-    alg: str | int,
-    sk: bytes,
     *,
-    pk: bytes,
+    alg_id: int,
+    secret_key: bytes,
+    public_key: bytes,
     domain: str,
     chain_id: int,
-    prehash: PrehashKind = "none",
-    context: bytes = b"",
-) -> Dict[str, Any]:
+    prehash: Prehash = "none",
+) -> PQSig:
     """
-    Returns a tx signature envelope (CBOR-friendly map).
-    Keys match what the CLI tx sender expects and what the node should verify.
+    Signs msg with OQS Signature.
+
+    IMPORTANT: We intentionally sign the *canonical CBOR bytes* passed in by the caller.
+    We only apply optional prehashing here.
     """
-    _ensure_liboqs_loaded()
+    if not isinstance(chain_id, int):
+        raise ValueError("chain_id must be an int")
 
-    alg_id, alg_name = _normalize_alg(alg)
+    _preload_liboqs_best_effort()
 
-    # Late import so our preload has a chance to work
     import oqs  # type: ignore
 
-    mech = _oqs_mech_for_alg(alg_id)
+    enabled = list(oqs.get_enabled_sig_mechanisms())
+    mech = _select_mech(alg_id, enabled)
 
-    enabled = oqs.get_enabled_sig_mechanisms()
-    if mech not in enabled:
-        raise RuntimeError(
-            f"Requested mechanism '{mech}' not enabled in liboqs runtime. "
-            f"Enabled sample={tuple(enabled[:12])}. "
-            f"Fix by installing liboqs v0.14.x and setting LIBOQS_PATH/LD_LIBRARY_PATH."
-        )
+    to_sign = _hash_message(msg, prehash)
 
-    sign_bytes = build_sign_bytes(
-        bytes(msg),
-        domain=domain,
-        chain_id=int(chain_id),
+    s = _new_signature_obj(oqs, mech, secret_key=secret_key)
+    sig = s.sign(to_sign)
+
+    # Local verification guardrail (this catches secret_key/public_key mismatch immediately)
+    ok = s.verify(to_sign, sig, public_key)
+    if not ok:
+        raise ValueError("Local PQ signature verification failed (secret_key/public_key mismatch?)")
+
+    return PQSig(
+        alg_id=alg_id,
+        mech=mech,
         prehash=prehash,
-        context=context,
+        domain=domain,
+        chain_id=chain_id,
+        public_key=public_key,
+        signature=sig,
     )
 
-    with oqs.Signature(mech) as s:
-        sig = s.sign(sign_bytes, bytes(sk))
 
-    return {
-        "alg": int(alg_id),
-        "pk": bytes(pk),
-        "sig": bytes(sig),
-        "domain": str(domain),
-        "prehash": str(prehash),
-    }
+# Back-compat for older imports
+sign_detached = pq_sign_detached
 
 
-# Back-compat exports (some callers import one or the other)
-def sign_detached(*args: Any, **kwargs: Any) -> Dict[str, Any]:
-    return pq_sign_detached(*args, **kwargs)
+def pq_verify_detached(
+    msg: bytes,
+    *,
+    alg_id: int,
+    public_key: bytes,
+    signature: bytes,
+    chain_id: int,
+    domain: str,
+    prehash: Prehash = "none",
+) -> bool:
+    _preload_liboqs_best_effort()
+    import oqs  # type: ignore
+
+    enabled = list(oqs.get_enabled_sig_mechanisms())
+    mech = _select_mech(alg_id, enabled)
+
+    to_verify = _hash_message(msg, prehash)
+    v = _new_signature_obj(oqs, mech, secret_key=None)
+    return bool(v.verify(to_verify, signature, public_key))
+
+
+verify_detached = pq_verify_detached
+
 
