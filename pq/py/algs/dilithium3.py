@@ -32,13 +32,23 @@ try:
 
     # Try ML-DSA-65 first (NIST standard, liboqs 0.15.0+)
     # Fall back to Dilithium3 (legacy, liboqs < 0.15.0)
-    enabled_mechs = getattr(oqs, "get_enabled_sig_mechanisms", lambda: [])()
+    enabled_mechs = list(getattr(oqs, "get_enabled_sig_mechanisms", lambda: [])())
+    enabled_map = {
+        m.upper().replace("_", "-"): m for m in enabled_mechs
+    }
     _mechanism_name = None
-    
-    if "ML-DSA-65" in enabled_mechs:
-        _mechanism_name = "ML-DSA-65"
-    elif "Dilithium3" in enabled_mechs:
-        _mechanism_name = "Dilithium3"
+
+    # Prefer the NIST-aligned ML-DSA-65 label; fall back to legacy Dilithium3.
+    preferred_labels = ["ML-DSA-65", "DILITHIUM3"]
+    for label in preferred_labels:
+        normalized = label.upper().replace("_", "-")
+        # Exact or prefix/alias match
+        for key, value in enabled_map.items():
+            if key == normalized or key.replace("-", "") == normalized.replace("-", ""):
+                _mechanism_name = value
+                break
+        if _mechanism_name:
+            break
     
     if _mechanism_name:
         # Probe sizes once; reuse instances per call to ensure fresh context
