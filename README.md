@@ -34,6 +34,31 @@ cd all
 source .venv/bin/activate
 ```
 
+### Fresh Installation
+
+For a completely clean installation (removes existing `.venv` and starts fresh):
+
+```bash
+# Using the --fresh flag
+./setup.sh --fresh
+
+# OR using environment variable
+FRESH=1 ./setup.sh
+```
+
+### Custom Package Index
+
+If you need to resolve packages from a custom pip index (for internal deployments or testing):
+
+```bash
+# Use a custom index for packages like omni-sdk
+PIP_EXTRA_INDEX_URL=https://your-index.example.com/simple ./setup.sh
+```
+
+### Setup Options
+
+Run `./setup.sh --help` for all available options and environment variables.
+
 ## Working with networks
 
 Animica ships with multiple network profiles:

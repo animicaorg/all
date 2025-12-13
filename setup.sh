@@ -10,6 +10,47 @@ have() { command -v "$1" >/dev/null 2>&1; }
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VENV_DIR="$ROOT/.venv"
 
+# Parse command-line flags
+FRESH_INSTALL=false
+if [ "${FRESH:-}" = "1" ]; then
+  FRESH_INSTALL=true
+fi
+
+for arg in "$@"; do
+  case "$arg" in
+    --fresh)
+      FRESH_INSTALL=true
+      ;;
+    --help|-h)
+      cat <<EOF
+Usage: $0 [OPTIONS]
+
+Options:
+  --fresh       Remove existing .venv and perform a clean installation
+  -h, --help    Show this help message
+
+Environment Variables:
+  FRESH=1       Same as --fresh flag
+  PIP_INDEX_URL If set, use this as the primary pip index
+  PIP_EXTRA_INDEX_URL If set, use this as an additional pip index
+
+Examples:
+  # Regular idempotent setup
+  ./setup.sh
+
+  # Fresh installation (removes existing .venv)
+  ./setup.sh --fresh
+  # OR
+  FRESH=1 ./setup.sh
+
+  # Use custom pip index for omni-sdk
+  PIP_EXTRA_INDEX_URL=https://custom-index.example.com/simple ./setup.sh
+EOF
+      exit 0
+      ;;
+  esac
+done
+
 install_system_deps() {
   if ! have apt-get; then
     warn "apt-get not found; skipping system deps install."
@@ -48,6 +89,11 @@ install_system_deps() {
 }
 
 ensure_venv() {
+  if [ "$FRESH_INSTALL" = true ] && [ -d "$VENV_DIR" ]; then
+    log "FRESH mode: removing existing virtual environment at $VENV_DIR"
+    rm -rf "$VENV_DIR"
+  fi
+  
   if [ -d "$VENV_DIR" ]; then
     log "Virtual environment already exists at $VENV_DIR (reusing)"
   else
@@ -62,13 +108,32 @@ ensure_venv() {
   python -m pip install -U pip setuptools wheel --quiet
 }
 
+install_local_dependencies() {
+  log "Installing local SDK dependencies (omni-sdk)"
+  
+  # Install omni-sdk from local path first (required by animica[dev])
+  if [ -d "$ROOT/sdk/python" ] && [ -f "$ROOT/sdk/python/pyproject.toml" ]; then
+    log "Installing omni-sdk from $ROOT/sdk/python"
+    if ! python -m pip install -e "$ROOT/sdk/python" --quiet; then
+      die "Failed to install omni-sdk from local path. Check $ROOT/sdk/python/pyproject.toml"
+    fi
+  else
+    warn "omni-sdk package not found at $ROOT/sdk/python - installation may fail"
+    warn "To use a custom pip index, set: PIP_EXTRA_INDEX_URL=https://your-index/simple"
+  fi
+}
+
 install_animica() {
   log "Installing Animica package in editable mode"
 
   if [ -d "$ROOT/python" ] && [ -f "$ROOT/python/pyproject.toml" ]; then
-    python -m pip install -e "$ROOT/python[dev]"
+    if ! python -m pip install -e "$ROOT/python[dev]"; then
+      die "Failed to install animica[dev]. Ensure omni-sdk is available via local path or PIP_EXTRA_INDEX_URL"
+    fi
   elif [ -f "$ROOT/pyproject.toml" ]; then
-    python -m pip install -e "$ROOT[dev]"
+    if ! python -m pip install -e "$ROOT[dev]"; then
+      die "Failed to install animica[dev] from root pyproject.toml"
+    fi
   else
     die "Could not find pyproject.toml (checked ./python and repo root)"
   fi
@@ -134,10 +199,15 @@ EOF
 }
 
 main() {
-  log "Animica setup starting (Ubuntu 24.04 compatible, idempotent)"
+  if [ "$FRESH_INSTALL" = true ]; then
+    log "Animica setup starting (FRESH mode - clean install)"
+  else
+    log "Animica setup starting (Ubuntu 24.04 compatible, idempotent)"
+  fi
   
   install_system_deps
   ensure_venv
+  install_local_dependencies
   install_animica
   verify_installation
   print_usage
