@@ -268,6 +268,48 @@ def _collect_sign_bytes(tx_like: t.Any) -> list[tuple[str, bytes]]:
     return candidates
 
 
+def _build_sig_env(alg_id: t.Any, sig: bytes):
+    from pq.py.sign import Signature  # type: ignore
+
+    if _ALG_NAME is not None and isinstance(alg_id, int):
+        alg_name = _ALG_NAME.get(alg_id, f"alg_0x{alg_id:02x}")
+    else:
+        alg_name = f"alg_0x{alg_id:02x}" if isinstance(alg_id, int) else str(alg_id)
+
+    sig_env = Signature(
+        alg_id=alg_id,
+        alg_name=alg_name,
+        domain="tx",  # Standard domain for transaction signatures (matches CLI/SDK)
+        prehash="sha3-512",  # Standard prehash for tx signatures
+        sig=sig,
+    )
+    return sig_env, alg_name
+
+
+def _verify_pq_candidates(
+    candidates: list[tuple[str, bytes]], sig_env, pub: bytes, *, chain_id: int
+) -> tuple[bool, str | None, list[str]]:
+    ok = False
+    used_label: str | None = None
+    verify_errors: list[str] = []
+
+    for label, candidate in candidates:
+        try:
+            attempt_ok = _pq_verify.verify_detached(  # type: ignore[attr-defined]
+                candidate, sig_env, pub, chain_id=chain_id
+            )
+        except Exception as verify_exc:  # pragma: no cover - defensive
+            verify_errors.append(f"{label}: {verify_exc}")
+            continue
+
+        if attempt_ok:
+            ok = True
+            used_label = label
+            break
+
+    return ok, used_label, verify_errors
+
+
 def _chain_id_required() -> int:
     """Return the configured chain ID for this node."""
 
@@ -506,32 +548,7 @@ def _verify_pq_signature(tx_like: t.Any, obj: dict, *, chain_id: int) -> None:
     # Construct a Signature envelope for verify_detached
     # The pq.py.verify API expects a Signature dataclass with alg_id, alg_name, domain, prehash, sig
     try:
-        from pq.py.sign import Signature
-        
-        # Normalize alg_id to int and map to alg_name
-        if isinstance(alg_id, str) and _ALG_ID is not None:
-            # alg_id is actually an alg_name string (e.g., "dilithium3")
-            alg_name = alg_id
-            alg_id = _ALG_ID.get(alg_name, 0)
-            if alg_id == 0:
-                raise ValueError(f"Unknown algorithm name: {alg_name}")
-        elif _ALG_NAME is not None:
-            # alg_id is an int, map to alg_name
-            alg_name = _ALG_NAME.get(alg_id, f"alg_0x{alg_id:02x}")
-        else:
-            # Fallback if registry is unavailable
-            alg_name = f"alg_0x{alg_id:02x}" if isinstance(alg_id, int) else str(alg_id)
-        
-        # Construct signature envelope with standard tx signing domain
-        # Note: Signature dataclass fields are: alg_id, alg_name, domain, prehash, sig
-        # Domain "tx" matches what SDK uses in sign_tx method
-        sig_env = Signature(
-            alg_id=alg_id,
-            alg_name=alg_name,
-            domain="tx",  # Standard domain for transaction signatures (matches SDK)
-            prehash="sha3-512",  # Standard prehash for tx signatures
-            sig=sig
-        )
+        sig_env, alg_name = _build_sig_env(alg_id, sig)
 
         if _PQ_VERIFY_DEBUG:
             log.info(
@@ -547,30 +564,18 @@ def _verify_pq_signature(tx_like: t.Any, obj: dict, *, chain_id: int) -> None:
         
         # Call verify_detached with the signature envelope and chain_id
         # verify_detached signature: (msg: bytes, sig: Signature, pk: bytes, chain_id: int, **kwargs) -> bool
-        ok = False
-        verify_errors: list[str] = []
+        ok, used_label, verify_errors = _verify_pq_candidates(
+            candidates, sig_env, pub, chain_id=chain_id
+        )
 
-        # Try verification across all candidate SignBytes, short-circuit on success
-        for label, candidate in candidates:
-            try:
-                attempt_ok = _pq_verify.verify_detached(  # type: ignore[attr-defined]
-                    candidate, sig_env, pub, chain_id=chain_id
-                )
-            except Exception as verify_exc:  # pragma: no cover - defensive
-                verify_errors.append(f"{label}: {verify_exc}")
-                continue
-
-            if attempt_ok:
-                ok = True
-                if label != msg_label:
-                    log.warning(
-                        "PQ signature verified using alternate SignBytes source (primary=%s, used=%s, primary_len=%d, alt_len=%d)",
-                        msg_label,
-                        label,
-                        len(msg),
-                        len(candidate),
-                    )
-                break
+        if ok and used_label and used_label != msg_label:
+            log.warning(
+                "PQ signature verified using alternate SignBytes source (primary=%s, used=%s, primary_len=%d, alt_len=%d)",
+                msg_label,
+                used_label,
+                len(msg),
+                next((len(c) for lbl, c in candidates if lbl == used_label), 0),
+            )
 
         log.debug(
             "PQ signature verification result: %s (domain=%s, alg=%s)",
@@ -898,6 +903,57 @@ def tx_send_raw_transaction(rawTx: str) -> str:
         pass
     
     return tx_hash_hex
+
+
+@method(
+    "tx.debugVerifyRawTransaction",
+    desc=(
+        "Decode and verify a raw PQ transaction without admitting it to the mempool. "
+        "Returns verification diagnostics instead of a tx hash."
+    ),
+    aliases=("tx_debugVerifyRawTransaction",),
+)
+def tx_debug_verify_raw_transaction(rawTx: str) -> dict:
+    if not isinstance(rawTx, str):
+        raise rpc_errors.InvalidParams("rawTx must be a hex string")
+    if rawTx.startswith("0b:"):
+        raise rpc_errors.InvalidParams("base64 not supported yet; send hex (0x…)")
+
+    if _pq_verify is None:
+        raise rpc_errors.InternalError("PQ verification unavailable")
+
+    raw = _b(rawTx)
+    tx_like, obj = _decode_tx(raw)
+    chain_id = _validate_chain_id(obj)
+
+    alg_id, pub, sig = _extract_sig(obj)
+    candidates = _collect_sign_bytes(obj)
+
+    sig_env, alg_name = _build_sig_env(alg_id, sig)
+
+    ok, used_label, verify_errors = _verify_pq_candidates(
+        candidates, sig_env, pub, chain_id=chain_id
+    )
+
+    candidate_views = [
+        {
+            "label": lbl,
+            "len": len(data),
+            "prefix": data[:32].hex(),
+            "sha3_256": _hex(_sha3_256(data)),
+        }
+        for lbl, data in candidates
+    ]
+
+    return {
+        "ok": ok,
+        "chainId": chain_id,
+        "algorithm": alg_name,
+        "algId": sig_env.alg_id,
+        "usedCandidate": used_label,
+        "candidates": candidate_views,
+        "errors": verify_errors,
+    }
 
 
 @method(
