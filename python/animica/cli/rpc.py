@@ -61,23 +61,34 @@ def call_rpc(method: str, params: Any, rpc_url: Optional[str] = None) -> Any:
         Result from the RPC call
         
     Raises:
-        Exception: If the RPC call fails
+        RuntimeError: If the RPC call fails with error details
     """
     url = _resolve_rpc_url(rpc_url)
     
-    if HAVE_RPC:
-        client = RpcClient(url, timeout=10.0)
-        return client.request(method, params)
-    else:
-        import httpx
-        
-        payload = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params}
-        resp = httpx.post(url, json=payload, timeout=10.0)
-        resp.raise_for_status()
-        parsed = resp.json()
-        if "error" in parsed:
-            raise RuntimeError(parsed.get("error"))
-        return parsed.get("result")
+    try:
+        if HAVE_RPC:
+            client = RpcClient(url, timeout=10.0)
+            return client.request(method, params)
+        else:
+            import httpx
+            
+            payload = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params}
+            resp = httpx.post(url, json=payload, timeout=10.0)
+            resp.raise_for_status()
+            parsed = resp.json()
+            if "error" in parsed:
+                error_detail = parsed.get("error")
+                raise RuntimeError(
+                    f"RPC call to '{method}' failed: {error_detail}"
+                )
+            return parsed.get("result")
+    except Exception as e:
+        # Re-raise with more context
+        if isinstance(e, RuntimeError):
+            raise
+        raise RuntimeError(
+            f"RPC call to '{method}' at {url} failed: {e}"
+        ) from e
 
 
 @app.command()
