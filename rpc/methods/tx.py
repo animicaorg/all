@@ -554,9 +554,9 @@ def _verify_pq_signature(tx_like: t.Any, obj: dict, *, chain_id: int) -> None:
             "PQ verification unavailable",
             **_error_data(
                 "pq_verify",
-                RuntimeError("Missing pq.py.verify backend (liboqs not installed?)"),
+                RuntimeError("Missing pq.py.verify backend (animica-pq not installed?)"),
                 "_verify_pq_signature",
-                "Install liboqs/oqs-python or set ANIMICA_PQ_VERIFY_OPTIONAL=1 to bypass in dev",
+                "Ensure animica-pq is installed in the node container or set ANIMICA_PQ_VERIFY_OPTIONAL=1 to bypass in dev",
             ),
         )
     alg_id, pub, sig, domain, prehash = _extract_sig(obj)
