@@ -42,6 +42,9 @@ RECEIPT_ADDRESS_LEN = 32  # Receipt log address length (bytes)
 TOPIC_LEN = 32  # Receipt log topic length (bytes)
 INTRINSIC_GAS_TRANSFER = 21_000  # Intrinsic gas cost for simple transfers
 
+# Logging display constants
+MAX_DISPLAYED_TX_HASHES = 3  # Maximum number of transaction hashes to display in logs
+
 # In-memory job cache for miner.getWork / miner.submitWork flows
 _JOB_CACHE: dict[str, dict[str, Any]] = {}
 _LOCAL_HEAD: dict[str, Any] = {}
@@ -900,7 +903,8 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
                     f"Mined block at height {header.height} with nonce {nonce_val} "
                     f"(hash {block_hash_int} <= target {target}), reward={reward_amount} nANM, "
                     f"txs={len(txs)}, receipts={len(receipts) if receipts else 0}, "
-                    f"included_tx_hashes={included_hashes[:3]}{'...' if len(included_hashes) > 3 else ''}"
+                    f"included_tx_hashes={included_hashes[:MAX_DISPLAYED_TX_HASHES]}"
+                    f"{'...' if len(included_hashes) > MAX_DISPLAYED_TX_HASHES else ''}"
                 )
                 return (True, reward_amount)
             return (False, 0)
