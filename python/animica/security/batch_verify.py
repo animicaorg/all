@@ -73,18 +73,16 @@ def _verify_worker(item: VerifyItem) -> VerifyResult:
     """
     try:
         # Import in worker to avoid pickling issues
+        # Try standard import first
         try:
             from animica.pq import sig_verify
         except ImportError:
-            # Fallback if running from different context
-            try:
-                from python.animica.pq import sig_verify
-            except ImportError:
-                return VerifyResult(
-                    index=item.index,
-                    valid=False,
-                    error="pq module not available"
-                )
+            # If that fails, PQ module is not available
+            return VerifyResult(
+                index=item.index,
+                valid=False,
+                error="pq module not available"
+            )
         
         # Verify the signature
         valid = sig_verify(item.public_key, item.message, item.signature)
@@ -154,8 +152,8 @@ def verify_batch(
             results.sort(key=lambda r: r.index)
             return results
     
-    except multiprocessing.TimeoutError:
-        raise TimeoutError(f"Batch verification timed out after {timeout}s")
+    except multiprocessing.TimeoutError as e:
+        raise TimeoutError(f"Batch verification timed out after {timeout}s") from e
     except Exception as e:
         logger.error("Batch verification failed: %s", e)
         raise RuntimeError(f"Batch verification failed: {type(e).__name__}")

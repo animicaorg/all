@@ -22,12 +22,24 @@ import sys
 import time
 from typing import List, Tuple
 
+# Check PQ availability
 try:
     from animica.pq import sig_keygen, sig_sign, sig_verify
-    from animica.security.batch_verify import VerifyItem, verify_batch
-    PQ_AVAILABLE = True
-except ImportError:
+except ImportError as e:
+    sig_keygen = sig_sign = sig_verify = None  # type: ignore
+    _pq_import_error = str(e)
     PQ_AVAILABLE = False
+else:
+    _pq_import_error = None
+    PQ_AVAILABLE = True
+
+# Check batch_verify availability
+try:
+    from animica.security.batch_verify import VerifyItem, verify_batch
+except ImportError as e:
+    if PQ_AVAILABLE:
+        # PQ is available but batch_verify is not - this is an error
+        raise ImportError(f"batch_verify module not available: {e}") from e
 
 
 def time_function(func, *args, **kwargs) -> float:
