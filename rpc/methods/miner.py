@@ -293,6 +293,25 @@ def _apply_block_reward(ctx: Any, height: int, payout_address: bytes | None = No
         return 0
 
 
+def _compute_state_root(state_db: Any) -> bytes:
+    """Compute a deterministic state root from the current state snapshot."""
+
+    if state_db is None:
+        return ZERO32
+
+    try:
+        snap = state_db.snapshot()
+        if hasattr(snap, "digest"):
+            root = snap.digest()
+            if isinstance(root, str):
+                root = bytes.fromhex(root[2:] if root.startswith("0x") else root)
+            return _bytes32(root)
+    except Exception as e:
+        log.warning("failed to compute state root; returning zero", extra={"err": str(e)})
+
+    return ZERO32
+
+
 def _bits_to_target(bits_hex: str) -> int:
     bits = int(bits_hex, 16)
     exponent = bits >> 24
@@ -659,6 +678,8 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
     DEFAULT_MAX_NONCE = 100_000
     max_nonce = int(os.getenv("ANIMICA_MINER_MAX_NONCE", str(DEFAULT_MAX_NONCE)))
     
+    reward_amount = 0
+
     for nonce_val in range(max_nonce):
         # Update header with new nonce using dataclasses.replace for efficiency
         try:
@@ -693,8 +714,58 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
         if block_hash_int <= target:
             # Found a valid block! Now execute txs and generate receipts before persisting.
             receipts = _execute_transactions(ctx, txs, header, payout_address)
-            
-            # Build block with receipts
+
+            # Apply block reward before finalizing header/roots
+            reward_amount = _apply_block_reward(ctx, header.height, payout_address)
+
+            # Compute receipts root (if any receipts) and ensure txs root matches tx set
+            receipts_root = ZERO32
+            if receipts:
+                try:
+                    leaves = [rcpt.hash() for rcpt in receipts]
+                    receipts_root = merkle_root(leaves) if leaves else ZERO32
+                except Exception as e:
+                    log.warning(
+                        "failed to compute receipts root; defaulting to zero", extra={"err": str(e)}
+                    )
+
+            try:
+                txs_root = merkle_root([tx.hash() for tx in txs]) if txs else ZERO32
+            except Exception:
+                txs_root = header.txsRoot
+
+            state_root = _compute_state_root(getattr(ctx, "state_db", None))
+
+            try:
+                from dataclasses import replace
+
+                header = replace(
+                    header,
+                    stateRoot=state_root,
+                    txsRoot=txs_root,
+                    receiptsRoot=receipts_root,
+                )
+            except Exception:
+                header = Header(
+                    v=header.v,
+                    chainId=header.chainId,
+                    height=header.height,
+                    parentHash=header.parentHash,
+                    timestamp=header.timestamp,
+                    stateRoot=state_root,
+                    txsRoot=txs_root,
+                    receiptsRoot=receipts_root,
+                    proofsRoot=header.proofsRoot,
+                    daRoot=header.daRoot,
+                    mixSeed=header.mixSeed,
+                    poiesPolicyRoot=header.poiesPolicyRoot,
+                    pqAlgPolicyRoot=header.pqAlgPolicyRoot,
+                    thetaMicro=header.thetaMicro,
+                    nonce=header.nonce,
+                    extra=header.extra,
+                )
+
+            # Build block with updated header and receipts
             block = Block.from_components(
                 header=header, txs=txs, proofs=(), receipts=receipts, verify=True
             )
@@ -717,8 +788,6 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
             
             if accepted:
                 _record_local_block(header.height, "0x" + block_hash_bytes.hex(), header)
-                # Apply block reward to specified payout address (or default miner address)
-                reward_amount = _apply_block_reward(ctx, header.height, payout_address)
 
                 # Evict successfully mined fallback-pool txs so they are not re-mined repeatedly
                 if included_hashes:
