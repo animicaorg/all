@@ -631,7 +631,8 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
     txs: list[Tx] = []
     included_hashes: list[str] = []
 
-    # Collect pending transactions from the best available source (mempool → fallback cache)
+    # Collect pending transactions from the best available source (mempool → pending pool → fallback cache)
+    # Priority order: adapter mempool snapshot → pending pool → fallback cache
     try:
         txs = list(adapter.get_mempool_snapshot(limit=1000))
         # Track hashes of transactions from adapter for eviction later
@@ -644,7 +645,52 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
                 # tx.hash() may not exist or may fail; log and skip this tx for eviction tracking
                 log.debug(f"Could not get hash for tx; skipping eviction tracking: {e}")
     except Exception as e:
-        log.debug(f"mempool snapshot unavailable; falling back to in-process cache: {e}")
+        log.debug(f"mempool snapshot unavailable; trying pending pool: {e}")
+
+    # If no txs from adapter, try pending pool
+    if not txs:
+        try:
+            from rpc.pending_pool import pool as pending_pool
+            
+            if pending_pool is not None:
+                # Get pending tx hashes (use asyncio.run since pending pool is async)
+                import asyncio
+                try:
+                    # Try to get event loop
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        # If loop is running, we can't use run_until_complete
+                        # Use synchronous fallback
+                        pass
+                    else:
+                        # Loop exists but not running; use it
+                        tx_hashes = loop.run_until_complete(pending_pool.list_hashes(limit=1000))
+                        for tx_hash in tx_hashes:
+                            try:
+                                tx_obj = loop.run_until_complete(pending_pool.get(tx_hash))
+                                if tx_obj is not None:
+                                    txs.append(tx_obj)
+                                    included_hashes.append(tx_hash)
+                            except Exception as e:
+                                log.debug(f"Failed to get tx {tx_hash} from pending pool: {e}")
+                except RuntimeError:
+                    # No event loop; create one for this operation
+                    tx_hashes = asyncio.run(pending_pool.list_hashes(limit=1000))
+                    for tx_hash in tx_hashes:
+                        try:
+                            tx_obj = asyncio.run(pending_pool.get(tx_hash))
+                            if tx_obj is not None:
+                                txs.append(tx_obj)
+                                included_hashes.append(tx_hash)
+                        except Exception as e:
+                            log.debug(f"Failed to get tx {tx_hash} from pending pool: {e}")
+                
+                if txs:
+                    log.info(f"Retrieved {len(txs)} transactions from pending pool for mining")
+        except ImportError:
+            log.debug("pending_pool not available; trying fallback cache")
+        except Exception as e:
+            log.debug(f"pending pool access failed: {e}")
 
     if not txs:
         try:
@@ -868,8 +914,37 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
             if accepted:
                 _record_local_block(header.height, "0x" + block_hash_bytes.hex(), header)
 
-                # Evict successfully mined fallback-pool txs so they are not re-mined repeatedly
+                # Evict successfully mined txs from all pools so they are not re-mined repeatedly
                 if included_hashes:
+                    # Evict from pending pool (async)
+                    try:
+                        from rpc.pending_pool import pool as pending_pool
+                        
+                        if pending_pool is not None:
+                            import asyncio
+                            try:
+                                # Try to get event loop
+                                loop = asyncio.get_event_loop()
+                                if loop.is_running():
+                                    # If loop is running, we can't use run_until_complete
+                                    # Schedule removal for later (best effort)
+                                    for h in included_hashes:
+                                        asyncio.create_task(pending_pool.remove(h))
+                                else:
+                                    # Loop exists but not running; use it
+                                    for h in included_hashes:
+                                        loop.run_until_complete(pending_pool.remove(h))
+                            except RuntimeError:
+                                # No event loop; create one for this operation
+                                for h in included_hashes:
+                                    asyncio.run(pending_pool.remove(h))
+                            log.info(f"Evicted {len(included_hashes)} transactions from pending pool")
+                    except ImportError:
+                        log.debug("pending_pool not available for eviction")
+                    except Exception as e:
+                        log.warning(f"Failed to evict from pending pool: {e}")
+                    
+                    # Evict from fallback cache
                     try:
                         from rpc.methods import tx as tx_methods
 
@@ -881,10 +956,11 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
                     except Exception:
                         pass
 
-                log.debug(
+                log.info(
                     f"Mined block at height {header.height} with nonce {nonce_val} "
                     f"(hash {block_hash_int} <= target {target}), reward={reward_amount} nANM, "
-                    f"txs={len(txs)}, receipts={len(receipts) if receipts else 0}"
+                    f"txs={len(txs)}, receipts={len(receipts) if receipts else 0}, "
+                    f"included_tx_hashes={included_hashes[:3]}{'...' if len(included_hashes) > 3 else ''}"
                 )
                 return (True, reward_amount)
             return (False, 0)
