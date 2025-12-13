@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 # Animica setup (defensive, idempotent)
-# - Builds a local liboqs into .deps/liboqs-install
+# - Builds a local liboqs into .deps/oqs-install
 # - Installs animica + animica-pq from the repo (no non-PyPI deps)
 # - Patches venv activate to point at the actual liboqs .so
 
@@ -15,7 +15,20 @@ exec > >(tee -a "$LOG_FILE") 2>&1
 
 log()  { echo "[setup] $(date -u +%Y-%m-%dT%H:%M:%SZ) $*"; }
 die()  { echo "[setup] ERROR: $*" >&2; exit 1; }
+warn() { echo "[setup] WARN: $*" >&2; }
 run()  { log "RUN  $*"; "$@"; }
+pip_install() {
+  local args=("$@")
+  if python -m pip install "${args[@]}"; then
+    return 0
+  fi
+  warn "pip install failed for: python -m pip ${args[*]} (retrying from cache if available)"
+  if python -m pip install --no-index --find-links="$HOME/.cache/pip" "${args[@]}"; then
+    return 0
+  fi
+  warn "pip install still failed; proceeding with existing environment"
+  return 1
+}
 
 WITH_PQ=0
 CLEAN=0
@@ -38,13 +51,22 @@ fi
 
 # ---------------- OS deps (Ubuntu) ----------------
 if command -v apt-get >/dev/null 2>&1; then
-  export DEBIAN_FRONTEND=noninteractive
-  run apt-get update -y
-  run apt-get install -y --no-install-recommends \
-    ca-certificates curl git jq \
-    build-essential pkg-config cmake ninja-build \
-    python3 python3-venv python3-dev python3-pip \
-    libssl-dev libffi-dev
+  if [[ ${ANIMICA_SKIP_APT:-1} -eq 1 ]]; then
+    warn "Skipping apt-get (ANIMICA_SKIP_APT=1 or offline environment)"
+  else
+    export DEBIAN_FRONTEND=noninteractive
+    if ! apt-get update -y; then
+      warn "apt-get update failed (network/proxy?). Continuing with existing packages."
+    else
+      if ! apt-get install -y --no-install-recommends \
+        ca-certificates curl git jq \
+        build-essential pkg-config cmake ninja-build \
+        python3 python3-venv python3-dev python3-pip \
+        libssl-dev libffi-dev; then
+        warn "apt-get install failed; assuming build deps already present"
+      fi
+    fi
+  fi
 fi
 
 # ---------------- Python venv ----------------
@@ -53,7 +75,7 @@ if [[ ! -d "$ROOT_DIR/.venv" ]]; then
 fi
 # shellcheck disable=SC1091
 source "$ROOT_DIR/.venv/bin/activate"
-run python -m pip install -U pip setuptools wheel
+pip_install -U pip setuptools wheel || warn "pip bootstrap (pip/setuptools/wheel) incomplete; using bundled versions"
 
 # Make repo root importable (so `import pq...` works without a pip package)
 SITE_DIR="$(python - <<'PY'
@@ -67,57 +89,74 @@ log "Wrote $PTH -> $ROOT_DIR"
 
 # Install Animica python package itself (but do NOT pull deps that include non-PyPI pkgs)
 if [[ -d "$ROOT_DIR/python" ]]; then
-  run python -m pip install -e "$ROOT_DIR/python" --no-deps
+  PIP_NO_BUILD_ISOLATION=1 pip_install --no-build-isolation -e "$ROOT_DIR/python" --no-deps || \
+    warn "Editable install of animica python package skipped"
 else
-  run python -m pip install -e "$ROOT_DIR" --no-deps
+  PIP_NO_BUILD_ISOLATION=1 pip_install --no-build-isolation -e "$ROOT_DIR" --no-deps || \
+    warn "Editable install of repo package skipped"
 fi
 
 # Install runtime deps explicitly (avoid omni-sdk / animica-pq from PyPI)
-run python -m pip install -U \
-  typer rich requests httpx pydantic pyyaml cbor2
+pip_install -U typer rich requests httpx pydantic pyyaml cbor2 || \
+  warn "Runtime dependency install skipped (offline?)"
 
 # Install local animica-pq package to satisfy dependency without PyPI
 if [[ -f "$ROOT_DIR/pq/pyproject.toml" ]]; then
-  run python -m pip install -e "$ROOT_DIR/pq"
+  PIP_NO_BUILD_ISOLATION=1 pip_install --no-build-isolation -e "$ROOT_DIR/pq" --no-deps || \
+    warn "Failed to install local animica-pq package"
 fi
 
 # ---------------- PQ / liboqs ----------------
 if [[ $WITH_PQ -eq 1 ]]; then
   DEPS="$ROOT_DIR/.deps"
-  OQS_PREFIX="$DEPS/liboqs-install"
+  OQS_PREFIX="$DEPS/oqs-install"
   mkdir -p "$DEPS"
 
   select_tag() {
-    local repo="$1" requested="$2"
-    python - <<'PY' "$repo" "$requested"
+    local repo="$1" preferred_major_minor="$2"
+    python - <<'PY' "$repo" "$preferred_major_minor"
 import re, subprocess, sys
-repo, requested = sys.argv[1], sys.argv[2]
+
+repo, preferred = sys.argv[1], sys.argv[2]
 out = subprocess.check_output(["git", "ls-remote", "--tags", "--refs", repo], text=True)
 tags = []
 for line in out.strip().splitlines():
     name = line.split()[-1].removeprefix("refs/tags/")
     norm = name.lstrip("v")
     if re.fullmatch(r"\d+\.\d+\.\d+", norm):
-        tags.append((norm, name))
+        major, minor, patch = map(int, norm.split("."))
+        tags.append(((major, minor, patch), name))
+
 if not tags:
-    print("", file=sys.stderr)
     raise SystemExit("No version tags found for %s" % repo)
-tags.sort(key=lambda t: tuple(map(int, t[0].split("."))))
-req_norm = requested.lstrip("v")
+
+tags.sort()
+
+preferred_tuple = None
+if preferred:
+    try:
+        major, minor = map(int, preferred.split("."))
+        preferred_tuple = (major, minor)
+    except Exception:
+        preferred_tuple = None
+
 selected = None
-for norm, name in tags:
-    if norm == req_norm or name == requested:
-        selected = name
-        break
+if preferred_tuple:
+    preferred_matches = [
+        name for (maj, minr, _), name in tags if (maj, minr) == preferred_tuple
+    ]
+    if preferred_matches:
+        selected = preferred_matches[-1]
+
 if selected is None:
     selected = tags[-1][1]
-    print(f"WARN: requested tag {requested} not found on {repo}; using latest {selected}", file=sys.stderr)
+
 print(selected)
 PY
   }
 
-  OQS_REQUESTED="${LIBOQS_VERSION:-0.15.0}"
-  if ! OQS_TAG=$(select_tag "https://github.com/open-quantum-safe/liboqs.git" "$OQS_REQUESTED"); then
+  OQS_REQUESTED_PREFIX="${LIBOQS_VERSION:-0.15}"
+  if ! OQS_TAG=$(select_tag "https://github.com/open-quantum-safe/liboqs.git" "$OQS_REQUESTED_PREFIX"); then
     die "Could not determine liboqs tag"
   fi
   log "liboqs tag selected: $OQS_TAG"
@@ -157,10 +196,33 @@ PY
   [[ -n "$OQS_LIB" ]] || die "Could not locate liboqs shared library under $OQS_PREFIX"
   OQS_LIB_DIR="$(dirname "$OQS_LIB")"
   export OQS_INSTALL_PATH="$OQS_PREFIX"
-  log "Using liboqs: $OQS_LIB"
+  export LIBOQS_PATH="$OQS_LIB"
+  export LD_LIBRARY_PATH="$OQS_LIB_DIR:$OQS_PREFIX/lib:$OQS_PREFIX/lib64:${LD_LIBRARY_PATH:-}"
+  OQS_VERSION="${OQS_TAG#v}"
+  log "Using liboqs: $OQS_LIB (version $OQS_VERSION)"
 
-  # Install liboqs-python aligned with liboqs 0.15.x
-  run python -m pip install -U "liboqs-python>=0.15.0,<0.16.0"
+  # Install liboqs-python aligned with liboqs
+  install_ok=0
+  if OQS_INSTALL_PATH="$OQS_PREFIX" LIBOQS_PATH="$OQS_LIB" LD_LIBRARY_PATH="$LD_LIBRARY_PATH" \
+      pip_install -U --no-cache-dir "liboqs-python==${OQS_VERSION}"; then
+    install_ok=1
+  else
+    warn "pip install liboqs-python==${OQS_VERSION} failed; attempting source build"
+    rm -rf "$DEPS/liboqs-python"
+    if run git clone --depth 1 https://github.com/open-quantum-safe/liboqs-python.git "$DEPS/liboqs-python"; then
+      pushd "$DEPS/liboqs-python" >/dev/null
+        git checkout -q "v${OQS_VERSION}" || warn "liboqs-python tag v${OQS_VERSION} not found; using default branch"
+        if OQS_INSTALL_PATH="$OQS_PREFIX" LIBOQS_PATH="$OQS_LIB" LD_LIBRARY_PATH="$LD_LIBRARY_PATH" \
+            pip_install -U --no-cache-dir .; then
+          install_ok=1
+        else
+          warn "liboqs-python source build failed"
+        fi
+      popd >/dev/null
+    fi
+  fi
+
+  [[ $install_ok -eq 1 ]] || die "Failed to install liboqs-python aligned with $OQS_VERSION"
 
   # Patch venv activate (REPLACE any old animica-liboqs block)
   ACT="$ROOT_DIR/.venv/bin/activate"
@@ -188,7 +250,7 @@ ACTEOF
   fi
 
   log "PQ sanity check (enabled sig mechanisms)"
-  LD_LIBRARY_PATH="$OQS_LIB_DIR:$OQS_PREFIX/lib:$OQS_PREFIX/lib64:${LD_LIBRARY_PATH:-}" LIBOQS_PATH="$OQS_LIB" OQS_INSTALL_PATH="$OQS_PREFIX" python - <<'PY'
+  LD_LIBRARY_PATH="$LD_LIBRARY_PATH" LIBOQS_PATH="$LIBOQS_PATH" OQS_INSTALL_PATH="$OQS_INSTALL_PATH" python - <<'PY'
 import os
 import subprocess
 import sys
@@ -219,6 +281,27 @@ if len(mechs) == 0:
         except Exception as ldd_err:  # pragma: no cover - diagnostics only
             print("  ldd error:", ldd_err)
     raise SystemExit("No enabled PQ signature mechanisms (liboqs build failed)")
+
+# Quick self-test: choose ML-DSA-65 if available, else first enabled mechanism
+mech = None
+if "ML-DSA-65" in mechs:
+    mech = "ML-DSA-65"
+elif mechs:
+    mech = mechs[0]
+else:
+    raise SystemExit("No PQ signature mechanisms enabled")
+
+print("self-test mechanism:", mech)
+with oqs.Signature(mech) as signer:
+    pk = signer.generate_keypair()
+    sk = signer.export_secret_key()
+    msg = b"animica-pq-self-test"
+    sig = signer.sign(msg)
+
+with oqs.Signature(mech, secret_key=sk) as s2:
+    assert s2.verify(msg, sig, pk), "oqs verify failed"
+
+print("oqs self-test: PASS")
 PY
 fi
 

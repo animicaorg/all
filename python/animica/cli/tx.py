@@ -11,7 +11,7 @@ import typer
 from rich.console import Console
 from rich.pretty import Pretty
 
-from pq.py.sign import build_sign_bytes, pq_sign_detached  # type: ignore
+from pq.py.sign import build_sign_bytes, pq_sign_detached, verify_detached  # type: ignore
 
 console = Console()
 app = typer.Typer(help="Transaction commands")
@@ -274,6 +274,23 @@ def send(
         prehash=prehash,  # type: ignore[arg-type]
     )
 
+    try:
+        local_ok = verify_detached(
+            body_bytes,
+            pq,
+            pk,
+            domain=domain,
+            chain_id=cid,
+            prehash=prehash,  # type: ignore[arg-type]
+        )
+    except Exception as e:
+        raise RuntimeError(f"Local PQ verify failed before broadcast: {e}") from e
+
+    if not local_ok:
+        raise RuntimeError(
+            "Local PQ verify failed before broadcast (sign-bytes mismatch)."
+        )
+
     raw = _build_raw_tx(
         body=body,
         alg_id=pq.alg_id,
@@ -287,7 +304,13 @@ def send(
 
     if verbose:
         console.print("\n[bold]RAW TX[/bold]")
-        console.print({"raw_len": len(raw), "raw_prefix": raw[:24].hex(), "raw_hex_prefix": raw_hex[:80] + "..."})
+        console.print(
+            {
+                "raw_len": len(raw),
+                "raw_prefix": raw[:24].hex(),
+                "raw_hex": raw_hex,
+            }
+        )
 
     # Submit (with one compatibility fallback)
     try:
