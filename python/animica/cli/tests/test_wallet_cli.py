@@ -95,7 +95,8 @@ def test_wallet_show_with_balance(tmp_path: Path) -> None:
     data = json.loads(show_output)
     assert data["address"] == address
     assert data["balance"] == 5
-    assert data["balance_formatted"] == "0.000000005 ANM (5 units)"
+    assert "0.000000005 ANM" in data["balance_formatted"]
+    assert "5 base units" in data["balance_formatted"]
 
 
 def test_wallet_export_and_import(tmp_path: Path) -> None:
@@ -333,3 +334,123 @@ def test_wallet_create_with_insecure_fallback(tmp_path: Path, monkeypatch: pytes
     store = json.loads(wallet_file.read_text())
     assert len(store["wallets"]) == 1
     assert store["wallets"][0]["label"] == "dev-wallet"
+
+
+# ============================================================================
+# Secret Key Security Tests
+# ============================================================================
+
+@respx.mock
+def test_wallet_show_default_hides_secret_key(premine_wallet_store: Path) -> None:
+    """Test that wallet show does NOT display secret_key_hex by default."""
+    rpc_url = "http://localhost:9999/rpc"
+    respx.post(rpc_url).respond(json={"jsonrpc": "2.0", "id": 1, "result": "0x64"})
+    
+    output = run_cli(["show", "premine", "--rpc-url", rpc_url], premine_wallet_store)
+    data = json.loads(output)
+    
+    # Verify secret_key_hex is NOT in output
+    assert "secret_key_hex" not in data, "secret_key_hex should not be in default output"
+    
+    # Verify other fields are present
+    assert "address" in data
+    assert "label" in data
+    assert "public_key_hex" in data
+    assert data["label"] == "premine"
+
+
+@respx.mock
+def test_wallet_show_with_show_secret_flag(premine_wallet_store: Path) -> None:
+    """Test that wallet show --show-secret includes secret_key_hex and prints warning."""
+    rpc_url = "http://localhost:9999/rpc"
+    respx.post(rpc_url).respond(json={"jsonrpc": "2.0", "id": 1, "result": "0x64"})
+    
+    # Use runner directly to capture output
+    result = runner.invoke(
+        wallet.app,
+        ["--wallet-file", str(premine_wallet_store), "show", "premine", "--rpc-url", rpc_url, "--show-secret"]
+    )
+    
+    assert result.exit_code == 0, f"Command failed: {result.output}"
+    
+    # Verify warning was printed (may be in output or stderr depending on typer behavior)
+    assert "WARNING" in result.output, "Warning should be displayed when showing secrets"
+    
+    # Parse the JSON output (skip warning lines)
+    output_lines = result.output.strip().split('\n')
+    json_start = 0
+    for i, line in enumerate(output_lines):
+        if line.strip().startswith('{'):
+            json_start = i
+            break
+    json_output = '\n'.join(output_lines[json_start:])
+    data = json.loads(json_output)
+    
+    # Verify secret_key_hex IS in output
+    assert "secret_key_hex" in data, "secret_key_hex should be present with --show-secret"
+    assert data["secret_key_hex"] == "0011223344556677889900112233445566778899001122334455667788990011"
+
+
+@respx.mock
+def test_wallet_show_rpc_success(premine_wallet_store: Path) -> None:
+    """Test wallet show with successful RPC balance fetch."""
+    rpc_url = "http://localhost:9999/rpc"
+    # Mock RPC to return 1.5 ANM (1,500,000,000 base units)
+    respx.post(rpc_url).respond(json={"jsonrpc": "2.0", "id": 1, "result": 1_500_000_000})
+    
+    output = run_cli(["show", "premine", "--rpc-url", rpc_url], premine_wallet_store)
+    data = json.loads(output)
+    
+    # Verify balance fields
+    assert data["balance"] == 1_500_000_000, "Balance should be integer in base units"
+    assert "balance_formatted" in data
+    assert "1.500000000 ANM" in data["balance_formatted"]
+    assert "balance_error" not in data, "Should not have balance_error on success"
+
+
+@respx.mock
+def test_wallet_show_rpc_failure(premine_wallet_store: Path) -> None:
+    """Test wallet show handles RPC failure gracefully."""
+    rpc_url = "http://localhost:9999/rpc"
+    # Mock RPC to return error
+    respx.post(rpc_url).respond(json={"jsonrpc": "2.0", "id": 1, "error": {"code": -32000, "message": "Node unreachable"}})
+    
+    output = run_cli(["show", "premine", "--rpc-url", rpc_url], premine_wallet_store)
+    data = json.loads(output)
+    
+    # Verify balance is null and error message is present
+    assert data["balance"] is None, "Balance should be null on RPC error"
+    assert data["balance_formatted"] == "unavailable (RPC error)"
+    assert "balance_error" in data
+    assert "Failed to fetch balance" in data["balance_error"]
+
+
+@respx.mock
+def test_wallet_show_rpc_network_timeout(premine_wallet_store: Path) -> None:
+    """Test wallet show handles network timeout gracefully."""
+    rpc_url = "http://localhost:9999/rpc"
+    # Mock RPC to timeout
+    import httpx
+    respx.post(rpc_url).side_effect = httpx.TimeoutException("Connection timeout")
+    
+    output = run_cli(["show", "premine", "--rpc-url", rpc_url], premine_wallet_store)
+    data = json.loads(output)
+    
+    # Verify balance is null and error is reported
+    assert data["balance"] is None
+    assert data["balance_formatted"] == "unavailable (RPC error)"
+    assert "balance_error" in data
+
+
+def test_wallet_list_does_not_leak_secrets(premine_wallet_store: Path) -> None:
+    """Verify that wallet list command does not expose secret keys."""
+    output = run_cli(["list"], premine_wallet_store)
+    
+    # List should only show index, label, address, and algorithm
+    assert "premine" in output
+    assert "anim1" in output  # address prefix
+    
+    # Should NOT contain any hex-encoded secret keys
+    store = json.loads(premine_wallet_store.read_text())
+    secret_key = store["wallets"][0]["secret_key_hex"]
+    assert secret_key not in output, "list command should not display secret keys"
