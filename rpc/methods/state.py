@@ -209,3 +209,38 @@ def state_get_nonce(address: str, tag: str = "latest") -> int:
     if tag not in ("latest", "pending", "safe", "finalized"):
         tag = "latest"
     return int(_svc_nonce(addr, tag=tag))
+
+
+@method(
+    "state.getAccount",
+    desc="Return the full account state (address, nonce, balance) for an address. Useful for debugging.",
+    aliases=("state_getAccount",),
+)
+def state_get_account(address: str, tag: str = "latest") -> dict:
+    """
+    Get full account state for an address.
+    
+    Args:
+        address: Address in bech32 (anim1...), system:... or hex (0x...) format
+        tag: Block tag (latest, pending, safe, finalized)
+        
+    Returns:
+        dict: {
+            "address": str,     # Original address format
+            "nonce": int,       # Transaction count/sequence number
+            "balance": str,     # Balance in hex (e.g., "0x0" for 0 nANM)
+        }
+    """
+    addr = _validate_address(address)
+    tag = (tag or "latest").lower()
+    if tag not in ("latest", "pending", "safe", "finalized"):
+        tag = "latest"
+    
+    balance = _svc_balance(addr, tag=tag)
+    nonce = _svc_nonce(addr, tag=tag)
+    
+    return {
+        "address": addr,
+        "nonce": int(nonce),
+        "balance": _to_hex_quantity(balance),
+    }

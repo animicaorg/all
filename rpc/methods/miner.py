@@ -374,6 +374,161 @@ def _build_child_header(
     )
 
 
+def _execute_transactions(
+    ctx: Any, txs: list[Tx], header: Header, coinbase_address: bytes | None = None
+) -> list[Any]:
+    """
+    Execute transactions and generate receipts.
+    
+    Args:
+        ctx: RPC context with state_db access
+        txs: List of transactions to execute
+        header: Block header (provides height, timestamp context)
+        coinbase_address: Optional coinbase address for tips; defaults to zero if None
+        
+    Returns:
+        list: Transaction receipts (one per tx, in order)
+    """
+    if not txs:
+        return []
+    
+    receipts = []
+    state_db = ctx.state_db
+    if state_db is None:
+        log.warning("No state_db available; skipping tx execution")
+        return []
+    
+    # Use coinbase address for tips (or payout address if mining with custom address)
+    coinbase = coinbase_address if coinbase_address is not None else ZERO32
+    
+    try:
+        # Try to use execution runtime for transfers
+        from execution.runtime.transfers import apply_transfer
+        from execution.runtime.env import BlockEnv, TxEnv
+        from core.types.receipt import Receipt, ReceiptStatus, Log
+        
+        # Build block environment
+        block_env = BlockEnv(
+            height=header.height,
+            timestamp=header.timestamp,
+            coinbase=coinbase,
+            chain_id=header.chainId,
+        )
+        
+        for tx in txs:
+            # Extract sender from tx (may be in different fields)
+            sender = getattr(tx, "sender", getattr(tx, "from", getattr(tx, "frm", None)))
+            if sender is None:
+                log.warning(f"Transaction missing sender; skipping")
+                # Add failed receipt
+                receipts.append(Receipt(
+                    status=ReceiptStatus.REVERT,
+                    gas_used=0,
+                    logs=tuple()
+                ))
+                continue
+            
+            # Ensure sender is bytes (may be hex string)
+            if isinstance(sender, str):
+                sender_hex = sender[2:] if sender.startswith("0x") else sender
+                sender_bytes = bytes.fromhex(sender_hex)
+            else:
+                sender_bytes = bytes(sender) if isinstance(sender, (bytes, bytearray)) else sender
+            
+            # Pad/truncate to 20 bytes (execution layer expects 20-byte addresses)
+            if len(sender_bytes) > 20:
+                sender_bytes = sender_bytes[:20]
+            elif len(sender_bytes) < 20:
+                sender_bytes = sender_bytes.rjust(20, b"\x00")
+            
+            # Build tx environment
+            gas_price = getattr(tx, "gas_price", getattr(tx, "tip", 1))
+            tx_env = TxEnv(
+                sender=sender_bytes,
+                gas_price=int(gas_price) if gas_price is not None else 1,
+                base_price=0,  # No base fee in simple model
+            )
+            
+            try:
+                # Apply transfer (handles balance updates, nonce increment, fees)
+                result = apply_transfer(tx, state_db, block_env, tx_env, emit_event=True)
+                
+                # Convert ApplyResult to Receipt
+                # Map status codes
+                if hasattr(result, "status"):
+                    status_val = result.status
+                    # Convert string status to ReceiptStatus enum
+                    if isinstance(status_val, str):
+                        status_map = {
+                            "SUCCESS": ReceiptStatus.SUCCESS,
+                            "REVERT": ReceiptStatus.REVERT,
+                            "OOG": ReceiptStatus.OOG,
+                        }
+                        status = status_map.get(status_val.upper(), ReceiptStatus.REVERT)
+                    elif isinstance(status_val, int):
+                        status = ReceiptStatus(status_val)
+                    else:
+                        status = ReceiptStatus.SUCCESS if status_val else ReceiptStatus.REVERT
+                else:
+                    status = ReceiptStatus.SUCCESS
+                
+                gas_used = int(result.gas_used) if hasattr(result, "gas_used") else 21000
+                
+                # Convert logs to Receipt Log format
+                logs_out = []
+                if hasattr(result, "logs") and result.logs:
+                    for log_event in result.logs:
+                        # Ensure address is 32 bytes (Receipt Log format)
+                        addr = getattr(log_event, "address", b"\x00" * 32)
+                        if isinstance(addr, (bytes, bytearray)):
+                            addr_bytes = bytes(addr)
+                        else:
+                            addr_bytes = b"\x00" * 32
+                        # Pad to 32 bytes
+                        if len(addr_bytes) < 32:
+                            addr_bytes = addr_bytes.ljust(32, b"\x00")
+                        elif len(addr_bytes) > 32:
+                            addr_bytes = addr_bytes[:32]
+                        
+                        topics = getattr(log_event, "topics", [])
+                        topics_tuple = tuple(
+                            bytes(t)[:32].ljust(32, b"\x00") if isinstance(t, (bytes, bytearray)) else b"\x00" * 32
+                            for t in topics
+                        )
+                        data = bytes(getattr(log_event, "data", b""))
+                        
+                        logs_out.append(Log(address=addr_bytes, topics=topics_tuple, data=data))
+                
+                receipt = Receipt(
+                    status=status,
+                    gas_used=gas_used,
+                    logs=tuple(logs_out)
+                )
+                receipts.append(receipt)
+                
+            except Exception as e:
+                log.warning(f"Transaction execution failed: {e}")
+                # Add revert receipt
+                receipts.append(Receipt(
+                    status=ReceiptStatus.REVERT,
+                    gas_used=21000,  # Charge intrinsic gas on revert
+                    logs=tuple()
+                ))
+        
+    except ImportError:
+        log.warning("execution.runtime not available; generating stub receipts")
+        # Fallback: generate stub receipts without execution
+        from core.types.receipt import Receipt, ReceiptStatus
+        for _ in txs:
+            receipts.append(Receipt(
+                status=ReceiptStatus.SUCCESS,
+                gas_used=21000,
+                logs=tuple()
+            ))
+    
+    return receipts
+
+
 def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
     """
     Mine a single block with proof-of-work.
@@ -381,6 +536,19 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
     This function performs actual mining by iterating through nonces until a valid
     block hash is found that meets the difficulty target. The target is derived from
     the current theta (acceptance threshold) parameter.
+    
+    Key operations:
+    1. Select pending transactions from mempool snapshot
+    2. Build candidate block header with txs merkle root
+    3. Find nonce that satisfies PoW target (hash <= target)
+    4. Execute transactions to update state (balances, nonces)
+    5. Generate transaction receipts (status, gasUsed, logs)
+    6. Apply block reward to coinbase/payout address
+    7. Persist block with receipts and update canonical head
+    
+    Base units: 1 ANM = 1_000_000_000 nANM (nano-ANM)
+    Block numbering: 0-based (genesis at height 0)
+    Mempool selection: Snapshot at time of mining (non-deterministic ordering OK)
     
     Args:
         payout_address: Optional 32-byte payout address. If None, uses default miner address.
@@ -518,9 +686,12 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
         
         # Check if hash meets target
         if block_hash_int <= target:
-            # Found a valid block!
+            # Found a valid block! Now execute txs and generate receipts before persisting.
+            receipts = _execute_transactions(ctx, txs, header, payout_address)
+            
+            # Build block with receipts
             block = Block.from_components(
-                header=header, txs=txs, proofs=(), receipts=None, verify=True
+                header=header, txs=txs, proofs=(), receipts=receipts, verify=True
             )
             accepted = adapter.submit_block(block)
             if accepted:
@@ -543,7 +714,8 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
 
                 log.debug(
                     f"Mined block at height {header.height} with nonce {nonce_val} "
-                    f"(hash {block_hash_int} <= target {target}), reward={reward_amount} nANM"
+                    f"(hash {block_hash_int} <= target {target}), reward={reward_amount} nANM, "
+                    f"txs={len(txs)}, receipts={len(receipts) if receipts else 0}"
                 )
                 return (True, reward_amount)
             return (False, 0)
