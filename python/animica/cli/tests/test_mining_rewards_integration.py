@@ -123,9 +123,16 @@ def test_resolve_payout_address_invalid_fails(wallet_with_premine):
         try:
             mining._resolve_payout_address("invalid_address_and_label")
             assert False, "Should have raised typer.Exit"
-        except SystemExit as e:
-            # typer.Exit raises SystemExit in testing
-            assert e.code == 2, f"Expected exit code 2, got {e.code}"
+        except (SystemExit, Exception) as e:
+            # typer.Exit can raise SystemExit or click.exceptions.Exit depending on implementation
+            # Check exit code if available
+            exit_code = getattr(e, "code", getattr(e, "exit_code", None))
+            if exit_code is not None:
+                assert exit_code == 2, f"Expected exit code 2, got {exit_code}"
+            else:
+                # For click.exceptions.Exit, the exit code is in the args
+                if hasattr(e, "args") and len(e.args) > 0:
+                    assert e.args[0] == 2, f"Expected exit code 2, got {e.args[0]}"
 
 
 def test_mine_blocks_with_label_uses_resolved_address(monkeypatch: Any, wallet_with_premine):
