@@ -653,6 +653,10 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
             from rpc.methods import tx as tx_methods
 
             pending_map = getattr(tx_methods, "_FALLBACK_PENDING", {}) or {}
+            pending_count = len(pending_map)
+            if pending_count > 0:
+                log.info(f"Attempting to retrieve {pending_count} transactions from fallback pending cache")
+            
             for tx_hash_hex, raw in pending_map.items():
                 try:
                     decoded, obj = tx_methods._decode_tx(raw)  # type: ignore[attr-defined]
@@ -676,22 +680,27 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
                                 txs.append(tx_obj)
                                 included_hashes.append(tx_hash_hex)
                             else:
-                                log.debug(
-                                    "Tx class has no from_obj/from_dict method; skipping tx",
+                                log.warning(
+                                    "Tx class has no from_obj/from_dict method; skipping tx from fallback cache",
                                     extra={"hash": tx_hash_hex},
                                 )
                         except Exception as e:
-                            log.debug(
-                                "could not convert decoded tx to Tx instance; skipping",
+                            log.warning(
+                                "could not convert decoded tx to Tx instance; skipping from fallback cache",
                                 extra={"hash": tx_hash_hex, "err": str(e), "keys": list(decoded.keys() if isinstance(decoded, dict) else [])},
                             )
                 except Exception as e:
                     log.warning(
-                        "failed to decode pending tx from fallback cache; dropping",
+                        "failed to decode pending tx from fallback cache; skipping",
                         extra={"hash": tx_hash_hex, "err": str(e)},
                     )
+            
+            if txs:
+                log.info(f"Retrieved {len(txs)}/{pending_count} transactions from fallback pending cache for mining")
+            elif pending_count > 0:
+                log.warning(f"Failed to retrieve any of {pending_count} transactions from fallback pending cache")
         except Exception as e:
-            log.debug("fallback pending pool unavailable", extra={"err": str(e)})
+            log.warning("fallback pending pool unavailable", extra={"err": str(e)})
     head = adapter.get_head()
     parent_height = int(head.get("height") or 0)
     parent_hash_val = head.get("hash") or head.get("hash_hex")
