@@ -495,6 +495,8 @@ def _verify_pq_signature(tx_like: t.Any, obj: dict, *, chain_id: int) -> None:
     # fail even with a valid signature. The decoded `obj` retains the exact
     # body that was signed by the CLI/SDK, so we canonicalize that here.
     candidates = _collect_sign_bytes(obj)
+    if not candidates:
+        raise rpc_errors.InvalidTx("No sign-bytes candidates found for PQ verification")
     msg_label, msg = candidates[0]
 
     log.debug(
@@ -863,46 +865,66 @@ def tx_send_raw_transaction(rawTx: str) -> str:
         raise rpc_errors.InvalidParams("rawTx must be a hex string")
     if rawTx.startswith("0b:"):
         raise rpc_errors.InvalidParams("base64 not supported yet; send hex (0x…)")
-    
-    raw = _b(rawTx)
+
+    try:
+        raw = _b(rawTx)
+    except Exception as e:
+        raise rpc_errors.InvalidParams(f"rawTx decode failed: {e}") from e
+
     log.debug("tx.sendRawTransaction: decoding %d CBOR bytes", len(raw))
-    tx_like, obj = _decode_tx(raw)
-    
+
+    try:
+        tx_like, obj = _decode_tx(raw)
+    except rpc_errors.RpcError:
+        raise
+    except Exception as e:
+        log.exception("tx.sendRawTransaction: decode failed")
+        raise rpc_errors.InvalidTx(f"Transaction decode failed: {e}") from e
+
     # Log the decoded structure for debugging
     log.debug(
         "tx.sendRawTransaction: decoded envelope type=%s, keys=%s",
         type(tx_like).__name__ if hasattr(type(tx_like), "__name__") else type(tx_like),
         list(obj.keys()) if isinstance(obj, dict) else "not-dict",
     )
-    
-    # Basic chainId check and reuse the validated value for signature verification
-    chain_id = _validate_chain_id(obj)
 
-    # PQ signature verify
-    _verify_pq_signature(tx_like, obj, chain_id=chain_id)
-    
-    # Compute hash from the original CBOR bytes to ensure consistency
-    # Per spec: TxID = sha3_256(CBOR(SignedTxMap))
-    tx_hash_hex = _hex(_sha3_256(raw)) or ""
-    
-    # Duplicate suppression: if already in pending/persisted, return hash (idempotent)
-    if _pending_get(tx_hash_hex) is not None:
-        return tx_hash_hex
-    persisted, *_ = _lookup_persisted_tx(tx_hash_hex)
-    if persisted is not None:
-        return tx_hash_hex
-    
-    # Admit to pending pool (stateless checks already done here)
-    _pending_put(tx_hash_hex, raw)
-    
-    # Notify WS hub (best-effort)
     try:
-        if hasattr(deps, "ws_broadcast_pending"):
-            deps.ws_broadcast_pending(tx_hash_hex, obj)  # type: ignore
-    except Exception:
-        pass
-    
-    return tx_hash_hex
+        # Basic chainId check and reuse the validated value for signature verification
+        chain_id = _validate_chain_id(obj)
+
+        # PQ signature verify
+        _verify_pq_signature(tx_like, obj, chain_id=chain_id)
+
+        # Compute hash from the original CBOR bytes to ensure consistency
+        # Per spec: TxID = sha3_256(CBOR(SignedTxMap))
+        tx_hash_hex = _hex(_sha3_256(raw)) or ""
+
+        # Duplicate suppression: if already in pending/persisted, return hash (idempotent)
+        if _pending_get(tx_hash_hex) is not None:
+            return tx_hash_hex
+        persisted, *_ = _lookup_persisted_tx(tx_hash_hex)
+        if persisted is not None:
+            return tx_hash_hex
+
+        # Admit to pending pool (stateless checks already done here)
+        _pending_put(tx_hash_hex, raw)
+
+        # Notify WS hub (best-effort)
+        try:
+            if hasattr(deps, "ws_broadcast_pending"):
+                deps.ws_broadcast_pending(tx_hash_hex, obj)  # type: ignore
+        except Exception:
+            pass
+
+        return tx_hash_hex
+    except rpc_errors.BadSignature as e:
+        # Normalize PQ failures to a consistent error code/message
+        raise rpc_errors.BadSignature(f"Invalid post-quantum signature: {e}") from e
+    except rpc_errors.RpcError:
+        raise
+    except Exception as e:
+        log.exception("tx.sendRawTransaction: unexpected failure")
+        raise rpc_errors.InvalidTx(f"tx.sendRawTransaction failed: {e}") from e
 
 
 @method(

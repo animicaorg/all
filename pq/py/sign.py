@@ -207,11 +207,7 @@ class SignedMessage:
 # --------------------------------------------------------------------------------------
 
 
-def _backend_sign(alg_name: str, sk: bytes, msg: bytes) -> bytes:
-    """
-    Call the algorithm-specific signer. `msg` is already canonical SignBytes
-    (a fixed-length digest), so backends should treat it as an opaque byte string.
-    """
+def _resolve_backend(alg_name: str):
     try:
         if alg_name == "dilithium3":
             from pq.py.algs import dilithium3 as backend
@@ -224,7 +220,15 @@ def _backend_sign(alg_name: str, sk: bytes, msg: bytes) -> bytes:
             f"Signature backend for {alg_name} not available. "
             f"Install/build PQ backend (e.g., liboqs) and ensure wrappers are importable. ({e})"
         ) from e
+    return backend
 
+
+def _backend_sign(alg_name: str, sk: bytes, msg: bytes) -> bytes:
+    """
+    Call the algorithm-specific signer. `msg` is already canonical SignBytes
+    (a fixed-length digest), so backends should treat it as an opaque byte string.
+    """
+    backend = _resolve_backend(alg_name)
     sign_fn = getattr(backend, "sign", None)
     if not callable(sign_fn):
         raise NotImplementedError(
@@ -246,10 +250,34 @@ def _backend_sign(alg_name: str, sk: bytes, msg: bytes) -> bytes:
 
     try:
         return sign_fn(sk, msg)
-    except TypeError as e:
-        raise TypeError(
-            f"Calling {backend.__name__}.sign(sk, msg) failed: {e}."
-        ) from e
+    except TypeError:
+        # As a last resort, try keyword arguments for backends that renamed parameters
+        try:
+            return sign_fn(secret_key=sk, message=msg)  # type: ignore[arg-type]
+        except Exception as e:
+            raise TypeError(
+                f"Calling {backend.__name__}.sign(sk, msg) failed: {e}."
+            ) from e
+
+
+def _backend_verify(alg_name: str, pk: bytes, msg: bytes, sig: bytes) -> bool:
+    backend = _resolve_backend(alg_name)
+    verify_fn = getattr(backend, "verify", None)
+    if not callable(verify_fn):
+        raise NotImplementedError(
+            f"Backend {backend.__name__} lacks callable verify(pk, msg, sig) implementation"
+        )
+
+    # Try positional first; fall back to keywords to accommodate older wrappers
+    try:
+        return bool(verify_fn(pk, msg, sig))
+    except TypeError:
+        try:
+            return bool(verify_fn(public_key=pk, message=msg, signature=sig))  # type: ignore[arg-type]
+        except Exception as e:
+            raise TypeError(
+                f"Calling {backend.__name__}.verify(pk, msg, sig) failed: {e}."
+            ) from e
 
 
 # --------------------------------------------------------------------------------------
@@ -317,9 +345,106 @@ def sign_attached(
     )
 
 
+# --------------------------------------------------------------------------------------
+# Verify API (kept here so signing + verification share backend resolution)
+# --------------------------------------------------------------------------------------
+
+
+def verify_detached(
+    msg: bytes,
+    sig: Signature,
+    pk: bytes,
+    *,
+    domain: Optional[Union[str, bytes]] = None,
+    chain_id: Optional[int] = None,
+    context: bytes = b"",
+    prehash: Optional[PrehashKind] = None,
+    strict_domain: bool = True,
+    strict_prehash: bool = True,
+    strict_alg: bool = True,
+) -> bool:
+    """
+    Verify a detached Signature for `msg` against public key `pk`.
+
+    The defaults enforce strict domain/prehash/alg matching to avoid accidental
+    cross-domain signature reuse. Production callers should keep strict_* True.
+    """
+
+    if not isinstance(sig, Signature):
+        raise TypeError("sig must be pq.py.sign.Signature")
+
+    alg_id = sig.alg_id
+    alg_name = sig.alg_name
+    if strict_alg:
+        if not is_known_alg_id(alg_id) or not is_sig_alg_id(alg_id):
+            raise ValueError(
+                f"Unknown or non-signature alg_id in envelope: 0x{alg_id:02x}"
+            )
+
+    # Domain checks
+    domain_effective: Union[str, bytes]
+    if domain is None:
+        domain_effective = sig.domain
+    else:
+        if strict_domain and str(domain) != str(sig.domain):
+            raise ValueError(f"domain mismatch: sig={sig.domain} verify={domain}")
+        domain_effective = domain
+
+    # Prehash checks
+    prehash_effective: PrehashKind
+    if prehash is None:
+        prehash_effective = sig.prehash
+    else:
+        if strict_prehash and prehash != sig.prehash:
+            raise ValueError(f"prehash mismatch: sig={sig.prehash} verify={prehash}")
+        prehash_effective = prehash
+
+    sign_bytes = build_sign_bytes(
+        msg,
+        domain=domain_effective,
+        chain_id=chain_id,
+        alg_id=alg_id,
+        context=context,
+        prehash=prehash_effective,
+    )
+
+    return _backend_verify(alg_name, pk, sign_bytes, sig.sig)
+
+
+def verify_attached(
+    signed: SignedMessage,
+    pk: bytes,
+    *,
+    domain: Optional[Union[str, bytes]] = None,
+    chain_id: Optional[int] = None,
+    context: bytes = b"",
+    prehash: Optional[PrehashKind] = None,
+    strict_domain: bool = True,
+    strict_prehash: bool = True,
+    strict_alg: bool = True,
+) -> bool:
+    if not isinstance(signed, SignedMessage):
+        raise TypeError("signed must be pq.py.sign.SignedMessage")
+
+    return verify_detached(
+        signed.message,
+        signed.signature,
+        pk,
+        domain=domain,
+        chain_id=chain_id,
+        context=context,
+        prehash=prehash,
+        strict_domain=strict_domain,
+        strict_prehash=strict_prehash,
+        strict_alg=strict_alg,
+    )
+
+
 # Back-compat aliases used across the repo
 pq_sign_detached = sign_detached
 sign = sign_detached
+pq_verify_detached = verify_detached
+verify = verify_detached
 
 
 # CLI helper
