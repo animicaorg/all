@@ -60,6 +60,12 @@ install_animica() {
   else
     die "Could not find pyproject.toml (checked ./python and repo root)"
   fi
+  
+  # Also install the pq package (now uses pure-Python backend)
+  if [ -d "$ROOT/pq" ] && [ -f "$ROOT/pq/pyproject.toml" ]; then
+    log "Installing pq package (pure-Python PQ backend)"
+    python -m pip install -e "$ROOT/pq"
+  fi
 }
 
 verify_installation() {
