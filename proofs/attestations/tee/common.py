@@ -19,7 +19,6 @@ Here we define:
 
 from __future__ import annotations
 
-import hmac
 import json
 import struct
 from dataclasses import dataclass, field
@@ -29,6 +28,17 @@ from typing import Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
 from proofs.errors import AttestationError
 from proofs.utils.hash import sha3_256, sha3_512
+
+# Import constant-time comparison helpers
+try:
+    from python.animica.security.ct import ct_eq_bytes
+except ImportError:
+    # Fallback for when running from different context
+    import hmac
+    def ct_eq_bytes(a: Optional[bytes], b: Optional[bytes]) -> bool:
+        if a is None or b is None:
+            return False
+        return hmac.compare_digest(a, b)
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Domain tags (must match spec/domains.yaml)
@@ -428,9 +438,11 @@ def _claims_compact(evidence: TEEEvidence) -> Dict[str, Union[int, str, bytes]]:
 
 
 def bytes_eq(a: Optional[bytes], b: Optional[bytes]) -> bool:
-    if a is None or b is None:
-        return False
-    return hmac.compare_digest(a, b)
+    """
+    Constant-time byte comparison for measurements.
+    Delegates to ct_eq_bytes for consistent timing behavior.
+    """
+    return ct_eq_bytes(a, b)
 
 
 def sgx_matches(
