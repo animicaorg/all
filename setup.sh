@@ -64,11 +64,11 @@ ensure_venv() {
 
 install_animica() {
   log "Installing Animica package in editable mode"
-  
+
   if [ -d "$ROOT/python" ] && [ -f "$ROOT/python/pyproject.toml" ]; then
-    python -m pip install -e "$ROOT/python"
+    python -m pip install -e "$ROOT/python[dev]"
   elif [ -f "$ROOT/pyproject.toml" ]; then
-    python -m pip install -e "$ROOT"
+    python -m pip install -e "$ROOT[dev]"
   else
     die "Could not find pyproject.toml (checked ./python and repo root)"
   fi
