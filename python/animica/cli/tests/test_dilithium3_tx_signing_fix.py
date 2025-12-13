@@ -13,6 +13,7 @@ import os
 import sys
 from pathlib import Path
 
+import cbor2
 import pytest
 
 # Ensure animica modules are importable
@@ -25,6 +26,20 @@ sys.path.insert(0, str(repo_root / "pq"))
 # Set environment for pure-Python testing
 os.environ["ANIMICA_UNSAFE_PQ_FAKE"] = "1"
 os.environ["ANIMICA_ALLOW_PQ_PURE_FALLBACK"] = "1"
+
+
+def _make_test_tx_body(from_addr: str = "anim1test", to_addr: str = "anim1dest") -> dict:
+    """Create a standard test transaction body."""
+    return {
+        "chainId": 2,
+        "from": from_addr,
+        "to": to_addr,
+        "nonce": 0,
+        "value": 1000000000,
+        "gasLimit": 21000,
+        "maxFee": 1,
+        "data": b"",
+    }
 
 
 class TestDilithium3TxSigningWithNormalization:
@@ -43,17 +58,7 @@ class TestDilithium3TxSigningWithNormalization:
         assert len(pk) == 1952
         
         # Simulate transaction body
-        import cbor2
-        tx_body = {
-            "chainId": 2,
-            "from": "anim1test",
-            "to": "anim1dest",
-            "nonce": 0,
-            "value": 1000000000,
-            "gasLimit": 21000,
-            "maxFee": 1,
-            "data": b"",
-        }
+        tx_body = _make_test_tx_body()
         body_bytes = cbor2.dumps(tx_body, canonical=True)
         
         # Sign
@@ -91,17 +96,7 @@ class TestDilithium3TxSigningWithNormalization:
         assert len(sk_legacy) == 4032, f"Expected 4032-byte legacy key, got {len(sk_legacy)}"
         
         # Simulate transaction body
-        import cbor2
-        tx_body = {
-            "chainId": 2,
-            "from": "anim1test",
-            "to": "anim1dest",
-            "nonce": 0,
-            "value": 1000000000,
-            "gasLimit": 21000,
-            "maxFee": 1,
-            "data": b"",
-        }
+        tx_body = _make_test_tx_body()
         body_bytes = cbor2.dumps(tx_body, canonical=True)
         
         # Sign with legacy key (should auto-normalize)
@@ -137,17 +132,7 @@ class TestDilithium3TxSigningWithNormalization:
         sk_legacy = sk_canonical + b"x" * 32
         
         # Simulate transaction body
-        import cbor2
-        tx_body = {
-            "chainId": 2,
-            "from": "anim1test",
-            "to": "anim1dest",
-            "nonce": 0,
-            "value": 1000000000,
-            "gasLimit": 21000,
-            "maxFee": 1,
-            "data": b"",
-        }
+        tx_body = _make_test_tx_body()
         body_bytes = cbor2.dumps(tx_body, canonical=True)
         
         # Sign with canonical key
@@ -177,7 +162,6 @@ class TestDilithium3TxSigningWithNormalization:
         """Test the full CLI tx send flow with a canonical 4000-byte key."""
         from animica._vendor.dilithium_py.dilithium3 import Dilithium3
         from pq.py.sign import sign_detached, verify_detached
-        import cbor2
         
         # Generate canonical key
         seed = b"d" * 32
@@ -205,16 +189,7 @@ class TestDilithium3TxSigningWithNormalization:
         assert len(pk_loaded) == 1952
         
         # Build transaction body
-        tx_body = {
-            "chainId": 2,
-            "from": "anim1test",
-            "to": "anim1dest",
-            "nonce": 0,
-            "value": 1000000000,
-            "gasLimit": 21000,
-            "maxFee": 1,
-            "data": b"",
-        }
+        tx_body = _make_test_tx_body()
         body_bytes = cbor2.dumps(tx_body, canonical=True)
         
         # Sign (simulating tx.py flow)
@@ -243,7 +218,6 @@ class TestDilithium3TxSigningWithNormalization:
         """Test the full CLI tx send flow with a legacy 4032-byte key."""
         from animica._vendor.dilithium_py.dilithium3 import Dilithium3
         from pq.py.sign import sign_detached, verify_detached
-        import cbor2
         
         # Generate canonical key and extend to legacy format
         seed = b"e" * 32
@@ -272,16 +246,7 @@ class TestDilithium3TxSigningWithNormalization:
         assert len(pk_loaded) == 1952
         
         # Build transaction body
-        tx_body = {
-            "chainId": 2,
-            "from": "anim1legacy",
-            "to": "anim1dest",
-            "nonce": 0,
-            "value": 1000000000,
-            "gasLimit": 21000,
-            "maxFee": 1,
-            "data": b"",
-        }
+        tx_body = _make_test_tx_body(from_addr="anim1legacy")
         body_bytes = cbor2.dumps(tx_body, canonical=True)
         
         # Sign (simulating tx.py flow) - should auto-normalize
