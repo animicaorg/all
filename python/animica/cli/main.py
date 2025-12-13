@@ -9,6 +9,7 @@ A comprehensive command-line interface for:
   - Chain queries (heads, blocks, transactions, accounts, events)
   - RPC method calls
   - Mining operations (start, stop, status)
+  - Mempool inspection (list, stats)
   - Data Availability (submit, retrieve, verify)
   - Network management (set, get, list networks)
   - Peer management (list, add, remove, info)
@@ -30,6 +31,8 @@ Examples:
   animica key list
   animica tx send --from 0 --to anim1... --value 1.5
   animica chain head
+  animica mempool list        # List pending transactions
+  animica mempool stats       # Show mempool statistics
   animica rpc call chain_getHead
   animica da submit < blob.bin
   animica network set mainnet
@@ -43,7 +46,7 @@ from typing import Optional
 import typer
 
 # Import subcommand apps
-from . import chain, da, faucet, key, mining, network, node, peer, rpc, studio, tx, wallet
+from . import chain, da, faucet, key, mempool, mining, network, node, peer, rpc, studio, tx, wallet
 
 app = typer.Typer(
     name="animica",
@@ -150,6 +153,7 @@ app.add_typer(faucet.app, name="faucet")
 app.add_typer(network.app, name="network")
 app.add_typer(peer.app, name="peer")
 app.add_typer(studio.app, name="studio")
+app.add_typer(mempool.app, name="mempool")
 
 
 # ============================================================================
