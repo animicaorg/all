@@ -634,8 +634,17 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
     # Collect pending transactions from the best available source (mempool → fallback cache)
     try:
         txs = list(adapter.get_mempool_snapshot(limit=1000))
-    except Exception:
-        log.debug("mempool snapshot unavailable; falling back to in-process cache")
+        # Track hashes of transactions from adapter for eviction later
+        for tx in txs:
+            try:
+                tx_hash = tx.hash()
+                tx_hash_hex = "0x" + tx_hash.hex() if isinstance(tx_hash, bytes) else str(tx_hash)
+                included_hashes.append(tx_hash_hex)
+            except (AttributeError, TypeError) as e:
+                # tx.hash() may not exist or may fail; log and skip this tx for eviction tracking
+                log.debug(f"Could not get hash for tx; skipping eviction tracking: {e}")
+    except Exception as e:
+        log.debug(f"mempool snapshot unavailable; falling back to in-process cache: {e}")
 
     if not txs:
         try:
