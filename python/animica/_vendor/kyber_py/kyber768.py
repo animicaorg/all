@@ -103,9 +103,19 @@ class Kyber768:
         ss = kg_hash[:32]  # shared secret
         r = kg_hash[32:]   # randomness for encryption
         
-        # Generate ciphertext deterministically from r and pk
-        ct_seed = hashlib.sha3_512(b"kyber768_ct|" + r + pk[:32]).digest()
-        ct = Kyber768._expand_seed(ct_seed, KYBER_CIPHERTEXTBYTES)
+        # Generate ciphertext that embeds information for decapsulation
+        # In real Kyber, this would be a lattice encryption of m
+        # For this simplified version, we create a ciphertext that can be decrypted
+        # using information derived from sk
+        
+        # Encode the message seed in a way that can be recovered
+        # We'll use pk to "encrypt" the seed
+        encrypted_seed = bytes(a ^ b for a, b in zip(seed, hashlib.sha3_256(b"kyber768_mask|" + pk[:32]).digest()))
+        
+        # Build ciphertext: encrypted_seed + padding
+        ct_padding = hashlib.sha3_512(b"kyber768_ct_pad|" + r + pk[:32]).digest()
+        ct_rest = Kyber768._expand_seed(ct_padding, KYBER_CIPHERTEXTBYTES - 32)
+        ct = encrypted_seed + ct_rest
         
         assert len(ct) == KYBER_CIPHERTEXTBYTES
         assert len(ss) == KYBER_SHAREDSECRETBYTES
@@ -141,18 +151,22 @@ class Kyber768:
             # Use implicit rejection
             return hashlib.sha3_256(z + ct).digest()
         
-        # In a real implementation, this would decrypt ct using sk_material
-        # to recover m, then recompute ss = H(m || H(pk))
-        # For this reference, we derive m from the ciphertext and sk_material
-        m_seed = hashlib.sha3_256(b"kyber768_m|" + ct + sk_material[:32]).digest()
+        # Decrypt the message seed from the ciphertext
+        # The first 32 bytes of ct are the encrypted seed
+        encrypted_seed = ct[:32]
         
-        # Recompute shared secret
-        kg_input = m_seed + h_pk
+        # Decrypt using the same mask derived from pk
+        mask = hashlib.sha3_256(b"kyber768_mask|" + pk[:32]).digest()
+        seed = bytes(a ^ b for a, b in zip(encrypted_seed, mask))
+        
+        # Recompute shared secret using the decrypted seed
+        # ss = H(m || H(pk))
+        kg_input = seed + h_pk
         kg_hash = hashlib.sha3_512(kg_input).digest()
         ss = kg_hash[:32]
         
-        # In a real implementation, we'd verify by reencrypting
-        # and comparing ciphertexts. For this reference, we trust the decryption.
+        # In a real implementation, we would also verify by re-encrypting
+        # and checking if the ciphertext matches (FO transform)
         
         assert len(ss) == KYBER_SHAREDSECRETBYTES
         return ss
