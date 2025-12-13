@@ -63,6 +63,10 @@ source "${VENV_DIR}/bin/activate"
 log "Upgrading pip/setuptools/wheel"
 python -m pip install -U pip setuptools wheel
 
+# IMPORTANT: liboqs-python uses hatchling backend; with --no-build-isolation we must have it installed.
+log "Installing build backend deps (hatchling) into venv"
+python -m pip install -U hatchling build packaging
+
 # =========================
 # Build/install liboqs (vendored)
 # =========================
@@ -78,7 +82,6 @@ else
   TARBALL_URL="https://github.com/open-quantum-safe/liboqs/archive/refs/tags/${OQS_VERSION}.tar.gz"
   log "Downloading ${TARBALL_URL}"
   curl -fsSL "${TARBALL_URL}" | tar -xz -C "${DEPS_DIR}/src"
-  # Tar expands to liboqs-${OQS_VERSION}
   if [ ! -d "${DEPS_DIR}/src/liboqs-${OQS_VERSION}" ]; then
     die "Expected source dir not found: ${DEPS_DIR}/src/liboqs-${OQS_VERSION}"
   fi
@@ -103,7 +106,6 @@ else
 fi
 
 # Make the vendored liboqs visible to the dynamic loader (best-effort).
-# This helps even when you run without LD_LIBRARY_PATH.
 if [ "$(id -u)" -eq 0 ] && [ -d /etc/ld.so.conf.d ]; then
   CONF_FILE="/etc/ld.so.conf.d/animica-liboqs.conf"
   log "Registering vendored liboqs with ldconfig: ${CONF_FILE}"
@@ -125,7 +127,6 @@ export LIBRARY_PATH="${OQS_PREFIX}/lib:${OQS_PREFIX}/lib64:${LIBRARY_PATH:-}"
 export CPATH="${OQS_PREFIX}/include:${CPATH:-}"
 export CFLAGS="-I${OQS_PREFIX}/include ${CFLAGS:-}"
 export LDFLAGS="-L${OQS_PREFIX}/lib -L${OQS_PREFIX}/lib64 ${LDFLAGS:-}"
-# Some build systems respect these:
 export CMAKE_ARGS="${CMAKE_ARGS:-} -DCMAKE_PREFIX_PATH=${OQS_PREFIX}"
 export SKBUILD_CONFIGURE_OPTIONS="${SKBUILD_CONFIGURE_OPTIONS:-} -DCMAKE_PREFIX_PATH=${OQS_PREFIX}"
 
@@ -137,10 +138,9 @@ log "Installing liboqs-python from a fresh git clone (linked to vendored liboqs 
 rm -rf "${LIBOQSPY_SRC}"
 git clone --depth=1 https://github.com/open-quantum-safe/liboqs-python "${LIBOQSPY_SRC}"
 
-# Remove any existing bindings to avoid confusion
 python -m pip uninstall -y liboqs-python oqs >/dev/null 2>&1 || true
 
-# Build from source, without isolation, so our env is used
+# Build from source, without isolation, so our env is used (and hatchling is present)
 python -m pip install --no-build-isolation --no-binary :all: "${LIBOQSPY_SRC}"
 
 # =========================
@@ -149,18 +149,11 @@ python -m pip install --no-build-isolation --no-binary :all: "${LIBOQSPY_SRC}"
 log "Patching installed oqs extension RPATH to prefer vendored liboqs"
 OQS_EXT_PATH="$(
 python - <<'PY'
-import importlib, sys
-try:
-    import oqs  # noqa
-except Exception as e:
-    print("", end="")
-    raise
-# Find the compiled extension (oqs*.so) next to the package
-import pathlib, oqs as pkg
+import pathlib
+import oqs as pkg
 pkg_dir = pathlib.Path(pkg.__file__).resolve().parent
 cands = list(pkg_dir.glob("*.so"))
 if not cands:
-    # sometimes nested
     cands = list(pkg_dir.glob("**/*.so"))
 print(str(cands[0]) if cands else "", end="")
 PY
@@ -174,7 +167,6 @@ if ! have_cmd patchelf; then
   die "patchelf not available; install it (apt-get install patchelf) and rerun"
 fi
 
-# Set RUNPATH to our vendored lib directories (highest priority for this extension)
 patchelf --set-rpath "${OQS_PREFIX}/lib:${OQS_PREFIX}/lib64" "${OQS_EXT_PATH}" || true
 
 log "ldd of oqs extension (liboqs should resolve to ${OQS_PREFIX})"
