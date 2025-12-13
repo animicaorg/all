@@ -9,6 +9,8 @@ This module tests that:
 
 import os
 import pytest
+from consensus.rewards import compute_block_reward
+from rpc import server as rpc_server
 from rpc.tests import new_test_client, rpc_call
 
 
@@ -361,6 +363,50 @@ def test_miner_reward_response_structure():
         sum_rewards = sum(r["reward"] for r in rewards_list)
         assert result["totalReward"] == sum_rewards, \
             f"totalReward ({result['totalReward']}) should equal sum of rewards ({sum_rewards})"
-        
+
         print(f"✓ Response structure validated: {result['mined']} blocks, {result['totalReward']} nANM total")
         print(f"✓ Per-block rewards: {rewards_list}")
+
+
+def test_mined_blocks_update_state_and_roots():
+    """Mining blocks should credit rewards and update the state root."""
+
+    client, cfg, _ = new_test_client()
+    payout_addr_bytes = b"\x42" * 32
+    payout_addr_hex = "0x" + payout_addr_bytes.hex()
+
+    head_before = rpc_call(client, "chain.getHead")["result"]
+    start_height = int(head_before.get("height") or 0)
+    zero_root_hex = "0x" + ("00" * 32)
+
+    initial_balance = _parse_balance(
+        rpc_call(client, "state.getBalance", [payout_addr_hex])
+    )
+
+    blocks_to_mine = 3
+    mined = rpc_call(
+        client, "miner.mine", {"count": blocks_to_mine, "address": payout_addr_hex}
+    )["result"]
+
+    assert mined["mined"] == blocks_to_mine, "Expected all requested blocks to be mined"
+    assert len(mined.get("rewards", [])) == blocks_to_mine, "Reward entries should match block count"
+
+    head_after = rpc_call(client, "chain.getHead")["result"]
+    final_balance = _parse_balance(rpc_call(client, "state.getBalance", [payout_addr_hex]))
+
+    params = rpc_server.deps.get_ctx().params
+    expected_reward = 0
+    for offset in range(1, blocks_to_mine + 1):
+        rewards = compute_block_reward(
+            chain_id=cfg.chain_id, height=start_height + offset, params=params
+        )
+        assert rewards, "Emission schedule should provide a reward entry"
+        expected_reward += int(rewards[0][1])
+
+    assert expected_reward > 0, "Block reward must be positive for mined blocks"
+    assert final_balance - initial_balance == expected_reward, "Balance should reflect all mined rewards"
+
+    roots_after = head_after.get("roots") or {}
+    state_root_hex = roots_after.get("stateRoot") or roots_after.get("state_root")
+    assert state_root_hex and isinstance(state_root_hex, str)
+    assert state_root_hex != zero_root_hex, "stateRoot should change after mining"

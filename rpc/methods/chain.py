@@ -105,21 +105,26 @@ def _header_view(
         mix_seed = header.get("mixSeed", mix_seed)
         nonce = header.get("nonce", nonce)
 
-    roots = getattr(header, "roots", None) or (
-        {
-            "stateRoot": header.get("stateRoot") if isinstance(header, dict) else None,
-            "txsRoot": header.get("txsRoot") if isinstance(header, dict) else None,
-            "receiptsRoot": (
-                header.get("receiptsRoot") if isinstance(header, dict) else None
-            ),
-            "proofsRoot": (
-                header.get("proofsRoot") if isinstance(header, dict) else None
-            ),
-            "daRoot": header.get("daRoot") if isinstance(header, dict) else None,
+    roots = getattr(header, "roots", None)
+    if not roots:
+        derived_roots = {
+            "stateRoot": getattr(header, "stateRoot", None),
+            "txsRoot": getattr(header, "txsRoot", None),
+            "receiptsRoot": getattr(header, "receiptsRoot", None),
+            "proofsRoot": getattr(header, "proofsRoot", None),
+            "daRoot": getattr(header, "daRoot", None),
         }
-        if isinstance(header, dict)
-        else {}
-    )
+        if isinstance(header, dict):
+            derived_roots.update(
+                {
+                    "stateRoot": header.get("stateRoot"),
+                    "txsRoot": header.get("txsRoot"),
+                    "receiptsRoot": header.get("receiptsRoot"),
+                    "proofsRoot": header.get("proofsRoot"),
+                    "daRoot": header.get("daRoot"),
+                }
+            )
+        roots = {k: v for k, v in derived_roots.items() if v is not None}
     # Roots may themselves be bytes; map to hex where relevant
     roots_view: dict[str, t.Any] = {}
     if isinstance(roots, dict):
