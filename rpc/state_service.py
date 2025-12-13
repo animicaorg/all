@@ -80,15 +80,30 @@ def parse_address(addr: str) -> bytes:
         payload = bech.convertbits(data, 5, 8, False)  # type: ignore[attr-defined]
         if payload is None:
             raise ValueError("bad bech32m data")
-        return bytes(payload)
+        payload_bytes = bytes(payload)
+        # CRITICAL: Bech32 payload format is: alg_id (2 bytes) || digest (32 bytes)
+        # State DB stores accounts by 32-byte digest only, matching how rewards are credited.
+        # Strip the 2-byte alg_id prefix to get the 32-byte digest.
+        if len(payload_bytes) >= 34:
+            # Standard format: alg_id (2 bytes) + digest (32 bytes)
+            return payload_bytes[2:34]
+        elif len(payload_bytes) == 32:
+            # Already just the digest (legacy or system address)
+            return payload_bytes
+        else:
+            # Pad/truncate to 32 bytes as fallback
+            return payload_bytes[:32].ljust(32, b"\x00")
     except Exception:
         # Try higher-level codec if available
         try:
             addr_mod = _import("pq.py.address")
             rec = addr_mod.decode_address(s)  # type: ignore[attr-defined]
-            # Return the full payload: alg_id (2 bytes) || digest (32 bytes)
+            # CRITICAL: Return only the digest (32 bytes), NOT alg_id + digest
+            # State DB stores accounts by 32-byte digest, matching how rewards are credited.
+            # The full Bech32 payload is (alg_id || digest), but state DB uses digest as key.
             digest_bytes = bytes(rec.digest) if not isinstance(rec.digest, bytes) else rec.digest  # type: ignore[attr-defined]
-            return rec.alg_id.to_bytes(2, "big") + digest_bytes  # type: ignore[attr-defined]
+            # Ensure exactly 32 bytes (pad or truncate if needed)
+            return digest_bytes[:32].ljust(32, b"\x00")  # type: ignore[attr-defined]
         except Exception as e:
             raise ValueError(f"Invalid address format: {s}") from e
 
