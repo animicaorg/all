@@ -1,0 +1,16 @@
+{
+  "algorithm": "ML-KEM-768",
+  "description": "Simple deterministic KAT for ML-KEM-768",
+  "test_vectors": [
+    {
+      "count": 0,
+      "seed": "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "comment": "Zero seed test vector for determinism validation"
+    },
+    {
+      "count": 1,
+      "seed": "0101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010",
+      "comment": "All-ones pattern for coverage"
+    }
+  ]
+}
