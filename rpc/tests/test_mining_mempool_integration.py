@@ -28,20 +28,12 @@ def _get_premine_address_hex() -> str:
     return "0x" + premine_addr_bytes.hex()
 
 
-def _parse_balance(result: dict) -> int:
-    """Helper to parse balance from RPC result."""
-    balance = result.get("result", 0)
-    if isinstance(balance, str):
-        return int(balance, 16) if balance.startswith("0x") else int(balance)
-    return int(balance)
-
-
-def _parse_nonce(result: dict) -> int:
-    """Helper to parse nonce from RPC result."""
-    nonce = result.get("result", 0)
-    if isinstance(nonce, str):
-        return int(nonce, 16) if nonce.startswith("0x") else int(nonce)
-    return int(nonce)
+def _parse_integer_result(result: dict) -> int:
+    """Helper to parse integer result from RPC (balance, nonce, etc.)."""
+    value = result.get("result", 0)
+    if isinstance(value, str):
+        return int(value, 16) if value.startswith("0x") else int(value)
+    return int(value)
 
 
 def _build_signed_transfer(client, cfg, sender_kp, recipient_hex: str, nonce: int = 0, value: int = 1_000_000_000):
@@ -129,17 +121,17 @@ def test_mining_includes_tx_and_updates_balances():
     assert mine_result["mined"] == 5, "Should mine 5 blocks for funding"
     
     # Check sender has funds
-    sender_balance_initial = _parse_balance(rpc_call(client, "state.getBalance", [sender_hex]))
+    sender_balance_initial = _parse_integer_result(rpc_call(client, "state.getBalance", [sender_hex]))
     print(f"Sender balance after mining: {sender_balance_initial} nANM")
     assert sender_balance_initial > 0, "Sender should have funds from mining rewards"
     
     # Check receiver has no funds initially
-    receiver_balance_initial = _parse_balance(rpc_call(client, "state.getBalance", [receiver_hex]))
+    receiver_balance_initial = _parse_integer_result(rpc_call(client, "state.getBalance", [receiver_hex]))
     print(f"Receiver balance initially: {receiver_balance_initial} nANM")
     assert receiver_balance_initial == 0, "Receiver should have zero balance initially"
     
     # Check sender nonce is 0
-    sender_nonce_initial = _parse_nonce(rpc_call(client, "state.getNonce", [sender_hex]))
+    sender_nonce_initial = _parse_integer_result(rpc_call(client, "state.getNonce", [sender_hex]))
     print(f"Sender nonce initially: {sender_nonce_initial}")
     assert sender_nonce_initial == 0, "Sender nonce should be 0 initially"
     
@@ -190,7 +182,7 @@ def test_mining_includes_tx_and_updates_balances():
     
     # Step 6: Verify balances are updated
     print("\n--- Step 6: Verify balances updated ---")
-    receiver_balance_final = _parse_balance(rpc_call(client, "state.getBalance", [receiver_hex]))
+    receiver_balance_final = _parse_integer_result(rpc_call(client, "state.getBalance", [receiver_hex]))
     print(f"Receiver balance after mining: {receiver_balance_final} nANM")
     
     # Receiver should have received the transfer amount
@@ -199,7 +191,7 @@ def test_mining_includes_tx_and_updates_balances():
     print(f"✓ Receiver received {transfer_amount} nANM")
     
     # Sender balance should decrease by transfer amount + fees, but increase by mining reward
-    sender_balance_final = _parse_balance(rpc_call(client, "state.getBalance", [sender_hex]))
+    sender_balance_final = _parse_integer_result(rpc_call(client, "state.getBalance", [sender_hex]))
     print(f"Sender balance after mining: {sender_balance_final} nANM")
     
     # Sender should have: initial + mining_reward - transfer - fees
@@ -212,7 +204,7 @@ def test_mining_includes_tx_and_updates_balances():
     
     # Step 7: Verify nonces are updated
     print("\n--- Step 7: Verify nonces updated ---")
-    sender_nonce_final = _parse_nonce(rpc_call(client, "state.getNonce", [sender_hex]))
+    sender_nonce_final = _parse_integer_result(rpc_call(client, "state.getNonce", [sender_hex]))
     print(f"Sender nonce after tx: {sender_nonce_final}")
     assert sender_nonce_final == 1, f"Sender nonce should be 1 after tx, got {sender_nonce_final}"
     print(f"✓ Sender nonce incremented to {sender_nonce_final}")
@@ -257,14 +249,14 @@ def test_mining_multiple_txs_in_single_block():
     mine_result = rpc_call(client, "miner.mine", {"count": 5, "address": sender_kp.address})["result"]
     assert mine_result["mined"] == 5
     
-    sender_balance = _parse_balance(rpc_call(client, "state.getBalance", [sender_hex]))
+    sender_balance = _parse_integer_result(rpc_call(client, "state.getBalance", [sender_hex]))
     print(f"Sender balance: {sender_balance} nANM")
     
     # Send 3 transactions with sequential nonces
     tx_hashes = []
     for nonce in range(3):
-        # Use different recipients (just different addresses)
-        recipient_hex = "0x" + (f"{nonce:064x}")
+        # Use different recipients (deterministic test addresses)
+        recipient_hex = f"0x{nonce:064x}"
         raw_hex, tx_hash = _build_signed_transfer(
             client, cfg, sender_kp, recipient_hex,
             nonce=nonce, value=100_000_000  # 0.1 ANM each
