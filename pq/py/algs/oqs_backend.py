@@ -41,7 +41,7 @@ from typing import Dict, List, Optional, Tuple
 logger = logging.getLogger(__name__)
 
 # Recommended liboqs version
-RECOMMENDED_LIBOQS_VERSION = "0.15.0"
+RECOMMENDED_LIBOQS_VERSION = "0.14.0"
 
 # Common library SONAME versions to try (newest to oldest)
 # These may need updating as new liboqs versions are released
@@ -144,7 +144,9 @@ def _load_liboqs() -> Optional[ctypes.CDLL]:
         prefix_candidates.append(prefix_lib)
 
     # Step 1c: Common local install prefixes (helps when env.sh wasn't sourced)
+    vendored = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../../.deps/liboqs", RECOMMENDED_LIBOQS_VERSION))
     default_prefixes = [
+        vendored,
         os.path.expanduser("~/.liboqs/install"),
         os.path.expanduser("~/_oqs"),
     ]
@@ -229,16 +231,11 @@ def _load_liboqs() -> Optional[ctypes.CDLL]:
         f"  - python-oqs wheel bundled paths: {len(bundled_paths)} checked\n"
         f"  - System library search: {len(candidates)} candidates\n"
         f"  - Environment: LD_LIBRARY_PATH/DYLD_LIBRARY_PATH {'set' if os.environ.get('LD_LIBRARY_PATH') or os.environ.get('DYLD_LIBRARY_PATH') else 'not set'}\n"
-        f"\n"
-        f"To fix:\n"
-        f"  1. Install liboqs-dev (apt/brew) or build from source\n"
-        f"  2. Install python-oqs: pip install liboqs-python\n"
-        f"  3. Set library path if needed:\n"
-        f"     - Linux: export LD_LIBRARY_PATH=/path/to/liboqs/lib:$LD_LIBRARY_PATH\n"
-        f"     - macOS: export DYLD_LIBRARY_PATH=/path/to/liboqs/lib:$DYLD_LIBRARY_PATH\n"
-        f"  4. Or set LIBOQS_PATH=/path/to/liboqs.so directly\n"
-        f"\n"
-        f"See: https://github.com/open-quantum-safe/liboqs/releases/tag/{RECOMMENDED_LIBOQS_VERSION}"
+        "\n"
+        f"To fix (pinned to {RECOMMENDED_LIBOQS_VERSION}):\n"
+        f"  1. Run ./setup.sh to build vendored liboqs into .deps/liboqs/{RECOMMENDED_LIBOQS_VERSION}\n"
+        f"  2. Ensure ~/.local/bin/animica shim is on PATH (it exports LD_LIBRARY_PATH)\n"
+        f"  3. Or set LIBOQS_PATH=/absolute/path/to/liboqs.so and prepend LD_LIBRARY_PATH yourself\n"
     )
     return None
 

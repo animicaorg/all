@@ -27,28 +27,27 @@ def reset_capability_cache():
 class TestCapabilityDetection:
     """Tests for capability detection."""
 
-    def test_detect_via_oqs_module_mldsa(self):
-        """Test detection when oqs module has ML-DSA-65."""
+    def test_detect_via_oqs_module_pinned(self):
+        """Test detection when oqs module exposes pinned Dilithium mechanisms."""
         from pq.py.capability import detect_capability
-        
-        # Mock oqs module with ML-DSA
+
+        # Mock oqs module with Dilithium
         mock_oqs = MagicMock()
-        mock_oqs.__version__ = "0.15.0"
+        mock_oqs.__version__ = "0.14.0"
         mock_oqs.get_enabled_sig_mechanisms.return_value = [
-            "ML-DSA-65",
-            "ML-DSA-87",
-            "SPHINCS+-SHAKE-128s-simple",
+            "Dilithium3",
+            "SPHINCS+-SHAKE-128s",
         ]
-        mock_oqs.get_enabled_kem_mechanisms.return_value = ["ML-KEM-768"]
-        
+        mock_oqs.get_enabled_kem_mechanisms.return_value = ["Kyber768"]
+
         with patch.dict("sys.modules", {"oqs": mock_oqs}):
             cap = detect_capability()
-            
+
             assert cap.available is True
             assert cap.provider == "oqs"
-            assert cap.version == "0.15.0"
-            assert "ML-DSA-65" in cap.sig_mechanisms
-            assert cap.default_sig_mechanism == "ML-DSA-65"
+            assert cap.version == "0.14.0"
+            assert "Dilithium3" in cap.sig_mechanisms
+            assert cap.default_sig_mechanism == "Dilithium3"
 
     def test_detect_via_oqs_module_dilithium3(self):
         """Test detection when oqs module has legacy Dilithium3."""
@@ -244,12 +243,12 @@ class TestHelperFunctions:
         
         with patch("pq.py.capability.get_capability") as mock_get:
             mock_cap = MagicMock()
-            mock_cap.sig_mechanisms = {"ML-DSA-65", "SPHINCS+-SHAKE-128s-simple"}
+            mock_cap.sig_mechanisms = {"Dilithium3", "SPHINCS+-SHAKE-128s"}
             mock_get.return_value = mock_cap
-            
+
             mechanisms = get_available_sig_mechanisms()
-            assert "ML-DSA-65" in mechanisms
-            assert "SPHINCS+-SHAKE-128s-simple" in mechanisms
+            assert "Dilithium3" in mechanisms
+            assert "SPHINCS+-SHAKE-128s" in mechanisms
 
 
 class TestDiagnostics:
@@ -261,11 +260,11 @@ class TestDiagnostics:
         
         mock_cap = PQCapability(
             available=True,
-            sig_mechanisms={"ML-DSA-65", "SPHINCS+-SHAKE-128s-simple"},
-            kem_mechanisms={"ML-KEM-768"},
-            default_sig_mechanism="ML-DSA-65",
+            sig_mechanisms={"Dilithium3", "SPHINCS+-SHAKE-128s"},
+            kem_mechanisms={"Kyber768"},
+            default_sig_mechanism="Dilithium3",
             provider="oqs",
-            version="0.15.0",
+            version="0.14.0",
         )
         
         with patch("pq.py.capability.get_capability", return_value=mock_cap):
@@ -273,9 +272,9 @@ class TestDiagnostics:
             
             assert "Available: True" in diag
             assert "Provider: oqs" in diag
-            assert "Version: 0.15.0" in diag
-            assert "ML-DSA-65" in diag
-            assert "SPHINCS+-SHAKE-128s-simple" in diag
+            assert "Version: 0.14.0" in diag
+            assert "Dilithium3" in diag
+            assert "SPHINCS+-SHAKE-128s" in diag
 
     def test_diagnostics_unavailable(self):
         """Test diagnostics when PQ is not available."""

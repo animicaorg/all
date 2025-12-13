@@ -60,7 +60,7 @@ echo -e "${BLUE}─────────────────────�
 echo ""
 
 echo "Expected behavior:"
-echo "• First run: Clones liboqs v0.15.0, builds, installs to .liboqs/install/"
+echo "• First run: Clones liboqs v0.14.0, builds, installs to .liboqs/install/"
 echo "• Second run (default): Removes .liboqs/, clones again, rebuilds (fresh installation)"
 echo "• With --skip-liboqs-rebuild: Reuses existing .liboqs/install/, sets env vars only"
 echo ""

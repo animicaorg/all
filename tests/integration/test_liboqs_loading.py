@@ -138,27 +138,21 @@ class TestLiboqsLoadingIntegration:
         with patch.dict(os.environ, {}, clear=True):
             msg = get_pq_missing_error_message()
             
-            # Should mention setup script
-            assert ".liboqs/env.sh" in msg or "setup.sh" in msg
-            
-            # Should mention installation methods
-            assert "apt-get install liboqs-dev" in msg
-            assert "brew install liboqs" in msg
-            assert "pip install liboqs-python" in msg
-            
-            # Should show version
-            assert "0.15.0" in msg
+            # Should mention setup script and vendored path
+            assert "setup.sh" in msg
+            assert ".deps/liboqs/0.14.0" in msg
+            assert "0.14." in msg
 
-    def test_check_pq_accepts_simple_variants(self):
-        """Test that PQ checking accepts liboqs 0.15.0+ simple variants."""
+    def test_check_pq_accepts_pinned_version(self):
+        """Test that PQ checking works with pinned liboqs 0.14.x."""
         from animica.cli.pq_utils import check_pq_signing_available
-        
-        # Mock oqs module with 0.15.0+ simple variants
+
+        # Mock oqs module with pinned variants
         mock_oqs = MagicMock()
-        mock_oqs.__version__ = "0.15.0"
+        mock_oqs.__version__ = "0.14.0"
         mock_oqs.get_enabled_sig_mechanisms.return_value = [
             "Dilithium3",
-            "SPHINCS+-SHAKE-128s-simple",  # liboqs 0.15.0+ naming
+            "SPHINCS+-SHAKE-128s",
             "Falcon-512",
         ]
         
