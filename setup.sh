@@ -211,29 +211,50 @@ write_repo_root_pth() {
 
 ensure_loader_paths() {
   section "Dynamic loader paths"
-  if [[ -f /etc/ld.so.conf.d/usr-local-lib.conf ]]; then
-    :
-  else
+
+  # Ensure /usr/local/lib is in the dynamic loader cache
+  if [[ ! -f /etc/ld.so.conf.d/usr-local-lib.conf ]]; then
     echo "/usr/local/lib" > /etc/ld.so.conf.d/usr-local-lib.conf
     log "Created /etc/ld.so.conf.d/usr-local-lib.conf"
   fi
   ldconfig || true
 
+  # Prefer an explicit liboqs *file* path for LIBOQS_PATH.
+  # Some loaders treat LIBOQS_PATH as a file, not a directory.
+  local oqs_prefix="${OQS_INSTALL_PATH:-/usr/local}"
+  local oqs_libdir="$oqs_prefix/lib"
+  local oqs_libfile=""
+  if [[ -d "$oqs_libdir" ]]; then
+    oqs_libfile="$(ls -1 "$oqs_libdir"/liboqs.so* "$oqs_libdir"/liboqs.dylib 2>/dev/null | head -n 1 || true)"
+  fi
+
   local act="$VENV_DIR/bin/activate"
   if [[ -f "$act" ]] && ! grep -q "ANIMICA_SETUP_LD_LIBRARY_PATH" "$act"; then
-    cat >>"$act" <<'EOF'
+    cat >>"$act" <<EOF
 
 # --- ANIMICA_SETUP_LD_LIBRARY_PATH (added by setup.sh) ---
-export LD_LIBRARY_PATH="/usr/local/lib:${LD_LIBRARY_PATH:-}"
-export LIBOQS_PATH="${LIBOQS_PATH:-/usr/local}"
-export OQS_INSTALL_PATH="${OQS_INSTALL_PATH:-/usr/local}"
+export OQS_INSTALL_PATH="${OQS_INSTALL_PATH:-$oqs_prefix}"
+export LD_LIBRARY_PATH="${oqs_libdir}:/usr/local/lib:${LD_LIBRARY_PATH:-}"
 EOF
+    if [[ -n "$oqs_libfile" ]]; then
+      cat >>"$act" <<EOF
+export LIBOQS_PATH="${LIBOQS_PATH:-$oqs_libfile}"
+EOF
+    else
+      cat >>"$act" <<'EOF'
+# NOTE: liboqs library file not found under $OQS_INSTALL_PATH/lib.
+# If you see "Failed to load liboqs from LIBOQS_PATH ... Is a directory",
+# set LIBOQS_PATH to the full path of liboqs.so (or liboqs.dylib).
+EOF
+    fi
     log "Patched venv activate with LD_LIBRARY_PATH/LIBOQS_PATH/OQS_INSTALL_PATH"
   fi
 
-  export LD_LIBRARY_PATH="/usr/local/lib:${LD_LIBRARY_PATH:-}"
-  export LIBOQS_PATH="${LIBOQS_PATH:-/usr/local}"
-  export OQS_INSTALL_PATH="${OQS_INSTALL_PATH:-/usr/local}"
+  export OQS_INSTALL_PATH="$oqs_prefix"
+  export LD_LIBRARY_PATH="${oqs_libdir}:/usr/local/lib:${LD_LIBRARY_PATH:-}"
+  if [[ -n "$oqs_libfile" ]]; then
+    export LIBOQS_PATH="${LIBOQS_PATH:-$oqs_libfile}"
+  fi
 }
 
 have_liboqs() {
