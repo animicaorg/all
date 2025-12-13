@@ -87,7 +87,8 @@ def test_wallet_show_outputs_clean_json(wallet_with_entry, monkeypatch):
     assert "address" in output_data
     assert "balance" in output_data
     assert "public_key_hex" in output_data
-    assert "secret_key_hex" in output_data
+    # NOTE: secret_key_hex should NOT be present by default (security fix)
+    assert "secret_key_hex" not in output_data, "secret_key_hex should not be shown by default"
     
     # Verify all values are valid JSON types (strings, ints, etc.)
     for key, value in output_data.items():
@@ -97,8 +98,6 @@ def test_wallet_show_outputs_clean_json(wallet_with_entry, monkeypatch):
     # Verify hex fields are valid hex strings
     assert all(c in "0123456789abcdef" for c in output_data["public_key_hex"]), \
         "public_key_hex contains non-hex characters"
-    assert all(c in "0123456789abcdef" for c in output_data["secret_key_hex"]), \
-        "secret_key_hex contains non-hex characters"
 
 
 def test_wallet_show_with_address_arg_outputs_clean_json(wallet_with_entry, monkeypatch):
