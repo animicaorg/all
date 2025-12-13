@@ -170,6 +170,12 @@ def _fetch_balance(address: str, rpc_url: str) -> Optional[int]:
         return None
 
 
+def _is_dilithium3_alg(alg_name: str) -> bool:
+    """Check if algorithm name refers to Dilithium3/ML-DSA-65."""
+    name_lower = alg_name.lower().replace("_", "-").replace(" ", "")
+    return name_lower in ("dilithium3", "ml-dsa-65", "mldsa65")
+
+
 def _normalize_dilithium3_secret_key(secret: bytes, alg_name: str) -> bytes:
     """
     Normalize Dilithium3 secret key to canonical 4000-byte format.
@@ -184,7 +190,7 @@ def _normalize_dilithium3_secret_key(secret: bytes, alg_name: str) -> bytes:
     Returns:
         Canonical secret key (4000 bytes for dilithium3, unchanged otherwise)
     """
-    if alg_name.lower() not in ("dilithium3", "ml-dsa-65", "mldsa65"):
+    if not _is_dilithium3_alg(alg_name):
         return secret
     
     sk_len = len(secret)
