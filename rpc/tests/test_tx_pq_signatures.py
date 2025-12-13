@@ -294,6 +294,34 @@ def test_verify_uses_envelope_body_for_sign_bytes(monkeypatch):
     # Verification should succeed even when tx_like is a dataclass with extras
     rpc_tx._verify_pq_signature(tx, envelope, chain_id=2)
 
+
+def test_pq_verify_works_without_oqs(monkeypatch):
+    """pq.py.verify should stay available even when the oqs module is missing."""
+
+    import importlib
+    import sys
+
+    try:
+        from omni_sdk.utils.cbor import loads as cbor_loads
+    except ImportError:
+        pytest.skip("SDK not available")
+
+    # Simulate environment without liboqs/oqs-python
+    sys.modules.pop("oqs", None)
+
+    import pq.py.keygen as pq_keygen
+    import rpc.methods.tx as tx_methods
+
+    importlib.reload(pq_keygen)
+    importlib.reload(tx_methods)
+
+    raw_tx, _signer = _create_signed_tx(chain_id=1)
+    envelope = cbor_loads(raw_tx)
+
+    # pq verify backend should be present and able to validate the tx envelope
+    assert tx_methods._pq_verify is not None
+    tx_methods._verify_pq_signature(envelope, envelope, chain_id=1)
+
 async def test_sendRawTransaction_requires_sig_field(monkeypatch):
     """Test that tx.sendRawTransaction requires sig field in envelope."""
     from omni_sdk.tx.build import transfer
