@@ -27,4 +27,5 @@ dev = [
   "pytest-asyncio>=0.23",
   "ruff>=0.4",
   "mypy>=1.9",
+  "omni-sdk>=0.1.0",
 ]
