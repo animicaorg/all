@@ -600,17 +600,59 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
             pending_map = getattr(tx_methods, "_FALLBACK_PENDING", {}) or {}
             for tx_hash_hex, raw in pending_map.items():
                 try:
-                    decoded, _ = tx_methods._decode_tx(raw)  # type: ignore[attr-defined]
+                    decoded, obj = tx_methods._decode_tx(raw)  # type: ignore[attr-defined]
+                    # Accept both Tx instances and dict/obj that can be used as Tx
+                    # _decode_tx may return (Tx, dict) or (dict, dict) depending on availability of Tx constructors
                     if isinstance(decoded, Tx):
                         txs.append(decoded)
                         included_hashes.append(tx_hash_hex)
-                except Exception:
+                    elif decoded is not None and isinstance(decoded, dict):
+                        # Try to construct Tx from the decoded dict
+                        # The dict may be in one of two formats:
+                        # 1. Core format: {"tx": {...}, "sigs": [...]}
+                        # 2. RPC envelope format: {"body": {...}, "sig": {...}} or {"body": {...}, "sigs": [...]}
+                        try:
+                            # Normalize RPC envelope format to core format if needed
+                            if "body" in decoded:
+                                # RPC envelope: convert body → tx, and sig/sigs → sigs
+                                normalized = {"tx": decoded["body"]}
+                                if "sigs" in decoded:
+                                    normalized["sigs"] = decoded["sigs"]
+                                elif "sig" in decoded:
+                                    # Single sig: wrap in array
+                                    normalized["sigs"] = [decoded["sig"]]
+                                else:
+                                    normalized["sigs"] = []
+                            else:
+                                # Already in core format or flat format
+                                normalized = decoded
+                            
+                            # Try to construct Tx
+                            if hasattr(Tx, "from_obj"):
+                                tx_obj = Tx.from_obj(normalized)  # type: ignore[attr-defined]
+                                txs.append(tx_obj)
+                                included_hashes.append(tx_hash_hex)
+                            elif hasattr(Tx, "from_dict"):
+                                tx_obj = Tx.from_dict(normalized)  # type: ignore[attr-defined]
+                                txs.append(tx_obj)
+                                included_hashes.append(tx_hash_hex)
+                            else:
+                                log.debug(
+                                    "Tx class has no from_obj/from_dict method; skipping tx",
+                                    extra={"hash": tx_hash_hex},
+                                )
+                        except Exception as e:
+                            log.debug(
+                                "could not convert decoded tx to Tx instance; skipping",
+                                extra={"hash": tx_hash_hex, "err": str(e), "keys": list(decoded.keys() if isinstance(decoded, dict) else [])},
+                            )
+                except Exception as e:
                     log.warning(
                         "failed to decode pending tx from fallback cache; dropping",
-                        extra={"hash": tx_hash_hex},
+                        extra={"hash": tx_hash_hex, "err": str(e)},
                     )
-        except Exception:
-            pass
+        except Exception as e:
+            log.debug("fallback pending pool unavailable", extra={"err": str(e)})
     head = adapter.get_head()
     parent_height = int(head.get("height") or 0)
     parent_hash_val = head.get("hash") or head.get("hash_hex")
