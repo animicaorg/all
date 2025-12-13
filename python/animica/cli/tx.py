@@ -17,8 +17,11 @@ import requests
 from animica.tx.signing import build_signable_tx_bytes
 
 from pq.py import verify as pq_verify
-from pq.py.sign import Signature as PQSignature
-from pq.py.sign import sign_detached as pq_sign_detached
+from pq.py.sign import (
+    Signature as PQSignature,
+    family_from_algname,
+    sign_detached as pq_sign_detached,
+)
 
 app = typer.Typer(help="Transaction commands")
 
@@ -296,16 +299,24 @@ def _suggest_max_fee(rpc_url: str) -> Tuple[int, str]:
 # ----------------------------
 
 def _domain_candidates_for_alg(alg_name: str) -> list[str]:
-    # spec/domains.yaml suggests tags like "sig|dilithium3|tx" (v1 tag implied by DomainTag construction)
-    alg = alg_name.lower().strip()
-    if "dilithium" in alg:
-        primary = "sig|dilithium3|tx"
-    elif "sphincs" in alg:
-        primary = "sig|sphincs|tx"
-    else:
-        primary = "tx"
-    # ordered: most “spec-like” first, then legacy
-    return [primary, "tx/sign", "tx"]
+    """Return signing-domain candidates.
+
+    Canonical domain for tx signing is "tx".
+    The PQ signing layer expands it into a chain-bound path like
+    "sig|<family>|tx". We keep a couple legacy spellings for compatibility.
+    """
+    fam = alg_name
+    try:
+        fam = family_from_algname(alg_name)
+    except Exception:
+        fam = alg_name
+
+    cands = ["tx", f"sig|{fam}|tx", f"sig|{alg_name}|tx"]
+    out: list[str] = []
+    for d in cands:
+        if d not in out:
+            out.append(d)
+    return out
 
 
 def _prehash_candidates() -> list[str]:
@@ -313,9 +324,17 @@ def _prehash_candidates() -> list[str]:
     return ["sha3-256", "sha3-512"]
 
 
-def _chain_id_candidates(resolved_chain_id: int) -> list[Optional[int]]:
-    # Many implementations bind chain via tx.body.chainId instead of pq.sign(chain_id=...).
-    return [None, resolved_chain_id]
+def _chain_id_candidates(resolved_chain_id: int | None) -> list[int]:
+    """Return chain-id candidates.
+
+    Animica domain-tag signing requires a chain_id, so we never emit None.
+    """
+    if resolved_chain_id is None:
+        return [0, 1, 2, 1337]
+    try:
+        return [int(resolved_chain_id)]
+    except Exception:
+        return [0, 1, 2, 1337]
 
 
 def _build_signed_envelope(
@@ -534,15 +553,19 @@ def send(
             for domain in _domain_candidates_for_alg(wallet_keys.alg_name):
                 for prehash in _prehash_candidates():
                     for cid in _chain_id_candidates(resolved_chain_id):
-                        sig_env = pq_sign_detached(
-                            signable,
-                            wallet_keys.alg_name,
-                            wallet_keys.secret_key,
-                            domain=domain,
-                            chain_id=cid,
-                            context=b"",
-                            prehash=prehash,  # type: ignore[arg-type]
-                        )
+                        try:
+                            sig_env = pq_sign_detached(
+                                signable,
+                                wallet_keys.alg_name,
+                                wallet_keys.secret_key,
+                                domain=domain,
+                                chain_id=cid,
+                                context=b"",
+                                prehash=prehash,  # type: ignore[arg-type]
+                            )
+                        except Exception as e:
+                            attempts.append({"domain": domain, "prehash": prehash, "chain_id_in_pq": cid, "error": str(e)})
+                            continue
                         ok = pq_verify.verify_detached(signable, sig_env, wallet_keys.public_key, chain_id=cid)
                         if not ok:
                             continue
