@@ -3,6 +3,7 @@ from __future__ import annotations
 import dataclasses as _dc
 import logging
 import os
+import time
 import traceback
 import typing as t
 
@@ -94,6 +95,8 @@ except Exception:  # pragma: no cover
 # ——— Local fallback pending store (development only) ———
 # Map tx_hash_hex → raw_tx_bytes
 _FALLBACK_PENDING: dict[str, bytes] = {}
+# Arrival timestamps for pending txs (for mempool stats)
+_FALLBACK_PENDING_TS: dict[str, float] = {}
 
 
 # ——— Helpers ———
@@ -850,6 +853,7 @@ def _pending_put(tx_hash_hex: str, raw: bytes) -> None:
         return
     # Fallback (dev)
     _FALLBACK_PENDING[tx_hash_hex] = raw
+    _FALLBACK_PENDING_TS[tx_hash_hex] = time.time()
 
 
 def _pending_get(tx_hash_hex: str) -> bytes | None:
@@ -1254,6 +1258,6 @@ def tx_get_transaction_receipt(txHash: str) -> t.Optional[dict]:
             return None
     except Exception:
         pass
-    
+
     # Not found or not yet mined
     return None
