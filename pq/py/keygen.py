@@ -3,9 +3,16 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Optional, Tuple, Union
 
-# NOTE: We intentionally depend on the official python package `oqs` for real PQ.
-# This avoids "fake" PQ keys that verify locally but fail on the node.
-import oqs  # type: ignore
+# NOTE: We prefer the official python package `oqs` when available, but the
+# node must continue working without it (pure-Python backend). Import lazily and
+# fall back to the vendored implementation when liboqs/oqs is absent.
+try:  # pragma: no cover - import resolution depends on environment
+    import oqs  # type: ignore
+
+    _HAS_OQS = True
+except Exception:  # pragma: no cover - handled by runtime fallback
+    oqs = None  # type: ignore
+    _HAS_OQS = False
 
 from pq.py.address import address_from_pubkey  # type: ignore
 
@@ -23,6 +30,9 @@ class KeyPair:
 
 
 def _enabled_mechs() -> list[str]:
+    if not _HAS_OQS or oqs is None:
+        return []
+
     for fn in ("get_enabled_sig_mechanisms", "get_enabled_mechanisms"):
         if hasattr(oqs, fn):
             try:
@@ -71,29 +81,40 @@ def _normalize_alg(alg: Union[int, str, Any]) -> Tuple[int, str]:
 
 def keygen_sig(alg: Union[int, str, Any]) -> KeyPair:
     """
-    Generate a real PQ signature keypair using liboqs-python.
+    Generate a PQ signature keypair.
 
-    IMPORTANT: This MUST produce a real secret key (Dilithium3/ML-DSA-65 sk_len ~ 4032),
-    not a fake dev fallback where sk==pk.
+    Prefers liboqs (if available); otherwise falls back to the vendored
+    pure-Python Dilithium3 implementation via ``animica.pq``. This keeps
+    deterministic, strict key material even inside minimal containers.
     """
     alg_id, alg_name = _normalize_alg(alg)
-    mech = _pick_sig_mech(alg_name)
 
-    s = oqs.Signature(mech)
-    pk = s.generate_keypair()
-    sk = s.export_secret_key()
+    # Fast path: liboqs
+    if _HAS_OQS and oqs is not None:
+        mech = _pick_sig_mech(alg_name)
 
-    # Refuse broken "fake" keys that can happen in fallback paths.
-    if not isinstance(pk, (bytes, bytearray)) or not isinstance(sk, (bytes, bytearray)):
-        raise RuntimeError("oqs returned non-bytes key material")
-    pk_b = bytes(pk)
-    sk_b = bytes(sk)
+        s = oqs.Signature(mech)
+        pk = s.generate_keypair()
+        sk = s.export_secret_key()
 
-    # Strong sanity checks:
-    if pk_b == sk_b:
-        raise RuntimeError("PQ keygen produced sk==pk (this is invalid / fake)")
-    if len(sk_b) <= len(pk_b):
-        raise RuntimeError(f"PQ keygen produced suspicious sizes pk={len(pk_b)} sk={len(sk_b)}")
+        # Refuse broken "fake" keys that can happen in fallback paths.
+        if not isinstance(pk, (bytes, bytearray)) or not isinstance(sk, (bytes, bytearray)):
+            raise RuntimeError("oqs returned non-bytes key material")
+        pk_b = bytes(pk)
+        sk_b = bytes(sk)
+
+        # Strong sanity checks:
+        if pk_b == sk_b:
+            raise RuntimeError("PQ keygen produced sk==pk (this is invalid / fake)")
+        if len(sk_b) <= len(pk_b):
+            raise RuntimeError(
+                f"PQ keygen produced suspicious sizes pk={len(pk_b)} sk={len(sk_b)}"
+            )
+    else:
+        # Pure-Python fallback (vendored Dilithium3)
+        from animica import pq as animica_pq
+
+        pk_b, sk_b = animica_pq.sig_keygen()
 
     addr = address_from_pubkey(pk_b, alg_id)
 

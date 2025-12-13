@@ -11,6 +11,15 @@ Animica uses **pure-Python implementations** of NIST-standardized post-quantum a
 
 These implementations are vendored under `python/animica/_vendor/` and require **no compiled dependencies** (no liboqs, no oqs, no C extensions).
 
+### Node container usage (pure-Python verification)
+
+The testnet node image installs both `python/` (Animica) and `pq/` (animica-pq) as
+editable packages so that `import animica.pq` succeeds inside the container without
+`liboqs`/`oqs-python` present. PQ verification therefore runs on the vendored
+pure-Python backend by default. If you build the image manually, keep the editable
+installs in `ops/docker/node.Dockerfile` to ensure PQ verification works in
+containerized environments.
+
 ## Rationale
 
 ### Why Pure-Python?
