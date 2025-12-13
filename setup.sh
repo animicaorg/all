@@ -155,7 +155,7 @@ print(selected)
 PY
   }
 
-  OQS_REQUESTED_PREFIX="${LIBOQS_VERSION:-0.15}"
+  OQS_REQUESTED_PREFIX="${LIBOQS_VERSION:-0.15.0}"
   if ! OQS_TAG=$(select_tag "https://github.com/open-quantum-safe/liboqs.git" "$OQS_REQUESTED_PREFIX"); then
     die "Could not determine liboqs tag"
   fi
@@ -211,7 +211,9 @@ PY
     rm -rf "$DEPS/liboqs-python"
     if run git clone --depth 1 https://github.com/open-quantum-safe/liboqs-python.git "$DEPS/liboqs-python"; then
       pushd "$DEPS/liboqs-python" >/dev/null
-        git checkout -q "v${OQS_VERSION}" || warn "liboqs-python tag v${OQS_VERSION} not found; using default branch"
+        if ! git checkout -q "v${OQS_VERSION}"; then
+          die "liboqs-python tag v${OQS_VERSION} not found; set LIBOQS_VERSION to an available release"
+        fi
         if OQS_INSTALL_PATH="$OQS_PREFIX" LIBOQS_PATH="$OQS_LIB" LD_LIBRARY_PATH="$LD_LIBRARY_PATH" \
             pip_install -U --no-cache-dir .; then
           install_ok=1
