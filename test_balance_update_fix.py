@@ -142,8 +142,7 @@ def test_transfers_module():
         class MockTx:
             to = bob
             value = 100_000
-            gas = 21_000
-            gasLimit = 21_000
+            gasLimit = 21_000  # transfers.py looks for gas/gas_limit/gasLimit
         
         tx = MockTx()
         
