@@ -94,9 +94,10 @@ def test_wallet_show_with_balance(tmp_path: Path) -> None:
     )
     data = json.loads(show_output)
     assert data["address"] == address
-    assert data["balance"] == 5
-    assert "0.000000005 ANM" in data["balance_formatted"]
-    assert "5 base units" in data["balance_formatted"]
+    assert data["balance_confirmed"] == 5
+    assert data["balance_source"] == "chain"
+    assert "0.000000005 ANM" in data["balance_confirmed_formatted"]
+    assert "5 base units" in data["balance_confirmed_formatted"]
 
 
 def test_wallet_export_and_import(tmp_path: Path) -> None:
@@ -153,7 +154,8 @@ def test_wallet_show_by_address_positional(premine_wallet_store: Path) -> None:
     data = json.loads(output)
     assert data["address"] == address
     assert data["label"] == "premine"
-    assert data["balance"] == 10
+    assert data["balance_confirmed"] == 10
+    assert data["balance_source"] == "chain"
 
 
 @respx.mock
@@ -351,31 +353,45 @@ def test_wallet_show_default_hides_secret_key(premine_wallet_store: Path) -> Non
     
     # Verify secret_key_hex is NOT in output
     assert "secret_key_hex" not in data, "secret_key_hex should not be in default output"
-    
+
     # Verify other fields are present
     assert "address" in data
     assert "label" in data
     assert "public_key_hex" in data
     assert data["label"] == "premine"
+    assert data["balance_confirmed"] == 100
+    assert data["balance_source"] == "chain"
 
 
 @respx.mock
-def test_wallet_show_with_show_secret_flag(premine_wallet_store: Path) -> None:
-    """Test that wallet show --show-secret includes secret_key_hex and prints warning."""
+def test_wallet_show_with_show_secret_flag(
+    premine_wallet_store: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test that wallet show --show-secret includes secret_key_hex when gated."""
     rpc_url = "http://localhost:9999/rpc"
     respx.post(rpc_url).respond(json={"jsonrpc": "2.0", "id": 1, "result": "0x64"})
-    
-    # Use runner directly to capture output
+
+    monkeypatch.setenv("ANIMICA_ALLOW_SECRET", "1")
+
     result = runner.invoke(
         wallet.app,
-        ["--wallet-file", str(premine_wallet_store), "show", "premine", "--rpc-url", rpc_url, "--show-secret"]
+        [
+            "--wallet-file",
+            str(premine_wallet_store),
+            "show",
+            "premine",
+            "--rpc-url",
+            rpc_url,
+            "--show-secret",
+            "--i-know-what-im-doing",
+        ],
     )
-    
+
     assert result.exit_code == 0, f"Command failed: {result.output}"
-    
+
     # Verify warning was printed (may be in output or stderr depending on typer behavior)
     assert "WARNING" in result.output, "Warning should be displayed when showing secrets"
-    
+
     # Parse the JSON output (skip warning lines)
     output_lines = result.output.strip().split('\n')
     json_start = 0
@@ -385,10 +401,54 @@ def test_wallet_show_with_show_secret_flag(premine_wallet_store: Path) -> None:
             break
     json_output = '\n'.join(output_lines[json_start:])
     data = json.loads(json_output)
-    
+
     # Verify secret_key_hex IS in output
     assert "secret_key_hex" in data, "secret_key_hex should be present with --show-secret"
     assert data["secret_key_hex"] == "0011223344556677889900112233445566778899001122334455667788990011"
+
+
+@respx.mock
+def test_wallet_show_secret_requires_gates(
+    premine_wallet_store: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ensure secrets are not shown without explicit gating."""
+
+    rpc_url = "http://localhost:9999/rpc"
+    respx.post(rpc_url).respond(json={"jsonrpc": "2.0", "id": 1, "result": "0x64"})
+
+    # Missing env var should fail even with confirmation flag
+    result = runner.invoke(
+        wallet.app,
+        [
+            "--wallet-file",
+            str(premine_wallet_store),
+            "show",
+            "premine",
+            "--rpc-url",
+            rpc_url,
+            "--show-secret",
+            "--i-know-what-im-doing",
+        ],
+    )
+    assert result.exit_code != 0
+    assert "Refusing to display secret" in result.output
+
+    # Env var present but missing confirmation flag should also fail
+    monkeypatch.setenv("ANIMICA_ALLOW_SECRET", "1")
+    result = runner.invoke(
+        wallet.app,
+        [
+            "--wallet-file",
+            str(premine_wallet_store),
+            "show",
+            "premine",
+            "--rpc-url",
+            rpc_url,
+            "--show-secret",
+        ],
+    )
+    assert result.exit_code != 0
+    assert "Refusing to display secret" in result.output
 
 
 @respx.mock
@@ -400,12 +460,13 @@ def test_wallet_show_rpc_success(premine_wallet_store: Path) -> None:
     
     output = run_cli(["show", "premine", "--rpc-url", rpc_url], premine_wallet_store)
     data = json.loads(output)
-    
+
     # Verify balance fields
-    assert data["balance"] == 1_500_000_000, "Balance should be integer in base units"
-    assert "balance_formatted" in data
-    assert "1.500000000 ANM" in data["balance_formatted"]
-    assert "balance_error" not in data, "Should not have balance_error on success"
+    assert data["balance_confirmed"] == 1_500_000_000, "Balance should be integer in base units"
+    assert "balance_confirmed_formatted" in data
+    assert "1.500000000 ANM" in data["balance_confirmed_formatted"]
+    assert data.get("balance_warning") is None
+    assert data["balance_source"] == "chain"
 
 
 @respx.mock
@@ -417,12 +478,13 @@ def test_wallet_show_rpc_failure(premine_wallet_store: Path) -> None:
     
     output = run_cli(["show", "premine", "--rpc-url", rpc_url], premine_wallet_store)
     data = json.loads(output)
-    
-    # Verify balance is null and error message is present
-    assert data["balance"] is None, "Balance should be null on RPC error"
-    assert data["balance_formatted"] == "unavailable (RPC error)"
-    assert "balance_error" in data
-    assert "Failed to fetch balance" in data["balance_error"]
+
+    # Verify balance falls back to cached and warning is present
+    assert data["balance_confirmed"] is None, "Balance should be null on RPC error"
+    assert data["balance_confirmed_formatted"] is None
+    assert data["balance_source"] == "cached"
+    assert "balance_warning" in data
+    assert "Failed to fetch balance" in data["balance_warning"]
 
 
 @respx.mock
@@ -435,11 +497,36 @@ def test_wallet_show_rpc_network_timeout(premine_wallet_store: Path) -> None:
     
     output = run_cli(["show", "premine", "--rpc-url", rpc_url], premine_wallet_store)
     data = json.loads(output)
-    
-    # Verify balance is null and error is reported
-    assert data["balance"] is None
-    assert data["balance_formatted"] == "unavailable (RPC error)"
-    assert "balance_error" in data
+
+    # Verify balance is null and warning is reported
+    assert data["balance_confirmed"] is None
+    assert data["balance_confirmed_formatted"] is None
+    assert "balance_warning" in data
+
+
+@respx.mock
+def test_wallet_show_chain_source_errors_on_failure(premine_wallet_store: Path) -> None:
+    """--source=chain should fail hard when RPC cannot be reached."""
+
+    rpc_url = "http://localhost:9999/rpc"
+    respx.post(rpc_url).respond(json={"jsonrpc": "2.0", "id": 1, "error": {"code": -32000}})
+
+    result = runner.invoke(
+        wallet.app,
+        [
+            "--wallet-file",
+            str(premine_wallet_store),
+            "show",
+            "premine",
+            "--rpc-url",
+            rpc_url,
+            "--source",
+            "chain",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "Failed to fetch balance from chain" in result.output
 
 
 def test_wallet_list_does_not_leak_secrets(premine_wallet_store: Path) -> None:
