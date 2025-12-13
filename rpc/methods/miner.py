@@ -647,7 +647,6 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
             log.info(f"Retrieved {len(txs)} transactions from mempool adapter for mining")
     except Exception as e:
         log.debug(f"mempool snapshot unavailable; falling back to in-process cache: {e}")
-
     if not txs:
         try:
             from rpc.methods import tx as tx_methods
@@ -888,8 +887,8 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
                         ts_cache = getattr(tx_methods, "_FALLBACK_PENDING_TS", {}) or {}
                         evicted_count = 0
                         for h in included_hashes:
-                            if h in cache:
-                                cache.pop(h, None)
+                            # pop() returns None if key doesn't exist, so we check return value
+                            if cache.pop(h, None) is not None:
                                 ts_cache.pop(h, None)
                                 evicted_count += 1
                         if evicted_count > 0:
