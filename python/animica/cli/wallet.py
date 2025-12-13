@@ -376,6 +376,7 @@ def show(
     identifier: Optional[str] = typer.Argument(None, help="Address (bech32), label, or public key hex"),
     address: Optional[str] = typer.Option(None, "--address", help="(Deprecated) use positional argument"),
     rpc_url: Optional[str] = typer.Option(None, "--rpc-url", help="Animica JSON-RPC endpoint", envvar=_RPC_ENV),
+    show_secret: bool = typer.Option(False, "--show-secret", help="Include secret key in output (WARNING: sensitive)"),
 ) -> None:
     lookup_id = identifier or address
     if not lookup_id:
@@ -387,11 +388,28 @@ def show(
     store = _load_store(path)
     entry = _find_wallet(store, identifier=lookup_id)
 
-    balance = _fetch_balance(entry.address, _resolve_rpc_url(rpc_url))
+    # Fetch live balance from RPC
+    rpc_endpoint = _resolve_rpc_url(rpc_url)
+    balance = _fetch_balance(entry.address, rpc_endpoint)
+    
+    # Build output dictionary
     output = entry.to_dict()
+    
+    # Remove secret key unless explicitly requested
+    if not show_secret:
+        output.pop("secret_key_hex", None)
+    else:
+        # Warn user when showing secrets
+        typer.echo("WARNING: Displaying secret key. Keep this information secure!", err=True)
+    
+    # Add balance information
     output["balance"] = balance
     if balance is not None:
         output["balance_formatted"] = format_amount(balance)
+    else:
+        output["balance_formatted"] = "unavailable (RPC error)"
+        output["balance_error"] = "Failed to fetch balance from RPC"
+    
     typer.echo(json.dumps(output, indent=2))
 
 
