@@ -45,6 +45,7 @@ if TYPE_CHECKING:
 # ------------------------------------------------------------------------------
 
 DEFAULT_INTRINSIC_TRANSFER = 21_000  # sane default; may be overridden by gas.table
+ADDRESS_LEN = 32  # Animica uses 32-byte addresses (matches core/types/tx.py)
 
 
 # ------------------------------------------------------------------------------
@@ -297,7 +298,7 @@ def _make_transfer_log(sender: bytes, recipient: bytes, amount: int) -> LogEvent
     # Use 32-byte addresses in topics (Animica native format)
     return LogEvent(
         address=recipient,
-        topics=[b"transfer", sender.rjust(32, b"\x00"), recipient.rjust(32, b"\x00")],
+        topics=[b"transfer", sender.rjust(ADDRESS_LEN, b"\x00"), recipient.rjust(ADDRESS_LEN, b"\x00")],
         data=data,
     )
 
@@ -348,7 +349,7 @@ def apply_transfer(
         raise ExecError(f"TxEnv.sender must be 20 or 32 bytes, got {len(sender)}")
     # Pad 20-byte addresses to 32 bytes for Animica state DB
     if len(sender) == 20:
-        sender = sender.rjust(32, b"\x00")
+        sender = sender.rjust(ADDRESS_LEN, b"\x00")
 
     to = _as_bytes(_get(tx, "to", "recipient", "to_address"), expect_len=None)
     if len(to) == 0:
@@ -361,13 +362,13 @@ def apply_transfer(
             receipt=None,
         )
     # Pad 20-byte addresses to 32 bytes for Animica state DB
-    if len(to) not in (20, 32):
-        raise ExecError(f"Recipient address must be 20 or 32 bytes, got {len(to)}")
+    if len(to) not in (20, ADDRESS_LEN):
+        raise ExecError(f"Recipient address must be 20 or {ADDRESS_LEN} bytes, got {len(to)}")
     if len(to) == 20:
-        to = to.rjust(32, b"\x00")
+        to = to.rjust(ADDRESS_LEN, b"\x00")
     
     # Validate we didn't accidentally zero out the address
-    if to == b"\x00" * 32:
+    if to == b"\x00" * ADDRESS_LEN:
         return ApplyResult(
             status=TxStatus.REVERT,
             gas_used=0,
@@ -416,11 +417,11 @@ def apply_transfer(
     _set_balance(state, sender, new_sender_balance)
 
     # Tip → coinbase
-    coinbase = _as_bytes(getattr(block_env, "coinbase", b"\x00" * 32), expect_len=None)
+    coinbase = _as_bytes(getattr(block_env, "coinbase", b"\x00" * ADDRESS_LEN), expect_len=None)
     # Pad 20-byte addresses to 32 bytes for Animica state DB
     if len(coinbase) == 20:
-        coinbase = coinbase.rjust(32, b"\x00")
-    if tip_fee_part > 0 and any(coinbase) and coinbase != b"\x00" * 32:
+        coinbase = coinbase.rjust(ADDRESS_LEN, b"\x00")
+    if tip_fee_part > 0 and any(coinbase) and coinbase != b"\x00" * ADDRESS_LEN:
         _ensure_account(state, coinbase)
         cb_bal = _get_balance(state, coinbase)
         _set_balance(state, coinbase, cb_bal + tip_fee_part)
@@ -432,7 +433,7 @@ def apply_transfer(
             t_addr = _as_bytes(treasury, expect_len=None)
             # Pad 20-byte addresses to 32 bytes for Animica state DB
             if len(t_addr) == 20:
-                t_addr = t_addr.rjust(32, b"\x00")
+                t_addr = t_addr.rjust(ADDRESS_LEN, b"\x00")
             if any(t_addr):
                 _ensure_account(state, t_addr)
                 t_bal = _get_balance(state, t_addr)
