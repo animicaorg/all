@@ -33,6 +33,20 @@ class TestCLIBasics:
         assert result.exit_code == 0
         assert "Animica" in result.stdout
 
+    def test_module_invocation(self) -> None:
+        """Test that the package can be invoked as a module."""
+        import subprocess
+        import sys
+        
+        # Test: python -m animica --help
+        result = subprocess.run(
+            [sys.executable, "-m", "animica", "--help"],
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, f"Module invocation failed: {result.stderr}"
+        assert "Animica" in result.stdout
+
     def test_node_help(self) -> None:
         """Test node subgroup --help."""
         result = runner.invoke(app, ["node", "--help"])
@@ -74,6 +88,12 @@ class TestCLIBasics:
         result = runner.invoke(app, ["da", "--help"])
         assert result.exit_code == 0
         assert "availability" in result.stdout.lower() or "da" in result.stdout
+
+    def test_mempool_help(self) -> None:
+        """Test mempool subgroup --help."""
+        result = runner.invoke(app, ["mempool", "--help"])
+        assert result.exit_code == 0
+        assert "mempool" in result.stdout.lower()
 
 
 class TestKeySubcommands:
