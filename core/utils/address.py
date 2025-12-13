@@ -73,8 +73,13 @@ def address_to_bytes(addr: str, *, allow_system: bool = True) -> bytes:
             # The full Bech32 payload is: alg_id (2 bytes) || digest (32 bytes)
             # But StateDB keys are the 32-byte digest alone for consistency with reward application
             digest_bytes = bytes(rec.digest) if not isinstance(rec.digest, bytes) else rec.digest
-            # Ensure exactly 32 bytes (pad or truncate if needed)
-            return digest_bytes[:32].ljust(32, b"\x00")
+            # Validate digest is exactly 32 bytes (address corruption check)
+            if len(digest_bytes) != 32:
+                raise AddressError(
+                    f"Invalid digest length: expected 32 bytes, got {len(digest_bytes)} bytes. "
+                    f"Address may be corrupted."
+                )
+            return digest_bytes
         except Exception as e:
             raise AddressError(f"failed to decode bech32m address: {e}") from e
 
