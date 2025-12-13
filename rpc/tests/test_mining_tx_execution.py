@@ -11,6 +11,9 @@ This module tests the complete mining flow:
 import pytest
 from rpc.tests import new_test_client, rpc_call
 
+# Tolerance for comparing actual vs reported rewards (allows for rounding/fee variations)
+REWARD_TOLERANCE = 0.9  # Accept if actual reward >= 90% of reported reward
+
 
 def _get_premine_address_hex() -> str:
     """Helper to get the premine address as hex string."""
@@ -240,7 +243,7 @@ def test_multiple_blocks_maintain_state():
     # If rewards were applied, verify they accumulate correctly
     if total_reward > 0:
         balance_increase = final_balance - initial_balance
-        assert balance_increase >= total_reward * 0.9, \
+        assert balance_increase >= total_reward * REWARD_TOLERANCE, \
             f"Balance increase ({balance_increase}) should be close to total rewards ({total_reward})"
     
     # Verify rewards are consistent

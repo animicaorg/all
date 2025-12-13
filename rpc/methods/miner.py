@@ -36,6 +36,11 @@ _DEFAULT_SHA256_BITS = os.getenv("ANIMICA_SHA256_NBITS", "1d00ffff")
 
 log = logging.getLogger("animica.rpc.miner")
 
+# Constants for address and gas calculations
+EVM_ADDRESS_LEN = 20  # EVM-compatible address length (bytes)
+RECEIPT_ADDRESS_LEN = 32  # Receipt log address length (bytes)
+TOPIC_LEN = 32  # Receipt log topic length (bytes)
+INTRINSIC_GAS_TRANSFER = 21_000  # Intrinsic gas cost for simple transfers
 
 # In-memory job cache for miner.getWork / miner.submitWork flows
 _JOB_CACHE: dict[str, dict[str, Any]] = {}
@@ -435,11 +440,11 @@ def _execute_transactions(
             else:
                 sender_bytes = bytes(sender) if isinstance(sender, (bytes, bytearray)) else sender
             
-            # Pad/truncate to 20 bytes (execution layer expects 20-byte addresses)
-            if len(sender_bytes) > 20:
-                sender_bytes = sender_bytes[:20]
-            elif len(sender_bytes) < 20:
-                sender_bytes = sender_bytes.rjust(20, b"\x00")
+            # Pad/truncate to EVM address length (execution layer expects 20-byte addresses)
+            if len(sender_bytes) > EVM_ADDRESS_LEN:
+                sender_bytes = sender_bytes[:EVM_ADDRESS_LEN]
+            elif len(sender_bytes) < EVM_ADDRESS_LEN:
+                sender_bytes = sender_bytes.rjust(EVM_ADDRESS_LEN, b"\x00")
             
             # Build tx environment
             gas_price = getattr(tx, "gas_price", getattr(tx, "tip", 1))
@@ -472,27 +477,27 @@ def _execute_transactions(
                 else:
                     status = ReceiptStatus.SUCCESS
                 
-                gas_used = int(result.gas_used) if hasattr(result, "gas_used") else 21000
+                gas_used = int(result.gas_used) if hasattr(result, "gas_used") else INTRINSIC_GAS_TRANSFER
                 
                 # Convert logs to Receipt Log format
                 logs_out = []
                 if hasattr(result, "logs") and result.logs:
                     for log_event in result.logs:
-                        # Ensure address is 32 bytes (Receipt Log format)
-                        addr = getattr(log_event, "address", b"\x00" * 32)
+                        # Ensure address is RECEIPT_ADDRESS_LEN bytes (Receipt Log format)
+                        addr = getattr(log_event, "address", b"\x00" * RECEIPT_ADDRESS_LEN)
                         if isinstance(addr, (bytes, bytearray)):
                             addr_bytes = bytes(addr)
                         else:
-                            addr_bytes = b"\x00" * 32
-                        # Pad to 32 bytes
-                        if len(addr_bytes) < 32:
-                            addr_bytes = addr_bytes.ljust(32, b"\x00")
-                        elif len(addr_bytes) > 32:
-                            addr_bytes = addr_bytes[:32]
+                            addr_bytes = b"\x00" * RECEIPT_ADDRESS_LEN
+                        # Pad to RECEIPT_ADDRESS_LEN bytes
+                        if len(addr_bytes) < RECEIPT_ADDRESS_LEN:
+                            addr_bytes = addr_bytes.ljust(RECEIPT_ADDRESS_LEN, b"\x00")
+                        elif len(addr_bytes) > RECEIPT_ADDRESS_LEN:
+                            addr_bytes = addr_bytes[:RECEIPT_ADDRESS_LEN]
                         
                         topics = getattr(log_event, "topics", [])
                         topics_tuple = tuple(
-                            bytes(t)[:32].ljust(32, b"\x00") if isinstance(t, (bytes, bytearray)) else b"\x00" * 32
+                            bytes(t)[:TOPIC_LEN].ljust(TOPIC_LEN, b"\x00") if isinstance(t, (bytes, bytearray)) else b"\x00" * TOPIC_LEN
                             for t in topics
                         )
                         data = bytes(getattr(log_event, "data", b""))
@@ -511,7 +516,7 @@ def _execute_transactions(
                 # Add revert receipt
                 receipts.append(Receipt(
                     status=ReceiptStatus.REVERT,
-                    gas_used=21000,  # Charge intrinsic gas on revert
+                    gas_used=INTRINSIC_GAS_TRANSFER,  # Charge intrinsic gas on revert
                     logs=tuple()
                 ))
         
@@ -522,7 +527,7 @@ def _execute_transactions(
         for _ in txs:
             receipts.append(Receipt(
                 status=ReceiptStatus.SUCCESS,
-                gas_used=21000,
+                gas_used=INTRINSIC_GAS_TRANSFER,
                 logs=tuple()
             ))
     
