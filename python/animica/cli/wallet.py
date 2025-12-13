@@ -1,3 +1,4 @@
+
 from __future__ import annotations
 
 import json
@@ -10,6 +11,7 @@ from typing import Any, Dict, List, Optional
 import click as _click
 import httpx
 import typer
+
 from animica.config import load_network_config
 from animica.cli.paths import ensure_file_dir, secure_file
 from animica.coin import format_amount
@@ -17,8 +19,7 @@ from animica.coin import format_amount
 try:
     from pq.py.address import address_from_pubkey, validate_address
     from pq.py.keygen import keygen_sig
-    from pq.py.registry import default_signature_alg, name_of
-
+    from pq.py.registry import default_signature_alg, name_of  # type: ignore
     HAVE_PQ = True
 except Exception:
     HAVE_PQ = False
@@ -26,8 +27,7 @@ except Exception:
 # Fallbacks when PQ package is not available
 if not HAVE_PQ:
     try:
-        from cryptography.hazmat.primitives.asymmetric.ed25519 import \
-            Ed25519PrivateKey
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
     except Exception:
         Ed25519PrivateKey = None
 
@@ -35,28 +35,16 @@ if not HAVE_PQ:
         class _Alg:
             alg_id = 0xFFFF
             name = "ed25519-fallback"
-
         return _Alg()
 
-    def name_of(alg_id: int) -> str:  # pragma: no cover - simple fallback
+    def name_of(alg_id: int) -> str:  # pragma: no cover
         return "ed25519-fallback" if alg_id == 0xFFFF else f"0x{alg_id:04x}"
 
 
 WALLET_FILE_ENV = "ANIMICA_WALLETS_FILE"
 _RPC_ENV = "ANIMICA_RPC_URL"
 
-
-def _get_default_wallet_path() -> Path:
-    """Get the default wallet path, respecting HOME environment variable.
-    
-    Default location: ~/.animica/wallets.json
-    This path is used across all network profiles (mainnet, testnet, devnet).
-    """
-    return Path.home() / ".animica" / "wallets.json"
-
-app = typer.Typer(
-    help="Wallet helper for creating, listing, and inspecting Animica addresses."
-)
+app = typer.Typer(help="Wallet helper for creating, listing, and inspecting Animica addresses.")
 
 
 @dataclass
@@ -73,9 +61,8 @@ class WalletEntry:
         return asdict(self)
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
+def _get_default_wallet_path() -> Path:
+    return Path.home() / ".animica" / "wallets.json"
 
 
 def _wallet_file_path(wallet_file: Optional[Path]) -> Path:
@@ -89,7 +76,6 @@ def _wallet_file_path(wallet_file: Optional[Path]) -> Path:
 
 def _load_store(wallet_file: Path) -> Dict[str, Any]:
     if not wallet_file.exists():
-        # Ensure parent directory exists with secure permissions
         ensure_file_dir(wallet_file, sensitive=True)
         store = {"version": 1, "wallets": []}
         wallet_file.write_text(json.dumps(store, indent=2), encoding="utf-8")
@@ -102,7 +88,6 @@ def _load_store(wallet_file: Path) -> Dict[str, Any]:
 
 
 def _save_store(wallet_file: Path, store: Dict[str, Any]) -> None:
-    # Ensure parent directory exists with secure permissions
     ensure_file_dir(wallet_file, sensitive=True)
     wallet_file.write_text(json.dumps(store, indent=2), encoding="utf-8")
     secure_file(wallet_file)
@@ -127,19 +112,6 @@ def _entry_from_dict(entry: Dict[str, Any]) -> WalletEntry:
 
 
 def _find_wallet(store: Dict[str, Any], *, identifier: str) -> WalletEntry:
-    """
-    Find a wallet by address, label, or public_key_hex.
-    
-    Args:
-        store: The wallet store dict
-        identifier: Address (full bech32), label, or public key hex
-        
-    Returns:
-        WalletEntry if found
-        
-    Raises:
-        typer.Exit if not found
-    """
     for entry in store.get("wallets", []):
         if (
             entry.get("address") == identifier
@@ -151,68 +123,17 @@ def _find_wallet(store: Dict[str, Any], *, identifier: str) -> WalletEntry:
     raise typer.Exit(code=1)
 
 
-def _generate_entry(label: str, *, allow_fallback: bool) -> WalletEntry:
-    if allow_fallback:
-        os.environ.setdefault("ANIMICA_ALLOW_PQ_PURE_FALLBACK", "1")
-        os.environ.setdefault("ANIMICA_UNSAFE_PQ_FAKE", "1")
-    alg_info = default_signature_alg()
-    if HAVE_PQ:
-        try:
-            kp = keygen_sig(alg_info.alg_id)
-            address = kp.address
-            public = kp.public_key
-            secret = kp.secret_key
-            alg_name = kp.alg_name
-        except NotImplementedError:
-            os.environ.setdefault("ANIMICA_ALLOW_PQ_PURE_FALLBACK", "1")
-            os.environ.setdefault("ANIMICA_UNSAFE_PQ_FAKE", "1")
-            from pq.py.algs import pure_python_fallbacks as pq_fallbacks
-
-            secret, public = pq_fallbacks.fallback_sig_keypair(alg_info.name)
-            address = address_from_pubkey(public, alg_info.alg_id)
-            alg_name = alg_info.name
-    else:
-        # Use ed25519 fallback if cryptography is available
-        if Ed25519PrivateKey is None:
-            raise RuntimeError(
-                "PQ not available and cryptography fallback not installed"
-            )
-        from cryptography.hazmat.primitives import serialization
-
-        sk = Ed25519PrivateKey.generate()
-        pk = sk.public_key()
-        public = pk.public_bytes(
-            encoding=serialization.Encoding.Raw,
-            format=serialization.PublicFormat.Raw,
-        )
-        # Private key raw bytes (unsafe, but stored locally in wallet store)
-        secret = sk.private_bytes(
-            encoding=serialization.Encoding.Raw,
-            format=serialization.PrivateFormat.Raw,
-            encryption_algorithm=serialization.NoEncryption(),
-        )
-        # Construct a simple fallback address: hrp 'anim1' + hex(pubkey)
-        address = "anim1" + public.hex()
-        alg_name = alg_info.name
-
-    return WalletEntry(
-        label=label,
-        address=address,
-        alg_id=alg_info.alg_id,
-        alg_name=alg_name,
-        public_key_hex=public.hex(),
-        secret_key_hex=secret.hex(),
-        created_at=datetime.now(timezone.utc).isoformat(),
-    )
+def _resolve_rpc_url(rpc_url: Optional[str]) -> str:
+    if rpc_url and rpc_url.strip():
+        return rpc_url.strip()
+    env_url = os.environ.get(_RPC_ENV)
+    if env_url and env_url.strip():
+        return env_url.strip()
+    return load_network_config().rpc_url
 
 
 def _fetch_balance(address: str, rpc_url: str) -> Optional[int]:
-    payload = {
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "state.getBalance",
-        "params": [address],
-    }
+    payload = {"jsonrpc": "2.0", "id": 1, "method": "state.getBalance", "params": [address]}
     try:
         resp = httpx.post(rpc_url, json=payload, timeout=5.0)
         resp.raise_for_status()
@@ -231,27 +152,71 @@ def _fetch_balance(address: str, rpc_url: str) -> Optional[int]:
         return None
 
 
-def _resolve_rpc_url(rpc_url: Optional[str]) -> str:
-    """Resolve RPC URL from option, env, or config.
-    
-    Empty strings are treated as unset and fall back to network config defaults.
-    """
-    # Check argument first
-    if rpc_url and rpc_url.strip():
-        return rpc_url.strip()
-    
-    # Check environment variable
-    env_url = os.environ.get(_RPC_ENV)
-    if env_url and env_url.strip():
-        return env_url.strip()
-    
-    # Fall back to network config
-    return load_network_config().rpc_url
+def _generate_entry(label: str, *, allow_fallback: bool) -> WalletEntry:
+    if allow_fallback:
+        os.environ.setdefault("ANIMICA_ALLOW_PQ_PURE_FALLBACK", "1")
+        os.environ.setdefault("ANIMICA_UNSAFE_PQ_FAKE", "1")
 
+    alg_info = default_signature_alg()
 
-# ---------------------------------------------------------------------------
-# Typer wiring
-# ---------------------------------------------------------------------------
+    if HAVE_PQ:
+        try:
+            kp = keygen_sig(alg_info.alg_id)
+
+            # HARD SAFETY CHECKS: refuse fake PQ wallets.
+            public = kp.public_key
+            secret = kp.secret_key
+
+            if public == secret:
+                raise RuntimeError("Refusing wallet: PQ keygen produced sk==pk (fake/broken)")
+            if len(secret) <= len(public):
+                raise RuntimeError(
+                    f"Refusing wallet: suspicious PQ sizes pk={len(public)} sk={len(secret)}"
+                )
+
+            address = kp.address
+            alg_name = kp.alg_name
+
+        except NotImplementedError as e:
+            if not allow_fallback:
+                raise
+            os.environ.setdefault("ANIMICA_ALLOW_PQ_PURE_FALLBACK", "1")
+            os.environ.setdefault("ANIMICA_UNSAFE_PQ_FAKE", "1")
+            from pq.py.algs import pure_python_fallbacks as pq_fallbacks  # type: ignore
+
+            secret, public = pq_fallbacks.fallback_sig_keypair(alg_info.name)
+            address = address_from_pubkey(public, alg_info.alg_id)
+            alg_name = alg_info.name
+
+    else:
+        if Ed25519PrivateKey is None:
+            raise RuntimeError("PQ not available and cryptography fallback not installed")
+
+        from cryptography.hazmat.primitives import serialization
+
+        sk = Ed25519PrivateKey.generate()
+        pk = sk.public_key()
+        public = pk.public_bytes(
+            encoding=serialization.Encoding.Raw,
+            format=serialization.PublicFormat.Raw,
+        )
+        secret = sk.private_bytes(
+            encoding=serialization.Encoding.Raw,
+            format=serialization.PrivateFormat.Raw,
+            encryption_algorithm=serialization.NoEncryption(),
+        )
+        address = "anim1" + public.hex()
+        alg_name = alg_info.name
+
+    return WalletEntry(
+        label=label,
+        address=address,
+        alg_id=alg_info.alg_id,
+        alg_name=alg_name,
+        public_key_hex=public.hex(),
+        secret_key_hex=secret.hex(),
+        created_at=datetime.now(timezone.utc).isoformat(),
+    )
 
 
 @app.callback()
@@ -264,29 +229,24 @@ def _configure(
         envvar=WALLET_FILE_ENV,
     ),
 ) -> None:
-    # Ensure ctx.obj is a dict, then store wallet_file
     if ctx.obj is None:
         ctx.obj = {}
     ctx.obj["wallet_file"] = wallet_file
 
 
 def _current_wallet_file() -> Optional[Path]:
-    # Try to get context from typer's context stack first
     try:
         ctx = typer.get_current_context(silent=True)
-        if ctx and hasattr(ctx, "obj") and isinstance(ctx.obj, dict):
+        if ctx and isinstance(getattr(ctx, "obj", None), dict):
             return ctx.obj.get("wallet_file")
     except Exception:
         pass
-    
-    # Fallback to click context (for CLI invocations outside typer.testing)
     try:
         ctx = _click.get_current_context(silent=True)
-        if ctx and hasattr(ctx, "obj") and isinstance(ctx.obj, dict):
+        if ctx and isinstance(getattr(ctx, "obj", None), dict):
             return ctx.obj.get("wallet_file")
     except Exception:
         pass
-    
     return None
 
 
@@ -299,31 +259,23 @@ def create(
         help="Use pure-Python PQ fallbacks when native libs are unavailable (dev/test only)",
     ),
 ) -> None:
-    """Generate a new wallet and persist it to the wallet store."""
-    # Check PQ availability if not using insecure fallback
-    # Only check when HAVE_PQ is True (pq module available), as without it
-    # we can't perform the check and will fall back to cryptography anyway
     if not allow_insecure_fallback:
-        from animica.cli.pq_utils import check_pq_signing_available
-        
-        available, error_msg = check_pq_signing_available()
-        if not available:
-            from animica.cli.pq_utils import get_pq_missing_error_message
+        from animica.cli.pq_utils import check_pq_signing_available, get_pq_missing_error_message
+
+        ok, msg = check_pq_signing_available()
+        if not ok:
             typer.echo(get_pq_missing_error_message(), err=True)
-            if error_msg:
-                typer.echo(f"\nAdditional info: {error_msg}", err=True)
-            typer.echo(
-                "\nTo create a wallet for development/testing only, use --allow-insecure-fallback",
-                err=True
-            )
+            if msg:
+                typer.echo(f"\nAdditional info: {msg}", err=True)
+            typer.echo("\nTo create a dev-only wallet, use --allow-insecure-fallback", err=True)
             raise typer.Exit(1)
-    
+
     ctx_wallet_file = _current_wallet_file()
     path = _wallet_file_path(ctx_wallet_file)
     store = _load_store(path)
 
     entry = _generate_entry(label, allow_fallback=allow_insecure_fallback)
-    # Validate address only if PQ validate function is available
+
     if HAVE_PQ:
         validate_address(entry.address, expect_hrp="anim")
     else:
@@ -345,62 +297,33 @@ def create(
 
 @app.command("list")
 def list_wallets() -> None:  # noqa: A001
-    """List known wallet addresses."""
     ctx_wallet_file = _current_wallet_file()
     path = _wallet_file_path(ctx_wallet_file)
     store = _load_store(path)
     wallets: List[Dict[str, Any]] = store.get("wallets", [])
     default_addr = store.get("default_address")
 
-    typer.echo("Idx Default Label            Address                          Alg")
-    typer.echo(
-        "--- ------- ---------------- -------------------------------- ----------------"
-    )
+    typer.echo("Idx Default Label             Address                              Alg")
+    typer.echo("--- ------- ----------------  -----------------------------------  ----------------")
     for idx, entry in enumerate(wallets):
         marker = "*" if entry.get("address") == default_addr else " "
         label = (entry.get("label") or "").ljust(16)
         address = entry.get("address") or ""
         alg_name = entry.get("alg_name") or ""
-        typer.echo(f"{idx:>3}   {marker}     {label} {address:<32} {alg_name}")
+        typer.echo(f"{idx:>3} {marker} {label}  {address:<35}  {alg_name}")
 
 
 @app.command()
 def show(
-    identifier: Optional[str] = typer.Argument(
-        None,
-        help="Address (bech32), label, or public key hex to display",
-    ),
-    address: Optional[str] = typer.Option(
-        None,
-        "--address",
-        help="(Deprecated) Address to display. Use positional argument instead.",
-    ),
-    rpc_url: Optional[str] = typer.Option(
-        None, "--rpc-url", help="Animica JSON-RPC endpoint", envvar=_RPC_ENV
-    ),
+    identifier: Optional[str] = typer.Argument(None, help="Address (bech32), label, or public key hex"),
+    address: Optional[str] = typer.Option(None, "--address", help="(Deprecated) use positional argument"),
+    rpc_url: Optional[str] = typer.Option(None, "--rpc-url", help="Animica JSON-RPC endpoint", envvar=_RPC_ENV),
 ) -> None:
-    """Show wallet metadata and current balance.
-    
-    Lookup a wallet by address (full bech32), label, or public key hex.
-    The wallet store defaults to ~/.animica/wallets.json unless overridden
-    via --wallet-file or ANIMICA_WALLETS_FILE.
-    
-    The RPC URL defaults to the configured network (mainnet by default).
-    To check balances on a different network, use --rpc-url or set ANIMICA_NETWORK.
-    
-    Examples:
-        animica wallet show anim1zqp8t5gdk...  # by address (on mainnet)
-        animica wallet show premine            # by label (checks premine balance)
-        animica wallet show a1b2c3d4...        # by public key hex
-        animica --network devnet wallet show premine  # check on devnet
-    """
-    # Support both positional and --address for backwards compatibility
     lookup_id = identifier or address
     if not lookup_id:
         typer.echo("Error: Missing wallet identifier", err=True)
-        typer.echo("Usage: animica wallet show <address|label|pubkey_hex>", err=True)
         raise typer.Exit(code=1)
-    
+
     ctx_wallet_file = _current_wallet_file()
     path = _wallet_file_path(ctx_wallet_file)
     store = _load_store(path)
@@ -416,33 +339,20 @@ def show(
 
 @app.command()
 def export(
-    identifier: Optional[str] = typer.Argument(
-        None,
-        help="Address (bech32), label, or public key hex to export",
-    ),
-    address: Optional[str] = typer.Option(
-        None,
-        "--address",
-        help="(Deprecated) Address to export. Use positional argument instead.",
-    ),
+    identifier: Optional[str] = typer.Argument(None, help="Address (bech32), label, or public key hex"),
+    address: Optional[str] = typer.Option(None, "--address", help="(Deprecated) use positional argument"),
     out: Path = typer.Option(..., "--out", help="Destination JSON file"),
 ) -> None:
-    """Export a wallet entry (including secret key) to a JSON file.
-    
-    Lookup a wallet by address (full bech32), label, or public key hex.
-    """
-    # Support both positional and --address for backwards compatibility
     lookup_id = identifier or address
     if not lookup_id:
         typer.echo("Error: Missing wallet identifier", err=True)
-        typer.echo("Usage: animica wallet export <address|label|pubkey_hex> --out <file>", err=True)
         raise typer.Exit(code=1)
-    
+
     ctx_wallet_file = _current_wallet_file()
     path = _wallet_file_path(ctx_wallet_file)
     store = _load_store(path)
     entry = _find_wallet(store, identifier=lookup_id)
-    # Ensure output directory exists (sensitive export file)
+
     ensure_file_dir(out, sensitive=True)
     out.write_text(json.dumps(entry.to_dict(), indent=2), encoding="utf-8")
     secure_file(out)
@@ -450,12 +360,11 @@ def export(
 
 
 @app.command(name="import")
-def import_(
+def import_(  # noqa: A001
     file: Path = typer.Option(..., "--file", help="JSON file to import"),
     label: Optional[str] = typer.Option(None, "--label", help="Override label"),
     force: bool = typer.Option(False, "--force", help="Overwrite existing address"),
 ) -> None:
-    """Import a wallet JSON file into the local wallet store."""
     ctx_wallet_file = _current_wallet_file()
     path = _wallet_file_path(ctx_wallet_file)
     store = _load_store(path)
@@ -474,44 +383,35 @@ def import_(
         if candidate.get("address") == entry.address:
             existing = idx
             break
+
     if existing is not None and not force:
         typer.echo("Wallet already exists; use --force to replace", err=True)
         raise typer.Exit(code=1)
+
     if existing is not None:
         store["wallets"][existing] = entry.to_dict()
     else:
         store.setdefault("wallets", []).append(entry.to_dict())
+
     _save_store(path, store)
     typer.echo(f"Imported wallet {entry.label or entry.address}")
 
 
 @app.command(name="set-default")
 def set_default(
-    identifier: Optional[str] = typer.Argument(
-        None,
-        help="Address (bech32), label, or public key hex to mark as default",
-    ),
-    address: Optional[str] = typer.Option(
-        None,
-        "--address",
-        help="(Deprecated) Address to mark as default. Use positional argument instead.",
-    ),
+    identifier: Optional[str] = typer.Argument(None, help="Address (bech32), label, or public key hex"),
+    address: Optional[str] = typer.Option(None, "--address", help="(Deprecated) use positional argument"),
 ) -> None:
-    """Mark a wallet as the default for other commands.
-    
-    Lookup a wallet by address (full bech32), label, or public key hex.
-    """
-    # Support both positional and --address for backwards compatibility
     lookup_id = identifier or address
     if not lookup_id:
         typer.echo("Error: Missing wallet identifier", err=True)
-        typer.echo("Usage: animica wallet set-default <address|label|pubkey_hex>", err=True)
         raise typer.Exit(code=1)
-    
+
     ctx_wallet_file = _current_wallet_file()
     path = _wallet_file_path(ctx_wallet_file)
     store = _load_store(path)
     entry = _find_wallet(store, identifier=lookup_id)
+
     store["default_address"] = entry.address
     _save_store(path, store)
     typer.echo(f"Default wallet set to {entry.address}")
@@ -519,21 +419,16 @@ def set_default(
 
 @app.command()
 def env() -> None:  # noqa: A001
-    """Emit shell exports for the default wallet."""
     ctx_wallet_file = _current_wallet_file()
     path = _wallet_file_path(ctx_wallet_file)
     store = _load_store(path)
     default_address = store.get("default_address")
     if not default_address:
-        typer.echo(
-            "No default wallet set; use `animica-wallet set-default --address ...`",
-            err=True,
-        )
+        typer.echo("No default wallet set; use `animica wallet set-default ...`", err=True)
         raise typer.Exit(code=1)
     typer.echo(f"export ANIMICA_DEFAULT_ADDRESS={default_address}")
 
 
-# Backwards-compatible alias for older docs/tests
 @app.command(name="new")
 def new_alias(label: str = typer.Option(..., "--label")) -> None:
     create(label=label, allow_insecure_fallback=True)
