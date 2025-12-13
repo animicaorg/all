@@ -93,8 +93,7 @@ def parse_address(addr: str) -> bytes:
         else:
             # Invalid payload length - reject rather than silently fixing
             raise ValueError(
-                f"Invalid Bech32 payload length: expected 32 or 34 bytes, got {len(payload_bytes)} bytes. "
-                f"Address format may be corrupted."
+                f"Invalid Bech32 payload length: expected 32 or 34 bytes, got {len(payload_bytes)} bytes"
             )
     except Exception:
         # Try higher-level codec if available
@@ -105,11 +104,10 @@ def parse_address(addr: str) -> bytes:
             # State DB stores accounts by 32-byte digest, matching how rewards are credited.
             # The full Bech32 payload is (alg_id || digest), but state DB uses digest as key.
             digest_bytes = bytes(rec.digest) if not isinstance(rec.digest, bytes) else rec.digest  # type: ignore[attr-defined]
-            # Validate digest is exactly 32 bytes (address corruption check)
+            # Validate digest is exactly 32 bytes
             if len(digest_bytes) != 32:
                 raise ValueError(
-                    f"Invalid digest length: expected 32 bytes, got {len(digest_bytes)} bytes. "
-                    f"Address may be corrupted."
+                    f"Invalid digest length in Bech32 address: expected 32 bytes, got {len(digest_bytes)} bytes"
                 )
             return digest_bytes  # type: ignore[attr-defined]
         except Exception as e:
