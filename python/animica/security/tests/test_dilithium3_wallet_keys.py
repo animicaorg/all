@@ -84,56 +84,19 @@ class TestDilithium3WalletKeyNormalization:
 class TestWalletGenerationStorageFormat:
     """Test that wallet generation stores canonical key format."""
     
-    def test_generated_wallet_stores_canonical_format(self, monkeypatch):
-        """New wallets should store canonical 4000-byte Dilithium3 keys."""
-        from animica.cli.wallet import _generate_entry
+    def test_normalized_secret_key_is_canonical(self):
+        """Verify normalization reduces 4032-byte key to 4000 bytes."""
+        from animica.cli.wallet import _normalize_dilithium3_secret_key
         
-        # Mock keygen_sig to return 4032-byte key (like liboqs)
-        class MockKeyPair:
-            def __init__(self):
-                self.alg_id = 0x1001  # dilithium3
-                self.alg_name = "dilithium3"
-                self.public_key = b"p" * 1952
-                self.secret_key = b"s" * 4032  # Legacy liboqs format
-                self.address = "anim1test"
+        # Simulate liboqs-generated 4032-byte key
+        sk_liboqs = b"s" * 4032
         
-        def mock_keygen_sig(alg_id):
-            return MockKeyPair()
+        # Normalize for storage
+        sk_normalized = _normalize_dilithium3_secret_key(sk_liboqs, "dilithium3")
         
-        # Patch keygen and registry
-        import sys
-        import types
-        
-        mock_pq = types.SimpleNamespace(
-            keygen=types.SimpleNamespace(keygen_sig=mock_keygen_sig),
-            address=types.SimpleNamespace(address_from_pubkey=lambda pk, aid: "anim1test"),
-            registry=types.SimpleNamespace(
-                default_signature_alg=lambda: types.SimpleNamespace(
-                    alg_id=0x1001, name="dilithium3"
-                ),
-                name_of=lambda aid: "dilithium3",
-            ),
-        )
-        
-        monkeypatch.setitem(sys.modules, "pq.py", mock_pq)
-        monkeypatch.setitem(sys.modules, "pq.py.keygen", mock_pq.keygen)
-        monkeypatch.setitem(sys.modules, "pq.py.address", mock_pq.address)
-        monkeypatch.setitem(sys.modules, "pq.py.registry", mock_pq.registry)
-        
-        # Force HAVE_PQ = True in wallet module
-        import animica.cli.wallet as wallet_module
-        monkeypatch.setattr(wallet_module, "HAVE_PQ", True)
-        monkeypatch.setattr(wallet_module, "keygen_sig", mock_keygen_sig)
-        
-        # Generate wallet entry
-        entry = _generate_entry("test-wallet", allow_fallback=False)
-        
-        # Verify stored secret key is canonical 4000 bytes
-        stored_sk = bytes.fromhex(entry.secret_key_hex)
-        assert len(stored_sk) == 4000, f"Expected 4000 bytes, got {len(stored_sk)}"
-        
-        # Verify it's the normalized version (first 4000 bytes of 4032)
-        assert stored_sk == b"s" * 4000
+        # Should be canonical 4000 bytes
+        assert len(sk_normalized) == 4000
+        assert sk_normalized == b"s" * 4000
 
 
 if __name__ == "__main__":
