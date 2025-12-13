@@ -1,350 +1,106 @@
 from __future__ import annotations
 
-"""
-keygen.py — Uniform key generation API for Animica PQ cryptography.
-
-Goals
------
-- One function to generate signature OR KEM keypairs, selected by alg name/id.
-- Deterministic (seeded) or non-deterministic (OS RNG) generation.
-- For signature keys, also derive a canonical Animica address (bech32m).
-- Graceful failure if the selected algorithm backend is unavailable.
-
-Public API
-----------
-- keygen(alg, *, seed: bytes|str|None = None, hrp: str = "anim")
-    → SigKeypair | KemKeypair
-- keygen_sig(alg, *, seed=None, hrp="anim")
-    → SigKeypair
-- keygen_kem(alg, *, seed=None)
-    → KemKeypair
-
-Where `alg` can be:
-- an integer alg_id (as per pq/alg_ids.yaml / pq.py.registry),
-- or a canonical string name, e.g. "dilithium3", "sphincs_shake_128s", "kyber768".
-
-Conventions
------------
-Signature address format: see pq.py.address.address_from_pubkey
-payload = alg_id(1) || sha3_256(pubkey)(32)  → bech32m "anim1..."
-
-Backends
---------
-This module dispatches to:
-- pq.py.algs.dilithium3
-- pq.py.algs.sphincs_shake_128s
-- pq.py.algs.kyber768
-
-Each backend SHOULD expose:
-    generate_keypair(seed: bytes | None = None) -> tuple[bytes, bytes]
-and MAY expose an alias:
-    keypair(seed: bytes | None = None) -> tuple[bytes, bytes]
-
-If unavailable, we raise NotImplementedError with a helpful message.
-
-"""
-
 from dataclasses import dataclass
-from typing import Literal, Optional, Tuple, Union
+from typing import Any, Optional, Tuple, Union
 
-from pq.py.address import address_from_pubkey
-from pq.py.registry import ALG_ID  # dict[str,int]
-from pq.py.registry import ALG_NAME  # dict[int,str]
-from pq.py.registry import is_kem_alg_id  # (int)->bool
-from pq.py.registry import is_known_alg_id  # (int)->bool
-from pq.py.registry import is_sig_alg_id  # (int)->bool
-from pq.py.utils.hash import sha3_256
-from pq.py.utils.rng import os_random
+# NOTE: We intentionally depend on the official python package `oqs` for real PQ.
+# This avoids "fake" PQ keys that verify locally but fail on the node.
+import oqs  # type: ignore
 
-AlgKind = Literal["sig", "kem"]
+from pq.py.address import address_from_pubkey  # type: ignore
 
 
-# ------------------------------------------------------------------------------
-# Dataclasses
-# ------------------------------------------------------------------------------
+DILITHIUM3_ID = 0x1001  # 4097
 
 
 @dataclass(frozen=True)
-class SigKeypair:
+class KeyPair:
     alg_id: int
     alg_name: str
     public_key: bytes
     secret_key: bytes
-    address: str  # bech32m (e.g., anim1...)
-
-    def __repr__(self) -> str:
-        pk8 = self.public_key[:8].hex()
-        return (
-            f"SigKeypair(alg={self.alg_name}/0x{self.alg_id:02x}, "
-            f"pk[:8]={pk8}…, addr={self.address[:12]}…)"
-        )
+    address: str
 
 
-@dataclass(frozen=True)
-class KemKeypair:
-    alg_id: int
-    alg_name: str
-    public_key: bytes
-    secret_key: bytes
-
-    def __repr__(self) -> str:
-        pk8 = self.public_key[:8].hex()
-        return f"KemKeypair(alg={self.alg_name}/0x{self.alg_id:02x}, " f"pk[:8]={pk8}…)"
+def _enabled_mechs() -> list[str]:
+    for fn in ("get_enabled_sig_mechanisms", "get_enabled_mechanisms"):
+        if hasattr(oqs, fn):
+            try:
+                return list(getattr(oqs, fn)())
+            except Exception:
+                continue
+    return []
 
 
-# ------------------------------------------------------------------------------
-# Helpers
-# ------------------------------------------------------------------------------
+def _pick_sig_mech(alg_name: str) -> str:
+    alg = alg_name.lower().strip()
+    mechs = _enabled_mechs()
+
+    # liboqs 0.15+ uses ML-DSA-* names; older uses Dilithium*.
+    if alg in ("dilithium3", "ml-dsa-65", "mldsa65"):
+        if "ML-DSA-65" in mechs:
+            return "ML-DSA-65"
+        if "Dilithium3" in mechs:
+            return "Dilithium3"
+        # If listing is unavailable, try the modern name first:
+        return "ML-DSA-65"
+
+    raise NotImplementedError(f"Unsupported signature alg: {alg_name}")
 
 
-def _normalize_alg(alg: Union[int, str]) -> tuple[int, str, AlgKind]:
-    """
-    Resolve `alg` to (alg_id, alg_name, kind).
-
-    Raises:
-        ValueError if unknown or ambiguous.
-    """
+def _normalize_alg(alg: Union[int, str, Any]) -> Tuple[int, str]:
     if isinstance(alg, int):
-        if not is_known_alg_id(alg):
-            raise ValueError(f"Unknown alg_id: 0x{alg:02x}")
-        name = ALG_NAME.get(alg, f"0x{alg:02x}")
-        kind: AlgKind
-        if is_sig_alg_id(alg):
-            kind = "sig"
-        elif is_kem_alg_id(alg):
-            kind = "kem"
-        else:
-            raise ValueError(f"Algorithm id 0x{alg:02x} not classified as sig or kem")
-        return alg, name, kind
+        if alg == DILITHIUM3_ID:
+            return DILITHIUM3_ID, "dilithium3"
+        raise NotImplementedError(f"Unknown alg id: 0x{alg:04x}")
 
     if isinstance(alg, str):
-        normalized = alg.strip().lower()
-        if normalized not in ALG_ID:
-            raise ValueError(f"Unknown algorithm name: {alg!r}")
-        alg_id = ALG_ID[normalized]
-        kind: AlgKind
-        if is_sig_alg_id(alg_id):
-            kind = "sig"
-        elif is_kem_alg_id(alg_id):
-            kind = "kem"
-        else:
-            raise ValueError(f"Algorithm name {alg!r} not classified as sig or kem")
-        return alg_id, normalized, kind
+        name = alg.lower().strip()
+        if name in ("dilithium3", "ml-dsa-65", "mldsa65"):
+            return DILITHIUM3_ID, "dilithium3"
+        raise NotImplementedError(f"Unknown alg name: {alg}")
 
-    raise TypeError("alg must be int (alg_id) or str (name)")
+    # object with alg_id / name
+    if hasattr(alg, "alg_id"):
+        return _normalize_alg(int(getattr(alg, "alg_id")))
+    if hasattr(alg, "name"):
+        return _normalize_alg(str(getattr(alg, "name")))
+
+    raise NotImplementedError(f"Unsupported alg descriptor: {type(alg)}")
 
 
-def _alg_id_bytes(alg_id: int) -> bytes:
-    """Encode alg_id into the minimal big-endian byte width (>=1 byte)."""
-
-    width = max(1, (alg_id.bit_length() + 7) // 8)
-    return alg_id.to_bytes(width, "big")
-
-
-def _ensure_bytes_seed(
-    seed: Optional[Union[bytes, str]], *, min_len: int = 0
-) -> Optional[bytes]:
+def keygen_sig(alg: Union[int, str, Any]) -> KeyPair:
     """
-    Normalize seed param:
-    - None → None (backend will use OS RNG)
-    - bytes → bytes (unchanged)
-    - str  → if startswith 'hex:' parse hex; else utf-8 encode
-    Then, if provided and shorter than min_len, left-pad with zeros to min_len.
-    """
-    if seed is None:
-        return None
-    if isinstance(seed, bytes):
-        b = seed
-    elif isinstance(seed, str):
-        s = seed.strip()
-        if s.startswith("hex:"):
-            h = s[4:].replace("_", "").replace(" ", "")
-            b = bytes.fromhex(h)
-        else:
-            b = s.encode("utf-8")
-    else:
-        raise TypeError("seed must be bytes | str | None")
+    Generate a real PQ signature keypair using liboqs-python.
 
-    if min_len and len(b) < min_len:
-        b = b.rjust(min_len, b"\x00")
-    return b
-
-
-def _call_backend_keypair(module, seed: Optional[bytes]) -> Tuple[bytes, bytes]:
+    IMPORTANT: This MUST produce a real secret key (Dilithium3/ML-DSA-65 sk_len ~ 4032),
+    not a fake dev fallback where sk==pk.
     """
-    Call the chosen backend's keypair API with a best-effort interface.
-    """
-    if hasattr(module, "generate_keypair"):
-        return module.generate_keypair(seed=seed)  # type: ignore[attr-defined]
-    if hasattr(module, "keypair"):
-        return module.keypair(seed=seed)  # type: ignore[attr-defined]
-    raise NotImplementedError(
-        f"Backend {module.__name__} does not expose generate_keypair/keypair"
+    alg_id, alg_name = _normalize_alg(alg)
+    mech = _pick_sig_mech(alg_name)
+
+    s = oqs.Signature(mech)
+    pk = s.generate_keypair()
+    sk = s.export_secret_key()
+
+    # Refuse broken "fake" keys that can happen in fallback paths.
+    if not isinstance(pk, (bytes, bytearray)) or not isinstance(sk, (bytes, bytearray)):
+        raise RuntimeError("oqs returned non-bytes key material")
+    pk_b = bytes(pk)
+    sk_b = bytes(sk)
+
+    # Strong sanity checks:
+    if pk_b == sk_b:
+        raise RuntimeError("PQ keygen produced sk==pk (this is invalid / fake)")
+    if len(sk_b) <= len(pk_b):
+        raise RuntimeError(f"PQ keygen produced suspicious sizes pk={len(pk_b)} sk={len(sk_b)}")
+
+    addr = address_from_pubkey(pk_b, alg_id)
+
+    return KeyPair(
+        alg_id=alg_id,
+        alg_name=alg_name,
+        public_key=pk_b,
+        secret_key=sk_b,
+        address=addr,
     )
-
-
-# ------------------------------------------------------------------------------
-# Public keygen (dispatcher)
-# ------------------------------------------------------------------------------
-
-
-def keygen(
-    alg: Union[int, str], *, seed: bytes | str | None = None, hrp: str = "anim"
-) -> SigKeypair | KemKeypair:
-    alg_id, alg_name, kind = _normalize_alg(alg)
-    if kind == "sig":
-        return keygen_sig(alg_id, seed=seed, hrp=hrp)
-    else:
-        return keygen_kem(alg_id, seed=seed)
-
-
-def keygen_sig(
-    alg: Union[int, str], *, seed: bytes | str | None = None, hrp: str = "anim"
-) -> SigKeypair:
-    alg_id, alg_name, kind = _normalize_alg(alg)
-    if kind != "sig":
-        raise ValueError(f"{alg_name} is not a signature algorithm")
-
-    # Defensive: pass None to let backend draw OS randomness. If a seed is provided,
-    # we domain-separate it to reduce cross-alg collisions.
-    seed_bytes = _ensure_bytes_seed(seed)
-    if seed_bytes is not None:
-        seed_bytes = sha3_256(b"animica:keygen:sig|" + _alg_id_bytes(alg_id) + seed_bytes)
-
-    # Dispatch to backend
-    try:
-        if alg_name == "dilithium3":
-            from pq.py.algs import dilithium3 as backend
-        elif alg_name == "sphincs_shake_128s":
-            from pq.py.algs import sphincs_shake_128s as backend
-        else:
-            raise NotImplementedError(f"Signature backend not wired for {alg_name}")
-    except Exception as e:
-        raise NotImplementedError(
-            f"Signature backend for {alg_name} not available. Install/build PQ backend (e.g., liboqs) and ensure wrappers are importable. ({e})"
-        ) from e
-
-    pk, sk = _call_backend_keypair(backend, seed_bytes)
-    addr = address_from_pubkey(pk, alg_id, hrp=hrp)
-    return SigKeypair(
-        alg_id=alg_id, alg_name=alg_name, public_key=pk, secret_key=sk, address=addr
-    )
-
-
-def keygen_kem(alg: Union[int, str], *, seed: bytes | str | None = None) -> KemKeypair:
-    alg_id, alg_name, kind = _normalize_alg(alg)
-    if kind != "kem":
-        raise ValueError(f"{alg_name} is not a KEM algorithm")
-
-    seed_bytes = _ensure_bytes_seed(seed)
-    if seed_bytes is not None:
-        seed_bytes = sha3_256(b"animica:keygen:kem|" + _alg_id_bytes(alg_id) + seed_bytes)
-
-    try:
-        if alg_name == "kyber768":
-            from pq.py.algs import kyber768 as backend
-        else:
-            raise NotImplementedError(f"KEM backend not wired for {alg_name}")
-    except Exception as e:
-        raise NotImplementedError(
-            f"KEM backend for {alg_name} not available. Install/build PQ backend (e.g., liboqs) and ensure wrappers are importable. ({e})"
-        ) from e
-
-    pk, sk = _call_backend_keypair(backend, seed_bytes)
-    return KemKeypair(alg_id=alg_id, alg_name=alg_name, public_key=pk, secret_key=sk)
-
-
-# ------------------------------------------------------------------------------
-# SDK compatibility helpers (tuple-returning keypair APIs)
-# ------------------------------------------------------------------------------
-
-
-def keypair_sig(
-    alg: Union[int, str], *, seed: bytes | str | None = None, hrp: str = "anim"
-) -> tuple[bytes, bytes]:
-    """SDK-style signature keypair API returning (secret_key, public_key)."""
-
-    kp = keygen_sig(alg, seed=seed, hrp=hrp)
-    return kp.secret_key, kp.public_key
-
-
-def keypair_kem(alg: Union[int, str], *, seed: bytes | str | None = None) -> tuple[bytes, bytes]:
-    """SDK-style KEM keypair API returning (secret_key, public_key)."""
-
-    kp = keygen_kem(alg, seed=seed)
-    return kp.secret_key, kp.public_key
-
-
-def keypair(
-    alg: Union[int, str],
-    seed: bytes | str | None = None,
-    *,
-    kind: Optional[str] = None,
-    hrp: str = "anim",
-) -> tuple[bytes, bytes]:
-    """
-    Unified keypair helper compatible with legacy pq.keygen APIs.
-
-    - If ``kind`` is omitted, infer from the algorithm id/name.
-    - If ``kind`` is provided, ensure it matches the algorithm classification.
-    """
-
-    alg_id, alg_name, inferred_kind = _normalize_alg(alg)
-    selected_kind = inferred_kind if kind is None else kind.lower()
-
-    if selected_kind not in ("sig", "kem"):
-        raise ValueError("kind must be 'sig' or 'kem'")
-    if selected_kind != inferred_kind:
-        raise ValueError(
-            f"Algorithm {alg_name} is {inferred_kind}; requested kind={selected_kind}"
-        )
-
-    if selected_kind == "sig":
-        return keypair_sig(alg_id, seed=seed, hrp=hrp)
-    return keypair_kem(alg_id, seed=seed)
-
-
-# ------------------------------------------------------------------------------
-# CLI-ish Smoke (python -m pq.py.keygen dilithium3|kyber768 [hex:seed])
-# ------------------------------------------------------------------------------
-
-
-def _main() -> None:
-    import sys
-
-    args = sys.argv[1:]
-    if not args or args[0] in ("-h", "--help"):
-        print(
-            "Usage: python -m pq.py.keygen <alg> [seed]\n"
-            "  alg  = dilithium3 | sphincs_shake_128s | kyber768 | <alg_id int>\n"
-            "  seed = optional; bytes interpreted as utf-8; prefix with 'hex:' for hex"
-        )
-        sys.exit(0)
-
-    alg_raw: Union[str, int] = args[0]
-    if alg_raw.isdigit():
-        alg_val: Union[str, int] = int(alg_raw)
-    else:
-        alg_val = alg_raw
-
-    seed = args[1] if len(args) > 1 else None
-
-    try:
-        kp = keygen(alg_val, seed=seed)
-    except Exception as e:
-        print("keygen failed:", e)
-        sys.exit(2)
-
-    if isinstance(kp, SigKeypair):
-        print("alg:", kp.alg_name, f"(0x{kp.alg_id:02x}) [sig]")
-        print("addr:", kp.address)
-        print("pk:", kp.public_key.hex())
-        print("sk:", kp.secret_key[:16].hex(), "… (hidden)")
-    else:
-        print("alg:", kp.alg_name, f"(0x{kp.alg_id:02x}) [kem]")
-        print("pk:", kp.public_key.hex())
-        print("sk:", kp.secret_key[:16].hex(), "… (hidden)")
-
-
-if __name__ == "__main__":
-    _main()
