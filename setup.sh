@@ -1,4 +1,3 @@
-cat > setup.sh <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -129,5 +128,3 @@ except Exception as e:
 PY
 
 log "Done."
-EOF
-chmod +x setup.sh
