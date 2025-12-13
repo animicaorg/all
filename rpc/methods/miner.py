@@ -693,8 +693,23 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
             block = Block.from_components(
                 header=header, txs=txs, proofs=(), receipts=receipts, verify=True
             )
-            accepted = adapter.submit_block(block)
-            print(f"DEBUG: Block submission result: accepted={accepted}, height={header.height}, hash={block_hash_bytes.hex()[:16]}...")
+            
+            # Persist block directly using block_db's atomic method
+            # This ensures the block is stored and marked canonical in one transaction
+            try:
+                block_db = ctx.block_db
+                if hasattr(block_db, "append_canonical_block"):
+                    block_db.append_canonical_block(header.height, block)
+                    accepted = True
+                    log.info(f"Block persisted via append_canonical_block at height {header.height}")
+                else:
+                    # Fallback to adapter
+                    accepted = adapter.submit_block(block)
+                    log.info(f"Block submitted via adapter: accepted={accepted}")
+            except Exception as e:
+                log.error(f"Block persistence failed: {e}", exc_info=True)
+                accepted = False
+            
             if accepted:
                 _record_local_block(header.height, "0x" + block_hash_bytes.hex(), header)
                 # Apply block reward to specified payout address (or default miner address)
