@@ -204,6 +204,21 @@ def _block_view(
     nonce = getattr(header, "nonce", None)
     roots = getattr(header, "roots", None)
 
+    if not roots:
+        derived_roots = {
+            "stateRoot": getattr(header, "stateRoot", None),
+            "txsRoot": getattr(header, "txsRoot", None),
+            "receiptsRoot": getattr(header, "receiptsRoot", None),
+            "proofsRoot": getattr(header, "proofsRoot", None),
+            "daRoot": getattr(header, "daRoot", None),
+        }
+        derived_roots = {k: v for k, v in derived_roots.items() if v is not None}
+        if derived_roots:
+            roots = {
+                k: (_hex(v) if isinstance(v, (bytes, bytearray)) else v)
+                for k, v in derived_roots.items()
+            }
+
     if isinstance(header, dict):
         parent_hash = header.get("parentHash", parent_hash)
         timestamp = header.get("timestamp", timestamp)
