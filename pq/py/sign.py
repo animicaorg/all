@@ -49,6 +49,19 @@ def _alg_family_for_domain(alg_name: str) -> str:
     return alg_name
 
 
+def family_from_algname(alg_name: str) -> str:
+    """Public helper to map an algorithm name to its domain family.
+
+    The CLI expects this to exist (see python/animica/cli/tx.py) to keep
+    domain-path construction aligned with the spec and to avoid duplicating
+    normalization logic.
+    """
+    if not isinstance(alg_name, str):
+        raise TypeError("alg_name must be a string")
+
+    return _alg_family_for_domain(alg_name.strip().lower())
+
+
 def _normalize_domain_path(domain: Union[str, bytes], *, alg_name: str) -> bytes:
     """
     Accept either:
