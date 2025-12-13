@@ -347,9 +347,9 @@ def mine_blocks(
         raise typer.Exit(2)
     
     # Resolve address: positional takes precedence over --address option
-    # Strip once and reuse
-    address_stripped = address.strip() if address else None
-    address_opt_stripped = address_opt.strip() if address_opt else None
+    # Strip once and reuse; treat empty strings as None
+    address_stripped = address.strip() if address and address.strip() else None
+    address_opt_stripped = address_opt.strip() if address_opt and address_opt.strip() else None
     final_address = address_stripped or address_opt_stripped
     
     # Validate and resolve address (label or raw Bech32)
@@ -467,9 +467,13 @@ def mine_blocks(
                                 tx_count = len(block_result["transactions"])
                                 tx_info = f", txs: {tx_count}"
                                 if tx_count > 0:
-                                    # List tx hashes if there are any
+                                    # List tx hashes if there are any (ensure they're strings and truncate safely)
                                     tx_hashes = block_result["transactions"][:MAX_VERBOSE_TX_DISPLAY]
-                                    tx_info += f" ({', '.join(str(h)[:10] + '...' for h in tx_hashes)}{'...' if tx_count > MAX_VERBOSE_TX_DISPLAY else ''})"
+                                    formatted_hashes = []
+                                    for h in tx_hashes:
+                                        h_str = str(h) if h else ""
+                                        formatted_hashes.append(h_str[:10] + "..." if len(h_str) > 10 else h_str)
+                                    tx_info += f" ({', '.join(formatted_hashes)}{'...' if tx_count > MAX_VERBOSE_TX_DISPLAY else ''})"
                         except Exception:
                             # Ignore errors in verbose mode - don't fail mining for this
                             pass

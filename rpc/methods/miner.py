@@ -640,11 +640,11 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
                 tx_hash = tx.hash()
                 tx_hash_hex = "0x" + tx_hash.hex() if isinstance(tx_hash, bytes) else str(tx_hash)
                 included_hashes.append(tx_hash_hex)
-            except Exception:
-                # If we can't get the hash, we can't track it for eviction
-                pass
-    except Exception:
-        log.debug("mempool snapshot unavailable; falling back to in-process cache")
+            except (AttributeError, TypeError) as e:
+                # tx.hash() may not exist or may fail; log and skip this tx for eviction tracking
+                log.debug(f"Could not get hash for tx; skipping eviction tracking: {e}")
+    except Exception as e:
+        log.debug(f"mempool snapshot unavailable; falling back to in-process cache: {e}")
 
     if not txs:
         try:
