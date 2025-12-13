@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import click as _click
-import httpx
 import typer
 
 from animica.config import load_network_config
@@ -43,6 +42,14 @@ if not HAVE_PQ:
 
 WALLET_FILE_ENV = "ANIMICA_WALLETS_FILE"
 _RPC_ENV = "ANIMICA_RPC_URL"
+_ALLOW_SECRET_ENV = "ANIMICA_ALLOW_SECRET"
+
+BALANCE_METHODS = [
+    "state.getBalance",
+    "state_getBalance",
+    "chain_getBalance",
+    "eth_getBalance",
+]
 
 app = typer.Typer(
     help=(
@@ -141,6 +148,20 @@ def _find_wallet(store: Dict[str, Any], *, identifier: str) -> WalletEntry:
     raise typer.Exit(code=1)
 
 
+def _find_wallet_raw(store: Dict[str, Any], *, identifier: str) -> Dict[str, Any]:
+    wallets = store.get("wallets", [])
+    identifier_lower = identifier.lower()
+    for entry in wallets:
+        if (
+            entry.get("address", "").lower() == identifier_lower
+            or entry.get("label", "").lower() == identifier_lower
+            or entry.get("public_key_hex", "").lower() == identifier_lower
+        ):
+            return entry
+    typer.echo(f"Wallet not found: {identifier}", err=True)
+    raise typer.Exit(code=1)
+
+
 def _resolve_rpc_url(rpc_url: Optional[str]) -> str:
     if rpc_url and rpc_url.strip():
         return rpc_url.strip()
@@ -150,24 +171,55 @@ def _resolve_rpc_url(rpc_url: Optional[str]) -> str:
     return load_network_config().rpc_url
 
 
-def _fetch_balance(address: str, rpc_url: str) -> Optional[int]:
-    payload = {"jsonrpc": "2.0", "id": 1, "method": "state.getBalance", "params": [address]}
+def _request_rpc(method: str, params: Optional[List[Any]], rpc_url: str) -> Any:
     try:
-        resp = httpx.post(rpc_url, json=payload, timeout=5.0)
+        from omni_sdk.rpc.http import RpcClient  # type: ignore
+
+        client = RpcClient(rpc_url, timeout=10.0)
+        return client.request(method, params)
+    except Exception:
+        import httpx
+
+        payload = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params or []}
+        resp = httpx.post(rpc_url, json=payload, timeout=10.0)
         resp.raise_for_status()
-        data = resp.json()
-        if "error" in data:
-            return None
-        result = data.get("result")
-        if isinstance(result, str):
+        parsed = resp.json()
+        if "error" in parsed:
+            raise RuntimeError(parsed.get("error"))
+        return parsed.get("result")
+
+
+class BalanceQueryError(Exception):
+    """Raised when balance cannot be fetched from the node."""
+
+
+def _parse_balance(result: Any) -> int:
+    if isinstance(result, str):
+        try:
             if result.startswith("0x"):
                 return int(result, 16)
             return int(result)
-        if result is None:
-            return None
+        except ValueError as exc:  # pragma: no cover - defensive
+            raise BalanceQueryError(f"Invalid balance string: {result}") from exc
+    if isinstance(result, (int, float)):
         return int(result)
-    except Exception:
-        return None
+    raise BalanceQueryError(f"Unexpected balance response type: {type(result)}")
+
+
+def get_balance(address: str, rpc_url: str) -> int:
+    """Fetch balance for an address using available RPC methods."""
+
+    errors: List[str] = []
+    for method in BALANCE_METHODS:
+        try:
+            result = _request_rpc(method, [address], rpc_url)
+            if result is None:
+                raise BalanceQueryError("Empty balance response")
+            return _parse_balance(result)
+        except Exception as exc:  # pragma: no cover - varied environments
+            errors.append(f"{method}: {exc}")
+            continue
+    raise BalanceQueryError("; ".join(errors) or "Balance RPC failed")
 
 
 def _is_dilithium3_alg(alg_name: str) -> bool:
@@ -376,7 +428,23 @@ def show(
     identifier: Optional[str] = typer.Argument(None, help="Address (bech32), label, or public key hex"),
     address: Optional[str] = typer.Option(None, "--address", help="(Deprecated) use positional argument"),
     rpc_url: Optional[str] = typer.Option(None, "--rpc-url", help="Animica JSON-RPC endpoint", envvar=_RPC_ENV),
+    source: str = typer.Option(
+        "auto",
+        "--source",
+        help="Balance source: auto (default), chain, or cached",
+        case_sensitive=False,
+    ),
+    chain: Optional[bool] = typer.Option(
+        None,
+        "--chain/--no-chain",
+        help="Force querying the chain for balance (overrides --source)",
+    ),
     show_secret: bool = typer.Option(False, "--show-secret", help="Include secret key in output (WARNING: sensitive)"),
+    i_know_what_im_doing: bool = typer.Option(
+        False,
+        "--i-know-what-im-doing",
+        help="Acknowledge the risk before printing secret keys",
+    ),
 ) -> None:
     lookup_id = identifier or address
     if not lookup_id:
@@ -386,30 +454,62 @@ def show(
     ctx_wallet_file = _current_wallet_file()
     path = _wallet_file_path(ctx_wallet_file)
     store = _load_store(path)
-    entry = _find_wallet(store, identifier=lookup_id)
+    raw_entry = _find_wallet_raw(store, identifier=lookup_id)
+    entry = _entry_from_dict(raw_entry)
 
-    # Fetch live balance from RPC
-    rpc_endpoint = _resolve_rpc_url(rpc_url)
-    balance = _fetch_balance(entry.address, rpc_endpoint)
-    
-    # Build output dictionary
+    source_choice = (chain and "chain") or ((chain is False) and "cached") or source.lower()
+    if source_choice not in {"auto", "chain", "cached"}:
+        typer.echo("Error: --source must be one of auto, chain, cached", err=True)
+        raise typer.Exit(code=1)
+
+    balance_confirmed: Optional[int] = None
+    balance_source = "cached"
+    balance_warning: Optional[str] = None
+
+    # Attempt to fetch live balance unless explicitly disabled
+    if source_choice != "cached":
+        rpc_endpoint = _resolve_rpc_url(rpc_url)
+        try:
+            balance_confirmed = get_balance(entry.address, rpc_endpoint)
+            balance_source = "chain"
+        except Exception as exc:
+            balance_warning = f"Failed to fetch balance from chain: {exc}"
+            if source_choice == "chain":
+                typer.echo(balance_warning, err=True)
+                raise typer.Exit(code=1)
+
+    # Fall back to cached balance if available
+    if balance_confirmed is None:
+        cached_balance = raw_entry.get("balance")
+        try:
+            balance_confirmed = int(cached_balance) if cached_balance is not None else None
+        except Exception:
+            balance_confirmed = None
+        balance_source = "cached"
+
     output = entry.to_dict()
-    
-    # Remove secret key unless explicitly requested
-    if not show_secret:
-        output.pop("secret_key_hex", None)
-    else:
-        # Warn user when showing secrets
+
+    # Secret handling
+    if show_secret:
+        env_allow = os.environ.get(_ALLOW_SECRET_ENV, "").strip().lower() in {"1", "true", "yes", "on"}
+        if not env_allow or not i_know_what_im_doing:
+            typer.echo(
+                "Refusing to display secret: set ANIMICA_ALLOW_SECRET=1 and pass --i-know-what-im-doing.",
+                err=True,
+            )
+            raise typer.Exit(code=1)
         typer.echo("WARNING: Displaying secret key. Keep this information secure!", err=True)
-    
-    # Add balance information
-    output["balance"] = balance
-    if balance is not None:
-        output["balance_formatted"] = format_amount(balance)
     else:
-        output["balance_formatted"] = "unavailable (RPC error)"
-        output["balance_error"] = "Failed to fetch balance from RPC"
-    
+        output.pop("secret_key_hex", None)
+
+    output["balance"] = balance_confirmed
+    output["balance_confirmed"] = balance_confirmed
+    output["balance_confirmed_formatted"] = (
+        format_amount(balance_confirmed) if balance_confirmed is not None else None
+    )
+    output["balance_source"] = balance_source
+    if balance_warning:
+        output["balance_warning"] = balance_warning
     typer.echo(json.dumps(output, indent=2))
 
 
