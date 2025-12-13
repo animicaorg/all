@@ -1,6 +1,6 @@
-
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import time
@@ -11,13 +11,14 @@ import typer
 from rich.console import Console
 from rich.pretty import Pretty
 
+from pq.py.sign import build_sign_bytes, pq_sign_detached  # type: ignore
+
 console = Console()
 app = typer.Typer(help="Transaction commands")
 
 ANM_BASE_UNITS = 1_000_000_000  # 1 ANM = 1e9 base units (matches your debug math)
-
-# IMPORTANT: import the correct function name (and sign.py also exports back-compat alias)
-from pq.py.sign import pq_sign_detached  # type: ignore
+DEFAULT_DOMAIN = "tx"
+DEFAULT_PREHASH = "sha3-512"
 
 try:
     import cbor2  # type: ignore
@@ -167,7 +168,7 @@ def _build_raw_tx(
 ) -> bytes:
     # Signature envelope includes enough metadata for node-side reconstruction.
     sig_env = {
-        "alg": int(alg_id),
+        "algId": int(alg_id),
         "pk": pk,
         "sig": sig,
         "domain": domain,
@@ -180,15 +181,16 @@ def _build_raw_tx(
 @app.command("send")
 def send(
     from_addr: str = typer.Option(..., "--from", help="Sender address (anim1...)"),
-    to_addr: str = typer.Option(..., "--to", help="Recipient address (anim1...)"),
+    to_addr: str = typer.Option(..., "--to", help="Recipient address (anim1... )"),
     value: float = typer.Option(..., "--value", help="Amount in ANM (whole/decimal)"),
     rpc_url: Optional[str] = typer.Option(None, "--rpc-url", help="RPC URL (default: node)"),
     chain_id: Optional[int] = typer.Option(None, "--chain-id", help="Chain ID override"),
     gas_limit: int = typer.Option(21000, "--gas-limit", help="Gas limit"),
     max_fee: Optional[int] = typer.Option(None, "--max-fee", help="Max fee (base units)"),
-    domain: str = typer.Option("tx", "--domain", help="PQ signing domain"),
-    prehash: str = typer.Option("none", "--prehash", help="Prehash: none | sha3-256 | sha256"),
+    domain: str = typer.Option(DEFAULT_DOMAIN, "--domain", help="PQ signing domain"),
+    prehash: str = typer.Option(DEFAULT_PREHASH, "--prehash", help="Prehash: sha3-512 | sha3-256"),
     verbose: bool = typer.Option(False, "-v", "--verbose", help="Verbose debug output"),
+    debug_signing: bool = typer.Option(False, "--debug-signing", help="Dump canonical sign-bytes debug info"),
 ):
     """
     Send a raw transaction via tx.sendRawTransaction using PQ signature.
@@ -231,7 +233,15 @@ def send(
     )
     body_bytes = _cbor(body)
 
-    if verbose:
+    sign_bytes = build_sign_bytes(
+        body_bytes,
+        domain=domain,
+        chain_id=cid,
+        alg_id=alg_id,
+        prehash=prehash,  # type: ignore[arg-type]
+    )
+
+    if verbose or debug_signing:
         console.print("\n[bold]CHAIN CONTEXT DEBUG[/bold]")
         console.print({"rpc_url": rpc, "chain_id": cid, "chain_id_source": "cli override" if chain_id is not None else "node:chain.getChainId"})
         console.print("")
@@ -249,15 +259,16 @@ def send(
                 "seckey_len": len(sk),
                 "message_len": len(body_bytes),
                 "message_prefix": body_bytes[:32].hex(),
+                "sign_bytes_hash": hashlib.sha3_256(sign_bytes).hexdigest(),
+                "sign_bytes_len": len(sign_bytes),
             }
         )
 
     # Sign
     pq = pq_sign_detached(
         body_bytes,
-        alg_id=alg_id,
-        secret_key=sk,
-        public_key=pk,
+        alg=alg_id,
+        sk=sk,
         domain=domain,
         chain_id=cid,
         prehash=prehash,  # type: ignore[arg-type]
@@ -266,8 +277,8 @@ def send(
     raw = _build_raw_tx(
         body=body,
         alg_id=pq.alg_id,
-        pk=pq.public_key,
-        sig=pq.signature,
+        pk=pk,
+        sig=pq.sig,
         domain=domain,
         prehash=prehash,
         chain_id=cid,
@@ -293,6 +304,3 @@ def send(
     if verbose:
         console.print("\n[bold]TX BODY[/bold]")
         console.print(Pretty(body))
-
-
-

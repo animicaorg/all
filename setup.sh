@@ -1,11 +1,10 @@
-
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
 # Animica setup (defensive, idempotent)
 # - Builds a local liboqs into .deps/liboqs-install
-# - Patches venv activate to point at the *actual liboqs .so*, not /usr/local
-# - Installs python deps without trying to pip-install non-PyPI packages (omni-sdk, animica-pq)
+# - Installs animica + animica-pq from the repo (no non-PyPI deps)
+# - Patches venv activate to point at the actual liboqs .so
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 LOG_DIR="$ROOT_DIR/logs"
@@ -70,27 +69,63 @@ log "Wrote $PTH -> $ROOT_DIR"
 if [[ -d "$ROOT_DIR/python" ]]; then
   run python -m pip install -e "$ROOT_DIR/python" --no-deps
 else
-  # fallback if pyproject is at repo root
   run python -m pip install -e "$ROOT_DIR" --no-deps
 fi
 
-# Install runtime deps explicitly (avoid omni-sdk / animica-pq)
+# Install runtime deps explicitly (avoid omni-sdk / animica-pq from PyPI)
 run python -m pip install -U \
   typer rich requests httpx pydantic pyyaml cbor2
+
+# Install local animica-pq package to satisfy dependency without PyPI
+if [[ -f "$ROOT_DIR/pq/pyproject.toml" ]]; then
+  run python -m pip install -e "$ROOT_DIR/pq"
+fi
 
 # ---------------- PQ / liboqs ----------------
 if [[ $WITH_PQ -eq 1 ]]; then
   DEPS="$ROOT_DIR/.deps"
   OQS_PREFIX="$DEPS/liboqs-install"
-  OQS_LIB=""
-  OQS_VER="${LIBOQS_VERSION:-0.14.1}"   # override with env if you want
-
   mkdir -p "$DEPS"
 
-  if [[ ! -f "$OQS_PREFIX/lib/liboqs.so" && ! -f "$OQS_PREFIX/lib64/liboqs.so" ]]; then
-    log "Building liboqs $OQS_VER into $OQS_PREFIX"
+  select_tag() {
+    local repo="$1" requested="$2"
+    python - <<'PY' "$repo" "$requested"
+import re, subprocess, sys
+repo, requested = sys.argv[1], sys.argv[2]
+out = subprocess.check_output(["git", "ls-remote", "--tags", "--refs", repo], text=True)
+tags = []
+for line in out.strip().splitlines():
+    name = line.split()[-1].removeprefix("refs/tags/")
+    norm = name.lstrip("v")
+    if re.fullmatch(r"\d+\.\d+\.\d+", norm):
+        tags.append((norm, name))
+if not tags:
+    print("", file=sys.stderr)
+    raise SystemExit("No version tags found for %s" % repo)
+tags.sort(key=lambda t: tuple(map(int, t[0].split("."))))
+req_norm = requested.lstrip("v")
+selected = None
+for norm, name in tags:
+    if norm == req_norm or name == requested:
+        selected = name
+        break
+if selected is None:
+    selected = tags[-1][1]
+    print(f"WARN: requested tag {requested} not found on {repo}; using latest {selected}", file=sys.stderr)
+print(selected)
+PY
+  }
+
+  OQS_REQUESTED="${LIBOQS_VERSION:-0.15.0}"
+  if ! OQS_TAG=$(select_tag "https://github.com/open-quantum-safe/liboqs.git" "$OQS_REQUESTED"); then
+    die "Could not determine liboqs tag"
+  fi
+  log "liboqs tag selected: $OQS_TAG"
+
+  if [[ ! -f "$OQS_PREFIX/lib/liboqs.so" && ! -f "$OQS_PREFIX/lib64/liboqs.so" && ! -f "$OQS_PREFIX/lib/liboqs.so.0" && ! -f "$OQS_PREFIX/lib64/liboqs.so.0" ]]; then
+    log "Building liboqs $OQS_TAG into $OQS_PREFIX"
     rm -rf "$DEPS/liboqs-src"
-    run git clone --depth 1 --branch "$OQS_VER" https://github.com/open-quantum-safe/liboqs.git "$DEPS/liboqs-src"
+    run git clone --depth 1 --branch "$OQS_TAG" https://github.com/open-quantum-safe/liboqs.git "$DEPS/liboqs-src"
     mkdir -p "$DEPS/liboqs-src/build"
     pushd "$DEPS/liboqs-src/build" >/dev/null
       run cmake -GNinja \
@@ -106,34 +141,41 @@ if [[ $WITH_PQ -eq 1 ]]; then
     log "liboqs already present in $OQS_PREFIX (skipping build)"
   fi
 
-  if [[ -f "$OQS_PREFIX/lib/liboqs.so" ]]; then
-    OQS_LIB="$OQS_PREFIX/lib/liboqs.so"
-  elif [[ -f "$OQS_PREFIX/lib64/liboqs.so" ]]; then
-    OQS_LIB="$OQS_PREFIX/lib64/liboqs.so"
-  elif [[ -f "$OQS_PREFIX/lib/liboqs.so.0" ]]; then
-    OQS_LIB="$OQS_PREFIX/lib/liboqs.so.0"
-  elif [[ -f "$OQS_PREFIX/lib64/liboqs.so.0" ]]; then
-    OQS_LIB="$OQS_PREFIX/lib64/liboqs.so.0"
-  else
-    die "Could not locate liboqs shared library under $OQS_PREFIX"
-  fi
-
+  OQS_LIB=""
+  for candidate in \
+    "$OQS_PREFIX/lib/liboqs.so" \
+    "$OQS_PREFIX/lib64/liboqs.so" \
+    "$OQS_PREFIX/lib/liboqs.so.0" \
+    "$OQS_PREFIX/lib64/liboqs.so.0" \
+    "$OQS_PREFIX/lib/liboqs.so.5" \
+    "$OQS_PREFIX/lib64/liboqs.so.5"; do
+    if [[ -f "$candidate" ]]; then
+      OQS_LIB="$candidate"
+      break
+    fi
+  done
+  [[ -n "$OQS_LIB" ]] || die "Could not locate liboqs shared library under $OQS_PREFIX"
   log "Using liboqs: $OQS_LIB"
 
-  # Install liboqs-python (oqs) – let pip pick a compatible wheel/sdist.
-  # If you already have oqs installed, pip will upgrade/downgrade as needed.
-  run python -m pip install -U liboqs-python
+  # Install matching liboqs-python
+  OQS_PY_REQUESTED="$OQS_TAG"
+  if ! OQS_PY_TAG=$(select_tag "https://github.com/open-quantum-safe/liboqs-python.git" "$OQS_PY_REQUESTED"); then
+    die "Could not determine liboqs-python tag"
+  fi
+  log "liboqs-python tag selected: $OQS_PY_TAG"
+  if ! python -m pip install --no-deps --no-build-isolation "git+https://github.com/open-quantum-safe/liboqs-python.git@$OQS_PY_TAG"; then
+    log "WARN: git install of liboqs-python failed; falling back to PyPI"
+    run python -m pip install -U liboqs-python
+  fi
 
   # Patch venv activate (REPLACE any old animica-liboqs block)
   ACT="$ROOT_DIR/.venv/bin/activate"
   perl -0777 -i -pe 's/# >>> animica-liboqs >>>.*?# <<< animica-liboqs <<<\n//s' "$ACT" || true
 
   cat >> "$ACT" <<ACTEOF
-
 # >>> animica-liboqs >>>
 export OQS_INSTALL_PATH='$OQS_PREFIX'
 export LIBOQS_PATH='$OQS_LIB'
-# Ensure our local liboqs is preferred
 export LD_LIBRARY_PATH='$OQS_PREFIX/lib:$OQS_PREFIX/lib64:'"\${LD_LIBRARY_PATH:-}"
 # <<< animica-liboqs <<<
 ACTEOF
@@ -144,14 +186,16 @@ ACTEOF
   # shellcheck disable=SC1091
   source "$ROOT_DIR/.venv/bin/activate"
 
-  log "PQ sanity check (show first 20 enabled sig mechs containing DILITHIUM or ML-DSA)"
-  LD_PRELOAD="$LIBOQS_PATH" python - <<'PY'
-import oqs
-mechs = [m for m in oqs.get_enabled_sig_mechanisms() if ("DILITHIUM" in m.upper() or "ML-DSA" in m.upper())]
-print(mechs[:20])
+  log "PQ sanity check (enabled sig mechanisms)"
+  LD_LIBRARY_PATH="$OQS_PREFIX/lib:$OQS_PREFIX/lib64:${LD_LIBRARY_PATH:-}" LIBOQS_PATH="$OQS_LIB" python - <<'PY'
+import oqs, json
+mechs = list(getattr(oqs, "get_enabled_sig_mechanisms", lambda: [])())
+print("oqs version:", getattr(oqs, "__version__", "unknown"))
+print("enabled sig mechanisms:", len(mechs))
+print("sample:", [m for m in mechs if ("DILITHIUM" in m.upper() or "ML-DSA" in m.upper())][:20])
+if len(mechs) == 0:
+    raise SystemExit("No enabled PQ signature mechanisms (liboqs build failed)")
 PY
-
 fi
 
 log "Done."
-
