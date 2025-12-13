@@ -697,7 +697,7 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
             elif pending_count > 0:
                 log.warning(f"Failed to retrieve any of {pending_count} transactions from fallback pending cache")
         except Exception as e:
-            log.warning("fallback pending pool unavailable", extra={"err": str(e)})
+            log.warning("Fallback pending pool unavailable", extra={"err": str(e)})
     head = adapter.get_head()
     parent_height = int(head.get("height") or 0)
     parent_hash_val = head.get("hash") or head.get("hash_hex")
