@@ -238,3 +238,30 @@ def chain_get_head() -> dict:
     except Exception:
         pass
     return view
+
+
+@method(
+    "chain.getBlockByHeight",
+    desc="Get a block by height (alias for getBlockByNumber). Params: (height, includeTxObjects: bool=false, includeReceipts: bool=false)",
+    aliases=("block_getBlockByHeight",),
+)
+def chain_get_block_by_height(
+    height: t.Union[int, str],
+    includeTxObjects: bool = False,
+    includeReceipts: bool = False,
+    includeTx: bool | None = None,
+) -> t.Optional[dict]:
+    """
+    Alias for chain.getBlockByNumber that explicitly accepts height parameter.
+    Accepts int, hex string (0x…), decimal string, or 'latest'/'earliest'.
+    Returns a JSON object or null if not found.
+    """
+    # Import here to avoid circular dependency
+    from rpc.methods.block import chain_get_block_by_number
+    
+    return chain_get_block_by_number(
+        height,
+        includeTxObjects=includeTxObjects,
+        includeReceipts=includeReceipts,
+        includeTx=includeTx,
+    )
