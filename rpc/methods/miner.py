@@ -655,7 +655,6 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
             pending_count = len(pending_map)
             if pending_count > 0:
                 log.info(f"Attempting to retrieve {pending_count} transactions from fallback pending cache")
-            
             for tx_hash_hex, raw in pending_map.items():
                 try:
                     decoded, obj = tx_methods._decode_tx(raw)  # type: ignore[attr-defined]
@@ -693,7 +692,6 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
                         "failed to decode pending tx from fallback cache; skipping",
                         extra={"hash": tx_hash_hex, "err": str(e)},
                     )
-            
             if txs:
                 log.info(f"Retrieved {len(txs)}/{pending_count} transactions from fallback pending cache for mining")
             elif pending_count > 0:
@@ -887,8 +885,10 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
                         ts_cache = getattr(tx_methods, "_FALLBACK_PENDING_TS", {}) or {}
                         evicted_count = 0
                         for h in included_hashes:
-                            # pop() returns None if key doesn't exist, so we check return value
+                            # pop() returns the removed value or None if key doesn't exist
+                            # We count eviction only if the tx was actually in the cache
                             if cache.pop(h, None) is not None:
+                                # Also remove timestamp (may not exist, that's ok)
                                 ts_cache.pop(h, None)
                                 evicted_count += 1
                         if evicted_count > 0:
