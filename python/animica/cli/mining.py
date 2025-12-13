@@ -240,21 +240,31 @@ def generate_payout_address(
 
 @app.command("mine-blocks")
 def mine_blocks(
-    address: str = typer.Option(
-        ...,
-        "--address",
-        help="Payout address: wallet label (e.g., 'premine') or Animica Bech32 address (e.g., 'anim1...')",
+    address: Optional[str] = typer.Argument(
+        None,
+        help="Payout address (positional): wallet label or Bech32 address",
     ),
     count: int = typer.Option(
         ...,
         "--count",
         help="Number of blocks to mine (must be > 0)",
     ),
+    address_opt: Optional[str] = typer.Option(
+        None,
+        "--address",
+        help="Payout address (option, for backward compat): wallet label or Bech32 address",
+    ),
     rpc_url: Optional[str] = typer.Option(
         None,
         "--rpc-url",
         help="Node JSON-RPC endpoint URL",
         envvar="ANIMICA_RPC_URL",
+    ),
+    verbose: bool = typer.Option(
+        False,
+        "--verbose",
+        "-v",
+        help="Enable verbose output (show tx selection details)",
     ),
 ) -> None:
     """
@@ -264,17 +274,22 @@ def mine_blocks(
     block hashes that meet the current difficulty target (derived from the network's
     theta parameter). Block rewards are credited to the specified payout address.
     
+    Pending mempool transactions are included in mined blocks and executed to update
+    balances and nonces. After mining, included transactions are removed from the mempool.
+    
     Address Resolution:
-      The --address parameter accepts either:
+      The address can be provided as a positional argument or via --address option:
       1. A wallet label (e.g., 'premine') - resolved from ~/.animica/wallets.json
       2. A raw Animica Bech32 address (e.g., 'anim1...') - used directly
       If neither is valid, the command fails with exit code 2.
     
     The mining process:
-    1. Retrieves current chain head and difficulty (theta) from the node
-    2. Iterates through nonces to find a valid block hash
-    3. Submits the mined block when a hash meets the target
-    4. Credits the block reward to the payout address
+    1. Selects pending transactions from mempool (nonce-ordered, fee policy enforced)
+    2. Executes transactions to update state (balances, nonces)
+    3. Iterates through nonces to find a valid block hash
+    4. Includes transactions and receipts in the mined block
+    5. Credits the block reward to the payout address
+    6. Removes included transactions from the mempool
     
     Persistence:
       - Chain state is stored under ~/.animica/chain-{chain_id}/ by default
@@ -286,11 +301,14 @@ def mine_blocks(
       - Higher theta means harder mining (lower target)
     
     Examples:
-        # Mine 5 blocks to a wallet label
+        # Mine 5 blocks to a wallet label (positional form)
+        animica miner mine-blocks --count 5 premine
+        
+        # Mine with --address option (backward compatible)
         animica miner mine-blocks --address premine --count 5
         
-        # Mine to a bech32 address
-        animica miner mine-blocks --address anim1zqp2nx50902d7jgrzk0ep798r2vhpgt3rhtmn89gadzdgyhf9hmln7g9e4xt9 --count 10
+        # Mine to a bech32 address with verbose output
+        animica miner mine-blocks --count 10 --verbose anim1zqp2nx50902d7jgrzk0ep798r2vhpgt3rhtmn89gadzdgyhf9hmln7g9e4xt9
         
         # Mine with custom RPC endpoint
         animica miner mine-blocks --address premine --count 10 --rpc-url http://localhost:8545
@@ -328,17 +346,23 @@ def mine_blocks(
         )
         raise typer.Exit(2)
     
+    # Resolve address: positional takes precedence over --address option
+    # Strip once and reuse; treat empty strings as None
+    address_stripped = address.strip() if address and address.strip() else None
+    address_opt_stripped = address_opt.strip() if address_opt and address_opt.strip() else None
+    final_address = address_stripped or address_opt_stripped
+    
     # Validate and resolve address (label or raw Bech32)
-    if not address or not address.strip():
+    if not final_address:
         typer.secho(
-            "Error: address is required",
+            "Error: address is required (provide as positional arg or --address option)",
             fg=typer.colors.RED,
             err=True,
         )
         raise typer.Exit(2)
     
     # Resolve address from label or validate raw Bech32 address
-    resolved_address = _resolve_payout_address(address.strip())
+    resolved_address = _resolve_payout_address(final_address)
     
     # Resolve RPC URL
     url = rpc_url or os.environ.get("ANIMICA_RPC_URL") or load_network_config().rpc_url
@@ -430,9 +454,33 @@ def mine_blocks(
                     total_reward += block_reward
                     # Convert nANM to ANM for display (1 ANM = 10^9 nANM)
                     reward_anm = block_reward / COIN_UNIT
+                    
+                    # Verbose output: show transaction details
+                    # Max number of tx hashes to display in verbose mode
+                    MAX_VERBOSE_TX_DISPLAY = 5
+                    tx_info = ""
+                    if verbose:
+                        try:
+                            # Query block to get transaction count
+                            block_result = client.request("chain.getBlockByNumber", [final_height, False])
+                            if block_result and "transactions" in block_result:
+                                tx_count = len(block_result["transactions"])
+                                tx_info = f", txs: {tx_count}"
+                                if tx_count > 0:
+                                    # List tx hashes if there are any (ensure they're strings and truncate safely)
+                                    tx_hashes = block_result["transactions"][:MAX_VERBOSE_TX_DISPLAY]
+                                    formatted_hashes = []
+                                    for h in tx_hashes:
+                                        h_str = str(h) if h else ""
+                                        formatted_hashes.append(h_str[:10] + "..." if len(h_str) > 10 else h_str)
+                                    tx_info += f" ({', '.join(formatted_hashes)}{'...' if tx_count > MAX_VERBOSE_TX_DISPLAY else ''})"
+                        except Exception:
+                            # Ignore errors in verbose mode - don't fail mining for this
+                            pass
+                    
                     typer.echo(
                         f"  Block {i + 1}/{count} mined (height: {final_height}, "
-                        f"reward: {reward_anm:.9f} ANM = {block_reward} nANM)"
+                        f"reward: {reward_anm:.9f} ANM = {block_reward} nANM{tx_info})"
                     )
                 else:
                     typer.secho(

@@ -47,15 +47,35 @@ animica-node block --height 1 --rpc-url $ANIMICA_RPC_URL
 The mining CLI (`animica miner` or `animica-mining`/`animica-pool`) provides both development mining utilities and Stratum pool management. Commands:
 
 ### Mining for Development
-- `mine-blocks --address <addr> --count <n> [--rpc-url <url>]` mines N blocks to a given address via RPC. This is useful for local testing and development. Validates that count > 0 and provides clear error messages.
+- `mine-blocks [<addr>] --count <n> [--address <addr>] [--rpc-url <url>] [--verbose]` mines N blocks to a given payout address via RPC. This is useful for local testing and development.
+  - **Address resolution**: Accepts wallet label (e.g., `premine`) or Bech32 address (e.g., `anim1...`)
+  - **Positional or option**: Address can be provided as positional arg or via `--address` flag
+  - **Mempool integration**: Pending transactions are included in mined blocks and executed
+  - **Verbose mode**: Use `--verbose` or `-v` to see transaction details per block
+  - Validates that count > 0 and provides clear error messages
 
-Example:
+Examples:
 ```sh
+# Mine with positional address (wallet label)
+animica miner mine-blocks --count 5 premine
+
+# Mine with --address option (backward compatible)
 animica miner mine-blocks --address anim1test123 --count 5
+
+# Mine with verbose output to see transactions
+animica miner mine-blocks --count 10 --verbose premine
+
+# Mine with custom RPC endpoint
 animica miner mine-blocks --address anim1test123 --count 10 --rpc-url http://localhost:8545
 ```
 
-Note: The current `miner.mine` RPC method does not support payout address selection yet. Blocks will be mined to the node's default miner address. The `--address` parameter is accepted for future compatibility.
+The mining process:
+1. Selects pending transactions from mempool (nonce-ordered, fee policy enforced)
+2. Executes transactions to update state (balances, nonces)
+3. Finds valid block hash via proof-of-work
+4. Includes transactions and receipts in the mined block
+5. Credits block reward to the payout address
+6. Removes included transactions from the mempool
 
 ### Stratum Pool Operations
 - `run-pool` starts the Stratum + metrics API using `ANIMICA_RPC_URL`,
