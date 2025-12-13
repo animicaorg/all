@@ -684,12 +684,12 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
                                 )
                         except Exception as e:
                             log.warning(
-                                "could not convert decoded tx to Tx instance; skipping from fallback cache",
+                                "Could not convert decoded tx to Tx instance; skipping from fallback cache",
                                 extra={"hash": tx_hash_hex, "err": str(e), "keys": list(decoded.keys() if isinstance(decoded, dict) else [])},
                             )
                 except Exception as e:
                     log.warning(
-                        "failed to decode pending tx from fallback cache; skipping",
+                        "Failed to decode pending tx from fallback cache; skipping",
                         extra={"hash": tx_hash_hex, "err": str(e)},
                     )
             if txs:
