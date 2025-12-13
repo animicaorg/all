@@ -264,6 +264,12 @@ def _resolve_backend(alg_name: str):
     return backend
 
 
+def _is_dilithium3_alg(alg_name: str) -> bool:
+    """Check if algorithm name refers to Dilithium3/ML-DSA-65."""
+    name_lower = alg_name.lower().replace("_", "-").replace(" ", "")
+    return name_lower in ("dilithium3", "ml-dsa-65", "mldsa65")
+
+
 def _backend_sign(alg_name: str, sk: bytes, msg: bytes) -> bytes:
     """
     Call the algorithm-specific signer. `msg` is already canonical SignBytes
@@ -273,7 +279,7 @@ def _backend_sign(alg_name: str, sk: bytes, msg: bytes) -> bytes:
     to canonical 4000-byte format before signing.
     """
     # Normalize Dilithium3 secret keys to handle legacy liboqs format
-    if alg_name == "dilithium3":
+    if _is_dilithium3_alg(alg_name):
         sk = _normalize_dilithium3_sk(sk)
     
     backend = _resolve_backend(alg_name)
