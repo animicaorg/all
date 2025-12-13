@@ -352,8 +352,10 @@ def apply_transfer(
         sender = sender.rjust(ADDRESS_LEN, b"\x00")
 
     to = _as_bytes(_get(tx, "to", "recipient", "to_address"), expect_len=None)
-    if len(to) == 0:
-        # No recipient → nothing to transfer (treat as revert)
+    
+    # Check for empty or zero address before padding
+    if len(to) == 0 or to == b"\x00" * len(to):
+        # No recipient or zero address → nothing to transfer (treat as revert)
         return ApplyResult(
             status=TxStatus.REVERT,
             gas_used=0,
@@ -361,21 +363,12 @@ def apply_transfer(
             state_root=_maybe_state_root(state),
             receipt=None,
         )
+    
     # Pad 20-byte addresses to 32 bytes for Animica state DB
     if len(to) not in (20, ADDRESS_LEN):
         raise ExecError(f"Recipient address must be 20 or {ADDRESS_LEN} bytes, got {len(to)}")
     if len(to) == 20:
         to = to.rjust(ADDRESS_LEN, b"\x00")
-    
-    # Validate we didn't accidentally zero out the address
-    if to == b"\x00" * ADDRESS_LEN:
-        return ApplyResult(
-            status=TxStatus.REVERT,
-            gas_used=0,
-            logs=[],
-            state_root=_maybe_state_root(state),
-            receipt=None,
-        )
 
     amount = _as_int(_get(tx, "value", "amount"), default=0)
     gas_limit = _as_int(_get(tx, "gas", "gas_limit", "gasLimit"), default=0)
