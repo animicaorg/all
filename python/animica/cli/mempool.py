@@ -13,7 +13,7 @@ from typing import Optional
 
 import typer
 
-from python.animica.cli.rpc import call_rpc
+from .rpc import call_rpc
 
 app = typer.Typer(
     name="mempool",
