@@ -58,6 +58,11 @@ _LOCAL_HEAD: dict[str, Any] = {}
 _AUTO_MINE: bool = False
 _AUTO_TASK: asyncio.Task | None = None
 
+# Hash tracking map for transactions from adapter
+# Maps id(tx_obj) -> (tx_hash_hex, raw_bytes)
+# Used to track original hashes when evicting from mempool
+_TX_HASH_MAP: dict[int, tuple[str, bytes]] = {}
+
 
 def _to_hex(b: bytes | None) -> str | None:
     return None if b is None else "0x" + b.hex()
@@ -593,7 +598,7 @@ def _adapter() -> CoreChainAdapter:
                 This reads from rpc.methods.tx._FALLBACK_PENDING which is where transactions
                 are stored when submitted via the RPC tx.sendRawTransaction method.
                 
-                Returns a list of Tx objects with _tx_hash_hex attribute added for tracking.
+                Returns a list of Tx objects. Uses _tx_hash_map to track original hashes.
                 """
                 txs = []
                 try:
@@ -641,15 +646,10 @@ def _adapter() -> CoreChainAdapter:
                                 log.debug(f"drain_fn: Skipping tx {tx_hash_hex} - would exceed limits (gas: {total_gas + tx_gas} > {max_gas} or bytes: {total_bytes + tx_bytes} > {max_bytes})")
                                 continue
                             
-                            # Store the original tx hash on the Tx object for eviction tracking
+                            # Store the original tx hash in the global mapping (keyed by object id)
                             # This ensures we can remove the correct entry from _FALLBACK_PENDING later
-                            try:
-                                tx_obj._tx_hash_hex = tx_hash_hex  # type: ignore[attr-defined]
-                                tx_obj._tx_raw = raw  # type: ignore[attr-defined]
-                            except Exception:
-                                # If we can't set attributes (frozen dataclass), skip this optimization
-                                # The eviction will fall back to recomputing the hash
-                                pass
+                            # even though Tx dataclasses are frozen and we can't set attributes
+                            _TX_HASH_MAP[id(tx_obj)] = (tx_hash_hex, raw)
                             
                             txs.append(tx_obj)
                             total_gas += tx_gas
@@ -1111,25 +1111,18 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
         if txs:
             log.info(f"_mine_once: Sample tx types from adapter: {[type(tx).__name__ for tx in txs[:3]]}")
         # Track hashes of transactions from adapter for eviction later
-        # Prefer the stored _tx_hash_hex attribute (set by drain_fn) to ensure we use
-        # the exact same hash that was used as the key in _FALLBACK_PENDING
+        # Use the _TX_HASH_MAP created by drain_fn to get the original hashes
         for tx in txs:
             try:
-                # Try to use the stored hash first (set by drain_fn from the dict key)
-                if hasattr(tx, "_tx_hash_hex"):
-                    tx_hash_hex = getattr(tx, "_tx_hash_hex")
+                # Try to get the hash from the global mapping (set by drain_fn)
+                if id(tx) in _TX_HASH_MAP:
+                    tx_hash_hex, raw = _TX_HASH_MAP[id(tx)]
                     included_hashes.append(tx_hash_hex)
-                    log.debug(f"Tracked tx hash from adapter (stored): {tx_hash_hex}")
+                    log.debug(f"Tracked tx hash from adapter (mapped): {tx_hash_hex}")
                 else:
-                    # Fallback: compute hash from raw bytes if available
-                    raw = getattr(tx, "_tx_raw", None) if hasattr(tx, "_tx_raw") else None
-                    if raw is not None:
-                        tx_hash_bytes = hashlib.sha3_256(raw).digest()
-                        tx_hash_hex = "0x" + tx_hash_bytes.hex()
-                    else:
-                        # Last resort: use txid_bytes() helper
-                        tx_hash_bytes = txid_bytes(tx)
-                        tx_hash_hex = "0x" + tx_hash_bytes.hex()
+                    # Fallback: compute hash from txid_bytes() helper
+                    tx_hash_bytes = txid_bytes(tx)
+                    tx_hash_hex = "0x" + tx_hash_bytes.hex()
                     included_hashes.append(tx_hash_hex)
                     log.debug(f"Tracked tx hash from adapter (computed): {tx_hash_hex}")
             except Exception as e:
@@ -1347,9 +1340,9 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
         
         for i, tx in enumerate(txs):
             try:
-                # Use original raw bytes if available (set by drain_fn)
-                raw = getattr(tx, "_tx_raw", None) if hasattr(tx, "_tx_raw") else None
-                if raw is not None:
+                # Use original raw bytes if available (from global mapping)
+                if id(tx) in _TX_HASH_MAP:
+                    _, raw = _TX_HASH_MAP[id(tx)]
                     # Compute from original CBOR bytes (canonical)
                     tx_hash = hashlib.sha3_256(raw).digest()
                 else:
@@ -1461,9 +1454,9 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
                     leaves = []
                     for tx in txs:
                         try:
-                            # Use original raw bytes if available (set by drain_fn)
-                            raw = getattr(tx, "_tx_raw", None) if hasattr(tx, "_tx_raw") else None
-                            if raw is not None:
+                            # Use original raw bytes if available (from global mapping)
+                            if id(tx) in _TX_HASH_MAP:
+                                _, raw = _TX_HASH_MAP[id(tx)]
                                 # Compute from original CBOR bytes (canonical)
                                 leaves.append(hashlib.sha3_256(raw).digest())
                             else:
@@ -1566,6 +1559,13 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
                             log.info(f"Evicted {evicted_count} included transactions from fallback cache")
                     except Exception as e:
                         log.warning(f"Failed to evict from fallback cache: {e}")
+                    
+                    # 3. Clean up the hash mapping for evicted transactions
+                    try:
+                        for tx in txs:
+                            _TX_HASH_MAP.pop(id(tx), None)
+                    except Exception as e:
+                        log.warning(f"Failed to clean up hash mapping: {e}")
 
                 log.info(
                     f"Mined block at height {header.height} with nonce {nonce_val} "
