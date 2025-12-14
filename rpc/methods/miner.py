@@ -336,6 +336,23 @@ def _theta_to_target(theta_micro: int) -> int:
     return min(max_target, scaled)
 
 
+def _hex_to_bytes(hex_str: str) -> bytes:
+    """
+    Convert a hex string to bytes, handling both "0x" prefixed and unprefixed formats.
+    
+    Args:
+        hex_str: Hex string (e.g., "0x6e23..." or "6e23...")
+        
+    Returns:
+        bytes: The decoded bytes
+    """
+    s = hex_str[2:] if hex_str.startswith("0x") else hex_str
+    # Pad with leading zero if odd length (ensures valid hex pairs)
+    if len(s) % 2:
+        s = "0" + s
+    return bytes.fromhex(s)
+
+
 def _parse_nonce(nonce: Any) -> bytes:
     if isinstance(nonce, (bytes, bytearray)):
         return bytes(nonce)
@@ -344,10 +361,7 @@ def _parse_nonce(nonce: Any) -> bytes:
             raise ValueError("nonce must be non-negative")
         return nonce.to_bytes(8, "big")
     if isinstance(nonce, str):
-        s = nonce[2:] if nonce.startswith("0x") else nonce
-        if len(s) % 2:
-            s = "0" + s
-        return bytes.fromhex(s)
+        return _hex_to_bytes(nonce)
     raise ValueError("nonce must be hex string, int, or bytes")
 
 
@@ -879,8 +893,22 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
             if accepted:
                 _record_local_block(header.height, "0x" + block_hash_bytes.hex(), header)
 
-                # Evict successfully mined fallback-pool txs so they are not re-mined repeatedly
+                # Evict successfully mined txs from both mempool adapter and fallback cache
+                # to prevent re-mining them in subsequent blocks
                 if included_hashes:
+                    # 1. Evict from adapter mempool (if available)
+                    try:
+                        # Convert hex hashes to bytes for adapter eviction
+                        hashes_bytes = [_hex_to_bytes(h) for h in included_hashes]
+                        
+                        # Call adapter to evict from mempool pool
+                        if hasattr(adapter, "remove_included"):
+                            adapter.remove_included(hashes_bytes)
+                            log.info(f"Evicted {len(hashes_bytes)} included transactions from mempool adapter")
+                    except Exception as e:
+                        log.warning(f"Failed to evict from mempool adapter: {e}")
+                    
+                    # 2. Evict from fallback pending cache (backward compatibility)
                     try:
                         from rpc.methods import tx as tx_methods
 
@@ -895,9 +923,9 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
                                 ts_cache.pop(h, None)
                                 evicted_count += 1
                         if evicted_count > 0:
-                            log.info(f"Evicted {evicted_count} included transactions from pending cache")
+                            log.info(f"Evicted {evicted_count} included transactions from fallback cache")
                     except Exception as e:
-                        log.warning(f"Failed to evict from pending cache: {e}")
+                        log.warning(f"Failed to evict from fallback cache: {e}")
 
                 log.info(
                     f"Mined block at height {header.height} with nonce {nonce_val} "
