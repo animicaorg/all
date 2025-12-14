@@ -336,21 +336,6 @@ def _theta_to_target(theta_micro: int) -> int:
     return min(max_target, scaled)
 
 
-def _parse_nonce(nonce: Any) -> bytes:
-    if isinstance(nonce, (bytes, bytearray)):
-        return bytes(nonce)
-    if isinstance(nonce, int):
-        if nonce < 0:
-            raise ValueError("nonce must be non-negative")
-        return nonce.to_bytes(8, "big")
-    if isinstance(nonce, str):
-        s = nonce[2:] if nonce.startswith("0x") else nonce
-        if len(s) % 2:
-            s = "0" + s
-        return bytes.fromhex(s)
-    raise ValueError("nonce must be hex string, int, or bytes")
-
-
 def _hex_to_bytes(hex_str: str) -> bytes:
     """
     Convert a hex string to bytes, handling both "0x" prefixed and unprefixed formats.
@@ -362,7 +347,22 @@ def _hex_to_bytes(hex_str: str) -> bytes:
         bytes: The decoded bytes
     """
     s = hex_str[2:] if hex_str.startswith("0x") else hex_str
+    # Pad with leading zero if odd length (ensures valid hex pairs)
+    if len(s) % 2:
+        s = "0" + s
     return bytes.fromhex(s)
+
+
+def _parse_nonce(nonce: Any) -> bytes:
+    if isinstance(nonce, (bytes, bytearray)):
+        return bytes(nonce)
+    if isinstance(nonce, int):
+        if nonce < 0:
+            raise ValueError("nonce must be non-negative")
+        return nonce.to_bytes(8, "big")
+    if isinstance(nonce, str):
+        return _hex_to_bytes(nonce)
+    raise ValueError("nonce must be hex string, int, or bytes")
 
 
 def _record_local_block(

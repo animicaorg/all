@@ -41,14 +41,14 @@ from tests.integration import env
 def _http_timeout() -> float:
     try:
         return float(env("ANIMICA_HTTP_TIMEOUT", "10"))
-    except Exception:
+    except (ValueError, TypeError):
         return 10.0
 
 
 def _mining_timeout() -> float:
     try:
         return float(env("ANIMICA_MINING_TIMEOUT", "60"))
-    except Exception:
+    except (ValueError, TypeError):
         return 60.0
 
 
@@ -109,7 +109,7 @@ def test_mining_consumes_mempool_transactions():
     # Skip if RPC is not available
     try:
         head_before = _rpc_call(rpc_url, "chain.getHead")
-    except Exception as e:
+    except (urllib.error.URLError, ConnectionError, TimeoutError, OSError, AssertionError) as e:
         pytest.skip(f"RPC not available at {rpc_url}: {e}")
     
     # Get initial chain height
@@ -126,7 +126,7 @@ def test_mining_consumes_mempool_transactions():
     print(f"Mining initial block at height {height_before}...")
     try:
         mine_result = _rpc_call(rpc_url, "miner.mine", {"count": 1})
-    except Exception as e:
+    except (urllib.error.URLError, ConnectionError, TimeoutError, OSError, AssertionError) as e:
         pytest.skip(f"miner.mine RPC not available: {e}")
     
     mined_count = mine_result.get("mined", 0)
@@ -139,7 +139,7 @@ def test_mining_consumes_mempool_transactions():
     # Step 2: Check mempool is empty
     try:
         mempool_before = _rpc_call(rpc_url, "mempool.getPending")
-    except Exception:
+    except (urllib.error.URLError, ConnectionError, TimeoutError, OSError, AssertionError):
         # If mempool.getPending is not available, skip this test
         pytest.skip("mempool.getPending RPC not available")
     
