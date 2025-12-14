@@ -1380,10 +1380,10 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
         # This ensures the same set of transactions always produces the same txsRoot,
         # regardless of mempool iteration order or insertion order.
         # Canonical rule: sort by tx.hash() bytes (lexicographic order)
-        if valid_txs:
+        if txs:
             try:
                 # Create list of (tx_hash, tx, included_hash_hex) tuples for sorting
-                tx_tuples = list(zip(leaves, valid_txs, included_hashes))
+                tx_tuples = list(zip(leaves, txs, included_hashes))
                 # Sort by tx_hash bytes (first element of tuple)
                 tx_tuples_sorted = sorted(tx_tuples, key=lambda t: t[0])
                 # Unpack sorted tuples back into separate lists
