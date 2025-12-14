@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import dataclasses as _dc
 import logging
 import os
@@ -856,6 +857,54 @@ def _pending_put(tx_hash_hex: str, raw: bytes) -> None:
     _FALLBACK_PENDING_TS[tx_hash_hex] = time.time()
 
 
+def _gossip_tx_to_peers(raw_tx: bytes) -> None:
+    """
+    Gossip a transaction to connected P2P peers.
+    
+    This function attempts to publish the transaction to the 'txs' topic
+    on the P2P gossip network. It's called after a transaction is successfully
+    admitted to the local pending pool via RPC.
+    
+    Args:
+        raw_tx: Raw CBOR-encoded transaction bytes
+    """
+    try:
+        # Get P2P service from RPC context
+        ctx = deps.get_ctx()
+        if not hasattr(ctx, 'p2p_service') or ctx.p2p_service is None:
+            log.debug("P2P service not available; tx not gossiped")
+            return
+        
+        p2p_service = ctx.p2p_service
+        
+        # Check if gossip engine is available
+        if not hasattr(p2p_service, 'gossip'):
+            log.debug("P2P gossip engine not available; tx not gossiped")
+            return
+        
+        gossip_engine = p2p_service.gossip
+        
+        # Check if publish method exists and is callable
+        if not hasattr(gossip_engine, 'publish') or not callable(gossip_engine.publish):
+            log.debug("P2P gossip publish method not available; tx not gossiped")
+            return
+        
+        # Publish to 'txs' topic
+        # Note: gossip.publish is async, but we're calling from sync context
+        # Use asyncio.ensure_future() which works whether or not a loop is running
+        try:
+            loop = asyncio.get_running_loop()
+            # Loop is running; schedule the coroutine as a task
+            asyncio.ensure_future(gossip_engine.publish('txs', raw_tx), loop=loop)
+            log.debug("Scheduled tx gossip to peers")
+        except RuntimeError:
+            # No running loop; log and skip (gossip will not work in this context)
+            log.debug("No running event loop; tx not gossiped to peers")
+                
+    except Exception as e:
+        log.debug("Failed to gossip tx to P2P peers: %s", e)
+
+
 def _pending_get(tx_hash_hex: str) -> bytes | None:
     if _PEND is not None and hasattr(_PEND, "get_raw"):
         return _PEND.get_raw(tx_hash_hex)  # type: ignore[attr-defined]
@@ -1043,6 +1092,12 @@ def _tx_send_raw_transaction(rawTx: str) -> str:
                 deps.ws_broadcast_pending(tx_hash_hex, obj)  # type: ignore
         except Exception:
             pass
+
+        # Gossip to P2P peers (best-effort)
+        try:
+            _gossip_tx_to_peers(raw)
+        except Exception as e:
+            log.debug("Failed to gossip tx to peers: %s", e)
 
         return tx_hash_hex
     except rpc_errors.BadSignature as e:
