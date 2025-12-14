@@ -78,7 +78,7 @@ def _bytes32(val: Any) -> bytes:
     return b[:32]
 
 
-def txid_bytes(tx: Any, raw: bytes | None = None) -> bytes:
+def txid_bytes(tx: Tx | dict | bytes, raw: bytes | None = None) -> bytes:
     """
     Canonical txid helper used everywhere in mining/block assembly.
     
@@ -1318,7 +1318,6 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
         leaves = []
         valid_txs = []
         valid_hashes = []
-        skipped_count = 0
         
         for i, tx in enumerate(txs):
             try:
@@ -1329,19 +1328,11 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
                 # Keep corresponding hash from included_hashes if available
                 if i < len(included_hashes):
                     valid_hashes.append(included_hashes[i])
-                skipped_count = 0  # Reset skip counter on success
             except Exception as e:
-                skipped_count += 1
                 log.debug(
                     f"Skipping malformed tx {i+1}/{len(txs)}: {e}",
                     extra={"tx_type": type(tx).__name__, "err": str(e)}
                 )
-                # Log warning only if we've skipped multiple txs
-                if skipped_count >= 3:
-                    log.warning(
-                        f"Skipped {skipped_count} malformed transactions from pending set",
-                        extra={"total_pending": len(txs), "valid": len(valid_txs)}
-                    )
         
         # Calculate counts before reassigning
         original_count = len(txs)
