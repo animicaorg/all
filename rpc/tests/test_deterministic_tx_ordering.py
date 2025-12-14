@@ -194,11 +194,29 @@ if __name__ == "__main__":
     # Run tests manually if pytest not available
     print("Running deterministic transaction ordering tests...\n")
     
-    test_sorted_merkle_leaves_produce_deterministic_root()
-    test_block_txs_root_handles_reordered_transactions()
-    test_empty_block_txs_root_is_zero()
-    test_single_transaction_block_has_consistent_root()
+    failed = []
+    tests = [
+        ("test_sorted_merkle_leaves_produce_deterministic_root", test_sorted_merkle_leaves_produce_deterministic_root),
+        ("test_block_txs_root_handles_reordered_transactions", test_block_txs_root_handles_reordered_transactions),
+        ("test_empty_block_txs_root_is_zero", test_empty_block_txs_root_is_zero),
+        ("test_single_transaction_block_has_consistent_root", test_single_transaction_block_has_consistent_root),
+    ]
+    
+    for test_name, test_func in tests:
+        try:
+            test_func()
+        except Exception as e:
+            print(f"✗ {test_name} FAILED: {e}")
+            failed.append(test_name)
     
     print("\n" + "="*70)
-    print("All deterministic ordering tests passed!")
-    print("="*70)
+    if not failed:
+        print("All deterministic ordering tests passed!")
+        print("="*70)
+    else:
+        print(f"FAILED: {len(failed)}/{len(tests)} tests failed:")
+        for name in failed:
+            print(f"  - {name}")
+        print("="*70)
+        import sys
+        sys.exit(1)
