@@ -91,7 +91,23 @@ def _has_blake3() -> bool:
         return False
 
 
-features = _detect_features()
+# Make features lazy to avoid triggering liboqs warnings on module import
+# Users who need feature detection can call features() explicitly
+_features_cache: dict[str, bool] | None = None
+
+def features() -> dict[str, bool]:
+    """
+    Get detected runtime features/backends.
+    
+    Returns:
+        dict: {"liboqs": bool, "blake3": bool}
+        
+    This is cached after first call to avoid repeated detection overhead.
+    """
+    global _features_cache
+    if _features_cache is None:
+        _features_cache = _detect_features()
+    return _features_cache.copy()
 
 
 def banner() -> str:
@@ -99,6 +115,7 @@ def banner() -> str:
     Return a small one-line banner suitable for logs.
     Example: 'animica-pq 0.1.0 (liboqs=yes, blake3=no)'
     """
-    liboqs = "yes" if features.get("liboqs") else "no"
-    blake3 = "yes" if features.get("blake3") else "no"
+    feat = features()
+    liboqs = "yes" if feat.get("liboqs") else "no"
+    blake3 = "yes" if feat.get("blake3") else "no"
     return f"animica-pq {__version__} (liboqs={liboqs}, blake3={blake3})"
