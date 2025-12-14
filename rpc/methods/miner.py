@@ -1068,7 +1068,7 @@ def _execute_transactions(
 
         # Pad/truncate to address length (consistent with _as_bytes32_addr)
         # ljust = left-justify = pad on the right with zeros
-        # Truncate from left to keep rightmost bytes
+        # [:ADDRESS_LEN] truncates from the right to keep leftmost bytes
         if len(sender_bytes) < ADDRESS_LEN:
             sender_bytes = sender_bytes.ljust(ADDRESS_LEN, b"\x00")
         elif len(sender_bytes) > ADDRESS_LEN:
