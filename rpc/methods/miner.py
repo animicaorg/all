@@ -58,6 +58,23 @@ _LOCAL_HEAD: dict[str, Any] = {}
 _AUTO_MINE: bool = False
 _AUTO_TASK: asyncio.Task | None = None
 
+# Hash tracking map for transactions from adapter and fallback pending cache
+# Maps id(tx_obj) -> (tx_hash_hex, raw_bytes)
+# Used to track original hashes (from _FALLBACK_PENDING dict keys) when evicting from mempool
+# This is necessary because Tx dataclasses are frozen and we can't store the hash as an attribute
+#
+# NOTE: Using id(tx_obj) as key has a small collision risk if Python reuses IDs after GC,
+# but this is acceptable because:
+# 1. The map is short-lived (only during mining)
+# 2. Entries are cleaned up immediately after use (success or failure)
+# 3. Collision would only cause fallback to txid_bytes() computation (safe degradation)
+#
+# Thread safety: This global is not thread-safe, but it's acceptable because:
+# 1. RPC methods are called sequentially within the same FastAPI worker process
+# 2. Mining operations (_mine_once) are synchronous and complete before next RPC call
+# 3. If concurrent mining is needed in the future, add threading.Lock
+_TX_HASH_MAP: dict[int, tuple[str, bytes]] = {}
+
 
 def _to_hex(b: bytes | None) -> str | None:
     return None if b is None else "0x" + b.hex()
@@ -592,6 +609,8 @@ def _adapter() -> CoreChainAdapter:
                 
                 This reads from rpc.methods.tx._FALLBACK_PENDING which is where transactions
                 are stored when submitted via the RPC tx.sendRawTransaction method.
+                
+                Returns a list of Tx objects. Uses _tx_hash_map to track original hashes.
                 """
                 txs = []
                 try:
@@ -638,6 +657,11 @@ def _adapter() -> CoreChainAdapter:
                                 # Skip this tx if it would exceed limits
                                 log.debug(f"drain_fn: Skipping tx {tx_hash_hex} - would exceed limits (gas: {total_gas + tx_gas} > {max_gas} or bytes: {total_bytes + tx_bytes} > {max_bytes})")
                                 continue
+                            
+                            # Store the original tx hash in the global mapping (keyed by object id)
+                            # This ensures we can remove the correct entry from _FALLBACK_PENDING later
+                            # even though Tx dataclasses are frozen and we can't set attributes
+                            _TX_HASH_MAP[id(tx_obj)] = (tx_hash_hex, raw)
                             
                             txs.append(tx_obj)
                             total_gas += tx_gas
@@ -1099,13 +1123,20 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
         if txs:
             log.info(f"_mine_once: Sample tx types from adapter: {[type(tx).__name__ for tx in txs[:3]]}")
         # Track hashes of transactions from adapter for eviction later
-        # Use canonical txid_bytes() helper to support multiple tx representations
+        # Use the _TX_HASH_MAP created by drain_fn to get the original hashes
         for tx in txs:
             try:
-                tx_hash_bytes = txid_bytes(tx)
-                tx_hash_hex = "0x" + tx_hash_bytes.hex()
-                included_hashes.append(tx_hash_hex)
-                log.debug(f"Tracked tx hash from adapter: {tx_hash_hex}")
+                # Try to get the hash from the global mapping (set by drain_fn)
+                if id(tx) in _TX_HASH_MAP:
+                    tx_hash_hex, raw = _TX_HASH_MAP[id(tx)]
+                    included_hashes.append(tx_hash_hex)
+                    log.debug(f"Tracked tx hash from adapter (mapped): {tx_hash_hex}")
+                else:
+                    # Fallback: compute hash from txid_bytes() helper
+                    tx_hash_bytes = txid_bytes(tx)
+                    tx_hash_hex = "0x" + tx_hash_bytes.hex()
+                    included_hashes.append(tx_hash_hex)
+                    log.debug(f"Tracked tx hash from adapter (computed): {tx_hash_hex}")
             except Exception as e:
                 # txid_bytes() may fail for malformed tx; log and skip this tx for eviction tracking
                 log.debug(f"Could not get hash for tx from adapter; skipping eviction tracking: {e}")
@@ -1313,7 +1344,7 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
     header_template = _build_child_header(parent_height, parent_hash_bytes, parent_header)
 
     if txs:
-        # Build merkle root from tx hashes using safe txid_bytes() helper
+        # Build merkle root from tx hashes using original raw bytes (canonical)
         # Drop individual malformed txs instead of failing the whole batch
         leaves = []
         valid_txs = []
@@ -1321,8 +1352,14 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
         
         for i, tx in enumerate(txs):
             try:
-                # Use canonical txid_bytes() helper that supports multiple tx formats
-                tx_hash = txid_bytes(tx)
+                # Use original raw bytes if available (from global mapping)
+                if id(tx) in _TX_HASH_MAP:
+                    _, raw = _TX_HASH_MAP[id(tx)]
+                    # Compute from original CBOR bytes (canonical)
+                    tx_hash = hashlib.sha3_256(raw).digest()
+                else:
+                    # Fallback to txid_bytes helper
+                    tx_hash = txid_bytes(tx)
                 leaves.append(tx_hash)
                 valid_txs.append(tx)
                 # Keep corresponding hash from included_hashes if available
@@ -1423,13 +1460,20 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
                         "failed to compute receipts root; defaulting to zero", extra={"err": str(e)}
                     )
 
-            # Recompute txsRoot using safe txid_bytes() helper
+            # Recompute txsRoot using original raw bytes (for canonical hash)
             try:
                 if txs:
                     leaves = []
                     for tx in txs:
                         try:
-                            leaves.append(txid_bytes(tx))
+                            # Use original raw bytes if available (from global mapping)
+                            if id(tx) in _TX_HASH_MAP:
+                                _, raw = _TX_HASH_MAP[id(tx)]
+                                # Compute from original CBOR bytes (canonical)
+                                leaves.append(hashlib.sha3_256(raw).digest())
+                            else:
+                                # Fallback to txid_bytes helper
+                                leaves.append(txid_bytes(tx))
                         except Exception as e:
                             log.warning(f"Failed to compute hash for tx in final root: {e}")
                     txs_root = merkle_root(leaves) if leaves else ZERO32
@@ -1527,6 +1571,13 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
                             log.info(f"Evicted {evicted_count} included transactions from fallback cache")
                     except Exception as e:
                         log.warning(f"Failed to evict from fallback cache: {e}")
+                    
+                    # 3. Clean up the hash mapping for evicted transactions
+                    try:
+                        for tx in txs:
+                            _TX_HASH_MAP.pop(id(tx), None)
+                    except Exception as e:
+                        log.warning(f"Failed to clean up hash mapping: {e}")
 
                 log.info(
                     f"Mined block at height {header.height} with nonce {nonce_val} "
@@ -1543,6 +1594,15 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
         f"Failed to mine block at height {parent_height + 1} after {max_nonce} attempts "
         f"(target: {target}, theta: {theta_micro})"
     )
+    
+    # Clean up hash map entries for transactions that weren't successfully mined
+    # to prevent memory leaks
+    try:
+        for tx in txs:
+            _TX_HASH_MAP.pop(id(tx), None)
+    except Exception as e:
+        log.warning(f"Failed to clean up hash mapping after mining failure: {e}")
+    
     return (False, 0)
 
 
