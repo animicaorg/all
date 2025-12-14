@@ -99,6 +99,7 @@ class NodeService:
     ping: pingsvc.PingService = field(init=False)
     identify: idsvc.IdentifyService = field(init=False)
     flowctl: proto_flow.FlowController = field(init=False)
+    tx_relay_handler: Any = field(init=False)  # TxRelayHandler
 
     # crypto/ids
     node_keys: Any = field(init=False)
@@ -174,6 +175,9 @@ class NodeService:
             )
             self._listeners.append(_Listener(addr=addr, listener=listener, task=task))
 
+        # Start TxRelayHandler (subscribe to gossip topic)
+        await self.tx_relay_handler.start()
+        
         # Start background services
         self._tasks.extend(
             [
@@ -197,6 +201,9 @@ class NodeService:
             return
         self.stopping = True
         log.info("P2P node stopping")
+
+        # Stop TxRelayHandler
+        await self.tx_relay_handler.stop()
 
         # Stop background tasks
         for t in self._tasks:
@@ -335,15 +342,14 @@ class NodeService:
                 cfg=self.cfg, codec=codec, deps=self.deps, gossip=self.gossip
             )
         )
-        self.router.add_handler(
-            proto_tx.TxRelayHandler(
-                cfg=self.cfg,
-                codec=codec,
-                deps=self.deps,
-                gossip=self.gossip,
-                ratelimiter=self.ratelimiter,
-            )
+        self.tx_relay_handler = proto_tx.TxRelayHandler(
+            cfg=self.cfg,
+            codec=codec,
+            deps=self.deps,
+            gossip=self.gossip,
+            ratelimiter=self.ratelimiter,
         )
+        self.router.add_handler(self.tx_relay_handler)
         self.router.add_handler(
             proto_share.ShareRelayHandler(
                 cfg=self.cfg,
