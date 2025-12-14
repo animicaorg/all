@@ -58,9 +58,10 @@ _LOCAL_HEAD: dict[str, Any] = {}
 _AUTO_MINE: bool = False
 _AUTO_TASK: asyncio.Task | None = None
 
-# Hash tracking map for transactions from adapter
+# Hash tracking map for transactions from adapter and fallback pending cache
 # Maps id(tx_obj) -> (tx_hash_hex, raw_bytes)
-# Used to track original hashes when evicting from mempool
+# Used to track original hashes (from _FALLBACK_PENDING dict keys) when evicting from mempool
+# This is necessary because Tx dataclasses are frozen and we can't store the hash as an attribute
 _TX_HASH_MAP: dict[int, tuple[str, bytes]] = {}
 
 
