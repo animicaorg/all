@@ -45,6 +45,10 @@ INTRINSIC_GAS_TRANSFER = 21_000  # Intrinsic gas cost for simple transfers
 # Logging display constants
 MAX_DISPLAYED_TX_HASHES = 3  # Maximum number of transaction hashes to display in logs
 
+# Mempool drain limits for block building
+DEFAULT_BLOCK_GAS_LIMIT = 100_000_000_000  # 100 billion gas (very high limit for devnet)
+DEFAULT_BLOCK_BYTE_LIMIT = 1_000_000_000  # 1GB block size limit
+
 # In-memory job cache for miner.getWork / miner.submitWork flows
 _JOB_CACHE: dict[str, dict[str, Any]] = {}
 _LOCAL_HEAD: dict[str, Any] = {}
@@ -463,18 +467,19 @@ def _adapter() -> CoreChainAdapter:
             # CoreChainAdapter expects: peek_ready(limit, gas_limit) -> Iterable[Tx]
             class MinerFeedAdapter:
                 """Adapter that provides peek_ready interface for CoreChainAdapter."""
-                def __init__(self, feed):
+                def __init__(self, feed: "MinerFeed"):
                     self._feed = feed
                 
                 def peek_ready(self, limit: int = 1000, gas_limit: int | None = None):
                     """Return an iterable of ready transactions (without removing them from pool)."""
-                    # Convert gas_limit to max_gas (default to large number if None)
-                    max_gas = gas_limit if gas_limit is not None else 100_000_000_000
-                    # Use a large byte limit (1GB)
-                    max_bytes = 1_000_000_000
+                    # Convert gas_limit to max_gas (use constant if None)
+                    max_gas = gas_limit if gas_limit is not None else DEFAULT_BLOCK_GAS_LIMIT
+                    max_bytes = DEFAULT_BLOCK_BYTE_LIMIT
                     
-                    # Drain transactions (this reads from _FALLBACK_PENDING)
-                    txs = self._feed._drain(max_gas, max_bytes)
+                    # Use next_batch() instead of private _drain() method
+                    # next_batch returns a MinerTxBatch with a txs attribute
+                    batch = self._feed.next_batch(max_gas, max_bytes, wait_s=0)
+                    txs = batch.txs if hasattr(batch, 'txs') else []
                     
                     # Return up to limit transactions
                     return txs[:limit] if limit else txs
