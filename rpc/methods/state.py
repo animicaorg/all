@@ -220,7 +220,88 @@ def state_get_nonce(address: str, tag: str = "latest") -> int:
     tag = (tag or "latest").lower()
     if tag not in ("latest", "pending", "safe", "finalized"):
         tag = "latest"
-    return int(_svc_nonce(addr, tag=tag))
+    nonce = int(_svc_nonce(addr, tag=tag))
+    
+    # For "pending" tag, check mempool for higher nonce
+    if tag == "pending":
+        pending_nonce = _svc_pending_nonce(addr)
+        return max(nonce, pending_nonce)
+    
+    return nonce
+
+
+def _svc_pending_nonce(addr: str) -> int:
+    """
+    Calculate pending nonce by checking mempool for pending transactions.
+    
+    Returns the highest nonce found in pending transactions + 1, or committed nonce if no pending txs.
+    """
+    committed_nonce = _svc_nonce(addr, tag="latest")
+    
+    # Try to access pending pool to find highest pending nonce
+    try:
+        from rpc.methods import tx as tx_methods
+        
+        pending_map = getattr(tx_methods, "_FALLBACK_PENDING", {}) or {}
+        if not pending_map:
+            return committed_nonce
+        
+        # Normalize address for comparison
+        addr_normalized = addr.lower().strip()
+        
+        highest_pending_nonce = committed_nonce - 1
+        
+        for tx_hash_hex, raw in pending_map.items():
+            try:
+                # Decode transaction to check sender and nonce
+                decoded, obj = tx_methods._decode_tx(raw)  # type: ignore[attr-defined]
+                
+                # Extract sender from body
+                body = obj.get("body", {}) if isinstance(obj, dict) else {}
+                tx_from = body.get("from", body.get("sender", ""))
+                
+                # Normalize tx sender for comparison
+                if isinstance(tx_from, bytes):
+                    tx_from_str = "0x" + tx_from.hex()
+                elif isinstance(tx_from, str):
+                    tx_from_str = tx_from.lower().strip()
+                else:
+                    continue
+                
+                # Check if this tx is from our address
+                if tx_from_str == addr_normalized or tx_from_str == addr_normalized.replace("0x", ""):
+                    tx_nonce = body.get("nonce", 0)
+                    if isinstance(tx_nonce, int) and tx_nonce > highest_pending_nonce:
+                        highest_pending_nonce = tx_nonce
+            except Exception:
+                # Skip transactions we can't decode
+                continue
+        
+        # Return highest pending nonce + 1, or committed nonce if no pending txs
+        if highest_pending_nonce >= committed_nonce:
+            return highest_pending_nonce + 1
+        
+    except Exception:
+        # If anything fails, return committed nonce
+        pass
+    
+    return committed_nonce
+
+
+@method(
+    "state.getPendingNonce",
+    desc="Return the pending nonce for an address (includes pending transactions in mempool).",
+    aliases=("state_getPendingNonce", "tx.getTransactionCount"),
+)
+def state_get_pending_nonce(address: str) -> int:
+    """
+    Get pending nonce for an address (committed nonce + count of pending transactions).
+    
+    This is the nonce that should be used for the next transaction submission
+    to avoid nonce reuse.
+    """
+    addr = _validate_address(address)
+    return int(_svc_pending_nonce(addr))
 
 
 @method(
