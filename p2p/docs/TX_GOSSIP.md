@@ -59,7 +59,7 @@ Remote Peer → GossipEngine → TxRelayHandler → TxRelayGate → Mempool
 1. Remote peer publishes a transaction to the `txs` gossip topic
 2. GossipEngine receives the message and forwards to TxRelayHandler's `_handle_gossip_tx()`
 3. TxRelayGate performs fast admission checks:
-   - Size bounds (reject if > MAX_TX_BYTES = 1 MiB)
+   - Size bounds (reject if > MAX_TX_BYTES = 512 KiB)
    - Bloom filter deduplication (reject if already seen)
    - Optional fast signature domain precheck
 4. If admitted by gate, decode transaction from CBOR
@@ -241,7 +241,7 @@ pytest p2p/tests/test_tx_gossip_integration.py -v
 ### DoS Protection
 
 1. **Rate Limiting**: Per-peer token buckets prevent spam
-2. **Size Limits**: MAX_TX_BYTES = 1 MiB hard cap per tx
+2. **Size Limits**: MAX_TX_BYTES = 512 KiB hard cap per tx
 3. **Bloom Filter**: Dedupe prevents re-processing same tx
 4. **Peer Scoring**: Low-quality peers (invalid msgs) get pruned
 

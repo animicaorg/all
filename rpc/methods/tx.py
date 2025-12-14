@@ -880,15 +880,18 @@ def _gossip_tx_to_peers(raw_tx: bytes) -> None:
         # Use TxRelayHandler if available (preferred path)
         if hasattr(p2p_service, 'tx_relay_handler'):
             tx_relay_handler = p2p_service.tx_relay_handler
-            if hasattr(tx_relay_handler, 'publish_local_tx') and callable(tx_relay_handler.publish_local_tx):
-                try:
-                    loop = asyncio.get_running_loop()
-                    asyncio.ensure_future(tx_relay_handler.publish_local_tx(raw_tx), loop=loop)
-                    log.debug("Scheduled tx gossip via TxRelayHandler")
-                    return
-                except RuntimeError:
-                    log.debug("No running event loop; tx not gossiped to peers")
-                    return
+            try:
+                loop = asyncio.get_running_loop()
+                asyncio.ensure_future(tx_relay_handler.publish_local_tx(raw_tx), loop=loop)
+                log.debug("Scheduled tx gossip via TxRelayHandler")
+                return
+            except RuntimeError:
+                log.debug("No running event loop; tx not gossiped to peers")
+                return
+            except AttributeError:
+                # Handler exists but publish_local_tx method missing; fall through to legacy path
+                log.debug("TxRelayHandler missing publish_local_tx; falling back to direct gossip")
+                pass
         
         # Fallback: direct gossip engine access (legacy path)
         if not hasattr(p2p_service, 'gossip'):

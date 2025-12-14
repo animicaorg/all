@@ -203,8 +203,7 @@ class NodeService:
         log.info("P2P node stopping")
 
         # Stop TxRelayHandler
-        if hasattr(self, 'tx_relay_handler'):
-            await self.tx_relay_handler.stop()
+        await self.tx_relay_handler.stop()
 
         # Stop background tasks
         for t in self._tasks:
