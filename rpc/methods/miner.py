@@ -49,6 +49,9 @@ MAX_DISPLAYED_TX_HASHES = 3  # Maximum number of transaction hashes to display i
 DEFAULT_BLOCK_GAS_LIMIT = 100_000_000_000  # 100 billion gas (very high limit for devnet)
 DEFAULT_BLOCK_BYTE_LIMIT = 1_000_000_000  # 1GB block size limit
 
+# Default gas limit for transactions when not specified (same as INTRINSIC_GAS_TRANSFER)
+DEFAULT_TX_GAS_LIMIT = INTRINSIC_GAS_TRANSFER  # 21,000 gas for simple transfers
+
 # In-memory job cache for miner.getWork / miner.submitWork flows
 _JOB_CACHE: dict[str, dict[str, Any]] = {}
 _LOCAL_HEAD: dict[str, Any] = {}
@@ -379,6 +382,40 @@ def auto_mine_enabled() -> bool:
     return _AUTO_MINE
 
 
+def _get_tx_gas_limit(tx_obj: Any) -> int:
+    """
+    Extract gas_limit from a Tx object.
+    
+    Handles both flat and nested structures:
+    - Flat: tx.gas_limit or tx.gas
+    - Nested: tx.unsigned.gas_limit (Tx dataclass structure)
+    
+    Args:
+        tx_obj: Transaction object (Tx instance or dict-like)
+        
+    Returns:
+        Gas limit as integer, defaults to DEFAULT_TX_GAS_LIMIT (21,000) if not found
+    """
+    # Try flat gas_limit attribute
+    tx_gas = getattr(tx_obj, "gas_limit", None)
+    if tx_gas is not None:
+        return int(tx_gas)
+    
+    # Try nested unsigned.gas_limit (Tx dataclass structure)
+    if hasattr(tx_obj, "unsigned"):
+        tx_gas = getattr(tx_obj.unsigned, "gas_limit", None)
+        if tx_gas is not None:
+            return int(tx_gas)
+    
+    # Try flat gas attribute (alternative naming)
+    tx_gas = getattr(tx_obj, "gas", None)
+    if tx_gas is not None:
+        return int(tx_gas)
+    
+    # Default to intrinsic gas for simple transfers
+    return DEFAULT_TX_GAS_LIMIT
+
+
 def _adapter() -> CoreChainAdapter:
     """
     Create a CoreChainAdapter with mempool feed for block building.
@@ -413,7 +450,9 @@ def _adapter() -> CoreChainAdapter:
                 txs = []
                 try:
                     pending_map = getattr(tx_methods, "_FALLBACK_PENDING", {}) or {}
+                    log.info(f"drain_fn called with max_gas={max_gas}, max_bytes={max_bytes}, pending_count={len(pending_map)}")
                     if not pending_map:
+                        log.info("drain_fn: No pending transactions in _FALLBACK_PENDING")
                         return []
                     
                     total_gas = 0
@@ -421,43 +460,56 @@ def _adapter() -> CoreChainAdapter:
                     
                     for tx_hash_hex, raw in pending_map.items():
                         try:
+                            log.debug(f"drain_fn: Processing tx {tx_hash_hex}, raw_len={len(raw)}")
                             # Decode the raw CBOR transaction
                             decoded, obj = tx_methods._decode_tx(raw)  # type: ignore[attr-defined]
+                            log.debug(f"drain_fn: Decoded tx {tx_hash_hex}, type={type(decoded).__name__}")
                             
                             # Try to construct a Tx instance
                             tx_obj = None
                             if isinstance(decoded, Tx):
                                 tx_obj = decoded
+                                log.debug(f"drain_fn: tx {tx_hash_hex} is already Tx instance")
                             elif isinstance(decoded, dict):
                                 # Normalize envelope format and try to construct Tx
                                 normalized = _normalize_tx_envelope(decoded)
+                                log.debug(f"drain_fn: Normalized tx {tx_hash_hex}, keys={list(normalized.keys())}")
                                 tx_obj = _construct_tx_from_dict(normalized)
+                                if tx_obj:
+                                    log.debug(f"drain_fn: Successfully constructed Tx from dict for {tx_hash_hex}")
+                                else:
+                                    log.warning(f"drain_fn: Failed to construct Tx from dict for {tx_hash_hex}")
                             
                             if tx_obj is None:
+                                log.warning(f"drain_fn: Skipping tx {tx_hash_hex} - could not construct Tx instance")
                                 continue
                             
                             # Check gas and byte limits
-                            tx_gas = getattr(tx_obj, "gas_limit", getattr(tx_obj, "gas", 21000))
+                            tx_gas = _get_tx_gas_limit(tx_obj)
                             tx_bytes = len(raw)
                             
                             if total_gas + tx_gas > max_gas or total_bytes + tx_bytes > max_bytes:
                                 # Skip this tx if it would exceed limits
+                                log.debug(f"drain_fn: Skipping tx {tx_hash_hex} - would exceed limits (gas: {total_gas + tx_gas} > {max_gas} or bytes: {total_bytes + tx_bytes} > {max_bytes})")
                                 continue
                             
                             txs.append(tx_obj)
                             total_gas += tx_gas
                             total_bytes += tx_bytes
+                            log.debug(f"drain_fn: Added tx {tx_hash_hex} to batch (total: {len(txs)}, gas: {total_gas}, bytes: {total_bytes})")
                             
                         except Exception as e:
-                            log.debug(f"Failed to decode tx {tx_hash_hex} in drain_fn: {e}")
+                            log.warning(f"drain_fn: Failed to decode tx {tx_hash_hex}: {e}", exc_info=True)
                             continue
                     
                     if txs:
-                        log.info(f"drain_fn returning {len(txs)} transactions from fallback pending cache")
+                        log.info(f"drain_fn returning {len(txs)} transactions from fallback pending cache (total_gas={total_gas}, total_bytes={total_bytes})")
+                    else:
+                        log.warning(f"drain_fn: Processed {len(pending_map)} pending txs but returned 0 (all failed or exceeded limits)")
                     return txs
                     
                 except Exception as e:
-                    log.warning(f"drain_fn failed: {e}")
+                    log.error(f"drain_fn failed with exception: {e}", exc_info=True)
                     return []
             
             # Create the MinerFeed with the drain function
@@ -472,17 +524,22 @@ def _adapter() -> CoreChainAdapter:
                 
                 def peek_ready(self, limit: int = 1000, gas_limit: int | None = None):
                     """Return an iterable of ready transactions (without removing them from pool)."""
+                    log.info(f"MinerFeedAdapter.peek_ready called with limit={limit}, gas_limit={gas_limit}")
                     # Convert gas_limit to max_gas (use constant if None)
                     max_gas = gas_limit if gas_limit is not None else DEFAULT_BLOCK_GAS_LIMIT
                     max_bytes = DEFAULT_BLOCK_BYTE_LIMIT
                     
                     # Use next_batch() instead of private _drain() method
                     # next_batch returns a MinerTxBatch with a txs attribute
+                    log.debug(f"MinerFeedAdapter.peek_ready calling next_batch(max_gas={max_gas}, max_bytes={max_bytes})")
                     batch = self._feed.next_batch(max_gas, max_bytes, wait_s=0)
                     txs = batch.txs if hasattr(batch, 'txs') else []
+                    log.info(f"MinerFeedAdapter.peek_ready: next_batch returned {len(txs)} transactions")
                     
                     # Return up to limit transactions
-                    return txs[:limit] if limit else txs
+                    result = txs[:limit] if limit else txs
+                    log.info(f"MinerFeedAdapter.peek_ready returning {len(result)} transactions")
+                    return result
             
             miner_feed = MinerFeedAdapter(base_feed)
             log.info("Created MinerFeed connected to RPC fallback pending cache")
@@ -722,13 +779,22 @@ def _construct_tx_from_dict(normalized: dict) -> Tx | None:
     1. Tx.from_obj() (preferred)
     2. Tx.from_dict() (fallback)
     
-    Returns Tx instance or None if no constructor available.
+    Returns Tx instance or None if construction fails or no constructor available.
     """
     if hasattr(Tx, "from_obj"):
-        return Tx.from_obj(normalized)  # type: ignore[attr-defined]
+        try:
+            return Tx.from_obj(normalized)  # type: ignore[attr-defined]
+        except Exception as e:
+            log.warning(f"_construct_tx_from_dict: Tx.from_obj failed: {e}", exc_info=True)
+            return None
     elif hasattr(Tx, "from_dict"):
-        return Tx.from_dict(normalized)  # type: ignore[attr-defined]
+        try:
+            return Tx.from_dict(normalized)  # type: ignore[attr-defined]
+        except Exception as e:
+            log.warning(f"_construct_tx_from_dict: Tx.from_dict failed: {e}", exc_info=True)
+            return None
     else:
+        log.warning("_construct_tx_from_dict: Tx class has no from_obj or from_dict method")
         return None
 
 
@@ -767,8 +833,10 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
     included_hashes: list[str] = []
 
     # Collect pending transactions from the best available source (mempool → fallback cache)
+    log.info("_mine_once: Starting transaction collection from mempool adapter")
     try:
         txs = list(adapter.get_mempool_snapshot(limit=1000))
+        log.info(f"_mine_once: adapter.get_mempool_snapshot returned {len(txs)} transactions")
         # Track hashes of transactions from adapter for eviction later
         for tx in txs:
             try:
@@ -781,23 +849,28 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
         if txs:
             log.info(f"Retrieved {len(txs)} transactions from mempool adapter for mining")
     except Exception as e:
-        log.debug(f"mempool snapshot unavailable; falling back to in-process cache: {e}")
+        log.warning(f"mempool snapshot unavailable; falling back to in-process cache: {e}", exc_info=True)
     if not txs:
+        log.info("_mine_once: No transactions from adapter, trying fallback pending cache")
         try:
             from rpc.methods import tx as tx_methods
 
             pending_map = getattr(tx_methods, "_FALLBACK_PENDING", {}) or {}
             pending_count = len(pending_map)
+            log.info(f"_mine_once: Found {pending_count} transactions in fallback pending cache")
             if pending_count > 0:
                 log.info(f"Attempting to retrieve {pending_count} transactions from fallback pending cache")
             for tx_hash_hex, raw in pending_map.items():
                 try:
+                    log.debug(f"_mine_once: Decoding tx {tx_hash_hex} from fallback")
                     decoded, obj = tx_methods._decode_tx(raw)  # type: ignore[attr-defined]
+                    log.debug(f"_mine_once: Decoded tx {tx_hash_hex}, type={type(decoded).__name__}")
                     # Accept both Tx instances and dict/obj that can be used as Tx
                     # _decode_tx returns (Tx, dict) when Tx.from_obj succeeds, or (dict, dict) when falling back to dict
                     if isinstance(decoded, Tx):
                         txs.append(decoded)
                         included_hashes.append(tx_hash_hex)
+                        log.debug(f"_mine_once: Added Tx instance {tx_hash_hex} to txs list")
                     elif decoded is not None and isinstance(decoded, dict):
                         # Try to construct Tx from the decoded dict
                         # The dict may be in one of two formats:
@@ -806,12 +879,14 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
                         try:
                             # Normalize RPC envelope format to core format if needed
                             normalized = _normalize_tx_envelope(decoded)
+                            log.debug(f"_mine_once: Normalized tx {tx_hash_hex}, keys={list(normalized.keys())}")
                             
                             # Try to construct Tx using available constructor methods
                             tx_obj = _construct_tx_from_dict(normalized)
                             if tx_obj is not None:
                                 txs.append(tx_obj)
                                 included_hashes.append(tx_hash_hex)
+                                log.debug(f"_mine_once: Successfully constructed and added Tx from dict for {tx_hash_hex}")
                             else:
                                 log.warning(
                                     "Tx class has no from_obj/from_dict method; skipping tx from fallback cache",
@@ -821,18 +896,20 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
                             log.warning(
                                 "Could not convert decoded tx to Tx instance; skipping from fallback cache",
                                 extra={"hash": tx_hash_hex, "err": str(e), "keys": list(decoded.keys() if isinstance(decoded, dict) else [])},
+                                exc_info=True,
                             )
                 except Exception as e:
                     log.warning(
                         "Failed to decode pending tx from fallback cache; skipping",
                         extra={"hash": tx_hash_hex, "err": str(e)},
+                        exc_info=True,
                     )
             if txs:
                 log.info(f"Retrieved {len(txs)}/{pending_count} transactions from fallback pending cache for mining")
             elif pending_count > 0:
                 log.warning(f"Failed to retrieve any of {pending_count} transactions from fallback pending cache")
         except Exception as e:
-            log.warning("Fallback pending pool unavailable", extra={"err": str(e)})
+            log.error("Fallback pending pool unavailable", extra={"err": str(e)}, exc_info=True)
     head = adapter.get_head()
     parent_height = int(head.get("height") or 0)
     parent_hash_val = head.get("hash") or head.get("hash_hex")
