@@ -1442,9 +1442,13 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
                             # Nonce matches - accept and increment expected nonce
                             sender_nonces[sender] = expected_nonce + 1
                         
+                        # Track tx hash and raw bytes for sender derivation later
+                        # This is critical for _attach_sender_if_possible to work
+                        _TX_HASH_MAP[id(decoded)] = (tx_hash_hex, raw)
+                        
                         txs.append(decoded)
                         included_hashes.append(tx_hash_hex)
-                        log.debug(f"_mine_once: Added Tx instance {tx_hash_hex} to txs list")
+                        log.debug(f"_mine_once: Added Tx instance {tx_hash_hex} to txs list (tracked for sender derivation)")
                     elif decoded is not None and isinstance(decoded, dict):
                         # Try to construct Tx from the decoded dict
                         # The dict may be in one of two formats:
@@ -1505,9 +1509,13 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
                                     # Nonce matches - accept and increment expected nonce
                                     sender_nonces[sender] = expected_nonce + 1
                                 
+                                # Track tx hash and raw bytes for sender derivation later
+                                # This is critical for _attach_sender_if_possible to work
+                                _TX_HASH_MAP[id(tx_obj)] = (tx_hash_hex, raw)
+                                
                                 txs.append(tx_obj)
                                 included_hashes.append(tx_hash_hex)
-                                log.debug(f"_mine_once: Successfully constructed and added Tx from dict for {tx_hash_hex}")
+                                log.debug(f"_mine_once: Successfully constructed and added Tx from dict for {tx_hash_hex} (tracked for sender derivation)")
                             else:
                                 log.warning(
                                     "Tx class has no from_obj/from_dict method; skipping tx from fallback cache",
