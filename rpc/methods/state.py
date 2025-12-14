@@ -239,6 +239,7 @@ def _svc_pending_nonce(addr: str) -> int:
     committed_nonce = _svc_nonce(addr, tag="latest")
     
     # Try to access pending pool to find highest pending nonce
+    # Import is inside function to avoid circular dependencies
     try:
         from rpc.methods import tx as tx_methods
         
@@ -256,6 +257,8 @@ def _svc_pending_nonce(addr: str) -> int:
         except Exception:
             return committed_nonce
         
+        # Start at committed_nonce - 1 so any pending nonce >= committed_nonce will be detected
+        # This ensures we return the highest pending nonce + 1
         highest_pending_nonce = committed_nonce - 1
         
         for tx_hash_hex, raw in pending_map.items():
@@ -301,7 +304,7 @@ def _svc_pending_nonce(addr: str) -> int:
 @method(
     "state.getPendingNonce",
     desc="Return the pending nonce for an address (includes pending transactions in mempool).",
-    aliases=("state_getPendingNonce", "tx.getTransactionCount"),
+    aliases=("state_getPendingNonce",),
 )
 def state_get_pending_nonce(address: str) -> int:
     """
