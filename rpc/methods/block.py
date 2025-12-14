@@ -103,16 +103,56 @@ def _compute_header_hash(header: t.Any) -> str | None:
 
 
 def _compute_tx_hash(tx: t.Any) -> str | None:
+    """
+    Compute transaction hash from a Tx object.
+    
+    Tries multiple methods in order:
+    1. tx.hash() or tx.txid() method (preferred, pre-computed)
+    2. Canonical sign bytes encoding
+    3. CBOR encoding of full tx structure
+    
+    Returns None only if all methods fail.
+    """
+    # Try direct hash method first (most efficient)
+    if hasattr(tx, "hash") and callable(getattr(tx, "hash")):
+        try:
+            h = tx.hash()
+            if isinstance(h, bytes):
+                return _hex(h)
+            elif isinstance(h, str):
+                return h if h.startswith("0x") else "0x" + h
+        except Exception:
+            pass
+    
+    # Try txid method (alias)
+    if hasattr(tx, "txid") and callable(getattr(tx, "txid")):
+        try:
+            h = tx.txid()
+            if isinstance(h, bytes):
+                return _hex(h)
+            elif isinstance(h, str):
+                return h if h.startswith("0x") else "0x" + h
+        except Exception:
+            pass
+    
+    # Try canonical sign bytes encoding
     try:
         if _tx_sign_bytes is not None:
             data = _tx_sign_bytes(tx)
-        elif _cbor_dumps is not None:
-            data = _cbor_dumps(_dcd(tx))
-        else:  # pragma: no cover
-            return None
-        return _hex(_sha3_256(data))
+            return _hex(_sha3_256(data))
     except Exception:
-        return None
+        pass
+    
+    # Try CBOR encoding
+    try:
+        if _cbor_dumps is not None:
+            data = _cbor_dumps(_dcd(tx))
+            return _hex(_sha3_256(data))
+    except Exception:
+        pass
+    
+    # Final fallback: return None (caller should handle)
+    return None
 
 
 def _tx_view(tx: t.Any) -> dict[str, t.Any]:
@@ -263,8 +303,18 @@ def _block_view(
     if include_txs:
         v["transactions"] = [_tx_view(tx) for tx in txs]
     else:
-        # Only hashes
-        v["transactions"] = [_compute_tx_hash(tx) for tx in txs]
+        # Only hashes - filter out None values to avoid [null] in JSON
+        tx_hashes = []
+        for tx in txs:
+            h = _compute_tx_hash(tx)
+            if h is not None:
+                tx_hashes.append(h)
+            else:
+                # Log warning but don't fail the request
+                import logging
+                log = logging.getLogger(__name__)
+                log.warning(f"Failed to compute hash for transaction in block; skipping from hash list")
+        v["transactions"] = tx_hashes
 
     if include_receipts:
         v["receipts"] = [_receipt_view(r) for r in receipts]
