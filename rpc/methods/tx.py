@@ -21,10 +21,13 @@ _RPC_DEBUG = os.environ.get("ANIMICA_RPC_DEBUG") == "1"
 
 # ——— Validation failure metrics ———
 try:
-    from rpc.metrics import TX_VALIDATION_FAILURES  # type: ignore[attr-defined]
+    from rpc.metrics import TX_VALIDATION_FAILURES
 except Exception:  # pragma: no cover
     # Fallback: no-op counter
     class _Counter:
+        def labels(self, **kwargs):
+            """Return self to support chaining."""
+            return self
         def inc(self, *args, **kwargs):
             pass
     TX_VALIDATION_FAILURES = _Counter()  # type: ignore[assignment]
@@ -1093,7 +1096,7 @@ def _tx_send_raw_transaction(rawTx: str) -> str:
         raw = _b(rawTx)
     except Exception as e:
         log.error("tx.sendRawTransaction: hex decode failed, len=%d", len(rawTx) if rawTx else 0)
-        TX_VALIDATION_FAILURES.inc(labels={"reason": "hex_decode_failed"})  # type: ignore[attr-defined]
+        TX_VALIDATION_FAILURES.labels(reason="hex_decode_failed").inc()
         raise rpc_errors.InvalidTx(
             "rawTx decode failed",
             **_error_data(
@@ -1112,7 +1115,7 @@ def _tx_send_raw_transaction(rawTx: str) -> str:
         raise
     except Exception as e:
         log.error("tx.sendRawTransaction: CBOR decode failed, raw_len=%d", len(raw), exc_info=True)
-        TX_VALIDATION_FAILURES.inc(labels={"reason": "cbor_decode_failed"})  # type: ignore[attr-defined]
+        TX_VALIDATION_FAILURES.labels(reason="cbor_decode_failed").inc()
         raise rpc_errors.InvalidTx(
             "Transaction decode failed",
             **_error_data(
@@ -1141,7 +1144,7 @@ def _tx_send_raw_transaction(rawTx: str) -> str:
                 e.data.get("got") if e.data else "unknown",
                 e.data.get("expected") if e.data else "unknown",
             )
-            TX_VALIDATION_FAILURES.inc(labels={"reason": "chain_id_mismatch"})  # type: ignore[attr-defined]
+            TX_VALIDATION_FAILURES.labels(reason="chain_id_mismatch").inc()
             raise
 
         # PQ signature verify
@@ -1149,7 +1152,7 @@ def _tx_send_raw_transaction(rawTx: str) -> str:
             _verify_pq_signature(tx_like, obj, chain_id=chain_id)
         except rpc_errors.BadSignature as e:
             log.warning("tx.sendRawTransaction: PQ signature invalid, chain_id=%d", chain_id)
-            TX_VALIDATION_FAILURES.inc(labels={"reason": "signature_invalid"})  # type: ignore[attr-defined]
+            TX_VALIDATION_FAILURES.labels(reason="signature_invalid").inc()
             raise
 
         # Compute hash from the original CBOR bytes to ensure consistency
@@ -1165,12 +1168,12 @@ def _tx_send_raw_transaction(rawTx: str) -> str:
         # Duplicate suppression: if already in pending/persisted, return hash (idempotent)
         if _pending_get(tx_hash_hex) is not None:
             log.info("tx.sendRawTransaction: duplicate tx (already pending), hash=%s", tx_hash_hex)
-            TX_VALIDATION_FAILURES.inc(labels={"reason": "duplicate"})  # type: ignore[attr-defined]
+            TX_VALIDATION_FAILURES.labels(reason="duplicate").inc()
             return tx_hash_hex
         persisted, *_ = _lookup_persisted_tx(tx_hash_hex)
         if persisted is not None:
             log.info("tx.sendRawTransaction: duplicate tx (already persisted), hash=%s", tx_hash_hex)
-            TX_VALIDATION_FAILURES.inc(labels={"reason": "duplicate"})  # type: ignore[attr-defined]
+            TX_VALIDATION_FAILURES.labels(reason="duplicate").inc()
             return tx_hash_hex
 
         # Admit to pending pool (stateless checks already done here)
