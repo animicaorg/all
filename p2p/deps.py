@@ -276,9 +276,14 @@ class P2PDeps:
                 return False, "no_pending_pool_available"
             
             # Encode the tx to CBOR (canonical format)
+            # Use the Tx object's built-in to_cbor() method which handles serialization correctly
             try:
-                from core.encoding.cbor import dumps as cbor_dumps
-                raw_cbor = cbor_dumps(tx)
+                if hasattr(tx, 'to_cbor') and callable(tx.to_cbor):
+                    raw_cbor = tx.to_cbor()
+                else:
+                    # Fallback: manually encode using CBOR and to_obj()
+                    from core.encoding.cbor import dumps as cbor_encode
+                    raw_cbor = cbor_encode(tx.to_obj())
             except Exception as e:
                 return False, f"cbor_encode_failed:{e}"
             
