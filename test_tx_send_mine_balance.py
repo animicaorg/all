@@ -18,6 +18,21 @@ import os
 # Add repo root to path
 sys.path.insert(0, os.path.dirname(__file__))
 
+
+def _address_to_32_bytes(address_record):
+    """Convert address record to 32-byte format."""
+    digest = bytes(address_record.digest) if isinstance(address_record.digest, list) else address_record.digest
+    return digest[:32].ljust(32, b"\x00")
+
+
+def _parse_int_result(result):
+    """Parse integer result from RPC (balance, nonce, etc.)."""
+    value = result.get("result", 0)
+    if isinstance(value, str):
+        return int(value, 16) if value.startswith("0x") else int(value)
+    return int(value)
+
+
 def test_tx_send_and_mine_updates_balance():
     """Test that sending a tx and mining a block updates balances."""
     print("\n" + "="*70)
@@ -57,8 +72,8 @@ def test_tx_send_and_mine_updates_balance():
     sender_record = decode_address(sender_addr_bech32)
     recipient_record = decode_address(recipient_addr_bech32)
     
-    sender_bytes = bytes(sender_record.digest)[:32].ljust(32, b"\x00")
-    recipient_bytes = bytes(recipient_record.digest)[:32].ljust(32, b"\x00")
+    sender_bytes = _address_to_32_bytes(sender_record)
+    recipient_bytes = _address_to_32_bytes(recipient_record)
     
     sender_hex = "0x" + sender_bytes.hex()
     recipient_hex = "0x" + recipient_bytes.hex()
@@ -75,13 +90,8 @@ def test_tx_send_and_mine_updates_balance():
     print(f"   Mined {mine_result['mined']} blocks, total reward: {mine_result['totalReward']} nANM")
     
     # Check sender balance
-    sender_balance_initial = rpc_call(client, "state.getBalance", [sender_hex])["result"]
-    if isinstance(sender_balance_initial, str):
-        sender_balance_initial = int(sender_balance_initial, 16) if sender_balance_initial.startswith("0x") else int(sender_balance_initial)
-    
-    recipient_balance_initial = rpc_call(client, "state.getBalance", [recipient_hex])["result"]
-    if isinstance(recipient_balance_initial, str):
-        recipient_balance_initial = int(recipient_balance_initial, 16) if recipient_balance_initial.startswith("0x") else int(recipient_balance_initial)
+    sender_balance_initial = _parse_int_result(rpc_call(client, "state.getBalance", [sender_hex]))
+    recipient_balance_initial = _parse_int_result(rpc_call(client, "state.getBalance", [recipient_hex]))
     
     print(f"   Sender balance:    {sender_balance_initial:,} nANM")
     print(f"   Recipient balance: {recipient_balance_initial:,} nANM")
@@ -97,9 +107,7 @@ def test_tx_send_and_mine_updates_balance():
     transfer_amount = 1_000_000_000  # 1 ANM
     
     # Get sender nonce
-    sender_nonce = rpc_call(client, "state.getNonce", [sender_hex])["result"]
-    if isinstance(sender_nonce, str):
-        sender_nonce = int(sender_nonce, 16) if sender_nonce.startswith("0x") else int(sender_nonce)
+    sender_nonce = _parse_int_result(rpc_call(client, "state.getNonce", [sender_hex]))
     
     print(f"   Sender nonce: {sender_nonce}")
     print(f"   Transfer amount: {transfer_amount:,} nANM (1 ANM)")
@@ -173,13 +181,8 @@ def test_tx_send_and_mine_updates_balance():
     
     # Check balances after mining
     print(f"\n7. Check balances after mining")
-    sender_balance_final = rpc_call(client, "state.getBalance", [sender_hex])["result"]
-    if isinstance(sender_balance_final, str):
-        sender_balance_final = int(sender_balance_final, 16) if sender_balance_final.startswith("0x") else int(sender_balance_final)
-    
-    recipient_balance_final = rpc_call(client, "state.getBalance", [recipient_hex])["result"]
-    if isinstance(recipient_balance_final, str):
-        recipient_balance_final = int(recipient_balance_final, 16) if recipient_balance_final.startswith("0x") else int(recipient_balance_final)
+    sender_balance_final = _parse_int_result(rpc_call(client, "state.getBalance", [sender_hex]))
+    recipient_balance_final = _parse_int_result(rpc_call(client, "state.getBalance", [recipient_hex]))
     
     print(f"   Sender balance:    {sender_balance_final:,} nANM (was {sender_balance_initial:,})")
     print(f"   Recipient balance: {recipient_balance_final:,} nANM (was {recipient_balance_initial:,})")
