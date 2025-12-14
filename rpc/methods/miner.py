@@ -416,6 +416,56 @@ def _get_tx_gas_limit(tx_obj: Any) -> int:
     return DEFAULT_TX_GAS_LIMIT
 
 
+def _get_tx_sender_and_nonce(tx: Tx) -> tuple[bytes | None, int | None]:
+    """
+    Extract sender address and nonce from a Tx object.
+    
+    Returns:
+        tuple[bytes | None, int | None]: (sender_bytes, nonce) or (None, None) if extraction fails
+    """
+    try:
+        # Try to get sender from unsigned field (Tx dataclass)
+        sender = None
+        nonce = None
+        
+        if hasattr(tx, "unsigned"):
+            sender = getattr(tx.unsigned, "sender", None)
+            nonce = getattr(tx.unsigned, "nonce", None)
+        
+        # Fallback to direct attributes
+        if sender is None:
+            sender = getattr(tx, "sender", getattr(tx, "from", getattr(tx, "frm", None)))
+        if nonce is None:
+            nonce = getattr(tx, "nonce", None)
+        
+        # Convert to bytes if string
+        if isinstance(sender, str):
+            if sender.startswith("0x"):
+                sender = bytes.fromhex(sender[2:])
+            elif sender.startswith("anim1"):
+                # Decode bech32
+                sender = _decode_bech32_address(sender)
+            else:
+                # Try hex without 0x prefix
+                try:
+                    sender = bytes.fromhex(sender)
+                except ValueError:
+                    sender = None
+        
+        # Ensure sender is bytes
+        if sender is not None and not isinstance(sender, (bytes, bytearray)):
+            sender = None
+        
+        # Ensure nonce is int
+        if nonce is not None:
+            nonce = int(nonce)
+        
+        return (bytes(sender) if sender else None, nonce)
+    except Exception as e:
+        log.debug(f"_get_tx_sender_and_nonce: Failed to extract sender/nonce: {e}")
+        return (None, None)
+
+
 def _adapter() -> CoreChainAdapter:
     """
     Create a CoreChainAdapter with mempool feed for block building.
@@ -938,6 +988,12 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
     adapter = _adapter()
     txs: list[Tx] = []
     included_hashes: list[str] = []
+    
+    # Track per-sender nonces to enforce sequencing within this block
+    # Maps sender_bytes -> next_expected_nonce
+    # NOTE: This is intentionally reset per mining call - each block starts fresh
+    # from current state, ensuring nonce consistency even if transactions fail
+    sender_nonces: dict[bytes, int] = {}
 
     # Collect pending transactions from the best available source (mempool → fallback cache)
     log.info("_mine_once: Starting transaction collection from mempool adapter")
@@ -977,6 +1033,52 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
                     # Accept both Tx instances and dict/obj that can be used as Tx
                     # _decode_tx returns (Tx, dict) when Tx.from_obj succeeds, or (dict, dict) when falling back to dict
                     if isinstance(decoded, Tx):
+                        # Verify chainId matches this node's chainId before including
+                        tx_chain_id = getattr(decoded, "chain_id", getattr(decoded, "chainId", None))
+                        if hasattr(decoded, "unsigned"):
+                            tx_chain_id = getattr(decoded.unsigned, "chain_id", tx_chain_id)
+                        
+                        node_chain_id = ctx.cfg.chain_id
+                        if tx_chain_id is not None and int(tx_chain_id) != int(node_chain_id):
+                            log.warning(
+                                f"_mine_once: Skipping tx {tx_hash_hex} - chainId mismatch "
+                                f"(tx={tx_chain_id}, node={node_chain_id})"
+                            )
+                            continue
+                        
+                        # Check nonce sequencing (optional, allows gaps but enforces order for same sender)
+                        sender, tx_nonce = _get_tx_sender_and_nonce(decoded)
+                        if sender is not None and tx_nonce is not None:
+                            # Get expected nonce for this sender (from state or tracked nonces)
+                            if sender not in sender_nonces:
+                                # First tx from this sender - get current nonce from state
+                                try:
+                                    state_nonce = ctx.state_db.get_nonce(sender) if ctx.state_db else 0
+                                    sender_nonces[sender] = int(state_nonce)
+                                except Exception:
+                                    sender_nonces[sender] = 0
+                            
+                            expected_nonce = sender_nonces[sender]
+                            if tx_nonce < expected_nonce:
+                                log.warning(
+                                    f"_mine_once: Skipping tx {tx_hash_hex} - nonce too low "
+                                    f"(tx_nonce={tx_nonce}, expected={expected_nonce})"
+                                )
+                                continue
+                            elif tx_nonce > expected_nonce:
+                                # Skip transactions with nonce gaps within this block
+                                # NOTE: This prevents out-of-order execution but means txs
+                                # with gaps stay in mempool until gap is filled. This is
+                                # standard Ethereum-style behavior and prevents stuck transactions.
+                                log.debug(
+                                    f"_mine_once: Skipping tx {tx_hash_hex} - nonce gap "
+                                    f"(tx_nonce={tx_nonce}, expected={expected_nonce})"
+                                )
+                                continue
+                            
+                            # Nonce matches - accept and increment expected nonce
+                            sender_nonces[sender] = expected_nonce + 1
+                        
                         txs.append(decoded)
                         included_hashes.append(tx_hash_hex)
                         log.debug(f"_mine_once: Added Tx instance {tx_hash_hex} to txs list")
@@ -993,6 +1095,53 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
                             # Try to construct Tx using available constructor methods
                             tx_obj = _construct_tx_from_dict(normalized)
                             if tx_obj is not None:
+                                # Verify chainId matches this node's chainId before including
+                                tx_chain_id = getattr(tx_obj, "chain_id", getattr(tx_obj, "chainId", None))
+                                if hasattr(tx_obj, "unsigned"):
+                                    tx_chain_id = getattr(tx_obj.unsigned, "chain_id", tx_chain_id)
+                                
+                                # Also check the dict body if Tx attributes not available
+                                if tx_chain_id is None and isinstance(obj, dict):
+                                    body = obj.get("body", {}) if "body" in obj else obj.get("tx", {})
+                                    tx_chain_id = body.get("chainId", body.get("chain_id"))
+                                
+                                node_chain_id = ctx.cfg.chain_id
+                                if tx_chain_id is not None and int(tx_chain_id) != int(node_chain_id):
+                                    log.warning(
+                                        f"_mine_once: Skipping tx {tx_hash_hex} - chainId mismatch "
+                                        f"(tx={tx_chain_id}, node={node_chain_id})"
+                                    )
+                                    continue
+                                
+                                # Check nonce sequencing (optional, allows gaps but enforces order for same sender)
+                                sender, tx_nonce = _get_tx_sender_and_nonce(tx_obj)
+                                if sender is not None and tx_nonce is not None:
+                                    # Get expected nonce for this sender (from state or tracked nonces)
+                                    if sender not in sender_nonces:
+                                        # First tx from this sender - get current nonce from state
+                                        try:
+                                            state_nonce = ctx.state_db.get_nonce(sender) if ctx.state_db else 0
+                                            sender_nonces[sender] = int(state_nonce)
+                                        except Exception:
+                                            sender_nonces[sender] = 0
+                                    
+                                    expected_nonce = sender_nonces[sender]
+                                    if tx_nonce < expected_nonce:
+                                        log.warning(
+                                            f"_mine_once: Skipping tx {tx_hash_hex} - nonce too low "
+                                            f"(tx_nonce={tx_nonce}, expected={expected_nonce})"
+                                        )
+                                        continue
+                                    elif tx_nonce > expected_nonce:
+                                        log.debug(
+                                            f"_mine_once: Skipping tx {tx_hash_hex} - nonce gap "
+                                            f"(tx_nonce={tx_nonce}, expected={expected_nonce})"
+                                        )
+                                        continue
+                                    
+                                    # Nonce matches - accept and increment expected nonce
+                                    sender_nonces[sender] = expected_nonce + 1
+                                
                                 txs.append(tx_obj)
                                 included_hashes.append(tx_hash_hex)
                                 log.debug(f"_mine_once: Successfully constructed and added Tx from dict for {tx_hash_hex}")
