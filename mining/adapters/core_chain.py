@@ -307,16 +307,28 @@ class CoreChainAdapter:
                 evicted_count = 0
                 for h in hashes:
                     # Convert bytes to hex format (with 0x prefix)
-                    h_hex = "0x" + h.hex() if isinstance(h, bytes) else h
-                    # Try both with and without 0x prefix
+                    # Function signature accepts Sequence[bytes], so we expect bytes
+                    if not isinstance(h, (bytes, bytearray)):
+                        log.warning(
+                            "remove_included expects bytes hashes, got %s",
+                            type(h).__name__
+                        )
+                        continue
+                    
+                    h_hex = "0x" + h.hex()
+                    # Try both with and without 0x prefix (in case cache uses different format)
+                    h_hex_alt = h_hex[2:]  # without 0x prefix
+                    
+                    # Try evicting with 0x prefix first (most common)
                     if fallback_cache.pop(h_hex, None) is not None:
                         evicted_count += 1
                         if ts_cache is not None:
                             ts_cache.pop(h_hex, None)
-                    elif fallback_cache.pop(h_hex[2:] if h_hex.startswith("0x") else "0x" + h_hex, None) is not None:
+                    # Try without 0x prefix as fallback
+                    elif fallback_cache.pop(h_hex_alt, None) is not None:
                         evicted_count += 1
                         if ts_cache is not None:
-                            ts_cache.pop(h_hex[2:] if h_hex.startswith("0x") else "0x" + h_hex, None)
+                            ts_cache.pop(h_hex_alt, None)
                 
                 if evicted_count > 0:
                     log.info("evicted transactions from RPC fallback cache", extra={"count": evicted_count})
