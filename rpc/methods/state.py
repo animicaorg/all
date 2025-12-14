@@ -246,8 +246,15 @@ def _svc_pending_nonce(addr: str) -> int:
         if not pending_map:
             return committed_nonce
         
-        # Normalize address for comparison
-        addr_normalized = addr.lower().strip()
+        # Normalize address to bytes for robust comparison
+        # Supports both bech32 (anim1...) and hex (0x...) formats
+        try:
+            addr_bytes = _to_account_key_bytes(addr)
+            if addr_bytes is None:
+                # If we can't parse the address, just return committed nonce
+                return committed_nonce
+        except Exception:
+            return committed_nonce
         
         highest_pending_nonce = committed_nonce - 1
         
@@ -256,20 +263,23 @@ def _svc_pending_nonce(addr: str) -> int:
                 # Decode transaction to check sender and nonce
                 decoded, obj = tx_methods._decode_tx(raw)  # type: ignore[attr-defined]
                 
-                # Extract sender from body
+                # Extract sender from body (RPC envelope format)
                 body = obj.get("body", {}) if isinstance(obj, dict) else {}
                 tx_from = body.get("from", body.get("sender", ""))
                 
-                # Normalize tx sender for comparison
-                if isinstance(tx_from, bytes):
-                    tx_from_str = "0x" + tx_from.hex()
+                # Convert tx sender to bytes for comparison
+                if isinstance(tx_from, (bytes, bytearray)):
+                    tx_from_bytes = bytes(tx_from)
                 elif isinstance(tx_from, str):
-                    tx_from_str = tx_from.lower().strip()
+                    # Try to parse as bech32 or hex
+                    tx_from_bytes = _to_account_key_bytes(tx_from)
+                    if tx_from_bytes is None:
+                        continue
                 else:
                     continue
                 
-                # Check if this tx is from our address
-                if tx_from_str == addr_normalized or tx_from_str == addr_normalized.replace("0x", ""):
+                # Check if this tx is from our address (compare bytes)
+                if tx_from_bytes == addr_bytes:
                     tx_nonce = body.get("nonce", 0)
                     if isinstance(tx_nonce, int) and tx_nonce > highest_pending_nonce:
                         highest_pending_nonce = tx_nonce
