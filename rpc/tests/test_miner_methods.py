@@ -212,8 +212,9 @@ def test_miner_mine_with_zero_transactions():
             tx_methods._FALLBACK_PENDING.clear()
         if hasattr(tx_methods, "_FALLBACK_PENDING_TS"):
             tx_methods._FALLBACK_PENDING_TS.clear()
-    except Exception:
-        pass  # If modules not available, continue anyway
+    except (ImportError, AttributeError):
+        # If modules/attributes not available, continue anyway
+        pass
     
     # Mine a single block with no pending transactions
     start_height = rpc_call(client, "chain.getHead")["result"].get("height") or 0
