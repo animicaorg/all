@@ -952,6 +952,8 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
     try:
         txs = list(adapter.get_mempool_snapshot(limit=1000))
         log.info(f"_mine_once: adapter.get_mempool_snapshot returned {len(txs)} transactions")
+        if txs:
+            log.info(f"_mine_once: Sample tx types from adapter: {[type(tx).__name__ for tx in txs[:3]]}")
         # Track hashes of transactions from adapter for eviction later
         for tx in txs:
             try:
