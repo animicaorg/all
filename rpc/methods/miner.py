@@ -1376,6 +1376,24 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
                 extra={"pending_total": original_count, "valid": valid_count, "skipped": skipped_total}
             )
         
+        # Enforce deterministic transaction ordering by sorting by tx_hash (bytes) ascending
+        # This ensures the same set of transactions always produces the same txsRoot,
+        # regardless of mempool iteration order or insertion order.
+        # Canonical rule: sort by tx.hash() bytes (lexicographic order)
+        if valid_txs:
+            try:
+                # Create list of (tx_hash, tx, included_hash_hex) tuples for sorting
+                tx_tuples = list(zip(leaves, valid_txs, included_hashes))
+                # Sort by tx_hash bytes (first element of tuple)
+                tx_tuples_sorted = sorted(tx_tuples, key=lambda t: t[0])
+                # Unpack sorted tuples back into separate lists
+                leaves = [t[0] for t in tx_tuples_sorted]
+                txs = [t[1] for t in tx_tuples_sorted]
+                included_hashes = [t[2] for t in tx_tuples_sorted]
+                log.debug(f"Sorted {len(txs)} transactions by tx_hash for deterministic ordering")
+            except Exception as e:
+                log.warning(f"Failed to sort transactions, continuing with original order: {e}")
+        
         # Compute merkle root and update header
         if leaves:
             try:
@@ -1451,6 +1469,8 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
 
             # Recompute txsRoot using tx.hash() (canonical method)
             # This must match the computation done before the mining loop
+            # NOTE: txs are already sorted by tx_hash at this point (from earlier sorting step)
+            # so we don't need to sort again - just compute leaves in current order
             try:
                 if txs:
                     leaves = []
