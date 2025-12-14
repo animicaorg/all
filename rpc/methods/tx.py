@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import dataclasses as _dc
 import logging
 import os
@@ -889,28 +890,16 @@ def _gossip_tx_to_peers(raw_tx: bytes) -> None:
             return
         
         # Publish to 'txs' topic
-        # Note: gossip.publish is typically async, but we're calling from sync context
-        # The gossip engine should handle this gracefully or we schedule it
-        import asyncio
-        
-        # Try to get event loop
+        # Note: gossip.publish is async, but we're calling from sync context
+        # Use asyncio.ensure_future() which works whether or not a loop is running
         try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                # Schedule as a task if loop is running
-                asyncio.create_task(gossip_engine.publish('txs', raw_tx))
-                log.debug("Scheduled tx gossip to peers (async)")
-            else:
-                # Run synchronously if no loop is running
-                loop.run_until_complete(gossip_engine.publish('txs', raw_tx))
-                log.debug("Gossiped tx to peers (sync)")
+            loop = asyncio.get_running_loop()
+            # Loop is running; schedule the coroutine as a task
+            asyncio.ensure_future(gossip_engine.publish('txs', raw_tx), loop=loop)
+            log.debug("Scheduled tx gossip to peers")
         except RuntimeError:
-            # No event loop in current thread; try to create task anyway
-            try:
-                asyncio.create_task(gossip_engine.publish('txs', raw_tx))
-                log.debug("Created tx gossip task")
-            except Exception as e:
-                log.debug("Could not gossip tx (no event loop): %s", e)
+            # No running loop; log and skip (gossip will not work in this context)
+            log.debug("No running event loop; tx not gossiped to peers")
                 
     except Exception as e:
         log.debug("Failed to gossip tx to P2P peers: %s", e)

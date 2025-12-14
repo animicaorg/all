@@ -271,10 +271,14 @@ class P2PDeps:
             # Import RPC tx methods to access pending pool admission
             from rpc.methods import tx as tx_methods
             
+            # Verify required methods are available
+            if not (hasattr(tx_methods, '_pending_get') and hasattr(tx_methods, '_pending_put')):
+                return False, "no_pending_pool_available"
+            
             # Encode the tx to CBOR (canonical format)
             try:
-                from core.encoding import cbor as cbor_enc
-                raw_cbor = cbor_enc.dumps(tx)
+                from core.encoding.cbor import dumps as cbor_dumps
+                raw_cbor = cbor_dumps(tx)
             except Exception as e:
                 return False, f"cbor_encode_failed:{e}"
             
@@ -286,17 +290,13 @@ class P2PDeps:
                 return False, f"hash_failed:{e}"
             
             # Check if already in pending pool (dedupe)
-            if hasattr(tx_methods, '_pending_get'):
-                existing = tx_methods._pending_get(tx_hash_hex)
-                if existing is not None:
-                    return True, "duplicate"  # Already have it; treat as success
+            existing = tx_methods._pending_get(tx_hash_hex)
+            if existing is not None:
+                return True, "duplicate"  # Already have it; treat as success
             
             # Add to pending pool using the same path as RPC submissions
-            if hasattr(tx_methods, '_pending_put'):
-                tx_methods._pending_put(tx_hash_hex, raw_cbor)
-                return True, None
-            
-            return False, "no_pending_pool_available"
+            tx_methods._pending_put(tx_hash_hex, raw_cbor)
+            return True, None
             
         except Exception as e:
             return False, f"admit_error:{e}"
