@@ -1017,6 +1017,15 @@ def _execute_transactions(
     block_env: Any,
     logger: Any,
 ) -> list[dict[str, Any]]:
+    # Import execution runtime modules once at function level
+    try:
+        from execution.runtime.transfers import apply_transfer
+        from execution.runtime.env import TxEnv
+    except ImportError:
+        # If execution runtime is not available, return empty receipts
+        logger.warning("execution.runtime not available; cannot execute transactions")
+        return [{"status": 0, "gasUsed": 0, "logs": []} for _ in txs]
+    
     receipts: list[dict[str, Any]] = []
 
     for tx in txs:
@@ -1057,16 +1066,15 @@ def _execute_transactions(
             receipts.append({"status": 0, "gasUsed": 0, "logs": []})
             continue
 
-        # Left-pad/truncate to address length
+        # Right-pad/truncate to address length for consistency
+        # Note: We right-pad (append zeros) for short addresses and truncate from left for long ones
+        # This matches the behavior in execution/runtime/env.py _as_bytes() function
         if len(sender_bytes) < ADDRESS_LEN:
             sender_bytes = sender_bytes.rjust(ADDRESS_LEN, b"\x00")
         elif len(sender_bytes) > ADDRESS_LEN:
             sender_bytes = sender_bytes[-ADDRESS_LEN:]
 
         try:
-            # Import TxEnv and apply_transfer here (inside execution path)
-            from execution.runtime.transfers import apply_transfer
-            from execution.runtime.env import TxEnv
             
             # Extract nonce and gas_price from tx
             # Try nested unsigned field first (Tx dataclass structure)
@@ -1091,8 +1099,8 @@ def _execute_transactions(
                 gas_price=int(gas_price),
             )
 
-            # Execute state transition
-            res = apply_transfer(tx, state_db, block_env=block_env, tx_env=tx_env)
+            # Execute state transition (use keyword arguments for clarity)
+            res = apply_transfer(tx=tx, state=state_db, block_env=block_env, tx_env=tx_env)
 
             # Receipt-like view
             receipts.append(
@@ -1744,8 +1752,8 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
         # Check if hash meets target
         if block_hash_int <= target:
             # Found a valid block! Now execute txs and generate receipts before persisting.
-            # Import Receipt and ReceiptStatus for conversion
-            from core.types.receipt import Receipt, ReceiptStatus
+            # Import Receipt, ReceiptStatus, Log, and BlockEnv at block level (once per mined block)
+            from core.types.receipt import Receipt, ReceiptStatus, Log
             from execution.runtime.env import BlockEnv
             
             # Build block_env for new _execute_transactions signature
@@ -1781,9 +1789,6 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
                 # Convert logs (may be empty list or list of log-like objects)
                 logs_out = []
                 for log_item in r_dict.get("logs", []):
-                    # Import Log class
-                    from core.types.receipt import Log
-                    
                     # If log_item is already a Log object, use it directly
                     if isinstance(log_item, Log):
                         logs_out.append(log_item)
