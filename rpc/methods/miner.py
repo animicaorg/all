@@ -1389,8 +1389,12 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
                 # Unpack sorted tuples back into separate lists using zip(*...)
                 leaves, txs, included_hashes = map(list, zip(*tx_tuples_sorted))
                 log.debug(f"Sorted {len(txs)} transactions by tx_hash for deterministic ordering")
-            except Exception as e:
+            except (ValueError, TypeError) as e:
+                # Specific exceptions that might occur during sorting
                 log.warning(f"Failed to sort transactions, continuing with original order: {e}")
+            except Exception as e:
+                # Catch-all for unexpected errors; log with more detail
+                log.error(f"Unexpected error during transaction sorting: {e}", exc_info=True)
         
         # Compute merkle root and update header
         if leaves:
