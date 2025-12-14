@@ -711,22 +711,24 @@ def _verify_pq_signature(tx_like: t.Any, obj: dict, *, chain_id: int) -> None:
 
 
 def _decode_tx(raw: bytes) -> tuple[t.Any, dict]:
+    """
+    Decode a raw CBOR transaction envelope.
+    
+    Returns:
+        tuple[tx, obj]: (Tx instance or dict, dict envelope with hash/raw added)
+        
+    The returned dict always includes:
+    - "hash": hex string of tx hash (sha3_256 of raw CBOR)
+    - "raw": raw CBOR bytes (for recomputing hash or re-serialization)
+    """
     if _cbor_loads is None:
         raise rpc_errors.InternalError("CBOR decoder unavailable")
     obj = _cbor_loads(raw)
-    if _Tx is not None:
-        try:
-            # Try friendly constructors if present
-            if hasattr(_Tx, "from_obj"):
-                tx = _Tx.from_obj(obj)  # type: ignore[attr-defined]
-            elif hasattr(_Tx, "from_dict"):
-                tx = _Tx.from_dict(obj)  # type: ignore[attr-defined]
-            else:
-                tx = _Tx(**obj)  # type: ignore[call-arg]
-            return tx, obj
-        except Exception:
-            # Fall back to dict shape
-            pass
+    
+    # Compute tx hash (canonical: sha3_256(raw_cbor_bytes))
+    tx_hash_hex = _hex(_sha3_256(raw)) or ""
+    
+    # Ensure obj is a dict so we can add hash/raw fields
     if not isinstance(obj, dict):
         raise rpc_errors.InvalidTx(
             "CBOR did not decode to a Tx object",
@@ -737,7 +739,28 @@ def _decode_tx(raw: bytes) -> tuple[t.Any, dict]:
                 "Ensure rawTx is a CBOR map with body/sig keys",
             ),
         )
-    return obj, obj
+    
+    # Add hash and raw to the envelope (non-destructive - doesn't modify obj in-place)
+    enriched_obj = dict(obj)
+    enriched_obj["hash"] = tx_hash_hex
+    enriched_obj["raw"] = raw
+    
+    # Try to construct Tx instance if possible
+    if _Tx is not None:
+        try:
+            # Try friendly constructors if present
+            if hasattr(_Tx, "from_obj"):
+                tx = _Tx.from_obj(obj)  # type: ignore[attr-defined]
+            elif hasattr(_Tx, "from_dict"):
+                tx = _Tx.from_dict(obj)  # type: ignore[attr-defined]
+            else:
+                tx = _Tx(**obj)  # type: ignore[call-arg]
+            return tx, enriched_obj
+        except Exception:
+            # Fall back to dict shape
+            pass
+    
+    return enriched_obj, enriched_obj
 
 
 def _tx_view(
