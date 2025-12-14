@@ -68,8 +68,8 @@ def _build_signed_transfer(client, cfg, sender_kp, recipient_hex: str, nonce: in
     )
     
     # Sign transaction
-    sign_bytes = tx_sign_bytes(unsigned.to_obj(), cfg.chain_id)
-    sig_env = sign.sign_detached(sign_bytes, alg_name, sender_kp.secret_key, domain="tx")
+    sign_bytes = tx_sign_bytes(unsigned.to_obj())
+    sig_env = sign.sign_detached(sign_bytes, alg_name, sender_kp.secret_key, domain="tx", chain_id=cfg.chain_id)
     
     # Create signed tx
     from core.types.tx import PqSignature
