@@ -1469,8 +1469,8 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
 
             # Recompute txsRoot using tx.hash() (canonical method)
             # This must match the computation done before the mining loop
-            # NOTE: txs are already sorted by tx_hash at this point (from earlier sorting step)
-            # so we don't need to sort again - just compute leaves in current order
+            # NOTE: txs should already be sorted by tx_hash from earlier sorting step,
+            # but we sort again defensively to ensure consistency even if earlier code changes
             try:
                 if txs:
                     leaves = []
@@ -1480,7 +1480,9 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
                             leaves.append(tx.hash())
                         except Exception as e:
                             log.warning(f"Failed to compute hash for tx in final root: {e}")
-                    txs_root = merkle_root(leaves) if leaves else ZERO32
+                    # Sort leaves to ensure deterministic ordering (defensive)
+                    leaves_sorted = sorted(leaves)
+                    txs_root = merkle_root(leaves_sorted) if leaves_sorted else ZERO32
                 else:
                     txs_root = ZERO32
             except Exception as e:
