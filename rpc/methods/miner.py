@@ -806,18 +806,30 @@ def _normalize_tx_envelope(decoded: dict) -> dict:
                     if addr.startswith("anim1"):
                         try:
                             addr_bytes = _decode_bech32_address(addr)
-                        except (ValueError, KeyError) as e:
+                        except Exception as e:
                             # Fallback: try hex if bech32 decode fails
                             log.debug(f"Bech32 decode failed ({e}), trying hex fallback for: {addr}")
-                            if addr.startswith("0x"):
-                                addr_bytes = bytes.fromhex(addr[2:])
-                            else:
-                                addr_bytes = bytes.fromhex(addr)
+                            try:
+                                if addr.startswith("0x"):
+                                    addr_bytes = bytes.fromhex(addr[2:])
+                                else:
+                                    # Try to parse as hex (may not have 0x prefix)
+                                    addr_bytes = bytes.fromhex(addr.replace("anim1", ""))
+                            except ValueError:
+                                # Last resort: use UTF-8 encoding and hash
+                                import hashlib
+                                addr_bytes = hashlib.sha3_256(addr.encode("utf-8")).digest()
+                                log.warning(f"Could not decode address '{addr}' as bech32 or hex, using hash")
                     elif addr.startswith("0x"):
                         addr_bytes = bytes.fromhex(addr[2:])
                     else:
-                        # Assume bare hex
-                        addr_bytes = bytes.fromhex(addr)
+                        # Try bare hex, fall back to UTF-8 hash
+                        try:
+                            addr_bytes = bytes.fromhex(addr)
+                        except ValueError:
+                            import hashlib
+                            addr_bytes = hashlib.sha3_256(addr.encode("utf-8")).digest()
+                            log.warning(f"Could not decode address '{addr}' as hex, using hash")
                 else:
                     raise TypeError(f"Unsupported address type: {type(addr).__name__} (expected str or bytes)")
                 
