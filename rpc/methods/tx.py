@@ -859,10 +859,10 @@ def _pending_put(tx_hash_hex: str, raw: bytes) -> None:
 
 def _gossip_tx_to_peers(raw_tx: bytes) -> None:
     """
-    Gossip a transaction to connected P2P peers.
+    Gossip a transaction to connected P2P peers via TxRelayHandler.
     
-    This function attempts to publish the transaction to the 'txs' topic
-    on the P2P gossip network. It's called after a transaction is successfully
+    This function attempts to publish the transaction to the 'txs' gossip topic
+    on the P2P network. It's called after a transaction is successfully
     admitted to the local pending pool via RPC.
     
     Args:
@@ -877,28 +877,50 @@ def _gossip_tx_to_peers(raw_tx: bytes) -> None:
         
         p2p_service = ctx.p2p_service
         
-        # Check if gossip engine is available
+        # Use TxRelayHandler if available (preferred path)
+        if hasattr(p2p_service, 'tx_relay_handler'):
+            tx_relay_handler = p2p_service.tx_relay_handler
+            try:
+                loop = asyncio.get_running_loop()
+                asyncio.ensure_future(tx_relay_handler.publish_local_tx(raw_tx), loop=loop)
+                log.debug("Scheduled tx gossip via TxRelayHandler")
+                return
+            except RuntimeError:
+                log.debug("No running event loop; tx not gossiped to peers")
+                return
+            except AttributeError:
+                # Handler exists but publish_local_tx method missing; fall through to legacy path
+                log.debug("TxRelayHandler missing publish_local_tx; falling back to direct gossip")
+                pass
+        
+        # Fallback: direct gossip engine access (legacy path)
         if not hasattr(p2p_service, 'gossip'):
             log.debug("P2P gossip engine not available; tx not gossiped")
             return
         
         gossip_engine = p2p_service.gossip
         
-        # Check if publish method exists and is callable
         if not hasattr(gossip_engine, 'publish') or not callable(gossip_engine.publish):
             log.debug("P2P gossip publish method not available; tx not gossiped")
             return
         
-        # Publish to 'txs' topic
-        # Note: gossip.publish is async, but we're calling from sync context
-        # Use asyncio.ensure_future() which works whether or not a loop is running
+        # Build the proper topic path using Topics helper
+        try:
+            from p2p.gossip import topics as gossip_topics
+            chain_id = _chain_id_required()
+            tx_topic = gossip_topics.txs(chain_id)
+            topic_path = tx_topic.path
+        except Exception:
+            # Fallback to bare topic string
+            topic_path = 'txs'
+            log.debug("Using fallback topic path 'txs'")
+        
+        # Publish to gossip mesh
         try:
             loop = asyncio.get_running_loop()
-            # Loop is running; schedule the coroutine as a task
-            asyncio.ensure_future(gossip_engine.publish('txs', raw_tx), loop=loop)
-            log.debug("Scheduled tx gossip to peers")
+            asyncio.ensure_future(gossip_engine.publish(topic_path, raw_tx), loop=loop)
+            log.debug("Scheduled tx gossip to topic %s", topic_path)
         except RuntimeError:
-            # No running loop; log and skip (gossip will not work in this context)
             log.debug("No running event loop; tx not gossiped to peers")
                 
     except Exception as e:
