@@ -254,6 +254,64 @@ def test_multiple_blocks_maintain_state():
     print(f"✓ State maintained correctly across 5 blocks")
 
 
+def test_chain_getBlockByNumber_includes_txs_and_receipts():
+    """
+    Test that chain.getBlockByNumber returns both 'txs' and 'receipts' fields.
+    
+    This is a regression test for the issue where getBlockByNumber(..., true, true)
+    was returning null for .result.txs and .result.receipts.
+    
+    Ensures:
+    1. Both 'txs' and 'transactions' fields are present (txs is an alias)
+    2. 'receipts' field is present when includeReceipts=True
+    3. All fields are arrays (never null) even if empty
+    """
+    client, cfg, _ = new_test_client()
+    
+    # Mine 1 block
+    result = rpc_call(client, "miner.mine", [1])["result"]
+    assert result["mined"] == 1, "Should mine exactly 1 block"
+    block_height = result["height"]
+    
+    # Call chain.getBlockByNumber with includeTxObjects=true, includeReceipts=true
+    # Using positional params as in the problem statement: ["latest", true, true]
+    response = rpc_call(client, "chain.getBlockByNumber", [block_height, True, True])
+    assert "result" in response, "Response should have result field"
+    
+    block = response["result"]
+    assert block is not None, f"Block at height {block_height} should not be null"
+    
+    # Verify 'transactions' field is present and is a list
+    assert "transactions" in block, "Block should have 'transactions' field"
+    assert isinstance(block["transactions"], list), "'transactions' should be a list, not null"
+    
+    # Verify 'txs' field is present (alias for 'transactions')
+    assert "txs" in block, "Block should have 'txs' field (alias for 'transactions')"
+    assert isinstance(block["txs"], list), "'txs' should be a list, not null"
+    
+    # Verify both aliases point to same data
+    assert block["txs"] == block["transactions"], "'txs' and 'transactions' should be equal"
+    
+    # Verify 'receipts' field is present and is a list
+    assert "receipts" in block, "Block should have 'receipts' field"
+    assert isinstance(block["receipts"], list), "'receipts' should be a list, not null"
+    
+    print(f"✓ Block {block_height} has required fields:")
+    print(f"  - transactions: {len(block['transactions'])} items")
+    print(f"  - txs: {len(block['txs'])} items (alias)")
+    print(f"  - receipts: {len(block['receipts'])} items")
+    
+    # Also test with "latest" parameter
+    response_latest = rpc_call(client, "chain.getBlockByNumber", ["latest", True, True])
+    block_latest = response_latest["result"]
+    
+    assert "txs" in block_latest, "Block retrieved with 'latest' should have 'txs' field"
+    assert "transactions" in block_latest, "Block retrieved with 'latest' should have 'transactions' field"
+    assert "receipts" in block_latest, "Block retrieved with 'latest' should have 'receipts' field"
+    
+    print(f"✓ Block 'latest' also has required fields")
+
+
 if __name__ == "__main__":
     # Run tests directly for debugging
     pytest.main([__file__, "-v", "-s"])
