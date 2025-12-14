@@ -807,19 +807,11 @@ def _normalize_tx_envelope(decoded: dict) -> dict:
                         try:
                             addr_bytes = _decode_bech32_address(addr)
                         except Exception as e:
-                            # Fallback: try hex if bech32 decode fails
-                            log.debug(f"Bech32 decode failed ({e}), trying hex fallback for: {addr}")
-                            try:
-                                if addr.startswith("0x"):
-                                    addr_bytes = bytes.fromhex(addr[2:])
-                                else:
-                                    # Try to parse as hex (may not have 0x prefix)
-                                    addr_bytes = bytes.fromhex(addr.replace("anim1", ""))
-                            except ValueError:
-                                # Last resort: use UTF-8 encoding and hash
-                                import hashlib
-                                addr_bytes = hashlib.sha3_256(addr.encode("utf-8")).digest()
-                                log.warning(f"Could not decode address '{addr}' as bech32 or hex, using hash")
+                            # Bech32 decode failed - fall back to UTF-8 hash
+                            # We can't assume the string after 'anim1' is hex since bech32 uses base32
+                            import hashlib
+                            addr_bytes = hashlib.sha3_256(addr.encode("utf-8")).digest()
+                            log.warning(f"Could not decode address '{addr}' as bech32 ({e}), using hash fallback")
                     elif addr.startswith("0x"):
                         addr_bytes = bytes.fromhex(addr[2:])
                     else:
