@@ -1895,6 +1895,8 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
                 # to prevent re-mining them in subsequent blocks
                 # Use canonical txid computed from raw signed envelope bytes for eviction
                 # (matches txid from sendRawTransaction: sha3_256(raw_cbor_bytes))
+                # Initialize to empty list to avoid UnboundLocalError when mining payout-only blocks
+                included_hashes_canonical: list[str] = []
                 if txs:
                     # Compute canonical hashes for eviction (from txs, not included_hashes)
                     # This ensures we use sha3_256(raw_cbor) consistent with sendRawTransaction
