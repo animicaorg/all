@@ -8,7 +8,7 @@ import logging
 import os
 import time
 import uuid
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from typing import Any, Dict, Tuple
 
 from core.types.block import Block
@@ -229,6 +229,25 @@ def _derive_sender_from_envelope_raw(raw: bytes) -> bytes | None:
         return None
 
 
+def _has_valid_sender(tx: Any) -> bool:
+    """
+    Check if a tx object has a valid (non-zero) sender.
+    
+    Args:
+        tx: Transaction object (Tx instance or dict-like)
+        
+    Returns:
+        True if tx has a non-zero sender, False otherwise
+    """
+    sender = None
+    if hasattr(tx, "unsigned"):
+        sender = getattr(tx.unsigned, "sender", None)
+    if sender is None:
+        sender = getattr(tx, "sender", None)
+    
+    return sender is not None and sender != ZERO32
+
+
 def _attach_sender_if_possible(tx: Tx) -> Tx:
     """
     Attach sender to a Tx object if possible.
@@ -239,14 +258,8 @@ def _attach_sender_if_possible(tx: Tx) -> Tx:
     Returns:
         Updated Tx with sender attached, or original tx if derivation fails
     """
-    # Check if tx already has sender
-    sender = None
-    if hasattr(tx, "unsigned"):
-        sender = getattr(tx.unsigned, "sender", None)
-    if sender is None:
-        sender = getattr(tx, "sender", None)
-    
-    if sender is not None and sender != ZERO32:
+    # Check if tx already has valid sender
+    if _has_valid_sender(tx):
         # Tx already has valid sender
         return tx
     
@@ -265,7 +278,6 @@ def _attach_sender_if_possible(tx: Tx) -> Tx:
     try:
         if hasattr(tx, "unsigned"):
             # Tx dataclass with nested unsigned field
-            from dataclasses import replace
             unsigned_updated = replace(tx.unsigned, sender=derived_sender)
             tx_updated = replace(tx, unsigned=unsigned_updated)
             log.debug(f"Attached sender to tx {tx_hash_hex[:16]}...: {derived_sender.hex()[:16]}...")
@@ -1580,15 +1592,8 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
             # Try to attach sender if missing
             tx_normalized = _attach_sender_if_possible(tx)
             
-            # Check if normalized tx has sender
-            sender = None
-            if hasattr(tx_normalized, "unsigned"):
-                sender = getattr(tx_normalized.unsigned, "sender", None)
-            if sender is None:
-                sender = getattr(tx_normalized, "sender", None)
-            
             # Drop txs that still have no sender (can't execute without sender)
-            if sender is None or sender == ZERO32:
+            if not _has_valid_sender(tx_normalized):
                 tx_hash_hex = included_hashes[i] if i < len(included_hashes) else "unknown"
                 log.warning(
                     f"Dropping tx {tx_hash_hex[:16]}... - no sender after normalization "
