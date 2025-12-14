@@ -1166,14 +1166,13 @@ def _tx_send_raw_transaction(rawTx: str) -> str:
         )
 
         # Duplicate suppression: if already in pending/persisted, return hash (idempotent)
+        # Note: Duplicates are not validation failures - they're expected and idempotent
         if _pending_get(tx_hash_hex) is not None:
             log.info("tx.sendRawTransaction: duplicate tx (already pending), hash=%s", tx_hash_hex)
-            TX_VALIDATION_FAILURES.labels(reason="duplicate").inc()
             return tx_hash_hex
         persisted, *_ = _lookup_persisted_tx(tx_hash_hex)
         if persisted is not None:
             log.info("tx.sendRawTransaction: duplicate tx (already persisted), hash=%s", tx_hash_hex)
-            TX_VALIDATION_FAILURES.labels(reason="duplicate").inc()
             return tx_hash_hex
 
         # Admit to pending pool (stateless checks already done here)
