@@ -1373,9 +1373,10 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
                 if i < len(included_hashes):
                     valid_hashes.append(included_hashes[i])
             except Exception as e:
-                log.debug(
-                    f"Skipping malformed tx {i+1}/{len(txs)}: {e}",
-                    extra={"tx_type": type(tx).__name__, "err": str(e)}
+                log.warning(
+                    f"Skipping malformed tx {i+1}/{len(txs)} during hash computation: {e}",
+                    extra={"tx_type": type(tx).__name__, "err": str(e)},
+                    exc_info=True
                 )
         
         # Calculate counts before reassigning
@@ -1426,6 +1427,16 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
                 # Fall back to empty block if merkle root computation fails
                 txs = []
                 included_hashes = []
+    
+    # Log final tx list before mining
+    log.info(
+        f"_mine_once: Ready to mine block with {len(txs)} transactions",
+        extra={
+            "tx_count": len(txs),
+            "tx_hashes": [h[:16] + "..." for h in included_hashes[:5]],
+            "has_more": len(included_hashes) > 5
+        }
+    )
     
     # Compute target from theta
     theta_micro = header_template.thetaMicro
