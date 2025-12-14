@@ -1739,7 +1739,6 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
         if leaves:
             try:
                 txs_root = merkle_root(leaves)
-                from dataclasses import replace
                 header_template = replace(header_template, txsRoot=txs_root)
                 log.debug(f"Computed txsRoot from {len(leaves)} tx hashes: {txs_root.hex()[:16]}...")
             except Exception as e:
@@ -1772,7 +1771,6 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
     for nonce_val in range(max_nonce):
         # Update header with new nonce using dataclasses.replace for efficiency
         try:
-            from dataclasses import replace
             header = replace(header_template, nonce=nonce_val)
         except Exception:
             # Fallback if replace not available or Header is not a dataclass
@@ -1843,8 +1841,6 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
             state_root = _compute_state_root(getattr(ctx, "state_db", None))
 
             try:
-                from dataclasses import replace
-
                 header = replace(
                     header,
                     stateRoot=state_root,
