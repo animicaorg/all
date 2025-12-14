@@ -68,6 +68,11 @@ _AUTO_TASK: asyncio.Task | None = None
 # 1. The map is short-lived (only during mining)
 # 2. Entries are cleaned up immediately after use (success or failure)
 # 3. Collision would only cause fallback to txid_bytes() computation (safe degradation)
+#
+# Thread safety: This global is not thread-safe, but it's acceptable because:
+# 1. RPC methods are called sequentially within the same FastAPI worker process
+# 2. Mining operations (_mine_once) are synchronous and complete before next RPC call
+# 3. If concurrent mining is needed in the future, add threading.Lock
 _TX_HASH_MAP: dict[int, tuple[str, bytes]] = {}
 
 

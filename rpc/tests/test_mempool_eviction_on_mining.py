@@ -12,6 +12,23 @@ import pytest
 from rpc.tests import new_test_client, rpc_call
 
 
+@pytest.fixture(autouse=True)
+def cleanup_mempool_state():
+    """Fixture to clean up mempool state after each test."""
+    yield  # Run the test
+    
+    # Cleanup after test
+    try:
+        from rpc.methods import tx as tx_methods
+        from rpc.methods import miner as miner_methods
+        
+        tx_methods._FALLBACK_PENDING.clear()
+        tx_methods._FALLBACK_PENDING_TS.clear()
+        miner_methods._TX_HASH_MAP.clear()
+    except Exception:
+        pass  # If modules not imported, nothing to clean
+
+
 def test_mempool_eviction_after_mining_via_fallback():
     """
     Test that txs added to _FALLBACK_PENDING are evicted after mining.
@@ -63,14 +80,7 @@ def test_mempool_eviction_after_mining_via_fallback():
     # If hashes match correctly and eviction works, txs should be removed
     # Note: This test may not fully work because the mock txs are invalid and won't
     # be decoded properly, but it demonstrates the intent of the fix
-    
-    # Clean up
-    tx_methods._FALLBACK_PENDING.clear()
-    tx_methods._FALLBACK_PENDING_TS.clear()
-    
-    # Also clean up the hash map to prevent test isolation issues
-    from rpc.methods import miner as miner_methods
-    miner_methods._TX_HASH_MAP.clear()
+    # (Cleanup handled by fixture)
 
 
 def test_mempool_getPending_lists_submitted_txs():
@@ -92,14 +102,7 @@ def test_mempool_getPending_lists_submitted_txs():
     # Should appear in mempool.getPending
     result = rpc_call(client, "mempool.getPending")
     assert tx_hash in result["result"], f"TX {tx_hash} should appear in mempool.getPending"
-    
-    # Clean up
-    tx_methods._FALLBACK_PENDING.clear()
-    tx_methods._FALLBACK_PENDING_TS.clear()
-    
-    # Also clean up the hash map to prevent test isolation issues
-    from rpc.methods import miner as miner_methods
-    miner_methods._TX_HASH_MAP.clear()
+    # (Cleanup handled by fixture)
 
 
 def test_mempool_getStats_counts_pending_txs():
@@ -127,14 +130,7 @@ def test_mempool_getStats_counts_pending_txs():
     result = rpc_call(client, "mempool.getStats")
     assert result["result"]["count"] == 2, "Mempool count should be 2"
     assert result["result"]["totalBytes"] == len(mock_raw_tx_1) + len(mock_raw_tx_2)
-    
-    # Clean up
-    tx_methods._FALLBACK_PENDING.clear()
-    tx_methods._FALLBACK_PENDING_TS.clear()
-    
-    # Also clean up the hash map to prevent test isolation issues
-    from rpc.methods import miner as miner_methods
-    miner_methods._TX_HASH_MAP.clear()
+    # (Cleanup handled by fixture)
 
 
 if __name__ == "__main__":
