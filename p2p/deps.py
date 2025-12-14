@@ -262,9 +262,49 @@ class P2PDeps:
     # Here we only provide a placeholder hook that higher-level wiring can replace.
     def admit_tx(self, tx: "Tx") -> Tuple[bool, Optional[str]]:
         """
-        Placeholder admission hook. Replaced at runtime by p2p.adapters.mempool if present.
+        Admit a transaction received from P2P gossip to the pending pool.
+        
+        This allows transactions gossiped by peers to be added to the local
+        mempool/pending pool so they can be included in blocks mined by this node.
         """
-        return False, "no_mempool_wired"
+        try:
+            # Import RPC tx methods to access pending pool admission
+            from rpc.methods import tx as tx_methods
+            
+            # Verify required methods are available
+            if not (hasattr(tx_methods, '_pending_get') and hasattr(tx_methods, '_pending_put')):
+                return False, "no_pending_pool_available"
+            
+            # Encode the tx to CBOR (canonical format)
+            # Use the Tx object's built-in to_cbor() method which handles serialization correctly
+            try:
+                if hasattr(tx, 'to_cbor') and callable(tx.to_cbor):
+                    raw_cbor = tx.to_cbor()
+                else:
+                    # Fallback: manually encode using CBOR and to_obj()
+                    from core.encoding.cbor import dumps as cbor_encode
+                    raw_cbor = cbor_encode(tx.to_obj())
+            except Exception as e:
+                return False, f"cbor_encode_failed:{e}"
+            
+            # Compute tx hash for deduplication
+            try:
+                from core.utils.hash import sha3_256
+                tx_hash_hex = "0x" + sha3_256(raw_cbor).hex()
+            except Exception as e:
+                return False, f"hash_failed:{e}"
+            
+            # Check if already in pending pool (dedupe)
+            existing = tx_methods._pending_get(tx_hash_hex)
+            if existing is not None:
+                return True, "duplicate"  # Already have it; treat as success
+            
+            # Add to pending pool using the same path as RPC submissions
+            tx_methods._pending_put(tx_hash_hex, raw_cbor)
+            return True, None
+            
+        except Exception as e:
+            return False, f"admit_error:{e}"
 
     # ---- Cheap validation surfaces -----------------------------------------
 
@@ -353,6 +393,9 @@ class AsyncP2PDeps:
 
     async def tx_by_hash(self, tx_hash: bytes) -> Optional["Tx"]:
         return await self._loop.run_in_executor(None, self._sync.tx_by_hash, tx_hash)
+
+    async def admit_tx(self, tx: "Tx") -> Tuple[bool, Optional[str]]:
+        return await self._loop.run_in_executor(None, self._sync.admit_tx, tx)
 
     async def cheap_header_sanity(self, header: "Header") -> Tuple[bool, Optional[str]]:
         return await self._loop.run_in_executor(
