@@ -68,8 +68,8 @@ def _build_signed_transfer(client, cfg, sender_kp, recipient_hex: str, nonce: in
     )
     
     # Sign transaction
-    sign_bytes = tx_sign_bytes(unsigned.to_obj(), cfg.chain_id)
-    sig_env = sign.sign_detached(sign_bytes, alg_name, sender_kp.secret_key, domain="tx")
+    sign_bytes = tx_sign_bytes(unsigned.to_obj())
+    sig_env = sign.sign_detached(sign_bytes, alg_name, sender_kp.secret_key, domain="tx", chain_id=cfg.chain_id)
     
     # Create signed tx
     from core.types.tx import PqSignature
@@ -92,11 +92,11 @@ def test_mining_includes_tx_and_updates_balances():
     client, cfg, _ = new_test_client()
     
     # Generate keypair for sender and receiver
-    from pq.py import keygen
+    from pq.py.keygen import keygen_sig
     
     try:
-        sender_kp = keygen.keygen("dilithium3")
-        receiver_kp = keygen.keygen("dilithium3")
+        sender_kp = keygen_sig("dilithium3")
+        receiver_kp = keygen_sig("dilithium3")
     except Exception:
         pytest.skip("PQ keygen not available")
         return
@@ -230,10 +230,10 @@ def test_mining_multiple_txs_in_single_block():
     client, cfg, _ = new_test_client()
     
     # Generate keypair for sender
-    from pq.py import keygen
+    from pq.py.keygen import keygen_sig
     
     try:
-        sender_kp = keygen.keygen("dilithium3")
+        sender_kp = keygen_sig("dilithium3")
     except Exception:
         pytest.skip("PQ keygen not available")
         return
