@@ -796,6 +796,9 @@ def _normalize_tx_envelope(decoded: dict) -> dict:
             # Core expects 32-byte raw addresses
             def _addr_to_bytes(addr) -> bytes:
                 """Convert address to 32-byte raw format."""
+                if addr is None:
+                    raise ValueError("Address cannot be None")
+                
                 if isinstance(addr, (bytes, bytearray)):
                     addr_bytes = bytes(addr)
                 elif isinstance(addr, str):
@@ -803,8 +806,9 @@ def _normalize_tx_envelope(decoded: dict) -> dict:
                     if addr.startswith("anim1"):
                         try:
                             addr_bytes = _decode_bech32_address(addr)
-                        except Exception:
-                            # Fallback: try hex
+                        except (ValueError, KeyError) as e:
+                            # Fallback: try hex if bech32 decode fails
+                            log.debug(f"Bech32 decode failed ({e}), trying hex fallback for: {addr}")
                             if addr.startswith("0x"):
                                 addr_bytes = bytes.fromhex(addr[2:])
                             else:
@@ -815,7 +819,7 @@ def _normalize_tx_envelope(decoded: dict) -> dict:
                         # Assume bare hex
                         addr_bytes = bytes.fromhex(addr)
                 else:
-                    raise TypeError(f"Unsupported address type: {type(addr).__name__}")
+                    raise TypeError(f"Unsupported address type: {type(addr).__name__} (expected str or bytes)")
                 
                 # Pad or truncate to 32 bytes
                 if len(addr_bytes) < ADDRESS_LEN:
