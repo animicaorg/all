@@ -67,6 +67,10 @@ def test_mempool_eviction_after_mining_via_fallback():
     # Clean up
     tx_methods._FALLBACK_PENDING.clear()
     tx_methods._FALLBACK_PENDING_TS.clear()
+    
+    # Also clean up the hash map to prevent test isolation issues
+    from rpc.methods import miner as miner_methods
+    miner_methods._TX_HASH_MAP.clear()
 
 
 def test_mempool_getPending_lists_submitted_txs():
@@ -92,6 +96,10 @@ def test_mempool_getPending_lists_submitted_txs():
     # Clean up
     tx_methods._FALLBACK_PENDING.clear()
     tx_methods._FALLBACK_PENDING_TS.clear()
+    
+    # Also clean up the hash map to prevent test isolation issues
+    from rpc.methods import miner as miner_methods
+    miner_methods._TX_HASH_MAP.clear()
 
 
 def test_mempool_getStats_counts_pending_txs():
@@ -123,6 +131,10 @@ def test_mempool_getStats_counts_pending_txs():
     # Clean up
     tx_methods._FALLBACK_PENDING.clear()
     tx_methods._FALLBACK_PENDING_TS.clear()
+    
+    # Also clean up the hash map to prevent test isolation issues
+    from rpc.methods import miner as miner_methods
+    miner_methods._TX_HASH_MAP.clear()
 
 
 if __name__ == "__main__":
