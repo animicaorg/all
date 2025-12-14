@@ -19,6 +19,19 @@ _PQ_VERIFY_OPTIONAL = os.environ.get("ANIMICA_PQ_VERIFY_OPTIONAL") == "1" or (
 )
 _RPC_DEBUG = os.environ.get("ANIMICA_RPC_DEBUG") == "1"
 
+# ——— Validation failure metrics ———
+try:
+    from rpc.metrics import TX_VALIDATION_FAILURES
+except Exception:  # pragma: no cover
+    # Fallback: no-op counter
+    class _Counter:
+        def labels(self, **kwargs):
+            """Return self to support chaining."""
+            return self
+        def inc(self, *args, **kwargs):
+            pass
+    TX_VALIDATION_FAILURES = _Counter()  # type: ignore[assignment]
+
 # ——— Optional deps (be tolerant during early bring-up) ———
 
 # CBOR codec (canonical, from core)
@@ -785,8 +798,8 @@ def _tx_view(
         gas = gas_obj.get("limit")
         tip = gas_obj.get("price")
     else:
-        gas = gas_obj or tx_obj.get("gasLimit")
-        tip = tx_obj.get("tip") or tx_obj.get("gasPrice")
+        gas = gas_obj or tx_obj.get("gasLimit") or tx_obj.get("gas_limit")
+        tip = tx_obj.get("tip") or tx_obj.get("gasPrice") or tx_obj.get("gas_price")
     
     if gas is None and hasattr(tx, "unsigned"):
         gas = getattr(tx.unsigned, "gas_limit", None)
@@ -797,6 +810,19 @@ def _tx_view(
         tip = getattr(tx.unsigned, "gas_price", None)
     if tip is None:
         tip = getattr(tx, "tip", None)
+    
+    # Extract maxFee (distinct from tip/gasPrice)
+    max_fee = tx_obj.get("maxFee") or tx_obj.get("max_fee")
+    if max_fee is None and tip is not None:
+        # Fallback: use tip as maxFee if maxFee not present
+        max_fee = tip
+    
+    # Extract chainId
+    chain_id = tx_obj.get("chainId") or tx_obj.get("chain_id")
+    if chain_id is None and hasattr(tx, "unsigned"):
+        chain_id = getattr(tx.unsigned, "chain_id", None) or getattr(tx.unsigned, "chainId", None)
+    if chain_id is None:
+        chain_id = getattr(tx, "chain_id", None) or getattr(tx, "chainId", None)
     # Handle payload - can be a dict {'t': type, 'v': {actual payload}} or direct values
     payload_obj = tx_obj.get("payload")
     if isinstance(payload_obj, dict):
@@ -833,8 +859,12 @@ def _tx_view(
         "to": _hex(to) if isinstance(to, (bytes, bytearray)) else to,
         "nonce": int(nonce) if nonce is not None else None,
         "gas": int(gas) if gas is not None else None,
+        "gasLimit": int(gas) if gas is not None else None,  # Alias for compatibility
         "tip": int(tip) if tip is not None else None,
+        "gasPrice": int(tip) if tip is not None else None,  # Alias for compatibility
+        "maxFee": int(max_fee) if max_fee is not None else None,
         "value": int(value) if value is not None else None,
+        "chainId": int(chain_id) if chain_id is not None else None,
         "data": _hex(data) if isinstance(data, (bytes, bytearray)) else data,
         "blockHash": (
             None
@@ -1066,6 +1096,7 @@ def _tx_send_raw_transaction(rawTx: str) -> str:
         raw = _b(rawTx)
     except Exception as e:
         log.error("tx.sendRawTransaction: hex decode failed, len=%d", len(rawTx) if rawTx else 0)
+        TX_VALIDATION_FAILURES.labels(reason="hex_decode_failed").inc()
         raise rpc_errors.InvalidTx(
             "rawTx decode failed",
             **_error_data(
@@ -1084,6 +1115,7 @@ def _tx_send_raw_transaction(rawTx: str) -> str:
         raise
     except Exception as e:
         log.error("tx.sendRawTransaction: CBOR decode failed, raw_len=%d", len(raw), exc_info=True)
+        TX_VALIDATION_FAILURES.labels(reason="cbor_decode_failed").inc()
         raise rpc_errors.InvalidTx(
             "Transaction decode failed",
             **_error_data(
@@ -1104,10 +1136,24 @@ def _tx_send_raw_transaction(rawTx: str) -> str:
 
     try:
         # Basic chainId check and reuse the validated value for signature verification
-        chain_id = _validate_chain_id(obj)
+        try:
+            chain_id = _validate_chain_id(obj)
+        except rpc_errors.ChainIdMismatch as e:
+            log.warning(
+                "tx.sendRawTransaction: chainId mismatch, got=%s, expected=%s",
+                e.data.get("got") if e.data else "unknown",
+                e.data.get("expected") if e.data else "unknown",
+            )
+            TX_VALIDATION_FAILURES.labels(reason="chain_id_mismatch").inc()
+            raise
 
         # PQ signature verify
-        _verify_pq_signature(tx_like, obj, chain_id=chain_id)
+        try:
+            _verify_pq_signature(tx_like, obj, chain_id=chain_id)
+        except rpc_errors.BadSignature as e:
+            log.warning("tx.sendRawTransaction: PQ signature invalid, chain_id=%d", chain_id)
+            TX_VALIDATION_FAILURES.labels(reason="signature_invalid").inc()
+            raise
 
         # Compute hash from the original CBOR bytes to ensure consistency
         # Per spec: TxID = sha3_256(CBOR(SignedTxMap))
@@ -1120,12 +1166,13 @@ def _tx_send_raw_transaction(rawTx: str) -> str:
         )
 
         # Duplicate suppression: if already in pending/persisted, return hash (idempotent)
+        # Note: Duplicates are not validation failures - they're expected and idempotent
         if _pending_get(tx_hash_hex) is not None:
-            log.debug("tx.sendRawTransaction: duplicate tx (already pending), hash=%s", tx_hash_hex)
+            log.info("tx.sendRawTransaction: duplicate tx (already pending), hash=%s", tx_hash_hex)
             return tx_hash_hex
         persisted, *_ = _lookup_persisted_tx(tx_hash_hex)
         if persisted is not None:
-            log.debug("tx.sendRawTransaction: duplicate tx (already persisted), hash=%s", tx_hash_hex)
+            log.info("tx.sendRawTransaction: duplicate tx (already persisted), hash=%s", tx_hash_hex)
             return tx_hash_hex
 
         # Admit to pending pool (stateless checks already done here)
