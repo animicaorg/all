@@ -1585,16 +1585,27 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
     # with "Transaction missing sender; skipping" during execution.
     if txs:
         log.info(f"Normalizing {len(txs)} transactions before mining (attaching sender where possible)")
+        
+        # Ensure txs and included_hashes have matching lengths (pad with canonical hashes if needed)
+        if len(included_hashes) < len(txs):
+            log.warning(
+                f"included_hashes shorter than txs ({len(included_hashes)} < {len(txs)}), "
+                f"computing missing canonical hashes"
+            )
+            # Compute missing hashes
+            for i in range(len(included_hashes), len(txs)):
+                included_hashes.append(_canonical_txid_hex(txs[i]))
+        
         txs_normalized = []
         included_hashes_normalized = []
         
-        for i, tx in enumerate(txs):
+        # Use zip to ensure synchronization between txs and hashes
+        for tx, tx_hash_hex in zip(txs, included_hashes):
             # Try to attach sender if missing
             tx_normalized = _attach_sender_if_possible(tx)
             
             # Drop txs that still have no sender (can't execute without sender)
             if not _has_valid_sender(tx_normalized):
-                tx_hash_hex = included_hashes[i] if i < len(included_hashes) else "unknown"
                 log.warning(
                     f"Dropping tx {tx_hash_hex[:16]}... - no sender after normalization "
                     f"(envelope may be missing signature or pubkey)"
@@ -1603,8 +1614,7 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
             
             # Keep normalized tx and its hash
             txs_normalized.append(tx_normalized)
-            if i < len(included_hashes):
-                included_hashes_normalized.append(included_hashes[i])
+            included_hashes_normalized.append(tx_hash_hex)
         
         # Replace with normalized lists
         dropped_count = len(txs) - len(txs_normalized)
