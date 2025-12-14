@@ -277,6 +277,70 @@ class CoreChainAdapter:
 
         return []
 
+    def remove_included(self, hashes: Sequence[bytes]) -> None:
+        """
+        Evict transactions that were included in a mined block from the mempool.
+        
+        This ensures that successfully mined transactions are removed from the
+        pending pool and don't get re-mined in subsequent blocks.
+        
+        Args:
+            hashes: Transaction hashes (bytes) to evict from mempool
+        """
+        # Try to get pool from a global registry or KV-backed accessor
+        # This is a best-effort approach that will work if the mempool module
+        # exposes a way to access the pool instance
+        pool = None
+        
+        # Strategy 1: Try to import and access a global pool if available
+        try:
+            from mempool import adapters as mp_adapters
+            # Check if there's a get_pool or similar function
+            if hasattr(mp_adapters, "get_pool"):
+                pool = mp_adapters.get_pool()  # type: ignore[attr-defined]
+            elif hasattr(mp_adapters, "_POOL"):
+                pool = mp_adapters._POOL  # type: ignore[attr-defined]
+        except Exception:  # noqa: BLE001
+            pass
+        
+        # Strategy 2: If miner_feed is available, try to access its drain's pool
+        if pool is None and self.miner_feed is not None:
+            # The drain function may be a bound method of a Pool instance
+            drain = getattr(self.miner_feed, "_drain", None)
+            if drain is not None:
+                # Check if drain is a bound method and extract the instance
+                pool = getattr(drain, "__self__", None)
+        
+        # Strategy 3: Try to reconstruct pool from KV (if Pool can be opened that way)
+        if pool is None:
+            try:
+                from mempool.pool import Pool  # type: ignore[import-not-found]
+                # Try to get a global pool instance if available
+                # Some implementations may store the pool in a module-level variable
+                import sys
+                if "mempool" in sys.modules:
+                    mp_module = sys.modules["mempool"]
+                    pool = getattr(mp_module, "_POOL", None) or getattr(mp_module, "pool", None)
+            except Exception:  # noqa: BLE001
+                pass
+        
+        # If we found a pool, evict the transactions
+        if pool is not None and hasattr(pool, "remove_included"):
+            try:
+                pool.remove_included(hashes)
+                log.info("evicted transactions from mempool pool", extra={"count": len(hashes)})
+                return
+            except Exception as e:  # noqa: BLE001
+                log.warning(
+                    "failed to evict from mempool pool; txs may be re-mined",
+                    extra={"err": str(e), "count": len(hashes)},
+                )
+        else:
+            log.debug(
+                "mempool pool not accessible; skipping eviction (txs may be re-mined)",
+                extra={"has_feed": self.miner_feed is not None, "count": len(hashes)},
+            )
+
     # --- Mutations ------------------------------------------------------------
     def submit_block(self, block: Block) -> bool:
         """
