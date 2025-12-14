@@ -16,21 +16,81 @@ Tests:
 import pytest
 from rpc.tests import new_test_client, rpc_call
 
+# Test address constants for deterministic testing
+TEST_RECIPIENT_1 = "0xdeadbeef" + "00" * 28  # 32-byte test address
+TEST_RECIPIENT_2 = "0xcafebabe" + "00" * 28  # 32-byte test address
+
+
+@pytest.fixture
+def sender_keypair():
+    """
+    Fixture to generate a PQ keypair for testing.
+    
+    Skips test if PQ keygen is not available.
+    
+    Returns:
+        Keypair object with address, public_key, secret_key attributes
+    """
+    try:
+        from pq.py.keygen import keygen_sig
+        return keygen_sig("dilithium3")
+    except Exception as e:
+        pytest.skip(f"PQ keygen not available: {e}")
+
+
+def _try_keygen():
+    """
+    Helper to generate a keypair for tests that don't use fixtures.
+    
+    Returns:
+        Keypair or None if PQ keygen fails (caller should skip test)
+    """
+    try:
+        from pq.py.keygen import keygen_sig
+        return keygen_sig("dilithium3")
+    except Exception:
+        return None
+
 
 def _get_premine_address_hex() -> str:
-    """Helper to get the premine address as hex string."""
-    from consensus.rewards import MAINNET_PREMINE_DISTRIBUTION
-    from pq.py.address import decode_address
+    """
+    Helper to get the premine address as hex string.
     
-    premine_addr_bech32 = MAINNET_PREMINE_DISTRIBUTION[0][0]
-    addr_record = decode_address(premine_addr_bech32)
-    digest = bytes(addr_record.digest) if isinstance(addr_record.digest, list) else addr_record.digest
-    premine_addr_bytes = digest[:32].ljust(32, b"\x00")
-    return "0x" + premine_addr_bytes.hex()
+    Note: Uses MAINNET_PREMINE_DISTRIBUTION which works for both mainnet and testnet
+    since the test environment uses chain_id=1 (default).
+    
+    Returns:
+        str: Premine address as hex string (e.g., "0xabcd...")
+    """
+    try:
+        from consensus.rewards import MAINNET_PREMINE_DISTRIBUTION
+        from pq.py.address import decode_address
+        
+        premine_addr_bech32 = MAINNET_PREMINE_DISTRIBUTION[0][0]
+        addr_record = decode_address(premine_addr_bech32)
+        digest = bytes(addr_record.digest) if isinstance(addr_record.digest, list) else addr_record.digest
+        premine_addr_bytes = digest[:32].ljust(32, b"\x00")
+        return "0x" + premine_addr_bytes.hex()
+    except (ImportError, IndexError, AttributeError):
+        # Fallback to a deterministic test address if premine not available
+        return "0x" + ("01" * 32)
 
 
 def _build_signed_transfer(client, cfg, sender_kp, recipient_hex: str, nonce: int = 0, value: int = 1_000_000_000):
-    """Build a signed transfer transaction using provided keypair."""
+    """
+    Build a signed transfer transaction using provided keypair.
+    
+    Args:
+        client: FastAPI test client
+        cfg: RPC config with chain_id
+        sender_kp: Sender keypair with address, public_key, secret_key
+        recipient_hex: Recipient address as hex string (e.g., "0xabcd...")
+        nonce: Transaction nonce (default: 0)
+        value: Transfer amount in nANM (default: 1 ANM)
+        
+    Returns:
+        tuple: (raw_tx_hex, tx_hash_hex) - CBOR-encoded tx and its hash
+    """
     from core.encoding.canonical import tx_sign_bytes
     from core.types.tx import Tx
     from pq.py import sign
@@ -103,18 +163,10 @@ def test_empty_block_has_zero_txsroot():
     print(f"✓ Empty block at height {block_height} has zero txsRoot")
 
 
-def test_block_with_one_tx_has_nonzero_txsroot():
+def test_block_with_one_tx_has_nonzero_txsroot(sender_keypair):
     """Test that mining a block with 1 transaction produces a non-zero txsRoot."""
     client, cfg, _ = new_test_client()
-    
-    # Generate keypair for sender
-    from pq.py.keygen import keygen_sig
-    
-    try:
-        sender_kp = keygen_sig("dilithium3")
-    except Exception:
-        pytest.skip("PQ keygen not available")
-        return
+    sender_kp = sender_keypair
     
     # Get sender address
     from pq.py.address import decode_address
@@ -163,18 +215,10 @@ def test_block_with_one_tx_has_nonzero_txsroot():
     print(f"✓ Transaction {tx_hash} included in block")
 
 
-def test_block_with_multiple_txs_has_correct_txsroot():
+def test_block_with_multiple_txs_has_correct_txsroot(sender_keypair):
     """Test that mining a block with multiple transactions produces correct txsRoot."""
     client, cfg, _ = new_test_client()
-    
-    # Generate keypair for sender
-    from pq.py.keygen import keygen_sig
-    
-    try:
-        sender_kp = keygen_sig("dilithium3")
-    except Exception:
-        pytest.skip("PQ keygen not available")
-        return
+    sender_kp = sender_keypair
     
     # Get sender address
     from pq.py.address import decode_address
@@ -190,8 +234,8 @@ def test_block_with_multiple_txs_has_correct_txsroot():
     # Build and submit 3 transactions with sequential nonces
     tx_hashes = []
     for nonce in range(3):
-        # Use different recipients (deterministic test addresses)
-        recipient_hex = f"0xdeadbeef{nonce:056x}"
+        # Use different recipients (deterministic test addresses with nonce suffix)
+        recipient_hex = TEST_RECIPIENT_1[:-2] + f"{nonce:02x}"
         raw_hex, tx_hash = _build_signed_transfer(
             client, cfg, sender_kp, recipient_hex,
             nonce=nonce, value=100_000_000  # 0.1 ANM each
@@ -231,7 +275,7 @@ def test_block_with_multiple_txs_has_correct_txsroot():
     assert included_count > 0, "At least one transaction should be included"
 
 
-def test_txsroot_matches_across_mining_and_validation():
+def test_txsroot_matches_across_mining_and_validation(sender_keypair):
     """
     Test that the txsRoot computed during mining matches the validation in Block.from_components.
     
@@ -243,15 +287,7 @@ def test_txsroot_matches_across_mining_and_validation():
     The fix ensures both use tx.hash() for consistency.
     """
     client, cfg, _ = new_test_client()
-    
-    # Generate keypair
-    from pq.py.keygen import keygen_sig
-    
-    try:
-        sender_kp = keygen_sig("dilithium3")
-    except Exception:
-        pytest.skip("PQ keygen not available")
-        return
+    sender_kp = sender_keypair
     
     # Fund sender
     rpc_call(client, "miner.mine", {"count": 2, "address": sender_kp.address})
@@ -274,18 +310,10 @@ def test_txsroot_matches_across_mining_and_validation():
             raise
 
 
-def test_mempool_drained_after_mining():
+def test_mempool_drained_after_mining(sender_keypair):
     """Test that transactions are removed from mempool after being mined."""
     client, cfg, _ = new_test_client()
-    
-    # Generate keypair
-    from pq.py.keygen import keygen_sig
-    
-    try:
-        sender_kp = keygen_sig("dilithium3")
-    except Exception:
-        pytest.skip("PQ keygen not available")
-        return
+    sender_kp = sender_keypair
     
     # Fund sender
     rpc_call(client, "miner.mine", {"count": 3, "address": sender_kp.address})
@@ -293,7 +321,8 @@ def test_mempool_drained_after_mining():
     # Submit 2 transactions
     tx_hashes = []
     for nonce in range(2):
-        recipient_hex = f"0xcafebabe{nonce:056x}"
+        # Use deterministic test addresses with nonce suffix
+        recipient_hex = TEST_RECIPIENT_2[:-2] + f"{nonce:02x}"
         raw_hex, tx_hash = _build_signed_transfer(client, cfg, sender_kp, recipient_hex, nonce=nonce)
         rpc_call(client, "tx.sendRawTransaction", {"rawTx": raw_hex})
         tx_hashes.append(tx_hash)
