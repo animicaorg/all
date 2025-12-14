@@ -39,8 +39,10 @@ def test_sorted_merkle_leaves_produce_deterministic_root():
     root_unsorted_3 = merkle_root(order_3)
     
     # Verify they differ (this proves ordering matters)
-    assert root_unsorted_1 != root_unsorted_2 or root_unsorted_1 != root_unsorted_3, \
-        "Different orderings should produce different roots when unsorted"
+    # At least 2 different roots should exist among the 3 orderings
+    unique_roots = len({root_unsorted_1, root_unsorted_2, root_unsorted_3})
+    assert unique_roots > 1, \
+        f"Different orderings should produce different roots when unsorted (got {unique_roots} unique roots)"
     
     # With sorting, all orders produce the same root
     root_sorted_1 = merkle_root(sorted(order_1))
@@ -181,8 +183,8 @@ def test_single_transaction_block_has_consistent_root():
     block = Block(header=header, txs=(tx,), proofs=(), receipts=None)
     root1 = block.txs_root()
     
-    # Compute expected root manually
-    expected_root = merkle_root([tx.hash()])
+    # Compute expected root manually (with sorting to match production code)
+    expected_root = merkle_root(sorted([tx.hash()]))
     
     assert root1 == expected_root, "Single transaction root should match manual computation"
     assert root1 != ZERO32, "Single transaction block should have non-zero txsRoot"
