@@ -605,24 +605,53 @@ def _adapter() -> CoreChainAdapter:
         if tx_methods is not None:
             def drain_fn(max_gas: int, max_bytes: int):
                 """
-                Drain function that selects transactions from the fallback pending cache.
+                Drain function that selects transactions from the pending pool.
                 
-                This reads from rpc.methods.tx._FALLBACK_PENDING which is where transactions
-                are stored when submitted via the RPC tx.sendRawTransaction method.
+                This reads from rpc.methods.tx._PEND (if available) or _FALLBACK_PENDING
+                (fallback), matching the same priority used by tx.sendRawTransaction and
+                mempool.getPending.
                 
                 Returns a list of Tx objects. Uses _tx_hash_map to track original hashes.
                 """
                 log.info(f"drain_fn: ENTRY with max_gas={max_gas}, max_bytes={max_bytes}")
                 txs = []
                 try:
-                    pending_map = getattr(tx_methods, "_FALLBACK_PENDING", {}) or {}
-                    log.info(f"drain_fn called with pending_count={len(pending_map)}")
+                    # Check _PEND first (same priority as _pending_put and mempool.getPending)
+                    pend = getattr(tx_methods, "_PEND", None)
+                    pending_map = {}
+                    
+                    if pend is not None:
+                        log.info("drain_fn: Using _PEND pool")
+                        # Try to get items from _PEND (depends on its interface)
+                        if hasattr(pend, "items") and callable(pend.items):
+                            try:
+                                pending_map = dict(pend.items())  # dict[str, bytes]
+                                log.info(f"drain_fn: Got {len(pending_map)} txs from _PEND.items()")
+                            except Exception as e:
+                                log.warning(f"drain_fn: _PEND.items() failed: {e}")
+                        elif hasattr(pend, "list_raw") and callable(pend.list_raw):
+                            try:
+                                items = pend.list_raw()  # Iterable[(str, bytes)]
+                                pending_map = dict(items)
+                                log.info(f"drain_fn: Got {len(pending_map)} txs from _PEND.list_raw()")
+                            except Exception as e:
+                                log.warning(f"drain_fn: _PEND.list_raw() failed: {e}")
+                        else:
+                            log.warning("drain_fn: _PEND exists but has no items() or list_raw() method")
+                    
+                    # Fallback to _FALLBACK_PENDING if _PEND is None or didn't provide items
+                    if not pending_map:
+                        fallback = getattr(tx_methods, "_FALLBACK_PENDING", {}) or {}
+                        pending_map = fallback
+                        log.info(f"drain_fn: Using _FALLBACK_PENDING with {len(pending_map)} txs")
+                    
                     if pending_map:
                         # Log first few tx hashes for debugging
                         sample_hashes = list(pending_map.keys())[:3]
                         log.info(f"drain_fn: Sample pending tx hashes: {sample_hashes}")
+                    
                     if not pending_map:
-                        log.info("drain_fn: No pending transactions in _FALLBACK_PENDING")
+                        log.info("drain_fn: No pending transactions in any pool")
                         return []
                     
                     total_gas = 0
