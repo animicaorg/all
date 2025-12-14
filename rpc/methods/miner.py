@@ -78,6 +78,102 @@ def _bytes32(val: Any) -> bytes:
     return b[:32]
 
 
+def txid_bytes(tx: Any, raw: bytes | None = None) -> bytes:
+    """
+    Canonical txid helper used everywhere in mining/block assembly.
+    
+    Computes transaction hash (txid) from various tx representations:
+    - Core `Tx` objects (uses `.hash()` or `.txid()` method)
+    - Decoded dict/envelope objects (uses hash field or computes from raw)
+    - Raw tx bytes (computes sha3_256 directly)
+    
+    The canonical rule is: TxID = sha3_256(raw_cbor_bytes) for the signed envelope.
+    This matches the rule used by `rpc/methods/tx.py` in `tx.sendRawTransaction`.
+    
+    Args:
+        tx: Transaction object (Tx instance, dict, or bytes)
+        raw: Optional raw CBOR bytes (used to compute hash if tx is dict without hash field)
+        
+    Returns:
+        32-byte transaction hash
+        
+    Raises:
+        ValueError: If hash cannot be computed from any available source
+    """
+    # Try 1: tx.hash() method (Tx dataclass)
+    if hasattr(tx, "hash") and callable(getattr(tx, "hash")):
+        try:
+            h = tx.hash()
+            if isinstance(h, bytes) and len(h) == 32:
+                return h
+        except Exception as e:
+            log.debug(f"txid_bytes: tx.hash() failed: {e}")
+    
+    # Try 2: tx.txid() method (alternative Tx method name)
+    if hasattr(tx, "txid") and callable(getattr(tx, "txid")):
+        try:
+            h = tx.txid()
+            if isinstance(h, bytes) and len(h) == 32:
+                return h
+        except Exception as e:
+            log.debug(f"txid_bytes: tx.txid() failed: {e}")
+    
+    # Try 3: Attributes (tx.tx_hash, tx.txid, tx.hash as bytes or hex)
+    for attr_name in ("tx_hash", "txid", "hash"):
+        if hasattr(tx, attr_name):
+            val = getattr(tx, attr_name)
+            if isinstance(val, bytes) and len(val) == 32:
+                return val
+            elif isinstance(val, str):
+                # Try to decode hex string
+                try:
+                    hex_str = val[2:] if val.startswith("0x") else val
+                    h = bytes.fromhex(hex_str)
+                    if len(h) == 32:
+                        return h
+                except Exception:
+                    pass
+    
+    # Try 4: Dict keys (for envelope objects)
+    if isinstance(tx, dict):
+        for key_name in ("hash", "tx_hash", "txid"):
+            if key_name in tx:
+                val = tx[key_name]
+                if isinstance(val, bytes) and len(val) == 32:
+                    return val
+                elif isinstance(val, str):
+                    try:
+                        hex_str = val[2:] if val.startswith("0x") else val
+                        h = bytes.fromhex(hex_str)
+                        if len(h) == 32:
+                            return h
+                    except Exception:
+                        pass
+    
+    # Try 5: Compute from raw bytes if available
+    if raw is not None and isinstance(raw, (bytes, bytearray)):
+        return hashlib.sha3_256(bytes(raw)).digest()
+    
+    # Try 6: If tx is raw bytes, compute directly
+    if isinstance(tx, (bytes, bytearray)):
+        return hashlib.sha3_256(bytes(tx)).digest()
+    
+    # Try 7: If tx is a Tx dataclass, serialize to CBOR and hash
+    if hasattr(tx, "to_cbor") and callable(getattr(tx, "to_cbor")):
+        try:
+            cbor_bytes = tx.to_cbor()
+            return hashlib.sha3_256(cbor_bytes).digest()
+        except Exception as e:
+            log.debug(f"txid_bytes: tx.to_cbor() failed: {e}")
+    
+    # Failed to compute hash from any source
+    raise ValueError(
+        f"Cannot compute txid from tx: type={type(tx).__name__}, "
+        f"has_hash={hasattr(tx, 'hash')}, has_txid={hasattr(tx, 'txid')}, "
+        f"has_to_cbor={hasattr(tx, 'to_cbor')}, raw_provided={raw is not None}"
+    )
+
+
 def _resolve_theta() -> int:
     # Try the live consensus state if available
     try:
@@ -1003,16 +1099,18 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
         if txs:
             log.info(f"_mine_once: Sample tx types from adapter: {[type(tx).__name__ for tx in txs[:3]]}")
         # Track hashes of transactions from adapter for eviction later
+        # Use canonical txid_bytes() helper to support multiple tx representations
         for tx in txs:
             try:
-                tx_hash = tx.hash()
-                tx_hash_hex = "0x" + tx_hash.hex() if isinstance(tx_hash, bytes) else str(tx_hash)
+                tx_hash_bytes = txid_bytes(tx)
+                tx_hash_hex = "0x" + tx_hash_bytes.hex()
                 included_hashes.append(tx_hash_hex)
-            except (AttributeError, TypeError) as e:
-                # tx.hash() may not exist or may fail; log and skip this tx for eviction tracking
-                log.debug(f"Could not get hash for tx; skipping eviction tracking: {e}")
+                log.debug(f"Tracked tx hash from adapter: {tx_hash_hex}")
+            except Exception as e:
+                # txid_bytes() may fail for malformed tx; log and skip this tx for eviction tracking
+                log.debug(f"Could not get hash for tx from adapter; skipping eviction tracking: {e}")
         if txs:
-            log.info(f"Retrieved {len(txs)} transactions from mempool adapter for mining")
+            log.info(f"Retrieved {len(txs)} transactions from mempool adapter for mining (tracked {len(included_hashes)} hashes)")
     except Exception as e:
         log.warning(f"mempool snapshot unavailable; falling back to in-process cache: {e}", exc_info=True)
     if not txs:
@@ -1215,16 +1313,59 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
     header_template = _build_child_header(parent_height, parent_hash_bytes, parent_header)
 
     if txs:
-        try:
-            leaves = [tx.hash() for tx in txs]
-            txs_root = merkle_root(leaves) if leaves else ZERO32
-            from dataclasses import replace
-
-            header_template = replace(header_template, txsRoot=txs_root)
-        except Exception as e:
-            log.warning("failed to set txsRoot from pending txs; mining empty block", extra={"err": str(e)})
-            txs = []
-            included_hashes = []
+        # Build merkle root from tx hashes using safe txid_bytes() helper
+        # Drop individual malformed txs instead of failing the whole batch
+        leaves = []
+        valid_txs = []
+        valid_hashes = []
+        skipped_count = 0
+        
+        for i, tx in enumerate(txs):
+            try:
+                # Use canonical txid_bytes() helper that supports multiple tx formats
+                tx_hash = txid_bytes(tx)
+                leaves.append(tx_hash)
+                valid_txs.append(tx)
+                # Keep corresponding hash from included_hashes if available
+                if i < len(included_hashes):
+                    valid_hashes.append(included_hashes[i])
+                skipped_count = 0  # Reset skip counter on success
+            except Exception as e:
+                skipped_count += 1
+                log.debug(
+                    f"Skipping malformed tx {i+1}/{len(txs)}: {e}",
+                    extra={"tx_type": type(tx).__name__, "err": str(e)}
+                )
+                # Log warning only if we've skipped multiple txs
+                if skipped_count >= 3:
+                    log.warning(
+                        f"Skipped {skipped_count} malformed transactions from pending set",
+                        extra={"total_pending": len(txs), "valid": len(valid_txs)}
+                    )
+        
+        # Update txs list and included_hashes to only include valid transactions
+        txs = valid_txs
+        included_hashes = valid_hashes
+        
+        # Log summary of tx selection
+        if len(txs) > 0:
+            log.info(
+                f"Selected {len(txs)} valid transactions for block (skipped {len(txs) - len(valid_txs)} malformed)",
+                extra={"pending_total": len(txs) + len(txs) - len(valid_txs), "valid": len(txs)}
+            )
+        
+        # Compute merkle root and update header
+        if leaves:
+            try:
+                txs_root = merkle_root(leaves)
+                from dataclasses import replace
+                header_template = replace(header_template, txsRoot=txs_root)
+                log.debug(f"Computed txsRoot from {len(leaves)} tx hashes: {txs_root.hex()[:16]}...")
+            except Exception as e:
+                log.error(f"Failed to compute merkle root from {len(leaves)} leaves: {e}", exc_info=True)
+                # Fall back to empty block if merkle root computation fails
+                txs = []
+                included_hashes = []
     
     # Compute target from theta
     theta_micro = header_template.thetaMicro
@@ -1286,9 +1427,20 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
                         "failed to compute receipts root; defaulting to zero", extra={"err": str(e)}
                     )
 
+            # Recompute txsRoot using safe txid_bytes() helper
             try:
-                txs_root = merkle_root([tx.hash() for tx in txs]) if txs else ZERO32
-            except Exception:
+                if txs:
+                    leaves = []
+                    for tx in txs:
+                        try:
+                            leaves.append(txid_bytes(tx))
+                        except Exception as e:
+                            log.warning(f"Failed to compute hash for tx in final root: {e}")
+                    txs_root = merkle_root(leaves) if leaves else ZERO32
+                else:
+                    txs_root = ZERO32
+            except Exception as e:
+                log.warning(f"Failed to recompute txsRoot after execution: {e}")
                 txs_root = header.txsRoot
 
             state_root = _compute_state_root(getattr(ctx, "state_db", None))
