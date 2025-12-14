@@ -193,3 +193,36 @@ def test_miner_mine_advances_head():
 
     after = rpc_call(client, "chain.getHead")["result"].get("height") or 0
     assert after >= start + 2
+
+
+def test_miner_mine_with_zero_transactions():
+    """
+    Test that mining a payout-only block (no pending transactions) succeeds.
+    
+    This test ensures no UnboundLocalError is thrown when mining with zero txs.
+    Regression test for PR #426 fix.
+    """
+    client, cfg, _ = new_test_client()
+    
+    # Ensure pending pool is empty (no transactions to include)
+    try:
+        from rpc.methods import tx as tx_methods
+        # Clear any pending transactions
+        if hasattr(tx_methods, "_FALLBACK_PENDING"):
+            tx_methods._FALLBACK_PENDING.clear()
+        if hasattr(tx_methods, "_FALLBACK_PENDING_TS"):
+            tx_methods._FALLBACK_PENDING_TS.clear()
+    except (ImportError, AttributeError):
+        # If modules/attributes not available, continue anyway
+        pass
+    
+    # Mine a single block with no pending transactions
+    start_height = rpc_call(client, "chain.getHead")["result"].get("height") or 0
+    result = rpc_call(client, "miner.mine", [1])["result"]
+    
+    # Verify mining succeeded
+    assert result["mined"] == 1
+    assert result["height"] >= start_height + 1
+    assert "totalReward" in result
+    assert "rewards" in result
+    assert len(result["rewards"]) == 1
