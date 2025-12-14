@@ -856,6 +856,66 @@ def _pending_put(tx_hash_hex: str, raw: bytes) -> None:
     _FALLBACK_PENDING_TS[tx_hash_hex] = time.time()
 
 
+def _gossip_tx_to_peers(raw_tx: bytes) -> None:
+    """
+    Gossip a transaction to connected P2P peers.
+    
+    This function attempts to publish the transaction to the 'txs' topic
+    on the P2P gossip network. It's called after a transaction is successfully
+    admitted to the local pending pool via RPC.
+    
+    Args:
+        raw_tx: Raw CBOR-encoded transaction bytes
+    """
+    try:
+        # Get P2P service from RPC context
+        ctx = deps.get_ctx()
+        if not hasattr(ctx, 'p2p_service') or ctx.p2p_service is None:
+            log.debug("P2P service not available; tx not gossiped")
+            return
+        
+        p2p_service = ctx.p2p_service
+        
+        # Check if gossip engine is available
+        if not hasattr(p2p_service, 'gossip'):
+            log.debug("P2P gossip engine not available; tx not gossiped")
+            return
+        
+        gossip_engine = p2p_service.gossip
+        
+        # Check if publish method exists and is callable
+        if not hasattr(gossip_engine, 'publish') or not callable(gossip_engine.publish):
+            log.debug("P2P gossip publish method not available; tx not gossiped")
+            return
+        
+        # Publish to 'txs' topic
+        # Note: gossip.publish is typically async, but we're calling from sync context
+        # The gossip engine should handle this gracefully or we schedule it
+        import asyncio
+        
+        # Try to get event loop
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # Schedule as a task if loop is running
+                asyncio.create_task(gossip_engine.publish('txs', raw_tx))
+                log.debug("Scheduled tx gossip to peers (async)")
+            else:
+                # Run synchronously if no loop is running
+                loop.run_until_complete(gossip_engine.publish('txs', raw_tx))
+                log.debug("Gossiped tx to peers (sync)")
+        except RuntimeError:
+            # No event loop in current thread; try to create task anyway
+            try:
+                asyncio.create_task(gossip_engine.publish('txs', raw_tx))
+                log.debug("Created tx gossip task")
+            except Exception as e:
+                log.debug("Could not gossip tx (no event loop): %s", e)
+                
+    except Exception as e:
+        log.debug("Failed to gossip tx to P2P peers: %s", e)
+
+
 def _pending_get(tx_hash_hex: str) -> bytes | None:
     if _PEND is not None and hasattr(_PEND, "get_raw"):
         return _PEND.get_raw(tx_hash_hex)  # type: ignore[attr-defined]
@@ -1043,6 +1103,12 @@ def _tx_send_raw_transaction(rawTx: str) -> str:
                 deps.ws_broadcast_pending(tx_hash_hex, obj)  # type: ignore
         except Exception:
             pass
+
+        # Gossip to P2P peers (best-effort)
+        try:
+            _gossip_tx_to_peers(raw)
+        except Exception as e:
+            log.debug("Failed to gossip tx to peers: %s", e)
 
         return tx_hash_hex
     except rpc_errors.BadSignature as e:
