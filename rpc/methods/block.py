@@ -305,6 +305,8 @@ def _block_view(
 
     if include_txs:
         tx_objects = [_tx_view(tx) for tx in txs]
+        # Set both 'transactions' and 'txs' to same list (true alias, not copy)
+        # This is intentional for efficiency - the dict is only used for JSON serialization
         v["transactions"] = tx_objects
         v["txs"] = tx_objects  # Alias for backward compatibility
     else:
