@@ -1376,6 +1376,26 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
                 extra={"pending_total": original_count, "valid": valid_count, "skipped": skipped_total}
             )
         
+        # Enforce deterministic transaction ordering by sorting by tx_hash (bytes) ascending
+        # This ensures the same set of transactions always produces the same txsRoot,
+        # regardless of mempool iteration order or insertion order.
+        # Canonical rule: sort by tx.hash() bytes (lexicographic order)
+        if txs:
+            try:
+                # Create list of (tx_hash, tx, included_hash_hex) tuples for sorting
+                tx_tuples = list(zip(leaves, txs, included_hashes))
+                # Sort by tx_hash bytes (first element of tuple)
+                tx_tuples_sorted = sorted(tx_tuples, key=lambda t: t[0])
+                # Unpack sorted tuples back into separate lists using zip(*...)
+                leaves, txs, included_hashes = map(list, zip(*tx_tuples_sorted))
+                log.debug(f"Sorted {len(txs)} transactions by tx_hash for deterministic ordering")
+            except (ValueError, TypeError) as e:
+                # Specific exceptions that might occur during sorting
+                log.warning(f"Failed to sort transactions, continuing with original order: {e}")
+            except Exception as e:
+                # Catch-all for unexpected errors; log with more detail
+                log.error(f"Unexpected error during transaction sorting: {e}", exc_info=True)
+        
         # Compute merkle root and update header
         if leaves:
             try:
@@ -1451,6 +1471,8 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
 
             # Recompute txsRoot using tx.hash() (canonical method)
             # This must match the computation done before the mining loop
+            # NOTE: txs should already be sorted by tx_hash from earlier sorting step,
+            # but we sort again defensively to ensure consistency even if earlier code changes
             try:
                 if txs:
                     leaves = []
@@ -1460,7 +1482,9 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
                             leaves.append(tx.hash())
                         except Exception as e:
                             log.warning(f"Failed to compute hash for tx in final root: {e}")
-                    txs_root = merkle_root(leaves) if leaves else ZERO32
+                    # Sort leaves to ensure deterministic ordering (defensive)
+                    leaves_sorted = sorted(leaves)
+                    txs_root = merkle_root(leaves_sorted) if leaves_sorted else ZERO32
                 else:
                     txs_root = ZERO32
             except Exception as e:
