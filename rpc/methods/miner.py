@@ -612,10 +612,11 @@ def _adapter() -> CoreChainAdapter:
                 
                 Returns a list of Tx objects. Uses _tx_hash_map to track original hashes.
                 """
+                log.info(f"drain_fn: ENTRY with max_gas={max_gas}, max_bytes={max_bytes}")
                 txs = []
                 try:
                     pending_map = getattr(tx_methods, "_FALLBACK_PENDING", {}) or {}
-                    log.info(f"drain_fn called with max_gas={max_gas}, max_bytes={max_bytes}, pending_count={len(pending_map)}")
+                    log.info(f"drain_fn called with pending_count={len(pending_map)}")
                     if pending_map:
                         # Log first few tx hashes for debugging
                         sample_hashes = list(pending_map.keys())[:3]
@@ -720,7 +721,7 @@ def _adapter() -> CoreChainAdapter:
     except Exception as e:
         # If anything fails, continue without a miner_feed
         # The adapter will still work but will use the inline fallback in _mine_once
-        log.warning(f"Failed to attach miner_feed to adapter: {e}")
+        log.error(f"Failed to attach miner_feed to adapter: {e}", exc_info=True)
         miner_feed = None
     
     return CoreChainAdapter(
@@ -1133,6 +1134,7 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
 
     # Collect pending transactions from the best available source (mempool → fallback cache)
     log.info("_mine_once: Starting transaction collection from mempool adapter")
+    log.info(f"_mine_once: Adapter has miner_feed: {adapter.miner_feed is not None}")
     try:
         txs = list(adapter.get_mempool_snapshot(limit=1000))
         log.info(f"_mine_once: adapter.get_mempool_snapshot returned {len(txs)} transactions")
