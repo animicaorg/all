@@ -98,8 +98,11 @@ def _get_chain_id(rpc_url: str) -> int:
 
 
 def _get_nonce(rpc_url: str, addr: str) -> int:
-    # Your node supports state.getNonce (per your logs). Keep fallbacks anyway.
+    # Try pending nonce first (includes mempool transactions)
+    # This ensures back-to-back sends use incrementing nonces
     methods = [
+        ("state.getPendingNonce", [addr]),
+        ("state.getNonce", [addr, "pending"]),
         ("state.getNonce", [addr]),
         ("state.getNonce", [{"address": addr}]),
         ("state.getTransactionCount", [addr]),
@@ -114,7 +117,7 @@ def _get_nonce(rpc_url: str, addr: str) -> int:
                 return int(v)
         except Exception:
             continue
-    raise RuntimeError("Could not determine nonce from node (tried state.getNonce and fallbacks)")
+    raise RuntimeError("Could not determine nonce from node (tried state.getPendingNonce, state.getNonce and fallbacks)")
 
 
 def _get_default_max_fee(rpc_url: str) -> int:
