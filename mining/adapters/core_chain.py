@@ -292,7 +292,39 @@ class CoreChainAdapter:
         # exposes a way to access the pool instance
         pool = None
         
-        # Strategy 1: Try to import and access a global pool if available
+        # Strategy 1: Try to access the RPC fallback pending cache directly
+        # This is where transactions are stored when submitted via RPC
+        # The _mine_once function in rpc/methods/miner.py also handles this directly,
+        # but we try here as well for redundancy
+        try:
+            from rpc.methods import tx as tx_methods
+            
+            fallback_cache = getattr(tx_methods, "_FALLBACK_PENDING", None)
+            ts_cache = getattr(tx_methods, "_FALLBACK_PENDING_TS", None)
+            
+            if fallback_cache is not None:
+                # Convert bytes hashes to hex for fallback cache lookup
+                evicted_count = 0
+                for h in hashes:
+                    # Convert bytes to hex format (with 0x prefix)
+                    h_hex = "0x" + h.hex() if isinstance(h, bytes) else h
+                    # Try both with and without 0x prefix
+                    if fallback_cache.pop(h_hex, None) is not None:
+                        evicted_count += 1
+                        if ts_cache is not None:
+                            ts_cache.pop(h_hex, None)
+                    elif fallback_cache.pop(h_hex[2:] if h_hex.startswith("0x") else "0x" + h_hex, None) is not None:
+                        evicted_count += 1
+                        if ts_cache is not None:
+                            ts_cache.pop(h_hex[2:] if h_hex.startswith("0x") else "0x" + h_hex, None)
+                
+                if evicted_count > 0:
+                    log.info("evicted transactions from RPC fallback cache", extra={"count": evicted_count})
+                    # Continue to other strategies to ensure all pools are cleaned
+        except (ImportError, AttributeError) as e:
+            log.debug("RPC fallback cache not accessible", extra={"err": str(e)})
+        
+        # Strategy 2: Try to import and access a global pool if available
         try:
             from mempool import adapters as mp_adapters
             # Check if there's a get_pool or similar function
@@ -303,7 +335,7 @@ class CoreChainAdapter:
         except (ImportError, AttributeError):
             pass
         
-        # Strategy 2: If miner_feed is available, try to access its drain's pool
+        # Strategy 3: If miner_feed is available, try to access its drain's pool
         if pool is None and self.miner_feed is not None:
             # The drain function may be a bound method of a Pool instance
             drain = getattr(self.miner_feed, "_drain", None)
@@ -311,7 +343,7 @@ class CoreChainAdapter:
                 # Check if drain is a bound method and extract the instance
                 pool = getattr(drain, "__self__", None)
         
-        # Strategy 3: Try to reconstruct pool from KV (if Pool can be opened that way)
+        # Strategy 4: Try to reconstruct pool from KV (if Pool can be opened that way)
         if pool is None:
             try:
                 from mempool.pool import Pool  # type: ignore[import-not-found]
@@ -337,7 +369,7 @@ class CoreChainAdapter:
                 )
         else:
             log.debug(
-                "mempool pool not accessible; skipping eviction (txs may be re-mined)",
+                "mempool pool not accessible; skipping pool eviction",
                 extra={"has_feed": self.miner_feed is not None, "count": len(hashes)},
             )
 
