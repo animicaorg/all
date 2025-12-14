@@ -1123,22 +1123,16 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
         if txs:
             log.info(f"_mine_once: Sample tx types from adapter: {[type(tx).__name__ for tx in txs[:3]]}")
         # Track hashes of transactions from adapter for eviction later
-        # Use the _TX_HASH_MAP created by drain_fn to get the original hashes
+        # Use tx.hash() to get canonical hash (consistent with Block.txs_root())
         for tx in txs:
             try:
-                # Try to get the hash from the global mapping (set by drain_fn)
-                if id(tx) in _TX_HASH_MAP:
-                    tx_hash_hex, raw = _TX_HASH_MAP[id(tx)]
-                    included_hashes.append(tx_hash_hex)
-                    log.debug(f"Tracked tx hash from adapter (mapped): {tx_hash_hex}")
-                else:
-                    # Fallback: compute hash from txid_bytes() helper
-                    tx_hash_bytes = txid_bytes(tx)
-                    tx_hash_hex = "0x" + tx_hash_bytes.hex()
-                    included_hashes.append(tx_hash_hex)
-                    log.debug(f"Tracked tx hash from adapter (computed): {tx_hash_hex}")
+                # Use tx.hash() which is the canonical method
+                tx_hash_bytes = tx.hash()
+                tx_hash_hex = "0x" + tx_hash_bytes.hex()
+                included_hashes.append(tx_hash_hex)
+                log.debug(f"Tracked tx hash from adapter: {tx_hash_hex}")
             except Exception as e:
-                # txid_bytes() may fail for malformed tx; log and skip this tx for eviction tracking
+                # tx.hash() may fail for malformed tx; log and skip this tx for eviction tracking
                 log.debug(f"Could not get hash for tx from adapter; skipping eviction tracking: {e}")
         if txs:
             log.info(f"Retrieved {len(txs)} transactions from mempool adapter for mining (tracked {len(included_hashes)} hashes)")
@@ -1344,7 +1338,7 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
     header_template = _build_child_header(parent_height, parent_hash_bytes, parent_header)
 
     if txs:
-        # Build merkle root from tx hashes using original raw bytes (canonical)
+        # Build merkle root from tx hashes using tx.hash() (canonical method)
         # Drop individual malformed txs instead of failing the whole batch
         leaves = []
         valid_txs = []
@@ -1352,14 +1346,9 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
         
         for i, tx in enumerate(txs):
             try:
-                # Use original raw bytes if available (from global mapping)
-                if id(tx) in _TX_HASH_MAP:
-                    _, raw = _TX_HASH_MAP[id(tx)]
-                    # Compute from original CBOR bytes (canonical)
-                    tx_hash = hashlib.sha3_256(raw).digest()
-                else:
-                    # Fallback to txid_bytes helper
-                    tx_hash = txid_bytes(tx)
+                # Use tx.hash() which is the canonical method that returns sha3_256(tx.to_cbor())
+                # This ensures consistency with Block.txs_root() which also uses tx.hash()
+                tx_hash = tx.hash()
                 leaves.append(tx_hash)
                 valid_txs.append(tx)
                 # Keep corresponding hash from included_hashes if available
@@ -1460,20 +1449,15 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
                         "failed to compute receipts root; defaulting to zero", extra={"err": str(e)}
                     )
 
-            # Recompute txsRoot using original raw bytes (for canonical hash)
+            # Recompute txsRoot using tx.hash() (canonical method)
+            # This must match the computation done before the mining loop
             try:
                 if txs:
                     leaves = []
                     for tx in txs:
                         try:
-                            # Use original raw bytes if available (from global mapping)
-                            if id(tx) in _TX_HASH_MAP:
-                                _, raw = _TX_HASH_MAP[id(tx)]
-                                # Compute from original CBOR bytes (canonical)
-                                leaves.append(hashlib.sha3_256(raw).digest())
-                            else:
-                                # Fallback to txid_bytes helper
-                                leaves.append(txid_bytes(tx))
+                            # Use tx.hash() which is the canonical method
+                            leaves.append(tx.hash())
                         except Exception as e:
                             log.warning(f"Failed to compute hash for tx in final root: {e}")
                     txs_root = merkle_root(leaves) if leaves else ZERO32
