@@ -263,7 +263,7 @@ def test_chain_getBlockByNumber_includes_txs_and_receipts():
     
     Ensures:
     1. Both 'txs' and 'transactions' fields are present (txs is an alias)
-    2. Both 'receipts' field is present
+    2. 'receipts' field is present when includeReceipts=True
     3. All fields are arrays (never null) even if empty
     """
     client, cfg, _ = new_test_client()
