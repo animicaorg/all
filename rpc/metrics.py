@@ -124,6 +124,14 @@ PENDING_BYTES = Gauge(
     registry=REG,
 )
 
+# Transaction validation failures
+TX_VALIDATION_FAILURES = Counter(
+    "animica_tx_validation_failures_total",
+    "Total transaction validation failures by reason.",
+    ["reason"],
+    registry=REG,
+)
+
 # Head / chain (optional helpers)
 CHAIN_HEIGHT = Gauge(
     "animica_chain_height",
@@ -299,4 +307,5 @@ __all__ = [
     "PENDING_BYTES",
     "CHAIN_HEIGHT",
     "RPC_SUBSCRIBERS",
+    "TX_VALIDATION_FAILURES",
 ]
