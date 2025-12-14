@@ -62,6 +62,12 @@ _AUTO_TASK: asyncio.Task | None = None
 # Maps id(tx_obj) -> (tx_hash_hex, raw_bytes)
 # Used to track original hashes (from _FALLBACK_PENDING dict keys) when evicting from mempool
 # This is necessary because Tx dataclasses are frozen and we can't store the hash as an attribute
+#
+# NOTE: Using id(tx_obj) as key has a small collision risk if Python reuses IDs after GC,
+# but this is acceptable because:
+# 1. The map is short-lived (only during mining)
+# 2. Entries are cleaned up immediately after use (success or failure)
+# 3. Collision would only cause fallback to txid_bytes() computation (safe degradation)
 _TX_HASH_MAP: dict[int, tuple[str, bytes]] = {}
 
 
@@ -1583,6 +1589,15 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
         f"Failed to mine block at height {parent_height + 1} after {max_nonce} attempts "
         f"(target: {target}, theta: {theta_micro})"
     )
+    
+    # Clean up hash map entries for transactions that weren't successfully mined
+    # to prevent memory leaks
+    try:
+        for tx in txs:
+            _TX_HASH_MAP.pop(id(tx), None)
+    except Exception as e:
+        log.warning(f"Failed to clean up hash mapping after mining failure: {e}")
+    
     return (False, 0)
 
 
