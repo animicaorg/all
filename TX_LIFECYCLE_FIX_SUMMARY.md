@@ -226,7 +226,15 @@ All changes maintain backward compatibility:
 
 ### Performance
 
-Pending nonce calculation scans the fallback pending cache linearly. For typical mempool sizes (< 1000 transactions), this is acceptable. For production, consider:
-- Indexing pending transactions by sender
-- Caching pending nonce calculations
+Pending nonce calculation scans the fallback pending cache linearly (O(n) where n = pending tx count). For typical mempool sizes (< 1000 transactions), this is acceptable. For production, consider:
+- Indexing pending transactions by sender address for O(1) lookup
+- Caching pending nonce calculations with invalidation on mempool changes
 - Using a proper mempool implementation instead of fallback cache
+- The current implementation prioritizes correctness and simplicity for the immediate fix
+
+### Code Quality Notes
+
+The implementation includes some intentional tradeoffs for this minimal fix:
+- **Import inside function**: Used to avoid circular dependency between state.py and tx.py. Future refactoring could move shared functionality to a separate module.
+- **Linear scan**: Acceptable for current mempool sizes; can be optimized with indexing if needed
+- **Test coupling**: Integration test imports private CLI functions; future work could create public test utilities
