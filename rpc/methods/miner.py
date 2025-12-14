@@ -806,18 +806,22 @@ def _normalize_tx_envelope(decoded: dict) -> dict:
                     if addr.startswith("anim1"):
                         try:
                             addr_bytes = _decode_bech32_address(addr)
-                        except (ValueError, KeyError) as e:
-                            # Fallback: try hex if bech32 decode fails
-                            log.debug(f"Bech32 decode failed ({e}), trying hex fallback for: {addr}")
-                            if addr.startswith("0x"):
-                                addr_bytes = bytes.fromhex(addr[2:])
-                            else:
-                                addr_bytes = bytes.fromhex(addr)
+                        except Exception as e:
+                            # Bech32 decode failed - fall back to UTF-8 hash
+                            # We can't assume hex format since bech32 addresses use base32 encoding
+                            import hashlib
+                            addr_bytes = hashlib.sha3_256(addr.encode("utf-8")).digest()
+                            log.warning(f"Could not decode address '{addr}' as bech32 ({e}), using hash fallback")
                     elif addr.startswith("0x"):
                         addr_bytes = bytes.fromhex(addr[2:])
                     else:
-                        # Assume bare hex
-                        addr_bytes = bytes.fromhex(addr)
+                        # Try bare hex, fall back to UTF-8 hash
+                        try:
+                            addr_bytes = bytes.fromhex(addr)
+                        except ValueError:
+                            import hashlib
+                            addr_bytes = hashlib.sha3_256(addr.encode("utf-8")).digest()
+                            log.warning(f"Could not decode address '{addr}' as hex, using hash")
                 else:
                     raise TypeError(f"Unsupported address type: {type(addr).__name__} (expected str or bytes)")
                 
@@ -940,6 +944,8 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
     try:
         txs = list(adapter.get_mempool_snapshot(limit=1000))
         log.info(f"_mine_once: adapter.get_mempool_snapshot returned {len(txs)} transactions")
+        if txs:
+            log.info(f"_mine_once: Sample tx types from adapter: {[type(tx).__name__ for tx in txs[:3]]}")
         # Track hashes of transactions from adapter for eviction later
         for tx in txs:
             try:
