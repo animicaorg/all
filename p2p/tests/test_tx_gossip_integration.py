@@ -408,8 +408,9 @@ async def test_tx_relay_handler_rejects_oversize():
 
     await handler.start()
 
-    # Create an oversized transaction (> MAX_TX_BYTES)
-    oversized_tx = b"TX" * (MAX_TX_BYTES + 1)
+    # Create an oversized transaction (> MAX_TX_BYTES = 512 KiB)
+    # Use MAX_TX_BYTES directly to ensure we exceed the actual limit
+    oversized_tx = b"TX" * ((MAX_TX_BYTES // 2) + 1000)
 
     # Handle the oversized tx
     await handler._handle_gossip_tx("peer1", "txs_topic", oversized_tx)

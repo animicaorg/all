@@ -46,7 +46,7 @@ except Exception:  # pragma: no cover
     HASH_LEN = 32
     MAX_TX_INV = 4096  # max hashes per inv/getdata
     MAX_TX_BODIES = 1024  # max bodies per TxBodies
-    MAX_TX_BYTES = 1024 * 1024  # 1 MiB hard cap for individual tx body
+    MAX_TX_BYTES = 512 * 1024  # 512 KiB hard cap for individual tx body
 
 # ---- Local payload tags (not global wire msg_ids) ----------------------------
 TAG_TX_INV = 20
@@ -489,11 +489,20 @@ class TxRelayHandler:
             
             try:
                 tx_obj = cbor_loads(payload)
-                if isinstance(tx_obj, dict):
-                    # Convert dict to Tx object
-                    tx = Tx.from_obj(tx_obj) if hasattr(Tx, 'from_obj') else Tx(**tx_obj)
-                else:
+                # Try standard Tx construction methods in order of preference
+                if hasattr(Tx, 'from_cbor'):
+                    # Preferred: reconstruct from raw CBOR
+                    tx = Tx.from_cbor(payload)
+                elif hasattr(Tx, 'from_obj') and isinstance(tx_obj, dict):
+                    # Next: use from_obj factory method
+                    tx = Tx.from_obj(tx_obj)
+                elif isinstance(tx_obj, Tx):
+                    # Already a Tx object (decoder returned typed object)
                     tx = tx_obj
+                else:
+                    # Fallback: treat as raw payload for admit_tx
+                    # Some mempool implementations accept raw CBOR
+                    tx = payload
             except Exception as e:
                 self._metrics["tx_rejected_mempool"] += 1
                 log.warning(f"CBOR decode failed for tx from {peer_id}: {e}")
