@@ -592,6 +592,8 @@ def _adapter() -> CoreChainAdapter:
                 
                 This reads from rpc.methods.tx._FALLBACK_PENDING which is where transactions
                 are stored when submitted via the RPC tx.sendRawTransaction method.
+                
+                Returns a list of Tx objects with _tx_hash_hex attribute added for tracking.
                 """
                 txs = []
                 try:
@@ -638,6 +640,16 @@ def _adapter() -> CoreChainAdapter:
                                 # Skip this tx if it would exceed limits
                                 log.debug(f"drain_fn: Skipping tx {tx_hash_hex} - would exceed limits (gas: {total_gas + tx_gas} > {max_gas} or bytes: {total_bytes + tx_bytes} > {max_bytes})")
                                 continue
+                            
+                            # Store the original tx hash on the Tx object for eviction tracking
+                            # This ensures we can remove the correct entry from _FALLBACK_PENDING later
+                            try:
+                                tx_obj._tx_hash_hex = tx_hash_hex  # type: ignore[attr-defined]
+                                tx_obj._tx_raw = raw  # type: ignore[attr-defined]
+                            except Exception:
+                                # If we can't set attributes (frozen dataclass), skip this optimization
+                                # The eviction will fall back to recomputing the hash
+                                pass
                             
                             txs.append(tx_obj)
                             total_gas += tx_gas
@@ -1099,13 +1111,27 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
         if txs:
             log.info(f"_mine_once: Sample tx types from adapter: {[type(tx).__name__ for tx in txs[:3]]}")
         # Track hashes of transactions from adapter for eviction later
-        # Use canonical txid_bytes() helper to support multiple tx representations
+        # Prefer the stored _tx_hash_hex attribute (set by drain_fn) to ensure we use
+        # the exact same hash that was used as the key in _FALLBACK_PENDING
         for tx in txs:
             try:
-                tx_hash_bytes = txid_bytes(tx)
-                tx_hash_hex = "0x" + tx_hash_bytes.hex()
-                included_hashes.append(tx_hash_hex)
-                log.debug(f"Tracked tx hash from adapter: {tx_hash_hex}")
+                # Try to use the stored hash first (set by drain_fn from the dict key)
+                if hasattr(tx, "_tx_hash_hex"):
+                    tx_hash_hex = getattr(tx, "_tx_hash_hex")
+                    included_hashes.append(tx_hash_hex)
+                    log.debug(f"Tracked tx hash from adapter (stored): {tx_hash_hex}")
+                else:
+                    # Fallback: compute hash from raw bytes if available
+                    raw = getattr(tx, "_tx_raw", None) if hasattr(tx, "_tx_raw") else None
+                    if raw is not None:
+                        tx_hash_bytes = hashlib.sha3_256(raw).digest()
+                        tx_hash_hex = "0x" + tx_hash_bytes.hex()
+                    else:
+                        # Last resort: use txid_bytes() helper
+                        tx_hash_bytes = txid_bytes(tx)
+                        tx_hash_hex = "0x" + tx_hash_bytes.hex()
+                    included_hashes.append(tx_hash_hex)
+                    log.debug(f"Tracked tx hash from adapter (computed): {tx_hash_hex}")
             except Exception as e:
                 # txid_bytes() may fail for malformed tx; log and skip this tx for eviction tracking
                 log.debug(f"Could not get hash for tx from adapter; skipping eviction tracking: {e}")
@@ -1313,7 +1339,7 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
     header_template = _build_child_header(parent_height, parent_hash_bytes, parent_header)
 
     if txs:
-        # Build merkle root from tx hashes using safe txid_bytes() helper
+        # Build merkle root from tx hashes using original raw bytes (canonical)
         # Drop individual malformed txs instead of failing the whole batch
         leaves = []
         valid_txs = []
@@ -1321,8 +1347,14 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
         
         for i, tx in enumerate(txs):
             try:
-                # Use canonical txid_bytes() helper that supports multiple tx formats
-                tx_hash = txid_bytes(tx)
+                # Use original raw bytes if available (set by drain_fn)
+                raw = getattr(tx, "_tx_raw", None) if hasattr(tx, "_tx_raw") else None
+                if raw is not None:
+                    # Compute from original CBOR bytes (canonical)
+                    tx_hash = hashlib.sha3_256(raw).digest()
+                else:
+                    # Fallback to txid_bytes helper
+                    tx_hash = txid_bytes(tx)
                 leaves.append(tx_hash)
                 valid_txs.append(tx)
                 # Keep corresponding hash from included_hashes if available
@@ -1423,13 +1455,20 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
                         "failed to compute receipts root; defaulting to zero", extra={"err": str(e)}
                     )
 
-            # Recompute txsRoot using safe txid_bytes() helper
+            # Recompute txsRoot using original raw bytes (for canonical hash)
             try:
                 if txs:
                     leaves = []
                     for tx in txs:
                         try:
-                            leaves.append(txid_bytes(tx))
+                            # Use original raw bytes if available (set by drain_fn)
+                            raw = getattr(tx, "_tx_raw", None) if hasattr(tx, "_tx_raw") else None
+                            if raw is not None:
+                                # Compute from original CBOR bytes (canonical)
+                                leaves.append(hashlib.sha3_256(raw).digest())
+                            else:
+                                # Fallback to txid_bytes helper
+                                leaves.append(txid_bytes(tx))
                         except Exception as e:
                             log.warning(f"Failed to compute hash for tx in final root: {e}")
                     txs_root = merkle_root(leaves) if leaves else ZERO32
