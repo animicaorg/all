@@ -989,8 +989,10 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
     txs: list[Tx] = []
     included_hashes: list[str] = []
     
-    # Track per-sender nonces to enforce sequencing
+    # Track per-sender nonces to enforce sequencing within this block
     # Maps sender_bytes -> next_expected_nonce
+    # NOTE: This is intentionally reset per mining call - each block starts fresh
+    # from current state, ensuring nonce consistency even if transactions fail
     sender_nonces: dict[bytes, int] = {}
 
     # Collect pending transactions from the best available source (mempool → fallback cache)
@@ -1064,6 +1066,10 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
                                 )
                                 continue
                             elif tx_nonce > expected_nonce:
+                                # Skip transactions with nonce gaps within this block
+                                # NOTE: This prevents out-of-order execution but means txs
+                                # with gaps stay in mempool until gap is filled. This is
+                                # standard Ethereum-style behavior and prevents stuck transactions.
                                 log.debug(
                                     f"_mine_once: Skipping tx {tx_hash_hex} - nonce gap "
                                     f"(tx_nonce={tx_nonce}, expected={expected_nonce})"
