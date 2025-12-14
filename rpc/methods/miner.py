@@ -1186,15 +1186,40 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
     except Exception as e:
         log.warning(f"mempool snapshot unavailable; falling back to in-process cache: {e}", exc_info=True)
     if not txs:
-        log.info("_mine_once: No transactions from adapter, trying fallback pending cache")
+        log.info("_mine_once: No transactions from adapter, trying fallback direct read")
         try:
             from rpc.methods import tx as tx_methods
 
-            pending_map = getattr(tx_methods, "_FALLBACK_PENDING", {}) or {}
+            # Check _PEND first (same priority as drain_fn)
+            pend = getattr(tx_methods, "_PEND", None)
+            pending_map = {}
+            
+            if pend is not None:
+                log.info("_mine_once fallback: Using _PEND pool")
+                # Try to get items from _PEND
+                if hasattr(pend, "items") and callable(pend.items):
+                    try:
+                        pending_map = dict(pend.items())
+                        log.info(f"_mine_once fallback: Got {len(pending_map)} txs from _PEND.items()")
+                    except Exception as e:
+                        log.warning(f"_mine_once fallback: _PEND.items() failed: {e}")
+                elif hasattr(pend, "list_raw") and callable(pend.list_raw):
+                    try:
+                        items = pend.list_raw()
+                        pending_map = dict(items)
+                        log.info(f"_mine_once fallback: Got {len(pending_map)} txs from _PEND.list_raw()")
+                    except Exception as e:
+                        log.warning(f"_mine_once fallback: _PEND.list_raw() failed: {e}")
+            
+            # Fallback to _FALLBACK_PENDING if _PEND is None or didn't provide items
+            if not pending_map:
+                fallback = getattr(tx_methods, "_FALLBACK_PENDING", {}) or {}
+                pending_map = fallback
+                log.info(f"_mine_once fallback: Using _FALLBACK_PENDING with {len(pending_map)} txs")
+            
             pending_count = len(pending_map)
-            log.info(f"_mine_once: Found {pending_count} transactions in fallback pending cache")
             if pending_count > 0:
-                log.info(f"Attempting to retrieve {pending_count} transactions from fallback pending cache")
+                log.info(f"Attempting to retrieve {pending_count} transactions from pending pool")
             for tx_hash_hex, raw in pending_map.items():
                 try:
                     log.debug(f"_mine_once: Decoding tx {tx_hash_hex} from fallback")
@@ -1619,7 +1644,27 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
                     except Exception as e:
                         log.warning(f"Failed to evict from mempool adapter: {e}")
                     
-                    # 2. Evict from fallback pending cache (backward compatibility)
+                    # 2. Evict from _PEND pool (if available)
+                    try:
+                        from rpc.methods import tx as tx_methods
+                        
+                        pend = getattr(tx_methods, "_PEND", None)
+                        if pend is not None and hasattr(pend, "remove"):
+                            evicted_count = 0
+                            for h in included_hashes:
+                                try:
+                                    # Call remove method on _PEND pool
+                                    removed = pend.remove(h)
+                                    if removed:
+                                        evicted_count += 1
+                                except Exception as e:
+                                    log.debug(f"Failed to remove {h} from _PEND: {e}")
+                            if evicted_count > 0:
+                                log.info(f"Evicted {evicted_count} included transactions from _PEND pool")
+                    except Exception as e:
+                        log.warning(f"Failed to evict from _PEND pool: {e}")
+                    
+                    # 3. Evict from _FALLBACK_PENDING (backward compatibility)
                     try:
                         from rpc.methods import tx as tx_methods
 
@@ -1634,11 +1679,11 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
                                 ts_cache.pop(h, None)
                                 evicted_count += 1
                         if evicted_count > 0:
-                            log.info(f"Evicted {evicted_count} included transactions from fallback cache")
+                            log.info(f"Evicted {evicted_count} included transactions from _FALLBACK_PENDING")
                     except Exception as e:
-                        log.warning(f"Failed to evict from fallback cache: {e}")
+                        log.warning(f"Failed to evict from _FALLBACK_PENDING: {e}")
                     
-                    # 3. Clean up the hash mapping for evicted transactions
+                    # 4. Clean up the hash mapping for evicted transactions
                     try:
                         for tx in txs:
                             _TX_HASH_MAP.pop(id(tx), None)
