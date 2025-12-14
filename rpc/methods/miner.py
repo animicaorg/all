@@ -9,7 +9,7 @@ import os
 import time
 import uuid
 from dataclasses import asdict, replace
-from typing import Any, Dict, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 from core.types.block import Block
 from core.types.header import Header
@@ -1011,157 +1011,109 @@ def _build_child_header(
 
 
 def _execute_transactions(
-    ctx: Any, txs: list[Tx], header: Header, coinbase_address: bytes | None = None
-) -> list[Any]:
-    """
-    Execute transactions and generate receipts.
-    
-    Args:
-        ctx: RPC context with state_db access
-        txs: List of transactions to execute
-        header: Block header (provides height, timestamp context)
-        coinbase_address: Optional coinbase address for tips; defaults to zero if None
-        
-    Returns:
-        list: Transaction receipts (one per tx, in order)
-    """
-    if not txs:
-        return []
-    
-    receipts = []
-    state_db = ctx.state_db
-    if state_db is None:
-        log.warning("No state_db available; skipping tx execution")
-        return []
-    
-    # Use coinbase address for tips (or payout address if mining with custom address)
-    coinbase = coinbase_address if coinbase_address is not None else ZERO32
-    
+    *,
+    txs: list[Any],
+    state_db: Any,
+    block_env: Any,
+    logger: Any,
+) -> list[dict[str, Any]]:
+    # Import execution runtime modules once at function level
     try:
-        # Try to use execution runtime for transfers
         from execution.runtime.transfers import apply_transfer
-        from execution.runtime.env import BlockEnv, TxEnv
-        from core.types.receipt import Receipt, ReceiptStatus, Log
-        
-        # Build block environment
-        block_env = BlockEnv(
-            height=header.height,
-            timestamp=header.timestamp,
-            coinbase=coinbase,
-            chain_id=header.chainId,
-        )
-        
-        for tx in txs:
-            # Extract sender from tx (may be in different fields)
-            sender = getattr(tx, "sender", getattr(tx, "from", getattr(tx, "frm", None)))
-            if sender is None:
-                log.warning(f"Transaction missing sender; skipping")
-                # Add failed receipt
-                receipts.append(Receipt(
-                    status=ReceiptStatus.REVERT,
-                    gas_used=0,
-                    logs=tuple()
-                ))
-                continue
+        from execution.runtime.env import TxEnv
+    except ImportError:
+        # If execution runtime is not available, return empty receipts
+        logger.warning("execution.runtime not available; cannot execute transactions")
+        return [{"status": 0, "gasUsed": 0, "logs": []} for _ in txs]
+    
+    receipts: list[dict[str, Any]] = []
+
+    for tx in txs:
+        # --------------------------
+        # Extract sender from tx
+        # --------------------------
+        sender = getattr(tx, "sender", getattr(tx, "from", getattr(tx, "frm", None)))
+        if sender is None:
+            unsigned = getattr(tx, "unsigned", None)
+            if unsigned is not None:
+                sender = (
+                    getattr(unsigned, "sender", None)
+                    or getattr(unsigned, "from", None)
+                    or getattr(unsigned, "from_addr", None)
+                    or getattr(unsigned, "frm", None)
+                )
+
+        if sender is None:
+            logger.warning("Transaction missing sender; skipping")
+            receipts.append({"status": 0, "gasUsed": 0, "logs": []})
+            continue
+
+        # Normalize sender to bytes
+        sender_bytes: Optional[bytes] = None
+        if isinstance(sender, (bytes, bytearray)):
+            sender_bytes = bytes(sender)
+        elif isinstance(sender, str) and sender.startswith("0x"):
+            try:
+                sender_bytes = bytes.fromhex(sender[2:])
+            except ValueError:
+                # Invalid hex string
+                sender_bytes = None
+        elif isinstance(sender, str):
+            # If someone mistakenly stored bech32, we cannot decode here; skip
+            sender_bytes = None
+
+        if sender_bytes is None:
+            logger.warning("Transaction sender not bytes/0x; skipping")
+            receipts.append({"status": 0, "gasUsed": 0, "logs": []})
+            continue
+
+        # Pad/truncate to address length (use _as_bytes32_addr for consistency)
+        sender_bytes = _as_bytes32_addr(sender_bytes)
+
+        try:
             
-            # Ensure sender is bytes (may be hex string)
-            if isinstance(sender, str):
-                sender_hex = sender[2:] if sender.startswith("0x") else sender
-                sender_bytes = bytes.fromhex(sender_hex)
-            else:
-                sender_bytes = bytes(sender) if isinstance(sender, (bytes, bytearray)) else sender
+            # Extract nonce and gas_price from tx
+            # Try nested unsigned field first (Tx dataclass structure)
+            nonce = 0
+            gas_price = 1
+            if hasattr(tx, "unsigned"):
+                nonce = getattr(tx.unsigned, "nonce", 0)
+                # Try to get gas_price from nested gas field
+                if hasattr(tx.unsigned, "gas"):
+                    gas_obj = tx.unsigned.gas
+                    gas_price = getattr(gas_obj, "price", 1)
+            # Fall back to flat attributes
+            if nonce == 0:
+                nonce = getattr(tx, "nonce", 0)
+            if gas_price == 1:
+                gas_price = getattr(tx, "gas_price", getattr(tx, "gasPrice", getattr(tx, "tip", 1)))
             
-            # Pad/truncate to Animica address length (32 bytes, matches core/types/tx.py ADDRESS_LEN)
-            if len(sender_bytes) > ADDRESS_LEN:
-                sender_bytes = sender_bytes[:ADDRESS_LEN]
-            elif len(sender_bytes) < ADDRESS_LEN:
-                sender_bytes = sender_bytes.rjust(ADDRESS_LEN, b"\x00")
+            # Extract chain_id from block_env (handles both camelCase and snake_case)
+            chain_id = getattr(block_env, "chain_id", getattr(block_env, "chainId", 0))
             
-            # Build tx environment
-            gas_price = getattr(tx, "gas_price", getattr(tx, "tip", 1))
             tx_env = TxEnv(
                 sender=sender_bytes,
-                gas_price=int(gas_price) if gas_price is not None else 1,
-                base_price=0,  # No base fee in simple model
+                chain_id=chain_id,
+                nonce=int(nonce),
+                gas_price=int(gas_price),
             )
-            
-            try:
-                # Apply transfer (handles balance updates, nonce increment, fees)
-                result = apply_transfer(tx, state_db, block_env, tx_env, emit_event=True)
-                
-                # Convert ApplyResult to Receipt
-                # Map status codes
-                if hasattr(result, "status"):
-                    status_val = result.status
-                    # Convert string status to ReceiptStatus enum
-                    if isinstance(status_val, str):
-                        status_map = {
-                            "SUCCESS": ReceiptStatus.SUCCESS,
-                            "REVERT": ReceiptStatus.REVERT,
-                            "OOG": ReceiptStatus.OOG,
-                        }
-                        status = status_map.get(status_val.upper(), ReceiptStatus.REVERT)
-                    elif isinstance(status_val, int):
-                        status = ReceiptStatus(status_val)
-                    else:
-                        status = ReceiptStatus.SUCCESS if status_val else ReceiptStatus.REVERT
-                else:
-                    status = ReceiptStatus.SUCCESS
-                
-                gas_used = int(result.gas_used) if hasattr(result, "gas_used") else INTRINSIC_GAS_TRANSFER
-                
-                # Convert logs to Receipt Log format
-                logs_out = []
-                if hasattr(result, "logs") and result.logs:
-                    for log_event in result.logs:
-                        # Ensure address is RECEIPT_ADDRESS_LEN bytes (Receipt Log format)
-                        addr = getattr(log_event, "address", b"\x00" * RECEIPT_ADDRESS_LEN)
-                        if isinstance(addr, (bytes, bytearray)):
-                            addr_bytes = bytes(addr)
-                        else:
-                            addr_bytes = b"\x00" * RECEIPT_ADDRESS_LEN
-                        # Pad to RECEIPT_ADDRESS_LEN bytes
-                        if len(addr_bytes) < RECEIPT_ADDRESS_LEN:
-                            addr_bytes = addr_bytes.ljust(RECEIPT_ADDRESS_LEN, b"\x00")
-                        elif len(addr_bytes) > RECEIPT_ADDRESS_LEN:
-                            addr_bytes = addr_bytes[:RECEIPT_ADDRESS_LEN]
-                        
-                        topics = getattr(log_event, "topics", [])
-                        topics_tuple = tuple(
-                            bytes(t)[:TOPIC_LEN].ljust(TOPIC_LEN, b"\x00") if isinstance(t, (bytes, bytearray)) else b"\x00" * TOPIC_LEN
-                            for t in topics
-                        )
-                        data = bytes(getattr(log_event, "data", b""))
-                        
-                        logs_out.append(Log(address=addr_bytes, topics=topics_tuple, data=data))
-                
-                receipt = Receipt(
-                    status=status,
-                    gas_used=gas_used,
-                    logs=tuple(logs_out)
-                )
-                receipts.append(receipt)
-                
-            except Exception as e:
-                log.warning(f"Transaction execution failed: {e}")
-                # Add revert receipt
-                receipts.append(Receipt(
-                    status=ReceiptStatus.REVERT,
-                    gas_used=INTRINSIC_GAS_TRANSFER,  # Charge intrinsic gas on revert
-                    logs=tuple()
-                ))
-        
-    except ImportError:
-        log.warning("execution.runtime not available; generating stub receipts")
-        # Fallback: generate stub receipts without execution
-        from core.types.receipt import Receipt, ReceiptStatus
-        for _ in txs:
-            receipts.append(Receipt(
-                status=ReceiptStatus.SUCCESS,
-                gas_used=INTRINSIC_GAS_TRANSFER,
-                logs=tuple()
-            ))
-    
+
+            # Execute state transition (use keyword arguments for clarity)
+            res = apply_transfer(tx=tx, state=state_db, block_env=block_env, tx_env=tx_env)
+
+            # Receipt-like view
+            # Note: res.is_success checks if res.status == TxStatus.SUCCESS
+            receipts.append(
+                {
+                    "status": 1 if res.is_success else 0,
+                    "gasUsed": int(res.gas_used or 0),
+                    "logs": res.logs or [],
+                }
+            )
+        except Exception as e:
+            logger.exception("Transaction execution failed: %s", e)
+            receipts.append({"status": 0, "gasUsed": 0, "logs": []})
+
     return receipts
 
 
@@ -1800,7 +1752,74 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
         # Check if hash meets target
         if block_hash_int <= target:
             # Found a valid block! Now execute txs and generate receipts before persisting.
-            receipts = _execute_transactions(ctx, txs, header, payout_address)
+            # Import Receipt, ReceiptStatus, Log, and BlockEnv at block level (once per mined block)
+            from core.types.receipt import Receipt, ReceiptStatus, Log
+            from execution.runtime.env import BlockEnv
+            
+            # Build block_env for new _execute_transactions signature
+            block_env = BlockEnv(
+                height=header.height,
+                timestamp=header.timestamp,
+                coinbase=payout_address if payout_address is not None else ZERO32,
+                chain_id=header.chainId,
+            )
+            
+            # Call new _execute_transactions with updated signature
+            receipts_dict = _execute_transactions(
+                txs=txs,
+                state_db=ctx.state_db,
+                block_env=block_env,
+                logger=log,
+            )
+            
+            # Convert dict receipts to Receipt objects for compatibility with receiptsRoot computation
+            receipts = []
+            for r_dict in receipts_dict:
+                # Convert status int to ReceiptStatus enum
+                # Status codes: 0 = REVERT, 1 = SUCCESS, 2 = OOG
+                status_val = r_dict.get("status", 0)
+                if status_val == 1:
+                    status = ReceiptStatus.SUCCESS
+                elif status_val == 2:
+                    status = ReceiptStatus.OOG
+                else:
+                    status = ReceiptStatus.REVERT
+                
+                gas_used = int(r_dict.get("gasUsed", 0))
+                
+                # Convert logs (may be empty list or list of log-like objects)
+                logs_out = []
+                for log_item in r_dict.get("logs", []):
+                    # If log_item is already a Log object, use it directly
+                    if isinstance(log_item, Log):
+                        logs_out.append(log_item)
+                    elif isinstance(log_item, dict):
+                        # Convert dict log to Log object
+                        addr = log_item.get("address", b"\x00" * RECEIPT_ADDRESS_LEN)
+                        if isinstance(addr, (bytes, bytearray)):
+                            addr_bytes = bytes(addr)
+                        else:
+                            addr_bytes = b"\x00" * RECEIPT_ADDRESS_LEN
+                        # Pad to RECEIPT_ADDRESS_LEN bytes
+                        if len(addr_bytes) < RECEIPT_ADDRESS_LEN:
+                            addr_bytes = addr_bytes.ljust(RECEIPT_ADDRESS_LEN, b"\x00")
+                        elif len(addr_bytes) > RECEIPT_ADDRESS_LEN:
+                            addr_bytes = addr_bytes[:RECEIPT_ADDRESS_LEN]
+                        
+                        topics = log_item.get("topics", [])
+                        topics_tuple = tuple(
+                            bytes(t)[:TOPIC_LEN].ljust(TOPIC_LEN, b"\x00") if isinstance(t, (bytes, bytearray)) else b"\x00" * TOPIC_LEN
+                            for t in topics
+                        )
+                        data = bytes(log_item.get("data", b""))
+                        
+                        logs_out.append(Log(address=addr_bytes, topics=topics_tuple, data=data))
+                
+                receipts.append(Receipt(
+                    status=status,
+                    gas_used=gas_used,
+                    logs=tuple(logs_out)
+                ))
 
             # Apply block reward before finalizing header/roots
             reward_amount = _apply_block_reward(ctx, header.height, payout_address)
