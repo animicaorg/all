@@ -58,10 +58,7 @@ class Block:
             return ZERO32
         # Compute leaves from transactions in sorted order (by tx_hash bytes ascending)
         # This ensures deterministic txsRoot regardless of input transaction order
-        leaves = [tx.hash() for tx in self.txs]
-        # Sort leaves to enforce canonical ordering
-        leaves_sorted = sorted(leaves)
-        return merkle_root(leaves_sorted)
+        return merkle_root(sorted([tx.hash() for tx in self.txs]))
 
     def receipts_root(self) -> bytes:
         if not self.receipts:

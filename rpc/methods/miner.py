@@ -1386,10 +1386,8 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
                 tx_tuples = list(zip(leaves, txs, included_hashes))
                 # Sort by tx_hash bytes (first element of tuple)
                 tx_tuples_sorted = sorted(tx_tuples, key=lambda t: t[0])
-                # Unpack sorted tuples back into separate lists
-                leaves = [t[0] for t in tx_tuples_sorted]
-                txs = [t[1] for t in tx_tuples_sorted]
-                included_hashes = [t[2] for t in tx_tuples_sorted]
+                # Unpack sorted tuples back into separate lists using zip(*...)
+                leaves, txs, included_hashes = map(list, zip(*tx_tuples_sorted))
                 log.debug(f"Sorted {len(txs)} transactions by tx_hash for deterministic ordering")
             except Exception as e:
                 log.warning(f"Failed to sort transactions, continuing with original order: {e}")
