@@ -1343,15 +1343,20 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
                         extra={"total_pending": len(txs), "valid": len(valid_txs)}
                     )
         
+        # Calculate counts before reassigning
+        original_count = len(txs)
+        valid_count = len(valid_txs)
+        skipped_total = original_count - valid_count
+        
         # Update txs list and included_hashes to only include valid transactions
         txs = valid_txs
         included_hashes = valid_hashes
         
         # Log summary of tx selection
-        if len(txs) > 0:
+        if valid_count > 0 or skipped_total > 0:
             log.info(
-                f"Selected {len(txs)} valid transactions for block (skipped {len(txs) - len(valid_txs)} malformed)",
-                extra={"pending_total": len(txs) + len(txs) - len(valid_txs), "valid": len(txs)}
+                f"Selected {valid_count} valid transactions for block (skipped {skipped_total} malformed)",
+                extra={"pending_total": original_count, "valid": valid_count, "skipped": skipped_total}
             )
         
         # Compute merkle root and update header
