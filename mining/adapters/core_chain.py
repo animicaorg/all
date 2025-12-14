@@ -300,7 +300,7 @@ class CoreChainAdapter:
                 pool = mp_adapters.get_pool()  # type: ignore[attr-defined]
             elif hasattr(mp_adapters, "_POOL"):
                 pool = mp_adapters._POOL  # type: ignore[attr-defined]
-        except (ImportError, AttributeError):  # noqa: BLE001
+        except (ImportError, AttributeError):
             pass
         
         # Strategy 2: If miner_feed is available, try to access its drain's pool
@@ -321,7 +321,7 @@ class CoreChainAdapter:
                 if "mempool" in sys.modules:
                     mp_module = sys.modules["mempool"]
                     pool = getattr(mp_module, "_POOL", None) or getattr(mp_module, "pool", None)
-            except (ImportError, AttributeError):  # noqa: BLE001
+            except (ImportError, AttributeError):
                 pass
         
         # If we found a pool, evict the transactions
@@ -330,7 +330,7 @@ class CoreChainAdapter:
                 pool.remove_included(hashes)
                 log.info("evicted transactions from mempool pool", extra={"count": len(hashes)})
                 return
-            except (AttributeError, TypeError, ValueError, KeyError) as e:  # noqa: BLE001
+            except (AttributeError, TypeError, ValueError, KeyError) as e:
                 log.warning(
                     "failed to evict from mempool pool; txs may be re-mined",
                     extra={"err": str(e), "count": len(hashes)},
