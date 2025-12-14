@@ -304,7 +304,9 @@ def _block_view(
         v["roots"] = roots_view
 
     if include_txs:
-        v["transactions"] = [_tx_view(tx) for tx in txs]
+        tx_objects = [_tx_view(tx) for tx in txs]
+        v["transactions"] = tx_objects
+        v["txs"] = tx_objects  # Alias for backward compatibility
     else:
         # Only hashes - filter out None values to avoid [null] in JSON
         tx_hashes = []
@@ -316,9 +318,11 @@ def _block_view(
                 # Log warning but don't fail the request
                 log.warning(f"Failed to compute hash for transaction in block; skipping from hash list")
         v["transactions"] = tx_hashes
+        v["txs"] = tx_hashes  # Alias for backward compatibility
 
     if include_receipts:
-        v["receipts"] = [_receipt_view(r) for r in receipts]
+        receipts_list = [_receipt_view(r) for r in receipts]
+        v["receipts"] = receipts_list
 
     header_view = {
         "number": v.get("number"),
