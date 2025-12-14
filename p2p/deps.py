@@ -262,9 +262,44 @@ class P2PDeps:
     # Here we only provide a placeholder hook that higher-level wiring can replace.
     def admit_tx(self, tx: "Tx") -> Tuple[bool, Optional[str]]:
         """
-        Placeholder admission hook. Replaced at runtime by p2p.adapters.mempool if present.
+        Admit a transaction received from P2P gossip to the pending pool.
+        
+        This allows transactions gossiped by peers to be added to the local
+        mempool/pending pool so they can be included in blocks mined by this node.
         """
-        return False, "no_mempool_wired"
+        try:
+            # Import RPC tx methods to access pending pool admission
+            from rpc.methods import tx as tx_methods
+            
+            # Encode the tx to CBOR (canonical format)
+            try:
+                from core.encoding import cbor as cbor_enc
+                raw_cbor = cbor_enc.dumps(tx)
+            except Exception as e:
+                return False, f"cbor_encode_failed:{e}"
+            
+            # Compute tx hash for deduplication
+            try:
+                from core.utils.hash import sha3_256
+                tx_hash_hex = "0x" + sha3_256(raw_cbor).hex()
+            except Exception as e:
+                return False, f"hash_failed:{e}"
+            
+            # Check if already in pending pool (dedupe)
+            if hasattr(tx_methods, '_pending_get'):
+                existing = tx_methods._pending_get(tx_hash_hex)
+                if existing is not None:
+                    return True, "duplicate"  # Already have it; treat as success
+            
+            # Add to pending pool using the same path as RPC submissions
+            if hasattr(tx_methods, '_pending_put'):
+                tx_methods._pending_put(tx_hash_hex, raw_cbor)
+                return True, None
+            
+            return False, "no_pending_pool_available"
+            
+        except Exception as e:
+            return False, f"admit_error:{e}"
 
     # ---- Cheap validation surfaces -----------------------------------------
 
@@ -353,6 +388,9 @@ class AsyncP2PDeps:
 
     async def tx_by_hash(self, tx_hash: bytes) -> Optional["Tx"]:
         return await self._loop.run_in_executor(None, self._sync.tx_by_hash, tx_hash)
+
+    async def admit_tx(self, tx: "Tx") -> Tuple[bool, Optional[str]]:
+        return await self._loop.run_in_executor(None, self._sync.admit_tx, tx)
 
     async def cheap_header_sanity(self, header: "Header") -> Tuple[bool, Optional[str]]:
         return await self._loop.run_in_executor(
