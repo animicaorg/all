@@ -737,8 +737,21 @@ def _tx_view(
     tx_index: int | None = None,
 ) -> dict:
     # Handle both flat and nested tx structures
-    # If obj has 'tx' key, it's a nested structure
-    tx_obj = obj.get("tx", obj) if isinstance(obj, dict) else obj
+    # RPC envelope: {body: {...}, sig/sigs: ...}
+    # Core envelope: {tx: {...}, sigs: [...]}
+    # Flat: {...fields directly...}
+    if isinstance(obj, dict):
+        if "body" in obj:
+            # RPC envelope format
+            tx_obj = obj["body"]
+        elif "tx" in obj:
+            # Core envelope format
+            tx_obj = obj["tx"]
+        else:
+            # Flat format
+            tx_obj = obj
+    else:
+        tx_obj = obj
     
     # Extract sender address
     # First, try to get bech32m address from signature (for pending txs with sigs)
@@ -1052,6 +1065,7 @@ def _tx_send_raw_transaction(rawTx: str) -> str:
     try:
         raw = _b(rawTx)
     except Exception as e:
+        log.error("tx.sendRawTransaction: hex decode failed, len=%d", len(rawTx) if rawTx else 0)
         raise rpc_errors.InvalidTx(
             "rawTx decode failed",
             **_error_data(
@@ -1069,7 +1083,7 @@ def _tx_send_raw_transaction(rawTx: str) -> str:
     except rpc_errors.RpcError:
         raise
     except Exception as e:
-        log.exception("tx.sendRawTransaction: decode failed")
+        log.error("tx.sendRawTransaction: CBOR decode failed, raw_len=%d", len(raw), exc_info=True)
         raise rpc_errors.InvalidTx(
             "Transaction decode failed",
             **_error_data(
@@ -1081,10 +1095,11 @@ def _tx_send_raw_transaction(rawTx: str) -> str:
         ) from e
 
     # Log the decoded structure for debugging
-    log.debug(
-        "tx.sendRawTransaction: decoded envelope type=%s, keys=%s",
+    log.info(
+        "tx.sendRawTransaction: decoded envelope type=%s, keys=%s, body_keys=%s",
         type(tx_like).__name__ if hasattr(type(tx_like), "__name__") else type(tx_like),
         list(obj.keys()) if isinstance(obj, dict) else "not-dict",
+        list(obj.get("body", {}).keys()) if isinstance(obj, dict) and "body" in obj else "no-body",
     )
 
     try:
@@ -1097,16 +1112,25 @@ def _tx_send_raw_transaction(rawTx: str) -> str:
         # Compute hash from the original CBOR bytes to ensure consistency
         # Per spec: TxID = sha3_256(CBOR(SignedTxMap))
         tx_hash_hex = _hex(_sha3_256(raw)) or ""
+        
+        log.info(
+            "tx.sendRawTransaction: validation passed, tx_hash=%s, chain_id=%d",
+            tx_hash_hex,
+            chain_id,
+        )
 
         # Duplicate suppression: if already in pending/persisted, return hash (idempotent)
         if _pending_get(tx_hash_hex) is not None:
+            log.debug("tx.sendRawTransaction: duplicate tx (already pending), hash=%s", tx_hash_hex)
             return tx_hash_hex
         persisted, *_ = _lookup_persisted_tx(tx_hash_hex)
         if persisted is not None:
+            log.debug("tx.sendRawTransaction: duplicate tx (already persisted), hash=%s", tx_hash_hex)
             return tx_hash_hex
 
         # Admit to pending pool (stateless checks already done here)
         _pending_put(tx_hash_hex, raw)
+        log.info("tx.sendRawTransaction: tx admitted to pending pool, hash=%s", tx_hash_hex)
 
         # Notify WS hub (best-effort)
         try:
@@ -1257,21 +1281,40 @@ def tx_get_transaction_by_hash(txHash: str) -> t.Optional[dict]:
     if not tx_hash_hex.startswith("0x"):
         tx_hash_hex = "0x" + tx_hash_hex
     
+    log.debug("tx.getTransactionByHash: looking up tx_hash=%s", tx_hash_hex)
+    
     # 1) Check pending pool
     raw = _pending_get(tx_hash_hex)
     if raw is not None and _cbor_loads is not None:
-        obj = _cbor_loads(raw)
-        tx_like = obj
-        return _tx_view(
-            tx_like, obj if isinstance(obj, dict) else _dcd(obj), pending=True
-        )
+        log.debug("tx.getTransactionByHash: found in pending pool, raw_len=%d", len(raw))
+        try:
+            obj = _cbor_loads(raw)
+            tx_like = obj
+            view = _tx_view(
+                tx_like, obj if isinstance(obj, dict) else _dcd(obj), pending=True
+            )
+            log.debug(
+                "tx.getTransactionByHash: returning pending tx view, fields=%s",
+                list(view.keys()) if view else "none",
+            )
+            return view
+        except Exception as e:
+            log.error(
+                "tx.getTransactionByHash: failed to decode pending tx, hash=%s, error=%s",
+                tx_hash_hex,
+                e,
+                exc_info=True,
+            )
+            # Fall through to check persisted
     
     # 2) Check persisted DB via deps/state_service
     view, *_etc = _lookup_persisted_tx(tx_hash_hex)
     if view is not None:
+        log.debug("tx.getTransactionByHash: found in persisted DB")
         return view
     
     # 3) Not found
+    log.debug("tx.getTransactionByHash: tx not found, hash=%s", tx_hash_hex)
     return None
 
 
