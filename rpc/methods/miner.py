@@ -1055,7 +1055,8 @@ def _execute_transactions(
         elif isinstance(sender, str) and sender.startswith("0x"):
             try:
                 sender_bytes = bytes.fromhex(sender[2:])
-            except Exception:
+            except ValueError:
+                # Invalid hex string
                 sender_bytes = None
         elif isinstance(sender, str):
             # If someone mistakenly stored bech32, we cannot decode here; skip
@@ -1066,13 +1067,8 @@ def _execute_transactions(
             receipts.append({"status": 0, "gasUsed": 0, "logs": []})
             continue
 
-        # Pad/truncate to address length (consistent with _as_bytes32_addr)
-        # ljust = left-justify = pad on the right with zeros
-        # [:ADDRESS_LEN] truncates from the right to keep leftmost bytes
-        if len(sender_bytes) < ADDRESS_LEN:
-            sender_bytes = sender_bytes.ljust(ADDRESS_LEN, b"\x00")
-        elif len(sender_bytes) > ADDRESS_LEN:
-            sender_bytes = sender_bytes[:ADDRESS_LEN]
+        # Pad/truncate to address length (use _as_bytes32_addr for consistency)
+        sender_bytes = _as_bytes32_addr(sender_bytes)
 
         try:
             
@@ -1092,9 +1088,12 @@ def _execute_transactions(
             if gas_price == 1:
                 gas_price = getattr(tx, "gas_price", getattr(tx, "gasPrice", getattr(tx, "tip", 1)))
             
+            # Extract chain_id from block_env (handles both camelCase and snake_case)
+            chain_id = getattr(block_env, "chain_id", getattr(block_env, "chainId", 0))
+            
             tx_env = TxEnv(
                 sender=sender_bytes,
-                chain_id=getattr(block_env, "chain_id", getattr(block_env, "chainId", 0)),
+                chain_id=chain_id,
                 nonce=int(nonce),
                 gas_price=int(gas_price),
             )
@@ -1777,6 +1776,7 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
             receipts = []
             for r_dict in receipts_dict:
                 # Convert status int to ReceiptStatus enum
+                # Status codes: 0 = REVERT, 1 = SUCCESS, 2 = OOG
                 status_val = r_dict.get("status", 0)
                 if status_val == 1:
                     status = ReceiptStatus.SUCCESS
