@@ -292,13 +292,35 @@ class CoreChainAdapter:
         # exposes a way to access the pool instance
         pool = None
         
-        # Strategy 1: Try to access the RPC fallback pending cache directly
+        # Strategy 1: Try to access the RPC pending pool directly
         # This is where transactions are stored when submitted via RPC
         # The _mine_once function in rpc/methods/miner.py also handles this directly,
         # but we try here as well for redundancy
         try:
             from rpc.methods import tx as tx_methods
             
+            # Check _PEND first (same priority as _pending_put and drain_fn)
+            pend = getattr(tx_methods, "_PEND", None)
+            if pend is not None and hasattr(pend, "remove"):
+                evicted_count = 0
+                for h in hashes:
+                    if not isinstance(h, (bytes, bytearray)):
+                        continue
+                    h_hex = "0x" + h.hex()
+                    try:
+                        # Call remove method on _PEND pool (may be async, handle gracefully)
+                        removed = pend.remove(h_hex)
+                        # If remove is async, we can't await it in this sync context
+                        # Just log and continue
+                        if removed:
+                            evicted_count += 1
+                    except Exception as e:
+                        log.debug(f"Failed to remove {h_hex} from _PEND: {e}")
+                
+                if evicted_count > 0:
+                    log.info("evicted transactions from _PEND pool", extra={"count": evicted_count})
+            
+            # Also check _FALLBACK_PENDING for backward compatibility
             fallback_cache = getattr(tx_methods, "_FALLBACK_PENDING", None)
             ts_cache = getattr(tx_methods, "_FALLBACK_PENDING_TS", None)
             
@@ -331,10 +353,10 @@ class CoreChainAdapter:
                             ts_cache.pop(h_hex_alt, None)
                 
                 if evicted_count > 0:
-                    log.info("evicted transactions from RPC fallback cache", extra={"count": evicted_count})
+                    log.info("evicted transactions from _FALLBACK_PENDING", extra={"count": evicted_count})
                     # Continue to other strategies to ensure all pools are cleaned
         except (ImportError, AttributeError) as e:
-            log.debug("RPC fallback cache not accessible", extra={"err": str(e)})
+            log.debug("RPC pending pools not accessible", extra={"err": str(e)})
         
         # Strategy 2: Try to import and access a global pool if available
         try:

@@ -605,19 +605,53 @@ def _adapter() -> CoreChainAdapter:
         if tx_methods is not None:
             def drain_fn(max_gas: int, max_bytes: int):
                 """
-                Drain function that selects transactions from the fallback pending cache.
+                Drain function that selects transactions from the pending pool.
                 
-                This reads from rpc.methods.tx._FALLBACK_PENDING which is where transactions
-                are stored when submitted via the RPC tx.sendRawTransaction method.
+                This reads from rpc.methods.tx._PEND (if available) or _FALLBACK_PENDING
+                (fallback), matching the same priority used by tx.sendRawTransaction and
+                mempool.getPending.
                 
                 Returns a list of Tx objects. Uses _tx_hash_map to track original hashes.
                 """
+                log.info(f"drain_fn: ENTRY with max_gas={max_gas}, max_bytes={max_bytes}")
                 txs = []
                 try:
-                    pending_map = getattr(tx_methods, "_FALLBACK_PENDING", {}) or {}
-                    log.info(f"drain_fn called with max_gas={max_gas}, max_bytes={max_bytes}, pending_count={len(pending_map)}")
+                    # Check _PEND first (same priority as _pending_put and mempool.getPending)
+                    pend = getattr(tx_methods, "_PEND", None)
+                    pending_map = {}
+                    
+                    if pend is not None:
+                        log.info("drain_fn: Using _PEND pool")
+                        # Try to get items from _PEND (depends on its interface)
+                        if hasattr(pend, "items") and callable(pend.items):
+                            try:
+                                pending_map = dict(pend.items())  # dict[str, bytes]
+                                log.info(f"drain_fn: Got {len(pending_map)} txs from _PEND.items()")
+                            except Exception as e:
+                                log.warning(f"drain_fn: _PEND.items() failed: {e}")
+                        elif hasattr(pend, "list_raw") and callable(pend.list_raw):
+                            try:
+                                items = pend.list_raw()  # Iterable[(str, bytes)]
+                                pending_map = dict(items)
+                                log.info(f"drain_fn: Got {len(pending_map)} txs from _PEND.list_raw()")
+                            except Exception as e:
+                                log.warning(f"drain_fn: _PEND.list_raw() failed: {e}")
+                        else:
+                            log.warning("drain_fn: _PEND exists but has no items() or list_raw() method")
+                    
+                    # Fallback to _FALLBACK_PENDING if _PEND is None or didn't provide items
                     if not pending_map:
-                        log.info("drain_fn: No pending transactions in _FALLBACK_PENDING")
+                        fallback = getattr(tx_methods, "_FALLBACK_PENDING", {}) or {}
+                        pending_map = fallback
+                        log.info(f"drain_fn: Using _FALLBACK_PENDING with {len(pending_map)} txs")
+                    
+                    if pending_map:
+                        # Log first few tx hashes for debugging
+                        sample_hashes = list(pending_map.keys())[:3]
+                        log.info(f"drain_fn: Sample pending tx hashes: {sample_hashes}")
+                    
+                    if not pending_map:
+                        log.info("drain_fn: No pending transactions in any pool")
                         return []
                     
                     total_gas = 0
@@ -646,7 +680,7 @@ def _adapter() -> CoreChainAdapter:
                                     log.warning(f"drain_fn: Failed to construct Tx from dict for {tx_hash_hex}")
                             
                             if tx_obj is None:
-                                log.warning(f"drain_fn: Skipping tx {tx_hash_hex} - could not construct Tx instance")
+                                log.error(f"drain_fn: Skipping tx {tx_hash_hex} - could not construct Tx instance (decoded type={type(decoded).__name__}, keys={list(decoded.keys()) if isinstance(decoded, dict) else 'N/A'})")
                                 continue
                             
                             # Check gas and byte limits
@@ -716,7 +750,7 @@ def _adapter() -> CoreChainAdapter:
     except Exception as e:
         # If anything fails, continue without a miner_feed
         # The adapter will still work but will use the inline fallback in _mine_once
-        log.warning(f"Failed to attach miner_feed to adapter: {e}")
+        log.error(f"Failed to attach miner_feed to adapter: {e}", exc_info=True)
         miner_feed = None
     
     return CoreChainAdapter(
@@ -1062,16 +1096,28 @@ def _construct_tx_from_dict(normalized: dict) -> Tx | None:
         try:
             return Tx.from_obj(normalized)  # type: ignore[attr-defined]
         except Exception as e:
-            log.warning(f"_construct_tx_from_dict: Tx.from_obj failed: {e}", exc_info=True)
+            # Log detailed error with normalized structure for debugging
+            log.error(
+                f"_construct_tx_from_dict: Tx.from_obj failed: {e}",
+                extra={
+                    "error_type": type(e).__name__,
+                    "error_msg": str(e),
+                    "normalized_keys": list(normalized.keys()),
+                    "has_tx": "tx" in normalized,
+                    "has_sigs": "sigs" in normalized,
+                    "tx_keys": list(normalized.get("tx", {}).keys()) if "tx" in normalized and isinstance(normalized.get("tx"), dict) else None,
+                }
+            )
+            log.debug(f"_construct_tx_from_dict: Full normalized object: {normalized}", exc_info=True)
             return None
     elif hasattr(Tx, "from_dict"):
         try:
             return Tx.from_dict(normalized)  # type: ignore[attr-defined]
         except Exception as e:
-            log.warning(f"_construct_tx_from_dict: Tx.from_dict failed: {e}", exc_info=True)
+            log.error(f"_construct_tx_from_dict: Tx.from_dict failed: {e}", exc_info=True)
             return None
     else:
-        log.warning("_construct_tx_from_dict: Tx class has no from_obj or from_dict method")
+        log.error("_construct_tx_from_dict: Tx class has no from_obj or from_dict method")
         return None
 
 
@@ -1117,6 +1163,7 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
 
     # Collect pending transactions from the best available source (mempool → fallback cache)
     log.info("_mine_once: Starting transaction collection from mempool adapter")
+    log.info(f"_mine_once: Adapter has miner_feed: {adapter.miner_feed is not None}")
     try:
         txs = list(adapter.get_mempool_snapshot(limit=1000))
         log.info(f"_mine_once: adapter.get_mempool_snapshot returned {len(txs)} transactions")
@@ -1139,15 +1186,40 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
     except Exception as e:
         log.warning(f"mempool snapshot unavailable; falling back to in-process cache: {e}", exc_info=True)
     if not txs:
-        log.info("_mine_once: No transactions from adapter, trying fallback pending cache")
+        log.info("_mine_once: No transactions from adapter, trying fallback direct read")
         try:
             from rpc.methods import tx as tx_methods
 
-            pending_map = getattr(tx_methods, "_FALLBACK_PENDING", {}) or {}
+            # Check _PEND first (same priority as drain_fn)
+            pend = getattr(tx_methods, "_PEND", None)
+            pending_map = {}
+            
+            if pend is not None:
+                log.info("_mine_once fallback: Using _PEND pool")
+                # Try to get items from _PEND
+                if hasattr(pend, "items") and callable(pend.items):
+                    try:
+                        pending_map = dict(pend.items())
+                        log.info(f"_mine_once fallback: Got {len(pending_map)} txs from _PEND.items()")
+                    except Exception as e:
+                        log.warning(f"_mine_once fallback: _PEND.items() failed: {e}")
+                elif hasattr(pend, "list_raw") and callable(pend.list_raw):
+                    try:
+                        items = pend.list_raw()
+                        pending_map = dict(items)
+                        log.info(f"_mine_once fallback: Got {len(pending_map)} txs from _PEND.list_raw()")
+                    except Exception as e:
+                        log.warning(f"_mine_once fallback: _PEND.list_raw() failed: {e}")
+            
+            # Fallback to _FALLBACK_PENDING if _PEND is None or didn't provide items
+            if not pending_map:
+                fallback = getattr(tx_methods, "_FALLBACK_PENDING", {}) or {}
+                pending_map = fallback
+                log.info(f"_mine_once fallback: Using _FALLBACK_PENDING with {len(pending_map)} txs")
+            
             pending_count = len(pending_map)
-            log.info(f"_mine_once: Found {pending_count} transactions in fallback pending cache")
             if pending_count > 0:
-                log.info(f"Attempting to retrieve {pending_count} transactions from fallback pending cache")
+                log.info(f"Attempting to retrieve {pending_count} transactions from pending pool")
             for tx_hash_hex, raw in pending_map.items():
                 try:
                     log.debug(f"_mine_once: Decoding tx {tx_hash_hex} from fallback")
@@ -1355,9 +1427,10 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
                 if i < len(included_hashes):
                     valid_hashes.append(included_hashes[i])
             except Exception as e:
-                log.debug(
-                    f"Skipping malformed tx {i+1}/{len(txs)}: {e}",
-                    extra={"tx_type": type(tx).__name__, "err": str(e)}
+                log.warning(
+                    f"Skipping malformed tx {i+1}/{len(txs)} during hash computation: {e}",
+                    extra={"tx_type": type(tx).__name__, "err": str(e)},
+                    exc_info=True
                 )
         
         # Calculate counts before reassigning
@@ -1408,6 +1481,16 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
                 # Fall back to empty block if merkle root computation fails
                 txs = []
                 included_hashes = []
+    
+    # Log final tx list before mining
+    log.info(
+        f"_mine_once: Ready to mine block with {len(txs)} transactions",
+        extra={
+            "tx_count": len(txs),
+            "tx_hashes": [h[:16] + "..." for h in included_hashes[:5]],
+            "has_more": len(included_hashes) > 5
+        }
+    )
     
     # Compute target from theta
     theta_micro = header_template.thetaMicro
@@ -1561,7 +1644,27 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
                     except Exception as e:
                         log.warning(f"Failed to evict from mempool adapter: {e}")
                     
-                    # 2. Evict from fallback pending cache (backward compatibility)
+                    # 2. Evict from _PEND pool (if available)
+                    try:
+                        from rpc.methods import tx as tx_methods
+                        
+                        pend = getattr(tx_methods, "_PEND", None)
+                        if pend is not None and hasattr(pend, "remove"):
+                            evicted_count = 0
+                            for h in included_hashes:
+                                try:
+                                    # Call remove method on _PEND pool
+                                    removed = pend.remove(h)
+                                    if removed:
+                                        evicted_count += 1
+                                except Exception as e:
+                                    log.debug(f"Failed to remove {h} from _PEND: {e}")
+                            if evicted_count > 0:
+                                log.info(f"Evicted {evicted_count} included transactions from _PEND pool")
+                    except Exception as e:
+                        log.warning(f"Failed to evict from _PEND pool: {e}")
+                    
+                    # 3. Evict from _FALLBACK_PENDING (backward compatibility)
                     try:
                         from rpc.methods import tx as tx_methods
 
@@ -1576,11 +1679,11 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
                                 ts_cache.pop(h, None)
                                 evicted_count += 1
                         if evicted_count > 0:
-                            log.info(f"Evicted {evicted_count} included transactions from fallback cache")
+                            log.info(f"Evicted {evicted_count} included transactions from _FALLBACK_PENDING")
                     except Exception as e:
-                        log.warning(f"Failed to evict from fallback cache: {e}")
+                        log.warning(f"Failed to evict from _FALLBACK_PENDING: {e}")
                     
-                    # 3. Clean up the hash mapping for evicted transactions
+                    # 4. Clean up the hash mapping for evicted transactions
                     try:
                         for tx in txs:
                             _TX_HASH_MAP.pop(id(tx), None)

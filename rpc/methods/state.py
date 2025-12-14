@@ -243,7 +243,29 @@ def _svc_pending_nonce(addr: str) -> int:
     try:
         from rpc.methods import tx as tx_methods
         
-        pending_map = getattr(tx_methods, "_FALLBACK_PENDING", {}) or {}
+        # Check _PEND first (same priority as _pending_put)
+        pend = getattr(tx_methods, "_PEND", None)
+        pending_map = {}
+        
+        if pend is not None:
+            # Try to get items from _PEND
+            if hasattr(pend, "items") and callable(pend.items):
+                try:
+                    pending_map = dict(pend.items())
+                except Exception:
+                    pass
+            elif hasattr(pend, "list_raw") and callable(pend.list_raw):
+                try:
+                    items = pend.list_raw()
+                    pending_map = dict(items)
+                except Exception:
+                    pass
+        
+        # Fallback to _FALLBACK_PENDING if _PEND is None or didn't provide items
+        if not pending_map:
+            fallback = getattr(tx_methods, "_FALLBACK_PENDING", {}) or {}
+            pending_map = fallback
+        
         if not pending_map:
             return committed_nonce
         
