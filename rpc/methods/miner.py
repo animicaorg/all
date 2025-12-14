@@ -8,7 +8,7 @@ import logging
 import os
 import time
 import uuid
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from typing import Any, Dict, Tuple
 
 from core.types.block import Block
@@ -74,6 +74,222 @@ _AUTO_TASK: asyncio.Task | None = None
 # 2. Mining operations (_mine_once) are synchronous and complete before next RPC call
 # 3. If concurrent mining is needed in the future, add threading.Lock
 _TX_HASH_MAP: dict[int, tuple[str, bytes]] = {}
+
+
+def _tracked(tx: Any) -> tuple[str, bytes] | None:
+    """
+    Check if tx has a tracked hash in _TX_HASH_MAP.
+    
+    Returns:
+        (tx_hash_hex, raw_bytes) if tracked, None otherwise
+    """
+    return _TX_HASH_MAP.get(id(tx))
+
+
+def _canonical_txid_hex(tx: Any) -> str:
+    """
+    Get the canonical txid (hex) from a tx object.
+    
+    Canonical rule: TxID = sha3_256(raw_cbor_bytes) for the signed envelope.
+    This matches the rule used by rpc/methods/tx.py in tx.sendRawTransaction.
+    
+    Returns:
+        Hex string with "0x" prefix, e.g., "0x6e23..."
+    """
+    # First, try to get the tracked hash (if tx came from _TX_HASH_MAP)
+    tracked = _tracked(tx)
+    if tracked:
+        return tracked[0]
+    
+    # Fall back to txid_bytes helper
+    try:
+        tx_hash_bytes = txid_bytes(tx)
+        return "0x" + tx_hash_bytes.hex()
+    except Exception as e:
+        log.warning(f"Failed to compute canonical txid: {e}")
+        return "0x" + (b"\x00" * 32).hex()
+
+
+def _decode_cbor_loose(raw: bytes) -> dict | None:
+    """
+    Safely decode CBOR bytes to a dict.
+    
+    Returns:
+        Decoded dict or None if cbor2 is unavailable or decoding fails
+    """
+    try:
+        import cbor2
+        obj = cbor2.loads(raw)
+        return obj if isinstance(obj, dict) else None
+    except ImportError:
+        return None
+    except Exception as e:
+        log.debug(f"CBOR decode failed: {e}")
+        return None
+
+
+def _as_bytes32_addr(val: Any) -> bytes:
+    """
+    Convert address value to 32-byte format.
+    
+    Handles:
+    - bytes/bytearray: pad or truncate to 32 bytes
+    - hex string: decode and pad/truncate
+    - bech32 string (anim1...): decode using _decode_bech32_address
+    
+    Returns:
+        32-byte address
+    """
+    if val is None:
+        return ZERO32
+    
+    if isinstance(val, (bytes, bytearray)):
+        addr_bytes = bytes(val)
+    elif isinstance(val, str):
+        # Try bech32 decode first for anim1... addresses
+        if val.startswith("anim1"):
+            try:
+                return _decode_bech32_address(val)
+            except Exception:
+                pass
+        
+        # Try hex decode
+        try:
+            hex_str = val[2:] if val.startswith("0x") else val
+            if len(hex_str) % 2:
+                hex_str = "0" + hex_str
+            addr_bytes = bytes.fromhex(hex_str)
+        except Exception:
+            # Fall back to zero address for invalid input
+            return ZERO32
+    else:
+        return ZERO32
+    
+    # Pad or truncate to 32 bytes
+    if len(addr_bytes) < ADDRESS_LEN:
+        addr_bytes = addr_bytes.ljust(ADDRESS_LEN, b"\x00")
+    elif len(addr_bytes) > ADDRESS_LEN:
+        addr_bytes = addr_bytes[:ADDRESS_LEN]
+    
+    return addr_bytes
+
+
+def _derive_sender_from_envelope_raw(raw: bytes) -> bytes | None:
+    """
+    Derive sender address from raw CBOR envelope by extracting pubkey and alg_id.
+    
+    Uses the signature envelope to reconstruct the bech32m address, then converts
+    to 32-byte raw address format.
+    
+    Returns:
+        32-byte sender address or None if derivation fails
+    """
+    # Decode the envelope
+    obj = _decode_cbor_loose(raw)
+    if obj is None:
+        return None
+    
+    # Extract signature info (try various envelope formats)
+    sigs = obj.get("sigs")
+    sig = None
+    
+    if sigs and isinstance(sigs, list) and len(sigs) > 0:
+        sig = sigs[0]
+    elif "sig" in obj:
+        sig = obj["sig"]
+    elif "signature" in obj:
+        sig = obj["signature"]
+    
+    if not isinstance(sig, dict):
+        return None
+    
+    # Extract alg_id and pubkey
+    alg_id = sig.get("alg") or sig.get("alg_id") or sig.get("algId")
+    pubkey = sig.get("pubkey") or sig.get("pub") or sig.get("pk")
+    
+    if alg_id is None or pubkey is None:
+        return None
+    
+    # Convert pubkey to bytes if needed
+    if isinstance(pubkey, str):
+        try:
+            hex_str = pubkey[2:] if pubkey.startswith("0x") else pubkey
+            pubkey = bytes.fromhex(hex_str)
+        except Exception:
+            return None
+    
+    # Derive bech32m address from pubkey
+    try:
+        from pq.py.address import address_from_pubkey
+        bech32_addr = address_from_pubkey(pubkey, alg_id)
+        # Convert bech32m to 32-byte raw address
+        return _decode_bech32_address(bech32_addr)
+    except Exception as e:
+        log.debug(f"Failed to derive sender from envelope: {e}")
+        return None
+
+
+def _has_valid_sender(tx: Any) -> bool:
+    """
+    Check if a tx object has a valid (non-zero) sender.
+    
+    Args:
+        tx: Transaction object (Tx instance or dict-like)
+        
+    Returns:
+        True if tx has a non-zero sender, False otherwise
+    """
+    sender = None
+    if hasattr(tx, "unsigned"):
+        sender = getattr(tx.unsigned, "sender", None)
+    if sender is None:
+        sender = getattr(tx, "sender", None)
+    
+    return sender is not None and sender != ZERO32
+
+
+def _attach_sender_if_possible(tx: Tx) -> Tx:
+    """
+    Attach sender to a Tx object if possible.
+    
+    If the tx already has a sender, returns it unchanged.
+    If the tx is missing sender, tries to derive it from the tracked raw envelope.
+    
+    Returns:
+        Updated Tx with sender attached, or original tx if derivation fails
+    """
+    # Check if tx already has valid sender
+    if _has_valid_sender(tx):
+        # Tx already has valid sender
+        return tx
+    
+    # Try to derive sender from tracked raw envelope
+    tracked = _tracked(tx)
+    if tracked is None:
+        return tx
+    
+    tx_hash_hex, raw = tracked
+    derived_sender = _derive_sender_from_envelope_raw(raw)
+    
+    if derived_sender is None:
+        return tx
+    
+    # Attach sender to tx by reconstructing with updated unsigned field
+    try:
+        if hasattr(tx, "unsigned"):
+            # Tx dataclass with nested unsigned field
+            unsigned_updated = replace(tx.unsigned, sender=derived_sender)
+            tx_updated = replace(tx, unsigned=unsigned_updated)
+            log.debug(f"Attached sender to tx {tx_hash_hex[:16]}...: {derived_sender.hex()[:16]}...")
+            return tx_updated
+        else:
+            # Flat tx structure - can't easily update frozen dataclass
+            # Return original tx unchanged
+            log.debug(f"Cannot attach sender to flat tx structure for {tx_hash_hex[:16]}...")
+            return tx
+    except Exception as e:
+        log.warning(f"Failed to attach sender to tx {tx_hash_hex[:16]}...: {e}")
+        return tx
 
 
 def _to_hex(b: bytes | None) -> str | None:
@@ -1363,6 +1579,56 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
                 log.warning(f"Failed to retrieve any of {pending_count} transactions from fallback pending cache")
         except Exception as e:
             log.error("Fallback pending pool unavailable", extra={"err": str(e)}, exc_info=True)
+    
+    # Normalize transactions: attach sender where possible, drop txs with no sender
+    # This fixes the bug where miner pulls txs from _FALLBACK_PENDING but drops them
+    # with "Transaction missing sender; skipping" during execution.
+    if txs:
+        log.info(f"Normalizing {len(txs)} transactions before mining (attaching sender where possible)")
+        
+        # Ensure txs and included_hashes have matching lengths (pad with canonical hashes if needed)
+        if len(included_hashes) < len(txs):
+            log.warning(
+                f"included_hashes shorter than txs ({len(included_hashes)} < {len(txs)}), "
+                f"computing missing canonical hashes"
+            )
+            # Compute missing hashes
+            for i in range(len(included_hashes), len(txs)):
+                included_hashes.append(_canonical_txid_hex(txs[i]))
+        
+        txs_normalized = []
+        included_hashes_normalized = []
+        
+        # Use zip to ensure synchronization between txs and hashes
+        for tx, tx_hash_hex in zip(txs, included_hashes):
+            # Try to attach sender if missing
+            tx_normalized = _attach_sender_if_possible(tx)
+            
+            # Drop txs that still have no sender (can't execute without sender)
+            if not _has_valid_sender(tx_normalized):
+                log.warning(
+                    f"Dropping tx {tx_hash_hex[:16]}... - no sender after normalization "
+                    f"(envelope may be missing signature or pubkey)"
+                )
+                continue
+            
+            # Keep normalized tx and its hash
+            txs_normalized.append(tx_normalized)
+            included_hashes_normalized.append(tx_hash_hex)
+        
+        # Replace with normalized lists
+        dropped_count = len(txs) - len(txs_normalized)
+        txs = txs_normalized
+        included_hashes = included_hashes_normalized
+        
+        if dropped_count > 0:
+            log.warning(
+                f"Dropped {dropped_count} transactions with missing sender "
+                f"(kept {len(txs)} txs with valid sender for block)"
+            )
+        else:
+            log.info(f"All {len(txs)} transactions have valid sender after normalization")
+    
     head = adapter.get_head()
     parent_height = int(head.get("height") or 0)
     parent_hash_val = head.get("hash") or head.get("hash_hex")
@@ -1473,7 +1739,6 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
         if leaves:
             try:
                 txs_root = merkle_root(leaves)
-                from dataclasses import replace
                 header_template = replace(header_template, txsRoot=txs_root)
                 log.debug(f"Computed txsRoot from {len(leaves)} tx hashes: {txs_root.hex()[:16]}...")
             except Exception as e:
@@ -1506,7 +1771,6 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
     for nonce_val in range(max_nonce):
         # Update header with new nonce using dataclasses.replace for efficiency
         try:
-            from dataclasses import replace
             header = replace(header_template, nonce=nonce_val)
         except Exception:
             # Fallback if replace not available or Header is not a dataclass
@@ -1577,8 +1841,6 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
             state_root = _compute_state_root(getattr(ctx, "state_db", None))
 
             try:
-                from dataclasses import replace
-
                 header = replace(
                     header,
                     stateRoot=state_root,
@@ -1631,16 +1893,27 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
 
                 # Evict successfully mined txs from both mempool adapter and fallback cache
                 # to prevent re-mining them in subsequent blocks
-                if included_hashes:
+                # Use canonical txid computed from raw signed envelope bytes for eviction
+                # (matches txid from sendRawTransaction: sha3_256(raw_cbor_bytes))
+                if txs:
+                    # Compute canonical hashes for eviction (from txs, not included_hashes)
+                    # This ensures we use sha3_256(raw_cbor) consistent with sendRawTransaction
+                    included_hashes_canonical = [_canonical_txid_hex(tx) for tx in txs]
+                    
                     # 1. Evict from adapter mempool (if available)
                     try:
-                        # Convert hex hashes to bytes for adapter eviction
-                        hashes_bytes = [_hex_to_bytes(h) for h in included_hashes]
-                        
-                        # Call adapter to evict from mempool pool
-                        if hasattr(adapter, "remove_included"):
-                            adapter.remove_included(hashes_bytes)
-                            log.info(f"Evicted {len(hashes_bytes)} included transactions from mempool adapter")
+                        # Try evict_by_hashes first (if available), which uses hex hashes
+                        if hasattr(adapter, "evict_by_hashes"):
+                            adapter.evict_by_hashes(included_hashes_canonical)
+                            log.info(f"Evicted {len(included_hashes_canonical)} included transactions from mempool adapter (by hashes)")
+                        else:
+                            # Fallback: convert hex hashes to bytes for adapter eviction
+                            hashes_bytes = [_hex_to_bytes(h) for h in included_hashes_canonical]
+                            
+                            # Call adapter to evict from mempool pool
+                            if hasattr(adapter, "remove_included"):
+                                adapter.remove_included(hashes_bytes)
+                                log.info(f"Evicted {len(hashes_bytes)} included transactions from mempool adapter")
                     except Exception as e:
                         log.warning(f"Failed to evict from mempool adapter: {e}")
                     
@@ -1651,7 +1924,7 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
                         pend = getattr(tx_methods, "_PEND", None)
                         if pend is not None and hasattr(pend, "remove"):
                             evicted_count = 0
-                            for h in included_hashes:
+                            for h in included_hashes_canonical:
                                 try:
                                     # Call remove method on _PEND pool
                                     removed = pend.remove(h)
@@ -1671,7 +1944,7 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
                         cache = getattr(tx_methods, "_FALLBACK_PENDING", {}) or {}
                         ts_cache = getattr(tx_methods, "_FALLBACK_PENDING_TS", {}) or {}
                         evicted_count = 0
-                        for h in included_hashes:
+                        for h in included_hashes_canonical:
                             # pop() returns the removed value or None if key doesn't exist
                             # We count eviction only if the tx was actually in the cache
                             if cache.pop(h, None) is not None:
@@ -1694,8 +1967,8 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
                     f"Mined block at height {header.height} with nonce {nonce_val} "
                     f"(hash {block_hash_int} <= target {target}), reward={reward_amount} nANM, "
                     f"txs={len(txs)}, receipts={len(receipts) if receipts else 0}, "
-                    f"included_tx_hashes={included_hashes[:MAX_DISPLAYED_TX_HASHES]}"
-                    f"{' ...' if len(included_hashes) > MAX_DISPLAYED_TX_HASHES else ''}"
+                    f"included_tx_hashes={included_hashes_canonical[:MAX_DISPLAYED_TX_HASHES]}"
+                    f"{' ...' if len(included_hashes_canonical) > MAX_DISPLAYED_TX_HASHES else ''}"
                 )
                 return (True, reward_amount)
             return (False, 0)
