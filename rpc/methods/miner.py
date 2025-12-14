@@ -376,9 +376,100 @@ def auto_mine_enabled() -> bool:
 
 
 def _adapter() -> CoreChainAdapter:
+    """
+    Create a CoreChainAdapter with mempool feed for block building.
+    
+    This adapter connects the miner to both the chain state (via block_db/state_db)
+    and the mempool (via miner_feed) so that pending transactions can be included
+    in newly mined blocks.
+    """
     ctx = _ctx()
+    
+    # Try to attach a miner_feed that drains from the RPC fallback pending cache
+    # This allows get_mempool_snapshot() to return pending transactions
+    miner_feed = None
+    try:
+        from mempool.adapters.miner_feed import MinerFeed
+        
+        # Import tx_methods to access _FALLBACK_PENDING
+        # This is where transactions are stored when submitted via RPC
+        try:
+            from rpc.methods import tx as tx_methods
+        except ImportError:
+            tx_methods = None  # type: ignore[assignment]
+        
+        if tx_methods is not None:
+            def drain_fn(max_gas: int, max_bytes: int):
+                """
+                Drain function that selects transactions from the fallback pending cache.
+                
+                This reads from rpc.methods.tx._FALLBACK_PENDING which is where transactions
+                are stored when submitted via the RPC tx.sendRawTransaction method.
+                """
+                txs = []
+                try:
+                    pending_map = getattr(tx_methods, "_FALLBACK_PENDING", {}) or {}
+                    if not pending_map:
+                        return []
+                    
+                    total_gas = 0
+                    total_bytes = 0
+                    
+                    for tx_hash_hex, raw in pending_map.items():
+                        try:
+                            # Decode the raw CBOR transaction
+                            decoded, obj = tx_methods._decode_tx(raw)  # type: ignore[attr-defined]
+                            
+                            # Try to construct a Tx instance
+                            tx_obj = None
+                            if isinstance(decoded, Tx):
+                                tx_obj = decoded
+                            elif isinstance(decoded, dict):
+                                # Normalize envelope format and try to construct Tx
+                                normalized = _normalize_tx_envelope(decoded)
+                                tx_obj = _construct_tx_from_dict(normalized)
+                            
+                            if tx_obj is None:
+                                continue
+                            
+                            # Check gas and byte limits
+                            tx_gas = getattr(tx_obj, "gas_limit", getattr(tx_obj, "gas", 21000))
+                            tx_bytes = len(raw)
+                            
+                            if total_gas + tx_gas > max_gas or total_bytes + tx_bytes > max_bytes:
+                                # Skip this tx if it would exceed limits
+                                continue
+                            
+                            txs.append(tx_obj)
+                            total_gas += tx_gas
+                            total_bytes += tx_bytes
+                            
+                        except Exception as e:
+                            log.debug(f"Failed to decode tx {tx_hash_hex} in drain_fn: {e}")
+                            continue
+                    
+                    if txs:
+                        log.info(f"drain_fn returning {len(txs)} transactions from fallback pending cache")
+                    return txs
+                    
+                except Exception as e:
+                    log.warning(f"drain_fn failed: {e}")
+                    return []
+            
+            # Create the MinerFeed with the drain function
+            miner_feed = MinerFeed(drain=drain_fn, notifier=None)
+            log.info("Created MinerFeed connected to RPC fallback pending cache")
+    except Exception as e:
+        # If anything fails, continue without a miner_feed
+        # The adapter will still work but will use the inline fallback in _mine_once
+        log.warning(f"Failed to attach miner_feed to adapter: {e}")
+        miner_feed = None
+    
     return CoreChainAdapter(
-        kv=ctx.kv, block_db=ctx.block_db, state_db=getattr(ctx, "state_db", None)
+        kv=ctx.kv,
+        block_db=ctx.block_db,
+        state_db=getattr(ctx, "state_db", None),
+        miner_feed=miner_feed,
     )
 
 
