@@ -457,7 +457,29 @@ def _adapter() -> CoreChainAdapter:
                     return []
             
             # Create the MinerFeed with the drain function
-            miner_feed = MinerFeed(drain=drain_fn, notifier=None)
+            base_feed = MinerFeed(drain=drain_fn, notifier=None)
+            
+            # Wrap the MinerFeed to provide the peek_ready interface expected by CoreChainAdapter
+            # CoreChainAdapter expects: peek_ready(limit, gas_limit) -> Iterable[Tx]
+            class MinerFeedAdapter:
+                """Adapter that provides peek_ready interface for CoreChainAdapter."""
+                def __init__(self, feed):
+                    self._feed = feed
+                
+                def peek_ready(self, limit: int = 1000, gas_limit: int | None = None):
+                    """Return an iterable of ready transactions (without removing them from pool)."""
+                    # Convert gas_limit to max_gas (default to large number if None)
+                    max_gas = gas_limit if gas_limit is not None else 100_000_000_000
+                    # Use a large byte limit (1GB)
+                    max_bytes = 1_000_000_000
+                    
+                    # Drain transactions (this reads from _FALLBACK_PENDING)
+                    txs = self._feed._drain(max_gas, max_bytes)
+                    
+                    # Return up to limit transactions
+                    return txs[:limit] if limit else txs
+            
+            miner_feed = MinerFeedAdapter(base_feed)
             log.info("Created MinerFeed connected to RPC fallback pending cache")
     except Exception as e:
         # If anything fails, continue without a miner_feed
