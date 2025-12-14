@@ -351,6 +351,20 @@ def _parse_nonce(nonce: Any) -> bytes:
     raise ValueError("nonce must be hex string, int, or bytes")
 
 
+def _hex_to_bytes(hex_str: str) -> bytes:
+    """
+    Convert a hex string to bytes, handling both "0x" prefixed and unprefixed formats.
+    
+    Args:
+        hex_str: Hex string (e.g., "0x6e23..." or "6e23...")
+        
+    Returns:
+        bytes: The decoded bytes
+    """
+    s = hex_str[2:] if hex_str.startswith("0x") else hex_str
+    return bytes.fromhex(s)
+
+
 def _record_local_block(
     height: int, block_hash: str, header: dict[str, Any] | None = None
 ) -> None:
@@ -885,11 +899,7 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
                     # 1. Evict from adapter mempool (if available)
                     try:
                         # Convert hex hashes to bytes for adapter eviction
-                        hashes_bytes = []
-                        for h_hex in included_hashes:
-                            # h_hex may be "0x..." or just hex string
-                            h_str = h_hex[2:] if h_hex.startswith("0x") else h_hex
-                            hashes_bytes.append(bytes.fromhex(h_str))
+                        hashes_bytes = [_hex_to_bytes(h) for h in included_hashes]
                         
                         # Call adapter to evict from mempool pool
                         if hasattr(adapter, "remove_included"):
