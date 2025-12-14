@@ -17,8 +17,24 @@ import pytest
 from rpc.tests import new_test_client, rpc_call
 
 # Test address constants for deterministic testing
-TEST_RECIPIENT_1 = "0xdeadbeef" + "00" * 28  # 32-byte test address
-TEST_RECIPIENT_2 = "0xcafebabe" + "00" * 28  # 32-byte test address
+ADDRESS_BYTES = 32  # Standard Animica address length
+TEST_RECIPIENT_1 = "0xdeadbeef" + "00" * (ADDRESS_BYTES - 4)  # 32-byte test address
+TEST_RECIPIENT_2 = "0xcafebabe" + "00" * (ADDRESS_BYTES - 4)  # 32-byte test address
+
+
+def _make_test_address(prefix: str, suffix: int) -> str:
+    """
+    Create a deterministic test address with a nonce suffix.
+    
+    Args:
+        prefix: Hex address prefix (e.g., "0xdeadbeef00...00")
+        suffix: Single-byte suffix to make address unique (0-255)
+        
+    Returns:
+        str: 32-byte hex address with the last byte replaced by suffix
+    """
+    # Replace last byte (2 hex chars) with suffix
+    return prefix[:-2] + f"{suffix:02x}"
 
 
 @pytest.fixture
@@ -66,7 +82,8 @@ def _get_premine_address_hex() -> str:
         from consensus.rewards import MAINNET_PREMINE_DISTRIBUTION
         from pq.py.address import decode_address
         
-        premine_addr_bech32 = MAINNET_PREMINE_DISTRIBUTION[0][0]
+        # Get first premine address: MAINNET_PREMINE_DISTRIBUTION is list[(address, amount), ...]
+        premine_addr_bech32 = MAINNET_PREMINE_DISTRIBUTION[0][0]  # First tuple, first element (address)
         addr_record = decode_address(premine_addr_bech32)
         digest = bytes(addr_record.digest) if isinstance(addr_record.digest, list) else addr_record.digest
         premine_addr_bytes = digest[:32].ljust(32, b"\x00")
@@ -235,7 +252,7 @@ def test_block_with_multiple_txs_has_correct_txsroot(sender_keypair):
     tx_hashes = []
     for nonce in range(3):
         # Use different recipients (deterministic test addresses with nonce suffix)
-        recipient_hex = TEST_RECIPIENT_1[:-2] + f"{nonce:02x}"
+        recipient_hex = _make_test_address(TEST_RECIPIENT_1, nonce)
         raw_hex, tx_hash = _build_signed_transfer(
             client, cfg, sender_kp, recipient_hex,
             nonce=nonce, value=100_000_000  # 0.1 ANM each
@@ -322,7 +339,7 @@ def test_mempool_drained_after_mining(sender_keypair):
     tx_hashes = []
     for nonce in range(2):
         # Use deterministic test addresses with nonce suffix
-        recipient_hex = TEST_RECIPIENT_2[:-2] + f"{nonce:02x}"
+        recipient_hex = _make_test_address(TEST_RECIPIENT_2, nonce)
         raw_hex, tx_hash = _build_signed_transfer(client, cfg, sender_kp, recipient_hex, nonce=nonce)
         rpc_call(client, "tx.sendRawTransaction", {"rawTx": raw_hex})
         tx_hashes.append(tx_hash)
