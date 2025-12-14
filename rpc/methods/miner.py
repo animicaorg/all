@@ -49,6 +49,9 @@ MAX_DISPLAYED_TX_HASHES = 3  # Maximum number of transaction hashes to display i
 DEFAULT_BLOCK_GAS_LIMIT = 100_000_000_000  # 100 billion gas (very high limit for devnet)
 DEFAULT_BLOCK_BYTE_LIMIT = 1_000_000_000  # 1GB block size limit
 
+# Default gas limit for transactions when not specified (same as INTRINSIC_GAS_TRANSFER)
+DEFAULT_TX_GAS_LIMIT = INTRINSIC_GAS_TRANSFER  # 21,000 gas for simple transfers
+
 # In-memory job cache for miner.getWork / miner.submitWork flows
 _JOB_CACHE: dict[str, dict[str, Any]] = {}
 _LOCAL_HEAD: dict[str, Any] = {}
@@ -379,6 +382,40 @@ def auto_mine_enabled() -> bool:
     return _AUTO_MINE
 
 
+def _get_tx_gas_limit(tx_obj: Any) -> int:
+    """
+    Extract gas_limit from a Tx object.
+    
+    Handles both flat and nested structures:
+    - Flat: tx.gas_limit or tx.gas
+    - Nested: tx.unsigned.gas_limit (Tx dataclass structure)
+    
+    Args:
+        tx_obj: Transaction object (Tx instance or dict-like)
+        
+    Returns:
+        Gas limit as integer, defaults to DEFAULT_TX_GAS_LIMIT (21,000) if not found
+    """
+    # Try flat gas_limit attribute
+    tx_gas = getattr(tx_obj, "gas_limit", None)
+    if tx_gas is not None:
+        return int(tx_gas)
+    
+    # Try nested unsigned.gas_limit (Tx dataclass structure)
+    if hasattr(tx_obj, "unsigned"):
+        tx_gas = getattr(tx_obj.unsigned, "gas_limit", None)
+        if tx_gas is not None:
+            return int(tx_gas)
+    
+    # Try flat gas attribute (alternative naming)
+    tx_gas = getattr(tx_obj, "gas", None)
+    if tx_gas is not None:
+        return int(tx_gas)
+    
+    # Default to intrinsic gas for simple transfers
+    return DEFAULT_TX_GAS_LIMIT
+
+
 def _adapter() -> CoreChainAdapter:
     """
     Create a CoreChainAdapter with mempool feed for block building.
@@ -448,12 +485,7 @@ def _adapter() -> CoreChainAdapter:
                                 continue
                             
                             # Check gas and byte limits
-                            # Tx has nested structure: tx.unsigned.gas_limit
-                            tx_gas = getattr(tx_obj, "gas_limit", None)
-                            if tx_gas is None and hasattr(tx_obj, "unsigned"):
-                                tx_gas = getattr(tx_obj.unsigned, "gas_limit", None)
-                            if tx_gas is None:
-                                tx_gas = getattr(tx_obj, "gas", 21000)
+                            tx_gas = _get_tx_gas_limit(tx_obj)
                             tx_bytes = len(raw)
                             
                             if total_gas + tx_gas > max_gas or total_bytes + tx_bytes > max_bytes:
