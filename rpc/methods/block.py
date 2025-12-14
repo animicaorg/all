@@ -321,6 +321,8 @@ def _block_view(
         v["txs"] = tx_hashes  # Alias for backward compatibility
 
     if include_receipts:
+        # Only include receipts field when explicitly requested (unlike transactions
+        # which are always present, either as hashes or full objects)
         receipts_list = [_receipt_view(r) for r in receipts]
         v["receipts"] = receipts_list
 
