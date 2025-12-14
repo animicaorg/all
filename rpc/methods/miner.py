@@ -1066,13 +1066,13 @@ def _execute_transactions(
             receipts.append({"status": 0, "gasUsed": 0, "logs": []})
             continue
 
-        # Right-pad/truncate to address length for consistency
-        # Note: We right-pad (append zeros) for short addresses and truncate from left for long ones
-        # This matches the behavior in execution/runtime/env.py _as_bytes() function
+        # Pad/truncate to address length (consistent with _as_bytes32_addr)
+        # ljust = left-justify = pad on the right with zeros
+        # Truncate from left to keep rightmost bytes
         if len(sender_bytes) < ADDRESS_LEN:
-            sender_bytes = sender_bytes.rjust(ADDRESS_LEN, b"\x00")
+            sender_bytes = sender_bytes.ljust(ADDRESS_LEN, b"\x00")
         elif len(sender_bytes) > ADDRESS_LEN:
-            sender_bytes = sender_bytes[-ADDRESS_LEN:]
+            sender_bytes = sender_bytes[:ADDRESS_LEN]
 
         try:
             
@@ -1103,11 +1103,12 @@ def _execute_transactions(
             res = apply_transfer(tx=tx, state=state_db, block_env=block_env, tx_env=tx_env)
 
             # Receipt-like view
+            # Note: res.is_success checks if res.status == TxStatus.SUCCESS
             receipts.append(
                 {
-                    "status": 1 if getattr(res, "ok", True) else 0,
-                    "gasUsed": int(getattr(res, "gas_used", 0) or 0),
-                    "logs": getattr(res, "logs", []) or [],
+                    "status": 1 if res.is_success else 0,
+                    "gasUsed": int(res.gas_used or 0),
+                    "logs": res.logs or [],
                 }
             )
         except Exception as e:
