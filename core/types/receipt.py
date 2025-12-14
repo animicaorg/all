@@ -131,6 +131,13 @@ class Receipt:
     def from_cbor(b: bytes) -> "Receipt":
         return Receipt.from_obj(cbor_loads(b))
 
+    # ---- hashing ----
+
+    def hash(self) -> bytes:
+        """Compute hash of the receipt (sha3-256 of CBOR)."""
+        from core.utils.hash import sha3_256
+        return sha3_256(self.to_cbor())
+
     # ---- convenience properties ----
 
     @property
