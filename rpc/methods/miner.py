@@ -42,6 +42,9 @@ RECEIPT_ADDRESS_LEN = 32  # Receipt log address length (bytes)
 TOPIC_LEN = 32  # Receipt log topic length (bytes)
 INTRINSIC_GAS_TRANSFER = 21_000  # Intrinsic gas cost for simple transfers
 
+# Logging display constants
+MAX_DISPLAYED_TX_HASHES = 3  # Maximum number of transaction hashes to display in logs
+
 # In-memory job cache for miner.getWork / miner.submitWork flows
 _JOB_CACHE: dict[str, dict[str, Any]] = {}
 _LOCAL_HEAD: dict[str, Any] = {}
@@ -643,14 +646,18 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
             except (AttributeError, TypeError) as e:
                 # tx.hash() may not exist or may fail; log and skip this tx for eviction tracking
                 log.debug(f"Could not get hash for tx; skipping eviction tracking: {e}")
+        if txs:
+            log.info(f"Retrieved {len(txs)} transactions from mempool adapter for mining")
     except Exception as e:
         log.debug(f"mempool snapshot unavailable; falling back to in-process cache: {e}")
-
     if not txs:
         try:
             from rpc.methods import tx as tx_methods
 
             pending_map = getattr(tx_methods, "_FALLBACK_PENDING", {}) or {}
+            pending_count = len(pending_map)
+            if pending_count > 0:
+                log.info(f"Attempting to retrieve {pending_count} transactions from fallback pending cache")
             for tx_hash_hex, raw in pending_map.items():
                 try:
                     decoded, obj = tx_methods._decode_tx(raw)  # type: ignore[attr-defined]
@@ -674,22 +681,26 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
                                 txs.append(tx_obj)
                                 included_hashes.append(tx_hash_hex)
                             else:
-                                log.debug(
-                                    "Tx class has no from_obj/from_dict method; skipping tx",
+                                log.warning(
+                                    "Tx class has no from_obj/from_dict method; skipping tx from fallback cache",
                                     extra={"hash": tx_hash_hex},
                                 )
                         except Exception as e:
-                            log.debug(
-                                "could not convert decoded tx to Tx instance; skipping",
+                            log.warning(
+                                "Could not convert decoded tx to Tx instance; skipping from fallback cache",
                                 extra={"hash": tx_hash_hex, "err": str(e), "keys": list(decoded.keys() if isinstance(decoded, dict) else [])},
                             )
                 except Exception as e:
                     log.warning(
-                        "failed to decode pending tx from fallback cache; dropping",
+                        "Failed to decode pending tx from fallback cache; skipping",
                         extra={"hash": tx_hash_hex, "err": str(e)},
                     )
+            if txs:
+                log.info(f"Retrieved {len(txs)}/{pending_count} transactions from fallback pending cache for mining")
+            elif pending_count > 0:
+                log.warning(f"Failed to retrieve any of {pending_count} transactions from fallback pending cache")
         except Exception as e:
-            log.debug("fallback pending pool unavailable", extra={"err": str(e)})
+            log.warning("Fallback pending pool unavailable", extra={"err": str(e)})
     head = adapter.get_head()
     parent_height = int(head.get("height") or 0)
     parent_hash_val = head.get("hash") or head.get("hash_hex")
@@ -875,16 +886,25 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
 
                         cache = getattr(tx_methods, "_FALLBACK_PENDING", {}) or {}
                         ts_cache = getattr(tx_methods, "_FALLBACK_PENDING_TS", {}) or {}
+                        evicted_count = 0
                         for h in included_hashes:
-                            cache.pop(h, None)
-                            ts_cache.pop(h, None)
-                    except Exception:
-                        pass
+                            # pop() returns the removed value or None if key doesn't exist
+                            # We count eviction only if the tx was actually in the cache
+                            if cache.pop(h, None) is not None:
+                                # Also remove timestamp (may not exist, that's ok)
+                                ts_cache.pop(h, None)
+                                evicted_count += 1
+                        if evicted_count > 0:
+                            log.info(f"Evicted {evicted_count} included transactions from pending cache")
+                    except Exception as e:
+                        log.warning(f"Failed to evict from pending cache: {e}")
 
-                log.debug(
+                log.info(
                     f"Mined block at height {header.height} with nonce {nonce_val} "
                     f"(hash {block_hash_int} <= target {target}), reward={reward_amount} nANM, "
-                    f"txs={len(txs)}, receipts={len(receipts) if receipts else 0}"
+                    f"txs={len(txs)}, receipts={len(receipts) if receipts else 0}, "
+                    f"included_tx_hashes={included_hashes[:MAX_DISPLAYED_TX_HASHES]}"
+                    f"{' ...' if len(included_hashes) > MAX_DISPLAYED_TX_HASHES else ''}"
                 )
                 return (True, reward_amount)
             return (False, 0)
