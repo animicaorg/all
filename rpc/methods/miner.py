@@ -448,7 +448,12 @@ def _adapter() -> CoreChainAdapter:
                                 continue
                             
                             # Check gas and byte limits
-                            tx_gas = getattr(tx_obj, "gas_limit", getattr(tx_obj, "gas", 21000))
+                            # Tx has nested structure: tx.unsigned.gas_limit
+                            tx_gas = getattr(tx_obj, "gas_limit", None)
+                            if tx_gas is None and hasattr(tx_obj, "unsigned"):
+                                tx_gas = getattr(tx_obj.unsigned, "gas_limit", None)
+                            if tx_gas is None:
+                                tx_gas = getattr(tx_obj, "gas", 21000)
                             tx_bytes = len(raw)
                             
                             if total_gas + tx_gas > max_gas or total_bytes + tx_bytes > max_bytes:
@@ -742,13 +747,22 @@ def _construct_tx_from_dict(normalized: dict) -> Tx | None:
     1. Tx.from_obj() (preferred)
     2. Tx.from_dict() (fallback)
     
-    Returns Tx instance or None if no constructor available.
+    Returns Tx instance or None if construction fails or no constructor available.
     """
     if hasattr(Tx, "from_obj"):
-        return Tx.from_obj(normalized)  # type: ignore[attr-defined]
+        try:
+            return Tx.from_obj(normalized)  # type: ignore[attr-defined]
+        except Exception as e:
+            log.warning(f"_construct_tx_from_dict: Tx.from_obj failed: {e}", exc_info=True)
+            return None
     elif hasattr(Tx, "from_dict"):
-        return Tx.from_dict(normalized)  # type: ignore[attr-defined]
+        try:
+            return Tx.from_dict(normalized)  # type: ignore[attr-defined]
+        except Exception as e:
+            log.warning(f"_construct_tx_from_dict: Tx.from_dict failed: {e}", exc_info=True)
+            return None
     else:
+        log.warning("_construct_tx_from_dict: Tx class has no from_obj or from_dict method")
         return None
 
 
