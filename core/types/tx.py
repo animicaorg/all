@@ -466,6 +466,10 @@ class Tx:
     def txid(self) -> bytes:
         """Hash of the **signed** tx (CBOR of full object)."""
         return sha3_256(self.to_cbor())
+    
+    def hash(self) -> bytes:
+        """Alias for txid() - hash of the signed transaction."""
+        return self.txid()
 
     def unsigned_hash(self) -> bytes:
         """Hash of the unsigned part (for dedupe / mempool)."""
