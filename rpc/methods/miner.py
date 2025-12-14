@@ -616,6 +616,10 @@ def _adapter() -> CoreChainAdapter:
                 try:
                     pending_map = getattr(tx_methods, "_FALLBACK_PENDING", {}) or {}
                     log.info(f"drain_fn called with max_gas={max_gas}, max_bytes={max_bytes}, pending_count={len(pending_map)}")
+                    if pending_map:
+                        # Log first few tx hashes for debugging
+                        sample_hashes = list(pending_map.keys())[:3]
+                        log.info(f"drain_fn: Sample pending tx hashes: {sample_hashes}")
                     if not pending_map:
                         log.info("drain_fn: No pending transactions in _FALLBACK_PENDING")
                         return []
@@ -646,7 +650,7 @@ def _adapter() -> CoreChainAdapter:
                                     log.warning(f"drain_fn: Failed to construct Tx from dict for {tx_hash_hex}")
                             
                             if tx_obj is None:
-                                log.warning(f"drain_fn: Skipping tx {tx_hash_hex} - could not construct Tx instance")
+                                log.error(f"drain_fn: Skipping tx {tx_hash_hex} - could not construct Tx instance (decoded type={type(decoded).__name__}, keys={list(decoded.keys()) if isinstance(decoded, dict) else 'N/A'})")
                                 continue
                             
                             # Check gas and byte limits
@@ -1062,16 +1066,28 @@ def _construct_tx_from_dict(normalized: dict) -> Tx | None:
         try:
             return Tx.from_obj(normalized)  # type: ignore[attr-defined]
         except Exception as e:
-            log.warning(f"_construct_tx_from_dict: Tx.from_obj failed: {e}", exc_info=True)
+            # Log detailed error with normalized structure for debugging
+            log.error(
+                f"_construct_tx_from_dict: Tx.from_obj failed: {e}",
+                extra={
+                    "error_type": type(e).__name__,
+                    "error_msg": str(e),
+                    "normalized_keys": list(normalized.keys()),
+                    "has_tx": "tx" in normalized,
+                    "has_sigs": "sigs" in normalized,
+                    "tx_keys": list(normalized.get("tx", {}).keys()) if "tx" in normalized and isinstance(normalized.get("tx"), dict) else None,
+                }
+            )
+            log.debug(f"_construct_tx_from_dict: Full normalized object: {normalized}", exc_info=True)
             return None
     elif hasattr(Tx, "from_dict"):
         try:
             return Tx.from_dict(normalized)  # type: ignore[attr-defined]
         except Exception as e:
-            log.warning(f"_construct_tx_from_dict: Tx.from_dict failed: {e}", exc_info=True)
+            log.error(f"_construct_tx_from_dict: Tx.from_dict failed: {e}", exc_info=True)
             return None
     else:
-        log.warning("_construct_tx_from_dict: Tx class has no from_obj or from_dict method")
+        log.error("_construct_tx_from_dict: Tx class has no from_obj or from_dict method")
         return None
 
 
