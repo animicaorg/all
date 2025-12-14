@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import dataclasses as _dc
+import logging
 import typing as t
 
 from rpc import deps
 from rpc.methods import method
+
+log = logging.getLogger(__name__)
 
 # Prefer canonical encoders from core; fall back to CBOR if needed.
 try:
@@ -311,8 +314,6 @@ def _block_view(
                 tx_hashes.append(h)
             else:
                 # Log warning but don't fail the request
-                import logging
-                log = logging.getLogger(__name__)
                 log.warning(f"Failed to compute hash for transaction in block; skipping from hash list")
         v["transactions"] = tx_hashes
 
