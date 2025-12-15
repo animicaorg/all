@@ -1417,6 +1417,4 @@ def tx_get_transaction_receipt(txHash: str) -> t.Optional[dict]:
     # Delegate to the full receipt.py implementation which handles all the lookup logic
     from rpc.methods.receipt import tx_get_transaction_receipt as _receipt_impl
     return _receipt_impl(txHash)
-
-    # Not found or not yet mined
     return None
