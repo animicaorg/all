@@ -337,8 +337,15 @@ class BlockDB:
             # This allows tx.getReceipt to find receipts by tx_hash efficiently
             if block.txs:
                 for idx, tx in enumerate(block.txs):
-                    tx_hash = tx.hash() if hasattr(tx, 'hash') and callable(tx.hash) else sha3_256(_to_cbor(tx))
-                    # Store pointer: tx_hash → (height, idx)
+                    # Get tx hash - prefer dedicated hash() method
+                    if hasattr(tx, 'hash') and callable(tx.hash):
+                        tx_hash = tx.hash()
+                    else:
+                        # Fallback: compute hash from CBOR encoding
+                        # Note: This should match the canonical tx hash computation
+                        tx_hash = sha3_256(_to_cbor(tx))
+                    
+                    # Store pointer: tx_hash → (height, idx, block_hash)
                     # Receipt can be retrieved via get_block_by_height then indexing receipts[idx]
                     receipt_ptr = cbor_dumps({"h": height, "i": idx, "b": hh})
                     b.put(k_rxi(tx_hash), receipt_ptr)
