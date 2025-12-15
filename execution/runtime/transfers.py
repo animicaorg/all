@@ -351,7 +351,17 @@ def apply_transfer(
     if len(sender) == 20:
         sender = sender.rjust(ADDRESS_LEN, b"\x00")
 
-    to = _as_bytes(_get(tx, "to", "recipient", "to_address"), expect_len=None)
+    # Extract recipient address from tx (check multiple locations for compatibility)
+    to = _get(tx, "to", "recipient", "to_address")
+    if to is None:
+        # Try nested structure: tx.unsigned.payload.to (canonical Tx format)
+        unsigned = _get(tx, "unsigned")
+        if unsigned is not None:
+            payload = _get(unsigned, "payload")
+            if payload is not None:
+                to = _get(payload, "to", "recipient")
+    
+    to = _as_bytes(to, expect_len=None)
     
     # Check for empty or zero address before padding
     if len(to) == 0 or to == b"\x00" * len(to):
@@ -370,8 +380,25 @@ def apply_transfer(
     if len(to) == 20:
         to = to.rjust(ADDRESS_LEN, b"\x00")
 
-    amount = _as_int(_get(tx, "value", "amount"), default=0)
-    gas_limit = _as_int(_get(tx, "gas", "gas_limit", "gasLimit"), default=0)
+    # Extract transfer amount from tx (check multiple locations for compatibility)
+    amount = _get(tx, "value", "amount")
+    if amount is None:
+        # Try nested structure: tx.unsigned.payload.amount (canonical Tx format)
+        unsigned = _get(tx, "unsigned")
+        if unsigned is not None:
+            payload = _get(unsigned, "payload")
+            if payload is not None:
+                amount = _get(payload, "amount", "value")
+    amount = _as_int(amount, default=0)
+    
+    # Extract gas limit from tx (check multiple locations for compatibility)
+    gas_limit = _get(tx, "gas", "gas_limit", "gasLimit")
+    if gas_limit is None or gas_limit == 0:
+        # Try nested structure: tx.unsigned.gas_limit (canonical Tx format)
+        unsigned = _get(tx, "unsigned")
+        if unsigned is not None:
+            gas_limit = _get(unsigned, "gas_limit", "gasLimit")
+    gas_limit = _as_int(gas_limit, default=0)
 
     gas_price = _as_int(getattr(tx_env, "gas_price", 0), default=0)
     base_price = _as_int(getattr(tx_env, "base_price", 0), default=0)
@@ -434,11 +461,15 @@ def apply_transfer(
         # Else burned (no credit)
 
     # Value transfer
-    _set_balance(state, sender, _get_balance(state, sender) - amount)
-    _set_balance(state, to, _get_balance(state, to) + amount)
+    sender_balance_before = _get_balance(state, sender)
+    recipient_balance_before = _get_balance(state, to)
+    sender_nonce_before = _get_nonce(state, sender)
+    
+    _set_balance(state, sender, sender_balance_before - amount)
+    _set_balance(state, to, recipient_balance_before + amount)
 
     # Nonce bump
-    _set_nonce(state, sender, _get_nonce(state, sender) + 1)
+    _set_nonce(state, sender, sender_nonce_before + 1)
 
     # Logs
     logs: List[LogEvent] = []
