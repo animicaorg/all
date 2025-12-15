@@ -11,14 +11,16 @@ import asyncio
 import hashlib
 import json
 import os
+import socket
 import sqlite3
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 import typer
 from animica.config import load_network_config
+from animica.seeds import get_default_ports, get_seed_nodes
 
 app = typer.Typer(help="Manage P2P network peers.")
 
@@ -288,6 +290,109 @@ def _read_peer_store(store_path: Path) -> List[Dict[str, Any]]:
     return peers
 
 
+def _probe_port(host: str, port: int, timeout: float = 2.0) -> bool:
+    """
+    Probe if a host:port is reachable.
+    
+    Args:
+        host: Hostname or IP address
+        port: Port number
+        timeout: Connection timeout in seconds
+        
+    Returns:
+        True if connection successful, False otherwise
+    """
+    sock = None
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(timeout)
+        result = sock.connect_ex((host, port))
+        return result == 0
+    except (socket.error, socket.timeout):
+        return False
+    finally:
+        if sock:
+            sock.close()
+
+
+def _parse_address(address: str) -> Tuple[str, Optional[int]]:
+    """
+    Parse an address into host and port components.
+    
+    Supports formats:
+    - host:port (e.g., "1.2.3.4:30303")
+    - host (e.g., "1.2.3.4")
+    - multiaddr (e.g., "/ip4/1.2.3.4/tcp/30303/p2p/PeerId")
+    
+    Args:
+        address: Address to parse
+        
+    Returns:
+        Tuple of (host, port) where port may be None if not specified
+    """
+    # Handle multiaddr format
+    if address.startswith("/"):
+        parts = address.split("/")
+        host = None
+        port = None
+        
+        # Find IP address
+        for i, part in enumerate(parts):
+            if part in ["ip4", "ip6"] and i + 1 < len(parts):
+                host = parts[i + 1]
+            elif part == "tcp" and i + 1 < len(parts):
+                try:
+                    port = int(parts[i + 1])
+                except ValueError:
+                    pass
+        
+        # If we couldn't parse host from multiaddr, return the full address as-is
+        # This will let the caller handle the error appropriately
+        if host is None:
+            return (address, port)
+        
+        return (host, port)
+    
+    # Handle host:port format
+    if ":" in address:
+        parts = address.rsplit(":", 1)
+        try:
+            return (parts[0], int(parts[1]))
+        except (ValueError, IndexError):
+            return (address, None)
+    
+    # Just host
+    return (address, None)
+
+
+def _detect_port(host: str, probe: bool = False) -> Optional[int]:
+    """
+    Auto-detect the best port for a host.
+    
+    If probe is True, tries to connect to each port and returns the first
+    working one. Otherwise, just returns the first default port.
+    
+    Args:
+        host: Hostname or IP address
+        probe: Whether to actually probe connectivity
+        
+    Returns:
+        Port number if found, None otherwise
+    """
+    default_ports = get_default_ports()
+    
+    if not probe:
+        # Just return the first default port without probing
+        return default_ports[0] if default_ports else None
+    
+    # Probe each port to find a working one
+    for port in default_ports:
+        if _probe_port(host, port):
+            return port
+    
+    return None
+
+
 @app.command(name="list")
 def list_peers(
     rpc_url: Optional[str] = typer.Option(
@@ -363,14 +468,20 @@ def list_peers(
 
     # Handle empty peer list
     if not peers or len(peers) == 0:
-        typer.secho("No peers connected.", fg=typer.colors.YELLOW)
         if rpc_failed:
-            typer.echo("\n(Showing peers from local peer store)")
+            typer.secho("No known peers in local peer store.", fg=typer.colors.YELLOW)
+        else:
+            typer.secho("No peers connected.", fg=typer.colors.YELLOW)
         return
 
     # Display peers
-    source_msg = " (from local peer store)" if rpc_failed else ""
-    typer.secho(f"\nConnected Peers: {len(peers)}{source_msg}", fg=typer.colors.CYAN, bold=True)
+    if rpc_failed:
+        source_msg = " (from local peer store)"
+        header = f"Known Peers: {len(peers)}{source_msg}"
+    else:
+        header = f"Connected Peers: {len(peers)}"
+    
+    typer.secho(f"\n{header}", fg=typer.colors.CYAN, bold=True)
     typer.echo()
 
     if verbose:
@@ -391,12 +502,15 @@ def list_peers(
 
 @app.command(name="add")
 def add_peer(
-    address: str = typer.Argument(..., help="Peer address (multiaddr or host:port)"),
+    address: str = typer.Argument(..., help="Peer address (multiaddr, host:port, or host)"),
     rpc_url: Optional[str] = typer.Option(
         None, "--rpc-url", help="JSON-RPC endpoint", envvar=RPC_ENV
     ),
     store: Optional[str] = typer.Option(
         None, "--store", help="Path to local peer store (fallback)", envvar=STORE_ENV
+    ),
+    probe: bool = typer.Option(
+        False, "--probe", help="Probe connectivity before adding (auto-detect port if not specified)"
     ),
 ) -> None:
     """
@@ -405,14 +519,53 @@ def add_peer(
     Attempts to connect to the specified peer and add it to the node's
     active peer list via RPC. Also persists the peer to the local store
     as a backup, or falls back to store-only if RPC is unavailable.
+    
+    If port is not specified, will try common P2P ports (30333, 30303, 31333, 31334).
+    Use --probe flag to test connectivity before adding.
 
     Examples:
         animica peer add /ip4/1.2.3.4/tcp/30303/p2p/QmPeerId...
         animica peer add 1.2.3.4:30303
+        animica peer add 144.126.133.21 --probe
         animica peer add 5.6.7.8:30333 --store ~/.animica/p2p/peers.json
     """
     url = _resolve_rpc_url(rpc_url)
     store_path = Path(store) if store else DEFAULT_STORE_PATH
+
+    # Parse address to check if port is missing
+    host, port = _parse_address(address)
+    
+    # If no port specified, try to detect one
+    if port is None:
+        if probe:
+            typer.echo(f"Auto-detecting port for {host}...")
+            detected_port = _detect_port(host, probe=True)
+            if detected_port:
+                typer.secho(f"✓ Found open port: {detected_port}", fg=typer.colors.GREEN)
+                port = detected_port
+                address = f"{host}:{port}"
+            else:
+                typer.secho(
+                    f"✗ Could not find an open port on {host}. Tried: {', '.join(map(str, get_default_ports()))}",
+                    fg=typer.colors.RED
+                )
+                typer.echo("Hint: Specify a port explicitly (e.g., host:port)")
+                raise typer.Exit(code=1)
+        else:
+            # Use default port without probing
+            default_port = _detect_port(host, probe=False)
+            if default_port:
+                port = default_port
+                address = f"{host}:{port}"
+                typer.echo(f"Using default port {port} for {host}")
+    elif probe:
+        # Port specified, but user wants to probe
+        if _probe_port(host, port):
+            typer.secho(f"✓ {host}:{port} is reachable", fg=typer.colors.GREEN)
+        else:
+            typer.secho(f"✗ Warning: {host}:{port} is not reachable", fg=typer.colors.YELLOW)
+            if not typer.confirm("Continue anyway?"):
+                raise typer.Exit(code=0)
 
     # Generate peer ID from address
     peer_id = _generate_peer_id(address)
@@ -630,6 +783,126 @@ def peer_info(
     typer.secho(f"\nPeer Information: {peer_id}", fg=typer.colors.CYAN, bold=True)
     typer.echo()
     typer.echo(_pretty(peer_data))
+
+
+@app.command(name="bootstrap")
+def bootstrap_peers(
+    rpc_url: Optional[str] = typer.Option(
+        None, "--rpc-url", help="JSON-RPC endpoint", envvar=RPC_ENV
+    ),
+    store: Optional[str] = typer.Option(
+        None, "--store", help="Path to local peer store (fallback)", envvar=STORE_ENV
+    ),
+    network: Optional[str] = typer.Option(
+        None, "--network", help="Network to bootstrap (defaults to current network)"
+    ),
+    probe: bool = typer.Option(
+        False, "--probe", help="Probe connectivity before adding"
+    ),
+) -> None:
+    """
+    Connect to bootstrap/seed nodes for the network.
+    
+    This command automatically adds known seed nodes for the specified network
+    (or the currently configured network) to help bootstrap peer discovery.
+
+    Examples:
+        animica peer bootstrap
+        animica peer bootstrap --network mainnet
+        animica peer bootstrap --probe
+    """
+    # Determine which network to use
+    if network is None:
+        network_config = load_network_config()
+        network = network_config.name
+    
+    # Get seed nodes for the network
+    seed_nodes = get_seed_nodes(network)
+    
+    if not seed_nodes:
+        typer.secho(
+            f"No seed nodes configured for network '{network}'",
+            fg=typer.colors.YELLOW
+        )
+        return
+    
+    typer.echo(f"Connecting to {network} seed nodes...")
+    typer.echo()
+    
+    success_count = 0
+    fail_count = 0
+    
+    for seed_address in seed_nodes:
+        try:
+            typer.echo(f"Adding seed node: {seed_address}")
+            
+            # Parse to get host and port
+            host, port = _parse_address(seed_address)
+            
+            # Probe if requested
+            if probe and port:
+                if _probe_port(host, port):
+                    typer.secho(f"  ✓ Reachable", fg=typer.colors.GREEN)
+                else:
+                    typer.secho(f"  ✗ Not reachable", fg=typer.colors.YELLOW)
+                    fail_count += 1
+                    continue
+            
+            # Generate peer ID
+            peer_id = _generate_peer_id(seed_address)
+            
+            # Try RPC first
+            url = _resolve_rpc_url(rpc_url)
+            store_path = Path(store) if store else DEFAULT_STORE_PATH
+            
+            methods_to_try = [
+                ("p2p.addPeer", [seed_address]),
+                ("admin_addPeer", [seed_address]),
+                ("net_addPeer", [seed_address]),
+            ]
+            
+            rpc_success = False
+            for method, params in methods_to_try:
+                try:
+                    result = asyncio.run(rpc_call(method, params, rpc_url=url))
+                    rpc_success = True
+                    break
+                except Exception:
+                    continue
+            
+            # Write to store as backup
+            try:
+                _write_peer_to_store(store_path, peer_id, seed_address)
+                store_written = True
+            except Exception:
+                store_written = False
+            
+            if rpc_success or store_written:
+                typer.secho(f"  ✓ Added successfully", fg=typer.colors.GREEN)
+                success_count += 1
+            else:
+                typer.secho(f"  ✗ Failed to add", fg=typer.colors.RED)
+                fail_count += 1
+            
+        except Exception as e:
+            typer.secho(f"  ✗ Error: {e}", fg=typer.colors.RED)
+            fail_count += 1
+        
+        typer.echo()
+    
+    # Summary
+    typer.echo()
+    if success_count > 0:
+        typer.secho(
+            f"✓ Successfully added {success_count} seed node(s)",
+            fg=typer.colors.GREEN,
+            bold=True
+        )
+    if fail_count > 0:
+        typer.secho(
+            f"✗ Failed to add {fail_count} seed node(s)",
+            fg=typer.colors.YELLOW
+        )
 
 
 if __name__ == "__main__":
