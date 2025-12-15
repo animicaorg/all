@@ -265,6 +265,28 @@ class BlockDB:
 
     # --- Receipt lookup by tx_hash ---
 
+    def get_receipt_loc_by_hash(self, tx_hash: bytes) -> Optional[dict]:
+        """
+        Look up receipt location (height, index, block_hash) by transaction hash.
+        
+        This is used by the RPC layer to find where a receipt is stored.
+        The actual receipt can then be fetched via get_block_by_height(height).receipts[index].
+        
+        Returns:
+            Dict with keys {"height": int, "index": int, "block_hash": bytes} if found, None otherwise.
+        """
+        ptr_data = self.kv.get(k_rxi(tx_hash))
+        if ptr_data is None:
+            return None
+        
+        # Decode pointer: {h: height, i: index, b: block_hash}
+        ptr = cbor_loads(ptr_data)
+        return {
+            "height": int(ptr["h"]),
+            "index": int(ptr["i"]),
+            "block_hash": bytes(ptr["b"]),
+        }
+
     def get_receipt_by_tx_hash(self, tx_hash: bytes) -> Optional[Tuple[int, int, bytes, Any]]:
         """
         Look up a receipt by transaction hash.
@@ -273,15 +295,13 @@ class BlockDB:
             Tuple of (height, tx_index, block_hash, receipt_obj) if found, None otherwise.
             The receipt_obj is the Receipt instance from the block.
         """
-        ptr_data = self.kv.get(k_rxi(tx_hash))
-        if ptr_data is None:
+        loc = self.get_receipt_loc_by_hash(tx_hash)
+        if loc is None:
             return None
         
-        # Decode pointer: {h: height, i: index, b: block_hash}
-        ptr = cbor_loads(ptr_data)
-        height = int(ptr["h"])
-        idx = int(ptr["i"])
-        block_hash = bytes(ptr["b"])
+        height = loc["height"]
+        idx = loc["index"]
+        block_hash = loc["block_hash"]
         
         # Fetch the block to get the receipt
         block = self.get_block_by_hash(block_hash)
