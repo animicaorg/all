@@ -181,7 +181,7 @@ class PeerStore:
                   address=excluded.address,
                   last_seen=excluded.last_seen,
                   score=excluded.score,
-                  direction=COALESCE(excluded.direction, direction)
+                  direction=COALESCE(direction, excluded.direction)
                 """,
                 (
                     peer_id,
