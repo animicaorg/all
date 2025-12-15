@@ -18,7 +18,6 @@ methods. All amounts are integers in the smallest unit (e.g. wei-like).
 
 from __future__ import annotations
 
-import typing as t
 from typing import Any, Dict, Optional, Protocol
 
 from ..errors import ExecError
@@ -54,9 +53,9 @@ class InsufficientBalance(ExecError):
         required: int | None = None,
         available: int | None = None,
         shortfall: int | None = None,
-        data: dict[str, t.Any] | None = None,
+        data: Dict[str, Any] | None = None,
     ):
-        d: dict[str, t.Any] = {}
+        d: Dict[str, Any] = {}
         if data:
             d.update(data)
         if required is not None:
