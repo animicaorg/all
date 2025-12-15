@@ -37,8 +37,8 @@ def test_sender_extraction_with_bech32():
         print(f"✓ Bech32 address decoded: {bech32_addr[:20]}... -> {addr_bytes.hex()[:16]}...")
         
         # Test with hex address
-        hex_addr = "0x" + b"\x01" * 32
-        addr_bytes2 = _as_bytes32_addr(hex_addr.hex())
+        hex_addr = "0x" + (b"\x01" * 32).hex()
+        addr_bytes2 = _as_bytes32_addr(hex_addr)
         assert len(addr_bytes2) == 32
         print(f"✓ Hex address decoded: {hex_addr[:20]}... -> {addr_bytes2.hex()[:16]}...")
         

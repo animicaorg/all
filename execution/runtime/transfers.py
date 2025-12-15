@@ -470,16 +470,6 @@ def apply_transfer(
 
     # Nonce bump
     _set_nonce(state, sender, sender_nonce_before + 1)
-    
-    # Log state changes for debugging
-    import logging
-    log = logging.getLogger("animica.execution.transfers")
-    log.debug(
-        f"Transfer executed: "
-        f"from={sender.hex()[:16]}... balance={sender_balance_before} -> {sender_balance_before - amount - total_fee}, "
-        f"to={to.hex()[:16]}... balance={recipient_balance_before} -> {recipient_balance_before + amount}, "
-        f"nonce={sender_nonce_before} -> {sender_nonce_before + 1}"
-    )
 
     # Logs
     logs: List[LogEvent] = []

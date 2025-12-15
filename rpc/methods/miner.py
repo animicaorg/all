@@ -1139,10 +1139,10 @@ def _execute_transactions(
                     to_addr = getattr(payload, "to", None)
             
             # Log transaction execution attempt
+            to_hex = to_addr.hex()[:16] if isinstance(to_addr, bytes) else str(to_addr)
             logger.info(
                 f"Executing transaction {idx}/{len(txs)}: "
-                f"from={sender_bytes.hex()[:16]}... "
-                f"to={to_addr.hex()[:16] if isinstance(to_addr, bytes) else to_addr}"
+                f"from={sender_bytes.hex()[:16]}... to={to_hex}"
             )
             
             # Extract nonce and gas_price from tx
