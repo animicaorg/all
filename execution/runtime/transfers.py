@@ -351,7 +351,17 @@ def apply_transfer(
     if len(sender) == 20:
         sender = sender.rjust(ADDRESS_LEN, b"\x00")
 
-    to = _as_bytes(_get(tx, "to", "recipient", "to_address"), expect_len=None)
+    # Extract recipient address from tx (check multiple locations for compatibility)
+    to = _get(tx, "to", "recipient", "to_address")
+    if to is None:
+        # Try nested structure: tx.unsigned.payload.to (canonical Tx format)
+        unsigned = _get(tx, "unsigned")
+        if unsigned is not None:
+            payload = _get(unsigned, "payload")
+            if payload is not None:
+                to = _get(payload, "to", "recipient")
+    
+    to = _as_bytes(to, expect_len=None)
     
     # Check for empty or zero address before padding
     if len(to) == 0 or to == b"\x00" * len(to):
@@ -370,7 +380,17 @@ def apply_transfer(
     if len(to) == 20:
         to = to.rjust(ADDRESS_LEN, b"\x00")
 
-    amount = _as_int(_get(tx, "value", "amount"), default=0)
+    # Extract transfer amount from tx (check multiple locations for compatibility)
+    amount = _get(tx, "value", "amount")
+    if amount is None:
+        # Try nested structure: tx.unsigned.payload.amount (canonical Tx format)
+        unsigned = _get(tx, "unsigned")
+        if unsigned is not None:
+            payload = _get(unsigned, "payload")
+            if payload is not None:
+                amount = _get(payload, "amount", "value")
+    amount = _as_int(amount, default=0)
+    
     gas_limit = _as_int(_get(tx, "gas", "gas_limit", "gasLimit"), default=0)
 
     gas_price = _as_int(getattr(tx_env, "gas_price", 0), default=0)
