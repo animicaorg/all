@@ -14,8 +14,10 @@ from pathlib import Path
 
 import pytest
 
-# Ensure local package is importable
-sys.path.insert(0, os.path.expanduser("~/animica"))
+# Ensure local package is importable - use relative path from test location
+_test_dir = Path(__file__).parent
+_repo_root = _test_dir.parent.parent
+sys.path.insert(0, str(_repo_root))
 
 try:
     from p2p.peer import peerstore
