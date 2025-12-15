@@ -1,13 +1,17 @@
 {
   "chain_id": "animica:1",
-  "generated_at": "2025-12-01T00:00:00Z",
+  "generated_at": "2025-12-15T00:00:00Z",
   "seeds": [
     {
-      "peer_id": "mainnet-static-1",
+      "peer_id": "mainnet-primary-1",
       "multiaddrs": [
-        "/ip4/144.126.133.21/tcp/9000"
+        "/dns4/mainnet.animica.org/udp/443/quic-v1",
+        "/dns4/mainnet.animica.org/tcp/30333",
+        "/ip4/144.126.133.21/udp/443/quic-v1",
+        "/ip4/144.126.133.21/tcp/30333"
       ],
-      "comment": "Static bootstrap seed for public mainnet"
+      "region": "primary",
+      "comment": "Primary Animica mainnet seed - DNS with IP fallback"
     }
   ]
 }
