@@ -1391,7 +1391,7 @@ def tx_get_transaction_by_hash(txHash: str) -> t.Optional[dict]:
 @method(
     "tx.getTransactionReceipt",
     desc="Get transaction receipt by hash",
-    aliases=("tx_getTransactionReceipt",),
+    aliases=("tx_getTransactionReceipt", "tx.getReceipt", "tx_getReceipt"),
 )
 def tx_get_transaction_receipt(txHash: str) -> t.Optional[dict]:
     """
