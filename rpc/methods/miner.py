@@ -1095,7 +1095,7 @@ def _execute_transactions(
     
     receipts: list[dict[str, Any]] = []
 
-    for tx in txs:
+    for idx, tx in enumerate(txs):
         # --------------------------
         # Extract sender from tx
         # --------------------------
@@ -1111,45 +1111,48 @@ def _execute_transactions(
                 )
 
         if sender is None:
-            logger.warning("Transaction missing sender; skipping")
+            logger.warning(f"Transaction {idx} missing sender; skipping")
             receipts.append({"status": 0, "gasUsed": 0, "logs": []})
             continue
 
-        # Normalize sender to bytes
-        sender_bytes: Optional[bytes] = None
-        if isinstance(sender, (bytes, bytearray)):
-            sender_bytes = bytes(sender)
-        elif isinstance(sender, str) and sender.startswith("0x"):
-            try:
-                sender_bytes = bytes.fromhex(sender[2:])
-            except ValueError:
-                # Invalid hex string
-                sender_bytes = None
-        elif isinstance(sender, str):
-            # If someone mistakenly stored bech32, we cannot decode here; skip
-            sender_bytes = None
-
-        if sender_bytes is None:
-            logger.warning("Transaction sender not bytes/0x; skipping")
+        # Normalize sender to bytes (handles bech32, hex, and raw bytes)
+        # Use _as_bytes32_addr for comprehensive address normalization
+        try:
+            sender_bytes = _as_bytes32_addr(sender)
+        except Exception as e:
+            logger.warning(f"Transaction {idx} sender normalization failed: {e}")
             receipts.append({"status": 0, "gasUsed": 0, "logs": []})
             continue
 
-        # Pad/truncate to address length (use _as_bytes32_addr for consistency)
-        sender_bytes = _as_bytes32_addr(sender_bytes)
+        # Validate sender is not zero address
+        if sender_bytes == ZERO32 or not any(sender_bytes):
+            logger.warning(f"Transaction {idx} has zero/invalid sender address; skipping")
+            receipts.append({"status": 0, "gasUsed": 0, "logs": []})
+            continue
 
         try:
+            # Get recipient address for logging
+            to_addr = getattr(tx, "to", None)
+            if to_addr is None and hasattr(tx, "unsigned"):
+                payload = getattr(tx.unsigned, "payload", None)
+                if payload is not None:
+                    to_addr = getattr(payload, "to", None)
+            
+            # Log transaction execution attempt
+            to_hex = to_addr.hex()[:16] if isinstance(to_addr, bytes) else str(to_addr)
+            logger.info(
+                f"Executing transaction {idx}/{len(txs)}: "
+                f"from={sender_bytes.hex()[:16]}... to={to_hex}"
+            )
             
             # Extract nonce and gas_price from tx
-            # Try nested unsigned field first (Tx dataclass structure)
+            # Try canonical Tx dataclass structure first (tx.unsigned.nonce, tx.unsigned.gas_price)
             nonce = 0
             gas_price = 1
             if hasattr(tx, "unsigned"):
                 nonce = getattr(tx.unsigned, "nonce", 0)
-                # Try to get gas_price from nested gas field
-                if hasattr(tx.unsigned, "gas"):
-                    gas_obj = tx.unsigned.gas
-                    gas_price = getattr(gas_obj, "price", 1)
-            # Fall back to flat attributes
+                gas_price = getattr(tx.unsigned, "gas_price", 1)
+            # Fall back to flat attributes (for non-canonical formats)
             if nonce == 0:
                 nonce = getattr(tx, "nonce", 0)
             if gas_price == 1:
@@ -1168,6 +1171,13 @@ def _execute_transactions(
             # Execute state transition (use keyword arguments for clarity)
             res = apply_transfer(tx=tx, state=state_db, block_env=block_env, tx_env=tx_env)
 
+            # Log execution result
+            status_str = "SUCCESS" if res.is_success else "FAILED"
+            logger.info(
+                f"Transaction {idx} executed: status={status_str}, "
+                f"gasUsed={res.gas_used}, logs={len(res.logs or [])}"
+            )
+
             # Receipt-like view
             # Note: res.is_success checks if res.status == TxStatus.SUCCESS
             receipts.append(
@@ -1178,7 +1188,7 @@ def _execute_transactions(
                 }
             )
         except Exception as e:
-            logger.exception("Transaction execution failed: %s", e)
+            logger.exception(f"Transaction {idx} execution failed: %s", e)
             receipts.append({"status": 0, "gasUsed": 0, "logs": []})
 
     return receipts
@@ -1842,67 +1852,31 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
             from core.types.receipt import Receipt, ReceiptStatus, Log
             from execution.runtime.env import BlockEnv
             
-            # CRITICAL FIX: Wrap ALL state changes in a single atomic batch
-            # This ensures tx execution + block reward are persisted together atomically
-            # Without this, state changes may not be committed to the underlying KV store,
-            # causing the bug where:
-            # - Mining advances head height but balances don't update
-            # - Transactions execute but state changes are lost
-            # - Receipts persist but state doesn't reflect the changes
-            #
-            # The state_db.batch() context manager starts a transaction (BEGIN) and commits it
-            # when exiting normally, or rolls back on exception. All put/delete operations
-            # within the context are buffered and applied atomically on commit.
-            state_db = ctx.state_db
-            if state_db is not None and hasattr(state_db, "batch"):
-                # Use context manager properly to ensure commit/rollback
-                with state_db.batch() as state_batch:
-                    # Build block_env for new _execute_transactions signature
-                    block_env = BlockEnv(
-                        height=header.height,
-                        timestamp=header.timestamp,
-                        coinbase=payout_address if payout_address is not None else ZERO32,
-                        chain_id=header.chainId,
-                    )
-                    
-                    # Call new _execute_transactions with updated signature
-                    # State changes (set_balance, inc_nonce) happen within this batch
-                    receipts_dict = _execute_transactions(
-                        txs=txs,
-                        state_db=ctx.state_db,
-                        block_env=block_env,
-                        logger=log,
-                    )
-                    
-                    # Convert dict receipts to Receipt objects for compatibility with receiptsRoot computation
-                    receipts = _convert_receipts_dict_to_objects(receipts_dict)
+            # Build block environment for transaction execution
+            block_env = BlockEnv(
+                height=header.height,
+                timestamp=header.timestamp,
+                coinbase=payout_address if payout_address is not None else ZERO32,
+                chain_id=header.chainId,
+            )
+            
+            # Execute all transactions and generate receipts
+            # State changes (balance transfers, nonce increments) are persisted via state_db
+            log.info(f"Executing {len(txs)} transactions for block at height {header.height}")
+            receipts_dict = _execute_transactions(
+                txs=txs,
+                state_db=ctx.state_db,
+                block_env=block_env,
+                logger=log,
+            )
+            
+            # Convert dict receipts to Receipt objects for compatibility with receiptsRoot computation
+            receipts = _convert_receipts_dict_to_objects(receipts_dict)
 
-                    # Apply block reward before finalizing header/roots
-                    # This also happens within the batch context
-                    reward_amount = _apply_block_reward(ctx, header.height, payout_address)
-                    
-                    # Batch will be committed automatically when exiting the 'with' block
-                    # All state changes (tx execution + block reward) are now persisted atomically
-            else:
-                # Fallback if state_db doesn't support batching (shouldn't happen in prod)
-                log.warning("state_db does not support batching; state changes may not persist atomically")
-                
-                block_env = BlockEnv(
-                    height=header.height,
-                    timestamp=header.timestamp,
-                    coinbase=payout_address if payout_address is not None else ZERO32,
-                    chain_id=header.chainId,
-                )
-                
-                receipts_dict = _execute_transactions(
-                    txs=txs,
-                    state_db=ctx.state_db,
-                    block_env=block_env,
-                    logger=log,
-                )
-                
-                receipts = _convert_receipts_dict_to_objects(receipts_dict)
-                reward_amount = _apply_block_reward(ctx, header.height, payout_address)
+            # Apply block reward to coinbase/miner address
+            # This also persists to state_db
+            log.info(f"Applying block reward to payout address at height {header.height}")
+            reward_amount = _apply_block_reward(ctx, header.height, payout_address)
 
             # Compute receipts root (if any receipts) and ensure txs root matches tx set
             receipts_root = ZERO32
