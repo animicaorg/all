@@ -118,6 +118,30 @@ def _address_to_32_bytes(address: str) -> bytes:
     return addr_bytes
 
 
+def _format_insufficient_funds_error(e: RpcError) -> None:
+    """Format and display an insufficient funds error in a user-friendly way."""
+    data = e.data or {}
+    required = data.get("required", "?")
+    available = data.get("available", "?")
+    shortfall = data.get("shortfall", "?")
+    
+    # Convert to ANM if possible (1 ANM = 1e9 base units)
+    try:
+        required_anm = int(required) / ANM_BASE_UNITS if required != "?" else "?"
+        available_anm = int(available) / ANM_BASE_UNITS if available != "?" else "?"
+        shortfall_anm = int(shortfall) / ANM_BASE_UNITS if shortfall != "?" else "?"
+    except (ValueError, TypeError):
+        required_anm = required
+        available_anm = available
+        shortfall_anm = shortfall
+    
+    console.print("\n[bold red]Error: Insufficient Balance[/bold red]")
+    console.print(f"  Requested: {required_anm} ANM ({required} base units)")
+    console.print(f"  Available: {available_anm} ANM ({available} base units)")
+    console.print(f"  Shortfall: {shortfall_anm} ANM ({shortfall} base units)")
+    console.print("\n[yellow]Tip:[/yellow] You need to obtain more ANM before sending this transaction.")
+
+
 def _get_chain_id(rpc_url: str) -> int:
     for m in ("chain.getChainId", "chain_id", "net_version"):
         try:
@@ -358,6 +382,10 @@ def send(
     try:
         tx_hash = _rpc(rpc, "tx.sendRawTransaction", [raw_hex])
     except RpcError as e:
+        # Handle insufficient funds error with user-friendly formatting
+        if e.code == -32013:  # AnimicaCode.INSUFFICIENT_FUNDS
+            _format_insufficient_funds_error(e)
+            raise typer.Exit(code=1)
         # Some nodes use alternate method naming
         if e.code in (-32601,):
             tx_hash = _rpc(rpc, "tx_sendRawTransaction", [raw_hex])
