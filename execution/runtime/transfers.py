@@ -391,7 +391,14 @@ def apply_transfer(
                 amount = _get(payload, "amount", "value")
     amount = _as_int(amount, default=0)
     
-    gas_limit = _as_int(_get(tx, "gas", "gas_limit", "gasLimit"), default=0)
+    # Extract gas limit from tx (check multiple locations for compatibility)
+    gas_limit = _get(tx, "gas", "gas_limit", "gasLimit")
+    if gas_limit is None or gas_limit == 0:
+        # Try nested structure: tx.unsigned.gas_limit (canonical Tx format)
+        unsigned = _get(tx, "unsigned")
+        if unsigned is not None:
+            gas_limit = _get(unsigned, "gas_limit", "gasLimit")
+    gas_limit = _as_int(gas_limit, default=0)
 
     gas_price = _as_int(getattr(tx_env, "gas_price", 0), default=0)
     base_price = _as_int(getattr(tx_env, "base_price", 0), default=0)

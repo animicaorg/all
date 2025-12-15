@@ -1146,16 +1146,13 @@ def _execute_transactions(
             )
             
             # Extract nonce and gas_price from tx
-            # Try nested unsigned field first (Tx dataclass structure)
+            # Try canonical Tx dataclass structure first (tx.unsigned.nonce, tx.unsigned.gas_price)
             nonce = 0
             gas_price = 1
             if hasattr(tx, "unsigned"):
                 nonce = getattr(tx.unsigned, "nonce", 0)
-                # Try to get gas_price from nested gas field
-                if hasattr(tx.unsigned, "gas"):
-                    gas_obj = tx.unsigned.gas
-                    gas_price = getattr(gas_obj, "price", 1)
-            # Fall back to flat attributes
+                gas_price = getattr(tx.unsigned, "gas_price", 1)
+            # Fall back to flat attributes (for non-canonical formats)
             if nonce == 0:
                 nonce = getattr(tx, "nonce", 0)
             if gas_price == 1:
