@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import ipaddress
 import logging
 import signal
 import time
@@ -400,13 +401,14 @@ class NodeService:
                     )
                     # Convert SeedEndpoints to multiaddr format
                     for ep in bundle.endpoints:
-                        # Determine IP type (ip4 vs ip6)
+                        # Determine IP type (ip4 vs ip6) or DNS type
                         try:
-                            import ipaddress
                             ip_obj = ipaddress.ip_address(ep.host)
                             ip_type = "ip6" if ip_obj.version == 6 else "ip4"
                         except ValueError:
-                            # It's a hostname, use dns4
+                            # It's a hostname - use dns4 as default
+                            # (dns6 exists but is rarely used; modern DNS resolvers
+                            # return both A and AAAA records via dns4)
                             ip_type = "dns4"
                         
                         # Build multiaddr based on scheme
