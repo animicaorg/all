@@ -376,18 +376,37 @@ class NodeService:
     async def _seed_and_discover(self) -> None:
         """
         Dial configured seeds, then keep the discovery loop running (DNS seeds, Kademlia, mDNS).
+        Uses network-specific seeds from config with automatic DNS/IP fallback.
         """
         from ..discovery import kademlia as kad
         from ..discovery import mdns as md
         from ..discovery import seeds as seedmod
 
-        # Bootstrap from static seed list (DNS/TXT or JSON)
-        try:
-            seed_addrs = await seedmod.resolve(self.cfg.seeds)
-        except Exception as e:
-            log.warning("Seed resolution failed", exc_info=e)
-            seed_addrs = []
-
+        # Use seeds from config (already network-specific with DNS + IP fallback)
+        # Seeds are provided as multiaddr strings, ready to dial
+        seed_addrs = list(self.cfg.seeds) if self.cfg.seeds else []
+        
+        # If no seeds configured, try to discover based on chain_id
+        if not seed_addrs:
+            try:
+                # Try to get chain_id from deps
+                chain_id = getattr(self.deps, 'chain_id', None)
+                if chain_id and chain_id in seedmod.NETWORK_DNS_SEEDS:
+                    log.info("[bootstrap] discovering seeds for chain_id=%d", chain_id)
+                    bundle = await seedmod.discover_for_network(
+                        chain_id, 
+                        resolve=True,
+                        include_fallbacks=True
+                    )
+                    # Convert SeedEndpoints to multiaddr strings
+                    for ep in bundle.endpoints:
+                        port = f":{ep.port}" if ep.port is not None else ""
+                        path = ep.path or ""
+                        seed_addrs.append(f"{ep.scheme}://{ep.host}{port}{path}")
+            except Exception as e:
+                log.warning("Dynamic seed discovery failed", exc_info=e)
+        
+        # Dial all seeds (DNS names will be resolved by transport layer)
         for addr in seed_addrs:
             with contextlib.suppress(Exception):
                 log.info("[bootstrap] dialing seed %s", addr)
