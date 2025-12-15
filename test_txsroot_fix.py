@@ -7,6 +7,10 @@ This test can be run standalone without full RPC infrastructure:
     python test_txsroot_fix.py
 """
 
+# Test constants (dummy signature sizes for Dilithium3)
+DILITHIUM3_PUBKEY_LEN = 1952
+DILITHIUM3_SIG_LEN = 2420
+
 def test_txsroot_computation_consistency():
     """
     Test that miner's txsRoot computation matches Block.txs_root().
@@ -33,7 +37,7 @@ def test_txsroot_computation_consistency():
     )
     
     # Create a dummy signature (won't verify, but that's ok for this test)
-    sig = PqSignature(alg_id=1, pubkey=b"\x03" * 1952, sig=b"\x04" * 2420)
+    sig = PqSignature(alg_id=1, pubkey=b"\x03" * DILITHIUM3_PUBKEY_LEN, sig=b"\x04" * DILITHIUM3_SIG_LEN)
     
     tx = Tx(unsigned=unsigned, sigs=(sig,))
     
@@ -120,7 +124,7 @@ def test_multiple_txs():
             ),
             access_list=(),
         )
-        sig = PqSignature(alg_id=1, pubkey=b"\x03" * 1952, sig=bytes([4 + i] * 2420))
+        sig = PqSignature(alg_id=1, pubkey=b"\x03" * DILITHIUM3_PUBKEY_LEN, sig=bytes([4 + i] * DILITHIUM3_SIG_LEN))
         tx = Tx(unsigned=unsigned, sigs=(sig,))
         txs.append(tx)
     
