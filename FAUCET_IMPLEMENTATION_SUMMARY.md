@@ -53,7 +53,7 @@ Successfully implemented a devnet/testnet-only faucet with effectively unlimited
 **Usage**:
 ```bash
 # Default amount (500M ANM)
-animica faucet request anim1zqp2nx50902d7jgrzk0ep798r2vhpgt3rhtmn89gadzdgyhf9hmln7g9e4xt9
+animica faucet request anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz
 
 # Custom amount
 animica faucet request anim1... --amount 1000000000000000
@@ -71,7 +71,7 @@ animica faucet request anim1... --json
 
 ### 3. Genesis Prefunds
 
-**User Address**: `anim1zqp2nx50902d7jgrzk0ep798r2vhpgt3rhtmn89gadzdgyhf9hmln7g9e4xt9`
+**User Address**: `anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz`
 
 **Amount**: 500,000,000 ANM (500,000,000,000,000,000 base units)
 
@@ -231,7 +231,7 @@ curl -X POST http://127.0.0.1:8545/rpc \
     "jsonrpc": "2.0",
     "method": "faucet.request",
     "params": {
-      "address": "anim1zqp2nx50902d7jgrzk0ep798r2vhpgt3rhtmn89gadzdgyhf9hmln7g9e4xt9"
+      "address": "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz"
     },
     "id": 1
   }'
@@ -244,11 +244,11 @@ curl -X POST http://127.0.0.1:8545/rpc \
 export ANIMICA_RPC_URL=http://127.0.0.1:8545/rpc
 
 # Request funds
-animica faucet request anim1zqp2nx50902d7jgrzk0ep798r2vhpgt3rhtmn89gadzdgyhf9hmln7g9e4xt9
+animica faucet request anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz
 
 # Output:
 # ✓ Faucet request successful!
-#   Address:      anim1zqp2nx50902d7jgrzk0ep798r2vhpgt3rhtmn89gadzdgyhf9hmln7g9e4xt9
+#   Address:      anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz
 #   Credited:     500,000,000.0 ANM (500,000,000,000,000,000 base units)
 #   New balance:  500,000,000.0 ANM (500,000,000,000,000,000 base units)
 ```

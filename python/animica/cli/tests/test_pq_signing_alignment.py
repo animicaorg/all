@@ -87,7 +87,7 @@ def test_cli_send_signature_verifies_with_pq(
     wallet_entry = {
         "label": "alice",
         "address": signer.address
-        or "anim1zqp2nx50902d7jgrzk0ep798r2vhpgt3rhtmn89gadzdgyhf9hmln7g9e4xt9",
+        or "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz",
         "alg_id": signer.alg_id,
         "alg_name": signer.alg_name,
         "public_key_hex": signer.public_key.hex(),

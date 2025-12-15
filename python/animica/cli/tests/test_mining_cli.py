@@ -143,7 +143,7 @@ def test_mine_blocks_invalid_count_negative() -> None:
 def test_mine_blocks_success(monkeypatch: Any) -> None:
     """Test that mine-blocks calls RPC successfully."""
     # Mock address validation to accept test address
-    test_address = "anim1zqp2nx50902d7jgrzk0ep798r2vhpgt3rhtmn89gadzdgyhf9hmln7g9e4xt9"
+    test_address = "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz"
     monkeypatch.setattr(mining, "_validate_bech32_address", lambda x: True if x == test_address else False)
     
     class MockRpcClient:
@@ -184,7 +184,7 @@ def test_mine_blocks_success(monkeypatch: Any) -> None:
 def test_mine_blocks_rpc_error(monkeypatch: Any) -> None:
     """Test that mine-blocks handles RPC errors gracefully."""
     # Mock address validation to accept test address
-    test_address = "anim1zqp2nx50902d7jgrzk0ep798r2vhpgt3rhtmn89gadzdgyhf9hmln7g9e4xt9"
+    test_address = "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz"
     monkeypatch.setattr(mining, "_validate_bech32_address", lambda x: True if x == test_address else False)
     
     class MockRpcClient:
@@ -246,7 +246,7 @@ def test_mine_blocks_with_wallet_label(monkeypatch: Any, tmp_path: Path) -> None
     
     # Create a test wallet file
     wallet_file = tmp_path / "wallets.json"
-    test_address = "anim1zqp2nx50902d7jgrzk0ep798r2vhpgt3rhtmn89gadzdgyhf9hmln7g9e4xt9"
+    test_address = "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz"
     wallet_data = {
         "version": 1,
         "wallets": [
@@ -336,7 +336,7 @@ def test_mine_blocks_enforces_2s_delay(monkeypatch: Any) -> None:
         mining.app,
         [
             "mine-blocks",
-            "--address", "anim1zqp2nx50902d7jgrzk0ep798r2vhpgt3rhtmn89gadzdgyhf9hmln7g9e4xt9",
+            "--address", "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz",
             "--count", "3",
             "--rpc-url", "http://127.0.0.1:8545",
         ],
