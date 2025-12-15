@@ -8,9 +8,11 @@ including listing peers, adding/removing peers, and viewing peer details.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import sqlite3
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -83,6 +85,129 @@ def _resolve_store_paths(store_path: Path) -> tuple[Path, Path]:
     
     # Default: treat as JSON path
     return (store_path, store_path.with_suffix(".db"))
+
+
+def _generate_peer_id(address: str) -> str:
+    """
+    Generate a peer ID from an address.
+    
+    For simple host:port addresses, we generate a deterministic ID.
+    For multiaddr format with explicit peer ID, we extract it.
+    
+    Args:
+        address: Peer address (multiaddr or host:port)
+        
+    Returns:
+        Generated or extracted peer ID
+    """
+    # Check if address contains a peer ID in multiaddr format
+    # Format: /ip4/x.x.x.x/tcp/port/p2p/PeerID or /ipfs/PeerID
+    if "/p2p/" in address:
+        parts = address.split("/p2p/")
+        if len(parts) > 1:
+            return parts[1].split("/")[0]
+    if "/ipfs/" in address:
+        parts = address.split("/ipfs/")
+        if len(parts) > 1:
+            return parts[1].split("/")[0]
+    
+    # Generate a deterministic peer ID from the address
+    # Use first 16 chars of hex hash to create a readable ID
+    hash_obj = hashlib.sha256(address.encode())
+    return f"peer_{hash_obj.hexdigest()[:16]}"
+
+
+def _write_peer_to_store(store_path: Path, peer_id: str, address: str) -> None:
+    """
+    Write a peer to the local JSON store.
+    
+    Creates or updates the peer store with the new peer entry.
+    
+    Args:
+        store_path: Path to peer store file
+        peer_id: Peer identifier
+        address: Peer address
+    """
+    json_path, _ = _resolve_store_paths(store_path)
+    
+    # Ensure parent directory exists
+    json_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    # Read existing data
+    data = {"peers": []}
+    if json_path.exists():
+        try:
+            with json_path.open("r") as f:
+                data = json.load(f)
+        except (json.JSONDecodeError, IOError):
+            pass
+    
+    # Find existing peer or create new entry
+    peers = data.get("peers", [])
+    existing_peer = None
+    for peer in peers:
+        if peer.get("peer_id") == peer_id:
+            existing_peer = peer
+            break
+    
+    if existing_peer:
+        # Update existing peer
+        if address not in existing_peer.get("addrs", []):
+            existing_peer.setdefault("addrs", []).append(address)
+        existing_peer["last_seen"] = time.time()
+    else:
+        # Add new peer
+        peers.append({
+            "peer_id": peer_id,
+            "addrs": [address],
+            "score": 0.0,
+            "last_seen": time.time(),
+            "connected": False,
+        })
+    
+    # Write back to file
+    data["peers"] = peers
+    with json_path.open("w") as f:
+        json.dump(data, f, indent=2)
+
+
+def _remove_peer_from_store(store_path: Path, peer_id: str) -> bool:
+    """
+    Remove a peer from the local JSON store.
+    
+    Args:
+        store_path: Path to peer store file
+        peer_id: Peer identifier to remove
+        
+    Returns:
+        True if peer was found and removed, False otherwise
+    """
+    json_path, _ = _resolve_store_paths(store_path)
+    
+    if not json_path.exists():
+        return False
+    
+    try:
+        with json_path.open("r") as f:
+            data = json.load(f)
+    except (json.JSONDecodeError, IOError):
+        return False
+    
+    peers = data.get("peers", [])
+    original_len = len(peers)
+    
+    # Filter out the peer to remove
+    peers = [p for p in peers if p.get("peer_id") != peer_id]
+    
+    if len(peers) == original_len:
+        return False  # Peer not found
+    
+    # Write back to file
+    data["peers"] = peers
+    with json_path.open("w") as f:
+        json.dump(data, f, indent=2)
+    
+    return True
 
 
 def _read_peer_store(store_path: Path) -> List[Dict[str, Any]]:
@@ -270,18 +395,27 @@ def add_peer(
     rpc_url: Optional[str] = typer.Option(
         None, "--rpc-url", help="JSON-RPC endpoint", envvar=RPC_ENV
     ),
+    store: Optional[str] = typer.Option(
+        None, "--store", help="Path to local peer store (fallback)", envvar=STORE_ENV
+    ),
 ) -> None:
     """
     Add a peer to the node's peer list.
 
     Attempts to connect to the specified peer and add it to the node's
-    active peer list.
+    active peer list via RPC. Also persists the peer to the local store
+    as a backup, or falls back to store-only if RPC is unavailable.
 
     Examples:
         animica peer add /ip4/1.2.3.4/tcp/30303/p2p/QmPeerId...
         animica peer add 1.2.3.4:30303
+        animica peer add 5.6.7.8:30333 --store ~/.animica/p2p/peers.json
     """
     url = _resolve_rpc_url(rpc_url)
+    store_path = Path(store) if store else DEFAULT_STORE_PATH
+
+    # Generate peer ID from address
+    peer_id = _generate_peer_id(address)
 
     # Try different RPC method names
     methods_to_try = [
@@ -290,27 +424,53 @@ def add_peer(
         ("net_addPeer", [address]),
     ]
 
-    success = False
+    rpc_success = False
     last_error = None
 
     for method, params in methods_to_try:
         try:
             result = asyncio.run(rpc_call(method, params, rpc_url=url))
-            success = True
+            rpc_success = True
             break
         except Exception as e:
             last_error = e
             continue
 
-    if success:
+    # Write to local store regardless of RPC success (as backup)
+    try:
+        _write_peer_to_store(store_path, peer_id, address)
+        store_written = True
+    except Exception as e:
+        store_written = False
+        if not rpc_success:
+            # Only show store error if RPC also failed
+            typer.echo(f"Warning: Failed to write to local store: {e}", err=True)
+
+    if rpc_success:
         typer.secho(f"✓ Successfully added peer: {address}", fg=typer.colors.GREEN, bold=True)
+        if store_written:
+            typer.echo(f"  (Also saved to local peer store: {store_path})")
+    elif store_written:
+        # RPC failed but store succeeded - this is the fallback case
+        typer.secho(
+            f"✓ RPC unavailable, but peer saved to local store: {address}",
+            fg=typer.colors.YELLOW,
+            bold=True,
+        )
+        typer.echo(f"  Peer ID: {peer_id}")
+        typer.echo(f"  Store: {store_path}")
+        typer.echo(
+            "\nNote: The peer is saved locally. When the node starts or syncs,\n"
+            "      it may attempt to connect to this peer."
+        )
     else:
+        # Both RPC and store failed
         typer.echo(
             f"Error: Failed to add peer '{address}'.",
             err=True,
         )
         if last_error:
-            typer.echo(f"Last error: {last_error}", err=True)
+            typer.echo(f"Last RPC error: {last_error}", err=True)
         typer.echo(
             "\nNote: Ensure the address is valid and the node supports peer management.",
             err=True,
@@ -324,17 +484,24 @@ def remove_peer(
     rpc_url: Optional[str] = typer.Option(
         None, "--rpc-url", help="JSON-RPC endpoint", envvar=RPC_ENV
     ),
+    store: Optional[str] = typer.Option(
+        None, "--store", help="Path to local peer store (fallback)", envvar=STORE_ENV
+    ),
 ) -> None:
     """
     Remove a peer from the node's peer list.
 
-    Disconnects from the specified peer and removes it from the active peer list.
+    Disconnects from the specified peer and removes it from the active peer list
+    via RPC. Also removes the peer from the local store, or falls back to
+    store-only removal if RPC is unavailable.
 
     Examples:
         animica peer remove QmPeerId...
         animica peer remove 12D3KooWPeerId...
+        animica peer remove peer_abc123 --store ~/.animica/p2p/peers.json
     """
     url = _resolve_rpc_url(rpc_url)
+    store_path = Path(store) if store else DEFAULT_STORE_PATH
 
     # Try different RPC method names
     methods_to_try = [
@@ -343,29 +510,51 @@ def remove_peer(
         ("net_removePeer", [peer_id]),
     ]
 
-    success = False
+    rpc_success = False
     last_error = None
 
     for method, params in methods_to_try:
         try:
             result = asyncio.run(rpc_call(method, params, rpc_url=url))
-            success = True
+            rpc_success = True
             break
         except Exception as e:
             last_error = e
             continue
 
-    if success:
+    # Also remove from local store
+    store_removed = False
+    try:
+        store_removed = _remove_peer_from_store(store_path, peer_id)
+    except Exception as e:
+        if not rpc_success:
+            # Only show store error if RPC also failed
+            typer.echo(f"Warning: Failed to remove from local store: {e}", err=True)
+
+    if rpc_success:
         typer.secho(f"✓ Successfully removed peer: {peer_id}", fg=typer.colors.GREEN, bold=True)
+        if store_removed:
+            typer.echo(f"  (Also removed from local peer store: {store_path})")
+        elif store_path.exists():
+            typer.echo(f"  (Peer not found in local store)")
+    elif store_removed:
+        # RPC failed but store removal succeeded - this is the fallback case
+        typer.secho(
+            f"✓ RPC unavailable, but peer removed from local store: {peer_id}",
+            fg=typer.colors.YELLOW,
+            bold=True,
+        )
+        typer.echo(f"  Store: {store_path}")
     else:
+        # Both RPC and store removal failed
         typer.echo(
             f"Error: Failed to remove peer '{peer_id}'.",
             err=True,
         )
         if last_error:
-            typer.echo(f"Last error: {last_error}", err=True)
+            typer.echo(f"Last RPC error: {last_error}", err=True)
         typer.echo(
-            "\nNote: Ensure the peer ID is valid and the node supports peer management.",
+            "\nNote: Ensure the peer ID is valid and exists in either the node or local store.",
             err=True,
         )
         raise typer.Exit(code=1)
