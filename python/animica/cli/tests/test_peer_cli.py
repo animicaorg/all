@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import sqlite3
 from typing import Any
 
 import httpx
@@ -92,8 +94,8 @@ def test_list_peers_empty(monkeypatch: Any) -> None:
 
 
 @respx.mock
-def test_list_peers_rpc_unavailable(monkeypatch: Any) -> None:
-    """Test listing peers when RPC is unavailable."""
+def test_list_peers_rpc_unavailable(monkeypatch: Any, tmp_path: Any) -> None:
+    """Test listing peers when RPC is unavailable and no local store exists."""
     rpc_url = "http://localhost:9999/rpc"
     monkeypatch.setenv("ANIMICA_RPC_URL", rpc_url)
 
@@ -105,7 +107,9 @@ def test_list_peers_rpc_unavailable(monkeypatch: Any) -> None:
         )
     )
 
-    result = runner.invoke(peer.app, ["list"])
+    # Use a non-existent store path
+    nonexistent_store = tmp_path / "nonexistent" / "peers.json"
+    result = runner.invoke(peer.app, ["list", "--store", str(nonexistent_store)])
     assert result.exit_code == 1
     assert "Unable to retrieve peers" in result.output
 
@@ -129,8 +133,8 @@ def test_add_peer_success(monkeypatch: Any) -> None:
 
 
 @respx.mock
-def test_add_peer_failure(monkeypatch: Any) -> None:
-    """Test adding a peer when it fails."""
+def test_add_peer_failure(monkeypatch: Any, tmp_path: Any) -> None:
+    """Test adding a peer when RPC fails now falls back to local store."""
     rpc_url = "http://localhost:9999/rpc"
     monkeypatch.setenv("ANIMICA_RPC_URL", rpc_url)
 
@@ -141,9 +145,11 @@ def test_add_peer_failure(monkeypatch: Any) -> None:
         )
     )
 
-    result = runner.invoke(peer.app, ["add", "/ip4/1.2.3.4/tcp/30303/p2p/QmPeer1"])
-    assert result.exit_code == 1
-    assert "Failed to add peer" in result.output
+    # With the new fallback logic, this should succeed by writing to store
+    store_path = tmp_path / "peers.json"
+    result = runner.invoke(peer.app, ["add", "/ip4/1.2.3.4/tcp/30303/p2p/QmPeer1", "--store", str(store_path)])
+    assert result.exit_code == 0
+    assert "RPC unavailable, but peer saved to local store" in result.output
 
 
 @respx.mock
@@ -165,8 +171,8 @@ def test_remove_peer_success(monkeypatch: Any) -> None:
 
 
 @respx.mock
-def test_remove_peer_failure(monkeypatch: Any) -> None:
-    """Test removing a peer when it fails."""
+def test_remove_peer_failure(monkeypatch: Any, tmp_path: Any) -> None:
+    """Test removing a peer when both RPC and local store fail."""
     rpc_url = "http://localhost:9999/rpc"
     monkeypatch.setenv("ANIMICA_RPC_URL", rpc_url)
 
@@ -177,7 +183,11 @@ def test_remove_peer_failure(monkeypatch: Any) -> None:
         )
     )
 
-    result = runner.invoke(peer.app, ["remove", "QmPeer1"])
+    # Create an empty store so removal will fail both in RPC and store
+    store_path = tmp_path / "peers.json"
+    store_path.write_text(json.dumps({"peers": []}))
+
+    result = runner.invoke(peer.app, ["remove", "QmPeer1", "--store", str(store_path)])
     assert result.exit_code == 1
     assert "Failed to remove peer" in result.output
 
@@ -231,7 +241,6 @@ def test_peer_info_not_found(monkeypatch: Any) -> None:
 @respx.mock
 def test_list_peers_fallback_to_json_store(monkeypatch: Any, tmp_path: Any) -> None:
     """Test fallback to JSON peer store when RPC is unavailable."""
-    import json
     
     rpc_url = "http://localhost:9999/rpc"
     monkeypatch.setenv("ANIMICA_RPC_URL", rpc_url)
@@ -282,7 +291,6 @@ def test_list_peers_fallback_to_json_store(monkeypatch: Any, tmp_path: Any) -> N
 @respx.mock
 def test_list_peers_fallback_to_json_store_verbose(monkeypatch: Any, tmp_path: Any) -> None:
     """Test fallback to JSON peer store with verbose output."""
-    import json
     
     rpc_url = "http://localhost:9999/rpc"
     monkeypatch.setenv("ANIMICA_RPC_URL", rpc_url)
@@ -323,7 +331,6 @@ def test_list_peers_fallback_to_json_store_verbose(monkeypatch: Any, tmp_path: A
 @respx.mock
 def test_list_peers_fallback_empty_store(monkeypatch: Any, tmp_path: Any) -> None:
     """Test fallback when both RPC and store are empty."""
-    import json
     
     rpc_url = "http://localhost:9999/rpc"
     monkeypatch.setenv("ANIMICA_RPC_URL", rpc_url)
@@ -375,7 +382,6 @@ def test_list_peers_fallback_nonexistent_store(monkeypatch: Any, tmp_path: Any) 
 @respx.mock
 def test_list_peers_rpc_takes_precedence_over_store(monkeypatch: Any, tmp_path: Any) -> None:
     """Test that RPC is tried first and takes precedence over store."""
-    import json
     
     rpc_url = "http://localhost:9999/rpc"
     monkeypatch.setenv("ANIMICA_RPC_URL", rpc_url)
@@ -421,7 +427,6 @@ def test_list_peers_rpc_takes_precedence_over_store(monkeypatch: Any, tmp_path: 
 @respx.mock
 def test_list_peers_fallback_to_sqlite_store(monkeypatch: Any, tmp_path: Any) -> None:
     """Test fallback to SQLite peer store when RPC is unavailable."""
-    import sqlite3
     
     rpc_url = "http://localhost:9999/rpc"
     monkeypatch.setenv("ANIMICA_RPC_URL", rpc_url)
@@ -492,3 +497,299 @@ def test_list_peers_fallback_to_sqlite_store(monkeypatch: Any, tmp_path: Any) ->
     assert "Connected Peers: 1" in result.output
     assert "from local peer store" in result.output
     assert "db_peer1" in result.output
+
+
+# ==================== Tests for add_peer with store fallback ====================
+
+
+@respx.mock
+def test_add_peer_writes_to_store_on_success(monkeypatch: Any, tmp_path: Any) -> None:
+    """Test that add_peer writes to store after successful RPC call."""
+    
+    rpc_url = "http://localhost:9999/rpc"
+    monkeypatch.setenv("ANIMICA_RPC_URL", rpc_url)
+    
+    store_path = tmp_path / "peers.json"
+    
+    # Mock RPC to succeed
+    respx.post(rpc_url).mock(
+        return_value=httpx.Response(
+            200,
+            json={"jsonrpc": "2.0", "id": 1, "result": True},
+        )
+    )
+    
+    result = runner.invoke(peer.app, ["add", "5.6.7.8:30333", "--store", str(store_path)])
+    assert result.exit_code == 0
+    assert "Successfully added peer" in result.output
+    assert "saved to local peer store" in result.output
+    
+    # Verify peer was written to store
+    assert store_path.exists()
+    with store_path.open("r") as f:
+        data = json.load(f)
+    
+    peers = data.get("peers", [])
+    assert len(peers) == 1
+    assert "5.6.7.8:30333" in peers[0]["addrs"]
+    assert peers[0]["peer_id"].startswith("peer_")
+
+
+@respx.mock
+def test_add_peer_fallback_to_store_when_rpc_fails(monkeypatch: Any, tmp_path: Any) -> None:
+    """Test that add_peer falls back to writing to store when RPC fails."""
+    
+    rpc_url = "http://localhost:9999/rpc"
+    monkeypatch.setenv("ANIMICA_RPC_URL", rpc_url)
+    
+    store_path = tmp_path / "peers.json"
+    
+    # Mock all RPC methods to fail
+    respx.post(rpc_url).mock(
+        return_value=httpx.Response(
+            200,
+            json={"jsonrpc": "2.0", "id": 1, "error": {"code": -32601, "message": "Method not found"}},
+        )
+    )
+    
+    result = runner.invoke(peer.app, ["add", "10.0.0.1:42000", "--store", str(store_path)])
+    assert result.exit_code == 0
+    assert "RPC unavailable, but peer saved to local store" in result.output
+    
+    # Verify peer was written to store
+    assert store_path.exists()
+    with store_path.open("r") as f:
+        data = json.load(f)
+    
+    peers = data.get("peers", [])
+    assert len(peers) == 1
+    assert "10.0.0.1:42000" in peers[0]["addrs"]
+
+
+@respx.mock
+def test_add_peer_with_multiaddr_extracts_peer_id(monkeypatch: Any, tmp_path: Any) -> None:
+    """Test that add_peer extracts peer ID from multiaddr format."""
+    
+    rpc_url = "http://localhost:9999/rpc"
+    monkeypatch.setenv("ANIMICA_RPC_URL", rpc_url)
+    
+    store_path = tmp_path / "peers.json"
+    
+    # Mock RPC to fail so we test store-only path
+    respx.post(rpc_url).mock(
+        return_value=httpx.Response(
+            200,
+            json={"jsonrpc": "2.0", "id": 1, "error": {"code": -32601, "message": "Method not found"}},
+        )
+    )
+    
+    multiaddr = "/ip4/192.168.1.1/tcp/30303/p2p/QmTestPeer123"
+    result = runner.invoke(peer.app, ["add", multiaddr, "--store", str(store_path)])
+    assert result.exit_code == 0
+    
+    # Verify peer ID was extracted correctly
+    with store_path.open("r") as f:
+        data = json.load(f)
+    
+    peers = data.get("peers", [])
+    assert len(peers) == 1
+    assert peers[0]["peer_id"] == "QmTestPeer123"
+    assert multiaddr in peers[0]["addrs"]
+
+
+@respx.mock
+def test_add_peer_updates_existing_peer(monkeypatch: Any, tmp_path: Any) -> None:
+    """Test that add_peer updates an existing peer with new address."""
+    
+    rpc_url = "http://localhost:9999/rpc"
+    monkeypatch.setenv("ANIMICA_RPC_URL", rpc_url)
+    
+    store_path = tmp_path / "peers.json"
+    
+    # Pre-populate store with a peer
+    existing_data = {
+        "peers": [
+            {
+                "peer_id": "test_peer",
+                "addrs": ["/ip4/1.1.1.1/tcp/1111"],
+                "score": 5.0,
+                "last_seen": 1234567890.0,
+                "connected": False,
+            }
+        ]
+    }
+    store_path.write_text(json.dumps(existing_data))
+    
+    # Mock RPC to fail
+    respx.post(rpc_url).mock(
+        return_value=httpx.Response(
+            200,
+            json={"jsonrpc": "2.0", "id": 1, "error": {"code": -32601, "message": "Method not found"}},
+        )
+    )
+    
+    # Add new address for same peer
+    result = runner.invoke(
+        peer.app, ["add", "/ip4/1.1.1.1/tcp/2222/p2p/test_peer", "--store", str(store_path)]
+    )
+    assert result.exit_code == 0
+    
+    # Verify peer now has both addresses
+    with store_path.open("r") as f:
+        data = json.load(f)
+    
+    peers = data.get("peers", [])
+    assert len(peers) == 1
+    assert peers[0]["peer_id"] == "test_peer"
+    assert len(peers[0]["addrs"]) == 2
+    assert "/ip4/1.1.1.1/tcp/1111" in peers[0]["addrs"]
+    assert "/ip4/1.1.1.1/tcp/2222/p2p/test_peer" in peers[0]["addrs"]
+
+
+# ==================== Tests for remove_peer with store fallback ====================
+
+
+@respx.mock
+def test_remove_peer_removes_from_store_on_success(monkeypatch: Any, tmp_path: Any) -> None:
+    """Test that remove_peer removes from store after successful RPC call."""
+    
+    rpc_url = "http://localhost:9999/rpc"
+    monkeypatch.setenv("ANIMICA_RPC_URL", rpc_url)
+    
+    store_path = tmp_path / "peers.json"
+    
+    # Pre-populate store with peers
+    existing_data = {
+        "peers": [
+            {
+                "peer_id": "peer_to_remove",
+                "addrs": ["/ip4/1.1.1.1/tcp/1111"],
+                "score": 0.0,
+                "last_seen": 1234567890.0,
+                "connected": False,
+            },
+            {
+                "peer_id": "peer_to_keep",
+                "addrs": ["/ip4/2.2.2.2/tcp/2222"],
+                "score": 0.0,
+                "last_seen": 1234567891.0,
+                "connected": False,
+            }
+        ]
+    }
+    store_path.write_text(json.dumps(existing_data))
+    
+    # Mock RPC to succeed
+    respx.post(rpc_url).mock(
+        return_value=httpx.Response(
+            200,
+            json={"jsonrpc": "2.0", "id": 1, "result": True},
+        )
+    )
+    
+    result = runner.invoke(peer.app, ["remove", "peer_to_remove", "--store", str(store_path)])
+    assert result.exit_code == 0
+    assert "Successfully removed peer" in result.output
+    assert "removed from local peer store" in result.output
+    
+    # Verify peer was removed from store
+    with store_path.open("r") as f:
+        data = json.load(f)
+    
+    peers = data.get("peers", [])
+    assert len(peers) == 1
+    assert peers[0]["peer_id"] == "peer_to_keep"
+
+
+@respx.mock
+def test_remove_peer_fallback_to_store_when_rpc_fails(monkeypatch: Any, tmp_path: Any) -> None:
+    """Test that remove_peer falls back to removing from store when RPC fails."""
+    
+    rpc_url = "http://localhost:9999/rpc"
+    monkeypatch.setenv("ANIMICA_RPC_URL", rpc_url)
+    
+    store_path = tmp_path / "peers.json"
+    
+    # Pre-populate store with a peer
+    existing_data = {
+        "peers": [
+            {
+                "peer_id": "peer_to_remove",
+                "addrs": ["/ip4/3.3.3.3/tcp/3333"],
+                "score": 0.0,
+                "last_seen": 1234567890.0,
+                "connected": False,
+            }
+        ]
+    }
+    store_path.write_text(json.dumps(existing_data))
+    
+    # Mock all RPC methods to fail
+    respx.post(rpc_url).mock(
+        return_value=httpx.Response(
+            200,
+            json={"jsonrpc": "2.0", "id": 1, "error": {"code": -32601, "message": "Method not found"}},
+        )
+    )
+    
+    result = runner.invoke(peer.app, ["remove", "peer_to_remove", "--store", str(store_path)])
+    assert result.exit_code == 0
+    assert "RPC unavailable, but peer removed from local store" in result.output
+    
+    # Verify peer was removed from store
+    with store_path.open("r") as f:
+        data = json.load(f)
+    
+    peers = data.get("peers", [])
+    assert len(peers) == 0
+
+
+@respx.mock
+def test_remove_peer_fails_when_peer_not_found(monkeypatch: Any, tmp_path: Any) -> None:
+    """Test that remove_peer fails when peer doesn't exist in RPC or store."""
+    
+    rpc_url = "http://localhost:9999/rpc"
+    monkeypatch.setenv("ANIMICA_RPC_URL", rpc_url)
+    
+    store_path = tmp_path / "peers.json"
+    
+    # Create empty store
+    store_path.write_text(json.dumps({"peers": []}))
+    
+    # Mock all RPC methods to fail
+    respx.post(rpc_url).mock(
+        return_value=httpx.Response(
+            200,
+            json={"jsonrpc": "2.0", "id": 1, "error": {"code": -32000, "message": "Peer not found"}},
+        )
+    )
+    
+    result = runner.invoke(peer.app, ["remove", "nonexistent_peer", "--store", str(store_path)])
+    assert result.exit_code == 1
+    assert "Failed to remove peer" in result.output
+
+
+def test_generate_peer_id_from_simple_address() -> None:
+    """Test peer ID generation from simple host:port address."""
+    from animica.cli.peer import _generate_peer_id
+    
+    peer_id = _generate_peer_id("192.168.1.1:30303")
+    assert peer_id.startswith("peer_")
+    assert len(peer_id) == len("peer_") + 32  # peer_ + 32 hex chars (better collision resistance)
+    
+    # Should be deterministic
+    peer_id2 = _generate_peer_id("192.168.1.1:30303")
+    assert peer_id == peer_id2
+
+
+def test_generate_peer_id_extracts_from_multiaddr() -> None:
+    """Test peer ID extraction from multiaddr with /p2p/ component."""
+    from animica.cli.peer import _generate_peer_id
+    
+    multiaddr = "/ip4/10.0.0.1/tcp/42000/p2p/QmActualPeerId123"
+    peer_id = _generate_peer_id(multiaddr)
+    assert peer_id == "QmActualPeerId123"
+    
+    multiaddr_ipfs = "/ip4/10.0.0.1/tcp/42000/ipfs/IpfsPeerId456"
+    peer_id_ipfs = _generate_peer_id(multiaddr_ipfs)
+    assert peer_id_ipfs == "IpfsPeerId456"
