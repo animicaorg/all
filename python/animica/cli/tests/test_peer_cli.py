@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import sqlite3
 from typing import Any
 
 import httpx
@@ -183,7 +185,6 @@ def test_remove_peer_failure(monkeypatch: Any, tmp_path: Any) -> None:
 
     # Create an empty store so removal will fail both in RPC and store
     store_path = tmp_path / "peers.json"
-    import json
     store_path.write_text(json.dumps({"peers": []}))
 
     result = runner.invoke(peer.app, ["remove", "QmPeer1", "--store", str(store_path)])
@@ -240,7 +241,6 @@ def test_peer_info_not_found(monkeypatch: Any) -> None:
 @respx.mock
 def test_list_peers_fallback_to_json_store(monkeypatch: Any, tmp_path: Any) -> None:
     """Test fallback to JSON peer store when RPC is unavailable."""
-    import json
     
     rpc_url = "http://localhost:9999/rpc"
     monkeypatch.setenv("ANIMICA_RPC_URL", rpc_url)
@@ -291,7 +291,6 @@ def test_list_peers_fallback_to_json_store(monkeypatch: Any, tmp_path: Any) -> N
 @respx.mock
 def test_list_peers_fallback_to_json_store_verbose(monkeypatch: Any, tmp_path: Any) -> None:
     """Test fallback to JSON peer store with verbose output."""
-    import json
     
     rpc_url = "http://localhost:9999/rpc"
     monkeypatch.setenv("ANIMICA_RPC_URL", rpc_url)
@@ -332,7 +331,6 @@ def test_list_peers_fallback_to_json_store_verbose(monkeypatch: Any, tmp_path: A
 @respx.mock
 def test_list_peers_fallback_empty_store(monkeypatch: Any, tmp_path: Any) -> None:
     """Test fallback when both RPC and store are empty."""
-    import json
     
     rpc_url = "http://localhost:9999/rpc"
     monkeypatch.setenv("ANIMICA_RPC_URL", rpc_url)
@@ -384,7 +382,6 @@ def test_list_peers_fallback_nonexistent_store(monkeypatch: Any, tmp_path: Any) 
 @respx.mock
 def test_list_peers_rpc_takes_precedence_over_store(monkeypatch: Any, tmp_path: Any) -> None:
     """Test that RPC is tried first and takes precedence over store."""
-    import json
     
     rpc_url = "http://localhost:9999/rpc"
     monkeypatch.setenv("ANIMICA_RPC_URL", rpc_url)
@@ -430,7 +427,6 @@ def test_list_peers_rpc_takes_precedence_over_store(monkeypatch: Any, tmp_path: 
 @respx.mock
 def test_list_peers_fallback_to_sqlite_store(monkeypatch: Any, tmp_path: Any) -> None:
     """Test fallback to SQLite peer store when RPC is unavailable."""
-    import sqlite3
     
     rpc_url = "http://localhost:9999/rpc"
     monkeypatch.setenv("ANIMICA_RPC_URL", rpc_url)
@@ -509,7 +505,6 @@ def test_list_peers_fallback_to_sqlite_store(monkeypatch: Any, tmp_path: Any) ->
 @respx.mock
 def test_add_peer_writes_to_store_on_success(monkeypatch: Any, tmp_path: Any) -> None:
     """Test that add_peer writes to store after successful RPC call."""
-    import json
     
     rpc_url = "http://localhost:9999/rpc"
     monkeypatch.setenv("ANIMICA_RPC_URL", rpc_url)
@@ -543,7 +538,6 @@ def test_add_peer_writes_to_store_on_success(monkeypatch: Any, tmp_path: Any) ->
 @respx.mock
 def test_add_peer_fallback_to_store_when_rpc_fails(monkeypatch: Any, tmp_path: Any) -> None:
     """Test that add_peer falls back to writing to store when RPC fails."""
-    import json
     
     rpc_url = "http://localhost:9999/rpc"
     monkeypatch.setenv("ANIMICA_RPC_URL", rpc_url)
@@ -575,7 +569,6 @@ def test_add_peer_fallback_to_store_when_rpc_fails(monkeypatch: Any, tmp_path: A
 @respx.mock
 def test_add_peer_with_multiaddr_extracts_peer_id(monkeypatch: Any, tmp_path: Any) -> None:
     """Test that add_peer extracts peer ID from multiaddr format."""
-    import json
     
     rpc_url = "http://localhost:9999/rpc"
     monkeypatch.setenv("ANIMICA_RPC_URL", rpc_url)
@@ -607,7 +600,6 @@ def test_add_peer_with_multiaddr_extracts_peer_id(monkeypatch: Any, tmp_path: An
 @respx.mock
 def test_add_peer_updates_existing_peer(monkeypatch: Any, tmp_path: Any) -> None:
     """Test that add_peer updates an existing peer with new address."""
-    import json
     
     rpc_url = "http://localhost:9999/rpc"
     monkeypatch.setenv("ANIMICA_RPC_URL", rpc_url)
@@ -660,7 +652,6 @@ def test_add_peer_updates_existing_peer(monkeypatch: Any, tmp_path: Any) -> None
 @respx.mock
 def test_remove_peer_removes_from_store_on_success(monkeypatch: Any, tmp_path: Any) -> None:
     """Test that remove_peer removes from store after successful RPC call."""
-    import json
     
     rpc_url = "http://localhost:9999/rpc"
     monkeypatch.setenv("ANIMICA_RPC_URL", rpc_url)
@@ -713,7 +704,6 @@ def test_remove_peer_removes_from_store_on_success(monkeypatch: Any, tmp_path: A
 @respx.mock
 def test_remove_peer_fallback_to_store_when_rpc_fails(monkeypatch: Any, tmp_path: Any) -> None:
     """Test that remove_peer falls back to removing from store when RPC fails."""
-    import json
     
     rpc_url = "http://localhost:9999/rpc"
     monkeypatch.setenv("ANIMICA_RPC_URL", rpc_url)
@@ -757,7 +747,6 @@ def test_remove_peer_fallback_to_store_when_rpc_fails(monkeypatch: Any, tmp_path
 @respx.mock
 def test_remove_peer_fails_when_peer_not_found(monkeypatch: Any, tmp_path: Any) -> None:
     """Test that remove_peer fails when peer doesn't exist in RPC or store."""
-    import json
     
     rpc_url = "http://localhost:9999/rpc"
     monkeypatch.setenv("ANIMICA_RPC_URL", rpc_url)
@@ -786,7 +775,7 @@ def test_generate_peer_id_from_simple_address() -> None:
     
     peer_id = _generate_peer_id("192.168.1.1:30303")
     assert peer_id.startswith("peer_")
-    assert len(peer_id) == len("peer_") + 16  # peer_ + 16 hex chars
+    assert len(peer_id) == len("peer_") + 32  # peer_ + 32 hex chars (better collision resistance)
     
     # Should be deterministic
     peer_id2 = _generate_peer_id("192.168.1.1:30303")

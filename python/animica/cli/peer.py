@@ -112,9 +112,9 @@ def _generate_peer_id(address: str) -> str:
             return parts[1].split("/")[0]
     
     # Generate a deterministic peer ID from the address
-    # Use first 16 chars of hex hash to create a readable ID
+    # Use first 32 chars of hex hash for adequate collision resistance
     hash_obj = hashlib.sha256(address.encode())
-    return f"peer_{hash_obj.hexdigest()[:16]}"
+    return f"peer_{hash_obj.hexdigest()[:32]}"
 
 
 def _write_peer_to_store(store_path: Path, peer_id: str, address: str) -> None:
