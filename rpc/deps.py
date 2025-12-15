@@ -556,6 +556,7 @@ def build_context(cfg: t.Any | None = None) -> RpcContext:
     if enable_p2p:
         try:
             from p2p.node.service import P2PService
+            import p2p
             
             # Determine peer store path based on network
             peerstore_path = os.environ.get("ANIMICA_PEER_STORE_PATH")
@@ -578,7 +579,10 @@ def build_context(cfg: t.Any | None = None) -> RpcContext:
                 deps=p2p_deps,
                 peerstore_path=peerstore_path,
             )
-            log.info(f"Initialized P2P service with peer store at {peerstore_path}")
+            
+            # Register P2P service with global registry so RPC methods can access it
+            p2p.register_service(p2p_service)
+            log.info(f"Initialized and registered P2P service with peer store at {peerstore_path}")
         except Exception as e:
             log.warning(f"Failed to initialize P2P service: {e}", exc_info=True)
             p2p_service = None
@@ -630,6 +634,17 @@ async def startup(cfg: t.Any | None = None) -> RpcContext:
                 finally:
                     _CTX = None
             _CTX = build_context(cfg)
+        
+        # Start P2P service if it was initialized
+        if _CTX.p2p_service is not None:
+            try:
+                await _CTX.p2p_service.start()
+                logging.getLogger("animica.rpc.deps").info("P2P service started successfully")
+            except Exception as e:
+                logging.getLogger("animica.rpc.deps").warning(
+                    f"Failed to start P2P service: {e}", exc_info=True
+                )
+        
         return _CTX
 
 
@@ -638,6 +653,16 @@ async def shutdown() -> None:
     with _CTX_LOCK:
         global _CTX
         if _CTX is not None:
+            # Stop P2P service before closing other resources
+            if _CTX.p2p_service is not None:
+                try:
+                    await _CTX.p2p_service.stop()
+                    logging.getLogger("animica.rpc.deps").info("P2P service stopped")
+                except Exception as e:
+                    logging.getLogger("animica.rpc.deps").warning(
+                        f"Failed to stop P2P service: {e}", exc_info=True
+                    )
+            
             try:
                 _CTX.close()
             finally:

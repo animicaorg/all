@@ -48,25 +48,25 @@ async def _safe_call_method(
     return result
 
 
-def _get_connection_manager() -> t.Any | None:
+def _get_p2p_service() -> t.Any | None:
     """
-    Attempt to retrieve the global P2P ConnectionManager instance.
+    Attempt to retrieve the global P2P service instance.
     
     Returns None if P2P service is not running or not available.
     This allows the RPC server to work even without P2P enabled.
     """
-    global _p2p_service, _connection_manager
+    global _p2p_service
     
-    if _connection_manager is not None:
-        return _connection_manager
+    if _p2p_service is not None:
+        return _p2p_service
     
     # Try the global P2P service registry
     try:
         import p2p
-        if hasattr(p2p, "get_connection_manager"):
-            _connection_manager = p2p.get_connection_manager()
-            if _connection_manager is not None:
-                return _connection_manager
+        if hasattr(p2p, "get_service"):
+            _p2p_service = p2p.get_service()
+            if _p2p_service is not None:
+                return _p2p_service
     except Exception:
         pass
     
@@ -76,12 +76,41 @@ def _get_connection_manager() -> t.Any | None:
         ctx = deps.get_ctx()
         if hasattr(ctx, "p2p_service") and ctx.p2p_service is not None:
             _p2p_service = ctx.p2p_service
-            if hasattr(_p2p_service, "connmgr"):
-                _connection_manager = _p2p_service.connmgr
+            return _p2p_service
+    except Exception:
+        pass
+    
+    return None
+
+
+def _get_connection_manager() -> t.Any | None:
+    """
+    Attempt to retrieve the P2P ConnectionManager instance.
+    
+    First tries to get the full NodeService's ConnectionManager,
+    then falls back to the lightweight P2PService which uses a different structure.
+    
+    Returns None if P2P service is not running or not available.
+    This allows the RPC server to work even without P2P enabled.
+    """
+    global _connection_manager
+    
+    if _connection_manager is not None:
+        return _connection_manager
+    
+    # Try the global P2P service registry (for full NodeService with connmgr)
+    try:
+        import p2p
+        if hasattr(p2p, "get_connection_manager"):
+            _connection_manager = p2p.get_connection_manager()
+            if _connection_manager is not None:
                 return _connection_manager
     except Exception:
         pass
     
+    # For lightweight P2PService, we don't have a separate ConnectionManager
+    # The service itself manages connections via _peers dict
+    # RPC methods will use the service's peers property directly
     return None
 
 
@@ -182,57 +211,86 @@ async def list_peers() -> list[dict[str, t.Any]]:
         >>> result[0]["id"]
         "12D3KooWPeer..."
     """
-    cm = _get_connection_manager()
-    if cm is None:
-        # Try to get peers from persistent store via P2P service
+    # First try to get the P2P service directly
+    p2p_svc = _get_p2p_service()
+    
+    # If we have a P2PService with a peers property, use it
+    if p2p_svc is not None and hasattr(p2p_svc, "peers"):
         try:
-            from rpc import deps
-            ctx = deps.get_ctx()
-            if hasattr(ctx, "p2p_service") and ctx.p2p_service is not None:
-                p2p_svc = ctx.p2p_service
-                # Check if P2PService has a peerstore attribute
-                if hasattr(p2p_svc, "peerstore"):
-                    from p2p.peer.peerstore import PeerStatus
-                    known_peers = p2p_svc.peerstore.list_known(
-                        limit=100, 
-                        status_in=[PeerStatus.CONNECTED]
-                    )
-                    result = []
-                    for peer in known_peers:
-                        peer_dict = {
-                            "id": peer.peer_id,
-                            "addr": peer.address,
-                            "status": peer.status.value if hasattr(peer.status, 'value') else str(peer.status),
-                            "lastSeen": peer.last_seen_s if hasattr(peer, 'last_seen_s') else None,
-                        }
-                        # Include direction if available
-                        if hasattr(peer, 'direction') and peer.direction:
-                            peer_dict["direction"] = peer.direction
-                        result.append(peer_dict)
-                    log.debug("Listed %d peers from persistent store", len(result))
-                    return result
+            peers_dict = p2p_svc.peers  # Returns Dict[str, Dict[str, Any]]
+            result = []
+            for remote_addr, peer_info in peers_dict.items():
+                peer_dict = {
+                    "id": peer_info.get("peer_id", "unknown"),
+                    "addr": str(peer_info.get("remote", remote_addr)),
+                    "status": "connected" if peer_info.get("connected", True) else "disconnected",
+                }
+                # Add optional fields if available
+                if "direction" in peer_info:
+                    peer_dict["direction"] = peer_info["direction"]
+                if "last_seen" in peer_info:
+                    peer_dict["lastSeen"] = peer_info["last_seen"]
+                if "height" in peer_info:
+                    peer_dict["height"] = peer_info["height"]
+                if "info" in peer_info:
+                    peer_dict["meta"] = peer_info["info"]
+                result.append(peer_dict)
+            
+            log.debug("Listed %d peers from P2P service", len(result))
+            return result
         except Exception as e:
-            log.debug("Failed to list peers from store: %s", e)
-        
-        log.debug("P2P ConnectionManager not available, returning empty peer list")
-        return []
+            log.debug("Failed to get peers from P2P service: %s", e)
     
+    # Try the ConnectionManager (for full NodeService)
+    cm = _get_connection_manager()
+    if cm is not None:
+        try:
+            # ConnectionManager.list_peers() returns List[Peer]
+            peers = await _safe_call_method(cm, "list_peers")
+            if peers is None:
+                peers = []
+            
+            # Convert to JSON-serializable format
+            result = [_peer_to_dict(peer) for peer in peers]
+            
+            log.debug("Listed %d peers from ConnectionManager", len(result))
+            return result
+        
+        except Exception as e:
+            log.error("Failed to list peers from ConnectionManager: %s", e, exc_info=True)
+    
+    # Fall back to persistent store if available
     try:
-        # ConnectionManager.list_peers() returns List[Peer]
-        peers = await _safe_call_method(cm, "list_peers")
-        if peers is None:
-            peers = []
-        
-        # Convert to JSON-serializable format
-        result = [_peer_to_dict(peer) for peer in peers]
-        
-        log.debug("Listed %d peers", len(result))
-        return result
-    
+        from rpc import deps
+        ctx = deps.get_ctx()
+        if hasattr(ctx, "p2p_service") and ctx.p2p_service is not None:
+            p2p_svc = ctx.p2p_service
+            # Check if P2PService has a peerstore attribute
+            if hasattr(p2p_svc, "peerstore"):
+                from p2p.peer.peerstore import PeerStatus
+                known_peers = p2p_svc.peerstore.list_known(
+                    limit=100, 
+                    status_in=[PeerStatus.CONNECTED]
+                )
+                result = []
+                for peer in known_peers:
+                    peer_dict = {
+                        "id": peer.peer_id,
+                        "addr": peer.address,
+                        "status": peer.status.value if hasattr(peer.status, 'value') else str(peer.status),
+                        "lastSeen": peer.last_seen_s if hasattr(peer, 'last_seen_s') else None,
+                    }
+                    # Include direction if available
+                    if hasattr(peer, 'direction') and peer.direction:
+                        peer_dict["direction"] = peer.direction
+                    result.append(peer_dict)
+                log.debug("Listed %d peers from persistent store", len(result))
+                return result
     except Exception as e:
-        log.error("Failed to list peers: %s", e, exc_info=True)
-        # Return empty list instead of failing - allows graceful degradation
-        return []
+        log.debug("Failed to list peers from store: %s", e)
+    
+    log.debug("P2P service not available, returning empty peer list")
+    return []
 
 
 @method("p2p.addPeer", desc="Add a peer by address")
@@ -252,6 +310,23 @@ async def add_peer(address: str) -> dict[str, t.Any]:
         >>> await add_peer("example.com:30303")
         {"success": True, "peer": {...}}
     """
+    # First try P2PService.dial() method
+    p2p_svc = _get_p2p_service()
+    if p2p_svc is not None and hasattr(p2p_svc, "dial"):
+        try:
+            await p2p_svc.dial(address)
+            return {
+                "success": True,
+                "message": f"Dialing {address}",
+            }
+        except Exception as e:
+            log.error("Failed to dial peer %s: %s", address, e, exc_info=True)
+            return {
+                "success": False,
+                "error": str(e),
+            }
+    
+    # Try ConnectionManager (for full NodeService)
     cm = _get_connection_manager()
     if cm is None:
         return {
