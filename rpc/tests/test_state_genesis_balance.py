@@ -49,7 +49,7 @@ def test_genesis_db():
                     "balance": "1000000000000000",
                 },
                 {
-                    "address": "anim1zqp2nx50902d7jgrzk0ep798r2vhpgt3rhtmn89gadzdgyhf9hmln7g9e4xt9",
+                    "address": "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz",
                     "nonce": 0,
                     "balance": "1000000000000000",
                 },
@@ -73,7 +73,7 @@ def test_genesis_db():
             "chain_id": 9999,
             "balances": {
                 "system:treasury": 1000000000000000,
-                "anim1zqp2nx50902d7jgrzk0ep798r2vhpgt3rhtmn89gadzdgyhf9hmln7g9e4xt9": 1000000000000000,
+                "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz": 1000000000000000,
             },
         }
 
@@ -91,7 +91,7 @@ def test_state_db_direct_access(test_genesis_db):
     ), f"System address balance mismatch: {sys_balance}"
 
     # Test bech32 address
-    bech_addr = "anim1zqp2nx50902d7jgrzk0ep798r2vhpgt3rhtmn89gadzdgyhf9hmln7g9e4xt9"
+    bech_addr = "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz"
     bech_addr_bytes = address_to_bytes(bech_addr)
     bech_balance = state.get_balance(bech_addr_bytes)
     assert (
@@ -122,7 +122,7 @@ def test_rpc_state_service_get_balance(test_genesis_db):
         ), f"RPC service returned wrong balance for system address: {sys_balance}"
 
         # Test bech32 address
-        bech_addr = "anim1zqp2nx50902d7jgrzk0ep798r2vhpgt3rhtmn89gadzdgyhf9hmln7g9e4xt9"
+        bech_addr = "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz"
         bech_balance = get_balance(bech_addr)
         assert (
             bech_balance == test_genesis_db["balances"][bech_addr]
@@ -161,7 +161,7 @@ def test_rpc_method_state_get_balance(test_genesis_db):
         ), f"RPC method returned wrong balance for system address: {sys_result} ({sys_balance_int})"
 
         # Test bech32 address
-        bech_addr = "anim1zqp2nx50902d7jgrzk0ep798r2vhpgt3rhtmn89gadzdgyhf9hmln7g9e4xt9"
+        bech_addr = "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz"
         bech_result = state_get_balance(bech_addr)
         bech_balance_int = int(bech_result, 16)
         assert (
@@ -194,7 +194,7 @@ def test_address_encoding_consistency():
     assert len(sys_bytes) == 15, f"System address length mismatch"
 
     # Bech32 address should be decoded to payload (34 bytes: alg_id + digest)
-    bech_addr = "anim1zqp2nx50902d7jgrzk0ep798r2vhpgt3rhtmn89gadzdgyhf9hmln7g9e4xt9"
+    bech_addr = "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz"
     bech_bytes = address_to_bytes(bech_addr)
     assert len(bech_bytes) == 34, f"Bech32 payload should be 34 bytes, got {len(bech_bytes)}"
 
