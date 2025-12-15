@@ -1115,27 +1115,20 @@ def _execute_transactions(
             receipts.append({"status": 0, "gasUsed": 0, "logs": []})
             continue
 
-        # Normalize sender to bytes
-        sender_bytes: Optional[bytes] = None
-        if isinstance(sender, (bytes, bytearray)):
-            sender_bytes = bytes(sender)
-        elif isinstance(sender, str) and sender.startswith("0x"):
-            try:
-                sender_bytes = bytes.fromhex(sender[2:])
-            except ValueError:
-                # Invalid hex string
-                sender_bytes = None
-        elif isinstance(sender, str):
-            # If someone mistakenly stored bech32, we cannot decode here; skip
-            sender_bytes = None
-
-        if sender_bytes is None:
-            logger.warning(f"Transaction {idx} sender not bytes/0x; skipping")
+        # Normalize sender to bytes (handles bech32, hex, and raw bytes)
+        # Use _as_bytes32_addr for comprehensive address normalization
+        try:
+            sender_bytes = _as_bytes32_addr(sender)
+        except Exception as e:
+            logger.warning(f"Transaction {idx} sender normalization failed: {e}")
             receipts.append({"status": 0, "gasUsed": 0, "logs": []})
             continue
 
-        # Pad/truncate to address length (use _as_bytes32_addr for consistency)
-        sender_bytes = _as_bytes32_addr(sender_bytes)
+        # Validate sender is not zero address
+        if sender_bytes == ZERO32 or not any(sender_bytes):
+            logger.warning(f"Transaction {idx} has zero/invalid sender address; skipping")
+            receipts.append({"status": 0, "gasUsed": 0, "logs": []})
+            continue
 
         try:
             # Get recipient address for logging
