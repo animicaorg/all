@@ -1,7 +1,18 @@
 {
   "chain_id": "animica:1337",
-  "generated_at": "2025-10-03T00:00:00Z",
+  "generated_at": "2025-12-15T00:00:00Z",
   "seeds": [
+    {
+      "peer_id": "devnet-primary-1",
+      "multiaddrs": [
+        "/dns4/devnet.animica.org/udp/443/quic-v1",
+        "/dns4/devnet.animica.org/tcp/30333",
+        "/ip4/144.126.133.21/udp/443/quic-v1",
+        "/ip4/144.126.133.21/tcp/30333"
+      ],
+      "region": "primary",
+      "comment": "Primary Animica devnet seed - DNS with IP fallback"
+    },
     {
       "peer_id": "12D3KooWB8mX3o2cGxYvQ8rGg2G5LxqWkR9u1kJt9YpJr9cZk9dA",
       "multiaddrs": [

@@ -221,6 +221,43 @@ Local profile defaults (devnet/testnet/mainnet)
   preview the comma-separated seed list and pre-fill `~/.animica/p2p/peers.json`.
 - `ops/run.sh --profile <profile> node` automatically wires these defaults on startup.
 
+Default seed configuration
+--------------------------
+The P2P stack automatically selects seeds based on the network (chain_id):
+
+**Network-specific domains:**
+- Mainnet (chain_id=1): `mainnet.animica.org`
+- Testnet (chain_id=2): `testnet.animica.org`
+- Devnet (chain_id=1337): `devnet.animica.org`
+
+**Fallback IP:** `144.126.133.21`
+- Used when DNS resolution fails
+- Always tried for all networks
+
+**Ports:**
+- QUIC (preferred): UDP 443
+- TCP (fallback): 30333
+
+**Environment variables:**
+- `ANIMICA_P2P_SEEDS` - Comma-separated list of seed addresses (overrides defaults)
+- `ANIMICA_P2P_NETWORK` - Network name (mainnet/testnet/devnet) to auto-select seeds
+- `ANIMICA_P2P_CHAIN_ID` - Chain ID to select network-specific seeds
+
+**Example usage:**
+```bash
+# Use mainnet seeds
+export ANIMICA_P2P_NETWORK=mainnet
+animica node up
+
+# Use testnet seeds  
+export ANIMICA_P2P_NETWORK=testnet
+animica node up
+
+# Custom seeds (overrides defaults)
+export ANIMICA_P2P_SEEDS="/ip4/1.2.3.4/tcp/30333,/dns4/custom.seed.com/udp/443/quic-v1"
+animica node up
+```
+
 ⸻
 
 FAQ

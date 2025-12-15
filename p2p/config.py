@@ -44,7 +44,38 @@ from .constants import MAX_OUTBOUND_PEERS as CONST_MAX_OUTBOUND
 from .constants import MAX_PEERS as CONST_MAX_PEERS
 from .constants import PROTOCOL_ID
 
+# Default fallback seed (legacy)
 DEFAULT_SEEDS: Final[tuple[str, ...]] = ("/dns4/seed.animica.org/tcp/9000",)
+
+# Network-specific seeds: domain names + IP fallback
+# Primary IP: 144.126.133.21 (used as fallback when DNS fails)
+DEFAULT_SEEDS_BY_NETWORK: Final[dict[int, tuple[str, ...]]] = {
+    1: (  # Mainnet
+        "/dns4/mainnet.animica.org/udp/443/quic-v1",
+        "/dns4/mainnet.animica.org/tcp/30333",
+        "/ip4/144.126.133.21/udp/443/quic-v1",
+        "/ip4/144.126.133.21/tcp/30333",
+    ),
+    2: (  # Testnet
+        "/dns4/testnet.animica.org/udp/443/quic-v1",
+        "/dns4/testnet.animica.org/tcp/30333",
+        "/ip4/144.126.133.21/udp/443/quic-v1",
+        "/ip4/144.126.133.21/tcp/30333",
+    ),
+    1337: (  # Devnet
+        "/dns4/devnet.animica.org/udp/443/quic-v1",
+        "/dns4/devnet.animica.org/tcp/30333",
+        "/ip4/144.126.133.21/udp/443/quic-v1",
+        "/ip4/144.126.133.21/tcp/30333",
+    ),
+}
+
+# Network name to chain_id mapping (for ANIMICA_P2P_NETWORK env var)
+NETWORK_NAME_TO_CHAIN_ID: Final[dict[str, int]] = {
+    "mainnet": 1,
+    "testnet": 2,
+    "devnet": 1337,
+}
 
 
 # ---------- parsing helpers ----------------------------------------------------
@@ -82,12 +113,35 @@ def _csv(value: str | None) -> list[str]:
     return [p for p in parts if p]
 
 
-def _load_seeds_from_env() -> tuple[str, ...]:
+def _load_seeds_from_env(chain_id: int | None = None) -> tuple[str, ...]:
+    """
+    Load seeds from environment variables or use network-specific defaults.
+    
+    Priority:
+    1. ANIMICA_P2P_SEEDS (explicit seed list)
+    2. ANIMICA_P2P_NETWORK (network name: mainnet/testnet/devnet)
+    3. chain_id parameter (use network-specific seeds)
+    4. DEFAULT_SEEDS (legacy fallback)
+    """
+    # Check for explicit seed list
     raw = os.getenv("ANIMICA_P2P_SEEDS")
-    if raw is None:
-        return DEFAULT_SEEDS
-    parsed = _csv(raw)
-    return tuple(_validate_advertised_addrs(parsed))
+    if raw is not None:
+        parsed = _csv(raw)
+        return tuple(_validate_advertised_addrs(parsed))
+    
+    # Check for network name env var
+    network_name = os.getenv("ANIMICA_P2P_NETWORK")
+    if network_name:
+        network_name = network_name.lower().strip()
+        if network_name in NETWORK_NAME_TO_CHAIN_ID:
+            chain_id = NETWORK_NAME_TO_CHAIN_ID[network_name]
+    
+    # Use network-specific seeds if chain_id is available
+    if chain_id is not None and chain_id in DEFAULT_SEEDS_BY_NETWORK:
+        return DEFAULT_SEEDS_BY_NETWORK[chain_id]
+    
+    # Legacy fallback
+    return DEFAULT_SEEDS
 
 
 def _expanduser(path: str | None) -> str | None:
@@ -249,7 +303,9 @@ def load_config() -> P2PConfig:
     advertised_addrs = tuple(
         _validate_advertised_addrs(_csv(_getenv("ANIMICA_P2P_ADVERTISED_ADDRS")))
     )
-    seeds = _load_seeds_from_env()
+    # Try to get chain_id for network-specific seeds (best effort)
+    chain_id = _getenv_int("ANIMICA_P2P_CHAIN_ID", 0) or None
+    seeds = _load_seeds_from_env(chain_id)
 
     max_peers = _getenv_int("ANIMICA_P2P_MAX_PEERS", CONST_MAX_PEERS)
     max_outbound = _getenv_int("ANIMICA_P2P_MAX_OUTBOUND", CONST_MAX_OUTBOUND)
