@@ -1388,32 +1388,5 @@ def tx_get_transaction_by_hash(txHash: str) -> t.Optional[dict]:
     return None
 
 
-@method(
-    "tx.getTransactionReceipt",
-    desc="Get transaction receipt by hash",
-    aliases=("tx_getTransactionReceipt", "tx.getReceipt", "tx_getReceipt"),
-)
-def tx_get_transaction_receipt(txHash: str) -> t.Optional[dict]:
-    """
-    Retrieve the receipt for a transaction by its hash.
-    
-    Returns None if the transaction is still pending or not found.
-    Returns a receipt object if the transaction has been included in a block.
-    
-    Receipt structure:
-    {
-        "transactionHash": "0x...",
-        "blockHash": "0x...",
-        "blockNumber": int,
-        "transactionIndex": int,
-        "from": "anim1...",
-        "to": "anim1..." or null,
-        "gasUsed": int,
-        "status": int (1 for success, 0 for failure),
-        "logs": [...],
-        "logsBloom": "0x..."
-    }
-    """
-    # Delegate to the full receipt.py implementation which handles all the lookup logic
-    from rpc.methods.receipt import tx_get_transaction_receipt as _receipt_impl
-    return _receipt_impl(txHash)
+# NOTE: tx.getTransactionReceipt is registered in rpc/methods/receipt.py
+# to avoid duplicate registration warnings. See receipt.py for implementation.
