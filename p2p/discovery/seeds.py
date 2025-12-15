@@ -137,6 +137,27 @@ class SeedBundle:
     fetched_at: float = field(default_factory=time.time)
 
 
+# Embedded fallback seeds - always available even if DNS fails
+# Primary seed IP: 144.126.133.21
+EMBEDDED_FALLBACK_SEEDS: List[str] = [
+    "quic://144.126.133.21:443",
+    "tcp://144.126.133.21:30333",
+]
+
+# Network-specific DNS seeds (for TXT record discovery)
+NETWORK_DNS_SEEDS: Dict[int, str] = {
+    1: "_p2p.mainnet.animica.org",      # Mainnet
+    2: "_p2p.testnet.animica.org",      # Testnet
+    1337: "_p2p.devnet.animica.org",    # Devnet
+}
+
+# Network-specific HTTPS seeds (for JSON discovery)
+NETWORK_HTTPS_SEEDS: Dict[int, str] = {
+    1: "https://seeds.mainnet.animica.org/seeds.json",
+    2: "https://seeds.testnet.animica.org/seeds.json",
+    1337: "https://seeds.devnet.animica.org/seeds.json",
+}
+
 _VALID_SCHEMES = {"tcp", "quic", "ws", "wss", "animica"}
 
 _ADDR_RE = re.compile(
@@ -347,9 +368,17 @@ async def discover_all(
     https_urls: Sequence[str] = (),
     static_addrs: Sequence[str] = (),
     resolve: bool = True,
+    include_fallbacks: bool = True,
 ) -> SeedBundle:
     """
     Run discovery across DNS, HTTPS, and static lists; merge & dedupe.
+    
+    Args:
+        dns_names: DNS TXT record names to query
+        https_urls: HTTPS JSON URLs to fetch
+        static_addrs: Static seed addresses
+        resolve: Whether to resolve hostnames to IPs
+        include_fallbacks: Whether to include embedded fallback seeds (default: True)
     """
     bundles: List[SeedBundle] = []
 
@@ -370,6 +399,13 @@ async def discover_all(
     # Static
     if static_addrs:
         bundles.append(discover_from_static(static_addrs))
+    
+    # Add embedded fallback seeds if enabled and no viable seeds found
+    # Check if any bundle has endpoints (efficient early-exit)
+    if include_fallbacks:
+        has_any_endpoints = any(len(b.endpoints) > 0 for b in bundles)
+        if not has_any_endpoints:
+            bundles.append(discover_from_static(EMBEDDED_FALLBACK_SEEDS))
 
     # Merge
     endpoints: List[SeedEndpoint] = []
@@ -402,8 +438,39 @@ def discover_all_sync(
     https_urls: Sequence[str] = (),
     static_addrs: Sequence[str] = (),
     resolve: bool = True,
+    include_fallbacks: bool = True,
 ) -> SeedBundle:
-    return asyncio.run(discover_all(dns_names, https_urls, static_addrs, resolve))
+    return asyncio.run(discover_all(dns_names, https_urls, static_addrs, resolve, include_fallbacks))
+
+
+async def discover_for_network(
+    chain_id: int,
+    resolve: bool = True,
+    include_fallbacks: bool = True,
+) -> SeedBundle:
+    """
+    Discover seeds for a specific network (chain_id).
+    
+    Tries DNS and HTTPS discovery for the network, falling back to embedded seeds.
+    
+    Args:
+        chain_id: Network chain ID (1=mainnet, 2=testnet, 1337=devnet)
+        resolve: Whether to resolve hostnames to IPs
+        include_fallbacks: Whether to include embedded fallback seeds
+    
+    Returns:
+        SeedBundle with discovered endpoints
+    """
+    dns_names = [NETWORK_DNS_SEEDS[chain_id]] if chain_id in NETWORK_DNS_SEEDS else []
+    https_urls = [NETWORK_HTTPS_SEEDS[chain_id]] if chain_id in NETWORK_HTTPS_SEEDS else []
+    
+    return await discover_all(
+        dns_names=dns_names,
+        https_urls=https_urls,
+        static_addrs=[],
+        resolve=resolve,
+        include_fallbacks=include_fallbacks,
+    )
 
 
 # ----------------------------
