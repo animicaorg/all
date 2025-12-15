@@ -281,7 +281,7 @@ def test_list_peers_fallback_to_json_store(monkeypatch: Any, tmp_path: Any) -> N
     
     result = runner.invoke(peer.app, ["list", "--store", str(store_path)])
     assert result.exit_code == 0
-    assert "Connected Peers: 2" in result.output
+    assert "Known Peers: 2" in result.output  # Changed from "Connected Peers" to "Known Peers"
     assert "from local peer store" in result.output
     assert "peer123" in result.output
     assert "peer456" in result.output
@@ -322,7 +322,7 @@ def test_list_peers_fallback_to_json_store_verbose(monkeypatch: Any, tmp_path: A
     
     result = runner.invoke(peer.app, ["list", "--store", str(store_path), "--verbose"])
     assert result.exit_code == 0
-    assert "Connected Peers: 1" in result.output
+    assert "Known Peers: 1" in result.output  # Changed from "Connected Peers" to "Known Peers"
     assert "from local peer store" in result.output
     # Check for JSON output
     assert '"peer_id": "peer789"' in result.output or '"peer_id":"peer789"' in result.output
@@ -353,7 +353,7 @@ def test_list_peers_fallback_empty_store(monkeypatch: Any, tmp_path: Any) -> Non
     
     result = runner.invoke(peer.app, ["list", "--store", str(store_path)])
     assert result.exit_code == 0
-    assert "No peers connected" in result.output
+    assert "No known peers in local peer store" in result.output  # Changed to reflect new message
 
 
 @respx.mock
@@ -494,7 +494,7 @@ def test_list_peers_fallback_to_sqlite_store(monkeypatch: Any, tmp_path: Any) ->
     # in the same directory, which is how it finds our SQLite database
     result = runner.invoke(peer.app, ["list", "--store", str(tmp_path / "peers.json")])
     assert result.exit_code == 0
-    assert "Connected Peers: 1" in result.output
+    assert "Known Peers: 1" in result.output  # Changed from "Connected Peers" to "Known Peers"
     assert "from local peer store" in result.output
     assert "db_peer1" in result.output
 
@@ -793,3 +793,181 @@ def test_generate_peer_id_extracts_from_multiaddr() -> None:
     multiaddr_ipfs = "/ip4/10.0.0.1/tcp/42000/ipfs/IpfsPeerId456"
     peer_id_ipfs = _generate_peer_id(multiaddr_ipfs)
     assert peer_id_ipfs == "IpfsPeerId456"
+
+
+# ==================== Tests for Issue 1: Better messaging for local store peers ====================
+
+
+@respx.mock
+def test_list_peers_known_peers_message(monkeypatch: Any, tmp_path: Any) -> None:
+    """Test that list shows 'Known Peers' when reading from store."""
+    
+    rpc_url = "http://localhost:9999/rpc"
+    monkeypatch.setenv("ANIMICA_RPC_URL", rpc_url)
+    
+    # Create a test peer store with disconnected peers
+    store_path = tmp_path / "peers.json"
+    peers_data = {
+        "peers": [
+            {
+                "peer_id": "peer_abc123",
+                "addrs": ["5.189.152.183:30333"],
+                "score": 0.0,
+                "last_seen": 1765836913.9271102,
+                "connected": False,
+            }
+        ]
+    }
+    store_path.write_text(json.dumps(peers_data))
+    
+    # Mock RPC to fail
+    respx.post(rpc_url).mock(
+        return_value=httpx.Response(
+            200,
+            json={"jsonrpc": "2.0", "id": 1, "error": {"code": -32601, "message": "Method not found"}},
+        )
+    )
+    
+    result = runner.invoke(peer.app, ["list", "--store", str(store_path)])
+    assert result.exit_code == 0
+    assert "Known Peers: 1" in result.output
+    assert "from local peer store" in result.output
+    assert "peer_abc123" in result.output
+    assert "disconnected" in result.output.lower()
+
+
+@respx.mock
+def test_list_peers_no_known_peers_message(monkeypatch: Any, tmp_path: Any) -> None:
+    """Test that list shows 'No known peers' when store is empty."""
+    
+    rpc_url = "http://localhost:9999/rpc"
+    monkeypatch.setenv("ANIMICA_RPC_URL", rpc_url)
+    
+    # Create empty store
+    store_path = tmp_path / "peers.json"
+    peers_data = {"peers": []}
+    store_path.write_text(json.dumps(peers_data))
+    
+    # Mock RPC to fail
+    respx.post(rpc_url).mock(
+        return_value=httpx.Response(
+            200,
+            json={"jsonrpc": "2.0", "id": 1, "error": {"code": -32601, "message": "Method not found"}},
+        )
+    )
+    
+    result = runner.invoke(peer.app, ["list", "--store", str(store_path)])
+    assert result.exit_code == 0
+    assert "No known peers in local peer store" in result.output
+
+
+# ==================== Tests for Issue 2: Port auto-detection ====================
+
+
+def test_parse_address_host_port() -> None:
+    """Test parsing host:port format."""
+    from animica.cli.peer import _parse_address
+    
+    host, port = _parse_address("192.168.1.1:30303")
+    assert host == "192.168.1.1"
+    assert port == 30303
+
+
+def test_parse_address_host_only() -> None:
+    """Test parsing host without port."""
+    from animica.cli.peer import _parse_address
+    
+    host, port = _parse_address("144.126.133.21")
+    assert host == "144.126.133.21"
+    assert port is None
+
+
+def test_parse_address_multiaddr() -> None:
+    """Test parsing multiaddr format."""
+    from animica.cli.peer import _parse_address
+    
+    host, port = _parse_address("/ip4/10.0.0.1/tcp/42000/p2p/QmPeer")
+    assert host == "10.0.0.1"
+    assert port == 42000
+
+
+@respx.mock
+def test_add_peer_with_port_auto_detection(monkeypatch: Any, tmp_path: Any) -> None:
+    """Test that add_peer auto-detects port when not specified."""
+    
+    rpc_url = "http://localhost:9999/rpc"
+    monkeypatch.setenv("ANIMICA_RPC_URL", rpc_url)
+    
+    store_path = tmp_path / "peers.json"
+    
+    # Mock RPC to succeed
+    respx.post(rpc_url).mock(
+        return_value=httpx.Response(
+            200,
+            json={"jsonrpc": "2.0", "id": 1, "result": True},
+        )
+    )
+    
+    # Add peer without port - should default to first port (30333)
+    result = runner.invoke(peer.app, ["add", "192.168.1.1", "--store", str(store_path)])
+    assert result.exit_code == 0
+    assert "Using default port 30333" in result.output
+    assert "Successfully added peer" in result.output
+    
+    # Verify peer was written with port
+    with store_path.open("r") as f:
+        data = json.load(f)
+    peers = data.get("peers", [])
+    assert len(peers) == 1
+    assert "192.168.1.1:30333" in peers[0]["addrs"]
+
+
+# ==================== Tests for bootstrap command ====================
+
+
+@respx.mock
+def test_bootstrap_mainnet(monkeypatch: Any, tmp_path: Any) -> None:
+    """Test bootstrap command for mainnet."""
+    
+    rpc_url = "http://localhost:9999/rpc"
+    monkeypatch.setenv("ANIMICA_RPC_URL", rpc_url)
+    monkeypatch.setenv("ANIMICA_NETWORK", "mainnet")
+    
+    store_path = tmp_path / "peers.json"
+    
+    # Mock RPC to succeed
+    respx.post(rpc_url).mock(
+        return_value=httpx.Response(
+            200,
+            json={"jsonrpc": "2.0", "id": 1, "result": True},
+        )
+    )
+    
+    result = runner.invoke(peer.app, ["bootstrap", "--store", str(store_path)])
+    assert result.exit_code == 0
+    assert "mainnet seed nodes" in result.output.lower()
+    assert "144.126.133.21:30333" in result.output
+    assert "Successfully added" in result.output
+    
+    # Verify seed was written to store
+    with store_path.open("r") as f:
+        data = json.load(f)
+    peers = data.get("peers", [])
+    assert len(peers) >= 1
+    # Check that at least one peer has the mainnet seed address
+    addrs = [addr for p in peers for addr in p.get("addrs", [])]
+    assert "144.126.133.21:30333" in addrs
+
+
+@respx.mock
+def test_bootstrap_no_seeds(monkeypatch: Any, tmp_path: Any) -> None:
+    """Test bootstrap command when no seeds are configured."""
+    
+    rpc_url = "http://localhost:9999/rpc"
+    monkeypatch.setenv("ANIMICA_RPC_URL", rpc_url)
+    
+    store_path = tmp_path / "peers.json"
+    
+    result = runner.invoke(peer.app, ["bootstrap", "--network", "devnet", "--store", str(store_path)])
+    assert result.exit_code == 0
+    assert "No seed nodes configured" in result.output
