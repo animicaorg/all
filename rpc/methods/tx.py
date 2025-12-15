@@ -91,6 +91,12 @@ try:
 except Exception:  # pragma: no cover
     _pq_verify = None  # type: ignore
 
+# State service for balance queries (needed for pre-mempool balance validation)
+try:
+    from rpc.state_service import parse_address as _parse_address  # type: ignore
+except Exception:  # pragma: no cover
+    _parse_address = None  # type: ignore
+
 # Bech32m address encoding
 try:
     from pq.py.address import address_from_pubkey as _address_from_pubkey  # type: ignore
@@ -767,6 +773,17 @@ def _validate_sufficient_balance(obj: dict) -> None:
     """
     Validate that the sender has sufficient balance to cover the transaction value + gas fees.
     
+    This validation is performed before adding the transaction to the mempool. It is skipped
+    in the following scenarios:
+    - Sender address cannot be determined from the transaction signature
+    - State DB is not available in the RPC context
+    - Address parsing fails
+    - Balance query methods are not available on state_db
+    
+    If balance check fails due to unexpected errors (not InsufficientFunds), the validation
+    is skipped and the transaction proceeds. This ensures that transient issues don't block
+    valid transactions.
+    
     Raises:
         rpc_errors.InsufficientFunds: If sender balance is insufficient
     """
@@ -805,9 +822,12 @@ def _validate_sufficient_balance(obj: dict) -> None:
         
         # Convert bech32 address to 32-byte digest for state lookup
         # sender_addr is already a bech32 address string from _extract_sender_address
+        if _parse_address is None:
+            log.debug("_validate_sufficient_balance: parse_address not available, skipping")
+            return
+        
         try:
-            from rpc.state_service import parse_address
-            sender_bytes = parse_address(sender_addr)
+            sender_bytes = _parse_address(sender_addr)
         except Exception as e:
             log.debug("_validate_sufficient_balance: failed to parse sender address %s: %s", sender_addr, e)
             return
