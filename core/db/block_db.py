@@ -314,6 +314,36 @@ class BlockDB:
         receipt = block.receipts[idx]
         return (height, idx, block_hash, receipt)
 
+    def get_transaction_by_hash(self, tx_hash: bytes) -> Optional[Tuple[int, int, bytes, Any]]:
+        """
+        Look up a transaction by hash.
+        
+        Uses the receipt index (PFX_RXI) to find the transaction location, then
+        fetches the block to get the actual transaction object.
+        
+        Returns:
+            Tuple of (height, tx_index, block_hash, tx_obj) if found, None otherwise.
+            The tx_obj is the Tx instance from the block.
+        """
+        loc = self.get_receipt_loc_by_hash(tx_hash)
+        if loc is None:
+            return None
+        
+        height = loc["height"]
+        idx = loc["index"]
+        block_hash = loc["block_hash"]
+        
+        # Fetch the block to get the transaction
+        block = self.get_block_by_hash(block_hash)
+        if block is None or block.txs is None:
+            return None
+        
+        if idx >= len(block.txs):
+            return None
+        
+        tx = block.txs[idx]
+        return (height, idx, block_hash, tx)
+
     # --- Iteration over canonical chain ---
 
     def iter_canonical_headers(
