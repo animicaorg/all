@@ -279,6 +279,10 @@ class P2PConfig:
     # Protocol id (ALPN / subprotocol)
     protocol_id: str = PROTOCOL_ID
 
+    # Data directory for persistent storage (peer store, keys, etc.)
+    # Defaults to ~/.animica/p2p/ when loaded via load_config()
+    data_dir: str = field(default_factory=lambda: os.path.expanduser("~/.animica/p2p"))
+
     def to_dict(self) -> dict:
         d = asdict(self)
         # dataclasses with tuples serialize as lists fine; return d directly
@@ -330,6 +334,12 @@ def load_config() -> P2PConfig:
     ws_allow_credentials = _getenv_bool("ANIMICA_P2P_WS_ALLOW_CREDENTIALS", False)
     ws_compression = _getenv_bool("ANIMICA_P2P_WS_COMPRESSION", True)
 
+    # Data directory for persistent storage (defaults to ~/.animica/p2p/)
+    data_dir = _expanduser(_getenv("ANIMICA_P2P_DATA_DIR"))
+    if data_dir is None:
+        # Default to ~/.animica/p2p/ for peer store and other persistent data
+        data_dir = os.path.expanduser("~/.animica/p2p")
+
     # Basic sanity: enforce bounds & non-negative
     if max_outbound < 0:
         max_outbound = 0
@@ -362,6 +372,7 @@ def load_config() -> P2PConfig:
         ws_cors_allowed_origins=ws_cors,
         ws_allow_credentials=ws_allow_credentials,
         ws_compression=ws_compression,
+        data_dir=data_dir,
     )
 
 

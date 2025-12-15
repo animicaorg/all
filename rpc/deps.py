@@ -550,6 +550,39 @@ def build_context(cfg: t.Any | None = None) -> RpcContext:
     else:
         log.info("RPC context ready: no head set yet (genesis will be initialized on first use)")
     
+    # Initialize P2P service if enabled
+    p2p_service = None
+    enable_p2p = os.environ.get("ANIMICA_P2P_ENABLE", "true").lower() in ("1", "true", "yes", "on")
+    if enable_p2p:
+        try:
+            from p2p.node.service import P2PService
+            
+            # Determine peer store path based on network
+            peerstore_path = os.environ.get("ANIMICA_PEER_STORE_PATH")
+            if not peerstore_path:
+                network_name = {1: "mainnet", 2: "testnet", 1337: "devnet"}.get(
+                    cfg_view.chain_id, "custom"
+                )
+                peerstore_path = os.path.expanduser(f"~/.animica/p2p/{network_name}")
+            
+            # Create simple deps object for P2P service
+            class _P2PDeps:
+                def __init__(self, block_db):
+                    self.block_db = block_db
+            
+            p2p_deps = _P2PDeps(bundle.block_db)
+            
+            # Initialize P2P service with persistent peer store
+            p2p_service = P2PService(
+                chain_id=cfg_view.chain_id,
+                deps=p2p_deps,
+                peerstore_path=peerstore_path,
+            )
+            log.info(f"Initialized P2P service with peer store at {peerstore_path}")
+        except Exception as e:
+            log.warning(f"Failed to initialize P2P service: {e}", exc_info=True)
+            p2p_service = None
+    
     return RpcContext(
         cfg=cfg_view,
         params=params,
@@ -558,6 +591,7 @@ def build_context(cfg: t.Any | None = None) -> RpcContext:
         block_db=bundle.block_db,
         tx_index=bundle.tx_index,
         head=head,
+        p2p_service=p2p_service,
     )
 
 

@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import ipaddress
 import logging
+import os
 import signal
 import time
 from dataclasses import dataclass, field
@@ -576,6 +578,7 @@ class P2PService:
         enable_ws: bool = False,
         nat: bool = False,
         deps: Any = None,
+        peerstore_path: str | None = None,
     ) -> None:
         from ..transport.base import ListenConfig
         from ..transport.multiaddr import parse_multiaddr
@@ -601,6 +604,14 @@ class P2PService:
         self._listen_config_cls = ListenConfig
         self._log = logging.getLogger("animica.p2p.service")
 
+        # Initialize persistent peer store
+        if peerstore_path is None:
+            # Default to network-specific directory
+            network_name = {1: "mainnet", 2: "testnet", 1337: "devnet"}.get(chain_id, "custom")
+            peerstore_path = os.path.expanduser(f"~/.animica/p2p/{network_name}")
+        self.peerstore = pstore.PeerStore(peerstore_path)
+        self._log.info(f"Initialized persistent peer store at {peerstore_path}")
+
         # Lazy identify helper (filled on-demand). We intentionally keep the
         # devnet-friendly service light, but still want peers to exchange
         # basic metadata (height, versions, caps) so operators can confirm the
@@ -613,6 +624,7 @@ class P2PService:
                 self._service = service
             @property
             def peer_count(self):
+                # Count both in-memory and persistent peers
                 return len(self._service._peers)
         self.metrics = _Metrics(self)
 
@@ -620,6 +632,15 @@ class P2PService:
         if self._running:
             return
         self._running = True
+        
+        # Load previously known peers from persistent store
+        try:
+            known_peers = self.peerstore.list_known(limit=100)
+            self._log.info(f"Loaded {len(known_peers)} peers from persistent store")
+        except Exception as e:
+            self._log.warning(f"Failed to load peers from store: {e}", exc_info=True)
+            known_peers = []
+        
         # Bind listeners
         for ma in self.listen_addrs:
             parsed = self._parse_multiaddr(ma)
@@ -645,10 +666,26 @@ class P2PService:
             self._dial_tasks.append(
                 self.loop.create_task(self._dial(addr), name=f"dial@{addr}")
             )
+        
+        # Also try to reconnect to previously known peers (best effort)
+        for peer in known_peers[:10]:  # Limit to first 10 to avoid overwhelming
+            if hasattr(peer, 'address') and peer.address:
+                try:
+                    # Parse address and dial
+                    addr_str = peer.address
+                    if addr_str.startswith("/"):
+                        parsed = self._parse_multiaddr(addr_str)
+                        if parsed.transport == "tcp":
+                            addr_str = f"tcp://{parsed.host}:{parsed.port}"
+                    self._dial_tasks.append(
+                        self.loop.create_task(self._dial(addr_str), name=f"redial@{addr_str}")
+                    )
+                except Exception:
+                    pass  # Skip invalid addresses
 
         self._log.info(
             "Started full P2P service",
-            extra={"listen": self.listen_addrs, "seeds": self.seeds},
+            extra={"listen": self.listen_addrs, "seeds": self.seeds, "known_peers": len(known_peers)},
         )
 
     async def stop(self) -> None:
@@ -661,12 +698,19 @@ class P2PService:
             t.cancel()
         if self._dial_tasks:
             await asyncio.gather(*self._dial_tasks, return_exceptions=True)
-        # Close live connections
+        # Close live connections and record disconnections
         for peer in list(self._peers.values()):
             conn = peer.get("conn")
+            peer_id = peer.get("peer_id")
             if conn:
                 with contextlib.suppress(Exception):
                     await conn.close()
+            # Record disconnection in peer store
+            if peer_id:
+                try:
+                    self.peerstore.record_disconnection(peer_id)
+                except Exception:
+                    pass
         with contextlib.suppress(Exception):
             await self._transport.close()
 
@@ -700,13 +744,25 @@ class P2PService:
             or getattr(conn, "remote_addr", None)
             or "unknown"
         )
+        # Generate peer_id from remote address
+        peer_id = f"peer_{hashlib.sha256(str(remote).encode()).hexdigest()[:32]}"
+        
         self._peers[remote] = {
             "remote": remote,
             "connected": True,
             "last_seen": time.time(),
             "conn": conn,
+            "peer_id": peer_id,
         }
-        self._log.info("peer connected", extra={"remote": remote})
+        self._log.info("peer connected", extra={"remote": remote, "peer_id": peer_id})
+
+        # Persist peer to PeerStore
+        try:
+            self.peerstore.add(peer_id=peer_id, addrs=[str(remote)], score=0.0)
+            self.peerstore.record_connection(peer_id)
+            self._log.debug(f"Persisted peer {peer_id} to store")
+        except Exception as e:
+            self._log.warning(f"Failed to persist peer to store: {e}", exc_info=True)
 
         # Best-effort IDENTIFY so peers exchange heights/caps/versions.
         async def _do_identify() -> None:
@@ -733,6 +789,11 @@ class P2PService:
                         "height": info.get("height"),
                     },
                 )
+                # Update peer store with identified info
+                try:
+                    self.peerstore.record_seen(peer_id, str(remote))
+                except Exception:
+                    pass
 
         self.loop.create_task(_do_identify(), name=f"identify@{remote}")
 
