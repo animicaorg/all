@@ -199,12 +199,16 @@ async def list_peers() -> list[dict[str, t.Any]]:
                     )
                     result = []
                     for peer in known_peers:
-                        result.append({
+                        peer_dict = {
                             "id": peer.peer_id,
                             "addr": peer.address,
                             "status": peer.status.value if hasattr(peer.status, 'value') else str(peer.status),
                             "lastSeen": peer.last_seen_s if hasattr(peer, 'last_seen_s') else None,
-                        })
+                        }
+                        # Include direction if available
+                        if hasattr(peer, 'direction') and peer.direction:
+                            peer_dict["direction"] = peer.direction
+                        result.append(peer_dict)
                     log.debug("Listed %d peers from persistent store", len(result))
                     return result
         except Exception as e:
