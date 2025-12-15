@@ -184,6 +184,32 @@ async def list_peers() -> list[dict[str, t.Any]]:
     """
     cm = _get_connection_manager()
     if cm is None:
+        # Try to get peers from persistent store via P2P service
+        try:
+            from rpc import deps
+            ctx = deps.get_ctx()
+            if hasattr(ctx, "p2p_service") and ctx.p2p_service is not None:
+                p2p_svc = ctx.p2p_service
+                # Check if P2PService has a peerstore attribute
+                if hasattr(p2p_svc, "peerstore"):
+                    from p2p.peer.peerstore import PeerStatus
+                    known_peers = p2p_svc.peerstore.list_known(
+                        limit=100, 
+                        status_in=[PeerStatus.CONNECTED]
+                    )
+                    result = []
+                    for peer in known_peers:
+                        result.append({
+                            "id": peer.peer_id,
+                            "addr": peer.address,
+                            "status": peer.status.value if hasattr(peer.status, 'value') else str(peer.status),
+                            "lastSeen": peer.last_seen_s if hasattr(peer, 'last_seen_s') else None,
+                        })
+                    log.debug("Listed %d peers from persistent store", len(result))
+                    return result
+        except Exception as e:
+            log.debug("Failed to list peers from store: %s", e)
+        
         log.debug("P2P ConnectionManager not available, returning empty peer list")
         return []
     
