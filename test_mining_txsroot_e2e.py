@@ -10,6 +10,10 @@ This test simulates the full mining flow:
 Run with: python test_mining_txsroot_e2e.py
 """
 
+# Test constants (dummy signature sizes for Dilithium3)
+DILITHIUM3_PUBKEY_LEN = 1952
+DILITHIUM3_SIG_LEN = 2420
+
 def test_e2e_mining_flow():
     """
     Simulate the full mining flow including receipt indexing.
@@ -35,7 +39,7 @@ def test_e2e_mining_flow():
         payload=TxTransfer(to=b"\x02" * 32, amount=1000, data=b""),
         access_list=(),
     )
-    sig = PqSignature(alg_id=1, pubkey=b"\x03" * 1952, sig=b"\x04" * 2420)
+    sig = PqSignature(alg_id=1, pubkey=b"\x03" * DILITHIUM3_PUBKEY_LEN, sig=b"\x04" * DILITHIUM3_SIG_LEN)
     tx = Tx(unsigned=unsigned, sigs=(sig,))
     
     # Simulate raw CBOR encoding (what sendRawTransaction receives)
@@ -186,7 +190,7 @@ def test_multiple_txs_e2e():
             ),
             access_list=(),
         )
-        sig = PqSignature(alg_id=1, pubkey=b"\x03" * 1952, sig=bytes([4 + i] * 2420))
+        sig = PqSignature(alg_id=1, pubkey=b"\x03" * DILITHIUM3_PUBKEY_LEN, sig=bytes([4 + i] * DILITHIUM3_SIG_LEN))
         tx = Tx(unsigned=unsigned, sigs=(sig,))
         txs.append(tx)
     
