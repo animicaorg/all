@@ -280,7 +280,8 @@ class P2PConfig:
     protocol_id: str = PROTOCOL_ID
 
     # Data directory for persistent storage (peer store, keys, etc.)
-    data_dir: Optional[str] = None  # defaults to ~/.animica/p2p/ if None
+    # Defaults to ~/.animica/p2p/ when loaded via load_config()
+    data_dir: str = field(default_factory=lambda: os.path.expanduser("~/.animica/p2p"))
 
     def to_dict(self) -> dict:
         d = asdict(self)
