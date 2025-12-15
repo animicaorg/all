@@ -1763,34 +1763,24 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
                 extra={"pending_total": original_count, "valid": valid_count, "skipped": skipped_total}
             )
         
-        # Enforce deterministic transaction ordering by sorting by tx_hash (bytes) ascending
-        # This ensures the same set of transactions always produces the same txsRoot,
-        # regardless of mempool iteration order or insertion order.
-        # Canonical rule: sort by tx.hash() bytes (lexicographic order)
-        if txs:
-            try:
-                # Create list of (tx_hash, tx, included_hash_hex) tuples for sorting
-                tx_tuples = list(zip(leaves, txs, included_hashes))
-                # Sort by tx_hash bytes (first element of tuple)
-                tx_tuples_sorted = sorted(tx_tuples, key=lambda t: t[0])
-                # Unpack sorted tuples back into separate lists using zip(*...)
-                leaves, txs, included_hashes = map(list, zip(*tx_tuples_sorted))
-                log.debug(f"Sorted {len(txs)} transactions by tx_hash for deterministic ordering")
-            except (ValueError, TypeError) as e:
-                # Specific exceptions that might occur during sorting
-                log.warning(f"Failed to sort transactions, continuing with original order: {e}")
-            except Exception as e:
-                # Catch-all for unexpected errors; log with more detail
-                log.error(f"Unexpected error during transaction sorting: {e}", exc_info=True)
-        
-        # Compute merkle root and update header
+        # Compute txsRoot using canonical helper (sorts hashes internally)
+        # compute_txs_root will sort tx hashes in ascending lexicographic order
+        # to ensure deterministic txsRoot regardless of input order
         if leaves:
             try:
-                txs_root = merkle_root(leaves)
+                from core.utils.merkle import compute_txs_root
+                txs_root = compute_txs_root(leaves)
                 header_template = replace(header_template, txsRoot=txs_root)
                 log.debug(f"Computed txsRoot from {len(leaves)} tx hashes: {txs_root.hex()[:16]}...")
+                
+                # Sort txs and included_hashes to match the sorted order used in txsRoot
+                # This ensures block.txs array order matches the merkle tree leaf order
+                tx_tuples = list(zip(leaves, txs, included_hashes))
+                tx_tuples_sorted = sorted(tx_tuples, key=lambda t: t[0])
+                leaves, txs, included_hashes = map(list, zip(*tx_tuples_sorted))
+                log.debug(f"Sorted {len(txs)} transactions to match txsRoot leaf order")
             except Exception as e:
-                log.error(f"Failed to compute merkle root from {len(leaves)} leaves: {e}", exc_info=True)
+                log.error(f"Failed to compute txsRoot from {len(leaves)} leaves: {e}", exc_info=True)
                 # Fall back to empty block if merkle root computation fails
                 txs = []
                 included_hashes = []
