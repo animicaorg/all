@@ -33,6 +33,7 @@ params = ctx.params             # dict (subset of spec/params.yaml)
 """
 
 import json
+import logging
 import os
 import re
 import threading
