@@ -84,6 +84,40 @@ def _hex_to_bytes(h: str) -> bytes:
     return bytes.fromhex(h)
 
 
+def _address_to_32_bytes(address: str) -> bytes:
+    """
+    Convert address to canonical 32-byte format for tx bodies.
+    
+    Args:
+        address: Bech32 address (anim1...) or hex address (0x...)
+        
+    Returns:
+        32-byte digest (for bech32) or padded hex bytes
+    """
+    from pq.py.address import decode_address
+    
+    address = address.strip()
+    
+    # Bech32 address → extract 32-byte digest
+    if address.lower().startswith("anim"):
+        rec = decode_address(address)
+        digest = bytes(rec.digest) if isinstance(rec.digest, list) else rec.digest
+        # Return only the 32-byte digest (not alg_id prefix)
+        return digest[:32].ljust(32, b"\x00")
+    
+    # Hex address → decode and pad/truncate to 32 bytes
+    if address.startswith("0x"):
+        address = address[2:]
+    
+    addr_bytes = bytes.fromhex(address)
+    if len(addr_bytes) < 32:
+        addr_bytes = addr_bytes.ljust(32, b"\x00")
+    elif len(addr_bytes) > 32:
+        addr_bytes = addr_bytes[:32]
+    
+    return addr_bytes
+
+
 def _get_chain_id(rpc_url: str) -> int:
     for m in ("chain.getChainId", "chain_id", "net_version"):
         try:
@@ -147,9 +181,13 @@ def _build_tx_body(
 ) -> Dict[str, Any]:
     # Keep keys stable + canonical CBOR in _cbor().
     # IMPORTANT: do not omit fields; node-side canonicalization often assumes presence.
+    # Convert addresses to canonical 32-byte format (digest bytes, not bech32 strings)
+    from_bytes = _address_to_32_bytes(from_addr)
+    to_bytes = _address_to_32_bytes(to_addr)
+    
     return {
-        "to": to_addr,
-        "from": from_addr,
+        "to": to_bytes,
+        "from": from_bytes,
         "value": int(value_base_units),
         "nonce": int(nonce),
         "gasLimit": int(gas_limit),
