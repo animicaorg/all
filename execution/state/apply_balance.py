@@ -18,6 +18,7 @@ methods. All amounts are integers in the smallest unit (e.g. wei-like).
 
 from __future__ import annotations
 
+import typing as t
 from typing import Any, Dict, Optional, Protocol
 
 from ..errors import ExecError
@@ -38,7 +39,33 @@ class BalanceAccess(Protocol):
 
 
 class InsufficientBalance(ExecError):
-    """Raised when a debit would make an account balance negative."""
+    """Raised when a debit would make an account balance negative.
+    
+    Attributes:
+        required: Total amount required (value + fee)
+        available: Current balance
+        shortfall: Difference between required and available
+    """
+    
+    def __init__(
+        self,
+        message: str = "insufficient balance",
+        *,
+        required: int | None = None,
+        available: int | None = None,
+        shortfall: int | None = None,
+        data: dict[str, t.Any] | None = None,
+    ):
+        d: dict[str, t.Any] = {}
+        if data:
+            d.update(data)
+        if required is not None:
+            d.setdefault("required", str(required))
+        if available is not None:
+            d.setdefault("available", str(available))
+        if shortfall is not None:
+            d.setdefault("shortfall", str(shortfall))
+        super().__init__(message=message, code="INSUFFICIENT_BALANCE", data=d or None)
 
 
 class NegativeAmount(ExecError):
@@ -67,7 +94,12 @@ def _safe_add(a: int, b: int) -> int:
 def _safe_sub(a: int, b: int) -> int:
     res = a - b
     if res < 0:
-        raise InsufficientBalance("insufficient balance")
+        raise InsufficientBalance(
+            "insufficient balance",
+            required=b,
+            available=a,
+            shortfall=b - a,
+        )
     return res
 
 

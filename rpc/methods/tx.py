@@ -763,6 +763,85 @@ def _decode_tx(raw: bytes) -> tuple[t.Any, dict]:
     return enriched_obj, enriched_obj
 
 
+def _validate_sufficient_balance(obj: dict) -> None:
+    """
+    Validate that the sender has sufficient balance to cover the transaction value + gas fees.
+    
+    Raises:
+        rpc_errors.InsufficientFunds: If sender balance is insufficient
+    """
+    # Extract transaction fields
+    tx_obj = obj.get("body", obj.get("tx", obj))
+    
+    # Extract sender address (32-byte digest)
+    sender_addr = _extract_sender_address(obj)
+    if sender_addr is None:
+        # If we can't determine sender, skip balance check (signature validation will catch this)
+        log.debug("_validate_sufficient_balance: cannot determine sender address, skipping")
+        return
+    
+    # Extract value and gas parameters
+    value = tx_obj.get("value", 0)
+    gas_limit = tx_obj.get("gasLimit") or tx_obj.get("gas_limit") or tx_obj.get("gas", 0)
+    max_fee = tx_obj.get("maxFee") or tx_obj.get("max_fee") or tx_obj.get("gasPrice") or tx_obj.get("gas_price", 0)
+    
+    # Convert to int
+    value = int(value) if value is not None else 0
+    gas_limit = int(gas_limit) if gas_limit is not None else 0
+    max_fee = int(max_fee) if max_fee is not None else 0
+    
+    # Calculate total required
+    max_gas_cost = gas_limit * max_fee
+    required = value + max_gas_cost
+    
+    # Query sender balance from state
+    try:
+        ctx = deps.get_ctx()
+        if not hasattr(ctx, "state_db") or ctx.state_db is None:
+            log.debug("_validate_sufficient_balance: state_db not available, skipping")
+            return
+        
+        state_db = ctx.state_db
+        
+        # Convert bech32 address to 32-byte digest for state lookup
+        # sender_addr is already a bech32 address string from _extract_sender_address
+        try:
+            from rpc.state_service import parse_address
+            sender_bytes = parse_address(sender_addr)
+        except Exception as e:
+            log.debug("_validate_sufficient_balance: failed to parse sender address %s: %s", sender_addr, e)
+            return
+        
+        # Get balance using state_db methods
+        balance = None
+        for method_name in ("get_balance", "read_balance", "balance_of"):
+            if hasattr(state_db, method_name):
+                try:
+                    balance = int(getattr(state_db, method_name)(sender_bytes))
+                    break
+                except Exception as e:
+                    log.debug("_validate_sufficient_balance: %s failed: %s", method_name, e)
+                    continue
+        
+        if balance is None:
+            log.debug("_validate_sufficient_balance: could not retrieve balance, skipping")
+            return
+        
+        # Check if balance is sufficient
+        if balance < required:
+            shortfall = required - balance
+            raise rpc_errors.InsufficientFunds(
+                required=required,
+                available=balance,
+            )
+    except rpc_errors.InsufficientFunds:
+        raise
+    except Exception as e:
+        # Don't fail tx submission if balance check fails for unexpected reasons
+        log.debug("_validate_sufficient_balance: unexpected error, skipping: %s", e)
+        return
+
+
 def _tx_view(
     tx: t.Any,
     obj: dict,
@@ -1212,6 +1291,18 @@ def _tx_send_raw_transaction(rawTx: str) -> str:
             tx_hash_hex,
             chain_id,
         )
+
+        # Balance validation: check if sender has sufficient funds
+        try:
+            _validate_sufficient_balance(obj)
+        except rpc_errors.InsufficientFunds as e:
+            log.warning(
+                "tx.sendRawTransaction: insufficient balance, required=%s, available=%s",
+                e.data.get("required") if e.data else "unknown",
+                e.data.get("available") if e.data else "unknown",
+            )
+            TX_VALIDATION_FAILURES.labels(reason="insufficient_balance").inc()
+            raise
 
         # Duplicate suppression: if already in pending/persisted, return hash (idempotent)
         # Note: Duplicates are not validation failures - they're expected and idempotent

@@ -33,6 +33,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, List, Mapping, Optional, Tuple
 
 from ..errors import OOG, ExecError, Revert
+from ..state.apply_balance import InsufficientBalance
 from ..types.events import LogEvent
 from ..types.result import ApplyResult
 from ..types.status import TxStatus
@@ -423,13 +424,13 @@ def apply_transfer(
     _ensure_account(state, sender)
     _ensure_account(state, to)
     sender_balance = _get_balance(state, sender)
-    if sender_balance < amount + total_fee:
-        return ApplyResult(
-            status=TxStatus.REVERT,
-            gas_used=intrinsic if gas_limit == 0 else min(intrinsic, gas_limit),
-            logs=[],
-            state_root=_maybe_state_root(state),
-            receipt=None,
+    required = amount + total_fee
+    if sender_balance < required:
+        raise InsufficientBalance(
+            f"Insufficient balance for transfer",
+            required=required,
+            available=sender_balance,
+            shortfall=required - sender_balance,
         )
 
     # Debit fees first (burn base, tip to coinbase)
