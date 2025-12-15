@@ -347,6 +347,20 @@ def tx_get_transaction_receipt(txHash: HexStr) -> t.Optional[dict]:
     # Find location (height, index), then fetch receipt and block context
     loc = _lookup_receipt_loc(tx_hash_b)
     if loc is None:
+        # Try the new get_receipt_by_tx_hash method on block_db
+        bdb = getattr(deps, "block_db", None)
+        if bdb is not None and hasattr(bdb, "get_receipt_by_tx_hash"):
+            try:
+                result = bdb.get_receipt_by_tx_hash(tx_hash_b)  # type: ignore[attr-defined]
+                if result is not None:
+                    height, idx, block_hash, receipt = result
+                    loc = _ReceiptLoc(height=height, index=idx, block_hash=block_hash)
+                    # Fetch the block for context
+                    blk = bdb.get_block_by_hash(block_hash)
+                    return _normalize_receipt(tx_hash_hex, loc, blk, receipt)
+            except Exception:
+                pass
+        
         # As a last-chance, some block_db offer get_receipt_by_hash directly
         bdb = getattr(deps, "block_db", None)
         if bdb is not None and hasattr(bdb, "get_receipt_by_hash"):
