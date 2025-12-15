@@ -251,6 +251,9 @@ def _read_peer_store(store_path: Path) -> List[Dict[str, Any]]:
                         "last_seen": row["last_seen"],
                         "score": row["score"],
                     }
+                    # Include direction if present in the database
+                    if "direction" in row.keys() and row["direction"]:
+                        peer["direction"] = row["direction"]
                     peers.append(peer)
                 return peers
         except (sqlite3.Error, KeyError):
@@ -493,10 +496,13 @@ def list_peers(
             peer_id = peer.get("id") or peer.get("peerId") or peer.get("peer_id") or "unknown"
             addr = peer.get("addr") or peer.get("address") or peer.get("multiaddr") or "unknown"
             status = peer.get("status") or peer.get("state") or "connected"
+            direction = peer.get("direction")
 
             typer.echo(f"{i}. Peer: {peer_id}")
             typer.echo(f"   Address: {addr}")
             typer.echo(f"   Status: {status}")
+            if direction:
+                typer.echo(f"   Direction: {direction}")
             typer.echo()
 
 
