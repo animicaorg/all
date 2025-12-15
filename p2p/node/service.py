@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import ipaddress
 import logging
+import os
 import signal
 import time
 from dataclasses import dataclass, field
@@ -605,7 +607,6 @@ class P2PService:
         # Initialize persistent peer store
         if peerstore_path is None:
             # Default to network-specific directory
-            import os
             network_name = {1: "mainnet", 2: "testnet", 1337: "devnet"}.get(chain_id, "custom")
             peerstore_path = os.path.expanduser(f"~/.animica/p2p/{network_name}")
         self.peerstore = pstore.PeerStore(peerstore_path)
@@ -744,7 +745,6 @@ class P2PService:
             or "unknown"
         )
         # Generate peer_id from remote address
-        import hashlib
         peer_id = f"peer_{hashlib.sha256(str(remote).encode()).hexdigest()[:32]}"
         
         self._peers[remote] = {
