@@ -1007,7 +1007,32 @@ def _lookup_persisted_tx(
     """
     Return (obj_view, block_number, tx_index, block_hash) if found in DB; otherwise (None, None, None, None).
     """
-    # Use state_service if exposed
+    # Try block_db.get_transaction_by_hash first (preferred path)
+    ctx = deps.get_ctx()
+    if hasattr(ctx, "block_db") and ctx.block_db is not None:
+        block_db = ctx.block_db
+        if hasattr(block_db, "get_transaction_by_hash"):
+            try:
+                # Convert hex hash to bytes
+                tx_hash_bytes = _b(tx_hash_hex)
+                result = block_db.get_transaction_by_hash(tx_hash_bytes)
+                if result is not None:
+                    height, idx, block_hash, tx_obj = result
+                    # Convert Tx dataclass to dict for _tx_view
+                    obj = _dcd(tx_obj) if _dc.is_dataclass(tx_obj) else dict(tx_obj) if isinstance(tx_obj, dict) else {}
+                    view = _tx_view(
+                        tx_obj,
+                        obj,
+                        pending=False,
+                        block_hash=block_hash,
+                        block_number=height,
+                        tx_index=idx,
+                    )
+                    return view, height, idx, block_hash
+            except Exception as e:
+                log.debug(f"block_db.get_transaction_by_hash failed: {e}")
+    
+    # Use state_service if exposed (fallback)
     svc = getattr(deps, "state_service", None)
     if svc is not None:
         # Expect methods like: get_transaction_by_hash, get_receipt_by_hash, etc.
@@ -1043,7 +1068,7 @@ def _lookup_persisted_tx(
                     b_hash if isinstance(b_hash, (bytes, bytearray)) else None,
                 )
     
-    # Try lower-level deps if present
+    # Try lower-level deps if present (last resort)
     if hasattr(deps, "get_tx_by_hash"):
         rec = deps.get_tx_by_hash(tx_hash_hex)  # type: ignore
         if rec:
@@ -1388,32 +1413,5 @@ def tx_get_transaction_by_hash(txHash: str) -> t.Optional[dict]:
     return None
 
 
-@method(
-    "tx.getTransactionReceipt",
-    desc="Get transaction receipt by hash",
-    aliases=("tx_getTransactionReceipt", "tx.getReceipt", "tx_getReceipt"),
-)
-def tx_get_transaction_receipt(txHash: str) -> t.Optional[dict]:
-    """
-    Retrieve the receipt for a transaction by its hash.
-    
-    Returns None if the transaction is still pending or not found.
-    Returns a receipt object if the transaction has been included in a block.
-    
-    Receipt structure:
-    {
-        "transactionHash": "0x...",
-        "blockHash": "0x...",
-        "blockNumber": int,
-        "transactionIndex": int,
-        "from": "anim1...",
-        "to": "anim1..." or null,
-        "gasUsed": int,
-        "status": int (1 for success, 0 for failure),
-        "logs": [...],
-        "logsBloom": "0x..."
-    }
-    """
-    # Delegate to the full receipt.py implementation which handles all the lookup logic
-    from rpc.methods.receipt import tx_get_transaction_receipt as _receipt_impl
-    return _receipt_impl(txHash)
+# NOTE: tx.getTransactionReceipt is registered in rpc/methods/receipt.py
+# to avoid duplicate registration warnings. See receipt.py for implementation.
