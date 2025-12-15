@@ -76,6 +76,36 @@ def merkle_root(leaves: Iterable[BytesLike]) -> bytes:
     return list_merkle_root(leaves)
 
 
+def compute_txs_root(tx_hashes: Sequence[bytes]) -> bytes:
+    """
+    Compute txsRoot for a block using canonical rules.
+    
+    Canonical rule: Sort tx hashes (bytes) in ascending lexicographic order,
+    then compute merkle root. This ensures deterministic txsRoot regardless
+    of input transaction order.
+    
+    Args:
+        tx_hashes: Sequence of 32-byte transaction hashes
+        
+    Returns:
+        32-byte merkle root, or ZERO32 if tx_hashes is empty
+        
+    Example:
+        >>> from core.utils.hash import ZERO32
+        >>> tx_hashes = [b"\\x01" * 32, b"\\x02" * 32]
+        >>> root = compute_txs_root(tx_hashes)
+        >>> root != ZERO32
+        True
+    """
+    if not tx_hashes:
+        from .hash import ZERO32
+        return ZERO32
+    
+    # Sort hashes in ascending lexicographic order (canonical rule)
+    sorted_hashes = sorted(tx_hashes)
+    return list_merkle_root(sorted_hashes)
+
+
 def kv_merkle_root(
     items: Mapping[BytesLike, BytesLike] | Iterable[Tuple[BytesLike, BytesLike]],
 ) -> bytes:
@@ -172,6 +202,7 @@ def kv_merkle_verify(
 __all__ = [
     "merkle_root",
     "list_merkle_root",
+    "compute_txs_root",
     "kv_merkle_root",
     "kv_merkle_proof",
     "kv_merkle_verify",
