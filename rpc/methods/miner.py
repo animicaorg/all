@@ -1764,73 +1764,152 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
             from core.types.receipt import Receipt, ReceiptStatus, Log
             from execution.runtime.env import BlockEnv
             
-            # Build block_env for new _execute_transactions signature
-            block_env = BlockEnv(
-                height=header.height,
-                timestamp=header.timestamp,
-                coinbase=payout_address if payout_address is not None else ZERO32,
-                chain_id=header.chainId,
-            )
-            
-            # Call new _execute_transactions with updated signature
-            receipts_dict = _execute_transactions(
-                txs=txs,
-                state_db=ctx.state_db,
-                block_env=block_env,
-                logger=log,
-            )
-            
-            # Convert dict receipts to Receipt objects for compatibility with receiptsRoot computation
-            receipts = []
-            for r_dict in receipts_dict:
-                # Convert status int to ReceiptStatus enum
-                # Status codes: 0 = REVERT, 1 = SUCCESS, 2 = OOG
-                status_val = r_dict.get("status", 0)
-                if status_val == 1:
-                    status = ReceiptStatus.SUCCESS
-                elif status_val == 2:
-                    status = ReceiptStatus.OOG
-                else:
-                    status = ReceiptStatus.REVERT
-                
-                gas_used = int(r_dict.get("gasUsed", 0))
-                
-                # Convert logs (may be empty list or list of log-like objects)
-                logs_out = []
-                for log_item in r_dict.get("logs", []):
-                    # If log_item is already a Log object, use it directly
-                    if isinstance(log_item, Log):
-                        logs_out.append(log_item)
-                    elif isinstance(log_item, dict):
-                        # Convert dict log to Log object
-                        addr = log_item.get("address", b"\x00" * RECEIPT_ADDRESS_LEN)
-                        if isinstance(addr, (bytes, bytearray)):
-                            addr_bytes = bytes(addr)
+            # CRITICAL FIX: Wrap ALL state changes in a single atomic batch
+            # This ensures tx execution + block reward are persisted together atomically
+            # Without this, state changes may not be committed to the underlying KV store,
+            # causing the bug where:
+            # - Mining advances head height but balances don't update
+            # - Transactions execute but state changes are lost
+            # - Receipts persist but state doesn't reflect the changes
+            #
+            # The state_db.batch() context manager starts a transaction (BEGIN) and commits it
+            # when exiting normally, or rolls back on exception. All put/delete operations
+            # within the context are buffered and applied atomically on commit.
+            state_db = ctx.state_db
+            if state_db is not None and hasattr(state_db, "batch"):
+                # Use context manager properly to ensure commit/rollback
+                with state_db.batch() as state_batch:
+                    # Build block_env for new _execute_transactions signature
+                    block_env = BlockEnv(
+                        height=header.height,
+                        timestamp=header.timestamp,
+                        coinbase=payout_address if payout_address is not None else ZERO32,
+                        chain_id=header.chainId,
+                    )
+                    
+                    # Call new _execute_transactions with updated signature
+                    # State changes (set_balance, inc_nonce) happen within this batch
+                    receipts_dict = _execute_transactions(
+                        txs=txs,
+                        state_db=ctx.state_db,
+                        block_env=block_env,
+                        logger=log,
+                    )
+                    
+                    # Convert dict receipts to Receipt objects for compatibility with receiptsRoot computation
+                    receipts = []
+                    for r_dict in receipts_dict:
+                        # Convert status int to ReceiptStatus enum
+                        # Status codes: 0 = REVERT, 1 = SUCCESS, 2 = OOG
+                        status_val = r_dict.get("status", 0)
+                        if status_val == 1:
+                            status = ReceiptStatus.SUCCESS
+                        elif status_val == 2:
+                            status = ReceiptStatus.OOG
                         else:
-                            addr_bytes = b"\x00" * RECEIPT_ADDRESS_LEN
-                        # Pad to RECEIPT_ADDRESS_LEN bytes
-                        if len(addr_bytes) < RECEIPT_ADDRESS_LEN:
-                            addr_bytes = addr_bytes.ljust(RECEIPT_ADDRESS_LEN, b"\x00")
-                        elif len(addr_bytes) > RECEIPT_ADDRESS_LEN:
-                            addr_bytes = addr_bytes[:RECEIPT_ADDRESS_LEN]
+                            status = ReceiptStatus.REVERT
                         
-                        topics = log_item.get("topics", [])
-                        topics_tuple = tuple(
-                            bytes(t)[:TOPIC_LEN].ljust(TOPIC_LEN, b"\x00") if isinstance(t, (bytes, bytearray)) else b"\x00" * TOPIC_LEN
-                            for t in topics
-                        )
-                        data = bytes(log_item.get("data", b""))
+                        gas_used = int(r_dict.get("gasUsed", 0))
                         
-                        logs_out.append(Log(address=addr_bytes, topics=topics_tuple, data=data))
-                
-                receipts.append(Receipt(
-                    status=status,
-                    gas_used=gas_used,
-                    logs=tuple(logs_out)
-                ))
+                        # Convert logs (may be empty list or list of log-like objects)
+                        logs_out = []
+                        for log_item in r_dict.get("logs", []):
+                            # If log_item is already a Log object, use it directly
+                            if isinstance(log_item, Log):
+                                logs_out.append(log_item)
+                            elif isinstance(log_item, dict):
+                                # Convert dict log to Log object
+                                addr = log_item.get("address", b"\x00" * RECEIPT_ADDRESS_LEN)
+                                if isinstance(addr, (bytes, bytearray)):
+                                    addr_bytes = bytes(addr)
+                                else:
+                                    addr_bytes = b"\x00" * RECEIPT_ADDRESS_LEN
+                                # Pad to RECEIPT_ADDRESS_LEN bytes
+                                if len(addr_bytes) < RECEIPT_ADDRESS_LEN:
+                                    addr_bytes = addr_bytes.ljust(RECEIPT_ADDRESS_LEN, b"\x00")
+                                elif len(addr_bytes) > RECEIPT_ADDRESS_LEN:
+                                    addr_bytes = addr_bytes[:RECEIPT_ADDRESS_LEN]
+                                
+                                topics = log_item.get("topics", [])
+                                topics_tuple = tuple(
+                                    bytes(t)[:TOPIC_LEN].ljust(TOPIC_LEN, b"\x00") if isinstance(t, (bytes, bytearray)) else b"\x00" * TOPIC_LEN
+                                    for t in topics
+                                )
+                                data = bytes(log_item.get("data", b""))
+                                
+                                logs_out.append(Log(address=addr_bytes, topics=topics_tuple, data=data))
+                        
+                        receipts.append(Receipt(
+                            status=status,
+                            gas_used=gas_used,
+                            logs=tuple(logs_out)
+                        ))
 
-            # Apply block reward before finalizing header/roots
-            reward_amount = _apply_block_reward(ctx, header.height, payout_address)
+                    # Apply block reward before finalizing header/roots
+                    # This also happens within the batch context
+                    reward_amount = _apply_block_reward(ctx, header.height, payout_address)
+                    
+                    # Batch will be committed automatically when exiting the 'with' block
+                    # All state changes (tx execution + block reward) are now persisted atomically
+            else:
+                # Fallback if state_db doesn't support batching (shouldn't happen in prod)
+                log.warning("state_db does not support batching; state changes may not persist atomically")
+                
+                block_env = BlockEnv(
+                    height=header.height,
+                    timestamp=header.timestamp,
+                    coinbase=payout_address if payout_address is not None else ZERO32,
+                    chain_id=header.chainId,
+                )
+                
+                receipts_dict = _execute_transactions(
+                    txs=txs,
+                    state_db=ctx.state_db,
+                    block_env=block_env,
+                    logger=log,
+                )
+                
+                receipts = []
+                for r_dict in receipts_dict:
+                    status_val = r_dict.get("status", 0)
+                    if status_val == 1:
+                        status = ReceiptStatus.SUCCESS
+                    elif status_val == 2:
+                        status = ReceiptStatus.OOG
+                    else:
+                        status = ReceiptStatus.REVERT
+                    
+                    gas_used = int(r_dict.get("gasUsed", 0))
+                    logs_out = []
+                    for log_item in r_dict.get("logs", []):
+                        if isinstance(log_item, Log):
+                            logs_out.append(log_item)
+                        elif isinstance(log_item, dict):
+                            addr = log_item.get("address", b"\x00" * RECEIPT_ADDRESS_LEN)
+                            if isinstance(addr, (bytes, bytearray)):
+                                addr_bytes = bytes(addr)
+                            else:
+                                addr_bytes = b"\x00" * RECEIPT_ADDRESS_LEN
+                            if len(addr_bytes) < RECEIPT_ADDRESS_LEN:
+                                addr_bytes = addr_bytes.ljust(RECEIPT_ADDRESS_LEN, b"\x00")
+                            elif len(addr_bytes) > RECEIPT_ADDRESS_LEN:
+                                addr_bytes = addr_bytes[:RECEIPT_ADDRESS_LEN]
+                            
+                            topics = log_item.get("topics", [])
+                            topics_tuple = tuple(
+                                bytes(t)[:TOPIC_LEN].ljust(TOPIC_LEN, b"\x00") if isinstance(t, (bytes, bytearray)) else b"\x00" * TOPIC_LEN
+                                for t in topics
+                            )
+                            data = bytes(log_item.get("data", b""))
+                            logs_out.append(Log(address=addr_bytes, topics=topics_tuple, data=data))
+                    
+                    receipts.append(Receipt(
+                        status=status,
+                        gas_used=gas_used,
+                        logs=tuple(logs_out)
+                    ))
+
+                reward_amount = _apply_block_reward(ctx, header.height, payout_address)
 
             # Compute receipts root (if any receipts) and ensure txs root matches tx set
             receipts_root = ZERO32
