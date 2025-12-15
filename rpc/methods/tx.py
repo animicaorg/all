@@ -1007,7 +1007,32 @@ def _lookup_persisted_tx(
     """
     Return (obj_view, block_number, tx_index, block_hash) if found in DB; otherwise (None, None, None, None).
     """
-    # Use state_service if exposed
+    # Try block_db.get_transaction_by_hash first (preferred path)
+    ctx = deps.get_ctx()
+    if hasattr(ctx, "block_db") and ctx.block_db is not None:
+        block_db = ctx.block_db
+        if hasattr(block_db, "get_transaction_by_hash"):
+            try:
+                # Convert hex hash to bytes
+                tx_hash_bytes = _b(tx_hash_hex)
+                result = block_db.get_transaction_by_hash(tx_hash_bytes)
+                if result is not None:
+                    height, idx, block_hash, tx_obj = result
+                    # Convert Tx dataclass to dict for _tx_view
+                    obj = _dcd(tx_obj) if _dc.is_dataclass(tx_obj) else dict(tx_obj) if isinstance(tx_obj, dict) else {}
+                    view = _tx_view(
+                        tx_obj,
+                        obj,
+                        pending=False,
+                        block_hash=block_hash,
+                        block_number=height,
+                        tx_index=idx,
+                    )
+                    return view, height, idx, block_hash
+            except Exception as e:
+                log.debug(f"block_db.get_transaction_by_hash failed: {e}")
+    
+    # Use state_service if exposed (fallback)
     svc = getattr(deps, "state_service", None)
     if svc is not None:
         # Expect methods like: get_transaction_by_hash, get_receipt_by_hash, etc.
@@ -1043,7 +1068,7 @@ def _lookup_persisted_tx(
                     b_hash if isinstance(b_hash, (bytes, bytearray)) else None,
                 )
     
-    # Try lower-level deps if present
+    # Try lower-level deps if present (last resort)
     if hasattr(deps, "get_tx_by_hash"):
         rec = deps.get_tx_by_hash(tx_hash_hex)  # type: ignore
         if rec:
