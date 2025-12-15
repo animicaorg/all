@@ -400,11 +400,16 @@ async def discover_all(
     if static_addrs:
         bundles.append(discover_from_static(static_addrs))
     
-    # Add embedded fallback seeds if enabled and no other seeds found
-    if include_fallbacks:
-        has_seeds = any(len(b.endpoints) > 0 for b in bundles)
-        if not has_seeds:
-            bundles.append(discover_from_static(EMBEDDED_FALLBACK_SEEDS))
+    # Merge to check for viable endpoints
+    temp_endpoints: List[SeedEndpoint] = []
+    for b in bundles:
+        temp_endpoints.extend(b.endpoints)
+    temp_endpoints = _dedupe(temp_endpoints)
+    
+    # Add embedded fallback seeds if enabled and no viable seeds found
+    # This handles both failure cases and empty result cases
+    if include_fallbacks and len(temp_endpoints) == 0:
+        bundles.append(discover_from_static(EMBEDDED_FALLBACK_SEEDS))
 
     # Merge
     endpoints: List[SeedEndpoint] = []

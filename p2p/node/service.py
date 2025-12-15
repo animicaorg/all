@@ -398,11 +398,33 @@ class NodeService:
                         resolve=True,
                         include_fallbacks=True
                     )
-                    # Convert SeedEndpoints to multiaddr strings
+                    # Convert SeedEndpoints to multiaddr format
                     for ep in bundle.endpoints:
-                        port = f":{ep.port}" if ep.port is not None else ""
-                        path = ep.path or ""
-                        seed_addrs.append(f"{ep.scheme}://{ep.host}{port}{path}")
+                        # Determine IP type (ip4 vs ip6)
+                        try:
+                            import ipaddress
+                            ip_obj = ipaddress.ip_address(ep.host)
+                            ip_type = "ip6" if ip_obj.version == 6 else "ip4"
+                        except ValueError:
+                            # It's a hostname, use dns4
+                            ip_type = "dns4"
+                        
+                        # Build multiaddr based on scheme
+                        if ep.scheme == "quic":
+                            # /ip4/host/udp/port/quic-v1 or /dns4/host/udp/port/quic-v1
+                            seed_addrs.append(f"/{ip_type}/{ep.host}/udp/{ep.port}/quic-v1")
+                        elif ep.scheme == "tcp":
+                            # /ip4/host/tcp/port or /dns4/host/tcp/port
+                            seed_addrs.append(f"/{ip_type}/{ep.host}/tcp/{ep.port}")
+                        elif ep.scheme in ("ws", "wss"):
+                            # /ip4/host/tcp/port/ws or /dns4/host/tcp/port/ws
+                            proto = "ws" if ep.scheme == "ws" else "wss"
+                            seed_addrs.append(f"/{ip_type}/{ep.host}/tcp/{ep.port}/{proto}")
+                        else:
+                            # Fallback: try URL-style (will be parsed by dial)
+                            port = f":{ep.port}" if ep.port is not None else ""
+                            path = ep.path or ""
+                            seed_addrs.append(f"{ep.scheme}://{ep.host}{port}{path}")
             except Exception as e:
                 log.warning("Dynamic seed discovery failed", exc_info=e)
         
