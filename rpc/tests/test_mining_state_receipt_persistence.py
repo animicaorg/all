@@ -31,18 +31,6 @@ def _parse_integer_result(result: dict) -> int:
     return _parse_balance_result(result)
 
 
-def _get_premine_address_hex() -> str:
-    """Helper to get the premine address as hex string."""
-    from consensus.rewards import MAINNET_PREMINE_DISTRIBUTION
-    from pq.py.address import decode_address
-    
-    premine_addr_bech32 = MAINNET_PREMINE_DISTRIBUTION[0][0]
-    addr_record = decode_address(premine_addr_bech32)
-    digest = bytes(addr_record.digest) if isinstance(addr_record.digest, list) else addr_record.digest
-    premine_addr_bytes = digest[:32].ljust(32, b"\x00")
-    return "0x" + premine_addr_bytes.hex()
-
-
 def _build_signed_transfer(client, cfg, sender_kp, recipient_hex: str, nonce: int = 0, value: int = 1_000_000_000):
     """Build a signed transfer transaction using provided keypair."""
     from core.encoding.canonical import tx_sign_bytes
