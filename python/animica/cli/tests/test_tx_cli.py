@@ -48,7 +48,7 @@ def wallet_store(tmp_path: Path) -> Path:
         "wallets": [
             {
                 "label": "alice",
-                "address": "anim1zqp2nx50902d7jgrzk0ep798r2vhpgt3rhtmn89gadzdgyhf9hmln7g9e4xt9",
+                "address": "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz",
                 "alg_id": 4098,
                 "alg_name": "sphincs_shake_128s",
                 "public_key_hex": "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
@@ -111,7 +111,7 @@ def test_send_resolve_from_label(wallet_store: Path) -> None:
     ], wallet_store)
     
     assert "Dry-Run Mode" in output
-    assert "anim1zqp2nx50902d7jgrzk0ep798r2vhpgt3rhtmn89gadzdgyhf9hmln7g9e4xt9" in output
+    assert "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz" in output
     assert "Transaction built and signed (not broadcast)" in output
 
 
@@ -126,7 +126,7 @@ def test_send_resolve_from_address(wallet_store: Path) -> None:
     
     _, output = run_tx_cli([
         "send",
-        "--from", "anim1zqp2nx50902d7jgrzk0ep798r2vhpgt3rhtmn89gadzdgyhf9hmln7g9e4xt9",
+        "--from", "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz",
         "--to", "anim1zqp2u7fz3msky532tz4d3076wm99datq9rdxqjxvznq7zqn7xj0869ctuj4km",
         "--value", "0.5",
         "--dry-run",
@@ -323,7 +323,7 @@ def test_send_dry_run_with_defaults(wallet_store: Path) -> None:
     _, output = run_tx_cli([
         "send",
         "--from", "bob",
-        "--to", "anim1zqp2nx50902d7jgrzk0ep798r2vhpgt3rhtmn89gadzdgyhf9hmln7g9e4xt9",
+        "--to", "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz",
         "--value", "0.1",
         "--dry-run",
         "--rpc-url", rpc_url
@@ -433,7 +433,7 @@ def test_send_with_explicit_params(wallet_store: Path) -> None:
     _, output = run_tx_cli([
         "send",
         "--from", "bob",
-        "--to", "anim1zqp2nx50902d7jgrzk0ep798r2vhpgt3rhtmn89gadzdgyhf9hmln7g9e4xt9",
+        "--to", "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz",
         "--value", "3.0",
         "--gas", "50000",
         "--gas-price", "5.0",
@@ -574,7 +574,7 @@ def test_send_round_trip_dry_run(wallet_store: Path) -> None:
     _, output2 = run_tx_cli([
         "send",
         "--from", "bob",
-        "--to", "anim1zqp2nx50902d7jgrzk0ep798r2vhpgt3rhtmn89gadzdgyhf9hmln7g9e4xt9",
+        "--to", "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz",
         "--value", "5.0",
         "--dry-run",
         "--rpc-url", rpc_url

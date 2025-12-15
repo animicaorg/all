@@ -308,7 +308,7 @@ def mine_blocks(
         animica miner mine-blocks --address premine --count 5
         
         # Mine to a bech32 address with verbose output
-        animica miner mine-blocks --count 10 --verbose anim1zqp2nx50902d7jgrzk0ep798r2vhpgt3rhtmn89gadzdgyhf9hmln7g9e4xt9
+        animica miner mine-blocks --count 10 --verbose anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz
         
         # Mine with custom RPC endpoint
         animica miner mine-blocks --address premine --count 10 --rpc-url http://localhost:8545
