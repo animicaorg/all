@@ -49,6 +49,10 @@ MAX_DISPLAYED_TX_HASHES = 3  # Maximum number of transaction hashes to display i
 DEFAULT_BLOCK_GAS_LIMIT = 100_000_000_000  # 100 billion gas (very high limit for devnet)
 DEFAULT_BLOCK_BYTE_LIMIT = 1_000_000_000  # 1GB block size limit
 
+# Receipt index prefix (matches PFX_RXI from core/db/block_db.py)
+# Used for re-indexing receipts with canonical tx hashes
+PFX_RXI = b"\x22"
+
 # Default gas limit for transactions when not specified (same as INTRINSIC_GAS_TRANSFER)
 DEFAULT_TX_GAS_LIMIT = INTRINSIC_GAS_TRANSFER  # 21,000 gas for simple transfers
 
@@ -2014,8 +2018,7 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
                                         # Store receipt pointer using canonical hash
                                         # Format: PFX_RXI + tx_hash → {"h": height, "i": idx, "b": block_hash}
                                         receipt_ptr = cbor_dumps({"h": header.height, "i": idx, "b": block_hash_bytes})
-                                        pfx_rxi = b"\x22"  # PFX_RXI from block_db.py
-                                        batch.put(pfx_rxi + tx_hash, receipt_ptr)
+                                        batch.put(PFX_RXI + tx_hash, receipt_ptr)
                                         log.debug(f"Re-indexed receipt for canonical hash: {tx_hash_hex[:16]}...")
                                 batch.commit()
                             log.info(f"Re-indexed {len(txs)} receipts with canonical tx hashes")

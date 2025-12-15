@@ -21,6 +21,44 @@ import os
 sys.path.insert(0, os.path.dirname(__file__))
 
 
+def _normalize_address_bytes(address_record) -> bytes:
+    """
+    Convert an address record to normalized 32-byte format.
+    
+    Args:
+        address_record: Address record with digest attribute
+        
+    Returns:
+        32-byte address (truncated or padded as needed)
+    """
+    ADDRESS_LEN = 32  # Animica address length
+    digest = bytes(address_record.digest)
+    # Truncate to ADDRESS_LEN bytes or pad with zeros
+    if len(digest) < ADDRESS_LEN:
+        return digest.ljust(ADDRESS_LEN, b"\x00")
+    return digest[:ADDRESS_LEN]
+
+
+def _safe_truncate(s: str | None, max_len: int = 16, suffix: str = "...") -> str:
+    """
+    Safely truncate a string with suffix.
+    
+    Args:
+        s: String to truncate (or None)
+        max_len: Maximum length before truncation
+        suffix: Suffix to add when truncated
+        
+    Returns:
+        Truncated string with suffix, or "None" if s is None
+    """
+    if s is None:
+        return "None"
+    s_str = str(s)
+    if len(s_str) <= max_len:
+        return s_str
+    return s_str[:max_len] + suffix
+
+
 def test_tx_hash_consistency():
     """Test that tx hashes are canonical and consistent throughout the system."""
     print("\n" + "="*80)
@@ -59,8 +97,8 @@ def test_tx_hash_consistency():
     sender_record = decode_address(sender_addr_bech32)
     recipient_record = decode_address(recipient_addr_bech32)
     
-    sender_bytes = bytes(sender_record.digest)[:32].ljust(32, b"\x00")
-    recipient_bytes = bytes(recipient_record.digest)[:32].ljust(32, b"\x00")
+    sender_bytes = _normalize_address_bytes(sender_record)
+    recipient_bytes = _normalize_address_bytes(recipient_record)
     
     sender_hex = "0x" + sender_bytes.hex()
     recipient_hex = "0x" + recipient_bytes.hex()
@@ -177,7 +215,7 @@ def test_tx_hash_consistency():
             tx_hashes_in_block.append(tx_data)
     
     print(f"   Block contains {len(tx_hashes_in_block)} transaction(s)")
-    print(f"   TX hashes in block: {[h[:16] + '...' if h else 'None' for h in tx_hashes_in_block]}")
+    print(f"   TX hashes in block: {[_safe_truncate(h) for h in tx_hashes_in_block]}")
     
     if returned_hash in tx_hashes_in_block:
         print(f"   ✓ PASS: Canonical hash appears in block")
@@ -197,7 +235,7 @@ def test_tx_hash_consistency():
         
         print(f"   ✓ PASS: getTransactionByHash returned tx data")
         print(f"      blockNumber: {tx_result.get('blockNumber')}")
-        print(f"      blockHash:   {tx_result.get('blockHash', 'N/A')[:18]}...")
+        print(f"      blockHash:   {_safe_truncate(tx_result.get('blockHash'), 18)}")
         print(f"      txIndex:     {tx_result.get('transactionIndex')}")
         
         # Verify the hash in the response matches
@@ -218,9 +256,9 @@ def test_tx_hash_consistency():
             return False
         
         print(f"   ✓ PASS: getTransactionReceipt returned receipt")
-        print(f"      transactionHash: {receipt.get('transactionHash', 'N/A')[:18]}...")
+        print(f"      transactionHash: {_safe_truncate(receipt.get('transactionHash'), 18)}")
         print(f"      blockNumber:     {receipt.get('blockNumber')}")
-        print(f"      blockHash:       {receipt.get('blockHash', 'N/A')[:18]}...")
+        print(f"      blockHash:       {_safe_truncate(receipt.get('blockHash'), 18)}")
         print(f"      status:          {receipt.get('status')}")
         print(f"      gasUsed:         {receipt.get('gasUsed')}")
         
