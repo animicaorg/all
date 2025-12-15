@@ -29,7 +29,7 @@ def test_devnet_genesis_has_prefund():
     assert genesis["chainId"] == 1337
     
     # Find the user address in allocations
-    user_address = "anim1zqp2nx50902d7jgrzk0ep798r2vhpgt3rhtmn89gadzdgyhf9hmln7g9e4xt9"
+    user_address = "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz"
     alloc = genesis.get("alloc", [])
     
     user_alloc = None
@@ -57,7 +57,7 @@ def test_testnet_genesis_has_prefund():
     assert genesis["chainId"] == 2
     
     # Find the user address in allocations
-    user_address = "anim1zqp2nx50902d7jgrzk0ep798r2vhpgt3rhtmn89gadzdgyhf9hmln7g9e4xt9"
+    user_address = "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz"
     alloc = genesis.get("alloc", [])
     
     user_alloc = None
@@ -85,7 +85,7 @@ def test_mainnet_genesis_no_prefund():
     assert genesis["chainId"] == 1
     
     # Verify the user address is NOT in allocations
-    user_address = "anim1zqp2nx50902d7jgrzk0ep798r2vhpgt3rhtmn89gadzdgyhf9hmln7g9e4xt9"
+    user_address = "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz"
     alloc = genesis.get("alloc", [])
     
     for entry in alloc:

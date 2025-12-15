@@ -120,7 +120,7 @@ def test_multiple_mining_sessions_accumulate():
     """
     client, cfg, _ = new_test_client()
     
-    test_address = "anim1zqp2nx50902d7jgrzk0ep798r2vhpgt3rhtmn89gadzdgyhf9hmln7g9e4xt9"
+    test_address = "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz"
     
     # Get initial balance
     balance = _parse_balance(rpc_call(client, "state.getBalance", [test_address]))
