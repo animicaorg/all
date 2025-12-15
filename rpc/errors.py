@@ -212,10 +212,15 @@ class BadSignature(RpcError):
 
 class InsufficientFunds(RpcError):
     def __init__(self, required: int, available: int) -> None:
+        shortfall = required - available
         super().__init__(
             AnimicaCode.INSUFFICIENT_FUNDS,
-            "Insufficient funds",
-            {"required": str(required), "available": str(available)},
+            "Insufficient funds for transfer",
+            {
+                "required": str(required),
+                "available": str(available),
+                "shortfall": str(shortfall),
+            },
         )
 
 
