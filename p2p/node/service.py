@@ -725,7 +725,7 @@ class P2PService:
                     if self._running:
                         self._log.warning("accept loop terminating", exc_info=True)
                     return
-                self._track_peer(conn)
+                self._track_peer(conn, direction="inbound")
         except asyncio.CancelledError:
             # Swallow expected cancellation during shutdown
             return
@@ -736,9 +736,9 @@ class P2PService:
         except Exception:
             self._log.debug("dial failed", exc_info=True, extra={"addr": addr})
             return
-        self._track_peer(conn)
+        self._track_peer(conn, direction="outbound")
 
-    def _track_peer(self, conn: Any) -> None:
+    def _track_peer(self, conn: Any, direction: str = "outbound") -> None:
         remote = (
             getattr(conn.info, "remote_addr", None)
             or getattr(conn, "remote_addr", None)
@@ -753,14 +753,15 @@ class P2PService:
             "last_seen": time.time(),
             "conn": conn,
             "peer_id": peer_id,
+            "direction": direction,
         }
-        self._log.info("peer connected", extra={"remote": remote, "peer_id": peer_id})
+        self._log.info("peer connected", extra={"remote": remote, "peer_id": peer_id, "direction": direction})
 
         # Persist peer to PeerStore
         try:
-            self.peerstore.add(peer_id=peer_id, addrs=[str(remote)], score=0.0)
+            self.peerstore.add(peer_id=peer_id, addrs=[str(remote)], score=0.0, direction=direction)
             self.peerstore.record_connection(peer_id)
-            self._log.debug(f"Persisted peer {peer_id} to store")
+            self._log.debug(f"Persisted peer {peer_id} to store with direction={direction}")
         except Exception as e:
             self._log.warning(f"Failed to persist peer to store: {e}", exc_info=True)
 
