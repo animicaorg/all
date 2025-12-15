@@ -302,14 +302,17 @@ def _probe_port(host: str, port: int, timeout: float = 2.0) -> bool:
     Returns:
         True if connection successful, False otherwise
     """
+    sock = None
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(timeout)
         result = sock.connect_ex((host, port))
-        sock.close()
         return result == 0
     except (socket.error, socket.timeout):
         return False
+    finally:
+        if sock:
+            sock.close()
 
 
 def _parse_address(address: str) -> Tuple[str, Optional[int]]:
@@ -343,7 +346,12 @@ def _parse_address(address: str) -> Tuple[str, Optional[int]]:
                 except ValueError:
                     pass
         
-        return (host or address, port)
+        # If we couldn't parse host from multiaddr, return the full address as-is
+        # This will let the caller handle the error appropriately
+        if host is None:
+            return (address, port)
+        
+        return (host, port)
     
     # Handle host:port format
     if ":" in address:
@@ -468,7 +476,7 @@ def list_peers(
 
     # Display peers
     if rpc_failed:
-        source_msg = f" (from local peer store)"
+        source_msg = " (from local peer store)"
         header = f"Known Peers: {len(peers)}{source_msg}"
     else:
         header = f"Connected Peers: {len(peers)}"
