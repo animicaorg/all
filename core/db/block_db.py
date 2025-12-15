@@ -47,6 +47,7 @@ from .kv import KV, Batch, ReadOnlyKV
 PFX_HDR = b"\x10"
 PFX_BLK = b"\x11"
 PFX_HIX = b"\x12"
+PFX_RXI = b"\x22"  # Receipt index: tx_hash → (height, index, receipt)
 PFX_META = b"\x1f"
 
 META_HEAD_HASH = PFX_META + b"head_hash"
@@ -77,6 +78,10 @@ def k_blk(h: bytes) -> bytes:
 
 def k_hix(height: int) -> bytes:
     return PFX_HIX + _u64be(height)
+
+
+def k_rxi(tx_hash: bytes) -> bytes:
+    return PFX_RXI + tx_hash
 
 
 # ---------------------------------------------------------------------------
@@ -258,6 +263,37 @@ class BlockDB:
         hh = self.get_canonical_hash(height)
         return None if hh is None else self.get_block_by_hash(hh)
 
+    # --- Receipt lookup by tx_hash ---
+
+    def get_receipt_by_tx_hash(self, tx_hash: bytes) -> Optional[Tuple[int, int, bytes, Any]]:
+        """
+        Look up a receipt by transaction hash.
+        
+        Returns:
+            Tuple of (height, tx_index, block_hash, receipt_obj) if found, None otherwise.
+            The receipt_obj is the Receipt instance from the block.
+        """
+        ptr_data = self.kv.get(k_rxi(tx_hash))
+        if ptr_data is None:
+            return None
+        
+        # Decode pointer: {h: height, i: index, b: block_hash}
+        ptr = cbor_loads(ptr_data)
+        height = int(ptr["h"])
+        idx = int(ptr["i"])
+        block_hash = bytes(ptr["b"])
+        
+        # Fetch the block to get the receipt
+        block = self.get_block_by_hash(block_hash)
+        if block is None or block.receipts is None:
+            return None
+        
+        if idx >= len(block.receipts):
+            return None
+        
+        receipt = block.receipts[idx]
+        return (height, idx, block_hash, receipt)
+
     # --- Iteration over canonical chain ---
 
     def iter_canonical_headers(
@@ -287,6 +323,7 @@ class BlockDB:
     def append_canonical_block(self, height: int, block: Block) -> bytes:
         """
         Atomically store a block, mark it canonical at `height`, and advance head if higher.
+        Also index transactions and receipts for fast lookup by tx_hash.
         Intended for linear devnet import or after fork-choice has selected this block.
 
         Returns the block hash.
@@ -295,6 +332,24 @@ class BlockDB:
         with self.kv.batch() as b:
             self.put_block(block, batch=b)
             self.set_canonical(height, hh, batch=b)
+            
+            # Index transactions and receipts by tx_hash for fast RPC lookup
+            # This allows tx.getReceipt to find receipts by tx_hash efficiently
+            if block.txs:
+                for idx, tx in enumerate(block.txs):
+                    # Get tx hash - prefer dedicated hash() method
+                    if hasattr(tx, 'hash') and callable(tx.hash):
+                        tx_hash = tx.hash()
+                    else:
+                        # Fallback: compute hash from CBOR encoding
+                        # Note: This should match the canonical tx hash computation
+                        tx_hash = sha3_256(_to_cbor(tx))
+                    
+                    # Store pointer: tx_hash → (height, idx, block_hash)
+                    # Receipt can be retrieved via get_block_by_height then indexing receipts[idx]
+                    receipt_ptr = cbor_dumps({"h": height, "i": idx, "b": hh})
+                    b.put(k_rxi(tx_hash), receipt_ptr)
+            
             cur = self.get_head()
             if cur is None or height >= cur[0]:
                 self.set_head(height, hh, batch=b)
