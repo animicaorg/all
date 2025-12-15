@@ -1709,8 +1709,9 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
     header_template = _build_child_header(parent_height, parent_hash_bytes, parent_header)
 
     if txs:
-        # Build merkle root from tx hashes using canonical hash (sha3_256(raw_cbor))
-        # This matches the hash returned by tx.sendRawTransaction
+        # Build merkle root from tx hashes using tx.hash()
+        # This MUST match Block.txs_root() which uses tx.hash() for validation
+        # Note: Canonical hashes from _TX_HASH_MAP are used for receipt indexing only
         # Drop individual malformed txs instead of failing the whole batch
         leaves = []
         valid_txs = []
@@ -1718,23 +1719,10 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
         
         for i, tx in enumerate(txs):
             try:
-                # CRITICAL FIX: Use canonical hash from raw CBOR (tracked in _TX_HASH_MAP)
-                # instead of tx.hash() which re-encodes and may produce different bytes.
-                # This ensures txsRoot is computed from the same hashes that:
-                # 1. tx.sendRawTransaction returns to the client
-                # 2. Receipts are indexed by in the block_db
-                # 3. chain.getBlockByHeight returns in the tx list
-                tracked = _tracked(tx)
-                if tracked:
-                    # Use the canonical hash from the raw envelope
-                    tx_hash_hex, raw = tracked
-                    tx_hash = bytes.fromhex(tx_hash_hex[2:])  # strip "0x" prefix
-                    log.debug(f"Using tracked canonical hash for tx: {tx_hash_hex[:16]}...")
-                else:
-                    # Fallback: compute from tx.hash() if not tracked
-                    # This should rarely happen since we track all txs from pending pool
-                    tx_hash = tx.hash()
-                    log.debug(f"Using tx.hash() fallback for untracked tx")
+                # Use tx.hash() to match Block.txs_root() validation
+                # This ensures txsRoot computed here matches the validation in Block.from_components
+                tx_hash = tx.hash()
+                log.debug(f"Using tx.hash() for txsRoot: {tx_hash.hex()[:16]}...")
                 
                 leaves.append(tx_hash)
                 valid_txs.append(tx)
@@ -1926,7 +1914,7 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
                         "failed to compute receipts root; defaulting to zero", extra={"err": str(e)}
                     )
 
-            # Recompute txsRoot using canonical hashes (sha3_256(raw_cbor))
+            # Recompute txsRoot using tx.hash() to match Block.txs_root()
             # This must match the computation done before the mining loop
             # NOTE: txs should already be sorted by tx_hash from earlier sorting step,
             # but we sort again defensively to ensure consistency even if earlier code changes
@@ -1935,14 +1923,8 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
                     leaves = []
                     for tx in txs:
                         try:
-                            # CRITICAL FIX: Use canonical hash from raw CBOR (same as before mining loop)
-                            tracked = _tracked(tx)
-                            if tracked:
-                                tx_hash_hex, raw = tracked
-                                tx_hash = bytes.fromhex(tx_hash_hex[2:])  # strip "0x" prefix
-                            else:
-                                # Fallback: compute from tx.hash()
-                                tx_hash = tx.hash()
+                            # Use tx.hash() to match Block.txs_root() validation
+                            tx_hash = tx.hash()
                             leaves.append(tx_hash)
                         except Exception as e:
                             log.warning(f"Failed to compute hash for tx in final root: {e}")
