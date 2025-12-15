@@ -281,7 +281,7 @@ def test_list_peers_fallback_to_json_store(monkeypatch: Any, tmp_path: Any) -> N
     
     result = runner.invoke(peer.app, ["list", "--store", str(store_path)])
     assert result.exit_code == 0
-    assert "Connected Peers: 2" in result.output
+    assert "Known Peers: 2" in result.output  # Changed from "Connected Peers" to "Known Peers"
     assert "from local peer store" in result.output
     assert "peer123" in result.output
     assert "peer456" in result.output
@@ -322,7 +322,7 @@ def test_list_peers_fallback_to_json_store_verbose(monkeypatch: Any, tmp_path: A
     
     result = runner.invoke(peer.app, ["list", "--store", str(store_path), "--verbose"])
     assert result.exit_code == 0
-    assert "Connected Peers: 1" in result.output
+    assert "Known Peers: 1" in result.output  # Changed from "Connected Peers" to "Known Peers"
     assert "from local peer store" in result.output
     # Check for JSON output
     assert '"peer_id": "peer789"' in result.output or '"peer_id":"peer789"' in result.output
@@ -353,7 +353,7 @@ def test_list_peers_fallback_empty_store(monkeypatch: Any, tmp_path: Any) -> Non
     
     result = runner.invoke(peer.app, ["list", "--store", str(store_path)])
     assert result.exit_code == 0
-    assert "No peers connected" in result.output
+    assert "No known peers in local peer store" in result.output  # Changed to reflect new message
 
 
 @respx.mock
@@ -494,7 +494,7 @@ def test_list_peers_fallback_to_sqlite_store(monkeypatch: Any, tmp_path: Any) ->
     # in the same directory, which is how it finds our SQLite database
     result = runner.invoke(peer.app, ["list", "--store", str(tmp_path / "peers.json")])
     assert result.exit_code == 0
-    assert "Connected Peers: 1" in result.output
+    assert "Known Peers: 1" in result.output  # Changed from "Connected Peers" to "Known Peers"
     assert "from local peer store" in result.output
     assert "db_peer1" in result.output
 
