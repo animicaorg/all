@@ -1010,6 +1010,69 @@ def _build_child_header(
     )
 
 
+def _convert_receipts_dict_to_objects(receipts_dict: list[dict[str, Any]]) -> list:
+    """
+    Convert dict receipts from _execute_transactions to Receipt objects.
+    
+    Args:
+        receipts_dict: List of receipt dicts with keys: status, gasUsed, logs
+        
+    Returns:
+        List of Receipt objects with proper types (ReceiptStatus enum, Log objects)
+    """
+    from core.types.receipt import Receipt, ReceiptStatus, Log
+    
+    receipts = []
+    for r_dict in receipts_dict:
+        # Convert status int to ReceiptStatus enum
+        # Status codes: 0 = REVERT, 1 = SUCCESS, 2 = OOG
+        status_val = r_dict.get("status", 0)
+        if status_val == 1:
+            status = ReceiptStatus.SUCCESS
+        elif status_val == 2:
+            status = ReceiptStatus.OOG
+        else:
+            status = ReceiptStatus.REVERT
+        
+        gas_used = int(r_dict.get("gasUsed", 0))
+        
+        # Convert logs (may be empty list or list of log-like objects)
+        logs_out = []
+        for log_item in r_dict.get("logs", []):
+            # If log_item is already a Log object, use it directly
+            if isinstance(log_item, Log):
+                logs_out.append(log_item)
+            elif isinstance(log_item, dict):
+                # Convert dict log to Log object
+                addr = log_item.get("address", b"\x00" * RECEIPT_ADDRESS_LEN)
+                if isinstance(addr, (bytes, bytearray)):
+                    addr_bytes = bytes(addr)
+                else:
+                    addr_bytes = b"\x00" * RECEIPT_ADDRESS_LEN
+                # Pad to RECEIPT_ADDRESS_LEN bytes
+                if len(addr_bytes) < RECEIPT_ADDRESS_LEN:
+                    addr_bytes = addr_bytes.ljust(RECEIPT_ADDRESS_LEN, b"\x00")
+                elif len(addr_bytes) > RECEIPT_ADDRESS_LEN:
+                    addr_bytes = addr_bytes[:RECEIPT_ADDRESS_LEN]
+                
+                topics = log_item.get("topics", [])
+                topics_tuple = tuple(
+                    bytes(t)[:TOPIC_LEN].ljust(TOPIC_LEN, b"\x00") if isinstance(t, (bytes, bytearray)) else b"\x00" * TOPIC_LEN
+                    for t in topics
+                )
+                data = bytes(log_item.get("data", b""))
+                
+                logs_out.append(Log(address=addr_bytes, topics=topics_tuple, data=data))
+        
+        receipts.append(Receipt(
+            status=status,
+            gas_used=gas_used,
+            logs=tuple(logs_out)
+        ))
+    
+    return receipts
+
+
 def _execute_transactions(
     *,
     txs: list[Any],
@@ -1797,53 +1860,7 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
                     )
                     
                     # Convert dict receipts to Receipt objects for compatibility with receiptsRoot computation
-                    receipts = []
-                    for r_dict in receipts_dict:
-                        # Convert status int to ReceiptStatus enum
-                        # Status codes: 0 = REVERT, 1 = SUCCESS, 2 = OOG
-                        status_val = r_dict.get("status", 0)
-                        if status_val == 1:
-                            status = ReceiptStatus.SUCCESS
-                        elif status_val == 2:
-                            status = ReceiptStatus.OOG
-                        else:
-                            status = ReceiptStatus.REVERT
-                        
-                        gas_used = int(r_dict.get("gasUsed", 0))
-                        
-                        # Convert logs (may be empty list or list of log-like objects)
-                        logs_out = []
-                        for log_item in r_dict.get("logs", []):
-                            # If log_item is already a Log object, use it directly
-                            if isinstance(log_item, Log):
-                                logs_out.append(log_item)
-                            elif isinstance(log_item, dict):
-                                # Convert dict log to Log object
-                                addr = log_item.get("address", b"\x00" * RECEIPT_ADDRESS_LEN)
-                                if isinstance(addr, (bytes, bytearray)):
-                                    addr_bytes = bytes(addr)
-                                else:
-                                    addr_bytes = b"\x00" * RECEIPT_ADDRESS_LEN
-                                # Pad to RECEIPT_ADDRESS_LEN bytes
-                                if len(addr_bytes) < RECEIPT_ADDRESS_LEN:
-                                    addr_bytes = addr_bytes.ljust(RECEIPT_ADDRESS_LEN, b"\x00")
-                                elif len(addr_bytes) > RECEIPT_ADDRESS_LEN:
-                                    addr_bytes = addr_bytes[:RECEIPT_ADDRESS_LEN]
-                                
-                                topics = log_item.get("topics", [])
-                                topics_tuple = tuple(
-                                    bytes(t)[:TOPIC_LEN].ljust(TOPIC_LEN, b"\x00") if isinstance(t, (bytes, bytearray)) else b"\x00" * TOPIC_LEN
-                                    for t in topics
-                                )
-                                data = bytes(log_item.get("data", b""))
-                                
-                                logs_out.append(Log(address=addr_bytes, topics=topics_tuple, data=data))
-                        
-                        receipts.append(Receipt(
-                            status=status,
-                            gas_used=gas_used,
-                            logs=tuple(logs_out)
-                        ))
+                    receipts = _convert_receipts_dict_to_objects(receipts_dict)
 
                     # Apply block reward before finalizing header/roots
                     # This also happens within the batch context
@@ -1869,46 +1886,7 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
                     logger=log,
                 )
                 
-                receipts = []
-                for r_dict in receipts_dict:
-                    status_val = r_dict.get("status", 0)
-                    if status_val == 1:
-                        status = ReceiptStatus.SUCCESS
-                    elif status_val == 2:
-                        status = ReceiptStatus.OOG
-                    else:
-                        status = ReceiptStatus.REVERT
-                    
-                    gas_used = int(r_dict.get("gasUsed", 0))
-                    logs_out = []
-                    for log_item in r_dict.get("logs", []):
-                        if isinstance(log_item, Log):
-                            logs_out.append(log_item)
-                        elif isinstance(log_item, dict):
-                            addr = log_item.get("address", b"\x00" * RECEIPT_ADDRESS_LEN)
-                            if isinstance(addr, (bytes, bytearray)):
-                                addr_bytes = bytes(addr)
-                            else:
-                                addr_bytes = b"\x00" * RECEIPT_ADDRESS_LEN
-                            if len(addr_bytes) < RECEIPT_ADDRESS_LEN:
-                                addr_bytes = addr_bytes.ljust(RECEIPT_ADDRESS_LEN, b"\x00")
-                            elif len(addr_bytes) > RECEIPT_ADDRESS_LEN:
-                                addr_bytes = addr_bytes[:RECEIPT_ADDRESS_LEN]
-                            
-                            topics = log_item.get("topics", [])
-                            topics_tuple = tuple(
-                                bytes(t)[:TOPIC_LEN].ljust(TOPIC_LEN, b"\x00") if isinstance(t, (bytes, bytearray)) else b"\x00" * TOPIC_LEN
-                                for t in topics
-                            )
-                            data = bytes(log_item.get("data", b""))
-                            logs_out.append(Log(address=addr_bytes, topics=topics_tuple, data=data))
-                    
-                    receipts.append(Receipt(
-                        status=status,
-                        gas_used=gas_used,
-                        logs=tuple(logs_out)
-                    ))
-
+                receipts = _convert_receipts_dict_to_objects(receipts_dict)
                 reward_amount = _apply_block_reward(ctx, header.height, payout_address)
 
             # Compute receipts root (if any receipts) and ensure txs root matches tx set
