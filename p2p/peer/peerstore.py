@@ -43,7 +43,8 @@ CREATE TABLE IF NOT EXISTS peers (
   last_disconnect REAL,
   rtt_ms REAL,
   score REAL,
-  snapshot TEXT                        -- JSON snapshot (optional but preferred)
+  snapshot TEXT,                       -- JSON snapshot (optional but preferred)
+  direction TEXT                       -- "inbound" or "outbound" or NULL
 );
 CREATE TABLE IF NOT EXISTS peer_addresses (
   peer_id TEXT NOT NULL,
@@ -110,6 +111,8 @@ class PeerStore:
                 s = stmt.strip()
                 if s:
                     conn.execute(s)
+            # Migration: Add direction column if it doesn't exist
+            self._migrate_add_direction_column(conn)
 
     def _locked_conn(self) -> sqlite3.Connection:
         # Acquire a re-entrant lock and return a connection bound to this thread.
@@ -133,11 +136,26 @@ class PeerStore:
 
         return _Guard(self, conn)  # type: ignore[return-value]
 
+    def _migrate_add_direction_column(self, conn: sqlite3.Connection) -> None:
+        """
+        Add the direction column to the peers table if it doesn't exist.
+        This migration is safe to run multiple times.
+        """
+        try:
+            # Check if direction column exists
+            cursor = conn.execute("PRAGMA table_info(peers)")
+            columns = [row[1] for row in cursor.fetchall()]
+            if "direction" not in columns:
+                conn.execute("ALTER TABLE peers ADD COLUMN direction TEXT")
+        except Exception:
+            # If migration fails, don't crash - the column may already exist
+            pass
+
     # ------------------------------------------------------------------ #
     # Upserts & updates
     # ------------------------------------------------------------------ #
 
-    def add(self, peer_id: str, addrs: Optional[list[str]] = None, score: float = 0) -> None:
+    def add(self, peer_id: str, addrs: Optional[list[str]] = None, score: float = 0, direction: Optional[str] = None) -> None:
         """
         Simplified upsert for tests: add/update a peer with minimal required fields.
         
@@ -145,6 +163,7 @@ class PeerStore:
             peer_id: Peer identifier
             addrs: List of multiaddr strings (optional)
             score: Initial score (default 0)
+            direction: Connection direction ("inbound" or "outbound", optional)
         """
         now = _now()
         addrs = addrs or []
@@ -156,12 +175,13 @@ class PeerStore:
             conn.execute(
                 """
                 INSERT INTO peers (peer_id, address, roles, chain_id, alg_policy_root, head_height, caps,
-                                   status, first_seen, last_seen, connected_at, last_disconnect, rtt_ms, score, snapshot)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                   status, first_seen, last_seen, connected_at, last_disconnect, rtt_ms, score, snapshot, direction)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(peer_id) DO UPDATE SET
                   address=excluded.address,
                   last_seen=excluded.last_seen,
-                  score=excluded.score
+                  score=excluded.score,
+                  direction=COALESCE(excluded.direction, direction)
                 """,
                 (
                     peer_id,
@@ -179,6 +199,7 @@ class PeerStore:
                     None,  # rtt_ms
                     float(score),
                     "{}",  # snapshot: empty
+                    direction,  # direction: "inbound", "outbound", or None
                 ),
             )
             # Upsert all addresses
@@ -192,9 +213,9 @@ class PeerStore:
                     (peer_id, addr, now),
                 )
     
-    def upsert(self, peer_id: str, addrs: Optional[list[str]] = None, score: float = 0) -> None:
+    def upsert(self, peer_id: str, addrs: Optional[list[str]] = None, score: float = 0, direction: Optional[str] = None) -> None:
         """Alias for add() to match test expectations."""
-        self.add(peer_id, addrs, score)
+        self.add(peer_id, addrs, score, direction)
 
     def upsert_peer(self, peer: Peer) -> None:
         """Insert or update a peer row + snapshot; refresh last_seen and address mapping."""
@@ -372,6 +393,9 @@ class PeerStore:
             peer.addrs = [r["address"] for r in addr_rows]  # type: ignore
             # Also attach the score snapshot for test compatibility
             peer.score = float(row["score"]) if row["score"] is not None else 0.0  # type: ignore
+            # Attach direction if present
+            if "direction" in row.keys():
+                peer.direction = row["direction"]  # type: ignore
             return peer
 
     def find_by_address(self, address: str) -> List[str]:
