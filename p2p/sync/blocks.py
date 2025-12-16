@@ -93,6 +93,8 @@ class BlocksSyncStats:
 class BlocksDownloader:
     """
     Download & reassemble a known ordered segment of block hashes (oldest→newest).
+    
+    Enhanced with better logging and idle handling for P2P rewrite.
 
     Typical usage:
       1) headers sync yields a contiguous header segment that's chosen as best.
@@ -128,17 +130,28 @@ class BlocksDownloader:
         """
         Fetch and commit the blocks for `order` (oldest→newest).
         Returns the number of blocks committed.
+        
+        Enhanced with logging for P2P rewrite.
         """
+        import logging
+        log = logging.getLogger("animica.p2p.sync.blocks")
+        
         if not order:
             return 0
 
+        log.info(f"Starting block download for {len(order)} blocks")
+        
         # Fast path: drop any prefix that is already persisted.
         next_idx = 0
         while next_idx < len(order) and await self.chain.has_block(order[next_idx]):
             next_idx += 1
 
         if next_idx >= len(order):
+            log.debug(f"All {len(order)} blocks already synced")
             return 0  # already synced
+        
+        blocks_to_fetch = len(order) - next_idx
+        log.info(f"Need to fetch {blocks_to_fetch} blocks (skipped {next_idx} already present)")
 
         # Concurrency control.
         sem = asyncio.Semaphore(max(1, self.cfg.max_parallel))
@@ -154,20 +167,30 @@ class BlocksDownloader:
                     if blk is None:
                         # Peer(s) failed to provide; mark as miss and stop retrying immediately.
                         self.stats.misses += 1
+                        log.warning(f"Block fetch miss for {h.hex()[:16]}...")
                         return None
+                    log.debug(f"Successfully fetched block {h.hex()[:16]}...")
                     return blk
                 except asyncio.TimeoutError:
                     self.stats.timeouts += 1
                     self.stats.retries += 1
+                    log.warning(
+                        f"Block fetch timeout for {h.hex()[:16]}... "
+                        f"(attempt {attempt + 1}/{self.cfg.max_retries + 1})"
+                    )
                     # Exponential backoff with jitter, but keep bounded.
                     base = min(6.0, timeout * 1.6)
                     timeout = base * (
                         1.0 + (random.random() - 0.5) * 2 * self.cfg.jitter_frac
                     )
-                except Exception:
+                except Exception as e:
                     self.stats.errors += 1
                     self.stats.retries += 1
+                    log.error(
+                        f"Block fetch error for {h.hex()[:16]}...: {e.__class__.__name__}: {e}"
+                    )
                     await asyncio.sleep(0.05)
+            log.error(f"Failed to fetch block {h.hex()[:16]}... after {self.cfg.max_retries + 1} attempts")
             return None
 
         async def schedule_until_full() -> None:
