@@ -321,6 +321,85 @@ Peer Management
   # (peers.db) and JSON (peers.json) formats. This allows you to see known
   # peers even when the node's RPC doesn't expose peer listing methods.
 
+Sync Management
+---------------
+  # Check blockchain synchronization status
+  # Shows current head height, sync progress, and connected peers
+  animica sync status
+  
+  # View detailed sync information (includes peer list)
+  animica sync status --verbose
+  
+  # Get sync status in JSON format (for scripts/monitoring)
+  animica sync status --json
+  
+  # Force blockchain resynchronization
+  # Useful when sync appears stuck or after network issues
+  animica sync force
+  
+  # Force sync with custom timeout (default: 300 seconds)
+  animica sync force --timeout 600
+  
+  # Adjust how often to check progress (default: 5 seconds)
+  animica sync force --check-interval 10
+  
+  # Typical workflow when node isn't syncing:
+  #   1. Check sync status: animica sync status
+  #   2. If no peers: animica peer bootstrap
+  #   3. Force sync: animica sync force
+  #   4. Monitor: animica sync status --verbose
+  
+  # The sync status command displays:
+  #   - Current blockchain head (height, hash, chain ID)
+  #   - Sync state (SYNCHRONIZED, SYNCING, or IDLE)
+  #   - Progress percentage (if actively syncing)
+  #   - Connected peer count
+  #   - Warnings and recommendations if issues detected
+  
+  # The force sync command:
+  #   - Checks peer connectivity before starting
+  #   - Attempts to trigger sync via RPC (tries multiple methods)
+  #   - Monitors sync progress in real-time
+  #   - Shows blocks synced and sync rate
+  #   - Provides helpful diagnostics if sync fails
+  
+  # Note: The sync commands use the following RPC methods with fallbacks:
+  #   Sync status: node.syncStatus, sync.status, chain.syncing, sync.isSyncing
+  #   Head info: chain.getHead
+  #   Peer list: p2p.listPeers, p2p.getPeers, admin_peers, net_peers
+  #   Trigger sync: sync.start, node.startSync, sync.trigger, p2p.sync
+  #
+  # The commands gracefully handle nodes that don't support all methods
+  # and provide clear error messages with troubleshooting hints.
+
+Troubleshooting Sync Issues
+----------------------------
+  Common sync problems and solutions:
+  
+  Problem: "No peers connected"
+  Solution: 
+    animica peer bootstrap           # Connect to seed nodes
+    animica peer add <address>       # Add specific peer
+  
+  Problem: Sync stuck at same height
+  Solution:
+    animica sync force               # Force resync
+    animica peer list --verbose      # Check peer status
+  
+  Problem: "Could not trigger sync via RPC"
+  Solution:
+    - Node may sync automatically when peers connect
+    - Ensure node is running: animica node status
+    - Check node logs for errors
+    - Verify RPC endpoint is accessible
+  
+  Problem: Slow sync speed
+  Solution:
+    - Add more peers: animica peer bootstrap
+    - Check network connectivity
+    - Ensure node has sufficient resources
+    - Monitor with: animica sync status --verbose
+
 Node Lifecycle Commands (up/down)
 ----------------------------------
 The `node up` and `node down` commands manage local development nodes using
@@ -426,9 +505,10 @@ Implementation Status
   - mining.py            run-pool, show-config, generate-payout-address
   - network.py           set, get, list (network management)
   - peer.py              list, add, remove, info (peer management)
+  - sync.py              status, force (sync management)
   - state.py             Persistent CLI state storage
   - pyproject.toml       Entry point added as `animica` command
-  - Tests                Comprehensive tests for node, network, state, peer
+  - Tests                Comprehensive tests for node, network, state, peer, sync
 
 Partial (TODO):
   - tx.py                sign, send (require full wallet integration)
