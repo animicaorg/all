@@ -36,6 +36,10 @@ class ProxyConfig:
     
     SECURITY WARNING: Setting trusted_rpc_url enables centralized trust mode.
     This is ONLY safe for client read operations, NEVER for node consensus/mining.
+    
+    MIGRATION: If you previously relied on the default rpc.animica.org endpoint,
+    you must now explicitly set ANIMICA_TRUSTED_RPC_URL environment variable.
+    This is an intentional breaking change to prevent accidental centralization.
     """
     
     trusted_rpc_url: str | None = None  # MUST be explicitly set, no default
@@ -102,7 +106,11 @@ class RpcProxy:
         if not self.config.trusted_rpc_url:
             raise ValueError(
                 "RPC Proxy is disabled by default. Set ANIMICA_TRUSTED_RPC_URL to enable.\n"
-                "WARNING: Proxy is for CLIENT-ONLY use. Do NOT use for node consensus, mining, or sync."
+                "WARNING: Proxy is for CLIENT-ONLY use. Do NOT use for node consensus, mining, or sync.\n"
+                "\n"
+                "MIGRATION: If you previously relied on rpc.animica.org as the default endpoint,\n"
+                "set ANIMICA_TRUSTED_RPC_URL=https://rpc.animica.org/rpc explicitly.\n"
+                "This is an intentional breaking change to enforce P2P-first decentralization."
             )
         
         logger.warning(
