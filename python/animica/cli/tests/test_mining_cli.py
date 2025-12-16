@@ -351,12 +351,17 @@ def test_mine_blocks_enforces_2s_delay(monkeypatch: Any) -> None:
 
 
 def _create_mock_rpc_client_with_device_tracking() -> tuple[type, dict[str, Any]]:
-    """Helper to create a mock RPC client that tracks the device parameter.
+    """Helper to create a mock RPC client that tracks RPC parameters.
+    
+    Note: Device parameter should NOT be sent to RPC (it's CLI-only).
+    This helper verifies that device is not in RPC params.
     
     Returns:
-        tuple: (MockRpcClient class, device tracking dict)
+        tuple: (MockRpcClient class, tracking dict with keys:
+                'has_device' (bool): True if device was in params,
+                'params' (dict | None): The RPC params dict or None)
     """
-    device_used = {"value": None}
+    params_tracker = {"has_device": False, "params": None}
     
     class MockRpcClient:
         def __init__(self, *args, **kwargs):
@@ -369,35 +374,37 @@ def _create_mock_rpc_client_with_device_tracking() -> tuple[type, dict[str, Any]
             pass
         
         def request(self, method: str, params: Any):
+            # Track whether device parameter was sent (it shouldn't be)
             if isinstance(params, dict):
-                device_used["value"] = params.get("device")
-            return {"mined": 1, "height": 1}
+                params_tracker["params"] = params
+                params_tracker["has_device"] = "device" in params
+            return {"mined": 1, "height": 1, "totalReward": 5000000000}
     
-    return MockRpcClient, device_used
+    return MockRpcClient, params_tracker
 
 
 def _setup_mock_rpc_client(monkeypatch: Any, test_address: str) -> dict[str, Any]:
     """Helper to set up mock RPC client and address validation.
     
     Returns:
-        dict: Device tracking dictionary with 'value' key
+        dict: Params tracking dictionary with 'has_device' and 'params' keys
     """
     monkeypatch.setattr(mining, "_validate_bech32_address", lambda x: True if x == test_address else False)
     
-    MockRpcClient, device_used = _create_mock_rpc_client_with_device_tracking()
+    MockRpcClient, params_tracker = _create_mock_rpc_client_with_device_tracking()
     mock_module = Mock()
     mock_module.RpcClient = MockRpcClient
     
     monkeypatch.setitem(__import__("sys").modules, "omni_sdk.rpc.http", mock_module)
     monkeypatch.setitem(__import__("sys").modules, "sdk.python.omni_sdk.rpc.http", mock_module)
     
-    return device_used
+    return params_tracker
 
 
 def test_mine_blocks_with_device_cpu(monkeypatch: Any) -> None:
-    """Test that mine-blocks accepts --device cpu."""
+    """Test that mine-blocks accepts --device cpu without sending to RPC."""
     test_address = "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz"
-    device_used = _setup_mock_rpc_client(monkeypatch, test_address)
+    params_tracker = _setup_mock_rpc_client(monkeypatch, test_address)
     
     result = runner.invoke(
         mining.app,
@@ -407,18 +414,20 @@ def test_mine_blocks_with_device_cpu(monkeypatch: Any) -> None:
             "--count", "1",
             "--device", "cpu",
             "--rpc-url", "http://127.0.0.1:8545",
+            "--no-proxy",  # Disable proxy for simpler test
         ],
     )
     
     assert result.exit_code == 0
-    assert device_used["value"] == "cpu"
+    # Device should NOT be sent to RPC (it's CLI-only)
+    assert not params_tracker["has_device"], "Device parameter should not be sent to RPC"
     assert "Using device: cpu" in result.output
 
 
 def test_mine_blocks_with_device_cuda(monkeypatch: Any) -> None:
-    """Test that mine-blocks accepts --device cuda."""
+    """Test that mine-blocks accepts --device cuda without sending to RPC."""
     test_address = "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz"
-    device_used = _setup_mock_rpc_client(monkeypatch, test_address)
+    params_tracker = _setup_mock_rpc_client(monkeypatch, test_address)
     
     result = runner.invoke(
         mining.app,
@@ -428,22 +437,26 @@ def test_mine_blocks_with_device_cuda(monkeypatch: Any) -> None:
             "--count", "1",
             "--device", "cuda",
             "--rpc-url", "http://127.0.0.1:8545",
+            "--no-proxy",
         ],
     )
     
     assert result.exit_code == 0
-    assert device_used["value"] == "cuda"
+    # Device should NOT be sent to RPC (it's CLI-only)
+    assert not params_tracker["has_device"], "Device parameter should not be sent to RPC"
     assert "Using device: cuda" in result.output
 
 
 def test_mine_blocks_with_device_auto(monkeypatch: Any) -> None:
     """Test that mine-blocks accepts --device auto and auto-detects device."""
     test_address = "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz"
-    device_used = _setup_mock_rpc_client(monkeypatch, test_address)
+    params_tracker = _setup_mock_rpc_client(monkeypatch, test_address)
     
     # Mock auto_detect_device to return cpu for test
-    from mining.device import DeviceType
-    monkeypatch.setattr("mining.device.auto_detect_device", lambda: DeviceType.CPU)
+    def mock_auto_detect():
+        return "cpu"
+    
+    monkeypatch.setattr("mining.device.auto_detect_device", mock_auto_detect)
     
     result = runner.invoke(
         mining.app,
@@ -453,12 +466,13 @@ def test_mine_blocks_with_device_auto(monkeypatch: Any) -> None:
             "--count", "1",
             "--device", "auto",
             "--rpc-url", "http://127.0.0.1:8545",
+            "--no-proxy",
         ],
     )
     
     assert result.exit_code == 0
-    # After auto-detection, it should resolve to cpu
-    assert device_used["value"] == "cpu"
+    # Device should NOT be sent to RPC (it's CLI-only)
+    assert not params_tracker["has_device"], "Device parameter should not be sent to RPC"
     assert "Auto-detected device: cpu" in result.output
     assert "Using device: cpu" in result.output
 
@@ -468,14 +482,13 @@ def test_mine_blocks_with_all_supported_devices(monkeypatch: Any) -> None:
     test_address = "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz"
     # Import the constant to ensure consistency with main module
     from animica.cli.mining import SUPPORTED_DEVICES
-    from mining.device import DeviceType
     
     # Mock auto_detect_device to return cpu for "auto" tests
-    monkeypatch.setattr("mining.device.auto_detect_device", lambda: DeviceType.CPU)
+    monkeypatch.setattr("mining.device.auto_detect_device", lambda: "cpu")
     
     for device in SUPPORTED_DEVICES:
         # Setup fresh mock for each device
-        device_used = _setup_mock_rpc_client(monkeypatch, test_address)
+        params_tracker = _setup_mock_rpc_client(monkeypatch, test_address)
         
         result = runner.invoke(
             mining.app,
@@ -485,18 +498,20 @@ def test_mine_blocks_with_all_supported_devices(monkeypatch: Any) -> None:
                 "--count", "1",
                 "--device", device,
                 "--rpc-url", "http://127.0.0.1:8545",
+                "--no-proxy",
             ],
         )
         
         assert result.exit_code == 0, f"Device {device} failed with: {result.output}"
         
+        # Device should NOT be sent to RPC (it's CLI-only)
+        assert not params_tracker["has_device"], f"Device parameter should not be sent to RPC for {device}"
+        
         # For "auto" device, the actual device used will be the auto-detected one (cpu in our mock)
         if device == "auto":
-            assert device_used["value"] == "cpu", f"Auto device should resolve to cpu, got {device_used['value']}"
             assert "Auto-detected device: cpu" in result.output
             assert "Using device: cpu" in result.output
         else:
-            assert device_used["value"] == device, f"Expected device {device}, got {device_used['value']}"
             assert f"Using device: {device}" in result.output
 
 
@@ -523,7 +538,7 @@ def test_mine_blocks_with_invalid_device() -> None:
 def test_mine_blocks_with_device_case_insensitive(monkeypatch: Any) -> None:
     """Test that device parameter is case-insensitive."""
     test_address = "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz"
-    device_used = _setup_mock_rpc_client(monkeypatch, test_address)
+    params_tracker = _setup_mock_rpc_client(monkeypatch, test_address)
     
     result = runner.invoke(
         mining.app,
@@ -533,22 +548,24 @@ def test_mine_blocks_with_device_case_insensitive(monkeypatch: Any) -> None:
             "--count", "1",
             "--device", "CUDA",  # Upper case
             "--rpc-url", "http://127.0.0.1:8545",
+            "--no-proxy",
         ],
     )
     
     assert result.exit_code == 0
-    assert device_used["value"] == "cuda"  # Should be normalized to lowercase
+    # Device should NOT be sent to RPC (it's CLI-only)
+    assert not params_tracker["has_device"], "Device parameter should not be sent to RPC"
+    # Should be normalized to lowercase in output
     assert "Using device: cuda" in result.output
 
 
 def test_mine_blocks_without_device_defaults_to_auto(monkeypatch: Any) -> None:
     """Test that mine-blocks defaults to auto device when --device is not specified."""
     test_address = "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz"
-    device_used = _setup_mock_rpc_client(monkeypatch, test_address)
+    params_tracker = _setup_mock_rpc_client(monkeypatch, test_address)
     
     # Mock auto_detect_device to return cpu for test
-    from mining.device import DeviceType
-    monkeypatch.setattr("mining.device.auto_detect_device", lambda: DeviceType.CPU)
+    monkeypatch.setattr("mining.device.auto_detect_device", lambda: "cpu")
     
     result = runner.invoke(
         mining.app,
@@ -558,12 +575,14 @@ def test_mine_blocks_without_device_defaults_to_auto(monkeypatch: Any) -> None:
             "--count", "1",
             # No --device flag specified
             "--rpc-url", "http://127.0.0.1:8545",
+            "--no-proxy",
         ],
     )
     
     assert result.exit_code == 0
+    # Device should NOT be sent to RPC (it's CLI-only)
+    assert not params_tracker["has_device"], "Device parameter should not be sent to RPC"
     # Should auto-detect and use cpu (from our mock)
-    assert device_used["value"] == "cpu"
     assert "Auto-detected device: cpu" in result.output
     assert "Using device: cpu" in result.output
 
@@ -572,7 +591,7 @@ def test_mine_blocks_device_from_env_var(monkeypatch: Any) -> None:
     """Test that device can be set via ANIMICA_MINER_DEVICE environment variable."""
     test_address = "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz"
     monkeypatch.setenv("ANIMICA_MINER_DEVICE", "cuda")
-    device_used = _setup_mock_rpc_client(monkeypatch, test_address)
+    params_tracker = _setup_mock_rpc_client(monkeypatch, test_address)
     
     result = runner.invoke(
         mining.app,
@@ -582,22 +601,24 @@ def test_mine_blocks_device_from_env_var(monkeypatch: Any) -> None:
             "--count", "1",
             # No --device flag, should use env var
             "--rpc-url", "http://127.0.0.1:8545",
+            "--no-proxy",
         ],
     )
     
     assert result.exit_code == 0
-    assert device_used["value"] == "cuda"  # Should use env var value
+    # Device should NOT be sent to RPC (it's CLI-only)
+    assert not params_tracker["has_device"], "Device parameter should not be sent to RPC"
+    # Should use env var value
     assert "Using device: cuda" in result.output
 
 
 def test_mine_blocks_auto_detect_cuda(monkeypatch: Any) -> None:
     """Test auto-detection selects CUDA when available."""
     test_address = "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz"
-    device_used = _setup_mock_rpc_client(monkeypatch, test_address)
+    params_tracker = _setup_mock_rpc_client(monkeypatch, test_address)
     
     # Mock auto_detect_device to return cuda
-    from mining.device import DeviceType
-    monkeypatch.setattr("mining.device.auto_detect_device", lambda: DeviceType.CUDA)
+    monkeypatch.setattr("mining.device.auto_detect_device", lambda: "cuda")
     
     result = runner.invoke(
         mining.app,
@@ -607,11 +628,13 @@ def test_mine_blocks_auto_detect_cuda(monkeypatch: Any) -> None:
             "--count", "1",
             "--device", "auto",
             "--rpc-url", "http://127.0.0.1:8545",
+            "--no-proxy",
         ],
     )
     
     assert result.exit_code == 0
-    assert device_used["value"] == "cuda"
+    # Device should NOT be sent to RPC (it's CLI-only)
+    assert not params_tracker["has_device"], "Device parameter should not be sent to RPC"
     assert "Auto-detected device: cuda" in result.output
     assert "Using device: cuda" in result.output
 
@@ -619,7 +642,7 @@ def test_mine_blocks_auto_detect_cuda(monkeypatch: Any) -> None:
 def test_mine_blocks_auto_detect_fallback_on_error(monkeypatch: Any) -> None:
     """Test auto-detection falls back to CPU on error."""
     test_address = "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz"
-    device_used = _setup_mock_rpc_client(monkeypatch, test_address)
+    params_tracker = _setup_mock_rpc_client(monkeypatch, test_address)
     
     # Mock auto_detect_device to raise an exception
     def mock_error():
@@ -635,11 +658,14 @@ def test_mine_blocks_auto_detect_fallback_on_error(monkeypatch: Any) -> None:
             "--count", "1",
             "--device", "auto",
             "--rpc-url", "http://127.0.0.1:8545",
+            "--no-proxy",
         ],
     )
     
     assert result.exit_code == 0
-    assert device_used["value"] == "cpu"  # Should fallback to cpu
+    # Device should NOT be sent to RPC (it's CLI-only)
+    assert not params_tracker["has_device"], "Device parameter should not be sent to RPC"
+    # Should fallback to cpu
     assert "Could not auto-detect device" in result.output
     assert "Falling back to CPU" in result.output
     assert "Using device: cpu" in result.output
@@ -648,11 +674,10 @@ def test_mine_blocks_auto_detect_fallback_on_error(monkeypatch: Any) -> None:
 def test_mine_blocks_explicit_device_overrides_auto(monkeypatch: Any) -> None:
     """Test that explicitly setting a device overrides auto-detection."""
     test_address = "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz"
-    device_used = _setup_mock_rpc_client(monkeypatch, test_address)
+    params_tracker = _setup_mock_rpc_client(monkeypatch, test_address)
     
     # Mock auto_detect_device to return cuda (but we'll explicitly request cpu)
-    from mining.device import DeviceType
-    monkeypatch.setattr("mining.device.auto_detect_device", lambda: DeviceType.CUDA)
+    monkeypatch.setattr("mining.device.auto_detect_device", lambda: "cuda")
     
     result = runner.invoke(
         mining.app,
@@ -662,11 +687,14 @@ def test_mine_blocks_explicit_device_overrides_auto(monkeypatch: Any) -> None:
             "--count", "1",
             "--device", "cpu",  # Explicitly request CPU
             "--rpc-url", "http://127.0.0.1:8545",
+            "--no-proxy",
         ],
     )
     
     assert result.exit_code == 0
-    assert device_used["value"] == "cpu"  # Should use explicitly requested CPU
+    # Device should NOT be sent to RPC (it's CLI-only)
+    assert not params_tracker["has_device"], "Device parameter should not be sent to RPC"
+    # Should use explicitly requested CPU
     # Should NOT show auto-detection message
     assert "Auto-detected device" not in result.output
     assert "Using device: cpu" in result.output

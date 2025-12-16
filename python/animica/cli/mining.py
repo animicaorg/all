@@ -298,7 +298,7 @@ def mine_blocks(
       If neither is valid, the command fails with exit code 2.
     
     Device Selection:
-      The --device flag specifies the mining backend to use:
+      The --device flag specifies the mining backend to use (CLI-only, not sent to RPC):
       - cpu: CPU backend (pure Python, always available)
       - cuda: NVIDIA CUDA backend (requires CUDA-capable GPU)
       - rocm: AMD ROCm backend (requires ROCm-capable GPU)
@@ -309,6 +309,9 @@ def mine_blocks(
       When 'auto' is selected (or no device specified), the system automatically detects
       and uses the best available device in priority order: CUDA > ROCm > OpenCL > Metal > CPU.
       Falls back to CPU if no GPU is detected or if detection fails.
+      
+      Note: Device selection is a local CLI feature for future use. The RPC node
+      handles mining execution and does not receive the device parameter.
       
       Default is 'auto'. Can also be set via ANIMICA_MINER_DEVICE environment variable.
     
@@ -549,21 +552,24 @@ def mine_blocks(
                     """Fallback: mine directly via local RPC."""
                     if verbose:
                         typer.echo(f"  [Fallback] Mining via local RPC at {url}")
-                    return client.request("miner.mine", {"count": 1, "address": resolved_address, "device": device_normalized})
+                    # Note: device is CLI-only parameter, not sent to RPC
+                    return client.request("miner.mine", {"count": 1, "address": resolved_address})
                 
                 try:
                     if proxy:
                         # Use proxy with fallback to local node
                         if verbose:
                             typer.echo(f"  [Proxy] Forwarding mining request to trusted RPC")
+                        # Note: device is CLI-only parameter for local device selection, not sent to RPC
                         result = proxy.sync_forward_request(
                             "miner.mine",
-                            {"count": 1, "address": resolved_address, "device": device_normalized},
+                            {"count": 1, "address": resolved_address},
                             fallback_handler=mine_via_local,
                         )
                     else:
                         # Direct mining to specified RPC
-                        result = client.request("miner.mine", {"count": 1, "address": resolved_address, "device": device_normalized})
+                        # Note: device is CLI-only parameter, not sent to RPC
+                        result = client.request("miner.mine", {"count": 1, "address": resolved_address})
                         
                 except Exception as e:
                     # If the RPC rejects the address parameter (older node), try without it
