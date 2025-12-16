@@ -59,22 +59,30 @@ function wireGlobalErrorHandlers() {
   window.addEventListener("unhandledrejection", (e) => {
     const reason = e.reason;
     
-    // Ignore certain benign rejections (network cancellations, etc.)
-    const shouldIgnore = 
-      reason instanceof DOMException && (
-        reason.name === "AbortError" ||
-        reason.name === "NetworkError"
-      ) ||
-      (reason instanceof TypeError && reason.message.includes("fetch"));
+    // Benign error types that should be silently ignored
+    const IGNORED_ERRORS = {
+      DOM_ABORT: "AbortError",
+      DOM_NETWORK: "NetworkError",
+    } as const;
     
-    if (!shouldIgnore) {
+    // Check if this is a benign error that should be ignored
+    const isBenignError = 
+      (reason instanceof DOMException && (
+        reason.name === IGNORED_ERRORS.DOM_ABORT ||
+        reason.name === IGNORED_ERRORS.DOM_NETWORK
+      )) ||
+      (reason instanceof TypeError && 
+        typeof reason.message === "string" && 
+        reason.message.includes("fetch"));
+    
+    if (!isBenignError) {
       if (process.env.NODE_ENV !== "production") {
         // eslint-disable-next-line no-console
         console.error("[explorer] Unhandled promise rejection:", reason);
       }
       
       // Show a user-friendly error toast for critical failures
-      if (typeof reason === "object" && reason !== null && "message" in reason) {
+      if (reason instanceof Error && typeof reason.message === "string") {
         try {
           window.dispatchEvent(
             new CustomEvent("explorer:toast", {
