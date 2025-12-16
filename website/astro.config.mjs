@@ -62,5 +62,15 @@ export default defineConfig({
       // Smaller JS by default; adjust if you need legacy support
       target: 'es2020',
     },
+    server: {
+      // Allow access from animica.org and common subdomains
+      allowedHosts: [
+        'animica.org',
+        'www.animica.org',
+        'dev.animica.org',
+        'staging.animica.org',
+        'preview.animica.org',
+      ],
+    },
   },
 });
