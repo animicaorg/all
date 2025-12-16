@@ -27,8 +27,14 @@ def test_difficulty_retarget_stability():
     theta_min, theta_max = min(thetas), max(thetas)
     band = theta_max / theta_min
 
-    assert params.theta_min_micro < theta_min
-    assert theta_max < params.theta_max_micro
+    assert params.theta_min_micro < theta_min, "Theta should stay above minimum"
+    # For unbounded theta, check that it doesn't grow unreasonably under normal conditions
+    if params.theta_max_micro is not None:
+        assert theta_max < params.theta_max_micro, "Theta should stay below maximum when set"
+    else:
+        # For unbounded case, verify reasonable growth (not exponential explosion)
+        # Under mixed intervals, theta should stay within reasonable bounds
+        assert theta_max < theta_init * 10.0, "Theta should not explode under normal mixed intervals"
     assert band < 3.0, "Θ should stay within a modest range under mixed intervals"
 
     recent = thetas[-25:]

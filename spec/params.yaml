@@ -76,7 +76,7 @@ networks:
       poies:
         theta_initial_munats: 16000000         # Θ₀ in µ-nats
         theta_min_munats: 8000000
-        theta_max_munats: 60000000             # Increased to handle high network load (was 32M)
+        theta_max_munats: null                 # Unbounded - allows dynamic scaling (was 60M)
         retarget:
           window_blocks: 1800                  # ~1 hour at 2s
           ema_beta: 0.15                       # fractional step toward target
@@ -174,7 +174,7 @@ networks:
       poies:
         theta_initial_munats: 12000000
         theta_min_munats: 6000000
-        theta_max_munats: 48000000             # Increased to handle high network load (was 24M)
+        theta_max_munats: null                 # Unbounded - allows dynamic scaling (was 48M)
         retarget: { window_blocks: 900, ema_beta: 0.25, clamp_ratio_per_window: { min: 0.5, max: 2.0 } }
         share_target_munats: 3000000
         nullifier_ttl_blocks: 32768
@@ -246,7 +246,7 @@ networks:
       poies:
         theta_initial_munats: 2000000
         theta_min_munats: 1000000
-        theta_max_munats: 24000000             # Increased to handle high network load (was 12M)
+        theta_max_munats: null                 # Unbounded - allows dynamic scaling (was 24M)
         retarget: { window_blocks: 90, ema_beta: 0.45, clamp_ratio_per_window: { min: 0.98, max: 1.15 } }
         share_target_munats: 600000
         nullifier_ttl_blocks: 8192
