@@ -1,7 +1,5 @@
 """Tests for P2P service configuration from environment variables."""
 
-import os
-import pytest
 
 
 def test_p2p_service_reads_env_vars(monkeypatch):
