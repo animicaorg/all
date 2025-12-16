@@ -78,5 +78,4 @@ def test_device_validation_accepts_all_supported() -> None:
         )
         
         # Should not fail device validation
-        assert "unsupported device" not in result.output.lower(), \
-            f"Device '{device}' should be supported but was rejected"
+        assert "unsupported device" not in result.output.lower(), f"Device '{device}' should be supported but was rejected"

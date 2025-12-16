@@ -301,9 +301,10 @@ If you have custom mining implementations:
 
 ## Related Issues
 
-- [#1234] RPC Error -32602: device parameter not supported
-- [#1235] Mining difficulty too high under network stress
-- [#1236] Theta adjustment too slow during hash rate changes
+This update addresses several reported issues:
+- RPC Error -32602: device parameter not supported
+- Mining difficulty constraints under network stress
+- Slow theta adjustment during hash rate changes
 
 ## References
 
