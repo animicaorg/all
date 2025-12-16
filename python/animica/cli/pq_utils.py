@@ -8,6 +8,12 @@ from typing import Optional, Tuple
 REQUIRED_PREFIX = "0.14."
 VENDORED_RELATIVE = ".deps/liboqs/0.14.0"
 
+# Dilithium3 algorithm ID (imported from pq.py.keygen if available)
+try:
+    from pq.py.keygen import DILITHIUM3_ID
+except Exception:
+    DILITHIUM3_ID = 0x1001  # Fallback constant
+
 
 def _try_import_oqs():
     try:
@@ -42,6 +48,35 @@ def _check_versions(oqs_mod) -> Tuple[bool, Optional[str]]:
     if c_ver and not c_ver.startswith(REQUIRED_PREFIX):
         return False, f"liboqs C library {c_ver} detected; Animica pins {REQUIRED_PREFIX}"
     return True, None
+
+
+def _test_pq_py_keygen(alg_id: int) -> Tuple[bool, Optional[str]]:
+    """
+    Helper to test pq.py keygen with a specific algorithm ID.
+    
+    Returns (success, error_msg).
+    """
+    try:
+        from pq.py.keygen import keygen_sig
+        from pq.py.sign import sign_detached, verify_detached
+        
+        kp = keygen_sig(alg_id)
+        
+        # Basic validation
+        if kp.public_key == kp.secret_key:
+            return False, "pq.py produced sk==pk (invalid)"
+        if len(kp.secret_key) <= len(kp.public_key):
+            return False, f"pq.py produced suspicious key sizes (pk={len(kp.public_key)} sk={len(kp.secret_key)})"
+        
+        # Test signing (pq.py uses a more complex signing API)
+        msg = b"animica-pq-check"
+        sig_obj = sign_detached(msg, alg_id, kp.secret_key, domain="test")
+        if not verify_detached(msg, sig_obj, kp.public_key, domain="test"):
+            return False, "pq.py sign/verify self-test failed"
+        
+        return True, None
+    except Exception as e:
+        return False, str(e)
 
 
 def check_pq_signing_available() -> Tuple[bool, Optional[str]]:
@@ -96,51 +131,22 @@ def check_pq_signing_available() -> Tuple[bool, Optional[str]]:
     # Fall back to pq.py module
     # Try with the default algorithm that wallet.py will use
     try:
-        from pq.py.keygen import keygen_sig
         from pq.py.registry import default_signature_alg
         
         alg_info = default_signature_alg()
-        kp = keygen_sig(alg_info.alg_id)
-        
-        # Basic validation
-        if kp.public_key == kp.secret_key:
-            return False, "pq.py produced sk==pk (invalid)"
-        if len(kp.secret_key) <= len(kp.public_key):
-            return False, f"pq.py produced suspicious key sizes (pk={len(kp.public_key)} sk={len(kp.secret_key)})"
-        
-        # Test signing (pq.py uses a more complex signing API)
-        from pq.py.sign import sign_detached, verify_detached
-        msg = b"animica-pq-check"
-        sig_obj = sign_detached(msg, alg_info.alg_id, kp.secret_key, domain="test")
-        if not verify_detached(msg, sig_obj, kp.public_key, domain="test"):
-            return False, "pq.py sign/verify self-test failed"
-        
-        return True, None
-    except NotImplementedError:
-        # Default algorithm not supported, try Dilithium3 as fallback
-        # since that's what animica.pq provides
-        try:
-            DILITHIUM3_ID = 0x1001
-            kp = keygen_sig(DILITHIUM3_ID)
-            
-            # Basic validation
-            if kp.public_key == kp.secret_key:
-                return False, "pq.py produced sk==pk (invalid)"
-            if len(kp.secret_key) <= len(kp.public_key):
-                return False, f"pq.py produced suspicious key sizes (pk={len(kp.public_key)} sk={len(kp.secret_key)})"
-            
-            # Test signing
-            from pq.py.sign import sign_detached, verify_detached
-            msg = b"animica-pq-check"
-            sig_obj = sign_detached(msg, DILITHIUM3_ID, kp.secret_key, domain="test")
-            if not verify_detached(msg, sig_obj, kp.public_key, domain="test"):
-                return False, "pq.py sign/verify self-test failed"
-            
+        ok, err = _test_pq_py_keygen(alg_info.alg_id)
+        if ok:
             return True, None
-        except Exception:
-            pass
-    except Exception as pq_err:
+    except NotImplementedError:
         pass
+    except Exception:
+        pass
+
+    # Default algorithm not supported, try Dilithium3 as fallback
+    # since that's what animica.pq provides
+    ok, err = _test_pq_py_keygen(DILITHIUM3_ID)
+    if ok:
+        return True, None
 
     # Neither backend available
     return False, f"No PQ backend available. oqs error: {oqs_err}"
