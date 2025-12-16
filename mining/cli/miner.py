@@ -13,8 +13,8 @@ Usage:
                                    [--metrics :PORT] [--log-level LEVEL]
                                    [--dry-run]
 
-  python -m mining.cli.miner mine-blocks --address ADDR --count N [--rpc-url URL]
-                                          [--log-level LEVEL]
+  python -m mining.cli.miner mine-blocks --address ADDR --count N [--threads N]
+                                          [--rpc-url URL] [--log-level LEVEL]
 
 Commands:
   start       - Start the continuous miner (orchestrator)
@@ -30,8 +30,8 @@ Examples:
   # Start the miner
   python -m mining.cli.miner start --threads 4
 
-  # Mine 5 blocks for testing
-  python -m mining.cli.miner mine-blocks --address anim1test123 --count 5
+  # Mine 5 blocks for testing with 4 threads
+  python -m mining.cli.miner mine-blocks --address anim1test123 --count 5 --threads 4
 
 Signals:
   - SIGINT/SIGTERM: graceful shutdown (start command).
@@ -203,6 +203,12 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help="number of blocks to mine (must be > 0)",
     )
     mine_blocks.add_argument(
+        "--threads",
+        type=int,
+        default=os.cpu_count() or 1,
+        help="number of CPU threads for mining (default: CPU count)",
+    )
+    mine_blocks.add_argument(
         "--rpc-url",
         type=str,
         default=_env_default("ANIMICA_RPC_URL", "http://127.0.0.1:8547"),
@@ -338,10 +344,11 @@ async def _run_mine_blocks(args: argparse.Namespace, log: logging.Logger) -> int
         return 3
 
     log.info(
-        "Mining %d block(s) with payout to address %s via RPC %s",
+        "Mining %d block(s) with payout to address %s via RPC %s (threads=%d)",
         args.count,
         args.address,
         args.rpc_url,
+        args.threads,
     )
 
     # JSON-RPC error code constant for invalid params (JSON-RPC 2.0 spec)
@@ -357,27 +364,50 @@ async def _run_mine_blocks(args: argparse.Namespace, log: logging.Logger) -> int
             JsonRpcCode = None  # type: ignore
         
         with rpc_client(args.rpc_url, timeout=30.0) as client:
-            # Call miner.mine RPC method with address parameter
-            # For backward compatibility, try with address first, fall back if not supported
+            # Call miner.mine RPC method with address and threads parameters
+            # For backward compatibility, try with full params first, fall back if not supported
             try:
-                result = client.request("miner.mine", {"count": args.count, "address": args.address})
+                result = client.request("miner.mine", {
+                    "count": args.count,
+                    "address": args.address,
+                    "threads": args.threads
+                })
             except Exception as e:
-                # If the RPC rejects the address parameter (older node), try without it
-                # Check for INVALID_PARAMS error code or presence of "address" in error message
+                # If the RPC rejects params (older node), try with just count and address
+                # Check for INVALID_PARAMS error code (preferred) or param names in error message (fallback)
+                # String matching is only used as last resort for compatibility with older SDK versions
                 is_param_error = False
                 if RpcError is not None and isinstance(e, RpcError):
+                    # Preferred: Use structured error code
                     is_param_error = (
                         e.code == JsonRpcCode.INVALID_PARAMS if JsonRpcCode else e.code == JSONRPC_INVALID_PARAMS
                     )
-                elif "address" in str(e).lower() or "unexpected" in str(e).lower():
+                elif "threads" in str(e).lower() or "address" in str(e).lower() or "unexpected" in str(e).lower():
+                    # Fallback: String matching for older SDK versions
                     is_param_error = True
                 
                 if is_param_error:
-                    log.warning(
-                        "Node does not support payout address selection (older version). "
-                        "Mining to node's default miner address."
-                    )
-                    result = client.request("miner.mine", [args.count])
+                    # Try without threads parameter (node doesn't support it yet)
+                    try:
+                        result = client.request("miner.mine", {"count": args.count, "address": args.address})
+                    except Exception as e2:
+                        # Still failing, try legacy format without address
+                        is_param_error2 = False
+                        if RpcError is not None and isinstance(e2, RpcError):
+                            is_param_error2 = (
+                                e2.code == JsonRpcCode.INVALID_PARAMS if JsonRpcCode else e2.code == JSONRPC_INVALID_PARAMS
+                            )
+                        elif "address" in str(e2).lower() or "unexpected" in str(e2).lower():
+                            is_param_error2 = True
+                        
+                        if is_param_error2:
+                            log.warning(
+                                "Node does not support payout address or threads (older version). "
+                                "Mining to node's default miner address with default threads."
+                            )
+                            result = client.request("miner.mine", [args.count])
+                        else:
+                            raise
                 else:
                     raise
 
