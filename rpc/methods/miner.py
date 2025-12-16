@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import math
 import os
 import time
 import uuid
@@ -61,6 +62,15 @@ _JOB_CACHE: dict[str, dict[str, Any]] = {}
 _LOCAL_HEAD: dict[str, Any] = {}
 _AUTO_MINE: bool = False
 _AUTO_TASK: asyncio.Task | None = None
+
+# Dynamic theta adjustment state for mining operations
+# Tracks timing of recent blocks to adapt difficulty
+_MINING_STATE: dict[str, Any] = {
+    "last_block_time": None,  # timestamp of last mined block
+    "block_times": [],         # Recent block intervals (seconds) for EMA calculation
+    "theta_state": None,       # RetargetState from consensus.difficulty
+    "adjustment_enabled": True, # Whether to dynamically adjust theta during mining
+}
 
 # Hash tracking map for transactions from adapter and fallback pending cache
 # Maps id(tx_obj) -> (tx_hash_hex, raw_bytes)
@@ -422,6 +432,110 @@ def _resolve_theta() -> int:
     except Exception:
         pass
     return _DEFAULT_THETA_MICRO
+
+
+def _adjust_theta_for_mining(dt_seconds: float | None = None) -> int:
+    """
+    Dynamically adjust theta micro during mining based on observed block times.
+    
+    This implements micro-adjustment of the acceptance threshold Θ to accommodate
+    network stress and hash rate changes. Uses EMA-based retargeting from
+    consensus.difficulty module.
+    
+    Args:
+        dt_seconds: Time elapsed since last block (seconds). If None, returns current theta.
+        
+    Returns:
+        int: Adjusted theta_micro value for next mining iteration
+    """
+    global _MINING_STATE
+    
+    # If adjustment is disabled, return baseline theta
+    if not _MINING_STATE.get("adjustment_enabled", True):
+        return _resolve_theta()
+    
+    # If no dt provided, return current theta (initialization case)
+    if dt_seconds is None:
+        # Initialize state if needed
+        if _MINING_STATE.get("theta_state") is None:
+            try:
+                from consensus.difficulty import RetargetParams, init_state
+                
+                # Get current theta from consensus
+                current_theta = _resolve_theta()
+                
+                # Initialize retarget params with mining-friendly settings
+                # Use faster response for mining (smaller half-life, higher gain)
+                params = RetargetParams(
+                    target_block_time_s=12.0,        # Target 12s blocks
+                    half_life_blocks=8.0,            # Faster adaptation for mining (vs 24 for consensus)
+                    gain_beta=0.9,                   # More aggressive response (vs 0.75 for consensus)
+                    step_clamp_micro=600_000,        # Allow larger steps (~0.6 nats per update)
+                    theta_min_micro=300_000,         # Lower minimum for easier mining (~0.3 nats)
+                    theta_max_micro=40_000_000,      # Higher maximum for network stress (~40 nats)
+                )
+                
+                _MINING_STATE["theta_state"] = init_state(params, current_theta)
+                log.info(
+                    f"Initialized dynamic theta adjustment for mining: "
+                    f"theta={current_theta/1e6:.3f} nats, target_time={params.target_block_time_s}s"
+                )
+            except Exception as e:
+                log.warning(f"Failed to initialize theta adjustment: {e}")
+                _MINING_STATE["adjustment_enabled"] = False
+                return _resolve_theta()
+        
+        # Return current theta from state
+        state = _MINING_STATE.get("theta_state")
+        if state:
+            return int(state.theta_micro)
+        return _resolve_theta()
+    
+    # Update theta based on observed block time
+    try:
+        from consensus.difficulty import update_theta
+        
+        state = _MINING_STATE.get("theta_state")
+        if state is None:
+            # Initialize state first
+            _adjust_theta_for_mining(dt_seconds=None)
+            state = _MINING_STATE.get("theta_state")
+            if state is None:
+                return _resolve_theta()
+        
+        # Validate dt_seconds
+        if dt_seconds <= 0 or not math.isfinite(dt_seconds):
+            log.warning(f"Invalid dt_seconds for theta adjustment: {dt_seconds}, skipping update")
+            return int(state.theta_micro)
+        
+        # Apply retargeting update
+        new_state = update_theta(state, dt_seconds, blocks_skipped=1)
+        _MINING_STATE["theta_state"] = new_state
+        
+        # Track block times for monitoring (keep last 20)
+        block_times = _MINING_STATE.get("block_times", [])
+        block_times.append(dt_seconds)
+        if len(block_times) > 20:
+            block_times = block_times[-20:]
+        _MINING_STATE["block_times"] = block_times
+        
+        # Log adjustment if significant change
+        old_theta = state.theta_micro
+        new_theta = new_state.theta_micro
+        if abs(new_theta - old_theta) > 10_000:  # > 0.01 nats change
+            avg_time = sum(block_times[-5:]) / min(5, len(block_times)) if block_times else 0
+            log.info(
+                f"Adjusted mining theta: {old_theta/1e6:.3f} → {new_theta/1e6:.3f} nats "
+                f"(dt={dt_seconds:.2f}s, avg_5={avg_time:.2f}s, target={state.params.target_block_time_s}s)"
+            )
+        
+        return int(new_theta)
+        
+    except Exception as e:
+        log.error(f"Failed to adjust theta for mining: {e}", exc_info=True)
+        # Disable adjustment on error to prevent cascading failures
+        _MINING_STATE["adjustment_enabled"] = False
+        return _resolve_theta()
 
 
 def _ctx():
@@ -1717,6 +1831,30 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
     # Build child header template (nonce will be updated in mining loop). Update the
     # txsRoot to reflect any pending transactions we plan to include.
     header_template = _build_child_header(parent_height, parent_hash_bytes, parent_header)
+    
+    # Apply dynamic theta adjustment based on recent block times
+    # This adapts mining difficulty to network conditions (hash rate, block times)
+    global _MINING_STATE
+    last_block_time = _MINING_STATE.get("last_block_time")
+    if last_block_time is not None:
+        # Calculate time since last block
+        current_time = time.time()
+        dt_seconds = current_time - last_block_time
+        
+        # Adjust theta based on observed interval
+        adjusted_theta = _adjust_theta_for_mining(dt_seconds)
+        
+        # Update header template with adjusted theta
+        # Use dataclasses.replace for efficiency
+        try:
+            header_template = replace(header_template, thetaMicro=adjusted_theta)
+            log.debug(f"Applied dynamic theta adjustment: {adjusted_theta/1e6:.3f} nats (dt={dt_seconds:.2f}s)")
+        except Exception as e:
+            log.warning(f"Failed to apply theta adjustment to header: {e}")
+    else:
+        # First block - initialize adjustment state
+        _adjust_theta_for_mining(dt_seconds=None)
+        log.info("Initialized theta adjustment for first mined block")
 
     if txs:
         # Build merkle root from CANONICAL tx hashes (from original raw CBOR)
@@ -1977,6 +2115,9 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
             
             if accepted:
                 _record_local_block(header.height, "0x" + block_hash_bytes.hex(), header)
+                
+                # Update mining state for theta adjustment
+                _MINING_STATE["last_block_time"] = time.time()
 
                 # Evict successfully mined txs from both mempool adapter and fallback cache
                 # to prevent re-mining them in subsequent blocks
@@ -2302,13 +2443,16 @@ def miner_submit_work(*args: Any, **payload: Any) -> Dict[str, Any]:
 
 
 @method("miner.mine", desc="Mine up to N blocks locally")
-def miner_mine(count: int | None = None, address: str | None = None) -> dict[str, int | list[dict[str, int]]]:
+def miner_mine(count: int | None = None, address: str | None = None, threads: int | None = None) -> dict[str, int | list[dict[str, int]]]:
     """
-    Mine N blocks locally.
+    Mine N blocks locally with dynamic theta micro adjustment.
     
     Args:
         count: Number of blocks to mine (default: 1)
         address: Optional payout address (bech32 or hex). If omitted, uses default miner address.
+        threads: Optional number of CPU threads to use for mining (default: CPU count).
+                 Note: Currently informational only; actual threading is controlled by
+                 internal mining backend configuration.
         
     Returns:
         dict: {
@@ -2326,6 +2470,13 @@ def miner_mine(count: int | None = None, address: str | None = None) -> dict[str
         head_before = ctx.get_head()
     except Exception:
         head_before = {"height": None, "hash": None}
+    
+    # Validate threads parameter
+    if threads is not None:
+        threads = max(1, int(threads))
+        log.info(f"Mining with {threads} thread(s) (Note: thread control is currently informational)")
+    else:
+        threads = os.cpu_count() or 1
     
     # Parse payout address if provided
     payout_address_bytes: bytes | None = None
