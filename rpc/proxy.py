@@ -237,19 +237,21 @@ class RpcProxy:
         
         # Run in event loop
         try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                # Already in event loop, use run_until_complete
-                return loop.run_until_complete(
-                    self.forward_request(method, params, async_fallback)
+            # Try to get the running event loop (Python 3.10+)
+            try:
+                loop = asyncio.get_running_loop()
+                # Already in event loop - can't use run_until_complete
+                # This should not happen in CLI context, but handle gracefully
+                raise RuntimeError(
+                    "sync_forward_request called from async context - use forward_request instead"
                 )
-            else:
-                # No running loop, create new one
+            except RuntimeError:
+                # No running loop, create new one (this is the normal case)
                 return asyncio.run(
                     self.forward_request(method, params, async_fallback)
                 )
-        except RuntimeError:
-            # Event loop issues, create new one
+        except Exception:
+            # Fallback for any other issues
             return asyncio.run(
                 self.forward_request(method, params, async_fallback)
             )
