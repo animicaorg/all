@@ -32,10 +32,16 @@ The adjustment uses the same EMA-based retargeting as consensus validation, but 
 target_block_time_s: 12.0      # Target 12s blocks
 half_life_blocks: 8.0          # Faster adaptation (vs 24 for consensus)
 gain_beta: 0.9                 # More aggressive response (vs 0.75)
-step_clamp_micro: 600_000      # Larger steps (~0.6 nats per update)
+step_clamp_micro: 1_000_000    # Larger steps (~1.0 nats per update)
 theta_min_micro: 300_000       # Lower minimum (~0.3 nats)
-theta_max_micro: 40_000_000    # Higher maximum (~40 nats)
+theta_max_micro: None          # Unbounded - allows dynamic scaling without artificial limits
 ```
+
+**Unbounded Theta:** As of this version, `theta_max_micro=None` allows theta to scale indefinitely
+to adapt to any network load. Stability is ensured by:
+- **step_clamp_micro:** Limits the rate of change per block (prevents wild swings)
+- **Overflow protection:** Caps at 10^9 nats (10^15 µ-nats) to prevent integer overflow
+- **EMA smoothing:** Dampens transient spikes and prevents oscillation
 
 The update formula:
 ```
@@ -56,6 +62,7 @@ Where:
 - Θ increases (mining becomes harder)
 - Prevents excessive block production
 - Smoothed by EMA to avoid oscillation
+- Can now scale indefinitely to match any hash rate surge
 
 **Slow Blocks (dt > target):**
 - Θ decreases (mining becomes easier)
@@ -65,7 +72,8 @@ Where:
 **Extreme Conditions:**
 - Invalid intervals (≤0, inf, NaN) are rejected
 - Severe fluctuations are handled via step clamps
-- Min/max bounds prevent unreasonable values
+- Minimum bound prevents trivial difficulty
+- Overflow protection prevents integer overflow (10^9 nats ceiling)
 
 ### Edge Cases
 
@@ -123,9 +131,11 @@ Comprehensive test coverage in `mining/tests/test_theta_micro_adjustment.py`:
 ## Security Considerations
 
 1. **DoS Protection**: Invalid dt values are rejected
-2. **Bounds Enforcement**: Min/max clamps prevent unreasonable theta
-3. **Graceful Degradation**: Falls back to consensus theta on error
-4. **No Chain Impact**: Mining-local adjustment doesn't affect consensus
+2. **Bounds Enforcement**: Minimum bound and overflow protection prevent unreasonable theta
+3. **Rate Limiting**: step_clamp_micro prevents single-block manipulation
+4. **Graceful Degradation**: Falls back to consensus theta on error
+5. **No Chain Impact**: Mining-local adjustment doesn't affect consensus
+6. **Unbounded Safety**: With no upper bound, step clamps and EMA smoothing are critical for stability
 
 ## Future Enhancements
 
