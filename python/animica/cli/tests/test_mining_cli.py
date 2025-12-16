@@ -452,7 +452,9 @@ def test_mine_blocks_with_device_auto(monkeypatch: Any) -> None:
 def test_mine_blocks_with_all_supported_devices(monkeypatch: Any) -> None:
     """Test that mine-blocks accepts all supported device values."""
     test_address = "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz"
-    supported_devices = ["cpu", "cuda", "rocm", "opencl", "metal", "auto"]
+    # Import the constant to ensure consistency with main module
+    from animica.cli.mining import SUPPORTED_DEVICES
+    supported_devices = SUPPORTED_DEVICES
     
     for device in supported_devices:
         # Setup fresh mock for each device

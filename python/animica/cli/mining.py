@@ -35,6 +35,9 @@ LOG_LEVEL_ENV = "ANIMICA_MINING_POOL_LOG_LEVEL"
 STRATUM_BIND_ENV = "ANIMICA_STRATUM_BIND"
 API_BIND_ENV = "ANIMICA_POOL_API_BIND"
 
+# Supported mining device backends
+SUPPORTED_DEVICES = ["cpu", "cuda", "rocm", "opencl", "metal", "auto"]
+
 
 def _ensure_network_env() -> None:
     cfg = load_network_config()
@@ -380,7 +383,6 @@ def mine_blocks(
             raise typer.Exit(2)
     
     # Validate device parameter
-    SUPPORTED_DEVICES = ["cpu", "cuda", "rocm", "opencl", "metal", "auto"]
     device_normalized = device.strip().lower() if isinstance(device, str) else "cpu"
     
     if device_normalized not in SUPPORTED_DEVICES:
