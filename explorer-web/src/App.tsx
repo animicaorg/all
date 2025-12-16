@@ -5,6 +5,7 @@ import { BrowserRouter, NavLink } from "react-router-dom";
 import AppRouter from "./router";
 import { ExplorerStoreProvider } from "./state/store";
 import { inferRpcUrl } from "./services/env";
+import { useNetworkManager } from "./state/network";
 
 // ────────────────────────────────────────────────────────────────────────────────
 // Global event channels so other modules can toggle loader / push toasts without
@@ -37,6 +38,7 @@ export default function App() {
   return (
     <ExplorerStoreProvider>
       <BrowserRouter basename={basename}>
+        <NetworkInitializer />
         <div className="app-root">
           <TopBar />
           <TopProgressBar />
@@ -60,14 +62,41 @@ export default function App() {
 }
 
 // ────────────────────────────────────────────────────────────────────────────────
+// Network Initializer - establishes RPC connection and manages network state
+// ────────────────────────────────────────────────────────────────────────────────
+function NetworkInitializer() {
+  const { status, error, rpcUrl, expectedChainId } = useNetworkManager();
+  
+  useEffect(() => {
+    if (status === 'connected') {
+      console.log('[App] Network connected successfully');
+      console.log('[App] RPC URL:', rpcUrl);
+      console.log('[App] Chain ID:', expectedChainId);
+    } else if (status === 'error') {
+      console.error('[App] Network connection error:', error);
+      console.error('[App] RPC URL:', rpcUrl);
+      console.error('[App] Expected Chain ID:', expectedChainId);
+    } else if (status === 'connecting') {
+      console.log('[App] Connecting to network...');
+    }
+  }, [status, error, rpcUrl, expectedChainId]);
+  
+  return null; // This component only handles side effects
+}
+
+// ────────────────────────────────────────────────────────────────────────────────
 // Top Bar with theme toggle and small network readout
 // ────────────────────────────────────────────────────────────────────────────────
 function TopBar() {
   const [theme, setTheme] = useTheme();
-  const chainId = (import.meta.env as any).VITE_CHAIN_ID ?? "unknown";
-  const rpcUrl = inferRpcUrl((import.meta.env as any));
-
+  const { status, rpcUrl, expectedChainId } = useNetworkManager();
+  const configuredRpcUrl = inferRpcUrl((import.meta.env as any));
+  
   const toggle = useCallback(() => setTheme(theme === "dark" ? "light" : "dark"), [theme, setTheme]);
+
+  const statusClass = status === 'connected' ? 'status-connected' : status === 'connecting' ? 'status-connecting' : 'status-disconnected';
+  const statusLabel = status === 'connected' ? 'Connected' : status === 'connecting' ? 'Connecting...' : 'Disconnected';
+  const chainId = expectedChainId || (import.meta.env as any).VITE_CHAIN_ID || "Unknown";
 
   return (
     <header className="topbar">
@@ -84,10 +113,10 @@ function TopBar() {
 
       <div className="grow" />
 
-      <div className="net-pill" title={`RPC: ${rpcUrl}`}>
-        <span className="dot status-connected" />
+      <div className="net-pill" title={`${statusLabel}\nRPC: ${rpcUrl || configuredRpcUrl}\nChain ID: ${chainId}`}>
+        <span className={`dot ${statusClass}`} />
         <span className="label">Chain</span>
-        <span className="value">{chainId || "Unknown"}</span>
+        <span className="value">{chainId}</span>
       </div>
 
       <button className="btn ghost" onClick={toggle} aria-label="Toggle theme">
@@ -375,8 +404,9 @@ body{margin:0;background:var(--bg);color:var(--text);font:14px/1.4 ui-sans-serif
 .net-pill{display:flex;align-items:center;gap:.4rem;border:1px solid var(--border);padding:.3rem .6rem;border-radius:999px;background:var(--panel);transition:all .2s ease}
 .net-pill:hover{border-color:var(--accent);box-shadow:0 0 0 3px rgba(64,169,255,.1)}
 .net-pill .dot{width:8px;height:8px;border-radius:999px;background:var(--ok);animation:pulse 2s ease-in-out infinite}
-.net-pill .dot.status-connected{background:var(--ok);box-shadow:0 0 0 2px rgba(60,207,145,.2)}
-.net-pill .dot.status-disconnected{background:var(--err);box-shadow:0 0 0 2px rgba(255,107,107,.2)}
+.net-pill .dot.status-connected{background:var(--ok);box-shadow:0 0 0 2px rgba(60,207,145,.2);animation:none}
+.net-pill .dot.status-connecting{background:var(--warn);box-shadow:0 0 0 2px rgba(240,165,0,.2)}
+.net-pill .dot.status-disconnected{background:var(--err);box-shadow:0 0 0 2px rgba(255,107,107,.2);animation:none}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.6}}
 .net-pill .label{opacity:.8;font-size:.85rem}
 .net-pill .value{font-weight:600;font-size:.9rem}

@@ -37,14 +37,15 @@ export interface RpcClient {
 }
 
 // Dynamic loader (avoids import cycles in SSR/build)
-type CreateRpcFn = (url: string) => RpcClient;
+type CreateRpcFn = (opts: { url: string }) => RpcClient;
 let _createRpcAsync: Promise<CreateRpcFn> | null = null;
 async function createRpc(rpcUrl: string): Promise<RpcClient> {
   if (!_createRpcAsync) {
     _createRpcAsync = import('../services/rpc').then(m => m.createRpc as unknown as CreateRpcFn);
   }
   const fn = await _createRpcAsync;
-  return fn(rpcUrl);
+  console.log('[blocks] Creating RPC client with URL:', rpcUrl);
+  return fn({ url: rpcUrl });
 }
 
 // ----------------------------- Local cache ----------------------------------
