@@ -234,6 +234,27 @@ def _normalize_stun(servers: Iterable[str]) -> list[tuple[str, int]]:
 
 
 @dataclass(frozen=True, slots=True)
+class DiscoveryConfig:
+    """Configuration for P2P discovery mechanisms."""
+    enable_kademlia: bool = False
+    enable_mdns: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class GossipConfig:
+    """Configuration for gossip subsystem."""
+    # Add gossip-specific configuration as needed
+    pass
+
+
+@dataclass(frozen=True, slots=True)
+class FlowControlConfig:
+    """Configuration for flow control."""
+    # Add flow control configuration as needed
+    pass
+
+
+@dataclass(frozen=True, slots=True)
 class P2PConfig:
     # Transports
     enable_tcp: bool = True
@@ -282,6 +303,21 @@ class P2PConfig:
     # Data directory for persistent storage (peer store, keys, etc.)
     # Defaults to ~/.animica/p2p/ when loaded via load_config()
     data_dir: str = field(default_factory=lambda: os.path.expanduser("~/.animica/p2p"))
+    
+    # Nested configuration objects
+    discovery: DiscoveryConfig = field(default_factory=DiscoveryConfig)
+    gossip: GossipConfig = field(default_factory=GossipConfig)
+    flow_control: FlowControlConfig = field(default_factory=FlowControlConfig)
+    
+    # Additional fields referenced by NodeService
+    alg_policy_root: Optional[bytes] = None
+    keys_path: Optional[str] = None
+    identity_alg: str = "dilithium3"
+    handshake_hkdf_salt: bytes = field(default_factory=lambda: b"animica-p2p-v1")
+    dial_timeout: float = 5.0
+    quic_alpn: str = "animica/1"
+    ws_cors: bool = True
+    listen_multiaddrs: Tuple[str, ...] = field(default_factory=tuple)
 
     def to_dict(self) -> dict:
         d = asdict(self)
@@ -340,6 +376,35 @@ def load_config() -> P2PConfig:
         # Default to ~/.animica/p2p/ for peer store and other persistent data
         data_dir = os.path.expanduser("~/.animica/p2p")
 
+    # Discovery configuration
+    enable_kademlia = _getenv_bool("ANIMICA_P2P_ENABLE_KADEMLIA", False)
+    enable_mdns = _getenv_bool("ANIMICA_P2P_ENABLE_MDNS", False)
+    discovery_config = DiscoveryConfig(
+        enable_kademlia=enable_kademlia,
+        enable_mdns=enable_mdns,
+    )
+    
+    # Gossip and flow control configs (use defaults for now)
+    gossip_config = GossipConfig()
+    flow_control_config = FlowControlConfig()
+    
+    # Additional NodeService fields
+    keys_path = _expanduser(_getenv("ANIMICA_P2P_KEYS_PATH"))
+    identity_alg = _getenv("ANIMICA_P2P_IDENTITY_ALG") or "dilithium3"
+    dial_timeout = float(_getenv("ANIMICA_P2P_DIAL_TIMEOUT") or "5.0")
+    
+    # Build listen_multiaddrs from individual listen addresses
+    listen_multiaddrs = []
+    if enable_tcp:
+        host, port = listen_tcp
+        listen_multiaddrs.append(f"/ip4/{host}/tcp/{port}")
+    if enable_quic:
+        host, port = listen_quic
+        listen_multiaddrs.append(f"/ip4/{host}/udp/{port}/quic-v1")
+    if enable_ws:
+        host, port = listen_ws
+        listen_multiaddrs.append(f"/ip4/{host}/tcp/{port}/ws")
+    
     # Basic sanity: enforce bounds & non-negative
     if max_outbound < 0:
         max_outbound = 0
@@ -373,6 +438,13 @@ def load_config() -> P2PConfig:
         ws_allow_credentials=ws_allow_credentials,
         ws_compression=ws_compression,
         data_dir=data_dir,
+        discovery=discovery_config,
+        gossip=gossip_config,
+        flow_control=flow_control_config,
+        keys_path=keys_path,
+        identity_alg=identity_alg,
+        dial_timeout=dial_timeout,
+        listen_multiaddrs=tuple(listen_multiaddrs),
     )
 
 
