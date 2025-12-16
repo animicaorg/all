@@ -200,7 +200,7 @@ def parse_multiaddr(ma: str) -> Multiaddr:
             i += 1
             continue
 
-        if proto in ("quic",):
+        if proto in ("quic", "quic-v1"):
             is_quic = True
             parts.append((proto, None))
             i += 1
