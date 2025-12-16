@@ -532,6 +532,86 @@ def test_devnet_uses_correct_compose_file(monkeypatch: Any) -> None:
             assert "Chain ID: 1337" in result.output
 
 
+@respx.mock
+def test_status_retries_on_connection_error(monkeypatch: Any) -> None:
+    """Test that status command retries indefinitely on connection errors."""
+    rpc_url = "http://localhost:9997/rpc"
+    monkeypatch.setenv("ANIMICA_RPC_URL", rpc_url)
+    
+    # Track number of retry attempts (not individual RPC calls)
+    retry_attempt_count = [0]
+    
+    def side_effect_fn(request):
+        # On first attempt (retry_attempt 1), all calls fail
+        # On second attempt (retry_attempt 2), all calls fail
+        # On third attempt (retry_attempt 3), all calls succeed
+        if retry_attempt_count[0] < 2:
+            raise httpx.ConnectError("Connection refused")
+        return httpx.Response(
+            200,
+            json={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": {"height": 42, "hash": "0xabc", "chainId": 10},
+            },
+        )
+    
+    # Track when we start a new retry attempt
+    original_sleep = __import__('time').sleep
+    def mock_sleep(duration):
+        retry_attempt_count[0] += 1
+        original_sleep(duration)
+    
+    head_route = respx.post(rpc_url).mock(side_effect=side_effect_fn)
+    
+    # Patch time.sleep to track retry attempts
+    import time
+    original_sleep_fn = time.sleep
+    time.sleep = mock_sleep
+    
+    try:
+        result = runner.invoke(node.app, ["status", "--retry-delay", "0.1"])
+        assert result.exit_code == 0
+        assert "Head height: 42" in result.output
+        # Should have had 2 retries (first attempt failed, 2 retries, 3rd attempt succeeded)
+        assert retry_attempt_count[0] == 2
+    finally:
+        time.sleep = original_sleep_fn
+
+
+@respx.mock
+def test_status_accepts_retry_delay_parameter(monkeypatch: Any) -> None:
+    """Test that status command accepts --retry-delay parameter."""
+    rpc_url = "http://localhost:9996/rpc"
+    monkeypatch.setenv("ANIMICA_RPC_URL", rpc_url)
+    
+    head_route = respx.post(rpc_url).mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": {"height": 10, "hash": "0x123", "chainId": 1},
+            },
+        )
+    )
+    
+    result = runner.invoke(node.app, ["status", "--retry-delay", "2.5"])
+    assert result.exit_code == 0
+    assert "Head height: 10" in result.output
+    assert head_route.called
+
+
+def test_status_rejects_invalid_retry_delay(monkeypatch: Any) -> None:
+    """Test that status command rejects invalid retry delay values."""
+    rpc_url = "http://localhost:9995/rpc"
+    monkeypatch.setenv("ANIMICA_RPC_URL", rpc_url)
+    
+    result = runner.invoke(node.app, ["status", "--retry-delay", "0"])
+    assert result.exit_code == 1
+    assert "retry-delay must be greater than 0" in result.output
+
+
 def test_network_switching_affects_compose_file(monkeypatch: Any) -> None:
     """Test that switching networks changes the compose file used."""
     with tempfile.TemporaryDirectory() as tmpdir:
