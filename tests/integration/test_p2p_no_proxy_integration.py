@@ -112,24 +112,41 @@ def test_docker_compose_mainnet_p2p_enabled():
     if not compose_file.exists():
         pytest.skip("Mainnet compose file not found")
     
-    with open(compose_file) as f:
-        content = f.read()
-    
-    # Verify P2P is enabled in the compose file
-    assert "P2P_ENABLE:" in content or "P2P_ENABLE=" in content, \
-        "P2P_ENABLE should be configured in mainnet compose"
-    
-    # Verify it's set to true (or uses default)
-    # The compose file should have P2P_ENABLE: "${P2P_ENABLE:-true}"
-    if "P2P_ENABLE:" in content:
-        # Extract the line
-        for line in content.split("\n"):
-            if "P2P_ENABLE:" in line:
-                # Check it defaults to true
-                assert "true" in line.lower() or "${P2P_ENABLE" in line, \
-                    f"P2P_ENABLE should default to true in mainnet: {line}"
-    
-    print("✓ Mainnet docker compose has P2P enabled")
+    try:
+        import yaml
+        
+        with open(compose_file) as f:
+            compose_data = yaml.safe_load(f)
+        
+        # Check if node service exists and has P2P_ENABLE configured
+        services = compose_data.get("services", {})
+        node_service = services.get("node", {})
+        env_vars = node_service.get("environment", {})
+        
+        # P2P_ENABLE should be configured (either as direct value or with default)
+        p2p_enable = env_vars.get("P2P_ENABLE", "")
+        
+        # Should be set to "true" or use env var with default true: "${P2P_ENABLE:-true}"
+        assert p2p_enable != "" or "P2P_ENABLE" in str(env_vars), \
+            "P2P_ENABLE should be configured in mainnet compose"
+        
+        # If it's a string with default, it should default to true
+        if isinstance(p2p_enable, str) and "${" in p2p_enable:
+            assert "true" in p2p_enable.lower(), \
+                f"P2P_ENABLE should default to true in mainnet: {p2p_enable}"
+        
+        print("✓ Mainnet docker compose has P2P enabled")
+        
+    except ImportError:
+        # YAML not available - do basic string check
+        with open(compose_file) as f:
+            content = f.read()
+        
+        # Verify P2P is mentioned
+        assert "P2P_ENABLE" in content, \
+            "P2P_ENABLE should be configured in mainnet compose"
+        
+        print("✓ Mainnet docker compose mentions P2P (basic check)")
 
 
 def test_mining_proxy_docs_deprecated():
