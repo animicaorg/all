@@ -80,6 +80,29 @@
   }
 }
 
+/* Roadmap-specific animations */
+@keyframes pulse-glow {
+  0%, 100% { 
+    opacity: 1;
+    box-shadow: 0 0 20px -5px var(--color-accent);
+  }
+  50% { 
+    opacity: 0.8;
+    box-shadow: 0 0 30px 0px var(--color-accent);
+  }
+}
+
+@keyframes ping-slow {
+  0% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  75%, 100% {
+    transform: scale(2);
+    opacity: 0;
+  }
+}
+
 @keyframes pulse {
   0%, 100% {
     opacity: 1;
