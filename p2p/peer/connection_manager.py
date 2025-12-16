@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import math
 import random
 import time
@@ -69,17 +70,29 @@ except Exception:  # pragma: no cover
 class DialBackoff:
     failures: int = 0
     next_try_at: float = 0.0
+    total_attempts: int = 0  # Track total connection attempts
+    first_failure_at: float = 0.0  # Track when failures started
+    last_success_at: float = 0.0  # Track last successful connection
 
     def mark_success(self) -> None:
         self.failures = 0
         self.next_try_at = 0.0
+        self.last_success_at = time.time()
+        self.first_failure_at = 0.0
 
     def mark_failure(self, base: float, jitter: float, max_backoff: float) -> None:
         self.failures += 1
+        self.total_attempts += 1
+        if self.first_failure_at == 0.0:
+            self.first_failure_at = time.time()
         # Exponential backoff with decorrelated jitter
         exp = min(max_backoff, (base**self.failures))
         delay = min(max_backoff, exp * (1.0 + random.random() * jitter))
         self.next_try_at = time.time() + delay
+    
+    def should_give_up(self, max_retries: int) -> bool:
+        """Check if we've exceeded maximum retry attempts."""
+        return self.failures >= max_retries
 
 
 @dataclass
@@ -107,6 +120,12 @@ class CMConfig:
     backoff_max_s: float = 300.0
     prune_idle_s: float = 2 * 3600.0  # 2h
     ban_s: float = 6 * 3600.0
+    # P2P flow rewrite enhancements
+    max_dial_retries: int = 5  # Maximum connection retry attempts
+    priority_boost_stable: float = 10.0  # Score boost for stable peers
+    priority_boost_recent: float = 5.0  # Score boost for recently seen peers
+    stability_threshold_s: float = 3600.0  # Consider peer stable after 1 hour uptime
+    verbosity: int = 0  # 0=normal, 1=verbose, 2=debug
 
 
 class ConnectionManager:
@@ -116,6 +135,7 @@ class ConnectionManager:
       - Outbound target / global limits
       - Periodic keepalive pings
       - Simple event bus for join/leave/fail
+      - Enhanced logging and peer prioritization (P2P rewrite)
     """
 
     def __init__(
@@ -132,6 +152,13 @@ class ConnectionManager:
         self._events: "asyncio.Queue[Tuple[str, Dict[str, Any]]]" = asyncio.Queue()
         self._dial_tokens = self._make_token_bucket(self.cfg.dial_rate_per_s)
         self._lock = asyncio.Lock()
+        
+        # Setup logger with appropriate verbosity
+        self._log = logging.getLogger("animica.p2p.connmgr")
+        if self.cfg.verbosity >= 2:
+            self._log.setLevel(logging.DEBUG)
+        elif self.cfg.verbosity >= 1:
+            self._log.setLevel(logging.INFO)
 
         # live peers
         self._peers_by_id: Dict[str, PeerSlot] = {}
@@ -143,6 +170,10 @@ class ConnectionManager:
 
         # async iter guard
         self._event_iter_open = 0
+        
+        # P2P rewrite: Track peer priorities and statistics
+        self._peer_priorities: Dict[str, float] = {}  # addr -> priority score
+        self._connection_stats: Dict[str, Dict[str, Any]] = {}  # addr -> stats
 
     # -------------------- lifecycle -------------------- #
 
@@ -223,7 +254,7 @@ class ConnectionManager:
     # -------------------- loops -------------------- #
 
     async def _dialer_loop(self) -> None:
-        """Continuously try to reach the outbound target."""
+        """Continuously try to reach the outbound target with prioritization."""
         try:
             while self._running:
                 await asyncio.sleep(0.05)
@@ -233,15 +264,16 @@ class ConnectionManager:
                     if s.direction == "outbound" and s.is_active
                 )
                 if outbound >= self.cfg.target_outbound:
+                    if self.cfg.verbosity >= 2:
+                        self._log.debug(f"Outbound target reached: {outbound}/{self.cfg.target_outbound}")
                     await asyncio.sleep(0.25)
                     continue
 
                 # Get candidates from address book (prefer recent good)
                 candidates = self.ab.list_recent(limit=500)
-                # Deterministic shuffle with bias for higher score / more good_count
-                random.shuffle(candidates)
-
-                picked = None
+                
+                # P2P rewrite: Sort candidates by priority score
+                candidates_with_priority = []
                 now = time.time()
                 for e in candidates:
                     addr = e.norm
@@ -253,18 +285,39 @@ class ConnectionManager:
                         continue
                     bo = self._backoff.get(addr)
                     if bo and now < bo.next_try_at:
+                        if self.cfg.verbosity >= 2:
+                            wait_time = bo.next_try_at - now
+                            self._log.debug(f"Skipping {addr}: backoff active, retry in {wait_time:.1f}s")
                         continue
-                    picked = addr
-                    break
+                    if bo and bo.should_give_up(self.cfg.max_dial_retries):
+                        if self.cfg.verbosity >= 1:
+                            self._log.info(f"Skipping {addr}: exceeded max retries ({self.cfg.max_dial_retries})")
+                        continue
+                    
+                    priority = self._calculate_peer_priority(addr)
+                    candidates_with_priority.append((priority, addr))
+                
+                # Sort by priority (highest first)
+                candidates_with_priority.sort(reverse=True, key=lambda x: x[0])
+
+                picked = None
+                if candidates_with_priority:
+                    priority, picked = candidates_with_priority[0]
+                    if self.cfg.verbosity >= 1:
+                        self._log.info(f"Selected peer {picked} with priority {priority:.2f}")
 
                 if not picked:
                     # Nothing to dial right now; wait a bit
+                    if self.cfg.verbosity >= 2:
+                        self._log.debug(f"No eligible peers to dial (candidates: {len(candidates)})")
                     await asyncio.sleep(0.5)
                     continue
 
                 # Token-bucket throttle
                 if not await self._dial_tokens.get():
                     # Wait for token refill
+                    if self.cfg.verbosity >= 2:
+                        self._log.debug("Dial rate limit reached, waiting for token")
                     await asyncio.sleep(0.2)
                     continue
 
@@ -318,19 +371,34 @@ class ConnectionManager:
         """Dial and register a peer; manages backoff and events."""
         # Respect per-address bans (but connect() bypasses this via add() then direct call here)
         if self._is_banned(address):
+            self._log.info(f"Skipping banned peer: {address}")
             await self._push_event("peer_connect_skipped_banned", {"address": address})
             return None
 
         conn: Optional[Conn] = None
+        dial_start = time.time()
+        
         try:
+            if self.cfg.verbosity >= 1:
+                self._log.info(f"Attempting to dial peer: {address}")
+            
             conn = await asyncio.wait_for(
                 self.t.dial(address, timeout=self.cfg.dial_timeout_s),
                 timeout=self.cfg.dial_timeout_s + 0.5,
             )
+            
+            if self.cfg.verbosity >= 2:
+                dial_time = time.time() - dial_start
+                self._log.debug(f"Connection established to {address} in {dial_time:.2f}s")
+            
             ident = await asyncio.wait_for(
                 perform_identify(conn, timeout=5.0), timeout=6.0
             )
             peer_id = ident.get("peer_id") or getattr(conn, "remote_addr", address)
+            
+            if self.cfg.verbosity >= 2:
+                self._log.debug(f"Identified peer {peer_id} at {address}: {ident}")
+            
             peer = Peer(
                 peer_id=peer_id,
                 address=address,
@@ -343,6 +411,7 @@ class ConnectionManager:
                 # If already connected under this id, drop older
                 old = self._peers_by_id.get(peer_id)
                 if old:
+                    self._log.info(f"Replacing existing connection to {peer_id}")
                     try:
                         await old.peer.conn.close()
                     except Exception:
@@ -355,8 +424,13 @@ class ConnectionManager:
                 self.ab.mark_seen(address, good=True, peer_id=peer_id)
             except Exception:
                 pass
-            # Reset backoff
+            # Reset backoff and update stats
             self._backoff.setdefault(address, DialBackoff()).mark_success()
+            self._update_connection_stats(address, success=True)
+            
+            total_time = time.time() - dial_start
+            self._log.info(f"Successfully connected to {peer_id} at {address} (took {total_time:.2f}s)")
+            
             await self._push_event(
                 "peer_connected",
                 {
@@ -364,12 +438,17 @@ class ConnectionManager:
                     "address": address,
                     "direction": "outbound",
                     "meta": ident,
+                    "connection_time_s": total_time,
                 },
             )
             return peer
         except asyncio.TimeoutError as e:
+            self._log.warning(f"Connection timeout to {address} after {time.time() - dial_start:.2f}s")
+            self._update_connection_stats(address, success=False)
             await self._record_failure(address, "timeout", e)
         except Exception as e:
+            self._log.warning(f"Connection failed to {address}: {e.__class__.__name__}: {e}")
+            self._update_connection_stats(address, success=False)
             await self._record_failure(address, "error", e)
         # Ensure connection is closed on failure
         if conn is not None:
@@ -389,11 +468,16 @@ class ConnectionManager:
             slot.last_rtt_ms = rtt
             slot.peer.last_rtt_ms = rtt
             slot.peer.last_seen = time.time()
+            
+            if self.cfg.verbosity >= 2:
+                self._log.debug(f"Ping successful to {slot.peer.peer_id}: RTT={rtt:.1f}ms")
+            
             await self._push_event(
                 "peer_ping_ok", {"peer_id": slot.peer.peer_id, "rtt_ms": rtt}
             )
         except Exception as e:
             # Treat as soft failure; if repeated, connection may drop elsewhere
+            self._log.warning(f"Ping failed to {slot.peer.peer_id}: {e.__class__.__name__}: {e}")
             await self._push_event(
                 "peer_ping_fail", {"peer_id": slot.peer.peer_id, "error": str(e)}
             )
@@ -405,6 +489,9 @@ class ConnectionManager:
                 self._peers_by_addr.pop(slot.addr, None)
         if slot:
             slot.is_active = False
+            uptime = time.time() - slot.connected_at if slot.connected_at else 0
+            self._log.info(f"Peer disconnected: {peer_id} ({slot.addr}), reason={reason}, uptime={uptime:.1f}s")
+            
             # Mark address as seen (bad)
             try:
                 self.ab.mark_seen(slot.addr, good=False, peer_id=peer_id)
@@ -412,7 +499,7 @@ class ConnectionManager:
                 pass
             await self._push_event(
                 "peer_disconnected",
-                {"peer_id": peer_id, "address": slot.addr, "reason": reason},
+                {"peer_id": peer_id, "address": slot.addr, "reason": reason, "uptime_s": uptime},
             )
 
     async def _record_failure(self, address: str, kind: str, err: Exception) -> None:
@@ -421,6 +508,19 @@ class ConnectionManager:
         bo.mark_failure(
             self.cfg.backoff_base, self.cfg.backoff_jitter, self.cfg.backoff_max_s
         )
+        
+        retry_delay = bo.next_try_at - time.time()
+        if bo.should_give_up(self.cfg.max_dial_retries):
+            self._log.warning(
+                f"Peer {address} exceeded max retries ({self.cfg.max_dial_retries}), "
+                f"giving up after {bo.total_attempts} attempts"
+            )
+        else:
+            self._log.info(
+                f"Connection failed to {address} ({kind}): {err}. "
+                f"Retry #{bo.failures} in {retry_delay:.1f}s"
+            )
+        
         # Mark bad in addr book
         try:
             self.ab.mark_seen(address, good=False)
@@ -433,6 +533,8 @@ class ConnectionManager:
                 "kind": kind,
                 "error": str(err),
                 "next_try_at": bo.next_try_at,
+                "failures": bo.failures,
+                "total_attempts": bo.total_attempts,
             },
         )
 
@@ -528,6 +630,92 @@ class ConnectionManager:
             except Exception:
                 pass
         await self._events.put((evt, payload))
+    
+    # -------------------- P2P rewrite: Enhanced peer prioritization -------------------- #
+    
+    def _calculate_peer_priority(self, address: str) -> float:
+        """
+        Calculate priority score for a peer based on:
+        - Connection stability (long uptime)
+        - Recent successful connections
+        - Success/failure ratio
+        - Manual priority boosts
+        """
+        priority = 0.0
+        
+        # Check backoff history
+        bo = self._backoff.get(address)
+        if bo:
+            # Penalize peers with many failures
+            priority -= bo.failures * 2.0
+            
+            # Boost peers with recent successful connections
+            if bo.last_success_at > 0:
+                time_since_success = time.time() - bo.last_success_at
+                if time_since_success < 3600.0:  # Within last hour
+                    priority += self.cfg.priority_boost_recent
+                
+                # Boost stable long-running connections
+                if time_since_success >= self.cfg.stability_threshold_s:
+                    priority += self.cfg.priority_boost_stable
+        
+        # Check connection statistics
+        stats = self._connection_stats.get(address, {})
+        total_conn = stats.get("total_connections", 0)
+        successful_conn = stats.get("successful_connections", 0)
+        
+        if total_conn > 0:
+            success_ratio = successful_conn / total_conn
+            priority += success_ratio * 5.0  # Up to +5 for perfect success rate
+        
+        # Apply any manual priority overrides
+        manual_priority = self._peer_priorities.get(address, 0.0)
+        priority += manual_priority
+        
+        return priority
+    
+    def set_peer_priority(self, address: str, priority: float) -> None:
+        """Manually set priority for a specific peer (for testing or manual control)."""
+        self._peer_priorities[address] = priority
+        self._log.info(f"Set manual priority for {address}: {priority}")
+    
+    def _update_connection_stats(self, address: str, success: bool) -> None:
+        """Track connection statistics for peer prioritization."""
+        if address not in self._connection_stats:
+            self._connection_stats[address] = {
+                "total_connections": 0,
+                "successful_connections": 0,
+                "last_attempt": 0.0,
+                "last_success": 0.0,
+            }
+        
+        stats = self._connection_stats[address]
+        stats["total_connections"] += 1
+        stats["last_attempt"] = time.time()
+        
+        if success:
+            stats["successful_connections"] += 1
+            stats["last_success"] = time.time()
+    
+    def get_peer_diagnostics(self, address: str) -> Dict[str, Any]:
+        """Get diagnostic information about a peer for debugging."""
+        bo = self._backoff.get(address)
+        stats = self._connection_stats.get(address, {})
+        priority = self._calculate_peer_priority(address)
+        
+        return {
+            "address": address,
+            "priority": priority,
+            "backoff": {
+                "failures": bo.failures if bo else 0,
+                "total_attempts": bo.total_attempts if bo else 0,
+                "next_try_at": bo.next_try_at if bo else 0.0,
+                "last_success_at": bo.last_success_at if bo else 0.0,
+            } if bo else None,
+            "stats": stats,
+            "is_banned": self._is_banned(address),
+            "is_connected": address in self._peers_by_addr,
+        }
 
     # Simple token bucket for dial throttling
     class _Bucket:
