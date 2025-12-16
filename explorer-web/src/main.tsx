@@ -45,6 +45,12 @@ function mount() {
   );
 }
 
+/** Benign error types that should be silently ignored */
+const IGNORED_ERRORS = {
+  DOM_ABORT: "AbortError",
+  DOM_NETWORK: "NetworkError",
+} as const;
+
 /** Minimal global error logging (keeps console noise low in production). */
 function wireGlobalErrorHandlers() {
   window.addEventListener("error", (e) => {
@@ -53,12 +59,48 @@ function wireGlobalErrorHandlers() {
       // eslint-disable-next-line no-console
       console.error("[explorer] Uncaught error:", e.error ?? e.message);
     }
+    // Prevent the error from propagating and crashing the app
+    e.preventDefault();
   });
   window.addEventListener("unhandledrejection", (e) => {
-    if (process.env.NODE_ENV !== "production") {
-      // eslint-disable-next-line no-console
-      console.error("[explorer] Unhandled promise rejection:", e.reason);
+    const reason = e.reason;
+    
+    // Check if this is a benign error that should be ignored
+    const isBenignError = 
+      (reason instanceof DOMException && (
+        reason.name === IGNORED_ERRORS.DOM_ABORT ||
+        reason.name === IGNORED_ERRORS.DOM_NETWORK
+      )) ||
+      (reason instanceof TypeError && 
+        typeof reason.message === "string" && 
+        reason.message.includes("fetch"));
+    
+    if (!isBenignError) {
+      if (process.env.NODE_ENV !== "production") {
+        // eslint-disable-next-line no-console
+        console.error("[explorer] Unhandled promise rejection:", reason);
+      }
+      
+      // Show a user-friendly error toast for critical failures
+      if (reason instanceof Error && typeof reason.message === "string") {
+        try {
+          window.dispatchEvent(
+            new CustomEvent("explorer:toast", {
+              detail: {
+                message: `An error occurred: ${reason.message}`,
+                kind: "error",
+                durationMs: 5000,
+              },
+            })
+          );
+        } catch {
+          // If toast system fails, fail silently
+        }
+      }
     }
+    
+    // Prevent the rejection from propagating
+    e.preventDefault();
   });
 }
 
