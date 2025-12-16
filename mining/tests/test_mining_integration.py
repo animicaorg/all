@@ -88,14 +88,19 @@ def test_theta_adjustment_block_time_tracking():
         _adjust_theta_for_mining(dt_seconds=dt)
     
     # Check that block times are tracked
-    block_times = _MINING_STATE.get("block_times", [])
+    block_times = _MINING_STATE.get("block_times")
     
+    assert block_times is not None
     assert len(block_times) > 0
-    assert len(block_times) <= 20  # Should be limited to last 20
+    assert len(block_times) <= 20  # Should be limited to last 20 (deque maxlen)
     
     # Most recent times should match our test times
-    recent = block_times[-len(test_times):]
-    assert recent == test_times
+    # Convert deque to list for comparison
+    recent = list(block_times)[-len(test_times):]
+    # Use approximate comparison for floats
+    assert len(recent) == len(test_times)
+    for r, t in zip(recent, test_times):
+        assert abs(r - t) < 1e-9  # Nearly equal
 
 
 def test_rpc_method_accepts_threads():

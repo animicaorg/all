@@ -374,13 +374,16 @@ async def _run_mine_blocks(args: argparse.Namespace, log: logging.Logger) -> int
                 })
             except Exception as e:
                 # If the RPC rejects params (older node), try with just count and address
-                # Check for INVALID_PARAMS error code or presence of param names in error message
+                # Check for INVALID_PARAMS error code (preferred) or param names in error message (fallback)
+                # String matching is only used as last resort for compatibility with older SDK versions
                 is_param_error = False
                 if RpcError is not None and isinstance(e, RpcError):
+                    # Preferred: Use structured error code
                     is_param_error = (
                         e.code == JsonRpcCode.INVALID_PARAMS if JsonRpcCode else e.code == JSONRPC_INVALID_PARAMS
                     )
                 elif "threads" in str(e).lower() or "address" in str(e).lower() or "unexpected" in str(e).lower():
+                    # Fallback: String matching for older SDK versions
                     is_param_error = True
                 
                 if is_param_error:
