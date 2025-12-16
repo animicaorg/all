@@ -88,7 +88,11 @@ export default function ProvidersPage() {
 
   useEffect(() => {
     void refresh();
-    timer.current = window.setInterval(refresh, REFRESH_MS);
+    timer.current = window.setInterval(() => {
+      refresh().catch((e) => {
+        console.error('[ProvidersPage] Refresh error:', e);
+      });
+    }, REFRESH_MS);
     return () => {
       if (timer.current) window.clearInterval(timer.current);
     };

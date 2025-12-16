@@ -151,7 +151,11 @@ export default function DAPage() {
 
   useEffect(() => {
     if (timer.current) window.clearInterval(timer.current);
-    timer.current = window.setInterval(refresh, REFRESH_MS_DEFAULT);
+    timer.current = window.setInterval(() => {
+      refresh().catch((e) => {
+        console.error('[DAPage] Refresh error:', e);
+      });
+    }, REFRESH_MS_DEFAULT);
     return () => {
       if (timer.current) window.clearInterval(timer.current);
     };
