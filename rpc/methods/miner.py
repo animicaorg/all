@@ -35,6 +35,12 @@ _DEFAULT_THETA_MICRO = int(os.getenv("ANIMICA_DEFAULT_THETA_MICRO", "3000000"))
 _DEFAULT_SHARE_TARGET = float(os.getenv("ANIMICA_DEFAULT_SHARE_TARGET", "0.01"))
 _DEFAULT_SHA256_BITS = os.getenv("ANIMICA_SHA256_NBITS", "1d00ffff")
 
+# Theta adjustment configuration (can be overridden via environment variables)
+# Increased limits to handle extreme network load and high hash rate scenarios
+_THETA_MAX_MICRO = int(os.getenv("ANIMICA_THETA_MAX_MICRO", "120000000"))  # 120 nats default (2x previous 60 nats)
+_THETA_MIN_MICRO = int(os.getenv("ANIMICA_THETA_MIN_MICRO", "300000"))     # 0.3 nats minimum
+_STEP_CLAMP_MICRO = int(os.getenv("ANIMICA_STEP_CLAMP_MICRO", "1500000")) # 1.5 nats per update (increased from 1.0)
+
 log = logging.getLogger("animica.rpc.miner")
 
 # Constants for address and gas calculations
@@ -66,10 +72,17 @@ _AUTO_TASK: asyncio.Task | None = None
 # Dynamic theta adjustment state for mining operations
 # Tracks timing of recent blocks to adapt difficulty
 _MINING_STATE: dict[str, Any] = {
-    "last_block_time": None,  # timestamp of last mined block
-    "block_times": [],         # Recent block intervals (seconds) for EMA calculation
-    "theta_state": None,       # RetargetState from consensus.difficulty
-    "adjustment_enabled": True, # Whether to dynamically adjust theta during mining
+    "last_block_time": None,        # timestamp of last mined block
+    "block_times": [],              # Recent block intervals (seconds) for EMA calculation
+    "theta_state": None,            # RetargetState from consensus.difficulty
+    "adjustment_enabled": True,     # Whether to dynamically adjust theta during mining
+    "network_metrics": {            # Network load metrics for dynamic adjustment
+        "pending_tx_count": 0,      # Number of pending transactions
+        "recent_tx_throughput": 0.0, # Transactions per second (last 20 blocks)
+        "avg_block_propagation_ms": 0.0, # Average block propagation time
+        "hash_rate_estimate": 0.0,  # Estimated network hash rate (hashes/sec)
+    },
+    "adjustment_history": [],       # Recent theta adjustments for adaptive tuning
 }
 
 # Hash tracking map for transactions from adapter and fallback pending cache
@@ -434,6 +447,144 @@ def _resolve_theta() -> int:
     return _DEFAULT_THETA_MICRO
 
 
+def _update_network_metrics() -> dict[str, float]:
+    """
+    Update network load metrics for dynamic theta adjustment.
+    
+    Collects current network state including:
+    - Pending transaction count
+    - Transaction throughput (recent blocks)
+    - Block propagation time estimates
+    - Hash rate estimates
+    
+    Returns:
+        dict: Updated network metrics
+    """
+    global _MINING_STATE
+    metrics = _MINING_STATE.get("network_metrics", {})
+    
+    # Initialize all metrics with defaults if not present
+    if "pending_tx_count" not in metrics:
+        metrics["pending_tx_count"] = 0
+    if "recent_tx_throughput" not in metrics:
+        metrics["recent_tx_throughput"] = 0.0
+    if "avg_block_propagation_ms" not in metrics:
+        metrics["avg_block_propagation_ms"] = 0.0
+    if "hash_rate_estimate" not in metrics:
+        metrics["hash_rate_estimate"] = 0.0
+    
+    # Update pending transaction count
+    try:
+        from rpc.methods import tx as tx_methods
+        pend = getattr(tx_methods, "_PEND", None)
+        fallback = getattr(tx_methods, "_FALLBACK_PENDING", {})
+        
+        if pend is not None and hasattr(pend, "__len__"):
+            metrics["pending_tx_count"] = len(pend)
+        elif fallback:
+            metrics["pending_tx_count"] = len(fallback)
+    except Exception:
+        pass
+    
+    # Calculate recent transaction throughput (tx/sec over last 20 blocks)
+    try:
+        block_times = _MINING_STATE.get("block_times", [])
+        if len(block_times) >= 2:
+            # Estimate: assume average of 10 tx per block (rough heuristic)
+            # In production, this should query actual tx counts from blocks
+            total_time = sum(list(block_times)[-20:])
+            num_blocks = min(20, len(block_times))
+            if total_time > 0:
+                # Rough estimate: 10 tx/block * blocks/time
+                metrics["recent_tx_throughput"] = (10.0 * num_blocks) / total_time
+    except Exception:
+        pass
+    
+    # Estimate hash rate based on recent theta and block times
+    try:
+        state = _MINING_STATE.get("theta_state")
+        block_times = _MINING_STATE.get("block_times", [])
+        if state and len(block_times) >= 3:
+            # Hash rate estimation: difficulty is proportional to exp(theta)
+            # Average block time relates to hash rate by: hashrate ≈ exp(theta) / block_time
+            theta_nats = state.theta_micro / 1_000_000.0
+            avg_block_time = sum(list(block_times)[-10:]) / min(10, len(block_times))
+            if avg_block_time > 0:
+                # Rough estimate in relative units (not absolute hashes/sec)
+                metrics["hash_rate_estimate"] = math.exp(min(theta_nats, 50.0)) / avg_block_time
+    except Exception:
+        pass
+    
+    _MINING_STATE["network_metrics"] = metrics
+    return metrics
+
+
+def _compute_dynamic_adjustment_params(
+    base_params: "RetargetParams",  # type: ignore
+    network_metrics: dict[str, float],
+) -> "RetargetParams":  # type: ignore
+    """
+    Adjust retargeting parameters dynamically based on network load.
+    
+    Under high load conditions (high pending tx, high throughput), we can:
+    - Reduce half_life to respond faster
+    - Increase gain_beta for more aggressive adjustment
+    - Increase step_clamp to allow larger corrections
+    
+    Args:
+        base_params: Base RetargetParams configuration
+        network_metrics: Current network load metrics
+        
+    Returns:
+        RetargetParams: Adjusted parameters for current network conditions
+    """
+    from consensus.difficulty import RetargetParams
+    
+    # Extract metrics with defaults
+    pending_tx = network_metrics.get("pending_tx_count", 0)
+    tx_throughput = network_metrics.get("recent_tx_throughput", 0.0)
+    hash_rate = network_metrics.get("hash_rate_estimate", 0.0)
+    
+    # Compute network load factor (0.0 = low, 1.0 = high, can exceed 1.0)
+    # High load indicators: many pending tx, high throughput
+    load_factor = 0.0
+    if pending_tx > 100:
+        load_factor += min((pending_tx - 100) / 1000.0, 0.5)  # +0.5 max from pending tx
+    if tx_throughput > 10.0:
+        load_factor += min((tx_throughput - 10.0) / 100.0, 0.5)  # +0.5 max from throughput
+    
+    # Under high load, respond more aggressively
+    # Reduce half_life (faster EMA response) up to 50%
+    half_life_multiplier = max(0.5, 1.0 - load_factor * 0.5)
+    adjusted_half_life = base_params.half_life_blocks * half_life_multiplier
+    
+    # Increase gain_beta up to 10% under high load
+    gain_multiplier = min(1.1, 1.0 + load_factor * 0.1)
+    adjusted_gain = min(1.5, base_params.gain_beta * gain_multiplier)  # Cap at 1.5
+    
+    # Increase step clamp up to 50% under high load to allow faster corrections
+    step_multiplier = min(1.5, 1.0 + load_factor * 0.5)
+    adjusted_step_clamp = int(base_params.step_clamp_micro * step_multiplier)
+    
+    # Log if adjustments are significant
+    if load_factor > 0.1:
+        log.info(
+            f"Dynamic params adjustment: load_factor={load_factor:.2f}, "
+            f"half_life={adjusted_half_life:.1f} (base={base_params.half_life_blocks:.1f}), "
+            f"gain_beta={adjusted_gain:.2f} (base={base_params.gain_beta:.2f}), "
+            f"step_clamp={adjusted_step_clamp} (base={base_params.step_clamp_micro})"
+        )
+    
+    return RetargetParams(
+        target_block_time_s=base_params.target_block_time_s,
+        half_life_blocks=adjusted_half_life,
+        gain_beta=adjusted_gain,
+        step_clamp_micro=adjusted_step_clamp,
+        theta_min_micro=base_params.theta_min_micro,
+        theta_max_micro=base_params.theta_max_micro,
+    )
+
+
 def _adjust_theta_for_mining(dt_seconds: float | None = None) -> int:
     """
     Dynamically adjust theta micro during mining based on observed block times.
@@ -472,14 +623,15 @@ def _adjust_theta_for_mining(dt_seconds: float | None = None) -> int:
                 
                 # Initialize retarget params with mining-friendly settings
                 # Use faster response for mining (smaller half-life, higher gain)
-                # Increased limits to handle high network load and hash rate spikes
+                # Increased limits to handle extreme network load and hash rate spikes
+                # Limits are configurable via environment variables for operational flexibility
                 params = RetargetParams(
                     target_block_time_s=12.0,        # Target 12s blocks
                     half_life_blocks=8.0,            # Faster adaptation for mining (vs 24 for consensus)
                     gain_beta=0.9,                   # More aggressive response (vs 0.75 for consensus)
-                    step_clamp_micro=1_000_000,      # Allow larger steps (~1.0 nats per update, increased from 0.6)
-                    theta_min_micro=300_000,         # Lower minimum for easier mining (~0.3 nats)
-                    theta_max_micro=60_000_000,      # Higher maximum for network stress (~60 nats, increased from 40)
+                    step_clamp_micro=_STEP_CLAMP_MICRO,  # Configurable step limit (default 1.5 nats per update)
+                    theta_min_micro=_THETA_MIN_MICRO,     # Configurable minimum (default 0.3 nats)
+                    theta_max_micro=_THETA_MAX_MICRO,     # Configurable maximum (default 120 nats, 2x increase)
                 )
                 
                 _MINING_STATE["theta_state"] = init_state(params, current_theta)
@@ -499,9 +651,9 @@ def _adjust_theta_for_mining(dt_seconds: float | None = None) -> int:
             return int(state.theta_micro)
         return _resolve_theta()
     
-    # Update theta based on observed block time
+    # Update theta based on observed block time and network metrics
     try:
-        from consensus.difficulty import update_theta
+        from consensus.difficulty import update_theta, RetargetParams, RetargetState
         
         state = _MINING_STATE.get("theta_state")
         if state is None:
@@ -520,12 +672,28 @@ def _adjust_theta_for_mining(dt_seconds: float | None = None) -> int:
             )
             return int(state.theta_micro)
         
-        # Apply retargeting update
+        # Update network metrics for dynamic adjustment
+        network_metrics = _update_network_metrics()
+        
+        # Compute dynamically adjusted parameters based on network load
+        # This allows the system to respond more aggressively under high load
+        adjusted_params = _compute_dynamic_adjustment_params(state.params, network_metrics)
+        
+        # Create updated state with new params if they changed significantly
+        if adjusted_params != state.params:
+            state = RetargetState(
+                theta_micro=state.theta_micro,
+                tau_nats=state.tau_nats,
+                ema_log_dt_over_T=state.ema_log_dt_over_T,
+                alpha=state.alpha,
+                params=adjusted_params,
+            )
+        
+        # Apply retargeting update with (potentially adjusted) parameters
         new_state = update_theta(state, dt_seconds, blocks_skipped=1)
         _MINING_STATE["theta_state"] = new_state
         
         # Track block times for monitoring (keep last 20)
-        # Use list for simplicity; for production consider collections.deque(maxlen=20)
         block_times = _MINING_STATE.get("block_times")
         if block_times is None:
             # Initialize with deque for automatic size management
@@ -534,16 +702,54 @@ def _adjust_theta_for_mining(dt_seconds: float | None = None) -> int:
             _MINING_STATE["block_times"] = block_times
         block_times.append(dt_seconds)
         
-        # Log adjustment if significant change
+        # Track adjustment history for adaptive tuning (keep last 100)
+        adjustment_history = _MINING_STATE.get("adjustment_history")
+        if adjustment_history is None:
+            from collections import deque
+            adjustment_history = deque(maxlen=100)
+            _MINING_STATE["adjustment_history"] = adjustment_history
+        
+        # Log adjustment if significant change or at regular intervals
         old_theta = state.theta_micro
         new_theta = new_state.theta_micro
-        if abs(new_theta - old_theta) > 10_000:  # > 0.01 nats change
-            # Calculate average of last 5 block times (deque needs list conversion for slicing)
+        delta_theta = new_theta - old_theta
+        
+        # Record adjustment in history
+        adjustment_history.append({
+            "timestamp": time.time(),
+            "old_theta": old_theta,
+            "new_theta": new_theta,
+            "delta": delta_theta,
+            "dt_seconds": dt_seconds,
+        })
+        
+        # Enhanced logging with network metrics
+        if abs(delta_theta) > 10_000:  # > 0.01 nats change
+            # Calculate statistics
             recent_times = list(block_times)[-5:] if len(block_times) > 0 else []
             avg_time = sum(recent_times) / len(recent_times) if recent_times else 0.0
+            
+            # Theta utilization (% of max)
+            theta_utilization = (new_theta / new_state.params.theta_max_micro) * 100.0
+            
+            # Log with comprehensive context
             log.info(
                 f"Adjusted mining theta: {old_theta/1e6:.3f} → {new_theta/1e6:.3f} nats "
-                f"(dt={dt_seconds:.2f}s, avg_5={avg_time:.2f}s, target={state.params.target_block_time_s}s)"
+                f"({delta_theta/1e6:+.3f}) "
+                f"[{theta_utilization:.1f}% of max {new_state.params.theta_max_micro/1e6:.1f}] | "
+                f"dt={dt_seconds:.2f}s, avg_5={avg_time:.2f}s, target={new_state.params.target_block_time_s}s | "
+                f"pending_tx={network_metrics.get('pending_tx_count', 0)}, "
+                f"tx_throughput={network_metrics.get('recent_tx_throughput', 0.0):.1f}/s"
+            )
+        
+        # Periodic logging even without significant changes (every 20 blocks)
+        elif len(block_times) % 20 == 0:
+            theta_utilization = (new_theta / new_state.params.theta_max_micro) * 100.0
+            avg_time = sum(list(block_times)) / len(block_times) if len(block_times) > 0 else 0.0
+            log.info(
+                f"Theta status: {new_theta/1e6:.3f} nats [{theta_utilization:.1f}% of max], "
+                f"avg_block_time={avg_time:.2f}s (target={new_state.params.target_block_time_s}s), "
+                f"pending_tx={network_metrics.get('pending_tx_count', 0)}"
             )
         
         return int(new_theta)

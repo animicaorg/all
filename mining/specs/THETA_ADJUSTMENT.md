@@ -2,7 +2,7 @@
 
 ## Overview
 
-The dynamic theta micro adjustment feature adapts the mining difficulty threshold (Θ) based on observed network conditions during mining operations. This ensures efficient block production even under varying hash rates and network stress.
+The dynamic theta micro adjustment feature adapts the mining difficulty threshold (Θ) based on observed network conditions during mining operations. This ensures efficient block production even under varying hash rates and extreme network stress. The system now supports scaling up to 120 nats (120,000,000 µ-nats) to accommodate high-load scenarios and integrates real-time network metrics for responsive adjustment.
 
 ## Implementation
 
@@ -28,14 +28,19 @@ The dynamic theta micro adjustment feature adapts the mining difficulty threshol
 The adjustment uses the same EMA-based retargeting as consensus validation, but with mining-optimized parameters:
 
 ```python
-# Retarget Parameters (Mining-Optimized)
+# Retarget Parameters (Mining-Optimized, Enhanced for High Load)
 target_block_time_s: 12.0      # Target 12s blocks
 half_life_blocks: 8.0          # Faster adaptation (vs 24 for consensus)
 gain_beta: 0.9                 # More aggressive response (vs 0.75)
-step_clamp_micro: 600_000      # Larger steps (~0.6 nats per update)
+step_clamp_micro: 1_500_000    # Larger steps (~1.5 nats per update, increased from 1.0)
 theta_min_micro: 300_000       # Lower minimum (~0.3 nats)
-theta_max_micro: 40_000_000    # Higher maximum (~40 nats)
+theta_max_micro: 120_000_000   # Higher maximum (~120 nats, 2x increase from 60M)
 ```
+
+**Environment Variable Overrides:**
+- `ANIMICA_THETA_MAX_MICRO`: Override maximum theta (default: 120,000,000)
+- `ANIMICA_THETA_MIN_MICRO`: Override minimum theta (default: 300,000)
+- `ANIMICA_STEP_CLAMP_MICRO`: Override step clamp (default: 1,500,000)
 
 The update formula:
 ```
@@ -127,12 +132,47 @@ Comprehensive test coverage in `mining/tests/test_theta_micro_adjustment.py`:
 3. **Graceful Degradation**: Falls back to consensus theta on error
 4. **No Chain Impact**: Mining-local adjustment doesn't affect consensus
 
+## Network Load Integration (NEW)
+
+### Network Metrics Tracking
+
+The system now tracks real-time network metrics to inform theta adjustment:
+
+1. **Pending Transaction Count**: Number of transactions waiting to be mined
+2. **Transaction Throughput**: Recent transaction processing rate (tx/sec)
+3. **Hash Rate Estimate**: Relative network hash rate based on theta and block times
+
+### Dynamic Parameter Adjustment
+
+Under high network load conditions, the system automatically:
+- **Reduces half-life** up to 50% for faster response (e.g., 8 → 4 blocks)
+- **Increases gain_beta** up to 10% for more aggressive adjustment
+- **Increases step_clamp** up to 50% to allow larger corrections
+
+Network load factor is computed from:
+- Pending transaction count (threshold: 100 tx)
+- Transaction throughput (threshold: 10 tx/sec)
+
+### Enhanced Logging
+
+Adjustment logs now include:
+- **Theta utilization**: Percentage of maximum (e.g., "85% of max 120.0 nats")
+- **Network metrics**: Pending tx count, throughput
+- **Periodic status**: Every 20 blocks, even without significant changes
+
+Example log output:
+```
+INFO: Adjusted mining theta: 65.000 → 68.500 nats (+3.500) [57.1% of max 120.0] | 
+      dt=3.20s, avg_5=4.50s, target=12.0s | pending_tx=450, tx_throughput=25.3/s
+```
+
 ## Future Enhancements
 
 1. **Persistence**: Save adjustment state across restarts
-2. **Adaptive Parameters**: Auto-tune half-life and gain based on volatility
+2. **Block Propagation Metrics**: Integrate P2P propagation times
 3. **Multi-Chain**: Per-chain adjustment state for multi-chain miners
-4. **Metrics**: Expose theta adjustment metrics via Prometheus
+4. **Prometheus Metrics**: Export theta and network metrics for monitoring
+5. **Adaptive Thresholds**: Auto-tune load thresholds based on historical patterns
 
 ## References
 

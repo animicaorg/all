@@ -125,7 +125,7 @@ class RetargetParams:
     gain_beta: float = 0.75
     step_clamp_micro: MicroNat = 400_000  # ~0.4 nats per step max
     theta_min_micro: MicroNat = 500_000  # ~0.5 nats (very easy)
-    theta_max_micro: MicroNat = 30_000_000  # 30 nats (very hard)
+    theta_max_micro: MicroNat = 120_000_000  # 120 nats (extremely hard, supports high network load)
 
 
 @dataclass(frozen=True)
