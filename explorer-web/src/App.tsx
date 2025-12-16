@@ -37,7 +37,7 @@ export default function App() {
 
   return (
     <ExplorerStoreProvider>
-      <BrowserRouter basename={basename}>
+      <BrowserRouter basename={basename} future={{ v7_relativeSplatPath: true }}>
         <NetworkInitializer />
         <div className="app-root">
           <TopBar />
