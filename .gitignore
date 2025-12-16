@@ -14,3 +14,4 @@ native/target/
 *.tsbuildinfo
 .liboqs/
 .deps/
+test_peer_connectivity.py
