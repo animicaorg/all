@@ -2,6 +2,8 @@
 
 This guide covers common issues when mining with Animica and how to resolve them.
 
+⚠️ **Important**: As of the P2P-first update, mining uses local P2P validation by default (no proxy). See [P2P Sync Guide](p2p_sync.md) for P2P troubleshooting.
+
 ## Table of Contents
 
 1. [RPC Parameter Errors](#rpc-parameter-errors)
