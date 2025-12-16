@@ -2,14 +2,14 @@
 
 ## Overview
 
-Successfully implemented RPC proxy mechanism for Animica mining operations, enabling all nodes to validate against `rpc.animica.org` as the source of truth while maintaining fallback capabilities to local nodes.
+Successfully implemented RPC proxy mechanism for Animica mining operations, enabling all nodes to validate against `rpc.animica.org/rpc` as the source of truth while maintaining fallback capabilities to local nodes.
 
 ## Implementation Details
 
 ### 1. RPC Proxy Module (`rpc/proxy.py`)
 
 **Features:**
-- Forwards RPC requests to trusted endpoint (default: `https://rpc.animica.org`)
+- Forwards RPC requests to trusted endpoint (default: `https://rpc.animica.org/rpc`)
 - Automatic retry logic with configurable attempts and delays
 - Fallback to local node when trusted endpoint is unreachable
 - Enhanced logging for debugging and monitoring
@@ -23,7 +23,7 @@ Successfully implemented RPC proxy mechanism for Animica mining operations, enab
 
 **Configuration (Environment Variables):**
 ```bash
-ANIMICA_TRUSTED_RPC_URL="https://rpc.animica.org"  # Trusted RPC endpoint
+ANIMICA_TRUSTED_RPC_URL="https://rpc.animica.org/rpc"  # Trusted RPC endpoint
 ANIMICA_PROXY_MAX_RETRIES=3                        # Max retry attempts
 ANIMICA_PROXY_RETRY_DELAY_MS=1000                  # Delay between retries (ms)
 ANIMICA_PROXY_TIMEOUT_SECONDS=30.0                 # Request timeout (seconds)
@@ -98,7 +98,7 @@ animica miner mine-blocks --count 5 premine --verbose
 ### ✅ Objectives Met
 
 1. **Every IP as RPC URL**: ✅ Nodes can proxy requests to trusted endpoint
-2. **Auto-confirm Source of Truth**: ✅ `rpc.animica.org` validated automatically
+2. **Auto-confirm Source of Truth**: ✅ `rpc.animica.org/rpc` validated automatically
 3. **Fallback Mechanisms**: ✅ Automatic retry and local node fallback
 4. **Enhanced Logging**: ✅ Detailed logging at each step
 5. **Backward Compatibility**: ✅ Existing mining commands work unchanged
@@ -305,7 +305,7 @@ Default configuration works out of the box. Optionally customize:
 
 ```bash
 # .env or shell profile
-export ANIMICA_TRUSTED_RPC_URL="https://rpc.animica.org"
+export ANIMICA_TRUSTED_RPC_URL="https://rpc.animica.org/rpc"
 export ANIMICA_PROXY_MAX_RETRIES=3
 export ANIMICA_PROXY_RETRY_DELAY_MS=1000
 export ANIMICA_PROXY_TIMEOUT_SECONDS=30.0
