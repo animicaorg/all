@@ -261,6 +261,15 @@ Mining Operations
   export ANIMICA_MINER_ADDRESS=anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz
   animica miner mine-blocks --count 5
   
+  # Specify mining device backend (cpu, cuda, rocm, opencl, metal, auto)
+  animica miner mine-blocks --count 5 --device cpu
+  animica miner mine-blocks --count 5 --device cuda
+  animica miner mine-blocks --count 5 --device auto
+  
+  # Configure device via environment variable
+  export ANIMICA_MINER_DEVICE=cuda
+  animica miner mine-blocks --count 5
+  
   # If ANIMICA_MINER_ADDRESS is not set, rewards go to:
   # 1. The premine address (for devnet/mainnet)
   # 2. Zero address (fallback)
