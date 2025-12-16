@@ -465,26 +465,29 @@ def _adjust_theta_for_mining(dt_seconds: float | None = None) -> int:
         # Initialize state if needed
         if _MINING_STATE.get("theta_state") is None:
             try:
-                from consensus.difficulty import RetargetParams, init_state
+                from consensus.difficulty import RetargetParams, init_state, THETA_HARD_CAP_MICRO
                 
                 # Get current theta from consensus
                 current_theta = _resolve_theta()
                 
                 # Initialize retarget params with mining-friendly settings
                 # Use faster response for mining (smaller half-life, higher gain)
-                # Theta is now unbounded (theta_max_micro=None) to allow dynamic scaling
-                # Stability is ensured by step_clamp_micro and overflow protection
+                # Theta is capped at THETA_HARD_CAP_MICRO (300M µ-nats = 300 nats)
+                # to maintain network stability and prevent runaway values
+                # Stability is ensured by hard cap, step_clamp_micro, and overflow protection
                 params = RetargetParams(
                     target_block_time_s=12.0,        # Target 12s blocks
                     half_life_blocks=8.0,            # Faster adaptation for mining (vs 24 for consensus)
                     gain_beta=0.9,                   # More aggressive response (vs 0.75 for consensus)
                     step_clamp_micro=1_000_000,      # Allow larger steps (~1.0 nats per update)
                     theta_min_micro=300_000,         # Lower minimum for easier mining (~0.3 nats)
-                    theta_max_micro=None,            # Unbounded - allows dynamic scaling without artificial limits
+                    theta_max_micro=None,            # None = use hard cap (300M µ-nats)
                 )
                 
                 _MINING_STATE["theta_state"] = init_state(params, current_theta)
-                max_display = f"{params.theta_max_micro / 1e6:.1f} nats" if params.theta_max_micro is not None else "unbounded"
+                # Display effective maximum (hard cap when None)
+                effective_max = params.theta_max_micro if params.theta_max_micro is not None else THETA_HARD_CAP_MICRO
+                max_display = f"{effective_max / 1e6:.1f} nats"
                 log.info(
                     f"Initialized dynamic theta adjustment for mining: "
                     f"theta={current_theta/1e6:.3f} nats, target_time={params.target_block_time_s}s, "
@@ -539,6 +542,20 @@ def _adjust_theta_for_mining(dt_seconds: float | None = None) -> int:
         # Log adjustment if significant change
         old_theta = state.theta_micro
         new_theta = new_state.theta_micro
+        
+        # Import hard cap for warning checks
+        from consensus.difficulty import THETA_HARD_CAP_MICRO
+        effective_max = state.params.theta_max_micro if state.params.theta_max_micro is not None else THETA_HARD_CAP_MICRO
+        
+        # Warn if approaching cap (within 10%)
+        cap_threshold = effective_max * 0.9
+        if new_theta >= cap_threshold and old_theta < cap_threshold:
+            log.warning(
+                f"Mining theta approaching maximum cap: {new_theta/1e6:.3f} nats "
+                f"(cap: {effective_max/1e6:.1f} nats). "
+                f"Network is experiencing high load. Theta will stabilize at cap if sustained."
+            )
+        
         if abs(new_theta - old_theta) > 10_000:  # > 0.01 nats change
             # Calculate average of last 5 block times (deque needs list conversion for slicing)
             recent_times = list(block_times)[-5:] if len(block_times) > 0 else []
