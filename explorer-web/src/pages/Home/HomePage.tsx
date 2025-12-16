@@ -122,10 +122,12 @@ const HomePage: React.FC = () => {
   const latencyMs = useExplorerStore(getLatencyMs);
   const blocks = useExplorerStore(getBlocks);
   const poies = useExplorerStore(getPoIES);
+  const network = useExplorerStore((s) => s.network);
 
   const height = safeHeight(head);
   const hash = safeHash(head);
   const tsMs = safeTimestampMs(head);
+  const isConnected = network?.connected;
 
   const avgBtMs = useMemo(() => computeAvgBlockTimeMs(blocks, 64), [blocks]);
   const tps = useMemo(() => computeTps(blocks, 60), [blocks]);
@@ -291,8 +293,8 @@ const HomePage: React.FC = () => {
         ) : null} */}
       </div>
 
-      {/* Empty State for No Data */}
-      {(!height || height === 0) && (
+      {/* Empty State for No Data or Connection Issues */}
+      {(!height || height === 0 || !isConnected) && (
         <div className="card p-12 text-center">
           <div className="space-y-4">
             <div className="flex justify-center">
@@ -303,10 +305,27 @@ const HomePage: React.FC = () => {
               </svg>
             </div>
             <div className="space-y-2">
-              <h3 className="text-lg font-semibold">No Connection to Node</h3>
+              <h3 className="text-lg font-semibold">
+                {!isConnected ? "Unable to Connect to RPC Node" : "Waiting for Blockchain Data"}
+              </h3>
               <p className="text-muted max-w-md mx-auto">
-                Unable to fetch blockchain data. Please ensure the RPC node is running and accessible at the configured URL.
+                {!isConnected 
+                  ? `Unable to establish connection with the RPC endpoint. Please check:`
+                  : "Connecting to the blockchain network..."}
               </p>
+              {!isConnected && (
+                <ul className="text-sm text-muted max-w-md mx-auto text-left list-disc pl-6 pt-2 space-y-1">
+                  <li>RPC node is running and accessible at <code className="bg-panel px-1 py-0.5 rounded text-xs">{network?.rpcUrl || "configured URL"}</code></li>
+                  <li>CORS is enabled on the RPC server for this origin</li>
+                  <li>Network connectivity is stable</li>
+                  <li>Chain ID is correct: <code className="bg-panel px-1 py-0.5 rounded text-xs">{network?.chainId || "unknown"}</code></li>
+                </ul>
+              )}
+              {!isConnected && (
+                <p className="text-xs text-muted max-w-md mx-auto pt-4">
+                  💡 Check the browser console (F12) for detailed error messages and connection logs.
+                </p>
+              )}
             </div>
           </div>
         </div>
