@@ -99,6 +99,8 @@ def test_two_nodes_sync_via_p2p():
         
         # Node A configuration (miner)
         node_a_env = os.environ.copy()
+        # Remove ANIMICA_TRUSTED_RPC_URL if present to ensure proxy is disabled
+        node_a_env.pop("ANIMICA_TRUSTED_RPC_URL", None)
         node_a_env.update({
             "ANIMICA_CHAIN_ID": "1337",  # devnet
             "ANIMICA_RPC_PORT": "8545",
@@ -109,12 +111,13 @@ def test_two_nodes_sync_via_p2p():
             "P2P_SEEDS": "",  # No external seeds - local only
             "ANIMICA_PEER_STORE_PATH": str(node_a_data / "peers"),
             "ANIMICA_LOG_LEVEL": "INFO",
-            # Disable proxy explicitly
-            "ANIMICA_TRUSTED_RPC_URL": "",
+            # Proxy disabled by default (no ANIMICA_TRUSTED_RPC_URL set)
         })
         
         # Node B configuration (syncer)
         node_b_env = os.environ.copy()
+        # Remove ANIMICA_TRUSTED_RPC_URL if present to ensure proxy is disabled
+        node_b_env.pop("ANIMICA_TRUSTED_RPC_URL", None)
         node_b_env.update({
             "ANIMICA_CHAIN_ID": "1337",  # devnet
             "ANIMICA_RPC_PORT": "8546",
@@ -125,8 +128,7 @@ def test_two_nodes_sync_via_p2p():
             "P2P_SEEDS": "/ip4/127.0.0.1/tcp/30333",  # Connect to node A
             "ANIMICA_PEER_STORE_PATH": str(node_b_data / "peers"),
             "ANIMICA_LOG_LEVEL": "INFO",
-            # Disable proxy explicitly
-            "ANIMICA_TRUSTED_RPC_URL": "",
+            # Proxy disabled by default (no ANIMICA_TRUSTED_RPC_URL set)
         })
         
         # Start node A (miner)
