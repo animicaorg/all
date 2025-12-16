@@ -357,7 +357,9 @@ def _create_mock_rpc_client_with_device_tracking() -> tuple[type, dict[str, Any]
     This helper verifies that device is not in RPC params.
     
     Returns:
-        tuple: (MockRpcClient class, tracking dict with 'has_device' key)
+        tuple: (MockRpcClient class, tracking dict with keys:
+                'has_device' (bool): True if device was in params,
+                'params' (dict | None): The RPC params dict or None)
     """
     params_tracker = {"has_device": False, "params": None}
     
