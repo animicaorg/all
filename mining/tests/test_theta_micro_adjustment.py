@@ -121,8 +121,9 @@ def test_theta_adjustment_extreme_values():
 
 
 def test_theta_adjustment_clamping():
-    """Test that theta adjustment respects min/max bounds."""
+    """Test that theta adjustment respects min bound and overflow protection."""
     from rpc.methods.miner import _adjust_theta_for_mining, _MINING_STATE
+    from consensus.difficulty import MAX_SAFE_THETA_MICRO
     
     # Reset and initialize
     _MINING_STATE.clear()
@@ -137,12 +138,20 @@ def test_theta_adjustment_clamping():
     min_theta = state.params.theta_min_micro
     max_theta = state.params.theta_max_micro
     
-    # Simulate many very fast blocks (should hit max)
+    # Simulate many very fast blocks (should grow but respect overflow protection)
+    initial_theta = _adjust_theta_for_mining(dt_seconds=None)
     for _ in range(50):
         theta = _adjust_theta_for_mining(dt_seconds=0.5)
     
-    # Should respect maximum
-    assert theta <= max_theta, f"Theta {theta} exceeded maximum {max_theta}"
+    # Should grow significantly due to fast blocks
+    assert theta > initial_theta, f"Theta should have increased from {initial_theta} but is {theta}"
+    
+    # Should respect maximum if set, otherwise overflow protection
+    if max_theta is not None:
+        assert theta <= max_theta, f"Theta {theta} exceeded maximum {max_theta}"
+    else:
+        # Check overflow protection is applied
+        assert theta <= MAX_SAFE_THETA_MICRO, f"Theta {theta} exceeded overflow protection {MAX_SAFE_THETA_MICRO}"
     
     # Reset to high value
     high_theta = diff.nats_to_micro(20.0)

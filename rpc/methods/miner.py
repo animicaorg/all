@@ -472,21 +472,23 @@ def _adjust_theta_for_mining(dt_seconds: float | None = None) -> int:
                 
                 # Initialize retarget params with mining-friendly settings
                 # Use faster response for mining (smaller half-life, higher gain)
-                # Increased limits to handle high network load and hash rate spikes
+                # Theta is now unbounded (theta_max_micro=None) to allow dynamic scaling
+                # Stability is ensured by step_clamp_micro and overflow protection
                 params = RetargetParams(
                     target_block_time_s=12.0,        # Target 12s blocks
                     half_life_blocks=8.0,            # Faster adaptation for mining (vs 24 for consensus)
                     gain_beta=0.9,                   # More aggressive response (vs 0.75 for consensus)
-                    step_clamp_micro=1_000_000,      # Allow larger steps (~1.0 nats per update, increased from 0.6)
+                    step_clamp_micro=1_000_000,      # Allow larger steps (~1.0 nats per update)
                     theta_min_micro=300_000,         # Lower minimum for easier mining (~0.3 nats)
-                    theta_max_micro=60_000_000,      # Higher maximum for network stress (~60 nats, increased from 40)
+                    theta_max_micro=None,            # Unbounded - allows dynamic scaling without artificial limits
                 )
                 
                 _MINING_STATE["theta_state"] = init_state(params, current_theta)
+                max_display = f"{params.theta_max_micro / 1e6:.1f} nats" if params.theta_max_micro is not None else "unbounded"
                 log.info(
                     f"Initialized dynamic theta adjustment for mining: "
                     f"theta={current_theta/1e6:.3f} nats, target_time={params.target_block_time_s}s, "
-                    f"range=[{params.theta_min_micro/1e6:.1f}, {params.theta_max_micro/1e6:.1f}] nats"
+                    f"range=[{params.theta_min_micro/1e6:.1f}, {max_display}]"
                 )
             except Exception as e:
                 log.warning(f"Failed to initialize theta adjustment: {e}")

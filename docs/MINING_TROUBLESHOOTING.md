@@ -116,13 +116,16 @@ state = _MINING_STATE.get("theta_state")
 if state:
     print(f"Current theta: {state.theta_micro / 1e6:.3f} nats")
     print(f"Min: {state.params.theta_min_micro / 1e6:.1f} nats")
-    print(f"Max: {state.params.theta_max_micro / 1e6:.1f} nats")
+    max_display = "unbounded" if state.params.theta_max_micro is None else f"{state.params.theta_max_micro / 1e6:.1f} nats"
+    print(f"Max: {max_display}")
 ```
 
 **If mining is too difficult**:
-- Theta may be at maximum due to high hash rate
+- Theta may have grown very high due to sustained high hash rate
+- With unbounded theta, difficulty can scale indefinitely to match network capacity
 - Wait for adjustment window (blocks arrive slower, theta decreases)
 - Check RPC logs for theta adjustment messages
+- Consider increasing mining hardware or joining a pool
 
 **If mining is too easy**:
 - This is self-correcting (fast blocks increase theta)

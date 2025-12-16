@@ -72,8 +72,10 @@ These parameters map to `consensus.difficulty.RetargetParams`:
 - `half_life_blocks`: From `retarget.window`
 - `gain_beta`: From `retarget.ema_alpha`
 - `step_clamp_micro`: Computed from `retarget.bounds`
-- `theta_min_micro`: 500,000 µ-nats (0.5 nats) - very easy
-- `theta_max_micro`: 30,000,000 µ-nats (30 nats) - very hard
+- `theta_min_micro`: 500,000 µ-nats (0.5 nats) - lower bound (required)
+- `theta_max_micro`: None (unbounded) - upper bound is now optional for dynamic scaling
+
+**Unbounded Theta:** The network now supports unbounded theta growth (theta_max_micro=None), allowing difficulty to scale indefinitely to match any hash rate. Stability is maintained through step clamps (limits rate of change) and overflow protection (caps at 10^9 nats). See `docs/UNBOUNDED_THETA.md` for details.
 
 ## Implementation
 

@@ -45,8 +45,18 @@ Exports
 - compute_share_micro(theta_micro, shares_per_block)
 - compute_share_tiers(theta_micro, factors=(2,4,8,16,32,64,128,256))
 - micro_to_nats, nats_to_micro
+- MAX_SAFE_THETA_MICRO: Overflow protection constant (10^15 µ-nats = 10^9 nats)
 
 All functions are deterministic and side-effect free.
+
+Note on Unbounded Theta
+-----------------------
+As of this version, theta_max_micro is optional (None = unbounded). The network
+can now scale theta dynamically without artificial ceilings. Stability is ensured
+by:
+  1. step_clamp_micro: Limits rate of change per block
+  2. Overflow protection: Caps at MAX_SAFE_THETA_MICRO (10^9 nats)
+  3. EMA smoothing: Prevents wild fluctuations from transient spikes
 
 See also:
 - consensus.math: H(u) numerics and nats↔µ-nats helpers
@@ -67,6 +77,11 @@ from .types import MicroNat  # alias for int
 # ---------------------------------------------------------------------------
 
 _MICRO: float = 1_000_000.0
+
+# Maximum safe value for theta_micro to prevent integer overflow
+# 10^15 micro-nats = 10^9 nats (far beyond any realistic network demand)
+# Calculated as: 10^9 nats * 10^6 µ-nats/nat = 10^15 µ-nats
+MAX_SAFE_THETA_MICRO: MicroNat = 10 ** 15
 
 
 def micro_to_nats(theta_micro: MicroNat) -> float:
@@ -116,8 +131,10 @@ class RetargetParams:
         Per-update absolute clamp on |ΔΘ|.
     theta_min_micro : MicroNat
         Lower bound for Θ (do not go below).
-    theta_max_micro : MicroNat
-        Upper bound for Θ (do not exceed).
+    theta_max_micro : MicroNat | None
+        Optional upper bound for Θ. If None, theta can grow indefinitely
+        (subject to step_clamp_micro and overflow protection at 2^63-1).
+        Default is None (unbounded).
     """
 
     target_block_time_s: float = 12.0
@@ -125,7 +142,7 @@ class RetargetParams:
     gain_beta: float = 0.75
     step_clamp_micro: MicroNat = 400_000  # ~0.4 nats per step max
     theta_min_micro: MicroNat = 500_000  # ~0.5 nats (very easy)
-    theta_max_micro: MicroNat = 30_000_000  # 30 nats (very hard)
+    theta_max_micro: MicroNat | None = None  # None = unbounded (default)
 
 
 @dataclass(frozen=True)
@@ -228,9 +245,15 @@ def update_theta(
         theta_next = theta_target_micro
 
     # Global clamps
-    theta_next = max(
-        int(p.theta_min_micro), min(int(p.theta_max_micro), int(theta_next))
-    )
+    # Enforce minimum
+    theta_next = max(int(p.theta_min_micro), int(theta_next))
+    
+    # Enforce maximum if specified, otherwise apply overflow protection
+    if p.theta_max_micro is not None:
+        theta_next = min(int(p.theta_max_micro), int(theta_next))
+    else:
+        # Apply overflow protection for unbounded case (use module-level constant)
+        theta_next = min(MAX_SAFE_THETA_MICRO, int(theta_next))
 
     return RetargetState(
         theta_micro=int(theta_next),
@@ -402,7 +425,7 @@ if __name__ == "__main__":
         gain_beta=0.9,
         step_clamp_micro=500_000,
         theta_min_micro=800_000,
-        theta_max_micro=20_000_000,
+        theta_max_micro=None,  # Unbounded (default)
     )
     s = init_state(params, theta_init_micro=3_000_000)  # ~3.0 nats
 

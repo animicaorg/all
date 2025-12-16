@@ -122,9 +122,14 @@ Network policy SHOULD specify:
 | \(\kappa\) | Controller gain | 0.35 |
 | \(\varepsilon\) | Deadband (log-rate) | 0.02 |
 | \(\Delta\Theta_{\max}\) | Per-block clamp | 0.20 |
-| \([\Theta_{\min},\Theta_{\max}]\) | Absolute guardrails | \([-10, +40]\) |
+| \(\Theta_{\min}\) | Lower bound (required) | \(-10\) |
+| \(\Theta_{\max}\) | Upper bound (optional) | None (unbounded) or \(+40\) |
 
-These are network-tunable; test via sims before mainnet.
+**Note on unbounded Theta:** As of the latest version, \(\Theta_{\max}\) is optional (can be `null`/`None`). When unbounded, Theta can grow indefinitely subject to:
+- Per-block step clamp \(\Delta\Theta_{\max}\)
+- Overflow protection at \(10^9\) nats (\(10^{15}\) µ-nats)
+
+These parameters are network-tunable; test via simulations before mainnet deployment.
 
 ---
 

@@ -137,19 +137,15 @@ def test_difficulty_retarget_produces_non_trivial_values():
     if not hasattr(diff, "init_state") or not hasattr(diff, "update_theta"):
         pytest.skip("Difficulty retarget functions not found")
     
-    # Create a minimal retarget state
-    from dataclasses import dataclass
-    
-    @dataclass
-    class MockParams:
-        target_interval_sec: float = 10.0
-        half_life_blocks: float = 32.0
-        beta: float = 0.5
-        theta_min_micro: int = 1_000_000
-        theta_max_micro: int = 50_000_000
-        delta_theta_clamp_micro: int = 1_000_000
-    
-    params = MockParams()
+    # Use actual RetargetParams from the module
+    params = diff.RetargetParams(
+        target_block_time_s=10.0,
+        half_life_blocks=32.0,
+        gain_beta=0.5,
+        theta_min_micro=1_000_000,
+        theta_max_micro=50_000_000,
+        step_clamp_micro=1_000_000,
+    )
     
     # Initialize with a non-trivial starting Θ
     theta_init = 3_000_000  # 3.0 nats
@@ -179,11 +175,15 @@ def test_difficulty_retarget_produces_non_trivial_values():
         "Theta should update based on inter-arrival time"
     )
     
-    # New theta should still be non-trivial (within min/max bounds)
-    assert params.theta_min_micro <= new_theta <= params.theta_max_micro, (
-        f"Updated theta {new_theta} should be within bounds "
-        f"[{params.theta_min_micro}, {params.theta_max_micro}]"
+    # New theta should still be non-trivial (at least respecting min bound)
+    assert new_theta >= params.theta_min_micro, (
+        f"Updated theta {new_theta} should be at least minimum {params.theta_min_micro}"
     )
+    # If max is set, should respect it; otherwise check overflow protection
+    if params.theta_max_micro is not None:
+        assert new_theta <= params.theta_max_micro, (
+            f"Updated theta {new_theta} should not exceed maximum {params.theta_max_micro}"
+        )
 
 
 def test_share_target_computation_uses_consensus_theta():
