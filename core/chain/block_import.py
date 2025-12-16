@@ -14,6 +14,7 @@ Responsibilities
     * header hash length sanity, roots length sanity
 - Persist header + block to the block DB and update tx index (if available).
 - Feed candidate into fork choice and, if selected, update canonical head.
+- Track and update difficulty (Θ) based on block intervals using EMA retargeting.
 
 This module intentionally avoids expensive consensus checks (PoIES scoring,
 proof verification, DA sampling, etc.). Those live in `consensus/validator.py`
@@ -60,6 +61,14 @@ from core.types.receipt import \
     Receipt  # imported for type completeness; not used here
 from core.types.tx import Tx
 from core.utils.hash import sha3_256
+
+# Import difficulty adjustment functions
+try:
+    from consensus import difficulty as diff
+    DIFFICULTY_AVAILABLE = True
+except ImportError:
+    DIFFICULTY_AVAILABLE = False
+    diff = None  # type: ignore[assignment]
 
 
 class ImportErrorCode(str):
@@ -134,6 +143,20 @@ def _height_of(header: Header, payload: Optional[Dict[str, Any]] = None) -> int:
     if payload and "height" in payload:
         return int(payload["height"])
     raise BlockImportError("header missing height")
+
+
+def _timestamp_of(header: Header, payload: Optional[Dict[str, Any]] = None) -> Optional[int]:
+    """Extract timestamp from header (returns None if not present)."""
+    if hasattr(header, "timestamp"):
+        ts = getattr(header, "timestamp")
+        if ts is not None:
+            return int(ts)
+    if payload:
+        if "timestamp" in payload and payload["timestamp"] is not None:
+            return int(payload["timestamp"])
+        if "time" in payload and payload["time"] is not None:
+            return int(payload["time"])
+    return None
 
 
 def compute_header_hash(header: Header) -> bytes:
@@ -215,10 +238,10 @@ def decode_block(
 class BlockImporter:
     """
     Block importer that knows how to decode, sanity-check, link, persist, and
-    update fork choice & canonical head.
+    update fork choice & canonical head. Tracks difficulty (Θ) adjustments.
     """
 
-    __slots__ = ("params", "block_db", "tx_index", "fork_choice")
+    __slots__ = ("params", "block_db", "tx_index", "fork_choice", "difficulty_state", "_last_block_time")
 
     def __init__(
         self,
@@ -232,11 +255,111 @@ class BlockImporter:
         self.block_db = block_db
         self.tx_index = tx_index
         self.fork_choice = fork_choice or ForkChoice()
+        
+        # Initialize difficulty adjustment state
+        self.difficulty_state = None
+        self._last_block_time: Optional[int] = None
+        if DIFFICULTY_AVAILABLE:
+            self._init_difficulty_state()
 
     # --- Basics -------------------------------------------------------------
 
     def head(self) -> Optional[Tuple[int, bytes]]:
         return self.block_db.get_canonical_head()
+
+    # --- Difficulty adjustment ----------------------------------------------
+
+    def _init_difficulty_state(self) -> None:
+        """
+        Initialize difficulty state from params. Called once at startup.
+        Maps ChainParams retarget config to consensus.difficulty RetargetParams.
+        """
+        if not DIFFICULTY_AVAILABLE or diff is None:
+            return
+        
+        try:
+            # Map from ChainParams to consensus.difficulty.RetargetParams
+            # ChainParams uses: retarget.window, retarget.ema_alpha, retarget.bounds.{min,max}
+            # consensus.difficulty uses: target_block_time_s, half_life_blocks, gain_beta, 
+            #                            step_clamp_micro, theta_min_micro, theta_max_micro
+            
+            # Convert window to half_life_blocks (approximation: use window as half-life)
+            half_life_blocks = float(self.params.retarget.window)
+            
+            # Use ema_alpha as gain_beta (proportional gain)
+            gain_beta = float(self.params.retarget.ema_alpha)
+            
+            # Compute step clamp from bounds: convert multiplicative ratio to additive µ-nats
+            # For a typical initial theta, compute a reasonable step clamp
+            # bounds.max = 2.0 means we can double; that's ln(2) ≈ 0.693 nats
+            # Convert to µ-nats: ~693,000 µ-nats per retarget window
+            # Per-block step: divide by window size
+            import math
+            max_change_nats = math.log(self.params.retarget.bounds.max)  # ln(2) ≈ 0.693 for 2x
+            step_clamp_micro = int(max_change_nats * 1_000_000 / max(1, half_life_blocks))
+            step_clamp_micro = max(100_000, min(1_000_000, step_clamp_micro))  # reasonable bounds
+            
+            retarget_params = diff.RetargetParams(
+                target_block_time_s=float(self.params.block.target_seconds),
+                half_life_blocks=half_life_blocks,
+                gain_beta=gain_beta,
+                step_clamp_micro=step_clamp_micro,
+                theta_min_micro=500_000,  # 0.5 nats - very easy
+                theta_max_micro=30_000_000,  # 30 nats - very hard
+            )
+            
+            # Initialize state with genesis theta
+            theta_init = int(self.params.theta_initial)
+            self.difficulty_state = diff.init_state(retarget_params, theta_init_micro=theta_init)
+            
+        except Exception as e:  # pragma: no cover
+            # If difficulty module is unavailable or initialization fails, log and continue
+            # The node can still import blocks without difficulty adjustment
+            import logging
+            logging.warning(f"Failed to initialize difficulty state: {e}")
+            self.difficulty_state = None
+
+    def _update_difficulty(self, block_timestamp: int) -> None:
+        """
+        Update difficulty state based on the time since the last block.
+        
+        Args:
+            block_timestamp: Unix timestamp (seconds) of the current block
+        """
+        if not DIFFICULTY_AVAILABLE or diff is None or self.difficulty_state is None:
+            return
+        
+        try:
+            # Calculate time delta since last block
+            if self._last_block_time is not None:
+                dt_seconds = float(block_timestamp - self._last_block_time)
+                
+                # Sanity check: ensure positive, non-zero time delta
+                if dt_seconds > 0:
+                    # Update theta using the consensus.difficulty mechanism
+                    self.difficulty_state = diff.update_theta(
+                        self.difficulty_state,
+                        dt_seconds=dt_seconds,
+                        blocks_skipped=1,
+                    )
+            
+            # Update last block time for next iteration
+            self._last_block_time = block_timestamp
+            
+        except Exception as e:  # pragma: no cover
+            import logging
+            logging.warning(f"Failed to update difficulty: {e}")
+
+    def get_current_difficulty(self) -> int:
+        """
+        Get the current difficulty threshold (Θ) in micro-nats.
+        
+        Returns:
+            Current theta_micro value, or genesis theta_initial if difficulty state not available.
+        """
+        if self.difficulty_state is not None:
+            return int(self.difficulty_state.theta_micro)
+        return int(self.params.theta_initial)
 
     # --- Import -------------------------------------------------------------
 
@@ -295,6 +418,12 @@ class BlockImporter:
                 self.block_db.set_canonical_head(0, h)
                 self.fork_choice.reset()
                 self.fork_choice.consider(height=0, block_hash=h)
+                
+                # Initialize difficulty tracking with genesis timestamp
+                timestamp = _timestamp_of(header, hdr_map)
+                if timestamp is not None:
+                    self._last_block_time = timestamp
+                
                 return ImportResult(ImportErrorCode.ACCEPTED, 0, h, True, None)
 
             # Non-genesis needs parent
@@ -330,6 +459,11 @@ class BlockImporter:
                         self.tx_index.put(tx_hash, height, idx)
                     except Exception:  # pragma: no cover - non-critical
                         pass
+
+            # Update difficulty based on block timestamp
+            timestamp = _timestamp_of(header, hdr_map)
+            if timestamp is not None:
+                self._update_difficulty(timestamp)
 
             # Fork choice & canonical head update
             head_changed = self.fork_choice.consider(height=height, block_hash=h)
@@ -386,8 +520,21 @@ class BlockImporter:
         ]:
             ensure_len(get(fld, alt), 32, fld)
 
-        # nonce / mixSeed (length-free but keep under 64 bytes for now)
-        for fld, alt in [("nonce", None), ("mix_seed", "mixSeed")]:
+        # nonce: can be int or bytes depending on header version
+        nonce_val = get("nonce", None)
+        if nonce_val is not None:
+            if isinstance(nonce_val, int):
+                # int nonce is valid (uint type in CBOR/CDDL)
+                if nonce_val < 0:
+                    raise BlockImportError(f"nonce must be non-negative, got {nonce_val}")
+            else:
+                # bytes nonce (legacy): check length
+                bb = _as_bytes(nonce_val, name="nonce")
+                if len(bb) > 64:
+                    raise BlockImportError(f"nonce: too long ({len(bb)} bytes)")
+        
+        # mixSeed (length-free but keep under 64 bytes for now)
+        for fld, alt in [("mix_seed", "mixSeed")]:
             v = get(fld, alt)
             if v is None:
                 continue
