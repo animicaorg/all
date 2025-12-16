@@ -318,6 +318,48 @@ def prefer(order: Iterable[Union[str, DeviceType]], **opts: Any) -> MiningDevice
     raise DeviceUnavailable("No devices matched the requested preference order.")
 
 
+def auto_detect_device() -> str:
+    """
+    Automatically detect the best available mining device.
+    
+    Priority order:
+    1. CUDA (NVIDIA GPUs)
+    2. ROCm (AMD GPUs)
+    3. OpenCL (Generic GPU support)
+    4. Metal (Apple GPUs)
+    5. CPU (fallback, always available)
+    
+    Returns:
+        str: Device type identifier (e.g., "cuda", "cpu")
+    
+    Examples:
+        >>> device = auto_detect_device()
+        >>> miner = create(device)
+    """
+    # Define priority order for device selection
+    priority_order = [
+        DeviceType.CUDA,
+        DeviceType.ROCM,
+        DeviceType.OPENCL,
+        DeviceType.METAL,
+        DeviceType.CPU,
+    ]
+    
+    # Get all available devices
+    available_devices = list_available()
+    
+    # Create a set of available device types for quick lookup
+    available_types = {d.type for d in available_devices}
+    
+    # Return the first device type from priority order that is available
+    for device_type in priority_order:
+        if device_type in available_types:
+            return device_type
+    
+    # Fallback to CPU (should always be available)
+    return DeviceType.CPU
+
+
 # ────────────────────────────────────────────────────────────────────────
 # Helpers
 # ────────────────────────────────────────────────────────────────────────
