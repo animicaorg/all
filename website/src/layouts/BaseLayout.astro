@@ -102,6 +102,13 @@ const jsonLdPayload = Array.isArray(jsonLd) ? jsonLd : (jsonLd ? [jsonLd] : []);
   </head>
 
   <body class={`theme tokens ${bodyClass}`}>
+    <!-- Animated background particles/orbs -->
+    <div class="animated-background" aria-hidden="true">
+      <div class="bg-orb bg-orb-1"></div>
+      <div class="bg-orb bg-orb-2"></div>
+      <div class="bg-orb bg-orb-3"></div>
+    </div>
+    
     <div class="page-shell">
       <a href="#main" class="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-50 bg-[var(--bg-elevated)] text-[var(--text-primary)] px-3 py-2 rounded">
         Skip to content
@@ -133,3 +140,87 @@ const jsonLdPayload = Array.isArray(jsonLd) ? jsonLd : (jsonLd ? [jsonLd] : []);
     -->
   </body>
 </html>
+
+<style>
+  /* Animated background with floating orbs */
+  .animated-background {
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    overflow: hidden;
+    pointer-events: none;
+  }
+  
+  .bg-orb {
+    position: absolute;
+    border-radius: 50%;
+    filter: blur(100px);
+    opacity: 0.15;
+    animation: float-slow 25s ease-in-out infinite;
+  }
+  
+  .bg-orb-1 {
+    width: 800px;
+    height: 800px;
+    background: radial-gradient(circle, rgba(139, 92, 246, 0.6), transparent 70%);
+    top: -10%;
+    left: -10%;
+    animation-delay: 0s;
+  }
+  
+  .bg-orb-2 {
+    width: 600px;
+    height: 600px;
+    background: radial-gradient(circle, rgba(34, 211, 238, 0.5), transparent 70%);
+    top: 30%;
+    right: -5%;
+    animation-delay: -8s;
+  }
+  
+  .bg-orb-3 {
+    width: 700px;
+    height: 700px;
+    background: radial-gradient(circle, rgba(236, 72, 153, 0.4), transparent 70%);
+    bottom: -5%;
+    left: 30%;
+    animation-delay: -16s;
+  }
+  
+  @keyframes float-slow {
+    0%, 100% {
+      transform: translate(0, 0) scale(1);
+    }
+    33% {
+      transform: translate(30px, -30px) scale(1.05);
+    }
+    66% {
+      transform: translate(-20px, 20px) scale(0.95);
+    }
+  }
+  
+  /* Smooth page transitions */
+  @media (prefers-reduced-motion: no-preference) {
+    .page-shell {
+      animation: fadeIn 0.5s ease-out;
+    }
+  }
+  
+  @keyframes fadeIn {
+    from {
+      opacity: 0;
+      transform: translateY(10px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  
+  /* Respect reduced motion */
+  @media (prefers-reduced-motion: reduce) {
+    .bg-orb {
+      animation: none;
+      opacity: 0.08;
+    }
+  }
+</style>
