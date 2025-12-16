@@ -26,6 +26,11 @@ Integration points:
 from .config import CheckpointsConfig, load_checkpoints_config
 from .loader import CheckpointLoader, Checkpoint
 from .verifier import CheckpointVerifier
+from .integration import (
+    initialize_checkpoints,
+    get_checkpoint_config_summary,
+    verify_chain_checkpoints,
+)
 
 __all__ = [
     "CheckpointsConfig",
@@ -33,4 +38,7 @@ __all__ = [
     "CheckpointLoader",
     "Checkpoint",
     "CheckpointVerifier",
+    "initialize_checkpoints",
+    "get_checkpoint_config_summary",
+    "verify_chain_checkpoints",
 ]
