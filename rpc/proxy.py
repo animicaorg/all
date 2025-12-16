@@ -1,7 +1,22 @@
-"""RPC proxy module for forwarding requests to trusted source of truth.
+"""RPC proxy module for CLIENT-ONLY forwarding to external RPC endpoints.
 
-This module implements a proxy mechanism that forwards RPC requests to a trusted
-endpoint (default: rpc.animica.org) with retry logic and fallback mechanisms.
+DEPRECATED: This module is for client convenience only and must NOT be used
+for node consensus, mining, or sync operations.
+
+WARNING: Using this proxy for node operations would centralize trust and defeat
+the purpose of P2P decentralization. Nodes should sync via P2P bootstrap seeds
+(e.g., mainnet.animica.org for P2P, NOT rpc.animica.org for HTTP RPC).
+
+This module forwards RPC requests to an external endpoint (disabled by default).
+It is only suitable for:
+  - Client-side wallet applications
+  - Read-only queries from untrusted clients
+  - Development/testing scenarios
+
+It must NEVER be used for:
+  - Node consensus or sync
+  - Mining or block validation
+  - Any operation requiring chain truth
 """
 
 from __future__ import annotations
@@ -17,9 +32,13 @@ logger = logging.getLogger("animica.rpc.proxy")
 
 @dataclass
 class ProxyConfig:
-    """Configuration for RPC proxy."""
+    """Configuration for RPC proxy (CLIENT-ONLY, disabled by default).
     
-    trusted_rpc_url: str = "https://rpc.animica.org/rpc"
+    SECURITY WARNING: Setting trusted_rpc_url enables centralized trust mode.
+    This is ONLY safe for client read operations, NEVER for node consensus/mining.
+    """
+    
+    trusted_rpc_url: str | None = None  # MUST be explicitly set, no default
     max_retries: int = 3
     retry_delay_ms: int = 1000  # milliseconds between retries
     timeout_seconds: float = 30.0
@@ -27,10 +46,15 @@ class ProxyConfig:
     
     @classmethod
     def from_env(cls) -> ProxyConfig:
-        """Load proxy config from environment variables."""
+        """Load proxy config from environment variables.
+        
+        SECURITY: trusted_rpc_url is None by default. Explicitly set
+        ANIMICA_TRUSTED_RPC_URL to enable proxy (client use only).
+        """
         import os
         
-        trusted_url = os.getenv("ANIMICA_TRUSTED_RPC_URL", "https://rpc.animica.org/rpc")
+        # NO DEFAULT - must be explicitly set via environment variable
+        trusted_url = os.getenv("ANIMICA_TRUSTED_RPC_URL")
         max_retries = int(os.getenv("ANIMICA_PROXY_MAX_RETRIES", "3"))
         retry_delay = int(os.getenv("ANIMICA_PROXY_RETRY_DELAY_MS", "1000"))
         timeout = float(os.getenv("ANIMICA_PROXY_TIMEOUT_SECONDS", "30.0"))
@@ -64,15 +88,27 @@ class RpcProxy:
     """RPC proxy that forwards requests to trusted source of truth."""
     
     def __init__(self, config: Optional[ProxyConfig] = None):
-        """Initialize RPC proxy.
+        """Initialize RPC proxy (CLIENT-ONLY usage).
         
         Args:
             config: Optional proxy configuration. If None, loads from environment.
+            
+        Raises:
+            ValueError: If trusted_rpc_url is not set (proxy disabled by default).
         """
         self.config = config or ProxyConfig.from_env()
         self._cache: dict[str, tuple[Any, float]] = {}  # method -> (result, timestamp)
-        logger.info(
-            f"RPC Proxy initialized with trusted endpoint: {self.config.trusted_rpc_url}"
+        
+        if not self.config.trusted_rpc_url:
+            raise ValueError(
+                "RPC Proxy is disabled by default. Set ANIMICA_TRUSTED_RPC_URL to enable.\n"
+                "WARNING: Proxy is for CLIENT-ONLY use. Do NOT use for node consensus, mining, or sync."
+            )
+        
+        logger.warning(
+            f"RPC Proxy enabled with trusted endpoint: {self.config.trusted_rpc_url}\n"
+            "WARNING: This proxy is for CLIENT-ONLY operations. "
+            "Do NOT use for node consensus, mining, or sync."
         )
     
     async def forward_request(

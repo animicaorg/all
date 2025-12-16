@@ -54,7 +54,12 @@ services:
       ANIMICA_RPC_CORS_ORIGINS: "${ANIMICA_RPC_CORS_ORIGINS:-[\"http://localhost:*\",\"http://127.0.0.1:*\"]}"
       ANIMICA_LOG_LEVEL: "${ANIMICA_LOG_LEVEL:-INFO}"
       # P2P config (mainnet seeds/peers should be set via env or config)
+      # P2P is enabled by default for mainnet - node bootstraps via P2P seeds
+      # (mainnet.animica.org) NOT via trusted HTTP RPC endpoint
       P2P_ENABLE: "${P2P_ENABLE:-true}"
+      ANIMICA_P2P_ENABLE: "${ANIMICA_P2P_ENABLE:-true}"
+      # Network-specific seeds are auto-loaded based on chain_id=1 (mainnet)
+      # Default seeds: mainnet.animica.org (TCP 30333 + UDP 443 QUIC)
       P2P_LISTEN: "${P2P_LISTEN:-0.0.0.0:30333}"
       P2P_SEEDS: "${P2P_SEEDS:-}"
     command: ["/bin/bash", "-c", "python -m rpc"]
@@ -64,8 +69,15 @@ services:
       timeout: 5s
       retries: 20
     ports:
+      # HTTP RPC (JSON-RPC 2.0)
       - "0.0.0.0:${HOST_RPC_PORT:-8545}:8545"
-      - "${HOST_P2P_PORT:-30333}:30333"
+      # P2P TCP (libp2p-style peer connections)
+      - "${HOST_P2P_TCP_PORT:-30333}:30333"
+      # P2P QUIC (UDP 443 - production standard for QUIC)
+      # NOTE: QUIC uses UDP 443, HTTPS uses TCP 443 - they can coexist
+      # Nginx/reverse proxy should NOT terminate UDP 443 traffic
+      - "${HOST_P2P_QUIC_PORT:-443}:443/udp"
+      # Metrics (Prometheus)
       - "0.0.0.0:${HOST_METRICS_PORT:-9000}:9000"
     networks: [mainnet]
     restart: unless-stopped
