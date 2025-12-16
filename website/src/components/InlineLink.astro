@@ -105,7 +105,7 @@ if (computedExternal && willOpenNewTab) {
 
 // CSS helpers (works with plain CSS or Tailwind-like tokens)
 const baseClass =
-  "inline-flex items-center gap-1 align-baseline hover:opacity-90 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[color-mix(in_srgb,var(--text-primary,_#000)_/_30%,transparent)]";
+  "inline-flex items-center gap-1 align-baseline focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[color-mix(in_srgb,var(--text-primary,_#000)_/_30%,transparent)] legendary-link";
 const underlineClass = underline ? "underline underline-offset-2 decoration-current" : "no-underline";
 ---
 
@@ -123,7 +123,7 @@ const underlineClass = underline ? "underline underline-offset-2 decoration-curr
     <svg
       aria-hidden="true"
       viewBox="0 0 20 20"
-      class="size-3 translate-y-px opacity-70 shrink-0"
+      class="size-3 translate-y-px opacity-70 shrink-0 external-icon"
       fill="currentColor"
     >
       <!-- external-link icon -->
@@ -132,3 +132,43 @@ const underlineClass = underline ? "underline underline-offset-2 decoration-curr
     </svg>
   ) : null}
 </a>
+
+<style>
+  .legendary-link {
+    position: relative;
+    transition: all 0.3s ease;
+    background: linear-gradient(135deg, var(--legendary-purple-500, #8b5cf6), var(--legendary-cyan-400, #22d3ee));
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-size: 200% auto;
+  }
+  
+  .legendary-link::after {
+    content: '';
+    position: absolute;
+    bottom: -2px;
+    left: 0;
+    width: 0;
+    height: 2px;
+    background: linear-gradient(90deg, var(--legendary-purple-500, #8b5cf6), var(--legendary-cyan-400, #22d3ee));
+    transition: width 0.3s ease;
+  }
+  
+  .legendary-link:hover {
+    background-position: 100% center;
+  }
+  
+  .legendary-link:hover::after {
+    width: 100%;
+  }
+  
+  .legendary-link .external-icon {
+    transition: all 0.3s ease;
+  }
+  
+  .legendary-link:hover .external-icon {
+    transform: translateX(2px) translateY(-2px);
+    opacity: 1;
+  }
+</style>
