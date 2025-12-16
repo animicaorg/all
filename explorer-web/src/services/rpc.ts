@@ -391,10 +391,142 @@ export class RpcClient {
   }
 }
 
+/* -------------------------- High-Level RPC Wrapper ------------------------ */
+
+/**
+ * High-level RPC methods expected by the explorer.
+ * These wrap the low-level RpcClient JSON-RPC calls with domain-specific methods.
+ */
+export interface ExplorerRpcClient extends RpcClient {
+  getChainId(): Promise<string>;
+  getHead(): Promise<{ height: number; hash: string; timeISO: string }>;
+  getBlock(height: number): Promise<any>;
+  getBlocks?(fromHeightInclusive: number, limit: number): Promise<any[]>;
+  getTx?(hash: string): Promise<any>;
+  getAccount?(address: string): Promise<any>;
+  subscribeNewHeads?(onHead: (head: { height: number; hash: string; timeISO: string }) => void): { unsubscribe: () => void };
+  ping?(): Promise<void>;
+}
+
+/**
+ * Wraps the base RpcClient with explorer-specific high-level methods.
+ */
+class ExplorerRpcClientImpl extends RpcClient implements ExplorerRpcClient {
+  async getChainId(): Promise<string> {
+    try {
+      const result = await this.call<number | string>('chain.getChainId');
+      return String(result);
+    } catch (e) {
+      // Fallback to eth_chainId for compatibility
+      try {
+        const result = await this.call<string>('eth_chainId');
+        // Convert hex to decimal if needed
+        if (typeof result === 'string' && result.startsWith('0x')) {
+          return String(parseInt(result, 16));
+        }
+        return String(result);
+      } catch {
+        throw e;
+      }
+    }
+  }
+
+  async getHead(): Promise<{ height: number; hash: string; timeISO: string }> {
+    const result = await this.call<any>('chain.getHead');
+    
+    // Parse the result into the expected format
+    const height = result.height ?? result.number ?? 0;
+    const hash = result.hash ?? result.blockHash ?? '';
+    
+    // Handle timestamp (could be in seconds or milliseconds, or ISO string)
+    let timeISO: string;
+    if (result.timeISO) {
+      timeISO = result.timeISO;
+    } else if (result.timestamp !== undefined) {
+      const ts = typeof result.timestamp === 'number' 
+        ? (result.timestamp > 10_000_000_000 ? result.timestamp : result.timestamp * 1000)
+        : Date.now();
+      timeISO = new Date(ts).toISOString();
+    } else if (result.timestamp_ms !== undefined) {
+      timeISO = new Date(result.timestamp_ms).toISOString();
+    } else {
+      timeISO = new Date().toISOString();
+    }
+
+    return { height, hash, timeISO };
+  }
+
+  async getBlock(height: number): Promise<any> {
+    try {
+      // Try chain.getBlockByHeight first
+      const result = await this.call<any>('chain.getBlockByHeight', [height, false, false]);
+      return this.normalizeBlock(result, height);
+    } catch (e) {
+      // Fallback to chain.getBlockByNumber
+      try {
+        const result = await this.call<any>('chain.getBlockByNumber', [height, false]);
+        return this.normalizeBlock(result, height);
+      } catch {
+        throw e;
+      }
+    }
+  }
+
+  async getBlocks(fromHeightInclusive: number, limit: number): Promise<any[]> {
+    // Fetch multiple blocks in parallel (batch request would be better, but this works)
+    const promises: Promise<any>[] = [];
+    for (let i = 0; i < limit; i++) {
+      const height = fromHeightInclusive - i;
+      if (height < 0) break;
+      promises.push(
+        this.getBlock(height).catch(() => null)
+      );
+    }
+    const blocks = await Promise.all(promises);
+    return blocks.filter((b) => b !== null);
+  }
+
+  async getTx(hash: string): Promise<any> {
+    return this.call<any>('tx.getTransaction', [hash]);
+  }
+
+  async getAccount(address: string): Promise<any> {
+    return this.call<any>('state.getAccount', [address]);
+  }
+
+  async ping(): Promise<void> {
+    // Simple ping using a lightweight method
+    await this.call('chain.getChainId');
+  }
+
+  private normalizeBlock(block: any, height: number): any {
+    if (!block) return null;
+    
+    // Normalize block structure for the explorer
+    return {
+      height: block.height ?? block.number ?? height,
+      hash: block.hash ?? block.blockHash ?? '',
+      parentHash: block.parentHash ?? block.parent ?? '',
+      timeISO: block.timeISO ?? (block.timestamp 
+        ? new Date((block.timestamp > 10_000_000_000 ? block.timestamp : block.timestamp * 1000)).toISOString()
+        : new Date().toISOString()),
+      timestamp: block.timestamp,
+      timestamp_ms: block.timestamp_ms ?? (block.timestamp 
+        ? (block.timestamp > 10_000_000_000 ? block.timestamp : block.timestamp * 1000)
+        : Date.now()),
+      txCount: block.txCount ?? (Array.isArray(block.txs) ? block.txs.length : (Array.isArray(block.transactions) ? block.transactions.length : 0)),
+      txs: block.txs ?? block.transactions ?? [],
+      proposer: block.proposer ?? block.miner ?? '',
+      daRoot: block.daRoot ?? '',
+      ...block,
+    };
+  }
+}
+
 /* ------------------------------ Convenience API ---------------------------- */
 
-export function createRpc(opts: RpcClientOptions): RpcClient {
-  return new RpcClient(opts);
+export function createRpc(opts: RpcClientOptions): ExplorerRpcClient {
+  return new ExplorerRpcClientImpl(opts);
 }
 
 /**
@@ -402,9 +534,9 @@ export function createRpc(opts: RpcClientOptions): RpcClient {
  * Example:
  *   const rpc = rpcFromEnv(import.meta.env.VITE_RPC_URL, import.meta.env.VITE_API_KEY);
  */
-export function rpcFromEnv(url?: string, apiKey?: string): RpcClient {
+export function rpcFromEnv(url?: string, apiKey?: string): ExplorerRpcClient {
   const baseUrl = url ?? inferRpcUrl();
-  const client = new RpcClient({ url: baseUrl });
+  const client = new ExplorerRpcClientImpl({ url: baseUrl });
   if (apiKey) client.setAuthToken(apiKey);
   return client;
 }

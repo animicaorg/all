@@ -70,10 +70,12 @@ function installFetchMock() {
     }
 
     // Minimal fetch Response stub
+    const responseBody = JSON.stringify({ jsonrpc: '2.0', id, result })
     return {
       ok: true,
       status: 200,
-      json: async () => ({ jsonrpc: '2.0', id, result }),
+      text: async () => responseBody,
+      json: async () => JSON.parse(responseBody),
     } as any
   })
   vi.stubGlobal('fetch', f)
