@@ -126,7 +126,11 @@ export function useBlocksWithCache(opts?: {
       }
     }
 
-    initCache();
+    initCache().catch((err) => {
+      if (!cancelled) {
+        console.error('[blocksWithCache] Unexpected error in initCache:', err);
+      }
+    });
 
     return () => {
       cancelled = true;
