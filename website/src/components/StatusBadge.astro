@@ -65,19 +65,48 @@ const config = JSON.stringify({
   id={uid}
   class={`inline-flex items-center rounded-full border bg-[var(--bg-elevated)]
     border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)] ring-4 ${statusStyles.offline.ring}
-    ${sizeCls} ${className}`}
+    ${sizeCls} ${className} status-badge`}
   data-config={config}
   aria-live="polite"
   role="status"
 >
   <span
-    class={`inline-block rounded-full ${dotSize} ${statusStyles.offline.dot}`}
+    class={`inline-block rounded-full ${dotSize} ${statusStyles.offline.dot} status-dot`}
     data-role="dot"
     aria-hidden="true"
   />
   <span class="font-medium" data-role="label">{statusStyles.offline.label}</span>
   {showLatency && <span class="ml-1 tabular-nums opacity-75" data-role="latency">—</span>}
 </div>
+
+<style>
+  .status-badge {
+    backdrop-filter: blur(12px);
+    transition: all 0.3s ease;
+  }
+  
+  .status-badge:hover {
+    transform: scale(1.02);
+  }
+  
+  .status-dot {
+    transition: all 0.3s ease;
+  }
+  
+  /* Pulse animation for healthy status */
+  .status-badge:has(.bg-emerald-500) .status-dot {
+    animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  }
+  
+  @keyframes pulse {
+    0%, 100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.7;
+    }
+  }
+</style>
 <script>
 (() => {
   const DEFAULT_THRESHOLDS = {

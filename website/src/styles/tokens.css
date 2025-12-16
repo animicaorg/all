@@ -107,6 +107,30 @@
   --brand-grad-to: #8b5cf6;
   --brand-grad-accent: #ec4899;
 
+  /* Legendary UI Color Palette */
+  --legendary-purple-500: #8b5cf6;
+  --legendary-violet-500: #7c3aed;
+  --legendary-indigo-500: #6366f1;
+  --legendary-cyan-400: #22d3ee;
+  --legendary-blue-500: #3b82f6;
+  --legendary-emerald-500: #10b981;
+  --legendary-amber-500: #f59e0b;
+  
+  /* Primary gradient: purple -> violet -> indigo */
+  --gradient-primary-from: var(--legendary-purple-500);
+  --gradient-primary-via: var(--legendary-violet-500);
+  --gradient-primary-to: var(--legendary-indigo-500);
+  
+  /* Accent gradient: cyan -> blue */
+  --gradient-accent-from: var(--legendary-cyan-400);
+  --gradient-accent-to: var(--legendary-blue-500);
+  
+  /* Glow colors */
+  --glow-purple: rgba(139, 92, 246, 0.3);
+  --glow-cyan: rgba(34, 211, 238, 0.3);
+  --glow-emerald: rgba(16, 185, 129, 0.3);
+  --glow-amber: rgba(245, 158, 11, 0.3);
+
   /* Neutral scale (tailored slate) */
   --gray-50:  #f7f9fd;
   --gray-100: #e7ecf7;
