@@ -437,9 +437,13 @@ def test_mine_blocks_with_device_cuda(monkeypatch: Any) -> None:
 
 
 def test_mine_blocks_with_device_auto(monkeypatch: Any) -> None:
-    """Test that mine-blocks accepts --device auto."""
+    """Test that mine-blocks accepts --device auto and auto-detects device."""
     test_address = "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz"
     device_used = _setup_mock_rpc_client(monkeypatch, test_address)
+    
+    # Mock auto_detect_device to return cpu for test
+    from mining.device import DeviceType
+    monkeypatch.setattr("mining.device.auto_detect_device", lambda: DeviceType.CPU)
     
     result = runner.invoke(
         mining.app,
@@ -453,8 +457,10 @@ def test_mine_blocks_with_device_auto(monkeypatch: Any) -> None:
     )
     
     assert result.exit_code == 0
-    assert device_used["value"] == "auto"
-    assert "Using device: auto" in result.output
+    # After auto-detection, it should resolve to cpu
+    assert device_used["value"] == "cpu"
+    assert "Auto-detected device: cpu" in result.output
+    assert "Using device: cpu" in result.output
 
 
 def test_mine_blocks_with_all_supported_devices(monkeypatch: Any) -> None:
@@ -462,6 +468,10 @@ def test_mine_blocks_with_all_supported_devices(monkeypatch: Any) -> None:
     test_address = "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz"
     # Import the constant to ensure consistency with main module
     from animica.cli.mining import SUPPORTED_DEVICES
+    from mining.device import DeviceType
+    
+    # Mock auto_detect_device to return cpu for "auto" tests
+    monkeypatch.setattr("mining.device.auto_detect_device", lambda: DeviceType.CPU)
     
     for device in SUPPORTED_DEVICES:
         # Setup fresh mock for each device
@@ -479,8 +489,15 @@ def test_mine_blocks_with_all_supported_devices(monkeypatch: Any) -> None:
         )
         
         assert result.exit_code == 0, f"Device {device} failed with: {result.output}"
-        assert device_used["value"] == device, f"Expected device {device}, got {device_used['value']}"
-        assert f"Using device: {device}" in result.output
+        
+        # For "auto" device, the actual device used will be the auto-detected one (cpu in our mock)
+        if device == "auto":
+            assert device_used["value"] == "cpu", f"Auto device should resolve to cpu, got {device_used['value']}"
+            assert "Auto-detected device: cpu" in result.output
+            assert "Using device: cpu" in result.output
+        else:
+            assert device_used["value"] == device, f"Expected device {device}, got {device_used['value']}"
+            assert f"Using device: {device}" in result.output
 
 
 def test_mine_blocks_with_invalid_device() -> None:
@@ -524,10 +541,14 @@ def test_mine_blocks_with_device_case_insensitive(monkeypatch: Any) -> None:
     assert "Using device: cuda" in result.output
 
 
-def test_mine_blocks_without_device_defaults_to_cpu(monkeypatch: Any) -> None:
-    """Test that mine-blocks defaults to cpu device when --device is not specified."""
+def test_mine_blocks_without_device_defaults_to_auto(monkeypatch: Any) -> None:
+    """Test that mine-blocks defaults to auto device when --device is not specified."""
     test_address = "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz"
     device_used = _setup_mock_rpc_client(monkeypatch, test_address)
+    
+    # Mock auto_detect_device to return cpu for test
+    from mining.device import DeviceType
+    monkeypatch.setattr("mining.device.auto_detect_device", lambda: DeviceType.CPU)
     
     result = runner.invoke(
         mining.app,
@@ -541,7 +562,9 @@ def test_mine_blocks_without_device_defaults_to_cpu(monkeypatch: Any) -> None:
     )
     
     assert result.exit_code == 0
-    assert device_used["value"] == "cpu"  # Should default to cpu
+    # Should auto-detect and use cpu (from our mock)
+    assert device_used["value"] == "cpu"
+    assert "Auto-detected device: cpu" in result.output
     assert "Using device: cpu" in result.output
 
 
@@ -565,3 +588,85 @@ def test_mine_blocks_device_from_env_var(monkeypatch: Any) -> None:
     assert result.exit_code == 0
     assert device_used["value"] == "cuda"  # Should use env var value
     assert "Using device: cuda" in result.output
+
+
+def test_mine_blocks_auto_detect_cuda(monkeypatch: Any) -> None:
+    """Test auto-detection selects CUDA when available."""
+    test_address = "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz"
+    device_used = _setup_mock_rpc_client(monkeypatch, test_address)
+    
+    # Mock auto_detect_device to return cuda
+    from mining.device import DeviceType
+    monkeypatch.setattr("mining.device.auto_detect_device", lambda: DeviceType.CUDA)
+    
+    result = runner.invoke(
+        mining.app,
+        [
+            "mine-blocks",
+            "--address", test_address,
+            "--count", "1",
+            "--device", "auto",
+            "--rpc-url", "http://127.0.0.1:8545",
+        ],
+    )
+    
+    assert result.exit_code == 0
+    assert device_used["value"] == "cuda"
+    assert "Auto-detected device: cuda" in result.output
+    assert "Using device: cuda" in result.output
+
+
+def test_mine_blocks_auto_detect_fallback_on_error(monkeypatch: Any) -> None:
+    """Test auto-detection falls back to CPU on error."""
+    test_address = "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz"
+    device_used = _setup_mock_rpc_client(monkeypatch, test_address)
+    
+    # Mock auto_detect_device to raise an exception
+    def mock_error():
+        raise RuntimeError("Detection failed")
+    
+    monkeypatch.setattr("mining.device.auto_detect_device", mock_error)
+    
+    result = runner.invoke(
+        mining.app,
+        [
+            "mine-blocks",
+            "--address", test_address,
+            "--count", "1",
+            "--device", "auto",
+            "--rpc-url", "http://127.0.0.1:8545",
+        ],
+    )
+    
+    assert result.exit_code == 0
+    assert device_used["value"] == "cpu"  # Should fallback to cpu
+    assert "Could not auto-detect device" in result.output
+    assert "Falling back to CPU" in result.output
+    assert "Using device: cpu" in result.output
+
+
+def test_mine_blocks_explicit_device_overrides_auto(monkeypatch: Any) -> None:
+    """Test that explicitly setting a device overrides auto-detection."""
+    test_address = "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz"
+    device_used = _setup_mock_rpc_client(monkeypatch, test_address)
+    
+    # Mock auto_detect_device to return cuda (but we'll explicitly request cpu)
+    from mining.device import DeviceType
+    monkeypatch.setattr("mining.device.auto_detect_device", lambda: DeviceType.CUDA)
+    
+    result = runner.invoke(
+        mining.app,
+        [
+            "mine-blocks",
+            "--address", test_address,
+            "--count", "1",
+            "--device", "cpu",  # Explicitly request CPU
+            "--rpc-url", "http://127.0.0.1:8545",
+        ],
+    )
+    
+    assert result.exit_code == 0
+    assert device_used["value"] == "cpu"  # Should use explicitly requested CPU
+    # Should NOT show auto-detection message
+    assert "Auto-detected device" not in result.output
+    assert "Using device: cpu" in result.output

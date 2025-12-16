@@ -258,9 +258,9 @@ def mine_blocks(
         help="Payout address (option, for backward compat): wallet label or Bech32 address",
     ),
     device: str = typer.Option(
-        "cpu",
+        "auto",
         "--device",
-        help="Mining device backend (cpu, cuda, rocm, opencl, metal, auto)",
+        help="Mining device backend (cpu, cuda, rocm, opencl, metal, auto). Default: auto (auto-detect best device)",
         envvar="ANIMICA_MINER_DEVICE",
     ),
     rpc_url: Optional[str] = typer.Option(
@@ -304,8 +304,13 @@ def mine_blocks(
       - rocm: AMD ROCm backend (requires ROCm-capable GPU)
       - opencl: OpenCL backend (requires OpenCL-capable device)
       - metal: Apple Metal backend (requires Metal-capable device)
-      - auto: Automatically select best available device
-      Default is 'cpu'. Can also be set via ANIMICA_MINER_DEVICE environment variable.
+      - auto: Automatically select best available device (default)
+      
+      When 'auto' is selected (or no device specified), the system automatically detects
+      and uses the best available device in priority order: CUDA > ROCm > OpenCL > Metal > CPU.
+      Falls back to CPU if no GPU is detected or if detection fails.
+      
+      Default is 'auto'. Can also be set via ANIMICA_MINER_DEVICE environment variable.
     
     The mining process:
     1. Selects pending transactions from mempool (nonce-ordered, fee policy enforced)
@@ -393,6 +398,29 @@ def mine_blocks(
             err=True,
         )
         raise typer.Exit(2)
+    
+    # Auto-detect device if requested
+    if device_normalized == "auto":
+        try:
+            import sys
+            # Add mining module to path if needed
+            repo_root = Path(__file__).resolve().parents[3]
+            if str(repo_root) not in sys.path:
+                sys.path.insert(0, str(repo_root))
+            
+            from mining.device import auto_detect_device
+            
+            device_normalized = auto_detect_device()
+            typer.secho(
+                f"✓ Auto-detected device: {device_normalized}",
+                fg=typer.colors.GREEN,
+            )
+        except Exception as e:
+            typer.secho(
+                f"Warning: Could not auto-detect device ({e}). Falling back to CPU.",
+                fg=typer.colors.YELLOW,
+            )
+            device_normalized = "cpu"
     
     # Validate count
     if count <= 0:
