@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from .config import CheckpointsConfig
+from . import builtin
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,18 +51,23 @@ class CheckpointLoader:
     Supports:
     - RPC mode: fetches from chain.getCheckpoints or HTTP endpoint
     - File mode: loads from local JSON file
+    - Built-in checkpoints: hardcoded checkpoints for known networks
     - Caching to avoid repeated fetches
     """
     
-    def __init__(self, config: CheckpointsConfig):
+    def __init__(self, config: CheckpointsConfig, chain_id: Optional[int] = None):
         self.config = config
+        self.chain_id = chain_id
         self._log = logging.getLogger("animica.p2p.checkpoints.loader")
         self._cached_checkpoints: Optional[List[Checkpoint]] = None
         self._cache_timestamp: Optional[float] = None
     
-    async def load_checkpoints(self) -> List[Checkpoint]:
+    async def load_checkpoints(self, include_builtin: bool = True) -> List[Checkpoint]:
         """
         Load checkpoints based on configuration.
+        
+        Args:
+            include_builtin: If True, include built-in checkpoints for the chain.
         
         Returns:
             List of Checkpoint objects, empty if disabled or unavailable.
@@ -70,6 +76,9 @@ class CheckpointLoader:
             Exception if strict mode is enabled and checkpoints cannot be loaded.
         """
         if not self.config.is_enabled():
+            # Even if disabled, return built-in checkpoints if requested and chain_id is set
+            if include_builtin and self.chain_id is not None:
+                return self._load_builtin_checkpoints()
             return []
         
         # Check cache validity
@@ -85,6 +94,10 @@ class CheckpointLoader:
             else:
                 checkpoints = []
             
+            # Merge with built-in checkpoints if enabled
+            if include_builtin and self.chain_id is not None:
+                checkpoints = self._merge_with_builtin(checkpoints)
+            
             # Update cache
             self._cached_checkpoints = checkpoints
             self._cache_timestamp = time.time()
@@ -97,11 +110,13 @@ class CheckpointLoader:
             if self.config.strict:
                 raise
             
-            # Non-strict mode: log warning and continue without checkpoints
+            # Non-strict mode: log warning and continue, but still include built-in
             self._log.warning(
                 f"Checkpoints unavailable in {self.config.mode} mode, "
                 "continuing without checkpoints"
             )
+            if include_builtin and self.chain_id is not None:
+                return self._load_builtin_checkpoints()
             return []
     
     def _is_cache_valid(self) -> bool:
@@ -228,3 +243,61 @@ class CheckpointLoader:
         checkpoints.sort(key=lambda c: c.height)
         
         return checkpoints
+    
+    def _load_builtin_checkpoints(self) -> List[Checkpoint]:
+        """
+        Load built-in checkpoints for the configured chain.
+        
+        Returns:
+            List of built-in Checkpoint objects for this chain.
+        """
+        if self.chain_id is None:
+            return []
+        
+        checkpoints = builtin.get_builtin_checkpoints(self.chain_id)
+        
+        if checkpoints:
+            self._log.info(
+                f"Loaded {len(checkpoints)} built-in checkpoints for chain_id={self.chain_id}"
+            )
+        
+        return checkpoints
+    
+    def _merge_with_builtin(self, external_checkpoints: List[Checkpoint]) -> List[Checkpoint]:
+        """
+        Merge external checkpoints with built-in checkpoints.
+        
+        Built-in checkpoints take precedence in case of conflicts (same height).
+        
+        Args:
+            external_checkpoints: Checkpoints loaded from RPC or file.
+        
+        Returns:
+            Merged list of checkpoints, sorted by height.
+        """
+        builtin_checkpoints = self._load_builtin_checkpoints()
+        
+        if not builtin_checkpoints:
+            return external_checkpoints
+        
+        # Build a map of height->checkpoint from built-in (these take precedence)
+        checkpoint_map: Dict[int, Checkpoint] = {cp.height: cp for cp in builtin_checkpoints}
+        
+        # Add external checkpoints that don't conflict
+        for cp in external_checkpoints:
+            if cp.height not in checkpoint_map:
+                checkpoint_map[cp.height] = cp
+            else:
+                # Log if there's a conflict
+                builtin_hash = checkpoint_map[cp.height].hash
+                if cp.hash.lower() != builtin_hash.lower():
+                    self._log.warning(
+                        f"External checkpoint at height {cp.height} ({cp.hash}) "
+                        f"conflicts with built-in ({builtin_hash}), using built-in"
+                    )
+        
+        # Convert back to sorted list
+        merged = list(checkpoint_map.values())
+        merged.sort(key=lambda c: c.height)
+        
+        return merged
