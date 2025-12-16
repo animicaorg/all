@@ -505,6 +505,12 @@ async def _run_mine_blocks(args: argparse.Namespace, log: logging.Logger) -> int
             # Network/connection/timeout errors - retry indefinitely
             from datetime import datetime
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            error_str = str(e)
+            
+            # Provide hint about --no-timeout on first timeout occurrence
+            if "timed out" in error_str.lower() and not args.no_timeout and attempt == 1:
+                log.warning("Timeout occurred. For long-running operations, consider using --no-timeout flag.")
+            
             log.warning(
                 "[%s] Retrying mining operation due to RPC error (attempt %d): %s. Retrying in %.1fs...",
                 timestamp,
