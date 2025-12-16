@@ -226,7 +226,11 @@ export default function JobsPage() {
 
   useEffect(() => {
     if (timer.current) window.clearInterval(timer.current);
-    timer.current = window.setInterval(refresh, REFRESH_MS_DEFAULT);
+    timer.current = window.setInterval(() => {
+      refresh().catch((e) => {
+        console.error('[JobsPage] Refresh error:', e);
+      });
+    }, REFRESH_MS_DEFAULT);
     return () => {
       if (timer.current) window.clearInterval(timer.current);
     };

@@ -203,7 +203,11 @@ export default function ContractDetailPage(): JSX.Element {
   useEffect(() => {
     fetchRecentLogs();
     // Optionally refresh on an interval
-    const t = setInterval(fetchRecentLogs, 15_000);
+    const t = setInterval(() => {
+      fetchRecentLogs().catch((e) => {
+        console.error('[ContractDetailPage] Fetch logs error:', e);
+      });
+    }, 15_000);
     return () => clearInterval(t);
   }, [fetchRecentLogs]);
 
