@@ -928,8 +928,7 @@ def diagnose_peer(
         animica peer diagnose tcp://example.com:30333
         animica peer diagnose /dns4/node.example.com/tcp/30333
     """
-    import socket
-    import time
+    # socket and time are already imported at module level
     
     typer.secho(f"\n🔍 Diagnosing peer: {address}", fg=typer.colors.CYAN, bold=True)
     typer.echo()
@@ -1086,9 +1085,10 @@ def test_peer_latency(
     for i in range(count):
         try:
             start = time.time()
-            result = asyncio.run(
+            _result = asyncio.run(
                 rpc_call("p2p.pingPeer", [peer_id], rpc_url=url)
             )
+            # Result not used - latency is measured by wall-clock time
             latency = (time.time() - start) * 1000
             latencies.append(latency)
             
