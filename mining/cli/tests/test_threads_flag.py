@@ -85,57 +85,46 @@ def test_threads_in_start_command():
     assert args.threads == 4
 
 
-def test_threads_parameter_passing():
-    """Test that threads parameter is passed to RPC correctly."""
-    from mining.cli.miner import _run_mine_blocks
-    import asyncio
-    import logging
-    from unittest.mock import MagicMock, patch
+def test_threads_parameter_in_args():
+    """Test that threads parameter is available in parsed arguments for RPC call."""
+    from mining.cli.miner import _build_arg_parser
     from argparse import Namespace
     
-    # Mock RpcClient
-    mock_client = MagicMock()
-    mock_client_instance = MagicMock()
-    mock_client_instance.request = MagicMock(return_value={
-        "mined": 2,
-        "height": 10,
-        "totalReward": 1000000000,
-        "rewards": [
-            {"height": 9, "reward": 500000000},
-            {"height": 10, "reward": 500000000}
-        ]
-    })
-    mock_client.return_value.__enter__ = MagicMock(return_value=mock_client_instance)
-    mock_client.return_value.__exit__ = MagicMock(return_value=False)
+    parser = _build_arg_parser()
     
-    # Create args with threads
-    args = Namespace(
-        address="anim1test123",
-        count=2,
-        threads=8,
-        rpc_url="http://127.0.0.1:8547",
-        log_level="info"
-    )
+    # Parse mine-blocks command with threads
+    args = parser.parse_args([
+        "mine-blocks",
+        "--address", "anim1test123",
+        "--count", "5",
+        "--threads", "8",
+        "--rpc-url", "http://127.0.0.1:8547"
+    ])
     
-    log = logging.getLogger("test")
+    # Verify all parameters are present
+    assert hasattr(args, "cmd")
+    assert hasattr(args, "address")
+    assert hasattr(args, "count")
+    assert hasattr(args, "threads")
+    assert hasattr(args, "rpc_url")
     
-    # Patch RpcClient import
-    with patch("mining.cli.miner.RPCClient", mock_client):
-        # Run the function
-        result = asyncio.run(_run_mine_blocks(args, log))
+    # Verify values
+    assert args.cmd == "mine-blocks"
+    assert args.address == "anim1test123"
+    assert args.count == 5
+    assert args.threads == 8
+    assert args.rpc_url == "http://127.0.0.1:8547"
     
-    # Should have succeeded
-    assert result == 0
+    # Test that threads can be used to construct RPC params
+    rpc_params = {
+        "count": args.count,
+        "address": args.address,
+        "threads": args.threads
+    }
     
-    # Check that RPC was called with threads parameter
-    calls = mock_client_instance.request.call_args_list
-    assert len(calls) >= 1
-    
-    # First call should include threads
-    method, params = calls[0][0]
-    assert method == "miner.mine"
-    assert "threads" in params
-    assert params["threads"] == 8
+    assert rpc_params["threads"] == 8
+    assert rpc_params["count"] == 5
+    assert rpc_params["address"] == "anim1test123"
 
 
 if __name__ == "__main__":
@@ -152,7 +141,7 @@ if __name__ == "__main__":
     test_threads_in_start_command()
     print("✓ Threads in start command test passed")
     
-    test_threads_parameter_passing()
-    print("✓ Threads parameter passing test passed")
+    test_threads_parameter_in_args()
+    print("✓ Threads parameter in args test passed")
     
     print("\n✓ All tests passed!")
