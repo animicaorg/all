@@ -290,3 +290,85 @@ class TestMineBlocksCommand:
         
         # Should fail with error code
         assert result != 0
+
+    @pytest.mark.asyncio
+    async def test_mine_blocks_with_no_timeout(self):
+        """Test that mine-blocks accepts and uses --no-timeout flag."""
+        import sys
+        
+        # Track the timeout value passed to RpcClient
+        timeout_tracker = {"timeout": -1}  # -1 means not set
+        
+        class TimeoutTrackingRpcClient:
+            def __init__(self, url, timeout=30.0):
+                timeout_tracker["timeout"] = timeout
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                pass
+            def request(self, method, params):
+                return {"mined": 1, "height": 101}
+        
+        mock_module = Mock()
+        mock_module.RpcClient = TimeoutTrackingRpcClient
+        
+        sys.modules['omni_sdk.rpc.http'] = mock_module
+        sys.modules['sdk.python.omni_sdk.rpc.http'] = mock_module
+        
+        try:
+            result = await miner._amain([
+                "mine-blocks",
+                "--address", "anim1test123",
+                "--count", "1",
+                "--rpc-url", "http://127.0.0.1:8545",
+                "--no-timeout"
+            ])
+            
+            # Should succeed
+            assert result == 0
+            # Timeout should be None when --no-timeout is used
+            assert timeout_tracker["timeout"] is None
+        finally:
+            sys.modules.pop('omni_sdk.rpc.http', None)
+            sys.modules.pop('sdk.python.omni_sdk.rpc.http', None)
+
+    @pytest.mark.asyncio
+    async def test_mine_blocks_without_no_timeout_uses_default(self):
+        """Test that mine-blocks uses default timeout when --no-timeout is not specified."""
+        import sys
+        
+        # Track the timeout value passed to RpcClient
+        timeout_tracker = {"timeout": -1}  # -1 means not set
+        
+        class TimeoutTrackingRpcClient:
+            def __init__(self, url, timeout=30.0):
+                timeout_tracker["timeout"] = timeout
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                pass
+            def request(self, method, params):
+                return {"mined": 1, "height": 101}
+        
+        mock_module = Mock()
+        mock_module.RpcClient = TimeoutTrackingRpcClient
+        
+        sys.modules['omni_sdk.rpc.http'] = mock_module
+        sys.modules['sdk.python.omni_sdk.rpc.http'] = mock_module
+        
+        try:
+            result = await miner._amain([
+                "mine-blocks",
+                "--address", "anim1test123",
+                "--count", "1",
+                "--rpc-url", "http://127.0.0.1:8545"
+                # --no-timeout NOT specified
+            ])
+            
+            # Should succeed
+            assert result == 0
+            # Timeout should be 30.0 (default) when --no-timeout is not used
+            assert timeout_tracker["timeout"] == 30.0
+        finally:
+            sys.modules.pop('omni_sdk.rpc.http', None)
+            sys.modules.pop('sdk.python.omni_sdk.rpc.http', None)

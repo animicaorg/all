@@ -94,7 +94,7 @@ class RpcClient:
     """Synchronous JSON-RPC 2.0 client over HTTP."""
 
     url: str
-    timeout: float = 30.0
+    timeout: Optional[float] = 30.0
     max_retries: int = 3
     backoff_base: float = 0.15
     backoff_factor: float = 1.8
@@ -117,8 +117,10 @@ class RpcClient:
         if self._use_httpx:
             if not _HAVE_HTTPX:  # pragma: no cover - defensive
                 raise RuntimeError("httpx not available")
+            # None timeout means no timeout (wait indefinitely)
+            httpx_timeout = None if self.timeout is None else self.timeout
             self._client = httpx.Client(
-                timeout=self.timeout,
+                timeout=httpx_timeout,
                 headers=merged_headers,
                 follow_redirects=True,  # Handle HTTP 307 redirects
             )
@@ -274,7 +276,16 @@ class RpcClient:
             assert _HAVE_HTTPX
             try:
                 r = self._client.post(self.url, content=body)
-            except (httpx.TimeoutException, httpx.NetworkError) as e:  # type: ignore[attr-defined]
+            except httpx.TimeoutException as e:  # type: ignore[attr-defined]
+                # Provide actionable error message for timeout
+                timeout_hint = " Consider using --no-timeout flag for long-running operations." if self.timeout is not None else ""
+                raise RpcError(
+                    code=-32098,
+                    message=f"RPC operation timed out after {self.timeout}s.{timeout_hint}",
+                    method=method,
+                    data=str(e)
+                )
+            except httpx.NetworkError as e:  # type: ignore[attr-defined]
                 raise RpcError(
                     code=-32098, message="Network error", method=method, data=str(e)
                 )
@@ -294,6 +305,15 @@ class RpcClient:
             assert _HAVE_REQUESTS
             try:
                 r = self._client.post(self.url, data=body, timeout=self.timeout)
+            except requests.exceptions.Timeout as e:  # type: ignore[attr-defined]
+                # Provide actionable error message for timeout
+                timeout_hint = " Consider using --no-timeout flag for long-running operations." if self.timeout is not None else ""
+                raise RpcError(
+                    code=-32098,
+                    message=f"RPC operation timed out after {self.timeout}s.{timeout_hint}",
+                    method=method,
+                    data=str(e)
+                )
             except requests.exceptions.RequestException as e:  # type: ignore[attr-defined]
                 raise RpcError(
                     code=-32098, message="Network error", method=method, data=str(e)
