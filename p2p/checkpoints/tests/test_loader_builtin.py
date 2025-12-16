@@ -99,7 +99,7 @@ async def test_loader_builtin_takes_precedence(tmp_path):
     # Create test checkpoint file with conflicting height
     checkpoint_data = {
         "checkpoints": [
-            {"height": 55795, "hash": "0xWRONGHASH"},  # Wrong hash at same height
+            {"height": 55795, "hash": "0x1111111111111111111111111111111111111111111111111111111111111111"},  # Wrong hash at same height
             {"height": 2000, "hash": "0xdef456"},
         ]
     }
@@ -120,7 +120,8 @@ async def test_loader_builtin_takes_precedence(tmp_path):
     assert cp_55795 is not None
     # Should use built-in hash, not the wrong one from file
     assert cp_55795.hash == "0x0a3205eb3aca078a9c6e8415e5970e198b43c087bff7b71371054bbbc99d8938"
-    assert cp_55795.hash != "0xwronghash"
+    # Verify it's not the wrong hash from file
+    assert cp_55795.hash != "0x1111111111111111111111111111111111111111111111111111111111111111"
 
 
 @pytest.mark.asyncio

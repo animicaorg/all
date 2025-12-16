@@ -8,13 +8,17 @@ from pathlib import Path
 import pytest
 
 
+# Get project root dynamically
+PROJECT_ROOT = Path(__file__).parent.parent.parent.parent.absolute()
+
+
 def test_cli_list_all():
     """Test CLI list command for all chains."""
     result = subprocess.run(
         [sys.executable, "-m", "p2p.checkpoints.cli.checkpoints", "list"],
         capture_output=True,
         text=True,
-        cwd="/home/runner/work/all/all"
+        cwd=str(PROJECT_ROOT)
     )
     
     assert result.returncode == 0
@@ -29,7 +33,7 @@ def test_cli_list_mainnet():
         [sys.executable, "-m", "p2p.checkpoints.cli.checkpoints", "list", "--chain-id", "1"],
         capture_output=True,
         text=True,
-        cwd="/home/runner/work/all/all"
+        cwd=str(PROJECT_ROOT)
     )
     
     assert result.returncode == 0
@@ -44,7 +48,7 @@ def test_cli_list_testnet():
         [sys.executable, "-m", "p2p.checkpoints.cli.checkpoints", "list", "--chain-id", "2"],
         capture_output=True,
         text=True,
-        cwd="/home/runner/work/all/all"
+        cwd=str(PROJECT_ROOT)
     )
     
     assert result.returncode == 0
@@ -64,7 +68,7 @@ def test_cli_export_mainnet(tmp_path):
         ],
         capture_output=True,
         text=True,
-        cwd="/home/runner/work/all/all"
+        cwd=str(PROJECT_ROOT)
     )
     
     assert result.returncode == 0
@@ -97,7 +101,7 @@ def test_cli_export_all(tmp_path):
         ],
         capture_output=True,
         text=True,
-        cwd="/home/runner/work/all/all"
+        cwd=str(PROJECT_ROOT)
     )
     
     assert result.returncode == 0
@@ -128,7 +132,7 @@ def test_cli_export_testnet_fails(tmp_path):
         ],
         capture_output=True,
         text=True,
-        cwd="/home/runner/work/all/all"
+        cwd=str(PROJECT_ROOT)
     )
     
     # Should fail because testnet has no checkpoints
@@ -142,7 +146,7 @@ def test_cli_no_command():
         [sys.executable, "-m", "p2p.checkpoints.cli.checkpoints"],
         capture_output=True,
         text=True,
-        cwd="/home/runner/work/all/all"
+        cwd=str(PROJECT_ROOT)
     )
     
     # Should show help
