@@ -1,8 +1,16 @@
 # Mining Proxy Implementation Summary
 
-## Overview
+⚠️ **DEPRECATED**: This document describes a legacy proxy implementation that has been **DISABLED BY DEFAULT** as of the P2P-first decentralization update.
 
-Successfully implemented RPC proxy mechanism for Animica mining operations, enabling all nodes to validate against `rpc.animica.org/rpc` as the source of truth while maintaining fallback capabilities to local nodes.
+**New behavior**: Nodes use P2P networking for consensus validation. See [docs/p2p_sync.md](docs/p2p_sync.md) for details.
+
+---
+
+## Overview (Historical)
+
+**Note**: This describes the original implementation. The proxy is now disabled by default and should only be used for specialized testing scenarios.
+
+Originally implemented RPC proxy mechanism for Animica mining operations to validate against `rpc.animica.org/rpc`. This approach has been replaced with P2P-first networking for production use.
 
 ## Implementation Details
 
