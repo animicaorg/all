@@ -174,13 +174,27 @@ H(u)   = -ln(u / 2^256)  // safe log; see consensus/math.py
 
 mining/config.py accepts:
 	•	MINER_THREADS (default: #logical cores)
-	•	MINER_DEVICE = cpu|cuda|rocm|opencl|metal (only cpu enabled by default)
+	•	MINER_DEVICE = cpu|cuda|rocm|opencl|metal|auto (default: auto for auto-detection)
 	•	MINER_TARGET_SHARES_PER_SEC (adaptive micro-target tuning)
 	•	RPC_URL, WS_URL, CHAIN_ID
 	•	ANIMICA_MINER_ADDRESS (bech32 address for block reward payouts; defaults to premine address)
 	•	Stratum: STRATUM_LISTEN=0.0.0.0:11333
 	•	Selection policy overlays (local caps tighter than network)
 	•	AICF endpoints for AI/Quantum job queues (devnet-ready)
+
+Device Auto-Detection:
+	When MINER_DEVICE is set to 'auto' (default), the miner automatically detects and uses
+	the best available device based on this priority order:
+	  1. CUDA (NVIDIA GPUs)
+	  2. ROCm (AMD GPUs)
+	  3. OpenCL (Generic GPU support)
+	  4. Metal (Apple Silicon/GPUs)
+	  5. CPU (fallback, always available)
+	
+	The auto-detection uses mining/device.py's list_available() to enumerate devices
+	across all backend modules. If auto-detection fails or no GPU is present, it falls
+	back to CPU. You can still force a specific device by setting MINER_DEVICE to
+	cpu, cuda, rocm, opencl, or metal.
 
 ⸻
 
@@ -207,13 +221,24 @@ source .venv/bin/activate
 # Default RPC server port is 8545
 python -m rpc.server --config rpc/config.toml
 
-# 2) Start miner (CPU)
+# 2) Start miner
+# Device is auto-detected by default (selects best available: GPU → CPU)
 # Note: Miner CLI defaults to port 8547, override with --rpc-url if needed
+python -m mining.cli.miner start --threads 4 --rpc-url http://127.0.0.1:8545 --ws-url ws://127.0.0.1:8546
+
+# Or force a specific device
 python -m mining.cli.miner start --threads 4 --device cpu --rpc-url http://127.0.0.1:8545 --ws-url ws://127.0.0.1:8546
+python -m mining.cli.miner start --threads 4 --device cuda --rpc-url http://127.0.0.1:8545 --ws-url ws://127.0.0.1:8546
 
 # 3) Mine a specific number of blocks (useful for testing)
 # Can omit --rpc-url to use default (http://127.0.0.1:8547), or specify if RPC is on different port
 python -m mining.cli.miner mine-blocks --address anim1test123 --count 5 --rpc-url http://127.0.0.1:8545
+
+# Device auto-detection examples
+python -m mining.cli.miner mine-blocks --address anim1test123 --count 5 --device auto    # Auto-detect
+python -m mining.cli.miner mine-blocks --address anim1test123 --count 5                  # Auto-detect (default)
+python -m mining.cli.miner mine-blocks --address anim1test123 --count 5 --device cpu     # Force CPU
+python -m mining.cli.miner mine-blocks --address anim1test123 --count 5 --device cuda    # Force CUDA
 
 The `mine-blocks` command mines N blocks via the node's RPC interface. This is useful for:
 - Testing and development environments
