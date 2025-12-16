@@ -25,6 +25,12 @@ try:  # Optional helper to compute share target from Θ
 except Exception:  # pragma: no cover
     share_microtarget = None  # type: ignore[assignment]
 
+# Import THETA_HARD_CAP_MICRO separately to avoid shadowing in function scope
+try:
+    from consensus.difficulty import THETA_HARD_CAP_MICRO
+except Exception:  # pragma: no cover
+    THETA_HARD_CAP_MICRO = 300_000_000  # Fallback if import fails
+
 try:  # canonical zero constant
     from core.types.hash import ZERO32
 except Exception:  # pragma: no cover
@@ -465,7 +471,7 @@ def _adjust_theta_for_mining(dt_seconds: float | None = None) -> int:
         # Initialize state if needed
         if _MINING_STATE.get("theta_state") is None:
             try:
-                from consensus.difficulty import RetargetParams, init_state, THETA_HARD_CAP_MICRO
+                from consensus.difficulty import RetargetParams, init_state
                 
                 # Get current theta from consensus
                 current_theta = _resolve_theta()
@@ -543,8 +549,7 @@ def _adjust_theta_for_mining(dt_seconds: float | None = None) -> int:
         old_theta = state.theta_micro
         new_theta = new_state.theta_micro
         
-        # Import hard cap for warning checks
-        from consensus.difficulty import THETA_HARD_CAP_MICRO
+        # Check for cap warning
         effective_max = state.params.theta_max_micro if state.params.theta_max_micro is not None else THETA_HARD_CAP_MICRO
         
         # Warn if approaching cap (within 10%)
