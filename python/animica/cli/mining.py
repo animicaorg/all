@@ -35,6 +35,9 @@ LOG_LEVEL_ENV = "ANIMICA_MINING_POOL_LOG_LEVEL"
 STRATUM_BIND_ENV = "ANIMICA_STRATUM_BIND"
 API_BIND_ENV = "ANIMICA_POOL_API_BIND"
 
+# Supported mining device backends
+SUPPORTED_DEVICES = ["cpu", "cuda", "rocm", "opencl", "metal", "auto"]
+
 
 def _ensure_network_env() -> None:
     cfg = load_network_config()
@@ -254,6 +257,12 @@ def mine_blocks(
         "--address",
         help="Payout address (option, for backward compat): wallet label or Bech32 address",
     ),
+    device: str = typer.Option(
+        "cpu",
+        "--device",
+        help="Mining device backend (cpu, cuda, rocm, opencl, metal, auto)",
+        envvar="ANIMICA_MINER_DEVICE",
+    ),
     rpc_url: Optional[str] = typer.Option(
         None,
         "--rpc-url",
@@ -287,6 +296,16 @@ def mine_blocks(
       1. A wallet label (e.g., 'premine') - resolved from ~/.animica/wallets.json
       2. A raw Animica Bech32 address (e.g., 'anim1...') - used directly
       If neither is valid, the command fails with exit code 2.
+    
+    Device Selection:
+      The --device flag specifies the mining backend to use:
+      - cpu: CPU backend (pure Python, always available)
+      - cuda: NVIDIA CUDA backend (requires CUDA-capable GPU)
+      - rocm: AMD ROCm backend (requires ROCm-capable GPU)
+      - opencl: OpenCL backend (requires OpenCL-capable device)
+      - metal: Apple Metal backend (requires Metal-capable device)
+      - auto: Automatically select best available device
+      Default is 'cpu'. Can also be set via ANIMICA_MINER_DEVICE environment variable.
     
     The mining process:
     1. Selects pending transactions from mempool (nonce-ordered, fee policy enforced)
@@ -328,11 +347,18 @@ def mine_blocks(
         
         # Mine with custom RPC endpoint and proxy
         animica miner mine-blocks --address premine --count 10 --rpc-url http://localhost:8545
+        
+        # Mine with CUDA backend
+        animica miner mine-blocks --address premine --count 5 --device cuda
+        
+        # Mine with auto device selection
+        animica miner mine-blocks --address premine --count 5 --device auto
     
     Environment variables:
         ANIMICA_RPC_URL             - Node RPC endpoint (default: http://127.0.0.1:8545/rpc)
         ANIMICA_TRUSTED_RPC_URL     - Trusted RPC for proxy (default: https://rpc.animica.org/rpc)
         ANIMICA_MINER_ADDRESS       - Default payout address if --address not specified
+        ANIMICA_MINER_DEVICE        - Default mining device (default: cpu)
         ANIMICA_MINER_MAX_NONCE     - Max nonce iterations per block (default: 100000)
         ANIMICA_PROXY_MAX_RETRIES   - Max proxy retries (default: 3)
         ANIMICA_PROXY_RETRY_DELAY_MS - Delay between retries in ms (default: 1000)
@@ -355,6 +381,18 @@ def mine_blocks(
                 err=True,
             )
             raise typer.Exit(2)
+    
+    # Validate device parameter
+    device_normalized = device.strip().lower() if isinstance(device, str) else "cpu"
+    
+    if device_normalized not in SUPPORTED_DEVICES:
+        typer.secho(
+            f"Error: unsupported device '{device}'. "
+            f"Supported devices: {', '.join(SUPPORTED_DEVICES)}",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(2)
     
     # Validate count
     if count <= 0:
@@ -441,6 +479,10 @@ def mine_blocks(
     typer.echo(
         f"Mining {count} block(s) {mode_str} with payout to address {resolved_address} via RPC {url}"
     )
+    typer.secho(
+        f"Using device: {device_normalized}",
+        fg=typer.colors.CYAN,
+    )
     
     # Import time for sleep between blocks
     import time
@@ -479,7 +521,7 @@ def mine_blocks(
                     """Fallback: mine directly via local RPC."""
                     if verbose:
                         typer.echo(f"  [Fallback] Mining via local RPC at {url}")
-                    return client.request("miner.mine", {"count": 1, "address": resolved_address})
+                    return client.request("miner.mine", {"count": 1, "address": resolved_address, "device": device_normalized})
                 
                 try:
                     if proxy:
@@ -488,12 +530,12 @@ def mine_blocks(
                             typer.echo(f"  [Proxy] Forwarding mining request to trusted RPC")
                         result = proxy.sync_forward_request(
                             "miner.mine",
-                            {"count": 1, "address": resolved_address},
+                            {"count": 1, "address": resolved_address, "device": device_normalized},
                             fallback_handler=mine_via_local,
                         )
                     else:
                         # Direct mining to specified RPC
-                        result = client.request("miner.mine", {"count": 1, "address": resolved_address})
+                        result = client.request("miner.mine", {"count": 1, "address": resolved_address, "device": device_normalized})
                         
                 except Exception as e:
                     # If the RPC rejects the address parameter (older node), try without it
