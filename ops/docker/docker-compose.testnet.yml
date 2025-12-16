@@ -55,6 +55,7 @@ services:
       ANIMICA_RPC_CORS_ORIGINS: "${ANIMICA_RPC_CORS_ORIGINS:-[*]}"
       ANIMICA_LOG_LEVEL: "${ANIMICA_LOG_LEVEL:-INFO}"
       # P2P config - testnet seeds auto-selected by chain_id
+      # Note: Testnet uses port 30334 (vs mainnet 30333) to allow running both networks simultaneously
       # Primary config (ANIMICA_P2P_* vars are canonical):
       ANIMICA_P2P_ENABLE: "${ANIMICA_P2P_ENABLE:-true}"
       ANIMICA_P2P_CHAIN_ID: "${ANIMICA_P2P_CHAIN_ID:-2}"  # Auto-loads testnet seeds

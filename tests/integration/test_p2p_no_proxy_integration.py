@@ -144,8 +144,8 @@ def test_docker_compose_mainnet_p2p_enabled():
         ports = node_service.get("ports", [])
         port_strs = [str(p) for p in ports]
         
-        # Check for QUIC UDP port mapping
-        has_quic_port = any("443" in p and "udp" in p.lower() for p in port_strs)
+        # Check for QUIC UDP port mapping (more precise check)
+        has_quic_port = any(":443/udp" in p or ":443" in p and "/udp" in p for p in port_strs)
         assert has_quic_port, \
             "Mainnet compose should expose QUIC UDP port 443"
         
