@@ -698,3 +698,95 @@ def test_mine_blocks_explicit_device_overrides_auto(monkeypatch: Any) -> None:
     # Should NOT show auto-detection message
     assert "Auto-detected device" not in result.output
     assert "Using device: cpu" in result.output
+
+
+def test_mine_blocks_with_no_timeout(monkeypatch: Any) -> None:
+    """Test that mine-blocks accepts --no-timeout flag."""
+    test_address = "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz"
+    
+    # Track the timeout value passed to RpcClient
+    timeout_tracker = {"timeout": -1}  # -1 means not set
+    
+    class MockRpcClient:
+        def __init__(self, url, timeout=30.0):
+            timeout_tracker["timeout"] = timeout
+        
+        def __enter__(self):
+            return self
+        
+        def __exit__(self, *args):
+            pass
+        
+        def request(self, method: str, params: Any):
+            return {"mined": 1, "height": 1, "totalReward": 5000000000}
+    
+    monkeypatch.setattr(mining, "_validate_bech32_address", lambda x: True if x == test_address else False)
+    
+    mock_module = Mock()
+    mock_module.RpcClient = MockRpcClient
+    
+    monkeypatch.setitem(__import__("sys").modules, "omni_sdk.rpc.http", mock_module)
+    monkeypatch.setitem(__import__("sys").modules, "sdk.python.omni_sdk.rpc.http", mock_module)
+    
+    result = runner.invoke(
+        mining.app,
+        [
+            "mine-blocks",
+            "--address", test_address,
+            "--count", "1",
+            "--rpc-url", "http://127.0.0.1:8545",
+            "--no-proxy",
+            "--no-timeout",
+        ],
+    )
+    
+    assert result.exit_code == 0
+    # Timeout should be None when --no-timeout is used
+    assert timeout_tracker["timeout"] is None
+    assert "RPC timeout disabled" in result.output
+
+
+def test_mine_blocks_without_no_timeout_uses_default(monkeypatch: Any) -> None:
+    """Test that mine-blocks uses default timeout when --no-timeout is not specified."""
+    test_address = "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz"
+    
+    # Track the timeout value passed to RpcClient
+    timeout_tracker = {"timeout": -1}  # -1 means not set
+    
+    class MockRpcClient:
+        def __init__(self, url, timeout=30.0):
+            timeout_tracker["timeout"] = timeout
+        
+        def __enter__(self):
+            return self
+        
+        def __exit__(self, *args):
+            pass
+        
+        def request(self, method: str, params: Any):
+            return {"mined": 1, "height": 1, "totalReward": 5000000000}
+    
+    monkeypatch.setattr(mining, "_validate_bech32_address", lambda x: True if x == test_address else False)
+    
+    mock_module = Mock()
+    mock_module.RpcClient = MockRpcClient
+    
+    monkeypatch.setitem(__import__("sys").modules, "omni_sdk.rpc.http", mock_module)
+    monkeypatch.setitem(__import__("sys").modules, "sdk.python.omni_sdk.rpc.http", mock_module)
+    
+    result = runner.invoke(
+        mining.app,
+        [
+            "mine-blocks",
+            "--address", test_address,
+            "--count", "1",
+            "--rpc-url", "http://127.0.0.1:8545",
+            "--no-proxy",
+            # --no-timeout NOT specified
+        ],
+    )
+    
+    assert result.exit_code == 0
+    # Timeout should be 30.0 (default) when --no-timeout is not used
+    assert timeout_tracker["timeout"] == 30.0
+    assert "RPC timeout disabled" not in result.output
