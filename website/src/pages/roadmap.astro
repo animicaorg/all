@@ -95,83 +95,157 @@ const ROADMAP_URL = import.meta.env.PUBLIC_ROADMAP_URL as string | undefined;
 ---
 
 <BaseLayout title={pageTitle} description={pageDesc}>
-  <section class="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8 py-10 sm:py-14">
-    <h1 class="text-3xl sm:text-4xl font-semibold tracking-tight">Roadmap</h1>
-    <p class="mt-3 text-base opacity-80">
-      This roadmap mirrors the project board. If you provide a JSON feed via
-      <code class="font-mono text-[0.95em]">PUBLIC_ROADMAP_URL</code>, it will override the
-      built-in milestones at runtime. Expected shape:
-      <code class="font-mono text-[0.95em]">[{`{ id, title, status, quarter?, summary?, progress?, tags?, links? }`}]</code>
-      where <code>status ∈ {"{NOW,NEXT,LATER,DONE}"}</code>.
-    </p>
-
-    <!-- Status columns -->
-    <div id="roadmap-root" class="mt-6 grid gap-5 lg:grid-cols-4">
-      <!-- NOW -->
-      <div class="rounded-2xl border bg-[var(--bg-elevated)]
-                  border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)] flex flex-col">
-        <div class="px-5 pt-4 pb-3 border-b border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
-          <h2 class="text-sm font-semibold tracking-wide">NOW</h2>
-          <p class="text-xs opacity-70">Actively in progress</p>
+  <!-- Hero Section with Dramatic Gradient -->
+  <section class="relative overflow-hidden">
+    <!-- Animated Background -->
+    <div class="absolute inset-0 bg-gradient-to-br from-[var(--accent)] via-[var(--bg-page)] to-[var(--bg-page)] opacity-10"></div>
+    <div class="absolute inset-0 bg-[radial-gradient(circle_at_30%_20%,rgba(var(--accent-rgb),0.15),transparent_50%)]"></div>
+    <div class="absolute inset-0 bg-[radial-gradient(circle_at_70%_80%,rgba(var(--accent-rgb),0.1),transparent_50%)]"></div>
+    
+    <!-- Grid Pattern Overlay -->
+    <div class="absolute inset-0 bg-[linear-gradient(to_right,rgba(var(--text-primary-rgb),0.02)_1px,transparent_1px),linear-gradient(to_bottom,rgba(var(--text-primary-rgb),0.02)_1px,transparent_1px)] bg-[size:4rem_4rem]"></div>
+    
+    <!-- Hero Content -->
+    <div class="relative mx-auto max-w-6xl px-4 sm:px-6 lg:px-8 py-16 sm:py-24">
+      <div class="text-center space-y-6">
+        <!-- Glowing Badge -->
+        <div class="inline-flex items-center gap-2 px-4 py-2 rounded-full border border-[var(--accent)] bg-[var(--accent)] bg-opacity-10 backdrop-blur-sm animate-pulse-glow">
+          <div class="w-2 h-2 rounded-full bg-[var(--accent)] animate-ping-slow"></div>
+          <span class="text-xs font-semibold tracking-wide uppercase text-[var(--accent)]">Live Roadmap</span>
         </div>
-        <div class="p-4 space-y-4" data-col="NOW">
+        
+        <!-- Title with Gradient -->
+        <h1 class="text-5xl sm:text-6xl lg:text-7xl font-bold tracking-tight bg-gradient-to-br from-[var(--text-primary)] via-[var(--text-primary)] to-[color-mix(in_srgb,var(--text-primary)_70%,var(--accent))] bg-clip-text text-transparent drop-shadow-2xl">
+          Building the Future
+        </h1>
+        
+        <!-- Tagline -->
+        <p class="text-xl sm:text-2xl text-[var(--text-primary)] opacity-90 max-w-3xl mx-auto font-light">
+          From vision to reality—track our journey as we revolutionize blockchain with post-quantum security, AI integration, and deterministic execution
+        </p>
+        
+        <!-- Description -->
+        <div class="mt-8 text-sm opacity-70 max-w-2xl mx-auto">
+          <p>
+            This roadmap mirrors the project board. If you provide a JSON feed via
+            <code class="font-mono text-[0.95em] px-1.5 py-0.5 rounded bg-[var(--bg-elevated)] border border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">PUBLIC_ROADMAP_URL</code>, it will override the
+            built-in milestones at runtime.
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Main Roadmap Section -->
+  <section class="relative mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-10 sm:py-14">
+
+    <!-- Status columns with enhanced styling -->
+    <div id="roadmap-root" class="mt-8 grid gap-6 lg:grid-cols-4">
+      <!-- NOW - Vibrant Accent -->
+      <div class="group relative rounded-2xl border bg-[var(--bg-elevated)] flex flex-col
+                  border-[var(--accent)] shadow-[0_0_30px_-10px_var(--accent)]
+                  hover:shadow-[0_0_40px_-5px_var(--accent)] transition-all duration-300">
+        <!-- Gradient overlay on hover -->
+        <div class="absolute inset-0 bg-gradient-to-br from-[var(--accent)] to-transparent opacity-5 rounded-2xl pointer-events-none"></div>
+        
+        <div class="relative px-5 pt-5 pb-4 border-b border-[var(--accent)] border-opacity-30">
+          <div class="flex items-center gap-3 mb-1">
+            <!-- Icon: Lightning bolt -->
+            <svg class="w-5 h-5 text-[var(--accent)]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+            </svg>
+            <h2 class="text-base font-bold tracking-wide text-[var(--accent)]">NOW</h2>
+          </div>
+          <p class="text-xs opacity-80">Actively in progress</p>
+        </div>
+        <div class="relative p-4 space-y-4" data-col="NOW" data-status="NOW">
           {groups.NOW.map((m) => <MilestoneCard milestone={m} />)}
         </div>
       </div>
 
-      <!-- NEXT -->
-      <div class="rounded-2xl border bg-[var(--bg-elevated)]
-                  border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)] flex flex-col">
-        <div class="px-5 pt-4 pb-3 border-b border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
-          <h2 class="text-sm font-semibold tracking-wide">NEXT</h2>
-          <p class="text-xs opacity-70">Up next on deck</p>
+      <!-- NEXT - Secondary/Blue -->
+      <div class="group relative rounded-2xl border bg-[var(--bg-elevated)] flex flex-col
+                  border-[#3b82f6] shadow-[0_0_20px_-10px_#3b82f6]
+                  hover:shadow-[0_0_30px_-5px_#3b82f6] transition-all duration-300">
+        <div class="absolute inset-0 bg-gradient-to-br from-[#3b82f6] to-transparent opacity-5 rounded-2xl pointer-events-none"></div>
+        
+        <div class="relative px-5 pt-5 pb-4 border-b border-[#3b82f6] border-opacity-30">
+          <div class="flex items-center gap-3 mb-1">
+            <!-- Icon: Clock -->
+            <svg class="w-5 h-5 text-[#3b82f6]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <h2 class="text-base font-bold tracking-wide text-[#3b82f6]">NEXT</h2>
+          </div>
+          <p class="text-xs opacity-80">Up next on deck</p>
         </div>
-        <div class="p-4 space-y-4" data-col="NEXT">
+        <div class="relative p-4 space-y-4" data-col="NEXT" data-status="NEXT">
           {groups.NEXT.map((m) => <MilestoneCard milestone={m} />)}
         </div>
       </div>
 
-      <!-- LATER -->
-      <div class="rounded-2xl border bg-[var(--bg-elevated)]
-                  border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)] flex flex-col">
-        <div class="px-5 pt-4 pb-3 border-b border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
-          <h2 class="text-sm font-semibold tracking-wide">LATER</h2>
+      <!-- LATER - Muted/Purple -->
+      <div class="group relative rounded-2xl border bg-[var(--bg-elevated)] flex flex-col
+                  border-[#a855f7] border-opacity-50 shadow-[0_0_15px_-10px_#a855f7]
+                  hover:shadow-[0_0_25px_-5px_#a855f7] transition-all duration-300">
+        <div class="absolute inset-0 bg-gradient-to-br from-[#a855f7] to-transparent opacity-5 rounded-2xl pointer-events-none"></div>
+        
+        <div class="relative px-5 pt-5 pb-4 border-b border-[#a855f7] border-opacity-20">
+          <div class="flex items-center gap-3 mb-1">
+            <!-- Icon: Sparkles -->
+            <svg class="w-5 h-5 text-[#a855f7]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" />
+            </svg>
+            <h2 class="text-base font-bold tracking-wide text-[#a855f7]">LATER</h2>
+          </div>
           <p class="text-xs opacity-70">Planned / exploration</p>
         </div>
-        <div class="p-4 space-y-4" data-col="LATER">
+        <div class="relative p-4 space-y-4" data-col="LATER" data-status="LATER">
           {groups.LATER.map((m) => <MilestoneCard milestone={m} />)}
         </div>
       </div>
 
-      <!-- DONE -->
-      <div class="rounded-2xl border bg-[var(--bg-elevated)]
-                  border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)] flex flex-col">
-        <div class="px-5 pt-4 pb-3 border-b border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
-          <h2 class="text-sm font-semibold tracking-wide">DONE</h2>
-          <p class="text-xs opacity-70">Shipped</p>
+      <!-- DONE - Success Green -->
+      <div class="group relative rounded-2xl border bg-[var(--bg-elevated)] flex flex-col
+                  border-[#10b981] shadow-[0_0_20px_-10px_#10b981]
+                  hover:shadow-[0_0_30px_-5px_#10b981] transition-all duration-300">
+        <div class="absolute inset-0 bg-gradient-to-br from-[#10b981] to-transparent opacity-5 rounded-2xl pointer-events-none"></div>
+        
+        <div class="relative px-5 pt-5 pb-4 border-b border-[#10b981] border-opacity-30">
+          <div class="flex items-center gap-3 mb-1">
+            <!-- Icon: Check Circle -->
+            <svg class="w-5 h-5 text-[#10b981]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <h2 class="text-base font-bold tracking-wide text-[#10b981]">DONE</h2>
+          </div>
+          <p class="text-xs opacity-80">Shipped</p>
         </div>
-        <div class="p-4 space-y-4" data-col="DONE">
+        <div class="relative p-4 space-y-4" data-col="DONE" data-status="DONE">
           {groups.DONE.map((m) => <MilestoneCard milestone={m} />)}
         </div>
       </div>
     </div>
 
-    <div class="mt-8 text-xs opacity-70">
-      {ROADMAP_URL
-        ? (
-          <p>
-            Runtime feed: <code class="font-mono break-all">{ROADMAP_URL}</code> (will replace the lists below if reachable).
+    <!-- Info Footer -->
+    <div class="mt-12 text-center">
+      {ROADMAP_URL ? (
+        <div class="inline-flex items-center gap-2 px-4 py-2 rounded-full border border-[var(--accent)] bg-[var(--accent)] bg-opacity-5 backdrop-blur-sm">
+          <div class="w-2 h-2 rounded-full bg-[var(--accent)] animate-pulse"></div>
+          <p class="text-xs font-medium">
+            Live feed: <code class="font-mono text-[0.9em]">{ROADMAP_URL}</code>
           </p>
-        ) : (
-          <p>No <code>PUBLIC_ROADMAP_URL</code> provided; using built-in milestones.</p>
-        )}
+        </div>
+      ) : (
+        <p class="text-sm opacity-60">Using built-in milestones</p>
+      )}
     </div>
   </section>
 
   <!-- Client override loader: fetch PUBLIC_ROADMAP_URL JSON and replace lists -->
-  <script is:inline>
+  <!-- FIXED: Use define:vars instead of is:inline to properly inject server variables -->
+  <script define:vars={{ FEED: ROADMAP_URL ?? "" }}>
       (function () {
-        const FEED = {JSON.stringify(ROADMAP_URL ?? "")};
         if (!FEED) return;
 
       const col = (name) => document.querySelector(`[data-col="${name}"]`);
@@ -186,39 +260,61 @@ const ROADMAP_URL = import.meta.env.PUBLIC_ROADMAP_URL as string | undefined;
       }
 
       function tagPill(t) {
-        return `<span class="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] border
-          border-[color-mix(in_srgb,var(--text-primary)_/_16%,transparent)] opacity-80">${esc(t)}</span>`;
+        return `<span class="inline-flex items-center rounded-full px-2.5 py-1 text-[10px] font-medium
+          bg-gradient-to-r from-[var(--accent)] to-[color-mix(in_srgb,var(--accent)_80%,#a855f7)]
+          bg-opacity-10 border border-[var(--accent)] border-opacity-30 text-[var(--accent)]">${esc(t)}</span>`;
       }
 
-      function card(m) {
+      // Get status-specific colors
+      function getStatusColors(status) {
+        switch (status) {
+          case 'NOW': return { border: 'var(--accent)', glow: 'var(--accent)', bg: 'rgba(var(--accent-rgb), 0.05)' };
+          case 'NEXT': return { border: '#3b82f6', glow: '#3b82f6', bg: 'rgba(59, 130, 246, 0.05)' };
+          case 'LATER': return { border: '#a855f7', glow: '#a855f7', bg: 'rgba(168, 85, 247, 0.05)' };
+          case 'DONE': return { border: '#10b981', glow: '#10b981', bg: 'rgba(16, 185, 129, 0.05)' };
+          default: return { border: 'var(--text-primary)', glow: 'var(--text-primary)', bg: 'transparent' };
+        }
+      }
+
+      function card(m, status) {
         const prog = Number.isFinite(m.progress) ? Math.min(100, Math.max(0, m.progress)) : null;
         const tags = Array.isArray(m.tags) ? m.tags.map(tagPill).join(" ") : "";
         const links = Array.isArray(m.links)
           ? m.links.map((l) =>
               `<a href="${esc(l.href)}" target="_blank" rel="noopener noreferrer"
-                 class="text-xs underline underline-offset-4">${esc(l.label)}</a>`
+                 class="text-xs font-medium underline underline-offset-4 hover:opacity-100 opacity-80 transition-opacity">${esc(l.label)}</a>`
             ).join(" · ")
           : "";
 
+        const colors = getStatusColors(status);
+
         return `
-<div class="rounded-xl border p-4 bg-[var(--bg-raised)]
-            border-[color-mix(in_srgb,var(--text-primary)_/_10%,transparent)]">
-  <div class="flex items-start justify-between gap-3">
-    <div>
-      <h3 class="text-sm font-semibold tracking-tight">${esc(m.title)}</h3>
+<div class="group relative rounded-xl border p-4 bg-[var(--bg-raised)]
+            hover:scale-[1.02] transition-all duration-300 cursor-default
+            border-[${colors.border}] border-opacity-20
+            hover:shadow-[0_0_20px_-5px_${colors.glow}]
+            backdrop-blur-sm">
+  <!-- Gradient border effect on hover -->
+  <div class="absolute inset-0 rounded-xl bg-gradient-to-br from-[${colors.border}] to-transparent opacity-0 group-hover:opacity-10 transition-opacity duration-300 pointer-events-none"></div>
+  
+  <div class="relative flex items-start justify-between gap-3">
+    <div class="flex-1">
+      <h3 class="text-sm font-semibold tracking-tight group-hover:text-[${colors.border}] transition-colors">${esc(m.title)}</h3>
       <p class="text-xs opacity-70 mt-0.5">${esc(m.quarter || "")}</p>
     </div>
     ${tags ? `<div class="flex flex-wrap gap-1 justify-end">${tags}</div>` : ``}
   </div>
-  ${m.summary ? `<p class="mt-2 text-sm opacity-90">${esc(m.summary)}</p>` : ``}
+  ${m.summary ? `<p class="relative mt-2 text-sm opacity-90">${esc(m.summary)}</p>` : ``}
   ${prog !== null ? `
-    <div class="mt-3">
-      <div class="h-1.5 rounded-full bg-[color-mix(in_srgb,var(--text-primary)_/_10%,transparent)] overflow-hidden">
-        <div class="h-1.5 rounded-full" style="width:${prog}% ; background:color-mix(in srgb, var(--text-primary) 65%, transparent);"></div>
+    <div class="relative mt-3">
+      <div class="h-2 rounded-full bg-[color-mix(in_srgb,var(--text-primary)_/_10%,transparent)] overflow-hidden relative">
+        <div class="absolute inset-0 bg-gradient-to-r from-transparent via-white to-transparent opacity-20 animate-shimmer"></div>
+        <div class="h-2 rounded-full bg-gradient-to-r from-[${colors.border}] to-[color-mix(in_srgb,${colors.border}_80%,transparent)] transition-all duration-500" 
+             style="width:${prog}%"></div>
       </div>
-      <p class="text-[11px] opacity-70 mt-1">${prog}%</p>
+      <p class="text-[11px] font-semibold opacity-70 mt-1.5" style="color: ${colors.border}">${prog}% Complete</p>
     </div>` : ``}
-  ${links ? `<div class="mt-3 flex flex-wrap gap-2">${links}</div>` : ``}
+  ${links ? `<div class="relative mt-3 flex flex-wrap gap-2">${links}</div>` : ``}
 </div>`;
       }
 
@@ -239,7 +335,7 @@ const ROADMAP_URL = import.meta.env.PUBLIC_ROADMAP_URL as string | undefined;
           for (const s of ["NOW", "NEXT", "LATER", "DONE"]) {
             const el = cols[s];
             if (!el) continue;
-            const html = buckets[s].map(card).join("\n");
+            const html = buckets[s].map((m) => card(m, s)).join("\n");
             if (html) el.innerHTML = html;
           }
         } catch {
@@ -250,5 +346,80 @@ const ROADMAP_URL = import.meta.env.PUBLIC_ROADMAP_URL as string | undefined;
       load();
     })();
   </script>
+
+  <!-- Enhanced Animations and Styles -->
+  <style>
+    @keyframes shimmer {
+      0% { transform: translateX(-100%); }
+      100% { transform: translateX(100%); }
+    }
+    
+    @keyframes pulse-glow {
+      0%, 100% { 
+        opacity: 1;
+        box-shadow: 0 0 20px -5px var(--accent);
+      }
+      50% { 
+        opacity: 0.8;
+        box-shadow: 0 0 30px 0px var(--accent);
+      }
+    }
+    
+    @keyframes ping-slow {
+      0% {
+        transform: scale(1);
+        opacity: 1;
+      }
+      75%, 100% {
+        transform: scale(2);
+        opacity: 0;
+      }
+    }
+    
+    .animate-shimmer {
+      animation: shimmer 2s infinite;
+    }
+    
+    .animate-pulse-glow {
+      animation: pulse-glow 3s ease-in-out infinite;
+    }
+    
+    .animate-ping-slow {
+      animation: ping-slow 2s cubic-bezier(0, 0, 0.2, 1) infinite;
+    }
+
+    /* Scroll reveal animations */
+    @keyframes fadeInUp {
+      from {
+        opacity: 0;
+        transform: translateY(30px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+    
+    #roadmap-root > div {
+      animation: fadeInUp 0.6s ease-out;
+      animation-fill-mode: both;
+    }
+    
+    #roadmap-root > div:nth-child(1) { animation-delay: 0.1s; }
+    #roadmap-root > div:nth-child(2) { animation-delay: 0.2s; }
+    #roadmap-root > div:nth-child(3) { animation-delay: 0.3s; }
+    #roadmap-root > div:nth-child(4) { animation-delay: 0.4s; }
+
+    /* Add CSS variable for accent RGB if not defined */
+    :root {
+      --accent-rgb: 139, 92, 246;
+      --text-primary-rgb: 255, 255, 255;
+    }
+    
+    [data-theme="light"] {
+      --accent-rgb: 139, 92, 246;
+      --text-primary-rgb: 0, 0, 0;
+    }
+  </style>
 </BaseLayout>
 
