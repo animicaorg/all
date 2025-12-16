@@ -519,8 +519,21 @@ class BlockImporter:
         ]:
             ensure_len(get(fld, alt), 32, fld)
 
-        # nonce / mixSeed (length-free but keep under 64 bytes for now)
-        for fld, alt in [("nonce", None), ("mix_seed", "mixSeed")]:
+        # nonce: can be int or bytes depending on header version
+        nonce_val = get("nonce", None)
+        if nonce_val is not None:
+            if isinstance(nonce_val, int):
+                # int nonce is valid (uint type in CBOR/CDDL)
+                if nonce_val < 0:
+                    raise BlockImportError(f"nonce must be non-negative, got {nonce_val}")
+            else:
+                # bytes nonce (legacy): check length
+                bb = _as_bytes(nonce_val, name="nonce")
+                if len(bb) > 64:
+                    raise BlockImportError(f"nonce: too long ({len(bb)} bytes)")
+        
+        # mixSeed (length-free but keep under 64 bytes for now)
+        for fld, alt in [("mix_seed", "mixSeed")]:
             v = get(fld, alt)
             if v is None:
                 continue
