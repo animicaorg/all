@@ -421,7 +421,6 @@ def _maybe_bootstrap_genesis(
         # We deliberately swallow errors here to avoid bringing down the RPC
         # process if core/genesis evolves. The node CLI (core.boot) handles
         # authoritative bootstrapping for production.
-        import logging
         logging.warning(f"Genesis bootstrap failed: {type(e).__name__}: {e}")
         try:
             from core.types.header import Header
@@ -510,8 +509,6 @@ def _needs_rebuild(cfg: t.Any | None) -> bool:
 
 
 def build_context(cfg: t.Any | None = None) -> RpcContext:
-    import logging
-    import os
     log = logging.getLogger("animica.rpc.deps")
     
     cfg_view = _coerce_config(cfg) if cfg is not None else _load_rpc_config()
