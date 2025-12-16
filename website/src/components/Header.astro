@@ -197,10 +197,20 @@ const activePath = Astro.url.pathname;
     position: sticky;
     top: 0;
     z-index: var(--z-sticky);
-    backdrop-filter: var(--backdrop-blur);
-    background: rgba(10, 14, 23, 0.8);
-    border-bottom: 1px solid var(--color-border);
-    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.1);
+    /* Enhanced glassmorphism */
+    backdrop-filter: blur(24px) saturate(180%);
+    background: rgba(10, 14, 23, 0.85);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.2), 0 0 40px rgba(139, 92, 246, 0.08);
+    transition: all 0.3s ease;
+  }
+  
+  .site-header::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(90deg, rgba(99, 102, 241, 0.03), rgba(139, 92, 246, 0.03));
+    pointer-events: none;
   }
 
   .header-container {
@@ -223,16 +233,23 @@ const activePath = Astro.url.pathname;
     color: var(--color-fg);
     font-weight: var(--weight-semibold);
     font-size: 1.125rem;
-    transition: opacity var(--transition-fast);
+    transition: all 0.3s ease;
+    position: relative;
   }
 
   .brand-link:hover {
-    opacity: 0.9;
+    transform: translateY(-1px);
+  }
+  
+  .brand-link:hover .brand-logo {
+    filter: drop-shadow(0 0 8px rgba(139, 92, 246, 0.6));
+    transform: rotate(5deg) scale(1.05);
   }
 
   .brand-logo {
     width: 24px;
     height: 24px;
+    transition: all 0.3s ease;
   }
 
   .brand-name {
@@ -261,17 +278,20 @@ const activePath = Astro.url.pathname;
     font-size: 0.9375rem;
     font-weight: var(--weight-medium);
     border-radius: var(--radius-md);
-    transition: all var(--transition-fast);
+    transition: all 0.3s ease;
   }
 
   .nav-link:hover {
     color: var(--color-fg);
-    background: rgba(99, 102, 241, 0.08);
+    background: rgba(99, 102, 241, 0.12);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(99, 102, 241, 0.15);
   }
 
   .nav-link--active {
     color: var(--color-fg);
-    background: rgba(99, 102, 241, 0.12);
+    background: rgba(99, 102, 241, 0.15);
+    box-shadow: 0 4px 12px rgba(99, 102, 241, 0.2);
   }
 
   .nav-link--active::after {
@@ -281,8 +301,9 @@ const activePath = Astro.url.pathname;
     left: 0.875rem;
     right: 0.875rem;
     height: 2px;
-    background: linear-gradient(90deg, var(--brand-grad-from), var(--brand-grad-to));
+    background: linear-gradient(90deg, var(--legendary-purple-500), var(--legendary-cyan-400));
     border-radius: 2px 2px 0 0;
+    box-shadow: 0 0 8px rgba(139, 92, 246, 0.5);
   }
 
   /* Header Actions */
@@ -299,12 +320,13 @@ const activePath = Astro.url.pathname;
     gap: 0.5rem;
     padding: 0.5rem 0.875rem;
     border-radius: var(--radius-pill);
-    border: 1px solid var(--color-border);
-    background: var(--color-surface);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    background: rgba(255, 255, 255, 0.05);
+    backdrop-filter: blur(12px);
     font-size: 0.8125rem;
     font-weight: var(--weight-medium);
     cursor: default;
-    transition: all var(--transition-fast);
+    transition: all 0.3s ease;
   }
 
   @media (min-width: 640px) {
@@ -314,7 +336,10 @@ const activePath = Astro.url.pathname;
   }
 
   .network-pill:hover {
-    border-color: rgba(99, 102, 241, 0.3);
+    border-color: rgba(99, 102, 241, 0.4);
+    background: rgba(99, 102, 241, 0.08);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(99, 102, 241, 0.15);
   }
 
   .network-status {
@@ -323,22 +348,23 @@ const activePath = Astro.url.pathname;
     height: 0.5rem;
     border-radius: 50%;
     background: var(--color-muted);
-    transition: background var(--transition-fast);
+    transition: all 0.3s ease;
   }
 
   .network-pill[data-status="online"] .network-status {
-    background: var(--color-success);
-    box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.2);
+    background: var(--legendary-emerald-500);
+    box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.3), 0 0 12px rgba(16, 185, 129, 0.4);
+    animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
   }
 
   .network-pill[data-status="offline"] .network-status {
     background: var(--color-danger);
-    box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.2);
+    box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.3);
   }
 
   .network-pill[data-status="lagging"] .network-status {
-    background: var(--color-warning);
-    box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.2);
+    background: var(--legendary-amber-500);
+    box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.3);
   }
 
   .network-name {
