@@ -695,11 +695,19 @@ def mine_blocks(
         )
         raise typer.Exit(5)
     except Exception as e:
+        error_str = str(e)
         typer.secho(
-            f"Error: Failed to mine blocks via RPC: {e}",
+            f"Error: Failed to mine blocks via RPC: {error_str}",
             fg=typer.colors.RED,
             err=True,
         )
+        # Provide hint about --no-timeout if this is a timeout error
+        if "timed out" in error_str.lower() and not no_timeout:
+            typer.secho(
+                "Hint: For long-running operations, consider using --no-timeout flag",
+                fg=typer.colors.YELLOW,
+                err=True,
+            )
         raise typer.Exit(5)
 
 

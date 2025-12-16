@@ -277,11 +277,11 @@ class RpcClient:
             try:
                 r = self._client.post(self.url, content=body)
             except httpx.TimeoutException as e:  # type: ignore[attr-defined]
-                # Provide actionable error message for timeout
-                timeout_hint = " Consider using --no-timeout flag for long-running operations." if self.timeout is not None else ""
+                # Provide clear timeout error with duration
+                timeout_msg = f"RPC operation timed out after {self.timeout}s" if self.timeout is not None else "RPC operation timed out"
                 raise RpcError(
                     code=-32098,
-                    message=f"RPC operation timed out after {self.timeout}s.{timeout_hint}",
+                    message=timeout_msg,
                     method=method,
                     data=str(e)
                 )
@@ -306,11 +306,11 @@ class RpcClient:
             try:
                 r = self._client.post(self.url, data=body, timeout=self.timeout)
             except requests.exceptions.Timeout as e:  # type: ignore[attr-defined]
-                # Provide actionable error message for timeout
-                timeout_hint = " Consider using --no-timeout flag for long-running operations." if self.timeout is not None else ""
+                # Provide clear timeout error with duration
+                timeout_msg = f"RPC operation timed out after {self.timeout}s" if self.timeout is not None else "RPC operation timed out"
                 raise RpcError(
                     code=-32098,
-                    message=f"RPC operation timed out after {self.timeout}s.{timeout_hint}",
+                    message=timeout_msg,
                     method=method,
                     data=str(e)
                 )
