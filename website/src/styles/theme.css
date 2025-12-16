@@ -175,8 +175,8 @@ blockquote {
   background: color-mix(in oklab, var(--color-surface), #fff 2%);
 }
 
-/* Buttons */
-.btn {
+/* Buttons - Legendary UI Enhanced */
+.btn, .button {
   display: inline-flex; align-items: center; justify-content: center;
   gap: var(--space-3);
   padding: var(--space-4) var(--space-6);
@@ -185,18 +185,64 @@ blockquote {
   border: 1px solid var(--color-border);
   background: var(--color-surface);
   color: var(--color-fg);
+  transition: all 0.3s ease;
+  position: relative;
+  overflow: hidden;
 }
-.btn:hover { box-shadow: var(--shadow-md); }
-.btn:focus-visible { outline: none; box-shadow:
-  0 0 0 var(--ring-offset) color-mix(in oklab, var(--ring-color), transparent 85%),
-  0 0 0 calc(var(--ring-offset) + var(--ring-width)) var(--ring-color); }
+.btn:hover, .button:hover { 
+  box-shadow: var(--shadow-lg); 
+  transform: translateY(-1px);
+}
+.btn:focus-visible, .button:focus-visible { 
+  outline: none; 
+  box-shadow:
+    0 0 0 var(--ring-offset) color-mix(in oklab, var(--ring-color), transparent 85%),
+    0 0 0 calc(var(--ring-offset) + var(--ring-width)) var(--ring-color);
+}
 
-.btn--primary {
+/* Primary button with gradient and glow */
+.btn--primary, .button--primary {
   border-color: transparent;
-  background: linear-gradient(135deg, var(--brand-grad-from), var(--brand-grad-to));
+  background: linear-gradient(135deg, var(--legendary-purple-500), var(--legendary-violet-500), var(--legendary-indigo-500));
   color: var(--color-accent-contrast);
+  box-shadow: 0 4px 14px rgba(139, 92, 246, 0.3);
 }
-.btn--ghost { background: transparent; }
+.btn--primary:hover, .button--primary:hover {
+  box-shadow: 0 6px 20px rgba(139, 92, 246, 0.5), 0 0 40px rgba(34, 211, 238, 0.3);
+  transform: translateY(-2px);
+}
+
+/* Outline button with enhanced border */
+.btn--outline, .button--outline {
+  background: rgba(255, 255, 255, 0.03);
+  border-color: rgba(139, 92, 246, 0.3);
+  backdrop-filter: blur(8px);
+}
+.btn--outline:hover, .button--outline:hover {
+  border-color: rgba(139, 92, 246, 0.6);
+  background: rgba(139, 92, 246, 0.1);
+  box-shadow: 0 4px 14px rgba(139, 92, 246, 0.2);
+}
+
+/* Ghost button */
+.btn--ghost, .button--ghost { 
+  background: transparent;
+  border-color: transparent;
+}
+.btn--ghost:hover, .button--ghost:hover {
+  background: rgba(139, 92, 246, 0.08);
+  border-color: rgba(139, 92, 246, 0.2);
+}
+
+/* Button sizes */
+.btn--sm, .button--sm {
+  padding: var(--space-3) var(--space-5);
+  font-size: var(--text-sm);
+}
+.btn--lg, .button--lg {
+  padding: var(--space-5) var(--space-8);
+  font-size: var(--text-lg);
+}
 
 /* Inputs */
 .input, .select, .textarea {
