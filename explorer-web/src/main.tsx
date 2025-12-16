@@ -53,12 +53,46 @@ function wireGlobalErrorHandlers() {
       // eslint-disable-next-line no-console
       console.error("[explorer] Uncaught error:", e.error ?? e.message);
     }
+    // Prevent the error from propagating and crashing the app
+    e.preventDefault();
   });
   window.addEventListener("unhandledrejection", (e) => {
-    if (process.env.NODE_ENV !== "production") {
-      // eslint-disable-next-line no-console
-      console.error("[explorer] Unhandled promise rejection:", e.reason);
+    const reason = e.reason;
+    
+    // Ignore certain benign rejections (network cancellations, etc.)
+    const shouldIgnore = 
+      reason instanceof DOMException && (
+        reason.name === "AbortError" ||
+        reason.name === "NetworkError"
+      ) ||
+      (reason instanceof TypeError && reason.message.includes("fetch"));
+    
+    if (!shouldIgnore) {
+      if (process.env.NODE_ENV !== "production") {
+        // eslint-disable-next-line no-console
+        console.error("[explorer] Unhandled promise rejection:", reason);
+      }
+      
+      // Show a user-friendly error toast for critical failures
+      if (typeof reason === "object" && reason !== null && "message" in reason) {
+        try {
+          window.dispatchEvent(
+            new CustomEvent("explorer:toast", {
+              detail: {
+                message: `An error occurred: ${reason.message}`,
+                kind: "error",
+                durationMs: 5000,
+              },
+            })
+          );
+        } catch {
+          // If toast system fails, fail silently
+        }
+      }
     }
+    
+    // Prevent the rejection from propagating
+    e.preventDefault();
   });
 }
 

@@ -21,7 +21,7 @@ import type { ReactNode } from 'react';
 import { useStore as useZustandStore } from 'zustand';
 import { createStore, type StoreApi } from 'zustand/vanilla';
 import { devtools, persist, subscribeWithSelector, createJSONStorage } from 'zustand/middleware';
-import shallow from 'zustand/shallow';
+import { shallow } from 'zustand/shallow';
 import { inferChainId, inferRpcUrl } from '../services/env';
 
 // ----------------------------- Types ----------------------------------------
