@@ -45,6 +45,12 @@ function mount() {
   );
 }
 
+/** Benign error types that should be silently ignored */
+const IGNORED_ERRORS = {
+  DOM_ABORT: "AbortError",
+  DOM_NETWORK: "NetworkError",
+} as const;
+
 /** Minimal global error logging (keeps console noise low in production). */
 function wireGlobalErrorHandlers() {
   window.addEventListener("error", (e) => {
@@ -58,12 +64,6 @@ function wireGlobalErrorHandlers() {
   });
   window.addEventListener("unhandledrejection", (e) => {
     const reason = e.reason;
-    
-    // Benign error types that should be silently ignored
-    const IGNORED_ERRORS = {
-      DOM_ABORT: "AbortError",
-      DOM_NETWORK: "NetworkError",
-    } as const;
     
     // Check if this is a benign error that should be ignored
     const isBenignError = 

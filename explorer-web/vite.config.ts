@@ -27,10 +27,10 @@ export default defineConfig({
       "::1",
     ],
     hmr: {
-      protocol: 'ws',
-      host: 'localhost',
+      // Use environment variable if set, otherwise default to localhost
+      // In production/containers, set VITE_HMR_HOST to match your setup
+      host: process.env.VITE_HMR_HOST || 'localhost',
       port: 3001,
-      clientPort: 3001,
     },
     watch: {
       usePolling: false,
