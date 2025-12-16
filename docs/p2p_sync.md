@@ -13,6 +13,16 @@ Animica uses a **P2P-first architecture** where nodes:
 
 **Key principle**: `rpc.animica.org` is a **client-facing service** (for wallets, explorers) but is **NOT** used for node consensus, mining, or validation.
 
+## Model 3: Hybrid with Optional Checkpoints
+
+As of this version, Animica implements **Model 3 (Hybrid)**, which maintains P2P-first sync as the default while adding an optional checkpoint mechanism for additional safety:
+
+- **Default behavior remains P2P-first** for sync/validation/mining
+- **No code path requires `rpc.animica.org` to be reachable** by default
+- **Optional checkpoint mechanism** can consult a configured RPC URL or local file
+- **Checkpoints are safety rails** used during initial sync or fork-choice, not live head oracles
+- **Graceful degradation**: if checkpoints are unavailable, sync continues via P2P (unless strict mode is enabled)
+
 ## Architecture
 
 ```
@@ -46,6 +56,16 @@ All consensus happens via P2P. RPC endpoints are only for:
 | `P2P_SEEDS` | (auto) | Bootstrap seed addresses (comma-separated) |
 | `ANIMICA_P2P_CHAIN_ID` | (from config) | Chain ID for network-specific seed selection |
 | `ANIMICA_PEER_STORE_PATH` | `~/.animica/p2p/{network}` | Persistent peer database location |
+
+### Checkpoint Configuration (Optional)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ANIMICA_CHECKPOINTS_MODE` | `off` | Checkpoint mode: `off`, `rpc`, or `file` |
+| `ANIMICA_CHECKPOINTS_RPC_URL` | `https://rpc.animica.org/rpc` | RPC endpoint for fetching checkpoints (when mode=rpc) |
+| `ANIMICA_CHECKPOINTS_FILE` | (none) | Path to local JSON checkpoint file (when mode=file) |
+| `ANIMICA_CHECKPOINTS_MAX_AGE` | (none) | Maximum age of checkpoints in seconds (optional) |
+| `ANIMICA_CHECKPOINTS_STRICT` | `false` | If true, fail fast when checkpoints unavailable |
 
 ### Network-Specific Seeds
 
@@ -353,19 +373,106 @@ export P2P_SEEDS="$(cat seeds.txt | tr '\n' ',')"
 python -m rpc
 ```
 
+## Checkpoints (Model 3)
+
+Checkpoints provide an optional safety mechanism to verify the canonical chain against known-good block hashes at specific heights. This is useful for:
+- Initial sync on a fresh node (avoid syncing to a minority fork)
+- Fork choice / reorg validation (prevent deep reorgs to bad chains)
+
+### Checkpoint Modes
+
+**Off (default)**:
+```bash
+export ANIMICA_CHECKPOINTS_MODE=off
+```
+- No checkpoints used
+- Pure P2P consensus
+- No external dependencies
+
+**RPC Mode**:
+```bash
+export ANIMICA_CHECKPOINTS_MODE=rpc
+export ANIMICA_CHECKPOINTS_RPC_URL=https://rpc.animica.org/rpc
+```
+- Fetches checkpoints from RPC endpoint
+- Tries `chain.getCheckpoints` JSON-RPC method first
+- Falls back to HTTP endpoints (`/checkpoints.json`, `/checkpoints`)
+- Non-strict by default: continues without checkpoints if unavailable
+
+**File Mode**:
+```bash
+export ANIMICA_CHECKPOINTS_MODE=file
+export ANIMICA_CHECKPOINTS_FILE=~/.animica/checkpoints.json
+```
+- Loads checkpoints from local JSON file
+- No network calls
+- Useful for air-gapped or private networks
+
+### Checkpoint Format
+
+Checkpoints are stored in JSON format:
+
+```json
+{
+  "checkpoints": [
+    {"height": 1000, "hash": "0x1234abcd..."},
+    {"height": 2000, "hash": "0x5678ef01..."},
+    {"height": 3000, "hash": "0x9abc2345..."}
+  ],
+  "timestamp": 1234567890
+}
+```
+
+Or as a plain list:
+
+```json
+[
+  {"height": 1000, "hash": "0x1234abcd..."},
+  {"height": 2000, "hash": "0x5678ef01..."}
+]
+```
+
+### Strict Mode
+
+By default, if checkpoints are unavailable, the node continues syncing via P2P with a warning. Enable strict mode to fail fast:
+
+```bash
+export ANIMICA_CHECKPOINTS_STRICT=true
+```
+
+With strict mode:
+- Node will refuse to start if checkpoints cannot be loaded
+- Checkpoint mismatches will halt sync immediately
+- Useful for production deployments requiring additional validation
+
+### Checkpoint Verification
+
+When checkpoints are enabled, the node verifies:
+1. During initial sync: blocks at checkpoint heights match expected hashes
+2. During fork choice: new best chain matches checkpoints
+3. If mismatch detected: chain is rejected with clear error logs
+
+**Important**: Checkpoints are **safety rails**, not consensus rules. They:
+- Do NOT replace P2P validation
+- Do NOT require `rpc.animica.org` to be reachable by default
+- Are optional and can be disabled entirely
+
 ## Comparison: P2P vs. Proxy (Legacy)
 
-| Feature | P2P-First (Default) | Proxy (Deprecated) |
-|---------|---------------------|---------------------|
-| Decentralized | ✅ Yes | ❌ No (relies on central endpoint) |
-| Mainnet Ready | ✅ Yes | ❌ No (centralization risk) |
-| Consensus | Local validation | External validation |
-| Offline Support | ✅ Works offline with peers | ❌ Requires internet |
-| Security | ✅ No single point of failure | ⚠️ Centralized trust |
-| Performance | Fast (local) | Slower (network latency) |
-| Configuration | Enabled by default | Must explicitly enable |
+| Feature | P2P-First (Default) | P2P + Checkpoints | Proxy (Deprecated) |
+|---------|---------------------|-------------------|---------------------|
+| Decentralized | ✅ Yes | ✅ Yes | ❌ No (relies on central endpoint) |
+| Mainnet Ready | ✅ Yes | ✅ Yes | ❌ No (centralization risk) |
+| Consensus | Local validation | Local validation + checkpoints | External validation |
+| Offline Support | ✅ Works offline with peers | ⚠️ Checkpoints need fetch once | ❌ Requires internet |
+| Security | ✅ No single point of failure | ✅ Additional safety rail | ⚠️ Centralized trust |
+| Performance | Fast (local) | Fast (local) | Slower (network latency) |
+| Configuration | Enabled by default | Opt-in via env vars | Must explicitly enable |
 
-**Recommendation**: Always use P2P-first for production. Proxy is only for specialized testing.
+**Recommendation**: 
+- Use **P2P-first** (default) for most deployments
+- Add **checkpoints** for additional safety in production
+- **Never use proxy** for mainnet
 
 ## Further Reading
 
