@@ -554,7 +554,7 @@ def build_context(cfg: t.Any | None = None) -> RpcContext:
     if enable_p2p:
         try:
             from p2p.node.service import P2PService
-            from p2p.config import load_config as load_p2p_config, _load_seeds_from_env
+            from p2p.config import load_config as load_p2p_config
             import p2p
             
             # Set chain_id in environment so P2P config can auto-select network seeds
