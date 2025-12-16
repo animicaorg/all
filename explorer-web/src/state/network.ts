@@ -156,12 +156,11 @@ export function useNetworkManager(opts?: {
         } catch (e: any) {
           console.warn('[network] Failed to fetch chain ID:', e);
           
-          // Provide detailed error message
-          const errorMsg = e?.message || String(e);
-          const detailedMsg = `Failed to fetch chain ID from ${rpcUrl}: ${errorMsg}`;
-          
-          // If we can't get chain ID, this is a critical error
+          // If we can't get chain ID and it's required, this is a critical error
           if (enforceChainId && expectedChainId) {
+            const errorMsg = e?.message || String(e);
+            const detailedMsg = `Failed to fetch chain ID from ${rpcUrl}: ${errorMsg}`;
+            
             setStatus('error');
             setErrMsg(detailedMsg);
             setNetwork({ connected: false });
