@@ -702,7 +702,16 @@ def mine_blocks(
             err=True,
         )
         # Provide hint about --no-timeout if this is a timeout error
-        if "timed out" in error_str.lower() and not no_timeout:
+        # Check for timeout indicators: RpcError with code -32098 or "timed out" in message
+        is_timeout = False
+        if RpcError is not None and isinstance(e, RpcError):
+            # Check if this is a timeout error (code -32098 with timeout message)
+            is_timeout = e.code == -32098 and "timed out" in error_str.lower()
+        elif "timed out" in error_str.lower():
+            # Fallback: check error message for timeout indication
+            is_timeout = True
+        
+        if is_timeout and not no_timeout:
             typer.secho(
                 "Hint: For long-running operations, consider using --no-timeout flag",
                 fg=typer.colors.YELLOW,

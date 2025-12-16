@@ -508,7 +508,9 @@ async def _run_mine_blocks(args: argparse.Namespace, log: logging.Logger) -> int
             error_str = str(e)
             
             # Provide hint about --no-timeout on first timeout occurrence
-            if "timed out" in error_str.lower() and not args.no_timeout and attempt == 1:
+            # Check for timeout indicators: TimeoutError type or "timed out" in message
+            is_timeout = isinstance(e, TimeoutError) or "timed out" in error_str.lower()
+            if is_timeout and not args.no_timeout and attempt == 1:
                 log.warning("Timeout occurred. For long-running operations, consider using --no-timeout flag.")
             
             log.warning(
