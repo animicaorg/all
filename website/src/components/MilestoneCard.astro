@@ -14,39 +14,61 @@ const tags = milestone.tags ?? [];
 const links = milestone.links ?? [];
 ---
 
-<div class="rounded-xl border p-4 bg-[var(--bg-raised)]
-            border-[color-mix(in_srgb,var(--text-primary)_/_10%,transparent)]">
-  <div class="flex items-start justify-between gap-3">
-    <div>
-      <h3 class="text-sm font-semibold tracking-tight">{milestone.title}</h3>
+<div class="group relative rounded-xl border p-4 bg-[var(--bg-raised)]
+            hover:scale-[1.02] transition-all duration-300 cursor-default
+            border-[color-mix(in_srgb,var(--text-primary)_/_10%,transparent)]
+            hover:border-[var(--accent)] hover:border-opacity-30
+            hover:shadow-[0_0_20px_-5px_var(--accent)]
+            backdrop-blur-sm">
+  <!-- Gradient border effect on hover -->
+  <div class="absolute inset-0 rounded-xl bg-gradient-to-br from-[var(--accent)] to-transparent opacity-0 group-hover:opacity-10 transition-opacity duration-300 pointer-events-none"></div>
+  
+  <div class="relative flex items-start justify-between gap-3">
+    <div class="flex-1">
+      <h3 class="text-sm font-semibold tracking-tight group-hover:text-[var(--accent)] transition-colors">{milestone.title}</h3>
       <p class="text-xs opacity-70 mt-0.5">{milestone.quarter}</p>
     </div>
     {tags.length ? (
       <div class="flex flex-wrap gap-1 justify-end">
         {tags.map((t) => (
-          <span class="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] border
-                       border-[color-mix(in_srgb,var(--text-primary)_/_16%,transparent)] opacity-80">{t}</span>
+          <span class="inline-flex items-center rounded-full px-2.5 py-1 text-[10px] font-medium
+                       bg-gradient-to-r from-[var(--accent)] to-[color-mix(in_srgb,var(--accent)_80%,#a855f7)]
+                       bg-opacity-10 border border-[var(--accent)] border-opacity-30 text-[var(--accent)]">{t}</span>
         ))}
       </div>
     ) : null}
   </div>
 
-  {milestone.summary ? <p class="mt-2 text-sm opacity-90">{milestone.summary}</p> : null}
+  {milestone.summary ? <p class="relative mt-2 text-sm opacity-90">{milestone.summary}</p> : null}
 
   {prog !== null ? (
-    <div class="mt-3">
-      <div class="h-1.5 rounded-full bg-[color-mix(in_srgb,var(--text-primary)_/_10%,transparent)] overflow-hidden">
-        <div class="h-1.5 rounded-full" style={{ width: prog + "%", background: "color-mix(in srgb, var(--text-primary) 65%, transparent)" }} />
+    <div class="relative mt-3">
+      <div class="h-2 rounded-full bg-[color-mix(in_srgb,var(--text-primary)_/_10%,transparent)] overflow-hidden relative">
+        <!-- Shimmer effect -->
+        <div class="absolute inset-0 bg-gradient-to-r from-transparent via-white to-transparent opacity-20 animate-shimmer"></div>
+        <div class="h-2 rounded-full bg-gradient-to-r from-[var(--accent)] to-[color-mix(in_srgb,var(--accent)_80%,transparent)] transition-all duration-500" 
+             style={{ width: prog + "%" }} />
       </div>
-      <p class="text-[11px] opacity-70 mt-1">{prog}%</p>
+      <p class="text-[11px] font-semibold opacity-70 mt-1.5 text-[var(--accent)]">{prog}% Complete</p>
     </div>
   ) : null}
 
   {links.length ? (
-    <div class="mt-3 flex flex-wrap gap-2">
+    <div class="relative mt-3 flex flex-wrap gap-2">
       {links.map((l) => (
         <InlineLink href={l.href} underline>{l.label}</InlineLink>
       ))}
     </div>
   ) : null}
 </div>
+
+<style>
+  @keyframes shimmer {
+    0% { transform: translateX(-100%); }
+    100% { transform: translateX(100%); }
+  }
+  
+  .animate-shimmer {
+    animation: shimmer 2s infinite;
+  }
+</style>
