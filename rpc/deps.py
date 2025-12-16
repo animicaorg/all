@@ -600,7 +600,7 @@ def build_context(cfg: t.Any | None = None) -> RpcContext:
             
             # Register P2P service with global registry so RPC methods can access it
             p2p.register_service(p2p_service)
-            log.info(f"Initialized and registered P2P service with peer store at {peerstore_path}")
+            log.info(f"Initialized P2P service: listen_addrs={listen_addrs}, seeds={len(seeds)} configured, peer_store={peerstore_path}")
         except Exception as e:
             log.warning(f"Failed to initialize P2P service: {e}", exc_info=True)
             p2p_service = None
