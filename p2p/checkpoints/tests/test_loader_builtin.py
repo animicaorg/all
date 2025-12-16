@@ -146,7 +146,7 @@ async def test_loader_builtin_fallback_on_error(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_loader_builtin_sorted():
+async def test_loader_builtin_sorted(tmp_path):
     """Test that merged checkpoints are sorted by height."""
     # Create test checkpoint file
     checkpoint_data = {
@@ -156,20 +156,15 @@ async def test_loader_builtin_sorted():
         ]
     }
     
-    import tempfile
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+    checkpoint_file = tmp_path / "checkpoints.json"
+    with checkpoint_file.open("w") as f:
         json.dump(checkpoint_data, f)
-        checkpoint_file = f.name
     
-    try:
-        config = CheckpointsConfig(mode="file", file_path=checkpoint_file)
-        loader = CheckpointLoader(config, chain_id=1)
-        
-        checkpoints = await loader.load_checkpoints(include_builtin=True)
-        
-        # Verify sorted order
-        for i in range(len(checkpoints) - 1):
-            assert checkpoints[i].height < checkpoints[i + 1].height
+    config = CheckpointsConfig(mode="file", file_path=str(checkpoint_file))
+    loader = CheckpointLoader(config, chain_id=1)
     
-    finally:
-        Path(checkpoint_file).unlink()
+    checkpoints = await loader.load_checkpoints(include_builtin=True)
+    
+    # Verify sorted order
+    for i in range(len(checkpoints) - 1):
+        assert checkpoints[i].height < checkpoints[i + 1].height

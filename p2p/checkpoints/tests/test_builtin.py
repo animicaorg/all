@@ -92,11 +92,12 @@ def test_builtin_checkpoints_immutable():
 
 
 def test_builtin_mainnet_checkpoints_constant():
-    """Test that MAINNET_CHECKPOINTS constant contains expected checkpoint."""
-    assert len(builtin.MAINNET_CHECKPOINTS) >= 1
+    """Test that mainnet built-in checkpoints contain expected checkpoint."""
+    mainnet_checkpoints = builtin.get_builtin_checkpoints(chain_id=1)
+    assert len(mainnet_checkpoints) >= 1
     
     # Find the specific checkpoint
-    cp_55795 = next((cp for cp in builtin.MAINNET_CHECKPOINTS if cp.height == 55795), None)
+    cp_55795 = next((cp for cp in mainnet_checkpoints if cp.height == 55795), None)
     
     assert cp_55795 is not None
     assert cp_55795.height == 55795

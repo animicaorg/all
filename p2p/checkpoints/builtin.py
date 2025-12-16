@@ -22,28 +22,28 @@ _MAINNET_CHECKPOINTS_RAW = [
     (55795, "0x0a3205eb3aca078a9c6e8415e5970e198b43c087bff7b71371054bbbc99d8938"),
 ]
 
-_TESTNET_CHECKPOINTS_RAW: List[tuple[int, str]] = []
+_TESTNET_CHECKPOINTS_RAW: list[tuple[int, str]] = []
 
-_DEVNET_CHECKPOINTS_RAW: List[tuple[int, str]] = []
+_DEVNET_CHECKPOINTS_RAW: list[tuple[int, str]] = []
 
-# Lazy-loaded actual Checkpoint objects
-MAINNET_CHECKPOINTS: List['Checkpoint'] | None = None
-TESTNET_CHECKPOINTS: List['Checkpoint'] | None = None
-DEVNET_CHECKPOINTS: List['Checkpoint'] | None = None
+# Lazy-loaded actual Checkpoint objects (module-level cache)
+_MAINNET_CHECKPOINTS: List['Checkpoint'] | None = None
+_TESTNET_CHECKPOINTS: List['Checkpoint'] | None = None
+_DEVNET_CHECKPOINTS: List['Checkpoint'] | None = None
 
 
 def _ensure_loaded() -> None:
     """Lazy load checkpoint objects to avoid circular import."""
-    global MAINNET_CHECKPOINTS, TESTNET_CHECKPOINTS, DEVNET_CHECKPOINTS
+    global _MAINNET_CHECKPOINTS, _TESTNET_CHECKPOINTS, _DEVNET_CHECKPOINTS
     
-    if MAINNET_CHECKPOINTS is not None:
+    if _MAINNET_CHECKPOINTS is not None:
         return  # Already loaded
     
     from .loader import Checkpoint
     
-    MAINNET_CHECKPOINTS = [Checkpoint(height=h, hash=hsh) for h, hsh in _MAINNET_CHECKPOINTS_RAW]
-    TESTNET_CHECKPOINTS = [Checkpoint(height=h, hash=hsh) for h, hsh in _TESTNET_CHECKPOINTS_RAW]
-    DEVNET_CHECKPOINTS = [Checkpoint(height=h, hash=hsh) for h, hsh in _DEVNET_CHECKPOINTS_RAW]
+    _MAINNET_CHECKPOINTS = [Checkpoint(height=h, hash=hsh) for h, hsh in _MAINNET_CHECKPOINTS_RAW]
+    _TESTNET_CHECKPOINTS = [Checkpoint(height=h, hash=hsh) for h, hsh in _TESTNET_CHECKPOINTS_RAW]
+    _DEVNET_CHECKPOINTS = [Checkpoint(height=h, hash=hsh) for h, hsh in _DEVNET_CHECKPOINTS_RAW]
 
 
 def get_builtin_checkpoints(chain_id: int) -> List['Checkpoint']:
@@ -59,11 +59,11 @@ def get_builtin_checkpoints(chain_id: int) -> List['Checkpoint']:
     _ensure_loaded()
     
     if chain_id == 1:
-        return MAINNET_CHECKPOINTS.copy()  # type: ignore
+        return _MAINNET_CHECKPOINTS.copy()  # type: ignore
     elif chain_id == 2:
-        return TESTNET_CHECKPOINTS.copy()  # type: ignore
+        return _TESTNET_CHECKPOINTS.copy()  # type: ignore
     elif chain_id == 1337:
-        return DEVNET_CHECKPOINTS.copy()  # type: ignore
+        return _DEVNET_CHECKPOINTS.copy()  # type: ignore
     else:
         # Unknown chain, no built-in checkpoints
         return []
@@ -80,14 +80,14 @@ def get_all_builtin_checkpoints() -> Dict[int, List['Checkpoint']]:
     
     result = {}
     
-    if MAINNET_CHECKPOINTS:  # type: ignore
-        result[1] = MAINNET_CHECKPOINTS.copy()  # type: ignore
+    if _MAINNET_CHECKPOINTS:  # type: ignore
+        result[1] = _MAINNET_CHECKPOINTS.copy()  # type: ignore
     
-    if TESTNET_CHECKPOINTS:  # type: ignore
-        result[2] = TESTNET_CHECKPOINTS.copy()  # type: ignore
+    if _TESTNET_CHECKPOINTS:  # type: ignore
+        result[2] = _TESTNET_CHECKPOINTS.copy()  # type: ignore
     
-    if DEVNET_CHECKPOINTS:  # type: ignore
-        result[1337] = DEVNET_CHECKPOINTS.copy()  # type: ignore
+    if _DEVNET_CHECKPOINTS:  # type: ignore
+        result[1337] = _DEVNET_CHECKPOINTS.copy()  # type: ignore
     
     return result
 
