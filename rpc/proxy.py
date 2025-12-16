@@ -10,7 +10,7 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 logger = logging.getLogger("animica.rpc.proxy")
 
@@ -79,7 +79,7 @@ class RpcProxy:
         self,
         method: str,
         params: Any,
-        fallback_handler: Optional[callable] = None,
+        fallback_handler: Optional[Callable[[], Any]] = None,
     ) -> Any:
         """Forward RPC request to trusted endpoint with retry logic.
         
@@ -211,7 +211,7 @@ class RpcProxy:
         self,
         method: str,
         params: Any,
-        fallback_handler: Optional[callable] = None,
+        fallback_handler: Optional[Callable[[], Any]] = None,
     ) -> Any:
         """Synchronous wrapper for forward_request.
         
@@ -236,22 +236,19 @@ class RpcProxy:
                 async_fallback = _wrap
         
         # Run in event loop
+        # Check if we're already in an async context
         try:
-            # Try to get the running event loop (Python 3.10+)
-            try:
-                loop = asyncio.get_running_loop()
-                # Already in event loop - can't use run_until_complete
-                # This should not happen in CLI context, but handle gracefully
-                raise RuntimeError(
-                    "sync_forward_request called from async context - use forward_request instead"
-                )
-            except RuntimeError:
-                # No running loop, create new one (this is the normal case)
-                return asyncio.run(
-                    self.forward_request(method, params, async_fallback)
-                )
-        except Exception:
-            # Fallback for any other issues
+            asyncio.get_running_loop()
+            # Already in event loop - cannot use sync_forward_request
+            raise RuntimeError(
+                "sync_forward_request called from async context - use forward_request instead"
+            )
+        except RuntimeError as e:
+            # Check if this is "no running loop" vs "called from async context"
+            if "sync_forward_request called from async context" in str(e):
+                # Re-raise our intentional error
+                raise
+            # No running loop - this is the expected case, create new loop
             return asyncio.run(
                 self.forward_request(method, params, async_fallback)
             )
