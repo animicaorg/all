@@ -7,8 +7,10 @@ import hashlib
 import logging
 import math
 import os
+import threading
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, replace
 from typing import Any, Dict, Optional, Tuple
 
@@ -1997,10 +1999,14 @@ def _mine_once(payout_address: bytes | None = None, threads: int = 1) -> tuple[b
     reward_amount = 0
     
     # Helper function to search a range of nonces in a worker thread
-    # Pass header_template and target as parameters for thread safety
-    def _search_nonce_range(start: int, end: int, template: Header, target_val: int) -> tuple[int, bytes, int] | None:
+    # Pass header_template, target, and stop_event as parameters for thread safety
+    def _search_nonce_range(start: int, end: int, template: Header, target_val: int, stop_event: threading.Event) -> tuple[int, bytes, int] | None:
         """Search for valid nonce in the given range. Returns (nonce, hash_bytes, hash_int) if found, None otherwise."""
         for nonce_val in range(start, end):
+            # Check if another thread found a valid nonce
+            if stop_event.is_set():
+                return None
+            
             # Update header with new nonce
             try:
                 header = replace(template, nonce=nonce_val)
@@ -2031,51 +2037,54 @@ def _mine_once(payout_address: bytes | None = None, threads: int = 1) -> tuple[b
             
             # Check if hash meets target
             if block_hash_int <= target_val:
+                # Signal other threads to stop
+                stop_event.set()
                 return (nonce_val, block_hash_bytes, block_hash_int)
         
         return None
     
     # Perform nonce search (single-threaded or multi-threaded based on threads parameter)
-    # Import concurrent.futures at top for better performance in multi-threaded scenarios
-    from concurrent.futures import ThreadPoolExecutor, as_completed
-    
     valid_nonce = None
     block_hash_bytes = None
     block_hash_int = None
     
+    # Create stop event for early termination across threads
+    stop_event = threading.Event()
+    
     if threads <= 1:
         # Single-threaded search
-        result = _search_nonce_range(0, max_nonce, header_template, target)
+        result = _search_nonce_range(0, max_nonce, header_template, target, stop_event)
         if result:
             valid_nonce, block_hash_bytes, block_hash_int = result
     else:
         # Multi-threaded search: divide nonce space among threads
+        # Limit effective threads to avoid creating empty ranges
+        effective_threads = min(threads, max_nonce)
+        
         # Divide nonce space into chunks for each thread
         # Ensure last thread handles any remainder nonces
-        chunk_size = max(1, max_nonce // threads)
+        chunk_size = max(1, max_nonce // effective_threads)
         ranges = []
-        for i in range(threads):
+        for i in range(effective_threads):
             start = i * chunk_size
             # Last thread gets all remaining nonces to handle remainder
-            end = max_nonce if i == threads - 1 else min((i + 1) * chunk_size, max_nonce)
+            end = max_nonce if i == effective_threads - 1 else min((i + 1) * chunk_size, max_nonce)
             if start < max_nonce:
                 ranges.append((start, end))
         
-        log.info(f"Mining with {threads} threads across {len(ranges)} nonce ranges (chunk_size={chunk_size})")
+        log.info(f"Mining with {effective_threads} threads (requested {threads}) across {len(ranges)} nonce ranges (chunk_size={chunk_size})")
         
         # Submit work to thread pool and wait for first valid nonce
-        with ThreadPoolExecutor(max_workers=threads) as executor:
-            futures = {executor.submit(_search_nonce_range, start, end, header_template, target): (start, end) for start, end in ranges}
+        with ThreadPoolExecutor(max_workers=effective_threads) as executor:
+            futures = {executor.submit(_search_nonce_range, start, end, header_template, target, stop_event): (start, end) for start, end in ranges}
             
             # Wait for first successful result
             for future in as_completed(futures):
                 result = future.result()
                 if result is not None:
                     valid_nonce, block_hash_bytes, block_hash_int = result
-                    # Cancel remaining futures (found a valid nonce)
-                    for f in futures:
-                        if f != future:
-                            f.cancel()
+                    # stop_event is already set by the worker that found the nonce
+                    # This signals other workers to stop early
                     break
     
     # Check if we found a valid nonce
