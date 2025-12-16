@@ -338,36 +338,56 @@ This update addresses several reported issues:
 - Mining troubleshooting documentation
 - Theta scaling documentation (this document)
 
-### v0.2.0 (Latest - Unbounded Theta)
+### v0.2.0 (Unbounded Theta - Deprecated)
 
 **Breaking Change** (Backward compatible):
 - **Removed upper bound on theta** - `theta_max_micro=None` (unbounded)
-- All networks now use `theta_max_munats: null` in config
-- Theta can scale indefinitely to match any hash rate
+- All networks temporarily used `theta_max_munats: null` in config
+- Theta could scale indefinitely to match any hash rate
+
+This version was superseded by v0.3.0 with a hard cap for stability.
+
+### v0.3.0 (Latest - Hard Cap at 300M µ-nats)
+
+**Breaking Change** (Backward compatible):
+- **Implemented hard cap at 300M µ-nats (300 nats)** for network stability
+- All networks now use `theta_max_munats: 300000000` in config
+- When `theta_max_micro=None`, the hard cap is automatically applied
 
 **Safety Mechanisms**:
+- Hard cap: 300M µ-nats (300 nats) prevents runaway values
 - Step clamp (1.0 nats/block) limits rate of change
-- Overflow protection at 10^9 nats (10^15 µ-nats)
+- Overflow protection at 10^9 nats (10^15 µ-nats) as ultimate safety
 - EMA smoothing prevents wild fluctuations
 - Minimum bound remains enforced
+- Warning system: logs at 90% (approaching) and 100% (at cap)
 
 **Benefits**:
-- No artificial scalability ceiling
-- Network adapts to unlimited hash rate growth
-- Better target block time maintenance
-- Future-proof design
+- Operational stability with predictable upper bound
+- 18.75x headroom over original mainnet cap (16 nats → 300 nats)
+- 5x headroom over previous temporary cap (60 nats → 300 nats)
+- Sufficient room for significant hash rate growth
+- Clear warnings for operators when approaching limits
+- Prevents extreme difficulty from impacting performance
 
 **Testing**:
-- New test suite: `mining/tests/test_theta_unbounded.py`
-- 26 tests passing across all difficulty modules
-- Verified stability under extreme conditions
+- Updated test suite: `mining/tests/test_theta_unbounded.py`
+- New test: `test_theta_adjustment_cap_enforcement()`
+- All 14 tests passing across theta adjustment and cap enforcement
+- Verified cap enforcement under sustained high load (100+ fast blocks)
+- Verified stability under extreme variance
 
 **Documentation**:
-- New comprehensive guide: `docs/UNBOUNDED_THETA.md`
+- Updated comprehensive guide: `docs/UNBOUNDED_THETA.md`
 - Updated specs: `mining/specs/THETA_ADJUSTMENT.md`
-- Updated retarget spec: `docs/spec/poies/RETARGET.md`
+- Updated this changelog: `docs/THETA_SCALING_UPDATE.md`
 
-See `docs/UNBOUNDED_THETA.md` for complete details on the unbounded theta feature.
+**Code Changes**:
+- `consensus/difficulty.py`: Added `THETA_HARD_CAP_MICRO` constant
+- `rpc/methods/miner.py`: Added warning logs for approaching/hitting cap
+- `spec/params.yaml`: Set `theta_max_munats: 300000000` for all networks
+
+See `docs/UNBOUNDED_THETA.md` for complete details on the theta hard cap feature.
 
 ---
 
