@@ -213,12 +213,28 @@ python -m mining.cli.miner start --threads 4 --device cpu --rpc-url http://127.0
 
 # 3) Mine a specific number of blocks (useful for testing)
 # Can omit --rpc-url to use default (http://127.0.0.1:8547), or specify if RPC is on different port
-python -m mining.cli.miner mine-blocks --address anim1test123 --count 5 --rpc-url http://127.0.0.1:8545
+# Use --threads to control CPU thread utilization (defaults to CPU count)
+python -m mining.cli.miner mine-blocks --address anim1test123 --count 5 --threads 4 --rpc-url http://127.0.0.1:8545
 
 The `mine-blocks` command mines N blocks via the node's RPC interface. This is useful for:
 - Testing and development environments
 - Advancing the chain to a specific height
 - Generating blocks on demand
+
+**Thread Configuration:**
+The `--threads` flag controls CPU thread utilization during mining:
+- Defaults to the total logical CPU count if not specified
+- Accepts any positive integer value
+- Example: `--threads 8` uses 8 CPU threads for mining
+
+**Dynamic Theta Adjustment:**
+During mining, the acceptance threshold Θ (theta) is dynamically adjusted based on:
+- Hash rate changes: Faster blocks → increase Θ (harder), slower blocks → decrease Θ (easier)
+- Block times: Uses EMA-based retargeting with configurable parameters
+- Network stress: Adapts to severe hash rate fluctuations automatically
+- Protocol constraints: Respects min/max bounds and per-step clamps
+
+This ensures efficient mining even under varying network conditions.
 
 **Miner Address Configuration:**
 
