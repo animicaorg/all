@@ -133,44 +133,69 @@ def _get_compose_file(network: str) -> Path:
 def status(
     rpc_url: Optional[str] = typer.Option(
         None, "--rpc-url", help="JSON-RPC endpoint", envvar=RPC_ENV
+    ),
+    retry_delay: float = typer.Option(
+        1.0, "--retry-delay", help="Delay between RPC retry attempts in seconds (default: 1.0)", envvar="ANIMICA_RETRY_DELAY"
     )
 ) -> None:
-    """Show chain head, block info and sync state."""
+    """Show chain head, block info and sync state. Retries indefinitely on RPC errors."""
     url = _resolve_rpc_url(rpc_url)
-    try:
-        head = asyncio.run(rpc_call("chain.getHead", [], rpc_url=url))
-        height = head.get("height") or head.get("number") or 0
-        chain_id = head.get("chainId") or head.get("chain_id")
-        head_hash = head.get("hash") or head.get("blockHash")
-    except Exception as e:
-        typer.echo(f"Error contacting RPC at {url}: {e}", err=True)
-        return
-
-    block = None
-    if height is not None:
+    
+    # Validate retry delay
+    if retry_delay <= 0:
+        typer.echo(f"Error: retry-delay must be greater than 0, got {retry_delay}", err=True)
+        raise typer.Exit(code=1)
+    
+    # Infinite retry loop for RPC operations
+    attempt = 0
+    while True:
+        attempt += 1
         try:
-            block = asyncio.run(
-                rpc_call("chain.getBlockByHeight", [height], rpc_url=url)
-            )
-        except Exception:
+            head = asyncio.run(rpc_call("chain.getHead", [], rpc_url=url))
+            height = head.get("height") or head.get("number") or 0
+            chain_id = head.get("chainId") or head.get("chain_id")
+            head_hash = head.get("hash") or head.get("blockHash")
+            
             block = None
+            if height is not None:
+                try:
+                    block = asyncio.run(
+                        rpc_call("chain.getBlockByHeight", [height], rpc_url=url)
+                    )
+                except Exception:
+                    block = None
 
-    sync_status = None
-    for method in ("node.syncStatus", "chain.syncing", "sync.isSyncing"):
-        try:
-            sync_status = asyncio.run(rpc_call(method, [], rpc_url=url))
-            break
-        except Exception:
-            continue
+            sync_status = None
+            for method in ("node.syncStatus", "chain.syncing", "sync.isSyncing"):
+                try:
+                    sync_status = asyncio.run(rpc_call(method, [], rpc_url=url))
+                    break
+                except Exception:
+                    continue
 
-    typer.echo(f"RPC URL: {url}")
-    typer.echo(f"Chain ID: {chain_id}")
-    typer.echo(f"Head height: {height}")
-    typer.echo(f"Head hash: {head_hash}")
-    typer.echo(f"Sync status: {sync_status}")
-    if block is not None:
-        typer.echo("Head block:")
-        typer.echo(_pretty(block))
+            typer.echo(f"RPC URL: {url}")
+            typer.echo(f"Chain ID: {chain_id}")
+            typer.echo(f"Head height: {height}")
+            typer.echo(f"Head hash: {head_hash}")
+            typer.echo(f"Sync status: {sync_status}")
+            if block is not None:
+                typer.echo("Head block:")
+                typer.echo(_pretty(block))
+            
+            # Success - exit the retry loop
+            return
+            
+        except Exception as e:
+            # RPC error - retry indefinitely
+            import time
+            from datetime import datetime
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            typer.echo(
+                f"[{timestamp}] Retrying node status query due to RPC error (attempt {attempt}): {e}. Retrying in {retry_delay:.1f}s...",
+                err=True
+            )
+            time.sleep(retry_delay)
+            continue  # Retry indefinitely
 
 
 @app.command()
