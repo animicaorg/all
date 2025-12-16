@@ -1,11 +1,13 @@
 # Animica L1 Blockchain
 
-**Animica** is a layer-1 blockchain platform for verifiable AI and quantum-secure execution. This repository houses the complete blockchain node implementation, consensus engine, execution layer, cryptographic infrastructure, wallets, SDKs, developer tooling, and supporting services for running and extending the network.
+**Animica** is a fully decentralized layer-1 blockchain platform for verifiable AI and quantum-secure execution. This repository houses the complete blockchain node implementation, consensus engine, execution layer, cryptographic infrastructure, wallets, SDKs, developer tooling, and supporting services for running and extending the network.
 
 ## 🌟 Key Features
 
+- **Fully Decentralized P2P Network**: Gossip-based peer discovery and communication with no central authority
 - **Post-Quantum Cryptography**: Dilithium3 (ML-DSA-65) and SPHINCS+ signatures for quantum-resistant security
 - **PoIES Consensus**: Proof-of-Integrated-External-Services combining hash-share work with AI/Quantum/Storage proofs
+- **Multiple Transport Protocols**: TCP, QUIC, and WebSocket with end-to-end encryption
 - **Python-VM Execution**: Deterministic Python-based smart contracts with gas metering
 - **AI & Quantum Integration**: Off-chain compute coordination via AICF (AI Capability Framework)
 - **Multi-Network Support**: Mainnet, testnet, devnet configurations with isolated state
@@ -16,6 +18,8 @@
 This monorepo contains:
 
 - **Core Protocol**: `core/`, `consensus/`, `execution/`, `mempool/`, `rpc/`, `p2p/`, `mining/`
+  - **P2P Network** (`p2p/`): Full peer-to-peer networking with quantum-resistant handshake, gossip protocol, and multi-transport support
+  - **Consensus** (`consensus/`): PoIES algorithm for decentralized block validation
 - **Cryptography & Proofs**: `proofs/`, `zk/`, `pq/`, `randomness/`
 - **Wallets & Explorer**: `wallet/` (Flutter), `wallet-extension/` (browser extension), `explorer-web/`
 - **Studio & Tooling**: `studio-web/`, `studio-wasm/`, `studio-services/`, `templates/`
@@ -23,6 +27,17 @@ This monorepo contains:
 - **Operations**: `ops/`, `tests/devnet/`, `installers/`, `chains/` (network metadata)
 
 Each module has its own README with detailed information. See the Copilot instructions at the bottom of this file for coding guidelines.
+
+## 🌐 Decentralized Architecture
+
+**Animica is a fully peer-to-peer network** where nodes communicate directly without relying on central servers:
+
+- ✅ **Peer Discovery**: Automatic discovery via DNS seeds, mDNS, and Kademlia DHT
+- ✅ **Gossip Protocol**: Efficient block/transaction/proof propagation
+- ✅ **Consensus**: Deterministic PoIES validation by all nodes
+- ✅ **No Central Authority**: Public RPC nodes like `rpc.animica.org` are simply participants, not controllers
+
+**Run your own node** to strengthen the network and maintain decentralization. See [P2P Networking Guide](docs/P2P_NETWORKING_GUIDE.md) for details.
 
 ## 📋 Prerequisites
 
@@ -176,6 +191,57 @@ Each network uses its own data directory to prevent state contamination:
 - `ANIMICA_NETWORK`: Active network name (mainnet, testnet, devnet, local-devnet)
 - `ANIMICA_RPC_URL`: Override default RPC endpoint
 - `ANIMICA_CHAIN_ID`: Override default chain ID
+
+## 🌐 Decentralized P2P Network
+
+**Animica is fully decentralized** - nodes connect directly to each other via P2P without any central authority. The public RPC at `rpc.animica.org` is simply one node among many, not a central server.
+
+### P2P Features
+
+- ✅ **Automatic Peer Discovery**: DNS seeds, mDNS, Kademlia DHT
+- ✅ **Quantum-Resistant**: Kyber-768 + Dilithium3 post-quantum crypto
+- ✅ **Multi-Transport**: TCP, QUIC, WebSocket support
+- ✅ **Gossip Protocol**: Efficient block/tx/proof propagation
+- ✅ **Consensus**: Independent PoIES validation by all nodes
+
+### Quick P2P Test
+
+Verify your node connects to the decentralized network:
+
+```bash
+# Start a node
+animica node up
+
+# Check connected peers (should show 8-16 peers)
+animica peer list
+
+# Or via RPC
+curl http://localhost:8545/rpc -H 'content-type: application/json' -d '{
+  "jsonrpc":"2.0","id":1,"method":"p2p.listPeers","params":[]
+}' | jq .
+```
+
+### P2P Configuration
+
+```bash
+# P2P is enabled by default
+export ANIMICA_P2P_ENABLE=true
+
+# Set listen addresses (for public nodes)
+export ANIMICA_P2P_LISTEN_TCP=0.0.0.0:30333
+export ANIMICA_P2P_LISTEN_QUIC=0.0.0.0:443
+
+# Set max peers
+export ANIMICA_P2P_MAX_PEERS=64
+
+# Use custom seeds
+export ANIMICA_P2P_SEEDS="/dns4/my-seed.com/tcp/30333"
+```
+
+### Documentation
+
+- **[P2P Networking Guide](docs/P2P_NETWORKING_GUIDE.md)** - Complete P2P architecture and troubleshooting
+- **[Multi-Node Docker Setup](docs/MULTI_NODE_DOCKER_SETUP.md)** - Test multi-node networks locally
 
 ## 🖥️ Node Operations
 
