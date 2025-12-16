@@ -1997,31 +1997,32 @@ def _mine_once(payout_address: bytes | None = None, threads: int = 1) -> tuple[b
     reward_amount = 0
     
     # Helper function to search a range of nonces in a worker thread
-    def _search_nonce_range(start: int, end: int) -> tuple[int, bytes, int] | None:
+    # Pass header_template and target as parameters for thread safety
+    def _search_nonce_range(start: int, end: int, template: Header, target_val: int) -> tuple[int, bytes, int] | None:
         """Search for valid nonce in the given range. Returns (nonce, hash_bytes, hash_int) if found, None otherwise."""
         for nonce_val in range(start, end):
             # Update header with new nonce
             try:
-                header = replace(header_template, nonce=nonce_val)
+                header = replace(template, nonce=nonce_val)
             except Exception:
                 # Fallback if replace not available
                 header = Header(
-                    v=header_template.v,
-                    chainId=header_template.chainId,
-                    height=header_template.height,
-                    parentHash=header_template.parentHash,
-                    timestamp=header_template.timestamp,
-                    stateRoot=header_template.stateRoot,
-                    txsRoot=header_template.txsRoot,
-                    receiptsRoot=header_template.receiptsRoot,
-                    proofsRoot=header_template.proofsRoot,
-                    daRoot=header_template.daRoot,
-                    mixSeed=header_template.mixSeed,
-                    poiesPolicyRoot=header_template.poiesPolicyRoot,
-                    pqAlgPolicyRoot=header_template.pqAlgPolicyRoot,
-                    thetaMicro=header_template.thetaMicro,
+                    v=template.v,
+                    chainId=template.chainId,
+                    height=template.height,
+                    parentHash=template.parentHash,
+                    timestamp=template.timestamp,
+                    stateRoot=template.stateRoot,
+                    txsRoot=template.txsRoot,
+                    receiptsRoot=template.receiptsRoot,
+                    proofsRoot=template.proofsRoot,
+                    daRoot=template.daRoot,
+                    mixSeed=template.mixSeed,
+                    poiesPolicyRoot=template.poiesPolicyRoot,
+                    pqAlgPolicyRoot=template.pqAlgPolicyRoot,
+                    thetaMicro=template.thetaMicro,
                     nonce=nonce_val,
-                    extra=header_template.extra,
+                    extra=template.extra,
                 )
             
             # Compute block hash
@@ -2029,31 +2030,34 @@ def _mine_once(payout_address: bytes | None = None, threads: int = 1) -> tuple[b
             block_hash_int = int.from_bytes(block_hash_bytes, "big")
             
             # Check if hash meets target
-            if block_hash_int <= target:
+            if block_hash_int <= target_val:
                 return (nonce_val, block_hash_bytes, block_hash_int)
         
         return None
     
     # Perform nonce search (single-threaded or multi-threaded based on threads parameter)
+    # Import concurrent.futures at top for better performance in multi-threaded scenarios
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    
     valid_nonce = None
     block_hash_bytes = None
     block_hash_int = None
     
     if threads <= 1:
         # Single-threaded search
-        result = _search_nonce_range(0, max_nonce)
+        result = _search_nonce_range(0, max_nonce, header_template, target)
         if result:
             valid_nonce, block_hash_bytes, block_hash_int = result
     else:
         # Multi-threaded search: divide nonce space among threads
-        from concurrent.futures import ThreadPoolExecutor, as_completed
-        
         # Divide nonce space into chunks for each thread
+        # Ensure last thread handles any remainder nonces
         chunk_size = max(1, max_nonce // threads)
         ranges = []
         for i in range(threads):
             start = i * chunk_size
-            end = min((i + 1) * chunk_size, max_nonce)
+            # Last thread gets all remaining nonces to handle remainder
+            end = max_nonce if i == threads - 1 else min((i + 1) * chunk_size, max_nonce)
             if start < max_nonce:
                 ranges.append((start, end))
         
@@ -2061,7 +2065,7 @@ def _mine_once(payout_address: bytes | None = None, threads: int = 1) -> tuple[b
         
         # Submit work to thread pool and wait for first valid nonce
         with ThreadPoolExecutor(max_workers=threads) as executor:
-            futures = {executor.submit(_search_nonce_range, start, end): (start, end) for start, end in ranges}
+            futures = {executor.submit(_search_nonce_range, start, end, header_template, target): (start, end) for start, end in ranges}
             
             # Wait for first successful result
             for future in as_completed(futures):
