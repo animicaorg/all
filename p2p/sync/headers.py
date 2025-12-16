@@ -103,6 +103,7 @@ class HeaderSyncConfig:
     idle_backoff_sec: float = 1.0  # when no headers received
     locator_max_steps: int = 32  # number of entries in the locator (exp backoff)
     sanity_parent_required: bool = True  # require first header's parent to be known
+    enable_checkpoints: bool = True  # enable checkpoint verification during sync
 
 
 class HeaderSync:
@@ -115,12 +116,18 @@ class HeaderSync:
       3) Pre-check each header via ConsensusView (schedule/policy roots).
       4) Persist the contiguous tail whose ancestry is known (or fully included).
       5) If the returned branch is better, switch the canonical head.
+      6) (Optional) Verify against checkpoints when enabled (Model 3).
 
     Fork handling:
       - If the batch's first header parent is unknown, we tighten the locator
         (walk further back) next round until we intersect.
       - We bound reorgs with `max_reorg_depth`; deeper forks will only be
         adopted once an ancestor within that bound is known.
+    
+    Checkpoints (Model 3):
+      - If enabled, verifies blocks at checkpoint heights match expected hashes
+      - Used as safety rail during initial sync and fork choice
+      - Checkpoints are optional and configured via environment variables
     """
 
     def __init__(
@@ -129,14 +136,23 @@ class HeaderSync:
         fetcher: HeaderFetcher,
         consensus: ConsensusView,
         config: Optional[HeaderSyncConfig] = None,
+        checkpoint_verifier: Optional[Any] = None,
     ) -> None:
         self.chain = chain
         self.fetcher = fetcher
         self.consensus = consensus
         self.cfg = config or HeaderSyncConfig()
+        self.checkpoint_verifier = checkpoint_verifier
         self._stop = asyncio.Event()
         self.stats = SyncStats(started_at=time.time(), last_progress_at=time.time())
         self._log = logging.getLogger("animica.p2p.sync.headers")
+        
+        # Log checkpoint status
+        if self.checkpoint_verifier and hasattr(self.checkpoint_verifier, 'has_checkpoints'):
+            if self.checkpoint_verifier.has_checkpoints():
+                self._log.info("Checkpoint verification enabled for header sync")
+            else:
+                self._log.debug("Checkpoint verifier present but no checkpoints loaded")
 
     # ---------------------------
     # Public control surface
@@ -279,10 +295,22 @@ class HeaderSync:
         current_head_obj = await self.chain.get_header(head_hash)
         if current_head_obj is None:
             # Extremely unlikely (head must exist), but be defensive.
+            # Check checkpoint before setting canonical head
+            if not await self._verify_checkpoint_if_enabled(last):
+                self._log.error(
+                    f"Checkpoint verification failed for header at height {height_of(last)}"
+                )
+                return False
             await self.chain.set_canonical_head(last.hash)
             return True
 
         if await self.chain.is_better_tip(last, current_head_obj):
+            # Check checkpoint before adopting new best tip (fork choice)
+            if not await self._verify_checkpoint_if_enabled(last):
+                self._log.error(
+                    f"Checkpoint verification failed during fork choice at height {height_of(last)}"
+                )
+                return False
             await self.chain.set_canonical_head(last.hash)
             return True
 
@@ -338,6 +366,56 @@ class HeaderSync:
                 # We know the hash of the parent, but not the header body (e.g., pruned or not yet persisted).
                 return parent if _ == steps - 1 else None
         return getattr(cur, "hash", None)
+    
+    async def _verify_checkpoint_if_enabled(self, header: HeaderLike) -> bool:
+        """
+        Verify header against checkpoint if checkpoints are enabled.
+        
+        Returns True if:
+        - Checkpoints disabled
+        - No checkpoint at this height
+        - Checkpoint matches
+        
+        Returns False if checkpoint verification fails.
+        """
+        if not self.cfg.enable_checkpoints or self.checkpoint_verifier is None:
+            return True
+        
+        if not hasattr(self.checkpoint_verifier, 'has_checkpoints'):
+            return True
+        
+        if not self.checkpoint_verifier.has_checkpoints():
+            return True
+        
+        # Get height and hash from header
+        h_height = height_of(header)
+        if h_height is None:
+            # Can't verify without height
+            return True
+        
+        h_hash = getattr(header, "hash", None)
+        if h_hash is None:
+            return True
+        
+        # Convert hash to hex string for verification
+        if isinstance(h_hash, bytes):
+            h_hash_str = "0x" + h_hash.hex()
+        else:
+            h_hash_str = str(h_hash)
+        
+        # Use a mock chain view since we're verifying a single block
+        class _HeaderChainView:
+            pass
+        
+        try:
+            is_valid, error = await self.checkpoint_verifier.verify_block(
+                _HeaderChainView(), h_height, h_hash_str
+            )
+            return is_valid
+        except Exception as e:
+            self._log.warning(f"Checkpoint verification error: {e}")
+            # On error, be permissive (return True) unless strict mode would handle this
+            return True
 
 
 # ---------------------------
