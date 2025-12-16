@@ -131,6 +131,7 @@ export function useNetworkManager(opts?: {
       cleanup(); // ensure clean start
       if (!rpcUrl) {
         setStatus('disconnected');
+        setErrMsg('No RPC URL configured');
         return;
       }
 
@@ -152,18 +153,41 @@ export function useNetworkManager(opts?: {
           console.log('[network] Fetching chain ID...');
           actualChainId = await client.getChainId();
           console.log('[network] Chain ID:', actualChainId);
-        } catch (e) {
+        } catch (e: any) {
           console.warn('[network] Failed to fetch chain ID:', e);
-          // Some nodes expose chain id via a generic 'status' or 'head' call; fallback:
+          
+          // Provide detailed error message
+          const errorMsg = e?.message || String(e);
+          const detailedMsg = `Failed to fetch chain ID from ${rpcUrl}: ${errorMsg}`;
+          
+          // If we can't get chain ID, this is a critical error
+          if (enforceChainId && expectedChainId) {
+            setStatus('error');
+            setErrMsg(detailedMsg);
+            setNetwork({ connected: false });
+            addToast({ 
+              kind: 'error', 
+              text: `${detailedMsg}\n\n💡 Check:\n• RPC server is running\n• CORS is enabled\n• Network connectivity`, 
+              ttl: 10000 
+            });
+            return;
+          }
+          
+          // Fallback if chain ID validation is not enforced
           actualChainId = expectedChainId || '';
         }
 
         if (enforceChainId && expectedChainId && actualChainId && expectedChainId !== actualChainId) {
           const msg = `Chain ID mismatch: expected ${expectedChainId}, got ${actualChainId}`;
+          console.error('[network]', msg);
           setStatus('error');
           setErrMsg(msg);
           setNetwork({ connected: false });
-          addToast({ kind: 'error', text: msg });
+          addToast({ 
+            kind: 'error', 
+            text: `${msg}\n\n💡 Update VITE_CHAIN_ID in your .env.local to match the node's chain ID`, 
+            ttl: 10000 
+          });
           // Do not proceed further
           return;
         }
@@ -176,30 +200,57 @@ export function useNetworkManager(opts?: {
             console.log('[network] Initial head:', head);
             setHead(head);
           }
-        } catch (e) {
+        } catch (e: any) {
           console.warn('[network] Failed to fetch initial head:', e);
           // Non-fatal; we'll rely on subsequent updates
+          // But log a warning for the user
+          const errorMsg = e?.message || String(e);
+          console.warn('[network] Could not fetch initial head:', errorMsg);
         }
 
         // WS subscribe if available, else poll
         if (typeof client.subscribeNewHeads === 'function') {
-          const sub = client.subscribeNewHeads!((h) => {
-            setHead(h);
-          });
-          runtime.current.stopFns.push(() => {
-            try {
-              sub.unsubscribe();
-            } catch {
-              // ignore
-            }
-          });
+          try {
+            const sub = client.subscribeNewHeads!((h) => {
+              if (!cancelled) {
+                setHead(h);
+              }
+            });
+            runtime.current.stopFns.push(() => {
+              try {
+                sub.unsubscribe();
+              } catch (e) {
+                console.debug('[network] Error during unsubscribe:', e);
+              }
+            });
+            console.log('[network] WebSocket subscription established');
+          } catch (e: any) {
+            console.warn('[network] Failed to establish WebSocket subscription, falling back to polling:', e);
+            // Fall back to polling
+            const pollId = window.setInterval(async () => {
+              if (cancelled) return;
+              try {
+                const h = await client.getHead();
+                if (!cancelled) {
+                  setHead(h);
+                }
+              } catch (pollError) {
+                console.debug('[network] Head poll error:', pollError);
+              }
+            }, pollIntervalMs);
+            runtime.current.stopFns.push(() => window.clearInterval(pollId));
+          }
         } else {
+          console.log('[network] No WebSocket support, using HTTP polling');
           const pollId = window.setInterval(async () => {
+            if (cancelled) return;
             try {
               const h = await client.getHead();
-              setHead(h);
-            } catch {
-              // ignore transient errors
+              if (!cancelled) {
+                setHead(h);
+              }
+            } catch (pollError) {
+              console.debug('[network] Head poll error:', pollError);
             }
           }, pollIntervalMs);
           runtime.current.stopFns.push(() => window.clearInterval(pollId));
@@ -207,6 +258,7 @@ export function useNetworkManager(opts?: {
 
         // Latency sampler
         const pingTick = async () => {
+          if (cancelled) return;
           try {
             const start = performance.now();
             if (client.ping) {
@@ -226,13 +278,17 @@ export function useNetworkManager(opts?: {
               }).catch(() => undefined);
             }
             const ms = Math.max(0, Math.round(performance.now() - start));
-            setLatencyMs(ms);
+            if (!cancelled) {
+              setLatencyMs(ms);
+            }
           } catch {
-            setLatencyMs(null);
+            if (!cancelled) {
+              setLatencyMs(null);
+            }
           }
         };
         // Prime & schedule
-        pingTick();
+        pingTick().catch(() => {/* ignore */});
         const pingId = window.setInterval(pingTick, pingIntervalMs);
         runtime.current.stopFns.push(() => window.clearInterval(pingId));
 
@@ -241,18 +297,47 @@ export function useNetworkManager(opts?: {
         console.log('[network] Connection established successfully');
       } catch (e: any) {
         if (cancelled) return;
-        const msg = `Failed to connect to RPC at ${rpcUrl}: ${e?.message || String(e)}`;
+        
+        // Categorize and provide detailed error message
+        const errorName = e?.name || 'Error';
+        const errorMsg = e?.message || String(e);
+        
+        let userMessage = `Failed to connect to RPC server`;
+        let troubleshooting = '';
+        
+        if (errorName === 'NetworkError' || errorMsg.includes('fetch failed') || errorMsg.includes('network')) {
+          userMessage = `Network error: Unable to reach RPC server at ${rpcUrl}`;
+          troubleshooting = '\n\n💡 Troubleshooting:\n• Check that the RPC server is running\n• Verify the URL is correct\n• Ensure your internet connection is stable\n• Check firewall settings';
+        } else if (errorMsg.includes('CORS')) {
+          userMessage = `CORS error: RPC server at ${rpcUrl} is blocking this origin`;
+          troubleshooting = '\n\n💡 The RPC server needs to allow requests from this origin.\nCheck the server\'s CORS configuration.';
+        } else if (errorMsg.includes('timeout') || errorMsg.includes('timed out')) {
+          userMessage = `Timeout: RPC server at ${rpcUrl} is not responding`;
+          troubleshooting = '\n\n💡 The server may be slow or overloaded.\nTry again in a few moments.';
+        } else {
+          userMessage = `Connection failed: ${errorMsg}`;
+          troubleshooting = `\n\nRPC URL: ${rpcUrl}\nChain ID: ${expectedChainId || 'not configured'}`;
+        }
+        
         console.error('[network] Connection error:', e);
         console.error('[network] RPC URL:', rpcUrl);
         console.error('[network] Expected Chain ID:', expectedChainId);
+        console.error('[network] Error details:', { name: errorName, message: errorMsg, stack: e?.stack });
+        
         setStatus('error');
-        setErrMsg(msg);
+        setErrMsg(userMessage);
         setNetwork({ connected: false });
-        addToast({ kind: 'error', text: msg, ttl: 8000 });
+        addToast({ kind: 'error', text: userMessage + troubleshooting, ttl: 12000 });
       }
     }
 
-    boot();
+    boot().catch((e) => {
+      if (!cancelled) {
+        console.error('[network] Unexpected error in boot():', e);
+        setStatus('error');
+        setErrMsg(`Unexpected error: ${e?.message || String(e)}`);
+      }
+    });
 
     return () => {
       cancelled = true;
