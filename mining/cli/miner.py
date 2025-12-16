@@ -15,6 +15,7 @@ Usage:
 
   python -m mining.cli.miner mine-blocks --address ADDR --count N [--threads N]
                                           [--rpc-url URL] [--log-level LEVEL]
+                                          [--retry-delay SECONDS]
 
 Commands:
   start       - Start the continuous miner (orchestrator)
@@ -25,6 +26,8 @@ a config, initializes the device backend, and runs the orchestrator until interr
 
 The 'mine-blocks' command mines N blocks via the node's RPC interface, with block
 rewards credited to the specified address. This is useful for testing and development.
+RPC operations retry indefinitely on network errors with configurable delay between
+attempts (default: 1.0 second).
 
 Examples:
   # Start the miner
@@ -32,6 +35,16 @@ Examples:
 
   # Mine 5 blocks for testing with 4 threads
   python -m mining.cli.miner mine-blocks --address anim1test123 --count 5 --threads 4
+  
+  # Mine blocks with custom retry delay (2.5 seconds between retries)
+  python -m mining.cli.miner mine-blocks --address anim1test123 --count 3 --retry-delay 2.5
+
+Retry Behavior:
+  - The 'mine-blocks' command retries RPC operations indefinitely on connection/network errors
+  - Each retry is logged with a timestamp and the error reason
+  - Configure retry delay with --retry-delay (default: 1.0 second)
+  - Non-retriable errors (e.g., invalid parameters) exit immediately
+  - Set ANIMICA_RETRY_DELAY environment variable for default retry delay
 
 Signals:
   - SIGINT/SIGTERM: graceful shutdown (start command).
@@ -220,6 +233,12 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         default=_env_default("ANIMICA_LOG_LEVEL", "info"),
         help="logging level (debug, info, warning, error)",
     )
+    mine_blocks.add_argument(
+        "--retry-delay",
+        type=float,
+        default=float(_env_default("ANIMICA_RETRY_DELAY", "1.0")),
+        help="delay between RPC retry attempts in seconds (default: 1.0)",
+    )
 
     return p
 
@@ -323,6 +342,11 @@ async def _run_mine_blocks(args: argparse.Namespace, log: logging.Logger) -> int
     if not args.address or not args.address.strip():
         log.error("address is required")
         return 2
+    
+    # Validate retry delay
+    if args.retry_delay <= 0:
+        log.error("retry-delay must be greater than 0, got %.3f", args.retry_delay)
+        return 2
 
     # Lazy import RpcClient to avoid import errors during test collection
     rpc_client = None
@@ -344,123 +368,153 @@ async def _run_mine_blocks(args: argparse.Namespace, log: logging.Logger) -> int
         return 3
 
     log.info(
-        "Mining %d block(s) with payout to address %s via RPC %s (threads=%d)",
+        "Mining %d block(s) with payout to address %s via RPC %s (threads=%d, retry_delay=%.1fs)",
         args.count,
         args.address,
         args.rpc_url,
         args.threads,
+        args.retry_delay,
     )
 
     # JSON-RPC error code constant for invalid params (JSON-RPC 2.0 spec)
     JSONRPC_INVALID_PARAMS = -32602
     
+    # Import RpcError for proper exception handling
     try:
-        # Import RpcError for proper exception handling
+        from omni_sdk.errors import RpcError, JsonRpcCode
+    except ImportError:
+        # Fallback if SDK not available or older version
+        RpcError = None  # type: ignore
+        JsonRpcCode = None  # type: ignore
+    
+    # Infinite retry loop for RPC operations
+    attempt = 0
+    while True:
+        attempt += 1
         try:
-            from omni_sdk.errors import RpcError, JsonRpcCode
-        except ImportError:
-            # Fallback if SDK not available or older version
-            RpcError = None  # type: ignore
-            JsonRpcCode = None  # type: ignore
-        
-        with rpc_client(args.rpc_url, timeout=30.0) as client:
-            # Call miner.mine RPC method with address and threads parameters
-            # For backward compatibility, try with full params first, fall back if not supported
-            try:
-                result = client.request("miner.mine", {
-                    "count": args.count,
-                    "address": args.address,
-                    "threads": args.threads
-                })
-            except Exception as e:
-                # If the RPC rejects params (older node), try with just count and address
-                # Check for INVALID_PARAMS error code (preferred) or param names in error message (fallback)
-                # String matching is only used as last resort for compatibility with older SDK versions
-                is_param_error = False
-                if RpcError is not None and isinstance(e, RpcError):
-                    # Preferred: Use structured error code
-                    is_param_error = (
-                        e.code == JsonRpcCode.INVALID_PARAMS if JsonRpcCode else e.code == JSONRPC_INVALID_PARAMS
-                    )
-                elif "threads" in str(e).lower() or "address" in str(e).lower() or "unexpected" in str(e).lower():
-                    # Fallback: String matching for older SDK versions
-                    is_param_error = True
-                
-                if is_param_error:
-                    # Try without threads parameter (node doesn't support it yet)
-                    try:
-                        result = client.request("miner.mine", {"count": args.count, "address": args.address})
-                    except Exception as e2:
-                        # Still failing, try legacy format without address
-                        is_param_error2 = False
-                        if RpcError is not None and isinstance(e2, RpcError):
-                            is_param_error2 = (
-                                e2.code == JsonRpcCode.INVALID_PARAMS if JsonRpcCode else e2.code == JSONRPC_INVALID_PARAMS
-                            )
-                        elif "address" in str(e2).lower() or "unexpected" in str(e2).lower():
-                            is_param_error2 = True
-                        
-                        if is_param_error2:
-                            log.warning(
-                                "Node does not support payout address or threads (older version). "
-                                "Mining to node's default miner address with default threads."
-                            )
-                            result = client.request("miner.mine", [args.count])
-                        else:
-                            raise
-                else:
-                    raise
+            with rpc_client(args.rpc_url, timeout=30.0) as client:
+                # Call miner.mine RPC method with address and threads parameters
+                # For backward compatibility, try with full params first, fall back if not supported
+                try:
+                    result = client.request("miner.mine", {
+                        "count": args.count,
+                        "address": args.address,
+                        "threads": args.threads
+                    })
+                except Exception as e:
+                    # If the RPC rejects params (older node), try with just count and address
+                    # Check for INVALID_PARAMS error code (preferred) or param names in error message (fallback)
+                    # String matching is only used as last resort for compatibility with older SDK versions
+                    is_param_error = False
+                    if RpcError is not None and isinstance(e, RpcError):
+                        # Preferred: Use structured error code
+                        is_param_error = (
+                            e.code == JsonRpcCode.INVALID_PARAMS if JsonRpcCode else e.code == JSONRPC_INVALID_PARAMS
+                        )
+                    elif "threads" in str(e).lower() or "address" in str(e).lower() or "unexpected" in str(e).lower():
+                        # Fallback: String matching for older SDK versions
+                        is_param_error = True
+                    
+                    if is_param_error:
+                        # Try without threads parameter (node doesn't support it yet)
+                        try:
+                            result = client.request("miner.mine", {"count": args.count, "address": args.address})
+                        except Exception as e2:
+                            # Still failing, try legacy format without address
+                            is_param_error2 = False
+                            if RpcError is not None and isinstance(e2, RpcError):
+                                is_param_error2 = (
+                                    e2.code == JsonRpcCode.INVALID_PARAMS if JsonRpcCode else e2.code == JSONRPC_INVALID_PARAMS
+                                )
+                            elif "address" in str(e2).lower() or "unexpected" in str(e2).lower():
+                                is_param_error2 = True
+                            
+                            if is_param_error2:
+                                log.warning(
+                                    "Node does not support payout address or threads (older version). "
+                                    "Mining to node's default miner address with default threads."
+                                )
+                                result = client.request("miner.mine", [args.count])
+                            else:
+                                raise
+                    else:
+                        raise
 
-            mined = result.get("mined", 0)
-            height = result.get("height", 0)
-            total_reward = result.get("totalReward", 0)
-            rewards_list = result.get("rewards", [])
+                mined = result.get("mined", 0)
+                height = result.get("height", 0)
+                total_reward = result.get("totalReward", 0)
+                rewards_list = result.get("rewards", [])
 
-            if mined == 0:
-                log.warning("No blocks were mined (may have failed)")
-                return 4
-            elif mined < args.count:
-                log.warning(
-                    "Only %d of %d requested blocks were mined",
-                    mined,
-                    args.count,
-                )
-
-            # Display per-block rewards
-            if rewards_list:
-                for i, reward_info in enumerate(rewards_list, 1):
-                    block_height = reward_info.get("height", "?")
-                    block_reward = reward_info.get("reward", 0)
-                    # Convert nANM to ANM for display (1 ANM = 10^9 nANM)
-                    reward_anm = block_reward / 1_000_000_000
-                    log.info(
-                        "Block %d/%d mined (height %s, reward %.9f ANM = %d nANM)",
-                        i,
+                if mined == 0:
+                    log.warning("No blocks were mined (may have failed)")
+                    return 4
+                elif mined < args.count:
+                    log.warning(
+                        "Only %d of %d requested blocks were mined",
                         mined,
-                        block_height,
-                        reward_anm,
-                        block_reward,
+                        args.count,
                     )
-            
-            # Display total reward summary
-            total_reward_anm = total_reward / 1_000_000_000
-            log.info(
-                "Successfully mined %d block(s). New chain height: %d. Total reward: %.9f ANM (%d nANM)",
-                mined,
-                height,
-                total_reward_anm,
-                total_reward,
-            )
-            return 0
 
-    except (RuntimeError, ConnectionError, OSError, TimeoutError) as e:
-        # Network/connection/timeout errors
-        log.error("Failed to connect to RPC: %s", e)
-        return 5
-    except Exception as e:
-        # Catch-all for unexpected errors (e.g., RpcError, KeyError)
-        log.exception("Failed to mine blocks via RPC: %s", e)
-        return 5
+                # Display per-block rewards
+                if rewards_list:
+                    for i, reward_info in enumerate(rewards_list, 1):
+                        block_height = reward_info.get("height", "?")
+                        block_reward = reward_info.get("reward", 0)
+                        # Convert nANM to ANM for display (1 ANM = 10^9 nANM)
+                        reward_anm = block_reward / 1_000_000_000
+                        log.info(
+                            "Block %d/%d mined (height %s, reward %.9f ANM = %d nANM)",
+                            i,
+                            mined,
+                            block_height,
+                            reward_anm,
+                            block_reward,
+                        )
+                
+                # Display total reward summary
+                total_reward_anm = total_reward / 1_000_000_000
+                log.info(
+                    "Successfully mined %d block(s). New chain height: %d. Total reward: %.9f ANM (%d nANM)",
+                    mined,
+                    height,
+                    total_reward_anm,
+                    total_reward,
+                )
+                return 0
+
+        except (RuntimeError, ConnectionError, OSError, TimeoutError) as e:
+            # Network/connection/timeout errors - retry indefinitely
+            from datetime import datetime
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            log.warning(
+                "[%s] Retrying mining operation due to RPC error (attempt %d): %s. Retrying in %.1fs...",
+                timestamp,
+                attempt,
+                e,
+                args.retry_delay,
+            )
+            await asyncio.sleep(args.retry_delay)
+            continue  # Retry indefinitely
+        except Exception as e:
+            # Non-retriable errors (e.g., invalid params, application logic errors)
+            # Check if this is a non-retriable RPC error
+            if RpcError is not None and isinstance(e, RpcError):
+                # RpcError from the server indicates an application error, not a network issue
+                log.exception("Failed to mine blocks via RPC (non-retriable): %s", e)
+                return 5
+            else:
+                # Unknown exception - also retry (could be network-related)
+                from datetime import datetime
+                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                log.warning(
+                    "[%s] Retrying mining operation due to unexpected error (attempt %d): %s. Retrying in %.1fs...",
+                    timestamp,
+                    attempt,
+                    e,
+                    args.retry_delay,
+                )
+                await asyncio.sleep(args.retry_delay)
+                continue  # Retry indefinitely
 
 
 async def _amain(argv: list[str]) -> int:

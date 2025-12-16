@@ -171,13 +171,32 @@ Node Management & Network Selection
   animica node down
   animica node down --volumes     # Also delete blockchain data (DESTRUCTIVE)
 
-  # Check node status
+  # Check node status (retries indefinitely on RPC errors)
+  animica node status
+  
+  # Check node status with custom retry delay
+  animica node status --retry-delay 2.5  # 2.5 seconds between retries
+  
+  # Set default retry delay via environment variable
+  export ANIMICA_RETRY_DELAY=2.0
   animica node status
 
   # View node logs
   # The exact compose file path depends on the active network
   animica network get  # Shows which network is active
   docker compose -f <compose-file> logs -f
+
+Retry Behavior
+--------------
+  The following commands retry indefinitely on RPC connection/network errors:
+  - animica node status: Retries RPC calls until the node is reachable
+  - animica miner mine-blocks: Retries mining operations until successful
+  
+  Configuration:
+  - Default retry delay: 1.0 second
+  - Configure with --retry-delay flag or ANIMICA_RETRY_DELAY environment variable
+  - Each retry is logged with timestamp and error reason
+  - Non-retriable errors (e.g., invalid parameters) exit immediately
 
 Studio Services Management (Optional)
 --------------------------------------

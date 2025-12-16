@@ -195,3 +195,98 @@ class TestMineBlocksCommand:
         finally:
             sys.modules.pop('omni_sdk.rpc.http', None)
             sys.modules.pop('sdk.python.omni_sdk.rpc.http', None)
+
+    @pytest.mark.asyncio
+    async def test_mine_blocks_retries_on_connection_error(self):
+        """Test that mine-blocks retries indefinitely on connection errors."""
+        import sys
+        import asyncio
+        
+        # Track number of attempts
+        attempts = []
+        
+        class RetryableRpcClient:
+            def __init__(self, *args, **kwargs):
+                pass
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                pass
+            def request(self, method, params):
+                attempts.append(1)
+                # Fail twice, then succeed
+                if len(attempts) < 3:
+                    raise ConnectionError("Connection refused")
+                return {"mined": 2, "height": 102}
+        
+        mock_module = Mock()
+        mock_module.RpcClient = RetryableRpcClient
+        
+        sys.modules['omni_sdk.rpc.http'] = mock_module
+        sys.modules['sdk.python.omni_sdk.rpc.http'] = mock_module
+        
+        try:
+            result = await miner._amain([
+                "mine-blocks",
+                "--address", "anim1test123",
+                "--count", "2",
+                "--rpc-url", "http://127.0.0.1:8545",
+                "--retry-delay", "0.1"  # Fast retry for testing
+            ])
+            
+            # Should succeed after retries
+            assert result == 0
+            # Should have made 3 attempts (2 failures + 1 success)
+            assert len(attempts) == 3
+        finally:
+            sys.modules.pop('omni_sdk.rpc.http', None)
+            sys.modules.pop('sdk.python.omni_sdk.rpc.http', None)
+
+    @pytest.mark.asyncio
+    async def test_mine_blocks_accepts_retry_delay_parameter(self):
+        """Test that mine-blocks accepts and uses --retry-delay parameter."""
+        import sys
+        
+        class SuccessRpcClient:
+            def __init__(self, *args, **kwargs):
+                pass
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                pass
+            def request(self, method, params):
+                return {"mined": 1, "height": 101}
+        
+        mock_module = Mock()
+        mock_module.RpcClient = SuccessRpcClient
+        
+        sys.modules['omni_sdk.rpc.http'] = mock_module
+        sys.modules['sdk.python.omni_sdk.rpc.http'] = mock_module
+        
+        try:
+            result = await miner._amain([
+                "mine-blocks",
+                "--address", "anim1test123",
+                "--count", "1",
+                "--rpc-url", "http://127.0.0.1:8545",
+                "--retry-delay", "2.5"
+            ])
+            
+            assert result == 0
+        finally:
+            sys.modules.pop('omni_sdk.rpc.http', None)
+            sys.modules.pop('sdk.python.omni_sdk.rpc.http', None)
+
+    @pytest.mark.asyncio
+    async def test_mine_blocks_rejects_invalid_retry_delay(self):
+        """Test that mine-blocks rejects invalid retry delay values."""
+        result = await miner._amain([
+            "mine-blocks",
+            "--address", "anim1test123",
+            "--count", "1",
+            "--rpc-url", "http://127.0.0.1:8545",
+            "--retry-delay", "0"
+        ])
+        
+        # Should fail with error code
+        assert result != 0
