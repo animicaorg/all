@@ -1,10 +1,14 @@
-# Mining with RPC Proxy
+# Mining with RPC Proxy (DEPRECATED)
 
-This document describes the RPC proxy mechanism for mining operations in the Animica ecosystem.
+⚠️ **DEPRECATED**: This document describes a legacy proxy mechanism that is **disabled by default**.
+
+**For production**: Use P2P-first networking instead. See [P2P Sync Guide](p2p_sync.md).
 
 ## Overview
 
-The mining proxy feature enables nodes to validate mining operations against a trusted RPC endpoint (`https://rpc.animica.org/rpc`) as the source of truth, while maintaining the ability to fall back to local nodes for resilience. This ensures network-wide consistency while supporting decentralization and redundancy.
+The mining proxy feature was a legacy mechanism that forwarded mining operations to an external RPC endpoint. This approach is **no longer recommended** and is disabled by default in favor of decentralized P2P consensus.
+
+**Current behavior**: All nodes perform local validation via P2P networking by default.
 
 ## Key Features
 
