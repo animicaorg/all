@@ -260,6 +260,11 @@ def mine_blocks(
         help="Node JSON-RPC endpoint URL",
         envvar="ANIMICA_RPC_URL",
     ),
+    use_proxy: bool = typer.Option(
+        True,
+        "--use-proxy/--no-proxy",
+        help="Use proxy to validate against trusted RPC (rpc.animica.org)",
+    ),
     verbose: bool = typer.Option(
         False,
         "--verbose",
@@ -291,6 +296,14 @@ def mine_blocks(
     5. Credits the block reward to the payout address
     6. Removes included transactions from the mempool
     
+    Proxy Mode (default):
+      When --use-proxy is enabled (default), mining requests are validated against
+      the trusted RPC endpoint (rpc.animica.org) with automatic retry and fallback:
+      - Forwards requests to rpc.animica.org as source of truth
+      - Automatically retries on transient failures (3 attempts by default)
+      - Falls back to local node if trusted endpoint is unreachable
+      - Use --no-proxy to disable proxy and mine directly to specified RPC
+    
     Persistence:
       - Chain state is stored under ~/.animica/chain-{chain_id}/ by default
       - Use ANIMICA_RPC_DB_URI to specify a custom database location
@@ -301,7 +314,7 @@ def mine_blocks(
       - Higher theta means harder mining (lower target)
     
     Examples:
-        # Mine 5 blocks to a wallet label (positional form)
+        # Mine 5 blocks to a wallet label (uses proxy by default)
         animica miner mine-blocks --count 5 premine
         
         # Mine with --address option (backward compatible)
@@ -310,13 +323,19 @@ def mine_blocks(
         # Mine to a bech32 address with verbose output
         animica miner mine-blocks --count 10 --verbose anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz
         
-        # Mine with custom RPC endpoint
+        # Mine directly without proxy
+        animica miner mine-blocks --address premine --count 10 --no-proxy
+        
+        # Mine with custom RPC endpoint and proxy
         animica miner mine-blocks --address premine --count 10 --rpc-url http://localhost:8545
     
     Environment variables:
-        ANIMICA_RPC_URL          - Node RPC endpoint (default: http://127.0.0.1:8545/rpc)
-        ANIMICA_MINER_ADDRESS    - Default payout address if --address not specified
-        ANIMICA_MINER_MAX_NONCE  - Max nonce iterations per block (default: 100000)
+        ANIMICA_RPC_URL             - Node RPC endpoint (default: http://127.0.0.1:8545/rpc)
+        ANIMICA_TRUSTED_RPC_URL     - Trusted RPC for proxy (default: https://rpc.animica.org)
+        ANIMICA_MINER_ADDRESS       - Default payout address if --address not specified
+        ANIMICA_MINER_MAX_NONCE     - Max nonce iterations per block (default: 100000)
+        ANIMICA_PROXY_MAX_RETRIES   - Max proxy retries (default: 3)
+        ANIMICA_PROXY_RETRY_DELAY_MS - Delay between retries in ms (default: 1000)
     
     Note: For backward compatibility with older nodes, if the node doesn't support
     payout address selection, blocks will be mined to the node's default miner address.
@@ -367,6 +386,37 @@ def mine_blocks(
     # Resolve RPC URL
     url = rpc_url or os.environ.get("ANIMICA_RPC_URL") or load_network_config().rpc_url
     
+    # Initialize proxy if enabled
+    proxy = None
+    if use_proxy:
+        try:
+            import sys
+            # Add rpc module to path if needed
+            repo_root = Path(__file__).resolve().parents[3]
+            if str(repo_root) not in sys.path:
+                sys.path.insert(0, str(repo_root))
+            
+            from rpc.proxy import create_proxy, ProxyConfig
+            
+            proxy = create_proxy()
+            
+            typer.secho(
+                f"✓ Proxy mode enabled - validating against {proxy.config.trusted_rpc_url}",
+                fg=typer.colors.GREEN,
+            )
+            if verbose:
+                typer.echo(
+                    f"  Max retries: {proxy.config.max_retries}, "
+                    f"Retry delay: {proxy.config.retry_delay_ms}ms, "
+                    f"Timeout: {proxy.config.timeout_seconds}s"
+                )
+        except ImportError as e:
+            typer.secho(
+                f"Warning: Could not load proxy module ({e}). Mining directly to {url}",
+                fg=typer.colors.YELLOW,
+            )
+            proxy = None
+    
     # Try to import RPC client
     rpc_client = None
     try:
@@ -387,8 +437,9 @@ def mine_blocks(
         )
         raise typer.Exit(3)
     
+    mode_str = "with proxy validation" if proxy else "directly"
     typer.echo(
-        f"Mining {count} block(s) with payout to address {resolved_address} via RPC {url}"
+        f"Mining {count} block(s) {mode_str} with payout to address {resolved_address} via RPC {url}"
     )
     
     # Import time for sleep between blocks
@@ -422,8 +473,28 @@ def mine_blocks(
             for i in range(count):
                 # Call miner.mine RPC method with address parameter (mine 1 block at a time)
                 # For backward compatibility, try with address first, fall back if not supported
+                
+                # Define mining function for proxy fallback
+                def mine_via_local():
+                    """Fallback: mine directly via local RPC."""
+                    if verbose:
+                        typer.echo(f"  [Fallback] Mining via local RPC at {url}")
+                    return client.request("miner.mine", {"count": 1, "address": resolved_address})
+                
                 try:
-                    result = client.request("miner.mine", {"count": 1, "address": resolved_address})
+                    if proxy:
+                        # Use proxy with fallback to local node
+                        if verbose:
+                            typer.echo(f"  [Proxy] Forwarding mining request to trusted RPC")
+                        result = proxy.sync_forward_request(
+                            "miner.mine",
+                            {"count": 1, "address": resolved_address},
+                            fallback_handler=mine_via_local,
+                        )
+                    else:
+                        # Direct mining to specified RPC
+                        result = client.request("miner.mine", {"count": 1, "address": resolved_address})
+                        
                 except Exception as e:
                     # If the RPC rejects the address parameter (older node), try without it
                     # Check for INVALID_PARAMS error code or presence of "address" in error message
@@ -441,7 +512,14 @@ def mine_blocks(
                             "Mining to node's default miner address.",
                             fg=typer.colors.YELLOW,
                         )
-                        result = client.request("miner.mine", [1])
+                        if proxy:
+                            result = proxy.sync_forward_request(
+                                "miner.mine",
+                                [1],
+                                fallback_handler=lambda: client.request("miner.mine", [1]),
+                            )
+                        else:
+                            result = client.request("miner.mine", [1])
                     else:
                         raise
                 
