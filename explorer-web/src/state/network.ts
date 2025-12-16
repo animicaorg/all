@@ -47,7 +47,8 @@ async function createRpc(rpcUrl: string): Promise<RpcClient> {
     _createRpcAsync = import('../services/rpc').then(m => m.createRpc as CreateRpcFn);
   }
   const fn = await _createRpcAsync;
-  return fn(rpcUrl) as unknown as RpcClient;
+  console.log('[network] Creating RPC client with URL:', rpcUrl);
+  return fn({ url: rpcUrl }) as unknown as RpcClient;
 }
 
 // ------------------------- Simple selectors ---------------------------------
@@ -138,16 +139,21 @@ export function useNetworkManager(opts?: {
       setNetwork({ connected: false });
 
       try {
+        console.log('[network] Connecting to RPC:', rpcUrl);
         const client = await createRpc(rpcUrl);
         if (cancelled) return;
 
         runtime.current.client = client;
+        console.log('[network] RPC client created successfully');
 
         // Resolve actual chainId
         let actualChainId: string;
         try {
+          console.log('[network] Fetching chain ID...');
           actualChainId = await client.getChainId();
+          console.log('[network] Chain ID:', actualChainId);
         } catch (e) {
+          console.warn('[network] Failed to fetch chain ID:', e);
           // Some nodes expose chain id via a generic 'status' or 'head' call; fallback:
           actualChainId = expectedChainId || '';
         }
@@ -164,11 +170,14 @@ export function useNetworkManager(opts?: {
 
         // Prime head
         try {
+          console.log('[network] Fetching initial head...');
           const head = await client.getHead();
           if (!cancelled) {
+            console.log('[network] Initial head:', head);
             setHead(head);
           }
         } catch (e) {
+          console.warn('[network] Failed to fetch initial head:', e);
           // Non-fatal; we'll rely on subsequent updates
         }
 
@@ -229,13 +238,17 @@ export function useNetworkManager(opts?: {
 
         setStatus('connected');
         setNetwork({ connected: true });
+        console.log('[network] Connection established successfully');
       } catch (e: any) {
         if (cancelled) return;
-        const msg = `[network] failed to connect: ${e?.message || String(e)}`;
+        const msg = `Failed to connect to RPC at ${rpcUrl}: ${e?.message || String(e)}`;
+        console.error('[network] Connection error:', e);
+        console.error('[network] RPC URL:', rpcUrl);
+        console.error('[network] Expected Chain ID:', expectedChainId);
         setStatus('error');
         setErrMsg(msg);
         setNetwork({ connected: false });
-        addToast({ kind: 'error', text: msg });
+        addToast({ kind: 'error', text: msg, ttl: 8000 });
       }
     }
 

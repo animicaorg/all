@@ -114,13 +114,122 @@ curl -X POST $VITE_RPC_URL \
 # Should return: {"jsonrpc":"2.0","id":1,"result":659658}
 ```
 
-**Troubleshooting**: If you see "Unable to fetch blockchain data", check:
-1. RPC node is running and accessible
-2. CORS is configured on the RPC server
-3. Firewall allows connections to RPC port
-4. `.env.local` has correct values and you've restarted the dev server
+## Troubleshooting RPC Connectivity
 
-For detailed troubleshooting, see [docs/TROUBLESHOOTING.md](./docs/TROUBLESHOOTING.md).
+### Common Issues and Solutions
+
+#### "Unable to Connect to RPC Node"
+
+If the explorer displays a disconnected status or shows "Unable to Connect to RPC Node", follow these steps:
+
+**1. Verify RPC Node is Running**
+```bash
+# Check if the RPC server is accessible
+curl -X POST $VITE_RPC_URL \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"chain.getChainId","params":[]}'
+
+# Expected response: {"jsonrpc":"2.0","id":1,"result":"1"}
+# (or your actual chain ID)
+```
+
+**2. Check Browser Console for Detailed Errors**
+- Open browser DevTools (F12)
+- Look for `[network]` prefixed logs showing connection attempts
+- Common errors and their meanings:
+  - `Network error` / `fetch failed`: RPC server is not reachable (check URL, firewall)
+  - `CORS error`: RPC server needs to allow your origin (see CORS section below)
+  - `Chain ID mismatch`: Configured chain ID doesn't match the node's chain ID
+  - `HTTP 404/500`: RPC endpoint path is incorrect or server has issues
+
+**3. Verify CORS Configuration**
+The explorer runs in the browser and requires CORS headers from the RPC server:
+
+```python
+# Example: Python/FastAPI RPC server CORS setup
+from fastapi.middleware.cors import CORSMiddleware
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173", "https://explorer.animica.org"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+```
+
+**4. Check Environment Variables**
+- Ensure `.env.local` exists and has correct values
+- After changing `.env.local`, restart the dev server
+- Verify VITE_RPC_URL doesn't have trailing slashes
+- Confirm VITE_CHAIN_ID matches your node's chain ID
+
+**5. Test with Alternative URLs**
+```bash
+# For local development, try multiple formats:
+VITE_RPC_URL=http://localhost:8545      # IPv4 localhost
+VITE_RPC_URL=http://127.0.0.1:8545      # Explicit IPv4
+VITE_RPC_URL=http://[::1]:8545          # IPv6 localhost
+
+# If using Docker, use host.docker.internal:
+VITE_RPC_URL=http://host.docker.internal:8545
+```
+
+**6. Verify Network Connectivity**
+```bash
+# Test basic connectivity
+ping 127.0.0.1
+
+# Check if port is open and listening
+netstat -an | grep 8545
+# or
+lsof -i :8545
+
+# Try telnet to test port connectivity
+telnet localhost 8545
+```
+
+### Debugging Tips
+
+**Enable Verbose Logging**
+The explorer logs detailed connection information to the browser console:
+- `[network] Creating RPC client with URL:` - Shows the URL being used
+- `[network] Connecting to RPC:` - Connection attempt started
+- `[network] RPC client created successfully` - Client initialized
+- `[network] Fetching chain ID...` - Attempting to fetch chain ID
+- `[network] Chain ID: X` - Successfully retrieved chain ID
+- `[network] Connection established successfully` - Full connection succeeded
+
+**Connection Status Indicator**
+The top bar shows a colored dot indicating connection status:
+- 🟢 **Green**: Connected and receiving live updates
+- 🟡 **Yellow**: Connecting, attempting to establish connection
+- 🔴 **Red**: Disconnected, unable to reach RPC node
+
+### Known Issues
+
+**Issue**: Chain ID Mismatch
+```
+Error: Chain ID mismatch: expected 1, got 659658
+```
+**Solution**: Update VITE_CHAIN_ID in `.env.local` to match your node's chain ID
+
+**Issue**: WebSocket Connection Failed (but HTTP works)
+- The explorer will fall back to HTTP polling automatically
+- Live updates may be delayed (4-second polling interval)
+- Check if WebSocket port (8546) is accessible
+
+**Issue**: Mixed Content (HTTPS page loading HTTP RPC)
+- Modern browsers block HTTP requests from HTTPS pages
+- Either use HTTPS for RPC or access explorer via HTTP (localhost only)
+
+### Getting Help
+
+If you're still experiencing issues:
+1. Check the [GitHub Issues](https://github.com/animicaorg/all/issues) for similar problems
+2. Share your browser console logs (with `[network]` entries)
+3. Include your `.env.local` configuration (remove sensitive values)
+4. Mention your OS, browser, and Node.js version
 
 ---
 

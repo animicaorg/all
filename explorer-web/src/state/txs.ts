@@ -71,7 +71,7 @@ export interface RpcClient {
 }
 
 // Lazy loader to avoid import cycles during SSR/tests
-type CreateRpcFn = (url: string) => RpcClient;
+type CreateRpcFn = (opts: { url: string }) => RpcClient;
 let _createRpcAsync: Promise<CreateRpcFn> | null = null;
 async function createRpc(rpcUrl: string): Promise<RpcClient> {
   if (!_createRpcAsync) {
@@ -80,7 +80,8 @@ async function createRpc(rpcUrl: string): Promise<RpcClient> {
     );
   }
   const fn = await _createRpcAsync;
-  return fn(rpcUrl);
+  console.log('[txs] Creating RPC client with URL:', rpcUrl);
+  return fn({ url: rpcUrl });
 }
 
 // ----------------------------- Cache layer ----------------------------------
