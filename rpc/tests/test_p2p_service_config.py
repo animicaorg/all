@@ -147,13 +147,12 @@ def test_deps_parse_p2p_seeds_with_empty_entries():
     assert "/ip4/5.6.7.8/tcp/30333" in seeds
 
 
-def test_p2p_listen_ipv6_format():
-    """Test that IPv6 addresses in host:port format are handled correctly."""
+def test_p2p_listen_ipv6_multiaddr():
+    """Test that IPv6 addresses in multiaddr format are handled correctly."""
     # Simulate the parsing logic from rpc/deps.py
-    # Note: IPv6 addresses should use brackets like [::]:30333
-    # but we'll test the current logic which uses rsplit
-    p2p_listen = "::1:30333"
-    
+    # IPv6 addresses should always use multiaddr format for proper handling
+    p2p_listen = "/ip6/::1/tcp/30333"
+
     listen_addrs = []
     if p2p_listen:
         if ":" in p2p_listen and not p2p_listen.startswith("/"):
@@ -161,9 +160,8 @@ def test_p2p_listen_ipv6_format():
             host, port = p2p_listen.rsplit(":", 1)
             listen_addrs = [f"/ip4/{host}/tcp/{port}"]
         else:
-            # Already in multiaddr format or empty
+            # Already in multiaddr format
             listen_addrs = [p2p_listen]
-    
-    # This will incorrectly parse IPv6, but it's an edge case
-    # For IPv6, users should use multiaddr format directly
-    assert listen_addrs == ["/ip4/::1/tcp/30333"]
+
+    # IPv6 in multiaddr format is preserved correctly
+    assert listen_addrs == ["/ip6/::1/tcp/30333"]

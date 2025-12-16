@@ -572,35 +572,45 @@ def build_context(cfg: t.Any | None = None) -> RpcContext:
             p2p_deps = _P2PDeps(bundle.block_db)
             
             # Read P2P configuration from environment
-            p2p_listen = os.environ.get("P2P_LISTEN", "0.0.0.0:30333")
+            p2p_listen = os.environ.get("P2P_LISTEN", "")
             p2p_seeds = os.environ.get("P2P_SEEDS", "")
             
             # Parse listen address to multiaddr format
-            listen_addrs = []
+            listen_addrs = None
             if p2p_listen:
                 if ":" in p2p_listen and not p2p_listen.startswith("/"):
                     # Format is "host:port", convert to multiaddr
                     host, port = p2p_listen.rsplit(":", 1)
                     listen_addrs = [f"/ip4/{host}/tcp/{port}"]
                 else:
-                    # Already in multiaddr format or empty
+                    # Already in multiaddr format
                     listen_addrs = [p2p_listen]
             
             # Parse seeds (comma-separated multiaddrs)
-            seeds = [s.strip() for s in p2p_seeds.split(",") if s.strip()]
+            seeds = [s.strip() for s in p2p_seeds.split(",") if s.strip()] if p2p_seeds else []
             
             # Initialize P2P service with persistent peer store
-            p2p_service = P2PService(
-                listen_addrs=listen_addrs,
-                seeds=seeds,
-                chain_id=cfg_view.chain_id,
-                deps=p2p_deps,
-                peerstore_path=peerstore_path,
-            )
+            # Only pass listen_addrs and seeds if they are explicitly configured
+            p2p_kwargs = {
+                "chain_id": cfg_view.chain_id,
+                "deps": p2p_deps,
+                "peerstore_path": peerstore_path,
+            }
+            if listen_addrs is not None:
+                p2p_kwargs["listen_addrs"] = listen_addrs
+            if seeds:
+                p2p_kwargs["seeds"] = seeds
+            
+            p2p_service = P2PService(**p2p_kwargs)
             
             # Register P2P service with global registry so RPC methods can access it
             p2p.register_service(p2p_service)
-            log.info(f"Initialized P2P service: listen_addrs={listen_addrs}, seeds={len(seeds)} configured, peer_store={peerstore_path}")
+            log_msg = f"Initialized P2P service: peer_store={peerstore_path}"
+            if listen_addrs:
+                log_msg += f", listen_addrs={listen_addrs}"
+            if seeds:
+                log_msg += f", seeds={len(seeds)} configured"
+            log.info(log_msg)
         except Exception as e:
             log.warning(f"Failed to initialize P2P service: {e}", exc_info=True)
             p2p_service = None
