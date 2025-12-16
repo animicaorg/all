@@ -288,7 +288,30 @@ def _generate_entry(label: str, *, allow_fallback: bool) -> WalletEntry:
             secret = _normalize_dilithium3_secret_key(secret, alg_name)
 
         except NotImplementedError as e:
-            if not allow_fallback:
+            # If default algorithm is not available (e.g., SPHINCS without liboqs),
+            # try Dilithium3 which has pure-Python fallback support
+            DILITHIUM3_ID = 0x1001
+            if alg_info.alg_id != DILITHIUM3_ID and not allow_fallback:
+                try:
+                    kp = keygen_sig(DILITHIUM3_ID)
+                    
+                    # HARD SAFETY CHECKS
+                    public = kp.public_key
+                    secret = kp.secret_key
+                    if public == secret:
+                        raise RuntimeError("Refusing wallet: PQ keygen produced sk==pk (fake/broken)")
+                    if len(secret) <= len(public):
+                        raise RuntimeError(
+                            f"Refusing wallet: suspicious PQ sizes pk={len(public)} sk={len(secret)}"
+                        )
+                    
+                    address = kp.address
+                    alg_name = kp.alg_name
+                    secret = _normalize_dilithium3_secret_key(secret, alg_name)
+                except Exception:
+                    # Dilithium3 also failed, re-raise original error
+                    raise e
+            elif not allow_fallback:
                 raise
             os.environ.setdefault("ANIMICA_ALLOW_PQ_PURE_FALLBACK", "1")
             os.environ.setdefault("ANIMICA_UNSAFE_PQ_FAKE", "1")
