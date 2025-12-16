@@ -484,11 +484,11 @@ def _adjust_theta_for_mining(dt_seconds: float | None = None) -> int:
                 )
                 
                 _MINING_STATE["theta_state"] = init_state(params, current_theta)
-                max_display = params.theta_max_micro / 1e6 if params.theta_max_micro else "unbounded"
+                max_display = f"{params.theta_max_micro / 1e6:.1f} nats" if params.theta_max_micro is not None else "unbounded"
                 log.info(
                     f"Initialized dynamic theta adjustment for mining: "
                     f"theta={current_theta/1e6:.3f} nats, target_time={params.target_block_time_s}s, "
-                    f"range=[{params.theta_min_micro/1e6:.1f}, {max_display}] nats"
+                    f"range=[{params.theta_min_micro/1e6:.1f}, {max_display}]"
                 )
             except Exception as e:
                 log.warning(f"Failed to initialize theta adjustment: {e}")

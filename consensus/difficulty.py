@@ -80,7 +80,8 @@ _MICRO: float = 1_000_000.0
 
 # Maximum safe value for theta_micro to prevent integer overflow
 # 10^15 micro-nats = 10^9 nats (far beyond any realistic network demand)
-MAX_SAFE_THETA_MICRO: MicroNat = 1_000_000_000_000_000
+# Calculated as: 10^9 nats * 10^6 µ-nats/nat = 10^15 µ-nats
+MAX_SAFE_THETA_MICRO: MicroNat = 10 ** 15
 
 
 def micro_to_nats(theta_micro: MicroNat) -> float:
