@@ -44,4 +44,29 @@ describe('env helpers', () => {
   it('promotes default RPC port to default WS port when only RPC is known', () => {
     expect(inferWsUrl({ VITE_RPC_URL: 'http://127.0.0.1:8545' })).toBe('ws://127.0.0.1:8546');
   });
+
+  it('supports VITE_RPC_HTTP as an alternative to VITE_RPC_URL', () => {
+    const env = { VITE_RPC_HTTP: 'http://rpc.alt' };
+    expect(inferRpcUrl(env)).toBe('http://rpc.alt');
+  });
+
+  it('prefers VITE_RPC_URL over VITE_RPC_HTTP when both are present', () => {
+    const env = { VITE_RPC_URL: 'http://primary', VITE_RPC_HTTP: 'http://fallback' };
+    expect(inferRpcUrl(env)).toBe('http://primary');
+  });
+
+  it('converts hex chain IDs to decimal strings', () => {
+    expect(inferChainId({ VITE_CHAIN_ID: '0xa11ca' })).toBe('659658');
+    expect(inferChainId({ VITE_CHAIN_ID: '0x1' })).toBe('1');
+    expect(inferChainId({ VITE_CHAIN_ID: '0x539' })).toBe('1337');
+  });
+
+  it('handles decimal chain IDs as-is', () => {
+    expect(inferChainId({ VITE_CHAIN_ID: '659658' })).toBe('659658');
+    expect(inferChainId({ VITE_CHAIN_ID: 1337 })).toBe('1337');
+  });
+
+  it('handles invalid hex chain IDs gracefully', () => {
+    expect(inferChainId({ VITE_CHAIN_ID: '0xInvalid' })).toBe('0xInvalid');
+  });
 });
