@@ -45,18 +45,21 @@ Exports
 - compute_share_micro(theta_micro, shares_per_block)
 - compute_share_tiers(theta_micro, factors=(2,4,8,16,32,64,128,256))
 - micro_to_nats, nats_to_micro
+- THETA_HARD_CAP_MICRO: Network stability cap (300M µ-nats = 300 nats)
 - MAX_SAFE_THETA_MICRO: Overflow protection constant (10^15 µ-nats = 10^9 nats)
 
 All functions are deterministic and side-effect free.
 
-Note on Unbounded Theta
------------------------
-As of this version, theta_max_micro is optional (None = unbounded). The network
-can now scale theta dynamically without artificial ceilings. Stability is ensured
-by:
-  1. step_clamp_micro: Limits rate of change per block
-  2. Overflow protection: Caps at MAX_SAFE_THETA_MICRO (10^9 nats)
-  3. EMA smoothing: Prevents wild fluctuations from transient spikes
+Note on Theta Hard Cap
+----------------------
+Theta micro has a hard cap at THETA_HARD_CAP_MICRO (300M µ-nats = 300 nats) to
+maintain network stability and prevent runaway difficulty values from negatively
+impacting blockchain performance. When theta_max_micro is None (default), this
+hard cap is automatically applied. Stability is ensured by:
+  1. Hard cap: Maximum at 300M µ-nats (300 nats)
+  2. step_clamp_micro: Limits rate of change per block
+  3. Overflow protection: Ultimate safety cap at MAX_SAFE_THETA_MICRO (10^9 nats)
+  4. EMA smoothing: Prevents wild fluctuations from transient spikes
 
 See also:
 - consensus.math: H(u) numerics and nats↔µ-nats helpers
@@ -65,12 +68,15 @@ See also:
 
 from __future__ import annotations
 
+import logging
 import math
 from dataclasses import dataclass, replace
 from typing import (Dict, Iterable, List, Mapping, MutableMapping, Optional,
                     Sequence, Tuple)
 
 from .types import MicroNat  # alias for int
+
+log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Utilities
@@ -82,6 +88,12 @@ _MICRO: float = 1_000_000.0
 # 10^15 micro-nats = 10^9 nats (far beyond any realistic network demand)
 # Calculated as: 10^9 nats * 10^6 µ-nats/nat = 10^15 µ-nats
 MAX_SAFE_THETA_MICRO: MicroNat = 10 ** 15
+
+# Hard cap for theta_micro to maintain network stability
+# 300M micro-nats = 300 nats (operational ceiling for network performance)
+# This cap prevents runaway theta values from negatively impacting blockchain performance
+# while allowing dynamic adjustment below the threshold.
+THETA_HARD_CAP_MICRO: MicroNat = 300_000_000
 
 
 def micro_to_nats(theta_micro: MicroNat) -> float:
@@ -132,9 +144,10 @@ class RetargetParams:
     theta_min_micro : MicroNat
         Lower bound for Θ (do not go below).
     theta_max_micro : MicroNat | None
-        Optional upper bound for Θ. If None, theta can grow indefinitely
-        (subject to step_clamp_micro and overflow protection at 2^63-1).
-        Default is None (unbounded).
+        Optional upper bound for Θ. If None, uses THETA_HARD_CAP_MICRO (300M µ-nats).
+        The hard cap ensures network stability by preventing excessive theta values
+        that could negatively impact blockchain performance.
+        Default is None (uses hard cap).
     """
 
     target_block_time_s: float = 12.0
@@ -248,12 +261,23 @@ def update_theta(
     # Enforce minimum
     theta_next = max(int(p.theta_min_micro), int(theta_next))
     
-    # Enforce maximum if specified, otherwise apply overflow protection
-    if p.theta_max_micro is not None:
-        theta_next = min(int(p.theta_max_micro), int(theta_next))
-    else:
-        # Apply overflow protection for unbounded case (use module-level constant)
-        theta_next = min(MAX_SAFE_THETA_MICRO, int(theta_next))
+    # Enforce maximum: use hard cap if not specified, otherwise use provided max
+    # The hard cap (300M µ-nats) ensures network stability
+    effective_max = int(p.theta_max_micro) if p.theta_max_micro is not None else THETA_HARD_CAP_MICRO
+    
+    # Check if we're hitting the cap and log a warning
+    if theta_next > effective_max:
+        # Log warning if attempting to exceed cap (only on actual clamp)
+        if theta_prev < effective_max:
+            log.warning(
+                f"Theta micro capped at maximum: attempted {theta_next/1e6:.3f} nats, "
+                f"clamped to {effective_max/1e6:.3f} nats. "
+                f"Network is at maximum difficulty threshold to maintain stability."
+            )
+        theta_next = effective_max
+    
+    # Also apply overflow protection as a safety measure
+    theta_next = min(MAX_SAFE_THETA_MICRO, int(theta_next))
 
     return RetargetState(
         theta_micro=int(theta_next),
