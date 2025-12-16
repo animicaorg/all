@@ -11,7 +11,7 @@ from RPC or file sources.
 
 from __future__ import annotations
 
-from typing import Dict, List, TYPE_CHECKING
+from typing import Dict, List, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .loader import Checkpoint
@@ -22,14 +22,14 @@ _MAINNET_CHECKPOINTS_RAW = [
     (55795, "0x0a3205eb3aca078a9c6e8415e5970e198b43c087bff7b71371054bbbc99d8938"),
 ]
 
-_TESTNET_CHECKPOINTS_RAW: list[tuple[int, str]] = []
+_TESTNET_CHECKPOINTS_RAW: List[tuple[int, str]] = []
 
-_DEVNET_CHECKPOINTS_RAW: list[tuple[int, str]] = []
+_DEVNET_CHECKPOINTS_RAW: List[tuple[int, str]] = []
 
 # Lazy-loaded actual Checkpoint objects (module-level cache)
-_MAINNET_CHECKPOINTS: List['Checkpoint'] | None = None
-_TESTNET_CHECKPOINTS: List['Checkpoint'] | None = None
-_DEVNET_CHECKPOINTS: List['Checkpoint'] | None = None
+_MAINNET_CHECKPOINTS: Optional[List['Checkpoint']] = None
+_TESTNET_CHECKPOINTS: Optional[List['Checkpoint']] = None
+_DEVNET_CHECKPOINTS: Optional[List['Checkpoint']] = None
 
 
 def _ensure_loaded() -> None:

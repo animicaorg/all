@@ -110,13 +110,20 @@ class CheckpointLoader:
             if self.config.strict:
                 raise
             
-            # Non-strict mode: log warning and continue, but still include built-in
+            # Non-strict mode: fall back to built-in checkpoints if available
+            if include_builtin and self.chain_id is not None:
+                builtin_checkpoints = self._load_builtin_checkpoints()
+                if builtin_checkpoints:
+                    self._log.warning(
+                        f"External checkpoints unavailable in {self.config.mode} mode, "
+                        f"falling back to {len(builtin_checkpoints)} built-in checkpoint(s)"
+                    )
+                    return builtin_checkpoints
+            
             self._log.warning(
                 f"Checkpoints unavailable in {self.config.mode} mode, "
                 "continuing without checkpoints"
             )
-            if include_builtin and self.chain_id is not None:
-                return self._load_builtin_checkpoints()
             return []
     
     def _is_cache_valid(self) -> bool:
