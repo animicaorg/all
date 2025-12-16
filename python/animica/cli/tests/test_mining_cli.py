@@ -350,12 +350,9 @@ def test_mine_blocks_enforces_2s_delay(monkeypatch: Any) -> None:
     assert all(s == 2.0 for s in sleep_calls)
 
 
-def test_mine_blocks_with_device_cpu(monkeypatch: Any) -> None:
-    """Test that mine-blocks accepts --device cpu."""
-    test_address = "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz"
-    monkeypatch.setattr(mining, "_validate_bech32_address", lambda x: True if x == test_address else False)
-    
-    device_used = None
+def _create_mock_rpc_client_with_device_tracking():
+    """Helper to create a mock RPC client that tracks the device parameter."""
+    device_used = {"value": None}
     
     class MockRpcClient:
         def __init__(self, *args, **kwargs):
@@ -368,16 +365,31 @@ def test_mine_blocks_with_device_cpu(monkeypatch: Any) -> None:
             pass
         
         def request(self, method: str, params: Any):
-            nonlocal device_used
             if isinstance(params, dict):
-                device_used = params.get("device")
+                device_used["value"] = params.get("device")
             return {"mined": 1, "height": 1}
     
+    return MockRpcClient, device_used
+
+
+def _setup_mock_rpc_client(monkeypatch: Any, test_address: str):
+    """Helper to set up mock RPC client and address validation."""
+    monkeypatch.setattr(mining, "_validate_bech32_address", lambda x: True if x == test_address else False)
+    
+    MockRpcClient, device_used = _create_mock_rpc_client_with_device_tracking()
     mock_module = Mock()
     mock_module.RpcClient = MockRpcClient
     
     monkeypatch.setitem(__import__("sys").modules, "omni_sdk.rpc.http", mock_module)
     monkeypatch.setitem(__import__("sys").modules, "sdk.python.omni_sdk.rpc.http", mock_module)
+    
+    return device_used
+
+
+def test_mine_blocks_with_device_cpu(monkeypatch: Any) -> None:
+    """Test that mine-blocks accepts --device cpu."""
+    test_address = "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz"
+    device_used = _setup_mock_rpc_client(monkeypatch, test_address)
     
     result = runner.invoke(
         mining.app,
@@ -391,38 +403,14 @@ def test_mine_blocks_with_device_cpu(monkeypatch: Any) -> None:
     )
     
     assert result.exit_code == 0
-    assert device_used == "cpu"
+    assert device_used["value"] == "cpu"
     assert "Using device: cpu" in result.output
 
 
 def test_mine_blocks_with_device_cuda(monkeypatch: Any) -> None:
     """Test that mine-blocks accepts --device cuda."""
     test_address = "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz"
-    monkeypatch.setattr(mining, "_validate_bech32_address", lambda x: True if x == test_address else False)
-    
-    device_used = None
-    
-    class MockRpcClient:
-        def __init__(self, *args, **kwargs):
-            pass
-        
-        def __enter__(self):
-            return self
-        
-        def __exit__(self, *args):
-            pass
-        
-        def request(self, method: str, params: Any):
-            nonlocal device_used
-            if isinstance(params, dict):
-                device_used = params.get("device")
-            return {"mined": 1, "height": 1}
-    
-    mock_module = Mock()
-    mock_module.RpcClient = MockRpcClient
-    
-    monkeypatch.setitem(__import__("sys").modules, "omni_sdk.rpc.http", mock_module)
-    monkeypatch.setitem(__import__("sys").modules, "sdk.python.omni_sdk.rpc.http", mock_module)
+    device_used = _setup_mock_rpc_client(monkeypatch, test_address)
     
     result = runner.invoke(
         mining.app,
@@ -436,38 +424,14 @@ def test_mine_blocks_with_device_cuda(monkeypatch: Any) -> None:
     )
     
     assert result.exit_code == 0
-    assert device_used == "cuda"
+    assert device_used["value"] == "cuda"
     assert "Using device: cuda" in result.output
 
 
 def test_mine_blocks_with_device_auto(monkeypatch: Any) -> None:
     """Test that mine-blocks accepts --device auto."""
     test_address = "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz"
-    monkeypatch.setattr(mining, "_validate_bech32_address", lambda x: True if x == test_address else False)
-    
-    device_used = None
-    
-    class MockRpcClient:
-        def __init__(self, *args, **kwargs):
-            pass
-        
-        def __enter__(self):
-            return self
-        
-        def __exit__(self, *args):
-            pass
-        
-        def request(self, method: str, params: Any):
-            nonlocal device_used
-            if isinstance(params, dict):
-                device_used = params.get("device")
-            return {"mined": 1, "height": 1}
-    
-    mock_module = Mock()
-    mock_module.RpcClient = MockRpcClient
-    
-    monkeypatch.setitem(__import__("sys").modules, "omni_sdk.rpc.http", mock_module)
-    monkeypatch.setitem(__import__("sys").modules, "sdk.python.omni_sdk.rpc.http", mock_module)
+    device_used = _setup_mock_rpc_client(monkeypatch, test_address)
     
     result = runner.invoke(
         mining.app,
@@ -481,41 +445,18 @@ def test_mine_blocks_with_device_auto(monkeypatch: Any) -> None:
     )
     
     assert result.exit_code == 0
-    assert device_used == "auto"
+    assert device_used["value"] == "auto"
     assert "Using device: auto" in result.output
 
 
 def test_mine_blocks_with_all_supported_devices(monkeypatch: Any) -> None:
     """Test that mine-blocks accepts all supported device values."""
     test_address = "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz"
-    monkeypatch.setattr(mining, "_validate_bech32_address", lambda x: True if x == test_address else False)
-    
     supported_devices = ["cpu", "cuda", "rocm", "opencl", "metal", "auto"]
     
     for device in supported_devices:
-        device_used = None
-        
-        class MockRpcClient:
-            def __init__(self, *args, **kwargs):
-                pass
-            
-            def __enter__(self):
-                return self
-            
-            def __exit__(self, *args):
-                pass
-            
-            def request(self, method: str, params: Any):
-                nonlocal device_used
-                if isinstance(params, dict):
-                    device_used = params.get("device")
-                return {"mined": 1, "height": 1}
-        
-        mock_module = Mock()
-        mock_module.RpcClient = MockRpcClient
-        
-        monkeypatch.setitem(__import__("sys").modules, "omni_sdk.rpc.http", mock_module)
-        monkeypatch.setitem(__import__("sys").modules, "sdk.python.omni_sdk.rpc.http", mock_module)
+        # Setup fresh mock for each device
+        device_used = _setup_mock_rpc_client(monkeypatch, test_address)
         
         result = runner.invoke(
             mining.app,
@@ -529,7 +470,7 @@ def test_mine_blocks_with_all_supported_devices(monkeypatch: Any) -> None:
         )
         
         assert result.exit_code == 0, f"Device {device} failed with: {result.output}"
-        assert device_used == device, f"Expected device {device}, got {device_used}"
+        assert device_used["value"] == device, f"Expected device {device}, got {device_used['value']}"
         assert f"Using device: {device}" in result.output
 
 
@@ -556,31 +497,7 @@ def test_mine_blocks_with_invalid_device() -> None:
 def test_mine_blocks_with_device_case_insensitive(monkeypatch: Any) -> None:
     """Test that device parameter is case-insensitive."""
     test_address = "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz"
-    monkeypatch.setattr(mining, "_validate_bech32_address", lambda x: True if x == test_address else False)
-    
-    device_used = None
-    
-    class MockRpcClient:
-        def __init__(self, *args, **kwargs):
-            pass
-        
-        def __enter__(self):
-            return self
-        
-        def __exit__(self, *args):
-            pass
-        
-        def request(self, method: str, params: Any):
-            nonlocal device_used
-            if isinstance(params, dict):
-                device_used = params.get("device")
-            return {"mined": 1, "height": 1}
-    
-    mock_module = Mock()
-    mock_module.RpcClient = MockRpcClient
-    
-    monkeypatch.setitem(__import__("sys").modules, "omni_sdk.rpc.http", mock_module)
-    monkeypatch.setitem(__import__("sys").modules, "sdk.python.omni_sdk.rpc.http", mock_module)
+    device_used = _setup_mock_rpc_client(monkeypatch, test_address)
     
     result = runner.invoke(
         mining.app,
@@ -594,38 +511,14 @@ def test_mine_blocks_with_device_case_insensitive(monkeypatch: Any) -> None:
     )
     
     assert result.exit_code == 0
-    assert device_used == "cuda"  # Should be normalized to lowercase
+    assert device_used["value"] == "cuda"  # Should be normalized to lowercase
     assert "Using device: cuda" in result.output
 
 
 def test_mine_blocks_without_device_defaults_to_cpu(monkeypatch: Any) -> None:
     """Test that mine-blocks defaults to cpu device when --device is not specified."""
     test_address = "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz"
-    monkeypatch.setattr(mining, "_validate_bech32_address", lambda x: True if x == test_address else False)
-    
-    device_used = None
-    
-    class MockRpcClient:
-        def __init__(self, *args, **kwargs):
-            pass
-        
-        def __enter__(self):
-            return self
-        
-        def __exit__(self, *args):
-            pass
-        
-        def request(self, method: str, params: Any):
-            nonlocal device_used
-            if isinstance(params, dict):
-                device_used = params.get("device")
-            return {"mined": 1, "height": 1}
-    
-    mock_module = Mock()
-    mock_module.RpcClient = MockRpcClient
-    
-    monkeypatch.setitem(__import__("sys").modules, "omni_sdk.rpc.http", mock_module)
-    monkeypatch.setitem(__import__("sys").modules, "sdk.python.omni_sdk.rpc.http", mock_module)
+    device_used = _setup_mock_rpc_client(monkeypatch, test_address)
     
     result = runner.invoke(
         mining.app,
@@ -639,39 +532,15 @@ def test_mine_blocks_without_device_defaults_to_cpu(monkeypatch: Any) -> None:
     )
     
     assert result.exit_code == 0
-    assert device_used == "cpu"  # Should default to cpu
+    assert device_used["value"] == "cpu"  # Should default to cpu
     assert "Using device: cpu" in result.output
 
 
 def test_mine_blocks_device_from_env_var(monkeypatch: Any) -> None:
     """Test that device can be set via ANIMICA_MINER_DEVICE environment variable."""
     test_address = "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz"
-    monkeypatch.setattr(mining, "_validate_bech32_address", lambda x: True if x == test_address else False)
     monkeypatch.setenv("ANIMICA_MINER_DEVICE", "cuda")
-    
-    device_used = None
-    
-    class MockRpcClient:
-        def __init__(self, *args, **kwargs):
-            pass
-        
-        def __enter__(self):
-            return self
-        
-        def __exit__(self, *args):
-            pass
-        
-        def request(self, method: str, params: Any):
-            nonlocal device_used
-            if isinstance(params, dict):
-                device_used = params.get("device")
-            return {"mined": 1, "height": 1}
-    
-    mock_module = Mock()
-    mock_module.RpcClient = MockRpcClient
-    
-    monkeypatch.setitem(__import__("sys").modules, "omni_sdk.rpc.http", mock_module)
-    monkeypatch.setitem(__import__("sys").modules, "sdk.python.omni_sdk.rpc.http", mock_module)
+    device_used = _setup_mock_rpc_client(monkeypatch, test_address)
     
     result = runner.invoke(
         mining.app,
@@ -685,5 +554,5 @@ def test_mine_blocks_device_from_env_var(monkeypatch: Any) -> None:
     )
     
     assert result.exit_code == 0
-    assert device_used == "cuda"  # Should use env var value
+    assert device_used["value"] == "cuda"  # Should use env var value
     assert "Using device: cuda" in result.output
