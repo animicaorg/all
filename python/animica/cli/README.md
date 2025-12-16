@@ -262,13 +262,18 @@ Mining Operations
   animica miner mine-blocks --count 5
   
   # Specify mining device backend (cpu, cuda, rocm, opencl, metal, auto)
-  animica miner mine-blocks --count 5 --device cpu
-  animica miner mine-blocks --count 5 --device cuda
-  animica miner mine-blocks --count 5 --device auto
+  # Default is 'auto' which automatically detects the best available device
+  animica miner mine-blocks --count 5                    # Uses auto-detection
+  animica miner mine-blocks --count 5 --device auto      # Explicit auto-detection
+  animica miner mine-blocks --count 5 --device cpu       # Force CPU
+  animica miner mine-blocks --count 5 --device cuda      # Force CUDA GPU
   
   # Configure device via environment variable
   export ANIMICA_MINER_DEVICE=cuda
   animica miner mine-blocks --count 5
+  
+  # Auto-detection priority: CUDA > ROCm > OpenCL > Metal > CPU
+  # Falls back to CPU if no GPU detected or if detection fails
   
   # If ANIMICA_MINER_ADDRESS is not set, rewards go to:
   # 1. The premine address (for devnet/mainnet)
