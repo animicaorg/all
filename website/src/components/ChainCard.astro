@@ -60,7 +60,7 @@ const hasRpc = Boolean(resolvedRpc);
 ---
 
 <article
-  class={`rounded-xl border bg-[var(--bg-elevated)]
+  class={`rounded-xl border bg-[var(--bg-elevated)] chain-card
            border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]
            p-4 sm:p-5 flex flex-col gap-3 ${className}`}
 >
@@ -158,3 +158,60 @@ const hasRpc = Boolean(resolvedRpc);
     }
   });
 </script>
+
+<style>
+  .chain-card {
+    position: relative;
+    backdrop-filter: blur(12px);
+    background: rgba(15, 23, 42, 0.6);
+    border-color: rgba(139, 92, 246, 0.15);
+    transition: all 0.3s ease;
+    overflow: hidden;
+  }
+  
+  .chain-card::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(135deg, rgba(139, 92, 246, 0.08), rgba(34, 211, 238, 0.08));
+    opacity: 0;
+    transition: opacity 0.3s ease;
+  }
+  
+  .chain-card:hover {
+    transform: translateY(-4px) perspective(1000px) rotateX(1deg) rotateY(1deg);
+    border-color: rgba(139, 92, 246, 0.4);
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3), 0 0 40px rgba(139, 92, 246, 0.2);
+  }
+  
+  .chain-card:hover::before {
+    opacity: 1;
+  }
+  
+  .chain-card h3 {
+    background: linear-gradient(135deg, var(--color-fg), var(--legendary-cyan-400, #22d3ee));
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+  
+  .chain-card button:hover,
+  .chain-card a:hover {
+    background: rgba(139, 92, 246, 0.12);
+    border-color: rgba(139, 92, 246, 0.4);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(139, 92, 246, 0.2);
+  }
+  
+  /* Animated stats */
+  .chain-card code {
+    background: rgba(139, 92, 246, 0.08);
+    border: 1px solid rgba(139, 92, 246, 0.15);
+    transition: all 0.3s ease;
+  }
+  
+  .chain-card:hover code {
+    background: rgba(139, 92, 246, 0.12);
+    border-color: rgba(139, 92, 246, 0.3);
+  }
+</style>
