@@ -13,6 +13,7 @@ A comprehensive command-line interface for:
   - Data Availability (submit, retrieve, verify)
   - Network management (set, get, list networks)
   - Peer management (list, add, remove, info)
+  - Sync management (status, force resync)
 
 Global options:
   --network TEXT          Network profile (local-devnet, devnet, testnet, mainnet)
@@ -37,6 +38,8 @@ Examples:
   animica da submit < blob.bin
   animica network set mainnet
   animica peer list
+  animica sync status         # Check sync status
+  animica sync force          # Force resync
 """
 
 from __future__ import annotations
@@ -46,7 +49,7 @@ from typing import Optional
 import typer
 
 # Import subcommand apps
-from . import chain, da, faucet, key, mempool, mining, network, node, peer, rpc, studio, tx, wallet
+from . import chain, da, faucet, key, mempool, mining, network, node, peer, rpc, studio, sync, tx, wallet
 
 app = typer.Typer(
     name="animica",
@@ -154,6 +157,7 @@ app.add_typer(network.app, name="network")
 app.add_typer(peer.app, name="peer")
 app.add_typer(studio.app, name="studio")
 app.add_typer(mempool.app, name="mempool")
+app.add_typer(sync.app, name="sync")
 
 
 # ============================================================================
