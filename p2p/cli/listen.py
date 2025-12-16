@@ -93,7 +93,9 @@ def _load_default_listen_config(args: argparse.Namespace) -> ListenConfig:
         if not seeds:
             from p2p.config import _load_seeds_from_env  # type: ignore
 
-            seeds = list(_load_seeds_from_env())
+            # Pass chain_id to get network-specific seeds
+            chain_id = int(args.chain_id or 0) if args.chain_id else None
+            seeds = list(_load_seeds_from_env(chain_id=chain_id))
     except Exception:
         pass
 
