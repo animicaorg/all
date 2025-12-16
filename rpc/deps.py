@@ -554,7 +554,15 @@ def build_context(cfg: t.Any | None = None) -> RpcContext:
     if enable_p2p:
         try:
             from p2p.node.service import P2PService
+            from p2p.config import load_config as load_p2p_config, _load_seeds_from_env
             import p2p
+            
+            # Set chain_id in environment so P2P config can auto-select network seeds
+            os.environ.setdefault("ANIMICA_P2P_CHAIN_ID", str(cfg_view.chain_id))
+            
+            # Load P2P configuration which will automatically select network-specific seeds
+            # based on chain_id (mainnet/testnet/devnet)
+            p2p_config = load_p2p_config()
             
             # Determine peer store path based on network
             peerstore_path = os.environ.get("ANIMICA_PEER_STORE_PATH")
@@ -571,9 +579,10 @@ def build_context(cfg: t.Any | None = None) -> RpcContext:
             
             p2p_deps = _P2PDeps(bundle.block_db)
             
-            # Read P2P configuration from environment
+            # Use config system for listen addresses and seeds
+            # Allow legacy P2P_LISTEN and P2P_SEEDS env vars for backward compatibility
             p2p_listen = os.environ.get("P2P_LISTEN", "")
-            p2p_seeds = os.environ.get("P2P_SEEDS", "")
+            p2p_seeds_legacy = os.environ.get("P2P_SEEDS", "")
             
             # Parse listen address to multiaddr format
             listen_addrs = None
@@ -586,11 +595,14 @@ def build_context(cfg: t.Any | None = None) -> RpcContext:
                     # Already in multiaddr format
                     listen_addrs = [p2p_listen]
             
-            # Parse seeds (comma-separated multiaddrs)
-            seeds = [s.strip() for s in p2p_seeds.split(",") if s.strip()] if p2p_seeds else []
+            # Get seeds from config (which auto-loads network-specific seeds based on chain_id)
+            # or from legacy P2P_SEEDS env var for backward compatibility
+            seeds = list(p2p_config.seeds) if p2p_config.seeds else []
+            if not seeds and p2p_seeds_legacy:
+                # Legacy fallback: parse P2P_SEEDS if no seeds from config
+                seeds = [s.strip() for s in p2p_seeds_legacy.split(",") if s.strip()]
             
             # Initialize P2P service with persistent peer store
-            # Only pass listen_addrs and seeds if they are explicitly configured
             p2p_kwargs = {
                 "chain_id": cfg_view.chain_id,
                 "deps": p2p_deps,
@@ -598,6 +610,7 @@ def build_context(cfg: t.Any | None = None) -> RpcContext:
             }
             if listen_addrs is not None:
                 p2p_kwargs["listen_addrs"] = listen_addrs
+            # Always pass seeds - either from config (network-specific) or legacy env var
             if seeds:
                 p2p_kwargs["seeds"] = seeds
             
@@ -605,11 +618,13 @@ def build_context(cfg: t.Any | None = None) -> RpcContext:
             
             # Register P2P service with global registry so RPC methods can access it
             p2p.register_service(p2p_service)
-            log_msg = f"Initialized P2P service: peer_store={peerstore_path}"
+            log_msg = f"Initialized P2P service: peer_store={peerstore_path}, chain_id={cfg_view.chain_id}"
             if listen_addrs:
                 log_msg += f", listen_addrs={listen_addrs}"
             if seeds:
                 log_msg += f", seeds={len(seeds)} configured"
+            else:
+                log_msg += ", no seeds configured"
             log.info(log_msg)
         except Exception as e:
             log.warning(f"Failed to initialize P2P service: {e}", exc_info=True)
