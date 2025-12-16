@@ -294,7 +294,8 @@ class BlockImporter:
             # bounds.max = 2.0 means we can double; that's ln(2) ≈ 0.693 nats
             # Convert to µ-nats: ~693,000 µ-nats per retarget window
             # Per-block step: divide by window size
-            max_change_nats = abs(1.0 - self.params.retarget.bounds.max)  # e.g., 1.0 for 2x
+            import math
+            max_change_nats = math.log(self.params.retarget.bounds.max)  # ln(2) ≈ 0.693 for 2x
             step_clamp_micro = int(max_change_nats * 1_000_000 / max(1, half_life_blocks))
             step_clamp_micro = max(100_000, min(1_000_000, step_clamp_micro))  # reasonable bounds
             
