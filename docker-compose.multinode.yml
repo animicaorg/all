@@ -1,0 +1,213 @@
+version: '3.8'
+
+# Multi-Node P2P Test Network for Animica
+# 
+# This setup demonstrates Animica's decentralized P2P network by running
+# multiple nodes that discover and connect to each other automatically.
+#
+# Usage:
+#   docker-compose -f docker-compose.multinode.yml up -d
+#   docker-compose -f docker-compose.multinode.yml logs -f
+#   docker-compose -f docker-compose.multinode.yml down
+#
+# Verify P2P:
+#   curl http://localhost:8545/rpc -H 'content-type: application/json' -d \
+#     '{"jsonrpc":"2.0","id":1,"method":"p2p.listPeers","params":[]}' | jq .
+#
+# See docs/MULTI_NODE_DOCKER_SETUP.md for detailed instructions.
+
+networks:
+  animica-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+
+volumes:
+  node1-data:
+  node2-data:
+  node3-data:
+  prometheus-data:
+  grafana-data:
+
+services:
+  # ============================================
+  # Node 1 - Seed Node (Full Node + RPC)
+  # ============================================
+  node1:
+    build:
+      context: .
+      dockerfile: ops/docker/Dockerfile.node
+    container_name: animica-node1
+    hostname: node1
+    networks:
+      animica-net:
+        ipv4_address: 172.28.0.10
+    ports:
+      - "8545:8545"      # RPC HTTP
+      - "30333:30333"    # P2P TCP
+      - "443:443/udp"    # P2P QUIC
+      - "9001:9000"      # Metrics
+    environment:
+      - ANIMICA_NETWORK=devnet
+      - ANIMICA_CHAIN_ID=1337
+      - ANIMICA_P2P_ENABLE=true
+      - ANIMICA_P2P_LISTEN_TCP=0.0.0.0:30333
+      - ANIMICA_P2P_LISTEN_QUIC=0.0.0.0:443
+      - ANIMICA_P2P_ADVERTISED_ADDRS=/ip4/172.28.0.10/tcp/30333,/ip4/172.28.0.10/udp/443/quic-v1
+      - ANIMICA_P2P_MAX_PEERS=50
+      - ANIMICA_P2P_MDNS=true
+      - RPC_HOST=0.0.0.0
+      - RPC_PORT=8545
+      - ANIMICA_DB_PATH=/data/node1.db
+      - LOG_LEVEL=info
+    volumes:
+      - node1-data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8545/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    labels:
+      - "animica.node=seed"
+      - "animica.network=devnet"
+
+  # ============================================
+  # Node 2 - Full Node (Syncs from Node 1)
+  # ============================================
+  node2:
+    build:
+      context: .
+      dockerfile: ops/docker/Dockerfile.node
+    container_name: animica-node2
+    hostname: node2
+    networks:
+      animica-net:
+        ipv4_address: 172.28.0.11
+    ports:
+      - "8546:8545"      # RPC HTTP
+      - "30334:30333"    # P2P TCP
+      - "9002:9000"      # Metrics
+    environment:
+      - ANIMICA_NETWORK=devnet
+      - ANIMICA_CHAIN_ID=1337
+      - ANIMICA_P2P_ENABLE=true
+      - ANIMICA_P2P_LISTEN_TCP=0.0.0.0:30333
+      - ANIMICA_P2P_LISTEN_QUIC=0.0.0.0:443
+      - ANIMICA_P2P_ADVERTISED_ADDRS=/ip4/172.28.0.11/tcp/30333
+      - ANIMICA_P2P_SEEDS=/ip4/172.28.0.10/tcp/30333
+      - ANIMICA_P2P_MAX_PEERS=50
+      - ANIMICA_P2P_MDNS=true
+      - RPC_HOST=0.0.0.0
+      - RPC_PORT=8545
+      - ANIMICA_DB_PATH=/data/node2.db
+      - LOG_LEVEL=info
+    volumes:
+      - node2-data:/data
+    restart: unless-stopped
+    depends_on:
+      - node1
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8545/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    labels:
+      - "animica.node=peer"
+      - "animica.network=devnet"
+
+  # ============================================
+  # Node 3 - Full Node (Syncs from Node 1)
+  # ============================================
+  node3:
+    build:
+      context: .
+      dockerfile: ops/docker/Dockerfile.node
+    container_name: animica-node3
+    hostname: node3
+    networks:
+      animica-net:
+        ipv4_address: 172.28.0.12
+    ports:
+      - "8547:8545"      # RPC HTTP
+      - "30335:30333"    # P2P TCP
+      - "9003:9000"      # Metrics
+    environment:
+      - ANIMICA_NETWORK=devnet
+      - ANIMICA_CHAIN_ID=1337
+      - ANIMICA_P2P_ENABLE=true
+      - ANIMICA_P2P_LISTEN_TCP=0.0.0.0:30333
+      - ANIMICA_P2P_LISTEN_QUIC=0.0.0.0:443
+      - ANIMICA_P2P_ADVERTISED_ADDRS=/ip4/172.28.0.12/tcp/30333
+      - ANIMICA_P2P_SEEDS=/ip4/172.28.0.10/tcp/30333
+      - ANIMICA_P2P_MAX_PEERS=50
+      - ANIMICA_P2P_MDNS=true
+      - RPC_HOST=0.0.0.0
+      - RPC_PORT=8545
+      - ANIMICA_DB_PATH=/data/node3.db
+      - LOG_LEVEL=info
+    volumes:
+      - node3-data:/data
+    restart: unless-stopped
+    depends_on:
+      - node1
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8545/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    labels:
+      - "animica.node=peer"
+      - "animica.network=devnet"
+
+  # ============================================
+  # Prometheus - Metrics Collection
+  # ============================================
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: animica-prometheus
+    hostname: prometheus
+    networks:
+      animica-net:
+        ipv4_address: 172.28.0.40
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./ops/prometheus/prometheus.multinode.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=7d'
+    restart: unless-stopped
+    labels:
+      - "animica.service=monitoring"
+
+  # ============================================
+  # Grafana - Metrics Visualization
+  # ============================================
+  grafana:
+    image: grafana/grafana:latest
+    container_name: animica-grafana
+    hostname: grafana
+    networks:
+      animica-net:
+        ipv4_address: 172.28.0.41
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=animica
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_SERVER_ROOT_URL=http://localhost:3001
+      - GF_INSTALL_PLUGINS=
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./ops/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./ops/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+    labels:
+      - "animica.service=monitoring"
