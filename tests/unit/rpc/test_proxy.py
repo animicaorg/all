@@ -274,7 +274,7 @@ def test_proxy_config_from_env(monkeypatch: Any) -> None:
 
 
 def test_proxy_config_defaults(monkeypatch: Any) -> None:
-    """Test default proxy config values."""
+    """Test default proxy config values (proxy disabled by default)."""
     # Clear any existing env vars
     monkeypatch.delenv("ANIMICA_TRUSTED_RPC_URL", raising=False)
     monkeypatch.delenv("ANIMICA_PROXY_MAX_RETRIES", raising=False)
@@ -284,23 +284,23 @@ def test_proxy_config_defaults(monkeypatch: Any) -> None:
     
     config = ProxyConfig.from_env()
     
-    assert config.trusted_rpc_url == "https://rpc.animica.org/rpc"
+    # Proxy is disabled by default - no URL
+    assert config.trusted_rpc_url is None
     assert config.max_retries == 3
     assert config.retry_delay_ms == 1000
     assert config.timeout_seconds == 30.0
     assert config.enable_caching is False
 
 
-def test_create_proxy_factory() -> None:
-    """Test proxy factory function."""
-    proxy = create_proxy()
-    
-    assert isinstance(proxy, RpcProxy)
-    assert proxy.config.trusted_rpc_url == "https://rpc.animica.org/rpc"
+def test_create_proxy_factory_requires_url() -> None:
+    """Test proxy factory function requires explicit URL configuration."""
+    # Creating proxy without URL should raise ValueError
+    with pytest.raises(ValueError, match="ANIMICA_TRUSTED_RPC_URL"):
+        proxy = create_proxy()
 
 
 def test_create_proxy_with_custom_config() -> None:
-    """Test proxy factory with custom config."""
+    """Test proxy factory with custom config (explicit URL required)."""
     config = ProxyConfig(
         trusted_rpc_url="https://custom.example.com",
         max_retries=5,
@@ -311,3 +311,13 @@ def test_create_proxy_with_custom_config() -> None:
     assert isinstance(proxy, RpcProxy)
     assert proxy.config.trusted_rpc_url == "https://custom.example.com"
     assert proxy.config.max_retries == 5
+
+
+def test_create_proxy_with_url_from_env(monkeypatch: Any) -> None:
+    """Test proxy creation with URL from environment."""
+    monkeypatch.setenv("ANIMICA_TRUSTED_RPC_URL", "https://test.example.com")
+    
+    proxy = create_proxy()
+    
+    assert isinstance(proxy, RpcProxy)
+    assert proxy.config.trusted_rpc_url == "https://test.example.com"

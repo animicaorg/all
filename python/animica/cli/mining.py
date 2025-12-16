@@ -270,9 +270,9 @@ def mine_blocks(
         envvar="ANIMICA_RPC_URL",
     ),
     use_proxy: bool = typer.Option(
-        True,
+        False,
         "--use-proxy/--no-proxy",
-        help="Use proxy to validate against trusted RPC (https://rpc.animica.org/rpc)",
+        help="(DEPRECATED) Use external proxy endpoint (requires ANIMICA_TRUSTED_RPC_URL). Default: disabled (use P2P)",
     ),
     verbose: bool = typer.Option(
         False,
@@ -323,13 +323,16 @@ def mine_blocks(
     5. Credits the block reward to the payout address
     6. Removes included transactions from the mempool
     
-    Proxy Mode (default):
-      When --use-proxy is enabled (default), mining requests are validated against
-      the trusted RPC endpoint (https://rpc.animica.org/rpc) with automatic retry and fallback:
-      - Forwards requests to https://rpc.animica.org/rpc as source of truth
+    P2P-First Mining (default):
+      By default, mining uses local node validation via P2P consensus (no proxy).
+      The node syncs state with peers and validates blocks locally.
+      
+    Legacy Proxy Mode (DEPRECATED):
+      Use --use-proxy to enable the legacy proxy (requires ANIMICA_TRUSTED_RPC_URL):
+      - Forwards requests to external endpoint (NOT recommended for production)
       - Automatically retries on transient failures (3 attempts by default)
-      - Falls back to local node if trusted endpoint is unreachable
-      - Use --no-proxy to disable proxy and mine directly to specified RPC
+      - Falls back to local node if external endpoint is unreachable
+      - Only for specialized testing scenarios
     
     Persistence:
       - Chain state is stored under ~/.animica/chain-{chain_id}/ by default
@@ -341,7 +344,7 @@ def mine_blocks(
       - Higher theta means harder mining (lower target)
     
     Examples:
-        # Mine 5 blocks to a wallet label (uses proxy by default)
+        # Mine 5 blocks to a wallet label (uses local P2P validation by default)
         animica miner mine-blocks --count 5 premine
         
         # Mine with --address option (backward compatible)
@@ -350,10 +353,7 @@ def mine_blocks(
         # Mine to a bech32 address with verbose output
         animica miner mine-blocks --count 10 --verbose anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz
         
-        # Mine directly without proxy
-        animica miner mine-blocks --address premine --count 10 --no-proxy
-        
-        # Mine with custom RPC endpoint and proxy
+        # Mine with custom RPC endpoint (local P2P validation)
         animica miner mine-blocks --address premine --count 10 --rpc-url http://localhost:8545
         
         # Mine with CUDA backend
@@ -364,12 +364,12 @@ def mine_blocks(
     
     Environment variables:
         ANIMICA_RPC_URL             - Node RPC endpoint (default: http://127.0.0.1:8545/rpc)
-        ANIMICA_TRUSTED_RPC_URL     - Trusted RPC for proxy (default: https://rpc.animica.org/rpc)
         ANIMICA_MINER_ADDRESS       - Default payout address if --address not specified
         ANIMICA_MINER_DEVICE        - Default mining device (default: cpu)
         ANIMICA_MINER_MAX_NONCE     - Max nonce iterations per block (default: 100000)
-        ANIMICA_PROXY_MAX_RETRIES   - Max proxy retries (default: 3)
-        ANIMICA_PROXY_RETRY_DELAY_MS - Delay between retries in ms (default: 1000)
+        ANIMICA_TRUSTED_RPC_URL     - (DEPRECATED) External proxy endpoint (only for --use-proxy)
+        ANIMICA_PROXY_MAX_RETRIES   - (DEPRECATED) Max proxy retries (default: 3)
+        ANIMICA_PROXY_RETRY_DELAY_MS - (DEPRECATED) Delay between retries in ms (default: 1000)
     
     Note: For backward compatibility with older nodes, if the node doesn't support
     payout address selection, blocks will be mined to the node's default miner address.
@@ -455,7 +455,7 @@ def mine_blocks(
     # Resolve RPC URL
     url = rpc_url or os.environ.get("ANIMICA_RPC_URL") or load_network_config().rpc_url
     
-    # Initialize proxy if enabled
+    # Initialize proxy if enabled (DEPRECATED - proxy is disabled by default)
     proxy = None
     if use_proxy:
         try:
@@ -467,11 +467,16 @@ def mine_blocks(
             
             from rpc.proxy import create_proxy, ProxyConfig
             
+            # Try to create proxy - will fail if ANIMICA_TRUSTED_RPC_URL is not set
             proxy = create_proxy()
             
             typer.secho(
-                f"✓ Proxy mode enabled - validating against {proxy.config.trusted_rpc_url}",
-                fg=typer.colors.GREEN,
+                f"⚠ DEPRECATED: Proxy mode enabled - forwarding to {proxy.config.trusted_rpc_url}",
+                fg=typer.colors.YELLOW,
+            )
+            typer.secho(
+                "  WARNING: Proxy is for testing only. Use P2P networking for production.",
+                fg=typer.colors.YELLOW,
             )
             if verbose:
                 typer.echo(
@@ -479,9 +484,22 @@ def mine_blocks(
                     f"Retry delay: {proxy.config.retry_delay_ms}ms, "
                     f"Timeout: {proxy.config.timeout_seconds}s"
                 )
+        except ValueError as e:
+            # Proxy not configured (expected - it's disabled by default)
+            typer.secho(
+                f"Error: Proxy not configured. {e}",
+                fg=typer.colors.RED,
+                err=True,
+            )
+            typer.secho(
+                "To use proxy: export ANIMICA_TRUSTED_RPC_URL=<endpoint>",
+                fg=typer.colors.YELLOW,
+                err=True,
+            )
+            raise typer.Exit(1)
         except ImportError as e:
             typer.secho(
-                f"Warning: Could not load proxy module ({e}). Mining directly to {url}",
+                f"Error: Could not load proxy module ({e}). Mining directly to {url}",
                 fg=typer.colors.YELLOW,
             )
             proxy = None
@@ -506,7 +524,7 @@ def mine_blocks(
         )
         raise typer.Exit(3)
     
-    mode_str = "with proxy validation" if proxy else "directly"
+    mode_str = "with DEPRECATED proxy" if proxy else "with local P2P validation"
     typer.echo(
         f"Mining {count} block(s) {mode_str} with payout to address {resolved_address} via RPC {url}"
     )
