@@ -655,17 +655,27 @@ class P2PService:
         )
 
         # Dial seeds (best-effort, fire-and-forget)
+        seed_count = 0
         for seed in self.seeds:
             try:
                 parsed = self._parse_multiaddr(seed)
-            except Exception:
+            except Exception as e:
+                self._log.warning(f"Failed to parse seed address {seed}: {e}")
                 continue
             if parsed.transport != "tcp":
+                self._log.debug(f"Skipping non-TCP seed: {seed} (transport={parsed.transport})")
                 continue
             addr = f"tcp://{parsed.host}:{parsed.port}"
+            self._log.info(f"Dialing seed: {addr}")
             self._dial_tasks.append(
                 self.loop.create_task(self._dial(addr), name=f"dial@{addr}")
             )
+            seed_count += 1
+        
+        if seed_count == 0 and len(self.seeds) > 0:
+            self._log.warning(f"No TCP seeds to dial (total seeds: {len(self.seeds)}). Ensure at least one TCP seed is configured.")
+        elif seed_count == 0:
+            self._log.warning("No seeds configured. Node will not connect to network unless peers connect to it.")
         
         # Also try to reconnect to previously known peers (best effort)
         for peer in known_peers[:10]:  # Limit to first 10 to avoid overwhelming
@@ -733,8 +743,8 @@ class P2PService:
     async def _dial(self, addr: str) -> None:
         try:
             conn = await self._transport.dial(addr, timeout=5.0)
-        except Exception:
-            self._log.debug("dial failed", exc_info=True, extra={"addr": addr})
+        except Exception as e:
+            self._log.warning(f"Failed to dial {addr}: {e.__class__.__name__}: {e}")
             return
         self._track_peer(conn, direction="outbound")
 
