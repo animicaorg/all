@@ -321,7 +321,11 @@ class P2PConfig:
 
     def to_dict(self) -> dict:
         d = asdict(self)
-        # dataclasses with tuples serialize as lists fine; return d directly
+        # Convert bytes to hex strings for JSON serialization
+        if d.get("alg_policy_root") is not None:
+            d["alg_policy_root"] = d["alg_policy_root"].hex()
+        if d.get("handshake_hkdf_salt") is not None:
+            d["handshake_hkdf_salt"] = d["handshake_hkdf_salt"].hex()
         return d
 
 
