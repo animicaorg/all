@@ -229,7 +229,7 @@ Configuration dataclass for RPC proxy:
 ```python
 @dataclass
 class ProxyConfig:
-    trusted_rpc_url: str = "https://rpc.animica.org"
+    trusted_rpc_url: str = "https://rpc.animica.org/rpc"
     max_retries: int = 3
     retry_delay_ms: int = 1000
     timeout_seconds: float = 30.0
