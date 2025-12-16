@@ -84,9 +84,17 @@ function DefaultErrorFallback({ error }: { error: Error | null }) {
   };
 
   const handleReset = () => {
-    // Clear localStorage and reload
+    // Clear explorer-specific localStorage keys and reload
     try {
-      localStorage.clear();
+      // Remove only explorer-specific keys to preserve user preferences
+      const keysToRemove = ['animica-explorer-store', 'animica-theme'];
+      keysToRemove.forEach(key => {
+        try {
+          localStorage.removeItem(key);
+        } catch {
+          // Ignore if specific key removal fails
+        }
+      });
     } catch {
       // Ignore if localStorage is unavailable
     }

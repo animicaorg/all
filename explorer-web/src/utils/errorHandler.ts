@@ -42,7 +42,7 @@ export function categorizeError(error: any): ErrorContext {
 
   if (
     error?.name === 'NetworkError' ||
-    error?.name === 'TypeError' && msg.includes('fetch') ||
+    (error?.name === 'TypeError' && msg.includes('fetch')) ||
     msg.includes('network') ||
     msg.includes('failed to fetch') ||
     msg.includes('load failed')
@@ -181,18 +181,25 @@ export function showErrorToast(error: any, title?: string) {
  * Call this once during app initialization.
  */
 export function installGlobalErrorHandlers() {
+  // Only install once
+  if (unhandledRejectionHandler || globalErrorHandler) {
+    console.log('[errorHandler] Global error handlers already installed');
+    return;
+  }
+
   // Handle unhandled promise rejections
-  window.addEventListener('unhandledrejection', (event) => {
+  unhandledRejectionHandler = (event) => {
     console.error('[errorHandler] Unhandled promise rejection:', event.reason);
     
     // Prevent default browser behavior (console warning)
     event.preventDefault();
     
     showErrorToast(event.reason, 'Unhandled Error');
-  });
+  };
+  window.addEventListener('unhandledrejection', unhandledRejectionHandler);
 
   // Handle global errors
-  window.addEventListener('error', (event) => {
+  globalErrorHandler = (event) => {
     console.error('[errorHandler] Global error:', event.error || event.message);
     
     // Don't show toast for script loading errors (they're usually handled elsewhere)
@@ -201,18 +208,29 @@ export function installGlobalErrorHandlers() {
     }
     
     showErrorToast(event.error || event.message, 'Application Error');
-  });
+  };
+  window.addEventListener('error', globalErrorHandler);
 
   console.log('[errorHandler] Global error handlers installed');
 }
+
+// Store handler references for cleanup
+let unhandledRejectionHandler: ((event: PromiseRejectionEvent) => void) | null = null;
+let globalErrorHandler: ((event: ErrorEvent) => void) | null = null;
 
 /**
  * Remove global error handlers (for cleanup in tests).
  */
 export function uninstallGlobalErrorHandlers() {
-  // Note: Can't easily remove specific handlers without keeping references,
-  // but this is mainly for test cleanup.
-  console.log('[errorHandler] Note: Global error handlers remain active (no cleanup implemented)');
+  if (unhandledRejectionHandler) {
+    window.removeEventListener('unhandledrejection', unhandledRejectionHandler);
+    unhandledRejectionHandler = null;
+  }
+  if (globalErrorHandler) {
+    window.removeEventListener('error', globalErrorHandler);
+    globalErrorHandler = null;
+  }
+  console.log('[errorHandler] Global error handlers uninstalled');
 }
 
 /**
