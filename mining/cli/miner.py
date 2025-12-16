@@ -15,7 +15,7 @@ Usage:
 
   python -m mining.cli.miner mine-blocks --address ADDR --count N [--threads N]
                                           [--rpc-url URL] [--log-level LEVEL]
-                                          [--retry-delay SECONDS]
+                                          [--retry-delay SECONDS] [--no-timeout]
 
 Commands:
   start       - Start the continuous miner (orchestrator)
@@ -38,6 +38,9 @@ Examples:
   
   # Mine blocks with custom retry delay (2.5 seconds between retries)
   python -m mining.cli.miner mine-blocks --address anim1test123 --count 3 --retry-delay 2.5
+  
+  # Mine blocks without timeout (useful for high-load scenarios)
+  python -m mining.cli.miner mine-blocks --address anim1test123 --count 5 --no-timeout
 
 Retry Behavior:
   - The 'mine-blocks' command retries RPC operations indefinitely on connection/network errors
@@ -45,6 +48,11 @@ Retry Behavior:
   - Configure retry delay with --retry-delay (default: 1.0 second)
   - Non-retriable errors (e.g., invalid parameters) exit immediately
   - Set ANIMICA_RETRY_DELAY environment variable for default retry delay
+
+Timeout Behavior:
+  - Default timeout for RPC operations is 30 seconds
+  - Use --no-timeout to disable timeout entirely (wait indefinitely)
+  - Useful in high-load or slow network conditions where operations may take longer
 
 Signals:
   - SIGINT/SIGTERM: graceful shutdown (start command).
@@ -239,6 +247,12 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         default=float(_env_default("ANIMICA_RETRY_DELAY", "1.0")),
         help="delay between RPC retry attempts in seconds (default: 1.0)",
     )
+    mine_blocks.add_argument(
+        "--no-timeout",
+        action="store_true",
+        default=False,
+        help="disable RPC timeout (wait indefinitely). Useful for high-load or slow network conditions.",
+    )
 
     return p
 
@@ -367,13 +381,18 @@ async def _run_mine_blocks(args: argparse.Namespace, log: logging.Logger) -> int
         )
         return 3
 
+    # Set timeout based on --no-timeout flag
+    timeout_value = None if args.no_timeout else 30.0
+    timeout_msg = "no timeout" if args.no_timeout else "30.0s timeout"
+    
     log.info(
-        "Mining %d block(s) with payout to address %s via RPC %s (threads=%d, retry_delay=%.1fs)",
+        "Mining %d block(s) with payout to address %s via RPC %s (threads=%d, retry_delay=%.1fs, %s)",
         args.count,
         args.address,
         args.rpc_url,
         args.threads,
         args.retry_delay,
+        timeout_msg,
     )
 
     # JSON-RPC error code constant for invalid params (JSON-RPC 2.0 spec)
@@ -392,7 +411,7 @@ async def _run_mine_blocks(args: argparse.Namespace, log: logging.Logger) -> int
     while True:
         attempt += 1
         try:
-            with rpc_client(args.rpc_url, timeout=30.0) as client:
+            with rpc_client(args.rpc_url, timeout=timeout_value) as client:
                 # Call miner.mine RPC method with address and threads parameters
                 # For backward compatibility, try with full params first, fall back if not supported
                 try:

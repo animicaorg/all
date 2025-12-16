@@ -280,6 +280,11 @@ def mine_blocks(
         "-v",
         help="Enable verbose output (show tx selection details)",
     ),
+    no_timeout: bool = typer.Option(
+        False,
+        "--no-timeout",
+        help="Disable RPC timeout (wait indefinitely). Useful for high-load or slow network conditions.",
+    ),
 ) -> None:
     """
     Mine blocks with proof-of-work to a specified payout address.
@@ -361,6 +366,9 @@ def mine_blocks(
         
         # Mine with auto device selection
         animica miner mine-blocks --address premine --count 5 --device auto
+        
+        # Mine without timeout (useful for high-load scenarios)
+        animica miner mine-blocks --address premine --count 10 --no-timeout
     
     Environment variables:
         ANIMICA_RPC_URL             - Node RPC endpoint (default: http://127.0.0.1:8545/rpc)
@@ -515,6 +523,12 @@ def mine_blocks(
         fg=typer.colors.CYAN,
     )
     
+    if no_timeout:
+        typer.secho(
+            "⚠ RPC timeout disabled - operations will wait indefinitely",
+            fg=typer.colors.YELLOW,
+        )
+    
     # Import time for sleep between blocks
     import time
     
@@ -537,7 +551,11 @@ def mine_blocks(
             RpcError = None  # type: ignore
             JsonRpcCode = None  # type: ignore
         
-        with rpc_client(url, timeout=30.0) as client:
+        # Set timeout based on --no-timeout flag
+        # None means no timeout (wait indefinitely)
+        timeout_value = None if no_timeout else 30.0
+        
+        with rpc_client(url, timeout=timeout_value) as client:
             total_mined = 0
             final_height = 0
             total_reward = 0
