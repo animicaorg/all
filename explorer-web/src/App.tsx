@@ -349,9 +349,17 @@ function CacheStatusWrapper() {
       }
     }
     
-    checkCache();
+    checkCache().catch((err) => {
+      console.debug('[Footer] Unexpected error in checkCache:', err);
+    });
+    
     // Refresh every 30 seconds
-    const interval = setInterval(checkCache, 30000);
+    const interval = setInterval(() => {
+      checkCache().catch((err) => {
+        console.debug('[Footer] Unexpected error in checkCache interval:', err);
+      });
+    }, 30000);
+    
     return () => clearInterval(interval);
   }, []);
 
