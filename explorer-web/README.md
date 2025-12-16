@@ -66,6 +66,14 @@ pnpm dev
 
 Vite will print a local URL. Open it in your browser; you should see live blocks if WS is reachable.
 
+### Allowed Hosts Configuration
+
+The development server is configured with `allowedHosts` to prevent DNS rebinding attacks. By default, it allows:
+- `explorer.animica.org` (production domain)
+- `localhost`, `127.0.0.1`, `::1` (local development)
+
+To add additional domains, edit `vite.config.ts` and add them to the `server.allowedHosts` array.
+
 ---
 
 ## UI Features
