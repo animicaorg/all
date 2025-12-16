@@ -571,8 +571,28 @@ def build_context(cfg: t.Any | None = None) -> RpcContext:
             
             p2p_deps = _P2PDeps(bundle.block_db)
             
+            # Read P2P configuration from environment
+            p2p_listen = os.environ.get("P2P_LISTEN", "0.0.0.0:30333")
+            p2p_seeds = os.environ.get("P2P_SEEDS", "")
+            
+            # Parse listen address to multiaddr format
+            listen_addrs = []
+            if p2p_listen:
+                if ":" in p2p_listen and not p2p_listen.startswith("/"):
+                    # Format is "host:port", convert to multiaddr
+                    host, port = p2p_listen.rsplit(":", 1)
+                    listen_addrs = [f"/ip4/{host}/tcp/{port}"]
+                else:
+                    # Already in multiaddr format or empty
+                    listen_addrs = [p2p_listen]
+            
+            # Parse seeds (comma-separated multiaddrs)
+            seeds = [s.strip() for s in p2p_seeds.split(",") if s.strip()]
+            
             # Initialize P2P service with persistent peer store
             p2p_service = P2PService(
+                listen_addrs=listen_addrs,
+                seeds=seeds,
                 chain_id=cfg_view.chain_id,
                 deps=p2p_deps,
                 peerstore_path=peerstore_path,
