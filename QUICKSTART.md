@@ -178,6 +178,45 @@ pytest --cov=consensus consensus/tests/
 pytest -m "not slow and not integration" -q
 ```
 
+## Testing P2P Decentralization
+
+**Verify that Animica is fully decentralized by running multiple nodes that discover and connect to each other.**
+
+### Quick Multi-Node Test (5 minutes)
+
+```bash
+# Start 3 nodes with P2P enabled
+docker-compose -f docker-compose.multinode.yml up -d
+
+# Wait 30 seconds for peer discovery
+sleep 30
+
+# Check Node 1 peers (should show node2 and node3)
+curl -s http://localhost:8545/rpc -H 'content-type: application/json' -d '{
+  "jsonrpc":"2.0","id":1,"method":"p2p.listPeers","params":[]
+}' | jq '.result | length'
+
+# Check Node 2 peers  
+curl -s http://localhost:8546/rpc -H 'content-type: application/json' -d '{
+  "jsonrpc":"2.0","id":1,"method":"p2p.listPeers","params":[]
+}' | jq '.result | length'
+
+# Verify all nodes have same chain height
+echo "Node 1:" && curl -s http://localhost:8545/rpc -H 'content-type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"chain.getHead","params":[]}' | jq '.result.height'
+echo "Node 2:" && curl -s http://localhost:8546/rpc -H 'content-type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"chain.getHead","params":[]}' | jq '.result.height'
+echo "Node 3:" && curl -s http://localhost:8547/rpc -H 'content-type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"chain.getHead","params":[]}' | jq '.result.height'
+
+# Stop nodes
+docker-compose -f docker-compose.multinode.yml down
+```
+
+**Expected Results:**
+- ✅ Each node shows 1-2 connected peers
+- ✅ All nodes report the same blockchain height
+- ✅ No central server needed - fully peer-to-peer!
+
+See [MULTINODE_QUICKSTART.md](MULTINODE_QUICKSTART.md) for detailed instructions.
+
 ## Devnet Setup
 
 **Note:** Since the default network is mainnet, you must explicitly set the network to devnet for local development.
