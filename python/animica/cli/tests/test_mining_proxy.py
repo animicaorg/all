@@ -21,7 +21,7 @@ def test_mine_blocks_with_proxy_enabled(monkeypatch: Any) -> None:
     # Mock proxy
     mock_proxy = Mock()
     mock_proxy.config = Mock()
-    mock_proxy.config.trusted_rpc_url = "https://rpc.animica.org"
+    mock_proxy.config.trusted_rpc_url = "https://rpc.animica.org/rpc"
     mock_proxy.config.max_retries = 3
     mock_proxy.config.retry_delay_ms = 1000
     mock_proxy.config.timeout_seconds = 30.0
@@ -134,7 +134,7 @@ def test_mine_blocks_proxy_with_fallback(monkeypatch: Any) -> None:
     
     mock_proxy = Mock()
     mock_proxy.config = Mock()
-    mock_proxy.config.trusted_rpc_url = "https://rpc.animica.org"
+    mock_proxy.config.trusted_rpc_url = "https://rpc.animica.org/rpc"
     mock_proxy.config.max_retries = 3
     mock_proxy.config.retry_delay_ms = 1000
     mock_proxy.config.timeout_seconds = 30.0
@@ -190,7 +190,7 @@ def test_mine_blocks_proxy_verbose_output(monkeypatch: Any) -> None:
     # Mock proxy
     mock_proxy = Mock()
     mock_proxy.config = Mock()
-    mock_proxy.config.trusted_rpc_url = "https://rpc.animica.org"
+    mock_proxy.config.trusted_rpc_url = "https://rpc.animica.org/rpc"
     mock_proxy.config.max_retries = 3
     mock_proxy.config.retry_delay_ms = 1000
     mock_proxy.config.timeout_seconds = 30.0

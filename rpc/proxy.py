@@ -19,7 +19,7 @@ logger = logging.getLogger("animica.rpc.proxy")
 class ProxyConfig:
     """Configuration for RPC proxy."""
     
-    trusted_rpc_url: str = "https://rpc.animica.org"
+    trusted_rpc_url: str = "https://rpc.animica.org/rpc"
     max_retries: int = 3
     retry_delay_ms: int = 1000  # milliseconds between retries
     timeout_seconds: float = 30.0
@@ -30,7 +30,7 @@ class ProxyConfig:
         """Load proxy config from environment variables."""
         import os
         
-        trusted_url = os.getenv("ANIMICA_TRUSTED_RPC_URL", "https://rpc.animica.org")
+        trusted_url = os.getenv("ANIMICA_TRUSTED_RPC_URL", "https://rpc.animica.org/rpc")
         max_retries = int(os.getenv("ANIMICA_PROXY_MAX_RETRIES", "3"))
         retry_delay = int(os.getenv("ANIMICA_PROXY_RETRY_DELAY_MS", "1000"))
         timeout = float(os.getenv("ANIMICA_PROXY_TIMEOUT_SECONDS", "30.0"))
@@ -183,7 +183,10 @@ class RpcProxy:
             f"with params: {params}"
         )
         
-        async with httpx.AsyncClient(timeout=self.config.timeout_seconds) as client:
+        async with httpx.AsyncClient(
+            timeout=self.config.timeout_seconds,
+            follow_redirects=True  # Handle HTTP 307 redirects gracefully
+        ) as client:
             response = await client.post(
                 self.config.trusted_rpc_url,
                 json=payload,
