@@ -120,6 +120,7 @@ class RpcClient:
             self._client = httpx.Client(
                 timeout=self.timeout,
                 headers=merged_headers,
+                follow_redirects=True,  # Handle HTTP 307 redirects
             )
         else:
             if not _HAVE_REQUESTS:
