@@ -406,17 +406,32 @@ export interface ExplorerRpcClient extends RpcClient {
   getAccount?(address: string): Promise<any>;
   subscribeNewHeads?(onHead: (head: { height: number; hash: string; timeISO: string }) => void): { unsubscribe: () => void };
   ping?(): Promise<void>;
+  close?(): void;
+}
+
+/**
+ * WebSocket client interface for subscriptions.
+ * Implemented by WsClient from ws.ts
+ */
+interface WsClientLike {
+  connect(): Promise<void>;
+  subscribeNewHeads(handler: (head: any) => void, onError?: (e: Error) => void): Promise<() => Promise<void>>;
+  close(): Promise<void>;
 }
 
 /**
  * Wraps the base RpcClient with explorer-specific high-level methods.
  */
 class ExplorerRpcClientImpl extends RpcClient implements ExplorerRpcClient {
+  private wsClient: WsClientLike | null = null;
+  private wsClientPromise: Promise<WsClientLike> | null = null;
   async getChainId(): Promise<string> {
     try {
       const result = await this.call<number | string>('chain.getChainId');
+      console.debug('[RPC] getChainId:', result);
       return String(result);
     } catch (e) {
+      console.warn('[RPC] chain.getChainId failed, trying eth_chainId fallback:', e);
       // Fallback to eth_chainId for compatibility
       try {
         const result = await this.call<string>('eth_chainId');
@@ -425,48 +440,58 @@ class ExplorerRpcClientImpl extends RpcClient implements ExplorerRpcClient {
           return String(parseInt(result, 16));
         }
         return String(result);
-      } catch {
+      } catch (fallbackError) {
+        console.error('[RPC] Both chain.getChainId and eth_chainId failed:', fallbackError);
         throw e;
       }
     }
   }
 
   async getHead(): Promise<{ height: number; hash: string; timeISO: string }> {
-    const result = await this.call<any>('chain.getHead');
-    
-    // Parse the result into the expected format
-    const height = result.height ?? result.number ?? 0;
-    const hash = result.hash ?? result.blockHash ?? '';
-    
-    // Handle timestamp (could be in seconds or milliseconds, or ISO string)
-    let timeISO: string;
-    if (result.timeISO) {
-      timeISO = result.timeISO;
-    } else if (result.timestamp !== undefined) {
-      const ts = typeof result.timestamp === 'number' 
-        ? (result.timestamp > 10_000_000_000 ? result.timestamp : result.timestamp * 1000)
-        : Date.now();
-      timeISO = new Date(ts).toISOString();
-    } else if (result.timestamp_ms !== undefined) {
-      timeISO = new Date(result.timestamp_ms).toISOString();
-    } else {
-      timeISO = new Date().toISOString();
-    }
+    try {
+      const result = await this.call<any>('chain.getHead');
+      console.debug('[RPC] getHead:', result);
+      
+      // Parse the result into the expected format
+      const height = result.height ?? result.number ?? 0;
+      const hash = result.hash ?? result.blockHash ?? '';
+      
+      // Handle timestamp (could be in seconds or milliseconds, or ISO string)
+      let timeISO: string;
+      if (result.timeISO) {
+        timeISO = result.timeISO;
+      } else if (result.timestamp !== undefined) {
+        const ts = typeof result.timestamp === 'number' 
+          ? (result.timestamp > 10_000_000_000 ? result.timestamp : result.timestamp * 1000)
+          : Date.now();
+        timeISO = new Date(ts).toISOString();
+      } else if (result.timestamp_ms !== undefined) {
+        timeISO = new Date(result.timestamp_ms).toISOString();
+      } else {
+        timeISO = new Date().toISOString();
+      }
 
-    return { height, hash, timeISO };
+      return { height, hash, timeISO };
+    } catch (error) {
+      console.error('[RPC] getHead failed:', error);
+      throw error;
+    }
   }
 
   async getBlock(height: number): Promise<any> {
     try {
       // Try chain.getBlockByHeight first
       const result = await this.call<any>('chain.getBlockByHeight', [height, false, false]);
+      console.debug('[RPC] getBlock:', height, result);
       return this.normalizeBlock(result, height);
     } catch (e) {
+      console.warn('[RPC] chain.getBlockByHeight failed for height', height, ', trying chain.getBlockByNumber:', e);
       // Fallback to chain.getBlockByNumber
       try {
         const result = await this.call<any>('chain.getBlockByNumber', [height, false]);
         return this.normalizeBlock(result, height);
-      } catch {
+      } catch (fallbackError) {
+        console.error('[RPC] Both getBlockByHeight and getBlockByNumber failed for height', height, ':', fallbackError);
         throw e;
       }
     }
@@ -497,6 +522,106 @@ class ExplorerRpcClientImpl extends RpcClient implements ExplorerRpcClient {
   async ping(): Promise<void> {
     // Simple ping using a lightweight method
     await this.call('chain.getChainId');
+  }
+
+  subscribeNewHeads(onHead: (head: { height: number; hash: string; timeISO: string }) => void): { unsubscribe: () => void } {
+    // Lazy-load and establish WebSocket connection
+    const wsPromise = this.getOrCreateWsClient();
+    
+    let unsubscribeFn: (() => Promise<void>) | null = null;
+    let cancelled = false;
+
+    // Async initialization
+    wsPromise.then(async (ws) => {
+      if (cancelled) return;
+      
+      try {
+        unsubscribeFn = await ws.subscribeNewHeads(
+          (rawHead: any) => {
+            if (cancelled) return;
+            
+            // Normalize the head data
+            const height = rawHead.height ?? rawHead.number ?? 0;
+            const hash = rawHead.hash ?? rawHead.blockHash ?? '';
+            
+            let timeISO: string;
+            if (rawHead.timeISO) {
+              timeISO = rawHead.timeISO;
+            } else if (rawHead.timestamp !== undefined) {
+              const ts = typeof rawHead.timestamp === 'number'
+                ? (rawHead.timestamp > 10_000_000_000 ? rawHead.timestamp : rawHead.timestamp * 1000)
+                : Date.now();
+              timeISO = new Date(ts).toISOString();
+            } else if (rawHead.timestamp_ms !== undefined) {
+              timeISO = new Date(rawHead.timestamp_ms).toISOString();
+            } else {
+              timeISO = new Date().toISOString();
+            }
+            
+            onHead({ height, hash, timeISO });
+          },
+          (error) => {
+            console.error('[RPC] WebSocket subscription error:', error);
+          }
+        );
+      } catch (error) {
+        console.error('[RPC] Failed to subscribe to newHeads:', error);
+      }
+    }).catch((error) => {
+      console.error('[RPC] Failed to establish WebSocket connection:', error);
+    });
+
+    // Return synchronous unsubscribe handle
+    return {
+      unsubscribe: () => {
+        cancelled = true;
+        if (unsubscribeFn) {
+          unsubscribeFn().catch((e) => {
+            console.error('[RPC] Unsubscribe error:', e);
+          });
+        }
+      },
+    };
+  }
+
+  close(): void {
+    // Close WebSocket if active
+    if (this.wsClient) {
+      this.wsClient.close().catch((e) => {
+        console.error('[RPC] Error closing WebSocket:', e);
+      });
+      this.wsClient = null;
+      this.wsClientPromise = null;
+    }
+  }
+
+  private async getOrCreateWsClient(): Promise<WsClientLike> {
+    if (this.wsClient) {
+      return this.wsClient;
+    }
+
+    if (this.wsClientPromise) {
+      return this.wsClientPromise;
+    }
+
+    this.wsClientPromise = (async () => {
+      // Dynamically import ws.ts to avoid circular dependencies
+      const wsModule = await import('./ws');
+      
+      // Derive WebSocket URL from HTTP RPC URL
+      const httpUrl = this.url;
+      const wsUrl = httpUrl
+        .replace(/^http:/, 'ws:')
+        .replace(/^https:/, 'wss:');
+
+      const ws = wsModule.createWs({ url: wsUrl });
+      await ws.connect();
+      
+      this.wsClient = ws;
+      return ws;
+    })();
+
+    return this.wsClientPromise;
   }
 
   private normalizeBlock(block: any, height: number): any {
