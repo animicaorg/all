@@ -1,8 +1,10 @@
 # Theta Scaling Update
 
+> **Note:** This document describes historical changes to theta scaling. As of the latest version, **theta is now unbounded** (no maximum limit). See `docs/UNBOUNDED_THETA.md` for current behavior.
+
 ## Overview
 
-This document describes the changes made to Theta (Θ) scaling parameters to better handle high network load and hash rate spikes in the Animica blockchain.
+This document describes the historical evolution of Theta (Θ) scaling parameters in the Animica blockchain, culminating in the removal of the upper bound.
 
 ## Background
 
@@ -24,18 +26,18 @@ The blockchain dynamically adjusts Theta to maintain a target block time (defaul
 - **Fast blocks** (< 12s average): Theta increases to slow down mining
 - **Slow blocks** (> 12s average): Theta decreases to speed up mining
 
-## Problem Statement
+## Historical Problem Statement
 
-Prior to this update, the Theta adjustment parameters were too constrained under high network load:
-
+### Initial Issue (v1)
+Theta adjustment parameters were too constrained:
 1. **Theta Maximum Too Low**: 40M µ-nats (40 nats) wasn't enough during hash rate spikes
 2. **Step Clamp Too Small**: 600k µ-nats (0.6 nats) per update meant slow adaptation
-3. **Network Config Misalignment**: Different networks had inconsistent limits
 
-This caused:
-- Mining to become inefficiently difficult during high load
-- Slow recovery when hash rate spiked then dropped
-- Network instability during miner influx
+### Intermediate Fix (v2)
+Raised limits to 60M µ-nats (60 nats) for mining, with proportional increases for networks.
+
+### Final Solution (v3 - Current)
+**Removed the upper bound entirely** - theta can now scale indefinitely to match any network load.
 
 ## Changes Made
 
@@ -335,6 +337,37 @@ This update addresses several reported issues:
 - Device parameter validation tests
 - Mining troubleshooting documentation
 - Theta scaling documentation (this document)
+
+### v0.2.0 (Latest - Unbounded Theta)
+
+**Breaking Change** (Backward compatible):
+- **Removed upper bound on theta** - `theta_max_micro=None` (unbounded)
+- All networks now use `theta_max_munats: null` in config
+- Theta can scale indefinitely to match any hash rate
+
+**Safety Mechanisms**:
+- Step clamp (1.0 nats/block) limits rate of change
+- Overflow protection at 10^9 nats (10^15 µ-nats)
+- EMA smoothing prevents wild fluctuations
+- Minimum bound remains enforced
+
+**Benefits**:
+- No artificial scalability ceiling
+- Network adapts to unlimited hash rate growth
+- Better target block time maintenance
+- Future-proof design
+
+**Testing**:
+- New test suite: `mining/tests/test_theta_unbounded.py`
+- 26 tests passing across all difficulty modules
+- Verified stability under extreme conditions
+
+**Documentation**:
+- New comprehensive guide: `docs/UNBOUNDED_THETA.md`
+- Updated specs: `mining/specs/THETA_ADJUSTMENT.md`
+- Updated retarget spec: `docs/spec/poies/RETARGET.md`
+
+See `docs/UNBOUNDED_THETA.md` for complete details on the unbounded theta feature.
 
 ---
 
