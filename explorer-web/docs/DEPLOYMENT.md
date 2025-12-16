@@ -4,6 +4,36 @@ This app is a client-only SPA (React + Vite). It serves **static assets** and ta
 
 ---
 
+## 0) Configuration
+
+### Allowed Hosts
+
+The Vite development server is configured with `server.allowedHosts` to control which domains can access the dev server. This prevents DNS rebinding attacks in development.
+
+**Current configuration** (in `vite.config.ts`):
+```typescript
+server: {
+  host: true,
+  port: 3001,
+  allowedHosts: [
+    "explorer.animica.org",  // Production domain
+    "localhost",             // Local development
+    ".localhost",            // Localhost subdomains
+    "127.0.0.1",            // IPv4 loopback
+    "::1",                  // IPv6 loopback
+  ],
+}
+```
+
+To add additional production domains:
+1. Edit `explorer-web/vite.config.ts`
+2. Add your domain(s) to the `allowedHosts` array
+3. Rebuild the application
+
+**Note:** This setting only affects the development server. Production builds are static and served by your hosting provider.
+
+---
+
 ## 1) Build Artifacts
 
 ```bash
