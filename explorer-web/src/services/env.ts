@@ -9,6 +9,7 @@
 
 export type EnvLike = {
   VITE_RPC_URL?: string;
+  VITE_RPC_HTTP?: string;  // Alternative name for RPC URL
   VITE_RPC_WS?: string;
   VITE_WS_URL?: string;
   VITE_CHAIN_ID?: string | number;
@@ -29,7 +30,9 @@ function resolveEnv(env?: Partial<EnvLike>): Partial<EnvLike> {
 /** Infer an RPC HTTP URL with sensible fallbacks. */
 export function inferRpcUrl(env?: Partial<EnvLike>): string {
   const e = resolveEnv(env);
+  // Support both VITE_RPC_URL and VITE_RPC_HTTP for backwards compatibility
   if (e?.VITE_RPC_URL) return e.VITE_RPC_URL;
+  if (e?.VITE_RPC_HTTP) return e.VITE_RPC_HTTP;
 
   if (typeof window !== "undefined") {
     const anyWin = window as any;
@@ -82,18 +85,34 @@ export function inferWsUrl(env?: Partial<EnvLike>): string {
 /**
  * Infer the chain id from env or window injection. Returns an empty string
  * when unavailable to keep existing UI defaults.
+ * Normalizes hex chain IDs (0x...) to decimal strings for consistency.
  */
 export function inferChainId(env?: Partial<EnvLike>): string {
   const e = resolveEnv(env);
-  if (e?.VITE_CHAIN_ID) return String(e.VITE_CHAIN_ID);
+  let chainId: string | number | undefined;
 
-  if (typeof window !== "undefined") {
+  if (e?.VITE_CHAIN_ID) {
+    chainId = e.VITE_CHAIN_ID;
+  } else if (typeof window !== "undefined") {
     const anyWin = window as any;
-    const injected = anyWin.__ANIMICA_CHAIN_ID__ ?? anyWin.__CHAIN_ID__;
-    if (injected !== undefined && injected !== null) return String(injected);
+    chainId = anyWin.__ANIMICA_CHAIN_ID__ ?? anyWin.__CHAIN_ID__;
   }
 
-  return "";
+  if (chainId === undefined || chainId === null) {
+    return "";
+  }
+
+  // Normalize hex chain IDs to decimal strings
+  const chainIdStr = String(chainId);
+  if (chainIdStr.startsWith("0x")) {
+    try {
+      return String(parseInt(chainIdStr, 16));
+    } catch {
+      return chainIdStr; // Return as-is if parsing fails
+    }
+  }
+
+  return chainIdStr;
 }
 
 export { DEFAULT_RPC, DEFAULT_WS };
