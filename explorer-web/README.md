@@ -74,6 +74,54 @@ The development server is configured with `allowedHosts` to prevent DNS rebindin
 
 To add additional domains, edit `vite.config.ts` and add them to the `server.allowedHosts` array.
 
+### Configuration Options
+
+**Required Environment Variables**:
+- `VITE_RPC_URL` - HTTP JSON-RPC endpoint (e.g., `https://rpc.animica.org/rpc`)
+- `VITE_CHAIN_ID` - Numeric chain ID (e.g., `659658` for mainnet, `1337` for devnet)
+
+**Optional Environment Variables**:
+- `VITE_RPC_WS` - WebSocket endpoint for live updates (e.g., `wss://rpc.animica.org/ws`)
+- `VITE_SERVICES_URL` - Studio services URL for contract verification (e.g., `http://localhost:8090`)
+
+**Quick Setup Examples**:
+
+```bash
+# Mainnet
+VITE_RPC_URL=https://rpc.animica.org/rpc
+VITE_RPC_WS=wss://rpc.animica.org/ws
+VITE_CHAIN_ID=659658
+
+# Local Development
+VITE_RPC_URL=http://localhost:8545
+VITE_RPC_WS=ws://localhost:8546
+VITE_CHAIN_ID=1337
+
+# Testnet (if available)
+VITE_RPC_URL=https://rpc.testnet.animica.org/rpc
+VITE_RPC_WS=wss://rpc.testnet.animica.org/ws
+VITE_CHAIN_ID=2
+```
+
+**Testing Your Configuration**:
+
+```bash
+# Test RPC connectivity
+curl -X POST $VITE_RPC_URL \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"chain.getChainId","params":[]}'
+
+# Should return: {"jsonrpc":"2.0","id":1,"result":659658}
+```
+
+**Troubleshooting**: If you see "Unable to fetch blockchain data", check:
+1. RPC node is running and accessible
+2. CORS is configured on the RPC server
+3. Firewall allows connections to RPC port
+4. `.env.local` has correct values and you've restarted the dev server
+
+For detailed troubleshooting, see [docs/TROUBLESHOOTING.md](./docs/TROUBLESHOOTING.md).
+
 ---
 
 ## UI Features
