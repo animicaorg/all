@@ -201,7 +201,11 @@ export default function AICFDashboard() {
 
   useEffect(() => {
     void refresh();
-    timer.current = window.setInterval(refresh, REFRESH_MS);
+    timer.current = window.setInterval(() => {
+      refresh().catch((e) => {
+        console.error('[AICFDashboard] Refresh error:', e);
+      });
+    }, REFRESH_MS);
     return () => {
       if (timer.current) window.clearInterval(timer.current);
     };

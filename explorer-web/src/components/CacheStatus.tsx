@@ -44,7 +44,11 @@ export function CacheStatus({
     }
 
     fetchStats();
-    const interval = setInterval(fetchStats, 10000); // Update every 10s
+    const interval = setInterval(() => {
+      fetchStats().catch((e) => {
+        console.debug('[CacheStatus] Fetch stats error:', e);
+      });
+    }, 10000); // Update every 10s
 
     return () => {
       cancelled = true;
