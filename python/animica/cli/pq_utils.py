@@ -94,6 +94,7 @@ def check_pq_signing_available() -> Tuple[bool, Optional[str]]:
         pass
 
     # Fall back to pq.py module
+    # Try with the default algorithm that wallet.py will use
     try:
         from pq.py.keygen import keygen_sig
         from pq.py.registry import default_signature_alg
@@ -115,6 +116,29 @@ def check_pq_signing_available() -> Tuple[bool, Optional[str]]:
             return False, "pq.py sign/verify self-test failed"
         
         return True, None
+    except NotImplementedError:
+        # Default algorithm not supported, try Dilithium3 as fallback
+        # since that's what animica.pq provides
+        try:
+            DILITHIUM3_ID = 0x1001
+            kp = keygen_sig(DILITHIUM3_ID)
+            
+            # Basic validation
+            if kp.public_key == kp.secret_key:
+                return False, "pq.py produced sk==pk (invalid)"
+            if len(kp.secret_key) <= len(kp.public_key):
+                return False, f"pq.py produced suspicious key sizes (pk={len(kp.public_key)} sk={len(kp.secret_key)})"
+            
+            # Test signing
+            from pq.py.sign import sign_detached, verify_detached
+            msg = b"animica-pq-check"
+            sig_obj = sign_detached(msg, DILITHIUM3_ID, kp.secret_key, domain="test")
+            if not verify_detached(msg, sig_obj, kp.public_key, domain="test"):
+                return False, "pq.py sign/verify self-test failed"
+            
+            return True, None
+        except Exception:
+            pass
     except Exception as pq_err:
         pass
 
