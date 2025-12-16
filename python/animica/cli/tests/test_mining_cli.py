@@ -348,3 +348,220 @@ def test_mine_blocks_enforces_2s_delay(monkeypatch: Any) -> None:
     assert len(sleep_calls) == 2
     # Each sleep should be 2 seconds
     assert all(s == 2.0 for s in sleep_calls)
+
+
+def _create_mock_rpc_client_with_device_tracking() -> tuple[type, dict[str, Any]]:
+    """Helper to create a mock RPC client that tracks the device parameter.
+    
+    Returns:
+        tuple: (MockRpcClient class, device tracking dict)
+    """
+    device_used = {"value": None}
+    
+    class MockRpcClient:
+        def __init__(self, *args, **kwargs):
+            pass
+        
+        def __enter__(self):
+            return self
+        
+        def __exit__(self, *args):
+            pass
+        
+        def request(self, method: str, params: Any):
+            if isinstance(params, dict):
+                device_used["value"] = params.get("device")
+            return {"mined": 1, "height": 1}
+    
+    return MockRpcClient, device_used
+
+
+def _setup_mock_rpc_client(monkeypatch: Any, test_address: str) -> dict[str, Any]:
+    """Helper to set up mock RPC client and address validation.
+    
+    Returns:
+        dict: Device tracking dictionary with 'value' key
+    """
+    monkeypatch.setattr(mining, "_validate_bech32_address", lambda x: True if x == test_address else False)
+    
+    MockRpcClient, device_used = _create_mock_rpc_client_with_device_tracking()
+    mock_module = Mock()
+    mock_module.RpcClient = MockRpcClient
+    
+    monkeypatch.setitem(__import__("sys").modules, "omni_sdk.rpc.http", mock_module)
+    monkeypatch.setitem(__import__("sys").modules, "sdk.python.omni_sdk.rpc.http", mock_module)
+    
+    return device_used
+
+
+def test_mine_blocks_with_device_cpu(monkeypatch: Any) -> None:
+    """Test that mine-blocks accepts --device cpu."""
+    test_address = "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz"
+    device_used = _setup_mock_rpc_client(monkeypatch, test_address)
+    
+    result = runner.invoke(
+        mining.app,
+        [
+            "mine-blocks",
+            "--address", test_address,
+            "--count", "1",
+            "--device", "cpu",
+            "--rpc-url", "http://127.0.0.1:8545",
+        ],
+    )
+    
+    assert result.exit_code == 0
+    assert device_used["value"] == "cpu"
+    assert "Using device: cpu" in result.output
+
+
+def test_mine_blocks_with_device_cuda(monkeypatch: Any) -> None:
+    """Test that mine-blocks accepts --device cuda."""
+    test_address = "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz"
+    device_used = _setup_mock_rpc_client(monkeypatch, test_address)
+    
+    result = runner.invoke(
+        mining.app,
+        [
+            "mine-blocks",
+            "--address", test_address,
+            "--count", "1",
+            "--device", "cuda",
+            "--rpc-url", "http://127.0.0.1:8545",
+        ],
+    )
+    
+    assert result.exit_code == 0
+    assert device_used["value"] == "cuda"
+    assert "Using device: cuda" in result.output
+
+
+def test_mine_blocks_with_device_auto(monkeypatch: Any) -> None:
+    """Test that mine-blocks accepts --device auto."""
+    test_address = "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz"
+    device_used = _setup_mock_rpc_client(monkeypatch, test_address)
+    
+    result = runner.invoke(
+        mining.app,
+        [
+            "mine-blocks",
+            "--address", test_address,
+            "--count", "1",
+            "--device", "auto",
+            "--rpc-url", "http://127.0.0.1:8545",
+        ],
+    )
+    
+    assert result.exit_code == 0
+    assert device_used["value"] == "auto"
+    assert "Using device: auto" in result.output
+
+
+def test_mine_blocks_with_all_supported_devices(monkeypatch: Any) -> None:
+    """Test that mine-blocks accepts all supported device values."""
+    test_address = "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz"
+    # Import the constant to ensure consistency with main module
+    from animica.cli.mining import SUPPORTED_DEVICES
+    
+    for device in SUPPORTED_DEVICES:
+        # Setup fresh mock for each device
+        device_used = _setup_mock_rpc_client(monkeypatch, test_address)
+        
+        result = runner.invoke(
+            mining.app,
+            [
+                "mine-blocks",
+                "--address", test_address,
+                "--count", "1",
+                "--device", device,
+                "--rpc-url", "http://127.0.0.1:8545",
+            ],
+        )
+        
+        assert result.exit_code == 0, f"Device {device} failed with: {result.output}"
+        assert device_used["value"] == device, f"Expected device {device}, got {device_used['value']}"
+        assert f"Using device: {device}" in result.output
+
+
+def test_mine_blocks_with_invalid_device() -> None:
+    """Test that mine-blocks rejects invalid device values."""
+    test_address = "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz"
+    
+    result = runner.invoke(
+        mining.app,
+        [
+            "mine-blocks",
+            "--address", test_address,
+            "--count", "1",
+            "--device", "invalid_device",
+            "--rpc-url", "http://127.0.0.1:8545",
+        ],
+    )
+    
+    assert result.exit_code == 2
+    assert "unsupported device" in result.output.lower()
+    assert "invalid_device" in result.output
+
+
+def test_mine_blocks_with_device_case_insensitive(monkeypatch: Any) -> None:
+    """Test that device parameter is case-insensitive."""
+    test_address = "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz"
+    device_used = _setup_mock_rpc_client(monkeypatch, test_address)
+    
+    result = runner.invoke(
+        mining.app,
+        [
+            "mine-blocks",
+            "--address", test_address,
+            "--count", "1",
+            "--device", "CUDA",  # Upper case
+            "--rpc-url", "http://127.0.0.1:8545",
+        ],
+    )
+    
+    assert result.exit_code == 0
+    assert device_used["value"] == "cuda"  # Should be normalized to lowercase
+    assert "Using device: cuda" in result.output
+
+
+def test_mine_blocks_without_device_defaults_to_cpu(monkeypatch: Any) -> None:
+    """Test that mine-blocks defaults to cpu device when --device is not specified."""
+    test_address = "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz"
+    device_used = _setup_mock_rpc_client(monkeypatch, test_address)
+    
+    result = runner.invoke(
+        mining.app,
+        [
+            "mine-blocks",
+            "--address", test_address,
+            "--count", "1",
+            # No --device flag specified
+            "--rpc-url", "http://127.0.0.1:8545",
+        ],
+    )
+    
+    assert result.exit_code == 0
+    assert device_used["value"] == "cpu"  # Should default to cpu
+    assert "Using device: cpu" in result.output
+
+
+def test_mine_blocks_device_from_env_var(monkeypatch: Any) -> None:
+    """Test that device can be set via ANIMICA_MINER_DEVICE environment variable."""
+    test_address = "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz"
+    monkeypatch.setenv("ANIMICA_MINER_DEVICE", "cuda")
+    device_used = _setup_mock_rpc_client(monkeypatch, test_address)
+    
+    result = runner.invoke(
+        mining.app,
+        [
+            "mine-blocks",
+            "--address", test_address,
+            "--count", "1",
+            # No --device flag, should use env var
+            "--rpc-url", "http://127.0.0.1:8545",
+        ],
+    )
+    
+    assert result.exit_code == 0
+    assert device_used["value"] == "cuda"  # Should use env var value
+    assert "Using device: cuda" in result.output
