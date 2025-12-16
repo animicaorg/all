@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from dataclasses import dataclass
 from typing import (Iterable, List, Optional, Protocol, Sequence, Tuple,
@@ -135,6 +136,7 @@ class HeaderSync:
         self.cfg = config or HeaderSyncConfig()
         self._stop = asyncio.Event()
         self.stats = SyncStats(started_at=time.time(), last_progress_at=time.time())
+        self._log = logging.getLogger("animica.p2p.sync.headers")
 
     # ---------------------------
     # Public control surface
@@ -147,19 +149,44 @@ class HeaderSync:
         """
         Single-threaded sync loop. It cooperates with other tasks via await and
         runs until stop() is called.
+        
+        Enhanced with idle detection and recovery for P2P rewrite.
         """
+        idle_count = 0
+        max_idle_before_warning = 10
+        
         while not self._stop.is_set():
             try:
                 made_progress = await self._sync_step()
                 if not made_progress:
+                    idle_count += 1
+                    
+                    # P2P rewrite: Detect prolonged idle state
+                    if idle_count == max_idle_before_warning:
+                        self._log.warning(
+                            f"Header sync has been idle for {idle_count} attempts. "
+                            "This may indicate no peers available or network issues."
+                        )
+                    elif idle_count > 0 and idle_count % 50 == 0:
+                        self._log.warning(
+                            f"Header sync still idle after {idle_count} attempts. "
+                            f"Last progress: {time.time() - self.stats.last_progress_at:.1f}s ago"
+                        )
+                    
                     await asyncio.sleep(self.cfg.idle_backoff_sec)
+                else:
+                    # Reset idle counter on progress
+                    if idle_count > 0:
+                        self._log.info(f"Header sync recovered after {idle_count} idle attempts")
+                    idle_count = 0
+                    
             except asyncio.CancelledError:
                 raise
             except (
                 Exception
             ) as e:  # noqa: BLE001 - we want to keep syncing unless fatal
-                # In production, prefer a structured logger (wired in deps).
-                print(f"[headers] sync step error: {e!r}")
+                # Enhanced error logging for P2P rewrite
+                self._log.error(f"Header sync step error: {e.__class__.__name__}: {e}", exc_info=True)
                 self.stats.errors += 1
                 await asyncio.sleep(min(2 * self.cfg.idle_backoff_sec, 5.0))
 
@@ -169,10 +196,15 @@ class HeaderSync:
 
     async def _sync_step(self) -> bool:
         head_hash, head_height = await self.chain.get_head()
+        
+        self._log.debug(f"Syncing headers from height {head_height}")
 
         locator = await self._build_locator(
             head_hash, max_steps=self.cfg.locator_max_steps
         )
+        
+        self._log.debug(f"Built locator with {len(locator)} entries")
+        
         headers = await self.fetcher.getheaders(
             locator=locator,
             stop=None,
@@ -181,7 +213,10 @@ class HeaderSync:
         )
 
         if not headers:
+            self._log.debug("No headers received from peers")
             return False
+        
+        self._log.info(f"Received {len(headers)} headers from peers")
 
         # Sanity: require linkage and known parent for the first header unless explicitly allowed.
         first = headers[0]

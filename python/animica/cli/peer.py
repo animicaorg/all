@@ -911,5 +911,223 @@ def bootstrap_peers(
         )
 
 
+@app.command(name="diagnose")
+def diagnose_peer(
+    address: str = typer.Argument(..., help="Peer address to diagnose"),
+    rpc_url: Optional[str] = typer.Option(
+        None, "--rpc-url", help="JSON-RPC endpoint", envvar=RPC_ENV
+    ),
+) -> None:
+    """
+    Diagnose connection issues with a specific peer.
+    
+    Tests connectivity, DNS resolution, port availability, and
+    provides detailed debugging information for troubleshooting P2P issues.
+    
+    Examples:
+        animica peer diagnose tcp://example.com:30333
+        animica peer diagnose /dns4/node.example.com/tcp/30333
+    """
+    # socket and time are already imported at module level
+    
+    typer.secho(f"\n🔍 Diagnosing peer: {address}", fg=typer.colors.CYAN, bold=True)
+    typer.echo()
+    
+    # Parse address to extract host and port
+    host, port = None, None
+    try:
+        if address.startswith("tcp://"):
+            # Simple TCP address
+            addr_part = address[6:]
+            if ":" in addr_part:
+                host, port_str = addr_part.rsplit(":", 1)
+                port = int(port_str)
+        elif "/" in address:
+            # Multiaddr format
+            parts = address.split("/")
+            for i, part in enumerate(parts):
+                if part in ["dns4", "dns6", "ip4", "ip6"] and i + 1 < len(parts):
+                    host = parts[i + 1]
+                if part == "tcp" and i + 1 < len(parts):
+                    port = int(parts[i + 1])
+        else:
+            # Assume host:port
+            if ":" in address:
+                host, port_str = address.rsplit(":", 1)
+                port = int(port_str)
+            else:
+                host = address
+                port = 30333  # Default port
+    except Exception as e:
+        typer.echo(f"❌ Failed to parse address: {e}", err=True)
+        raise typer.Exit(code=1)
+    
+    if not host:
+        typer.echo("❌ Could not extract host from address", err=True)
+        raise typer.Exit(code=1)
+    
+    typer.echo(f"📋 Parsed address:")
+    typer.echo(f"   Host: {host}")
+    typer.echo(f"   Port: {port or 'N/A'}")
+    typer.echo()
+    
+    # DNS Resolution
+    typer.secho("1️⃣  DNS Resolution", fg=typer.colors.BLUE, bold=True)
+    try:
+        start = time.time()
+        ip_address = socket.gethostbyname(host)
+        dns_time = time.time() - start
+        typer.secho(f"   ✓ Resolved to: {ip_address}", fg=typer.colors.GREEN)
+        typer.echo(f"   ⏱  Lookup time: {dns_time*1000:.1f}ms")
+    except socket.gaierror as e:
+        typer.secho(f"   ✗ DNS resolution failed: {e}", fg=typer.colors.RED)
+        ip_address = None
+    typer.echo()
+    
+    # Port Connectivity
+    if port:
+        typer.secho("2️⃣  Port Connectivity", fg=typer.colors.BLUE, bold=True)
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(5)
+            start = time.time()
+            result = sock.connect_ex((host, port))
+            connect_time = time.time() - start
+            sock.close()
+            
+            if result == 0:
+                typer.secho(f"   ✓ Port {port} is open", fg=typer.colors.GREEN)
+                typer.echo(f"   ⏱  Connection time: {connect_time*1000:.1f}ms")
+            else:
+                typer.secho(f"   ✗ Port {port} is closed or filtered", fg=typer.colors.RED)
+                typer.echo(f"   Error code: {result}")
+        except Exception as e:
+            typer.secho(f"   ✗ Connection failed: {e}", fg=typer.colors.RED)
+        typer.echo()
+    
+    # Latency Test (Ping approximation)
+    if ip_address and port:
+        typer.secho("3️⃣  Latency Test (3 attempts)", fg=typer.colors.BLUE, bold=True)
+        latencies = []
+        for i in range(3):
+            try:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(3)
+                start = time.time()
+                sock.connect((ip_address, port))
+                latency = (time.time() - start) * 1000
+                sock.close()
+                latencies.append(latency)
+                typer.echo(f"   Attempt {i+1}: {latency:.1f}ms")
+            except Exception as e:
+                typer.echo(f"   Attempt {i+1}: Failed ({e})")
+        
+        if latencies:
+            avg_latency = sum(latencies) / len(latencies)
+            typer.secho(f"   ✓ Average latency: {avg_latency:.1f}ms", fg=typer.colors.GREEN)
+        typer.echo()
+    
+    # RPC Status Check
+    typer.secho("4️⃣  Node RPC Status", fg=typer.colors.BLUE, bold=True)
+    url = _resolve_rpc_url(rpc_url)
+    try:
+        result = asyncio.run(rpc_call("p2p.listPeers", [], rpc_url=url))
+        typer.secho(f"   ✓ Node RPC accessible", fg=typer.colors.GREEN)
+        typer.echo(f"   Connected peers: {len(result) if result else 0}")
+    except Exception as e:
+        typer.secho(f"   ✗ Node RPC failed: {e}", fg=typer.colors.RED)
+    typer.echo()
+    
+    # Summary
+    typer.secho("📊 Diagnosis Summary", fg=typer.colors.CYAN, bold=True)
+    if ip_address and port and latencies:
+        typer.secho("   ✓ Peer appears reachable", fg=typer.colors.GREEN)
+        typer.echo("   Connection should be possible")
+    elif not ip_address:
+        typer.secho("   ⚠  DNS resolution issue", fg=typer.colors.YELLOW)
+        typer.echo("   Check your DNS settings or use IP address directly")
+    elif port and not latencies:
+        typer.secho("   ⚠  Port connectivity issue", fg=typer.colors.YELLOW)
+        typer.echo("   Port may be filtered by firewall or peer is offline")
+    else:
+        typer.secho("   ⚠  Partial connectivity", fg=typer.colors.YELLOW)
+        typer.echo("   Some checks failed - review details above")
+    typer.echo()
+
+
+@app.command(name="test-latency")
+def test_peer_latency(
+    peer_id: str = typer.Argument(..., help="Peer ID to test latency"),
+    rpc_url: Optional[str] = typer.Option(
+        None, "--rpc-url", help="JSON-RPC endpoint", envvar=RPC_ENV
+    ),
+    count: int = typer.Option(5, "--count", "-c", help="Number of pings to send"),
+) -> None:
+    """
+    Test network latency to a connected peer.
+    
+    Sends multiple ping requests and measures round-trip time (RTT)
+    to help diagnose network performance issues.
+    
+    Examples:
+        animica peer test-latency QmPeerId...
+        animica peer test-latency 12D3KooWPeerId... --count 10
+    """
+    url = _resolve_rpc_url(rpc_url)
+    
+    typer.secho(f"\n🏓 Testing latency to peer: {peer_id[:16]}...", fg=typer.colors.CYAN, bold=True)
+    typer.echo(f"   Sending {count} pings...")
+    typer.echo()
+    
+    latencies = []
+    failures = 0
+    
+    for i in range(count):
+        try:
+            start = time.time()
+            _result = asyncio.run(
+                rpc_call("p2p.pingPeer", [peer_id], rpc_url=url)
+            )
+            # Result not used - latency is measured by wall-clock time
+            latency = (time.time() - start) * 1000
+            latencies.append(latency)
+            
+            status = "✓" if latency < 200 else "⚠" if latency < 500 else "✗"
+            color = typer.colors.GREEN if latency < 200 else typer.colors.YELLOW if latency < 500 else typer.colors.RED
+            
+            typer.secho(f"   {status} Ping {i+1}: {latency:.1f}ms", fg=color)
+            time.sleep(0.5)  # Small delay between pings
+            
+        except Exception as e:
+            failures += 1
+            typer.secho(f"   ✗ Ping {i+1}: Failed ({e})", fg=typer.colors.RED)
+    
+    typer.echo()
+    
+    if latencies:
+        avg_latency = sum(latencies) / len(latencies)
+        min_latency = min(latencies)
+        max_latency = max(latencies)
+        
+        typer.secho("📊 Statistics:", fg=typer.colors.CYAN, bold=True)
+        typer.echo(f"   Sent: {count}")
+        typer.echo(f"   Received: {len(latencies)}")
+        typer.echo(f"   Lost: {failures} ({failures/count*100:.1f}%)")
+        typer.echo(f"   Min: {min_latency:.1f}ms")
+        typer.echo(f"   Max: {max_latency:.1f}ms")
+        typer.echo(f"   Avg: {avg_latency:.1f}ms")
+        
+        if avg_latency < 100:
+            typer.secho(f"\n✓ Excellent connection quality", fg=typer.colors.GREEN)
+        elif avg_latency < 300:
+            typer.secho(f"\n⚠  Moderate connection quality", fg=typer.colors.YELLOW)
+        else:
+            typer.secho(f"\n✗ Poor connection quality", fg=typer.colors.RED)
+    else:
+        typer.secho("✗ All pings failed - peer may be unreachable", fg=typer.colors.RED, bold=True)
+    
+    typer.echo()
+
+
 if __name__ == "__main__":
     app()
