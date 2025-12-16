@@ -350,8 +350,12 @@ def test_mine_blocks_enforces_2s_delay(monkeypatch: Any) -> None:
     assert all(s == 2.0 for s in sleep_calls)
 
 
-def _create_mock_rpc_client_with_device_tracking():
-    """Helper to create a mock RPC client that tracks the device parameter."""
+def _create_mock_rpc_client_with_device_tracking() -> tuple[type, dict[str, Any]]:
+    """Helper to create a mock RPC client that tracks the device parameter.
+    
+    Returns:
+        tuple: (MockRpcClient class, device tracking dict)
+    """
     device_used = {"value": None}
     
     class MockRpcClient:
@@ -372,8 +376,12 @@ def _create_mock_rpc_client_with_device_tracking():
     return MockRpcClient, device_used
 
 
-def _setup_mock_rpc_client(monkeypatch: Any, test_address: str):
-    """Helper to set up mock RPC client and address validation."""
+def _setup_mock_rpc_client(monkeypatch: Any, test_address: str) -> dict[str, Any]:
+    """Helper to set up mock RPC client and address validation.
+    
+    Returns:
+        dict: Device tracking dictionary with 'value' key
+    """
     monkeypatch.setattr(mining, "_validate_bech32_address", lambda x: True if x == test_address else False)
     
     MockRpcClient, device_used = _create_mock_rpc_client_with_device_tracking()
@@ -454,9 +462,8 @@ def test_mine_blocks_with_all_supported_devices(monkeypatch: Any) -> None:
     test_address = "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz"
     # Import the constant to ensure consistency with main module
     from animica.cli.mining import SUPPORTED_DEVICES
-    supported_devices = SUPPORTED_DEVICES
     
-    for device in supported_devices:
+    for device in SUPPORTED_DEVICES:
         # Setup fresh mock for each device
         device_used = _setup_mock_rpc_client(monkeypatch, test_address)
         
