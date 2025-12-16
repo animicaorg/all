@@ -21,12 +21,16 @@ _log = logging.getLogger("animica.p2p.checkpoints.integration")
 
 async def initialize_checkpoints(
     config: Optional[CheckpointsConfig] = None,
+    chain_id: Optional[int] = None,
+    include_builtin: bool = True,
 ) -> Optional[CheckpointVerifier]:
     """
     Initialize checkpoint system based on configuration.
     
     Args:
         config: CheckpointsConfig instance, or None to load from environment.
+        chain_id: Optional chain identifier for built-in checkpoints (1=mainnet, etc.)
+        include_builtin: If True, include built-in checkpoints for the chain.
     
     Returns:
         CheckpointVerifier instance if checkpoints are enabled, None otherwise.
@@ -34,20 +38,20 @@ async def initialize_checkpoints(
     if config is None:
         config = load_checkpoints_config()
     
-    if not config.is_enabled():
-        _log.info("Checkpoints disabled (mode=off)")
+    if not config.is_enabled() and not (include_builtin and chain_id is not None):
+        _log.info("Checkpoints disabled (mode=off) and no built-in requested")
         return None
     
-    _log.info(f"Initializing checkpoints in {config.mode} mode")
+    _log.info(f"Initializing checkpoints in {config.mode} mode (chain_id={chain_id})")
     
     try:
-        loader = CheckpointLoader(config)
-        checkpoints = await loader.load_checkpoints()
+        loader = CheckpointLoader(config, chain_id=chain_id)
+        checkpoints = await loader.load_checkpoints(include_builtin=include_builtin)
         
         if not checkpoints:
             _log.warning(
                 f"No checkpoints loaded in {config.mode} mode "
-                f"(strict={config.strict})"
+                f"(strict={config.strict}, chain_id={chain_id})"
             )
             if config.strict:
                 raise RuntimeError(

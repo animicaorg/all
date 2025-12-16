@@ -31,6 +31,7 @@ from .integration import (
     get_checkpoint_config_summary,
     verify_chain_checkpoints,
 )
+from . import builtin
 
 __all__ = [
     "CheckpointsConfig",
@@ -41,4 +42,5 @@ __all__ = [
     "initialize_checkpoints",
     "get_checkpoint_config_summary",
     "verify_chain_checkpoints",
+    "builtin",
 ]
