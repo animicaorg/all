@@ -248,13 +248,10 @@ def update_theta(
     theta_next = max(int(p.theta_min_micro), int(theta_next))
     
     # Enforce maximum if specified, otherwise apply overflow protection
-    # Max safe value for MicroNat (int64): 2^63-1 = 9_223_372_036_854_775_807
-    # Use a practical ceiling of 10^15 micro-nats (10^9 nats) to avoid overflow
-    MAX_SAFE_THETA_MICRO = 1_000_000_000_000_000  # 10^9 nats
     if p.theta_max_micro is not None:
         theta_next = min(int(p.theta_max_micro), int(theta_next))
     else:
-        # Apply overflow protection for unbounded case
+        # Apply overflow protection for unbounded case (use module-level constant)
         theta_next = min(MAX_SAFE_THETA_MICRO, int(theta_next))
 
     return RetargetState(
