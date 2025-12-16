@@ -170,7 +170,11 @@ export default function ProviderDetailPage() {
 
   useEffect(() => {
     if (timer.current) window.clearInterval(timer.current);
-    timer.current = window.setInterval(refresh, REFRESH_MS_DEFAULT);
+    timer.current = window.setInterval(() => {
+      refresh().catch((e) => {
+        console.error('[ProviderDetailPage] Refresh error:', e);
+      });
+    }, REFRESH_MS_DEFAULT);
     return () => {
       if (timer.current) window.clearInterval(timer.current);
     };

@@ -6,6 +6,8 @@ import AppRouter from "./router";
 import { ExplorerStoreProvider } from "./state/store";
 import { inferRpcUrl } from "./services/env";
 import { useNetworkManager } from "./state/network";
+import { ErrorBoundary } from "./components/ErrorBoundary";
+import { installGlobalErrorHandlers } from "./utils/errorHandler";
 
 // ────────────────────────────────────────────────────────────────────────────────
 // Global event channels so other modules can toggle loader / push toasts without
@@ -35,29 +37,38 @@ export const setGlobalLoading = (on: boolean, label?: string) =>
 export default function App() {
   const basename = (import.meta as any).env?.VITE_BASE_PATH || undefined;
 
-  return (
-    <ExplorerStoreProvider>
-      <BrowserRouter basename={basename} future={{ v7_relativeSplatPath: true }}>
-        <NetworkInitializer />
-        <div className="app-root">
-          <TopBar />
-          <TopProgressBar />
-          <div className="app-container">
-            <SideNav />
-            <main className="app-main" role="main" aria-live="polite">
-              <Suspense fallback={<RouteFallback />}>
-                <AppRouter />
-              </Suspense>
-            </main>
-          </div>
+  // Install global error handlers once
+  useEffect(() => {
+    installGlobalErrorHandlers();
+  }, []);
 
-          <GlobalLoaderOverlay />
-          <ToastHost />
-          <Footer />
-          <style>{globalCss}</style>
-        </div>
-      </BrowserRouter>
-    </ExplorerStoreProvider>
+  return (
+    <ErrorBoundary>
+      <ExplorerStoreProvider>
+        <BrowserRouter basename={basename} future={{ v7_relativeSplatPath: true }}>
+          <NetworkInitializer />
+          <div className="app-root">
+            <TopBar />
+            <TopProgressBar />
+            <div className="app-container">
+              <SideNav />
+              <main className="app-main" role="main" aria-live="polite">
+                <ErrorBoundary>
+                  <Suspense fallback={<RouteFallback />}>
+                    <AppRouter />
+                  </Suspense>
+                </ErrorBoundary>
+              </main>
+            </div>
+
+            <GlobalLoaderOverlay />
+            <ToastHost />
+            <Footer />
+            <style>{globalCss}</style>
+          </div>
+        </BrowserRouter>
+      </ExplorerStoreProvider>
+    </ErrorBoundary>
   );
 }
 
@@ -338,9 +349,17 @@ function CacheStatusWrapper() {
       }
     }
     
-    checkCache();
+    checkCache().catch((err) => {
+      console.debug('[Footer] Unexpected error in checkCache:', err);
+    });
+    
     // Refresh every 30 seconds
-    const interval = setInterval(checkCache, 30000);
+    const interval = setInterval(() => {
+      checkCache().catch((err) => {
+        console.debug('[Footer] Unexpected error in checkCache interval:', err);
+      });
+    }, 30000);
+    
     return () => clearInterval(interval);
   }, []);
 
