@@ -455,21 +455,7 @@ class ExplorerRpcClientImpl extends RpcClient implements ExplorerRpcClient {
       // Parse the result into the expected format
       const height = result.height ?? result.number ?? 0;
       const hash = result.hash ?? result.blockHash ?? '';
-      
-      // Handle timestamp (could be in seconds or milliseconds, or ISO string)
-      let timeISO: string;
-      if (result.timeISO) {
-        timeISO = result.timeISO;
-      } else if (result.timestamp !== undefined) {
-        const ts = typeof result.timestamp === 'number' 
-          ? (result.timestamp > 10_000_000_000 ? result.timestamp : result.timestamp * 1000)
-          : Date.now();
-        timeISO = new Date(ts).toISOString();
-      } else if (result.timestamp_ms !== undefined) {
-        timeISO = new Date(result.timestamp_ms).toISOString();
-      } else {
-        timeISO = new Date().toISOString();
-      }
+      const timeISO = this.normalizeTimestamp(result);
 
       return { height, hash, timeISO };
     } catch (error) {
@@ -543,20 +529,7 @@ class ExplorerRpcClientImpl extends RpcClient implements ExplorerRpcClient {
             // Normalize the head data
             const height = rawHead.height ?? rawHead.number ?? 0;
             const hash = rawHead.hash ?? rawHead.blockHash ?? '';
-            
-            let timeISO: string;
-            if (rawHead.timeISO) {
-              timeISO = rawHead.timeISO;
-            } else if (rawHead.timestamp !== undefined) {
-              const ts = typeof rawHead.timestamp === 'number'
-                ? (rawHead.timestamp > 10_000_000_000 ? rawHead.timestamp : rawHead.timestamp * 1000)
-                : Date.now();
-              timeISO = new Date(ts).toISOString();
-            } else if (rawHead.timestamp_ms !== undefined) {
-              timeISO = new Date(rawHead.timestamp_ms).toISOString();
-            } else {
-              timeISO = new Date().toISOString();
-            }
+            const timeISO = this.normalizeTimestamp(rawHead);
             
             onHead({ height, hash, timeISO });
           },
@@ -624,21 +597,48 @@ class ExplorerRpcClientImpl extends RpcClient implements ExplorerRpcClient {
     return this.wsClientPromise;
   }
 
+  /**
+   * Normalize timestamp from various formats to ISO string.
+   * Handles: ISO string, Unix seconds, Unix milliseconds, timestamp_ms field.
+   */
+  private normalizeTimestamp(data: any): string {
+    if (data.timeISO) {
+      return data.timeISO;
+    }
+    
+    if (data.timestamp !== undefined) {
+      const ts = typeof data.timestamp === 'number'
+        ? (data.timestamp > 10_000_000_000 ? data.timestamp : data.timestamp * 1000)
+        : Date.now();
+      return new Date(ts).toISOString();
+    }
+    
+    if (data.timestamp_ms !== undefined) {
+      return new Date(data.timestamp_ms).toISOString();
+    }
+    
+    return new Date().toISOString();
+  }
+
   private normalizeBlock(block: any, height: number): any {
     if (!block) return null;
+    
+    const timeISO = this.normalizeTimestamp(block);
+    const timestamp = block.timestamp;
+    const timestamp_ms = block.timestamp_ms ?? (
+      block.timestamp
+        ? (block.timestamp > 10_000_000_000 ? block.timestamp : block.timestamp * 1000)
+        : Date.now()
+    );
     
     // Normalize block structure for the explorer
     return {
       height: block.height ?? block.number ?? height,
       hash: block.hash ?? block.blockHash ?? '',
       parentHash: block.parentHash ?? block.parent ?? '',
-      timeISO: block.timeISO ?? (block.timestamp 
-        ? new Date((block.timestamp > 10_000_000_000 ? block.timestamp : block.timestamp * 1000)).toISOString()
-        : new Date().toISOString()),
-      timestamp: block.timestamp,
-      timestamp_ms: block.timestamp_ms ?? (block.timestamp 
-        ? (block.timestamp > 10_000_000_000 ? block.timestamp : block.timestamp * 1000)
-        : Date.now()),
+      timeISO,
+      timestamp,
+      timestamp_ms,
       txCount: block.txCount ?? (Array.isArray(block.txs) ? block.txs.length : (Array.isArray(block.transactions) ? block.transactions.length : 0)),
       txs: block.txs ?? block.transactions ?? [],
       proposer: block.proposer ?? block.miner ?? '',
