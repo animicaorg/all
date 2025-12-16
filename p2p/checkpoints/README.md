@@ -8,9 +8,19 @@ Model 3 (Hybrid) maintains P2P-first sync as the default while adding an optiona
 
 - **Default behavior remains P2P-first** for sync/validation/mining
 - **No code path requires `rpc.animica.org` to be reachable** by default
+- **Built-in checkpoints** provide hardcoded safety checkpoints for mainnet (and other networks)
 - **Optional checkpoint mechanism** can consult a configured RPC URL or local file
 - **Checkpoints are safety rails** used during initial sync or fork-choice, not live head oracles
 - **Graceful degradation**: if checkpoints are unavailable, sync continues via P2P (unless strict mode)
+
+## Built-in Checkpoints
+
+Built-in checkpoints are hardcoded safety rails that don't require external fetching. These are particularly useful for mainnet to provide a baseline security check.
+
+**Mainnet (chain_id=1):**
+- Height 55795: `0x0a3205eb3aca078a9c6e8415e5970e198b43c087bff7b71371054bbbc99d8938`
+
+Built-in checkpoints are always available and can be merged with external checkpoints from RPC or file sources. When there's a conflict, built-in checkpoints take precedence.
 
 ## Configuration
 
@@ -98,17 +108,38 @@ See `fixtures/example_checkpoints.json` for a complete example.
 
 ## Usage
 
+### CLI Tool
+
+List built-in checkpoints:
+
+```bash
+# List all built-in checkpoints
+python -m p2p.checkpoints.cli.checkpoints list
+
+# List checkpoints for mainnet only
+python -m p2p.checkpoints.cli.checkpoints list --chain-id 1
+
+# Export mainnet checkpoints to file
+python -m p2p.checkpoints.cli.checkpoints export --chain-id 1 --output checkpoints.json
+
+# Export all built-in checkpoints
+python -m p2p.checkpoints.cli.checkpoints export --output all_checkpoints.json
+```
+
 ### Programmatic Initialization
 
 ```python
 from p2p.checkpoints import initialize_checkpoints, CheckpointsConfig
 
-# Load from environment
-verifier = await initialize_checkpoints()
+# Load from environment (includes built-in checkpoints for mainnet)
+verifier = await initialize_checkpoints(chain_id=1)
+
+# Load without built-in checkpoints
+verifier = await initialize_checkpoints(chain_id=1, include_builtin=False)
 
 # Or with explicit config
 config = CheckpointsConfig(mode="file", file_path="/path/to/checkpoints.json")
-verifier = await initialize_checkpoints(config)
+verifier = await initialize_checkpoints(config, chain_id=1)
 
 # Use with header sync
 from p2p.sync.headers import HeaderSync
@@ -119,6 +150,21 @@ sync = HeaderSync(
     consensus=consensus_view,
     checkpoint_verifier=verifier,  # Optional
 )
+```
+
+### Built-in Checkpoint Access
+
+```python
+from p2p.checkpoints import builtin
+
+# Get built-in checkpoints for mainnet
+mainnet_cps = builtin.get_builtin_checkpoints(chain_id=1)
+
+# Check if a chain has built-in checkpoints
+has_checkpoints = builtin.has_builtin_checkpoints(chain_id=1)
+
+# Get all built-in checkpoints
+all_cps = builtin.get_all_builtin_checkpoints()
 ```
 
 ### Verification
