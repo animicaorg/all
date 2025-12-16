@@ -442,11 +442,17 @@ def _adjust_theta_for_mining(dt_seconds: float | None = None) -> int:
     network stress and hash rate changes. Uses EMA-based retargeting from
     consensus.difficulty module.
     
+    Theta (Θ) represents mining difficulty:
+    - Higher theta → harder mining (fewer valid blocks)
+    - Lower theta → easier mining (more valid blocks)
+    - Fast blocks (dt < target) → increase theta
+    - Slow blocks (dt > target) → decrease theta
+    
     Args:
         dt_seconds: Time elapsed since last block (seconds). If None, returns current theta.
         
     Returns:
-        int: Adjusted theta_micro value for next mining iteration
+        int: Adjusted theta_micro value for next mining iteration (in micro-nats)
     """
     global _MINING_STATE
     
@@ -503,9 +509,13 @@ def _adjust_theta_for_mining(dt_seconds: float | None = None) -> int:
             if state is None:
                 return _resolve_theta()
         
-        # Validate dt_seconds
-        if dt_seconds <= 0 or not math.isfinite(dt_seconds):
-            log.warning(f"Invalid dt_seconds for theta adjustment: {dt_seconds}, skipping update")
+        # Validate dt_seconds (reject invalid and extreme values)
+        # Upper bound: 1 hour = 3600s (prevents overflow and unreasonable adjustments)
+        if dt_seconds <= 0 or not math.isfinite(dt_seconds) or dt_seconds > 3600.0:
+            log.warning(
+                f"Invalid dt_seconds for theta adjustment: {dt_seconds}, skipping update "
+                f"(must be in range (0, 3600] seconds)"
+            )
             return int(state.theta_micro)
         
         # Apply retargeting update
@@ -513,17 +523,22 @@ def _adjust_theta_for_mining(dt_seconds: float | None = None) -> int:
         _MINING_STATE["theta_state"] = new_state
         
         # Track block times for monitoring (keep last 20)
-        block_times = _MINING_STATE.get("block_times", [])
+        # Use list for simplicity; for production consider collections.deque(maxlen=20)
+        block_times = _MINING_STATE.get("block_times")
+        if block_times is None:
+            # Initialize with deque for automatic size management
+            from collections import deque
+            block_times = deque(maxlen=20)
+            _MINING_STATE["block_times"] = block_times
         block_times.append(dt_seconds)
-        if len(block_times) > 20:
-            block_times = block_times[-20:]
-        _MINING_STATE["block_times"] = block_times
         
         # Log adjustment if significant change
         old_theta = state.theta_micro
         new_theta = new_state.theta_micro
         if abs(new_theta - old_theta) > 10_000:  # > 0.01 nats change
-            avg_time = sum(block_times[-5:]) / min(5, len(block_times)) if block_times else 0
+            # Calculate average of last 5 block times (deque needs list conversion for slicing)
+            recent_times = list(block_times)[-5:] if len(block_times) > 0 else []
+            avg_time = sum(recent_times) / len(recent_times) if recent_times else 0.0
             log.info(
                 f"Adjusted mining theta: {old_theta/1e6:.3f} → {new_theta/1e6:.3f} nats "
                 f"(dt={dt_seconds:.2f}s, avg_5={avg_time:.2f}s, target={state.params.target_block_time_s}s)"
