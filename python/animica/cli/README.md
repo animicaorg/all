@@ -340,6 +340,20 @@ Peer Management
 
   # Get detailed peer information
   animica peer info QmPeerId...
+  
+  # Connect to bootstrap/seed nodes
+  # Automatically connects to network-specific seeds (mainnet/testnet/devnet)
+  animica peer bootstrap
+  animica peer bootstrap --network mainnet  # Explicit network
+  animica peer bootstrap --probe            # Test connectivity before adding
+
+  # Important: For mainnet nodes running via `animica node up`:
+  # - P2P is enabled by default (ANIMICA_P2P_ENABLE=true)
+  # - Bootstrap seeds are automatically loaded based on chain ID
+  # - TCP port 30333 and QUIC UDP port 443 must be accessible for peers
+  # - The node auto-connects to seeds on startup
+  # - Use `animica peer list` to verify peer connections
+  # - If no peers connect, ensure firewall allows outbound connections on these ports
 
   # Note: The peer listing uses the following RPC methods with automatic fallback:
   #   - p2p.listPeers (primary)

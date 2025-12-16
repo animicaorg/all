@@ -112,7 +112,16 @@ docker compose -f ops/docker/docker-compose.testnet.yml up -d
 docker compose -f ops/docker/docker-compose.devnet.yml up -d
 ```
 
-P2P is **enabled by default** in all compose files (`P2P_ENABLE=true`).
+P2P is **enabled by default** in all compose files with the following configuration:
+- `ANIMICA_P2P_ENABLE=true` — Enables P2P networking
+- `ANIMICA_P2P_CHAIN_ID` — Set to network chain ID (1=mainnet, 2=testnet, 1337=devnet)
+- Network-specific seeds are **automatically loaded** based on chain ID
+- Both TCP (port 30333) and QUIC (UDP port 443) transports are enabled by default
+
+**Important**: When running `animica node up`, ensure the following ports are accessible:
+- **TCP 30333** — P2P connections (must be open for peer connectivity)
+- **UDP 443** — QUIC transport (preferred, faster than TCP)
+- TCP 8545 — RPC (localhost/trusted clients only, DO NOT expose publicly)
 
 ### Manual Start
 
@@ -122,11 +131,15 @@ export ANIMICA_NETWORK=mainnet
 export ANIMICA_CHAIN_ID=1
 
 # Enable P2P (enabled by default)
-export P2P_ENABLE=true
-export P2P_LISTEN=0.0.0.0:30333
+export ANIMICA_P2P_ENABLE=true
+export ANIMICA_P2P_CHAIN_ID=1  # Auto-loads mainnet seeds
 
-# Seeds are auto-loaded for mainnet, or override:
-export P2P_SEEDS="/dns4/mainnet.animica.org/tcp/30333,/ip4/144.126.133.21/tcp/30333"
+# Optional: Override default listen addresses
+export ANIMICA_P2P_LISTEN_TCP=0.0.0.0:30333
+export ANIMICA_P2P_LISTEN_QUIC=0.0.0.0:443
+
+# Optional: Override seeds (not recommended - use auto-selected seeds)
+# export ANIMICA_P2P_SEEDS="/dns4/mainnet.animica.org/tcp/30333,/dns4/mainnet.animica.org/udp/443/quic-v1"
 
 # Start node
 python -m rpc

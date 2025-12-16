@@ -102,7 +102,7 @@ def test_p2p_config_loads_network_seeds():
 
 
 def test_docker_compose_mainnet_p2p_enabled():
-    """Test that mainnet docker compose has P2P enabled."""
+    """Test that mainnet docker compose has P2P enabled with correct config."""
     import os
     from pathlib import Path
     
@@ -118,24 +118,47 @@ def test_docker_compose_mainnet_p2p_enabled():
         with open(compose_file) as f:
             compose_data = yaml.safe_load(f)
         
-        # Check if node service exists and has P2P_ENABLE configured
+        # Check if node service exists and has P2P configured
         services = compose_data.get("services", {})
         node_service = services.get("node", {})
         env_vars = node_service.get("environment", {})
         
-        # P2P_ENABLE should be configured (either as direct value or with default)
-        p2p_enable = env_vars.get("P2P_ENABLE", "")
+        # Check for ANIMICA_P2P_* variables (canonical)
+        animica_p2p_enable = env_vars.get("ANIMICA_P2P_ENABLE", "")
+        animica_p2p_chain_id = env_vars.get("ANIMICA_P2P_CHAIN_ID", "")
         
-        # Should be set to "true" or use env var with default true: "${P2P_ENABLE:-true}"
-        assert p2p_enable != "" or "P2P_ENABLE" in str(env_vars), \
-            "P2P_ENABLE should be configured in mainnet compose"
+        # ANIMICA_P2P_ENABLE should be configured
+        assert animica_p2p_enable != "", \
+            "ANIMICA_P2P_ENABLE should be configured in mainnet compose"
         
         # If it's a string with default, it should default to true
-        if isinstance(p2p_enable, str) and "${" in p2p_enable:
-            assert "true" in p2p_enable.lower(), \
-                f"P2P_ENABLE should default to true in mainnet: {p2p_enable}"
+        if isinstance(animica_p2p_enable, str) and "${" in animica_p2p_enable:
+            assert "true" in animica_p2p_enable.lower(), \
+                f"ANIMICA_P2P_ENABLE should default to true in mainnet: {animica_p2p_enable}"
         
-        print("✓ Mainnet docker compose has P2P enabled")
+        # ANIMICA_P2P_CHAIN_ID should be configured for mainnet (1)
+        assert animica_p2p_chain_id != "", \
+            "ANIMICA_P2P_CHAIN_ID should be configured in mainnet compose"
+        
+        # Check for port mappings (should include QUIC UDP 443)
+        ports = node_service.get("ports", [])
+        port_strs = [str(p) for p in ports]
+        
+        # Check for QUIC UDP port mapping
+        has_quic_port = any("443" in p and "udp" in p.lower() for p in port_strs)
+        assert has_quic_port, \
+            "Mainnet compose should expose QUIC UDP port 443"
+        
+        # Legacy P2P_ENABLE should still be present for backward compatibility
+        p2p_enable = env_vars.get("P2P_ENABLE", "")
+        assert p2p_enable != "", \
+            "Legacy P2P_ENABLE should still be present for backward compatibility"
+        
+        print("✓ Mainnet docker compose has P2P enabled with correct config")
+        print(f"  - ANIMICA_P2P_ENABLE: {animica_p2p_enable}")
+        print(f"  - ANIMICA_P2P_CHAIN_ID: {animica_p2p_chain_id}")
+        print(f"  - QUIC port exposed: {has_quic_port}")
+        print(f"  - Legacy P2P_ENABLE: {p2p_enable}")
         
     except ImportError:
         # YAML not available - do basic string check
@@ -143,10 +166,16 @@ def test_docker_compose_mainnet_p2p_enabled():
             content = f.read()
         
         # Verify P2P is mentioned
-        assert "P2P_ENABLE" in content, \
-            "P2P_ENABLE should be configured in mainnet compose"
+        assert "ANIMICA_P2P_ENABLE" in content, \
+            "ANIMICA_P2P_ENABLE should be configured in mainnet compose"
         
-        print("✓ Mainnet docker compose mentions P2P (basic check)")
+        assert "ANIMICA_P2P_CHAIN_ID" in content, \
+            "ANIMICA_P2P_CHAIN_ID should be configured in mainnet compose"
+        
+        assert "443" in content and "udp" in content.lower(), \
+            "QUIC UDP port 443 should be exposed in mainnet compose"
+        
+        print("✓ Mainnet docker compose has P2P config (basic check)")
 
 
 def test_mining_proxy_docs_deprecated():
