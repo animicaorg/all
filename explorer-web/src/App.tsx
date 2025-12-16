@@ -299,6 +299,8 @@ function Footer() {
   return (
     <footer className="footer">
       <span className="muted">© {new Date().getFullYear()} Animica • Explorer</span>
+      <div className="grow" />
+      <CacheStatusWrapper />
       <a
         className="muted link"
         href="https://github.com/animica-labs"
@@ -309,6 +311,52 @@ function Footer() {
         GitHub
       </a>
     </footer>
+  );
+}
+
+// Simple wrapper for cache status in footer
+function CacheStatusWrapper() {
+  const [cacheInfo, setCacheInfo] = useState<{ synced: boolean; blocksCount: number } | null>(null);
+  const [showDetails, setShowDetails] = useState(false);
+
+  useEffect(() => {
+    // Check cache availability and get basic stats
+    async function checkCache() {
+      try {
+        const { isCacheAvailable, getCache } = await import('./services/cache');
+        if (!isCacheAvailable()) return;
+        
+        const cache = await getCache();
+        const stats = await cache.getStats();
+        setCacheInfo({
+          synced: (stats.lastSyncHeight ?? 0) > 0,
+          blocksCount: stats.blocksCount,
+        });
+      } catch (err) {
+        // Cache not available or error - silently ignore
+        console.debug('[Footer] Cache check failed:', err);
+      }
+    }
+    
+    checkCache();
+    // Refresh every 30 seconds
+    const interval = setInterval(checkCache, 30000);
+    return () => clearInterval(interval);
+  }, []);
+
+  if (!cacheInfo) return null;
+
+  return (
+    <div className="cache-footer-pill" title={`Local cache: ${cacheInfo.blocksCount.toLocaleString()} blocks cached`}>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+        <line x1="3" y1="9" x2="21" y2="9"/>
+        <line x1="9" y1="21" x2="9" y2="9"/>
+      </svg>
+      <span className="muted" style={{ fontSize: '0.85rem' }}>
+        {cacheInfo.synced ? '💾' : '⏳'} {cacheInfo.blocksCount.toLocaleString()}
+      </span>
+    </div>
   );
 }
 
@@ -420,6 +468,7 @@ body{margin:0;background:var(--bg);color:var(--text);font:14px/1.4 ui-sans-serif
 .app-main{padding:1rem;min-width:0}
 
 .footer{display:flex;gap:.8rem;align-items:center;justify-content:space-between;border-top:1px solid var(--border);padding:.7rem .9rem;background:var(--panel)}
+.cache-footer-pill{display:flex;align-items:center;gap:.3rem;padding:.25rem .5rem;border-radius:.3rem;background:rgba(128,128,128,.08);border:1px solid var(--border)}
 
 .top-progress{position:fixed;inset:0 0 auto 0;height:2px;background:linear-gradient(90deg,var(--accent),transparent);transform:scaleX(0);transform-origin:left;transition:transform .2s ease;z-index:60;opacity:.8}
 .top-progress.active{transform:scaleX(1);animation:tp 1.1s ease-in-out infinite}
