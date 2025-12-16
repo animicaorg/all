@@ -16,6 +16,9 @@ Usage:
   python -m mining.cli.miner mine-blocks --address ADDR --count N [--threads N]
                                           [--rpc-url URL] [--log-level LEVEL]
                                           [--retry-delay SECONDS] [--no-timeout]
+  
+  The --threads option controls the number of CPU threads used for parallel nonce search.
+  Higher thread counts can speed up mining on multi-core systems.
 
 Commands:
   start       - Start the continuous miner (orchestrator)
