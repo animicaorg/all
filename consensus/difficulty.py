@@ -58,7 +58,7 @@ impacting blockchain performance. When theta_max_micro is None (default), this
 hard cap is automatically applied. Stability is ensured by:
   1. Hard cap: Maximum at 300M µ-nats (300 nats)
   2. step_clamp_micro: Limits rate of change per block
-  3. Overflow protection: Ultimate safety cap at MAX_SAFE_THETA_MICRO (10^9 nats)
+  3. Overflow protection: Ultimate safety cap at MAX_SAFE_THETA_MICRO (10^15 µ-nats = 10^9 nats)
   4. EMA smoothing: Prevents wild fluctuations from transient spikes
 
 See also:
