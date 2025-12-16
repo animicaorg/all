@@ -7,6 +7,7 @@ A lightweight, secure, and fast web explorer for Animica-compatible networks. It
 ## Highlights
 
 - **Live Heads** — auto-updating latest blocks via WS subscriptions
+- **Persistent Cache** — IndexedDB-based local caching for offline operation and improved performance
 - **Blocks View** — height, timestamp, proposer, gas usage, PoIES/DA breakdown
 - **Transaction Details** — status, fees, decoded inputs/outputs, logs, raw CBOR
 - **Address Insights** — balance, nonce, recent activity, contract flag
@@ -29,6 +30,7 @@ A lightweight, secure, and fast web explorer for Animica-compatible networks. It
 - **Strict CORS:** The app is static; CORS must be allowed on the RPC/Services origins.
 - **Immutable assets:** Content-hashed JS/CSS; only `index.html` should be no-store.
 - **Security-first:** No private keys or server-side signing. Read-only explorer.
+- **Local caching:** IndexedDB cache stores blockchain data locally for offline access and improved performance. See [CACHING.md](docs/CACHING.md) for details.
 
 **Directory sketch (simplified)**
 
@@ -258,6 +260,16 @@ The explorer displays real-time connection status:
 - **Green dot**: Connected to node, receiving live updates
 - **Red dot**: Disconnected, will attempt to reconnect
 - Chain ID and RPC latency visible in the top navigation bar
+
+### Local Caching & Offline Mode
+The explorer includes persistent local caching for improved performance and offline operation:
+- **Automatic Caching**: Blockchain data is automatically cached in IndexedDB
+- **Background Sync**: Continuously synchronizes with RPC in the background
+- **Offline Access**: Browse cached blocks and transactions when RPC is unavailable
+- **Cache Status**: View cache statistics and sync progress in the footer
+- **Cache Management**: Clear cache if needed via the cache status panel
+
+For more details, see [CACHING.md](docs/CACHING.md).
 
 ---
 
