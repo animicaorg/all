@@ -14,5 +14,15 @@ export default defineConfig({
     // some deps read process.env; keep it defined in browser to avoid crashes
     "process.env": {}
   },
-  server: { host: true, port: 3001 },
+  server: { 
+    host: true, 
+    port: 3001,
+    allowedHosts: [
+      "explorer.animica.org",
+      "localhost",
+      ".localhost",
+      "127.0.0.1",
+      "::1",
+    ],
+  },
 });
