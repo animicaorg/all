@@ -284,7 +284,7 @@ def test_proxy_config_defaults(monkeypatch: Any) -> None:
     
     config = ProxyConfig.from_env()
     
-    assert config.trusted_rpc_url == "https://rpc.animica.org"
+    assert config.trusted_rpc_url == "https://rpc.animica.org/rpc"
     assert config.max_retries == 3
     assert config.retry_delay_ms == 1000
     assert config.timeout_seconds == 30.0
@@ -296,7 +296,7 @@ def test_create_proxy_factory() -> None:
     proxy = create_proxy()
     
     assert isinstance(proxy, RpcProxy)
-    assert proxy.config.trusted_rpc_url == "https://rpc.animica.org"
+    assert proxy.config.trusted_rpc_url == "https://rpc.animica.org/rpc"
 
 
 def test_create_proxy_with_custom_config() -> None:

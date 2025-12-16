@@ -4,11 +4,11 @@ This document describes the RPC proxy mechanism for mining operations in the Ani
 
 ## Overview
 
-The mining proxy feature enables nodes to validate mining operations against a trusted RPC endpoint (`rpc.animica.org`) as the source of truth, while maintaining the ability to fall back to local nodes for resilience. This ensures network-wide consistency while supporting decentralization and redundancy.
+The mining proxy feature enables nodes to validate mining operations against a trusted RPC endpoint (`https://rpc.animica.org/rpc`) as the source of truth, while maintaining the ability to fall back to local nodes for resilience. This ensures network-wide consistency while supporting decentralization and redundancy.
 
 ## Key Features
 
-1. **Trusted Source of Truth**: All mining operations are validated against `rpc.animica.org` by default
+1. **Trusted Source of Truth**: All mining operations are validated against `https://rpc.animica.org/rpc` by default
 2. **Automatic Retry Logic**: Transient failures are handled with configurable retry attempts
 3. **Fallback Mechanism**: Automatically falls back to local node if trusted endpoint is unreachable
 4. **Enhanced Logging**: Detailed logging for debugging and monitoring
@@ -26,7 +26,7 @@ animica miner mine-blocks --count 5 premine
 animica miner mine-blocks --count 10 anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz
 ```
 
-By default, mining operations use the proxy to validate against `rpc.animica.org`.
+By default, mining operations use the proxy to validate against `https://rpc.animica.org/rpc`.
 
 ### Disable Proxy
 
@@ -56,7 +56,7 @@ The proxy can be configured via environment variables:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `ANIMICA_TRUSTED_RPC_URL` | `https://rpc.animica.org` | Trusted RPC endpoint for validation |
+| `ANIMICA_TRUSTED_RPC_URL` | `https://rpc.animica.org/rpc` | Trusted RPC endpoint for validation |
 | `ANIMICA_PROXY_MAX_RETRIES` | `3` | Maximum retry attempts on failure |
 | `ANIMICA_PROXY_RETRY_DELAY_MS` | `1000` | Delay between retries (milliseconds) |
 | `ANIMICA_PROXY_TIMEOUT_SECONDS` | `30.0` | Request timeout (seconds) |
@@ -81,7 +81,7 @@ animica miner mine-blocks --count 5 premine
 ### Normal Operation
 
 1. Mining request is sent to the proxy
-2. Proxy forwards request to trusted RPC (`rpc.animica.org`)
+2. Proxy forwards request to trusted RPC (`https://rpc.animica.org/rpc`)
 3. Response is returned to the CLI
 4. Mining completes successfully
 

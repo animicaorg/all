@@ -263,7 +263,7 @@ def mine_blocks(
     use_proxy: bool = typer.Option(
         True,
         "--use-proxy/--no-proxy",
-        help="Use proxy to validate against trusted RPC (rpc.animica.org)",
+        help="Use proxy to validate against trusted RPC (https://rpc.animica.org/rpc)",
     ),
     verbose: bool = typer.Option(
         False,
@@ -298,8 +298,8 @@ def mine_blocks(
     
     Proxy Mode (default):
       When --use-proxy is enabled (default), mining requests are validated against
-      the trusted RPC endpoint (rpc.animica.org) with automatic retry and fallback:
-      - Forwards requests to rpc.animica.org as source of truth
+      the trusted RPC endpoint (https://rpc.animica.org/rpc) with automatic retry and fallback:
+      - Forwards requests to https://rpc.animica.org/rpc as source of truth
       - Automatically retries on transient failures (3 attempts by default)
       - Falls back to local node if trusted endpoint is unreachable
       - Use --no-proxy to disable proxy and mine directly to specified RPC
@@ -331,7 +331,7 @@ def mine_blocks(
     
     Environment variables:
         ANIMICA_RPC_URL             - Node RPC endpoint (default: http://127.0.0.1:8545/rpc)
-        ANIMICA_TRUSTED_RPC_URL     - Trusted RPC for proxy (default: https://rpc.animica.org)
+        ANIMICA_TRUSTED_RPC_URL     - Trusted RPC for proxy (default: https://rpc.animica.org/rpc)
         ANIMICA_MINER_ADDRESS       - Default payout address if --address not specified
         ANIMICA_MINER_MAX_NONCE     - Max nonce iterations per block (default: 100000)
         ANIMICA_PROXY_MAX_RETRIES   - Max proxy retries (default: 3)

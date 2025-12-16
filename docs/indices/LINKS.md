@@ -16,7 +16,7 @@ This page centralizes public entry points for the **website**, **explorer**, **s
 | **Explorer (Web)** | https://explorer.animica.org     | https://explorer.testnet.animica.org     | http://localhost:5173                    |
 | **Studio (Web IDE)** | https://studio.animica.org       | https://studio.testnet.animica.org       | http://localhost:5174                    |
 | **Studio Services API** | https://services.animica.org     | https://services.testnet.animica.org     | http://localhost:8080                    |
-| **RPC (HTTP)** | https://rpc.animica.org            | https://rpc.testnet.animica.org          | http://localhost:8545                    |
+| **RPC (HTTP)** | https://rpc.animica.org/rpc        | https://rpc.testnet.animica.org/rpc      | http://localhost:8545/rpc                |
 | **RPC (WebSocket)** | wss://rpc.animica.org/ws          | wss://rpc.testnet.animica.org/ws         | ws://localhost:8546/ws                   |
 
 ### Deep Links (computed)
