@@ -9,7 +9,7 @@ def test_default_seeds_when_unset(monkeypatch):
     monkeypatch.delenv("ANIMICA_P2P_CHAIN_ID", raising=False)
     monkeypatch.delenv("ANIMICA_P2P_NETWORK", raising=False)
     cfg = p2p_config.load_config()
-    # With no env vars, should get legacy DEFAULT_SEEDS fallback
+    # With no env vars, should get mainnet DEFAULT_SEEDS fallback
     assert cfg.seeds == p2p_config.DEFAULT_SEEDS
 
     args = listen_cli.argparse.Namespace(
