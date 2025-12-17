@@ -41,6 +41,7 @@ from math import log
 from typing import (Dict, Iterable, List, Optional, Protocol, Sequence, Tuple,
                     runtime_checkable)
 
+from . import work_registry
 from .errors import ConsensusError  # re-raised by callers with context
 from .interfaces import (PROOF_TYPE_HASHSHARE, HeaderView, PolicySnapshot,
                          ProofEnvelope, ProofMetrics, VerificationResult,
@@ -161,6 +162,35 @@ def _compute_h_micro_from_hashshares(items: Sequence[Tuple[int, ProofMetrics]]) 
     return _to_micro_nats(best_ln)
 
 
+def _chain_and_height(header: HeaderView) -> Tuple[int, int]:
+    """Best-effort extraction of (chain_id, height) from header-like objects."""
+    cid = getattr(header, "chain_id", None) or getattr(header, "chainId", None) or 0
+    height = getattr(header, "height", None) or getattr(header, "number", None) or 0
+    return int(cid), int(height)
+
+
+def _work_type_from_header(header: HeaderView) -> Optional[int]:
+    """Extract the declared work discriminator from the header, if present."""
+    if hasattr(header, "work_type"):
+        wt = getattr(header, "work_type")
+        if wt is not None:
+            return int(wt)
+    if hasattr(header, "workType"):
+        try:
+            return int(getattr(header, "workType"))
+        except Exception:
+            return None
+    if hasattr(header, "__getitem__"):
+        for k in ("work_type", "workType"):
+            try:
+                v = header[k]  # type: ignore[index]
+            except Exception:
+                v = None
+            if v is not None:
+                return int(v)
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Core
 # ---------------------------------------------------------------------------
@@ -223,8 +253,42 @@ def validate_block(
             breakdown={
                 "expected": int.from_bytes(policy.alg_policy_root, "big"),
                 "header": int.from_bytes(header.policy_alg_root, "big"),
-            },
-        )
+                },
+            )
+
+    chain_id, height = _chain_and_height(header)
+    adaptive_pow = chain_id == 1 and height >= 100_000
+    work_type = _work_type_from_header(header)
+    availability: Optional[work_registry.WorkAvailability] = None
+
+    if adaptive_pow:
+        availability = work_registry.discover_available_work_types()
+        if work_type is None:
+            return ValidationOutcome(
+                ok=False,
+                reason="work-type-required",
+                theta_micro=header.theta_micro,
+                h_micro=0,
+                psi_micro=0,
+                s_micro=0,
+                bad_index=None,
+                bad_stage="work",
+                normalized_envelopes=(),
+                breakdown={"available": sorted(availability.available)},
+            )
+        if int(work_type) not in availability.available:
+            return ValidationOutcome(
+                ok=False,
+                reason="work-type-unavailable",
+                theta_micro=header.theta_micro,
+                h_micro=0,
+                psi_micro=0,
+                s_micro=0,
+                bad_index=None,
+                bad_stage="work",
+                normalized_envelopes=(),
+                breakdown={"available": sorted(availability.available)},
+            )
 
     # (2) Nullifier freshness (pre-check)
     seen_any_dup = False
@@ -302,6 +366,22 @@ def validate_block(
                 res.metrics,
             )
         )
+
+    if adaptive_pow:
+        assert work_type is not None  # guarded above
+        if not any(int(tid) == int(work_type) for tid, _ in verified):
+            return ValidationOutcome(
+                ok=False,
+                reason="work-mismatch",
+                theta_micro=header.theta_micro,
+                h_micro=0,
+                psi_micro=0,
+                s_micro=0,
+                bad_index=None,
+                bad_stage="work",
+                normalized_envelopes=tuple(normalized_envelopes),
+                breakdown={"declared": int(work_type)},
+            )
 
     # (4) Score Σψ via provided scorer (caps inside)
     try:
