@@ -75,7 +75,7 @@ def _params_from_spec(chain_id: int | None = None) -> t.Dict[str, t.Any]:
     Load canonical params from spec/params.yaml and return a dict view that is
     stable for RPC responses. We do not force a specific dataclass here to keep
     RPC loosely coupled to core/types. Handlers can shape/validate further.
-    
+
     The params.yaml file uses a network-specific structure under a 'networks' key:
     networks:
       "animica:1": {...}    # mainnet
@@ -89,7 +89,7 @@ def _params_from_spec(chain_id: int | None = None) -> t.Dict[str, t.Any]:
 
     # If chain_id is provided, try to load network-specific config
     network_key = f"animica:{chain_id}" if chain_id is not None else None
-    
+
     # Check if params.yaml uses new network structure
     networks = raw.get("networks", {})
     if networks and network_key and network_key in networks:
@@ -100,7 +100,7 @@ def _params_from_spec(chain_id: int | None = None) -> t.Dict[str, t.Any]:
         out["chain_id"] = chain_id
         out["chainId"] = chain_id
         return out
-    
+
     # Fallback: try old structure or return minimal config
     out: dict[str, t.Any] = {}
 
@@ -326,7 +326,9 @@ class _HeadAccessor:
                     if callable(getter) and hash_val is not None:
                         try:
                             # Pass original bytes to getter if hash_val was bytes
-                            getter_input = head[1] if isinstance(head[1], bytes) else hash_val
+                            getter_input = (
+                                head[1] if isinstance(head[1], bytes) else hash_val
+                            )
                             header_obj = getter(getter_input)
                         except Exception:
                             header_obj = None
@@ -345,7 +347,11 @@ class _HeadAccessor:
                 # Ensure hash is hex string for JSON serialization
                 if isinstance(hash_val, bytes):
                     hash_val = "0x" + hash_val.hex()
-                return {"height": h.get("height") if isinstance(h, dict) else None, "hash": hash_val, "header": h}
+                return {
+                    "height": h.get("height") if isinstance(h, dict) else None,
+                    "hash": hash_val,
+                    "header": h,
+                }
             # Last resort: nothing known
             return {"height": None, "hash": None, "header": None}
 
@@ -372,7 +378,7 @@ def _maybe_bootstrap_genesis(
     Light-touch genesis bootstrap: if the DB appears empty (no head), try to
     initialize it using core.genesis.loader. If anything is missing, this is a
     no-op (RPC can still serve read-only methods with null head).
-    
+
     CRITICAL: This function must NOT open a second connection to the DB that's
     already open in bundle.kv. Instead, it should use the existing KV instance
     to avoid conflicts and ensure state consistency.
@@ -398,7 +404,7 @@ def _maybe_bootstrap_genesis(
 
         loader = _import("core.genesis.loader")
         head_mod = _import("core.chain.head")
-        
+
         # CRITICAL: Use load_genesis with existing KV, NOT load_and_init_genesis
         # which would open a second connection to the same DB file
         if hasattr(loader, "load_genesis"):
@@ -510,9 +516,9 @@ def _needs_rebuild(cfg: t.Any | None) -> bool:
 
 def build_context(cfg: t.Any | None = None) -> RpcContext:
     log = logging.getLogger("animica.rpc.deps")
-    
+
     cfg_view = _coerce_config(cfg) if cfg is not None else _load_rpc_config()
-    
+
     # Determine network name for logging
     network = os.environ.get("ANIMICA_NETWORK", "").strip().lower()
     if not network:
@@ -525,45 +531,56 @@ def build_context(cfg: t.Any | None = None) -> RpcContext:
             network = "devnet"
         else:
             network = f"custom (chain_id={cfg_view.chain_id})"
-    
-    log.info(f"Building RPC context for network: {network} (chain_id={cfg_view.chain_id})")
+
+    log.info(
+        f"Building RPC context for network: {network} (chain_id={cfg_view.chain_id})"
+    )
     log.info(f"Using database: {cfg_view.db_uri}")
     if cfg_view.genesis_path:
         log.info(f"Genesis file: {cfg_view.genesis_path}")
-    
+
     params = _params_from_spec(cfg_view.chain_id)
     kv = _open_kv(cfg_view.db_uri)
     bundle = _build_db_facades(kv)
-    
+
     # Check if genesis bootstrap is needed (only if no head exists)
     _maybe_bootstrap_genesis(
         bundle, cfg_view.chain_id, cfg_view.genesis_path, cfg_view.db_uri
     )
-    
+
     head = _HeadAccessor(bundle)
     head_info = head.get()
     # head_info is a dict with 'height', 'hash', 'header' keys
-    if head_info and head_info.get('height') is not None:
-        log.info(f"RPC context ready: head_height={head_info.get('height')}, head_hash={head_info.get('hash')}")
+    if head_info and head_info.get("height") is not None:
+        log.info(
+            f"RPC context ready: head_height={head_info.get('height')}, head_hash={head_info.get('hash')}"
+        )
     else:
-        log.info("RPC context ready: no head set yet (genesis will be initialized on first use)")
-    
+        log.info(
+            "RPC context ready: no head set yet (genesis will be initialized on first use)"
+        )
+
     # Initialize P2P service if enabled
     p2p_service = None
-    enable_p2p = os.environ.get("ANIMICA_P2P_ENABLE", "true").lower() in ("1", "true", "yes", "on")
+    enable_p2p = os.environ.get("ANIMICA_P2P_ENABLE", "true").lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
     if enable_p2p:
         try:
-            from p2p.node.service import P2PService
-            from p2p.config import load_config as load_p2p_config
             import p2p
-            
+            from p2p.config import load_config as load_p2p_config
+            from p2p.node.service import P2PService
+
             # Set chain_id in environment so P2P config can auto-select network seeds
             os.environ.setdefault("ANIMICA_P2P_CHAIN_ID", str(cfg_view.chain_id))
-            
+
             # Load P2P configuration which will automatically select network-specific seeds
             # based on chain_id (mainnet/testnet/devnet)
             p2p_config = load_p2p_config()
-            
+
             # Determine peer store path based on network
             peerstore_path = os.environ.get("ANIMICA_PEER_STORE_PATH")
             if not peerstore_path:
@@ -571,19 +588,20 @@ def build_context(cfg: t.Any | None = None) -> RpcContext:
                     cfg_view.chain_id, "custom"
                 )
                 peerstore_path = os.path.expanduser(f"~/.animica/p2p/{network_name}")
-            
-            # Create simple deps object for P2P service
-            class _P2PDeps:
-                def __init__(self, block_db):
-                    self.block_db = block_db
-            
-            p2p_deps = _P2PDeps(bundle.block_db)
-            
+
+            # Use the P2P deps adapter (bridges to core DBs for block import + pending pool admission).
+            from p2p.deps import AsyncP2PDeps, P2PDeps
+
+            # Note: this opens its own KV handles (safe for SQLite/RocksDB in this repo).
+            p2p_deps = AsyncP2PDeps(
+                P2PDeps.open(cfg_view.db_uri, cfg_view.genesis_path)
+            )
+
             # Use config system for listen addresses and seeds
             # Allow legacy P2P_LISTEN and P2P_SEEDS env vars for backward compatibility
             p2p_listen = os.environ.get("P2P_LISTEN", "")
             p2p_seeds_legacy = os.environ.get("P2P_SEEDS", "")
-            
+
             # Parse listen address to multiaddr format
             listen_addrs = None
             if p2p_listen:
@@ -594,14 +612,14 @@ def build_context(cfg: t.Any | None = None) -> RpcContext:
                 else:
                     # Already in multiaddr format
                     listen_addrs = [p2p_listen]
-            
+
             # Get seeds from config (which auto-loads network-specific seeds based on chain_id)
             # or from legacy P2P_SEEDS env var for backward compatibility
             seeds = list(p2p_config.seeds) if p2p_config.seeds else []
             if not seeds and p2p_seeds_legacy:
                 # Legacy fallback: parse P2P_SEEDS if no seeds from config
                 seeds = [s.strip() for s in p2p_seeds_legacy.split(",") if s.strip()]
-            
+
             # Initialize P2P service with persistent peer store
             p2p_kwargs = {
                 "chain_id": cfg_view.chain_id,
@@ -613,9 +631,9 @@ def build_context(cfg: t.Any | None = None) -> RpcContext:
             # Always pass seeds - either from config (network-specific) or legacy env var
             if seeds:
                 p2p_kwargs["seeds"] = seeds
-            
+
             p2p_service = P2PService(**p2p_kwargs)
-            
+
             # Register P2P service with global registry so RPC methods can access it
             p2p.register_service(p2p_service)
             log_msg = f"Initialized P2P service: peer_store={peerstore_path}, chain_id={cfg_view.chain_id}"
@@ -629,7 +647,7 @@ def build_context(cfg: t.Any | None = None) -> RpcContext:
         except Exception as e:
             log.warning(f"Failed to initialize P2P service: {e}", exc_info=True)
             p2p_service = None
-    
+
     return RpcContext(
         cfg=cfg_view,
         params=params,
@@ -677,17 +695,19 @@ async def startup(cfg: t.Any | None = None) -> RpcContext:
                 finally:
                     _CTX = None
             _CTX = build_context(cfg)
-        
+
         # Start P2P service if it was initialized
         if _CTX.p2p_service is not None:
             try:
                 await _CTX.p2p_service.start()
-                logging.getLogger("animica.rpc.deps").info("P2P service started successfully")
+                logging.getLogger("animica.rpc.deps").info(
+                    "P2P service started successfully"
+                )
             except Exception as e:
                 logging.getLogger("animica.rpc.deps").warning(
                     f"Failed to start P2P service: {e}", exc_info=True
                 )
-        
+
         return _CTX
 
 
@@ -705,7 +725,7 @@ async def shutdown() -> None:
                     logging.getLogger("animica.rpc.deps").warning(
                         f"Failed to stop P2P service: {e}", exc_info=True
                     )
-            
+
             try:
                 _CTX.close()
             finally:
@@ -721,11 +741,11 @@ async def ready() -> tuple[bool, dict[str, t.Any]]:
 
     head = ctx.get_head()
     hash_val = head.get("hash")
-    
+
     # Convert bytes to hex string for JSON serialization
     if isinstance(hash_val, bytes):
         hash_val = "0x" + hash_val.hex()
-    
+
     return True, {
         "height": head.get("height"),
         "hash": hash_val,
@@ -742,6 +762,7 @@ def attach_lifecycle(app, cfg: _ConfigView | None = None) -> None:
 
     If `cfg` is not provided, it is loaded from rpc.config.load_config().
     """
+
     @app.on_event("startup")
     async def _startup() -> None:
         nonlocal cfg
@@ -804,10 +825,10 @@ def get_head() -> dict[str, t.Any]:
 def get_block_by_height(height: int) -> t.Any | None:
     """
     Retrieve a block by canonical height.
-    
+
     Args:
         height: Block height (0-based)
-        
+
     Returns:
         Block object if found, None otherwise
     """
@@ -820,10 +841,10 @@ def get_block_by_height(height: int) -> t.Any | None:
 def get_block_by_hash(block_hash: bytes) -> t.Any | None:
     """
     Retrieve a block by hash.
-    
+
     Args:
         block_hash: Block hash (32 bytes)
-        
+
     Returns:
         Block object if found, None otherwise
     """
