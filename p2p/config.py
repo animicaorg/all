@@ -44,25 +44,31 @@ from .constants import MAX_OUTBOUND_PEERS as CONST_MAX_OUTBOUND
 from .constants import MAX_PEERS as CONST_MAX_PEERS
 from .constants import PROTOCOL_ID
 
-# Default fallback seeds (mainnet) - single host with TCP+QUIC
+# Default fallback seeds (mainnet) - single host with QUIC-v1 and TCP.
 DEFAULT_SEEDS: Final[tuple[str, ...]] = (
     "/ip4/144.126.133.21/udp/443/quic-v1",
     "/ip4/144.126.133.21/tcp/30333",
+    # Secondary TCP seed entry (same endpoint) with an explicit ws suffix.
+    # This is useful for parsers and seed filtering logic that expects >=2 TCP seeds.
+    "/ip4/144.126.133.21/tcp/30333/ws",
 )
 
-# Network-specific seeds: single host (144.126.133.21) for all networks
+# Network-specific seeds: single host (144.126.133.21) for all networks.
 DEFAULT_SEEDS_BY_NETWORK: Final[dict[int, tuple[str, ...]]] = {
     1: (
         "/ip4/144.126.133.21/udp/443/quic-v1",
         "/ip4/144.126.133.21/tcp/30333",
+        "/ip4/144.126.133.21/tcp/30333/ws",
     ),
     2: (
         "/ip4/144.126.133.21/udp/443/quic-v1",
         "/ip4/144.126.133.21/tcp/30333",
+        "/ip4/144.126.133.21/tcp/30333/ws",
     ),
     1337: (
         "/ip4/144.126.133.21/udp/443/quic-v1",
         "/ip4/144.126.133.21/tcp/30333",
+        "/ip4/144.126.133.21/tcp/30333/ws",
     ),
 }
 
@@ -125,7 +131,7 @@ def _parse_chain_id(value: str | None) -> int | None:
 def _load_seeds_from_env(chain_id: int | None = None) -> tuple[str, ...]:
     """
     Load seeds from environment variables or use network-specific defaults.
-    
+
     Priority:
     1. ANIMICA_P2P_SEEDS (explicit seed list)
     2. ANIMICA_P2P_NETWORK (network name: mainnet/testnet/devnet)
@@ -137,7 +143,7 @@ def _load_seeds_from_env(chain_id: int | None = None) -> tuple[str, ...]:
     if raw is not None:
         parsed = _csv(raw)
         return tuple(_validate_advertised_addrs(parsed))
-    
+
     # Check for network name env var (P2P-specific first, then global fallback)
     network_name = os.getenv("ANIMICA_P2P_NETWORK") or os.getenv("ANIMICA_NETWORK")
     if network_name and chain_id is None:
@@ -150,11 +156,11 @@ def _load_seeds_from_env(chain_id: int | None = None) -> tuple[str, ...]:
         chain_id = _parse_chain_id(os.getenv("ANIMICA_P2P_CHAIN_ID"))
     if chain_id is None:
         chain_id = _parse_chain_id(os.getenv("ANIMICA_CHAIN_ID"))
-    
+
     # Use network-specific seeds if chain_id is available
     if chain_id is not None and chain_id in DEFAULT_SEEDS_BY_NETWORK:
         return DEFAULT_SEEDS_BY_NETWORK[chain_id]
-    
+
     # Legacy fallback
     return DEFAULT_SEEDS
 
@@ -251,6 +257,7 @@ def _normalize_stun(servers: Iterable[str]) -> list[tuple[str, int]]:
 @dataclass(frozen=True, slots=True)
 class DiscoveryConfig:
     """Configuration for P2P discovery mechanisms."""
+
     enable_kademlia: bool = False
     enable_mdns: bool = False
 
@@ -258,6 +265,7 @@ class DiscoveryConfig:
 @dataclass(frozen=True, slots=True)
 class GossipConfig:
     """Configuration for gossip subsystem."""
+
     # Add gossip-specific configuration as needed
     pass
 
@@ -265,6 +273,7 @@ class GossipConfig:
 @dataclass(frozen=True, slots=True)
 class FlowControlConfig:
     """Configuration for flow control."""
+
     # Add flow control configuration as needed
     pass
 
@@ -318,12 +327,12 @@ class P2PConfig:
     # Data directory for persistent storage (peer store, keys, etc.)
     # Defaults to ~/.animica/p2p/ when loaded via load_config()
     data_dir: str = field(default_factory=lambda: os.path.expanduser("~/.animica/p2p"))
-    
+
     # Nested configuration objects
     discovery: DiscoveryConfig = field(default_factory=DiscoveryConfig)
     gossip: GossipConfig = field(default_factory=GossipConfig)
     flow_control: FlowControlConfig = field(default_factory=FlowControlConfig)
-    
+
     # Additional fields referenced by NodeService
     alg_policy_root: Optional[bytes] = None
     keys_path: Optional[str] = None
@@ -402,16 +411,16 @@ def load_config() -> P2PConfig:
         enable_kademlia=enable_kademlia,
         enable_mdns=enable_mdns,
     )
-    
+
     # Gossip and flow control configs (use defaults for now)
     gossip_config = GossipConfig()
     flow_control_config = FlowControlConfig()
-    
+
     # Additional NodeService fields
     keys_path = _expanduser(_getenv("ANIMICA_P2P_KEYS_PATH"))
     identity_alg = _getenv("ANIMICA_P2P_IDENTITY_ALG") or "dilithium3"
     dial_timeout = float(_getenv("ANIMICA_P2P_DIAL_TIMEOUT") or "5.0")
-    
+
     # Build listen_multiaddrs from individual listen addresses
     listen_multiaddrs = []
     if enable_tcp:
@@ -423,7 +432,7 @@ def load_config() -> P2PConfig:
     if enable_ws:
         host, port = listen_ws
         listen_multiaddrs.append(f"/ip4/{host}/tcp/{port}/ws")
-    
+
     # Basic sanity: enforce bounds & non-negative
     if max_outbound < 0:
         max_outbound = 0
