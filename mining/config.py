@@ -65,7 +65,7 @@ class MiningConfig:
 
       ANIMICA_MINER_STRATUM_ENABLED=true|false        (default: true)
       ANIMICA_MINER_STRATUM_HOST=0.0.0.0
-      ANIMICA_MINER_STRATUM_PORT=22224
+      ANIMICA_MINER_STRATUM_PORT=23454
 
       ANIMICA_MINER_WS_GETWORK_ENABLED=true|false     (default: true)
       ANIMICA_MINER_WS_GETWORK_HOST=0.0.0.0
@@ -107,7 +107,7 @@ class MiningConfig:
     # Stratum TCP server
     stratum_enabled: bool = True
     stratum_host: str = "0.0.0.0"
-    stratum_port: int = 22224
+    stratum_port: int = 23454
 
     # WS getwork server
     ws_getwork_enabled: bool = True
@@ -151,7 +151,7 @@ class MiningConfig:
             chain_id=_env_int("ANIMICA_MINER_CHAIN_ID", 1),
             stratum_enabled=_env_bool("ANIMICA_MINER_STRATUM_ENABLED", True),
             stratum_host=_env("ANIMICA_MINER_STRATUM_HOST", "0.0.0.0"),
-            stratum_port=_env_int("ANIMICA_MINER_STRATUM_PORT", 22224),
+            stratum_port=_env_int("ANIMICA_MINER_STRATUM_PORT", 23454),
             ws_getwork_enabled=_env_bool("ANIMICA_MINER_WS_GETWORK_ENABLED", True),
             ws_getwork_host=_env("ANIMICA_MINER_WS_GETWORK_HOST", "0.0.0.0"),
             ws_getwork_port=_env_int("ANIMICA_MINER_WS_GETWORK_PORT", 22225),
