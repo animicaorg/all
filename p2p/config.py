@@ -118,6 +118,19 @@ def _csv(value: str | None) -> list[str]:
     return [p for p in parts if p]
 
 
+def _parse_chain_id(value: str | None) -> int | None:
+    """
+    Parse chain_id values in decimal or 0x-prefixed hex form.
+    Returns None for missing/invalid inputs.
+    """
+    if value is None:
+        return None
+    try:
+        return int(value, 0)
+    except Exception:
+        return None
+
+
 def _load_seeds_from_env(chain_id: int | None = None) -> tuple[str, ...]:
     """
     Load seeds from environment variables or use network-specific defaults.
@@ -134,12 +147,18 @@ def _load_seeds_from_env(chain_id: int | None = None) -> tuple[str, ...]:
         parsed = _csv(raw)
         return tuple(_validate_advertised_addrs(parsed))
     
-    # Check for network name env var
-    network_name = os.getenv("ANIMICA_P2P_NETWORK")
-    if network_name:
+    # Check for network name env var (P2P-specific first, then global fallback)
+    network_name = os.getenv("ANIMICA_P2P_NETWORK") or os.getenv("ANIMICA_NETWORK")
+    if network_name and chain_id is None:
         network_name = network_name.lower().strip()
         if network_name in NETWORK_NAME_TO_CHAIN_ID:
             chain_id = NETWORK_NAME_TO_CHAIN_ID[network_name]
+
+    # Fall back to chain_id env vars if still unset (P2P-specific first)
+    if chain_id is None:
+        chain_id = _parse_chain_id(os.getenv("ANIMICA_P2P_CHAIN_ID"))
+    if chain_id is None:
+        chain_id = _parse_chain_id(os.getenv("ANIMICA_CHAIN_ID"))
     
     # Use network-specific seeds if chain_id is available
     if chain_id is not None and chain_id in DEFAULT_SEEDS_BY_NETWORK:
@@ -353,7 +372,7 @@ def load_config() -> P2PConfig:
         _validate_advertised_addrs(_csv(_getenv("ANIMICA_P2P_ADVERTISED_ADDRS")))
     )
     # Try to get chain_id for network-specific seeds (best effort)
-    chain_id = _getenv_int("ANIMICA_P2P_CHAIN_ID", 0) or None
+    chain_id = _parse_chain_id(_getenv("ANIMICA_P2P_CHAIN_ID"))
     seeds = _load_seeds_from_env(chain_id)
 
     max_peers = _getenv_int("ANIMICA_P2P_MAX_PEERS", CONST_MAX_PEERS)
