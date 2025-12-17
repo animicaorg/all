@@ -138,10 +138,8 @@ class SeedBundle:
 
 
 # Embedded fallback seeds - always available even if DNS fails
-# Primary seed endpoints: mainnet DNS + IP fallback (30333)
+# Primary seed endpoints: single host (144.126.133.21) with QUIC+TCP
 EMBEDDED_FALLBACK_SEEDS: List[str] = [
-    "quic://mainnet.animica.org:443",
-    "tcp://mainnet.animica.org:30333",
     "quic://144.126.133.21:443",
     "tcp://144.126.133.21:30333",
 ]
