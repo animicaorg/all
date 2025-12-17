@@ -19,6 +19,7 @@ class PoolConfig:
     db_url: str = "sqlite:///animica_pool.db"
     chain_id: int = 1
     pool_address: str = ""
+    rpc_timeout: float = 15.0
     min_difficulty: float = 0.01
     max_difficulty: float = 1.0
     poll_interval: float = 1.0
@@ -60,6 +61,11 @@ def load_config_from_env(*, overrides: Optional[dict] = None) -> PoolConfig:
     )
     chain_id = int(overrides.get("chain_id") or _env("ANIMICA_CHAIN_ID", "1"))
     pool_address = overrides.get("pool_address") or _env("ANIMICA_POOL_ADDRESS", "")
+    rpc_timeout = float(
+        overrides.get("rpc_timeout")
+        or _env("ANIMICA_STRATUM_RPC_TIMEOUT")
+        or _env("ANIMICA_RPC_TIMEOUT", "15.0")
+    )
     network = overrides.get("network") or _env("ANIMICA_NETWORK", network_cfg.name)
 
     min_difficulty = float(
@@ -94,6 +100,8 @@ def load_config_from_env(*, overrides: Optional[dict] = None) -> PoolConfig:
         or _env("ANIMICA_STRATUM_EXTRANONCE2_SIZE", "4")
     )
 
+    if rpc_timeout <= 0:
+        raise ValueError("rpc_timeout must be positive")
     if min_difficulty <= 0:
         raise ValueError("min_difficulty must be positive")
     if max_difficulty < min_difficulty:
@@ -106,6 +114,7 @@ def load_config_from_env(*, overrides: Optional[dict] = None) -> PoolConfig:
         db_url=db_url,
         chain_id=chain_id,
         pool_address=pool_address,
+        rpc_timeout=rpc_timeout,
         min_difficulty=min_difficulty,
         max_difficulty=max_difficulty,
         poll_interval=poll_interval,

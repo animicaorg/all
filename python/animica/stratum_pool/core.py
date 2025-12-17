@@ -54,10 +54,11 @@ class MiningCoreAdapter:
         rpc_url: str,
         chain_id: int,
         pool_address: str,
+        rpc_timeout_s: float = 15.0,
         *,
         logger: Optional[logging.Logger] = None,
     ) -> None:
-        self._rpc = JsonRpcClient(rpc_url)
+        self._rpc = JsonRpcClient(rpc_url, timeout_s=rpc_timeout_s)
         self._validator = ShareValidator()
         self._chain_id = chain_id
         self._pool_address = pool_address
