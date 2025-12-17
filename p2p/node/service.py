@@ -180,7 +180,7 @@ class NodeService:
 
         # Start TxRelayHandler (subscribe to gossip topic)
         await self.tx_relay_handler.start()
-        
+
         # Start background services
         self._tasks.extend(
             [
@@ -388,18 +388,16 @@ class NodeService:
         # Use seeds from config (already network-specific with DNS + IP fallback)
         # Seeds are provided as multiaddr strings, ready to dial
         seed_addrs = list(self.cfg.seeds) if self.cfg.seeds else []
-        
+
         # If no seeds configured, try to discover based on chain_id
         if not seed_addrs:
             try:
                 # Try to get chain_id from deps
-                chain_id = getattr(self.deps, 'chain_id', None)
+                chain_id = getattr(self.deps, "chain_id", None)
                 if chain_id and chain_id in seedmod.NETWORK_DNS_SEEDS:
                     log.info("[bootstrap] discovering seeds for chain_id=%d", chain_id)
                     bundle = await seedmod.discover_for_network(
-                        chain_id, 
-                        resolve=True,
-                        include_fallbacks=True
+                        chain_id, resolve=True, include_fallbacks=True
                     )
                     # Convert SeedEndpoints to multiaddr format
                     for ep in bundle.endpoints:
@@ -412,18 +410,22 @@ class NodeService:
                             # (dns6 exists but is rarely used; modern DNS resolvers
                             # return both A and AAAA records via dns4)
                             ip_type = "dns4"
-                        
+
                         # Build multiaddr based on scheme
                         if ep.scheme == "quic":
                             # /ip4/host/udp/port/quic-v1 or /dns4/host/udp/port/quic-v1
-                            seed_addrs.append(f"/{ip_type}/{ep.host}/udp/{ep.port}/quic-v1")
+                            seed_addrs.append(
+                                f"/{ip_type}/{ep.host}/udp/{ep.port}/quic-v1"
+                            )
                         elif ep.scheme == "tcp":
                             # /ip4/host/tcp/port or /dns4/host/tcp/port
                             seed_addrs.append(f"/{ip_type}/{ep.host}/tcp/{ep.port}")
                         elif ep.scheme in ("ws", "wss"):
                             # /ip4/host/tcp/port/ws or /dns4/host/tcp/port/ws
                             proto = "ws" if ep.scheme == "ws" else "wss"
-                            seed_addrs.append(f"/{ip_type}/{ep.host}/tcp/{ep.port}/{proto}")
+                            seed_addrs.append(
+                                f"/{ip_type}/{ep.host}/tcp/{ep.port}/{proto}"
+                            )
                         else:
                             # Fallback: try URL-style (will be parsed by dial)
                             port = f":{ep.port}" if ep.port is not None else ""
@@ -431,7 +433,7 @@ class NodeService:
                             seed_addrs.append(f"{ep.scheme}://{ep.host}{port}{path}")
             except Exception as e:
                 log.warning("Dynamic seed discovery failed", exc_info=e)
-        
+
         # Dial all seeds (DNS names will be resolved by transport layer)
         for addr in seed_addrs:
             with contextlib.suppress(Exception):
@@ -558,7 +560,7 @@ class NodeService:
 # -------------------------------------------------------------------------------------
 
 
-class P2PService:
+class P2PServiceLegacy:
     """
     Lightweight wrapper that exposes a stable API for the CLI and tests.
 
@@ -608,7 +610,9 @@ class P2PService:
         # Initialize persistent peer store
         if peerstore_path is None:
             # Default to network-specific directory
-            network_name = {1: "mainnet", 2: "testnet", 1337: "devnet"}.get(chain_id, "custom")
+            network_name = {1: "mainnet", 2: "testnet", 1337: "devnet"}.get(
+                chain_id, "custom"
+            )
             peerstore_path = os.path.expanduser(f"~/.animica/p2p/{network_name}")
         self.peerstore = pstore.PeerStore(peerstore_path)
         self._log.info(f"Initialized persistent peer store at {peerstore_path}")
@@ -618,22 +622,24 @@ class P2PService:
         # basic metadata (height, versions, caps) so operators can confirm the
         # network is healthy.
         self._identify = idsvc.perform_identify
-        
+
         # Metrics object for test compatibility
         class _Metrics:
             def __init__(self, service):
                 self._service = service
+
             @property
             def peer_count(self):
                 # Count both in-memory and persistent peers
                 return len(self._service._peers)
+
         self.metrics = _Metrics(self)
 
     async def start(self) -> None:
         if self._running:
             return
         self._running = True
-        
+
         # Load previously known peers from persistent store
         try:
             known_peers = self.peerstore.list_known(limit=100)
@@ -641,7 +647,7 @@ class P2PService:
         except Exception as e:
             self._log.warning(f"Failed to load peers from store: {e}", exc_info=True)
             known_peers = []
-        
+
         # Bind listeners
         for ma in self.listen_addrs:
             parsed = self._parse_multiaddr(ma)
@@ -664,7 +670,9 @@ class P2PService:
                 self._log.warning(f"Failed to parse seed address {seed}: {e}")
                 continue
             if parsed.transport != "tcp":
-                self._log.debug(f"Skipping non-TCP seed: {seed} (transport={parsed.transport})")
+                self._log.debug(
+                    f"Skipping non-TCP seed: {seed} (transport={parsed.transport})"
+                )
                 continue
             addr = f"tcp://{parsed.host}:{parsed.port}"
             self._log.info(f"Dialing seed: {addr}")
@@ -672,15 +680,19 @@ class P2PService:
                 self.loop.create_task(self._dial(addr), name=f"dial@{addr}")
             )
             seed_count += 1
-        
+
         if seed_count == 0 and len(self.seeds) > 0:
-            self._log.warning(f"No TCP seeds to dial (total seeds: {len(self.seeds)}). Ensure at least one TCP seed is configured.")
+            self._log.warning(
+                f"No TCP seeds to dial (total seeds: {len(self.seeds)}). Ensure at least one TCP seed is configured."
+            )
         elif seed_count == 0:
-            self._log.warning("No seeds configured. Node will not connect to network unless peers connect to it.")
-        
+            self._log.warning(
+                "No seeds configured. Node will not connect to network unless peers connect to it."
+            )
+
         # Also try to reconnect to previously known peers (best effort)
         for peer in known_peers[:10]:  # Limit to first 10 to avoid overwhelming
-            if hasattr(peer, 'address') and peer.address:
+            if hasattr(peer, "address") and peer.address:
                 try:
                     # Parse address and dial
                     addr_str = peer.address
@@ -689,17 +701,25 @@ class P2PService:
                         if parsed.transport == "tcp":
                             addr_str = f"tcp://{parsed.host}:{parsed.port}"
                     self._dial_tasks.append(
-                        self.loop.create_task(self._dial(addr_str), name=f"redial@{addr_str}")
+                        self.loop.create_task(
+                            self._dial(addr_str), name=f"redial@{addr_str}"
+                        )
                     )
                 except Exception:
                     pass  # Skip invalid addresses
 
         # Continuous consensus/identify probing so peers agree on head hash/height
-        self._consensus_task = self.loop.create_task(self._consensus_watch_loop(), name="consensus-watch")
+        self._consensus_task = self.loop.create_task(
+            self._consensus_watch_loop(), name="consensus-watch"
+        )
 
         self._log.info(
             "Started full P2P service",
-            extra={"listen": self.listen_addrs, "seeds": self.seeds, "known_peers": len(known_peers)},
+            extra={
+                "listen": self.listen_addrs,
+                "seeds": self.seeds,
+                "known_peers": len(known_peers),
+            },
         )
 
     async def stop(self) -> None:
@@ -764,7 +784,7 @@ class P2PService:
         )
         # Generate peer_id from remote address
         peer_id = f"peer_{hashlib.sha256(str(remote).encode()).hexdigest()[:32]}"
-        
+
         self._peers[remote] = {
             "remote": remote,
             "connected": True,
@@ -773,13 +793,20 @@ class P2PService:
             "peer_id": peer_id,
             "direction": direction,
         }
-        self._log.info("peer connected", extra={"remote": remote, "peer_id": peer_id, "direction": direction})
+        self._log.info(
+            "peer connected",
+            extra={"remote": remote, "peer_id": peer_id, "direction": direction},
+        )
 
         # Persist peer to PeerStore
         try:
-            self.peerstore.add(peer_id=peer_id, addrs=[str(remote)], score=0.0, direction=direction)
+            self.peerstore.add(
+                peer_id=peer_id, addrs=[str(remote)], score=0.0, direction=direction
+            )
             self.peerstore.record_connection(peer_id)
-            self._log.debug(f"Persisted peer {peer_id} to store with direction={direction}")
+            self._log.debug(
+                f"Persisted peer {peer_id} to store with direction={direction}"
+            )
         except Exception as e:
             self._log.warning(f"Failed to persist peer to store: {e}", exc_info=True)
 
@@ -801,7 +828,11 @@ class P2PService:
                     "identify failed", exc_info=True, extra={"remote": remote}
                 )
             if info:
-                self._peers[remote].update(info=info, height=info.get("height"), head_hash=info.get("head_hash"))
+                self._peers[remote].update(
+                    info=info,
+                    height=info.get("height"),
+                    head_hash=info.get("head_hash"),
+                )
                 self._log.info(
                     "peer identified",
                     extra={
@@ -843,14 +874,20 @@ class P2PService:
                             head_hash=local_hash,
                         )
                         # Update local cache
-                        peer.update(info=info, height=info.get("height"), head_hash=info.get("head_hash"))
+                        peer.update(
+                            info=info,
+                            height=info.get("height"),
+                            head_hash=info.get("head_hash"),
+                        )
                         remote_height = int(info.get("height") or 0)
                         remote_hash = info.get("head_hash")
 
                         # Persist latest height for prioritization/dialing
                         try:
                             self.peerstore.update_head_height(peer_id, remote_height)
-                            self.peerstore.record_seen(peer_id, peer.get("remote") or remote)
+                            self.peerstore.record_seen(
+                                peer_id, peer.get("remote") or remote
+                            )
                         except Exception:
                             pass
 
@@ -914,7 +951,11 @@ class P2PService:
                 elif hasattr(block_db, "get_head"):
                     head_tuple = block_db.get_head()
 
-                if head_tuple and isinstance(head_tuple, (list, tuple)) and len(head_tuple) >= 2:
+                if (
+                    head_tuple
+                    and isinstance(head_tuple, (list, tuple))
+                    and len(head_tuple) >= 2
+                ):
                     height = int(head_tuple[0])
                     hh = head_tuple[1]
                     if isinstance(hh, (bytes, bytearray)):
@@ -933,7 +974,7 @@ class P2PService:
             k: {kk: vv for kk, vv in v.items() if kk != "conn"}
             for k, v in self._peers.items()
         }
-    
+
     async def dial(self, addr: str) -> None:
         """
         Public dial method for tests and CLI.
@@ -948,3 +989,12 @@ class P2PService:
             except Exception:
                 pass  # Fall through and try as-is
         await self._dial(addr)
+
+
+# -------------------------------------------------------------------------------------
+# Public service: use the production implementation by default.
+# -------------------------------------------------------------------------------------
+
+# This repo historically shipped a devnet-only stub (P2PServiceLegacy).  Keep it
+# around for reference/tests, but export the real service as `P2PService`.
+from .p2p_service import P2PService  # noqa: E402
