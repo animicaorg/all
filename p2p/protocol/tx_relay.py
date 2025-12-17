@@ -37,7 +37,10 @@ import time
 from dataclasses import dataclass
 from typing import Callable, Iterable, List, Optional
 
-import msgspec
+try:
+    import msgspec  # type: ignore
+except Exception:  # pragma: no cover - optional dependency
+    msgspec = None  # type: ignore
 
 # ---- Constants (fallbacks; prefer p2p.constants if available) ----------------
 try:
@@ -64,31 +67,67 @@ class AdmissionError(Exception):
 
 
 # ---- Message structs ---------------------------------------------------------
-class _TxInvS(msgspec.Struct, omit_defaults=True):
-    """TxInv: announce a batch of tx hashes (32-byte sha3-256)."""
+if msgspec is not None:
 
-    t: int
-    ids: List[bytes]
+    class _TxInvS(msgspec.Struct, omit_defaults=True):  # type: ignore[misc,attr-defined]
+        """TxInv: announce a batch of tx hashes (32-byte sha3-256)."""
+
+        t: int
+        ids: List[bytes]
+
+    class _TxGetDataS(msgspec.Struct, omit_defaults=True):  # type: ignore[misc,attr-defined]
+        """TxGetData: ask for tx bodies by hash."""
+
+        t: int
+        ids: List[bytes]
+
+    class _TxBodiesS(msgspec.Struct, omit_defaults=True):  # type: ignore[misc,attr-defined]
+        """TxBodies: raw CBOR-encoded bodies, in request order (missing items omitted)."""
+
+        t: int
+        tx: List[bytes]
+
+else:  # pragma: no cover - fallback
+    _TxInvS = _TxGetDataS = _TxBodiesS = object  # type: ignore
 
 
-class _TxGetDataS(msgspec.Struct, omit_defaults=True):
-    """TxGetData: ask for tx bodies by hash."""
+if msgspec is not None:
+    ENC = msgspec.msgpack.Encoder()  # type: ignore[attr-defined]
+    DEC_INV = msgspec.msgpack.Decoder(type=_TxInvS)  # type: ignore[attr-defined]
+    DEC_GET = msgspec.msgpack.Decoder(type=_TxGetDataS)  # type: ignore[attr-defined]
+    DEC_BOD = msgspec.msgpack.Decoder(type=_TxBodiesS)  # type: ignore[attr-defined]
+else:  # pragma: no cover - fallback for minimal environments
+    from types import SimpleNamespace
 
-    t: int
-    ids: List[bytes]
+    try:
+        from core.encoding.cbor import dumps as _cbor_dumps
+        from core.encoding.cbor import loads as _cbor_loads
+    except Exception:  # pragma: no cover
+        import cbor2
 
+        _cbor_dumps = cbor2.dumps
+        _cbor_loads = cbor2.loads
 
-class _TxBodiesS(msgspec.Struct, omit_defaults=True):
-    """TxBodies: raw CBOR-encoded bodies, in request order (missing items omitted)."""
+    class _Enc:
+        def encode(self, obj):
+            if hasattr(obj, "__dict__"):
+                return _cbor_dumps(obj.__dict__)
+            return _cbor_dumps(obj)
 
-    t: int
-    tx: List[bytes]
+    class _Dec:
+        def __init__(self, tag: int):
+            self._tag = tag
 
+        def decode(self, data: bytes):
+            d = _cbor_loads(data)
+            if not isinstance(d, dict):
+                raise ProtocolError("fallback decode expected map")
+            return SimpleNamespace(**d)
 
-ENC = msgspec.msgpack.Encoder()
-DEC_INV = msgspec.msgpack.Decoder(type=_TxInvS)
-DEC_GET = msgspec.msgpack.Decoder(type=_TxGetDataS)
-DEC_BOD = msgspec.msgpack.Decoder(type=_TxBodiesS)
+    ENC = _Enc()
+    DEC_INV = _Dec(TAG_TX_INV)
+    DEC_GET = _Dec(TAG_TX_GET)
+    DEC_BOD = _Dec(TAG_TX_BODIES)
 
 
 # ---- Hashing helper ----------------------------------------------------------
@@ -324,12 +363,15 @@ from typing import TYPE_CHECKING, Any, Iterable
 
 if TYPE_CHECKING:  # pragma: no cover
     from typing import Protocol
-    
+
     class ConnLike(Protocol):
         remote_addr: str
-        async def send_frame(self, msg_id: int, payload: bytes, *, acks: bool = False) -> None: ...
+
+        async def send_frame(
+            self, msg_id: int, payload: bytes, *, acks: bool = False
+        ) -> None: ...
         def is_closed(self) -> bool: ...
-    
+
     class Frame(Protocol):
         msg_id: int
         seq: int
@@ -344,31 +386,31 @@ log = logging.getLogger("animica.p2p.tx_relay")
 class TxRelayHandler:
     """
     Protocol handler for transaction relay (gossip-based).
-    
+
     Responsibilities:
       • Receive TX_INV/TX_GET/TX_BODIES messages from peers
       • Validate, deduplicate, and admit transactions to local mempool
       • Enforce fee floor, nonce ordering, chain_id, signature validity
       • Publish accepted transactions to gossip mesh
       • Track metrics for relay events (accept/reject/publish)
-    
+
     This handler integrates with:
       - TxRelayGate for dedupe and fast admission checks
       - p2p.deps.AsyncP2PDeps for mempool admission
       - gossip.GossipEngine for outbound publishing
     """
-    
+
     cfg: Any  # P2PConfig
     codec: Any  # wire codec for encode/decode
     deps: Any  # AsyncP2PDeps (provides admit_tx)
     gossip: Any  # GossipEngine
     ratelimiter: Any  # PeerRateLimiter
-    
+
     # Internal state
     _gate: TxRelayGate = field(init=False)
     _metrics: dict = field(default_factory=dict, init=False)
     _subscribed: bool = field(default=False, init=False)
-    
+
     def __post_init__(self) -> None:
         """Initialize the relay gate and metrics."""
         self._gate = TxRelayGate(
@@ -388,59 +430,62 @@ class TxRelayHandler:
             "tx_published": 0,
         }
         log.info("TxRelayHandler initialized")
-    
+
     def msg_ids(self) -> Iterable[int]:
         """Message IDs this handler accepts (wire-level)."""
         # For now, we rely on gossip engine for TX gossip.
         # Direct wire messages (INV/GET/BODIES) can be added later if needed.
         return []
-    
+
     async def handle(self, conn: "ConnLike", frame: "Frame") -> None:
         """
         Handle a direct protocol message (not currently used; gossip handles TX relay).
-        
+
         If we later add direct INV/GET/BODIES messages (non-gossip), we'd implement:
           - frame.msg_id == MSG_TX_INV: parse_tx_inv, respond with GET for missing
           - frame.msg_id == MSG_TX_GET: parse_tx_get, respond with BODIES
           - frame.msg_id == MSG_TX_BODIES: parse_tx_bodies, admit to mempool
         """
-        log.debug(f"Unexpected direct frame msg_id={frame.msg_id} from {conn.remote_addr}")
-    
+        log.debug(
+            f"Unexpected direct frame msg_id={frame.msg_id} from {conn.remote_addr}"
+        )
+
     async def start(self) -> None:
         """
         Start the handler: subscribe to the txs gossip topic.
         """
         if self._subscribed:
             return
-        
+
         try:
             # Import topics helper
             from p2p.gossip import topics as gossip_topics
-            
+
             # Get chain_id from deps
             chain_id = getattr(self.deps, "chain_id", 1337)
-            
+
             # Build the txs topic path
             tx_topic = gossip_topics.txs(chain_id)
-            
+
             # Subscribe to gossip
             await self.gossip.subscribe(tx_topic.path)
-            
+
             # Register our callback for inbound gossip messages
             self.gossip.on_message(self._handle_gossip_tx)
-            
+
             self._subscribed = True
             log.info(f"TxRelayHandler subscribed to gossip topic: {tx_topic.path}")
         except Exception as e:
             log.error(f"Failed to subscribe to tx gossip topic: {e}", exc_info=True)
-    
+
     async def stop(self) -> None:
         """Stop the handler and unsubscribe from gossip."""
         if not self._subscribed:
             return
-        
+
         try:
             from p2p.gossip import topics as gossip_topics
+
             chain_id = getattr(self.deps, "chain_id", 1337)
             tx_topic = gossip_topics.txs(chain_id)
             await self.gossip.unsubscribe(tx_topic.path)
@@ -448,29 +493,31 @@ class TxRelayHandler:
             log.info("TxRelayHandler unsubscribed from tx gossip")
         except Exception as e:
             log.error(f"Failed to unsubscribe: {e}", exc_info=True)
-    
+
     async def _handle_gossip_tx(self, peer_id: str, topic: str, payload: bytes) -> None:
         """
         Handle an incoming transaction from the gossip mesh.
-        
+
         Args:
             peer_id: Source peer ID
             topic: Gossip topic path
             payload: Raw CBOR-encoded transaction
         """
         self._metrics["rx_bodies"] += 1
-        
+
         # Rotate bloom filter periodically
         self._gate.maybe_rotate()
-        
+
         # Fast admission check via gate
         admit_result = self._gate.admit_tx_body(payload)
-        
+
         if not admit_result.accepted:
             reason = admit_result.reason or "unknown"
             if reason == "duplicate":
                 self._metrics["tx_duplicate"] += 1
-                log.debug(f"Duplicate tx from {peer_id}, hash={admit_result.tx_hash.hex() if admit_result.tx_hash else 'N/A'}")
+                log.debug(
+                    f"Duplicate tx from {peer_id}, hash={admit_result.tx_hash.hex() if admit_result.tx_hash else 'N/A'}"
+                )
             elif "oversize" in reason:
                 self._metrics["tx_rejected_oversize"] += 1
                 log.warning(f"Oversized tx from {peer_id}: {reason}")
@@ -480,98 +527,78 @@ class TxRelayHandler:
             else:
                 log.debug(f"Rejected tx from {peer_id}: {reason}")
             return
-        
-        # Parse and admit to mempool via deps
+
+        # Admit to mempool via deps (prefer raw bytes; deps decide how to parse).
         try:
-            # Decode the transaction from CBOR
-            from core.encoding.cbor import loads as cbor_loads
-            from core.types.tx import Tx
-            
-            try:
-                tx_obj = cbor_loads(payload)
-                # Try standard Tx construction methods in order of preference
-                if hasattr(Tx, 'from_cbor'):
-                    # Preferred: reconstruct from raw CBOR
-                    tx = Tx.from_cbor(payload)
-                elif hasattr(Tx, 'from_obj') and isinstance(tx_obj, dict):
-                    # Next: use from_obj factory method
-                    tx = Tx.from_obj(tx_obj)
-                elif isinstance(tx_obj, Tx):
-                    # Already a Tx object (decoder returned typed object)
-                    tx = tx_obj
-                else:
-                    # Fallback: treat as raw payload for admit_tx
-                    # Some mempool implementations accept raw CBOR
-                    tx = payload
-            except Exception as e:
-                self._metrics["tx_rejected_mempool"] += 1
-                log.warning(f"CBOR decode failed for tx from {peer_id}: {e}")
-                return
-            
-            # Admit to mempool via deps
-            accepted, reason = await self.deps.admit_tx(tx)
-            
-            if accepted:
-                self._metrics["tx_admitted"] += 1
-                log.info(
-                    f"Admitted relayed tx from {peer_id}",
-                    extra={
-                        "tx_hash": admit_result.tx_hash.hex() if admit_result.tx_hash else "N/A",
-                        "peer": peer_id,
-                    }
-                )
-            else:
-                self._metrics["tx_rejected_mempool"] += 1
-                log.debug(
-                    f"Mempool rejected tx from {peer_id}: {reason}",
-                    extra={
-                        "tx_hash": admit_result.tx_hash.hex() if admit_result.tx_hash else "N/A",
-                        "reason": reason,
-                    }
-                )
+            accepted, reason = await self.deps.admit_tx(payload)
         except Exception as e:
             self._metrics["tx_rejected_mempool"] += 1
             log.error(f"Error admitting tx from {peer_id}: {e}", exc_info=True)
-    
+            return
+
+        if accepted:
+            self._metrics["tx_admitted"] += 1
+            log.info(
+                f"Admitted relayed tx from {peer_id}",
+                extra={
+                    "tx_hash": (
+                        admit_result.tx_hash.hex() if admit_result.tx_hash else "N/A"
+                    ),
+                    "peer": peer_id,
+                },
+            )
+        else:
+            self._metrics["tx_rejected_mempool"] += 1
+            log.debug(
+                f"Mempool rejected tx from {peer_id}: {reason}",
+                extra={
+                    "tx_hash": (
+                        admit_result.tx_hash.hex() if admit_result.tx_hash else "N/A"
+                    ),
+                    "reason": reason,
+                },
+            )
+
     async def publish_local_tx(self, tx_cbor: bytes) -> bool:
         """
         Publish a locally-submitted transaction to the gossip mesh.
-        
+
         Args:
             tx_cbor: Raw CBOR-encoded transaction
-        
+
         Returns:
             True if published successfully, False otherwise
         """
         if not self._subscribed:
             log.warning("Cannot publish tx: handler not subscribed to gossip")
             return False
-        
+
         try:
             # Check if we've already seen this tx (avoid re-broadcast)
             h = tx_hash(tx_cbor)
             if self._gate.seen.contains(h):
                 log.debug(f"Skipping publish of already-seen tx {h.hex()[:16]}...")
                 return False
-            
+
             # Mark as seen
             self._gate.seen.add(h)
-            
+
             # Get topic
             from p2p.gossip import topics as gossip_topics
+
             chain_id = getattr(self.deps, "chain_id", 1337)
             tx_topic = gossip_topics.txs(chain_id)
-            
+
             # Publish to gossip mesh
             await self.gossip.publish(tx_topic.path, tx_cbor)
-            
+
             self._metrics["tx_published"] += 1
             log.info(f"Published local tx to gossip: {h.hex()[:16]}...")
             return True
         except Exception as e:
             log.error(f"Failed to publish local tx: {e}", exc_info=True)
             return False
-    
+
     def get_metrics(self) -> dict:
         """Return current metrics snapshot."""
         return dict(self._metrics)
