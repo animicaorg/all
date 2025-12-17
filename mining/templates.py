@@ -50,6 +50,7 @@ class HeaderTemplate:
     pq_alg_policy_root: bytes
     poies_policy_root: bytes
     timestamp: int  # seconds since epoch (informational; included in SignBytes)
+    work_type: int | None = None
 
     def to_sign_bytes(self) -> bytes:
         """Canonical header SignBytes for nonce preimages."""
@@ -69,6 +70,8 @@ class HeaderTemplate:
             "poiesPolicyRoot": self.poies_policy_root,
             "timestamp": self.timestamp,
         }
+        if self.work_type is not None:
+            body["workType"] = int(self.work_type)
         return _sign_bytes(body)
 
 
@@ -81,6 +84,7 @@ class WorkTemplate:
     theta_target_micro: int
     height: int
     parent_hash: bytes
+    work_type: int | None = None
 
     @property
     def mix_seed(self) -> bytes:
@@ -130,11 +134,23 @@ class TemplateBuilder:
         receipts_root_supplier: Callable[[], bytes] | None = None,
         proofs_root_supplier: Callable[[], bytes] | None = None,
         da_root_supplier: Callable[[], bytes] | None = None,
+        work_selector: Callable[[int, int], int | None] | None = None,
     ) -> None:
         self._get_head = get_head_info
         self._get_theta = get_theta
         self._get_roots = get_policy_roots
         self._get_beacon = get_beacon
+        if work_selector is not None:
+            self._select_work = work_selector
+        else:
+            try:
+                from mining.useful_work import auto_select_work_type  # type: ignore
+
+                self._select_work = (
+                    lambda cid, h: auto_select_work_type(chain_id=cid, height=h)
+                )
+            except Exception:
+                self._select_work = None
 
         # At template time these roots are often empty; header_packer will
         # recompute them before submit. You may inject suppliers for special
@@ -145,7 +161,7 @@ class TemplateBuilder:
         self._da_root = da_root_supplier or (lambda: ZERO32)
 
         # Cached tuple identifying the last head+θ we built a template for.
-        self._cache_key: Optional[Tuple[bytes, int]] = None
+        self._cache_key: Optional[Tuple[bytes, int, int | None]] = None
         self._cached: Optional[WorkTemplate] = None
 
     # Public API ---------------------------------------------------------------
@@ -156,7 +172,17 @@ class TemplateBuilder:
         """
         parent_hash, height, parent_mix, chain_id, parent_state_root = self._get_head()
         theta = self._get_theta()
-        key = (parent_hash, theta)
+        work_type = None
+        # Only stamp a workType once the adaptive PoW fork activates
+        if self._select_work is not None:
+            activation_height = 100_000 if chain_id == 1 else 0
+            if (height + 1) >= activation_height:
+                try:
+                    work_type = self._select_work(chain_id, height + 1)
+                except Exception:
+                    work_type = None
+
+        key = (parent_hash, theta, work_type)
         if not force and self._cache_key == key and self._cached is not None:
             return self._cached
 
@@ -181,6 +207,7 @@ class TemplateBuilder:
             pq_alg_policy_root=pq_root,
             poies_policy_root=poies_root,
             timestamp=int(time.time()),
+            work_type=work_type,
         )
         wt = WorkTemplate(
             header=header,
@@ -188,6 +215,7 @@ class TemplateBuilder:
             theta_target_micro=theta,
             height=height + 1,
             parent_hash=parent_hash,
+            work_type=work_type,
         )
         self._cache_key = key
         self._cached = wt
