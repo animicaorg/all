@@ -69,6 +69,76 @@ brew install pkg-config openssl
 
 ## 🚀 Installation & Setup
 
+### 🚴‍♂️ CLI Quickstart (Everything End-to-End)
+
+1) **Install dependencies & create the venv**
+
+```bash
+./setup.sh            # or: FRESH=1 ./setup.sh --fresh
+source .venv/bin/activate
+```
+
+2) **Pick the network profile** (determines RPC/P2P ports, data dir, and seeds):
+
+```bash
+animica network set devnet          # mainnet | testnet | devnet | local-devnet
+animica network get                 # confirm selection
+```
+
+3) **Start your node from the CLI** (Docker Compose wrapper):
+
+```bash
+animica node up                     # background (default)
+animica node up --no-detach         # foreground with logs
+animica node up --with-miner        # include miner service
+```
+
+4) **Verify health and sync**:
+
+```bash
+animica node status                 # chain head, peers, sync info
+animica node head                   # latest block header
+animica peer list                   # connected peers (expect >0)
+```
+
+5) **Ensure peers connect** (connectivity checklist):
+
+```bash
+animica peer list --verbose         # shows multiaddrs + scores
+docker compose -f tests/devnet/docker-compose.yml -p animica-devnet logs -f node1 | grep p2p
+```
+
+If peer count stays 0: verify `ANIMICA_P2P_SEEDS` (or use defaults), open TCP/QUIC ports on your host, and confirm you selected the right network. For a manual seed bump, set:
+
+```bash
+export ANIMICA_P2P_SEEDS="/dns4/seed.animica.org/tcp/30333"
+animica node down && animica node up
+```
+
+6) **Create a wallet and fund it** (dev/test only):
+
+```bash
+animica wallet create --label mywallet
+animica faucet request mywallet     # devnet/testnet only
+animica wallet show mywallet --source chain
+```
+
+7) **Send a transaction** (with the running node):
+
+```bash
+animica tx send --from mywallet --to anim1recipient... --value 1.0
+animica tx status <tx_hash>
+```
+
+8) **Stop services** when done:
+
+```bash
+animica node down                   # keep data
+animica node down --volumes         # wipe data (irreversible)
+```
+
+> Need a deeper walkthrough? The sections below expand on each CLI area (networking, node ops, wallets, mining, RPC, Studio Services, Docker, non-Docker boot, and troubleshooting).
+
 ### 1. Clone the Repository
 
 ```bash
