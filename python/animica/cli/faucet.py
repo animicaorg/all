@@ -23,6 +23,7 @@ import typer
 from animica.coin import COIN_UNIT, format_amount
 from animica.config import load_network_config
 from .state import get_cli_state
+from .timeouts import DEFAULT_RPC_TIMEOUT, RPC_TIMEOUT_ENV, describe_timeout, resolve_timeout
 
 logger = logging.getLogger(__name__)
 
@@ -110,7 +111,13 @@ def _resolve_rpc_url(rpc_url: Optional[str], network: Optional[str] = None) -> s
     return cfg.rpc_url
 
 
-def _rpc_call(method: str, params: dict | list | None = None, rpc_url: Optional[str] = None, network: Optional[str] = None) -> dict:
+def _rpc_call(
+    method: str,
+    params: dict | list | None = None,
+    rpc_url: Optional[str] = None,
+    network: Optional[str] = None,
+    timeout: Optional[float] = None,
+) -> dict:
     """
     Make a JSON-RPC call to the node.
     
@@ -134,6 +141,7 @@ def _rpc_call(method: str, params: dict | list | None = None, rpc_url: Optional[
         raise typer.Exit(1) from exc
 
     url = _resolve_rpc_url(rpc_url, network)
+    resolved_timeout = resolve_timeout("RPC timeout", timeout, env_var=RPC_TIMEOUT_ENV, default=DEFAULT_RPC_TIMEOUT)
     logger.debug(f"Making RPC call to {url}: {method}")
     
     payload = {
@@ -144,7 +152,7 @@ def _rpc_call(method: str, params: dict | list | None = None, rpc_url: Optional[
     }
     
     try:
-        resp = requests.post(url, json=payload, timeout=10)
+        resp = requests.post(url, json=payload, timeout=resolved_timeout)
         resp.raise_for_status()
     except requests.exceptions.RequestException as e:
         typer.secho(f"Failed to connect to RPC at {url}: {e}", fg=typer.colors.RED, err=True)
@@ -205,6 +213,12 @@ def request_funds(
         "-v",
         help="Enable verbose logging",
     ),
+    timeout: Optional[float] = typer.Option(
+        None,
+        "--timeout",
+        help=f"RPC timeout in seconds (default: {describe_timeout(DEFAULT_RPC_TIMEOUT)})",
+        envvar=RPC_TIMEOUT_ENV,
+    ),
 ) -> None:
     f"""
     Request test funds from the faucet.
@@ -249,7 +263,7 @@ def request_funds(
         params["amount"] = amount
     
     # Call RPC (pass both rpc_url and network for proper resolution)
-    result = _rpc_call("faucet.request", params, rpc_url, active_network)
+    result = _rpc_call("faucet.request", params, rpc_url, active_network, timeout)
     
     if json_output:
         typer.echo(json.dumps(result.get("result", {}), indent=2))
@@ -293,6 +307,7 @@ Options:
   --amount, -a      Amount in base units (default: {DEFAULT_FAUCET_ANM:,} ANM = {DEFAULT_FAUCET_UNITS:,} units)
   --network         Override network (mainnet, testnet, devnet, local-devnet)
   --rpc-url         Override RPC endpoint URL
+  --timeout         RPC timeout in seconds (default: no timeout)
   --json            Output JSON format
   --verbose, -v     Enable verbose logging
 

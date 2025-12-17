@@ -12,6 +12,7 @@ from typing import Any, Dict, Optional
 import httpx
 import typer
 from animica.config import get_network_defaults
+from .timeouts import DEFAULT_RPC_TIMEOUT, RPC_TIMEOUT_ENV, resolve_timeout
 
 from .state import get_cli_state
 
@@ -188,7 +189,7 @@ def _validate_config(
 async def _check_health(
     host: str = "127.0.0.1",
     port: int = DEFAULT_STUDIO_PORT,
-    timeout: float = 5.0
+    timeout: Optional[float] = None,
 ) -> Dict[str, Any]:
     """
     Check studio services health endpoint.
@@ -196,7 +197,8 @@ async def _check_health(
     Returns health status dict or raises exception.
     """
     url = f"http://{host}:{port}/healthz"
-    async with httpx.AsyncClient(timeout=timeout) as client:
+    resolved_timeout = resolve_timeout("RPC timeout", timeout, env_var=RPC_TIMEOUT_ENV, default=DEFAULT_RPC_TIMEOUT)
+    async with httpx.AsyncClient(timeout=resolved_timeout) as client:
         response = await client.get(url)
         response.raise_for_status()
         return response.json() if response.headers.get("content-type", "").startswith("application/json") else DEFAULT_HEALTH_RESPONSE
@@ -205,7 +207,7 @@ async def _check_health(
 async def _check_readiness(
     host: str = "127.0.0.1",
     port: int = DEFAULT_STUDIO_PORT,
-    timeout: float = 5.0
+    timeout: Optional[float] = None,
 ) -> Dict[str, Any]:
     """
     Check studio services readiness endpoint.
@@ -213,7 +215,8 @@ async def _check_readiness(
     Returns readiness status dict or raises exception.
     """
     url = f"http://{host}:{port}/readyz"
-    async with httpx.AsyncClient(timeout=timeout) as client:
+    resolved_timeout = resolve_timeout("RPC timeout", timeout, env_var=RPC_TIMEOUT_ENV, default=DEFAULT_RPC_TIMEOUT)
+    async with httpx.AsyncClient(timeout=resolved_timeout) as client:
         response = await client.get(url)
         response.raise_for_status()
         return response.json() if response.headers.get("content-type", "").startswith("application/json") else DEFAULT_READY_RESPONSE

@@ -177,7 +177,7 @@ Node Management & Network Selection
   # Check node status with custom retry delay
   animica node status --retry-delay 2.5  # 2.5 seconds between retries
   
-  # Increase RPC timeout when the node is under heavy load
+  # Increase RPC timeout when the node is under heavy load (defaults to unlimited)
   animica node status --timeout 45
   
   # Set default retry delay via environment variable
@@ -201,7 +201,7 @@ Retry Behavior
   
   Configuration:
   - Default retry delay: 1.0 second
-  - Default RPC timeout: 30 seconds (configure via --timeout or ANIMICA_RPC_TIMEOUT)
+  - Default RPC timeout: no timeout (wait indefinitely; configure via --timeout or ANIMICA_RPC_TIMEOUT; use 0/"none" to disable)
   - Configure with --retry-delay flag or ANIMICA_RETRY_DELAY environment variable
   - Configure with --timeout flag or ANIMICA_RPC_TIMEOUT environment variable
   - Each retry is logged with timestamp and error reason
