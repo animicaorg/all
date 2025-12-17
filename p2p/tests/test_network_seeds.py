@@ -107,6 +107,33 @@ class TestSeedLoadingFromEnv:
         assert any("testnet.animica.org" in s for s in seeds)
         assert any("144.126.133.21" in s for s in seeds)
 
+    def test_load_seeds_with_global_network_env(self, monkeypatch):
+        """Test loading seeds via ANIMICA_NETWORK fallback."""
+        monkeypatch.delenv("ANIMICA_P2P_SEEDS", raising=False)
+        monkeypatch.delenv("ANIMICA_P2P_NETWORK", raising=False)
+        monkeypatch.delenv("ANIMICA_P2P_CHAIN_ID", raising=False)
+        monkeypatch.setenv("ANIMICA_NETWORK", "testnet")
+
+        seeds = p2p_config._load_seeds_from_env()
+
+        # Should return testnet seeds through global network env
+        assert any("testnet.animica.org" in s for s in seeds)
+        assert any("144.126.133.21" in s for s in seeds)
+
+    def test_load_seeds_with_global_chain_id_env(self, monkeypatch):
+        """Test loading seeds via ANIMICA_CHAIN_ID fallback."""
+        monkeypatch.delenv("ANIMICA_P2P_SEEDS", raising=False)
+        monkeypatch.delenv("ANIMICA_P2P_NETWORK", raising=False)
+        monkeypatch.delenv("ANIMICA_P2P_CHAIN_ID", raising=False)
+        monkeypatch.delenv("ANIMICA_NETWORK", raising=False)
+        monkeypatch.setenv("ANIMICA_CHAIN_ID", "2")
+
+        seeds = p2p_config._load_seeds_from_env()
+
+        # Should return testnet seeds based on global chain id env
+        assert any("testnet.animica.org" in s for s in seeds)
+        assert any("144.126.133.21" in s for s in seeds)
+
     def test_explicit_seeds_override_defaults(self, monkeypatch):
         """Test that ANIMICA_P2P_SEEDS overrides network-specific defaults."""
         custom_seeds = "/ip4/1.2.3.4/tcp/1234,/ip4/5.6.7.8/tcp/5678"
@@ -187,6 +214,31 @@ class TestFullConfigLoad:
         
         # Should include mainnet seeds
         assert any("mainnet.animica.org" in s for s in cfg.seeds)
+
+    def test_load_config_with_global_chain_id_env(self, monkeypatch):
+        """Test that load_config respects global ANIMICA_CHAIN_ID when P2P env not set."""
+        monkeypatch.delenv("ANIMICA_P2P_SEEDS", raising=False)
+        monkeypatch.delenv("ANIMICA_P2P_CHAIN_ID", raising=False)
+        monkeypatch.delenv("ANIMICA_P2P_NETWORK", raising=False)
+        monkeypatch.delenv("ANIMICA_NETWORK", raising=False)
+        monkeypatch.setenv("ANIMICA_CHAIN_ID", "2")
+
+        cfg = p2p_config.load_config()
+
+        # Should include testnet seeds via global chain id
+        assert any("testnet.animica.org" in s for s in cfg.seeds)
+
+    def test_load_config_with_global_network_env(self, monkeypatch):
+        """Test that load_config respects global ANIMICA_NETWORK."""
+        monkeypatch.delenv("ANIMICA_P2P_SEEDS", raising=False)
+        monkeypatch.delenv("ANIMICA_P2P_CHAIN_ID", raising=False)
+        monkeypatch.delenv("ANIMICA_P2P_NETWORK", raising=False)
+        monkeypatch.setenv("ANIMICA_NETWORK", "devnet")
+
+        cfg = p2p_config.load_config()
+
+        # Should include devnet seeds from global network env
+        assert any("devnet.animica.org" in s for s in cfg.seeds)
 
     def test_load_config_with_network_env(self, monkeypatch):
         """Test that load_config respects ANIMICA_P2P_NETWORK."""
