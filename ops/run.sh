@@ -182,6 +182,98 @@ print(parsed.path or "/rpc")
 PY
 }
 
+rpc_health_check() {
+  local rpc_url="$1"
+  python - "${rpc_url}" <<'PY'
+import json
+import sys
+import urllib.error
+import urllib.request
+
+url = sys.argv[1]
+payload = json.dumps(
+    {"jsonrpc": "2.0", "id": 1, "method": "net_version", "params": []}
+).encode()
+req = urllib.request.Request(
+    url, data=payload, headers={"Content-Type": "application/json"}
+)
+
+try:
+    with urllib.request.urlopen(req, timeout=2) as resp:
+        json.load(resp)
+    sys.exit(0)
+except (urllib.error.URLError, urllib.error.HTTPError, OSError):
+    sys.exit(1)
+PY
+}
+
+wait_for_rpc() {
+  local rpc_url="$1"
+  local timeout_s="${2:-10}"
+  local start_ts
+  start_ts="$(date +%s)"
+  while true; do
+    if rpc_health_check "${rpc_url}"; then
+      return 0
+    fi
+    if (( $(date +%s) - start_ts >= timeout_s )); then
+      return 1
+    fi
+    sleep 1
+  done
+}
+
+is_local_rpc_host() {
+  read -r rpc_host _ _ < <(parse_rpc_from_url)
+  case "${rpc_host}" in
+    ""|localhost|127.*|0.0.0.0)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+# Start a local node for the pool if the configured RPC is local and unreachable.
+AUTO_NODE_PID=""
+cleanup_auto_node() {
+  if [[ -n "${AUTO_NODE_PID}" ]]; then
+    echo "[animica] Stopping auto-started node (pid=${AUTO_NODE_PID})"
+    kill "${AUTO_NODE_PID}" 2>/dev/null || true
+  fi
+}
+
+ensure_pool_rpc() {
+  local rpc_url="${ANIMICA_RPC_URL:-http://127.0.0.1:8545/rpc}"
+  local wait_seconds="${ANIMICA_POOL_RPC_WAIT_SECONDS:-8}"
+  local local_grace="${ANIMICA_POOL_RPC_LOCAL_GRACE:-15}"
+
+  if wait_for_rpc "${rpc_url}" "${wait_seconds}"; then
+    return 0
+  fi
+
+  if is_local_rpc_host; then
+    # When the node is starting in another process (e.g., `run.sh all`), give it
+    # a bit more time to come up before auto-starting a new one.
+    if wait_for_rpc "${rpc_url}" "${local_grace}"; then
+      return 0
+    fi
+
+    echo "[animica] RPC ${rpc_url} unreachable; auto-starting local node for the pool"
+    start_node &
+    AUTO_NODE_PID=$!
+    trap cleanup_auto_node EXIT INT TERM
+
+    # Give the node a moment to come up before starting the pool.
+    if ! wait_for_rpc "${rpc_url}" "${ANIMICA_POOL_RPC_WAIT_SECONDS:-20}"; then
+      echo "[animica] RPC still unreachable after auto-start; check node logs" >&2
+    fi
+  else
+    echo "[animica] RPC ${rpc_url} is not reachable. Set ANIMICA_RPC_URL to a running node or use 'ops/run.sh all'." >&2
+  fi
+}
+
 # ------------------------------
 # Pool profile detection
 # ------------------------------
@@ -272,6 +364,7 @@ start_pool() {
   read -r api_host api_port < <(split_bind "${ANIMICA_POOL_API_BIND}")
   export ANIMICA_POOL_API_HOST="${ANIMICA_POOL_API_HOST:-${api_host}}"
   export ANIMICA_POOL_API_PORT="${ANIMICA_POOL_API_PORT:-${api_port}}"
+  ensure_pool_rpc
   python -m animica.stratum_pool
 }
 
