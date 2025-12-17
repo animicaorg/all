@@ -44,8 +44,13 @@ from .constants import MAX_OUTBOUND_PEERS as CONST_MAX_OUTBOUND
 from .constants import MAX_PEERS as CONST_MAX_PEERS
 from .constants import PROTOCOL_ID
 
-# Default fallback seed (legacy)
-DEFAULT_SEEDS: Final[tuple[str, ...]] = ("/dns4/seed.animica.org/tcp/9000",)
+# Default fallback seeds (mainnet)
+DEFAULT_SEEDS: Final[tuple[str, ...]] = (
+    "/dns4/mainnet.animica.org/udp/443/quic-v1",
+    "/dns4/mainnet.animica.org/tcp/30333",
+    "/ip4/144.126.133.21/udp/443/quic-v1",
+    "/ip4/144.126.133.21/tcp/30333",
+)
 
 # Network-specific seeds: domain names + IP fallback
 # Primary IP: 144.126.133.21 (used as fallback when DNS fails)
@@ -121,7 +126,7 @@ def _load_seeds_from_env(chain_id: int | None = None) -> tuple[str, ...]:
     1. ANIMICA_P2P_SEEDS (explicit seed list)
     2. ANIMICA_P2P_NETWORK (network name: mainnet/testnet/devnet)
     3. chain_id parameter (use network-specific seeds)
-    4. DEFAULT_SEEDS (legacy fallback)
+    4. DEFAULT_SEEDS (mainnet fallback)
     """
     # Check for explicit seed list
     raw = os.getenv("ANIMICA_P2P_SEEDS")

@@ -130,15 +130,16 @@ class TestSeedLoadingFromEnv:
         # Should still work with uppercase
         assert any("mainnet.animica.org" in s for s in seeds)
 
-    def test_fallback_to_legacy_default(self, monkeypatch):
-        """Test fallback to legacy DEFAULT_SEEDS when no chain_id or network."""
+    def test_fallback_to_mainnet_default(self, monkeypatch):
+        """Test fallback to mainnet DEFAULT_SEEDS when no chain_id or network."""
         monkeypatch.delenv("ANIMICA_P2P_SEEDS", raising=False)
         monkeypatch.delenv("ANIMICA_P2P_NETWORK", raising=False)
         
         seeds = p2p_config._load_seeds_from_env(chain_id=None)
         
-        # Should return legacy default seeds
+        # Should return mainnet default seeds
         assert seeds == p2p_config.DEFAULT_SEEDS
+        assert any("mainnet.animica.org" in s for s in seeds)
 
 
 class TestEmbeddedFallbackSeeds:
@@ -150,6 +151,8 @@ class TestEmbeddedFallbackSeeds:
         
         # Should include the primary IP
         assert any("144.126.133.21" in s for s in seed_discovery.EMBEDDED_FALLBACK_SEEDS)
+        # Should include the mainnet DNS hostname
+        assert any("mainnet.animica.org" in s for s in seed_discovery.EMBEDDED_FALLBACK_SEEDS)
 
     def test_network_dns_seeds_mapping(self):
         """Test that network DNS seeds are defined for all networks."""

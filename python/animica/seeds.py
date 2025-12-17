@@ -14,6 +14,7 @@ DEFAULT_P2P_PORTS = [30333, 30303, 31333, 31334]
 # Seed nodes per network
 NETWORK_SEEDS: Dict[str, List[str]] = {
     "mainnet": [
+        "mainnet.animica.org:30333",
         "144.126.133.21:30333",
     ],
     "testnet": [
