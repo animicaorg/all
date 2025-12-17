@@ -612,6 +612,91 @@ def test_status_rejects_invalid_retry_delay(monkeypatch: Any) -> None:
     assert "retry-delay must be greater than 0" in result.output
 
 
+@respx.mock
+def test_status_accepts_timeout_parameter(monkeypatch: Any) -> None:
+    """Test that status command accepts --timeout parameter and uses it without errors."""
+    rpc_url = "http://localhost:9994/rpc"
+    monkeypatch.setenv("ANIMICA_RPC_URL", rpc_url)
+
+    route = respx.post(rpc_url).mock(
+        side_effect=[
+            httpx.Response(
+                200,
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "result": {"height": 7, "hash": "0xaaa", "chainId": 5},
+                },
+            ),
+            httpx.Response(
+                200,
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "result": {"height": 7, "hash": "0xaaa"},
+                },
+            ),
+            httpx.Response(
+                200, json={"jsonrpc": "2.0", "id": 1, "result": {"syncing": False}}
+            ),
+        ]
+    )
+
+    result = runner.invoke(node.app, ["status", "--timeout", "15", "--retry-delay", "0.01"])
+    assert result.exit_code == 0
+    assert "Head height: 7" in result.output
+    assert route.called
+
+
+def test_status_rejects_invalid_timeout(monkeypatch: Any) -> None:
+    """Test that status command rejects invalid timeout values."""
+    rpc_url = "http://localhost:9993/rpc"
+    monkeypatch.setenv("ANIMICA_RPC_URL", rpc_url)
+
+    result = runner.invoke(node.app, ["status", "--timeout", "0"])
+    assert result.exit_code == 1
+    assert "RPC timeout must be greater than 0" in result.output
+
+
+@respx.mock
+def test_status_logs_error_type_when_message_missing(monkeypatch: Any) -> None:
+    """Ensure retry log includes error type when exception has no message."""
+    rpc_url = "http://localhost:9992/rpc"
+    monkeypatch.setenv("ANIMICA_RPC_URL", rpc_url)
+
+    attempt = {"count": 0}
+
+    def side_effect(request):
+        method = request.json()["method"]
+        if method == "chain.getHead":
+            attempt["count"] += 1
+            if attempt["count"] == 1:
+                raise Exception()
+            return httpx.Response(
+                200,
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "result": {"height": 3, "hash": "0xbbb", "chainId": 9},
+                },
+            )
+        if method == "chain.getBlockByHeight":
+            return httpx.Response(
+                200, json={"jsonrpc": "2.0", "id": 1, "result": {"hash": "0xbbb"}}
+            )
+        return httpx.Response(
+            200, json={"jsonrpc": "2.0", "id": 1, "result": {"syncing": False}}
+        )
+
+    respx.post(rpc_url).mock(side_effect=side_effect)
+
+    result = runner.invoke(node.app, ["status", "--retry-delay", "0.01"])
+
+    assert result.exit_code == 0
+    assert "Head height: 3" in result.output
+    assert "Exception()" in result.output
+
+
 def test_network_switching_affects_compose_file(monkeypatch: Any) -> None:
     """Test that switching networks changes the compose file used."""
     with tempfile.TemporaryDirectory() as tmpdir:
