@@ -89,6 +89,7 @@ _PT_BY_NAME: Dict[str, ProofType] = {
     "quantum": ProofType.QUANTUM,
     "storage": ProofType.STORAGE,
     "vdf": ProofType.VDF,
+    "hash_work": ProofType.HASH_WORK,
 }
 _NAME_BY_PT: Dict[ProofType, str] = {v: k for k, v in _PT_BY_NAME.items()}
 

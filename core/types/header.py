@@ -21,6 +21,7 @@ Fields (stable, consensus-critical):
   - poiesPolicyRoot:  bstr .size 32  (Merkle root of PoIES policy tree in effect)
   - pqAlgPolicyRoot:  bstr .size 32  (Merkle root of PQ algorithm-policy tree in effect)
   - thetaMicro:       uint (Θ) acceptance threshold in micro-nats (fixed-point)
+  - workType:         uint (discriminator for adaptive/useful-work selection; 0=legacy/default)
   - nonce:            uint (producer-chosen nonce used in u-draw domain; 0 for headers in mempool)
   - extra:            bstr (opaque, bounded; non-consensus hints/notes; can be empty)
 
@@ -61,9 +62,9 @@ class Header:
 
     poiesPolicyRoot: bytes
     pqAlgPolicyRoot: bytes
-
     thetaMicro: int
-    nonce: int
+    workType: int = 0
+    nonce: int = 0
 
     extra: bytes = b""
 
@@ -83,6 +84,7 @@ class Header:
         poies_policy_root: bytes,
         pq_alg_policy_root: bytes,
         theta_micro: int,
+        work_type: int = 0,
         extra: bytes = b"",
     ) -> "Header":
         """Build a deterministic genesis header (height=0, parentHash=0x00..00, nonce=0)."""
@@ -102,6 +104,7 @@ class Header:
             poiesPolicyRoot=poies_policy_root,
             pqAlgPolicyRoot=pq_alg_policy_root,
             thetaMicro=theta_micro,
+            workType=work_type,
             nonce=0,
             extra=extra,
         )
@@ -121,6 +124,7 @@ class Header:
         poies_policy_root: Optional[bytes] = None,
         pq_alg_policy_root: Optional[bytes] = None,
         theta_micro: Optional[int] = None,
+        work_type: Optional[int] = None,
         nonce: int = 0,
         extra: bytes = b"",
     ) -> "Header":
@@ -151,6 +155,7 @@ class Header:
                 else self.pqAlgPolicyRoot
             ),
             thetaMicro=theta_micro if theta_micro is not None else self.thetaMicro,
+            workType=work_type if work_type is not None else self.workType,
             nonce=nonce,
             extra=extra,
         )
@@ -171,6 +176,8 @@ class Header:
         expect_len(self.pqAlgPolicyRoot, HASH32_LEN, name="Header.pqAlgPolicyRoot")
         if not isinstance(self.extra, (bytes, bytearray)):
             raise TypeError("Header.extra must be bytes")
+        if int(self.workType) < 0:
+            raise ValueError("Header.workType must be non-negative")
 
     # ---- hashing, CBOR, and sign-bytes ----
 
@@ -178,7 +185,7 @@ class Header:
         """
         Canonical map for CBOR encoding. Key names and ordering must remain stable.
         """
-        return {
+        obj = {
             "v": int(self.v),
             "chainId": int(self.chainId),
             "height": int(self.height),
@@ -196,6 +203,9 @@ class Header:
             "nonce": int(self.nonce),
             "extra": bytes(self.extra),
         }
+        if int(self.workType):
+            obj["workType"] = int(self.workType)
+        return obj
 
     @staticmethod
     def from_obj(o: Mapping[str, Any]) -> "Header":
@@ -214,6 +224,7 @@ class Header:
             poiesPolicyRoot=bytes(o["poiesPolicyRoot"]),
             pqAlgPolicyRoot=bytes(o["pqAlgPolicyRoot"]),
             thetaMicro=int(o["thetaMicro"]),
+            workType=int(o.get("workType", 0)),
             nonce=int(o["nonce"]),
             extra=bytes(o.get("extra", b"")),
         )
@@ -269,6 +280,8 @@ class Header:
             "extra": bytes(self.extra),
             "domainTag": bytes(domain_tag),
         }
+        if int(self.workType):
+            obj["workType"] = int(self.workType)
         return cbor_dumps(obj)
 
     # ---- convenience ----
@@ -287,7 +300,7 @@ class Header:
             f"Header(v={self.v} cid={self.chainId} h={self.height} t={self.timestamp} "
             f"parent={h(self.parentHash)} state={h(self.stateRoot)} txs={h(self.txsRoot)} "
             f"rcpt={h(self.receiptsRoot)} proofs={h(self.proofsRoot)} da={h(self.daRoot)} "
-            f"mix={h(self.mixSeed)} Θμ={self.thetaMicro} nonce={self.nonce})"
+            f"mix={h(self.mixSeed)} Θμ={self.thetaMicro} work={self.workType} nonce={self.nonce})"
         )
 
 

@@ -61,6 +61,7 @@ PROOF_TYPE_AI: int = 2
 PROOF_TYPE_QUANTUM: int = 3
 PROOF_TYPE_STORAGE: int = 4
 PROOF_TYPE_VDF: int = 5
+PROOF_TYPE_HASH_WORK: int = 6
 
 
 # ---------------------------------------------------------------------------
@@ -87,6 +88,8 @@ class HeaderView:
 
     # Optional: parent hash to allow header-linking checks without DB reads
     parent_hash: Optional[Hash32] = None
+    # Optional discriminator for adaptive/useful-work selection (post-fork)
+    work_type: Optional[int] = None
 
 
 @dataclass(frozen=True)
