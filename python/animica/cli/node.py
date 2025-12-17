@@ -16,7 +16,9 @@ from animica.config import get_network_defaults, load_network_config
 from .state import get_cli_state
 
 DEFAULT_RPC_URL = load_network_config().rpc_url
+DEFAULT_RPC_TIMEOUT = 30.0
 RPC_ENV = "ANIMICA_RPC_URL"
+RPC_TIMEOUT_ENV = "ANIMICA_RPC_TIMEOUT"
 STATE_KEY_NETWORK = "active_network"
 
 # Networks that use the 'dev' profile in docker-compose
@@ -26,15 +28,16 @@ app = typer.Typer(help="Manage and query Animica nodes.")
 
 
 async def rpc_call(
-    method: str, params: Optional[list[Any]] = None, *, rpc_url: str
+    method: str, params: Optional[list[Any]] = None, *, rpc_url: str, timeout: Optional[float] = None
 ) -> Any:
+    resolved_timeout = _resolve_rpc_timeout(timeout)
     payload: Dict[str, Any] = {
         "jsonrpc": "2.0",
         "id": 1,
         "method": method,
         "params": params or [],
     }
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with httpx.AsyncClient(timeout=resolved_timeout) as client:
         response = await client.post(rpc_url, json=payload)
         data = response.json()
     if "error" in data:
@@ -58,6 +61,33 @@ def _resolve_rpc_url(rpc_url: Optional[str]) -> str:
     
     # Fall back to network config
     return load_network_config().rpc_url
+
+
+def _resolve_rpc_timeout(timeout: Optional[float]) -> float:
+    """Resolve RPC timeout from CLI arg, env var, or default.
+
+    Empty strings are treated as unset and fall back to the next priority level.
+    """
+
+    def _coerce_timeout(value: str) -> float:
+        try:
+            parsed = float(value)
+        except ValueError:
+            raise ValueError(f"Invalid RPC timeout value: {value}")
+        if parsed <= 0:
+            raise ValueError(f"RPC timeout must be greater than 0 seconds, got {parsed}")
+        return parsed
+
+    if timeout is not None:
+        if timeout <= 0:
+            raise ValueError(f"RPC timeout must be greater than 0 seconds, got {timeout}")
+        return timeout
+
+    env_timeout = os.environ.get(RPC_TIMEOUT_ENV)
+    if env_timeout and env_timeout.strip():
+        return _coerce_timeout(env_timeout.strip())
+
+    return DEFAULT_RPC_TIMEOUT
 
 
 def _pretty(obj: Any) -> str:
@@ -136,10 +166,21 @@ def status(
     ),
     retry_delay: float = typer.Option(
         1.0, "--retry-delay", help="Delay between RPC retry attempts in seconds (default: 1.0)", envvar="ANIMICA_RETRY_DELAY"
+    ),
+    timeout: Optional[float] = typer.Option(
+        None,
+        "--timeout",
+        help=f"JSON-RPC request timeout in seconds (default: {DEFAULT_RPC_TIMEOUT})",
+        envvar=RPC_TIMEOUT_ENV,
     )
 ) -> None:
     """Show chain head, block info and sync state. Retries indefinitely on RPC errors."""
     url = _resolve_rpc_url(rpc_url)
+    try:
+        rpc_timeout = _resolve_rpc_timeout(timeout)
+    except ValueError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=1)
     
     # Validate retry delay
     if retry_delay <= 0:
@@ -151,7 +192,7 @@ def status(
     while True:
         attempt += 1
         try:
-            head = asyncio.run(rpc_call("chain.getHead", [], rpc_url=url))
+            head = asyncio.run(rpc_call("chain.getHead", [], rpc_url=url, timeout=rpc_timeout))
             height = head.get("height") or head.get("number") or 0
             chain_id = head.get("chainId") or head.get("chain_id")
             head_hash = head.get("hash") or head.get("blockHash")
@@ -160,7 +201,7 @@ def status(
             if height is not None:
                 try:
                     block = asyncio.run(
-                        rpc_call("chain.getBlockByHeight", [height], rpc_url=url)
+                        rpc_call("chain.getBlockByHeight", [height], rpc_url=url, timeout=rpc_timeout)
                     )
                 except Exception:
                     block = None
@@ -168,7 +209,7 @@ def status(
             sync_status = None
             for method in ("node.syncStatus", "chain.syncing", "sync.isSyncing"):
                 try:
-                    sync_status = asyncio.run(rpc_call(method, [], rpc_url=url))
+                    sync_status = asyncio.run(rpc_call(method, [], rpc_url=url, timeout=rpc_timeout))
                     break
                 except Exception:
                     continue
@@ -190,8 +231,11 @@ def status(
             import time
             from datetime import datetime
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            error_message = str(e).strip()
+            if not error_message:
+                error_message = repr(e)
             typer.echo(
-                f"[{timestamp}] Retrying node status query due to RPC error (attempt {attempt}): {e}. Retrying in {retry_delay:.1f}s...",
+                f"[{timestamp}] Retrying node status query due to RPC error (attempt {attempt}): {error_message}. Retrying in {retry_delay:.1f}s...",
                 err=True
             )
             time.sleep(retry_delay)
@@ -202,11 +246,22 @@ def status(
 def head(
     rpc_url: Optional[str] = typer.Option(
         None, "--rpc-url", help="JSON-RPC endpoint", envvar=RPC_ENV
-    )
+    ),
+    timeout: Optional[float] = typer.Option(
+        None,
+        "--timeout",
+        help=f"JSON-RPC request timeout in seconds (default: {DEFAULT_RPC_TIMEOUT})",
+        envvar=RPC_TIMEOUT_ENV,
+    ),
 ) -> None:
     """Print the current chain head summary."""
     url = _resolve_rpc_url(rpc_url)
-    head_info = asyncio.run(rpc_call("chain.getHead", [], rpc_url=url))
+    try:
+        rpc_timeout = _resolve_rpc_timeout(timeout)
+    except ValueError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=1)
+    head_info = asyncio.run(rpc_call("chain.getHead", [], rpc_url=url, timeout=rpc_timeout))
     typer.echo(_pretty(head_info))
 
 
@@ -217,23 +272,34 @@ def block(
     rpc_url: Optional[str] = typer.Option(
         None, "--rpc-url", help="JSON-RPC endpoint", envvar=RPC_ENV
     ),
+    timeout: Optional[float] = typer.Option(
+        None,
+        "--timeout",
+        help=f"JSON-RPC request timeout in seconds (default: {DEFAULT_RPC_TIMEOUT})",
+        envvar=RPC_TIMEOUT_ENV,
+    ),
 ) -> None:
     """Fetch and display a block by height or hash."""
     if not height and not hash:
         raise typer.BadParameter("Provide --height or --hash")
     url = _resolve_rpc_url(rpc_url)
+    try:
+        rpc_timeout = _resolve_rpc_timeout(timeout)
+    except ValueError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=1)
     if height is not None:
-        result = asyncio.run(rpc_call("chain.getBlockByHeight", [height], rpc_url=url))
+        result = asyncio.run(rpc_call("chain.getBlockByHeight", [height], rpc_url=url, timeout=rpc_timeout))
         if (
             isinstance(result, dict)
             and "transactions" not in result
             and result.get("hash")
         ):
             result = asyncio.run(
-                rpc_call("chain.getBlockByHash", [result["hash"]], rpc_url=url)
+                rpc_call("chain.getBlockByHash", [result["hash"]], rpc_url=url, timeout=rpc_timeout)
             )
     else:
-        result = asyncio.run(rpc_call("chain.getBlockByHash", [hash], rpc_url=url))
+        result = asyncio.run(rpc_call("chain.getBlockByHash", [hash], rpc_url=url, timeout=rpc_timeout))
     typer.echo(_pretty(result))
 
 
@@ -243,10 +309,21 @@ def tx(
     rpc_url: Optional[str] = typer.Option(
         None, "--rpc-url", help="JSON-RPC endpoint", envvar=RPC_ENV
     ),
+    timeout: Optional[float] = typer.Option(
+        None,
+        "--timeout",
+        help=f"JSON-RPC request timeout in seconds (default: {DEFAULT_RPC_TIMEOUT})",
+        envvar=RPC_TIMEOUT_ENV,
+    ),
 ) -> None:
     """Fetch and display a transaction by hash."""
     url = _resolve_rpc_url(rpc_url)
-    result = asyncio.run(rpc_call("chain.getTransactionByHash", [hash], rpc_url=url))
+    try:
+        rpc_timeout = _resolve_rpc_timeout(timeout)
+    except ValueError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=1)
+    result = asyncio.run(rpc_call("chain.getTransactionByHash", [hash], rpc_url=url, timeout=rpc_timeout))
     typer.echo(_pretty(result))
 
 
