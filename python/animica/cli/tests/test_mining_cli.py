@@ -706,9 +706,9 @@ def test_mine_blocks_with_no_timeout(monkeypatch: Any) -> None:
     
     # Track the timeout value passed to RpcClient
     timeout_tracker = {"timeout": -1}  # -1 means not set
-    
+
     class MockRpcClient:
-        def __init__(self, url, timeout=30.0):
+        def __init__(self, url, timeout=None):
             timeout_tracker["timeout"] = timeout
         
         def __enter__(self):
@@ -752,9 +752,9 @@ def test_mine_blocks_without_no_timeout_uses_default(monkeypatch: Any) -> None:
     
     # Track the timeout value passed to RpcClient
     timeout_tracker = {"timeout": -1}  # -1 means not set
-    
+
     class MockRpcClient:
-        def __init__(self, url, timeout=30.0):
+        def __init__(self, url, timeout=None):
             timeout_tracker["timeout"] = timeout
         
         def __enter__(self):
@@ -787,6 +787,6 @@ def test_mine_blocks_without_no_timeout_uses_default(monkeypatch: Any) -> None:
     )
     
     assert result.exit_code == 0
-    # Timeout should be 30.0 (default) when --no-timeout is not used
-    assert timeout_tracker["timeout"] == 30.0
+    # Timeout should default to None (unbounded) when --no-timeout is not used
+    assert timeout_tracker["timeout"] is None
     assert "RPC timeout disabled" not in result.output

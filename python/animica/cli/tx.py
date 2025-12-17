@@ -12,6 +12,7 @@ from rich.console import Console
 from rich.pretty import Pretty
 
 from pq.py.sign import build_sign_bytes, pq_sign_detached, verify_detached  # type: ignore
+from .timeouts import DEFAULT_RPC_TIMEOUT, RPC_TIMEOUT_ENV, resolve_timeout
 
 console = Console()
 app = typer.Typer(help="Transaction commands")
@@ -45,9 +46,15 @@ class RpcError(Exception):
         return f"{self.code} {self.message} {self.data!r}"
 
 
-def _rpc(url: str, method: str, params: list[Any] | None = None, timeout: float = 15.0) -> Any:
+def _rpc(
+    url: str,
+    method: str,
+    params: list[Any] | None = None,
+    timeout: Optional[float] = None,
+) -> Any:
     payload = {"jsonrpc": "2.0", "id": int(time.time() * 1000) % 1_000_000, "method": method, "params": params or []}
-    r = requests.post(url, json=payload, timeout=timeout)
+    resolved_timeout = resolve_timeout("RPC timeout", timeout, env_var=RPC_TIMEOUT_ENV, default=DEFAULT_RPC_TIMEOUT)
+    r = requests.post(url, json=payload, timeout=resolved_timeout)
     r.raise_for_status()
     out = r.json()
     if "error" in out and out["error"] is not None:
