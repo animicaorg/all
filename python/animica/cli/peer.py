@@ -89,6 +89,31 @@ def _resolve_store_paths(store_path: Path) -> tuple[Path, Path]:
     return (store_path, store_path.with_suffix(".db"))
 
 
+def _rpc_operation_succeeded(result: Any) -> tuple[bool, Optional[str]]:
+    """
+    Determine whether an RPC response indicates success.
+
+    Args:
+        result: The "result" payload from a JSON-RPC response.
+
+    Returns:
+        Tuple of (success flag, error message if available).
+    """
+    if isinstance(result, dict):
+        if "success" in result:
+            return bool(result.get("success")), result.get("error") or result.get("message")
+        if "result" in result and isinstance(result.get("result"), bool):
+            return bool(result.get("result")), result.get("error") or result.get("message")
+        for key in ("added", "connected", "removed"):
+            if key in result and isinstance(result.get(key), bool):
+                return bool(result.get(key)), result.get("error") or result.get("message")
+        # Unknown dict payload - treat as failure to avoid false positives
+        return False, result.get("error") or result.get("message") or "Unexpected RPC response"
+
+    # Primitive responses (bool/int/str) - treat truthy as success
+    return bool(result), None
+
+
 def _generate_peer_id(address: str) -> str:
     """
     Generate a peer ID from an address.
@@ -584,15 +609,18 @@ def add_peer(
     ]
 
     rpc_success = False
-    last_error = None
+    last_error: Optional[str] = None
 
     for method, params in methods_to_try:
         try:
             result = asyncio.run(rpc_call(method, params, rpc_url=url))
-            rpc_success = True
-            break
+            method_success, method_error = _rpc_operation_succeeded(result)
+            if method_success:
+                rpc_success = True
+                break
+            last_error = method_error or f"{method} did not report success"
         except Exception as e:
-            last_error = e
+            last_error = str(e)
             continue
 
     # Write to local store regardless of RPC success (as backup)
@@ -611,11 +639,13 @@ def add_peer(
             typer.echo(f"  (Also saved to local peer store: {store_path})")
     elif store_written:
         # RPC failed but store succeeded - this is the fallback case
+        reason = last_error or "RPC call did not succeed"
         typer.secho(
-            f"✓ RPC unavailable, but peer saved to local store: {address}",
+            f"✓ Peer saved to local store after RPC failure: {address}",
             fg=typer.colors.YELLOW,
             bold=True,
         )
+        typer.echo(f"  Reason: {reason}")
         typer.echo(f"  Peer ID: {peer_id}")
         typer.echo(f"  Store: {store_path}")
         typer.echo(
@@ -670,15 +700,18 @@ def remove_peer(
     ]
 
     rpc_success = False
-    last_error = None
+    last_error: Optional[str] = None
 
     for method, params in methods_to_try:
         try:
             result = asyncio.run(rpc_call(method, params, rpc_url=url))
-            rpc_success = True
-            break
+            method_success, method_error = _rpc_operation_succeeded(result)
+            if method_success:
+                rpc_success = True
+                break
+            last_error = method_error or f"{method} did not report success"
         except Exception as e:
-            last_error = e
+            last_error = str(e)
             continue
 
     # Also remove from local store
@@ -698,11 +731,13 @@ def remove_peer(
             typer.echo(f"  (Peer not found in local store)")
     elif store_removed:
         # RPC failed but store removal succeeded - this is the fallback case
+        reason = last_error or "RPC call did not succeed"
         typer.secho(
-            f"✓ RPC unavailable, but peer removed from local store: {peer_id}",
+            f"✓ Peer removed from local store after RPC failure: {peer_id}",
             fg=typer.colors.YELLOW,
             bold=True,
         )
+        typer.echo(f"  Reason: {reason}")
         typer.echo(f"  Store: {store_path}")
     else:
         # Both RPC and store removal failed
@@ -835,7 +870,8 @@ def bootstrap_peers(
     typer.echo(f"Connecting to {network} seed nodes...")
     typer.echo()
     
-    success_count = 0
+    connected_count = 0
+    stored_count = 0
     fail_count = 0
     
     for seed_address in seed_nodes:
@@ -868,12 +904,17 @@ def bootstrap_peers(
             ]
             
             rpc_success = False
+            last_error: Optional[str] = None
             for method, params in methods_to_try:
                 try:
                     result = asyncio.run(rpc_call(method, params, rpc_url=url))
-                    rpc_success = True
-                    break
-                except Exception:
+                    method_success, method_error = _rpc_operation_succeeded(result)
+                    if method_success:
+                        rpc_success = True
+                        break
+                    last_error = method_error or f"{method} did not report success"
+                except Exception as e:
+                    last_error = str(e)
                     continue
             
             # Write to store as backup
@@ -883,11 +924,18 @@ def bootstrap_peers(
             except Exception:
                 store_written = False
             
-            if rpc_success or store_written:
-                typer.secho(f"  ✓ Added successfully", fg=typer.colors.GREEN)
-                success_count += 1
+            if rpc_success:
+                typer.secho(f"  ✓ Added via RPC", fg=typer.colors.GREEN)
+                connected_count += 1
+            elif store_written:
+                reason = last_error or "RPC call did not succeed"
+                typer.secho(f"  ⚠ RPC add failed: {reason}", fg=typer.colors.YELLOW)
+                typer.echo(f"    Saved to local peer store: {store_path}")
+                stored_count += 1
             else:
                 typer.secho(f"  ✗ Failed to add", fg=typer.colors.RED)
+                if last_error:
+                    typer.echo(f"    Reason: {last_error}")
                 fail_count += 1
             
         except Exception as e:
@@ -898,11 +946,17 @@ def bootstrap_peers(
     
     # Summary
     typer.echo()
-    if success_count > 0:
+    if connected_count > 0:
         typer.secho(
-            f"✓ Successfully added {success_count} seed node(s)",
+            f"✓ Successfully added {connected_count} seed node(s)",
             fg=typer.colors.GREEN,
             bold=True
+        )
+    if stored_count > 0:
+        typer.secho(
+            f"⚠ Saved {stored_count} seed node(s) to local store after RPC failure",
+            fg=typer.colors.YELLOW,
+            bold=True,
         )
     if fail_count > 0:
         typer.secho(
