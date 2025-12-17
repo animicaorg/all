@@ -399,6 +399,9 @@ def force_sync(
             typer.echo()
             if not typer.confirm("Continue anyway?"):
                 raise typer.Exit(code=0)
+    except typer.Exit:
+        # Allow graceful user abort without being caught by the generic handler
+        raise
     except Exception:
         peer_count = 0
         typer.secho("Warning: Could not check peer count", fg=typer.colors.YELLOW)

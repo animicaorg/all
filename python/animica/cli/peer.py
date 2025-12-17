@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import ipaddress
 import json
 import os
 import socket
@@ -87,6 +88,64 @@ def _resolve_store_paths(store_path: Path) -> tuple[Path, Path]:
     
     # Default: treat as JSON path
     return (store_path, store_path.with_suffix(".db"))
+
+
+def _normalize_to_multiaddr(address: str) -> str:
+    """
+    Convert a user-provided address into a multiaddr-like string that the P2P stack understands.
+
+    Examples:
+        "1.2.3.4:30333" -> "/ip4/1.2.3.4/tcp/30333"
+        "node.animica.org:30333" -> "/dns4/node.animica.org/tcp/30333"
+        "/ip4/1.2.3.4/tcp/30333" -> (returned as-is)
+    """
+    # Already a multiaddr
+    if address.startswith("/"):
+        return address
+
+    # Strip known url-like prefixes (tcp://, quic://, ws://)
+    if "://" in address:
+        address = address.split("://", 1)[1]
+
+    host, port = _parse_address(address)
+
+    # If no port or host, leave as-is (caller is responsible for filling)
+    if port is None or not host:
+        return address
+
+    # Decide ip4/ip6 vs dns
+    try:
+        ip_obj = ipaddress.ip_address(host)
+        ip_tag = "ip6" if ip_obj.version == 6 else "ip4"
+    except ValueError:
+        ip_tag = "dns4"
+
+    return f"/{ip_tag}/{host}/tcp/{port}"
+
+
+def _write_peer_to_sqlite(store_path: Path, peer_id: str, address: str, direction: Optional[str] = None) -> None:
+    """
+    Persist a peer into the SQLite peer store used by the P2P stack.
+
+    This ensures peers added via the CLI can be dialed automatically by the node
+    without requiring a successful RPC call.
+    """
+    try:
+        from p2p.peer.peerstore import PeerStore
+    except Exception:
+        # If peerstore is unavailable, silently skip; JSON store still acts as fallback.
+        return
+
+    _, db_path = _resolve_store_paths(store_path)
+    db_dir = db_path.parent
+    db_dir.mkdir(parents=True, exist_ok=True)
+
+    # Normalize to a multiaddr that NodeService/ConnectionManager can parse
+    normalized = _normalize_to_multiaddr(address)
+
+    store = PeerStore(db_path)
+    store.add(peer_id=peer_id, addrs=[normalized], score=0.0, direction=direction)
+    store.record_seen(peer_id, normalized)
 
 
 def _rpc_operation_succeeded(result: Any) -> tuple[bool, Optional[str]]:
@@ -197,6 +256,9 @@ def _write_peer_to_store(store_path: Path, peer_id: str, address: str) -> None:
     with json_path.open("w") as f:
         json.dump(data, f, indent=2)
 
+    # Also persist to SQLite peer store so the node can autodial without RPC
+    _write_peer_to_sqlite(store_path, peer_id, address, direction="outbound")
+
 
 def _remove_peer_from_store(store_path: Path, peer_id: str) -> bool:
     """
@@ -233,7 +295,18 @@ def _remove_peer_from_store(store_path: Path, peer_id: str) -> bool:
     data["peers"] = peers
     with json_path.open("w") as f:
         json.dump(data, f, indent=2)
-    
+
+    # Also remove from SQLite store if present
+    try:
+        from p2p.peer.peerstore import PeerStore
+        _, db_path = _resolve_store_paths(store_path)
+        if db_path.exists():
+            store = PeerStore(db_path)
+            store.forget(peer_id)
+    except Exception:
+        # Fallback silently; JSON removal already succeeded
+        pass
+
     return True
 
 
@@ -623,6 +696,9 @@ def add_peer(
             last_error = str(e)
             continue
 
+    # Resolve storage paths for messaging
+    json_store, db_store = _resolve_store_paths(store_path)
+
     # Write to local store regardless of RPC success (as backup)
     try:
         _write_peer_to_store(store_path, peer_id, address)
@@ -636,7 +712,7 @@ def add_peer(
     if rpc_success:
         typer.secho(f"✓ Successfully added peer: {address}", fg=typer.colors.GREEN, bold=True)
         if store_written:
-            typer.echo(f"  (Also saved to local peer store: {store_path})")
+            typer.echo(f"  (Also saved to local peer store: {json_store} | db: {db_store})")
     elif store_written:
         # RPC failed but store succeeded - this is the fallback case
         reason = last_error or "RPC call did not succeed"
@@ -647,7 +723,7 @@ def add_peer(
         )
         typer.echo(f"  Reason: {reason}")
         typer.echo(f"  Peer ID: {peer_id}")
-        typer.echo(f"  Store: {store_path}")
+        typer.echo(f"  Store: {json_store} | db: {db_store}")
         typer.echo(
             "\nNote: The peer is saved locally. When the node starts or syncs,\n"
             "      it may attempt to connect to this peer."
@@ -896,6 +972,7 @@ def bootstrap_peers(
             # Try RPC first
             url = _resolve_rpc_url(rpc_url)
             store_path = Path(store) if store else DEFAULT_STORE_PATH
+            json_store, db_store = _resolve_store_paths(store_path)
             
             methods_to_try = [
                 ("p2p.addPeer", [seed_address]),
@@ -930,7 +1007,7 @@ def bootstrap_peers(
             elif store_written:
                 reason = last_error or "RPC call did not succeed"
                 typer.secho(f"  ⚠ RPC add failed: {reason}", fg=typer.colors.YELLOW)
-                typer.echo(f"    Saved to local peer store: {store_path}")
+                typer.echo(f"    Saved to local peer store: {json_store} | db: {db_store}")
                 stored_count += 1
             else:
                 typer.secho(f"  ✗ Failed to add", fg=typer.colors.RED)
