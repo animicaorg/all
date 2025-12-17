@@ -24,3 +24,10 @@ Example with extras:
 ```bash
 python -m pip install -e "python[stratum,dev]"
 ```
+
+### Stratum pool runtime
+
+Run the pool via ``python -m animica.stratum_pool`` (or ``animica.mining.pool``) and
+use ``--rpc-timeout``/``ANIMICA_STRATUM_RPC_TIMEOUT`` (falls back to
+``ANIMICA_RPC_TIMEOUT``) to stretch JSON-RPC deadlines when pointing at slower
+remote endpoints.
