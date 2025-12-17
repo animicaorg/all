@@ -149,7 +149,28 @@ def test_add_peer_failure(monkeypatch: Any, tmp_path: Any) -> None:
     store_path = tmp_path / "peers.json"
     result = runner.invoke(peer.app, ["add", "/ip4/1.2.3.4/tcp/30303/p2p/QmPeer1", "--store", str(store_path)])
     assert result.exit_code == 0
-    assert "RPC unavailable, but peer saved to local store" in result.output
+    assert "Peer saved to local store after RPC failure" in result.output
+
+
+@respx.mock
+def test_add_peer_unsuccessful_rpc_response(monkeypatch: Any, tmp_path: Any) -> None:
+    """Test adding a peer when RPC returns a failure payload."""
+
+    rpc_url = "http://localhost:9999/rpc"
+    monkeypatch.setenv("ANIMICA_RPC_URL", rpc_url)
+
+    respx.post(rpc_url).mock(
+        return_value=httpx.Response(
+            200,
+            json={"jsonrpc": "2.0", "id": 1, "result": {"success": False, "error": "P2P service not available"}},
+        )
+    )
+
+    store_path = tmp_path / "peers.json"
+    result = runner.invoke(peer.app, ["add", "5.6.7.8:30333", "--store", str(store_path)])
+    assert result.exit_code == 0
+    assert "Peer saved to local store after RPC failure" in result.output
+    assert "P2P service not available" in result.output
 
 
 @respx.mock
@@ -554,7 +575,7 @@ def test_add_peer_fallback_to_store_when_rpc_fails(monkeypatch: Any, tmp_path: A
     
     result = runner.invoke(peer.app, ["add", "10.0.0.1:42000", "--store", str(store_path)])
     assert result.exit_code == 0
-    assert "RPC unavailable, but peer saved to local store" in result.output
+    assert "Peer saved to local store after RPC failure" in result.output
     
     # Verify peer was written to store
     assert store_path.exists()
@@ -734,7 +755,7 @@ def test_remove_peer_fallback_to_store_when_rpc_fails(monkeypatch: Any, tmp_path
     
     result = runner.invoke(peer.app, ["remove", "peer_to_remove", "--store", str(store_path)])
     assert result.exit_code == 0
-    assert "RPC unavailable, but peer removed from local store" in result.output
+    assert "Peer removed from local store after RPC failure" in result.output
     
     # Verify peer was removed from store
     with store_path.open("r") as f:
@@ -957,6 +978,36 @@ def test_bootstrap_mainnet(monkeypatch: Any, tmp_path: Any) -> None:
     # Check that at least one peer has the mainnet seed address
     addrs = [addr for p in peers for addr in p.get("addrs", [])]
     assert "144.126.133.21:30333" in addrs
+
+
+@respx.mock
+def test_bootstrap_unsuccessful_rpc_response(monkeypatch: Any, tmp_path: Any) -> None:
+    """Test bootstrap when RPC returns a failure payload for addPeer."""
+
+    rpc_url = "http://localhost:9999/rpc"
+    monkeypatch.setenv("ANIMICA_RPC_URL", rpc_url)
+    monkeypatch.setenv("ANIMICA_NETWORK", "mainnet")
+
+    store_path = tmp_path / "peers.json"
+
+    respx.post(rpc_url).mock(
+        return_value=httpx.Response(
+            200,
+            json={"jsonrpc": "2.0", "id": 1, "result": {"success": False, "error": "P2P disabled"}},
+        )
+    )
+
+    result = runner.invoke(peer.app, ["bootstrap", "--store", str(store_path)])
+    assert result.exit_code == 0
+    assert "RPC add failed" in result.output
+    assert "Saved to local peer store" in result.output
+    assert "Saved 2 seed node(s) to local store after RPC failure" in result.output
+
+    # Verify seeds were written to store even though RPC failed
+    with store_path.open("r") as f:
+        data = json.load(f)
+    peers = data.get("peers", [])
+    assert len(peers) >= 2
 
 
 @respx.mock
