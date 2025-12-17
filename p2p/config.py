@@ -44,32 +44,23 @@ from .constants import MAX_OUTBOUND_PEERS as CONST_MAX_OUTBOUND
 from .constants import MAX_PEERS as CONST_MAX_PEERS
 from .constants import PROTOCOL_ID
 
-# Default fallback seeds (mainnet)
+# Default fallback seeds (mainnet) - single host with TCP+QUIC
 DEFAULT_SEEDS: Final[tuple[str, ...]] = (
-    "/dns4/mainnet.animica.org/udp/443/quic-v1",
-    "/dns4/mainnet.animica.org/tcp/30333",
     "/ip4/144.126.133.21/udp/443/quic-v1",
     "/ip4/144.126.133.21/tcp/30333",
 )
 
-# Network-specific seeds: domain names + IP fallback
-# Primary IP: 144.126.133.21 (used as fallback when DNS fails)
+# Network-specific seeds: single host (144.126.133.21) for all networks
 DEFAULT_SEEDS_BY_NETWORK: Final[dict[int, tuple[str, ...]]] = {
-    1: (  # Mainnet
-        "/dns4/mainnet.animica.org/udp/443/quic-v1",
-        "/dns4/mainnet.animica.org/tcp/30333",
+    1: (
         "/ip4/144.126.133.21/udp/443/quic-v1",
         "/ip4/144.126.133.21/tcp/30333",
     ),
-    2: (  # Testnet
-        "/dns4/testnet.animica.org/udp/443/quic-v1",
-        "/dns4/testnet.animica.org/tcp/30333",
+    2: (
         "/ip4/144.126.133.21/udp/443/quic-v1",
         "/ip4/144.126.133.21/tcp/30333",
     ),
-    1337: (  # Devnet
-        "/dns4/devnet.animica.org/udp/443/quic-v1",
-        "/dns4/devnet.animica.org/tcp/30333",
+    1337: (
         "/ip4/144.126.133.21/udp/443/quic-v1",
         "/ip4/144.126.133.21/tcp/30333",
     ),
