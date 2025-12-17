@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=65"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "opencl-miner"
+version = "0.1.0"
+description = "Standalone Stratum OpenCL miner for Animica."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "pyopencl>=2022.3",
+]
+
+[project.scripts]
+opencl-miner = "opencl_miner.cli:main"
+
+[tool.setuptools]
+packages = ["opencl_miner", "opencl_miner.mining"]
+
+[tool.setuptools.package-data]
+"opencl_miner.mining" = ["py.typed"]
