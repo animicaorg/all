@@ -24,7 +24,7 @@ from typing import Any, Awaitable, Callable, Dict, Optional, TypedDict
 PROTOCOL_FAMILY = "animica"
 PROTOCOL_MAJOR = 1
 PROTOCOL_MINOR = 0
-WIRE_SCHEMA_VERSION = 1  # bump when wire payload schemas change incompatibly
+WIRE_SCHEMA_VERSION = 2  # bump when wire payload schemas change incompatibly
 ALPN = f"{PROTOCOL_FAMILY}/{PROTOCOL_MAJOR}"
 
 # -----------------------------
