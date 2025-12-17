@@ -34,6 +34,35 @@ class TestMineBlocksCommand:
         assert args.cmd == "mine-blocks"
         assert args.address == "anim1test123address"
         assert args.count == 5
+    
+    def test_parse_mine_blocks_with_threads(self):
+        """Test that mine-blocks parses threads parameter correctly."""
+        parser = miner._build_arg_parser()
+        args = parser.parse_args([
+            "mine-blocks",
+            "--address", "anim1test123",
+            "--count", "3",
+            "--threads", "4"
+        ])
+        
+        assert args.cmd == "mine-blocks"
+        assert args.address == "anim1test123"
+        assert args.count == 3
+        assert args.threads == 4
+    
+    def test_parse_mine_blocks_with_default_threads(self):
+        """Test that mine-blocks uses default threads when not specified."""
+        import os
+        parser = miner._build_arg_parser()
+        args = parser.parse_args([
+            "mine-blocks",
+            "--address", "anim1test123",
+            "--count", "2"
+        ])
+        
+        assert args.cmd == "mine-blocks"
+        # Default should be CPU count
+        assert args.threads == (os.cpu_count() or 1)
 
     def test_parse_mine_blocks_missing_address(self):
         """Test that mine-blocks fails when address is missing."""
@@ -123,6 +152,51 @@ class TestMineBlocksCommand:
             assert result == 0
         finally:
             # Clean up
+            sys.modules.pop('omni_sdk.rpc.http', None)
+            sys.modules.pop('sdk.python.omni_sdk.rpc.http', None)
+    
+    @pytest.mark.asyncio
+    async def test_mine_blocks_passes_threads_to_rpc(self):
+        """Test that mine-blocks passes threads parameter to RPC method."""
+        import sys
+        
+        # Track RPC params
+        rpc_params = {}
+        
+        class ThreadTrackingRpcClient:
+            def __init__(self, *args, **kwargs):
+                pass
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                pass
+            def request(self, method, params):
+                # Capture params for verification
+                nonlocal rpc_params
+                rpc_params = params
+                return {"mined": 2, "height": 102}
+        
+        mock_module = Mock()
+        mock_module.RpcClient = ThreadTrackingRpcClient
+        
+        sys.modules['omni_sdk.rpc.http'] = mock_module
+        sys.modules['sdk.python.omni_sdk.rpc.http'] = mock_module
+        
+        try:
+            result = await miner._amain([
+                "mine-blocks",
+                "--address", "anim1test123",
+                "--count", "2",
+                "--threads", "8",
+                "--rpc-url", "http://127.0.0.1:8545"
+            ])
+            
+            # Should succeed
+            assert result == 0
+            # Verify threads parameter was passed
+            assert "threads" in rpc_params
+            assert rpc_params["threads"] == 8
+        finally:
             sys.modules.pop('omni_sdk.rpc.http', None)
             sys.modules.pop('sdk.python.omni_sdk.rpc.http', None)
 
