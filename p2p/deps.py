@@ -208,7 +208,7 @@ class P2PDeps:
         height, _ = self.head()
         return _build_header_locator(
             height,
-            lambda n: self._block_db.get_hash_by_height(n),
+            lambda n: self._block_db.get_canonical_hash(n),
             max_entries=max_entries,
         )
 
@@ -218,7 +218,7 @@ class P2PDeps:
         return self._block_db.get_block_by_hash(h)
 
     def block_by_number(self, height: int) -> Optional["Block"]:
-        h = self._block_db.get_hash_by_height(height)
+        h = self._block_db.get_canonical_hash(height)
         if not h:
             return None
         return self._block_db.get_block_by_hash(h)
@@ -263,46 +263,51 @@ class P2PDeps:
     def admit_tx(self, tx: "Tx") -> Tuple[bool, Optional[str]]:
         """
         Admit a transaction received from P2P gossip to the pending pool.
-        
+
         This allows transactions gossiped by peers to be added to the local
         mempool/pending pool so they can be included in blocks mined by this node.
         """
         try:
             # Import RPC tx methods to access pending pool admission
             from rpc.methods import tx as tx_methods
-            
+
             # Verify required methods are available
-            if not (hasattr(tx_methods, '_pending_get') and hasattr(tx_methods, '_pending_put')):
+            if not (
+                hasattr(tx_methods, "_pending_get")
+                and hasattr(tx_methods, "_pending_put")
+            ):
                 return False, "no_pending_pool_available"
-            
+
             # Encode the tx to CBOR (canonical format)
             # Use the Tx object's built-in to_cbor() method which handles serialization correctly
             try:
-                if hasattr(tx, 'to_cbor') and callable(tx.to_cbor):
+                if hasattr(tx, "to_cbor") and callable(tx.to_cbor):
                     raw_cbor = tx.to_cbor()
                 else:
                     # Fallback: manually encode using CBOR and to_obj()
                     from core.encoding.cbor import dumps as cbor_encode
+
                     raw_cbor = cbor_encode(tx.to_obj())
             except Exception as e:
                 return False, f"cbor_encode_failed:{e}"
-            
+
             # Compute tx hash for deduplication
             try:
                 from core.utils.hash import sha3_256
+
                 tx_hash_hex = "0x" + sha3_256(raw_cbor).hex()
             except Exception as e:
                 return False, f"hash_failed:{e}"
-            
+
             # Check if already in pending pool (dedupe)
             existing = tx_methods._pending_get(tx_hash_hex)
             if existing is not None:
                 return True, "duplicate"  # Already have it; treat as success
-            
+
             # Add to pending pool using the same path as RPC submissions
             tx_methods._pending_put(tx_hash_hex, raw_cbor)
             return True, None
-            
+
         except Exception as e:
             return False, f"admit_error:{e}"
 
@@ -324,9 +329,25 @@ class P2PDeps:
                 )
             if header.height == 0:
                 # genesis hash must match stored genesis
-                g = self._block_db.get_hash_by_height(0)
-                if g and getattr(header, "hash", None) and header.hash != g:
-                    return False, "genesis_hash_mismatch"
+                g = (
+                    self._block_db.get_canonical_hash(0)
+                    or self._block_db.get_genesis_hash()
+                )
+                if (
+                    g
+                    and getattr(header, "hash", None)
+                    and callable(getattr(header, "hash"))
+                ):
+                    hh = header.hash()  # type: ignore[operator]
+                    if hh != g:
+                        return False, "genesis_hash_mismatch"
+                elif (
+                    g
+                    and getattr(header, "hash", None)
+                    and isinstance(getattr(header, "hash"), (bytes, bytearray))
+                ):
+                    if bytes(getattr(header, "hash")) != g:
+                        return False, "genesis_hash_mismatch"
                 return True, None
             # parent must exist
             parent = getattr(header, "parentHash", None)
