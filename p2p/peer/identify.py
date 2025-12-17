@@ -80,6 +80,7 @@ class IdentifyRequest:
     height: int
     timestamp: float
     network_id: Optional[str] = None  # e.g., "animica:1"
+    head_hash: Optional[str] = None  # Optional hex-encoded head hash for consensus probing
 
 
 @dataclass
@@ -91,6 +92,7 @@ class IdentifyResponse:
     height: int
     timestamp: float
     network_id: Optional[str] = None
+    head_hash: Optional[str] = None  # Optional hex-encoded head hash
     # Optional diagnostics
     addr: Optional[str] = None
     rtt_ms: Optional[float] = None
@@ -147,7 +149,11 @@ class IdentifyService:
         self._running = False
 
     def describe_local(
-        self, *, addr: Optional[str] = None, rtt_ms: Optional[float] = None
+        self,
+        *,
+        addr: Optional[str] = None,
+        rtt_ms: Optional[float] = None,
+        head_hash: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Return an IdentifyResponse-like dict for this node. This is used by
@@ -171,6 +177,7 @@ class IdentifyService:
                 network_id=network_id,
                 addr=addr,
                 rtt_ms=rtt_ms,
+                head_hash=head_hash,
             )
         )
 
@@ -197,6 +204,7 @@ async def perform_identify(
     local_height: int = 0,
     network_id: Optional[str] = None,
     agent: Optional[str] = None,
+    head_hash: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Perform an IDENTIFY exchange with a remote peer connection.
@@ -220,6 +228,7 @@ async def perform_identify(
         height=max(0, int(local_height)),
         timestamp=time.time(),
         network_id=network_id,
+        head_hash=head_hash,
     )
 
     # 1) Direct identify(conn, req)
@@ -361,6 +370,15 @@ def _validate_response(resp: Any, conn: Any) -> Dict[str, Any]:
     network_id = resp.get("network_id")
     if network_id is not None:
         network_id = str(network_id)
+    
+    head_hash_raw = resp.get("head_hash")
+    head_hash: Optional[str]
+    if isinstance(head_hash_raw, (bytes, bytearray)):
+        head_hash = head_hash_raw.hex()
+    elif isinstance(head_hash_raw, str):
+        head_hash = head_hash_raw
+    else:
+        head_hash = None
 
     # Optional diagnostics
     rtt_ms = resp.get("rtt_ms")
@@ -385,6 +403,8 @@ def _validate_response(resp: Any, conn: Any) -> Dict[str, Any]:
         out["rtt_ms"] = rtt_ms
     if addr is not None:
         out["addr"] = addr
+    if head_hash is not None:
+        out["head_hash"] = head_hash
     return out
 
 
@@ -401,6 +421,7 @@ async def handle_identify_request(
     agent: Optional[str] = None,
     addr: Optional[str] = None,
     rtt_ms: Optional[float] = None,
+    head_hash: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Helper for servers implementing IDENTIFY. Given a parsed IdentifyRequest,
@@ -418,5 +439,6 @@ async def handle_identify_request(
             network_id=network_id,
             addr=addr,
             rtt_ms=rtt_ms,
+            head_hash=head_hash,
         )
     )
