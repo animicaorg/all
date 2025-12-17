@@ -36,6 +36,13 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Animica node RPC URL (default: ANIMICA_RPC_URL)",
     )
     parser.add_argument(
+        "--rpc-timeout",
+        dest="rpc_timeout",
+        type=float,
+        default=None,
+        help="RPC request timeout in seconds (default: ANIMICA_STRATUM_RPC_TIMEOUT or 15.0)",
+    )
+    parser.add_argument(
         "--chain-id", dest="chain_id", type=int, default=None, help="Chain id"
     )
     parser.add_argument(
@@ -106,7 +113,12 @@ def build_config(args: argparse.Namespace) -> PoolConfig:
 
 async def run_pool(config: PoolConfig, logger: Optional[logging.Logger] = None) -> None:
     if config.profile.startswith("asic"):
-        adapter = Sha256RpcAdapter(config.rpc_url, config.pool_address, logger=logger)
+        adapter = Sha256RpcAdapter(
+            config.rpc_url,
+            config.pool_address,
+            config.rpc_timeout,
+            logger=logger,
+        )
         server = Sha256PoolServer(
             adapter,
             host=config.host,
@@ -118,7 +130,11 @@ async def run_pool(config: PoolConfig, logger: Optional[logging.Logger] = None) 
         metrics = PoolMetrics(config, server.job_manager, server.stratum)
     else:
         adapter = MiningCoreAdapter(
-            config.rpc_url, config.chain_id, config.pool_address, logger=logger
+            config.rpc_url,
+            config.chain_id,
+            config.pool_address,
+            rpc_timeout_s=config.rpc_timeout,
+            logger=logger,
         )
         job_manager = JobManager(adapter, config, logger=logger)
         server = StratumPoolServer(adapter, config, job_manager, logger=logger)

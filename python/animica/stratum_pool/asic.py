@@ -58,10 +58,11 @@ class Sha256RpcAdapter:
         self,
         rpc_url: str,
         pool_address: str,
+        rpc_timeout_s: float = 15.0,
         *,
         logger: Optional[logging.Logger] = None,
     ) -> None:
-        self._rpc = JsonRpcClient(rpc_url)
+        self._rpc = JsonRpcClient(rpc_url, timeout_s=rpc_timeout_s)
         self._pool_address = pool_address
         self._log = logger or logging.getLogger("animica.stratum_pool.sha256.rpc")
 
