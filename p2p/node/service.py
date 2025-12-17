@@ -598,6 +598,7 @@ class P2PService:
         self._listen_cfg = ListenConfig(addr="tcp://0.0.0.0:0")
         self._accept_task: asyncio.Task | None = None
         self._dial_tasks: list[asyncio.Task] = []
+        self._consensus_task: asyncio.Task | None = None
         self._peers: Dict[str, Dict[str, Any]] = {}
         self._running = False
         self._parse_multiaddr = parse_multiaddr
@@ -693,6 +694,9 @@ class P2PService:
                 except Exception:
                     pass  # Skip invalid addresses
 
+        # Continuous consensus/identify probing so peers agree on head hash/height
+        self._consensus_task = self.loop.create_task(self._consensus_watch_loop(), name="consensus-watch")
+
         self._log.info(
             "Started full P2P service",
             extra={"listen": self.listen_addrs, "seeds": self.seeds, "known_peers": len(known_peers)},
@@ -708,6 +712,10 @@ class P2PService:
             t.cancel()
         if self._dial_tasks:
             await asyncio.gather(*self._dial_tasks, return_exceptions=True)
+        if self._consensus_task:
+            self._consensus_task.cancel()
+            with contextlib.suppress(Exception):
+                await self._consensus_task
         # Close live connections and record disconnections
         for peer in list(self._peers.values()):
             conn = peer.get("conn")
@@ -779,25 +787,28 @@ class P2PService:
         async def _do_identify() -> None:
             info: Dict[str, Any] | None = None
             try:
+                local_height, local_hash = self._local_head()
                 info = await self._identify(
                     conn,
                     timeout=5.0,
-                    local_height=self._local_height(),
+                    local_height=local_height,
                     network_id=str(self.chain_id),
                     agent=f"animica-p2p/{p2p_version.__version__}",
+                    head_hash=local_hash,
                 )
             except Exception:
                 self._log.debug(
                     "identify failed", exc_info=True, extra={"remote": remote}
                 )
             if info:
-                self._peers[remote].update(info=info, height=info.get("height"))
+                self._peers[remote].update(info=info, height=info.get("height"), head_hash=info.get("head_hash"))
                 self._log.info(
                     "peer identified",
                     extra={
                         "remote": remote,
                         "network": info.get("network_id"),
                         "height": info.get("height"),
+                        "head_hash": info.get("head_hash"),
                     },
                 )
                 # Update peer store with identified info
@@ -807,6 +818,67 @@ class P2PService:
                     pass
 
         self.loop.create_task(_do_identify(), name=f"identify@{remote}")
+
+    async def _consensus_watch_loop(self) -> None:
+        """
+        Periodically re-identify peers to keep head height/hash in sync.
+        Logs divergences so operators know when consensus is drifting.
+        """
+        try:
+            while self._running:
+                await asyncio.sleep(10.0)
+                local_height, local_hash = self._local_head()
+                for remote, peer in list(self._peers.items()):
+                    conn = peer.get("conn")
+                    peer_id = peer.get("peer_id")
+                    if conn is None or peer_id is None:
+                        continue
+                    try:
+                        info = await self._identify(
+                            conn,
+                            timeout=5.0,
+                            local_height=local_height,
+                            network_id=str(self.chain_id),
+                            agent=f"animica-p2p/{p2p_version.__version__}",
+                            head_hash=local_hash,
+                        )
+                        # Update local cache
+                        peer.update(info=info, height=info.get("height"), head_hash=info.get("head_hash"))
+                        remote_height = int(info.get("height") or 0)
+                        remote_hash = info.get("head_hash")
+
+                        # Persist latest height for prioritization/dialing
+                        try:
+                            self.peerstore.update_head_height(peer_id, remote_height)
+                            self.peerstore.record_seen(peer_id, peer.get("remote") or remote)
+                        except Exception:
+                            pass
+
+                        # Surface consensus drift
+                        if (
+                            local_hash
+                            and remote_hash
+                            and remote_height == local_height
+                            and str(remote_hash) != str(local_hash)
+                        ):
+                            self._log.warning(
+                                "Consensus mismatch detected",
+                                extra={
+                                    "peer": peer_id,
+                                    "remote": remote,
+                                    "local_height": local_height,
+                                    "local_head": local_hash,
+                                    "remote_head": remote_hash,
+                                },
+                            )
+                    except Exception:
+                        self._log.debug(
+                            "consensus probe failed",
+                            exc_info=True,
+                            extra={"peer": peer_id, "remote": remote},
+                        )
+        except asyncio.CancelledError:
+            return
 
     def _local_height(self) -> int:
         """Read the local canonical height if available (best-effort)."""
@@ -823,6 +895,36 @@ class P2PService:
             except Exception:
                 self._log.debug("local height probe failed", exc_info=True)
         return 0
+
+    def _local_head(self) -> tuple[int, Optional[str]]:
+        """
+        Return (height, head_hash_hex) for the local node when available.
+        Falls back to height-only if the hash cannot be read.
+        """
+        height = self._local_height()
+        head_hash: Optional[str] = None
+
+        if self.deps and hasattr(self.deps, "block_db"):
+            block_db = self.deps.block_db
+            try:
+                # Prefer tuple (height, hash_bytes)
+                head_tuple = None
+                if hasattr(block_db, "get_canonical_head"):
+                    head_tuple = block_db.get_canonical_head()
+                elif hasattr(block_db, "get_head"):
+                    head_tuple = block_db.get_head()
+
+                if head_tuple and isinstance(head_tuple, (list, tuple)) and len(head_tuple) >= 2:
+                    height = int(head_tuple[0])
+                    hh = head_tuple[1]
+                    if isinstance(hh, (bytes, bytearray)):
+                        head_hash = hh.hex()
+                    elif isinstance(hh, str):
+                        head_hash = hh
+            except Exception:
+                self._log.debug("local head probe failed", exc_info=True)
+
+        return height, head_hash
 
     # Exposed for tests/ops
     @property
