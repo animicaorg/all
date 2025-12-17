@@ -16,8 +16,8 @@ Examples
 python -m p2p.cli.listen \
   --db sqlite:///animica.db \
   --chain-id 1 \
-  --listen /ip4/0.0.0.0/tcp/42069 \
-  --seed /dns/bootstrap.animica.example/tcp/42069 \
+  --listen /ip4/0.0.0.0/tcp/30333 \
+  --seed /dns/mainnet.animica.org/tcp/30333 \
   --enable-quic \
   --enable-ws
 
@@ -38,6 +38,8 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+from p2p.constants import DEFAULT_TCP_PORT
 
 # ---- Optional faster event loop -------------------------------------------------------
 try:  # pragma: no cover - optional
@@ -232,7 +234,7 @@ def _build_deps(db_uri: str, chain_id: int) -> _Deps:
 
 class _MinimalTcpNode:
     def __init__(self, listen_addrs: List[str]):
-        self.listen_addrs = listen_addrs or ["/ip4/0.0.0.0/tcp/42069"]
+        self.listen_addrs = listen_addrs or [f"/ip4/0.0.0.0/tcp/{DEFAULT_TCP_PORT}"]
         self.transport = None
         self._task: Optional[_asyncio.Task] = None
         self._running = False
@@ -351,7 +353,7 @@ def _build_argparser() -> argparse.ArgumentParser:
         "--listen",
         action="append",
         default=[],
-        help="Listen multiaddr (repeatable), e.g. /ip4/0.0.0.0/tcp/42069",
+        help="Listen multiaddr (repeatable), e.g. /ip4/0.0.0.0/tcp/30333",
     )
     p.add_argument(
         "--seed", action="append", default=[], help="Seed multiaddr (repeatable)"
@@ -383,7 +385,7 @@ async def _amain(args: argparse.Namespace) -> int:
 
     # Fill default listen addr if none provided
     if not cfg.listen_addrs:
-        cfg.listen_addrs = ["/ip4/0.0.0.0/tcp/42069"]
+        cfg.listen_addrs = [f"/ip4/0.0.0.0/tcp/{DEFAULT_TCP_PORT}"]
 
     deps = _build_deps(cfg.db_uri, cfg.chain_id)
     bridge = _ServiceBridge(cfg, deps)
