@@ -152,6 +152,7 @@ class HeaderView(BaseModel):
     theta_micro: int = Field(alias="thetaMicro")
     mix_seed: HexStr = Field(alias="mixSeed")
     nonce: HexStr = Field(alias="nonce")
+    work_type: Optional[int] = Field(default=None, alias="workType")
 
     @field_validator(
         "parent_hash",

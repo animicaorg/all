@@ -57,6 +57,7 @@ _LAZY_MODULES: Dict[ProofType, str] = {
     ProofType.QUANTUM: "proofs.quantum",
     ProofType.STORAGE: "proofs.storage",
     ProofType.VDF: "proofs.vdf",
+    ProofType.HASH_WORK: "proofs.hash_work",
 }
 
 
