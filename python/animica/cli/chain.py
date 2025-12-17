@@ -24,6 +24,7 @@ except Exception:
     HAVE_RPC = False
 
 from animica.config import load_network_config
+from .timeouts import DEFAULT_RPC_TIMEOUT, RPC_TIMEOUT_ENV, resolve_timeout
 
 app = typer.Typer(help="Chain queries (head, blocks, transactions, accounts)")
 
@@ -49,14 +50,15 @@ def _ensure_rpc_available() -> None:
 def _request_rpc(method: str, params: Optional[list], rpc_url: Optional[str]):
     """Perform an RPC request using RpcClient if available, otherwise httpx."""
     url = _resolve_rpc_url(rpc_url)
+    timeout = resolve_timeout("RPC timeout", None, env_var=RPC_TIMEOUT_ENV, default=DEFAULT_RPC_TIMEOUT)
     if HAVE_RPC:
-        client = RpcClient(url, timeout=10.0)
+        client = RpcClient(url, timeout=timeout)
         return client.request(method, params)
     else:
         import httpx
 
         payload = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params or []}
-        resp = httpx.post(url, json=payload, timeout=10.0)
+        resp = httpx.post(url, json=payload, timeout=timeout)
         resp.raise_for_status()
         parsed = resp.json()
         if "error" in parsed:

@@ -13,12 +13,12 @@ import httpx
 import typer
 from animica.config import get_network_defaults, load_network_config
 
+from .timeouts import DEFAULT_RPC_TIMEOUT, RPC_TIMEOUT_ENV, describe_timeout, resolve_timeout
+
 from .state import get_cli_state
 
 DEFAULT_RPC_URL = load_network_config().rpc_url
-DEFAULT_RPC_TIMEOUT = 30.0
 RPC_ENV = "ANIMICA_RPC_URL"
-RPC_TIMEOUT_ENV = "ANIMICA_RPC_TIMEOUT"
 STATE_KEY_NETWORK = "active_network"
 
 # Networks that use the 'dev' profile in docker-compose
@@ -30,7 +30,7 @@ app = typer.Typer(help="Manage and query Animica nodes.")
 async def rpc_call(
     method: str, params: Optional[list[Any]] = None, *, rpc_url: str, timeout: Optional[float] = None
 ) -> Any:
-    resolved_timeout = _resolve_rpc_timeout(timeout)
+    resolved_timeout = resolve_timeout("RPC timeout", timeout, env_var=RPC_TIMEOUT_ENV)
     payload: Dict[str, Any] = {
         "jsonrpc": "2.0",
         "id": 1,
@@ -61,33 +61,6 @@ def _resolve_rpc_url(rpc_url: Optional[str]) -> str:
     
     # Fall back to network config
     return load_network_config().rpc_url
-
-
-def _resolve_rpc_timeout(timeout: Optional[float]) -> float:
-    """Resolve RPC timeout from CLI arg, env var, or default.
-
-    Empty strings are treated as unset and fall back to the next priority level.
-    """
-
-    def _coerce_timeout(value: str) -> float:
-        try:
-            parsed = float(value)
-        except ValueError:
-            raise ValueError(f"Invalid RPC timeout value: {value}")
-        if parsed <= 0:
-            raise ValueError(f"RPC timeout must be greater than 0 seconds, got {parsed}")
-        return parsed
-
-    if timeout is not None:
-        if timeout <= 0:
-            raise ValueError(f"RPC timeout must be greater than 0 seconds, got {timeout}")
-        return timeout
-
-    env_timeout = os.environ.get(RPC_TIMEOUT_ENV)
-    if env_timeout and env_timeout.strip():
-        return _coerce_timeout(env_timeout.strip())
-
-    return DEFAULT_RPC_TIMEOUT
 
 
 def _pretty(obj: Any) -> str:
@@ -170,14 +143,14 @@ def status(
     timeout: Optional[float] = typer.Option(
         None,
         "--timeout",
-        help=f"JSON-RPC request timeout in seconds (default: {DEFAULT_RPC_TIMEOUT})",
+        help=f"JSON-RPC request timeout in seconds (default: {describe_timeout(DEFAULT_RPC_TIMEOUT)})",
         envvar=RPC_TIMEOUT_ENV,
     )
 ) -> None:
     """Show chain head, block info and sync state. Retries indefinitely on RPC errors."""
     url = _resolve_rpc_url(rpc_url)
     try:
-        rpc_timeout = _resolve_rpc_timeout(timeout)
+        rpc_timeout = resolve_timeout("RPC timeout", timeout, env_var=RPC_TIMEOUT_ENV)
     except ValueError as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(code=1)
@@ -250,14 +223,14 @@ def head(
     timeout: Optional[float] = typer.Option(
         None,
         "--timeout",
-        help=f"JSON-RPC request timeout in seconds (default: {DEFAULT_RPC_TIMEOUT})",
+        help=f"JSON-RPC request timeout in seconds (default: {describe_timeout(DEFAULT_RPC_TIMEOUT)})",
         envvar=RPC_TIMEOUT_ENV,
     ),
 ) -> None:
     """Print the current chain head summary."""
     url = _resolve_rpc_url(rpc_url)
     try:
-        rpc_timeout = _resolve_rpc_timeout(timeout)
+        rpc_timeout = resolve_timeout("RPC timeout", timeout, env_var=RPC_TIMEOUT_ENV)
     except ValueError as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(code=1)
@@ -275,7 +248,7 @@ def block(
     timeout: Optional[float] = typer.Option(
         None,
         "--timeout",
-        help=f"JSON-RPC request timeout in seconds (default: {DEFAULT_RPC_TIMEOUT})",
+        help=f"JSON-RPC request timeout in seconds (default: {describe_timeout(DEFAULT_RPC_TIMEOUT)})",
         envvar=RPC_TIMEOUT_ENV,
     ),
 ) -> None:
@@ -284,7 +257,7 @@ def block(
         raise typer.BadParameter("Provide --height or --hash")
     url = _resolve_rpc_url(rpc_url)
     try:
-        rpc_timeout = _resolve_rpc_timeout(timeout)
+        rpc_timeout = resolve_timeout("RPC timeout", timeout, env_var=RPC_TIMEOUT_ENV)
     except ValueError as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(code=1)
@@ -312,14 +285,14 @@ def tx(
     timeout: Optional[float] = typer.Option(
         None,
         "--timeout",
-        help=f"JSON-RPC request timeout in seconds (default: {DEFAULT_RPC_TIMEOUT})",
+        help=f"JSON-RPC request timeout in seconds (default: {describe_timeout(DEFAULT_RPC_TIMEOUT)})",
         envvar=RPC_TIMEOUT_ENV,
     ),
 ) -> None:
     """Fetch and display a transaction by hash."""
     url = _resolve_rpc_url(rpc_url)
     try:
-        rpc_timeout = _resolve_rpc_timeout(timeout)
+        rpc_timeout = resolve_timeout("RPC timeout", timeout, env_var=RPC_TIMEOUT_ENV)
     except ValueError as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(code=1)

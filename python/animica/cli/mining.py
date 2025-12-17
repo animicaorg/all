@@ -16,6 +16,7 @@ from typing import Optional
 import typer
 from animica.coin import COIN_UNIT
 from animica.config import load_network_config
+from .timeouts import DEFAULT_RPC_TIMEOUT, RPC_TIMEOUT_ENV, resolve_timeout
 
 try:
     from animica.cli.wallet import (WalletEntry, _wallet_file_path,
@@ -569,9 +570,10 @@ def mine_blocks(
             RpcError = None  # type: ignore
             JsonRpcCode = None  # type: ignore
         
-        # Set timeout based on --no-timeout flag
+        # Set timeout based on --no-timeout flag (default: no timeout)
+        base_timeout = resolve_timeout("RPC timeout", None, env_var=RPC_TIMEOUT_ENV, default=DEFAULT_RPC_TIMEOUT)
         # None means no timeout (wait indefinitely)
-        timeout_value = None if no_timeout else 30.0
+        timeout_value = None if no_timeout else base_timeout
         
         with rpc_client(url, timeout=timeout_value) as client:
             total_mined = 0

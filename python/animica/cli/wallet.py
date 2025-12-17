@@ -14,6 +14,7 @@ import typer
 from animica.config import load_network_config
 from animica.cli.paths import ensure_file_dir, secure_file
 from animica.coin import format_amount
+from .timeouts import DEFAULT_RPC_TIMEOUT, RPC_TIMEOUT_ENV, resolve_timeout
 
 try:
     from pq.py.address import address_from_pubkey, validate_address
@@ -176,13 +177,15 @@ def _request_rpc(method: str, params: Optional[List[Any]], rpc_url: str) -> Any:
     try:
         from omni_sdk.rpc.http import RpcClient  # type: ignore
 
-        client = RpcClient(rpc_url, timeout=10.0)
+        timeout = resolve_timeout("RPC timeout", None, env_var=RPC_TIMEOUT_ENV, default=DEFAULT_RPC_TIMEOUT)
+        client = RpcClient(rpc_url, timeout=timeout)
         return client.request(method, params)
     except Exception:
         import httpx
 
         payload = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params or []}
-        resp = httpx.post(rpc_url, json=payload, timeout=10.0)
+        timeout = resolve_timeout("RPC timeout", None, env_var=RPC_TIMEOUT_ENV, default=DEFAULT_RPC_TIMEOUT)
+        resp = httpx.post(rpc_url, json=payload, timeout=timeout)
         resp.raise_for_status()
         parsed = resp.json()
         if "error" in parsed:

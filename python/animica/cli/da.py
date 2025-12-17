@@ -24,6 +24,7 @@ except Exception:
     HAVE_DA = False
 
 from animica.config import load_network_config
+from .timeouts import DEFAULT_RPC_TIMEOUT, RPC_TIMEOUT_ENV, describe_timeout, resolve_timeout
 
 app = typer.Typer(help="Data Availability (submit, retrieve, verify blobs)")
 
@@ -56,6 +57,12 @@ def submit(
         help="Override RPC URL",
         envvar="ANIMICA_RPC_URL",
     ),
+    timeout: Optional[float] = typer.Option(
+        None,
+        "--timeout",
+        help=f"RPC timeout in seconds (default: {describe_timeout(DEFAULT_RPC_TIMEOUT)})",
+        envvar=RPC_TIMEOUT_ENV,
+    ),
 ) -> None:
     """
     Submit a blob to the Data Availability layer and return commitment.
@@ -68,6 +75,7 @@ def submit(
 
     try:
         url = _resolve_rpc_url(rpc_url)
+        resolved_timeout = resolve_timeout("RPC timeout", timeout, env_var=RPC_TIMEOUT_ENV, default=DEFAULT_RPC_TIMEOUT)
 
         # Read data
         if input_file:
@@ -81,7 +89,7 @@ def submit(
 
         # Preferred path: use DAClient when available
         if HAVE_DA:
-            rpc = RpcClient(url, timeout=30.0)
+            rpc = RpcClient(url, timeout=resolved_timeout)
             da = DAClient(rpc)
             commit, receipt = da.post_blob(namespace=namespace, data=data)
         else:
@@ -105,7 +113,7 @@ def submit(
                     "params": [namespace, data.hex()],
                 }
                 try:
-                    resp = httpx.post(url, json=payload, timeout=30.0)
+                    resp = httpx.post(url, json=payload, timeout=resolved_timeout)
                     resp.raise_for_status()
                     parsed = resp.json()
                     if parsed and (parsed.get("result") is not None):
@@ -148,6 +156,12 @@ def get(
         help="Override RPC URL",
         envvar="ANIMICA_RPC_URL",
     ),
+    timeout: Optional[float] = typer.Option(
+        None,
+        "--timeout",
+        help=f"RPC timeout in seconds (default: {describe_timeout(DEFAULT_RPC_TIMEOUT)})",
+        envvar=RPC_TIMEOUT_ENV,
+    ),
 ) -> None:
     """
     Retrieve a blob from Data Availability by commitment.
@@ -160,8 +174,9 @@ def get(
 
     try:
         url = _resolve_rpc_url(rpc_url)
+        resolved_timeout = resolve_timeout("RPC timeout", timeout, env_var=RPC_TIMEOUT_ENV, default=DEFAULT_RPC_TIMEOUT)
         if HAVE_DA:
-            rpc = RpcClient(url, timeout=30.0)
+            rpc = RpcClient(url, timeout=resolved_timeout)
             da = DAClient(rpc)
             data = da.get_blob(commitment)
         else:
@@ -183,7 +198,7 @@ def get(
                     "params": [commitment],
                 }
                 try:
-                    resp = httpx.post(url, json=payload, timeout=30.0)
+                    resp = httpx.post(url, json=payload, timeout=resolved_timeout)
                     resp.raise_for_status()
                     parsed = resp.json()
                     if parsed and (parsed.get("result") is not None):
@@ -244,6 +259,12 @@ def verify(
         help="Override RPC URL",
         envvar="ANIMICA_RPC_URL",
     ),
+    timeout: Optional[float] = typer.Option(
+        None,
+        "--timeout",
+        help=f"RPC timeout in seconds (default: {describe_timeout(DEFAULT_RPC_TIMEOUT)})",
+        envvar=RPC_TIMEOUT_ENV,
+    ),
 ) -> None:
     """
     Verify that a file matches a DA commitment.
@@ -255,10 +276,11 @@ def verify(
 
     try:
         url = _resolve_rpc_url(rpc_url)
+        resolved_timeout = resolve_timeout("RPC timeout", timeout, env_var=RPC_TIMEOUT_ENV, default=DEFAULT_RPC_TIMEOUT)
         data = data_file.read_bytes()
 
         if HAVE_DA:
-            rpc = RpcClient(url, timeout=30.0)
+            rpc = RpcClient(url, timeout=resolved_timeout)
             da = DAClient(rpc)
             ok = da.verify_availability(commitment)
         else:
@@ -282,7 +304,7 @@ def verify(
                     "params": [commitment],
                 }
                 try:
-                    resp = httpx.post(url, json=payload, timeout=30.0)
+                    resp = httpx.post(url, json=payload, timeout=resolved_timeout)
                     resp.raise_for_status()
                     parsed = resp.json()
                     if parsed and (parsed.get("result") is not None):
