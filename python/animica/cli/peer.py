@@ -22,6 +22,7 @@ import httpx
 import typer
 from animica.config import load_network_config
 from animica.seeds import get_default_ports, get_seed_nodes
+from .timeouts import DEFAULT_RPC_TIMEOUT, RPC_TIMEOUT_ENV, resolve_timeout
 
 app = typer.Typer(help="Manage P2P network peers.")
 
@@ -32,16 +33,21 @@ STORE_ENV = "ANIMICA_PEER_STORE"
 
 
 async def rpc_call(
-    method: str, params: Optional[List[Any]] = None, *, rpc_url: str
+    method: str,
+    params: Optional[List[Any]] = None,
+    *,
+    rpc_url: str,
+    timeout: Optional[float] = None,
 ) -> Any:
     """Make a JSON-RPC call to the node."""
+    resolved_timeout = resolve_timeout("RPC timeout", timeout, env_var=RPC_TIMEOUT_ENV, default=DEFAULT_RPC_TIMEOUT)
     payload: Dict[str, Any] = {
         "jsonrpc": "2.0",
         "id": 1,
         "method": method,
         "params": params or [],
     }
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with httpx.AsyncClient(timeout=resolved_timeout) as client:
         response = await client.post(rpc_url, json=payload)
         data = response.json()
     if "error" in data:

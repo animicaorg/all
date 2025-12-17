@@ -653,9 +653,41 @@ def test_status_rejects_invalid_timeout(monkeypatch: Any) -> None:
     rpc_url = "http://localhost:9993/rpc"
     monkeypatch.setenv("ANIMICA_RPC_URL", rpc_url)
 
-    result = runner.invoke(node.app, ["status", "--timeout", "0"])
+    result = runner.invoke(node.app, ["status", "--timeout", "-1"])
     assert result.exit_code == 1
-    assert "RPC timeout must be greater than 0" in result.output
+    assert "must not be negative" in result.output
+
+
+@respx.mock
+def test_status_allows_unbounded_timeout(monkeypatch: Any) -> None:
+    """Timeout value of 0 disables timeouts and should be accepted."""
+    rpc_url = "http://localhost:9990/rpc"
+    monkeypatch.setenv("ANIMICA_RPC_URL", rpc_url)
+
+    route = respx.post(rpc_url).mock(
+        side_effect=[
+            httpx.Response(
+                200,
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "result": {"height": 11, "hash": "0xccc", "chainId": 5},
+                },
+            ),
+            httpx.Response(
+                200,
+                json={"jsonrpc": "2.0", "id": 1, "result": {"height": 11, "hash": "0xccc"}},
+            ),
+            httpx.Response(
+                200, json={"jsonrpc": "2.0", "id": 1, "result": {"syncing": False}}
+            ),
+        ]
+    )
+
+    result = runner.invoke(node.app, ["status", "--timeout", "0", "--retry-delay", "0.01"])
+    assert result.exit_code == 0
+    assert "Head height: 11" in result.output
+    assert route.called
 
 
 @respx.mock

@@ -23,6 +23,7 @@ except Exception:
     HAVE_RPC = False
 
 from animica.config import load_network_config
+from .timeouts import DEFAULT_RPC_TIMEOUT, RPC_TIMEOUT_ENV, describe_timeout, resolve_timeout
 
 app = typer.Typer(help="Raw JSON-RPC calls")
 
@@ -48,7 +49,7 @@ def _ensure_rpc_available() -> None:
         raise typer.Exit(1)
 
 
-def call_rpc(method: str, params: Any, rpc_url: Optional[str] = None) -> Any:
+def call_rpc(method: str, params: Any, rpc_url: Optional[str] = None, timeout: Optional[float] = None) -> Any:
     """
     Helper function to make RPC calls from other CLI modules.
     
@@ -64,16 +65,17 @@ def call_rpc(method: str, params: Any, rpc_url: Optional[str] = None) -> Any:
         RuntimeError: If the RPC call fails with error details
     """
     url = _resolve_rpc_url(rpc_url)
+    resolved_timeout = resolve_timeout("RPC timeout", timeout, env_var=RPC_TIMEOUT_ENV, default=DEFAULT_RPC_TIMEOUT)
     
     try:
         if HAVE_RPC:
-            client = RpcClient(url, timeout=10.0)
+            client = RpcClient(url, timeout=resolved_timeout)
             return client.request(method, params)
         else:
             import httpx
-            
+
             payload = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params}
-            resp = httpx.post(url, json=payload, timeout=10.0)
+            resp = httpx.post(url, json=payload, timeout=resolved_timeout)
             resp.raise_for_status()
             parsed = resp.json()
             if "error" in parsed:
@@ -103,6 +105,12 @@ def call(
         help="Override RPC URL",
         envvar="ANIMICA_RPC_URL",
     ),
+    timeout: Optional[float] = typer.Option(
+        None,
+        "--timeout",
+        help=f"Request timeout in seconds (default: {describe_timeout(DEFAULT_RPC_TIMEOUT)})",
+        envvar=RPC_TIMEOUT_ENV,
+    ),
 ) -> None:
     """
     Make a raw JSON-RPC 2.0 call to the node.
@@ -118,6 +126,7 @@ def call(
     """
     try:
         url = _resolve_rpc_url(rpc_url)
+        resolved_timeout = resolve_timeout("RPC timeout", timeout, env_var=RPC_TIMEOUT_ENV, default=DEFAULT_RPC_TIMEOUT)
 
         # Parse params
         params: Any = []
@@ -130,13 +139,13 @@ def call(
 
         # Use RpcClient when available, otherwise fall back to httpx
         if HAVE_RPC:
-            client = RpcClient(url, timeout=10.0)
+            client = RpcClient(url, timeout=resolved_timeout)
             result = client.request(method, params)
         else:
             import httpx
 
             payload = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params}
-            resp = httpx.post(url, json=payload, timeout=10.0)
+            resp = httpx.post(url, json=payload, timeout=resolved_timeout)
             resp.raise_for_status()
             parsed = resp.json()
             if "error" in parsed:

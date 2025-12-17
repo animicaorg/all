@@ -16,6 +16,7 @@ from typing import Any, Dict, List, Optional
 import httpx
 import typer
 from animica.config import load_network_config
+from .timeouts import DEFAULT_RPC_TIMEOUT, RPC_TIMEOUT_ENV, resolve_timeout
 
 app = typer.Typer(help="Manage blockchain synchronization.")
 
@@ -24,16 +25,21 @@ RPC_ENV = "ANIMICA_RPC_URL"
 
 
 async def rpc_call(
-    method: str, params: Optional[List[Any]] = None, *, rpc_url: str, timeout: float = 10.0
+    method: str,
+    params: Optional[List[Any]] = None,
+    *,
+    rpc_url: str,
+    timeout: Optional[float] = None,
 ) -> Any:
     """Make a JSON-RPC call to the node."""
+    resolved_timeout = resolve_timeout("RPC timeout", timeout, env_var=RPC_TIMEOUT_ENV, default=DEFAULT_RPC_TIMEOUT)
     payload: Dict[str, Any] = {
         "jsonrpc": "2.0",
         "id": 1,
         "method": method,
         "params": params or [],
     }
-    async with httpx.AsyncClient(timeout=timeout) as client:
+    async with httpx.AsyncClient(timeout=resolved_timeout) as client:
         response = await client.post(rpc_url, json=payload)
         data = response.json()
     if "error" in data:
@@ -145,7 +151,7 @@ async def _trigger_sync(rpc_url: str) -> bool:
     
     for method in methods_to_try:
         try:
-            result = await rpc_call(method, [], rpc_url=rpc_url, timeout=30.0)
+            result = await rpc_call(method, [], rpc_url=rpc_url, timeout=DEFAULT_RPC_TIMEOUT)
             # Consider any non-error response as success
             return True
         except Exception:
