@@ -29,8 +29,9 @@ from __future__ import annotations
 from enum import IntEnum
 from typing import Dict, Optional
 
-# Bump when adding/removing/renaming message ids.
-WIRE_SCHEMA_VERSION: int = 1
+# Bump when changing payload schemas in incompatible ways.
+# (e.g., adding mandatory fields, renaming fields, or changing semantics)
+WIRE_SCHEMA_VERSION: int = 2
 
 
 class MsgID(IntEnum):
