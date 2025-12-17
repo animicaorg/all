@@ -100,7 +100,8 @@ RELEASE_FEED_BETA="${RELEASE_FEED_BETA:-$RELEASE_FEED_BASE/feeds/beta.json}"
 RELEASE_FEED_STABLE="${RELEASE_FEED_STABLE:-$RELEASE_FEED_BASE/feeds/stable.json}"
 ARTIFACT_CDN_BASE="${ARTIFACT_CDN_BASE:-https://cdn.animica.org/artifacts}"
 
-DEFAULT_RPC_URL="${DEFAULT_RPC_URL:-https://rpc.animica.org/rpc}"
+# Default to local node RPC (port 8545)
+DEFAULT_RPC_URL="${DEFAULT_RPC_URL:-http://127.0.0.1:8545/rpc}"
 DEFAULT_CHAIN_ID="${DEFAULT_CHAIN_ID:-1}"
 SERVICES_BASE_URL="${SERVICES_BASE_URL:-https://services.animica.org}"
 

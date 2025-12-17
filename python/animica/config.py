@@ -15,8 +15,8 @@ from typing import Any, Optional
 from urllib.parse import urlparse
 
 DEFAULT_NETWORK = "mainnet"
-# Public mainnet RPC endpoint
-DEFAULT_RPC_URL = "https://rpc.animica.org/rpc"
+# Local RPC endpoint (default port 8545)
+DEFAULT_RPC_URL = "http://127.0.0.1:8545/rpc"
 
 logger = logging.getLogger(__name__)
 
@@ -119,7 +119,7 @@ def get_network_defaults(network: str) -> dict[str, any]:
     network_configs = {
         "mainnet": {
             "chain_id": 1,
-            "rpc_url": "https://rpc.animica.org/rpc",
+            "rpc_url": "http://127.0.0.1:8545/rpc",
             "rpc_port": 8545,
             "p2p_port": 30333,
             "metrics_port": 9000,
