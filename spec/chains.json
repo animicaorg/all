@@ -32,7 +32,7 @@
     ],
     "faucets": [],
     "p2p": {
-      "defaultPorts": { "tcp": 26000, "quic": 26001, "ws": 26002 },
+      "defaultPorts": { "tcp": 30333, "quic": 30334, "ws": 30335 },
       "protocols": ["tcp", "quic", "ws"]
     },
     "genesis": {
