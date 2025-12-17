@@ -1,0 +1,2 @@
+# This file marks the `mining` package as providing inline type hints (PEP 561).
+# It may be empty; comments are allowed and ignored by type checkers.
