@@ -7,8 +7,10 @@ import hashlib
 import logging
 import math
 import os
+import threading
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, replace
 from typing import Any, Dict, Optional, Tuple
 
@@ -1521,7 +1523,7 @@ def _construct_tx_from_dict(normalized: dict) -> Tx | None:
         return None
 
 
-def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
+def _mine_once(payout_address: bytes | None = None, threads: int = 1) -> tuple[bool, int]:
     """
     Mine a single block with proof-of-work.
     
@@ -1544,6 +1546,7 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
     
     Args:
         payout_address: Optional 32-byte payout address. If None, uses default miner address.
+        threads: Number of parallel threads to use for nonce search (default: 1)
         
     Returns:
         tuple[bool, int]: (success, reward_amount) where:
@@ -1994,13 +1997,107 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
     max_nonce = int(os.getenv("ANIMICA_MINER_MAX_NONCE", str(DEFAULT_MAX_NONCE)))
     
     reward_amount = 0
-
-    for nonce_val in range(max_nonce):
-        # Update header with new nonce using dataclasses.replace for efficiency
+    
+    # Helper function to search a range of nonces in a worker thread
+    # Pass header_template, target, and stop_event as parameters for thread safety
+    def _search_nonce_range(start: int, end: int, template: Header, target_val: int, stop_event: threading.Event) -> tuple[int, bytes, int] | None:
+        """Search for valid nonce in the given range. Returns (nonce, hash_bytes, hash_int) if found, None otherwise."""
+        for nonce_val in range(start, end):
+            # Check if another thread found a valid nonce
+            if stop_event.is_set():
+                return None
+            
+            # Update header with new nonce
+            try:
+                header = replace(template, nonce=nonce_val)
+            except Exception:
+                # Fallback if replace not available
+                header = Header(
+                    v=template.v,
+                    chainId=template.chainId,
+                    height=template.height,
+                    parentHash=template.parentHash,
+                    timestamp=template.timestamp,
+                    stateRoot=template.stateRoot,
+                    txsRoot=template.txsRoot,
+                    receiptsRoot=template.receiptsRoot,
+                    proofsRoot=template.proofsRoot,
+                    daRoot=template.daRoot,
+                    mixSeed=template.mixSeed,
+                    poiesPolicyRoot=template.poiesPolicyRoot,
+                    pqAlgPolicyRoot=template.pqAlgPolicyRoot,
+                    thetaMicro=template.thetaMicro,
+                    nonce=nonce_val,
+                    extra=template.extra,
+                )
+            
+            # Compute block hash
+            block_hash_bytes = header.hash()
+            block_hash_int = int.from_bytes(block_hash_bytes, "big")
+            
+            # Check if hash meets target
+            if block_hash_int <= target_val:
+                # Signal other threads to stop
+                stop_event.set()
+                return (nonce_val, block_hash_bytes, block_hash_int)
+        
+        return None
+    
+    # Perform nonce search (single-threaded or multi-threaded based on threads parameter)
+    valid_nonce = None
+    block_hash_bytes = None
+    block_hash_int = None
+    
+    # Create stop event for early termination across threads
+    stop_event = threading.Event()
+    
+    if threads <= 1:
+        # Single-threaded search
+        result = _search_nonce_range(0, max_nonce, header_template, target, stop_event)
+        if result:
+            valid_nonce, block_hash_bytes, block_hash_int = result
+    else:
+        # Multi-threaded search: divide nonce space among threads
+        # Limit effective threads to avoid creating empty ranges
+        effective_threads = min(threads, max_nonce)
+        
+        # Divide nonce space into chunks for each thread
+        # Ensure last thread handles any remainder nonces
+        chunk_size = max(1, max_nonce // effective_threads)
+        ranges = []
+        for i in range(effective_threads):
+            start = i * chunk_size
+            # Last thread gets all remaining nonces to handle remainder
+            end = max_nonce if i == effective_threads - 1 else min((i + 1) * chunk_size, max_nonce)
+            if start < max_nonce:
+                ranges.append((start, end))
+        
+        log.info(f"Mining with {effective_threads} threads (requested {threads}) across {len(ranges)} nonce ranges (chunk_size={chunk_size})")
+        
+        # Submit work to thread pool and wait for first valid nonce
+        with ThreadPoolExecutor(max_workers=effective_threads) as executor:
+            futures = {executor.submit(_search_nonce_range, start, end, header_template, target, stop_event): (start, end) for start, end in ranges}
+            
+            # Wait for first successful result
+            for future in as_completed(futures):
+                result = future.result()
+                if result is not None:
+                    valid_nonce, block_hash_bytes, block_hash_int = result
+                    # stop_event is already set by the worker that found the nonce
+                    # This signals other workers to stop early
+                    break
+    
+    # Check if we found a valid nonce
+    if valid_nonce is not None and block_hash_bytes is not None and block_hash_int is not None:
+        # Found a valid block! Now execute txs and generate receipts before persisting.
+        # Import Receipt, ReceiptStatus, Log, and BlockEnv at block level (once per mined block)
+        from core.types.receipt import Receipt, ReceiptStatus, Log
+        from execution.runtime.env import BlockEnv
+        
+        # Reconstruct the header with the valid nonce
         try:
-            header = replace(header_template, nonce=nonce_val)
+            header = replace(header_template, nonce=valid_nonce)
         except Exception:
-            # Fallback if replace not available or Header is not a dataclass
             header = Header(
                 v=header_template.v,
                 chainId=header_template.chainId,
@@ -2016,233 +2113,222 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
                 poiesPolicyRoot=header_template.poiesPolicyRoot,
                 pqAlgPolicyRoot=header_template.pqAlgPolicyRoot,
                 thetaMicro=header_template.thetaMicro,
-                nonce=nonce_val,
+                nonce=valid_nonce,
                 extra=header_template.extra,
             )
         
-        # Compute block hash
-        block_hash_bytes = header.hash()
-        block_hash_int = int.from_bytes(block_hash_bytes, "big")
+        # Build block environment for transaction execution
+        block_env = BlockEnv(
+            height=header.height,
+            timestamp=header.timestamp,
+            coinbase=payout_address if payout_address is not None else ZERO32,
+            chain_id=header.chainId,
+        )
         
-        # Check if hash meets target
-        if block_hash_int <= target:
-            # Found a valid block! Now execute txs and generate receipts before persisting.
-            # Import Receipt, ReceiptStatus, Log, and BlockEnv at block level (once per mined block)
-            from core.types.receipt import Receipt, ReceiptStatus, Log
-            from execution.runtime.env import BlockEnv
-            
-            # Build block environment for transaction execution
-            block_env = BlockEnv(
-                height=header.height,
-                timestamp=header.timestamp,
-                coinbase=payout_address if payout_address is not None else ZERO32,
-                chain_id=header.chainId,
-            )
-            
-            # Execute all transactions and generate receipts
-            # State changes (balance transfers, nonce increments) are persisted via state_db
-            log.info(f"Executing {len(txs)} transactions for block at height {header.height}")
-            receipts_dict = _execute_transactions(
-                txs=txs,
-                state_db=ctx.state_db,
-                block_env=block_env,
-                logger=log,
-            )
-            
-            # Convert dict receipts to Receipt objects for compatibility with receiptsRoot computation
-            receipts = _convert_receipts_dict_to_objects(receipts_dict)
+        # Execute all transactions and generate receipts
+        # State changes (balance transfers, nonce increments) are persisted via state_db
+        log.info(f"Executing {len(txs)} transactions for block at height {header.height}")
+        receipts_dict = _execute_transactions(
+            txs=txs,
+            state_db=ctx.state_db,
+            block_env=block_env,
+            logger=log,
+        )
+        
+        # Convert dict receipts to Receipt objects for compatibility with receiptsRoot computation
+        receipts = _convert_receipts_dict_to_objects(receipts_dict)
 
-            # Apply block reward to coinbase/miner address
-            # This also persists to state_db
-            log.info(f"Applying block reward to payout address at height {header.height}")
-            reward_amount = _apply_block_reward(ctx, header.height, payout_address)
+        # Apply block reward to coinbase/miner address
+        # This also persists to state_db
+        log.info(f"Applying block reward to payout address at height {header.height}")
+        reward_amount = _apply_block_reward(ctx, header.height, payout_address)
 
-            # Compute receipts root (if any receipts) and ensure txs root matches tx set
-            receipts_root = ZERO32
-            if receipts:
-                try:
-                    leaves = [rcpt.hash() for rcpt in receipts]
-                    receipts_root = merkle_root(leaves) if leaves else ZERO32
-                except Exception as e:
-                    log.warning(
-                        "failed to compute receipts root; defaulting to zero", extra={"err": str(e)}
-                    )
-
-            # Keep txsRoot from header (already computed from canonical hashes before mining loop)
-            # Transaction execution doesn't change the transactions themselves, only generates receipts
-            # So txsRoot should remain the same as what was computed before mining started
-            txs_root = header.txsRoot
-
-            state_root = _compute_state_root(getattr(ctx, "state_db", None))
-
+        # Compute receipts root (if any receipts) and ensure txs root matches tx set
+        receipts_root = ZERO32
+        if receipts:
             try:
-                header = replace(
-                    header,
-                    stateRoot=state_root,
-                    txsRoot=txs_root,
-                    receiptsRoot=receipts_root,
-                )
-            except Exception:
-                header = Header(
-                    v=header.v,
-                    chainId=header.chainId,
-                    height=header.height,
-                    parentHash=header.parentHash,
-                    timestamp=header.timestamp,
-                    stateRoot=state_root,
-                    txsRoot=txs_root,
-                    receiptsRoot=receipts_root,
-                    proofsRoot=header.proofsRoot,
-                    daRoot=header.daRoot,
-                    mixSeed=header.mixSeed,
-                    poiesPolicyRoot=header.poiesPolicyRoot,
-                    pqAlgPolicyRoot=header.pqAlgPolicyRoot,
-                    thetaMicro=header.thetaMicro,
-                    nonce=header.nonce,
-                    extra=header.extra,
-                )
-
-            # Build block with updated header and receipts
-            # NOTE: Skip verification (verify=False) because txsRoot was computed from canonical
-            # hashes (sha3_256 of original raw CBOR), but Block.txs_root() would recompute from
-            # tx.hash() which re-encodes and might not match if transaction was normalized.
-            # The miner has already ensured txsRoot is correct by using canonical hashes.
-            block = Block.from_components(
-                header=header, txs=txs, proofs=(), receipts=receipts, verify=False
-            )
-            
-            # Persist block directly using block_db's atomic method
-            # This ensures the block is stored and marked canonical in one transaction
-            try:
-                block_db = ctx.block_db
-                if hasattr(block_db, "append_canonical_block"):
-                    block_db.append_canonical_block(header.height, block)
-                    accepted = True
-                    log.info(f"Block persisted via append_canonical_block at height {header.height}")
-                    
-                    # CRITICAL FIX: Re-index receipts using canonical tx hashes
-                    # append_canonical_block indexes receipts using tx.hash() which re-encodes,
-                    # but we need to index them using the canonical hash from raw CBOR.
-                    # This ensures tx.getTransactionReceipt can find receipts using the hash
-                    # returned by tx.sendRawTransaction.
-                    if txs and hasattr(block_db, "kv"):
-                        try:
-                            from core.encoding.cbor import dumps as cbor_dumps
-                            # Re-index receipts with canonical hashes
-                            with block_db.kv.batch() as batch:
-                                for idx, tx in enumerate(txs):
-                                    # Get canonical hash from tracked raw bytes
-                                    tracked = _tracked(tx)
-                                    if tracked:
-                                        tx_hash_hex, raw = tracked
-                                        tx_hash = bytes.fromhex(tx_hash_hex[2:])  # strip "0x" prefix
-                                        
-                                        # Store receipt pointer using canonical hash
-                                        # Format: PFX_RXI + tx_hash → {"h": height, "i": idx, "b": block_hash}
-                                        receipt_ptr = cbor_dumps({"h": header.height, "i": idx, "b": block_hash_bytes})
-                                        batch.put(PFX_RXI + tx_hash, receipt_ptr)
-                                        log.debug(f"Re-indexed receipt for canonical hash: {tx_hash_hex[:16]}...")
-                                batch.commit()
-                            log.info(f"Re-indexed {len(txs)} receipts with canonical tx hashes")
-                        except Exception as e:
-                            log.warning(f"Failed to re-index receipts with canonical hashes: {e}")
-                else:
-                    # Fallback to adapter
-                    accepted = adapter.submit_block(block)
-                    log.info(f"Block submitted via adapter: accepted={accepted}")
+                leaves = [rcpt.hash() for rcpt in receipts]
+                receipts_root = merkle_root(leaves) if leaves else ZERO32
             except Exception as e:
-                log.error(f"Block persistence failed: {e}", exc_info=True)
-                accepted = False
-            
-            if accepted:
-                _record_local_block(header.height, "0x" + block_hash_bytes.hex(), header)
+                log.warning(
+                    "failed to compute receipts root; defaulting to zero", extra={"err": str(e)}
+                )
+
+        # Keep txsRoot from header (already computed from canonical hashes before mining loop)
+        # Transaction execution doesn't change the transactions themselves, only generates receipts
+        # So txsRoot should remain the same as what was computed before mining started
+        txs_root = header.txsRoot
+
+        state_root = _compute_state_root(getattr(ctx, "state_db", None))
+
+        try:
+            header = replace(
+                header,
+                stateRoot=state_root,
+                txsRoot=txs_root,
+                receiptsRoot=receipts_root,
+            )
+        except Exception:
+            header = Header(
+                v=header.v,
+                chainId=header.chainId,
+                height=header.height,
+                parentHash=header.parentHash,
+                timestamp=header.timestamp,
+                stateRoot=state_root,
+                txsRoot=txs_root,
+                receiptsRoot=receipts_root,
+                proofsRoot=header.proofsRoot,
+                daRoot=header.daRoot,
+                mixSeed=header.mixSeed,
+                poiesPolicyRoot=header.poiesPolicyRoot,
+                pqAlgPolicyRoot=header.pqAlgPolicyRoot,
+                thetaMicro=header.thetaMicro,
+                nonce=header.nonce,
+                extra=header.extra,
+            )
+
+        # Build block with updated header and receipts
+        # NOTE: Skip verification (verify=False) because txsRoot was computed from canonical
+        # hashes (sha3_256 of original raw CBOR), but Block.txs_root() would recompute from
+        # tx.hash() which re-encodes and might not match if transaction was normalized.
+        # The miner has already ensured txsRoot is correct by using canonical hashes.
+        block = Block.from_components(
+            header=header, txs=txs, proofs=(), receipts=receipts, verify=False
+        )
+        
+        # Persist block directly using block_db's atomic method
+        # This ensures the block is stored and marked canonical in one transaction
+        try:
+            block_db = ctx.block_db
+            if hasattr(block_db, "append_canonical_block"):
+                block_db.append_canonical_block(header.height, block)
+                accepted = True
+                log.info(f"Block persisted via append_canonical_block at height {header.height}")
                 
-                # Update mining state for theta adjustment
-                _MINING_STATE["last_block_time"] = time.time()
-
-                # Evict successfully mined txs from both mempool adapter and fallback cache
-                # to prevent re-mining them in subsequent blocks
-                # Use canonical txid computed from raw signed envelope bytes for eviction
-                # (matches txid from sendRawTransaction: sha3_256(raw_cbor_bytes))
-                # Initialize to empty list to avoid UnboundLocalError when mining payout-only blocks
-                included_hashes_canonical: list[str] = []
-                if txs:
-                    # Compute canonical hashes for eviction (from txs, not included_hashes)
-                    # This ensures we use sha3_256(raw_cbor) consistent with sendRawTransaction
-                    included_hashes_canonical = [_canonical_txid_hex(tx) for tx in txs]
-                    
-                    # 1. Evict from adapter mempool (if available)
+                # CRITICAL FIX: Re-index receipts using canonical tx hashes
+                # append_canonical_block indexes receipts using tx.hash() which re-encodes,
+                # but we need to index them using the canonical hash from raw CBOR.
+                # This ensures tx.getTransactionReceipt can find receipts using the hash
+                # returned by tx.sendRawTransaction.
+                if txs and hasattr(block_db, "kv"):
                     try:
-                        # Try evict_by_hashes first (if available), which uses hex hashes
-                        if hasattr(adapter, "evict_by_hashes"):
-                            adapter.evict_by_hashes(included_hashes_canonical)
-                            log.info(f"Evicted {len(included_hashes_canonical)} included transactions from mempool adapter (by hashes)")
-                        else:
-                            # Fallback: convert hex hashes to bytes for adapter eviction
-                            hashes_bytes = [_hex_to_bytes(h) for h in included_hashes_canonical]
-                            
-                            # Call adapter to evict from mempool pool
-                            if hasattr(adapter, "remove_included"):
-                                adapter.remove_included(hashes_bytes)
-                                log.info(f"Evicted {len(hashes_bytes)} included transactions from mempool adapter")
+                        from core.encoding.cbor import dumps as cbor_dumps
+                        # Re-index receipts with canonical hashes
+                        with block_db.kv.batch() as batch:
+                            for idx, tx in enumerate(txs):
+                                # Get canonical hash from tracked raw bytes
+                                tracked = _tracked(tx)
+                                if tracked:
+                                    tx_hash_hex, raw = tracked
+                                    tx_hash = bytes.fromhex(tx_hash_hex[2:])  # strip "0x" prefix
+                                    
+                                    # Store receipt pointer using canonical hash
+                                    # Format: PFX_RXI + tx_hash → {"h": height, "i": idx, "b": block_hash}
+                                    receipt_ptr = cbor_dumps({"h": header.height, "i": idx, "b": block_hash_bytes})
+                                    batch.put(PFX_RXI + tx_hash, receipt_ptr)
+                                    log.debug(f"Re-indexed receipt for canonical hash: {tx_hash_hex[:16]}...")
+                            batch.commit()
+                        log.info(f"Re-indexed {len(txs)} receipts with canonical tx hashes")
                     except Exception as e:
-                        log.warning(f"Failed to evict from mempool adapter: {e}")
-                    
-                    # 2. Evict from _PEND pool (if available)
-                    try:
-                        from rpc.methods import tx as tx_methods
+                        log.warning(f"Failed to re-index receipts with canonical hashes: {e}")
+            else:
+                # Fallback to adapter
+                accepted = adapter.submit_block(block)
+                log.info(f"Block submitted via adapter: accepted={accepted}")
+        except Exception as e:
+            log.error(f"Block persistence failed: {e}", exc_info=True)
+            accepted = False
+        
+        if accepted:
+            _record_local_block(header.height, "0x" + block_hash_bytes.hex(), header)
+            
+            # Update mining state for theta adjustment
+            _MINING_STATE["last_block_time"] = time.time()
+
+            # Evict successfully mined txs from both mempool adapter and fallback cache
+            # to prevent re-mining them in subsequent blocks
+            # Use canonical txid computed from raw signed envelope bytes for eviction
+            # (matches txid from sendRawTransaction: sha3_256(raw_cbor_bytes))
+            # Initialize to empty list to avoid UnboundLocalError when mining payout-only blocks
+            included_hashes_canonical: list[str] = []
+            if txs:
+                # Compute canonical hashes for eviction (from txs, not included_hashes)
+                # This ensures we use sha3_256(raw_cbor) consistent with sendRawTransaction
+                included_hashes_canonical = [_canonical_txid_hex(tx) for tx in txs]
+                
+                # 1. Evict from adapter mempool (if available)
+                try:
+                    # Try evict_by_hashes first (if available), which uses hex hashes
+                    if hasattr(adapter, "evict_by_hashes"):
+                        adapter.evict_by_hashes(included_hashes_canonical)
+                        log.info(f"Evicted {len(included_hashes_canonical)} included transactions from mempool adapter (by hashes)")
+                    else:
+                        # Fallback: convert hex hashes to bytes for adapter eviction
+                        hashes_bytes = [_hex_to_bytes(h) for h in included_hashes_canonical]
                         
-                        pend = getattr(tx_methods, "_PEND", None)
-                        if pend is not None and hasattr(pend, "remove"):
-                            evicted_count = 0
-                            for h in included_hashes_canonical:
-                                try:
-                                    # Call remove method on _PEND pool
-                                    removed = pend.remove(h)
-                                    if removed:
-                                        evicted_count += 1
-                                except Exception as e:
-                                    log.debug(f"Failed to remove {h} from _PEND: {e}")
-                            if evicted_count > 0:
-                                log.info(f"Evicted {evicted_count} included transactions from _PEND pool")
-                    except Exception as e:
-                        log.warning(f"Failed to evict from _PEND pool: {e}")
+                        # Call adapter to evict from mempool pool
+                        if hasattr(adapter, "remove_included"):
+                            adapter.remove_included(hashes_bytes)
+                            log.info(f"Evicted {len(hashes_bytes)} included transactions from mempool adapter")
+                except Exception as e:
+                    log.warning(f"Failed to evict from mempool adapter: {e}")
+                
+                # 2. Evict from _PEND pool (if available)
+                try:
+                    from rpc.methods import tx as tx_methods
                     
-                    # 3. Evict from _FALLBACK_PENDING (backward compatibility)
-                    try:
-                        from rpc.methods import tx as tx_methods
-
-                        cache = getattr(tx_methods, "_FALLBACK_PENDING", {}) or {}
-                        ts_cache = getattr(tx_methods, "_FALLBACK_PENDING_TS", {}) or {}
+                    pend = getattr(tx_methods, "_PEND", None)
+                    if pend is not None and hasattr(pend, "remove"):
                         evicted_count = 0
                         for h in included_hashes_canonical:
-                            # pop() returns the removed value or None if key doesn't exist
-                            # We count eviction only if the tx was actually in the cache
-                            if cache.pop(h, None) is not None:
-                                # Also remove timestamp (may not exist, that's ok)
-                                ts_cache.pop(h, None)
-                                evicted_count += 1
+                            try:
+                                # Call remove method on _PEND pool
+                                removed = pend.remove(h)
+                                if removed:
+                                    evicted_count += 1
+                            except Exception as e:
+                                log.debug(f"Failed to remove {h} from _PEND: {e}")
                         if evicted_count > 0:
-                            log.info(f"Evicted {evicted_count} included transactions from _FALLBACK_PENDING")
-                    except Exception as e:
-                        log.warning(f"Failed to evict from _FALLBACK_PENDING: {e}")
-                    
-                    # 4. Clean up the hash mapping for evicted transactions
-                    try:
-                        for tx in txs:
-                            _TX_HASH_MAP.pop(id(tx), None)
-                    except Exception as e:
-                        log.warning(f"Failed to clean up hash mapping: {e}")
+                            log.info(f"Evicted {evicted_count} included transactions from _PEND pool")
+                except Exception as e:
+                    log.warning(f"Failed to evict from _PEND pool: {e}")
+                
+                # 3. Evict from _FALLBACK_PENDING (backward compatibility)
+                try:
+                    from rpc.methods import tx as tx_methods
 
-                log.info(
-                    f"Mined block at height {header.height} with nonce {nonce_val} "
-                    f"(hash {block_hash_int} <= target {target}), reward={reward_amount} nANM, "
-                    f"txs={len(txs)}, receipts={len(receipts) if receipts else 0}, "
-                    f"included_tx_hashes={included_hashes_canonical[:MAX_DISPLAYED_TX_HASHES]}"
-                    f"{' ...' if len(included_hashes_canonical) > MAX_DISPLAYED_TX_HASHES else ''}"
-                )
-                return (True, reward_amount)
-            return (False, 0)
+                    cache = getattr(tx_methods, "_FALLBACK_PENDING", {}) or {}
+                    ts_cache = getattr(tx_methods, "_FALLBACK_PENDING_TS", {}) or {}
+                    evicted_count = 0
+                    for h in included_hashes_canonical:
+                        # pop() returns the removed value or None if key doesn't exist
+                        # We count eviction only if the tx was actually in the cache
+                        if cache.pop(h, None) is not None:
+                            # Also remove timestamp (may not exist, that's ok)
+                            ts_cache.pop(h, None)
+                            evicted_count += 1
+                    if evicted_count > 0:
+                        log.info(f"Evicted {evicted_count} included transactions from _FALLBACK_PENDING")
+                except Exception as e:
+                    log.warning(f"Failed to evict from _FALLBACK_PENDING: {e}")
+                
+                # 4. Clean up the hash mapping for evicted transactions
+                try:
+                    for tx in txs:
+                        _TX_HASH_MAP.pop(id(tx), None)
+                except Exception as e:
+                    log.warning(f"Failed to clean up hash mapping: {e}")
+
+            log.info(
+                f"Mined block at height {header.height} with nonce {valid_nonce} "
+                f"(hash {block_hash_int} <= target {target}), reward={reward_amount} nANM, "
+                f"txs={len(txs)}, receipts={len(receipts) if receipts else 0}, "
+                f"included_tx_hashes={included_hashes_canonical[:MAX_DISPLAYED_TX_HASHES]}"
+                f"{' ...' if len(included_hashes_canonical) > MAX_DISPLAYED_TX_HASHES else ''}"
+            )
+            return (True, reward_amount)
+        return (False, 0)
     
     # Failed to mine a valid block within max_nonce iterations
     log.warning(
@@ -2492,8 +2578,7 @@ def miner_mine(count: int | None = None, address: str | None = None, threads: in
         count: Number of blocks to mine (default: 1)
         address: Optional payout address (bech32 or hex). If omitted, uses default miner address.
         threads: Optional number of CPU threads to use for mining (default: CPU count).
-                 Note: Currently informational only; actual threading is controlled by
-                 internal mining backend configuration.
+                 The nonce search space is divided among threads for parallel mining.
         
     Returns:
         dict: {
@@ -2515,9 +2600,10 @@ def miner_mine(count: int | None = None, address: str | None = None, threads: in
     # Validate threads parameter
     if threads is not None:
         threads = max(1, int(threads))
-        log.info(f"Mining with {threads} thread(s) (Note: thread control is currently informational)")
+        log.info(f"Mining with {threads} thread(s) for parallel nonce search")
     else:
         threads = os.cpu_count() or 1
+        log.info(f"Mining with {threads} thread(s) (CPU count) for parallel nonce search")
     
     # Parse payout address if provided
     payout_address_bytes: bytes | None = None
@@ -2561,7 +2647,7 @@ def miner_mine(count: int | None = None, address: str | None = None, threads: in
     rewards_list: list[dict[str, int]] = []
     
     for _ in range(target):
-        success, reward_amount = _mine_once(payout_address=payout_address_bytes)
+        success, reward_amount = _mine_once(payout_address=payout_address_bytes, threads=threads)
         if success:
             mined += 1
             total_reward += reward_amount
