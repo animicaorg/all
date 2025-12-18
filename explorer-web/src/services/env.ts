@@ -19,6 +19,41 @@ export type EnvLike = {
 
 const DEFAULT_RPC = "/rpc";
 const DEFAULT_WS = "ws://127.0.0.1:8546";
+const LEGACY_MAINNET_CHAIN_IDS = new Set(["659658", "659914", "0xa11ca"]);
+const CANONICAL_MAINNET_CHAIN_ID = "1";
+
+function normalizeChainIdValue(chainId: string | number): string {
+  const raw = String(chainId).trim();
+  let normalized = raw;
+
+  // Normalize hex chain IDs to decimal strings
+  if (raw.toLowerCase().startsWith("0x")) {
+    try {
+      const parsed = parseInt(raw, 16);
+      if (!Number.isNaN(parsed)) {
+        normalized = String(parsed);
+      } else {
+        return raw; // invalid hex, return as-is
+      }
+    } catch {
+      return raw; // Return as-is if parsing fails
+    }
+  }
+
+  // Migrate legacy prelaunch IDs to the canonical mainnet chain ID
+  const rawLower = raw.toLowerCase();
+  if (LEGACY_MAINNET_CHAIN_IDS.has(normalized) || LEGACY_MAINNET_CHAIN_IDS.has(rawLower)) {
+    if (typeof console !== "undefined" && console?.warn) {
+      console.warn(
+        `[env] Legacy Animica mainnet chain ID detected (${raw}); normalizing to ${CANONICAL_MAINNET_CHAIN_ID}. ` +
+          'Update VITE_CHAIN_ID to "1" to avoid this fallback.'
+      );
+    }
+    return CANONICAL_MAINNET_CHAIN_ID;
+  }
+
+  return normalized;
+}
 
 function resolveEnv(env?: Partial<EnvLike>): Partial<EnvLike> {
   if (env) return env;
@@ -113,17 +148,7 @@ export function inferChainId(env?: Partial<EnvLike>): string {
     return "";
   }
 
-  // Normalize hex chain IDs to decimal strings
-  const chainIdStr = String(chainId);
-  if (chainIdStr.startsWith("0x")) {
-    try {
-      return String(parseInt(chainIdStr, 16));
-    } catch {
-      return chainIdStr; // Return as-is if parsing fails
-    }
-  }
-
-  return chainIdStr;
+  return normalizeChainIdValue(chainId);
 }
 
 export { DEFAULT_RPC, DEFAULT_WS };

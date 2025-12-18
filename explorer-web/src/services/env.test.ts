@@ -56,13 +56,18 @@ describe('env helpers', () => {
   });
 
   it('converts hex chain IDs to decimal strings', () => {
-    expect(inferChainId({ VITE_CHAIN_ID: '0xa11ca' })).toBe('659658');
     expect(inferChainId({ VITE_CHAIN_ID: '0x1' })).toBe('1');
     expect(inferChainId({ VITE_CHAIN_ID: '0x539' })).toBe('1337');
   });
 
+  it('normalizes legacy mainnet chain IDs to the canonical value', () => {
+    expect(inferChainId({ VITE_CHAIN_ID: '0xa11ca' })).toBe('1');
+    expect(inferChainId({ VITE_CHAIN_ID: '659658' })).toBe('1');
+    expect(inferChainId({ VITE_CHAIN_ID: '659914' })).toBe('1');
+  });
+
   it('handles decimal chain IDs as-is', () => {
-    expect(inferChainId({ VITE_CHAIN_ID: '659658' })).toBe('659658');
+    expect(inferChainId({ VITE_CHAIN_ID: '2' })).toBe('2');
     expect(inferChainId({ VITE_CHAIN_ID: 1337 })).toBe('1337');
   });
 
