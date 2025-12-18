@@ -25,6 +25,13 @@ STATE_KEY_NETWORK = "active_network"
 # Networks that use the 'dev' profile in docker-compose
 DEV_NETWORKS = {"devnet", "local-devnet"}
 
+BOOTSTRAP_TIMEOUT_ENV = "ANIMICA_BOOTSTRAP_TIMEOUT"
+BOOTSTRAP_RPC_TIMEOUT = 30.0
+ALLOWED_BOOTSTRAP_METHODS = {
+    "bootstrap.getManifest",
+    "bootstrap.getSeeds",
+}
+
 app = typer.Typer(help="Manage and query Animica nodes.")
 
 
@@ -89,9 +96,20 @@ def _persist_bootstrap_state(cfg: Any, manifest: dict[str, Any], seeds: list[str
 
 
 def _bootstrap_rpc(bootstrap_url: str, method: str) -> Dict[str, Any]:
+    if method not in ALLOWED_BOOTSTRAP_METHODS:
+        raise ValueError(
+            f"Unsupported bootstrap method '{method}'. Only read-only bootstrap RPC calls are permitted."
+        )
+
+    timeout = resolve_timeout(
+        "bootstrap RPC timeout",
+        None,
+        env_var=BOOTSTRAP_TIMEOUT_ENV,
+        default=BOOTSTRAP_RPC_TIMEOUT,
+    )
     payload = {"jsonrpc": "2.0", "id": 1, "method": method, "params": []}
     try:
-        resp = httpx.post(bootstrap_url, json=payload, timeout=10.0)
+        resp = httpx.post(bootstrap_url, json=payload, timeout=timeout)
         resp.raise_for_status()
         parsed = resp.json()
         if "error" in parsed and parsed["error"]:
