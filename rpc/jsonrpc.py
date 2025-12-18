@@ -302,6 +302,7 @@ def _error_obj(exc: Exception) -> Json:
     code = getattr(rpc_err, "code", -32603)
     message = getattr(rpc_err, "message", "Internal error")
     data = getattr(rpc_err, "data", None)
+    original_message = message
 
     # Normalize canonical JSON-RPC messages
     if code == -32602:
@@ -311,7 +312,12 @@ def _error_obj(exc: Exception) -> Json:
     elif code == -32601:
         message = "Method not found"
     elif code == -32603:
-        message = "Internal error"
+        # Preserve custom details for internal errors when available
+        if original_message != "Internal error":
+            message = original_message
+            data = data or {"detail": original_message}
+        else:
+            message = "Internal error"
 
     if hasattr(rpc_err, "to_dict"):
         base = rpc_err.to_dict()  # type: ignore[assignment]

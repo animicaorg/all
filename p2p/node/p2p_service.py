@@ -24,12 +24,14 @@ from p2p.wire.frames import Framer, unpack_frame
 from p2p.wire.message_ids import MsgID
 from p2p.wire.messages import (Blocks, GetBlocks, GetData, GetHeaders, HeaderCompact,
                                Headers, Hello, HelloAck, Inv, InvItem, InvType, Tx)
+from p2p.node.peer_registry import PeerRegistry
 
 log = logging.getLogger("animica.p2p.service")
 
 
 @dataclass(slots=True)
 class _PeerState:
+    session_id: str
     remote: str
     direction: str  # "inbound" | "outbound"
     conn: Any
@@ -40,6 +42,7 @@ class _PeerState:
     hello: Optional[dict] = None
     hello_done: asyncio.Event = field(default_factory=asyncio.Event)
     pending_headers: Optional[asyncio.Future] = None
+    connected_at: float = field(default_factory=time.time)
 
 
 class P2PService:
@@ -124,6 +127,11 @@ class P2PService:
 
         self._peer_lock = asyncio.Lock()
         self._peers: dict[str, _PeerState] = {}  # remote -> state
+        self._peers_by_session: dict[str, _PeerState] = {}
+        self._peer_registry = PeerRegistry(
+            max_inbound_per_ip=int(os.environ.get("ANIMICA_P2P_MAX_INBOUND_PER_IP", "10") or 10),
+            handshake_timeout_s=float(os.environ.get("ANIMICA_P2P_HANDSHAKE_TIMEOUT", "6.0") or 6.0),
+        )
 
         # Seen LRU (dedupe + rebroadcast suppression)
         self._seen_tx: "OrderedDict[bytes, float]" = OrderedDict()
@@ -251,16 +259,15 @@ class P2PService:
 
     @property
     def peers(self) -> Dict[str, Dict[str, Any]]:
-        # remote -> sanitized peer view
-        out: dict[str, dict[str, Any]] = {}
-        for remote, p in self._peers.items():
-            out[remote] = {
-                "remote": remote,
-                "direction": p.direction,
-                "peer_id": p.peer_id,
-                "hello": p.hello,
-            }
-        return out
+        # Deduplicated view sourced from the peer registry
+        return {
+            snap.get("remote", f"session:{idx}"): snap
+            for idx, snap in enumerate(self._peer_registry.snapshot())
+        }
+
+    @property
+    def peer_registry(self) -> PeerRegistry:
+        return self._peer_registry
 
     def _normalize_seed(self, address: str) -> str:
         if address.startswith("/"):
@@ -334,7 +341,7 @@ class P2PService:
         return added
 
     def peer_count(self) -> int:
-        return len(self._peers)
+        return self._peer_registry.peer_count()
 
     async def import_peers(self, addresses: list[str]) -> dict[str, Any]:
         if not addresses:
@@ -486,21 +493,43 @@ class P2PService:
             with contextlib.suppress(Exception):
                 await conn.close()
             return
+        try:
+            session = self._peer_registry.register(remote, direction)
+        except ValueError as exc:
+            log.info("Rejecting %s peer %s: %s", direction, remote, exc)
+            with contextlib.suppress(Exception):
+                await conn.close()
+            return
 
         peer = _PeerState(
+            session_id=session.session_id,
             remote=remote,
             direction=direction,
             conn=conn,
             stream=stream,
             framer=Framer(aead=None),
             write_lock=asyncio.Lock(),
+            connected_at=session.connected_at,
         )
 
         async with self._peer_lock:
             self._peers[remote] = peer
-            self._stats["peers"] = len(self._peers)
+            self._peers_by_session[peer.session_id] = peer
+            self._stats["peers"] = self._peer_registry.peer_count()
 
         self._create_child_task(self._peer_loop(peer), name=f"p2p.peer@{remote}")
+        self._create_child_task(
+            self._enforce_handshake_timeout(peer), name=f"p2p.handshake@{remote}"
+        )
+
+    async def _enforce_handshake_timeout(self, peer: _PeerState) -> None:
+        try:
+            await asyncio.wait_for(
+                peer.hello_done.wait(), timeout=self._peer_registry.handshake_timeout_s
+            )
+        except asyncio.TimeoutError:
+            log.info("Dropping peer %s due to handshake timeout", peer.remote)
+            await self._drop_peer(peer, reason="handshake_timeout")
 
     async def _peer_loop(self, peer: _PeerState) -> None:
         # Send HELLO immediately (both sides do this; handler is symmetric).
@@ -514,6 +543,7 @@ class P2PService:
                 data = await peer.stream.recv()
                 if data == b"":
                     break
+                self._peer_registry.mark_seen(peer.session_id)
                 frame = unpack_frame(data, aead=None)
                 await self._handle(peer, frame.msg_id, frame.payload)
         except asyncio.CancelledError:
@@ -521,16 +551,33 @@ class P2PService:
         except Exception:
             log.debug("peer loop error", extra={"remote": peer.remote}, exc_info=True)
         finally:
+            await self._drop_peer(peer, reason="loop_exit")
+
+    async def _drop_peer(self, peer: _PeerState, *, reason: str) -> None:
+        with contextlib.suppress(Exception):
+            await peer.conn.close()
+        self._peer_registry.remove(peer.session_id)
+
+        async with self._peer_lock:
+            self._peers.pop(peer.remote, None)
+            self._peers_by_session.pop(peer.session_id, None)
+            self._stats["peers"] = self._peer_registry.peer_count()
+
+        if peer.peer_id:
             with contextlib.suppress(Exception):
-                await peer.conn.close()
+                self.peerstore.record_disconnection(peer.peer_id)
 
-            async with self._peer_lock:
-                self._peers.pop(peer.remote, None)
-                self._stats["peers"] = len(self._peers)
-
-            if peer.peer_id:
-                with contextlib.suppress(Exception):
-                    self.peerstore.record_disconnection(peer.peer_id)
+        uptime = time.time() - peer.connected_at if peer.connected_at else 0.0
+        log.info(
+            "Peer disconnected",
+            extra={
+                "peer_id": peer.peer_id or "unknown",
+                "remote": peer.remote,
+                "reason": reason,
+                "direction": peer.direction,
+                "uptime_s": round(uptime, 2),
+            },
+        )
 
     # ---------------------------------------------------------------------
     # Wire send/recv helpers
@@ -634,6 +681,26 @@ class P2PService:
         peer.peer_id = bytes(hello.peer_id).hex()
         peer.hello = data
         peer.hello_done.set()
+
+        self._peer_registry.update_meta(
+            peer.session_id,
+            peer_id=peer.peer_id,
+            last_seen=time.time(),
+            height=int(hello.head_height),
+            remote=peer.remote,
+            direction=peer.direction,
+        )
+
+        # Deduplicate connections for the same peer_id (keep the newest).
+        to_drop = self._peer_registry.mark_identified(peer.session_id, peer.peer_id)
+        for session_id in to_drop:
+            if session_id == peer.session_id:
+                await self._drop_peer(peer, reason="duplicate_peer_id")
+                return
+            other = self._peers_by_session.get(session_id)
+            if other:
+                await self._drop_peer(other, reason="duplicate_peer_id")
+        self._stats["peers"] = self._peer_registry.peer_count()
 
         with contextlib.suppress(Exception):
             self.peerstore.add(

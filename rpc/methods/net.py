@@ -121,7 +121,37 @@ def _collect_live_peer_seeds() -> tuple[list[str], list[str]]:
         return out
 
     return _dedupe(inbound), _dedupe(outbound)
+
+
+def _active_peer_snapshot() -> list[dict[str, object]]:
+    """
+    Return a list of active peer sessions from the running P2P service.
+    """
+    try:
+        import p2p  # type: ignore
+
+        svc = None
+        if hasattr(p2p, "get_service"):
+            svc = p2p.get_service()
+        if svc is not None and hasattr(svc, "peer_registry"):
+            try:
+                registry = getattr(svc, "peer_registry")
+                if registry is not None and hasattr(registry, "snapshot"):
+                    return list(registry.snapshot())
+            except Exception:
+                pass
+        if svc is not None and hasattr(svc, "peers"):
+            peers = svc.peers() if callable(getattr(svc, "peers")) else svc.peers
+            if isinstance(peers, dict):
+                return list(peers.values())
+            if peers is None:
+                return []
+            return list(peers)
+    except Exception:
+        return []
+    return []
 from rpc.methods import method
+from rpc import errors as rpc_errors
 
 
 def _fallback_seeds_from_network(chain_id: int | None) -> list[str]:
@@ -176,4 +206,30 @@ def net_get_bootstrap_seeds() -> dict[str, t.Any]:
     }
 
 
-__all__ = ["net_get_bootstrap_seeds"]
+@method("net.peerCount", desc="Return the number of connected peers", aliases=["p2p.peerCount"])
+async def net_peer_count() -> int:
+    try:
+        snapshot = _active_peer_snapshot()
+        if snapshot:
+            # Deduplicate by peer_id when present
+            seen = set()
+            for peer in snapshot:
+                pid = str(peer.get("peer_id") or peer.get("id") or "")
+                if pid:
+                    seen.add(pid)
+            unknown = sum(1 for peer in snapshot if not (peer.get("peer_id") or peer.get("id")))
+            return len(seen) + unknown
+        return 0
+    except Exception as exc:
+        raise rpc_errors.InternalError(f"peer count unavailable: {exc}")
+
+
+@method("net.peers", desc="Return a snapshot of connected peers", aliases=["p2p.netPeers"])
+async def net_peers() -> list[dict[str, object]]:
+    try:
+        return _active_peer_snapshot()
+    except Exception as exc:
+        raise rpc_errors.InternalError(f"peer list unavailable: {exc}")
+
+
+__all__ = ["net_get_bootstrap_seeds", "net_peer_count", "net_peers"]

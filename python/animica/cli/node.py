@@ -248,6 +248,9 @@ def status(
     retry_delay: float = typer.Option(
         1.0, "--retry-delay", help="Delay between RPC retry attempts in seconds (default: 1.0)", envvar="ANIMICA_RETRY_DELAY"
     ),
+    max_retries: int = typer.Option(
+        3, "--max-retries", help="Maximum number of RPC attempts before failing fast"
+    ),
     timeout: Optional[float] = typer.Option(
         None,
         "--timeout",
@@ -255,7 +258,7 @@ def status(
         envvar=RPC_TIMEOUT_ENV,
     )
 ) -> None:
-    """Show chain head, block info and sync state. Retries indefinitely on RPC errors."""
+    """Show chain head, block info and sync state. Retries with bounded attempts on RPC errors."""
     url = _resolve_rpc_url(rpc_url)
     try:
         rpc_timeout = resolve_timeout("RPC timeout", timeout, env_var=RPC_TIMEOUT_ENV)
@@ -267,10 +270,14 @@ def status(
     if retry_delay <= 0:
         typer.echo(f"Error: retry-delay must be greater than 0, got {retry_delay}", err=True)
         raise typer.Exit(code=1)
+    if max_retries < 1:
+        typer.echo("Error: max-retries must be at least 1", err=True)
+        raise typer.Exit(code=1)
     
-    # Infinite retry loop for RPC operations
+    # Bounded retry loop for RPC operations
     attempt = 0
-    while True:
+    backoff_delay = retry_delay
+    while attempt < max_retries:
         attempt += 1
         try:
             head = asyncio.run(rpc_call("chain.getHead", [], rpc_url=url, timeout=rpc_timeout))
@@ -308,19 +315,27 @@ def status(
             return
             
         except Exception as e:
-            # RPC error - retry indefinitely
+            # RPC error - retry with backoff
             import time
             from datetime import datetime
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             error_message = str(e).strip()
             if not error_message:
                 error_message = repr(e)
+            if attempt >= max_retries:
+                typer.echo(
+                    f"[{timestamp}] Node status failed after {attempt} attempts: {error_message}",
+                    err=True,
+                )
+                raise typer.Exit(code=1)
+
             typer.echo(
-                f"[{timestamp}] Retrying node status query due to RPC error (attempt {attempt}): {error_message}. Retrying in {retry_delay:.1f}s...",
-                err=True
+                f"[{timestamp}] Retrying node status (attempt {attempt} failed: {error_message}). Retrying in {backoff_delay:.1f}s...",
+                err=True,
             )
-            time.sleep(retry_delay)
-            continue  # Retry indefinitely
+            time.sleep(backoff_delay)
+            backoff_delay *= 2
+            continue  # Retry bounded number of times
 
 
 @app.command()
