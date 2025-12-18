@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional
 import click as _click
 import typer
 
+from animica.cli.rpc_guard import guard_bootstrap_rpc
 from animica.config import load_network_config
 from animica.cli.paths import ensure_file_dir, secure_file
 from animica.coin import format_amount
@@ -457,6 +458,11 @@ def show(
     identifier: Optional[str] = typer.Argument(None, help="Address (bech32), label, or public key hex"),
     address: Optional[str] = typer.Option(None, "--address", help="(Deprecated) use positional argument"),
     rpc_url: Optional[str] = typer.Option(None, "--rpc-url", help="Animica JSON-RPC endpoint", envvar=_RPC_ENV),
+    allow_remote_rpc: bool = typer.Option(
+        False,
+        "--allow-remote-rpc",
+        help="Allow using bootstrap RPC (requires ANIMICA_I_UNDERSTAND_REMOTE_RISK=1)",
+    ),
     source: str = typer.Option(
         "auto",
         "--source",
@@ -498,6 +504,7 @@ def show(
     # Attempt to fetch live balance unless explicitly disabled
     if source_choice != "cached":
         rpc_endpoint = _resolve_rpc_url(rpc_url)
+        guard_bootstrap_rpc(rpc_endpoint, allow_remote=allow_remote_rpc, method="state.getBalance")
         try:
             balance_confirmed = get_balance(entry.address, rpc_endpoint)
             balance_source = "chain"

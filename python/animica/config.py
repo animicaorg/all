@@ -46,11 +46,13 @@ def _get_cli_state_network() -> Optional[str]:
 class NetworkConfig:
     name: str
     rpc_url: str
+    bootstrap_url: str
     chain_id: int
     compose_file: Path
     genesis_path: str
     data_dir: str
     rpc_port: int
+    db_name: str
 
     @property
     def rpc_host(self) -> str:
@@ -118,21 +120,23 @@ def get_network_defaults(network: str) -> dict[str, any]:
     
     network_configs = {
         "mainnet": {
-            "chain_id": 1,
-            "rpc_url": "http://127.0.0.1:8545/rpc",
-            "rpc_port": 8545,
-            "p2p_port": 30333,
-            "metrics_port": 9000,
+        "chain_id": 1,
+        "rpc_url": "http://127.0.0.1:8545/rpc",
+        "bootstrap_url": "https://rpc.animica.org/rpc",
+        "rpc_port": 8545,
+        "p2p_port": 30333,
+        "metrics_port": 9000,
             "compose_file": repo_root / "ops" / "docker" / "docker-compose.mainnet.yml",
             "genesis_path": "core/genesis/genesis.mainnet.json",
             "data_dir": "~/.animica/chain-1",
             "db_name": "mainnet.db",
         },
         "testnet": {
-            "chain_id": 2,
-            "rpc_url": "http://127.0.0.1:18546/rpc",
-            "rpc_port": 18546,
-            "p2p_port": 31334,
+        "chain_id": 2,
+        "rpc_url": "http://127.0.0.1:18546/rpc",
+        "bootstrap_url": "https://rpc.testnet.animica.org/rpc",
+        "rpc_port": 18546,
+        "p2p_port": 31334,
             "metrics_port": 19000,
             "compose_file": repo_root / "ops" / "docker" / "docker-compose.testnet.yml",
             "genesis_path": "core/genesis/genesis.testnet.json",
@@ -140,9 +144,10 @@ def get_network_defaults(network: str) -> dict[str, any]:
             "db_name": "testnet.db",
         },
         "devnet": {
-            "chain_id": 1337,
-            "rpc_url": "http://127.0.0.1:28545/rpc",
-            "rpc_port": 28545,
+        "chain_id": 1337,
+        "rpc_url": "http://127.0.0.1:28545/rpc",
+        "bootstrap_url": "http://127.0.0.1:28545/rpc",
+        "rpc_port": 28545,
             "p2p_port": 31335,
             "metrics_port": 29000,
             "compose_file": repo_root / "ops" / "docker" / "docker-compose.devnet.yml",
@@ -151,9 +156,10 @@ def get_network_defaults(network: str) -> dict[str, any]:
             "db_name": "devnet.db",
         },
         "local-devnet": {
-            "chain_id": 1337,
-            "rpc_url": "http://127.0.0.1:38545/rpc",
-            "rpc_port": 38545,
+        "chain_id": 1337,
+        "rpc_url": "http://127.0.0.1:38545/rpc",
+        "bootstrap_url": "http://127.0.0.1:38545/rpc",
+        "rpc_port": 38545,
             "p2p_port": 31336,
             "metrics_port": 39000,
             "compose_file": repo_root / "tests" / "devnet" / "docker-compose.yml",
@@ -217,16 +223,24 @@ def load_network_config(network: Optional[str] = None) -> NetworkConfig:
         rpc_url = rpc_url.strip()
     if not rpc_url:
         rpc_url = defaults["rpc_url"]
+
+    bootstrap_url = os.getenv("ANIMICA_BOOTSTRAP_RPC_URL")
+    if bootstrap_url is not None:
+        bootstrap_url = bootstrap_url.strip()
+    if not bootstrap_url:
+        bootstrap_url = defaults.get("bootstrap_url", defaults["rpc_url"])
     chain_id = _safe_int_from_env("ANIMICA_CHAIN_ID", defaults["chain_id"])
-    
+
     return NetworkConfig(
         name=network_name,
         rpc_url=rpc_url,
+        bootstrap_url=bootstrap_url,
         chain_id=chain_id,
         compose_file=defaults["compose_file"],
         genesis_path=defaults["genesis_path"],
         data_dir=defaults["data_dir"],
         rpc_port=defaults["rpc_port"],
+        db_name=defaults["db_name"],
     )
 
 

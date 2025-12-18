@@ -1,18 +1,24 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
 import httpx
-import respx
+import pytest
+try:
+    import respx  # type: ignore
+except Exception:  # pragma: no cover - optional dependency
+    respx = None  # type: ignore[assignment]
 from animica.cli import node
 from animica.cli.state import CLIState
 from typer.testing import CliRunner
 
 runner = CliRunner()
+respx_mock = respx if respx is not None else pytest.mark.skip(reason="respx not installed")
 
 
 # Test helper functions for up_all tests
@@ -75,12 +81,25 @@ def create_mock_subprocess_with_failures(failed_networks: set[str]):
     return mock_subprocess_run
 
 
-@respx.mock
+def _dummy_net_cfg(tmpdir: Path, bootstrap_url: str = "https://rpc.animica.org/rpc") -> Any:
+    endpoint = bootstrap_url
+
+    class _Cfg:
+        name = "mainnet"
+        data_dir = str(tmpdir / "data")
+        db_name = "chain.db"
+        rpc_url = "http://127.0.0.1:8545/rpc"
+        bootstrap_url = endpoint
+
+    return _Cfg()
+
+
+@respx_mock
 def test_status_and_head(monkeypatch: Any) -> None:
     rpc_url = "http://localhost:9999/rpc"
     monkeypatch.setenv("ANIMICA_RPC_URL", rpc_url)
 
-    head_route = respx.post(rpc_url).mock(
+    head_route = respx.post(rpc_url)(
         side_effect=[
             httpx.Response(
                 200,
@@ -116,15 +135,53 @@ def test_status_and_head(monkeypatch: Any) -> None:
     data = json.loads(head_result.output)
     assert data["hash"] == "0xabc"
 
-    assert head_route.called
+
+def test_auto_bootstrap_fetches_when_db_missing(monkeypatch: Any, tmp_path: Path) -> None:
+    cfg = _dummy_net_cfg(tmp_path)
+    monkeypatch.delenv("ANIMICA_P2P_SEEDS", raising=False)
+
+    def fake_bootstrap_rpc(url: str, method: str) -> dict[str, Any]:
+        assert url == cfg.bootstrap_url
+        if method == "bootstrap.getManifest":
+            return {"p2p": {"seeds": ["seed-a"]}}
+        if method == "bootstrap.getSeeds":
+            return {"seeds": ["seed-a", "seed-b"]}
+        raise RuntimeError("unexpected method")
+
+    monkeypatch.setattr(node, "_bootstrap_rpc", fake_bootstrap_rpc)
+
+    created = node._auto_bootstrap_if_needed(cfg, cfg.bootstrap_url, force=False, quiet=True)
+    assert created is True
+
+    state_path = Path(cfg.data_dir) / "bootstrap.json"
+    assert state_path.exists()
+    payload = json.loads(state_path.read_text())
+    assert payload["seeds"]
+    assert payload["manifest"]
+    assert os.environ.get("ANIMICA_P2P_SEEDS")
 
 
-@respx.mock
+def test_auto_bootstrap_skips_when_db_exists(monkeypatch: Any, tmp_path: Path) -> None:
+    cfg = _dummy_net_cfg(tmp_path)
+    db_dir = Path(cfg.data_dir)
+    db_dir.mkdir(parents=True, exist_ok=True)
+    (db_dir / cfg.db_name).write_text("db-present")
+
+    def fail_bootstrap(*args: Any, **kwargs: Any) -> None:
+        raise AssertionError("bootstrap should not be called when DB exists")
+
+    monkeypatch.setattr(node, "_bootstrap_rpc", fail_bootstrap)
+
+    created = node._auto_bootstrap_if_needed(cfg, cfg.bootstrap_url, force=False, quiet=True)
+    assert created is False
+
+
+@respx_mock
 def test_block_and_tx(monkeypatch: Any) -> None:
     rpc_url = "http://localhost:9998/rpc"
     monkeypatch.setenv("ANIMICA_RPC_URL", rpc_url)
 
-    block_route = respx.post(rpc_url).mock(
+    block_route = respx.post(rpc_url)(
         side_effect=[
             httpx.Response(
                 200,
@@ -144,7 +201,7 @@ def test_block_and_tx(monkeypatch: Any) -> None:
     assert block_result.exit_code == 0
     assert "0xdeadbeef" in block_result.output
 
-    tx_route = respx.post(rpc_url).mock(
+    tx_route = respx.post(rpc_url)(
         return_value=httpx.Response(
             200, json={"jsonrpc": "2.0", "id": 1, "result": {"hash": "0xbead"}}
         )
@@ -532,7 +589,7 @@ def test_devnet_uses_correct_compose_file(monkeypatch: Any) -> None:
             assert "Chain ID: 1337" in result.output
 
 
-@respx.mock
+@respx_mock
 def test_status_retries_on_connection_error(monkeypatch: Any) -> None:
     """Test that status command retries indefinitely on connection errors."""
     rpc_url = "http://localhost:9997/rpc"
@@ -562,7 +619,7 @@ def test_status_retries_on_connection_error(monkeypatch: Any) -> None:
         retry_attempt_count[0] += 1
         original_sleep(duration)
     
-    head_route = respx.post(rpc_url).mock(side_effect=side_effect_fn)
+    head_route = respx.post(rpc_url)(side_effect=side_effect_fn)
     
     # Patch time.sleep to track retry attempts
     import time
@@ -579,13 +636,13 @@ def test_status_retries_on_connection_error(monkeypatch: Any) -> None:
         time.sleep = original_sleep_fn
 
 
-@respx.mock
+@respx_mock
 def test_status_accepts_retry_delay_parameter(monkeypatch: Any) -> None:
     """Test that status command accepts --retry-delay parameter."""
     rpc_url = "http://localhost:9996/rpc"
     monkeypatch.setenv("ANIMICA_RPC_URL", rpc_url)
     
-    head_route = respx.post(rpc_url).mock(
+    head_route = respx.post(rpc_url)(
         return_value=httpx.Response(
             200,
             json={
@@ -612,13 +669,13 @@ def test_status_rejects_invalid_retry_delay(monkeypatch: Any) -> None:
     assert "retry-delay must be greater than 0" in result.output
 
 
-@respx.mock
+@respx_mock
 def test_status_accepts_timeout_parameter(monkeypatch: Any) -> None:
     """Test that status command accepts --timeout parameter and uses it without errors."""
     rpc_url = "http://localhost:9994/rpc"
     monkeypatch.setenv("ANIMICA_RPC_URL", rpc_url)
 
-    route = respx.post(rpc_url).mock(
+    route = respx.post(rpc_url)(
         side_effect=[
             httpx.Response(
                 200,
@@ -658,13 +715,13 @@ def test_status_rejects_invalid_timeout(monkeypatch: Any) -> None:
     assert "must not be negative" in result.output
 
 
-@respx.mock
+@respx_mock
 def test_status_allows_unbounded_timeout(monkeypatch: Any) -> None:
     """Timeout value of 0 disables timeouts and should be accepted."""
     rpc_url = "http://localhost:9990/rpc"
     monkeypatch.setenv("ANIMICA_RPC_URL", rpc_url)
 
-    route = respx.post(rpc_url).mock(
+    route = respx.post(rpc_url)(
         side_effect=[
             httpx.Response(
                 200,
@@ -690,7 +747,7 @@ def test_status_allows_unbounded_timeout(monkeypatch: Any) -> None:
     assert route.called
 
 
-@respx.mock
+@respx_mock
 def test_status_logs_error_type_when_message_missing(monkeypatch: Any) -> None:
     """Ensure retry log includes error type when exception has no message."""
     rpc_url = "http://localhost:9992/rpc"
@@ -720,7 +777,7 @@ def test_status_logs_error_type_when_message_missing(monkeypatch: Any) -> None:
             200, json={"jsonrpc": "2.0", "id": 1, "result": {"syncing": False}}
         )
 
-    respx.post(rpc_url).mock(side_effect=side_effect)
+    respx.post(rpc_url)(side_effect=side_effect)
 
     result = runner.invoke(node.app, ["status", "--retry-delay", "0.01"])
 

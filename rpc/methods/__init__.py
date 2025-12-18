@@ -115,6 +115,7 @@ def _iter_builtin_modules() -> Iterable[str]:
     We keep this in one place so it's easy to add/remove namespaces.
     """
     return [
+        "rpc.methods.bootstrap",
         "rpc.methods.tx",
         "rpc.methods.receipt",  # tx.getTransactionReceipt
         "rpc.methods.state",
