@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
+import ipaddress
 import logging
 import os
 import time
@@ -94,10 +96,16 @@ class P2PService:
 
         # Persistent peerstore
         if peerstore_path is None:
-            network_name = {1: "mainnet", 2: "testnet", 1337: "devnet"}.get(
-                self.chain_id, "custom"
+            env_peerstore = os.environ.get("ANIMICA_PEER_STORE_PATH") or os.environ.get(
+                "ANIMICA_P2P_DATA_DIR"
             )
-            peerstore_path = os.path.expanduser(f"~/.animica/p2p/{network_name}")
+            if env_peerstore:
+                peerstore_path = os.path.expanduser(env_peerstore)
+            else:
+                network_name = {1: "mainnet", 2: "testnet", 1337: "devnet"}.get(
+                    self.chain_id, "custom"
+                )
+                peerstore_path = os.path.expanduser(f"~/.animica/p2p/{network_name}")
         self.peerstore = pstore.PeerStore(peerstore_path)
 
         # Transport (TCP only for now)
@@ -132,6 +140,9 @@ class P2PService:
             "sync_rounds": 0,
         }
 
+        self._sync_lock = asyncio.Lock()
+        self._sync_wakeup = asyncio.Event()
+
         class _Metrics:
             def __init__(self, svc: "P2PService") -> None:
                 self._svc = svc
@@ -151,6 +162,10 @@ class P2PService:
             return
         self._running = True
 
+        # Persist configured seeds so a restarted node reuses them immediately
+        if self.seeds:
+            self._seed_peerstore(self.seeds)
+
         # Listen
         for ma in self.listen_addrs:
             parsed = parse_multiaddr(ma)
@@ -169,6 +184,7 @@ class P2PService:
             asyncio.create_task(self._head_watch_loop(), name="p2p.head_watch"),
             asyncio.create_task(self._sync_loop(), name="p2p.sync"),
         ]
+        self._sync_wakeup.set()
         log.info(
             "P2P started",
             extra={
@@ -222,6 +238,78 @@ class P2PService:
                 "hello": p.hello,
             }
         return out
+
+    def _normalize_seed(self, address: str) -> str:
+        if address.startswith("/"):
+            return address
+
+        # strip scheme if present
+        if "://" in address:
+            address = address.split("://", 1)[1]
+
+        host, _, port = address.rpartition(":")
+        if not host:
+            host = address
+        if not port:
+            return address
+
+        try:
+            ip_obj = ipaddress.ip_address(host)
+            ip_tag = "ip6" if ip_obj.version == 6 else "ip4"
+        except Exception:
+            ip_tag = "dns4"
+
+        return f"/{ip_tag}/{host}/tcp/{port}"
+
+    def _peer_id_from_addr(self, address: str) -> str:
+        if "/p2p/" in address:
+            return address.split("/p2p/", 1)[1].split("/")[0]
+        if "/ipfs/" in address:
+            return address.split("/ipfs/", 1)[1].split("/")[0]
+        return hashlib.sha256(address.encode()).hexdigest()[:32]
+
+    def _seed_peerstore(self, addresses: list[str]) -> int:
+        added = 0
+        for raw in addresses:
+            addr = self._normalize_seed(raw)
+            peer_id = self._peer_id_from_addr(addr)
+            try:
+                self.peerstore.add(peer_id=peer_id, addrs=[addr], direction="outbound")
+                self.peerstore.record_seen(peer_id, addr)
+                added += 1
+            except Exception:
+                continue
+        return added
+
+    def peer_count(self) -> int:
+        return len(self._peers)
+
+    async def import_peers(self, addresses: list[str]) -> dict[str, Any]:
+        if not addresses:
+            return {"added": 0, "dialing": 0}
+
+        normalized = [self._normalize_seed(a) for a in addresses]
+        added = self._seed_peerstore(normalized)
+
+        dial_targets: list[str] = []
+        for addr in normalized:
+            if addr.startswith("/"):
+                with contextlib.suppress(Exception):
+                    parsed = parse_multiaddr(addr)
+                    if parsed.transport == "tcp":
+                        dial_targets.append(f"tcp://{parsed.host}:{parsed.port}")
+                        continue
+            dial_targets.append(addr)
+
+        for addr in list(dict.fromkeys(dial_targets)):
+            asyncio.create_task(self._dial(addr), name=f"p2p.import_dial@{addr}")
+
+        self._sync_wakeup.set()
+        return {"added": added, "dialing": len(dial_targets)}
+
+    async def force_sync(self) -> dict[str, Any]:
+        self._sync_wakeup.set()
+        return await self._sync_once(force=True)
 
     async def dial(self, addr: str) -> None:
         if addr.startswith("/"):
@@ -660,41 +748,66 @@ class P2PService:
         except asyncio.CancelledError:
             return
 
+    async def _sync_once(self, *, force: bool = False) -> dict[str, Any]:
+        result: dict[str, Any] = {
+            "started": False,
+            "peer": None,
+            "remoteHeight": None,
+            "localHeight": None,
+        }
+
+        async with self._sync_lock:
+            peer = self._best_peer()
+            if peer is None or not peer.hello_done.is_set():
+                return result
+
+            local_height, _ = self._local_head()
+            remote_height = int((peer.hello or {}).get("head_height") or 0)
+            result.update({
+                "peer": peer.remote,
+                "remoteHeight": remote_height,
+                "localHeight": local_height,
+            })
+
+            if remote_height <= local_height and not force:
+                return result
+
+            self._stats["sync_rounds"] += 1
+
+            locator = self._build_locator()
+            fut: asyncio.Future = asyncio.get_event_loop().create_future()
+            peer.pending_headers = fut
+            await self._send(
+                peer,
+                MsgID.GET_HEADERS,
+                GetHeaders(locator=locator, max_headers=128),
+            )
+
+            try:
+                headers_msg: Headers = await asyncio.wait_for(fut, timeout=6.0)
+            except Exception:
+                peer.pending_headers = None
+                result["error"] = "timeout"
+                return result
+
+            if not headers_msg.headers:
+                result["error"] = "no-headers"
+                return result
+
+            hashes = [bytes(h.hash) for h in headers_msg.headers]
+            await self._request_blocks(peer, hashes)
+            result["started"] = True
+            return result
+
     async def _sync_loop(self) -> None:
         try:
             while self._running:
-                await asyncio.sleep(2.0)
-                peer = self._best_peer()
-                if peer is None or not peer.hello_done.is_set():
-                    continue
-
-                local_height, _ = self._local_head()
-                remote_height = int((peer.hello or {}).get("head_height") or 0)
-                if remote_height <= local_height:
-                    continue
-
-                self._stats["sync_rounds"] += 1
-
-                locator = self._build_locator()
-                fut: asyncio.Future = asyncio.get_event_loop().create_future()
-                peer.pending_headers = fut
-                await self._send(
-                    peer,
-                    MsgID.GET_HEADERS,
-                    GetHeaders(locator=locator, max_headers=128),
-                )
-
                 try:
-                    headers_msg: Headers = await asyncio.wait_for(fut, timeout=6.0)
-                except Exception:
-                    peer.pending_headers = None
-                    continue
-
-                if not headers_msg.headers:
-                    continue
-
-                hashes = [bytes(h.hash) for h in headers_msg.headers]
-                await self._request_blocks(peer, hashes)
+                    await asyncio.wait_for(self._sync_wakeup.wait(), timeout=2.0)
+                except asyncio.TimeoutError:
+                    pass
+                self._sync_wakeup.clear()
+                await self._sync_once()
         except asyncio.CancelledError:
             return
 

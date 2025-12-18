@@ -31,9 +31,9 @@ animica node status  # Now uses devnet
 
 **Each network uses a separate database directory to prevent state contamination:**
 
-- **Mainnet:** `~/.local/share/animica/chain-1/` (or `~/Library/Application Support/animica/chain-1/` on macOS)
-- **Testnet:** `~/.local/share/animica/chain-2/`
-- **Devnet:** `~/.local/share/animica/chain-1337/`
+- **Mainnet:** `~/.animica/chain-1/`
+- **Testnet:** `~/.animica/chain-2/`
+- **Devnet:** `~/.animica/chain-1337/`
 
 When you switch networks using `animica network set`, the system automatically:
 1. Points to the correct RPC endpoint for that network
@@ -52,6 +52,8 @@ The CLI automatically uses network-specific RPC URLs when `ANIMICA_RPC_URL` is n
 - **Local-devnet**: `http://127.0.0.1:38545/rpc`
 
 **No manual configuration needed!** Commands like `animica node status`, `animica rpc call`, and `animica wallet show` will work without setting `ANIMICA_RPC_URL`.
+
+> **Bootstrap-only public RPC:** `https://rpc.animica.org/rpc` is reserved for bootstrapping (seed discovery, headers, and manifests). Run `animica node up` and use your local RPC port for normal operations.
 
 To override the default:
 ```bash

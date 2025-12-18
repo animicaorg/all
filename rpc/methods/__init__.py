@@ -116,10 +116,12 @@ def _iter_builtin_modules() -> Iterable[str]:
     """
     return [
         "rpc.methods.bootstrap",
+        "rpc.methods.net",
         "rpc.methods.tx",
         "rpc.methods.receipt",  # tx.getTransactionReceipt
         "rpc.methods.state",
         "rpc.methods.chain",
+        "rpc.methods.sync",
         "rpc.methods.miner",
         "rpc.methods.mempool",
         "rpc.methods.da",

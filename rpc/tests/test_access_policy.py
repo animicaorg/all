@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 
 from rpc import deps
 from rpc.access_policy import AccessMode, AccessPolicy
-from rpc.errors import RpcMethodRestricted
+from rpc.errors import BootstrapOnlyEndpoint, RpcMethodRestricted
 from rpc.server import create_app
 from rpc.config import Config
 
@@ -72,3 +72,17 @@ def test_rpc_endpoint_rejects_restricted_methods(monkeypatch, tmp_path) -> None:
         body = denied.json()
         assert body.get("error", {}).get("code") == -32040
         assert "restricted" in body.get("error", {}).get("message", "").lower()
+
+
+def test_bootstrap_only_error(monkeypatch) -> None:
+    monkeypatch.setenv("ANIMICA_RPC_BOOTSTRAP_ONLY", "1")
+    policy = AccessPolicy.from_config(Config(host="0.0.0.0", port=0, db_uri=":memory:", chain_id=1))
+    ctx = DummyCtx()
+
+    # Allowed bootstrap method
+    policy.authorize("bootstrap.getManifest", ctx)
+
+    with pytest.raises(BootstrapOnlyEndpoint) as exc:
+        policy.authorize("state.getBalance", ctx)
+
+    assert exc.value.code == -32070
