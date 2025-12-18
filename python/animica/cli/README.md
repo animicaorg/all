@@ -117,10 +117,13 @@ Wallet Operations
 
   # Export wallet for backup (lookup by address or label)
   animica wallet export my-wallet --out backup.json
-  
+
   # Set default wallet
   animica wallet set-default my-wallet
-  
+
+  # Check where wallets are stored (respects --wallet-file and ANIMICA_WALLETS_FILE)
+  animica wallet path
+
   # Override wallet store location
   animica wallet --wallet-file /path/to/wallets.json list
   export ANIMICA_WALLETS_FILE=/path/to/wallets.json
@@ -415,6 +418,8 @@ Sync Management
   # The force sync command:
   #   - Checks peer connectivity before starting
   #   - Attempts to trigger sync via RPC (tries multiple methods)
+  #   - Auto-bootstraps peers from the configured bootstrap list when none are connected
+  #   - Re-seeds and re-triggers sync if progress stalls during monitoring
   #   - Monitors sync progress in real-time
   #   - Shows blocks synced and sync rate
   #   - Provides helpful diagnostics if sync fails

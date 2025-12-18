@@ -21,6 +21,7 @@ from animica.config import load_network_config
 from animica.cli.peer import (
     _generate_peer_id,
     _resolve_store_paths,
+    _rpc_operation_succeeded,
     _write_peer_to_sqlite,
     _write_peer_to_store,
 )
@@ -163,6 +164,85 @@ async def _get_peer_count(rpc_url: str) -> Optional[int]:
         except Exception:
             continue
     return None
+
+
+def _fetch_bootstrap_seeds(net_cfg) -> tuple[list[str], list[str]]:
+    """Fetch seed peers from bootstrap RPC or static defaults."""
+
+    seeds: list[str] = []
+    fetch_errors: list[str] = []
+
+    if net_cfg.bootstrap_url:
+        try:
+            guard_bootstrap_rpc(
+                net_cfg.bootstrap_url,
+                allow_bootstrap_methods=True,
+                method="net.getBootstrapSeeds",
+                bootstrap_url=net_cfg.bootstrap_url,
+            )
+            resp = asyncio.run(rpc_call("net.getBootstrapSeeds", [], rpc_url=net_cfg.bootstrap_url))
+            seeds = list((resp or {}).get("seeds") or [])
+            if not seeds:
+                alt_resp = asyncio.run(rpc_call("bootstrap.getSeeds", [], rpc_url=net_cfg.bootstrap_url))
+                seeds = list((alt_resp or {}).get("seeds") or [])
+        except Exception as exc:
+            fetch_errors.append(str(exc))
+
+    if not seeds:
+        seeds = get_seed_nodes(net_cfg.name)
+
+    return list(dict.fromkeys(seeds)), fetch_errors
+
+
+def _seed_local_peerstores(net_cfg, *, quiet: bool = False) -> tuple[int, bool, list[str]]:
+    """Persist bootstrap seeds locally and push them into a running node."""
+
+    seeds, fetch_errors = _fetch_bootstrap_seeds(net_cfg)
+    store_path = Path(net_cfg.data_dir).expanduser() / "p2p" / "peers.json"
+
+    if not seeds:
+        if not quiet:
+            typer.secho("⚠ No seeds available; cannot bootstrap peers", fg=typer.colors.YELLOW)
+        return 0, False, fetch_errors
+
+    stored = 0
+    for seed in seeds:
+        peer_id = _generate_peer_id(seed)
+        try:
+            _write_peer_to_store(store_path, peer_id, seed)
+            _write_peer_to_sqlite(store_path, peer_id, seed, direction="outbound")
+            stored += 1
+        except Exception as exc:
+            if not quiet:
+                typer.secho(f"⚠ Failed to persist {seed}: {exc}", fg=typer.colors.YELLOW)
+
+    rpc_added = False
+    rpc_error: Optional[str] = None
+    try:
+        import_resp = asyncio.run(rpc_call("p2p.importPeers", [seeds], rpc_url=net_cfg.rpc_url))
+        rpc_added, rpc_error = _rpc_operation_succeeded(import_resp)
+        if not rpc_added:
+            rpc_error = rpc_error or "p2p.importPeers did not report success"
+    except Exception as exc:
+        rpc_error = str(exc)
+
+    if not quiet:
+        if stored:
+            typer.secho(f"✓ Added {stored} seed(s) to local peer store", fg=typer.colors.GREEN)
+        if rpc_added:
+            typer.secho("✓ Seeds imported into running node", fg=typer.colors.GREEN)
+        else:
+            typer.secho("⚠ Could not push seeds into running node", fg=typer.colors.YELLOW)
+            if rpc_error:
+                typer.echo(f"  Reason: {rpc_error}")
+            typer.echo("  The node will read the persisted peer store on next start.")
+
+        if fetch_errors:
+            typer.secho("Bootstrap RPC errors (using fallback seeds if available):", fg=typer.colors.YELLOW)
+            for err in fetch_errors:
+                typer.echo(f"  - {err}")
+
+    return stored, rpc_added, fetch_errors
 
 
 async def _trigger_sync(rpc_url: str) -> bool:
@@ -443,42 +523,7 @@ def force_sync(
             "Using bootstrap RPC for discovery only. Seeding local peer store...",
             fg=typer.colors.YELLOW,
         )
-        seeds: list[str] = []
-        try:
-            guard_bootstrap_rpc(
-                url,
-                allow_bootstrap_methods=True,
-                method="net.getBootstrapSeeds",
-                bootstrap_url=net_cfg.bootstrap_url,
-            )
-            resp = asyncio.run(rpc_call("net.getBootstrapSeeds", [], rpc_url=url))
-            seeds = list((resp or {}).get("seeds") or [])
-        except Exception as exc:
-            typer.echo(f"Bootstrap RPC error: {exc}", err=True)
-
-        if not seeds:
-            seeds = get_seed_nodes(net_cfg.name)
-
-        if seeds:
-            store_path = Path(net_cfg.data_dir).expanduser() / "p2p" / "peers.json"
-            for seed in list(dict.fromkeys(seeds)):
-                peer_id = _generate_peer_id(seed)
-                try:
-                    _write_peer_to_store(store_path, peer_id, seed)
-                    _write_peer_to_sqlite(store_path, peer_id, seed, direction="outbound")
-                except Exception as exc:
-                    typer.secho(f"⚠ Failed to persist {seed}: {exc}", fg=typer.colors.YELLOW)
-
-            try:
-                import_resp = asyncio.run(rpc_call("p2p.importPeers", [seeds], rpc_url=net_cfg.rpc_url))
-                if not (isinstance(import_resp, dict) and import_resp.get("success")):
-                    typer.secho("⚠ Could not import seeds via local RPC (node may be offline)", fg=typer.colors.YELLOW)
-                else:
-                    typer.secho("✓ Seeds sent to local node", fg=typer.colors.GREEN)
-            except Exception as exc:
-                typer.secho(f"⚠ Seed import via local RPC failed: {exc}", fg=typer.colors.YELLOW)
-        else:
-            typer.secho("⚠ No seeds available; cannot bootstrap peers", fg=typer.colors.YELLOW)
+        _seed_local_peerstores(net_cfg)
 
         url = net_cfg.rpc_url
         typer.echo(f"Switching to local RPC for sync: {url}")
@@ -502,7 +547,7 @@ def force_sync(
         peers = asyncio.run(_get_peers(url))
         peer_count = len(peers)
         typer.echo(f"Connected peers: {peer_count}")
-        
+
         if peer_count == 0:
             typer.secho(
                 "\n⚠ Warning: No peers connected. Cannot sync without peers.",
@@ -514,6 +559,16 @@ def force_sync(
             typer.echo("  animica peer bootstrap")
             typer.echo("  animica peer add <address>")
             typer.echo()
+
+            typer.echo("Auto-bootstrapping peers from configured seeds...")
+            stored, rpc_added, _ = _seed_local_peerstores(net_cfg, quiet=False)
+            if stored:
+                try:
+                    peers = asyncio.run(_get_peers(url))
+                    peer_count = len(peers)
+                    typer.echo(f"Connected peers after bootstrap: {peer_count}")
+                except Exception:
+                    typer.secho("Warning: Could not refresh peer list after bootstrap", fg=typer.colors.YELLOW)
     except Exception:
         peer_count = 0
         typer.secho("Warning: Could not check peer count", fg=typer.colors.YELLOW)
@@ -585,6 +640,16 @@ def force_sync(
                             f"\n⚠ No progress for {stall_count * check_interval} seconds",
                             nl=False
                         )
+                        # Try to re-import seeds and retrigger sync to keep progress moving
+                        added, _, _ = _seed_local_peerstores(net_cfg, quiet=True)
+                        if added:
+                            try:
+                                peers = asyncio.run(_get_peers(url))
+                                peer_count = len(peers)
+                                typer.echo(f"\n✓ Re-seeded peers; {peer_count} connected")
+                            except Exception:
+                                typer.secho("\n⚠ Could not refresh peer list after re-seeding", fg=typer.colors.YELLOW, nl=False)
+                        asyncio.run(_trigger_sync(url))
             except Exception:
                 typer.echo("\n⚠ Connection error", nl=False)
     
