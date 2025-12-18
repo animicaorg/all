@@ -116,6 +116,48 @@ curl -X POST $VITE_RPC_URL \
 # Should return: {"jsonrpc":"2.0","id":1,"result":659658}
 ```
 
+## Production hosting (static)
+
+- Build once with `pnpm build` and serve the generated `dist/` directory from a static server (nginx, caddy, S3+CDN).  
+  **Do not run `pnpm dev` or expose the Vite HMR client in production.**
+- Prefer the built-in same-origin proxy path `/rpc` to avoid CORS issues; override via `VITE_RPC_URL` or `?rpc=` only for debugging.
+
+Example nginx snippet for `explorer.animica.org`:
+
+```nginx
+server {
+  listen 80;
+  server_name explorer.animica.org;
+
+  location / {
+    root /var/www/explorer/dist;
+    try_files $uri /index.html;
+    add_header Cache-Control "public, max-age=31536000, immutable";
+  }
+
+  location = /index.html {
+    add_header Cache-Control "no-store";
+  }
+
+  location /rpc {
+    proxy_pass https://rpc.animica.org/rpc;
+    proxy_set_header Host rpc.animica.org;
+    proxy_set_header X-Forwarded-For $remote_addr;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_http_version 1.1;
+    proxy_set_header Connection "";
+
+    if ($request_method = OPTIONS) {
+      add_header 'Access-Control-Allow-Origin' $http_origin;
+      add_header 'Access-Control-Allow-Methods' 'GET, POST, OPTIONS';
+      add_header 'Access-Control-Allow-Headers' '*';
+      add_header 'Access-Control-Max-Age' 1728000;
+      return 204;
+    }
+  }
+}
+```
+
 ## Troubleshooting RPC Connectivity
 
 ### Common Issues and Solutions

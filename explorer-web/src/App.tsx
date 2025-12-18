@@ -4,10 +4,10 @@ import { BrowserRouter, NavLink } from "react-router-dom";
 // Router (will be provided in explorer-web/src/router.tsx)
 import AppRouter from "./router";
 import { ExplorerStoreProvider } from "./state/store";
-import { inferRpcUrl } from "./services/env";
 import { useNetworkManager } from "./state/network";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { installGlobalErrorHandlers } from "./utils/errorHandler";
+import { resolveRpcUrl } from "./config/rpcUrl";
 
 // ────────────────────────────────────────────────────────────────────────────────
 // Global event channels so other modules can toggle loader / push toasts without
@@ -45,7 +45,7 @@ export default function App() {
   return (
     <ErrorBoundary>
       <ExplorerStoreProvider>
-        <BrowserRouter basename={basename} future={{ v7_relativeSplatPath: true }}>
+        <BrowserRouter basename={basename} future={{ v7_relativeSplatPath: true, v7_startTransition: true }}>
           <NetworkInitializer />
           <div className="app-root">
             <TopBar />
@@ -101,7 +101,7 @@ function NetworkInitializer() {
 function TopBar() {
   const [theme, setTheme] = useTheme();
   const { status, rpcUrl, expectedChainId } = useNetworkManager();
-  const configuredRpcUrl = inferRpcUrl((import.meta.env as any));
+  const configuredRpcUrl = resolveRpcUrl();
   
   const toggle = useCallback(() => setTheme(theme === "dark" ? "light" : "dark"), [theme, setTheme]);
 

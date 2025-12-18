@@ -181,10 +181,15 @@ export function showErrorToast(error: any, title?: string) {
  * Call this once during app initialization.
  */
 export function installGlobalErrorHandlers() {
-  // Only install once
-  if (unhandledRejectionHandler || globalErrorHandler) {
+  // Only install once (even across StrictMode double-invocation)
+  const flag = '__animica_explorer_error_handlers__';
+  if (typeof window !== 'undefined' && (window as any)[flag]) {
     console.log('[errorHandler] Global error handlers already installed');
     return;
+  }
+
+  if (typeof window !== 'undefined') {
+    (window as any)[flag] = true;
   }
 
   // Handle unhandled promise rejections
