@@ -6,6 +6,7 @@ import asyncio
 import json
 import os
 import subprocess
+import time
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -65,6 +66,95 @@ def _resolve_rpc_url(rpc_url: Optional[str]) -> str:
 
 def _pretty(obj: Any) -> str:
     return json.dumps(obj, indent=2)
+
+
+def _db_path(cfg: Any) -> Path:
+    data_dir = Path(os.path.expanduser(cfg.data_dir))
+    data_dir.mkdir(parents=True, exist_ok=True)
+    db_name = getattr(cfg, "db_name", "animica.db")
+    return data_dir / db_name
+
+
+def _bootstrap_state_path(cfg: Any) -> Path:
+    data_dir = Path(os.path.expanduser(cfg.data_dir))
+    data_dir.mkdir(parents=True, exist_ok=True)
+    return data_dir / "bootstrap.json"
+
+
+def _persist_bootstrap_state(cfg: Any, manifest: dict[str, Any], seeds: list[str]) -> Path:
+    state_path = _bootstrap_state_path(cfg)
+    payload = {"manifest": manifest, "seeds": seeds, "fetched_at": int(time.time())}
+    state_path.write_text(json.dumps(payload, indent=2))
+    return state_path
+
+
+def _bootstrap_rpc(bootstrap_url: str, method: str) -> Dict[str, Any]:
+    payload = {"jsonrpc": "2.0", "id": 1, "method": method, "params": []}
+    try:
+        resp = httpx.post(bootstrap_url, json=payload, timeout=10.0)
+        resp.raise_for_status()
+        parsed = resp.json()
+        if "error" in parsed and parsed["error"]:
+            raise RuntimeError(parsed["error"])
+        result = parsed.get("result")
+        return result if isinstance(result, dict) else {}
+    except Exception as exc:
+        raise RuntimeError(f"Bootstrap RPC {method} failed: {exc}") from exc
+
+
+def _local_rpc(rpc_url: str, method: str, params: list[Any] | None = None) -> Any:
+    payload = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params or []}
+    resp = httpx.post(rpc_url, json=payload, timeout=5.0)
+    resp.raise_for_status()
+    parsed = resp.json()
+    if "error" in parsed and parsed["error"]:
+        raise RuntimeError(parsed["error"])
+    return parsed.get("result")
+
+
+def _fetch_bootstrap_data(net_cfg: Any, bootstrap_url: str) -> tuple[dict[str, Any], list[str], Path]:
+    manifest = _bootstrap_rpc(bootstrap_url, "bootstrap.getManifest")
+
+    seeds: list[str] = []
+    p2p_info = manifest.get("p2p") if isinstance(manifest, dict) else None
+    if isinstance(p2p_info, dict):
+        seeds = list(p2p_info.get("seeds") or [])
+
+    if not seeds:
+        try:
+            seed_resp = _bootstrap_rpc(bootstrap_url, "bootstrap.getSeeds")
+            seeds = list(seed_resp.get("seeds") or [])
+        except Exception:
+            seeds = []
+
+    state_path = _persist_bootstrap_state(net_cfg, manifest, seeds)
+    if seeds:
+        os.environ["ANIMICA_P2P_SEEDS"] = ",".join(str(s) for s in seeds)
+    return manifest, seeds, state_path
+
+
+def _auto_bootstrap_if_needed(net_cfg: Any, bootstrap_url: str | None, *, force: bool = False, quiet: bool = False) -> bool:
+    db_path = _db_path(net_cfg)
+    db_exists = db_path.exists() and db_path.stat().st_size > 0
+    if db_exists and not force:
+        return False
+
+    endpoint = bootstrap_url or getattr(net_cfg, "bootstrap_url", None)
+    if not endpoint:
+        return False
+
+    if not quiet:
+        typer.echo(f"Auto-bootstrap: fetching seeds from {endpoint}")
+
+    try:
+        _fetch_bootstrap_data(net_cfg, endpoint)
+        if not quiet:
+            typer.secho("✓ Bootstrap metadata saved locally", fg=typer.colors.GREEN)
+        return True
+    except Exception as exc:
+        if not quiet:
+            typer.secho(f"Warning: auto-bootstrap failed ({exc})", fg=typer.colors.YELLOW, err=True)
+        return False
 
 
 def _ensure_network_set() -> str:
@@ -239,6 +329,105 @@ def head(
 
 
 @app.command()
+def bootstrap(
+    network: Optional[str] = typer.Option(
+        None, "--network", help="Network to bootstrap (defaults to current network)", envvar="ANIMICA_NETWORK"
+    ),
+    bootstrap_url: Optional[str] = typer.Option(
+        None,
+        "--bootstrap-url",
+        help="Bootstrap RPC endpoint (defaults to network bootstrap URL)",
+        envvar="ANIMICA_BOOTSTRAP_RPC_URL",
+    ),
+    detach: bool = typer.Option(True, "--detach/--no-detach", help="Run node in background while bootstrapping"),
+    max_peer_wait: int = typer.Option(60, "--peer-wait", help="Seconds to wait for peers after start"),
+    retry_seeds: int = typer.Option(1, "--retry-seeds", help="Retry seed fetches when no peers"),
+) -> None:
+    """Bootstrap a node using the public bootstrap RPC, then switch to local RPC."""
+
+    net_cfg = load_network_config(network)
+    bootstrap_endpoint = bootstrap_url or net_cfg.bootstrap_url
+    if not bootstrap_endpoint:
+        typer.echo("No bootstrap RPC configured for this network", err=True)
+        raise typer.Exit(code=1)
+
+    db_path = _db_path(net_cfg)
+    db_exists = db_path.exists() and db_path.stat().st_size > 0
+
+    typer.secho(f"Bootstrapping network: {net_cfg.name}", fg=typer.colors.CYAN, bold=True)
+    typer.echo(f"Bootstrap RPC: {bootstrap_endpoint}")
+    typer.echo(f"Local RPC: {net_cfg.rpc_url}")
+    typer.echo(f"Data dir: {net_cfg.data_dir} (db exists: {'yes' if db_exists else 'no'})")
+
+    try:
+        manifest, seeds, state_path = _fetch_bootstrap_data(net_cfg, bootstrap_endpoint)
+    except Exception as exc:
+        typer.echo(f"Failed to fetch bootstrap manifest: {exc}", err=True)
+        raise typer.Exit(code=1)
+
+    typer.echo(f"Saved bootstrap state to {state_path}")
+
+    # Ensure subsequent commands use this network
+    os.environ["ANIMICA_NETWORK"] = net_cfg.name
+
+    # Start node using existing up command
+    try:
+        up(detach=detach, build=True, with_miner=False)
+    except SystemExit as exc:  # Typer exits bubble up as SystemExit
+        if exc.code not in (0, None):
+            raise
+    except Exception as exc:
+        typer.echo(f"Failed to start node: {exc}", err=True)
+        raise typer.Exit(code=1)
+
+    local_rpc = net_cfg.rpc_url
+    typer.echo("Waiting for local node to become ready...")
+    ready = False
+    for _ in range(30):
+        try:
+            _local_rpc(local_rpc, "chain.getHead", [])
+            ready = True
+            break
+        except Exception:
+            time.sleep(2)
+    if not ready:
+        typer.echo("Node did not respond on local RPC within timeout", err=True)
+        raise typer.Exit(code=1)
+
+    attempts = max(1, max_peer_wait)
+    refreshes = retry_seeds
+    for attempt in range(attempts):
+        try:
+            peers = _local_rpc(local_rpc, "p2p.listPeers", [])
+            peer_count = len(peers) if isinstance(peers, list) else int(peers or 0)
+        except Exception:
+            peer_count = 0
+
+        if peer_count > 0:
+            typer.secho(f"Peers connected: {peer_count}. Bootstrap complete.", fg=typer.colors.GREEN)
+            break
+
+        if peer_count == 0 and refreshes > 0 and attempt and attempt % 10 == 0:
+            try:
+                refreshed = _bootstrap_rpc(bootstrap_endpoint, "bootstrap.getSeeds")
+                new_seeds = list(refreshed.get("seeds") or [])
+                if new_seeds:
+                    seeds = new_seeds
+                refreshes -= 1
+            except Exception:
+                pass
+            for seed in seeds:
+                try:
+                    _local_rpc(local_rpc, "p2p.addPeer", [str(seed)])
+                except Exception:
+                    continue
+
+        time.sleep(1)
+    else:
+        typer.echo("Warning: no peers connected after bootstrap window", err=True)
+
+
+@app.command()
 def block(
     height: Optional[int] = typer.Option(None, "--height", help="Block height"),
     hash: Optional[str] = typer.Option(None, "--hash", help="Block hash"),
@@ -365,6 +554,9 @@ def up(
     compose_file = _get_compose_file(network)
     
     defaults = get_network_defaults(network)
+    net_cfg = load_network_config(network)
+
+    _auto_bootstrap_if_needed(net_cfg, os.getenv("ANIMICA_BOOTSTRAP_RPC_URL"), quiet=False)
     
     typer.secho(f"Starting node for network: {network}", fg=typer.colors.CYAN, bold=True)
     typer.echo(f"Using compose file: {compose_file}")
@@ -372,7 +564,7 @@ def up(
     typer.echo(f"Host RPC Port: {os.environ.get('HOST_RPC_PORT', defaults['rpc_port'])}")
     typer.echo(f"Host P2P Port: {os.environ.get('HOST_P2P_PORT', defaults['p2p_port'])}")
     typer.echo(f"Host Metrics Port: {os.environ.get('HOST_METRICS_PORT', defaults['metrics_port'])}")
-    typer.echo(f"Data directory: {defaults['data_dir']}")
+    typer.echo(f"Data directory: {net_cfg.data_dir}")
     
     # Build docker-compose command
     # For devnet, we need to use profiles; for mainnet/testnet, services run by default
@@ -509,6 +701,7 @@ def up_all(
         try:
             defaults = get_network_defaults(network)
             compose_file = defaults["compose_file"]
+            net_cfg = load_network_config(network)
             
             if not compose_file.exists():
                 typer.secho(
@@ -527,12 +720,14 @@ def up_all(
             skipped_networks.append(network)
             continue
         
+        _auto_bootstrap_if_needed(net_cfg, os.getenv("ANIMICA_BOOTSTRAP_RPC_URL"), quiet=True)
+
         typer.echo(f"Compose file: {compose_file}")
         typer.echo(f"Chain ID: {defaults['chain_id']}")
         typer.echo(f"Host RPC Port: {os.environ.get('HOST_RPC_PORT', defaults['rpc_port'])}")
         typer.echo(f"Host P2P Port: {os.environ.get('HOST_P2P_PORT', defaults['p2p_port'])}")
         typer.echo(f"Host Metrics Port: {os.environ.get('HOST_METRICS_PORT', defaults['metrics_port'])}")
-        typer.echo(f"Data directory: {defaults['data_dir']}")
+        typer.echo(f"Data directory: {net_cfg.data_dir}")
         
         # Build docker-compose command
         cmd = [

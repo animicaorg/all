@@ -24,8 +24,8 @@
       "quantum_ready"
     ],
     "rpc": [
-      { "type": "http", "url": "https://rpc.animica.org/rpc" },
-      { "type": "ws",   "url": "wss://rpc.animica.org/ws" }
+      { "type": "http", "url": "http://127.0.0.1:8545/rpc" },
+      { "type": "ws",   "url": "ws://127.0.0.1:8546/ws" }
     ],
     "explorers": [
       { "name": "animica-explorer", "url": "https://explorer.animica.org" }

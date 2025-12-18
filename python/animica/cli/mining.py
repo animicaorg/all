@@ -16,6 +16,7 @@ from typing import Optional
 import typer
 from animica.coin import COIN_UNIT
 from animica.config import load_network_config
+from animica.cli.rpc_guard import guard_bootstrap_rpc
 from .timeouts import DEFAULT_RPC_TIMEOUT, RPC_TIMEOUT_ENV, resolve_timeout
 
 try:
@@ -162,6 +163,11 @@ def run_pool(
     rpc_url: Optional[str] = typer.Option(
         None, "--rpc-url", help="Animica node RPC URL", envvar=RPC_ENV
     ),
+    allow_remote_rpc: bool = typer.Option(
+        False,
+        "--allow-remote-rpc",
+        help="Allow using bootstrap RPC (requires ANIMICA_I_UNDERSTAND_REMOTE_RISK=1)",
+    ),
     db_url: Optional[str] = typer.Option(
         None, "--db-url", help="Database URL", envvar=DB_ENV
     ),
@@ -178,6 +184,8 @@ def run_pool(
     """Start the Animica Stratum mining pool."""
     _ensure_stratum_available()
     _ensure_network_env()
+    effective_rpc = rpc_url or os.environ.get(RPC_ENV) or load_network_config().rpc_url
+    guard_bootstrap_rpc(effective_rpc, allow_remote=allow_remote_rpc, method="miner.runPool")
     env_overrides = {
         RPC_ENV: rpc_url,
         DB_ENV: db_url,
@@ -257,6 +265,11 @@ def mine_blocks(
         None,
         "--address",
         help="Payout address (option, for backward compat): wallet label or Bech32 address",
+    ),
+    allow_remote_rpc: bool = typer.Option(
+        False,
+        "--allow-remote-rpc",
+        help="Allow using bootstrap RPC (requires ANIMICA_I_UNDERSTAND_REMOTE_RISK=1)",
     ),
     device: str = typer.Option(
         "auto",
@@ -463,6 +476,7 @@ def mine_blocks(
     
     # Resolve RPC URL
     url = rpc_url or os.environ.get("ANIMICA_RPC_URL") or load_network_config().rpc_url
+    guard_bootstrap_rpc(url, allow_remote=allow_remote_rpc, method="miner.mineBlocks")
     
     # Initialize proxy if enabled (DEPRECATED - proxy is disabled by default)
     proxy = None

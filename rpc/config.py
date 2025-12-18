@@ -39,6 +39,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from rpc.access_policy import AccessMode
+
 
 def _expand_sqlite_uri(uri: str) -> str:
     """
@@ -170,6 +172,16 @@ def _env_json_map_float(name: str, default: Dict[str, float]) -> Dict[str, float
     return dict(default)
 
 
+def _env_access_mode(name: str, default: AccessMode) -> AccessMode:
+    raw = _env(name)
+    if raw is None:
+        return default
+    try:
+        return AccessMode[raw.strip().upper()]
+    except Exception:
+        return default
+
+
 DEFAULT_PER_METHOD_RPS: Dict[str, float] = {
     # Chain & blocks
     "chain.getParams": 5.0,
@@ -222,6 +234,14 @@ class RateLimitConfig:
 
 
 @dataclass(frozen=True)
+class AccessControlConfig:
+    mode: AccessMode = AccessMode.LOCAL_DEV
+    admin_token: Optional[str] = None
+    admin_allowlist: List[str] = field(default_factory=list)
+    bootstrap_rate_limit: int = 0
+
+
+@dataclass(frozen=True)
 class RpcConfig:
     host: str
     port: int
@@ -234,6 +254,7 @@ class RpcConfig:
     metrics_enabled: bool
     metrics_port: int
     openrpc_enabled: bool
+    access: AccessControlConfig
     genesis_path: Path | None = None
 
     @property
@@ -268,6 +289,13 @@ def load() -> RpcConfig:
         per_method_rps=_env_json_map_float(
             "ANIMICA_RPC_RATE_PER_METHOD", DEFAULT_PER_METHOD_RPS
         ),
+    )
+
+    access = AccessControlConfig(
+        mode=_env_access_mode("ANIMICA_RPC_ACCESS_MODE", AccessMode.LOCAL_DEV),
+        admin_token=_env("ANIMICA_RPC_ADMIN_TOKEN"),
+        admin_allowlist=_env_list("ANIMICA_RPC_ADMIN_ALLOWLIST", []),
+        bootstrap_rate_limit=_env_int("ANIMICA_BOOTSTRAP_RATE_LIMIT", 0),
     )
 
     explicit_chain_id = "ANIMICA_CHAIN_ID" in os.environ
@@ -327,6 +355,7 @@ def load() -> RpcConfig:
         metrics_enabled=metrics_enabled,
         metrics_port=metrics_port,
         openrpc_enabled=openrpc_enabled,
+        access=access,
         genesis_path=genesis_path,
     )
 
@@ -372,6 +401,10 @@ class Config:
     rate_limit_per_ip: float = 0.0
     rate_limit_per_method: float = 0.0
     genesis_path: Path | None = None
+    access_mode: str = AccessMode.LOCAL_DEV.value
+    admin_token: str | None = None
+    admin_allowlist: list[str] = field(default_factory=list)
+    bootstrap_rate_limit: int = 0
 
 
 def load_config() -> Config:
@@ -386,12 +419,18 @@ def load_config() -> Config:
         rate_limit_per_ip=cfg.rate.default_rps,
         rate_limit_per_method=cfg.rate.default_rps,
         genesis_path=cfg.genesis_path,
+        access_mode=cfg.access.mode.value,
+        admin_token=cfg.access.admin_token,
+        admin_allowlist=list(cfg.access.admin_allowlist),
+        bootstrap_rate_limit=cfg.access.bootstrap_rate_limit,
     )
 
 
 __all__ = [
     "CorsConfig",
     "RateLimitConfig",
+    "AccessControlConfig",
+    "AccessMode",
     "RpcConfig",
     "CONFIG",
     "resolve_chain_id",

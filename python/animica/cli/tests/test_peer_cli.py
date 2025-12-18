@@ -7,14 +7,21 @@ import sqlite3
 from typing import Any
 
 import httpx
-import respx
+import pytest
 from animica.cli import peer
 from typer.testing import CliRunner
+
+try:
+    import respx  # type: ignore
+except Exception:  # pragma: no cover - optional dependency
+    respx = None  # type: ignore[assignment]
+
+respx_mock = respx.mock if respx is not None else pytest.mark.skip(reason="respx not installed")
 
 runner = CliRunner()
 
 
-@respx.mock
+@respx_mock
 def test_list_peers_success(monkeypatch: Any) -> None:
     """Test listing peers successfully."""
     rpc_url = "http://localhost:9999/rpc"
@@ -34,7 +41,7 @@ def test_list_peers_success(monkeypatch: Any) -> None:
     ]
 
     # Mock the RPC call
-    respx.post(rpc_url).mock(
+    respx.post(rpc_url)(
         return_value=httpx.Response(
             200,
             json={"jsonrpc": "2.0", "id": 1, "result": mock_peers},
@@ -48,7 +55,7 @@ def test_list_peers_success(monkeypatch: Any) -> None:
     assert "QmPeer2" in result.output
 
 
-@respx.mock
+@respx_mock
 def test_list_peers_verbose(monkeypatch: Any) -> None:
     """Test listing peers with verbose output."""
     rpc_url = "http://localhost:9999/rpc"
@@ -62,7 +69,7 @@ def test_list_peers_verbose(monkeypatch: Any) -> None:
         }
     ]
 
-    respx.post(rpc_url).mock(
+    respx.post(rpc_url)(
         return_value=httpx.Response(
             200,
             json={"jsonrpc": "2.0", "id": 1, "result": mock_peers},
@@ -75,13 +82,13 @@ def test_list_peers_verbose(monkeypatch: Any) -> None:
     assert '"id": "QmPeer1"' in result.output or '"id":"QmPeer1"' in result.output
 
 
-@respx.mock
+@respx_mock
 def test_list_peers_empty(monkeypatch: Any) -> None:
     """Test listing peers when no peers are connected."""
     rpc_url = "http://localhost:9999/rpc"
     monkeypatch.setenv("ANIMICA_RPC_URL", rpc_url)
 
-    respx.post(rpc_url).mock(
+    respx.post(rpc_url)(
         return_value=httpx.Response(
             200,
             json={"jsonrpc": "2.0", "id": 1, "result": []},
@@ -93,14 +100,14 @@ def test_list_peers_empty(monkeypatch: Any) -> None:
     assert "No peers connected" in result.output
 
 
-@respx.mock
+@respx_mock
 def test_list_peers_rpc_unavailable(monkeypatch: Any, tmp_path: Any) -> None:
     """Test listing peers when RPC is unavailable and no local store exists."""
     rpc_url = "http://localhost:9999/rpc"
     monkeypatch.setenv("ANIMICA_RPC_URL", rpc_url)
 
     # Mock all potential RPC methods to fail
-    respx.post(rpc_url).mock(
+    respx.post(rpc_url)(
         return_value=httpx.Response(
             200,
             json={"jsonrpc": "2.0", "id": 1, "error": {"code": -32601, "message": "Method not found"}},
@@ -114,13 +121,13 @@ def test_list_peers_rpc_unavailable(monkeypatch: Any, tmp_path: Any) -> None:
     assert "Unable to retrieve peers" in result.output
 
 
-@respx.mock
+@respx_mock
 def test_add_peer_success(monkeypatch: Any) -> None:
     """Test adding a peer successfully."""
     rpc_url = "http://localhost:9999/rpc"
     monkeypatch.setenv("ANIMICA_RPC_URL", rpc_url)
 
-    respx.post(rpc_url).mock(
+    respx.post(rpc_url)(
         return_value=httpx.Response(
             200,
             json={"jsonrpc": "2.0", "id": 1, "result": True},
@@ -132,13 +139,13 @@ def test_add_peer_success(monkeypatch: Any) -> None:
     assert "Successfully added peer" in result.output
 
 
-@respx.mock
+@respx_mock
 def test_add_peer_failure(monkeypatch: Any, tmp_path: Any) -> None:
     """Test adding a peer when RPC fails now falls back to local store."""
     rpc_url = "http://localhost:9999/rpc"
     monkeypatch.setenv("ANIMICA_RPC_URL", rpc_url)
 
-    respx.post(rpc_url).mock(
+    respx.post(rpc_url)(
         return_value=httpx.Response(
             200,
             json={"jsonrpc": "2.0", "id": 1, "error": {"code": -32000, "message": "Failed to add peer"}},
@@ -152,14 +159,14 @@ def test_add_peer_failure(monkeypatch: Any, tmp_path: Any) -> None:
     assert "Peer saved to local store after RPC failure" in result.output
 
 
-@respx.mock
+@respx_mock
 def test_add_peer_unsuccessful_rpc_response(monkeypatch: Any, tmp_path: Any) -> None:
     """Test adding a peer when RPC returns a failure payload."""
 
     rpc_url = "http://localhost:9999/rpc"
     monkeypatch.setenv("ANIMICA_RPC_URL", rpc_url)
 
-    respx.post(rpc_url).mock(
+    respx.post(rpc_url)(
         return_value=httpx.Response(
             200,
             json={"jsonrpc": "2.0", "id": 1, "result": {"success": False, "error": "P2P service not available"}},
@@ -173,13 +180,13 @@ def test_add_peer_unsuccessful_rpc_response(monkeypatch: Any, tmp_path: Any) -> 
     assert "P2P service not available" in result.output
 
 
-@respx.mock
+@respx_mock
 def test_remove_peer_success(monkeypatch: Any) -> None:
     """Test removing a peer successfully."""
     rpc_url = "http://localhost:9999/rpc"
     monkeypatch.setenv("ANIMICA_RPC_URL", rpc_url)
 
-    respx.post(rpc_url).mock(
+    respx.post(rpc_url)(
         return_value=httpx.Response(
             200,
             json={"jsonrpc": "2.0", "id": 1, "result": True},
@@ -191,13 +198,13 @@ def test_remove_peer_success(monkeypatch: Any) -> None:
     assert "Successfully removed peer" in result.output
 
 
-@respx.mock
+@respx_mock
 def test_remove_peer_failure(monkeypatch: Any, tmp_path: Any) -> None:
     """Test removing a peer when both RPC and local store fail."""
     rpc_url = "http://localhost:9999/rpc"
     monkeypatch.setenv("ANIMICA_RPC_URL", rpc_url)
 
-    respx.post(rpc_url).mock(
+    respx.post(rpc_url)(
         return_value=httpx.Response(
             200,
             json={"jsonrpc": "2.0", "id": 1, "error": {"code": -32000, "message": "Peer not found"}},
@@ -213,7 +220,7 @@ def test_remove_peer_failure(monkeypatch: Any, tmp_path: Any) -> None:
     assert "Failed to remove peer" in result.output
 
 
-@respx.mock
+@respx_mock
 def test_peer_info_success(monkeypatch: Any) -> None:
     """Test getting peer info successfully."""
     rpc_url = "http://localhost:9999/rpc"
@@ -227,7 +234,7 @@ def test_peer_info_success(monkeypatch: Any) -> None:
         "version": "1.0.0",
     }
 
-    respx.post(rpc_url).mock(
+    respx.post(rpc_url)(
         return_value=httpx.Response(
             200,
             json={"jsonrpc": "2.0", "id": 1, "result": mock_peer_info},
@@ -240,14 +247,14 @@ def test_peer_info_success(monkeypatch: Any) -> None:
     assert "1.2.3.4" in result.output
 
 
-@respx.mock
+@respx_mock
 def test_peer_info_not_found(monkeypatch: Any) -> None:
     """Test getting peer info when peer not found."""
     rpc_url = "http://localhost:9999/rpc"
     monkeypatch.setenv("ANIMICA_RPC_URL", rpc_url)
 
     # Mock all methods to fail
-    respx.post(rpc_url).mock(
+    respx.post(rpc_url)(
         return_value=httpx.Response(
             200,
             json={"jsonrpc": "2.0", "id": 1, "error": {"code": -32000, "message": "Peer not found"}},
@@ -259,7 +266,7 @@ def test_peer_info_not_found(monkeypatch: Any) -> None:
     assert "Unable to retrieve information" in result.output
 
 
-@respx.mock
+@respx_mock
 def test_list_peers_fallback_to_json_store(monkeypatch: Any, tmp_path: Any) -> None:
     """Test fallback to JSON peer store when RPC is unavailable."""
     
@@ -293,7 +300,7 @@ def test_list_peers_fallback_to_json_store(monkeypatch: Any, tmp_path: Any) -> N
     store_path.write_text(json.dumps(peers_data))
     
     # Mock all RPC methods to fail
-    respx.post(rpc_url).mock(
+    respx.post(rpc_url)(
         return_value=httpx.Response(
             200,
             json={"jsonrpc": "2.0", "id": 1, "error": {"code": -32601, "message": "Method not found"}},
@@ -309,7 +316,7 @@ def test_list_peers_fallback_to_json_store(monkeypatch: Any, tmp_path: Any) -> N
     assert "/ip4/10.0.0.1/tcp/30303" in result.output
 
 
-@respx.mock
+@respx_mock
 def test_list_peers_fallback_to_json_store_verbose(monkeypatch: Any, tmp_path: Any) -> None:
     """Test fallback to JSON peer store with verbose output."""
     
@@ -334,7 +341,7 @@ def test_list_peers_fallback_to_json_store_verbose(monkeypatch: Any, tmp_path: A
     store_path.write_text(json.dumps(peers_data))
     
     # Mock all RPC methods to fail
-    respx.post(rpc_url).mock(
+    respx.post(rpc_url)(
         return_value=httpx.Response(
             200,
             json={"jsonrpc": "2.0", "id": 1, "error": {"code": -32601, "message": "Method not found"}},
@@ -349,7 +356,7 @@ def test_list_peers_fallback_to_json_store_verbose(monkeypatch: Any, tmp_path: A
     assert '"peer_id": "peer789"' in result.output or '"peer_id":"peer789"' in result.output
 
 
-@respx.mock
+@respx_mock
 def test_list_peers_fallback_empty_store(monkeypatch: Any, tmp_path: Any) -> None:
     """Test fallback when both RPC and store are empty."""
     
@@ -365,7 +372,7 @@ def test_list_peers_fallback_empty_store(monkeypatch: Any, tmp_path: Any) -> Non
     # We only error if both RPC fails AND the store file doesn't exist
     
     # Mock all RPC methods to fail
-    respx.post(rpc_url).mock(
+    respx.post(rpc_url)(
         return_value=httpx.Response(
             200,
             json={"jsonrpc": "2.0", "id": 1, "error": {"code": -32601, "message": "Method not found"}},
@@ -377,7 +384,7 @@ def test_list_peers_fallback_empty_store(monkeypatch: Any, tmp_path: Any) -> Non
     assert "No known peers in local peer store" in result.output  # Changed to reflect new message
 
 
-@respx.mock
+@respx_mock
 def test_list_peers_fallback_nonexistent_store(monkeypatch: Any, tmp_path: Any) -> None:
     """Test fallback when store file does not exist."""
     rpc_url = "http://localhost:9999/rpc"
@@ -387,7 +394,7 @@ def test_list_peers_fallback_nonexistent_store(monkeypatch: Any, tmp_path: Any) 
     store_path = tmp_path / "nonexistent_peers.json"
     
     # Mock all RPC methods to fail
-    respx.post(rpc_url).mock(
+    respx.post(rpc_url)(
         return_value=httpx.Response(
             200,
             json={"jsonrpc": "2.0", "id": 1, "error": {"code": -32601, "message": "Method not found"}},
@@ -400,7 +407,7 @@ def test_list_peers_fallback_nonexistent_store(monkeypatch: Any, tmp_path: Any) 
     assert str(store_path) in result.output
 
 
-@respx.mock
+@respx_mock
 def test_list_peers_rpc_takes_precedence_over_store(monkeypatch: Any, tmp_path: Any) -> None:
     """Test that RPC is tried first and takes precedence over store."""
     
@@ -430,7 +437,7 @@ def test_list_peers_rpc_takes_precedence_over_store(monkeypatch: Any, tmp_path: 
             "status": "connected",
         }
     ]
-    respx.post(rpc_url).mock(
+    respx.post(rpc_url)(
         return_value=httpx.Response(
             200,
             json={"jsonrpc": "2.0", "id": 1, "result": mock_rpc_peers},
@@ -445,7 +452,7 @@ def test_list_peers_rpc_takes_precedence_over_store(monkeypatch: Any, tmp_path: 
     assert "from local peer store" not in result.output
 
 
-@respx.mock
+@respx_mock
 def test_list_peers_fallback_to_sqlite_store(monkeypatch: Any, tmp_path: Any) -> None:
     """Test fallback to SQLite peer store when RPC is unavailable."""
     
@@ -504,7 +511,7 @@ def test_list_peers_fallback_to_sqlite_store(monkeypatch: Any, tmp_path: Any) ->
     conn.close()
     
     # Mock all RPC methods to fail
-    respx.post(rpc_url).mock(
+    respx.post(rpc_url)(
         return_value=httpx.Response(
             200,
             json={"jsonrpc": "2.0", "id": 1, "error": {"code": -32601, "message": "Method not found"}},
@@ -523,7 +530,7 @@ def test_list_peers_fallback_to_sqlite_store(monkeypatch: Any, tmp_path: Any) ->
 # ==================== Tests for add_peer with store fallback ====================
 
 
-@respx.mock
+@respx_mock
 def test_add_peer_writes_to_store_on_success(monkeypatch: Any, tmp_path: Any) -> None:
     """Test that add_peer writes to store after successful RPC call."""
     
@@ -533,7 +540,7 @@ def test_add_peer_writes_to_store_on_success(monkeypatch: Any, tmp_path: Any) ->
     store_path = tmp_path / "peers.json"
     
     # Mock RPC to succeed
-    respx.post(rpc_url).mock(
+    respx.post(rpc_url)(
         return_value=httpx.Response(
             200,
             json={"jsonrpc": "2.0", "id": 1, "result": True},
@@ -556,7 +563,7 @@ def test_add_peer_writes_to_store_on_success(monkeypatch: Any, tmp_path: Any) ->
     assert peers[0]["peer_id"].startswith("peer_")
 
 
-@respx.mock
+@respx_mock
 def test_add_peer_fallback_to_store_when_rpc_fails(monkeypatch: Any, tmp_path: Any) -> None:
     """Test that add_peer falls back to writing to store when RPC fails."""
     
@@ -566,7 +573,7 @@ def test_add_peer_fallback_to_store_when_rpc_fails(monkeypatch: Any, tmp_path: A
     store_path = tmp_path / "peers.json"
     
     # Mock all RPC methods to fail
-    respx.post(rpc_url).mock(
+    respx.post(rpc_url)(
         return_value=httpx.Response(
             200,
             json={"jsonrpc": "2.0", "id": 1, "error": {"code": -32601, "message": "Method not found"}},
@@ -587,7 +594,7 @@ def test_add_peer_fallback_to_store_when_rpc_fails(monkeypatch: Any, tmp_path: A
     assert "10.0.0.1:42000" in peers[0]["addrs"]
 
 
-@respx.mock
+@respx_mock
 def test_add_peer_with_multiaddr_extracts_peer_id(monkeypatch: Any, tmp_path: Any) -> None:
     """Test that add_peer extracts peer ID from multiaddr format."""
     
@@ -597,7 +604,7 @@ def test_add_peer_with_multiaddr_extracts_peer_id(monkeypatch: Any, tmp_path: An
     store_path = tmp_path / "peers.json"
     
     # Mock RPC to fail so we test store-only path
-    respx.post(rpc_url).mock(
+    respx.post(rpc_url)(
         return_value=httpx.Response(
             200,
             json={"jsonrpc": "2.0", "id": 1, "error": {"code": -32601, "message": "Method not found"}},
@@ -618,7 +625,7 @@ def test_add_peer_with_multiaddr_extracts_peer_id(monkeypatch: Any, tmp_path: An
     assert multiaddr in peers[0]["addrs"]
 
 
-@respx.mock
+@respx_mock
 def test_add_peer_updates_existing_peer(monkeypatch: Any, tmp_path: Any) -> None:
     """Test that add_peer updates an existing peer with new address."""
     
@@ -642,7 +649,7 @@ def test_add_peer_updates_existing_peer(monkeypatch: Any, tmp_path: Any) -> None
     store_path.write_text(json.dumps(existing_data))
     
     # Mock RPC to fail
-    respx.post(rpc_url).mock(
+    respx.post(rpc_url)(
         return_value=httpx.Response(
             200,
             json={"jsonrpc": "2.0", "id": 1, "error": {"code": -32601, "message": "Method not found"}},
@@ -670,7 +677,7 @@ def test_add_peer_updates_existing_peer(monkeypatch: Any, tmp_path: Any) -> None
 # ==================== Tests for remove_peer with store fallback ====================
 
 
-@respx.mock
+@respx_mock
 def test_remove_peer_removes_from_store_on_success(monkeypatch: Any, tmp_path: Any) -> None:
     """Test that remove_peer removes from store after successful RPC call."""
     
@@ -701,7 +708,7 @@ def test_remove_peer_removes_from_store_on_success(monkeypatch: Any, tmp_path: A
     store_path.write_text(json.dumps(existing_data))
     
     # Mock RPC to succeed
-    respx.post(rpc_url).mock(
+    respx.post(rpc_url)(
         return_value=httpx.Response(
             200,
             json={"jsonrpc": "2.0", "id": 1, "result": True},
@@ -722,7 +729,7 @@ def test_remove_peer_removes_from_store_on_success(monkeypatch: Any, tmp_path: A
     assert peers[0]["peer_id"] == "peer_to_keep"
 
 
-@respx.mock
+@respx_mock
 def test_remove_peer_fallback_to_store_when_rpc_fails(monkeypatch: Any, tmp_path: Any) -> None:
     """Test that remove_peer falls back to removing from store when RPC fails."""
     
@@ -746,7 +753,7 @@ def test_remove_peer_fallback_to_store_when_rpc_fails(monkeypatch: Any, tmp_path
     store_path.write_text(json.dumps(existing_data))
     
     # Mock all RPC methods to fail
-    respx.post(rpc_url).mock(
+    respx.post(rpc_url)(
         return_value=httpx.Response(
             200,
             json={"jsonrpc": "2.0", "id": 1, "error": {"code": -32601, "message": "Method not found"}},
@@ -765,7 +772,7 @@ def test_remove_peer_fallback_to_store_when_rpc_fails(monkeypatch: Any, tmp_path
     assert len(peers) == 0
 
 
-@respx.mock
+@respx_mock
 def test_remove_peer_fails_when_peer_not_found(monkeypatch: Any, tmp_path: Any) -> None:
     """Test that remove_peer fails when peer doesn't exist in RPC or store."""
     
@@ -778,7 +785,7 @@ def test_remove_peer_fails_when_peer_not_found(monkeypatch: Any, tmp_path: Any) 
     store_path.write_text(json.dumps({"peers": []}))
     
     # Mock all RPC methods to fail
-    respx.post(rpc_url).mock(
+    respx.post(rpc_url)(
         return_value=httpx.Response(
             200,
             json={"jsonrpc": "2.0", "id": 1, "error": {"code": -32000, "message": "Peer not found"}},
@@ -819,7 +826,7 @@ def test_generate_peer_id_extracts_from_multiaddr() -> None:
 # ==================== Tests for Issue 1: Better messaging for local store peers ====================
 
 
-@respx.mock
+@respx_mock
 def test_list_peers_known_peers_message(monkeypatch: Any, tmp_path: Any) -> None:
     """Test that list shows 'Known Peers' when reading from store."""
     
@@ -842,7 +849,7 @@ def test_list_peers_known_peers_message(monkeypatch: Any, tmp_path: Any) -> None
     store_path.write_text(json.dumps(peers_data))
     
     # Mock RPC to fail
-    respx.post(rpc_url).mock(
+    respx.post(rpc_url)(
         return_value=httpx.Response(
             200,
             json={"jsonrpc": "2.0", "id": 1, "error": {"code": -32601, "message": "Method not found"}},
@@ -857,7 +864,7 @@ def test_list_peers_known_peers_message(monkeypatch: Any, tmp_path: Any) -> None
     assert "disconnected" in result.output.lower()
 
 
-@respx.mock
+@respx_mock
 def test_list_peers_no_known_peers_message(monkeypatch: Any, tmp_path: Any) -> None:
     """Test that list shows 'No known peers' when store is empty."""
     
@@ -870,7 +877,7 @@ def test_list_peers_no_known_peers_message(monkeypatch: Any, tmp_path: Any) -> N
     store_path.write_text(json.dumps(peers_data))
     
     # Mock RPC to fail
-    respx.post(rpc_url).mock(
+    respx.post(rpc_url)(
         return_value=httpx.Response(
             200,
             json={"jsonrpc": "2.0", "id": 1, "error": {"code": -32601, "message": "Method not found"}},
@@ -912,7 +919,7 @@ def test_parse_address_multiaddr() -> None:
     assert port == 42000
 
 
-@respx.mock
+@respx_mock
 def test_add_peer_with_port_auto_detection(monkeypatch: Any, tmp_path: Any) -> None:
     """Test that add_peer auto-detects port when not specified."""
     
@@ -922,7 +929,7 @@ def test_add_peer_with_port_auto_detection(monkeypatch: Any, tmp_path: Any) -> N
     store_path = tmp_path / "peers.json"
     
     # Mock RPC to succeed
-    respx.post(rpc_url).mock(
+    respx.post(rpc_url)(
         return_value=httpx.Response(
             200,
             json={"jsonrpc": "2.0", "id": 1, "result": True},
@@ -946,7 +953,7 @@ def test_add_peer_with_port_auto_detection(monkeypatch: Any, tmp_path: Any) -> N
 # ==================== Tests for bootstrap command ====================
 
 
-@respx.mock
+@respx_mock
 def test_bootstrap_mainnet(monkeypatch: Any, tmp_path: Any) -> None:
     """Test bootstrap command for mainnet."""
     
@@ -957,7 +964,7 @@ def test_bootstrap_mainnet(monkeypatch: Any, tmp_path: Any) -> None:
     store_path = tmp_path / "peers.json"
     
     # Mock RPC to succeed
-    respx.post(rpc_url).mock(
+    respx.post(rpc_url)(
         return_value=httpx.Response(
             200,
             json={"jsonrpc": "2.0", "id": 1, "result": True},
@@ -980,7 +987,7 @@ def test_bootstrap_mainnet(monkeypatch: Any, tmp_path: Any) -> None:
     assert "144.126.133.21:30333" in addrs
 
 
-@respx.mock
+@respx_mock
 def test_bootstrap_unsuccessful_rpc_response(monkeypatch: Any, tmp_path: Any) -> None:
     """Test bootstrap when RPC returns a failure payload for addPeer."""
 
@@ -990,7 +997,7 @@ def test_bootstrap_unsuccessful_rpc_response(monkeypatch: Any, tmp_path: Any) ->
 
     store_path = tmp_path / "peers.json"
 
-    respx.post(rpc_url).mock(
+    respx.post(rpc_url)(
         return_value=httpx.Response(
             200,
             json={"jsonrpc": "2.0", "id": 1, "result": {"success": False, "error": "P2P disabled"}},
@@ -1010,7 +1017,7 @@ def test_bootstrap_unsuccessful_rpc_response(monkeypatch: Any, tmp_path: Any) ->
     assert len(peers) >= 2
 
 
-@respx.mock
+@respx_mock
 def test_bootstrap_no_seeds(monkeypatch: Any, tmp_path: Any) -> None:
     """Test bootstrap command when no seeds are configured."""
     
@@ -1022,3 +1029,15 @@ def test_bootstrap_no_seeds(monkeypatch: Any, tmp_path: Any) -> None:
     result = runner.invoke(peer.app, ["bootstrap", "--network", "devnet", "--store", str(store_path)])
     assert result.exit_code == 0
     assert "No seed nodes configured" in result.output
+
+
+def test_peer_commands_block_bootstrap_rpc(monkeypatch: Any) -> None:
+    """Ensure peer CLI refuses bootstrap RPC without explicit override."""
+
+    monkeypatch.setenv("ANIMICA_NETWORK", "mainnet")
+    result = runner.invoke(
+        peer.app,
+        ["list", "--rpc-url", "https://rpc.animica.org/rpc"],
+    )
+    assert result.exit_code == 2
+    assert "bootstrap-only" in result.output
