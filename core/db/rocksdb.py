@@ -259,8 +259,33 @@ def open_rocksdb_kv(
     return RocksKV(db, read_only=readonly)
 
 
+def RocksDBKV(
+    path: Union[str, bytes, "os.PathLike[str]", "os.PathLike[bytes]"],
+    *,
+    create: bool = True,
+    readonly: bool = False,
+    fallback_to_sqlite: bool = True,
+    options: Optional["rocksdb.Options"] = None,  # type: ignore[name-defined]
+) -> KV:
+    """
+    Backwards-compatible constructor used by callers expecting a class-like RocksDBKV.
+
+    Historically this symbol pointed to a class that accepted a filesystem path.
+    We now delegate to `open_rocksdb_kv` while preserving the same signature and
+    semantics (create-on-write, readonly toggle, optional SQLite fallback).
+    """
+    return open_rocksdb_kv(
+        path,
+        create=create,
+        readonly=readonly,
+        fallback_to_sqlite=fallback_to_sqlite,
+        options=options,
+    )
+
+
 __all__ = [
     "open_rocksdb_kv",
+    "RocksDBKV",
     "RocksKV",
     "RocksBatch",
     "_ROCKS_OK",
