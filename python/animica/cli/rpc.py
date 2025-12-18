@@ -23,6 +23,7 @@ except Exception:
     HAVE_RPC = False
 
 from animica.config import load_network_config
+from animica.cli.rpc_guard import guard_bootstrap_rpc
 from .timeouts import DEFAULT_RPC_TIMEOUT, RPC_TIMEOUT_ENV, describe_timeout, resolve_timeout
 
 app = typer.Typer(help="Raw JSON-RPC calls")
@@ -49,7 +50,15 @@ def _ensure_rpc_available() -> None:
         raise typer.Exit(1)
 
 
-def call_rpc(method: str, params: Any, rpc_url: Optional[str] = None, timeout: Optional[float] = None) -> Any:
+def call_rpc(
+    method: str,
+    params: Any,
+    rpc_url: Optional[str] = None,
+    timeout: Optional[float] = None,
+    *,
+    allow_remote: bool = False,
+    allow_bootstrap_methods: bool = False,
+) -> Any:
     """
     Helper function to make RPC calls from other CLI modules.
     
@@ -65,6 +74,12 @@ def call_rpc(method: str, params: Any, rpc_url: Optional[str] = None, timeout: O
         RuntimeError: If the RPC call fails with error details
     """
     url = _resolve_rpc_url(rpc_url)
+    guard_bootstrap_rpc(
+        url,
+        allow_remote=allow_remote,
+        allow_bootstrap_methods=allow_bootstrap_methods,
+        method=method,
+    )
     resolved_timeout = resolve_timeout("RPC timeout", timeout, env_var=RPC_TIMEOUT_ENV, default=DEFAULT_RPC_TIMEOUT)
     
     try:
@@ -111,6 +126,11 @@ def call(
         help=f"Request timeout in seconds (default: {describe_timeout(DEFAULT_RPC_TIMEOUT)})",
         envvar=RPC_TIMEOUT_ENV,
     ),
+    allow_remote_rpc: bool = typer.Option(
+        False,
+        "--allow-remote-rpc",
+        help="Allow using bootstrap RPC (requires ANIMICA_I_UNDERSTAND_REMOTE_RISK=1)",
+    ),
 ) -> None:
     """
     Make a raw JSON-RPC 2.0 call to the node.
@@ -126,6 +146,12 @@ def call(
     """
     try:
         url = _resolve_rpc_url(rpc_url)
+        guard_bootstrap_rpc(
+            url,
+            allow_remote=allow_remote_rpc,
+            allow_bootstrap_methods=method.startswith("bootstrap."),
+            method=method,
+        )
         resolved_timeout = resolve_timeout("RPC timeout", timeout, env_var=RPC_TIMEOUT_ENV, default=DEFAULT_RPC_TIMEOUT)
 
         # Parse params

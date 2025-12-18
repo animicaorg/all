@@ -18,6 +18,7 @@ from rpc import config as rpc_config
 from rpc import deps
 from rpc import errors as rpc_errors
 from rpc import version as rpc_version
+from rpc.access_policy import AccessPolicy, set_active_policy
 
 # Optional helpers (feature-detected)
 _jsonrpc_mod = importlib.import_module("rpc.jsonrpc")
@@ -205,6 +206,7 @@ def create_app(cfg: rpc_config.Config | None = None) -> FastAPI:
     """
     # Load config
     cfg = cfg or rpc_config.load_config()
+    set_active_policy(AccessPolicy.from_config(cfg))
 
     # Basic logging if caller hasn't configured it
     if not logging.getLogger().handlers:

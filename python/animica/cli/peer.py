@@ -20,6 +20,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 import typer
+from animica.cli.rpc_guard import guard_bootstrap_rpc
 from animica.config import load_network_config
 from animica.seeds import get_default_ports, get_seed_nodes
 from .timeouts import DEFAULT_RPC_TIMEOUT, RPC_TIMEOUT_ENV, resolve_timeout
@@ -60,9 +61,16 @@ async def rpc_call(
     return data.get("result")
 
 
-def _resolve_rpc_url(rpc_url: Optional[str]) -> str:
-    """Resolve RPC URL from option, env, or default."""
-    return rpc_url or os.environ.get(RPC_ENV) or load_network_config().rpc_url
+def _resolve_rpc_url(
+    rpc_url: Optional[str],
+    *,
+    allow_remote_rpc: bool = False,
+    method: str | None = None,
+) -> str:
+    """Resolve RPC URL from option, env, or default and enforce bootstrap guard."""
+    resolved = rpc_url or os.environ.get(RPC_ENV) or load_network_config().rpc_url
+    guard_bootstrap_rpc(resolved, allow_remote=allow_remote_rpc, method=method)
+    return resolved
 
 
 def _pretty(obj: Any) -> str:
@@ -505,6 +513,11 @@ def list_peers(
     rpc_url: Optional[str] = typer.Option(
         None, "--rpc-url", help="JSON-RPC endpoint", envvar=RPC_ENV
     ),
+    allow_remote_rpc: bool = typer.Option(
+        False,
+        "--allow-remote-rpc",
+        help="Allow using remote bootstrap RPC (requires ANIMICA_I_UNDERSTAND_REMOTE_RISK=1)",
+    ),
     store: Optional[str] = typer.Option(
         None, "--store", help="Path to local peer store (fallback)", envvar=STORE_ENV
     ),
@@ -527,7 +540,7 @@ def list_peers(
         animica peer list --rpc-url http://localhost:8545
         animica peer list --store ~/.animica/p2p/peers.json
     """
-    url = _resolve_rpc_url(rpc_url)
+    url = _resolve_rpc_url(rpc_url, allow_remote_rpc=allow_remote_rpc, method="p2p.listPeers")
 
     # Try different RPC method names that might be available
     methods_to_try = [
@@ -616,6 +629,11 @@ def add_peer(
     rpc_url: Optional[str] = typer.Option(
         None, "--rpc-url", help="JSON-RPC endpoint", envvar=RPC_ENV
     ),
+    allow_remote_rpc: bool = typer.Option(
+        False,
+        "--allow-remote-rpc",
+        help="Allow using remote bootstrap RPC (requires ANIMICA_I_UNDERSTAND_REMOTE_RISK=1)",
+    ),
     store: Optional[str] = typer.Option(
         None, "--store", help="Path to local peer store (fallback)", envvar=STORE_ENV
     ),
@@ -639,7 +657,7 @@ def add_peer(
         animica peer add 144.126.133.21 --probe
         animica peer add 5.6.7.8:30333 --store ~/.animica/p2p/peers.json
     """
-    url = _resolve_rpc_url(rpc_url)
+    url = _resolve_rpc_url(rpc_url, allow_remote_rpc=allow_remote_rpc, method="p2p.addPeer")
     store_path = Path(store) if store else DEFAULT_STORE_PATH
 
     # Parse address to check if port is missing
@@ -755,6 +773,11 @@ def remove_peer(
     rpc_url: Optional[str] = typer.Option(
         None, "--rpc-url", help="JSON-RPC endpoint", envvar=RPC_ENV
     ),
+    allow_remote_rpc: bool = typer.Option(
+        False,
+        "--allow-remote-rpc",
+        help="Allow using remote bootstrap RPC (requires ANIMICA_I_UNDERSTAND_REMOTE_RISK=1)",
+    ),
     store: Optional[str] = typer.Option(
         None, "--store", help="Path to local peer store (fallback)", envvar=STORE_ENV
     ),
@@ -771,7 +794,7 @@ def remove_peer(
         animica peer remove 12D3KooWPeerId...
         animica peer remove peer_abc123 --store ~/.animica/p2p/peers.json
     """
-    url = _resolve_rpc_url(rpc_url)
+    url = _resolve_rpc_url(rpc_url, allow_remote_rpc=allow_remote_rpc, method="p2p.removePeer")
     store_path = Path(store) if store else DEFAULT_STORE_PATH
 
     # Try different RPC method names
@@ -842,6 +865,11 @@ def peer_info(
     rpc_url: Optional[str] = typer.Option(
         None, "--rpc-url", help="JSON-RPC endpoint", envvar=RPC_ENV
     ),
+    allow_remote_rpc: bool = typer.Option(
+        False,
+        "--allow-remote-rpc",
+        help="Allow using remote bootstrap RPC (requires ANIMICA_I_UNDERSTAND_REMOTE_RISK=1)",
+    ),
 ) -> None:
     """
     Show detailed information about a specific peer.
@@ -853,7 +881,7 @@ def peer_info(
         animica peer info QmPeerId...
         animica peer info 12D3KooWPeerId...
     """
-    url = _resolve_rpc_url(rpc_url)
+    url = _resolve_rpc_url(rpc_url, allow_remote_rpc=allow_remote_rpc, method="p2p.getPeerInfo")
 
     # Try different RPC method names
     methods_to_try = [
@@ -912,6 +940,11 @@ def peer_info(
 def bootstrap_peers(
     rpc_url: Optional[str] = typer.Option(
         None, "--rpc-url", help="JSON-RPC endpoint", envvar=RPC_ENV
+    ),
+    allow_remote_rpc: bool = typer.Option(
+        False,
+        "--allow-remote-rpc",
+        help="Allow using remote bootstrap RPC (requires ANIMICA_I_UNDERSTAND_REMOTE_RISK=1)",
     ),
     store: Optional[str] = typer.Option(
         None, "--store", help="Path to local peer store (fallback)", envvar=STORE_ENV
@@ -976,7 +1009,7 @@ def bootstrap_peers(
             peer_id = _generate_peer_id(seed_address)
             
             # Try RPC first
-            url = _resolve_rpc_url(rpc_url)
+            url = _resolve_rpc_url(rpc_url, allow_remote_rpc=allow_remote_rpc, method="p2p.addPeer")
             store_path = Path(store) if store else DEFAULT_STORE_PATH
             json_store, db_store = _resolve_store_paths(store_path)
             
@@ -1053,6 +1086,11 @@ def diagnose_peer(
     address: str = typer.Argument(..., help="Peer address to diagnose"),
     rpc_url: Optional[str] = typer.Option(
         None, "--rpc-url", help="JSON-RPC endpoint", envvar=RPC_ENV
+    ),
+    allow_remote_rpc: bool = typer.Option(
+        False,
+        "--allow-remote-rpc",
+        help="Allow using remote bootstrap RPC (requires ANIMICA_I_UNDERSTAND_REMOTE_RISK=1)",
     ),
 ) -> None:
     """
@@ -1166,7 +1204,7 @@ def diagnose_peer(
     
     # RPC Status Check
     typer.secho("4️⃣  Node RPC Status", fg=typer.colors.BLUE, bold=True)
-    url = _resolve_rpc_url(rpc_url)
+    url = _resolve_rpc_url(rpc_url, allow_remote_rpc=allow_remote_rpc, method="p2p.getPeerInfo")
     try:
         result = asyncio.run(rpc_call("p2p.listPeers", [], rpc_url=url))
         typer.secho(f"   ✓ Node RPC accessible", fg=typer.colors.GREEN)
@@ -1198,6 +1236,11 @@ def test_peer_latency(
     rpc_url: Optional[str] = typer.Option(
         None, "--rpc-url", help="JSON-RPC endpoint", envvar=RPC_ENV
     ),
+    allow_remote_rpc: bool = typer.Option(
+        False,
+        "--allow-remote-rpc",
+        help="Allow using remote bootstrap RPC (requires ANIMICA_I_UNDERSTAND_REMOTE_RISK=1)",
+    ),
     count: int = typer.Option(5, "--count", "-c", help="Number of pings to send"),
 ) -> None:
     """
@@ -1210,7 +1253,7 @@ def test_peer_latency(
         animica peer test-latency QmPeerId...
         animica peer test-latency 12D3KooWPeerId... --count 10
     """
-    url = _resolve_rpc_url(rpc_url)
+    url = _resolve_rpc_url(rpc_url, allow_remote_rpc=allow_remote_rpc, method="p2p.pingPeer")
     
     typer.secho(f"\n🏓 Testing latency to peer: {peer_id[:16]}...", fg=typer.colors.CYAN, bold=True)
     typer.echo(f"   Sending {count} pings...")
