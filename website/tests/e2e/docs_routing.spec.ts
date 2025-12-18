@@ -9,7 +9,7 @@ import { test, expect } from '@playwright/test';
  */
 
 const DOCS_BASE =
-  process.env.PUBLIC_DOCS_URL?.replace(/\/+$/, '') || 'https://docs.animica.dev';
+  process.env.PUBLIC_DOCS_URL?.replace(/\/+$/, '') || 'https://docs.animica.org';
 
 const isRedirect = (code: number) => [301, 302, 307, 308].includes(code);
 const header = (h: Record<string, string>, name: string) =>
