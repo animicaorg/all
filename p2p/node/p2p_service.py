@@ -22,8 +22,8 @@ from p2p.transport.tcp import TcpTransport
 from p2p.wire.encoding import decode_payload, encode_payload
 from p2p.wire.frames import Framer, unpack_frame
 from p2p.wire.message_ids import MsgID
-from p2p.wire.messages import (Blocks, GetBlocks, GetData, GetHeaders, Headers,
-                               Hello, HelloAck, Inv, InvItem, InvType, Tx)
+from p2p.wire.messages import (Blocks, GetBlocks, GetData, GetHeaders, HeaderCompact,
+                               Headers, Hello, HelloAck, Inv, InvItem, InvType, Tx)
 
 log = logging.getLogger("animica.p2p.service")
 
@@ -742,7 +742,13 @@ class P2PService:
 
     async def _handle_headers(self, peer: _PeerState, payload: bytes) -> None:
         data = self._decode_map(payload)
-        msg = Headers(**data)
+        headers: list[HeaderCompact] = []
+        for h in data.get("headers") or []:
+            if isinstance(h, dict):
+                headers.append(HeaderCompact(**h))
+            elif isinstance(h, HeaderCompact):
+                headers.append(h)
+        msg = Headers(headers=headers)
 
         # If we have a pending request waiting on this response, fulfill it.
         fut = peer.pending_headers
