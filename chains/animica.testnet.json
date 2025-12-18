@@ -9,7 +9,7 @@
   "nativeCurrency": { "name": "Animica", "symbol": "ANM", "decimals": 18 },
 
   "rpc": {
-    "http": ["http://144.126.133.21:8545", "https://rpc.testnet.animica.org"],
+    "http": ["https://rpc.testnet.animica.org/rpc", "http://144.126.133.21:8545/rpc"],
     "ws":   ["wss://ws.testnet.animica.org"]
   },
 
@@ -25,6 +25,7 @@
     "protocols": ["animica/1"],
     "port": 30303,
     "seeds": [
+      "rpc.testnet.animica.org",
       "144.126.133.21",
       "seed1.testnet.animica.org",
       "seed2.testnet.animica.org"
