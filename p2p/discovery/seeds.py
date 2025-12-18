@@ -138,8 +138,12 @@ class SeedBundle:
 
 
 # Embedded fallback seeds - always available even if DNS fails
-# Primary seed endpoints: single host (144.126.133.21) with QUIC+TCP
+# Prefer the public RPC host (rpc.animica.org) with IP fallback.
 EMBEDDED_FALLBACK_SEEDS: List[str] = [
+    # DNS-first so we follow the public RPC host even if the IP changes.
+    "quic://rpc.animica.org:443",
+    "tcp://rpc.animica.org:30333",
+    # IP fallback for environments without DNS.
     "quic://144.126.133.21:443",
     "tcp://144.126.133.21:30333",
 ]

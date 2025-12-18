@@ -5,7 +5,9 @@
 # Comments start with '#'. Blank lines ignored.
 
 # ===== Primary Seed (All Networks) =====
-# IP: 144.126.133.21 - Fallback when DNS fails
+# DNS-first to follow the public RPC host, with IP fallback when DNS fails
+/dns4/rpc.animica.org/udp/443/quic-v1
+/dns4/rpc.animica.org/tcp/30333
 /ip4/144.126.133.21/udp/443/quic-v1
 /ip4/144.126.133.21/tcp/30333
 
