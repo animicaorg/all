@@ -121,6 +121,10 @@ LEGACY_PROFILE_DIR="${ANIMICA_DATA_ROOT}/${PROFILE}"
 LEGACY_CHAIN_DB="${LEGACY_PROFILE_DIR}/chain.db"
 LEGACY_POOL_DB="${LEGACY_PROFILE_DIR}/pool.db"
 
+# P2P store defaults (chain-specific). Respect explicit overrides if provided.
+export ANIMICA_P2P_DATA_DIR="${ANIMICA_P2P_DATA_DIR:-${ANIMICA_DATA_ROOT}/chain-${ANIMICA_CHAIN_ID}/p2p}"
+export ANIMICA_PEER_STORE_PATH="${ANIMICA_PEER_STORE_PATH:-${ANIMICA_P2P_DATA_DIR}}"
+
 migrate_legacy_db() {
   local source="$1" target="$2"
   if [[ -f "${target}" || ! -f "${source}" ]]; then

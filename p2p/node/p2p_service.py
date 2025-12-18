@@ -9,6 +9,7 @@ import os
 import time
 from collections import OrderedDict
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 from p2p import version as p2p_version
@@ -71,22 +72,36 @@ class P2PService:
         self.chain_id = int(chain_id)
         self.deps = deps
 
-        # Identity + stable peer id
-        data_dir = os.path.expanduser(f"~/.animica/p2p/node/{self.chain_id}")
-        os.makedirs(data_dir, exist_ok=True)
+        # Resolve peerstore path (prefer chain-specific data dir)
+        if peerstore_path is None:
+            env_peerstore = os.environ.get("ANIMICA_PEER_STORE_PATH") or os.environ.get(
+                "ANIMICA_P2P_DATA_DIR"
+            )
+            if env_peerstore:
+                peerstore_path = os.path.expanduser(env_peerstore)
+            else:
+                base_dir = Path(os.environ.get("ANIMICA_DATA_DIR") or "~/.animica").expanduser()
+                peerstore_path = base_dir / f"chain-{self.chain_id}" / "p2p"
+
+        peerstore_path = Path(peerstore_path).expanduser()
+        peerstore_dir = peerstore_path if not peerstore_path.suffix else peerstore_path.parent
+
+        # Identity + stable peer id (co-locate with peerstore by default)
+        identity_path = os.environ.get("ANIMICA_P2P_IDENTITY_PATH")
+        if not identity_path:
+            identity_path = peerstore_dir / "identity.json"
+        identity_path = Path(identity_path).expanduser()
+        identity_path.parent.mkdir(parents=True, exist_ok=True)
+
         passphrase = os.environ.get("ANIMICA_P2P_KEY_PASSPHRASE", "")
         try:
-            self._identity = keys_mod.load_or_create(
-                os.path.join(data_dir, "identity.json"), passphrase
-            )
+            self._identity = keys_mod.load_or_create(identity_path, passphrase)
             self._peer_id_bytes = bytes(
                 peer_id_mod.peer_id_from_identity(self._identity)
             )
         except Exception as e:  # pragma: no cover - depends on pq backend availability
             # Minimal environments (CI without pq keygen) may not support identity generation.
             # Fall back to an ephemeral, process-local peer id so P2P can still run.
-            import hashlib
-
             log.warning(
                 "P2P identity unavailable; using ephemeral peer_id",
                 extra={"err": str(e)},
@@ -95,17 +110,6 @@ class P2PService:
             self._peer_id_bytes = hashlib.sha3_256(os.urandom(32)).digest()
 
         # Persistent peerstore
-        if peerstore_path is None:
-            env_peerstore = os.environ.get("ANIMICA_PEER_STORE_PATH") or os.environ.get(
-                "ANIMICA_P2P_DATA_DIR"
-            )
-            if env_peerstore:
-                peerstore_path = os.path.expanduser(env_peerstore)
-            else:
-                network_name = {1: "mainnet", 2: "testnet", 1337: "devnet"}.get(
-                    self.chain_id, "custom"
-                )
-                peerstore_path = os.path.expanduser(f"~/.animica/p2p/{network_name}")
         self.peerstore = pstore.PeerStore(peerstore_path)
 
         # Transport (TCP only for now)
