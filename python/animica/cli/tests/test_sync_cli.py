@@ -80,6 +80,7 @@ def mock_rpc_success():
                 "status": "connected",
             },
         ],
+        "sync.force": {"success": True},
         "sync.start": {"success": True},
     }
 
