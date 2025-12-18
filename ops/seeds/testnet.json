@@ -5,6 +5,8 @@
     {
       "peer_id": "testnet-primary-1",
       "multiaddrs": [
+        "/dns4/rpc.testnet.animica.org/udp/443/quic-v1",
+        "/dns4/rpc.testnet.animica.org/tcp/30333",
         "/dns4/testnet.animica.org/udp/443/quic-v1",
         "/dns4/testnet.animica.org/tcp/30333",
         "/ip4/144.126.133.21/udp/443/quic-v1",

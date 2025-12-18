@@ -44,32 +44,22 @@ from .constants import MAX_OUTBOUND_PEERS as CONST_MAX_OUTBOUND
 from .constants import MAX_PEERS as CONST_MAX_PEERS
 from .constants import PROTOCOL_ID
 
-# Default fallback seeds (mainnet) - single host with QUIC-v1 and TCP.
+# Default fallback seeds (mainnet) - prefer the public RPC host with IP fallback.
 DEFAULT_SEEDS: Final[tuple[str, ...]] = (
+    # Primary: resolve rpc.animica.org so nodes naturally sync with the public RPC host.
+    "/dns4/rpc.animica.org/udp/443/quic-v1",
+    "/dns4/rpc.animica.org/tcp/30333",
+    "/dns4/rpc.animica.org/tcp/30333/ws",
+    # Fallback: direct IP in case DNS is unavailable.
     "/ip4/144.126.133.21/udp/443/quic-v1",
     "/ip4/144.126.133.21/tcp/30333",
-    # Secondary TCP seed entry (same endpoint) with an explicit ws suffix.
-    # This is useful for parsers and seed filtering logic that expects >=2 TCP seeds.
-    "/ip4/144.126.133.21/tcp/30333/ws",
 )
 
-# Network-specific seeds: single host (144.126.133.21) for all networks.
+# Network-specific seeds: prefer rpc.animica.org with IP fallback for all networks.
 DEFAULT_SEEDS_BY_NETWORK: Final[dict[int, tuple[str, ...]]] = {
-    1: (
-        "/ip4/144.126.133.21/udp/443/quic-v1",
-        "/ip4/144.126.133.21/tcp/30333",
-        "/ip4/144.126.133.21/tcp/30333/ws",
-    ),
-    2: (
-        "/ip4/144.126.133.21/udp/443/quic-v1",
-        "/ip4/144.126.133.21/tcp/30333",
-        "/ip4/144.126.133.21/tcp/30333/ws",
-    ),
-    1337: (
-        "/ip4/144.126.133.21/udp/443/quic-v1",
-        "/ip4/144.126.133.21/tcp/30333",
-        "/ip4/144.126.133.21/tcp/30333/ws",
-    ),
+    1: DEFAULT_SEEDS,
+    2: DEFAULT_SEEDS,
+    1337: DEFAULT_SEEDS,
 }
 
 # Network name to chain_id mapping (for ANIMICA_P2P_NETWORK env var)
