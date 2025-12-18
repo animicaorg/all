@@ -898,6 +898,8 @@ def down(
     
     # Get network-specific compose file
     compose_file = _get_compose_file(network)
+    net_cfg = load_network_config(network)
+    data_dir = str(Path(net_cfg.data_dir).expanduser())
     
     typer.secho(f"Stopping node for network: {network}", fg=typer.colors.CYAN, bold=True)
     typer.echo(f"Using compose file: {compose_file}")
