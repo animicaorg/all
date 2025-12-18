@@ -31,7 +31,7 @@ This guide helps you diagnose and fix common issues with the Animica Blockchain 
 - **Fix**: Start your RPC node or use a different endpoint
 
 #### 2. Incorrect RPC URL Configuration
-- **Check**: Verify your `.env.local` or `.env` file has the correct values:
+- **Check**: Verify your `.env` file has the correct values:
   ```env
   VITE_RPC_URL=https://rpc.animica.org/rpc
   VITE_CHAIN_ID=659658
@@ -78,10 +78,11 @@ This guide helps you diagnose and fix common issues with the Animica Blockchain 
 **Symptom**: Explorer shows default values instead of your configuration
 
 **Solution**:
-1. Ensure the file is named exactly `.env.local` (not `.env.local.txt`)
+1. Ensure the file is named exactly `.env` (not `.env.txt`)
 2. Restart the development server after changing environment variables
 3. Clear browser cache and reload
 4. Verify the variables are prefixed with `VITE_` (required for Vite)
+5. `.env.local` overrides are unsupported; rename them to `.env`
 
 ### Chain ID Mismatch
 
@@ -94,7 +95,7 @@ This guide helps you diagnose and fix common issues with the Animica Blockchain 
      -H "Content-Type: application/json" \
      -d '{"jsonrpc":"2.0","id":1,"method":"chain.getChainId","params":[]}'
    ```
-2. Update `VITE_CHAIN_ID` in your `.env.local` to match
+2. Update `VITE_CHAIN_ID` in your `.env` to match
 3. Restart the dev server
 
 ### WebSocket Connection Failures
@@ -279,7 +280,7 @@ If you're still experiencing issues:
    - Browser console logs (DevTools → Console)
    - Network tab data (DevTools → Network)
    - RPC server logs
-   - Configuration files (`.env.local`, `vite.config.ts`)
+   - Configuration files (`.env`, `vite.config.ts`)
 
 2. **Check Documentation**:
    - [README.md](../README.md) - Setup and quickstart

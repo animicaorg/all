@@ -1,6 +1,17 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import path from "node:path";
+import { existsSync } from "node:fs";
+
+const envLocalPath = path.resolve(__dirname, ".env.local");
+if (existsSync(envLocalPath)) {
+  throw new Error(
+    [
+      "explorer-web no longer supports `.env.local`.",
+      "Rename the file to `.env` so configuration (RPC URLs, chain ID, etc.) comes from a single source.",
+    ].join(" ")
+  );
+}
 
 export default defineConfig({
   plugins: [react()],
