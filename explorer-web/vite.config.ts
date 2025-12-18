@@ -26,6 +26,14 @@ export default defineConfig({
       "127.0.0.1",
       "::1",
     ],
+    proxy: {
+      '/rpc': {
+        target: 'https://rpc.animica.org',
+        changeOrigin: true,
+        secure: true,
+        rewrite: (path) => path.replace(/^\/rpc/, '/rpc'),
+      },
+    },
     hmr: {
       // Use environment variable if set, otherwise default to localhost
       // In production/containers, set VITE_HMR_HOST to match your setup

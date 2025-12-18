@@ -170,10 +170,28 @@ function isJsonRpcSuccess(x: any): x is JsonRpcSuccess {
   return x && x.jsonrpc === '2.0' && 'result' in x && !('error' in x);
 }
 
+const CORS_BLOCKED_MESSAGE = 'RPC blocked by CORS. Use same-origin /rpc proxy or enable CORS on the RPC server.';
+
+function isProbableCorsError(err: any, url: string): boolean {
+  const msg = typeof err?.message === 'string' ? err.message.toLowerCase() : '';
+  if (msg.includes('cors')) return true;
+  if (msg.includes('failed to fetch') || msg.includes('networkerror') || msg.includes('network error')) {
+    if (typeof window !== 'undefined') {
+      try {
+        const target = new URL(url, window.location.href);
+        return target.origin !== window.location.origin;
+      } catch {
+        /* ignore */ 
+      }
+    }
+  }
+  return false;
+}
+
 /* --------------------------------- Client ---------------------------------- */
 
 export class RpcClient {
-  private url: string;
+  protected url: string;
   private headers: Record<string, string>;
   private maxRetries: number;
   private timeoutMs: number;
@@ -370,6 +388,10 @@ export class RpcClient {
         } else if (e instanceof RpcError || e instanceof HttpError || e instanceof ParseError) {
           err = e;
         } else if (e instanceof TypeError || e?.message?.includes('fetch failed')) {
+          if (isProbableCorsError(e, this.url)) {
+            err = new NetworkError(CORS_BLOCKED_MESSAGE);
+            throw err; // no retries on CORS
+          }
           err = new NetworkError(e?.message);
         } else {
           err = new UnknownError(e?.message ?? 'Unknown failure');
@@ -377,7 +399,7 @@ export class RpcClient {
 
         lastErr = err;
 
-        const retry = this.shouldRetry({ attempt, error: err, method: methodLabel });
+        const retry = err.message !== CORS_BLOCKED_MESSAGE && this.shouldRetry({ attempt, error: err, method: methodLabel });
         if (retry && attempt < attempts) {
           await sleep(expoJitterDelay(attempt, this.baseDelayMs, this.maxDelayMs));
           continue;
@@ -426,11 +448,17 @@ class ExplorerRpcClientImpl extends RpcClient implements ExplorerRpcClient {
   private wsClient: WsClientLike | null = null;
   private wsClientPromise: Promise<WsClientLike> | null = null;
   async getChainId(): Promise<string> {
+    const rethrowIfCors = (err: any) => {
+      if (isProbableCorsError(err, this.url)) {
+        throw new NetworkError(CORS_BLOCKED_MESSAGE);
+      }
+    };
     try {
       const result = await this.call<number | string>('chain.getChainId');
       console.debug('[RPC] getChainId:', result);
       return String(result);
     } catch (e) {
+      rethrowIfCors(e);
       console.warn('[RPC] chain.getChainId failed, trying eth_chainId fallback:', e);
       // Fallback to eth_chainId for compatibility
       try {
@@ -441,6 +469,7 @@ class ExplorerRpcClientImpl extends RpcClient implements ExplorerRpcClient {
         }
         return String(result);
       } catch (fallbackError) {
+        rethrowIfCors(fallbackError);
         console.error('[RPC] Both chain.getChainId and eth_chainId failed:', fallbackError);
         throw e;
       }
@@ -649,6 +678,28 @@ class ExplorerRpcClientImpl extends RpcClient implements ExplorerRpcClient {
 }
 
 /* ------------------------------ Convenience API ---------------------------- */
+
+const rpcClientPromises = new Map<string, Promise<ExplorerRpcClient>>();
+
+export function getRpcClient(url: string): Promise<ExplorerRpcClient> {
+  const key = url.trim();
+  const existing = rpcClientPromises.get(key);
+  if (existing) return existing;
+
+  const promise = Promise.resolve()
+    .then(() => createRpc({ url: key }))
+    .catch((err) => {
+      rpcClientPromises.delete(key);
+      throw err;
+    });
+
+  rpcClientPromises.set(key, promise);
+  return promise;
+}
+
+export function releaseRpcClient(url: string) {
+  rpcClientPromises.delete(url.trim());
+}
 
 export function createRpc(opts: RpcClientOptions): ExplorerRpcClient {
   return new ExplorerRpcClientImpl(opts);
