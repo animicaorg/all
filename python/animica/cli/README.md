@@ -263,8 +263,8 @@ JSON-RPC Calls
 --------------
   # Direct RPC calls
   animica rpc call chain_getHead
-  animica rpc call chain_getBlock '[0]'
-  animica rpc call chain_getTx '["0x..."]'
+  animica rpc call block_getBlockByNumber '[0]'
+  animica rpc call tx_getTransactionByHash '["0x..."]'
   animica rpc call animica_vm_call '{"to":"anim1...","data":"0x"}'
 
 Data Availability

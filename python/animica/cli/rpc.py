@@ -137,9 +137,9 @@ def call(
 
     Examples:
       animica rpc call chain_getHead
-      animica rpc call chain_getBlock '[0]'
-      animica rpc call chain_getBlockByHeight '[100]'
-      animica rpc call chain_getTx '["0x..."]'
+      animica rpc call block_getBlockByNumber '[0]'
+      animica rpc call block_getBlockByHash '["0x..."]'
+      animica rpc call tx_getTransactionByHash '["0x..."]'
 
     The params argument can be a JSON array or object. If omitted, an empty
     array is used.
