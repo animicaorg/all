@@ -114,9 +114,29 @@ export ANIMICA_RPC_URL="${ANIMICA_RPC_URL:-http://127.0.0.1:8545/rpc}"
 # Use XDG-ish home by default
 ANIMICA_DATA_ROOT="${ANIMICA_DATA_ROOT:-$HOME/.animica}"
 
-# Per-profile DB roots
-CHAIN_DB_PATH="${ANIMICA_DATA_ROOT}/${PROFILE}/chain.db"
-POOL_DB_PATH="${ANIMICA_DATA_ROOT}/${PROFILE}/pool.db"
+# Per-network DB roots (chain-<id>) with migration from legacy profile-based layout
+CHAIN_DB_PATH="${ANIMICA_DATA_ROOT}/chain-${ANIMICA_CHAIN_ID}/animica.db"
+POOL_DB_PATH="${ANIMICA_DATA_ROOT}/chain-${ANIMICA_CHAIN_ID}/pool.db"
+LEGACY_PROFILE_DIR="${ANIMICA_DATA_ROOT}/${PROFILE}"
+LEGACY_CHAIN_DB="${LEGACY_PROFILE_DIR}/chain.db"
+LEGACY_POOL_DB="${LEGACY_PROFILE_DIR}/pool.db"
+
+# P2P store defaults (chain-specific). Respect explicit overrides if provided.
+export ANIMICA_P2P_DATA_DIR="${ANIMICA_P2P_DATA_DIR:-${ANIMICA_DATA_ROOT}/chain-${ANIMICA_CHAIN_ID}/p2p}"
+export ANIMICA_PEER_STORE_PATH="${ANIMICA_PEER_STORE_PATH:-${ANIMICA_P2P_DATA_DIR}}"
+
+migrate_legacy_db() {
+  local source="$1" target="$2"
+  if [[ -f "${target}" || ! -f "${source}" ]]; then
+    return
+  fi
+  mkdir -p "$(dirname "${target}")"
+  cp -p "${source}" "${target}"
+  echo "[animica] Migrated legacy DB ${source} -> ${target}"
+}
+
+migrate_legacy_db "${LEGACY_CHAIN_DB}" "${CHAIN_DB_PATH}"
+migrate_legacy_db "${LEGACY_POOL_DB}" "${POOL_DB_PATH}"
 
 export ANIMICA_RPC_DB_URI="${ANIMICA_RPC_DB_URI:-sqlite:///${CHAIN_DB_PATH}}"
 export ANIMICA_MINING_POOL_DB_URL="${ANIMICA_MINING_POOL_DB_URL:-sqlite:///${POOL_DB_PATH}}"

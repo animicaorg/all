@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 import threading
 import time
@@ -9,6 +10,8 @@ from pathlib import Path
 from typing import Iterable, List, Optional, Sequence, Tuple
 
 from .peer import Peer, PeerRole, PeerStatus
+
+log = logging.getLogger(__name__)
 
 
 def _now() -> float:
@@ -520,21 +523,58 @@ class PeerStore:
                 pass
 
         # Minimal constructor from columns.
-        p = Peer(
-            peer_id=row["peer_id"],
-            address=row["address"],
-            roles=PeerRole(int(row["roles"])),
-            chain_id=int(row["chain_id"]),
-            alg_policy_root=bytes(row["alg_policy_root"]),
-            head_height=int(row["head_height"]),
-            caps=set(json.loads(row["caps"] or "[]")),
-        )
-        p.status = PeerStatus(row["status"])
-        p.connected_at_s = row["connected_at"]
-        p.last_seen_s = row["last_seen"]
-        p.last_disconnect_s = row["last_disconnect"]
-        p.rtt_ms_ewma = float(row["rtt_ms"]) if row["rtt_ms"] is not None else None
-        return p
+        try:
+            caps_raw = row["caps"]
+            try:
+                caps = set(json.loads(caps_raw or "[]"))
+            except Exception:
+                log.debug("PeerStore: failed to parse caps; defaulting to empty", exc_info=True)
+                caps = set()
+
+            try:
+                status = PeerStatus(row["status"])
+            except Exception:
+                log.warning(
+                    "PeerStore: unknown status '%s'; treating as disconnected", row["status"]
+                )
+                status = PeerStatus.DISCONNECTED
+
+            try:
+                alg_root = bytes(row["alg_policy_root"])
+            except Exception:
+                alg_root = b""
+
+            p = Peer(
+                peer_id=row["peer_id"],
+                address=row["address"],
+                roles=PeerRole(int(row["roles"] or 0)),
+                chain_id=int(row["chain_id"] or 0),
+                alg_policy_root=alg_root,
+                head_height=int(row["head_height"] or 0),
+                caps=caps,
+            )
+            p.status = status
+            p.connected_at_s = row["connected_at"]
+            p.last_seen_s = row["last_seen"]
+            p.last_disconnect_s = row["last_disconnect"]
+            try:
+                p.rtt_ms_ewma = float(row["rtt_ms"]) if row["rtt_ms"] is not None else None
+            except Exception:
+                p.rtt_ms_ewma = None
+            return p
+        except Exception:
+            log.warning("PeerStore: failed to rehydrate peer row; skipping", exc_info=True)
+            try:
+                chain_val = row["chain_id"]
+            except Exception:
+                chain_val = 0
+            return Peer(
+                peer_id=row["peer_id"],
+                address=row["address"],
+                roles=PeerRole.NONE,
+                chain_id=int(chain_val or 0),
+                alg_policy_root=b"",
+            )
 
 
 # Convenience factory: memory store (for tests)
