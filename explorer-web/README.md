@@ -82,7 +82,10 @@ To add additional domains, edit `vite.config.ts` and add them to the `server.all
 
 **Required Environment Variables**:
 - `VITE_RPC_URL` - HTTP JSON-RPC endpoint (e.g., `https://rpc.animica.org/rpc`)
-- `VITE_CHAIN_ID` - Numeric chain ID (e.g., `659658` for mainnet, `1337` for devnet)
+- `VITE_CHAIN_ID` - Numeric chain ID (e.g., `1` for mainnet, `1337` for devnet)
+
+> Legacy prelaunch IDs such as `659658` / `0xa11ca` are automatically normalized to the
+> canonical mainnet chain ID `1`. Update any old `.env` files to avoid mismatch warnings.
 
 **Optional Environment Variables**:
 - `VITE_RPC_WS` - WebSocket endpoint for live updates (e.g., `wss://rpc.animica.org/ws`)
@@ -94,7 +97,7 @@ To add additional domains, edit `vite.config.ts` and add them to the `server.all
 # Mainnet
 VITE_RPC_URL=https://rpc.animica.org/rpc
 VITE_RPC_WS=wss://rpc.animica.org/ws
-VITE_CHAIN_ID=659658
+VITE_CHAIN_ID=1
 
 # Local Development
 VITE_RPC_URL=http://localhost:8545
@@ -115,7 +118,7 @@ curl -X POST $VITE_RPC_URL \
   -H "Content-Type: application/json" \
   -d '{"jsonrpc":"2.0","id":1,"method":"chain.getChainId","params":[]}'
 
-# Should return: {"jsonrpc":"2.0","id":1,"result":659658}
+# Should return: {"jsonrpc":"2.0","id":1,"result":1}
 ```
 
 ## Production hosting (static)
@@ -256,7 +259,7 @@ The top bar shows a colored dot indicating connection status:
 
 **Issue**: Chain ID Mismatch
 ```
-Error: Chain ID mismatch: expected 1, got 659658
+Error: Chain ID mismatch: expected 1, got 1337
 ```
 **Solution**: Update VITE_CHAIN_ID in `.env` to match your node's chain ID
 
