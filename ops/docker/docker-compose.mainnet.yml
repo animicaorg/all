@@ -61,8 +61,8 @@ services:
       ANIMICA_P2P_LISTEN_QUIC: "${ANIMICA_P2P_LISTEN_QUIC:-0.0.0.0:443}"
       ANIMICA_P2P_ENABLE_TCP: "${ANIMICA_P2P_ENABLE_TCP:-true}"
       ANIMICA_P2P_ENABLE_QUIC: "${ANIMICA_P2P_ENABLE_QUIC:-true}"
-      ANIMICA_P2P_DATA_DIR: "${ANIMICA_P2P_DATA_DIR:-/data/p2p}"
-      ANIMICA_PEER_STORE_PATH: "${ANIMICA_PEER_STORE_PATH:-/data/p2p}"
+      ANIMICA_P2P_DATA_DIR: "${ANIMICA_P2P_DATA_DIR:-/data/chain-${ANIMICA_CHAIN_ID:-1}/p2p}"
+      ANIMICA_PEER_STORE_PATH: "${ANIMICA_PEER_STORE_PATH:-/data/chain-${ANIMICA_CHAIN_ID:-1}/p2p}"
       # Legacy P2P config (backward compatibility - deprecated):
       P2P_ENABLE: "${P2P_ENABLE:-true}"
       P2P_LISTEN: "${P2P_LISTEN:-0.0.0.0:30333}"
