@@ -184,7 +184,7 @@ If a React component crashes:
 
 ### Simulate Chain ID Mismatch
 
-1. Edit `.env.local`: `VITE_CHAIN_ID=999999`
+1. Edit `.env`: `VITE_CHAIN_ID=999999`
 2. Refresh the explorer
 3. **Expected:** Chain ID mismatch error with resolution steps
 

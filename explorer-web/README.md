@@ -54,13 +54,15 @@ pnpm install
 
 	2.	Configure environment
 
-Create .env.local (copy from .env.example if present) with your devnet values:
+Create `.env` (copy from `.env.example` if present) with your devnet values:
 
 VITE_RPC_URL=http://127.0.0.1:8545
 VITE_RPC_WS=wss://127.0.0.1:8546
 VITE_CHAIN_ID=1337
 # Optional (only if you run studio-services for verification links):
 VITE_SERVICES_URL=http://127.0.0.1:8787
+
+> `.env.local` overrides are disabled—use the `.env` file for all configuration, including chain ID.
 
 	3.	Run in dev mode
 
@@ -203,8 +205,8 @@ app.add_middleware(
 ```
 
 **4. Check Environment Variables**
-- Ensure `.env.local` exists and has correct values
-- After changing `.env.local`, restart the dev server
+- Ensure `.env` exists and has correct values
+- After changing `.env`, restart the dev server
 - Verify VITE_RPC_URL doesn't have trailing slashes
 - Confirm VITE_CHAIN_ID matches your node's chain ID
 
@@ -256,7 +258,7 @@ The top bar shows a colored dot indicating connection status:
 ```
 Error: Chain ID mismatch: expected 1, got 659658
 ```
-**Solution**: Update VITE_CHAIN_ID in `.env.local` to match your node's chain ID
+**Solution**: Update VITE_CHAIN_ID in `.env` to match your node's chain ID
 
 **Issue**: WebSocket Connection Failed (but HTTP works)
 - The explorer will fall back to HTTP polling automatically
@@ -272,7 +274,7 @@ Error: Chain ID mismatch: expected 1, got 659658
 If you're still experiencing issues:
 1. Check the [GitHub Issues](https://github.com/animicaorg/all/issues) for similar problems
 2. Share your browser console logs (with `[network]` entries)
-3. Include your `.env.local` configuration (remove sensitive values)
+3. Include your `.env` configuration (remove sensitive values)
 4. Mention your OS, browser, and Node.js version
 
 ---
