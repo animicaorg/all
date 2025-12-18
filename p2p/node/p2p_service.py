@@ -10,7 +10,7 @@ import time
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Awaitable, Dict, Optional, Set
 
 from p2p import version as p2p_version
 from p2p.crypto import keys as keys_mod
@@ -120,6 +120,7 @@ class P2PService:
 
         self._running = False
         self._tasks: list[asyncio.Task] = []
+        self._child_tasks: Set[asyncio.Task] = set()
 
         self._peer_lock = asyncio.Lock()
         self._peers: dict[str, _PeerState] = {}  # remote -> state
@@ -160,6 +161,18 @@ class P2PService:
     # ---------------------------------------------------------------------
     # Lifecycle
     # ---------------------------------------------------------------------
+
+    def _create_child_task(
+        self, coro: Awaitable[Any], *, name: str
+    ) -> asyncio.Task:
+        task = asyncio.create_task(coro, name=name)
+        self._child_tasks.add(task)
+
+        def _discard(t: asyncio.Task) -> None:
+            self._child_tasks.discard(t)
+
+        task.add_done_callback(_discard)
+        return task
 
     async def start(self) -> None:
         if self._running:
@@ -208,6 +221,12 @@ class P2PService:
             t.cancel()
         await asyncio.gather(*self._tasks, return_exceptions=True)
         self._tasks.clear()
+
+        for t in list(self._child_tasks):
+            t.cancel()
+        if self._child_tasks:
+            await asyncio.gather(*self._child_tasks, return_exceptions=True)
+            self._child_tasks.clear()
 
         async with self._peer_lock:
             peers = list(self._peers.values())
@@ -306,7 +325,7 @@ class P2PService:
             dial_targets.append(addr)
 
         for addr in list(dict.fromkeys(dial_targets)):
-            asyncio.create_task(self._dial(addr), name=f"p2p.import_dial@{addr}")
+            self._create_child_task(self._dial(addr), name=f"p2p.import_dial@{addr}")
 
         self._sync_wakeup.set()
         return {"added": added, "dialing": len(dial_targets)}
@@ -361,7 +380,7 @@ class P2PService:
         try:
             while self._running:
                 conn = await self._transport.accept()
-                asyncio.create_task(
+                self._create_child_task(
                     self._register_conn(conn, direction="inbound"), name="p2p.peer.in"
                 )
         except asyncio.CancelledError:
@@ -412,7 +431,7 @@ class P2PService:
                     if backoff.get(addr, 0.0) > now:
                         continue
                     backoff[addr] = now + 10.0
-                    asyncio.create_task(self._dial(addr), name=f"p2p.dial@{addr}")
+                    self._create_child_task(self._dial(addr), name=f"p2p.dial@{addr}")
                     break
         except asyncio.CancelledError:
             return
@@ -448,7 +467,7 @@ class P2PService:
             self._peers[remote] = peer
             self._stats["peers"] = len(self._peers)
 
-        asyncio.create_task(self._peer_loop(peer), name=f"p2p.peer@{remote}")
+        self._create_child_task(self._peer_loop(peer), name=f"p2p.peer@{remote}")
 
     async def _peer_loop(self, peer: _PeerState) -> None:
         # Send HELLO immediately (both sides do this; handler is symmetric).
