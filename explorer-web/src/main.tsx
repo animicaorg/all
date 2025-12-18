@@ -27,6 +27,21 @@ import "./i18n/config";
   }
 })();
 
+// Guard against serving the dev client in production environments
+if (import.meta.hot && typeof window !== "undefined") {
+  const host = window.location.hostname;
+  const isLocalHost =
+    host === "localhost" ||
+    host === "127.0.0.1" ||
+    host === "[::1]" ||
+    host.endsWith(".localhost");
+  if (!isLocalHost) {
+    console.warn(
+      "[explorer] Vite dev client detected on a non-localhost host. Use `pnpm build` and serve dist/ for production deployments."
+    );
+  }
+}
+
 /** Mount app */
 function mount() {
   const containerId = "root";

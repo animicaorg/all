@@ -29,9 +29,9 @@ describe('env helpers', () => {
 
   it('falls back to page origin when only location is available', () => {
     global.window = { location: { origin: 'http://site.local' } };
-    expect(inferRpcUrl()).toBe('http://site.local/');
+    expect(inferRpcUrl()).toBe('/rpc');
     // With no explicit WS, should convert origin and keep port/protocol
-    expect(inferWsUrl()).toBe('ws://site.local/');
+    expect(inferWsUrl()).toBe('ws://site.local/rpc');
   });
 
   it('defaults to localhost when nothing else is provided', () => {

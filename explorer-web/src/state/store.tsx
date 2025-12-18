@@ -18,8 +18,8 @@
 
 import React, { createContext, useContext, useRef } from 'react';
 import type { ReactNode } from 'react';
-import { useStore as useZustandStore } from 'zustand';
 import { createStore, type StoreApi } from 'zustand/vanilla';
+import { useStoreWithEqualityFn } from 'zustand/traditional';
 import { devtools, persist, subscribeWithSelector, createJSONStorage } from 'zustand/middleware';
 import { shallow } from 'zustand/shallow';
 import { inferChainId, inferRpcUrl } from '../services/env';
@@ -42,6 +42,9 @@ export interface NetworkState {
   rpcUrl: string;
   chainId: string;
   connected: boolean;
+  status?: 'disconnected' | 'connecting' | 'connected' | 'error';
+  latencyMs?: number | null;
+  error?: string | null;
 }
 
 export interface HeadState {
@@ -82,6 +85,9 @@ const defaults = (): ExplorerState => ({
     rpcUrl: envRpc,
     chainId: envChainId,
     connected: false,
+    status: 'disconnected',
+    latencyMs: null,
+    error: null,
   },
   head: {
     height: 0,
@@ -195,6 +201,9 @@ export function createExplorerStore(preloaded?: Partial<ExplorerState>) {
                 rpcUrl: state.network.rpcUrl,
                 chainId: state.network.chainId,
                 connected: false, // never persist live connection flag
+                status: 'disconnected',
+                latencyMs: null,
+                error: null,
               },
               ui: state.ui,
             } as unknown as S),
@@ -249,8 +258,7 @@ export function useExplorerStore<T>(
   if (!store) {
     throw new Error('useExplorerStore must be used within <ExplorerStoreProvider>');
   }
-  // @ts-expect-error: zustand react signature supports equality as third arg
-  return useZustandStore(store, selector, equality);
+  return useStoreWithEqualityFn(store, selector, equality);
 }
 
 // Commonly re-used selectors & helpers

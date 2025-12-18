@@ -7,6 +7,8 @@
  *   4. Local defaults (127.0.0.1)
  */
 
+import { resolveRpcUrl } from '../config/rpcUrl';
+
 export type EnvLike = {
   VITE_RPC_URL?: string;
   VITE_RPC_HTTP?: string;  // Alternative name for RPC URL
@@ -15,7 +17,7 @@ export type EnvLike = {
   VITE_CHAIN_ID?: string | number;
 };
 
-const DEFAULT_RPC = "http://127.0.0.1:8545";
+const DEFAULT_RPC = "/rpc";
 const DEFAULT_WS = "ws://127.0.0.1:8546";
 
 function resolveEnv(env?: Partial<EnvLike>): Partial<EnvLike> {
@@ -30,9 +32,13 @@ function resolveEnv(env?: Partial<EnvLike>): Partial<EnvLike> {
 /** Infer an RPC HTTP URL with sensible fallbacks. */
 export function inferRpcUrl(env?: Partial<EnvLike>): string {
   const e = resolveEnv(env);
-  // Support both VITE_RPC_URL and VITE_RPC_HTTP for backwards compatibility
-  if (e?.VITE_RPC_URL) return e.VITE_RPC_URL;
-  if (e?.VITE_RPC_HTTP) return e.VITE_RPC_HTTP;
+  const envRpc = e?.VITE_RPC_URL ?? e?.VITE_RPC_HTTP;
+
+  if (typeof window !== "undefined") {
+    return resolveRpcUrl(e);
+  }
+
+  if (envRpc) return envRpc;
 
   if (typeof window !== "undefined") {
     const anyWin = window as any;
@@ -43,7 +49,8 @@ export function inferRpcUrl(env?: Partial<EnvLike>): string {
     if (typeof injected === "string" && injected.length > 0) return injected;
 
     try {
-      return new URL(window.location.origin).toString();
+      const origin = new URL(window.location.origin).toString();
+      return origin.endsWith("/") ? `${origin}rpc` : `${origin}/rpc`;
     } catch {
       /* noop */
     }
@@ -78,6 +85,10 @@ export function inferWsUrl(env?: Partial<EnvLike>): string {
     u.protocol = u.protocol === "https:" ? "wss:" : "ws:";
     return u.toString();
   } catch {
+    if (typeof window !== "undefined" && rpc?.startsWith?.("/")) {
+      const base = window.location.origin.replace(/^http/, "ws");
+      return `${base}${rpc}`;
+    }
     return DEFAULT_WS;
   }
 }
