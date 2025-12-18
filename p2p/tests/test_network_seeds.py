@@ -8,16 +8,19 @@ from p2p import config as p2p_config
 from p2p.discovery import seeds as seed_discovery
 
 
+PRIMARY_SEED_HOST = "rpc.animica.org"
+FALLBACK_SEED_IP = "144.126.133.21"
+
+
 class TestNetworkSpecificSeeds:
     """Test that seeds are correctly selected based on chain_id/network."""
 
     def test_default_seeds_by_network_mainnet(self):
         """Test mainnet (chain_id=1) seeds point at the primary host."""
         seeds = p2p_config.DEFAULT_SEEDS_BY_NETWORK[1]
-        
-        # Should include the single seed host
-        assert all("144.126.133.21" in s for s in seeds)
-        
+
+        assert any(PRIMARY_SEED_HOST in s for s in seeds)
+        assert any(FALLBACK_SEED_IP in s for s in seeds)
         # Should include both QUIC and TCP
         assert any("quic" in s for s in seeds)
         assert any("tcp/30333" in s for s in seeds)
@@ -25,10 +28,9 @@ class TestNetworkSpecificSeeds:
     def test_default_seeds_by_network_testnet(self):
         """Test testnet (chain_id=2) seeds point at the primary host."""
         seeds = p2p_config.DEFAULT_SEEDS_BY_NETWORK[2]
-        
-        # Should include the single seed host
-        assert all("144.126.133.21" in s for s in seeds)
-        
+
+        assert any(PRIMARY_SEED_HOST in s for s in seeds)
+        assert any(FALLBACK_SEED_IP in s for s in seeds)
         # Should include both QUIC and TCP
         assert any("quic" in s for s in seeds)
         assert any("tcp/30333" in s for s in seeds)
@@ -36,10 +38,9 @@ class TestNetworkSpecificSeeds:
     def test_default_seeds_by_network_devnet(self):
         """Test devnet (chain_id=1337) seeds point at the primary host."""
         seeds = p2p_config.DEFAULT_SEEDS_BY_NETWORK[1337]
-        
-        # Should include the single seed host
-        assert all("144.126.133.21" in s for s in seeds)
-        
+
+        assert any(PRIMARY_SEED_HOST in s for s in seeds)
+        assert any(FALLBACK_SEED_IP in s for s in seeds)
         # Should include both QUIC and TCP
         assert any("quic" in s for s in seeds)
         assert any("tcp/30333" in s for s in seeds)
@@ -60,9 +61,9 @@ class TestSeedLoadingFromEnv:
         monkeypatch.delenv("ANIMICA_P2P_NETWORK", raising=False)
         
         seeds = p2p_config._load_seeds_from_env(chain_id=1)
-        
-        # Should return mainnet seeds for the single host
-        assert all("144.126.133.21" in s for s in seeds)
+
+        assert any(PRIMARY_SEED_HOST in s for s in seeds)
+        assert any(FALLBACK_SEED_IP in s for s in seeds)
 
     def test_load_seeds_with_chain_id_testnet(self, monkeypatch):
         """Test loading seeds for testnet via chain_id parameter."""
@@ -70,9 +71,9 @@ class TestSeedLoadingFromEnv:
         monkeypatch.delenv("ANIMICA_P2P_NETWORK", raising=False)
         
         seeds = p2p_config._load_seeds_from_env(chain_id=2)
-        
-        # Should return testnet seeds
-        assert all("144.126.133.21" in s for s in seeds)
+
+        assert any(PRIMARY_SEED_HOST in s for s in seeds)
+        assert any(FALLBACK_SEED_IP in s for s in seeds)
 
     def test_load_seeds_with_network_env_mainnet(self, monkeypatch):
         """Test loading seeds via ANIMICA_P2P_NETWORK=mainnet."""
@@ -80,9 +81,9 @@ class TestSeedLoadingFromEnv:
         monkeypatch.setenv("ANIMICA_P2P_NETWORK", "mainnet")
         
         seeds = p2p_config._load_seeds_from_env()
-        
-        # Should return mainnet seeds
-        assert all("144.126.133.21" in s for s in seeds)
+
+        assert any(PRIMARY_SEED_HOST in s for s in seeds)
+        assert any(FALLBACK_SEED_IP in s for s in seeds)
 
     def test_load_seeds_with_network_env_testnet(self, monkeypatch):
         """Test loading seeds via ANIMICA_P2P_NETWORK=testnet."""
@@ -90,9 +91,9 @@ class TestSeedLoadingFromEnv:
         monkeypatch.setenv("ANIMICA_P2P_NETWORK", "testnet")
         
         seeds = p2p_config._load_seeds_from_env()
-        
-        # Should return testnet seeds
-        assert all("144.126.133.21" in s for s in seeds)
+
+        assert any(PRIMARY_SEED_HOST in s for s in seeds)
+        assert any(FALLBACK_SEED_IP in s for s in seeds)
 
     def test_load_seeds_with_global_network_env(self, monkeypatch):
         """Test loading seeds via ANIMICA_NETWORK fallback."""
@@ -104,7 +105,8 @@ class TestSeedLoadingFromEnv:
         seeds = p2p_config._load_seeds_from_env()
 
         # Should return testnet seeds through global network env
-        assert all("144.126.133.21" in s for s in seeds)
+        assert any(PRIMARY_SEED_HOST in s for s in seeds)
+        assert any(FALLBACK_SEED_IP in s for s in seeds)
 
     def test_load_seeds_with_global_chain_id_env(self, monkeypatch):
         """Test loading seeds via ANIMICA_CHAIN_ID fallback."""
@@ -117,7 +119,8 @@ class TestSeedLoadingFromEnv:
         seeds = p2p_config._load_seeds_from_env()
 
         # Should return testnet seeds based on global chain id env
-        assert all("144.126.133.21" in s for s in seeds)
+        assert any(PRIMARY_SEED_HOST in s for s in seeds)
+        assert any(FALLBACK_SEED_IP in s for s in seeds)
 
     def test_explicit_seeds_override_defaults(self, monkeypatch):
         """Test that ANIMICA_P2P_SEEDS overrides network-specific defaults."""
@@ -140,7 +143,8 @@ class TestSeedLoadingFromEnv:
         seeds = p2p_config._load_seeds_from_env()
         
         # Should still work with uppercase
-        assert all("144.126.133.21" in s for s in seeds)
+        assert any(PRIMARY_SEED_HOST in s for s in seeds)
+        assert any(FALLBACK_SEED_IP in s for s in seeds)
 
     def test_fallback_to_mainnet_default(self, monkeypatch):
         """Test fallback to mainnet DEFAULT_SEEDS when no chain_id or network."""
@@ -151,7 +155,8 @@ class TestSeedLoadingFromEnv:
         
         # Should return mainnet default seeds
         assert seeds == p2p_config.DEFAULT_SEEDS
-        assert all("144.126.133.21" in s for s in seeds)
+        assert any(PRIMARY_SEED_HOST in s for s in seeds)
+        assert any(FALLBACK_SEED_IP in s for s in seeds)
 
 
 class TestEmbeddedFallbackSeeds:
@@ -161,8 +166,9 @@ class TestEmbeddedFallbackSeeds:
         """Test that embedded fallback seeds are defined."""
         assert len(seed_discovery.EMBEDDED_FALLBACK_SEEDS) > 0
         
-        # Should only include the primary IP host
-        assert all("144.126.133.21" in s for s in seed_discovery.EMBEDDED_FALLBACK_SEEDS)
+        # Should include both DNS host and IP fallback
+        assert any(PRIMARY_SEED_HOST in s for s in seed_discovery.EMBEDDED_FALLBACK_SEEDS)
+        assert any(FALLBACK_SEED_IP in s for s in seed_discovery.EMBEDDED_FALLBACK_SEEDS)
 
     def test_network_dns_seeds_mapping(self):
         """Test that network DNS seeds are defined for all networks."""
@@ -181,8 +187,9 @@ class TestEmbeddedFallbackSeeds:
         bundle = seed_discovery.discover_from_static(seed_discovery.EMBEDDED_FALLBACK_SEEDS)
         
         assert len(bundle.endpoints) > 0
-        # Should include the primary IP
-        assert any("144.126.133.21" in ep.host for ep in bundle.endpoints)
+        # Should include both DNS host and IP
+        assert any(PRIMARY_SEED_HOST in ep.host for ep in bundle.endpoints)
+        assert any(FALLBACK_SEED_IP in ep.host for ep in bundle.endpoints)
 
 
 class TestFullConfigLoad:
@@ -195,8 +202,9 @@ class TestFullConfigLoad:
         
         cfg = p2p_config.load_config()
         
-        # Should include mainnet seeds pointed at the single host
-        assert all("144.126.133.21" in s for s in cfg.seeds)
+        # Should include mainnet seeds pointed at DNS + IP fallback
+        assert any(PRIMARY_SEED_HOST in s for s in cfg.seeds)
+        assert any(FALLBACK_SEED_IP in s for s in cfg.seeds)
 
     def test_load_config_with_global_chain_id_env(self, monkeypatch):
         """Test that load_config respects global ANIMICA_CHAIN_ID when P2P env not set."""
@@ -209,7 +217,8 @@ class TestFullConfigLoad:
         cfg = p2p_config.load_config()
 
         # Should include testnet seeds via global chain id
-        assert all("144.126.133.21" in s for s in cfg.seeds)
+        assert any(PRIMARY_SEED_HOST in s for s in cfg.seeds)
+        assert any(FALLBACK_SEED_IP in s for s in cfg.seeds)
 
     def test_load_config_with_global_network_env(self, monkeypatch):
         """Test that load_config respects global ANIMICA_NETWORK."""
@@ -221,7 +230,8 @@ class TestFullConfigLoad:
         cfg = p2p_config.load_config()
 
         # Should include devnet seeds from global network env
-        assert all("144.126.133.21" in s for s in cfg.seeds)
+        assert any(PRIMARY_SEED_HOST in s for s in cfg.seeds)
+        assert any(FALLBACK_SEED_IP in s for s in cfg.seeds)
 
     def test_load_config_with_network_env(self, monkeypatch):
         """Test that load_config respects ANIMICA_P2P_NETWORK."""
@@ -232,4 +242,5 @@ class TestFullConfigLoad:
         cfg = p2p_config.load_config()
         
         # Should include testnet seeds
-        assert all("144.126.133.21" in s for s in cfg.seeds)
+        assert any(PRIMARY_SEED_HOST in s for s in cfg.seeds)
+        assert any(FALLBACK_SEED_IP in s for s in cfg.seeds)
