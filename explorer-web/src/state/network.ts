@@ -24,6 +24,7 @@ import type { ExplorerState } from './store';
 import { shallow } from './store';
 import type { ExplorerRpcClient } from '../services/rpc';
 import { getRpcClient, releaseRpcClient } from '../services/rpc';
+import { DEFAULT_RPC } from '../services/env';
 
 // Thin client interface expected from ../services/rpc
 // The explorer-web/services/rpc.ts should provide a compatible client.
@@ -95,6 +96,25 @@ const bindings: {
   setHead?: ExplorerState['setHead'];
   addToast?: ExplorerState['addToast'];
 } = {};
+
+function isCorsLikeError(message: string) {
+  const lower = message.toLowerCase();
+  return lower.includes('cors') || lower.includes('cross-origin');
+}
+
+function inferSameOriginRpcUrl(currentRpc: string): string | null {
+  if (typeof window === 'undefined') return null;
+
+  try {
+    const resolved = new URL(currentRpc, window.location.href);
+    if (resolved.origin === window.location.origin) return null; // already same-origin
+
+    const safePath = DEFAULT_RPC.startsWith('/') ? DEFAULT_RPC : `/${DEFAULT_RPC}`;
+    return `${window.location.origin}${safePath}`;
+  } catch {
+    return null;
+  }
+}
 
 // ------------------------- Public setters -----------------------------------
 
@@ -195,7 +215,7 @@ function ensureBoot(params: {
   snapshot = { ...snapshot, rpcUrl, expectedChainId };
   emit();
 
-  const promise = boot({ ...params, rpcUrl, expectedChainId, signal: controller.signal });
+  const promise = boot({ ...params, rpcUrl, expectedChainId, signal: controller.signal, triedCorsFallback: false });
   runtime.bootPromise = promise;
   return promise;
 }
@@ -207,8 +227,9 @@ async function boot(params: {
   pingIntervalMs: number;
   enforceChainId: boolean;
   signal: AbortSignal;
+  triedCorsFallback?: boolean;
 }) {
-  const { rpcUrl, expectedChainId, pollIntervalMs, pingIntervalMs, enforceChainId, signal } = params;
+  const { rpcUrl, expectedChainId, pollIntervalMs, pingIntervalMs, enforceChainId, signal, triedCorsFallback } = params;
   if (signal.aborted) return;
 
   setStatus('connecting', null);
@@ -359,10 +380,36 @@ async function boot(params: {
     const errorName = e?.name || 'Error';
     const errorMsg = e?.message || String(e);
 
+    const sameOriginRpc = inferSameOriginRpcUrl(rpcUrl);
+    const isCorsError = isCorsLikeError(errorMsg);
+    if (isCorsError && !triedCorsFallback && sameOriginRpc) {
+      console.warn(`[network] CORS detected for ${rpcUrl}; retrying via same-origin proxy ${sameOriginRpc}`);
+
+      releaseRpcClient(rpcUrl);
+      runtime.client = null;
+
+      runtime.bootKey = `${sameOriginRpc}|${expectedChainId || ''}`;
+      snapshot = { ...snapshot, rpcUrl: sameOriginRpc, status: 'connecting', error: null };
+      emit();
+      bindings.setNetwork?.({ rpcUrl: sameOriginRpc, status: 'connecting', error: null, connected: false });
+
+      const nextPromise = boot({
+        rpcUrl: sameOriginRpc,
+        expectedChainId,
+        pollIntervalMs,
+        pingIntervalMs,
+        enforceChainId,
+        signal,
+        triedCorsFallback: true,
+      });
+      runtime.bootPromise = nextPromise;
+      return nextPromise;
+    }
+
     let userMessage = 'Failed to connect to RPC server';
     let troubleshooting = '';
 
-    if (errorMsg.toLowerCase().includes('cors')) {
+    if (isCorsError) {
       userMessage = 'RPC blocked by CORS. Use the built-in /rpc proxy or enable CORS on the RPC server.';
       troubleshooting = '\n\n💡 The RPC server must allow this origin or be accessed via a same-origin proxy.';
     } else if (errorName === 'NetworkError' || errorMsg.includes('fetch failed') || errorMsg.toLowerCase().includes('network')) {
