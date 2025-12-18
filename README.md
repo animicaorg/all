@@ -35,7 +35,7 @@ Each module has its own README with detailed information. See the Copilot instru
 - ✅ **Peer Discovery**: Automatic discovery via DNS seeds, mDNS, and Kademlia DHT
 - ✅ **Gossip Protocol**: Efficient block/transaction/proof propagation
 - ✅ **Consensus**: Deterministic PoIES validation by all nodes
-- ✅ **No Central Authority**: Public RPC nodes like `rpc.animica.org` are simply participants, not controllers
+- ✅ **No Central Authority**: Public RPC nodes like `rpc.animica.org` are bootstrap-only helpers; run your own node for day-to-day queries and mining.
 
 **Run your own node** to strengthen the network and maintain decentralization. See [P2P Networking Guide](docs/P2P_NETWORKING_GUIDE.md) for details.
 
@@ -264,7 +264,7 @@ Each network uses its own data directory to prevent state contamination:
 
 ## 🌐 Decentralized P2P Network
 
-**Animica is fully decentralized** - nodes connect directly to each other via P2P without any central authority. The public RPC at `rpc.animica.org` is simply one node among many, not a central server.
+**Animica is fully decentralized** - nodes connect directly to each other via P2P without any central authority. The public RPC at `rpc.animica.org` is provided only for bootstrapping; wallets, miners, and explorers should use a locally run node after syncing.
 
 ### P2P Features
 

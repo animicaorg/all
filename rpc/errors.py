@@ -64,6 +64,7 @@ class AnimicaCode(IntEnum):
     ACCESS_DENIED = -32003
     NOT_FOUND = -32004
     ALREADY_EXISTS = -32005
+    RPC_METHOD_RESTRICTED = -32040
 
     # TX & state
     INVALID_TX = -32010
@@ -86,8 +87,8 @@ class AnimicaCode(IntEnum):
     PQ_POLICY_VIOLATION = -32032
 
     # Data availability
-    DA_ERROR = -32040
-    DA_NOT_AVAILABLE = -32041
+    DA_ERROR = -32041
+    DA_NOT_AVAILABLE = -32042
 
     # Randomness
     RAND_WINDOW_ERROR = -32050
@@ -164,6 +165,11 @@ class RateLimited(RpcError):
         if retry_after_ms is not None:
             payload["retryAfterMs"] = int(retry_after_ms)
         super().__init__(AnimicaCode.RATE_LIMITED, "Too many requests", payload or None)
+
+
+class RpcMethodRestricted(RpcError):
+    def __init__(self, detail: str = "RPC method restricted", **data: Any) -> None:
+        super().__init__(AnimicaCode.RPC_METHOD_RESTRICTED, detail, data or None)
 
 
 class TemporarilyUnavailable(RpcError):
@@ -380,7 +386,7 @@ def http_status_hint(code: int) -> int:
         return 400
     if code == JsonRpcCode.METHOD_NOT_FOUND:
         return 404
-    if code in (AnimicaCode.ACCESS_DENIED,):
+    if code in (AnimicaCode.ACCESS_DENIED, AnimicaCode.RPC_METHOD_RESTRICTED):
         return 403
     if code in (AnimicaCode.RATE_LIMITED,):
         return 429

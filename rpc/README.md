@@ -11,6 +11,16 @@ Backed by `core/` (DB, types, genesis), `pq/` (post-quantum sigs), `mempool/`, `
 - **Observability**: Prometheus `/metrics`, structured logs, `/healthz` & `/readyz`.
 - **Spec-driven**: OpenRPC served at `/openrpc.json` (see `spec/openrpc.json`).
 
+### Access policy (bootstrap vs. admin)
+
+The RPC server enforces an access mode selected via `ANIMICA_RPC_ACCESS_MODE`:
+
+- `LOCAL_DEV` (default): full RPC surface for local development.
+- `PUBLIC_BOOTSTRAP`: only `bootstrap.*`/chain identity calls are allowed to the public; all other methods return `RPC_METHOD_RESTRICTED` (-32040).
+- `PRIVATE_FULL`: all methods require admin authorization.
+
+Admin access can be granted via `ANIMICA_RPC_ADMIN_TOKEN` (header: `X-Animica-Admin-Token`) or IP/CIDR allowlist (`ANIMICA_RPC_ADMIN_ALLOWLIST`). Bootstrap endpoints can be rate limited with `ANIMICA_BOOTSTRAP_RATE_LIMIT` (requests/min per IP).
+
 ## Features (v0)
 
 - Chain metadata: `chain.getParams`, `chain.getChainId`, `chain.getHead`
@@ -295,4 +305,3 @@ Useful links
 	•	Wallet extension provider: wallet-extension/src/provider
 
 ⸻
-

@@ -12,6 +12,8 @@ from rich.console import Console
 from rich.pretty import Pretty
 
 from pq.py.sign import build_sign_bytes, pq_sign_detached, verify_detached  # type: ignore
+from animica.config import load_network_config
+from animica.cli.rpc_guard import guard_bootstrap_rpc
 from .timeouts import DEFAULT_RPC_TIMEOUT, RPC_TIMEOUT_ENV, resolve_timeout
 
 console = Console()
@@ -61,6 +63,15 @@ def _rpc(
         err = out["error"]
         raise RpcError(code=int(err.get("code", -1)), message=str(err.get("message", "RPC error")), data=err.get("data"))
     return out.get("result")
+
+
+def _resolve_rpc_url(rpc_url: Optional[str]) -> str:
+    if rpc_url and rpc_url.strip():
+        return rpc_url.strip()
+    env_url = os.environ.get("ANIMICA_RPC_URL")
+    if env_url and env_url.strip():
+        return env_url.strip()
+    return load_network_config().rpc_url
 
 
 def _cbor(obj: Any) -> bytes:
@@ -256,6 +267,11 @@ def send(
     to_addr: str = typer.Option(..., "--to", help="Recipient address (anim1... )"),
     value: float = typer.Option(..., "--value", help="Amount in ANM (whole/decimal)"),
     rpc_url: Optional[str] = typer.Option(None, "--rpc-url", help="RPC URL (default: node)"),
+    allow_remote_rpc: bool = typer.Option(
+        False,
+        "--allow-remote-rpc",
+        help="Allow using remote bootstrap RPC (requires ANIMICA_I_UNDERSTAND_REMOTE_RISK=1)",
+    ),
     chain_id: Optional[int] = typer.Option(None, "--chain-id", help="Chain ID override"),
     gas_limit: int = typer.Option(21000, "--gas-limit", help="Gas limit"),
     max_fee: Optional[int] = typer.Option(None, "--max-fee", help="Max fee (base units)"),
@@ -268,7 +284,8 @@ def send(
     Send a raw transaction via tx.sendRawTransaction using PQ signature.
     """
     # Resolve RPC
-    rpc = rpc_url or os.environ.get("ANIMICA_RPC_URL") or "http://127.0.0.1:18546/rpc"
+    rpc = _resolve_rpc_url(rpc_url)
+    guard_bootstrap_rpc(rpc, allow_remote=allow_remote_rpc, method="tx.sendRawTransaction")
 
     # Resolve chain id
     cid = int(chain_id) if chain_id is not None else _get_chain_id(rpc)

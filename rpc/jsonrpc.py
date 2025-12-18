@@ -97,6 +97,7 @@ except Exception:  # pragma: no cover - fallback if errors module not ready
 
 
 from rpc import version as rpc_version
+from rpc.access_policy import get_active_policy
 
 log = logging.getLogger(__name__)
 
@@ -442,6 +443,8 @@ async def dispatch_one(obj: Json, ctx: Optional[Context]) -> Optional[Json]:
     """
     try:
         method_name, params, req_id = _validate_request_obj(obj)
+        policy = get_active_policy()
+        policy.authorize(method_name, ctx)
         fn = registry.get(method_name)
         args, kwargs = _bind_call_args(fn, params, ctx)
         result = await _maybe_await(fn(*args, **kwargs))
