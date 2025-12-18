@@ -34,7 +34,7 @@ This guide helps you diagnose and fix common issues with the Animica Blockchain 
 - **Check**: Verify your `.env` file has the correct values:
   ```env
   VITE_RPC_URL=https://rpc.animica.org/rpc
-  VITE_CHAIN_ID=659658
+  VITE_CHAIN_ID=1
   ```
 - **For mainnet**: Use `https://rpc.animica.org/rpc`
 - **For testnet**: Use your testnet RPC URL
@@ -95,7 +95,8 @@ This guide helps you diagnose and fix common issues with the Animica Blockchain 
      -H "Content-Type: application/json" \
      -d '{"jsonrpc":"2.0","id":1,"method":"chain.getChainId","params":[]}'
    ```
-2. Update `VITE_CHAIN_ID` in your `.env` to match
+2. Update `VITE_CHAIN_ID` in your `.env` to match (legacy values like `659658` / `0xa11ca`
+   are now normalized to `1`, but you should still update the config to avoid warnings)
 3. Restart the dev server
 
 ### WebSocket Connection Failures
