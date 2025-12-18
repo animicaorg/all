@@ -136,6 +136,24 @@ def test_status_and_head(monkeypatch: Any) -> None:
     assert data["hash"] == "0xabc"
 
 
+def test_status_stops_after_max_retries(monkeypatch: Any) -> None:
+    attempts: list[int] = []
+
+    async def failing_rpc_call(*args: Any, **kwargs: Any) -> Any:
+        attempts.append(1)
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(node, "rpc_call", failing_rpc_call)
+    result = runner.invoke(
+        node.app,
+        ["status", "--max-retries", "2", "--retry-delay", "0.01"],
+    )
+
+    assert result.exit_code == 1
+    assert len(attempts) == 2
+    assert "failed after 2 attempts" in result.stdout or "failed after 2 attempts" in result.stderr
+
+
 def test_auto_bootstrap_fetches_when_db_missing(monkeypatch: Any, tmp_path: Path) -> None:
     cfg = _dummy_net_cfg(tmp_path)
     monkeypatch.delenv("ANIMICA_P2P_SEEDS", raising=False)
