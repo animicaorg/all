@@ -13,7 +13,7 @@
  *     --include "**\\/*.{png,jpg,jpeg,svg,webp,gif}" \
  *     --exclude "**\\/node_modules/**" --clean
  *
- *   node website/scripts/sync_docs_from_repo.mjs --git https://github.com/animica-labs/animica \
+ *   node website/scripts/sync_docs_from_repo.mjs --git https://github.com/animicaorg/animica \
  *     --ref main --prefix docs \
  *     --dest website/src/docs --clean --verbose
  *

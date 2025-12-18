@@ -21,7 +21,7 @@ export function getStaticPaths() {
 }
 
 const CANONICAL =
-  (import.meta.env.PUBLIC_DOCS_URL as string) || "https://docs.animica.dev";
+  (import.meta.env.PUBLIC_DOCS_URL as string) || "https://docs.animica.org";
 
 /**
  * Discover local docs at build time.

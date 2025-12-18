@@ -7,6 +7,36 @@
 
   "redirects": [
     {
+      "source": "/studio",
+      "destination": "https://studio.animica.org",
+      "permanent": false
+    },
+    {
+      "source": "/studio/:path*",
+      "destination": "https://studio.animica.org/:path*",
+      "permanent": false
+    },
+    {
+      "source": "/explorer",
+      "destination": "https://explorer.animica.org",
+      "permanent": false
+    },
+    {
+      "source": "/explorer/:path*",
+      "destination": "https://explorer.animica.org/:path*",
+      "permanent": false
+    },
+    {
+      "source": "/docs",
+      "destination": "https://docs.animica.org",
+      "permanent": true
+    },
+    {
+      "source": "/docs/:path*",
+      "destination": "https://docs.animica.org/:path*",
+      "permanent": true
+    },
+    {
       "source": "/:path*",
       "has": [{ "type": "host", "value": "www.animica.org" }],
       "destination": "https://animica.org/:path*",

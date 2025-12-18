@@ -3,20 +3,20 @@
 
 # --- Canonical host (optional) ---
 # If you host both apex and www, choose one:
-# http://animica.dev/*   https://www.animica.dev/:splat   301!
-# http://www.animica.dev/* https://animica.dev/:splat     301!
+# http://animica.org/*   https://www.animica.org/:splat   301!
+# http://www.animica.org/* https://animica.org/:splat     301!
 
 # --- Short-links to external apps ---
-/studio      https://studio.animica.dev/                 302
-/explorer    https://explorer.animica.dev/               302
+/studio      https://studio.animica.org/                 302
+/explorer    https://explorer.animica.org/               302
 
 # --- Docs hosted elsewhere ---
 /docs        /docs/                                      301
-/docs/*      https://docs.animica.dev/:splat             301
+/docs/*      https://docs.animica.org/:splat             301
 
 # --- RPC proxy (optional; uncomment & edit host) ---
-# /rpc/*     https://rpc.animica.dev/:splat              200
-# /ws/*      wss://rpc.animica.dev/:splat                200
+# /rpc/*     https://rpc.animica.org/:splat              200
+# /ws/*      wss://rpc.animica.org/:splat                200
 
 # --- Ensure API/serverless routes are not swallowed by SPA fallback ---
 /api/*       /api/:splat                                 200
