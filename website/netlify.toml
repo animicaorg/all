@@ -65,11 +65,35 @@
 
 # If you host previews under a different domain, you can add additional host rules above.
 
-# Example legacy docs route (uncomment/adjust if needed)
-# [[redirects]]
-#   from = "/docs/*"
-#   to = "https://docs.animica.org/:splat"
-#   status = 302
+[[redirects]]
+  from = "/studio"
+  to = "https://studio.animica.org"
+  status = 302
+
+[[redirects]]
+  from = "/studio/*"
+  to = "https://studio.animica.org/:splat"
+  status = 302
+
+[[redirects]]
+  from = "/explorer"
+  to = "https://explorer.animica.org"
+  status = 302
+
+[[redirects]]
+  from = "/explorer/*"
+  to = "https://explorer.animica.org/:splat"
+  status = 302
+
+[[redirects]]
+  from = "/docs"
+  to = "https://docs.animica.org"
+  status = 301
+
+[[redirects]]
+  from = "/docs/*"
+  to = "https://docs.animica.org/:splat"
+  status = 301
 
 #######################################################################
 # Edge Functions (optional)
@@ -94,4 +118,3 @@
 # [plugins]
 #   # Example: Include official Next/Astro plugins if you switch to SSR.
 #   # packages = ["@netlify/astro-adapter"]  # not required for static export
-

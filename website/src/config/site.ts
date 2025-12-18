@@ -143,7 +143,7 @@ export const SITE: SiteConfig = {
 
   social: {
     twitter: 'https://x.com/animica',
-    github: 'https://github.com/animica-labs',
+    github: 'https://github.com/animicaorg',
     discord: 'https://discord.gg/animica',
     youtube: 'https://www.youtube.com/@animica'
   },
