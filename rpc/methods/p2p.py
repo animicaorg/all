@@ -357,6 +357,39 @@ async def add_peer(address: str) -> dict[str, t.Any]:
         }
 
 
+@method("p2p.importPeers", desc="Persist and dial a list of peers")
+async def import_peers(addresses: list[str]) -> dict[str, t.Any]:
+    svc = _get_p2p_service()
+    if svc is None:
+        return {"success": False, "error": "P2P service not available"}
+
+    if hasattr(svc, "import_peers"):
+        try:
+            result = await svc.import_peers(addresses)
+            result.setdefault("success", True)
+            return result
+        except Exception as e:  # pragma: no cover - defensive
+            log.error("import_peers failed", exc_info=True)
+            return {"success": False, "error": str(e)}
+
+    # Fallback: seed peerstore directly if available
+    added = 0
+    try:
+        peerstore = getattr(svc, "peerstore", None)
+        if peerstore is None:
+            return {"success": False, "error": "Peerstore unavailable"}
+        for addr in addresses:
+            peer_id = addr
+            try:
+                peerstore.add(peer_id=peer_id, addrs=[addr], direction="outbound")
+                added += 1
+            except Exception:
+                continue
+        return {"success": True, "added": added}
+    except Exception as e:  # pragma: no cover - defensive
+        return {"success": False, "error": str(e)}
+
+
 @method("p2p.removePeer", desc="Remove a peer by ID")
 async def remove_peer(peer_id: str) -> dict[str, t.Any]:
     """
@@ -437,4 +470,5 @@ __all__ = [
     "add_peer",
     "remove_peer",
     "get_peer_info",
+    "import_peers",
 ]

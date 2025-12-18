@@ -570,9 +570,12 @@ def up(
     
     # Get network-specific compose file
     compose_file = _get_compose_file(network)
+    net_cfg = load_network_config(network)
+    data_dir = str(Path(net_cfg.data_dir).expanduser())
     
     defaults = get_network_defaults(network)
     net_cfg = load_network_config(network)
+    data_dir = str(Path(net_cfg.data_dir).expanduser())
 
     _auto_bootstrap_if_needed(net_cfg, os.getenv("ANIMICA_BOOTSTRAP_RPC_URL"), quiet=False)
     
@@ -582,7 +585,7 @@ def up(
     typer.echo(f"Host RPC Port: {os.environ.get('HOST_RPC_PORT', defaults['rpc_port'])}")
     typer.echo(f"Host P2P Port: {os.environ.get('HOST_P2P_PORT', defaults['p2p_port'])}")
     typer.echo(f"Host Metrics Port: {os.environ.get('HOST_METRICS_PORT', defaults['metrics_port'])}")
-    typer.echo(f"Data directory: {net_cfg.data_dir}")
+    typer.echo(f"Data directory: {data_dir}")
     
     # Build docker-compose command
     # For devnet, we need to use profiles; for mainnet/testnet, services run by default
@@ -611,12 +614,19 @@ def up(
     typer.echo(f"\nRunning: {' '.join(cmd)}")
     typer.echo("This may take a few minutes on first run...\n")
     
+    compose_env = {
+        **os.environ,
+        "ANIMICA_NETWORK": network,
+        "ANIMICA_DATA_DIR": data_dir,
+        "ANIMICA_P2P_DATA_DIR": str(Path(data_dir) / "p2p"),
+    }
+
     try:
         result = subprocess.run(
             cmd,
             cwd=compose_file.parent,
             check=False,
-            env={**os.environ, "ANIMICA_NETWORK": network}
+            env=compose_env,
         )
         
         if result.returncode == 0:
@@ -720,6 +730,7 @@ def up_all(
             defaults = get_network_defaults(network)
             compose_file = defaults["compose_file"]
             net_cfg = load_network_config(network)
+            data_dir = str(Path(net_cfg.data_dir).expanduser())
             
             if not compose_file.exists():
                 typer.secho(
@@ -745,7 +756,7 @@ def up_all(
         typer.echo(f"Host RPC Port: {os.environ.get('HOST_RPC_PORT', defaults['rpc_port'])}")
         typer.echo(f"Host P2P Port: {os.environ.get('HOST_P2P_PORT', defaults['p2p_port'])}")
         typer.echo(f"Host Metrics Port: {os.environ.get('HOST_METRICS_PORT', defaults['metrics_port'])}")
-        typer.echo(f"Data directory: {net_cfg.data_dir}")
+        typer.echo(f"Data directory: {data_dir}")
         
         # Build docker-compose command
         cmd = [
@@ -767,15 +778,22 @@ def up_all(
         
         if detach:
             cmd.append("-d")
-        
+
         typer.echo(f"\nRunning: {' '.join(cmd)}")
-        
+
+        compose_env = {
+            **os.environ,
+            "ANIMICA_NETWORK": network,
+            "ANIMICA_DATA_DIR": data_dir,
+            "ANIMICA_P2P_DATA_DIR": str(Path(data_dir) / "p2p"),
+        }
+
         try:
             result = subprocess.run(
                 cmd,
                 cwd=compose_file.parent,
                 check=False,
-                env={**os.environ, "ANIMICA_NETWORK": network},
+                env=compose_env,
                 capture_output=True,
                 text=True
             )
@@ -907,13 +925,20 @@ def down(
         cmd.append("-v")
     
     typer.echo(f"\nRunning: {' '.join(cmd)}\n")
-    
+
+    compose_env = {
+        **os.environ,
+        "ANIMICA_NETWORK": network,
+        "ANIMICA_DATA_DIR": data_dir,
+        "ANIMICA_P2P_DATA_DIR": str(Path(data_dir) / "p2p"),
+    }
+
     try:
         result = subprocess.run(
             cmd,
             cwd=compose_file.parent,
             check=False,
-            env={**os.environ, "ANIMICA_NETWORK": network}
+            env=compose_env,
         )
         
         if result.returncode == 0:

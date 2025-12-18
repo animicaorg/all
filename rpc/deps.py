@@ -186,6 +186,31 @@ def _coerce_config(cfg: t.Any) -> _ConfigView:
     )
 
 
+def _infer_data_root(cfg: _ConfigView) -> Path:
+    """Derive the canonical data root for the active chain.
+
+    Preference order:
+    1) ANIMICA_DATA_DIR (per chain)
+    2) sqlite DB parent directory
+    3) ~/.animica/chain-<id>
+    """
+
+    env_dir = os.environ.get("ANIMICA_DATA_DIR")
+    base = Path(env_dir).expanduser() if env_dir else None
+
+    if base is None:
+        db_uri = getattr(cfg, "db_uri", "") or ""
+        if isinstance(db_uri, str) and db_uri.startswith("sqlite:///"):
+            db_path = Path(db_uri.split("sqlite:///")[1]).expanduser()
+            if db_path != Path(":memory:"):
+                base = db_path.parent
+
+    if base is None:
+        base = Path("~/.animica").expanduser()
+
+    return base / f"chain-{cfg.chain_id}"
+
+
 def _load_rpc_config() -> _ConfigView:
     # rpc.config.load_config() → object with db_uri/chain_id/genesis/logging
     cfg_mod = _import("rpc.config")
@@ -518,6 +543,7 @@ def build_context(cfg: t.Any | None = None) -> RpcContext:
     log = logging.getLogger("animica.rpc.deps")
 
     cfg_view = _coerce_config(cfg) if cfg is not None else _load_rpc_config()
+    data_root = _infer_data_root(cfg_view)
 
     # Determine network name for logging
     network = os.environ.get("ANIMICA_NETWORK", "").strip().lower()
@@ -577,17 +603,15 @@ def build_context(cfg: t.Any | None = None) -> RpcContext:
             # Set chain_id in environment so P2P config can auto-select network seeds
             os.environ.setdefault("ANIMICA_P2P_CHAIN_ID", str(cfg_view.chain_id))
 
-            # Load P2P configuration which will automatically select network-specific seeds
-            # based on chain_id (mainnet/testnet/devnet)
-            p2p_config = load_p2p_config()
-
             # Determine peer store path based on network
             peerstore_path = os.environ.get("ANIMICA_PEER_STORE_PATH")
             if not peerstore_path:
-                network_name = {1: "mainnet", 2: "testnet", 1337: "devnet"}.get(
-                    cfg_view.chain_id, "custom"
-                )
-                peerstore_path = os.path.expanduser(f"~/.animica/p2p/{network_name}")
+                peerstore_path = str((data_root / "p2p").expanduser())
+            os.environ.setdefault("ANIMICA_P2P_DATA_DIR", str(peerstore_path))
+
+            # Load P2P configuration which will automatically select network-specific seeds
+            # based on chain_id (mainnet/testnet/devnet)
+            p2p_config = load_p2p_config()
 
             # Use the P2P deps adapter (bridges to core DBs for block import + pending pool admission).
             from p2p.deps import AsyncP2PDeps, P2PDeps

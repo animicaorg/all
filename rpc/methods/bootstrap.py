@@ -114,3 +114,15 @@ def bootstrap_get_seeds() -> dict[str, t.Any]:
         return {"seeds": seeds[:16], "ttl": BOOTSTRAP_CACHE_TTL}
 
     return _cached("seeds", _build)
+
+
+@method("bootstrap.getSnapshotManifest", desc="Return snapshot manifest for bootstrap")
+def bootstrap_get_snapshot_manifest() -> dict[str, t.Any]:
+    url = os.getenv("ANIMICA_SNAPSHOT_URL")
+    sha = os.getenv("ANIMICA_SNAPSHOT_SHA256")
+    if not url:
+        return {}
+    manifest: dict[str, t.Any] = {"url": url}
+    if sha:
+        manifest["sha256"] = sha
+    return manifest

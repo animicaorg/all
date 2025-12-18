@@ -182,6 +182,11 @@ def _env_access_mode(name: str, default: AccessMode) -> AccessMode:
         return default
 
 
+def _default_chain_dir(chain_id: int) -> Path:
+    base = os.getenv("ANIMICA_DATA_DIR") or "~/.animica"
+    return Path(base).expanduser() / f"chain-{chain_id}"
+
+
 DEFAULT_PER_METHOD_RPS: Dict[str, float] = {
     # Chain & blocks
     "chain.getParams": 5.0,
@@ -315,9 +320,11 @@ def load() -> RpcConfig:
             # Default to mainnet when no network is specified
             chain_id = 1
     
-    # Use per-network DB path based on chain_id to ensure DB isolation
+    # Use per-network DB path based on chain_id to ensure DB isolation and
+    # align with the shared data directory used by CLI + Docker mounts.
+    default_db = _default_chain_dir(chain_id) / "animica.db"
     db_uri = _expand_sqlite_uri(
-        _env("ANIMICA_RPC_DB_URI", f"sqlite:///~/animica/chain-{chain_id}/animica.db")
+        _env("ANIMICA_RPC_DB_URI", f"sqlite:///{default_db}")
     )
     
     log_level = (_env("ANIMICA_LOG_LEVEL", "INFO") or "INFO").upper()
