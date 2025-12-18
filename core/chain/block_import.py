@@ -45,7 +45,9 @@ Fork choice (from core/chain/fork_choice.py):
 - ForkChoice.best() -> Optional[tuple[int, bytes]]
 """
 
+import os
 from dataclasses import asdict, is_dataclass
+from functools import lru_cache
 from typing import Any, Dict, List, NamedTuple, Optional, Tuple, Union
 
 from core.chain.fork_choice import ForkChoice
@@ -54,6 +56,7 @@ from core.encoding.canonical import \
 from core.encoding.cbor import dumps as cbor_dumps
 from core.encoding.cbor import loads as cbor_loads
 from core.errors import AnimicaError
+from core.genesis.loader import load_genesis
 from core.types.block import Block
 from core.types.header import Header
 from core.types.params import ChainParams
@@ -557,6 +560,58 @@ class BlockImporter:
         from core.encoding.canonical import tx_signing_bytes
 
         return sha3_256(tx_signing_bytes(tx))
+
+
+_IMPORTER_CACHE: Dict[int, BlockImporter] = {}
+
+
+def _resolve_genesis_path(genesis_path: Optional[str]) -> Optional[str]:
+    return genesis_path or os.getenv("GENESIS_PATH") or os.getenv("ANIMICA_GENESIS_PATH")
+
+
+@lru_cache(maxsize=4)
+def _load_chain_params_for_import(genesis_path: Optional[str]) -> ChainParams:
+    params, _header = load_genesis(genesis_path)
+    return params
+
+
+def _get_importer(
+    block_db,
+    tx_index,
+    params: ChainParams,
+) -> BlockImporter:
+    cached = _IMPORTER_CACHE.get(id(block_db))
+    if cached is not None and cached.params.chain_id == params.chain_id:
+        return cached
+    importer = BlockImporter(params=params, block_db=block_db, tx_index=tx_index)
+    _IMPORTER_CACHE[id(block_db)] = importer
+    return importer
+
+
+def import_block(
+    block_db,
+    state_db,  # unused but kept for signature compatibility
+    tx_index,
+    raw_block,
+    genesis_path: Optional[str] = None,
+) -> Tuple[bool, Optional[str]]:
+    """
+    Module-level adapter for P2P/RPC that mirrors the legacy signature expected
+    by p2p.deps._lazy_core. It instantiates (and caches) a BlockImporter using
+    chain params loaded from the configured genesis file, then imports the
+    provided block.
+    """
+    try:
+        params = _load_chain_params_for_import(_resolve_genesis_path(genesis_path))
+        importer = _get_importer(block_db, tx_index, params)
+        result = importer.import_block(raw_block)
+        accepted = result.code in (
+            ImportErrorCode.ACCEPTED,
+            ImportErrorCode.DUPLICATE,
+        )
+        return accepted, result.reason or result.code
+    except Exception as e:
+        return False, str(e)
 
 
 # Convenience: tiny CLI for manual testing

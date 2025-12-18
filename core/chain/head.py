@@ -143,6 +143,13 @@ def write_head(block_db, height: int, h: bytes) -> None:
     raise GenesisError("block_db missing head setter")
 
 
+def get_head(block_db) -> Tuple[int, bytes]:
+    """
+    Compatibility alias for read_head(block_db).
+    """
+    return read_head(block_db)
+
+
 # --- Genesis finalization ---------------------------------------------------
 
 
@@ -260,3 +267,19 @@ def _ensure_genesis_header_persisted(block_db, h0: bytes, hdr: Header) -> None:
         # (some exotic impl), we just skip; finalize_genesis will still succeed
         # as long as the canonical head & DB are consistent.
         pass
+
+
+def finalize_genesis_if_needed(
+    block_db, state_db=None, genesis_path: Optional[str] = None
+) -> Tuple[int, bytes]:
+    """
+    Idempotent helper used by P2P to ensure the DB has a finalized genesis.
+
+    Loads the genesis params/header and delegates to finalize_genesis. We avoid
+    mutating state beyond the block DB finalization so callers can safely invoke
+    this during service startup.
+    """
+    from core.genesis.loader import load_genesis
+
+    params, header = load_genesis(genesis_path)
+    return finalize_genesis(block_db, params, header)
