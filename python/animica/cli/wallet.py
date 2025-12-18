@@ -390,6 +390,50 @@ def _current_wallet_file() -> Optional[Path]:
     return None
 
 
+@app.command("path")
+def wallet_path(json_output: bool = typer.Option(False, "--json", help="Return path info as JSON")) -> None:
+    """Show the wallet store path and how it was resolved.
+
+    This helps users locate their ``wallets.json`` file when moving between
+    machines or debugging custom locations.
+    """
+
+    ctx_wallet_file = _current_wallet_file()
+    resolved = _wallet_file_path(ctx_wallet_file)
+
+    if ctx_wallet_file:
+        source = "cli"
+    elif os.environ.get(WALLET_FILE_ENV):
+        source = "env"
+    else:
+        source = "default"
+
+    info = {
+        "path": str(resolved),
+        "exists": resolved.exists(),
+        "source": source,
+        "env_var": WALLET_FILE_ENV,
+        "default_path": str(_get_default_wallet_path()),
+    }
+
+    if json_output:
+        typer.echo(json.dumps(info, indent=2))
+        return
+
+    typer.echo(f"Wallet store path: {resolved}")
+    source_hint = (
+        "--wallet-file"
+        if source == "cli"
+        else f"${WALLET_FILE_ENV}"
+        if source == "env"
+        else "default ~/.animica/wallets.json"
+    )
+    typer.echo(f"Source: {source} ({source_hint})")
+    typer.echo(f"Exists: {'yes' if info['exists'] else 'no (created on first write)'}")
+    typer.echo(f"Default: {_get_default_wallet_path()}")
+    typer.echo(f"Override: --wallet-file or set {WALLET_FILE_ENV}")
+
+
 @app.command("create")
 def create(
     label: str = typer.Option(..., "--label", help="Label for the new wallet"),
