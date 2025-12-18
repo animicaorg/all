@@ -43,6 +43,12 @@ def _parse_allowlist(raw: str | None) -> list[ipaddress._BaseNetwork]:
     return parsed
 
 
+def _is_truthy(raw: str | None) -> bool:
+    if raw is None:
+        return False
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _extract_ip(ctx: t.Any) -> str | None:
     try:
         headers = {k.lower(): v for k, v in getattr(ctx, "headers", {}).items()}
@@ -67,11 +73,16 @@ class AccessPolicy:
     admin_token: str | None = None
     admin_allowlist: list[ipaddress._BaseNetwork] = field(default_factory=list)
     bootstrap_rate_limit_rpm: int = 0
+    bootstrap_only: bool = False
     bootstrap_methods: set[str] = field(default_factory=lambda: {
         "bootstrap.getManifest",
         "bootstrap.getSeeds",
         "bootstrap.getPeers",
+        "bootstrap.getSnapshotManifest",
+        "net.getBootstrapSeeds",
         "chain.getHead",
+        "chain.getHeaders",
+        "chain.getGenesis",
         "chain_getHead",
         "chain.getChainId",
         "chain_getChainId",
@@ -104,6 +115,14 @@ class AccessPolicy:
             or getattr(getattr(cfg, "access", None), "bootstrap_rate_limit", None)
             or os.getenv("ANIMICA_BOOTSTRAP_RATE_LIMIT")
         )
+        bootstrap_only_flag = (
+            _is_truthy(os.getenv("ANIMICA_RPC_BOOTSTRAP_ONLY"))
+            or getattr(cfg, "bootstrap_only", False)
+            or getattr(getattr(cfg, "access", None), "bootstrap_only", False)
+        )
+
+        if bootstrap_only_flag:
+            mode = AccessMode.PUBLIC_BOOTSTRAP
         try:
             rate_limit = int(rate_limit_raw) if rate_limit_raw not in (None, "", False) else 0
         except Exception:
@@ -114,6 +133,7 @@ class AccessPolicy:
             admin_token=str(token) if token else None,
             admin_allowlist=_parse_allowlist(allowlist_raw),
             bootstrap_rate_limit_rpm=max(0, rate_limit),
+            bootstrap_only=bootstrap_only_flag,
         )
 
     def _authorized(self, ctx: t.Any, client_ip: str | None) -> bool:
@@ -164,6 +184,11 @@ class AccessPolicy:
             return
         if is_admin:
             return
+        if self.bootstrap_only:
+            raise errors.BootstrapOnlyEndpoint(
+                "BOOTSTRAP_ONLY endpoint: run a local node and use localhost RPC",
+                mode=self.mode.value,
+            )
         raise errors.RpcMethodRestricted("RPC method restricted", mode=self.mode.value)
 
 

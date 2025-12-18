@@ -8,6 +8,15 @@ import typer
 from animica.config import load_network_config
 
 _RISK_ENV = "ANIMICA_I_UNDERSTAND_REMOTE_RISK"
+_BOOTSTRAP_SAFE_METHODS = {
+    "bootstrap.getManifest",
+    "bootstrap.getSeeds",
+    "bootstrap.getPeers",
+    "bootstrap.getSnapshotManifest",
+    "net.getBootstrapSeeds",
+    "chain.getHead",
+    "chain.getChainId",
+}
 
 
 def guard_bootstrap_rpc(
@@ -18,8 +27,11 @@ def guard_bootstrap_rpc(
     method: str | None = None,
     bootstrap_url: str | None = None,
 ) -> None:
-    if allow_bootstrap_methods and method and method.startswith("bootstrap."):
-        return
+    if allow_bootstrap_methods and method and (
+        method.startswith("bootstrap.") or method in _BOOTSTRAP_SAFE_METHODS
+    ):
+        # Caller explicitly allowed bootstrap-only methods; only guard if host is different.
+        pass
 
     cfg = load_network_config()
     bootstrap = bootstrap_url or cfg.bootstrap_url
@@ -27,10 +39,18 @@ def guard_bootstrap_rpc(
     bootstrap_host = urlparse(bootstrap).hostname if bootstrap else None
 
     if not target_host or not bootstrap_host:
-        return
+        return False
 
-    if target_host != bootstrap_host:
-        return
+    is_bootstrap = target_host == bootstrap_host
+    if not is_bootstrap:
+        return False
+
+    if allow_bootstrap_methods and (method is None or method in _BOOTSTRAP_SAFE_METHODS or method.startswith("bootstrap.")):
+        typer.secho(
+            f"Using bootstrap RPC endpoint {target_host} for discovery/sync only.",
+            fg=typer.colors.YELLOW,
+        )
+        return True
 
     if allow_remote:
         if os.getenv(_RISK_ENV) != "1":
@@ -44,9 +64,9 @@ def guard_bootstrap_rpc(
 
         typer.secho(
             "Warning: using bootstrap RPC for this command; prefer your local node.",
-            fg=typer.colors.YELLOW,
-        )
-        return
+                fg=typer.colors.YELLOW,
+            )
+        return True
 
     host_hint = bootstrap_host or target_host
     typer.secho(

@@ -86,6 +86,8 @@ class AnimicaCode(IntEnum):
     POIES_REJECTED = -32031
     PQ_POLICY_VIOLATION = -32032
 
+    BOOTSTRAP_ONLY = -32070
+
     # Data availability
     DA_ERROR = -32041
     DA_NOT_AVAILABLE = -32042
@@ -180,6 +182,11 @@ class TemporarilyUnavailable(RpcError):
 class AccessDenied(RpcError):
     def __init__(self, detail: str = "Access denied", **data: Any) -> None:
         super().__init__(AnimicaCode.ACCESS_DENIED, detail, data or None)
+
+
+class BootstrapOnlyEndpoint(RpcError):
+    def __init__(self, detail: str = "BOOTSTRAP_ONLY endpoint: run a local node and use localhost RPC", **data: Any) -> None:
+        super().__init__(AnimicaCode.BOOTSTRAP_ONLY, detail, data or None)
 
 
 class NotFound(RpcError):

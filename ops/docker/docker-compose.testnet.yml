@@ -26,7 +26,6 @@ networks:
     driver: bridge
 
 volumes:
-  testnet_node_data:
   testnet_services_data:
 
 services:
@@ -42,13 +41,15 @@ services:
     working_dir: /app
     volumes:
       - ../..:/app:ro
-      - testnet_node_data:/data
+      - ${ANIMICA_DATA_DIR:-~/.animica/chain-2}:/data
     environment:
       # Testnet chain config
       ANIMICA_NETWORK: "testnet"
       ANIMICA_CHAIN_ID: "${ANIMICA_CHAIN_ID:-2}"
-      ANIMICA_RPC_DB_URI: "${ANIMICA_RPC_DB_URI:-sqlite:////data/testnet.db}"
+      ANIMICA_RPC_DB_URI: "${ANIMICA_RPC_DB_URI:-sqlite:////data/animica.db}"
       GENESIS_PATH: "${GENESIS_PATH:-core/genesis/genesis.testnet.json}"
+      ANIMICA_DATA_DIR: "/data"
+      ANIMICA_RPC_BOOTSTRAP_ONLY: "${ANIMICA_RPC_BOOTSTRAP_ONLY:-1}"
       # RPC server config
       ANIMICA_RPC_HOST: "${ANIMICA_RPC_HOST:-0.0.0.0}"
       ANIMICA_RPC_PORT: "${ANIMICA_RPC_PORT:-8546}"
@@ -63,6 +64,8 @@ services:
       ANIMICA_P2P_LISTEN_QUIC: "${ANIMICA_P2P_LISTEN_QUIC:-0.0.0.0:443}"
       ANIMICA_P2P_ENABLE_TCP: "${ANIMICA_P2P_ENABLE_TCP:-true}"
       ANIMICA_P2P_ENABLE_QUIC: "${ANIMICA_P2P_ENABLE_QUIC:-true}"
+      ANIMICA_P2P_DATA_DIR: "${ANIMICA_P2P_DATA_DIR:-/data/p2p}"
+      ANIMICA_PEER_STORE_PATH: "${ANIMICA_PEER_STORE_PATH:-/data/p2p}"
       # Legacy P2P config (backward compatibility - deprecated):
       P2P_ENABLE: "${P2P_ENABLE:-true}"
       P2P_LISTEN: "${P2P_LISTEN:-0.0.0.0:30334}"

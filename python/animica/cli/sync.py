@@ -11,11 +11,21 @@ import asyncio
 import json
 import os
 import time
+from pathlib import Path
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
 
 import httpx
 import typer
 from animica.config import load_network_config
+from animica.cli.peer import (
+    _generate_peer_id,
+    _resolve_store_paths,
+    _write_peer_to_sqlite,
+    _write_peer_to_store,
+)
+from animica.cli.rpc_guard import guard_bootstrap_rpc
+from animica.seeds import get_seed_nodes
 from .timeouts import DEFAULT_RPC_TIMEOUT, RPC_TIMEOUT_ENV, resolve_timeout
 
 app = typer.Typer(help="Manage blockchain synchronization.")
@@ -109,10 +119,7 @@ async def _get_sync_status(rpc_url: str) -> Optional[Dict[str, Any]]:
 
 async def _get_head_info(rpc_url: str) -> Optional[Dict[str, Any]]:
     """Get current chain head information."""
-    try:
-        return await rpc_call("chain.getHead", [], rpc_url=rpc_url)
-    except Exception:
-        return None
+    return await rpc_call("chain.getHead", [], rpc_url=rpc_url)
 
 
 async def _get_peers(rpc_url: str) -> List[Dict[str, Any]]:
@@ -143,6 +150,7 @@ async def _trigger_sync(rpc_url: str) -> bool:
     Returns True if sync was triggered successfully, False otherwise.
     """
     methods_to_try = [
+        "sync.force",
         "sync.start",
         "node.startSync",
         "sync.trigger",
@@ -371,7 +379,55 @@ def force_sync(
         animica sync force --timeout 600
     """
     url = _resolve_rpc_url(rpc_url)
-    
+    net_cfg = load_network_config()
+
+    bootstrap_host = urlparse(net_cfg.bootstrap_url).hostname if net_cfg.bootstrap_url else None
+    target_host = urlparse(url).hostname if url else None
+    if bootstrap_host and target_host and bootstrap_host == target_host:
+        typer.secho(
+            "Using bootstrap RPC for discovery only. Seeding local peer store...",
+            fg=typer.colors.YELLOW,
+        )
+        seeds: list[str] = []
+        try:
+            guard_bootstrap_rpc(
+                url,
+                allow_bootstrap_methods=True,
+                method="net.getBootstrapSeeds",
+                bootstrap_url=net_cfg.bootstrap_url,
+            )
+            resp = asyncio.run(rpc_call("net.getBootstrapSeeds", [], rpc_url=url))
+            seeds = list((resp or {}).get("seeds") or [])
+        except Exception as exc:
+            typer.echo(f"Bootstrap RPC error: {exc}", err=True)
+
+        if not seeds:
+            seeds = get_seed_nodes(net_cfg.name)
+
+        if seeds:
+            store_path = Path(net_cfg.data_dir).expanduser() / "p2p" / "peers.json"
+            for seed in list(dict.fromkeys(seeds)):
+                peer_id = _generate_peer_id(seed)
+                try:
+                    _write_peer_to_store(store_path, peer_id, seed)
+                    _write_peer_to_sqlite(store_path, peer_id, seed, direction="outbound")
+                except Exception as exc:
+                    typer.secho(f"⚠ Failed to persist {seed}: {exc}", fg=typer.colors.YELLOW)
+
+            try:
+                import_resp = asyncio.run(rpc_call("p2p.importPeers", [seeds], rpc_url=net_cfg.rpc_url))
+                if not (isinstance(import_resp, dict) and import_resp.get("success")):
+                    typer.secho("⚠ Could not import seeds via local RPC (node may be offline)", fg=typer.colors.YELLOW)
+                else:
+                    typer.secho("✓ Seeds sent to local node", fg=typer.colors.GREEN)
+            except Exception as exc:
+                typer.secho(f"⚠ Seed import via local RPC failed: {exc}", fg=typer.colors.YELLOW)
+        else:
+            typer.secho("⚠ No seeds available; cannot bootstrap peers", fg=typer.colors.YELLOW)
+
+        url = net_cfg.rpc_url
+        typer.echo(f"Switching to local RPC for sync: {url}")
+
     typer.secho("\n🔄 Forcing blockchain synchronization...", fg=typer.colors.CYAN, bold=True)
     typer.echo(f"RPC URL: {url}")
     typer.echo()
@@ -382,8 +438,8 @@ def force_sync(
         initial_height = initial_head.get("height", 0) if initial_head else 0
         typer.echo(f"Current height: {initial_height}")
     except Exception as e:
-        typer.echo(f"Error: Unable to connect to node at {url}", err=True)
-        typer.echo(f"Details: {e}", err=True)
+        typer.echo(f"Error: Unable to connect to node at {url}")
+        typer.echo(f"Details: {e}")
         raise typer.Exit(code=1)
     
     # Check peer count
@@ -403,11 +459,6 @@ def force_sync(
             typer.echo("  animica peer bootstrap")
             typer.echo("  animica peer add <address>")
             typer.echo()
-            if not typer.confirm("Continue anyway?"):
-                raise typer.Exit(code=0)
-    except typer.Exit:
-        # Allow graceful user abort without being caught by the generic handler
-        raise
     except Exception:
         peer_count = 0
         typer.secho("Warning: Could not check peer count", fg=typer.colors.YELLOW)

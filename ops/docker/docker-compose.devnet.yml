@@ -29,7 +29,10 @@ x-node-env: &node_env
   # Chain / DB
   CHAIN_ID: ${CHAIN_ID:-1337}
   DB_BACKEND: sqlite
-  DB_PATH: /data/node/animica.db
+  DB_PATH: /data/animica.db
+  ANIMICA_DATA_DIR: /data
+  ANIMICA_P2P_DATA_DIR: /data/p2p
+  ANIMICA_PEER_STORE_PATH: /data/p2p
   # P2P (public devnet defaults)
   # Primary config (ANIMICA_P2P_* vars are canonical):
   ANIMICA_P2P_ENABLE: true
@@ -90,7 +93,6 @@ networks:
     driver: bridge
 
 volumes:
-  node-data:
   miner-data:
   services-data:
   explorer-data:
@@ -107,7 +109,7 @@ services:
     environment: *node_env
     command: ["/bin/sh", "-lc", "/app/ops/docker/entrypoints/node.sh"]
     volumes:
-      - node-data:/data
+      - ${ANIMICA_DATA_DIR:-~/.animica/chain-1337}:/data
       - ./entrypoints:/entrypoints:ro
       - ./healthchecks:/healthchecks:ro
     ports:
