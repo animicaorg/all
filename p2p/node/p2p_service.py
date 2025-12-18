@@ -265,6 +265,35 @@ class P2PService:
 
         return f"/{ip_tag}/{host}/tcp/{port}"
 
+    def _addr_key(self, address: str) -> str:
+        """
+        Normalize an address so we can deduplicate against active connections.
+
+        Peers are stored using the transport's remote_addr (e.g. "1.2.3.4:30333"),
+        while dial targets might include schemes or multiaddr prefixes. Converting
+        everything to a simple "host:port" string lets us skip redialing peers we
+        are already connected to and proceed to additional candidates.
+        """
+
+        if address.startswith("/"):
+            try:
+                parsed = parse_multiaddr(address)
+                if parsed.host and parsed.port:
+                    return f"{parsed.host}:{parsed.port}"
+            except Exception:
+                pass
+
+        # Strip common schemes like tcp://, quic://, ws://, wss://
+        if "://" in address:
+            address = address.split("://", 1)[1]
+
+        # At this point the address should resemble host:port; fall back to the raw
+        # string if we cannot parse cleanly.
+        parts = address.rsplit(":", 1)
+        if len(parts) == 2 and parts[0] and parts[1]:
+            return f"{parts[0]}:{parts[1]}"
+        return address
+
     def _peer_id_from_addr(self, address: str) -> str:
         if "/p2p/" in address:
             return address.split("/p2p/", 1)[1].split("/")[0]
@@ -381,6 +410,7 @@ class P2PService:
                     outbound = [
                         p for p in self._peers.values() if p.direction == "outbound"
                     ]
+                    active_keys = {self._addr_key(p.remote) for p in outbound}
                 if len(outbound) >= target_outbound:
                     continue
 
@@ -409,6 +439,9 @@ class P2PService:
                 addrs = list(dict.fromkeys(addrs))
                 now = time.time()
                 for addr in addrs:
+                    # Skip peers we're already connected to so we can reach new ones.
+                    if self._addr_key(addr) in active_keys:
+                        continue
                     if backoff.get(addr, 0.0) > now:
                         continue
                     backoff[addr] = now + 10.0
