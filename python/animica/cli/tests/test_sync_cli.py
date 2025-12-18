@@ -122,6 +122,8 @@ def mock_rpc_no_peers():
             "syncing": False,
             "synchronized": True,
         },
+        "net.peerCount": 0,
+        "net.peers": [],
         "p2p.listPeers": [],
     }
 
@@ -212,9 +214,9 @@ def test_sync_status_connection_error():
         
         result = runner.invoke(app, ["sync", "status"])
         
-        # The code handles exceptions gracefully and shows empty results
-        assert result.exit_code == 0
-        assert "Height:    Unknown" in result.stdout or "0 connected" in result.stdout
+        assert result.exit_code == 1
+        output = result.stdout + (result.stderr or "")
+        assert "Unable to connect" in output or "RPC unavailable" in output
 
 
 def test_sync_status_custom_rpc_url(mock_rpc_success):

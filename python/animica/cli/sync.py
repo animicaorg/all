@@ -125,6 +125,7 @@ async def _get_head_info(rpc_url: str) -> Optional[Dict[str, Any]]:
 async def _get_peers(rpc_url: str) -> List[Dict[str, Any]]:
     """Get list of connected peers."""
     methods_to_try = [
+        "net.peers",
         "p2p.listPeers",
         "p2p.getPeers",
         "p2p.peers",
@@ -141,6 +142,27 @@ async def _get_peers(rpc_url: str) -> List[Dict[str, Any]]:
             continue
     
     return []
+
+
+async def _get_peer_count(rpc_url: str) -> Optional[int]:
+    """Get peer count using lightweight count methods."""
+    methods_to_try = [
+        "net.peerCount",
+        "p2p.peerCount",
+        "p2p.peer_count",
+        "net_peerCount",
+    ]
+
+    for method in methods_to_try:
+        try:
+            result = await rpc_call(method, [], rpc_url=rpc_url)
+            if isinstance(result, int):
+                return result
+            if isinstance(result, str) and result.isdigit():
+                return int(result)
+        except Exception:
+            continue
+    return None
 
 
 async def _trigger_sync(rpc_url: str) -> bool:
@@ -195,6 +217,7 @@ def sync_status(
         animica sync status --verbose
     """
     url = _resolve_rpc_url(rpc_url)
+    peer_count_error: Optional[Exception] = None
     
     try:
         # Gather all information concurrently
@@ -202,18 +225,24 @@ def sync_status(
             return await asyncio.gather(
                 _get_head_info(url),
                 _get_sync_status(url),
+                _get_peer_count(url),
                 _get_peers(url),
                 return_exceptions=True
             )
         
-        head_info, sync_status, peers = asyncio.run(gather_info())
+        head_info, sync_status, peer_count_result, peers = asyncio.run(gather_info())
         
         # Handle exceptions
         if isinstance(head_info, Exception):
             head_info = None
         if isinstance(sync_status, Exception):
             sync_status = None
+        peer_count_error: Optional[Exception] = None
+        if isinstance(peer_count_result, Exception):
+            peer_count_error = peer_count_result
+            peer_count_result = None
         if isinstance(peers, Exception):
+            peer_count_error = peer_count_error or peers
             peers = []
         
     except Exception as e:
@@ -255,9 +284,24 @@ def sync_status(
                 sync_progress.get("target_height")
             )
     
-    peer_count = len(peers) if peers else 0
+    peer_count: Optional[int] = None
+    if isinstance(peer_count_result, int):
+        peer_count = peer_count_result
+    elif peers:
+        peer_count = len(peers)
     
     # JSON output
+    peer_error_msg = None
+    if peer_count_result is None and peer_count is None and "peer_count_result" in locals():
+        peer_error_msg = "RPC peer methods unavailable"
+    if peer_count_error:
+        peer_error_msg = str(peer_count_error)
+
+    rpc_unavailable = head_info is None and sync_status is None and peer_error_msg
+    if rpc_unavailable and not peers:
+        typer.secho(f"RPC unavailable at {url}: {peer_error_msg}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1)
+
     if json_output:
         output = {
             "rpc_url": url,
@@ -269,6 +313,8 @@ def sync_status(
         }
         if sync_progress:
             output["sync_progress"] = sync_progress
+        if peer_error_msg:
+            output["peer_error"] = peer_error_msg
         if verbose and peers:
             output["peers"] = peers
         typer.echo(_pretty(output))
@@ -288,7 +334,9 @@ def sync_status(
     
     # Head info
     typer.secho("Current Head:", fg=typer.colors.BRIGHT_BLUE, bold=True)
-    if height is not None:
+    if head_info is None:
+        typer.echo("  Height:    RPC unavailable")
+    elif height is not None:
         typer.echo(f"  Height:    {height}")
     else:
         typer.echo(f"  Height:    Unknown")
@@ -315,7 +363,12 @@ def sync_status(
     
     # Peer info
     typer.secho("Network:", fg=typer.colors.BRIGHT_BLUE, bold=True)
-    typer.echo(f"  Peers:     {peer_count} connected")
+    if peer_count is None:
+        typer.echo(
+            f"  Peers:     unavailable{f' ({peer_error_msg})' if peer_error_msg else ''}"
+        )
+    else:
+        typer.echo(f"  Peers:     {peer_count} connected")
     
     if peer_count == 0:
         typer.secho(
@@ -341,6 +394,8 @@ def sync_status(
     if peer_count == 0:
         typer.secho("💡 Tip: Connect to seed nodes to start syncing:", fg=typer.colors.CYAN)
         typer.echo("   animica peer bootstrap")
+    elif peer_count is None and peer_error_msg:
+        typer.secho("💡 RPC peer data unavailable. Check node RPC or logs.", fg=typer.colors.YELLOW)
     elif is_syncing:
         typer.secho("💡 Syncing in progress... Check back later or run:", fg=typer.colors.CYAN)
         typer.echo("   animica sync status")

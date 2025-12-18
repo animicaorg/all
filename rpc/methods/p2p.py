@@ -218,24 +218,31 @@ async def list_peers() -> list[dict[str, t.Any]]:
     if p2p_svc is not None and hasattr(p2p_svc, "peers"):
         try:
             peers_dict = p2p_svc.peers  # Returns Dict[str, Dict[str, Any]]
+            if callable(peers_dict):
+                peers_dict = peers_dict()
             result = []
-            for remote_addr, peer_info in peers_dict.items():
+            iterable = peers_dict.values() if isinstance(peers_dict, dict) else (peers_dict or [])
+            for peer_info in iterable:
                 peer_dict = {
-                    "id": peer_info.get("peer_id", "unknown"),
-                    "addr": str(peer_info.get("remote", remote_addr)),
+                    "id": peer_info.get("peer_id") or peer_info.get("id") or "unknown",
+                    "addr": str(peer_info.get("remote") or peer_info.get("addr") or ""),
                     "status": "connected" if peer_info.get("connected", True) else "disconnected",
+                    "direction": peer_info.get("direction"),
                 }
-                # Add optional fields if available
-                if "direction" in peer_info:
-                    peer_dict["direction"] = peer_info["direction"]
                 if "last_seen" in peer_info:
                     peer_dict["lastSeen"] = peer_info["last_seen"]
+                if "last_seen" not in peer_info and "last_seen_s" in peer_info:
+                    peer_dict["lastSeen"] = peer_info.get("last_seen_s")
+                if "connected_at" in peer_info:
+                    peer_dict["connectedAt"] = peer_info.get("connected_at")
                 if "height" in peer_info:
                     peer_dict["height"] = peer_info["height"]
                 if "info" in peer_info:
                     peer_dict["meta"] = peer_info["info"]
+                if "meta" in peer_info and isinstance(peer_info.get("meta"), dict):
+                    peer_dict["meta"] = peer_info.get("meta")
                 result.append(peer_dict)
-            
+
             log.debug("Listed %d peers from P2P service", len(result))
             return result
         except Exception as e:
