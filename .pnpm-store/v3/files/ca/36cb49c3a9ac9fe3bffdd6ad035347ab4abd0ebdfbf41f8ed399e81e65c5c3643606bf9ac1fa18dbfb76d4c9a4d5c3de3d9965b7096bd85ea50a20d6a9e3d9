@@ -1,0 +1,73 @@
+import * as node_modules__eslint_core_dist_cjs_types_d_cts from 'node_modules/@eslint/core/dist/cjs/types.d.cts';
+import * as eslint from 'eslint';
+
+declare const configs: {
+    base: eslint.Linter.Config[];
+    recommended: eslint.Linter.Config[];
+    all: eslint.Linter.Config[];
+    "jsx-a11y-strict": eslint.Linter.Config[];
+    "jsx-a11y-recommended": eslint.Linter.Config[];
+    "flat/base": eslint.Linter.Config[];
+    "flat/recommended": eslint.Linter.Config[];
+    "flat/all": eslint.Linter.Config[];
+    "flat/jsx-a11y-strict": eslint.Linter.Config[];
+    "flat/jsx-a11y-recommended": eslint.Linter.Config[];
+};
+declare const _default: {
+    meta: {
+        name: string;
+        version: string;
+    };
+    environments: {
+        astro: {
+            globals: {
+                Astro: boolean;
+                Fragment: boolean;
+            };
+        };
+    };
+    rules: {
+        [key: string]: eslint.Rule.RuleModule;
+    };
+    processors: {
+        ".astro": eslint.Linter.Processor<string | node_modules__eslint_core_dist_cjs_types_d_cts.ProcessorFile>;
+        astro: eslint.Linter.Processor<string | node_modules__eslint_core_dist_cjs_types_d_cts.ProcessorFile>;
+        "client-side-ts": eslint.Linter.Processor<string | node_modules__eslint_core_dist_cjs_types_d_cts.ProcessorFile>;
+    };
+} & {
+    configs: {
+        base: eslint.Linter.Config[];
+        recommended: eslint.Linter.Config[];
+        all: eslint.Linter.Config[];
+        "jsx-a11y-strict": eslint.Linter.Config[];
+        "jsx-a11y-recommended": eslint.Linter.Config[];
+        "flat/base": eslint.Linter.Config[];
+        "flat/recommended": eslint.Linter.Config[];
+        "flat/all": eslint.Linter.Config[];
+        "flat/jsx-a11y-strict": eslint.Linter.Config[];
+        "flat/jsx-a11y-recommended": eslint.Linter.Config[];
+    };
+};
+
+declare const meta: {
+    name: string;
+    version: string;
+};
+declare const rules: {
+    [key: string]: eslint.Rule.RuleModule;
+};
+declare const processors: {
+    ".astro": eslint.Linter.Processor<string | node_modules__eslint_core_dist_cjs_types_d_cts.ProcessorFile>;
+    astro: eslint.Linter.Processor<string | node_modules__eslint_core_dist_cjs_types_d_cts.ProcessorFile>;
+    "client-side-ts": eslint.Linter.Processor<string | node_modules__eslint_core_dist_cjs_types_d_cts.ProcessorFile>;
+};
+declare const environments: {
+    astro: {
+        globals: {
+            Astro: boolean;
+            Fragment: boolean;
+        };
+    };
+};
+
+export { configs, _default as default, environments, meta, processors, rules };

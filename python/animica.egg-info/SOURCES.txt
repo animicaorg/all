@@ -1,6 +1,8 @@
 README.md
 pyproject.toml
 animica/__init__.py
+animica/__main__.py
+animica/coin.py
 animica/config.py
 animica/wallet_cli.py
 animica.egg-info/PKG-INFO
@@ -36,5 +38,7 @@ animica/stratum_pool/core.py
 animica/stratum_pool/job_manager.py
 animica/stratum_pool/metrics.py
 animica/stratum_pool/stratum_server.py
+animica/tx/__init__.py
+animica/tx/signing.py
 tests/test_config.py
 tests/test_wallet_cli.py

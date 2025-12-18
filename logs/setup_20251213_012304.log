@@ -1,0 +1,126 @@
+[setup] 2025-12-13T01:23:04Z =================================================================
+[setup] 2025-12-13T01:23:04Z Start
+[setup] 2025-12-13T01:23:04Z =================================================================
+[setup] 2025-12-13T01:23:04Z Repo root: /root/animica
+[setup] 2025-12-13T01:23:04Z Venv:      /root/animica/.venv
+[setup] 2025-12-13T01:23:04Z Deps:      /root/animica/.deps
+[setup] 2025-12-13T01:23:04Z Log:       /root/animica/logs/setup_20251213_012304.log
+[setup] 2025-12-13T01:23:04Z Detected OS: Ubuntu 24.04.3 LTS
+[setup] 2025-12-13T01:23:04Z =================================================================
+[setup] 2025-12-13T01:23:04Z OS packages
+[setup] 2025-12-13T01:23:04Z =================================================================
+Hit:1 http://archive.ubuntu.com/ubuntu noble InRelease
+Hit:2 http://archive.ubuntu.com/ubuntu noble-updates InRelease
+Hit:3 https://deb.nodesource.com/node_20.x nodistro InRelease
+Hit:4 http://archive.ubuntu.com/ubuntu noble-backports InRelease
+Hit:5 https://download.docker.com/linux/ubuntu noble InRelease
+Hit:6 http://security.ubuntu.com/ubuntu noble-security InRelease
+Reading package lists...
+Reading package lists...
+Building dependency tree...
+Reading state information...
+ca-certificates is already the newest version (20240203).
+curl is already the newest version (8.5.0-2ubuntu10.6).
+git is already the newest version (1:2.43.0-1ubuntu7.3).
+jq is already the newest version (1.7.1-3ubuntu0.24.04.1).
+build-essential is already the newest version (12.10ubuntu1).
+pkg-config is already the newest version (1.8.1-2build1).
+cmake is already the newest version (3.28.3-1build7).
+ninja-build is already the newest version (1.11.1-2).
+libssl-dev is already the newest version (3.0.13-0ubuntu3.6).
+libffi-dev is already the newest version (3.4.6-1build1).
+patchelf is already the newest version (0.18.0-1.1build1).
+python3 is already the newest version (3.12.3-0ubuntu2.1).
+python3-venv is already the newest version (3.12.3-0ubuntu2.1).
+python3-dev is already the newest version (3.12.3-0ubuntu2.1).
+python3-pip is already the newest version (24.0+dfsg-1ubuntu1.3).
+0 upgraded, 0 newly installed, 0 to remove and 2 not upgraded.
+[setup] 2025-12-13T01:23:11Z =================================================================
+[setup] 2025-12-13T01:23:11Z Python / Virtualenv
+[setup] 2025-12-13T01:23:11Z =================================================================
+[setup] 2025-12-13T01:23:11Z Using: Python 3.12.3
+[setup] 2025-12-13T01:23:11Z Venv exists.
+[setup] 2025-12-13T01:23:11Z Activated venv: /root/animica/.venv
+Requirement already satisfied: pip in ./.venv/lib/python3.12/site-packages (25.3)
+Requirement already satisfied: setuptools in ./.venv/lib/python3.12/site-packages (80.9.0)
+Requirement already satisfied: wheel in ./.venv/lib/python3.12/site-packages (0.45.1)
+[setup] 2025-12-13T01:23:12Z Wrote: /root/animica/.venv/lib/python3.12/site-packages/animica_repo_root.pth -> /root/animica
+[setup] 2025-12-13T01:23:12Z =================================================================
+[setup] 2025-12-13T01:23:12Z Install animica (editable, no-deps)
+[setup] 2025-12-13T01:23:12Z =================================================================
+Obtaining file:///root/animica/python
+  Installing build dependencies: started
+  Installing build dependencies: finished with status 'done'
+  Checking if build backend supports build_editable: started
+  Checking if build backend supports build_editable: finished with status 'done'
+  Getting requirements to build editable: started
+  Getting requirements to build editable: finished with status 'done'
+  Installing backend dependencies: started
+  Installing backend dependencies: finished with status 'done'
+  Preparing editable metadata (pyproject.toml): started
+  Preparing editable metadata (pyproject.toml): finished with status 'done'
+Building wheels for collected packages: animica
+  Building editable for animica (pyproject.toml): started
+  Building editable for animica (pyproject.toml): finished with status 'done'
+  Created wheel for animica: filename=animica-0.1.0-py3-none-any.whl size=1723 sha256=fc23e2dc4be956a0610c63d84305a69d09f14b00c3a9f8efdb55528cd0ad45d9
+  Stored in directory: /tmp/pip-ephem-wheel-cache-n4kbnava/wheels/c2/59/8d/7b899d15b765935b52481f681f3bdf8955280ba61d8cac698e
+Successfully built animica
+Installing collected packages: animica
+  Attempting uninstall: animica
+    Found existing installation: animica 0.1.0
+    Uninstalling animica-0.1.0:
+      Successfully uninstalled animica-0.1.0
+Successfully installed animica-0.1.0
+[setup] 2025-12-13T01:23:16Z =================================================================
+[setup] 2025-12-13T01:23:16Z Python deps (explicit)
+[setup] 2025-12-13T01:23:16Z =================================================================
+Requirement already satisfied: typer in ./.venv/lib/python3.12/site-packages (0.20.0)
+Requirement already satisfied: rich in ./.venv/lib/python3.12/site-packages (14.2.0)
+Requirement already satisfied: requests in ./.venv/lib/python3.12/site-packages (2.32.5)
+Requirement already satisfied: cbor2 in ./.venv/lib/python3.12/site-packages (5.7.1)
+Requirement already satisfied: httpx in ./.venv/lib/python3.12/site-packages (0.28.1)
+Requirement already satisfied: pydantic in ./.venv/lib/python3.12/site-packages (2.12.5)
+Requirement already satisfied: pyyaml in ./.venv/lib/python3.12/site-packages (6.0.3)
+Requirement already satisfied: click>=8.0.0 in ./.venv/lib/python3.12/site-packages (from typer) (8.3.1)
+Requirement already satisfied: typing-extensions>=3.7.4.3 in ./.venv/lib/python3.12/site-packages (from typer) (4.15.0)
+Requirement already satisfied: shellingham>=1.3.0 in ./.venv/lib/python3.12/site-packages (from typer) (1.5.4)
+Requirement already satisfied: markdown-it-py>=2.2.0 in ./.venv/lib/python3.12/site-packages (from rich) (4.0.0)
+Requirement already satisfied: pygments<3.0.0,>=2.13.0 in ./.venv/lib/python3.12/site-packages (from rich) (2.19.2)
+Requirement already satisfied: charset_normalizer<4,>=2 in ./.venv/lib/python3.12/site-packages (from requests) (3.4.4)
+Requirement already satisfied: idna<4,>=2.5 in ./.venv/lib/python3.12/site-packages (from requests) (3.11)
+Requirement already satisfied: urllib3<3,>=1.21.1 in ./.venv/lib/python3.12/site-packages (from requests) (2.6.2)
+Requirement already satisfied: certifi>=2017.4.17 in ./.venv/lib/python3.12/site-packages (from requests) (2025.11.12)
+Requirement already satisfied: anyio in ./.venv/lib/python3.12/site-packages (from httpx) (4.12.0)
+Requirement already satisfied: httpcore==1.* in ./.venv/lib/python3.12/site-packages (from httpx) (1.0.9)
+Requirement already satisfied: h11>=0.16 in ./.venv/lib/python3.12/site-packages (from httpcore==1.*->httpx) (0.16.0)
+Requirement already satisfied: annotated-types>=0.6.0 in ./.venv/lib/python3.12/site-packages (from pydantic) (0.7.0)
+Requirement already satisfied: pydantic-core==2.41.5 in ./.venv/lib/python3.12/site-packages (from pydantic) (2.41.5)
+Requirement already satisfied: typing-inspection>=0.4.2 in ./.venv/lib/python3.12/site-packages (from pydantic) (0.4.2)
+Requirement already satisfied: mdurl~=0.1 in ./.venv/lib/python3.12/site-packages (from markdown-it-py>=2.2.0->rich) (0.1.2)
+Collecting pytest
+  Using cached pytest-9.0.2-py3-none-any.whl.metadata (7.6 kB)
+Collecting pytest-asyncio
+  Using cached pytest_asyncio-1.3.0-py3-none-any.whl.metadata (4.1 kB)
+Requirement already satisfied: anyio in ./.venv/lib/python3.12/site-packages (4.12.0)
+Collecting iniconfig>=1.0.1 (from pytest)
+  Using cached iniconfig-2.3.0-py3-none-any.whl.metadata (2.5 kB)
+Collecting packaging>=22 (from pytest)
+  Using cached packaging-25.0-py3-none-any.whl.metadata (3.3 kB)
+Collecting pluggy<2,>=1.5 (from pytest)
+  Using cached pluggy-1.6.0-py3-none-any.whl.metadata (4.8 kB)
+Requirement already satisfied: pygments>=2.7.2 in ./.venv/lib/python3.12/site-packages (from pytest) (2.19.2)
+Requirement already satisfied: typing-extensions>=4.12 in ./.venv/lib/python3.12/site-packages (from pytest-asyncio) (4.15.0)
+Requirement already satisfied: idna>=2.8 in ./.venv/lib/python3.12/site-packages (from anyio) (3.11)
+Using cached pytest-9.0.2-py3-none-any.whl (374 kB)
+Using cached pluggy-1.6.0-py3-none-any.whl (20 kB)
+Using cached pytest_asyncio-1.3.0-py3-none-any.whl (15 kB)
+Using cached iniconfig-2.3.0-py3-none-any.whl (7.5 kB)
+Using cached packaging-25.0-py3-none-any.whl (66 kB)
+Installing collected packages: pluggy, packaging, iniconfig, pytest, pytest-asyncio
+
+Successfully installed iniconfig-2.3.0 packaging-25.0 pluggy-1.6.0 pytest-9.0.2 pytest-asyncio-1.3.0
+[setup] 2025-12-13T01:23:19Z PQ setup skipped (run with --with-pq to enable).
+[setup] 2025-12-13T01:23:19Z =================================================================
+[setup] 2025-12-13T01:23:19Z Done
+[setup] 2025-12-13T01:23:19Z =================================================================
+[setup] 2025-12-13T01:23:19Z Activate venv: source /root/animica/.venv/bin/activate
