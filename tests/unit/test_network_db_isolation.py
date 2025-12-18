@@ -115,6 +115,29 @@ def test_rpc_config_per_network_db_uri():
         importlib.reload(rpc.config)
 
 
+def test_rpc_config_migrates_legacy_profile_db(tmp_path, monkeypatch):
+    """Legacy profile-based DBs should be migrated into chain-specific paths."""
+
+    data_root = tmp_path / "data"
+    legacy_dir = data_root / "mainnet"
+    legacy_dir.mkdir(parents=True)
+    legacy_db = legacy_dir / "chain.db"
+    legacy_db.write_bytes(b"legacy-mainnet-db")
+
+    monkeypatch.setenv("ANIMICA_DATA_DIR", str(data_root))
+    monkeypatch.setenv("ANIMICA_NETWORK", "mainnet")
+    monkeypatch.delenv("ANIMICA_RPC_DB_URI", raising=False)
+
+    import rpc.config as rpc_config
+    importlib.reload(rpc_config)
+    cfg = rpc_config.load()
+
+    expected_db = data_root / "chain-1" / "animica.db"
+    assert expected_db.exists(), "Expected mainnet DB to be materialized"
+    assert expected_db.read_bytes() == b"legacy-mainnet-db"
+    assert str(expected_db) in cfg.db_uri
+
+
 def test_network_switch_does_not_contaminate_state():
     """
     Simulate switching networks and verify that each network maintains

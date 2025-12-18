@@ -34,12 +34,16 @@ Notes
 from __future__ import annotations
 
 import json
+import logging
 import os
+import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
 
 from rpc.access_policy import AccessMode
+
+log = logging.getLogger(__name__)
 
 
 def _expand_sqlite_uri(uri: str) -> str:
@@ -187,6 +191,41 @@ def _default_chain_dir(chain_id: int) -> Path:
     return Path(base).expanduser() / f"chain-{chain_id}"
 
 
+def _legacy_db_candidates(chain_id: int, *, base_dir: Path | None = None) -> list[Path]:
+    network_name = {1: "mainnet", 2: "testnet", 1337: "devnet"}.get(
+        chain_id, f"chain-{chain_id}"
+    )
+    base = (base_dir or Path(os.getenv("ANIMICA_DATA_DIR") or "~/.animica")).expanduser()
+    alt_base = Path.home() / "animica"
+    candidates = [
+        base / network_name / "chain.db",
+        base / network_name / "animica.db",
+    ]
+
+    # Some legacy setups used a non-dotted root (~/animica/...).
+    if base.name.startswith("."):
+        candidates.append(alt_base / network_name / "chain.db")
+        candidates.append(alt_base / network_name / "animica.db")
+
+    return candidates
+
+
+def _maybe_migrate_legacy_db(chain_id: int, target: Path) -> Path | None:
+    if target.exists():
+        return None
+
+    base_dir = target.parent.parent if target.parent.name.startswith("chain-") else target.parent
+    for legacy_path in _legacy_db_candidates(chain_id, base_dir=base_dir):
+        if legacy_path.exists():
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(legacy_path, target)
+            log.info(
+                "Migrated legacy RPC DB from %s to %s", legacy_path, target
+            )
+            return legacy_path
+    return None
+
+
 DEFAULT_PER_METHOD_RPS: Dict[str, float] = {
     # Chain & blocks
     "chain.getParams": 5.0,
@@ -323,9 +362,12 @@ def load() -> RpcConfig:
     # Use per-network DB path based on chain_id to ensure DB isolation and
     # align with the shared data directory used by CLI + Docker mounts.
     default_db = _default_chain_dir(chain_id) / "animica.db"
-    db_uri = _expand_sqlite_uri(
-        _env("ANIMICA_RPC_DB_URI", f"sqlite:///{default_db}")
-    )
+    db_env = _env("ANIMICA_RPC_DB_URI")
+    if db_env:
+        db_uri = _expand_sqlite_uri(db_env)
+    else:
+        _maybe_migrate_legacy_db(chain_id, default_db)
+        db_uri = _expand_sqlite_uri(f"sqlite:///{default_db}")
     
     log_level = (_env("ANIMICA_LOG_LEVEL", "INFO") or "INFO").upper()
 

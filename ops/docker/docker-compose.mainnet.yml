@@ -40,15 +40,14 @@ services:
     working_dir: /app
     volumes:
       - ../..:/app:ro
-      - ${ANIMICA_DATA_DIR:-~/.animica/chain-1}:/data
+      - ${ANIMICA_DATA_ROOT:-~/.animica}:/data
     environment:
       # Mainnet chain config
       ANIMICA_NETWORK: "mainnet"
       ANIMICA_CHAIN_ID: "${ANIMICA_CHAIN_ID:-1}"
-      ANIMICA_RPC_DB_URI: "${ANIMICA_RPC_DB_URI:-sqlite:////data/animica.db}"
       GENESIS_PATH: "${GENESIS_PATH:-core/genesis/genesis.mainnet.json}"
       ANIMICA_DATA_DIR: "/data"
-      ANIMICA_RPC_BOOTSTRAP_ONLY: "${ANIMICA_RPC_BOOTSTRAP_ONLY:-1}"
+      ANIMICA_RPC_BOOTSTRAP_ONLY: "${ANIMICA_RPC_BOOTSTRAP_ONLY:-0}"
       # RPC server config
       ANIMICA_RPC_HOST: "${ANIMICA_RPC_HOST:-0.0.0.0}"
       ANIMICA_RPC_PORT: "${ANIMICA_RPC_PORT:-8545}"
