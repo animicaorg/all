@@ -241,6 +241,35 @@ def test_wallet_default_path_resolution(monkeypatch: pytest.MonkeyPatch, tmp_pat
     assert store["wallets"][0]["label"] == "testdefault"
 
 
+def test_wallet_path_default_resolution(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """`wallet path` should show the default store location."""
+
+    home_dir = tmp_path / "home"
+    home_dir.mkdir()
+    monkeypatch.setenv("HOME", str(home_dir))
+
+    result = runner.invoke(wallet.app, ["path"])
+    assert result.exit_code == 0
+
+    expected_path = home_dir / ".animica" / "wallets.json"
+    assert str(expected_path) in result.output
+    assert "Source: default" in result.output
+
+
+def test_wallet_path_env_resolution(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """`wallet path --json` should respect ANIMICA_WALLETS_FILE."""
+
+    custom_path = tmp_path / "custom" / "wallets.json"
+    monkeypatch.setenv("ANIMICA_WALLETS_FILE", str(custom_path))
+
+    result = runner.invoke(wallet.app, ["path", "--json"])
+    assert result.exit_code == 0
+
+    data = json.loads(result.output)
+    assert data["path"] == str(custom_path)
+    assert data["source"] == "env"
+
+
 def test_wallet_env_var_override(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Test that ANIMICA_WALLETS_FILE env var overrides default path."""
     custom_wallet_file = tmp_path / "custom_wallets.json"

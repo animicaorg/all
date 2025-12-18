@@ -237,17 +237,50 @@ def test_sync_force_no_peers(mock_rpc_no_peers):
     """Test force sync with no peers shows warning."""
     with patch("httpx.AsyncClient") as mock_client:
         mock_client.return_value = MockAsyncClient(mock_rpc_no_peers)
-        
+
         # Simulate user declining to continue
         result = runner.invoke(
             app,
             ["sync", "force"],
             input="n\n"  # Answer "no" to continue prompt
         )
-        
+
         assert result.exit_code == 0
         assert "No peers connected" in result.stdout
         assert "Cannot sync without peers" in result.stdout
+
+
+def test_sync_force_auto_bootstrap_and_reseed():
+    """Force sync should bootstrap peers and reseed on stalls."""
+
+    responses = {
+        "chain.getHead": {"height": 0, "hash": "0x" + "c" * 64},
+        "p2p.listPeers": [],
+        "sync.force": {"success": True},
+    }
+
+    with patch("animica.cli.sync._seed_local_peerstores") as seed_mock:
+        seed_mock.return_value = (2, True, [])
+
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_client.return_value = MockAsyncClient(responses)
+
+            result = runner.invoke(
+                app,
+                [
+                    "sync",
+                    "force",
+                    "--timeout",
+                    "4",
+                    "--check-interval",
+                    "1",
+                ],
+            )
+
+            assert result.exit_code == 0
+            assert "Auto-bootstrapping peers from configured seeds" in result.stdout
+            # Should reseed at least once more when progress stalls
+            assert seed_mock.call_count >= 2
 
 
 def test_sync_force_success(mock_rpc_success):
