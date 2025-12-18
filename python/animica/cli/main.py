@@ -44,6 +44,7 @@ Examples:
 
 from __future__ import annotations
 
+import os
 from typing import Optional
 
 import typer
@@ -141,6 +142,16 @@ def main_callback(
     _ctx.config_path = config
     _ctx.json_output = json_output
     _ctx.verbose = verbose
+
+    # Propagate high-priority CLI flags to environment so subcommands that
+    # resolve configuration independently (e.g., wallet) still honor the
+    # global options. CLI flags should take precedence over existing env vars.
+    if network:
+        os.environ["ANIMICA_NETWORK"] = network
+    if rpc_url:
+        os.environ["ANIMICA_RPC_URL"] = rpc_url
+    if chain_id is not None:
+        os.environ["ANIMICA_CHAIN_ID"] = str(chain_id)
 
 
 # Register subcommand groups
