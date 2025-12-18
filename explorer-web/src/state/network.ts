@@ -252,7 +252,7 @@ async function boot(params: {
       bindings.setNetwork?.({ connected: false });
       bindings.addToast?.({
         kind: 'error',
-        text: `${msg}\n\n💡 Update VITE_CHAIN_ID in your .env.local to match the node's chain ID`,
+        text: `${msg}\n\n💡 Update VITE_CHAIN_ID in your .env to match the node's chain ID`,
         ttl: 10000,
       });
       return;
