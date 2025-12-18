@@ -224,6 +224,50 @@ class TestGlobalOptions:
         result = runner.invoke(app, ["--network", "devnet", "node", "--help"])
         assert result.exit_code == 0
 
+    def test_global_rpc_url_applies_to_wallet(self, monkeypatch: Any, tmp_path: Path) -> None:
+        """Global --rpc-url should propagate to wallet commands."""
+        from animica.cli import wallet
+
+        wallet_path = tmp_path / "wallets.json"
+        wallet_path.write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "wallets": [
+                        {
+                            "label": "alice",
+                            "address": "anim1alice",
+                            "alg_id": 0,
+                            "alg_name": "ed25519",
+                            "public_key_hex": "0xabc",
+                            "secret_key_hex": "0xdef",
+                            "created_at": "2024-01-01T00:00:00Z",
+                            "balance": "0",
+                        }
+                    ],
+                }
+            )
+        )
+
+        captured: dict[str, str] = {}
+
+        def _fake_get_balance(address: str, rpc_url: str) -> int:
+            captured["address"] = address
+            captured["rpc_url"] = rpc_url
+            return 0
+
+        monkeypatch.setattr(wallet, "get_balance", _fake_get_balance)
+
+        result = runner.invoke(
+            app,
+            ["--rpc-url", "http://global:9999/rpc", "wallet", "show", "alice", "--source", "chain"],
+            env={"ANIMICA_WALLETS_FILE": str(wallet_path)},
+        )
+
+        assert result.exit_code == 0, result.output
+        assert captured["address"] == "anim1alice"
+        assert captured["rpc_url"] == "http://global:9999/rpc"
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
