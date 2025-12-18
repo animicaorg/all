@@ -1,0 +1,147 @@
+
+[setup] =================================================================
+[setup] 2025-12-12T23:49:08Z Start
+[setup] =================================================================
+[setup] 2025-12-12T23:49:08Z Repo root: /root/animica
+[setup] 2025-12-12T23:49:08Z Venv: /root/animica/.venv
+[setup] 2025-12-12T23:49:08Z Log: /root/animica/logs/setup_20251212_234908.log
+[setup] 2025-12-12T23:49:08Z Detected OS: Ubuntu 24.04.3 LTS
+
+[setup] =================================================================
+[setup] 2025-12-12T23:49:08Z OS packages
+[setup] =================================================================
+Hit:1 http://archive.ubuntu.com/ubuntu noble InRelease
+Hit:2 http://archive.ubuntu.com/ubuntu noble-updates InRelease
+Hit:3 https://deb.nodesource.com/node_20.x nodistro InRelease
+Hit:4 https://download.docker.com/linux/ubuntu noble InRelease
+Hit:5 http://archive.ubuntu.com/ubuntu noble-backports InRelease
+Hit:6 http://security.ubuntu.com/ubuntu noble-security InRelease
+Reading package lists...
+Reading package lists...
+Building dependency tree...
+Reading state information...
+ca-certificates is already the newest version (20240203).
+curl is already the newest version (8.5.0-2ubuntu10.6).
+git is already the newest version (1:2.43.0-1ubuntu7.3).
+jq is already the newest version (1.7.1-3ubuntu0.24.04.1).
+build-essential is already the newest version (12.10ubuntu1).
+pkg-config is already the newest version (1.8.1-2build1).
+cmake is already the newest version (3.28.3-1build7).
+ninja-build is already the newest version (1.11.1-2).
+libssl-dev is already the newest version (3.0.13-0ubuntu3.6).
+python3 is already the newest version (3.12.3-0ubuntu2.1).
+python3-venv is already the newest version (3.12.3-0ubuntu2.1).
+python3-dev is already the newest version (3.12.3-0ubuntu2.1).
+python3-pip is already the newest version (24.0+dfsg-1ubuntu1.3).
+The following NEW packages will be installed:
+  libffi-dev patchelf
+0 upgraded, 2 newly installed, 0 to remove and 2 not upgraded.
+Need to get 169 kB of archives.
+After this operation, 610 kB of additional disk space will be used.
+Get:1 http://archive.ubuntu.com/ubuntu noble/universe amd64 patchelf amd64 0.18.0-1.1build1 [106 kB]
+Get:2 http://archive.ubuntu.com/ubuntu noble/main amd64 libffi-dev amd64 3.4.6-1build1 [62.8 kB]
+Fetched 169 kB in 1s (261 kB/s)
+Selecting previously unselected package patchelf.
+(Reading database ... (Reading database ... 5%(Reading database ... 10%(Reading database ... 15%(Reading database ... 20%(Reading database ... 25%(Reading database ... 30%(Reading database ... 35%(Reading database ... 40%(Reading database ... 45%(Reading database ... 50%(Reading database ... 55%(Reading database ... 60%(Reading database ... 65%(Reading database ... 70%(Reading database ... 75%(Reading database ... 80%(Reading database ... 85%(Reading database ... 90%(Reading database ... 95%(Reading database ... 100%(Reading database ... 134549 files and directories currently installed.)
+Preparing to unpack .../patchelf_0.18.0-1.1build1_amd64.deb ...
+Unpacking patchelf (0.18.0-1.1build1) ...
+Selecting previously unselected package libffi-dev:amd64.
+Preparing to unpack .../libffi-dev_3.4.6-1build1_amd64.deb ...
+Unpacking libffi-dev:amd64 (3.4.6-1build1) ...
+Setting up libffi-dev:amd64 (3.4.6-1build1) ...
+Setting up patchelf (0.18.0-1.1build1) ...
+Processing triggers for install-info (7.1-3build2) ...
+Processing triggers for man-db (2.12.0-4build2) ...
+
+Pending kernel upgrade!
+Running kernel version:
+  6.8.0-88-generic
+Diagnostics:
+  The currently running kernel version is not the expected kernel version 6.8.0-90-generic.
+
+Restarting the system to load the new kernel will not be handled automatically, so you should consider rebooting.
+
+Restarting services...
+
+Service restarts being deferred:
+ /etc/needrestart/restart.d/dbus.service
+ systemctl restart unattended-upgrades.service
+
+No containers need to be restarted.
+
+No user sessions are running outdated binaries.
+
+No VM guests are running outdated hypervisor (qemu) binaries on this host.
+Reading package lists...
+Building dependency tree...
+Reading state information...
+E: Unable to locate package liboqs-dev
+[setup] 2025-12-12T23:49:20Z WARN: liboqs-dev not available via apt (expected on some Ubuntu versions). Will build liboqs from source.
+
+[setup] =================================================================
+[setup] 2025-12-12T23:49:20Z Python
+[setup] =================================================================
+[setup] 2025-12-12T23:49:20Z Using: Python 3.12.3
+
+[setup] =================================================================
+[setup] 2025-12-12T23:49:20Z Virtualenv
+[setup] =================================================================
+[setup] 2025-12-12T23:49:20Z Venv exists: /root/animica/.venv
+[setup] 2025-12-12T23:49:20Z Activated venv: /root/animica/.venv
+Requirement already satisfied: pip in ./.venv/lib/python3.12/site-packages (25.3)
+Requirement already satisfied: setuptools in ./.venv/lib/python3.12/site-packages (80.9.0)
+Requirement already satisfied: wheel in ./.venv/lib/python3.12/site-packages (0.45.1)
+
+[setup] =================================================================
+[setup] 2025-12-12T23:49:21Z Make repo importable (pth)
+[setup] =================================================================
+[setup] 2025-12-12T23:49:22Z site-packages: /root/animica/.venv/lib/python3.12/site-packages
+[setup] 2025-12-12T23:49:22Z Wrote: /root/animica/.venv/lib/python3.12/site-packages/animica_repo_root.pth -> /root/animica
+
+[setup] =================================================================
+[setup] 2025-12-12T23:49:22Z Dynamic loader paths
+[setup] =================================================================
+[setup] 2025-12-12T23:49:22Z Patched venv activate with LD_LIBRARY_PATH/LIBOQS_PATH/OQS_INSTALL_PATH
+
+[setup] =================================================================
+[setup] 2025-12-12T23:49:22Z liboqs build (source)
+[setup] =================================================================
+[setup] 2025-12-12T23:49:22Z liboqs already present; skipping source build (set FORCE_BUILD_LIBOQS=1 to rebuild).
+
+[setup] =================================================================
+[setup] 2025-12-12T23:49:22Z liboqs-python (oqs) install
+[setup] =================================================================
+Cloning into '/root/animica/.deps/liboqs-python'...
+Processing /root/animica/.deps/liboqs-python
+  Installing build dependencies: started
+  Installing build dependencies: finished with status 'done'
+  Getting requirements to build wheel: started
+  Getting requirements to build wheel: finished with status 'done'
+  Preparing metadata (pyproject.toml): started
+  Preparing metadata (pyproject.toml): finished with status 'done'
+Building wheels for collected packages: liboqs-python
+  Building wheel for liboqs-python (pyproject.toml): started
+  Building wheel for liboqs-python (pyproject.toml): finished with status 'done'
+  Created wheel for liboqs-python: filename=liboqs_python-0.14.0-py3-none-any.whl size=18100 sha256=80a1bc77de39a08fde32f43bdfc645f336c31de2c1694510de87b5dc6dc5c3cc
+  Stored in directory: /tmp/pip-ephem-wheel-cache-utsxl_qb/wheels/0b/5a/77/8ba63c336b2c0b129cf7a48e57212addb65f1ccd08785af4a0
+Successfully built liboqs-python
+Installing collected packages: liboqs-python
+Successfully installed liboqs-python-0.14.0
+liboqs-python faulthandler is disabled
+/root/animica/.venv/lib/python3.12/site-packages/oqs/__init__.py:1: UserWarning: liboqs version (major, minor) 0.15.0 differs from liboqs-python version 0.14.0
+  from oqs.oqs import (
+enabled_sig_mechanisms_count = 221
+sample = ('ML-DSA-44', 'ML-DSA-65', 'ML-DSA-87', 'Falcon-512', 'Falcon-1024', 'Falcon-padded-512', 'Falcon-padded-1024', 'SPHINCS+-SHA2-128f-simple', 'SPHINCS+-SHA2-128s-simple', 'SPHINCS+-SHA2-192f-simple', 'SPHINCS+-SHA2-192s-simple', 'SPHINCS+-SHA2-256f-simple')
+ERROR: Dilithium mechanisms missing; expected at least Dilithium3
+[setup] 2025-12-12T23:49:25Z WARN: FAILED (exit=1) at line 275: python - <<'PY'
+import oqs
+mechs = oqs.get_enabled_sig_mechanisms()
+print("enabled_sig_mechanisms_count =", len(mechs))
+print("sample =", mechs[:12])
+if not mechs:
+    raise SystemExit("ERROR: oqs installed but no signature mechanisms enabled (liboqs not detected at runtime)")
+if not any("DILITHIUM" in m.upper() for m in mechs):
+    raise SystemExit("ERROR: Dilithium mechanisms missing; expected at least Dilithium3")
+PY
+
+[setup] 2025-12-12T23:49:25Z WARN: Log: /root/animica/logs/setup_20251212_234908.log

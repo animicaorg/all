@@ -1,0 +1,401 @@
+[setup] 2025-12-13T01:09:00Z =================================================================
+[setup] 2025-12-13T01:09:00Z Start
+[setup] 2025-12-13T01:09:00Z =================================================================
+[setup] 2025-12-13T01:09:00Z Repo root: /root/animica
+[setup] 2025-12-13T01:09:00Z Venv:      /root/animica/.venv
+[setup] 2025-12-13T01:09:00Z Log:       /root/animica/logs/setup/setup_20251213_010900.log
+[setup] 2025-12-13T01:09:00Z =================================================================
+[setup] 2025-12-13T01:09:00Z OS packages
+[setup] 2025-12-13T01:09:00Z =================================================================
+Hit:1 http://archive.ubuntu.com/ubuntu noble InRelease
+Hit:2 http://archive.ubuntu.com/ubuntu noble-updates InRelease
+Hit:3 https://deb.nodesource.com/node_20.x nodistro InRelease
+Hit:4 https://download.docker.com/linux/ubuntu noble InRelease
+Hit:5 http://archive.ubuntu.com/ubuntu noble-backports InRelease
+Hit:6 http://security.ubuntu.com/ubuntu noble-security InRelease
+Reading package lists...
+Reading package lists...
+Building dependency tree...
+Reading state information...
+ca-certificates is already the newest version (20240203).
+curl is already the newest version (8.5.0-2ubuntu10.6).
+git is already the newest version (1:2.43.0-1ubuntu7.3).
+jq is already the newest version (1.7.1-3ubuntu0.24.04.1).
+build-essential is already the newest version (12.10ubuntu1).
+pkg-config is already the newest version (1.8.1-2build1).
+cmake is already the newest version (3.28.3-1build7).
+ninja-build is already the newest version (1.11.1-2).
+libssl-dev is already the newest version (3.0.13-0ubuntu3.6).
+libffi-dev is already the newest version (3.4.6-1build1).
+python3 is already the newest version (3.12.3-0ubuntu2.1).
+python3-venv is already the newest version (3.12.3-0ubuntu2.1).
+python3-dev is already the newest version (3.12.3-0ubuntu2.1).
+python3-pip is already the newest version (24.0+dfsg-1ubuntu1.3).
+patchelf is already the newest version (0.18.0-1.1build1).
+0 upgraded, 0 newly installed, 0 to remove and 2 not upgraded.
+[setup] 2025-12-13T01:09:06Z =================================================================
+[setup] 2025-12-13T01:09:06Z Python / Virtualenv
+[setup] 2025-12-13T01:09:06Z =================================================================
+[setup] 2025-12-13T01:09:06Z --clean requested: removing /root/animica/.venv
+[setup] 2025-12-13T01:09:06Z Creating venv
+[setup] 2025-12-13T01:09:11Z Activated venv: /root/animica/.venv
+Requirement already satisfied: pip in ./.venv/lib/python3.12/site-packages (24.0)
+Collecting pip
+  Using cached pip-25.3-py3-none-any.whl.metadata (4.7 kB)
+Collecting setuptools
+  Using cached setuptools-80.9.0-py3-none-any.whl.metadata (6.6 kB)
+Collecting wheel
+  Using cached wheel-0.45.1-py3-none-any.whl.metadata (2.3 kB)
+Using cached pip-25.3-py3-none-any.whl (1.8 MB)
+Using cached setuptools-80.9.0-py3-none-any.whl (1.2 MB)
+Using cached wheel-0.45.1-py3-none-any.whl (72 kB)
+Installing collected packages: wheel, setuptools, pip
+  Attempting uninstall: pip
+    Found existing installation: pip 24.0
+    Uninstalling pip-24.0:
+      Successfully uninstalled pip-24.0
+Successfully installed pip-25.3 setuptools-80.9.0 wheel-0.45.1
+[setup] 2025-12-13T01:09:14Z Make repo importable (pth)
+site-packages: /root/animica/.venv/lib/python3.12/site-packages
+wrote: /root/animica/.venv/lib/python3.12/site-packages/animica_repo_root.pth -> /root/animica
+[setup] 2025-12-13T01:09:14Z =================================================================
+[setup] 2025-12-13T01:09:14Z PQ dependencies
+[setup] 2025-12-13T01:09:14Z =================================================================
+[setup] 2025-12-13T01:09:14Z liboqs already present under /root/animica/.deps/oqs-install; skipping build.
+[setup] 2025-12-13T01:09:14Z Installing liboqs-python (oqs)
+Collecting liboqs-python<0.16,>=0.14
+  Downloading liboqs_python-0.14.1-py3-none-any.whl.metadata (11 kB)
+Downloading liboqs_python-0.14.1-py3-none-any.whl (15 kB)
+Installing collected packages: liboqs-python
+Successfully installed liboqs-python-0.14.1
+[setup] 2025-12-13T01:09:15Z Installed liboqs-python from PyPI
+[setup] 2025-12-13T01:09:15Z Checking enabled PQ signature mechanisms (best-effort)
+/root/animica/.venv/lib/python3.12/site-packages/oqs/__init__.py:1: UserWarning: liboqs version (major, minor) 0.15.0 differs from liboqs-python version 0.14.1
+  from oqs.oqs import (
+enabled_sig_mechanisms_count = 221
+sample = ('ML-DSA-44', 'ML-DSA-65', 'ML-DSA-87', 'Falcon-512', 'Falcon-1024', 'Falcon-padded-512', 'Falcon-padded-1024', 'SPHINCS+-SHA2-128f-simple', 'SPHINCS+-SHA2-128s-simple', 'SPHINCS+-SHA2-192f-simple', 'SPHINCS+-SHA2-192s-simple', 'SPHINCS+-SHA2-256f-simple', 'SPHINCS+-SHA2-256s-simple', 'SPHINCS+-SHAKE-128f-simple', 'SPHINCS+-SHAKE-128s-simple', 'SPHINCS+-SHAKE-192f-simple', 'SPHINCS+-SHAKE-192s-simple', 'SPHINCS+-SHAKE-256f-simple', 'SPHINCS+-SHAKE-256s-simple', 'MAYO-1')
+[setup] 2025-12-13T01:09:16Z =================================================================
+[setup] 2025-12-13T01:09:16Z Python deps (baseline)
+[setup] 2025-12-13T01:09:16Z =================================================================
+Collecting requests
+  Using cached requests-2.32.5-py3-none-any.whl.metadata (4.9 kB)
+Collecting cbor2
+  Using cached cbor2-5.7.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (5.4 kB)
+Collecting rich
+  Using cached rich-14.2.0-py3-none-any.whl.metadata (18 kB)
+Collecting typer
+  Using cached typer-0.20.0-py3-none-any.whl.metadata (16 kB)
+Collecting charset_normalizer<4,>=2 (from requests)
+  Using cached charset_normalizer-3.4.4-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (37 kB)
+Collecting idna<4,>=2.5 (from requests)
+  Using cached idna-3.11-py3-none-any.whl.metadata (8.4 kB)
+Collecting urllib3<3,>=1.21.1 (from requests)
+  Using cached urllib3-2.6.2-py3-none-any.whl.metadata (6.6 kB)
+Collecting certifi>=2017.4.17 (from requests)
+  Using cached certifi-2025.11.12-py3-none-any.whl.metadata (2.5 kB)
+Collecting markdown-it-py>=2.2.0 (from rich)
+  Using cached markdown_it_py-4.0.0-py3-none-any.whl.metadata (7.3 kB)
+Collecting pygments<3.0.0,>=2.13.0 (from rich)
+  Using cached pygments-2.19.2-py3-none-any.whl.metadata (2.5 kB)
+Collecting click>=8.0.0 (from typer)
+  Using cached click-8.3.1-py3-none-any.whl.metadata (2.6 kB)
+Collecting typing-extensions>=3.7.4.3 (from typer)
+  Using cached typing_extensions-4.15.0-py3-none-any.whl.metadata (3.3 kB)
+Collecting shellingham>=1.3.0 (from typer)
+  Using cached shellingham-1.5.4-py2.py3-none-any.whl.metadata (3.5 kB)
+Collecting mdurl~=0.1 (from markdown-it-py>=2.2.0->rich)
+  Using cached mdurl-0.1.2-py3-none-any.whl.metadata (1.6 kB)
+Using cached requests-2.32.5-py3-none-any.whl (64 kB)
+Using cached charset_normalizer-3.4.4-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (153 kB)
+Using cached idna-3.11-py3-none-any.whl (71 kB)
+Using cached urllib3-2.6.2-py3-none-any.whl (131 kB)
+Using cached cbor2-5.7.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (285 kB)
+Using cached rich-14.2.0-py3-none-any.whl (243 kB)
+Using cached pygments-2.19.2-py3-none-any.whl (1.2 MB)
+Using cached typer-0.20.0-py3-none-any.whl (47 kB)
+Using cached certifi-2025.11.12-py3-none-any.whl (159 kB)
+Using cached click-8.3.1-py3-none-any.whl (108 kB)
+Using cached markdown_it_py-4.0.0-py3-none-any.whl (87 kB)
+Using cached mdurl-0.1.2-py3-none-any.whl (10.0 kB)
+Using cached shellingham-1.5.4-py2.py3-none-any.whl (9.8 kB)
+Using cached typing_extensions-4.15.0-py3-none-any.whl (44 kB)
+Installing collected packages: urllib3, typing-extensions, shellingham, pygments, mdurl, idna, click, charset_normalizer, certifi, cbor2, requests, markdown-it-py, rich, typer
+
+ERROR: pip's dependency resolver does not currently take into account all the packages that are installed. This behaviour is the source of the following dependency conflicts.
+animica 0.1.0 requires cryptography>=42.0.0, which is not installed.
+animica 0.1.0 requires httpx>=0.27.0, which is not installed.
+animica 0.1.0 requires respx>=0.21.0, which is not installed.
+Successfully installed cbor2-5.7.1 certifi-2025.11.12 charset_normalizer-3.4.4 click-8.3.1 idna-3.11 markdown-it-py-4.0.0 mdurl-0.1.2 pygments-2.19.2 requests-2.32.5 rich-14.2.0 shellingham-1.5.4 typer-0.20.0 typing-extensions-4.15.0 urllib3-2.6.2
+[setup] 2025-12-13T01:09:19Z =================================================================
+[setup] 2025-12-13T01:09:19Z Install Animica (Python)
+[setup] 2025-12-13T01:09:19Z =================================================================
+[setup] 2025-12-13T01:09:19Z Attempting: pip install -e /root/animica/python
+Obtaining file:///root/animica/python
+  Installing build dependencies: started
+  Installing build dependencies: finished with status 'done'
+  Checking if build backend supports build_editable: started
+  Checking if build backend supports build_editable: finished with status 'done'
+  Getting requirements to build editable: started
+  Getting requirements to build editable: finished with status 'done'
+  Installing backend dependencies: started
+  Installing backend dependencies: finished with status 'done'
+  Preparing editable metadata (pyproject.toml): started
+  Preparing editable metadata (pyproject.toml): finished with status 'done'
+INFO: pip is looking at multiple versions of animica to determine which version is compatible with other requirements. This could take a while.
+ERROR: Could not find a version that satisfies the requirement animica-pq>=0.1.0 (from animica) (from versions: none)
+ERROR: No matching distribution found for animica-pq>=0.1.0
+[setup] 2025-12-13T01:09:22Z WARN: Editable install failed (common cause: missing deps on PyPI like omni-sdk/animica-pq). Falling back to --no-deps.
+Obtaining file:///root/animica/python
+  Installing build dependencies: started
+  Installing build dependencies: finished with status 'done'
+  Checking if build backend supports build_editable: started
+  Checking if build backend supports build_editable: finished with status 'done'
+  Getting requirements to build editable: started
+  Getting requirements to build editable: finished with status 'done'
+  Installing backend dependencies: started
+  Installing backend dependencies: finished with status 'done'
+  Preparing editable metadata (pyproject.toml): started
+  Preparing editable metadata (pyproject.toml): finished with status 'done'
+Building wheels for collected packages: animica
+  Building editable for animica (pyproject.toml): started
+  Building editable for animica (pyproject.toml): finished with status 'done'
+  Created wheel for animica: filename=animica-0.1.0-py3-none-any.whl size=1723 sha256=fc23e2dc4be956a0610c63d84305a69d09f14b00c3a9f8efdb55528cd0ad45d9
+  Stored in directory: /tmp/pip-ephem-wheel-cache-c9iqor_b/wheels/c2/59/8d/7b899d15b765935b52481f681f3bdf8955280ba61d8cac698e
+Successfully built animica
+Installing collected packages: animica
+  Attempting uninstall: animica
+    Found existing installation: animica 0.1.0
+    Not uninstalling animica at /root/animica, outside environment /root/animica/.venv
+    Can't uninstall 'animica'. No files were found to uninstall.
+Successfully installed animica-0.1.0
+[setup] 2025-12-13T01:09:25Z =================================================================
+[setup] 2025-12-13T01:09:25Z Best-effort dependency install (never hard-fails)
+[setup] 2025-12-13T01:09:25Z =================================================================
+Requirement already satisfied: typer>=0.12.3 in ./.venv/lib/python3.12/site-packages (0.20.0)
+Requirement already satisfied: click>=8.0.0 in ./.venv/lib/python3.12/site-packages (from typer>=0.12.3) (8.3.1)
+Requirement already satisfied: typing-extensions>=3.7.4.3 in ./.venv/lib/python3.12/site-packages (from typer>=0.12.3) (4.15.0)
+Requirement already satisfied: shellingham>=1.3.0 in ./.venv/lib/python3.12/site-packages (from typer>=0.12.3) (1.5.4)
+Requirement already satisfied: rich>=10.11.0 in ./.venv/lib/python3.12/site-packages (from typer>=0.12.3) (14.2.0)
+Requirement already satisfied: markdown-it-py>=2.2.0 in ./.venv/lib/python3.12/site-packages (from rich>=10.11.0->typer>=0.12.3) (4.0.0)
+Requirement already satisfied: pygments<3.0.0,>=2.13.0 in ./.venv/lib/python3.12/site-packages (from rich>=10.11.0->typer>=0.12.3) (2.19.2)
+Requirement already satisfied: mdurl~=0.1 in ./.venv/lib/python3.12/site-packages (from markdown-it-py>=2.2.0->rich>=10.11.0->typer>=0.12.3) (0.1.2)
+Requirement already satisfied: rich>=13.7.0 in ./.venv/lib/python3.12/site-packages (14.2.0)
+Requirement already satisfied: markdown-it-py>=2.2.0 in ./.venv/lib/python3.12/site-packages (from rich>=13.7.0) (4.0.0)
+Requirement already satisfied: pygments<3.0.0,>=2.13.0 in ./.venv/lib/python3.12/site-packages (from rich>=13.7.0) (2.19.2)
+Requirement already satisfied: mdurl~=0.1 in ./.venv/lib/python3.12/site-packages (from markdown-it-py>=2.2.0->rich>=13.7.0) (0.1.2)
+Collecting httpx>=0.27.0
+  Using cached httpx-0.28.1-py3-none-any.whl.metadata (7.1 kB)
+Collecting anyio (from httpx>=0.27.0)
+  Using cached anyio-4.12.0-py3-none-any.whl.metadata (4.3 kB)
+Requirement already satisfied: certifi in ./.venv/lib/python3.12/site-packages (from httpx>=0.27.0) (2025.11.12)
+Collecting httpcore==1.* (from httpx>=0.27.0)
+  Using cached httpcore-1.0.9-py3-none-any.whl.metadata (21 kB)
+Requirement already satisfied: idna in ./.venv/lib/python3.12/site-packages (from httpx>=0.27.0) (3.11)
+Collecting h11>=0.16 (from httpcore==1.*->httpx>=0.27.0)
+  Using cached h11-0.16.0-py3-none-any.whl.metadata (8.3 kB)
+Requirement already satisfied: typing_extensions>=4.5 in ./.venv/lib/python3.12/site-packages (from anyio->httpx>=0.27.0) (4.15.0)
+Using cached httpx-0.28.1-py3-none-any.whl (73 kB)
+Using cached httpcore-1.0.9-py3-none-any.whl (78 kB)
+Using cached h11-0.16.0-py3-none-any.whl (37 kB)
+Using cached anyio-4.12.0-py3-none-any.whl (113 kB)
+Installing collected packages: h11, anyio, httpcore, httpx
+
+ERROR: pip's dependency resolver does not currently take into account all the packages that are installed. This behaviour is the source of the following dependency conflicts.
+animica 0.1.0 requires animica-pq>=0.1.0, which is not installed.
+animica 0.1.0 requires pydantic>=2.7.0, which is not installed.
+animica 0.1.0 requires pyyaml>=6.0.1, which is not installed.
+Successfully installed anyio-4.12.0 h11-0.16.0 httpcore-1.0.9 httpx-0.28.1
+Collecting pydantic>=2.7.0
+  Using cached pydantic-2.12.5-py3-none-any.whl.metadata (90 kB)
+Collecting annotated-types>=0.6.0 (from pydantic>=2.7.0)
+  Using cached annotated_types-0.7.0-py3-none-any.whl.metadata (15 kB)
+Collecting pydantic-core==2.41.5 (from pydantic>=2.7.0)
+  Using cached pydantic_core-2.41.5-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (7.3 kB)
+Requirement already satisfied: typing-extensions>=4.14.1 in ./.venv/lib/python3.12/site-packages (from pydantic>=2.7.0) (4.15.0)
+Collecting typing-inspection>=0.4.2 (from pydantic>=2.7.0)
+  Using cached typing_inspection-0.4.2-py3-none-any.whl.metadata (2.6 kB)
+Using cached pydantic-2.12.5-py3-none-any.whl (463 kB)
+Using cached pydantic_core-2.41.5-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (2.1 MB)
+Using cached annotated_types-0.7.0-py3-none-any.whl (13 kB)
+Using cached typing_inspection-0.4.2-py3-none-any.whl (14 kB)
+Installing collected packages: typing-inspection, pydantic-core, annotated-types, pydantic
+
+ERROR: pip's dependency resolver does not currently take into account all the packages that are installed. This behaviour is the source of the following dependency conflicts.
+animica 0.1.0 requires animica-pq>=0.1.0, which is not installed.
+animica 0.1.0 requires pyyaml>=6.0.1, which is not installed.
+Successfully installed annotated-types-0.7.0 pydantic-2.12.5 pydantic-core-2.41.5 typing-inspection-0.4.2
+Collecting pyyaml>=6.0.1
+  Using cached pyyaml-6.0.3-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (2.4 kB)
+Using cached pyyaml-6.0.3-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (807 kB)
+Installing collected packages: pyyaml
+ERROR: pip's dependency resolver does not currently take into account all the packages that are installed. This behaviour is the source of the following dependency conflicts.
+animica 0.1.0 requires animica-pq>=0.1.0, which is not installed.
+Successfully installed pyyaml-6.0.3
+Requirement already satisfied: cbor2>=5.6.0 in ./.venv/lib/python3.12/site-packages (5.7.1)
+Requirement already satisfied: requests in ./.venv/lib/python3.12/site-packages (2.32.5)
+Requirement already satisfied: charset_normalizer<4,>=2 in ./.venv/lib/python3.12/site-packages (from requests) (3.4.4)
+Requirement already satisfied: idna<4,>=2.5 in ./.venv/lib/python3.12/site-packages (from requests) (3.11)
+Requirement already satisfied: urllib3<3,>=1.21.1 in ./.venv/lib/python3.12/site-packages (from requests) (2.6.2)
+Requirement already satisfied: certifi>=2017.4.17 in ./.venv/lib/python3.12/site-packages (from requests) (2025.11.12)
+Requirement already satisfied: cbor2 in ./.venv/lib/python3.12/site-packages (5.7.1)
+Requirement already satisfied: rich in ./.venv/lib/python3.12/site-packages (14.2.0)
+Requirement already satisfied: markdown-it-py>=2.2.0 in ./.venv/lib/python3.12/site-packages (from rich) (4.0.0)
+Requirement already satisfied: pygments<3.0.0,>=2.13.0 in ./.venv/lib/python3.12/site-packages (from rich) (2.19.2)
+Requirement already satisfied: mdurl~=0.1 in ./.venv/lib/python3.12/site-packages (from markdown-it-py>=2.2.0->rich) (0.1.2)
+Requirement already satisfied: typer in ./.venv/lib/python3.12/site-packages (0.20.0)
+Requirement already satisfied: click>=8.0.0 in ./.venv/lib/python3.12/site-packages (from typer) (8.3.1)
+Requirement already satisfied: typing-extensions>=3.7.4.3 in ./.venv/lib/python3.12/site-packages (from typer) (4.15.0)
+Requirement already satisfied: shellingham>=1.3.0 in ./.venv/lib/python3.12/site-packages (from typer) (1.5.4)
+Requirement already satisfied: rich>=10.11.0 in ./.venv/lib/python3.12/site-packages (from typer) (14.2.0)
+Requirement already satisfied: markdown-it-py>=2.2.0 in ./.venv/lib/python3.12/site-packages (from rich>=10.11.0->typer) (4.0.0)
+Requirement already satisfied: pygments<3.0.0,>=2.13.0 in ./.venv/lib/python3.12/site-packages (from rich>=10.11.0->typer) (2.19.2)
+Requirement already satisfied: mdurl~=0.1 in ./.venv/lib/python3.12/site-packages (from markdown-it-py>=2.2.0->rich>=10.11.0->typer) (0.1.2)
+deps(filtered)= ['typer>=0.12.3', 'rich>=13.7.0', 'httpx>=0.27.0', 'pydantic>=2.7.0', 'pyyaml>=6.0.1', 'cbor2>=5.6.0', 'requests', 'cbor2', 'rich', 'typer']
+Best-effort deps done.
+[setup] 2025-12-13T01:09:35Z =================================================================
+[setup] 2025-12-13T01:09:35Z Node workspace (best-effort)
+[setup] 2025-12-13T01:09:35Z =================================================================
+Progress: resolved 1, reused 0, downloaded 0, added 0
+wallet-extension                         |  WARN  deprecated eslint@8.57.1
+Progress: resolved 217, reused 211, downloaded 0, added 0
+Progress: resolved 918, reused 836, downloaded 0, added 0
+ WARN  5 deprecated subdependencies found: @humanwhocodes/config-array@0.13.0, @humanwhocodes/object-schema@2.0.3, glob@7.2.3, inflight@1.0.6, rimraf@3.0.2
+Progress: resolved 1043, reused 946, downloaded 0, added 0
+Packages: +1
++
+Progress: resolved 1043, reused 946, downloaded 0, added 1, done
+website postinstall$ playwright install --with-deps || true
+studio-web prepare$ playwright install --with-deps || true
+studio-web prepare: Installing dependencies...
+website postinstall: Installing dependencies...
+studio-web prepare: Hit:1 https://deb.nodesource.com/node_20.x nodistro InRelease
+studio-web prepare: Hit:2 https://download.docker.com/linux/ubuntu noble InRelease
+studio-web prepare: Hit:3 http://security.ubuntu.com/ubuntu noble-security InRelease
+studio-web prepare: Hit:4 http://archive.ubuntu.com/ubuntu noble InRelease
+studio-web prepare: Hit:5 http://archive.ubuntu.com/ubuntu noble-updates InRelease
+studio-web prepare: Hit:6 http://archive.ubuntu.com/ubuntu noble-backports InRelease
+website postinstall: Reading package lists...
+website postinstall: E: Could not get lock /var/lib/apt/lists/lock. It is held by process 299691 (apt-get)
+website postinstall: E: Unable to lock directory /var/lib/apt/lists/
+website postinstall: Failed to install browsers
+website postinstall: Error: Installation process exited with code: 100
+website postinstall: Done
+website prepare$ husky install
+website prepare: husky - install command is DEPRECATED
+website prepare: .git can't be found
+website prepare: Done
+studio-web prepare: Reading package lists...
+studio-web prepare: Reading package lists...
+studio-web prepare: Building dependency tree...
+studio-web prepare: Reading state information...
+studio-web prepare: libasound2t64 is already the newest version (1.2.11-1ubuntu0.1).
+studio-web prepare: libatk-bridge2.0-0t64 is already the newest version (2.52.0-1build1).
+studio-web prepare: libatk1.0-0t64 is already the newest version (2.52.0-1build1).
+studio-web prepare: libatspi2.0-0t64 is already the newest version (2.52.0-1build1).
+studio-web prepare: libcairo2 is already the newest version (1.18.0-3build1).
+studio-web prepare: libcups2t64 is already the newest version (2.4.7-1.2ubuntu7.9).
+studio-web prepare: libdbus-1-3 is already the newest version (1.14.10-4ubuntu4.1).
+studio-web prepare: libdrm2 is already the newest version (2.4.122-1~ubuntu0.24.04.2).
+studio-web prepare: libgbm1 is already the newest version (25.0.7-0ubuntu0.24.04.2).
+studio-web prepare: libglib2.0-0t64 is already the newest version (2.80.0-6ubuntu3.5).
+studio-web prepare: libnspr4 is already the newest version (2:4.35-1.1build1).
+studio-web prepare: libnss3 is already the newest version (2:3.98-1build1).
+studio-web prepare: libpango-1.0-0 is already the newest version (1.52.1+ds-1build1).
+studio-web prepare: libx11-6 is already the newest version (2:1.8.7-1build1).
+studio-web prepare: libxcb1 is already the newest version (1.15-1ubuntu2).
+studio-web prepare: libxcomposite1 is already the newest version (1:0.4.5-1build3).
+studio-web prepare: libxdamage1 is already the newest version (1:1.1.6-1build1).
+studio-web prepare: libxext6 is already the newest version (2:1.3.4-1build2).
+studio-web prepare: libxfixes3 is already the newest version (1:6.0.0-2build1).
+studio-web prepare: libxkbcommon0 is already the newest version (1.6.0-1build1).
+studio-web prepare: libxrandr2 is already the newest version (2:1.5.2-2build1).
+studio-web prepare: libcairo-gobject2 is already the newest version (1.18.0-3build1).
+studio-web prepare: libfontconfig1 is already the newest version (2.15.0-1.1ubuntu2).
+studio-web prepare: libfreetype6 is already the newest version (2.13.2+dfsg-1build3).
+studio-web prepare: libgdk-pixbuf-2.0-0 is already the newest version (2.42.10+dfsg-3ubuntu3.2).
+studio-web prepare: libgtk-3-0t64 is already the newest version (3.24.41-4ubuntu1.3).
+studio-web prepare: libpangocairo-1.0-0 is already the newest version (1.52.1+ds-1build1).
+studio-web prepare: libx11-xcb1 is already the newest version (2:1.8.7-1build1).
+studio-web prepare: libxcb-shm0 is already the newest version (1.15-1ubuntu2).
+studio-web prepare: libxcursor1 is already the newest version (1:1.2.1-1build1).
+studio-web prepare: libxi6 is already the newest version (2:1.8.1-1build1).
+studio-web prepare: libxrender1 is already the newest version (1:0.9.10-1.1build1).
+studio-web prepare: gstreamer1.0-libav is already the newest version (1.24.1-1build1).
+studio-web prepare: gstreamer1.0-plugins-bad is already the newest version (1.24.2-1ubuntu4).
+studio-web prepare: gstreamer1.0-plugins-base is already the newest version (1.24.2-1ubuntu0.3).
+studio-web prepare: gstreamer1.0-plugins-good is already the newest version (1.24.2-1ubuntu1.2).
+studio-web prepare: libicu74 is already the newest version (74.2-1ubuntu3.1).
+studio-web prepare: libatomic1 is already the newest version (14.2.0-4ubuntu2~24.04).
+studio-web prepare: libenchant-2-2 is already the newest version (2.3.3-2build2).
+studio-web prepare: libepoxy0 is already the newest version (1.5.10-1build1).
+studio-web prepare: libevent-2.1-7t64 is already the newest version (2.1.12-stable-9ubuntu2).
+studio-web prepare: libflite1 is already the newest version (2.2-6build3).
+studio-web prepare: libgles2 is already the newest version (1.7.0-1build1).
+studio-web prepare: libgstreamer-gl1.0-0 is already the newest version (1.24.2-1ubuntu0.3).
+studio-web prepare: libgstreamer-plugins-bad1.0-0 is already the newest version (1.24.2-1ubuntu4).
+studio-web prepare: libgstreamer-plugins-base1.0-0 is already the newest version (1.24.2-1ubuntu0.3).
+studio-web prepare: libgstreamer1.0-0 is already the newest version (1.24.2-1ubuntu0.1).
+studio-web prepare: libgtk-4-1 is already the newest version (4.14.5+ds-0ubuntu0.7).
+studio-web prepare: libharfbuzz-icu0 is already the newest version (8.3.0-2build2).
+studio-web prepare: libharfbuzz0b is already the newest version (8.3.0-2build2).
+studio-web prepare: libhyphen0 is already the newest version (2.8.8-7build3).
+studio-web prepare: libjpeg-turbo8 is already the newest version (2.1.5-2ubuntu2).
+studio-web prepare: liblcms2-2 is already the newest version (2.14-2build1).
+studio-web prepare: libmanette-0.2-0 is already the newest version (0.2.7-1build2).
+studio-web prepare: libopus0 is already the newest version (1.4-1build1).
+studio-web prepare: libpng16-16t64 is already the newest version (1.6.43-5ubuntu0.1).
+studio-web prepare: libsecret-1-0 is already the newest version (0.21.4-1build3).
+studio-web prepare: libvpx9 is already the newest version (1.14.0-1ubuntu2.2).
+studio-web prepare: libwayland-client0 is already the newest version (1.22.0-2.1build1).
+studio-web prepare: libwayland-egl1 is already the newest version (1.22.0-2.1build1).
+studio-web prepare: libwayland-server0 is already the newest version (1.22.0-2.1build1).
+studio-web prepare: libwebp7 is already the newest version (1.3.2-0.4build3).
+studio-web prepare: libwebpdemux2 is already the newest version (1.3.2-0.4build3).
+studio-web prepare: libwoff1 is already the newest version (1.0.2-2build1).
+studio-web prepare: libxml2 is already the newest version (2.9.14+dfsg-1.3ubuntu3.6).
+studio-web prepare: libxslt1.1 is already the newest version (1.1.39-0exp1ubuntu0.24.04.2).
+studio-web prepare: libx264-164 is already the newest version (2:0.164.3108+git31e19f9-1).
+studio-web prepare: libavif16 is already the newest version (1.0.4-1ubuntu3).
+studio-web prepare: xvfb is already the newest version (2:21.1.12-1ubuntu1.5).
+studio-web prepare: fonts-noto-color-emoji is already the newest version (2.047-0ubuntu0.24.04.1).
+studio-web prepare: fonts-unifont is already the newest version (1:15.1.01-1build1).
+studio-web prepare: xfonts-cyrillic is already the newest version (1:1.0.5+nmu1).
+studio-web prepare: xfonts-scalable is already the newest version (1:1.0.3-1.3).
+studio-web prepare: fonts-liberation is already the newest version (1:2.1.5-3).
+studio-web prepare: fonts-ipafont-gothic is already the newest version (00303-21ubuntu1).
+studio-web prepare: fonts-wqy-zenhei is already the newest version (0.9.45-8).
+studio-web prepare: fonts-tlwg-loma-otf is already the newest version (1:0.7.3-1).
+studio-web prepare: fonts-freefont-ttf is already the newest version (20211204+svn4273-2).
+studio-web prepare: 0 upgraded, 0 newly installed, 0 to remove and 2 not upgraded.
+studio-web prepare: Done
+
+ WARN  Issues with peer dependencies found
+apps/miner-dashboard
+├─┬ vitest 2.1.9
+│ └── ✕ unmet peer @vitest/ui@2.1.9: found 1.6.1
+└─┬ @vitest/ui 1.6.1
+  └── ✕ unmet peer vitest@1.6.1: found 2.1.9
+
+studio-web
+├─┬ @typescript-eslint/eslint-plugin 7.18.0
+│ ├── ✕ unmet peer eslint@^8.56.0: found 9.39.1
+│ └─┬ @typescript-eslint/type-utils 7.18.0
+│   ├── ✕ unmet peer eslint@^8.56.0: found 9.39.1
+│   └─┬ @typescript-eslint/utils 7.18.0
+│     └── ✕ unmet peer eslint@^8.56.0: found 9.39.1
+└─┬ @typescript-eslint/parser 7.18.0
+  └── ✕ unmet peer eslint@^8.56.0: found 9.39.1
+
+wallet-extension
+├─┬ vitest 2.1.9
+│ └── ✕ unmet peer @vitest/ui@2.1.9: found 1.6.1
+└─┬ @vitest/ui 1.6.1
+  └── ✕ unmet peer vitest@1.6.1: found 2.1.9
+
+Done in 9.8s
+[setup] 2025-12-13T01:09:45Z =================================================================
+[setup] 2025-12-13T01:09:45Z Setup complete
+[setup] 2025-12-13T01:09:45Z =================================================================
+[setup] 2025-12-13T01:09:45Z Next:
+[setup] 2025-12-13T01:09:45Z   source .venv/bin/activate
+[setup] 2025-12-13T01:09:45Z   animica --help

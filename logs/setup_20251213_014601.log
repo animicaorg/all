@@ -1,0 +1,153 @@
+[setup] 2025-12-13T01:46:01Z Root: /root/animica
+[setup] 2025-12-13T01:46:01Z Log:  /root/animica/logs/setup_20251213_014601.log
+[setup] 2025-12-13T01:46:01Z Cleaning .venv and .deps
+[setup] 2025-12-13T01:46:01Z RUN  apt-get update -y
+Hit:1 https://deb.nodesource.com/node_20.x nodistro InRelease
+Hit:2 https://download.docker.com/linux/ubuntu noble InRelease
+Hit:3 http://archive.ubuntu.com/ubuntu noble InRelease
+Hit:4 http://archive.ubuntu.com/ubuntu noble-updates InRelease
+Hit:5 http://archive.ubuntu.com/ubuntu noble-backports InRelease
+Hit:6 http://security.ubuntu.com/ubuntu noble-security InRelease
+Reading package lists...
+[setup] 2025-12-13T01:46:05Z RUN  apt-get install -y --no-install-recommends ca-certificates curl git jq build-essential pkg-config cmake ninja-build python3 python3-venv python3-dev python3-pip libssl-dev libffi-dev
+Reading package lists...
+Building dependency tree...
+Reading state information...
+ca-certificates is already the newest version (20240203).
+curl is already the newest version (8.5.0-2ubuntu10.6).
+git is already the newest version (1:2.43.0-1ubuntu7.3).
+jq is already the newest version (1.7.1-3ubuntu0.24.04.1).
+build-essential is already the newest version (12.10ubuntu1).
+pkg-config is already the newest version (1.8.1-2build1).
+cmake is already the newest version (3.28.3-1build7).
+ninja-build is already the newest version (1.11.1-2).
+python3 is already the newest version (3.12.3-0ubuntu2.1).
+python3-venv is already the newest version (3.12.3-0ubuntu2.1).
+python3-dev is already the newest version (3.12.3-0ubuntu2.1).
+python3-pip is already the newest version (24.0+dfsg-1ubuntu1.3).
+libssl-dev is already the newest version (3.0.13-0ubuntu3.6).
+libffi-dev is already the newest version (3.4.6-1build1).
+0 upgraded, 0 newly installed, 0 to remove and 2 not upgraded.
+[setup] 2025-12-13T01:46:07Z RUN  python3 -m venv /root/animica/.venv
+[setup] 2025-12-13T01:46:12Z RUN  python -m pip install -U pip setuptools wheel
+Requirement already satisfied: pip in ./.venv/lib/python3.12/site-packages (24.0)
+Collecting pip
+  Using cached pip-25.3-py3-none-any.whl.metadata (4.7 kB)
+Collecting setuptools
+  Using cached setuptools-80.9.0-py3-none-any.whl.metadata (6.6 kB)
+Collecting wheel
+  Using cached wheel-0.45.1-py3-none-any.whl.metadata (2.3 kB)
+Using cached pip-25.3-py3-none-any.whl (1.8 MB)
+Using cached setuptools-80.9.0-py3-none-any.whl (1.2 MB)
+Using cached wheel-0.45.1-py3-none-any.whl (72 kB)
+Installing collected packages: wheel, setuptools, pip
+  Attempting uninstall: pip
+    Found existing installation: pip 24.0
+    Uninstalling pip-24.0:
+      Successfully uninstalled pip-24.0
+Successfully installed pip-25.3 setuptools-80.9.0 wheel-0.45.1
+[setup] 2025-12-13T01:46:16Z Wrote /root/animica/.venv/lib/python3.12/site-packages/animica_repo_root.pth -> /root/animica
+[setup] 2025-12-13T01:46:16Z RUN  python -m pip install -e /root/animica/python --no-deps
+Obtaining file:///root/animica/python
+  Installing build dependencies: started
+  Installing build dependencies: finished with status 'done'
+  Checking if build backend supports build_editable: started
+  Checking if build backend supports build_editable: finished with status 'done'
+  Getting requirements to build editable: started
+  Getting requirements to build editable: finished with status 'done'
+  Installing backend dependencies: started
+  Installing backend dependencies: finished with status 'done'
+  Preparing editable metadata (pyproject.toml): started
+  Preparing editable metadata (pyproject.toml): finished with status 'done'
+Building wheels for collected packages: animica
+  Building editable for animica (pyproject.toml): started
+  Building editable for animica (pyproject.toml): finished with status 'done'
+  Created wheel for animica: filename=animica-0.1.0-py3-none-any.whl size=1723 sha256=fc23e2dc4be956a0610c63d84305a69d09f14b00c3a9f8efdb55528cd0ad45d9
+  Stored in directory: /tmp/pip-ephem-wheel-cache-3h6bx3y0/wheels/c2/59/8d/7b899d15b765935b52481f681f3bdf8955280ba61d8cac698e
+Successfully built animica
+Installing collected packages: animica
+  Attempting uninstall: animica
+    Found existing installation: animica 0.1.0
+    Not uninstalling animica at /root/animica, outside environment /root/animica/.venv
+    Can't uninstall 'animica'. No files were found to uninstall.
+Successfully installed animica-0.1.0
+[setup] 2025-12-13T01:46:19Z RUN  python -m pip install -U typer rich requests httpx pydantic pyyaml cbor2
+Collecting typer
+  Using cached typer-0.20.0-py3-none-any.whl.metadata (16 kB)
+Collecting rich
+  Using cached rich-14.2.0-py3-none-any.whl.metadata (18 kB)
+Collecting requests
+  Using cached requests-2.32.5-py3-none-any.whl.metadata (4.9 kB)
+Collecting httpx
+  Using cached httpx-0.28.1-py3-none-any.whl.metadata (7.1 kB)
+Collecting pydantic
+  Using cached pydantic-2.12.5-py3-none-any.whl.metadata (90 kB)
+Collecting pyyaml
+  Using cached pyyaml-6.0.3-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (2.4 kB)
+Collecting cbor2
+  Using cached cbor2-5.7.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (5.4 kB)
+Collecting click>=8.0.0 (from typer)
+  Using cached click-8.3.1-py3-none-any.whl.metadata (2.6 kB)
+Collecting typing-extensions>=3.7.4.3 (from typer)
+  Using cached typing_extensions-4.15.0-py3-none-any.whl.metadata (3.3 kB)
+Collecting shellingham>=1.3.0 (from typer)
+  Using cached shellingham-1.5.4-py2.py3-none-any.whl.metadata (3.5 kB)
+Collecting markdown-it-py>=2.2.0 (from rich)
+  Using cached markdown_it_py-4.0.0-py3-none-any.whl.metadata (7.3 kB)
+Collecting pygments<3.0.0,>=2.13.0 (from rich)
+  Using cached pygments-2.19.2-py3-none-any.whl.metadata (2.5 kB)
+Collecting charset_normalizer<4,>=2 (from requests)
+  Using cached charset_normalizer-3.4.4-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (37 kB)
+Collecting idna<4,>=2.5 (from requests)
+  Using cached idna-3.11-py3-none-any.whl.metadata (8.4 kB)
+Collecting urllib3<3,>=1.21.1 (from requests)
+  Using cached urllib3-2.6.2-py3-none-any.whl.metadata (6.6 kB)
+Collecting certifi>=2017.4.17 (from requests)
+  Using cached certifi-2025.11.12-py3-none-any.whl.metadata (2.5 kB)
+Collecting anyio (from httpx)
+  Using cached anyio-4.12.0-py3-none-any.whl.metadata (4.3 kB)
+Collecting httpcore==1.* (from httpx)
+  Using cached httpcore-1.0.9-py3-none-any.whl.metadata (21 kB)
+Collecting h11>=0.16 (from httpcore==1.*->httpx)
+  Using cached h11-0.16.0-py3-none-any.whl.metadata (8.3 kB)
+Collecting annotated-types>=0.6.0 (from pydantic)
+  Using cached annotated_types-0.7.0-py3-none-any.whl.metadata (15 kB)
+Collecting pydantic-core==2.41.5 (from pydantic)
+  Using cached pydantic_core-2.41.5-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (7.3 kB)
+Collecting typing-inspection>=0.4.2 (from pydantic)
+  Using cached typing_inspection-0.4.2-py3-none-any.whl.metadata (2.6 kB)
+Collecting mdurl~=0.1 (from markdown-it-py>=2.2.0->rich)
+  Using cached mdurl-0.1.2-py3-none-any.whl.metadata (1.6 kB)
+Using cached typer-0.20.0-py3-none-any.whl (47 kB)
+Using cached rich-14.2.0-py3-none-any.whl (243 kB)
+Using cached pygments-2.19.2-py3-none-any.whl (1.2 MB)
+Using cached requests-2.32.5-py3-none-any.whl (64 kB)
+Using cached charset_normalizer-3.4.4-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (153 kB)
+Using cached idna-3.11-py3-none-any.whl (71 kB)
+Using cached urllib3-2.6.2-py3-none-any.whl (131 kB)
+Using cached httpx-0.28.1-py3-none-any.whl (73 kB)
+Using cached httpcore-1.0.9-py3-none-any.whl (78 kB)
+Using cached pydantic-2.12.5-py3-none-any.whl (463 kB)
+Using cached pydantic_core-2.41.5-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (2.1 MB)
+Using cached pyyaml-6.0.3-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (807 kB)
+Using cached cbor2-5.7.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (285 kB)
+Using cached annotated_types-0.7.0-py3-none-any.whl (13 kB)
+Using cached certifi-2025.11.12-py3-none-any.whl (159 kB)
+Using cached click-8.3.1-py3-none-any.whl (108 kB)
+Using cached h11-0.16.0-py3-none-any.whl (37 kB)
+Using cached markdown_it_py-4.0.0-py3-none-any.whl (87 kB)
+Using cached mdurl-0.1.2-py3-none-any.whl (10.0 kB)
+Using cached shellingham-1.5.4-py2.py3-none-any.whl (9.8 kB)
+Using cached typing_extensions-4.15.0-py3-none-any.whl (44 kB)
+Using cached typing_inspection-0.4.2-py3-none-any.whl (14 kB)
+Using cached anyio-4.12.0-py3-none-any.whl (113 kB)
+Installing collected packages: urllib3, typing-extensions, shellingham, pyyaml, pygments, mdurl, idna, h11, click, charset_normalizer, certifi, cbor2, annotated-types, typing-inspection, requests, pydantic-core, markdown-it-py, httpcore, anyio, rich, pydantic, httpx, typer
+
+ERROR: pip's dependency resolver does not currently take into account all the packages that are installed. This behaviour is the source of the following dependency conflicts.
+animica 0.1.0 requires animica-pq>=0.1.0, which is not installed.
+Successfully installed annotated-types-0.7.0 anyio-4.12.0 cbor2-5.7.1 certifi-2025.11.12 charset_normalizer-3.4.4 click-8.3.1 h11-0.16.0 httpcore-1.0.9 httpx-0.28.1 idna-3.11 markdown-it-py-4.0.0 mdurl-0.1.2 pydantic-2.12.5 pydantic-core-2.41.5 pygments-2.19.2 pyyaml-6.0.3 requests-2.32.5 rich-14.2.0 shellingham-1.5.4 typer-0.20.0 typing-extensions-4.15.0 typing-inspection-0.4.2 urllib3-2.6.2
+[setup] 2025-12-13T01:46:25Z Building liboqs 0.14.1 into /root/animica/.deps/liboqs-install
+[setup] 2025-12-13T01:46:25Z RUN  git clone --depth 1 --branch 0.14.1 https://github.com/open-quantum-safe/liboqs.git /root/animica/.deps/liboqs-src
+Cloning into '/root/animica/.deps/liboqs-src'...
+warning: Could not find remote branch 0.14.1 to clone.
+fatal: Remote branch 0.14.1 not found in upstream origin
