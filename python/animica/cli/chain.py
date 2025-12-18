@@ -12,58 +12,46 @@ Implements:
 from __future__ import annotations
 
 import json
-from typing import Optional
+from typing import Iterable, List, Optional
 
 import typer
 
-try:
-    from omni_sdk.rpc.http import RpcClient
-
-    HAVE_RPC = True
-except Exception:
-    HAVE_RPC = False
-
 from animica.config import load_network_config
-from .timeouts import DEFAULT_RPC_TIMEOUT, RPC_TIMEOUT_ENV, resolve_timeout
+from animica.cli.rpc import call_rpc
 
 app = typer.Typer(help="Chain queries (head, blocks, transactions, accounts)")
 
 
 def _resolve_rpc_url(rpc_url: Optional[str]) -> str:
     """Resolve RPC URL from option, env, or config."""
-    if rpc_url:
-        return rpc_url
+    if rpc_url and rpc_url.strip():
+        return rpc_url.strip()
     cfg = load_network_config()
     return cfg.rpc_url
 
 
-def _ensure_rpc_available() -> None:
-    if not HAVE_RPC:
-        typer.echo(
-            "Error: omni_sdk.rpc.http.RpcClient required. "
-            "Ensure 'omni_sdk' is installed.",
-            err=True,
-        )
-        raise typer.Exit(1)
+def _try_rpc(methods: Iterable[str], params: Optional[list], rpc_url: Optional[str]):
+    """
+    Try a list of RPC method names until one succeeds.
 
+    Falls back only on "method not found" errors, and raises the last
+    non-fallback error if everything fails.
+    """
 
-def _request_rpc(method: str, params: Optional[list], rpc_url: Optional[str]):
-    """Perform an RPC request using RpcClient if available, otherwise httpx."""
-    url = _resolve_rpc_url(rpc_url)
-    timeout = resolve_timeout("RPC timeout", None, env_var=RPC_TIMEOUT_ENV, default=DEFAULT_RPC_TIMEOUT)
-    if HAVE_RPC:
-        client = RpcClient(url, timeout=timeout)
-        return client.request(method, params)
-    else:
-        import httpx
-
-        payload = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params or []}
-        resp = httpx.post(url, json=payload, timeout=timeout)
-        resp.raise_for_status()
-        parsed = resp.json()
-        if "error" in parsed:
-            raise RuntimeError(parsed.get("error"))
-        return parsed.get("result")
+    last_error: Exception | None = None
+    for method in methods:
+        try:
+            return call_rpc(method, params or [], rpc_url)
+        except Exception as exc:  # noqa: BLE001 - best-effort fallback handling
+            msg = str(exc).lower()
+            if "method not found" in msg or "-32601" in msg:
+                last_error = exc
+                continue
+            last_error = exc
+            break
+    if last_error:
+        raise last_error
+    return None
 
 
 def _pretty(obj: dict) -> str:
@@ -83,14 +71,13 @@ def head(
     # RPC availability handled by _request_rpc fallback
 
     try:
-        # Try different method names
-        head_data = None
-        for method in ("chain_getHead", "chain.getHead", "eth_blockNumber"):
-            try:
-                head_data = _request_rpc(method, None, rpc_url)
-                break
-            except Exception:
-                continue
+        head_data = _try_rpc(("chain_getHead", "chain.getHead"), None, rpc_url)
+        if head_data is None:
+            head_data = _try_rpc(
+                ("block_getBlockByNumber", "chain_getBlockByHeight", "chain.getBlockByNumber"),
+                ["latest", False, False],
+                rpc_url,
+            )
 
         if head_data is None:
             typer.echo("Could not fetch head from node", err=True)
@@ -140,13 +127,21 @@ def block(
         is_hash = height_or_hash.startswith("0x")
 
         if is_hash:
-            method = "chain_getBlockByHash"
-            params = [height_or_hash]
+            method_options: List[str] = [
+                "block_getBlockByHash",
+                "chain_getBlockByHash",
+                "chain.getBlockByHash",
+            ]
+            params = [height_or_hash, False, True]
         else:
-            method = "chain_getBlockByHeight"
-            params = [int(height_or_hash)]
+            method_options = [
+                "block_getBlockByNumber",
+                "chain_getBlockByHeight",
+                "chain.getBlockByNumber",
+            ]
+            params = [height_or_hash, False, True]
 
-        block_data = _request_rpc(method, params, rpc_url)
+        block_data = _try_rpc(method_options, params, rpc_url)
 
         if block_data is None:
             typer.echo(f"Block not found: {height_or_hash}", err=True)
@@ -175,8 +170,16 @@ def tx(
 
     try:
         # Fetch tx and receipt
-        tx_data = _request_rpc("chain_getTx", [tx_hash], rpc_url)
-        receipt = _request_rpc("chain_getReceipt", [tx_hash], rpc_url)
+        tx_data = _try_rpc(
+            ["tx_getTransactionByHash", "tx.getTransactionByHash", "chain_getTx"],
+            [tx_hash],
+            rpc_url,
+        )
+        receipt = _try_rpc(
+            ["tx_getTransactionReceipt", "tx.getTransactionReceipt", "chain_getReceipt"],
+            [tx_hash],
+            rpc_url,
+        )
 
         if tx_data is None:
             typer.echo(f"Transaction not found: {tx_hash}", err=True)
@@ -210,9 +213,15 @@ def account(
     try:
         # Try different balance methods
         balance = None
-        for method in ("chain_getBalance", "eth_getBalance"):
+        for method in (
+            "state.getBalance",
+            "state_getBalance",
+            "chain_getBalance",
+            "eth_getBalance",
+        ):
             try:
-                balance = _request_rpc(method, [address], rpc_url)
+                params = [address] if method != "eth_getBalance" else [address, "latest"]
+                balance = _try_rpc([method], params, rpc_url)
                 break
             except Exception:
                 continue
@@ -222,11 +231,20 @@ def account(
             raise typer.Exit(1)
 
         typer.echo(f"Address: {address}")
-        typer.echo(f"Balance: {balance}")
+        # Balance may be a hex quantity; normalize for readability
+        try:
+            numeric_balance = int(str(balance), 0)
+            typer.echo(f"Balance: {numeric_balance} ({balance})")
+        except Exception:
+            typer.echo(f"Balance: {balance}")
 
         # Try to get nonce
         try:
-            nonce = _request_rpc("chain_getTransactionCount", [address], rpc_url)
+            nonce = _try_rpc(
+                ["state.getNonce", "state_getNonce", "chain_getTransactionCount"],
+                [address],
+                rpc_url,
+            )
             if nonce is not None:
                 typer.echo(f"Nonce:   {nonce}")
         except Exception:
@@ -257,23 +275,61 @@ def events(
     # RPC availability handled by _request_rpc fallback
 
     try:
-        # Build filter
-        filter_params = {
-            "fromHeight": from_height,
-        }
+        # First, try native log endpoints if available
+        filter_params = {"fromHeight": from_height}
         if to_height is not None:
             filter_params["toHeight"] = to_height
         if filter_type:
             filter_params["type"] = filter_type
 
-        # Try different method names
         events_data = None
-        for method in ("chain_getLogs", "eth_getLogs"):
-            try:
-                events_data = _request_rpc(method, [filter_params], rpc_url)
-                break
-            except Exception:
-                continue
+        try:
+            events_data = _try_rpc(("chain_getLogs", "eth_getLogs"), [filter_params], rpc_url)
+        except Exception:
+            events_data = None
+
+        # Fallback: scan blocks and gather logs from receipts
+        if events_data is None:
+            latest_height = to_height
+            if latest_height is None:
+                try:
+                    head = _try_rpc(["chain_getHead", "chain.getHead"], None, rpc_url)
+                    latest_height = int(head.get("height") or head.get("number") or 0)
+                except Exception:
+                    latest_height = from_height
+
+            collected: list[dict] = []
+            for h in range(from_height, (latest_height or from_height) + 1):
+                blk = _try_rpc(
+                    ["block_getBlockByNumber", "chain_getBlockByHeight", "chain.getBlockByNumber"],
+                    [h, False, True],
+                    rpc_url,
+                )
+                if not blk:
+                    continue
+                tx_hashes = blk.get("transactions") or blk.get("txs") or []
+                receipts = blk.get("receipts") or []
+                for idx, rec in enumerate(receipts):
+                    tx_hash = tx_hashes[idx] if idx < len(tx_hashes) else None
+                    logs = rec.get("logs") if isinstance(rec, dict) else None
+                    if not logs:
+                        continue
+                    for log_index, log in enumerate(logs):
+                        if filter_type:
+                            event_name = None
+                            if isinstance(log, dict):
+                                event_name = log.get("type") or log.get("event")
+                            if event_name and str(event_name).lower() != filter_type.lower():
+                                continue
+                        entry = {
+                            "blockNumber": blk.get("number"),
+                            "blockHash": blk.get("hash"),
+                            "txHash": tx_hash,
+                            "logIndex": log_index,
+                            "event": log,
+                        }
+                        collected.append(entry)
+            events_data = collected
 
         if events_data is None:
             typer.echo("No events found or method not supported", err=True)
