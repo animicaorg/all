@@ -34,6 +34,7 @@ ALLOWED_BOOTSTRAP_METHODS = {
 }
 
 app = typer.Typer(help="Manage and query Animica nodes.")
+p2p_app = typer.Typer(help="P2P diagnostics and peer helpers.")
 
 
 async def rpc_call(
@@ -74,6 +75,17 @@ def _resolve_rpc_url(rpc_url: Optional[str]) -> str:
 
 def _pretty(obj: Any) -> str:
     return json.dumps(obj, indent=2)
+
+
+def _load_p2p_config() -> tuple[Optional[Any], Optional[str]]:
+    try:
+        from p2p.config import load_config as load_p2p_config
+    except Exception as exc:
+        return None, f"Failed to import p2p.config: {exc}"
+    try:
+        return load_p2p_config(), None
+    except Exception as exc:
+        return None, f"Failed to load P2P config: {exc}"
 
 
 def _db_path(cfg: Any) -> Path:
@@ -146,6 +158,20 @@ def _persist_sync_state(
 def _record_bootstrap_head(net_cfg: Any, bootstrap_url: Optional[str], *, quiet: bool = False) -> bool:
     if not bootstrap_url:
         return False
+
+
+def _bootstrap_seeds_from_state(net_cfg: Any) -> list[str]:
+    state_path = _bootstrap_state_path(net_cfg)
+    if not state_path.exists():
+        return []
+    try:
+        payload = json.loads(state_path.read_text())
+        seeds = payload.get("seeds")
+        if isinstance(seeds, list):
+            return [str(s) for s in seeds if s]
+    except Exception:
+        return []
+    return []
     try:
         head = _bootstrap_rpc(bootstrap_url, "chain.getHead")
         if not head:
@@ -1072,6 +1098,178 @@ def down(
     except KeyboardInterrupt:
         typer.echo("\n\nInterrupted by user", err=True)
         raise typer.Exit(code=130)
+
+
+@p2p_app.command("status")
+def p2p_status(
+    rpc_url: Optional[str] = typer.Option(
+        None, "--rpc-url", help="JSON-RPC endpoint", envvar=RPC_ENV
+    ),
+    timeout: Optional[float] = typer.Option(
+        None,
+        "--timeout",
+        help=f"JSON-RPC request timeout in seconds (default: {describe_timeout(DEFAULT_RPC_TIMEOUT)})",
+        envvar=RPC_TIMEOUT_ENV,
+    ),
+) -> None:
+    """Show P2P peer counts and local listen/seeds configuration."""
+    url = _resolve_rpc_url(rpc_url)
+    try:
+        rpc_timeout = resolve_timeout("RPC timeout", timeout, env_var=RPC_TIMEOUT_ENV)
+    except ValueError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=1)
+
+    peer_count = None
+    peers_len = None
+    peer_error = None
+    try:
+        peer_count = asyncio.run(rpc_call("net.peerCount", [], rpc_url=url, timeout=rpc_timeout))
+        peers = asyncio.run(rpc_call("p2p.listPeers", [], rpc_url=url, timeout=rpc_timeout))
+        if isinstance(peers, list):
+            peers_len = len(peers)
+    except Exception as exc:
+        peer_error = str(exc)
+
+    typer.echo(f"RPC URL: {url}")
+    if peer_error:
+        typer.echo(f"Peer query error: {peer_error}")
+    else:
+        typer.echo(f"Connected peers: {peer_count}")
+        if peers_len is not None:
+            typer.echo(f"Peer details available: {peers_len}")
+
+    cfg, cfg_err = _load_p2p_config()
+    if cfg_err:
+        typer.echo(f"Local P2P config unavailable: {cfg_err}")
+        return
+
+    seeds = list(getattr(cfg, "seeds", []) or [])
+    listen_tcp = getattr(cfg, "listen_tcp", None)
+    data_dir = getattr(cfg, "data_dir", None)
+    typer.echo("Local P2P config:")
+    if listen_tcp:
+        typer.echo(f"  Listen TCP: {listen_tcp[0]}:{listen_tcp[1]}")
+    if data_dir:
+        typer.echo(f"  Data dir: {data_dir}")
+    typer.echo(f"  Seeds loaded: {len(seeds)}")
+
+
+@p2p_app.command("peers")
+def p2p_peers(
+    rpc_url: Optional[str] = typer.Option(
+        None, "--rpc-url", help="JSON-RPC endpoint", envvar=RPC_ENV
+    ),
+    timeout: Optional[float] = typer.Option(
+        None,
+        "--timeout",
+        help=f"JSON-RPC request timeout in seconds (default: {describe_timeout(DEFAULT_RPC_TIMEOUT)})",
+        envvar=RPC_TIMEOUT_ENV,
+    ),
+) -> None:
+    """List connected peers via RPC."""
+    url = _resolve_rpc_url(rpc_url)
+    try:
+        rpc_timeout = resolve_timeout("RPC timeout", timeout, env_var=RPC_TIMEOUT_ENV)
+    except ValueError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=1)
+    result = asyncio.run(rpc_call("p2p.listPeers", [], rpc_url=url, timeout=rpc_timeout))
+    typer.echo(_pretty(result))
+
+
+@p2p_app.command("add")
+def p2p_add(
+    address: str = typer.Argument(..., help="Peer address (multiaddr or host:port)"),
+    rpc_url: Optional[str] = typer.Option(
+        None, "--rpc-url", help="JSON-RPC endpoint", envvar=RPC_ENV
+    ),
+    timeout: Optional[float] = typer.Option(
+        None,
+        "--timeout",
+        help=f"JSON-RPC request timeout in seconds (default: {describe_timeout(DEFAULT_RPC_TIMEOUT)})",
+        envvar=RPC_TIMEOUT_ENV,
+    ),
+) -> None:
+    """Dial a peer address via RPC."""
+    url = _resolve_rpc_url(rpc_url)
+    try:
+        rpc_timeout = resolve_timeout("RPC timeout", timeout, env_var=RPC_TIMEOUT_ENV)
+    except ValueError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=1)
+    result = asyncio.run(
+        rpc_call("p2p.addPeer", [address], rpc_url=url, timeout=rpc_timeout)
+    )
+    typer.echo(_pretty(result))
+
+
+@p2p_app.command("remove")
+def p2p_remove(
+    peer_id: str = typer.Argument(..., help="Peer ID to disconnect"),
+    rpc_url: Optional[str] = typer.Option(
+        None, "--rpc-url", help="JSON-RPC endpoint", envvar=RPC_ENV
+    ),
+    timeout: Optional[float] = typer.Option(
+        None,
+        "--timeout",
+        help=f"JSON-RPC request timeout in seconds (default: {describe_timeout(DEFAULT_RPC_TIMEOUT)})",
+        envvar=RPC_TIMEOUT_ENV,
+    ),
+) -> None:
+    """Disconnect a peer by ID via RPC."""
+    url = _resolve_rpc_url(rpc_url)
+    try:
+        rpc_timeout = resolve_timeout("RPC timeout", timeout, env_var=RPC_TIMEOUT_ENV)
+    except ValueError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=1)
+    result = asyncio.run(
+        rpc_call("p2p.removePeer", [peer_id], rpc_url=url, timeout=rpc_timeout)
+    )
+    typer.echo(_pretty(result))
+
+
+@p2p_app.command("seeds")
+def p2p_seeds() -> None:
+    """Show seeds from local P2P config and bootstrap cache."""
+    cfg, cfg_err = _load_p2p_config()
+    if cfg_err:
+        typer.echo(f"Local P2P config unavailable: {cfg_err}")
+        raise typer.Exit(code=1)
+
+    seeds = list(getattr(cfg, "seeds", []) or [])
+    typer.echo("Configured seeds:")
+    if seeds:
+        for seed in seeds:
+            typer.echo(f"  {seed}")
+    else:
+        typer.echo("  (none)")
+
+    net_cfg = load_network_config()
+    bootstrap_seeds = _bootstrap_seeds_from_state(net_cfg)
+    typer.echo("Bootstrap cached seeds:")
+    if bootstrap_seeds:
+        for seed in bootstrap_seeds:
+            typer.echo(f"  {seed}")
+    else:
+        typer.echo("  (none)")
+
+
+@p2p_app.command("config")
+def p2p_config() -> None:
+    """Print the resolved local P2P configuration."""
+    cfg, cfg_err = _load_p2p_config()
+    if cfg_err:
+        typer.echo(f"Local P2P config unavailable: {cfg_err}")
+        raise typer.Exit(code=1)
+    if hasattr(cfg, "to_dict"):
+        typer.echo(_pretty(cfg.to_dict()))
+    else:
+        typer.echo(_pretty(cfg))
+
+
+app.add_typer(p2p_app, name="p2p")
 
 
 if __name__ == "__main__":  # pragma: no cover
