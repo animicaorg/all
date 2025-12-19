@@ -503,6 +503,7 @@ class RpcContext:
     tx_index: t.Any
     head: _HeadAccessor
     p2p_service: t.Any = None  # Optional P2P service for peer management
+    core_p2p_service: t.Any = None  # Optional core-style P2P service
 
     def get_head(self) -> dict[str, t.Any]:
         return self.head.get()
@@ -586,8 +587,10 @@ def build_context(cfg: t.Any | None = None) -> RpcContext:
             "RPC context ready: no head set yet (genesis will be initialized on first use)"
         )
 
-    # Initialize P2P service if enabled
+    # Initialize P2P services if enabled
     p2p_service = None
+    core_p2p_service = None
+    p2p_deps_sync = None
     enable_p2p = os.environ.get("ANIMICA_P2P_ENABLE", "true").lower() in (
         "1",
         "true",
@@ -617,9 +620,8 @@ def build_context(cfg: t.Any | None = None) -> RpcContext:
             from p2p.deps import AsyncP2PDeps, P2PDeps
 
             # Note: this opens its own KV handles (safe for SQLite/RocksDB in this repo).
-            p2p_deps = AsyncP2PDeps(
-                P2PDeps.open(cfg_view.db_uri, cfg_view.genesis_path)
-            )
+            p2p_deps_sync = P2PDeps.open(cfg_view.db_uri, cfg_view.genesis_path)
+            p2p_deps = AsyncP2PDeps(p2p_deps_sync)
 
             # Use config system for listen addresses and seeds
             # Allow legacy P2P_LISTEN and P2P_SEEDS env vars for backward compatibility
@@ -671,6 +673,70 @@ def build_context(cfg: t.Any | None = None) -> RpcContext:
         except Exception as e:
             log.warning(f"Failed to initialize P2P service: {e}", exc_info=True)
             p2p_service = None
+            p2p_deps_sync = None
+
+    enable_core_p2p = os.environ.get("ANIMICA_P2P_CORE_ENABLE", "true").lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+    if enable_core_p2p:
+        try:
+            from p2p.config import load_config as load_p2p_config
+            from p2p.core_p2p.chain_adapter import CoreChainAdapter
+            from p2p.core_p2p.service import CoreP2PService
+            from p2p.deps import P2PDeps
+            from p2p.transport.multiaddr import parse_multiaddr
+
+            if p2p_deps_sync is None:
+                p2p_deps_sync = P2PDeps.open(cfg_view.db_uri, cfg_view.genesis_path)
+
+            p2p_config = load_p2p_config()
+            listen_host, listen_port = p2p_config.listen_tcp
+            try:
+                listen_port = int(
+                    os.environ.get("ANIMICA_P2P_CORE_PORT", listen_port + 1)
+                )
+            except ValueError:
+                listen_port = listen_port + 1
+            core_listen = os.environ.get("ANIMICA_P2P_CORE_LISTEN", "").strip()
+            if core_listen:
+                if core_listen.startswith("/"):
+                    parsed = parse_multiaddr(core_listen)
+                    if parsed.transport == "tcp":
+                        listen_host = parsed.host or listen_host
+                        listen_port = int(parsed.port or listen_port)
+                elif ":" in core_listen:
+                    listen_host, port_str = core_listen.rsplit(":", 1)
+                    try:
+                        listen_port = int(port_str)
+                    except ValueError:
+                        listen_port = listen_port
+                else:
+                    listen_host = core_listen
+
+            chain_adapter = CoreChainAdapter(p2p_deps_sync)
+            core_p2p_service = CoreP2PService(
+                chain=chain_adapter,
+                listen_host=listen_host or "0.0.0.0",
+                listen_port=listen_port,
+                seeds=p2p_config.seeds,
+                max_outbound=p2p_config.max_outbound,
+                max_inbound=p2p_config.max_inbound,
+            )
+            log.info(
+                "Initialized core P2P service",
+                extra={
+                    "listen": f"{listen_host}:{listen_port}",
+                    "seeds": len(p2p_config.seeds),
+                },
+            )
+        except Exception as e:
+            log.warning(
+                f"Failed to initialize core P2P service: {e}", exc_info=True
+            )
+            core_p2p_service = None
 
     return RpcContext(
         cfg=cfg_view,
@@ -681,6 +747,7 @@ def build_context(cfg: t.Any | None = None) -> RpcContext:
         tx_index=bundle.tx_index,
         head=head,
         p2p_service=p2p_service,
+        core_p2p_service=core_p2p_service,
     )
 
 
@@ -732,6 +799,17 @@ async def startup(cfg: t.Any | None = None) -> RpcContext:
                     f"Failed to start P2P service: {e}", exc_info=True
                 )
 
+        if _CTX.core_p2p_service is not None:
+            try:
+                await _CTX.core_p2p_service.start()
+                logging.getLogger("animica.rpc.deps").info(
+                    "Core P2P service started successfully"
+                )
+            except Exception as e:
+                logging.getLogger("animica.rpc.deps").warning(
+                    f"Failed to start core P2P service: {e}", exc_info=True
+                )
+
         return _CTX
 
 
@@ -748,6 +826,17 @@ async def shutdown() -> None:
                 except Exception as e:
                     logging.getLogger("animica.rpc.deps").warning(
                         f"Failed to stop P2P service: {e}", exc_info=True
+                    )
+
+            if _CTX.core_p2p_service is not None:
+                try:
+                    await _CTX.core_p2p_service.stop()
+                    logging.getLogger("animica.rpc.deps").info(
+                        "Core P2P service stopped"
+                    )
+                except Exception as e:
+                    logging.getLogger("animica.rpc.deps").warning(
+                        f"Failed to stop core P2P service: {e}", exc_info=True
                     )
 
             try:
