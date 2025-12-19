@@ -45,8 +45,12 @@ from .constants import MAX_PEERS as CONST_MAX_PEERS
 from .constants import PROTOCOL_ID
 
 # Default fallback seeds (mainnet) - prefer the public RPC host with IP fallback.
-DEFAULT_SEEDS: Final[tuple[str, ...]] = (
-    # Primary: resolve rpc.animica.org so nodes naturally sync with the public RPC host.
+MAINNET_SEEDS: Final[tuple[str, ...]] = (
+    # Primary: resolve the mainnet seed domain first.
+    "/dns4/mainnet.animica.org/udp/443/quic-v1",
+    "/dns4/mainnet.animica.org/tcp/30333",
+    "/dns4/mainnet.animica.org/tcp/30333/ws",
+    # Public RPC host for additional reachability.
     "/dns4/rpc.animica.org/udp/443/quic-v1",
     "/dns4/rpc.animica.org/tcp/30333",
     "/dns4/rpc.animica.org/tcp/30333/ws",
@@ -55,11 +59,36 @@ DEFAULT_SEEDS: Final[tuple[str, ...]] = (
     "/ip4/144.126.133.21/tcp/30333",
 )
 
-# Network-specific seeds: prefer rpc.animica.org with IP fallback for all networks.
+TESTNET_SEEDS: Final[tuple[str, ...]] = (
+    # Primary: dedicated testnet seed domain.
+    "/dns4/testnet.animica.org/udp/443/quic-v1",
+    "/dns4/testnet.animica.org/tcp/30333",
+    "/dns4/testnet.animica.org/tcp/30333/ws",
+    # Public RPC host for testnet.
+    "/dns4/rpc.testnet.animica.org/udp/443/quic-v1",
+    "/dns4/rpc.testnet.animica.org/tcp/30333",
+    # Shared IP fallback.
+    "/ip4/144.126.133.21/udp/443/quic-v1",
+    "/ip4/144.126.133.21/tcp/30333",
+)
+
+DEVNET_SEEDS: Final[tuple[str, ...]] = (
+    # Primary devnet domain.
+    "/dns4/devnet.animica.org/udp/443/quic-v1",
+    "/dns4/devnet.animica.org/tcp/30333",
+    # Shared IP fallback.
+    "/ip4/144.126.133.21/udp/443/quic-v1",
+    "/ip4/144.126.133.21/tcp/30333",
+)
+
+# Legacy default: fall back to mainnet seeds.
+DEFAULT_SEEDS: Final[tuple[str, ...]] = MAINNET_SEEDS
+
+# Network-specific seeds.
 DEFAULT_SEEDS_BY_NETWORK: Final[dict[int, tuple[str, ...]]] = {
-    1: DEFAULT_SEEDS,
-    2: DEFAULT_SEEDS,
-    1337: DEFAULT_SEEDS,
+    1: MAINNET_SEEDS,
+    2: TESTNET_SEEDS,
+    1337: DEVNET_SEEDS,
 }
 
 # Network name to chain_id mapping (for ANIMICA_P2P_NETWORK env var)
