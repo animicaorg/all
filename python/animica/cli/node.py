@@ -30,6 +30,7 @@ BOOTSTRAP_RPC_TIMEOUT = 30.0
 ALLOWED_BOOTSTRAP_METHODS = {
     "bootstrap.getManifest",
     "bootstrap.getSeeds",
+    "chain.getHead",
 }
 
 app = typer.Typer(help="Manage and query Animica nodes.")
@@ -118,6 +119,53 @@ def _format_sync_timestamp(raw: Any) -> Optional[str]:
         return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(float(raw)))
     except (TypeError, ValueError):
         return None
+
+
+def _persist_sync_state(
+    cfg: Any,
+    *,
+    rpc_url: str,
+    head_info: dict[str, Any],
+    note: Optional[str] = None,
+) -> None:
+    state_path = _sync_state_path(cfg)
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "rpc_url": rpc_url,
+        "height": head_info.get("height") or head_info.get("number"),
+        "head_hash": head_info.get("hash") or head_info.get("blockHash"),
+        "chain_id": head_info.get("chainId") or head_info.get("chain_id"),
+        "peer_count": 0,
+        "updated_at": time.time(),
+    }
+    if note:
+        payload["note"] = note
+    state_path.write_text(json.dumps(payload, indent=2))
+
+
+def _record_bootstrap_head(net_cfg: Any, bootstrap_url: Optional[str], *, quiet: bool = False) -> bool:
+    if not bootstrap_url:
+        return False
+    try:
+        head = _bootstrap_rpc(bootstrap_url, "chain.getHead")
+        if not head:
+            raise RuntimeError("empty head response")
+        _persist_sync_state(
+            net_cfg,
+            rpc_url=bootstrap_url,
+            head_info=head,
+            note="bootstrap head snapshot",
+        )
+        if not quiet:
+            typer.secho(
+                f"✓ Recorded bootstrap head at height {head.get('height') or head.get('number')}",
+                fg=typer.colors.GREEN,
+            )
+        return True
+    except Exception as exc:
+        if not quiet:
+            typer.secho(f"Warning: bootstrap head fetch failed ({exc})", fg=typer.colors.YELLOW, err=True)
+        return False
 
 
 def _bootstrap_rpc(bootstrap_url: str, method: str) -> Dict[str, Any]:
@@ -633,6 +681,7 @@ def up(
     data_dir = str(Path(net_cfg.data_dir).expanduser())
 
     _auto_bootstrap_if_needed(net_cfg, os.getenv("ANIMICA_BOOTSTRAP_RPC_URL"), quiet=False)
+    _record_bootstrap_head(net_cfg, os.getenv("ANIMICA_BOOTSTRAP_RPC_URL") or net_cfg.bootstrap_url, quiet=False)
     
     typer.secho(f"Starting node for network: {network}", fg=typer.colors.CYAN, bold=True)
     typer.echo(f"Using compose file: {compose_file}")
@@ -805,6 +854,7 @@ def up_all(
             continue
         
         _auto_bootstrap_if_needed(net_cfg, os.getenv("ANIMICA_BOOTSTRAP_RPC_URL"), quiet=True)
+        _record_bootstrap_head(net_cfg, os.getenv("ANIMICA_BOOTSTRAP_RPC_URL") or net_cfg.bootstrap_url, quiet=True)
 
         typer.echo(f"Compose file: {compose_file}")
         typer.echo(f"Chain ID: {defaults['chain_id']}")
