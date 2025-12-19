@@ -147,12 +147,12 @@ class NetProcessing:
 
         if command == "block":
             self.chain.process_block(payload)
-            await self.announce_block(peers, hashlib.sha256(payload).digest(), send_peer)
+            await self.announce_block(peers, self._block_hash(payload), send_peer)
             return
 
         if command == "tx":
             self.chain.process_tx(payload)
-            await self.announce_tx(peers, hashlib.sha256(payload).digest(), send_peer)
+            await self.announce_tx(peers, self._tx_hash(payload), send_peer)
             return
 
     def chain_height(self) -> int:
@@ -176,3 +176,15 @@ class NetProcessing:
             if tx_hash not in peer.known_inventory:
                 peer.known_inventory.add(tx_hash)
                 await send(peer, "inv", payload)
+
+    def _block_hash(self, payload: bytes) -> bytes:
+        getter = getattr(self.chain, "block_hash", None)
+        if callable(getter):
+            return getter(payload)
+        return hashlib.sha256(payload).digest()
+
+    def _tx_hash(self, payload: bytes) -> bytes:
+        getter = getattr(self.chain, "tx_hash", None)
+        if callable(getter):
+            return getter(payload)
+        return hashlib.sha256(payload).digest()
