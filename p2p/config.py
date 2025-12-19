@@ -161,7 +161,9 @@ def _load_seeds_from_env(chain_id: int | None = None) -> tuple[str, ...]:
     raw = os.getenv("ANIMICA_P2P_SEEDS")
     if raw is not None:
         parsed = _csv(raw)
-        return tuple(_validate_advertised_addrs(parsed))
+        if parsed:
+            return tuple(_validate_advertised_addrs(parsed))
+        # Treat empty or separator-only values as unset so defaults apply.
 
     # Check for network name env var (P2P-specific first, then global fallback)
     network_name = os.getenv("ANIMICA_P2P_NETWORK") or os.getenv("ANIMICA_NETWORK")
