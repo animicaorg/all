@@ -95,6 +95,31 @@ def _persist_bootstrap_state(cfg: Any, manifest: dict[str, Any], seeds: list[str
     return state_path
 
 
+def _sync_state_path(cfg: Any) -> Path:
+    data_dir = Path(os.path.expanduser(cfg.data_dir))
+    data_dir.mkdir(parents=True, exist_ok=True)
+    return data_dir / "sync" / "progress.json"
+
+
+def _load_sync_state(cfg: Any) -> Optional[Dict[str, Any]]:
+    state_path = _sync_state_path(cfg)
+    if not state_path.exists():
+        return None
+    try:
+        return json.loads(state_path.read_text())
+    except Exception:
+        return None
+
+
+def _format_sync_timestamp(raw: Any) -> Optional[str]:
+    if raw is None:
+        return None
+    try:
+        return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(float(raw)))
+    except (TypeError, ValueError):
+        return None
+
+
 def _bootstrap_rpc(bootstrap_url: str, method: str) -> Dict[str, Any]:
     if method not in ALLOWED_BOOTSTRAP_METHODS:
         raise ValueError(
@@ -327,6 +352,21 @@ def status(
                     f"[{timestamp}] Node status failed after {attempt} attempts: {error_message}",
                     err=True,
                 )
+                cached = _load_sync_state(load_network_config())
+                if cached:
+                    typer.secho(
+                        "\n⚠ RPC unavailable. Showing last persisted sync state from 'animica sync force'.",
+                        fg=typer.colors.YELLOW,
+                    )
+                    typer.echo(f"RPC URL: {cached.get('rpc_url', 'unknown')} (cached)")
+                    typer.echo(f"Chain ID: {cached.get('chain_id')}")
+                    typer.echo(f"Head height: {cached.get('height')}")
+                    typer.echo(f"Head hash: {cached.get('head_hash')}")
+                    typer.echo(f"Peer count: {cached.get('peer_count')}")
+                    updated_at = _format_sync_timestamp(cached.get("updated_at"))
+                    if updated_at:
+                        typer.echo(f"Updated at: {updated_at}")
+                    raise typer.Exit(code=0)
                 raise typer.Exit(code=1)
 
             typer.echo(
