@@ -245,6 +245,68 @@ def _seed_local_peerstores(net_cfg, *, quiet: bool = False) -> tuple[int, bool, 
     return stored, rpc_added, fetch_errors
 
 
+def _persist_connected_peers(net_cfg, peers: List[Dict[str, Any]], *, quiet: bool = True) -> int:
+    """Persist connected peers into the local peer stores."""
+
+    if not peers:
+        return 0
+
+    store_path = Path(net_cfg.data_dir).expanduser() / "p2p" / "peers.json"
+    stored = 0
+    for peer in peers:
+        peer_id = peer.get("id") or peer.get("peerId") or peer.get("peer_id")
+        addr = peer.get("addr") or peer.get("address") or peer.get("multiaddr")
+        if not peer_id or not addr:
+            continue
+        try:
+            _write_peer_to_store(store_path, peer_id, addr)
+            _write_peer_to_sqlite(store_path, peer_id, addr, direction="inbound")
+            stored += 1
+        except Exception as exc:
+            if not quiet:
+                typer.secho(f"⚠ Failed to persist peer {peer_id}: {exc}", fg=typer.colors.YELLOW)
+
+    return stored
+
+
+def _sync_state_path(net_cfg) -> Path:
+    """Return the path for persisting sync progress state."""
+
+    return Path(net_cfg.data_dir).expanduser() / "sync" / "progress.json"
+
+
+def _persist_sync_state(
+    net_cfg,
+    *,
+    rpc_url: str,
+    head_info: Optional[Dict[str, Any]],
+    peers: List[Dict[str, Any]],
+    note: Optional[str] = None,
+) -> None:
+    """Persist sync progress to disk for continuity across restarts."""
+
+    state_path = _sync_state_path(net_cfg)
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+
+    height = head_info.get("height") if head_info else None
+    head_hash = head_info.get("hash") if head_info else None
+    chain_id = head_info.get("chainId") if head_info else None
+
+    payload = {
+        "rpc_url": rpc_url,
+        "height": height,
+        "head_hash": head_hash,
+        "chain_id": chain_id,
+        "peer_count": len(peers),
+        "updated_at": time.time(),
+        "peers": peers,
+    }
+    if note:
+        payload["note"] = note
+
+    state_path.write_text(json.dumps(payload, indent=2))
+
+
 async def _trigger_sync(rpc_url: str) -> bool:
     """
     Trigger a sync operation on the node.
@@ -518,35 +580,45 @@ def force_sync(
 
     bootstrap_host = urlparse(net_cfg.bootstrap_url).hostname if net_cfg.bootstrap_url else None
     target_host = urlparse(url).hostname if url else None
+    sync_url = url
+    if net_cfg.bootstrap_url and not rpc_url:
+        sync_url = net_cfg.bootstrap_url
+        typer.secho(
+            f"Using bootstrap RPC as sync source: {sync_url}",
+            fg=typer.colors.YELLOW,
+        )
+
     if bootstrap_host and target_host and bootstrap_host == target_host:
         typer.secho(
-            "Using bootstrap RPC for discovery only. Seeding local peer store...",
+            "Using bootstrap RPC for sync. Seeding local peer store...",
             fg=typer.colors.YELLOW,
         )
         _seed_local_peerstores(net_cfg)
 
-        url = net_cfg.rpc_url
-        typer.echo(f"Switching to local RPC for sync: {url}")
+    if net_cfg.bootstrap_url and bootstrap_host and target_host and bootstrap_host != target_host:
+        _seed_local_peerstores(net_cfg, quiet=True)
 
     typer.secho("\n🔄 Forcing blockchain synchronization...", fg=typer.colors.CYAN, bold=True)
-    typer.echo(f"RPC URL: {url}")
+    typer.echo(f"RPC URL: {sync_url}")
     typer.echo()
     
     # Get initial state
     try:
-        initial_head = asyncio.run(_get_head_info(url))
+        initial_head = asyncio.run(_get_head_info(sync_url))
         initial_height = initial_head.get("height", 0) if initial_head else 0
         typer.echo(f"Current height: {initial_height}")
     except Exception as e:
-        typer.echo(f"Error: Unable to connect to node at {url}")
+        typer.echo(f"Error: Unable to connect to node at {sync_url}")
         typer.echo(f"Details: {e}")
         raise typer.Exit(code=1)
     
     # Check peer count
     try:
-        peers = asyncio.run(_get_peers(url))
+        peers = asyncio.run(_get_peers(sync_url))
         peer_count = len(peers)
         typer.echo(f"Connected peers: {peer_count}")
+        _persist_connected_peers(net_cfg, peers, quiet=True)
+        _persist_sync_state(net_cfg, rpc_url=sync_url, head_info=initial_head, peers=peers, note="initial")
 
         if peer_count == 0:
             typer.secho(
@@ -564,9 +636,17 @@ def force_sync(
             stored, rpc_added, _ = _seed_local_peerstores(net_cfg, quiet=False)
             if stored:
                 try:
-                    peers = asyncio.run(_get_peers(url))
+                    peers = asyncio.run(_get_peers(sync_url))
                     peer_count = len(peers)
                     typer.echo(f"Connected peers after bootstrap: {peer_count}")
+                    _persist_connected_peers(net_cfg, peers, quiet=True)
+                    _persist_sync_state(
+                        net_cfg,
+                        rpc_url=sync_url,
+                        head_info=initial_head,
+                        peers=peers,
+                        note="post-bootstrap",
+                    )
                 except Exception:
                     typer.secho("Warning: Could not refresh peer list after bootstrap", fg=typer.colors.YELLOW)
     except Exception:
@@ -577,7 +657,7 @@ def force_sync(
     typer.echo("Attempting to trigger sync...")
     
     # Try to trigger sync
-    triggered = asyncio.run(_trigger_sync(url))
+    triggered = asyncio.run(_trigger_sync(sync_url))
     
     if not triggered:
         typer.secho(
@@ -621,8 +701,14 @@ def force_sync(
             progress.update(check_interval)
             
             try:
-                head_info = asyncio.run(_get_head_info(url))
+                head_info = asyncio.run(_get_head_info(sync_url))
                 current_height = head_info.get("height", 0) if head_info else 0
+                try:
+                    peers = asyncio.run(_get_peers(sync_url))
+                except Exception:
+                    peers = []
+                _persist_connected_peers(net_cfg, peers, quiet=True)
+                _persist_sync_state(net_cfg, rpc_url=sync_url, head_info=head_info, peers=peers)
                 
                 if current_height > last_height:
                     blocks_synced = current_height - last_height
@@ -644,12 +730,12 @@ def force_sync(
                         added, _, _ = _seed_local_peerstores(net_cfg, quiet=True)
                         if added:
                             try:
-                                peers = asyncio.run(_get_peers(url))
+                                peers = asyncio.run(_get_peers(sync_url))
                                 peer_count = len(peers)
                                 typer.echo(f"\n✓ Re-seeded peers; {peer_count} connected")
                             except Exception:
                                 typer.secho("\n⚠ Could not refresh peer list after re-seeding", fg=typer.colors.YELLOW, nl=False)
-                        asyncio.run(_trigger_sync(url))
+                        asyncio.run(_trigger_sync(sync_url))
             except Exception:
                 typer.echo("\n⚠ Connection error", nl=False)
     
@@ -658,7 +744,7 @@ def force_sync(
     
     # Final status
     try:
-        final_head = asyncio.run(_get_head_info(url))
+        final_head = asyncio.run(_get_head_info(sync_url))
         final_height = final_head.get("height", 0) if final_head else 0
         
         blocks_synced = final_height - initial_height
@@ -682,6 +768,12 @@ def force_sync(
             typer.echo("  - Sync is disabled or stuck")
             typer.echo()
             typer.echo("Check peer status with: animica peer list")
+        try:
+            peers = asyncio.run(_get_peers(sync_url))
+        except Exception:
+            peers = []
+        _persist_connected_peers(net_cfg, peers, quiet=True)
+        _persist_sync_state(net_cfg, rpc_url=sync_url, head_info=final_head, peers=peers, note="final")
     except Exception as e:
         typer.echo(f"Error checking final status: {e}", err=True)
         raise typer.Exit(code=1)
