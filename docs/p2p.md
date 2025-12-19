@@ -1,111 +1,61 @@
-# Animica P2P (tx/block gossip + P2P-first sync)
+# Animica P2P (Core-style)
 
-Animica nodes run a P2P transport alongside the RPC server. The P2P layer is responsible for:
+Animica's P2P stack now mirrors the reference wire protocol and peer manager behavior while preserving Animica chain rules.
 
-- Transaction relay: `INV -> GETDATA -> TX`
-- Block relay: `INV -> GETDATA/GET_BLOCKS -> BLOCKS`
-- P2P-first sync: `GET_HEADERS -> HEADERS`, then request missing block bodies from peers
+## Ports
 
-This is designed so a node can join consensus **without relying on any “trusted RPC”** upstream. A remote RPC can still be used as a bootstrap/fallback, but it is optional.
+* TCP: `30333` (default)
 
-## Quickstart: 3 local nodes (A, B, C)
+## Message framing
 
-Each node runs its own RPC server + P2P listener on a different port and uses its own SQLite DB.
+Animica uses the reference-style envelope:
 
-### Node A (bootstrap)
-
-PowerShell:
-
-```powershell
-$env:ANIMICA_CHAIN_ID="1337"
-$env:ANIMICA_RPC_HOST="127.0.0.1"
-$env:ANIMICA_RPC_PORT="8545"
-$env:ANIMICA_RPC_DB_URI="sqlite:///./nodeA.db"
-
-$env:ANIMICA_P2P_ENABLE="true"
-$env:P2P_LISTEN="127.0.0.1:30333"
-$env:P2P_SEEDS=""
-
-python -m rpc
+```
+magic(4) + command(12) + length(4) + checksum(4) + payload
 ```
 
-### Node B (dial A)
+* `magic`: network identifier (default `ANMC`, override with `ANIMICA_P2P_MAGIC`)
+* `command`: ASCII, null-padded to 12 bytes
+* `length`: little-endian payload length
+* `checksum`: first 4 bytes of double-SHA256(payload)
 
-```powershell
-$env:ANIMICA_CHAIN_ID="1337"
-$env:ANIMICA_RPC_HOST="127.0.0.1"
-$env:ANIMICA_RPC_PORT="8546"
-$env:ANIMICA_RPC_DB_URI="sqlite:///./nodeB.db"
+Serialization primitives are reference-compatible: CompactSize varints, little-endian integers, vectored types, and IPv6/IPv4-mapped netaddresses.
 
-$env:ANIMICA_P2P_ENABLE="true"
-$env:P2P_LISTEN="127.0.0.1:30334"
-$env:P2P_SEEDS="/ip4/127.0.0.1/tcp/30333"
+## Handshake
 
-python -m rpc
-```
+Handshake follows reference ordering:
 
-### Node C (dial B)
+1. `version` exchanged on connect
+2. `verack` exchanged once `version` is validated
+3. Peers that send non-handshake messages before `verack` are disconnected
 
-```powershell
-$env:ANIMICA_CHAIN_ID="1337"
-$env:ANIMICA_RPC_HOST="127.0.0.1"
-$env:ANIMICA_RPC_PORT="8547"
-$env:ANIMICA_RPC_DB_URI="sqlite:///./nodeC.db"
+The `version` payload includes protocol version, service flags, timestamps, `addr_recv`/`addr_from`, nonce, user agent, start height, and relay flag.
 
-$env:ANIMICA_P2P_ENABLE="true"
-$env:P2P_LISTEN="127.0.0.1:30335"
-$env:P2P_SEEDS="/ip4/127.0.0.1/tcp/30334"
+## Peer discovery
 
-python -m rpc
-```
+* `addr` and `getaddr` are supported
+* Addresses are stored in a reference-like addrman with `new` and `tried` buckets
+* Outbound selection favors `tried` addresses but still samples `new`
 
-## Verify peers connected
+## Inventory relay
 
-List peers over JSON-RPC:
+Animica uses reference-style inventory relay:
 
-```bash
-curl -s http://127.0.0.1:8545/rpc -H "content-type: application/json" ^
-  -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"p2p.listPeers\",\"params\":[]}"
-```
+* `inv` to announce tx/block hashes
+* `getdata` to request missing items
+* `notfound` to respond to missing inventory
 
-Repeat for `:8546` and `:8547`.
+Per-peer known-inventory filters prevent redundant relays.
 
-## Verify tx relay (INV/GETDATA/TX)
+## Headers-first sync
 
-1) Submit a tx to Node A via RPC (`tx.sendRawTransaction`). After it is admitted to the pending pool, Node A announces it to peers via `INV`. Peers request the body via `GETDATA`, and Node A responds with `TX`.
+`getheaders`/`headers` drives headers-first sync. Blocks are requested via `getdata` once headers are accepted.
 
-2) Confirm it appeared on Node B/C:
+## Migration notes
 
-```bash
-curl -s http://127.0.0.1:8546/rpc -H "content-type: application/json" ^
-  -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tx.getPending\",\"params\":[]}"
-```
+* Legacy HELLO/IDENTIFY and gossip frames remain available in the old P2P stack.
+* New core-style stack lives in `p2p/core_p2p/` and is integrated by the node service.
 
-If your build doesn’t expose `tx.getPending`, use `tx.getTransactionByHash` once you have the tx hash returned by `tx.sendRawTransaction`.
+## Observability
 
-## Verify block relay (INV/GETDATA/BLOCKS) and sync
-
-- When a node imports a new head, it announces the block hash via `INV`.
-- Peers request bodies (`GETDATA`/`GET_BLOCKS`) and import them locally.
-- A late-joining node requests headers via `GET_HEADERS` and pulls missing blocks from peers.
-
-For local testing you can mine on one node (example):
-
-```bash
-curl -s http://127.0.0.1:8547/rpc -H "content-type: application/json" ^
-  -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"miner.mine\",\"params\":[1]}"
-```
-
-Then confirm other nodes advanced:
-
-```bash
-curl -s http://127.0.0.1:8545/rpc -H "content-type: application/json" ^
-  -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"chain.getHead\",\"params\":[]}"
-```
-
-## Notes / knobs
-
-- Disable P2P: set `ANIMICA_P2P_ENABLE=false`
-- Force outbound target: set `ANIMICA_P2P_OUTBOUND=8`
-- Peer store location: set `ANIMICA_PEER_STORE_PATH` (defaults under `~/.animica/p2p/<network>/`)
-
+Structured logs include peer connect/disconnect, handshake completion, addr acceptance, inv relay, and headers progress.

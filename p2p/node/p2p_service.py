@@ -28,6 +28,10 @@ from p2p.node.peer_registry import PeerRegistry
 
 log = logging.getLogger("animica.p2p.service")
 
+DEFAULT_BOOTSTRAP_SEEDS = [
+    "/ip4/144.126.133.21/tcp/30333",
+]
+
 
 @dataclass(slots=True)
 class _PeerState:
@@ -71,7 +75,11 @@ class P2PService:
         _ = (enable_quic, enable_ws, nat)
 
         self.listen_addrs = listen_addrs or ["/ip4/0.0.0.0/tcp/30333"]
-        self.seeds = seeds or []
+        merged_seeds = list(seeds or [])
+        for addr in DEFAULT_BOOTSTRAP_SEEDS:
+            if addr not in merged_seeds:
+                merged_seeds.append(addr)
+        self.seeds = merged_seeds
         self.chain_id = int(chain_id)
         self.deps = deps
 
