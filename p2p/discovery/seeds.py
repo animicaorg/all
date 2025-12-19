@@ -138,12 +138,22 @@ class SeedBundle:
 
 
 # Embedded fallback seeds - always available even if DNS fails
-# Prefer the public RPC host (rpc.animica.org) with IP fallback.
+# Prefer dedicated network domains with RPC + IP fallback.
 EMBEDDED_FALLBACK_SEEDS: List[str] = [
-    # DNS-first so we follow the public RPC host even if the IP changes.
+    # Mainnet
+    "quic://mainnet.animica.org:443",
+    "tcp://mainnet.animica.org:30333",
     "quic://rpc.animica.org:443",
     "tcp://rpc.animica.org:30333",
-    # IP fallback for environments without DNS.
+    # Testnet
+    "quic://testnet.animica.org:443",
+    "tcp://testnet.animica.org:30333",
+    "quic://rpc.testnet.animica.org:443",
+    "tcp://rpc.testnet.animica.org:30333",
+    # Devnet
+    "quic://devnet.animica.org:443",
+    "tcp://devnet.animica.org:30333",
+    # Shared IP fallback for DNS-less environments.
     "quic://144.126.133.21:443",
     "tcp://144.126.133.21:30333",
 ]
