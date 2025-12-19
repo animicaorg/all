@@ -26,6 +26,7 @@ def guard_bootstrap_rpc(
     allow_bootstrap_methods: bool = False,
     method: str | None = None,
     bootstrap_url: str | None = None,
+    quiet: bool = False,
 ) -> None:
     if allow_bootstrap_methods and method and (
         method.startswith("bootstrap.") or method in _BOOTSTRAP_SAFE_METHODS
@@ -46,10 +47,11 @@ def guard_bootstrap_rpc(
         return False
 
     if allow_bootstrap_methods and (method is None or method in _BOOTSTRAP_SAFE_METHODS or method.startswith("bootstrap.")):
-        typer.secho(
-            f"Using bootstrap RPC endpoint {target_host} for discovery/sync only.",
-            fg=typer.colors.YELLOW,
-        )
+        if not quiet:
+            typer.secho(
+                f"Using bootstrap RPC endpoint {target_host} for discovery/sync only.",
+                fg=typer.colors.YELLOW,
+            )
         return True
 
     if allow_remote:
