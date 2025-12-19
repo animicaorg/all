@@ -602,6 +602,7 @@ def build_context(cfg: t.Any | None = None) -> RpcContext:
             import p2p
             from p2p.config import load_config as load_p2p_config
             from p2p.node.service import P2PService
+            import ipaddress
 
             # Set chain_id in environment so P2P config can auto-select network seeds
             os.environ.setdefault("ANIMICA_P2P_CHAIN_ID", str(cfg_view.chain_id))
@@ -628,16 +629,30 @@ def build_context(cfg: t.Any | None = None) -> RpcContext:
             p2p_listen = os.environ.get("P2P_LISTEN", "")
             p2p_seeds_legacy = os.environ.get("P2P_SEEDS", "")
 
+            def _tcp_multiaddr(host: str, port: int) -> str:
+                try:
+                    ip_obj = ipaddress.ip_address(host)
+                    ip_tag = "ip6" if ip_obj.version == 6 else "ip4"
+                except ValueError:
+                    ip_tag = "dns4"
+                return f"/{ip_tag}/{host}/tcp/{port}"
+
             # Parse listen address to multiaddr format
-            listen_addrs = None
+            listen_addrs: list[str] = []
             if p2p_listen:
-                if ":" in p2p_listen and not p2p_listen.startswith("/"):
-                    # Format is "host:port", convert to multiaddr
-                    host, port = p2p_listen.rsplit(":", 1)
-                    listen_addrs = [f"/ip4/{host}/tcp/{port}"]
-                else:
-                    # Already in multiaddr format
-                    listen_addrs = [p2p_listen]
+                for entry in [p.strip() for p in p2p_listen.split(",") if p.strip()]:
+                    if ":" in entry and not entry.startswith("/"):
+                        host, port = entry.rsplit(":", 1)
+                        try:
+                            listen_addrs.append(_tcp_multiaddr(host, int(port)))
+                        except ValueError:
+                            continue
+                    else:
+                        listen_addrs.append(entry)
+
+            if not listen_addrs:
+                host, port = p2p_config.listen_tcp
+                listen_addrs = [_tcp_multiaddr(host, int(port))]
 
             # Get seeds from config (which auto-loads network-specific seeds based on chain_id)
             # or from legacy P2P_SEEDS env var for backward compatibility
