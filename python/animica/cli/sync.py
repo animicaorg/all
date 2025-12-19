@@ -33,6 +33,7 @@ app = typer.Typer(help="Manage blockchain synchronization.")
 
 DEFAULT_RPC_URL = load_network_config().rpc_url
 RPC_ENV = "ANIMICA_RPC_URL"
+BOOTSTRAP_RPC_ENV = "ANIMICA_BOOTSTRAP_RPC_URL"
 
 
 async def rpc_call(
@@ -63,9 +64,37 @@ async def rpc_call(
     return data.get("result")
 
 
-def _resolve_rpc_url(rpc_url: Optional[str]) -> str:
-    """Resolve RPC URL from option, env, or default."""
-    return rpc_url or os.environ.get(RPC_ENV) or load_network_config().rpc_url
+def _resolve_sync_endpoints(
+    rpc_url: Optional[str],
+    bootstrap_rpc: Optional[str],
+) -> tuple[str, Optional[str]]:
+    """Resolve target and bootstrap RPC endpoints."""
+    net_cfg = load_network_config()
+    target = rpc_url or os.environ.get(RPC_ENV) or net_cfg.rpc_url
+    bootstrap = bootstrap_rpc or os.environ.get(BOOTSTRAP_RPC_ENV) or net_cfg.bootstrap_url
+    target = target.strip()
+    bootstrap = bootstrap.strip() if bootstrap else None
+    return target, bootstrap
+
+
+def _extract_height(head_info: Optional[Dict[str, Any]]) -> Optional[int]:
+    """Extract the height field while preserving zero values."""
+    if not head_info:
+        return None
+    for key in ("height", "number", "blockNumber"):
+        if key in head_info:
+            return head_info.get(key)
+    return None
+
+
+def _extract_chain_id(head_info: Optional[Dict[str, Any]]) -> Optional[int]:
+    """Extract the chain id field while preserving zero values."""
+    if not head_info:
+        return None
+    for key in ("chainId", "chain_id"):
+        if key in head_info:
+            return head_info.get(key)
+    return None
 
 
 def _pretty(obj: Any) -> str:
@@ -123,6 +152,20 @@ async def _get_head_info(rpc_url: str) -> Optional[Dict[str, Any]]:
     return await rpc_call("chain.getHead", [], rpc_url=rpc_url)
 
 
+async def _get_bootstrap_head_info(bootstrap_url: Optional[str]) -> Optional[Dict[str, Any]]:
+    """Fetch chain head from bootstrap RPC for network tip comparison."""
+    if not bootstrap_url:
+        return None
+    guard_bootstrap_rpc(
+        bootstrap_url,
+        allow_bootstrap_methods=True,
+        method="chain.getHead",
+        bootstrap_url=bootstrap_url,
+        quiet=True,
+    )
+    return await _get_head_info(bootstrap_url)
+
+
 async def _get_peers(rpc_url: str) -> List[Dict[str, Any]]:
     """Get list of connected peers."""
     methods_to_try = [
@@ -166,24 +209,24 @@ async def _get_peer_count(rpc_url: str) -> Optional[int]:
     return None
 
 
-def _fetch_bootstrap_seeds(net_cfg) -> tuple[list[str], list[str]]:
+def _fetch_bootstrap_seeds(net_cfg, bootstrap_url: Optional[str]) -> tuple[list[str], list[str]]:
     """Fetch seed peers from bootstrap RPC or static defaults."""
 
     seeds: list[str] = []
     fetch_errors: list[str] = []
 
-    if net_cfg.bootstrap_url:
+    if bootstrap_url:
         try:
             guard_bootstrap_rpc(
-                net_cfg.bootstrap_url,
+                bootstrap_url,
                 allow_bootstrap_methods=True,
                 method="net.getBootstrapSeeds",
-                bootstrap_url=net_cfg.bootstrap_url,
+                bootstrap_url=bootstrap_url,
             )
-            resp = asyncio.run(rpc_call("net.getBootstrapSeeds", [], rpc_url=net_cfg.bootstrap_url))
+            resp = asyncio.run(rpc_call("net.getBootstrapSeeds", [], rpc_url=bootstrap_url))
             seeds = list((resp or {}).get("seeds") or [])
             if not seeds:
-                alt_resp = asyncio.run(rpc_call("bootstrap.getSeeds", [], rpc_url=net_cfg.bootstrap_url))
+                alt_resp = asyncio.run(rpc_call("bootstrap.getSeeds", [], rpc_url=bootstrap_url))
                 seeds = list((alt_resp or {}).get("seeds") or [])
         except Exception as exc:
             fetch_errors.append(str(exc))
@@ -194,10 +237,16 @@ def _fetch_bootstrap_seeds(net_cfg) -> tuple[list[str], list[str]]:
     return list(dict.fromkeys(seeds)), fetch_errors
 
 
-def _seed_local_peerstores(net_cfg, *, quiet: bool = False) -> tuple[int, bool, list[str]]:
+def _seed_local_peerstores(
+    net_cfg,
+    *,
+    target_rpc_url: str,
+    bootstrap_url: Optional[str],
+    quiet: bool = False,
+) -> tuple[int, bool, list[str]]:
     """Persist bootstrap seeds locally and push them into a running node."""
 
-    seeds, fetch_errors = _fetch_bootstrap_seeds(net_cfg)
+    seeds, fetch_errors = _fetch_bootstrap_seeds(net_cfg, bootstrap_url)
     store_path = Path(net_cfg.data_dir).expanduser() / "p2p" / "peers.json"
 
     if not seeds:
@@ -219,7 +268,7 @@ def _seed_local_peerstores(net_cfg, *, quiet: bool = False) -> tuple[int, bool, 
     rpc_added = False
     rpc_error: Optional[str] = None
     try:
-        import_resp = asyncio.run(rpc_call("p2p.importPeers", [seeds], rpc_url=net_cfg.rpc_url))
+        import_resp = asyncio.run(rpc_call("p2p.importPeers", [seeds], rpc_url=target_rpc_url))
         rpc_added, rpc_error = _rpc_operation_succeeded(import_resp)
         if not rpc_added:
             rpc_error = rpc_error or "p2p.importPeers did not report success"
@@ -288,9 +337,9 @@ def _persist_sync_state(
     state_path = _sync_state_path(net_cfg)
     state_path.parent.mkdir(parents=True, exist_ok=True)
 
-    height = head_info.get("height") if head_info else None
+    height = _extract_height(head_info)
     head_hash = head_info.get("hash") if head_info else None
-    chain_id = head_info.get("chainId") if head_info else None
+    chain_id = _extract_chain_id(head_info)
 
     payload = {
         "rpc_url": rpc_url,
@@ -337,6 +386,12 @@ def sync_status(
     rpc_url: Optional[str] = typer.Option(
         None, "--rpc-url", help="JSON-RPC endpoint", envvar=RPC_ENV
     ),
+    bootstrap_rpc: Optional[str] = typer.Option(
+        None,
+        "--bootstrap-rpc",
+        help="Bootstrap RPC endpoint for discovery/seed info",
+        envvar=BOOTSTRAP_RPC_ENV,
+    ),
     json_output: bool = typer.Option(
         False, "--json", help="Output JSON format"
     ),
@@ -358,7 +413,7 @@ def sync_status(
         animica sync status --json
         animica sync status --verbose
     """
-    url = _resolve_rpc_url(rpc_url)
+    url, bootstrap_url = _resolve_sync_endpoints(rpc_url, bootstrap_rpc)
     peer_count_error: Optional[Exception] = None
     
     try:
@@ -369,10 +424,11 @@ def sync_status(
                 _get_sync_status(url),
                 _get_peer_count(url),
                 _get_peers(url),
+                _get_bootstrap_head_info(bootstrap_url),
                 return_exceptions=True
             )
         
-        head_info, sync_status, peer_count_result, peers = asyncio.run(gather_info())
+        head_info, sync_status, peer_count_result, peers, bootstrap_head = asyncio.run(gather_info())
         
         # Handle exceptions
         if isinstance(head_info, Exception):
@@ -386,6 +442,8 @@ def sync_status(
         if isinstance(peers, Exception):
             peer_count_error = peer_count_error or peers
             peers = []
+        if isinstance(bootstrap_head, Exception):
+            bootstrap_head = None
         
     except Exception as e:
         typer.echo(f"Error: Unable to connect to node at {url}", err=True)
@@ -397,14 +455,10 @@ def sync_status(
         raise typer.Exit(code=1)
     
     # Extract info
-    height = None
-    head_hash = None
-    chain_id = None
-    
-    if head_info:
-        height = head_info.get("height") or head_info.get("number") or head_info.get("blockNumber")
-        head_hash = head_info.get("hash") or head_info.get("blockHash")
-        chain_id = head_info.get("chainId") or head_info.get("chain_id")
+    height = _extract_height(head_info)
+    head_hash = head_info.get("hash") or head_info.get("blockHash") if head_info else None
+    chain_id = _extract_chain_id(head_info)
+    bootstrap_height = _extract_height(bootstrap_head)
     
     is_syncing = False
     sync_progress = None
@@ -447,8 +501,10 @@ def sync_status(
     if json_output:
         output = {
             "rpc_url": url,
+            "bootstrap_rpc": bootstrap_url,
             "chain_id": chain_id,
             "height": height,
+            "bootstrap_height": bootstrap_height,
             "head_hash": head_hash,
             "syncing": is_syncing,
             "peer_count": peer_count,
@@ -469,7 +525,8 @@ def sync_status(
     typer.echo()
     
     # Connection info
-    typer.echo(f"RPC URL:     {url}")
+    typer.echo(f"Target RPC:    {url}")
+    typer.echo(f"Bootstrap RPC: {bootstrap_url or 'not configured'}")
     if chain_id:
         typer.echo(f"Chain ID:    {chain_id}")
     typer.echo()
@@ -491,7 +548,7 @@ def sync_status(
     typer.secho("Sync Status:", fg=typer.colors.BRIGHT_BLUE, bold=True)
     if is_syncing:
         typer.secho("  Status:    SYNCING", fg=typer.colors.YELLOW, bold=True)
-        if target_height and height:
+        if target_height is not None and height is not None:
             progress_pct = (height / target_height * 100) if target_height > 0 else 0
             typer.echo(f"  Progress:  {height} / {target_height} ({progress_pct:.1f}%)")
             remaining = target_height - height
@@ -499,6 +556,14 @@ def sync_status(
     else:
         if height is not None and height > 0:
             typer.secho("  Status:    SYNCHRONIZED", fg=typer.colors.GREEN, bold=True)
+        elif height == 0 and bootstrap_height and bootstrap_height > 0:
+            typer.secho(
+                f"  Status:    NOT SYNCED (local=0, network={bootstrap_height})",
+                fg=typer.colors.RED,
+                bold=True,
+            )
+        elif height == 0:
+            typer.secho("  Status:    IDLE (genesis)", fg=typer.colors.YELLOW)
         else:
             typer.secho("  Status:    IDLE (no blocks)", fg=typer.colors.YELLOW)
     typer.echo()
@@ -541,6 +606,8 @@ def sync_status(
     elif is_syncing:
         typer.secho("💡 Syncing in progress... Check back later or run:", fg=typer.colors.CYAN)
         typer.echo("   animica sync status")
+    elif height == 0 and bootstrap_height and bootstrap_height > 0:
+        typer.secho("⚠ Node is not synced yet. Wait for peers or run sync force.", fg=typer.colors.YELLOW)
     else:
         typer.secho("✓ Node is synchronized with the network", fg=typer.colors.GREEN)
 
@@ -549,6 +616,12 @@ def sync_status(
 def force_sync(
     rpc_url: Optional[str] = typer.Option(
         None, "--rpc-url", help="JSON-RPC endpoint", envvar=RPC_ENV
+    ),
+    bootstrap_rpc: Optional[str] = typer.Option(
+        None,
+        "--bootstrap-rpc",
+        help="Bootstrap RPC endpoint for discovery/seed info",
+        envvar=BOOTSTRAP_RPC_ENV,
     ),
     timeout: int = typer.Option(
         300, "--timeout", help="Maximum time to wait for sync to start (seconds)"
@@ -575,50 +648,37 @@ def force_sync(
         animica sync force
         animica sync force --timeout 600
     """
-    url = _resolve_rpc_url(rpc_url)
     net_cfg = load_network_config()
+    url, bootstrap_url = _resolve_sync_endpoints(rpc_url, bootstrap_rpc)
 
-    bootstrap_host = urlparse(net_cfg.bootstrap_url).hostname if net_cfg.bootstrap_url else None
+    bootstrap_host = urlparse(bootstrap_url).hostname if bootstrap_url else None
     target_host = urlparse(url).hostname if url else None
-    sync_url = url
-    if net_cfg.bootstrap_url and not rpc_url:
-        sync_url = net_cfg.bootstrap_url
-        typer.secho(
-            f"Using bootstrap RPC as sync source: {sync_url}",
-            fg=typer.colors.YELLOW,
-        )
 
-    if bootstrap_host and target_host and bootstrap_host == target_host:
-        typer.secho(
-            "Using bootstrap RPC for sync. Seeding local peer store...",
-            fg=typer.colors.YELLOW,
-        )
-        _seed_local_peerstores(net_cfg)
-
-    if net_cfg.bootstrap_url and bootstrap_host and target_host and bootstrap_host != target_host:
-        _seed_local_peerstores(net_cfg, quiet=True)
+    if bootstrap_url and bootstrap_host and target_host and bootstrap_host != target_host:
+        _seed_local_peerstores(net_cfg, target_rpc_url=url, bootstrap_url=bootstrap_url, quiet=True)
 
     typer.secho("\n🔄 Forcing blockchain synchronization...", fg=typer.colors.CYAN, bold=True)
-    typer.echo(f"RPC URL: {sync_url}")
+    typer.echo(f"Target RPC:    {url}")
+    typer.echo(f"Bootstrap RPC: {bootstrap_url or 'not configured'}")
     typer.echo()
     
     # Get initial state
     try:
-        initial_head = asyncio.run(_get_head_info(sync_url))
-        initial_height = initial_head.get("height", 0) if initial_head else 0
+        initial_head = asyncio.run(_get_head_info(url))
+        initial_height = _extract_height(initial_head) or 0
         typer.echo(f"Current height: {initial_height}")
     except Exception as e:
-        typer.echo(f"Error: Unable to connect to node at {sync_url}")
+        typer.echo(f"Error: Unable to connect to node at {url}")
         typer.echo(f"Details: {e}")
         raise typer.Exit(code=1)
     
     # Check peer count
     try:
-        peers = asyncio.run(_get_peers(sync_url))
+        peers = asyncio.run(_get_peers(url))
         peer_count = len(peers)
         typer.echo(f"Connected peers: {peer_count}")
         _persist_connected_peers(net_cfg, peers, quiet=True)
-        _persist_sync_state(net_cfg, rpc_url=sync_url, head_info=initial_head, peers=peers, note="initial")
+        _persist_sync_state(net_cfg, rpc_url=url, head_info=initial_head, peers=peers, note="initial")
 
         if peer_count == 0:
             typer.secho(
@@ -633,16 +693,21 @@ def force_sync(
             typer.echo()
 
             typer.echo("Auto-bootstrapping peers from configured seeds...")
-            stored, rpc_added, _ = _seed_local_peerstores(net_cfg, quiet=False)
+            stored, rpc_added, _ = _seed_local_peerstores(
+                net_cfg,
+                target_rpc_url=url,
+                bootstrap_url=bootstrap_url,
+                quiet=False,
+            )
             if stored:
                 try:
-                    peers = asyncio.run(_get_peers(sync_url))
+                    peers = asyncio.run(_get_peers(url))
                     peer_count = len(peers)
                     typer.echo(f"Connected peers after bootstrap: {peer_count}")
                     _persist_connected_peers(net_cfg, peers, quiet=True)
                     _persist_sync_state(
                         net_cfg,
-                        rpc_url=sync_url,
+                        rpc_url=url,
                         head_info=initial_head,
                         peers=peers,
                         note="post-bootstrap",
@@ -657,7 +722,7 @@ def force_sync(
     typer.echo("Attempting to trigger sync...")
     
     # Try to trigger sync
-    triggered = asyncio.run(_trigger_sync(sync_url))
+    triggered = asyncio.run(_trigger_sync(url))
     
     if not triggered:
         typer.secho(
@@ -701,14 +766,14 @@ def force_sync(
             progress.update(check_interval)
             
             try:
-                head_info = asyncio.run(_get_head_info(sync_url))
-                current_height = head_info.get("height", 0) if head_info else 0
+                head_info = asyncio.run(_get_head_info(url))
+                current_height = _extract_height(head_info) or 0
                 try:
-                    peers = asyncio.run(_get_peers(sync_url))
+                    peers = asyncio.run(_get_peers(url))
                 except Exception:
                     peers = []
                 _persist_connected_peers(net_cfg, peers, quiet=True)
-                _persist_sync_state(net_cfg, rpc_url=sync_url, head_info=head_info, peers=peers)
+                _persist_sync_state(net_cfg, rpc_url=url, head_info=head_info, peers=peers)
                 
                 if current_height > last_height:
                     blocks_synced = current_height - last_height
@@ -727,15 +792,20 @@ def force_sync(
                             nl=False
                         )
                         # Try to re-import seeds and retrigger sync to keep progress moving
-                        added, _, _ = _seed_local_peerstores(net_cfg, quiet=True)
+                        added, _, _ = _seed_local_peerstores(
+                            net_cfg,
+                            target_rpc_url=url,
+                            bootstrap_url=bootstrap_url,
+                            quiet=True,
+                        )
                         if added:
                             try:
-                                peers = asyncio.run(_get_peers(sync_url))
+                                peers = asyncio.run(_get_peers(url))
                                 peer_count = len(peers)
                                 typer.echo(f"\n✓ Re-seeded peers; {peer_count} connected")
                             except Exception:
                                 typer.secho("\n⚠ Could not refresh peer list after re-seeding", fg=typer.colors.YELLOW, nl=False)
-                        asyncio.run(_trigger_sync(sync_url))
+                        asyncio.run(_trigger_sync(url))
             except Exception:
                 typer.echo("\n⚠ Connection error", nl=False)
     
@@ -744,8 +814,8 @@ def force_sync(
     
     # Final status
     try:
-        final_head = asyncio.run(_get_head_info(sync_url))
-        final_height = final_head.get("height", 0) if final_head else 0
+        final_head = asyncio.run(_get_head_info(url))
+        final_height = _extract_height(final_head) or 0
         
         blocks_synced = final_height - initial_height
         
@@ -769,11 +839,11 @@ def force_sync(
             typer.echo()
             typer.echo("Check peer status with: animica peer list")
         try:
-            peers = asyncio.run(_get_peers(sync_url))
+            peers = asyncio.run(_get_peers(url))
         except Exception:
             peers = []
         _persist_connected_peers(net_cfg, peers, quiet=True)
-        _persist_sync_state(net_cfg, rpc_url=sync_url, head_info=final_head, peers=peers, note="final")
+        _persist_sync_state(net_cfg, rpc_url=url, head_info=final_head, peers=peers, note="final")
     except Exception as e:
         typer.echo(f"Error checking final status: {e}", err=True)
         raise typer.Exit(code=1)

@@ -304,7 +304,15 @@ def test_sync_force_success(mock_rpc_success):
         return client
     
     with patch("httpx.AsyncClient", side_effect=get_mock_client):
-        with patch("time.sleep"):  # Speed up test
+        clock = {"now": 0}
+
+        def fake_time():
+            clock["now"] += 5
+            return clock["now"]
+
+        with patch("animica.cli.sync.time.sleep"), patch(
+            "animica.cli.sync.time.time", side_effect=fake_time
+        ):
             result = runner.invoke(
                 app,
                 ["sync", "force", "--timeout", "10", "--check-interval", "2"]
@@ -320,7 +328,15 @@ def test_sync_force_no_progress(mock_rpc_success):
     with patch("httpx.AsyncClient") as mock_client:
         mock_client.return_value = MockAsyncClient(mock_rpc_success)
         
-        with patch("time.sleep"):  # Speed up test
+        clock = {"now": 0}
+
+        def fake_time():
+            clock["now"] += 5
+            return clock["now"]
+
+        with patch("animica.cli.sync.time.sleep"), patch(
+            "animica.cli.sync.time.time", side_effect=fake_time
+        ):
             result = runner.invoke(
                 app,
                 ["sync", "force", "--timeout", "10", "--check-interval", "2"]
@@ -356,7 +372,15 @@ def test_sync_force_with_custom_timeout(mock_rpc_success):
     with patch("httpx.AsyncClient") as mock_client:
         mock_client.return_value = MockAsyncClient(mock_rpc_success)
         
-        with patch("time.sleep"):
+        clock = {"now": 0}
+
+        def fake_time():
+            clock["now"] += 20
+            return clock["now"]
+
+        with patch("animica.cli.sync.time.sleep"), patch(
+            "animica.cli.sync.time.time", side_effect=fake_time
+        ):
             result = runner.invoke(
                 app,
                 ["sync", "force", "--timeout", "60", "--check-interval", "10"]
@@ -365,6 +389,103 @@ def test_sync_force_with_custom_timeout(mock_rpc_success):
             assert result.exit_code == 0
             assert "Monitoring sync progress for 60 seconds" in result.stdout
             assert "(Checking every 10 seconds)" in result.stdout
+
+
+def test_sync_force_uses_target_rpc_by_default(monkeypatch):
+    """Sync force should target local RPC by default and not use bootstrap for chain.getHead."""
+    target_url = "http://127.0.0.1:8545/rpc"
+    bootstrap_url = "https://bootstrap.animica.test/rpc"
+
+    monkeypatch.setenv("ANIMICA_RPC_URL", target_url)
+    monkeypatch.setenv("ANIMICA_BOOTSTRAP_RPC_URL", bootstrap_url)
+
+    calls: list[tuple[str, str]] = []
+
+    class RecordingClient:
+        def __init__(self, responses: Dict[str, Any]):
+            self.responses = responses
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def post(self, url: str, json: Dict[str, Any]):
+            method = json.get("method", "")
+            calls.append((url, method))
+            if method in self.responses:
+                return MockRPCResponse(result=self.responses[method])
+            return MockRPCResponse(error={"message": f"Method {method} not found"})
+
+    responses = {
+        "chain.getHead": {"height": 0, "hash": "0x" + "a" * 64},
+        "p2p.listPeers": [
+            {"id": "peer_123", "addr": "127.0.0.1:30303", "status": "connected"}
+        ],
+        "sync.force": {"success": True},
+    }
+
+    with patch("animica.cli.sync._seed_local_peerstores") as seed_mock:
+        seed_mock.return_value = (0, False, [])
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_client.return_value = RecordingClient(responses)
+            clock = {"now": 0}
+
+            def fake_time():
+                clock["now"] += 5
+                return clock["now"]
+
+            with patch("animica.cli.sync.time.sleep"), patch(
+                "animica.cli.sync.time.time", side_effect=fake_time
+            ):
+                result = runner.invoke(
+                    app,
+                    ["sync", "force", "--timeout", "4", "--check-interval", "1"],
+                )
+
+    assert result.exit_code == 0
+    head_calls = [url for url, method in calls if method == "chain.getHead"]
+    assert head_calls
+    assert all(url == target_url for url in head_calls)
+    assert bootstrap_url not in head_calls
+
+
+def test_sync_status_not_synced_when_bootstrap_ahead(monkeypatch):
+    """Sync status should not claim synced when bootstrap tip is higher than local genesis."""
+    target_url = "http://127.0.0.1:8545/rpc"
+    bootstrap_url = "https://bootstrap.animica.test/rpc"
+
+    monkeypatch.setenv("ANIMICA_RPC_URL", target_url)
+    monkeypatch.setenv("ANIMICA_BOOTSTRAP_RPC_URL", bootstrap_url)
+
+    class UrlAwareClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def post(self, url: str, json: Dict[str, Any]):
+            method = json.get("method", "")
+            if method == "chain.getHead" and url == bootstrap_url:
+                return MockRPCResponse(result={"height": 42, "hash": "0x" + "b" * 64})
+            if method == "chain.getHead" and url == target_url:
+                return MockRPCResponse(result={"height": 0, "hash": "0x" + "c" * 64})
+            if method == "node.syncStatus":
+                return MockRPCResponse(result={"syncing": False, "synchronized": True})
+            if method == "p2p.listPeers":
+                return MockRPCResponse(result=[])
+            return MockRPCResponse(error={"message": f"Method {method} not found"})
+
+    with patch("httpx.AsyncClient") as mock_client:
+        mock_client.return_value = UrlAwareClient()
+
+        result = runner.invoke(app, ["sync", "status"])
+
+    assert result.exit_code == 0
+    assert "NOT SYNCED" in result.stdout
+    assert "synchronized with the network" not in result.stdout
 
 
 def test_sync_main_help():
@@ -385,6 +506,7 @@ def test_sync_status_help():
     assert "Show current blockchain synchronization status" in result.stdout
     assert "--json" in result.stdout
     assert "--verbose" in result.stdout
+    assert "--bootstrap-rpc" in result.stdout
 
 
 def test_sync_force_help():
@@ -395,6 +517,7 @@ def test_sync_force_help():
     assert "Force a blockchain resynchronization" in result.stdout
     assert "--timeout" in result.stdout
     assert "--check-interval" in result.stdout
+    assert "--bootstrap-rpc" in result.stdout
 
 
 def test_sync_status_fallback_methods():
@@ -453,7 +576,15 @@ def test_sync_force_trigger_fails(mock_rpc_no_peers):
         mock_client.return_value = MockAsyncClient(mock_rpc_no_peers)
         
         # Simulate user choosing to monitor anyway
-        with patch("time.sleep"):
+        clock = {"now": 0}
+
+        def fake_time():
+            clock["now"] += 5
+            return clock["now"]
+
+        with patch("animica.cli.sync.time.sleep"), patch(
+            "animica.cli.sync.time.time", side_effect=fake_time
+        ):
             result = runner.invoke(
                 app,
                 ["sync", "force", "--timeout", "10"],
