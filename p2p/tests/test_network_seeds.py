@@ -146,6 +146,17 @@ class TestSeedLoadingFromEnv:
         assert "/ip4/5.6.7.8/tcp/5678" in seeds
         assert not any("144.126.133.21" in s for s in seeds)
 
+    def test_empty_seeds_env_falls_back_to_defaults(self, monkeypatch):
+        """Test that empty ANIMICA_P2P_SEEDS falls back to network defaults."""
+        monkeypatch.setenv("ANIMICA_P2P_SEEDS", "")
+        monkeypatch.setenv("ANIMICA_P2P_NETWORK", "mainnet")
+
+        seeds = p2p_config._load_seeds_from_env()
+
+        for host in MAINNET_SEED_HOSTS:
+            assert any(host in s for s in seeds)
+        assert any(FALLBACK_SEED_IP in s for s in seeds)
+
     def test_network_env_case_insensitive(self, monkeypatch):
         """Test that network name is case-insensitive."""
         monkeypatch.delenv("ANIMICA_P2P_SEEDS", raising=False)
