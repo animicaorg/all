@@ -16,7 +16,9 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
+import socket
 import typing as t
+from urllib.parse import urlparse
 
 from rpc.methods import method
 
@@ -25,6 +27,7 @@ log = logging.getLogger("animica.rpc.p2p")
 # Optional P2P service imports with graceful fallbacks
 _p2p_service: t.Any = None
 _connection_manager: t.Any = None
+_core_p2p_service: t.Any = None
 
 
 async def _safe_call_method(
@@ -83,6 +86,82 @@ def _get_p2p_service() -> t.Any | None:
     return None
 
 
+def _get_core_p2p_service() -> t.Any | None:
+    global _core_p2p_service
+
+    if _core_p2p_service is not None:
+        return _core_p2p_service
+
+    try:
+        from rpc import deps
+
+        ctx = deps.get_ctx()
+        if hasattr(ctx, "core_p2p_service") and ctx.core_p2p_service is not None:
+            _core_p2p_service = ctx.core_p2p_service
+            return _core_p2p_service
+    except Exception:
+        pass
+
+    return None
+
+
+def _resolve_core_host(host: str) -> str | None:
+    try:
+        infos = socket.getaddrinfo(host, None, proto=socket.IPPROTO_TCP)
+    except OSError:
+        return None
+    for family, _, _, _, addr in infos:
+        if family in (socket.AF_INET, socket.AF_INET6):
+            return addr[0]
+    return None
+
+
+def _parse_core_address(address: str) -> tuple[t.Any | None, str | None]:
+    try:
+        from p2p.core_p2p.netaddress import NetAddress
+        from p2p.transport.multiaddr import parse_multiaddr
+    except Exception:
+        return None, "core p2p address parser unavailable"
+
+    if not address:
+        return None, "address is empty"
+
+    if address.startswith("/"):
+        try:
+            parsed = parse_multiaddr(address)
+        except Exception:
+            return None, f"invalid multiaddr: {address}"
+        if parsed.transport != "tcp":
+            return None, f"unsupported transport: {parsed.transport}"
+        if not parsed.host or not parsed.port:
+            return None, "missing host or port in multiaddr"
+        resolved = _resolve_core_host(parsed.host)
+        if resolved is None:
+            return None, f"failed to resolve host {parsed.host}"
+        return NetAddress(services=1, ip=resolved, port=int(parsed.port)), None
+
+    host = address
+    port: int | None = None
+    if "://" in address:
+        parsed = urlparse(address)
+        host = parsed.hostname or ""
+        port = parsed.port
+    elif ":" in address:
+        host, port_str = address.rsplit(":", 1)
+        try:
+            port = int(port_str)
+        except ValueError:
+            return None, f"invalid port in address: {address}"
+
+    if not host or port is None:
+        return None, f"missing host or port in address: {address}"
+
+    resolved = _resolve_core_host(host)
+    if resolved is None:
+        return None, f"failed to resolve host {host}"
+    return NetAddress(services=1, ip=resolved, port=port), None
+
+
 def _get_connection_manager() -> t.Any | None:
     """
     Attempt to retrieve the P2P ConnectionManager instance.
@@ -112,6 +191,40 @@ def _get_connection_manager() -> t.Any | None:
     # The service itself manages connections via _peers dict
     # RPC methods will use the service's peers property directly
     return None
+
+
+def _core_peer_to_dict(peer: t.Any) -> dict[str, t.Any]:
+    if peer is None:
+        return {}
+    addr = getattr(peer, "address", None)
+    addr_str = ""
+    if addr is not None:
+        addr_str = getattr(addr, "key", lambda: "")()
+        if not addr_str:
+            ip = getattr(addr, "ip", "")
+            port = getattr(addr, "port", "")
+            if ip and port:
+                addr_str = f"{ip}:{port}"
+    direction = "inbound" if getattr(peer, "inbound", False) else "outbound"
+    last_seen = max(
+        getattr(peer, "last_recv", 0) or 0,
+        getattr(peer, "last_send", 0) or 0,
+    )
+    peer_dict: dict[str, t.Any] = {
+        "id": str(getattr(peer, "peer_id", "")),
+        "addr": addr_str,
+        "status": "connected",
+        "direction": direction,
+    }
+    if last_seen:
+        peer_dict["lastSeen"] = float(last_seen)
+    if hasattr(peer, "connected_at"):
+        peer_dict["connectedAt"] = float(getattr(peer, "connected_at"))
+    if hasattr(peer, "start_height"):
+        peer_dict["height"] = getattr(peer, "start_height")
+    if hasattr(peer, "user_agent") and getattr(peer, "user_agent"):
+        peer_dict["meta"] = {"userAgent": getattr(peer, "user_agent")}
+    return peer_dict
 
 
 def _peer_to_dict(peer: t.Any) -> dict[str, t.Any]:
@@ -295,6 +408,15 @@ async def list_peers() -> list[dict[str, t.Any]]:
                 return result
     except Exception as e:
         log.debug("Failed to list peers from store: %s", e)
+
+    core_svc = _get_core_p2p_service()
+    if core_svc is not None and hasattr(core_svc, "connman"):
+        try:
+            peers = core_svc.connman.peers()
+            if isinstance(peers, dict):
+                return [_core_peer_to_dict(peer) for peer in peers.values()]
+        except Exception as e:
+            log.debug("Failed to list peers from core P2P service: %s", e)
     
     log.debug("P2P service not available, returning empty peer list")
     return []
@@ -335,40 +457,72 @@ async def add_peer(address: str) -> dict[str, t.Any]:
     
     # Try ConnectionManager (for full NodeService)
     cm = _get_connection_manager()
-    if cm is None:
-        return {
-            "success": False,
-            "error": "P2P service not available",
-        }
-    
-    try:
-        # ConnectionManager.connect(address) returns Optional[Peer]
-        peer = await _safe_call_method(cm, "connect", address)
-        
-        if peer is None:
+    if cm is not None:
+        try:
+            # ConnectionManager.connect(address) returns Optional[Peer]
+            peer = await _safe_call_method(cm, "connect", address)
+            
+            if peer is None:
+                return {
+                    "success": False,
+                    "error": f"Failed to connect to {address}",
+                }
+            
             return {
-                "success": False,
-                "error": f"Failed to connect to {address}",
+                "success": True,
+                "peer": _peer_to_dict(peer),
             }
         
-        return {
-            "success": True,
-            "peer": _peer_to_dict(peer),
-        }
-    
-    except Exception as e:
-        log.error("Failed to add peer %s: %s", address, e, exc_info=True)
-        return {
-            "success": False,
-            "error": str(e),
-        }
+        except Exception as e:
+            log.error("Failed to add peer %s: %s", address, e, exc_info=True)
+            return {
+                "success": False,
+                "error": str(e),
+            }
+
+    core_svc = _get_core_p2p_service()
+    if core_svc is not None and hasattr(core_svc, "connman"):
+        net_addr, error = _parse_core_address(address)
+        if net_addr is None:
+            return {"success": False, "error": error or "invalid address"}
+        try:
+            await core_svc.connman.dial(net_addr)
+            return {"success": True, "message": f"Dialing {address}"}
+        except Exception as e:
+            log.error("Failed to dial core peer %s: %s", address, e, exc_info=True)
+            return {"success": False, "error": str(e)}
+
+    return {
+        "success": False,
+        "error": "P2P service not available",
+    }
 
 
 @method("p2p.importPeers", desc="Persist and dial a list of peers")
 async def import_peers(addresses: list[str]) -> dict[str, t.Any]:
     svc = _get_p2p_service()
     if svc is None:
-        return {"success": False, "error": "P2P service not available"}
+        core_svc = _get_core_p2p_service()
+        if core_svc is None or not hasattr(core_svc, "addrman"):
+            return {"success": False, "error": "P2P service not available"}
+        added = 0
+        errors: list[str] = []
+        for addr in addresses:
+            net_addr, err = _parse_core_address(addr)
+            if net_addr is None:
+                errors.append(err or f"invalid address {addr}")
+                continue
+            try:
+                core_svc.addrman.add([net_addr])
+                added += 1
+                if hasattr(core_svc, "connman"):
+                    await core_svc.connman.dial(net_addr)
+            except Exception as exc:  # pragma: no cover - defensive
+                errors.append(str(exc))
+        result = {"success": added > 0, "added": added}
+        if errors and added == 0:
+            result["error"] = errors[0]
+        return result
 
     if hasattr(svc, "import_peers"):
         try:
@@ -413,25 +567,34 @@ async def remove_peer(peer_id: str) -> dict[str, t.Any]:
         {"success": True}
     """
     cm = _get_connection_manager()
-    if cm is None:
-        return {
-            "success": False,
-            "error": "P2P service not available",
-        }
-    
-    try:
-        success = await _safe_call_method(cm, "disconnect", peer_id)
+    if cm is not None:
+        try:
+            success = await _safe_call_method(cm, "disconnect", peer_id)
+            
+            return {
+                "success": bool(success),
+            }
         
-        return {
-            "success": bool(success),
-        }
-    
-    except Exception as e:
-        log.error("Failed to remove peer %s: %s", peer_id, e, exc_info=True)
-        return {
-            "success": False,
-            "error": str(e),
-        }
+        except Exception as e:
+            log.error("Failed to remove peer %s: %s", peer_id, e, exc_info=True)
+            return {
+                "success": False,
+                "error": str(e),
+            }
+
+    core_svc = _get_core_p2p_service()
+    if core_svc is not None and hasattr(core_svc, "connman"):
+        try:
+            await core_svc.connman._drop(peer_id, reason="rpc_remove")
+            return {"success": True}
+        except Exception as e:
+            log.error("Failed to remove core peer %s: %s", peer_id, e, exc_info=True)
+            return {"success": False, "error": str(e)}
+
+    return {
+        "success": False,
+        "error": "P2P service not available",
+    }
 
 
 @method("p2p.getPeerInfo", desc="Get detailed information about a specific peer")
@@ -450,25 +613,36 @@ async def get_peer_info(peer_id: str) -> dict[str, t.Any] | None:
         {"id": "12D3Koo...", "addr": "/ip4/...", ...}
     """
     cm = _get_connection_manager()
-    if cm is None:
-        return None
-    
-    try:
-        # Get all peers and find the matching one
-        peers = await _safe_call_method(cm, "list_peers")
-        if peers is None:
+    if cm is not None:
+        try:
+            # Get all peers and find the matching one
+            peers = await _safe_call_method(cm, "list_peers")
+            if peers is None:
+                return None
+            
+            for peer in peers:
+                peer_dict = _peer_to_dict(peer)
+                if peer_dict.get("id") == peer_id:
+                    return peer_dict
+            
             return None
         
-        for peer in peers:
-            peer_dict = _peer_to_dict(peer)
-            if peer_dict.get("id") == peer_id:
-                return peer_dict
-        
-        return None
-    
-    except Exception as e:
-        log.error("Failed to get peer info for %s: %s", peer_id, e, exc_info=True)
-        return None
+        except Exception as e:
+            log.error("Failed to get peer info for %s: %s", peer_id, e, exc_info=True)
+            return None
+
+    core_svc = _get_core_p2p_service()
+    if core_svc is not None and hasattr(core_svc, "connman"):
+        try:
+            peers = core_svc.connman.peers()
+            peer = peers.get(peer_id)
+            if peer is None:
+                return None
+            return _core_peer_to_dict(peer)
+        except Exception as e:
+            log.error("Failed to get core peer info for %s: %s", peer_id, e, exc_info=True)
+            return None
+    return None
 
 
 # Export for RPC method discovery

@@ -109,6 +109,31 @@ def _collect_live_peer_seeds() -> tuple[list[str], list[str]]:
         # No P2P available (or not importable) – fall back to static seeds only.
         pass
 
+    try:
+        ctx = deps.get_ctx()
+        core_svc = getattr(ctx, "core_p2p_service", None)
+        if core_svc is not None and hasattr(core_svc, "connman"):
+            peers = core_svc.connman.peers()
+            for peer in peers.values():
+                addr = getattr(peer, "address", None)
+                addr_str = ""
+                if addr is not None:
+                    addr_str = getattr(addr, "key", lambda: "")()
+                    if not addr_str:
+                        ip = getattr(addr, "ip", "")
+                        port = getattr(addr, "port", "")
+                        if ip and port:
+                            addr_str = f"{ip}:{port}"
+                if not addr_str:
+                    continue
+                addr_str = _normalize_seed_address(addr_str)
+                if getattr(peer, "inbound", False):
+                    inbound.append(addr_str)
+                else:
+                    outbound.append(addr_str)
+    except Exception:
+        pass
+
     # Preserve insertion order while deduplicating
     def _dedupe(items: list[str]) -> list[str]:
         seen = set()
@@ -148,7 +173,46 @@ def _active_peer_snapshot() -> list[dict[str, object]]:
                 return []
             return list(peers)
     except Exception:
-        return []
+        pass
+
+    try:
+        ctx = deps.get_ctx()
+        core_svc = getattr(ctx, "core_p2p_service", None)
+        if core_svc is not None and hasattr(core_svc, "connman"):
+            peers = core_svc.connman.peers()
+            snapshot = []
+            for peer in peers.values():
+                addr = getattr(peer, "address", None)
+                addr_str = ""
+                if addr is not None:
+                    addr_str = getattr(addr, "key", lambda: "")()
+                    if not addr_str:
+                        ip = getattr(addr, "ip", "")
+                        port = getattr(addr, "port", "")
+                        if ip and port:
+                            addr_str = f"{ip}:{port}"
+                direction = "inbound" if getattr(peer, "inbound", False) else "outbound"
+                last_seen = max(
+                    getattr(peer, "last_recv", 0) or 0,
+                    getattr(peer, "last_send", 0) or 0,
+                )
+                peer_dict: dict[str, object] = {
+                    "peer_id": str(getattr(peer, "peer_id", "")),
+                    "addr": addr_str,
+                    "direction": direction,
+                }
+                if last_seen:
+                    peer_dict["last_seen"] = float(last_seen)
+                if hasattr(peer, "connected_at"):
+                    peer_dict["connected_at"] = float(getattr(peer, "connected_at"))
+                if hasattr(peer, "start_height"):
+                    peer_dict["height"] = getattr(peer, "start_height")
+                if hasattr(peer, "user_agent") and getattr(peer, "user_agent"):
+                    peer_dict["info"] = {"userAgent": getattr(peer, "user_agent")}
+                snapshot.append(peer_dict)
+            return snapshot
+    except Exception:
+        pass
     return []
 from rpc.methods import method
 from rpc import errors as rpc_errors
