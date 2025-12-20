@@ -10,7 +10,7 @@
  */
 
 import { inferRpcUrl } from './env';
-import { getCache, isCacheAvailable, type ExplorerCache } from './cache';
+import { getCache, isCacheAccessError, isCacheAvailable, type ExplorerCache } from './cache';
 
 export type JsonValue =
   | null
@@ -456,7 +456,11 @@ class ExplorerRpcClientImpl extends RpcClient implements ExplorerRpcClient {
       this.cachePromise = getCache()
         .then((cache) => cache)
         .catch((err) => {
-          console.warn('[RPC] Failed to initialize explorer cache:', err);
+          if (isCacheAccessError(err)) {
+            console.debug('[RPC] Explorer cache unavailable:', err);
+          } else {
+            console.warn('[RPC] Failed to initialize explorer cache:', err);
+          }
           return null;
         });
     }
