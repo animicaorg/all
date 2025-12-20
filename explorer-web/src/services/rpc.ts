@@ -10,6 +10,7 @@
  */
 
 import { inferRpcUrl } from './env';
+import { getCache, isCacheAvailable, type ExplorerCache } from './cache';
 
 export type JsonValue =
   | null
@@ -447,6 +448,21 @@ interface WsClientLike {
 class ExplorerRpcClientImpl extends RpcClient implements ExplorerRpcClient {
   private wsClient: WsClientLike | null = null;
   private wsClientPromise: Promise<WsClientLike> | null = null;
+  private cachePromise: Promise<ExplorerCache | null> | null = null;
+
+  private async getCache(): Promise<ExplorerCache | null> {
+    if (!isCacheAvailable()) return null;
+    if (!this.cachePromise) {
+      this.cachePromise = getCache()
+        .then((cache) => cache)
+        .catch((err) => {
+          console.warn('[RPC] Failed to initialize explorer cache:', err);
+          return null;
+        });
+    }
+    return this.cachePromise;
+  }
+
   async getChainId(): Promise<string> {
     const rethrowIfCors = (err: any) => {
       if (isProbableCorsError(err, this.url)) {
@@ -494,19 +510,49 @@ class ExplorerRpcClientImpl extends RpcClient implements ExplorerRpcClient {
   }
 
   async getBlock(height: number): Promise<any> {
+    const cache = await this.getCache();
+    if (cache) {
+      try {
+        const cached = await cache.getBlock(height);
+        if (cached) return cached;
+      } catch {
+        /* ignore cache read errors */
+      }
+    }
+
     try {
       // Try chain.getBlockByHeight first
       const result = await this.call<any>('chain.getBlockByHeight', [height, false, false]);
       console.debug('[RPC] getBlock:', height, result);
-      return this.normalizeBlock(result, height);
+      const normalized = this.normalizeBlock(result, height);
+      if (cache && normalized?.height != null) {
+        cache.putBlock(normalized.height, normalized.hash ?? '', normalized).catch((err) => {
+          console.warn('[RPC] Failed to cache block:', err);
+        });
+      }
+      return normalized;
     } catch (e) {
       console.warn('[RPC] chain.getBlockByHeight failed for height', height, ', trying chain.getBlockByNumber:', e);
       // Fallback to chain.getBlockByNumber
       try {
         const result = await this.call<any>('chain.getBlockByNumber', [height, false]);
-        return this.normalizeBlock(result, height);
+        const normalized = this.normalizeBlock(result, height);
+        if (cache && normalized?.height != null) {
+          cache.putBlock(normalized.height, normalized.hash ?? '', normalized).catch((err) => {
+            console.warn('[RPC] Failed to cache block:', err);
+          });
+        }
+        return normalized;
       } catch (fallbackError) {
         console.error('[RPC] Both getBlockByHeight and getBlockByNumber failed for height', height, ':', fallbackError);
+        if (cache) {
+          try {
+            const cached = await cache.getBlock(height);
+            if (cached) return cached;
+          } catch {
+            /* ignore cache read errors */
+          }
+        }
         throw e;
       }
     }
@@ -527,11 +573,68 @@ class ExplorerRpcClientImpl extends RpcClient implements ExplorerRpcClient {
   }
 
   async getTx(hash: string): Promise<any> {
-    return this.call<any>('tx.getTransaction', [hash]);
+    const cache = await this.getCache();
+    if (cache) {
+      try {
+        const cached = await cache.getTx(hash);
+        if (cached) return cached;
+      } catch {
+        /* ignore cache read errors */
+      }
+    }
+
+    try {
+      const tx = await this.call<any>('tx.getTransaction', [hash]);
+      if (cache && tx) {
+        const blockHeight = tx.blockNumber ?? tx.height ?? tx.blockHeight;
+        cache.putTx(hash, tx, typeof blockHeight === 'number' ? blockHeight : undefined).catch((err) => {
+          console.warn('[RPC] Failed to cache tx:', err);
+        });
+      }
+      return tx;
+    } catch (err) {
+      if (cache) {
+        try {
+          const cached = await cache.getTx(hash);
+          if (cached) return cached;
+        } catch {
+          /* ignore cache read errors */
+        }
+      }
+      throw err;
+    }
   }
 
   async getAccount(address: string): Promise<any> {
-    return this.call<any>('state.getAccount', [address]);
+    const cache = await this.getCache();
+    if (cache) {
+      try {
+        const cached = await cache.getAddress(address);
+        if (cached) return cached;
+      } catch {
+        /* ignore cache read errors */
+      }
+    }
+
+    try {
+      const account = await this.call<any>('state.getAccount', [address]);
+      if (cache && account) {
+        cache.putAddress(address, account).catch((err) => {
+          console.warn('[RPC] Failed to cache address:', err);
+        });
+      }
+      return account;
+    } catch (err) {
+      if (cache) {
+        try {
+          const cached = await cache.getAddress(address);
+          if (cached) return cached;
+        } catch {
+          /* ignore cache read errors */
+        }
+      }
+      throw err;
+    }
   }
 
   async ping(): Promise<void> {

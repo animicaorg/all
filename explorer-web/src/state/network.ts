@@ -116,6 +116,40 @@ function inferSameOriginRpcUrl(currentRpc: string): string | null {
   }
 }
 
+function retryViaSameOrigin(params: {
+  rpcUrl: string;
+  expectedChainId?: string;
+  pollIntervalMs: number;
+  pingIntervalMs: number;
+  enforceChainId: boolean;
+  signal: AbortSignal;
+  triedCorsFallback?: boolean;
+}): Promise<void> | undefined {
+  const { rpcUrl, expectedChainId, triedCorsFallback } = params;
+  if (triedCorsFallback) return;
+
+  const sameOriginRpc = inferSameOriginRpcUrl(rpcUrl);
+  if (!sameOriginRpc) return;
+
+  console.warn(`[network] CORS detected for ${rpcUrl}; retrying via same-origin proxy ${sameOriginRpc}`);
+
+  releaseRpcClient(rpcUrl);
+  runtime.client = null;
+
+  runtime.bootKey = `${sameOriginRpc}|${expectedChainId || ''}`;
+  snapshot = { ...snapshot, rpcUrl: sameOriginRpc, status: 'connecting', error: null };
+  emit();
+  bindings.setNetwork?.({ rpcUrl: sameOriginRpc, status: 'connecting', error: null, connected: false });
+
+  const nextPromise = boot({
+    ...params,
+    rpcUrl: sameOriginRpc,
+    triedCorsFallback: true,
+  });
+  runtime.bootPromise = nextPromise;
+  return nextPromise;
+}
+
 // ------------------------- Public setters -----------------------------------
 
 export function setRpcUrl(url: string) {
@@ -250,8 +284,20 @@ async function boot(params: {
       console.log('[network] Chain ID:', actualChainId);
     } catch (e: any) {
       console.warn('[network] Failed to fetch chain ID:', e);
+      const errorMsg = e?.message || String(e);
+      if (isCorsLikeError(errorMsg)) {
+        const retried = retryViaSameOrigin({
+          rpcUrl,
+          expectedChainId,
+          pollIntervalMs,
+          pingIntervalMs,
+          enforceChainId,
+          signal,
+          triedCorsFallback,
+        });
+        if (retried) return retried;
+      }
       if (enforceChainId && expectedChainId) {
-        const errorMsg = e?.message || String(e);
         const detailedMsg = `Failed to fetch chain ID from ${rpcUrl}: ${errorMsg}`;
 
         setStatus('error', detailedMsg);
@@ -380,30 +426,18 @@ async function boot(params: {
     const errorName = e?.name || 'Error';
     const errorMsg = e?.message || String(e);
 
-    const sameOriginRpc = inferSameOriginRpcUrl(rpcUrl);
     const isCorsError = isCorsLikeError(errorMsg);
-    if (isCorsError && !triedCorsFallback && sameOriginRpc) {
-      console.warn(`[network] CORS detected for ${rpcUrl}; retrying via same-origin proxy ${sameOriginRpc}`);
-
-      releaseRpcClient(rpcUrl);
-      runtime.client = null;
-
-      runtime.bootKey = `${sameOriginRpc}|${expectedChainId || ''}`;
-      snapshot = { ...snapshot, rpcUrl: sameOriginRpc, status: 'connecting', error: null };
-      emit();
-      bindings.setNetwork?.({ rpcUrl: sameOriginRpc, status: 'connecting', error: null, connected: false });
-
-      const nextPromise = boot({
-        rpcUrl: sameOriginRpc,
+    if (isCorsError) {
+      const retried = retryViaSameOrigin({
+        rpcUrl,
         expectedChainId,
         pollIntervalMs,
         pingIntervalMs,
         enforceChainId,
         signal,
-        triedCorsFallback: true,
+        triedCorsFallback,
       });
-      runtime.bootPromise = nextPromise;
-      return nextPromise;
+      if (retried) return retried;
     }
 
     let userMessage = 'Failed to connect to RPC server';
