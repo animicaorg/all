@@ -70,6 +70,7 @@ export default defineConfig({
         'dev.animica.org',
         'staging.animica.org',
         'preview.animica.org',
+        'explorer.animica.org',
       ],
     },
   },
