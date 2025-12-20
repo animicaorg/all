@@ -1,6 +1,7 @@
 import React, { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App";
+import { seedCacheFromBootstrap } from "./services/bootstrap";
 
 // Global styles
 import "./styles/tokens.css";
@@ -120,6 +121,9 @@ function wireGlobalErrorHandlers() {
 }
 
 wireGlobalErrorHandlers();
+seedCacheFromBootstrap().catch(() => {
+  // no-op; cache bootstrap is best-effort
+});
 mount();
 
 export {};
