@@ -27,14 +27,13 @@ describe('env helpers', () => {
     expect(inferWsUrl()).toBe('ws://ws.injected');
   });
 
-  it('falls back to page origin when only location is available', () => {
+  it('uses the public Animica RPC by default even with a window location', () => {
     global.window = { location: { origin: 'http://site.local' } };
-    expect(inferRpcUrl()).toBe('/rpc');
-    // With no explicit WS, should convert origin and keep port/protocol
-    expect(inferWsUrl()).toBe('ws://site.local/rpc');
+    expect(inferRpcUrl()).toBe(DEFAULT_RPC);
+    expect(inferWsUrl()).toBe('wss://rpc.animica.org/rpc');
   });
 
-  it('defaults to localhost when nothing else is provided', () => {
+  it('defaults to the public Animica endpoints when nothing else is provided', () => {
     global.window = undefined;
     expect(inferRpcUrl({})).toBe(DEFAULT_RPC);
     expect(inferWsUrl({})).toBe(DEFAULT_WS);
