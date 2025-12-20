@@ -24,6 +24,7 @@ export class ExplorerService {
 
       const headRaw = await this.safeRpc(() => this.rpc.getHead())
       const head = normalizeHead(headRaw)
+      this.cache.set('head-view', head, this.cacheTtls.head)
 
       const [blocks, mempool, peers] = await Promise.all([
         this.getRecentBlocks(head.height),
@@ -41,26 +42,45 @@ export class ExplorerService {
   async getBlocks(limitInput: number, cursor?: string): Promise<{ items: BlockSummary[]; nextCursor: string | null }> {
     const limit = clampLimit(limitInput)
     const cursorHeight = parseCursor(cursor)
-    const headRaw = await this.safeRpc(() => this.rpc.getHead())
-    const head = normalizeHead(headRaw)
-    const startHeight = cursorHeight ?? head.height
-    const heights = Array.from({ length: limit }, (_, i) => startHeight - i).filter((h) => h >= 0)
+    try {
+      const headRaw = await this.safeRpc(() => this.rpc.getHead())
+      const head = normalizeHead(headRaw)
+      this.cache.set('head-view', head, this.cacheTtls.head)
+      const startHeight = cursorHeight ?? head.height
+      const heights = Array.from({ length: limit }, (_, i) => startHeight - i).filter((h) => h >= 0)
 
-    const blocks = await Promise.all(
-      heights.map((height) =>
-        this.coalescer.run(`block:${height}`, async () => {
-          const cached = this.cache.get<BlockSummary>(`block:${height}`)
-          if (cached) return cached
-          const raw = await this.safeRpc(() => this.rpc.getBlockByNumber(height, false, false))
-          const summary = normalizeBlockSummary(raw)
-          this.cache.set(`block:${height}`, summary, this.cacheTtls.blocks)
-          return summary
-        })
+      const blocks = await Promise.all(
+        heights.map((height) =>
+          this.coalescer.run(`block:${height}`, async () => {
+            const cached = this.cache.get<BlockSummary>(`block:${height}`)
+            if (cached) return cached
+            const raw = await this.safeRpc(() => this.rpc.getBlockByNumber(height, false, false))
+            const summary = normalizeBlockSummary(raw)
+            this.cache.set(`block:${height}`, summary, this.cacheTtls.blocks)
+            return summary
+          })
+        )
       )
-    )
 
-    const minHeight = heights.length ? heights[heights.length - 1] : startHeight
-    return { items: blocks, nextCursor: nextCursorForHeight(minHeight) }
+      const minHeight = heights.length ? heights[heights.length - 1] : startHeight
+      return { items: blocks, nextCursor: nextCursorForHeight(minHeight) }
+    } catch (err) {
+      if (err instanceof HttpError && err.status === 503) {
+        const cachedHead = this.cache.get<HeadView>('head-view')
+        if (!cachedHead) {
+          return { items: [], nextCursor: null }
+        }
+        const startHeight = cursorHeight ?? cachedHead.height
+        const heights = Array.from({ length: limit }, (_, i) => startHeight - i).filter((h) => h >= 0)
+        const items = heights
+          .map((height) => this.cache.get<BlockSummary>(`block:${height}`))
+          .filter((block): block is BlockSummary => Boolean(block))
+
+        const minHeight = heights.length ? heights[heights.length - 1] : startHeight
+        return { items, nextCursor: items.length ? nextCursorForHeight(minHeight) : null }
+      }
+      throw err
+    }
   }
 
   async getBlockDetail(hashOrHeight: string): Promise<BlockDetail> {
@@ -136,17 +156,40 @@ export class ExplorerService {
 
   async getMempool(limitInput: number, cursor?: string): Promise<MempoolView> {
     const limit = clampLimit(limitInput)
-    const pending = await this.safeRpc(() => this.rpc.getMempoolPending())
-    const stats = await this.safeRpc(() => this.rpc.getMempoolStats()).catch(() => null)
-    const start = parseCursor(cursor) ?? 0
-    const slice = pending.slice(start, start + limit)
-    const nextCursor = start + limit < pending.length ? String(start + limit) : null
+    try {
+      const pending = await this.safeRpc(() => this.rpc.getMempoolPending())
+      const stats = await this.safeRpc(() => this.rpc.getMempoolStats()).catch(() => null)
+      this.cache.set('mempool-pending', pending, this.cacheTtls.head)
+      if (stats) {
+        this.cache.set('mempool-stats', stats, this.cacheTtls.head)
+      }
+      const start = parseCursor(cursor) ?? 0
+      const slice = pending.slice(start, start + limit)
+      const nextCursor = start + limit < pending.length ? String(start + limit) : null
 
-    return {
-      total: pending.length,
-      entries: slice.map((hash) => ({ hash })),
-      nextCursor,
-      stats: stats ?? undefined
+      return {
+        total: pending.length,
+        entries: slice.map((hash) => ({ hash })),
+        nextCursor,
+        stats: stats ?? undefined
+      }
+    } catch (err) {
+      if (err instanceof HttpError && err.status === 503) {
+        const pending = this.cache.get<string[]>('mempool-pending') ?? []
+        const stats = this.cache.get<{ count: number; totalBytes: number; oldestAgeSec: number | null }>(
+          'mempool-stats'
+        )
+        const start = parseCursor(cursor) ?? 0
+        const slice = pending.slice(start, start + limit)
+        const nextCursor = start + limit < pending.length ? String(start + limit) : null
+        return {
+          total: pending.length,
+          entries: slice.map((hash) => ({ hash })),
+          nextCursor,
+          stats: stats ?? undefined
+        }
+      }
+      throw err
     }
   }
 
