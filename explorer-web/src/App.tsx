@@ -270,6 +270,10 @@ function ToastHost() {
   useEffect(() => {
     function onToast(e: Event) {
       const { id, title, message, kind, durationMs }: ToastPayload = (e as CustomEvent).detail;
+      if (kind === "error") {
+        console.warn("[ToastHost] Suppressed error toast:", { title, message });
+        return;
+      }
       const expiresAt = Date.now() + (durationMs ?? 4500);
       const t: Toast = { id: id ?? cryptoRandomId(), title, message, kind: kind ?? "info", expiresAt };
       setToasts((prev) => [...prev.filter((x) => x.id !== t.id), t]);
