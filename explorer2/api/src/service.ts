@@ -155,7 +155,7 @@ export class ExplorerService {
   }
 
   async getMempool(limitInput: number, cursor?: string): Promise<MempoolView> {
-    const limit = clampLimit(limitInput)
+    const limit = clampLimit(limitInput, 1000)
     try {
       const pending = await this.safeRpc(() => this.rpc.getMempoolPending())
       const stats = await this.safeRpc(() => this.rpc.getMempoolStats()).catch(() => null)

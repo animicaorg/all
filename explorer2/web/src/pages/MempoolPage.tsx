@@ -13,7 +13,7 @@ export default function MempoolPage() {
   const load = async (cursor?: string | null) => {
     setLoading(true)
     try {
-      const res = await api.getMempool(50, cursor ?? undefined)
+      const res = await api.getMempool(1000, cursor ?? undefined)
       setData((prev) => {
         if (!prev || !cursor) return res
         return {

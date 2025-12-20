@@ -13,6 +13,20 @@ if (existsSync(envLocalPath)) {
   );
 }
 
+const hmrHost = process.env.VITE_HMR_HOST;
+const hmrProtocol = process.env.VITE_HMR_PROTOCOL;
+const hmrPort = process.env.VITE_HMR_PORT ? Number(process.env.VITE_HMR_PORT) : 3001;
+const hmrClientPort = process.env.VITE_HMR_CLIENT_PORT ? Number(process.env.VITE_HMR_CLIENT_PORT) : undefined;
+const hmrConfig =
+  hmrHost || hmrProtocol || hmrClientPort || process.env.VITE_HMR_PORT
+    ? {
+        host: hmrHost,
+        protocol: hmrProtocol,
+        port: hmrPort,
+        clientPort: hmrClientPort,
+      }
+    : undefined;
+
 export default defineConfig({
   plugins: [react()],
   resolve: {
@@ -45,12 +59,7 @@ export default defineConfig({
         rewrite: (path) => path.replace(/^\/rpc/, '/rpc'),
       },
     },
-    hmr: {
-      // Use environment variable if set, otherwise default to localhost
-      // In production/containers, set VITE_HMR_HOST to match your setup
-      host: process.env.VITE_HMR_HOST || 'localhost',
-      port: 3001,
-    },
+    ...(hmrConfig ? { hmr: hmrConfig } : {}),
     watch: {
       usePolling: false,
     },
