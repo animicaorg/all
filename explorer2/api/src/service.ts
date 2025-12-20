@@ -22,7 +22,20 @@ export class ExplorerService {
       const cached = this.cache.get<{ head: HeadView; stats: any }>('head')
       if (cached) return cached
 
-      const headRaw = await this.safeRpc(() => this.rpc.getHead())
+      let headRaw: unknown
+      try {
+        headRaw = await this.safeRpc(() => this.rpc.getHead())
+      } catch (err) {
+        if (err instanceof HttpError && err.status === 503) {
+          const cachedHead = this.cache.get<HeadView>('head-view')
+          if (cachedHead) {
+            const cachedStats = this.cache.get<any>('head-stats') ?? {}
+            return { head: cachedHead, stats: cachedStats }
+          }
+        }
+        throw err
+      }
+
       const head = normalizeHead(headRaw)
       this.cache.set('head-view', head, this.cacheTtls.head)
 
@@ -35,6 +48,7 @@ export class ExplorerService {
       const stats = buildNetworkStats(blocks, mempool, peers)
       const payload = { head, stats }
       this.cache.set('head', payload, this.cacheTtls.head)
+      this.cache.set('head-stats', stats, this.cacheTtls.head)
       return payload
     })
   }
@@ -88,10 +102,12 @@ export class ExplorerService {
     return this.coalescer.run(cacheKey, async () => {
       const cached = this.cache.get<BlockDetail>(cacheKey)
       if (cached) return cached
-      const raw = await this.safeRpc(() =>
-        isNumeric(hashOrHeight)
-          ? this.rpc.getBlockByNumber(Number(hashOrHeight), true, false)
-          : this.rpc.getBlockByHash(hashOrHeight, true, false)
+      const raw = await this.safeRpc(
+        () =>
+          isNumeric(hashOrHeight)
+            ? this.rpc.getBlockByNumber(Number(hashOrHeight), true, false)
+            : this.rpc.getBlockByHash(hashOrHeight, true, false),
+        { allowNotFound: true }
       )
       if (!raw) throw new HttpError(404, 'Block not found')
       const detail = normalizeBlockDetail(raw)
@@ -203,11 +219,17 @@ export class ExplorerService {
     return blocks.filter(Boolean).map((block) => normalizeBlockSummary(block))
   }
 
-  private async safeRpc<T>(fn: () => Promise<T>): Promise<T> {
+  private async safeRpc<T>(fn: () => Promise<T>): Promise<T>
+  private async safeRpc<T>(fn: () => Promise<T>, options: { allowNotFound: true }): Promise<T | null>
+  private async safeRpc<T>(fn: () => Promise<T>, options?: { allowNotFound?: boolean }): Promise<T | null> {
     try {
       return await fn()
     } catch (error: any) {
-      throw new HttpError(503, 'RPC unavailable', error?.message ?? String(error))
+      const message = error?.message ?? String(error)
+      if (options?.allowNotFound && isNotFoundError(message)) {
+        return null
+      }
+      throw new HttpError(503, 'RPC unavailable', message)
     }
   }
 }
@@ -237,4 +259,8 @@ function buildNetworkStats(blocks: BlockSummary[], mempool: any, peers: any): an
 
 function isNumeric(value: string): boolean {
   return /^[0-9]+$/.test(value)
+}
+
+function isNotFoundError(message: string): boolean {
+  return /not found|unknown block|missing|does not exist/i.test(message)
 }
