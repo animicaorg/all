@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "concurrently \"pnpm -C api dev\" \"pnpm -C web dev\"",
+    "dev": "concurrently \"pnpm -C shared dev\" \"pnpm -C api dev\" \"pnpm -C web dev\"",
     "build": "pnpm -C shared build && pnpm -C api build && pnpm -C web build",
     "test": "pnpm -C api test"
   },
