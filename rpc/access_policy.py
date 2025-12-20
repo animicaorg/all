@@ -102,6 +102,11 @@ class AccessPolicy:
             mode_source = getattr(getattr(cfg, "access"), "mode", None)
         mode = _parse_access_mode(mode_source or env_mode)
 
+        bootstrap_node_flag = (
+            _is_truthy(os.getenv("ANIMICA_RPC_BOOTSTRAP_NODE"))
+            or getattr(cfg, "bootstrap_node", False)
+            or getattr(getattr(cfg, "access", None), "bootstrap_node", False)
+        )
         token = (
             getattr(cfg, "admin_token", None)
             or getattr(getattr(cfg, "access", None), "admin_token", None)
@@ -122,6 +127,10 @@ class AccessPolicy:
             or getattr(cfg, "bootstrap_only", False)
             or getattr(getattr(cfg, "access", None), "bootstrap_only", False)
         )
+
+        if bootstrap_node_flag:
+            mode = AccessMode.LOCAL_DEV
+            bootstrap_only_flag = False
 
         if bootstrap_only_flag:
             mode = AccessMode.PUBLIC_BOOTSTRAP

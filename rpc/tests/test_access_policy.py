@@ -86,3 +86,12 @@ def test_bootstrap_only_error(monkeypatch) -> None:
         policy.authorize("state.getBalance", ctx)
 
     assert exc.value.code == -32070
+
+
+def test_bootstrap_node_allows_full_access(monkeypatch) -> None:
+    monkeypatch.setenv("ANIMICA_RPC_ACCESS_MODE", AccessMode.PUBLIC_BOOTSTRAP.value)
+    monkeypatch.setenv("ANIMICA_RPC_BOOTSTRAP_NODE", "1")
+    policy = AccessPolicy.from_config(Config(host="0.0.0.0", port=0, db_uri=":memory:", chain_id=1))
+    ctx = DummyCtx()
+
+    policy.authorize("state.getBalance", ctx)
