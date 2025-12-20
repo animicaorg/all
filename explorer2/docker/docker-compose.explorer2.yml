@@ -6,13 +6,13 @@ services:
       context: ../..
       dockerfile: explorer2/docker/Dockerfile.api
     environment:
-      EXPLORER2_PORT: 3001
+      EXPLORER2_PORT: 8081
       EXPLORER2_RPC_URL: ${EXPLORER2_RPC_URL:-http://host.docker.internal:8545/rpc}
       EXPLORER2_CORS_ORIGIN: "*"
     ports:
-      - "3001:3001"
+      - "8081:8081"
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://localhost:3001/api/health').then(r=>r.ok?process.exit(0):process.exit(1)).catch(()=>process.exit(1))"]
+      test: ["CMD", "node", "-e", "fetch('http://localhost:8081/api/health').then(r=>r.ok?process.exit(0):process.exit(1)).catch(()=>process.exit(1))"]
       interval: 10s
       timeout: 3s
       retries: 5
@@ -22,7 +22,7 @@ services:
       context: ../..
       dockerfile: explorer2/docker/Dockerfile.web
     ports:
-      - "3002:80"
+      - "3001:80"
     depends_on:
       explorer2-api:
         condition: service_healthy

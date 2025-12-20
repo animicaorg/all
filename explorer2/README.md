@@ -26,8 +26,8 @@ cp explorer2/.env.example explorer2/.env
 pnpm -C explorer2 dev
 ```
 
-- API runs on `http://localhost:3001`
-- Web runs on `http://localhost:5174` and proxies `/api` to the API service
+- API runs on `http://localhost:8081`
+- Web runs on `http://localhost:3001` and proxies `/api` to the API service
 
 ## Production build
 
@@ -46,7 +46,7 @@ docker compose -f explorer2/docker/docker-compose.explorer2.yml up --build
 
 | Variable | Description | Default |
 | --- | --- | --- |
-| `EXPLORER2_PORT` | API port | `3001` |
+| `EXPLORER2_PORT` | API port | `8081` |
 | `EXPLORER2_RPC_URL` | Animica JSON-RPC endpoint | `http://127.0.0.1:8545/rpc` |
 | `EXPLORER2_CORS_ORIGIN` | CORS allowed origins | `*` |
 | `EXPLORER2_LOG_LEVEL` | API log level | `info` |
