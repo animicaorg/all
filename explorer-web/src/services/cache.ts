@@ -605,15 +605,39 @@ export class ExplorerCache {
 // ----------------------------- Singleton Pattern ----------------------------
 
 let _cacheInstance: ExplorerCache | null = null;
+let cacheDisabled = false;
+let cacheDisabledReason: unknown = null;
+
+function isDomException(err: unknown): boolean {
+  return typeof DOMException !== 'undefined' && err instanceof DOMException;
+}
+
+export function isCacheAccessError(err: unknown): boolean {
+  if (!err) return false;
+  if (isDomException(err)) return true;
+  const name = (err as { name?: string }).name;
+  const message = (err as { message?: string }).message ?? String(err);
+  return name === 'SecurityError' || name === 'InvalidStateError' || /indexeddb/i.test(message);
+}
 
 /**
  * Get the singleton cache instance.
  * Initializes on first call.
  */
 export async function getCache(): Promise<ExplorerCache> {
+  if (cacheDisabled) {
+    throw cacheDisabledReason ?? new Error('Explorer cache disabled');
+  }
   if (!_cacheInstance) {
     _cacheInstance = new ExplorerCache();
-    await _cacheInstance.init();
+    try {
+      await _cacheInstance.init();
+    } catch (err) {
+      cacheDisabled = true;
+      cacheDisabledReason = err;
+      _cacheInstance = null;
+      throw err;
+    }
   }
   return _cacheInstance;
 }
@@ -622,5 +646,5 @@ export async function getCache(): Promise<ExplorerCache> {
  * Check if cache is available (IndexedDB supported).
  */
 export function isCacheAvailable(): boolean {
-  return typeof indexedDB !== 'undefined';
+  return typeof indexedDB !== 'undefined' && !cacheDisabled;
 }

@@ -5,7 +5,7 @@
  * IndexedDB so the explorer has data immediately on first load.
  */
 
-import { getCache, isCacheAvailable } from './cache';
+import { getCache, isCacheAccessError, isCacheAvailable } from './cache';
 
 type BootstrapPayload = {
   generatedAt?: string;
@@ -126,6 +126,10 @@ export async function seedCacheFromBootstrap(opts?: {
       await cache.setLastSyncTime(Date.now());
     }
   } catch (err) {
-    console.warn('[bootstrap] Failed to seed explorer cache:', err);
+    if (isCacheAccessError(err)) {
+      console.debug('[bootstrap] Explorer cache unavailable:', err);
+    } else {
+      console.warn('[bootstrap] Failed to seed explorer cache:', err);
+    }
   }
 }
