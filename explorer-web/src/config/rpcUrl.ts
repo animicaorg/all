@@ -3,8 +3,9 @@
  * ------------------------------------------
  * Priority:
  *   1) Query param `rpc` (e.g., ?rpc=https://alt.rpc.example/rpc)
- *   2) import.meta.env.VITE_RPC_URL (or VITE_RPC_HTTP)
- *   3) Fallback to same-origin proxy path `/rpc` (dev + prod)
+ *   2) Window-injected globals (if provided by a host)
+ *   3) import.meta.env.VITE_RPC_URL (or VITE_RPC_HTTP)
+ *   4) Default to the public Animica RPC endpoint
  */
 
 type EnvShape = {
@@ -14,6 +15,8 @@ type EnvShape = {
 };
 
 const DEFAULT_RPC_PATH = '/rpc';
+const PRIMARY_RPC_URL = 'https://rpc.Animica.org/rpc';
+const FALLBACK_RPC_URL = 'http://127.0.0.1:8545';
 let cachedRpcUrl: string | null = null;
 let loggedRpcUrl: string | null = null;
 
@@ -56,9 +59,9 @@ export function resolveRpcUrl(envOverride?: Partial<EnvShape>): string {
 
   const resolved =
     queryRpc ||
-    envRpc ||
     injectedRpc ||
-    DEFAULT_RPC_PATH;
+    envRpc ||
+    PRIMARY_RPC_URL;
 
   cachedRpcUrl = resolved;
 
@@ -73,3 +76,5 @@ export function resolveRpcUrl(envOverride?: Partial<EnvShape>): string {
 export function resetResolvedRpcUrl() {
   cachedRpcUrl = null;
 }
+
+export { DEFAULT_RPC_PATH, PRIMARY_RPC_URL, FALLBACK_RPC_URL };
