@@ -337,6 +337,22 @@ export function useBlocksWithCache(opts?: {
     }
   }, [newestHeight, pageSize]);
 
+  useEffect(() => {
+    if (!autoRefresh) return;
+    const intervalMs = 5 * 60 * 1000;
+    const id = window.setInterval(() => {
+      void refreshLatest();
+      const syncManager = runtime.current.syncManager;
+      if (syncManager) {
+        syncManager.triggerSync().catch((err) => {
+          console.warn('[blocksWithCache] Periodic sync error:', err);
+        });
+      }
+    }, intervalMs);
+
+    return () => window.clearInterval(id);
+  }, [autoRefresh, refreshLatest]);
+
   const clearCache = useCallback(async () => {
     const rt = runtime.current;
     if (!rt.cache) {
