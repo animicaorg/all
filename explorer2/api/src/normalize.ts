@@ -23,6 +23,19 @@ function toStringValue(value: unknown): string | undefined {
   return undefined
 }
 
+function toHex(value: Uint8Array): string {
+  return `0x${Buffer.from(value).toString('hex')}`
+}
+
+function normalizeAddress(value: unknown): Address | undefined {
+  if (value === undefined || value === null) return undefined
+  if (typeof value === 'string') return value
+  if (typeof value === 'number') return `0x${value.toString(16)}`
+  if (typeof value === 'bigint') return `0x${value.toString(16)}`
+  if (value instanceof Uint8Array) return toHex(value)
+  return undefined
+}
+
 function getHeader(block: any): any {
   if (!block) return null
   return block.header ?? block
@@ -48,7 +61,7 @@ export function normalizeBlockSummary(block: any): BlockSummary {
     hash,
     time,
     txCount: txs.length,
-    miner: header?.miner as Address | undefined
+    miner: normalizeAddress(header?.miner)
   }
 }
 
@@ -58,8 +71,8 @@ export function normalizeTxSummary(tx: any): TxSummary {
   }
   return {
     hash: tx?.hash ?? tx?.txHash ?? '0x0',
-    from: tx?.from,
-    to: tx?.to,
+    from: normalizeAddress(tx?.from),
+    to: normalizeAddress(tx?.to),
     nonce: toNumber(tx?.nonce) ?? tx?.nonce,
     value: toStringValue(tx?.value)
   }
@@ -90,8 +103,8 @@ export function normalizeTxDetail(tx: any, receipt: any | null): TxDetail {
     status,
     blockHash: receipt?.blockHash ?? tx?.blockHash,
     blockHeight,
-    from: tx?.from,
-    to: tx?.to,
+    from: normalizeAddress(tx?.from),
+    to: normalizeAddress(tx?.to),
     value: toStringValue(tx?.value),
     gasUsed: toStringValue(receipt?.gasUsed),
     feePaid: toStringValue(receipt?.feePaid ?? receipt?.fee),
