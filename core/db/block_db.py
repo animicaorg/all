@@ -202,6 +202,16 @@ class BlockDB:
             batch.put(META_HEAD_HEIGHT, _u64be(height))
             batch.put(META_HEAD_HASH, block_hash)
 
+    def set_canonical_head(
+        self, height: int, block_hash: bytes, batch: Optional[Batch] = None
+    ) -> None:
+        """
+        Convenience helper that updates both the canonical height index and
+        the head pointers.
+        """
+        self.set_canonical(height, block_hash, batch=batch)
+        self.set_head(height, block_hash, batch=batch)
+
     def get_head(self) -> Optional[Tuple[int, bytes]]:
         h_raw = self.kv.get(META_HEAD_HEIGHT)
         if h_raw is None:
@@ -211,6 +221,35 @@ class BlockDB:
         if hh is None:
             return None
         return (n, hh)
+
+    def get_canonical_head(self) -> Optional[Tuple[int, bytes]]:
+        """
+        Return the canonical head (height, hash) if available.
+
+        Prefers the explicit head pointers; falls back to the canonical height
+        index if needed.
+        """
+        head = self.get_head()
+        if head is not None:
+            return head
+        iterator = getattr(self.kv, "iter_prefix", None)
+        if not callable(iterator):
+            return None
+        try:
+            max_height = -1
+            max_hash: Optional[bytes] = None
+            for key, value in iterator(PFX_HIX):
+                if len(key) < len(PFX_HIX) + 8:
+                    continue
+                height = _from_u64be(key[-8:])
+                if height >= max_height:
+                    max_height = height
+                    max_hash = bytes(value)
+            if max_hash is None:
+                return None
+            return (max_height, max_hash)
+        except Exception:
+            return None
 
     def set_genesis_hash(
         self, block_hash: bytes, batch: Optional[Batch] = None
