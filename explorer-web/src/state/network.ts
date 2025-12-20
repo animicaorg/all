@@ -325,6 +325,10 @@ async function boot(params: {
       return;
     }
 
+    if (actualChainId) {
+      bindings.setNetwork?.({ chainId: actualChainId });
+    }
+
     try {
       console.log('[network] Fetching initial head...');
       const head = await client.getHead();
