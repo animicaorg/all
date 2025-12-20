@@ -60,6 +60,7 @@ const META_STORE = 'meta';
 // Meta keys
 const META_LAST_SYNC_HEIGHT = 'lastSyncHeight';
 const META_LAST_SYNC_TIME = 'lastSyncTime';
+const META_GENESIS_SYNC_HEIGHT = 'genesisSyncHeight';
 
 // Cache limits (to avoid filling disk)
 const MAX_BLOCKS = 100_000; // ~100k blocks at ~2KB each = ~200MB
@@ -426,6 +427,21 @@ export class ExplorerCache {
    */
   async setLastSyncTime(time: number): Promise<void> {
     await this.setMeta(META_LAST_SYNC_TIME, time);
+  }
+
+  /**
+   * Get last synced block height from genesis bootstrap (ascending).
+   */
+  async getGenesisSyncHeight(): Promise<number | null> {
+    const val = await this.getMeta(META_GENESIS_SYNC_HEIGHT);
+    return typeof val === 'number' ? val : null;
+  }
+
+  /**
+   * Set last synced block height from genesis bootstrap (ascending).
+   */
+  async setGenesisSyncHeight(height: number): Promise<void> {
+    await this.setMeta(META_GENESIS_SYNC_HEIGHT, height);
   }
 
   /**
