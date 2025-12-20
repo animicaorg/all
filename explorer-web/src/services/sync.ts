@@ -27,12 +27,18 @@ export interface SyncOptions {
   delayMs?: number; // delay between batches (default: 500)
   maxRetries?: number; // retries per batch (default: 3)
   catchupThreshold?: number; // blocks behind before entering catchup mode (default: 100)
+  bootstrapFromGenesis?: boolean; // sync from genesis upward (default: true)
+  bootstrapBatchSize?: number; // blocks per bootstrap batch (default: 20)
+  bootstrapDelayMs?: number; // delay between bootstrap batches (default: 200)
 }
 
 const DEFAULT_BATCH_SIZE = 20;
 const DEFAULT_DELAY_MS = 500;
 const DEFAULT_MAX_RETRIES = 3;
 const DEFAULT_CATCHUP_THRESHOLD = 100;
+const DEFAULT_BOOTSTRAP_ENABLED = true;
+const DEFAULT_BOOTSTRAP_BATCH_SIZE = 20;
+const DEFAULT_BOOTSTRAP_DELAY_MS = 200;
 
 /**
  * Background sync manager.
@@ -59,6 +65,9 @@ export class SyncManager {
     delayMs: DEFAULT_DELAY_MS,
     maxRetries: DEFAULT_MAX_RETRIES,
     catchupThreshold: DEFAULT_CATCHUP_THRESHOLD,
+    bootstrapFromGenesis: DEFAULT_BOOTSTRAP_ENABLED,
+    bootstrapBatchSize: DEFAULT_BOOTSTRAP_BATCH_SIZE,
+    bootstrapDelayMs: DEFAULT_BOOTSTRAP_DELAY_MS,
   };
 
   private listeners: Array<(status: SyncStatus) => void> = [];
@@ -181,7 +190,9 @@ export class SyncManager {
     }
 
     console.log('[sync] Manual sync triggered');
-    await this.syncLatest();
+    const currentHeight = await this.getHeadHeight();
+    if (currentHeight == null) return;
+    await this.syncLatest(currentHeight);
   }
 
   // ----------------------------- Internal ------------------------------------
@@ -197,7 +208,17 @@ export class SyncManager {
       }
 
       try {
-        await this.syncLatest();
+        const currentHeight = await this.getHeadHeight();
+        if (currentHeight == null) {
+          await this.sleep(this.options.delayMs);
+          continue;
+        }
+
+        if (this.options.bootstrapFromGenesis) {
+          await this.syncGenesis(currentHeight);
+        }
+
+        await this.syncLatest(currentHeight);
 
         // Check if we need catchup
         const behind = this.status.blocksToSync;
@@ -223,19 +244,12 @@ export class SyncManager {
   /**
    * Sync the latest blocks (head-first strategy).
    */
-  private async syncLatest(): Promise<void> {
+  private async syncLatest(currentHeightInput?: number): Promise<void> {
     if (!this.rpcClient || !this.cache) return;
 
     // Get current head height from RPC
-    let currentHeight: number;
-    try {
-      const head = await this.rpcClient.getBlock(0); // Assume 0 or 'latest' gives head
-      currentHeight = head?.height ?? 0;
-    } catch (err) {
-      // If RPC fails, we can't sync
-      console.warn('[sync] Failed to fetch head:', err);
-      return;
-    }
+    const currentHeight = currentHeightInput ?? (await this.getHeadHeight());
+    if (currentHeight == null) return;
 
     // Get last synced height from cache
     const lastSyncHeight = (await this.cache.getLastSyncHeight()) ?? 0;
@@ -370,6 +384,57 @@ export class SyncManager {
     this.updateStatus({ isSynced: synced >= totalToSync });
   }
 
+  /**
+   * Bootstrap from genesis (ascending).
+   */
+  private async syncGenesis(currentHeight: number): Promise<void> {
+    if (!this.rpcClient || !this.cache) return;
+    if (currentHeight <= 0) return;
+
+    const batchSize = Math.max(1, this.options.bootstrapBatchSize);
+    const delayMs = Math.max(0, this.options.bootstrapDelayMs);
+
+    while (this.running && !this.paused) {
+      const genesisSyncHeight = (await this.cache.getGenesisSyncHeight()) ?? 0;
+      const startHeight = Math.max(1, genesisSyncHeight + 1);
+      if (startHeight > currentHeight) {
+        return;
+      }
+
+      const endHeight = Math.min(currentHeight, startHeight + batchSize - 1);
+      const heights = Array.from({ length: endHeight - startHeight + 1 }, (_, i) => startHeight + i);
+
+      const blocks = await Promise.all(
+        heights.map(async (height) => {
+          try {
+            const block = await this.rpcClient!.getBlock(height);
+            if (!block) return null;
+            return { height, hash: block.hash ?? '', data: block };
+          } catch (err) {
+            console.warn(`[sync] Genesis bootstrap failed to fetch block ${height}:`, err);
+            return null;
+          }
+        })
+      );
+
+      const filtered = blocks.filter((b): b is { height: number; hash: string; data: any } => Boolean(b));
+      if (filtered.length > 0) {
+        await this.cache.putBlocks(filtered);
+        const newGenesisHeight = Math.max(...filtered.map((b) => b.height));
+        await this.cache.setGenesisSyncHeight(newGenesisHeight);
+        await this.cache.setLastSyncTime(Date.now());
+        console.debug(`[sync] Genesis bootstrap cached ${filtered.length} blocks up to ${newGenesisHeight}`);
+      }
+
+      if (filtered.length < heights.length) {
+        // If we failed to fetch some blocks, pause briefly to avoid tight loops.
+        await this.sleep(Math.max(delayMs, 200));
+      } else if (delayMs > 0) {
+        await this.sleep(delayMs);
+      }
+    }
+  }
+
   private updateStatus(patch: Partial<SyncStatus>): void {
     this.status = { ...this.status, ...patch };
     // Notify listeners
@@ -384,6 +449,18 @@ export class SyncManager {
 
   private sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  private async getHeadHeight(): Promise<number | null> {
+    if (!this.rpcClient) return null;
+    try {
+      const head = await this.rpcClient.getBlock(0); // Assume 0 or 'latest' gives head
+      const height = head?.height ?? 0;
+      return Number.isFinite(height) ? height : null;
+    } catch (err) {
+      console.warn('[sync] Failed to fetch head:', err);
+      return null;
+    }
   }
 }
 
