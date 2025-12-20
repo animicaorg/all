@@ -7,7 +7,7 @@
  *   4. Local defaults (127.0.0.1)
  */
 
-import { resolveRpcUrl } from '../config/rpcUrl';
+import { PRIMARY_RPC_URL, resolveRpcUrl } from '../config/rpcUrl';
 
 export type EnvLike = {
   VITE_RPC_URL?: string;
@@ -17,8 +17,8 @@ export type EnvLike = {
   VITE_CHAIN_ID?: string | number;
 };
 
-const DEFAULT_RPC = "/rpc";
-const DEFAULT_WS = "ws://127.0.0.1:8546";
+const DEFAULT_RPC = PRIMARY_RPC_URL;
+const DEFAULT_WS = "wss://rpc.animica.org/rpc";
 const LEGACY_MAINNET_CHAIN_IDS = new Set(["659658", "659914", "0xa11ca"]);
 const CANONICAL_MAINNET_CHAIN_ID = "1";
 
@@ -69,26 +69,10 @@ export function inferRpcUrl(env?: Partial<EnvLike>): string {
   const e = resolveEnv(env);
   const envRpc = e?.VITE_RPC_URL ?? e?.VITE_RPC_HTTP;
 
-  if (typeof window !== "undefined") {
-    return resolveRpcUrl(e);
-  }
-
   if (envRpc) return envRpc;
 
   if (typeof window !== "undefined") {
-    const anyWin = window as any;
-    const injected =
-      anyWin.__ANIMICA_RPC_URL__ ??
-      anyWin.__ANIMICA_RPC_HTTP__ ??
-      anyWin.__ANIMICA_HTTP_URL__;
-    if (typeof injected === "string" && injected.length > 0) return injected;
-
-    try {
-      const origin = new URL(window.location.origin).toString();
-      return origin.endsWith("/") ? `${origin}rpc` : `${origin}/rpc`;
-    } catch {
-      /* noop */
-    }
+    return resolveRpcUrl(e);
   }
 
   return DEFAULT_RPC;

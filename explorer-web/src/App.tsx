@@ -107,7 +107,7 @@ function TopBar() {
 
   const statusClass = status === 'connected' ? 'status-connected' : status === 'connecting' ? 'status-connecting' : 'status-disconnected';
   const statusLabel = status === 'connected' ? 'Connected' : status === 'connecting' ? 'Connecting...' : 'Disconnected';
-  const chainId = expectedChainId || (import.meta.env as any).VITE_CHAIN_ID || "Unknown";
+  const chainId = expectedChainId || "Unknown";
 
   return (
     <header className="topbar">
