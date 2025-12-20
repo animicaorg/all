@@ -261,8 +261,22 @@ export class ExplorerCache {
       const tx = this.db!.transaction(BLOCKS_STORE, 'readwrite');
       const store = tx.objectStore(BLOCKS_STORE);
 
-      let completed = 0;
-      let hadError = false;
+      let remaining = blocks.length;
+      let settled = false;
+
+      const finish = (err?: DOMException | null) => {
+        if (settled) return;
+        settled = true;
+        if (err) {
+          reject(err);
+        } else {
+          resolve();
+        }
+      };
+
+      tx.onabort = () => finish(tx.error);
+      tx.onerror = () => finish(tx.error);
+      tx.oncomplete = () => finish();
 
       for (const b of blocks) {
         const entry: BlockCacheEntry = {
@@ -274,12 +288,18 @@ export class ExplorerCache {
 
         const req = store.put(entry);
         req.onsuccess = () => {
-          completed++;
-          if (completed === blocks.length && !hadError) resolve();
+          remaining -= 1;
+          if (remaining === 0) finish();
         };
-        req.onerror = () => {
-          hadError = true;
-          reject(req.error);
+        req.onerror = (event) => {
+          const err = req.error;
+          if (err && (err.name === 'ConstraintError' || err.name === 'DataError')) {
+            event.preventDefault();
+            remaining -= 1;
+            if (remaining === 0) finish();
+            return;
+          }
+          finish(err);
         };
       }
     });
