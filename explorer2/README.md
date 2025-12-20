@@ -1,12 +1,12 @@
 # Animica Explorer 2 (MVP)
 
-Explorer2 is a new, standalone Animica blockchain explorer with a dedicated API and web UI. It talks to Animica JSON-RPC and can be extended with an indexer in later phases.
+Explorer2 is a new, standalone Animica blockchain explorer with a dedicated API and web UI. It reads chain data from `~/.animica` by default and only falls back to JSON-RPC for data that is not available locally (mempool/peer stats, pending balances).
 
 ## Prerequisites
 
 - Node.js 18.18+
 - pnpm 9+
-- Running Animica node exposing JSON-RPC (default: `http://127.0.0.1:8545/rpc`)
+- Running Animica node that is writing to `~/.animica` (or the data root you configure)
 
 ## Setup
 
@@ -48,6 +48,9 @@ docker compose -f explorer2/docker/docker-compose.explorer2.yml up --build
 | --- | --- | --- |
 | `EXPLORER2_PORT` | API port | `8081` |
 | `EXPLORER2_RPC_URL` | Animica JSON-RPC endpoint | `http://127.0.0.1:8545/rpc` |
+| `EXPLORER2_DATA_ROOT` | Base directory for local chain data | `~/.animica` |
+| `EXPLORER2_CHAIN_ID` | Chain ID for local data lookup | `1` |
+| `EXPLORER2_DB_PATH` | Full path to the chain DB (overrides data root + chain id) | unset |
 | `EXPLORER2_CORS_ORIGIN` | CORS allowed origins | `*` |
 | `EXPLORER2_LOG_LEVEL` | API log level | `info` |
 | `EXPLORER2_CACHE_HEAD_TTL_MS` | Cache TTL for head endpoint | `5000` |

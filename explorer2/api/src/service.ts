@@ -3,7 +3,17 @@ import { RequestCoalescer, TtlCache } from './cache'
 import { HttpError } from './errors'
 import { normalizeBlockDetail, normalizeBlockSummary, normalizeHead, normalizeTxDetail, normalizeTxSummary } from './normalize'
 import { clampLimit, nextCursorForHeight, parseCursor } from './pagination'
-import { RpcClient } from './rpcClient'
+export interface ChainClient {
+  getHead: () => Promise<unknown>
+  getBlockByNumber: (height: number | string, includeTxs?: boolean, includeReceipts?: boolean) => Promise<unknown>
+  getBlockByHash: (hash: string, includeTxs?: boolean, includeReceipts?: boolean) => Promise<unknown>
+  getTransactionByHash: (hash: string) => Promise<unknown>
+  getTransactionReceipt: (hash: string) => Promise<unknown>
+  getMempoolPending: () => Promise<string[]>
+  getMempoolStats: () => Promise<{ count: number; totalBytes: number; oldestAgeSec: number | null }>
+  getPeers: () => Promise<unknown[]>
+  getBalance: (address: string, tag?: 'latest' | 'pending') => Promise<string>
+}
 
 const RECENT_BLOCK_WINDOW = 20
 const ADDRESS_SCAN_WINDOW = 50
@@ -13,7 +23,7 @@ export class ExplorerService {
   private coalescer = new RequestCoalescer()
 
   constructor(
-    private rpc: RpcClient,
+    private rpc: ChainClient,
     private cacheTtls: { head: number; blocks: number; tx: number }
   ) {}
 
