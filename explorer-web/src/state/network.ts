@@ -24,7 +24,7 @@ import type { ExplorerState } from './store';
 import { shallow } from './store';
 import type { ExplorerRpcClient } from '../services/rpc';
 import { getRpcClient, releaseRpcClient } from '../services/rpc';
-import { DEFAULT_RPC } from '../services/env';
+import { DEFAULT_RPC_PATH, FALLBACK_RPC_URL, PRIMARY_RPC_URL } from '../config/rpcUrl';
 
 // Thin client interface expected from ../services/rpc
 // The explorer-web/services/rpc.ts should provide a compatible client.
@@ -102,6 +102,18 @@ function isCorsLikeError(message: string) {
   return lower.includes('cors') || lower.includes('cross-origin');
 }
 
+function isNetworkLikeError(message: string) {
+  const lower = message.toLowerCase();
+  return (
+    lower.includes('network') ||
+    lower.includes('fetch') ||
+    lower.includes('econnrefused') ||
+    lower.includes('dns') ||
+    lower.includes('timeout') ||
+    lower.includes('timed out')
+  );
+}
+
 function inferSameOriginRpcUrl(currentRpc: string): string | null {
   if (typeof window === 'undefined') return null;
 
@@ -109,7 +121,7 @@ function inferSameOriginRpcUrl(currentRpc: string): string | null {
     const resolved = new URL(currentRpc, window.location.href);
     if (resolved.origin === window.location.origin) return null; // already same-origin
 
-    const safePath = DEFAULT_RPC.startsWith('/') ? DEFAULT_RPC : `/${DEFAULT_RPC}`;
+    const safePath = DEFAULT_RPC_PATH.startsWith('/') ? DEFAULT_RPC_PATH : `/${DEFAULT_RPC_PATH}`;
     return `${window.location.origin}${safePath}`;
   } catch {
     return null;
@@ -148,6 +160,53 @@ function retryViaSameOrigin(params: {
   });
   runtime.bootPromise = nextPromise;
   return nextPromise;
+}
+
+function retryViaLocalFallback(params: {
+  rpcUrl: string;
+  expectedChainId?: string;
+  pollIntervalMs: number;
+  pingIntervalMs: number;
+  enforceChainId: boolean;
+  signal: AbortSignal;
+  triedLocalFallback?: boolean;
+}): Promise<void> | undefined {
+  const { rpcUrl, expectedChainId, triedLocalFallback } = params;
+  if (triedLocalFallback) return;
+  if (rpcUrl !== PRIMARY_RPC_URL) return;
+
+  console.warn(`[network] Primary RPC unreachable (${rpcUrl}); falling back to ${FALLBACK_RPC_URL}`);
+
+  releaseRpcClient(rpcUrl);
+  runtime.client = null;
+
+  runtime.bootKey = `${FALLBACK_RPC_URL}|${expectedChainId || ''}`;
+  snapshot = { ...snapshot, rpcUrl: FALLBACK_RPC_URL, status: 'connecting', error: null };
+  emit();
+  bindings.setNetwork?.({ rpcUrl: FALLBACK_RPC_URL, status: 'connecting', error: null, connected: false });
+
+  const nextPromise = boot({
+    ...params,
+    rpcUrl: FALLBACK_RPC_URL,
+    triedLocalFallback: true,
+  });
+  runtime.bootPromise = nextPromise;
+  return nextPromise;
+}
+
+const toastGate = {
+  message: '',
+  ts: 0,
+};
+
+function addNetworkToast(message: string, troubleshooting: string) {
+  const now = Date.now();
+  if (toastGate.message === message && now - toastGate.ts < 12000) {
+    return;
+  }
+  toastGate.message = message;
+  toastGate.ts = now;
+  bindings.addToast?.({ kind: 'error', text: message + troubleshooting, ttl: 12000 });
 }
 
 // ------------------------- Public setters -----------------------------------
@@ -262,8 +321,18 @@ async function boot(params: {
   enforceChainId: boolean;
   signal: AbortSignal;
   triedCorsFallback?: boolean;
+  triedLocalFallback?: boolean;
 }) {
-  const { rpcUrl, expectedChainId, pollIntervalMs, pingIntervalMs, enforceChainId, signal, triedCorsFallback } = params;
+  const {
+    rpcUrl,
+    expectedChainId,
+    pollIntervalMs,
+    pingIntervalMs,
+    enforceChainId,
+    signal,
+    triedCorsFallback,
+    triedLocalFallback,
+  } = params;
   if (signal.aborted) return;
 
   setStatus('connecting', null);
@@ -297,16 +366,27 @@ async function boot(params: {
         });
         if (retried) return retried;
       }
+      if (isNetworkLikeError(errorMsg)) {
+        const retried = retryViaLocalFallback({
+          rpcUrl,
+          expectedChainId,
+          pollIntervalMs,
+          pingIntervalMs,
+          enforceChainId,
+          signal,
+          triedLocalFallback,
+        });
+        if (retried) return retried;
+      }
       if (enforceChainId && expectedChainId) {
         const detailedMsg = `Failed to fetch chain ID from ${rpcUrl}: ${errorMsg}`;
 
         setStatus('error', detailedMsg);
         bindings.setNetwork?.({ connected: false });
-        bindings.addToast?.({
-          kind: 'error',
-          text: `${detailedMsg}\n\n💡 Check:\n• RPC server is reachable\n• Use the built-in /rpc proxy or enable CORS\n• Verify the endpoint path`,
-          ttl: 12000,
-        });
+        addNetworkToast(
+          detailedMsg,
+          '\n\n💡 Check:\n• RPC server is reachable\n• Use the built-in /rpc proxy or enable CORS\n• Verify the endpoint path'
+        );
         return;
       }
       actualChainId = expectedChainId || '';
@@ -443,6 +523,18 @@ async function boot(params: {
       });
       if (retried) return retried;
     }
+    if (isNetworkLikeError(errorMsg)) {
+      const retried = retryViaLocalFallback({
+        rpcUrl,
+        expectedChainId,
+        pollIntervalMs,
+        pingIntervalMs,
+        enforceChainId,
+        signal,
+        triedLocalFallback,
+      });
+      if (retried) return retried;
+    }
 
     let userMessage = 'Failed to connect to RPC server';
     let troubleshooting = '';
@@ -468,7 +560,7 @@ async function boot(params: {
 
     setStatus('error', userMessage);
     bindings.setNetwork?.({ connected: false });
-    bindings.addToast?.({ kind: 'error', text: userMessage + troubleshooting, ttl: 12000 });
+    addNetworkToast(userMessage, troubleshooting);
   }
 }
 
