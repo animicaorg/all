@@ -1,0 +1,18 @@
+FROM node:18-alpine AS builder
+
+WORKDIR /app
+
+RUN corepack enable && corepack prepare pnpm@9.0.0 --activate
+
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
+COPY explorer2 ./explorer2
+
+RUN pnpm install --filter @animica/explorer2-web... --filter @animica/explorer2-shared... --frozen-lockfile
+RUN pnpm -C explorer2/shared build && pnpm -C explorer2/web build
+
+FROM nginx:alpine
+
+COPY explorer2/docker/nginx.conf /etc/nginx/conf.d/default.conf
+COPY --from=builder /app/explorer2/web/dist /usr/share/nginx/html
+
+EXPOSE 80
