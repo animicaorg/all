@@ -246,6 +246,30 @@ def chain_get_head() -> dict:
 
 
 @method(
+    "chain.getCheckpoints",
+    desc="Return built-in checkpoints for the requested chain.",
+    aliases=("chain_getCheckpoints",),
+)
+def chain_get_checkpoints(chain_id: int | None = None) -> dict:
+    """
+    Returns a list of built-in checkpoints suitable for bootstrap syncing.
+    """
+    requested_chain_id = int(chain_id) if chain_id is not None else int(deps.get_chain_id())
+
+    from p2p.checkpoints import builtin
+
+    checkpoints = builtin.get_builtin_checkpoints(requested_chain_id)
+    return {
+        "chainId": requested_chain_id,
+        "checkpoints": [
+            {"height": checkpoint.height, "hash": checkpoint.hash}
+            for checkpoint in checkpoints
+        ],
+        "source": "builtin",
+    }
+
+
+@method(
     "chain.getBlockByHeight",
     desc="Get a block by height (alias for getBlockByNumber). Params: (height, includeTxObjects: bool=false, includeReceipts: bool=false)",
     aliases=("block_getBlockByHeight",),

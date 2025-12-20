@@ -231,6 +231,7 @@ DEFAULT_PER_METHOD_RPS: Dict[str, float] = {
     "chain.getParams": 5.0,
     "chain.getChainId": 10.0,
     "chain.getHead": 40.0,
+    "chain.getCheckpoints": 10.0,
     "chain.getBlockByNumber": 15.0,
     "chain.getBlockByHash": 15.0,
     # Tx flow
