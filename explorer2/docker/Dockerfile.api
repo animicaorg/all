@@ -1,0 +1,16 @@
+FROM node:18-alpine
+
+WORKDIR /app
+
+RUN corepack enable && corepack prepare pnpm@9.0.0 --activate
+
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
+COPY explorer2 ./explorer2
+
+RUN pnpm install --filter @animica/explorer2-api... --filter @animica/explorer2-shared... --frozen-lockfile
+RUN pnpm -C explorer2/shared build && pnpm -C explorer2/api build
+
+ENV NODE_ENV=production
+EXPOSE 3001
+
+CMD ["node", "explorer2/api/dist/index.js"]
