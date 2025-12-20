@@ -7,3 +7,5 @@ packages:
   - wallet-extension
   - wallet
   - apps/miner-dashboard
+  - explorer2
+  - explorer2/*
