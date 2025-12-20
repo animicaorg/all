@@ -52,6 +52,7 @@ export async function seedCacheFromBootstrap(opts?: {
   if (!isCacheAvailable() || typeof window === 'undefined') return;
 
   const url = opts?.url ?? '/bootstrap/chain.json';
+  const chunkSize = 250;
 
   try {
     const cache = await getCache();
@@ -72,19 +73,33 @@ export async function seedCacheFromBootstrap(opts?: {
     const txs = Array.isArray(payload.txs) ? payload.txs : extractTxsFromBlocks(blocks);
 
     if (blocks.length > 0) {
-      await cache.putBlocks(
-        blocks
-          .map((block) => {
-            const height = normalizeBlockHeight(block);
-            if (height === null) return null;
-            return {
-              height,
-              hash: normalizeBlockHash(block),
-              data: block,
-            };
-          })
-          .filter(Boolean) as Array<{ height: number; hash: string; data: any }>
-      );
+      const entries = blocks
+        .map((block) => {
+          const height = normalizeBlockHeight(block);
+          if (height === null) return null;
+          return {
+            height,
+            hash: normalizeBlockHash(block),
+            data: block,
+          };
+        })
+        .filter(Boolean) as Array<{ height: number; hash: string; data: any }>;
+
+      const seenHeights = new Set<number>();
+      const deduped = entries.filter((entry) => {
+        if (seenHeights.has(entry.height)) return false;
+        seenHeights.add(entry.height);
+        return true;
+      });
+
+      for (let i = 0; i < deduped.length; i += chunkSize) {
+        const chunk = deduped.slice(i, i + chunkSize);
+        try {
+          await cache.putBlocks(chunk);
+        } catch (err) {
+          console.debug('[bootstrap] Skipped bootstrap block chunk due to cache error:', err);
+        }
+      }
     }
 
     if (txs.length > 0) {
@@ -92,7 +107,11 @@ export async function seedCacheFromBootstrap(opts?: {
         const hash = normalizeTxHash(tx);
         if (!hash) continue;
         const blockHeight = tx.blockNumber ?? tx.height ?? tx.blockHeight;
-        await cache.putTx(hash, tx, typeof blockHeight === 'number' ? blockHeight : undefined);
+        try {
+          await cache.putTx(hash, tx, typeof blockHeight === 'number' ? blockHeight : undefined);
+        } catch (err) {
+          console.debug('[bootstrap] Skipped bootstrap tx due to cache error:', err);
+        }
       }
     }
 
