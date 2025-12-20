@@ -1,11 +1,27 @@
 import { createHash } from 'node:crypto'
+import { createRequire } from 'node:module'
 import { homedir } from 'node:os'
 import path from 'node:path'
-import Database from 'better-sqlite3'
+import type Database from 'better-sqlite3'
 import { bech32m } from 'bech32'
 import * as cbor from 'cbor'
 
 type BalanceTag = 'latest' | 'pending'
+
+const require = createRequire(import.meta.url)
+
+function loadDatabaseModule(): typeof Database {
+  try {
+    const module = require('better-sqlite3') as { default?: typeof Database }
+    return module.default ?? (module as typeof Database)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    const hint = 'better-sqlite3 is required to use the local chain database. Install it with pnpm -C explorer2/api add better-sqlite3.'
+    const wrappedError = new Error(`${hint}\n${message}`)
+    ;(wrappedError as Error & { cause?: unknown }).cause = error
+    throw wrappedError
+  }
+}
 
 const PFX_HDR = Buffer.from([0x10])
 const PFX_BLK = Buffer.from([0x11])
@@ -149,7 +165,8 @@ export class LocalChainClient {
   private db: Database.Database
 
   constructor(dbPath: string) {
-    this.db = new Database(dbPath, { readonly: true, fileMustExist: true })
+    const DatabaseModule = loadDatabaseModule()
+    this.db = new DatabaseModule(dbPath, { readonly: true, fileMustExist: true })
   }
 
   private getKv(key: Buffer): Buffer | null {
@@ -288,7 +305,7 @@ export class LocalChainClient {
 
 export class HybridChainClient {
   constructor(
-    private local: LocalChainClient,
+    private local: LocalChainClient | null,
     private rpc: {
       getHead: () => Promise<unknown>
       getBlockByNumber: (height: number | string, includeTxs?: boolean, includeReceipts?: boolean) => Promise<unknown>
@@ -303,48 +320,68 @@ export class HybridChainClient {
   ) {}
 
   async getHead(): Promise<unknown> {
-    try {
-      return await this.local.getHead()
-    } catch (error) {
-      if (this.rpc) return this.rpc.getHead()
-      throw error
+    if (this.local) {
+      try {
+        return await this.local.getHead()
+      } catch (error) {
+        if (this.rpc) return this.rpc.getHead()
+        throw error
+      }
     }
+    if (this.rpc) return this.rpc.getHead()
+    throw new Error('RPC unavailable')
   }
 
   async getBlockByNumber(height: number | string, includeTxs = false, includeReceipts = false): Promise<unknown> {
-    try {
-      return await this.local.getBlockByNumber(height, includeTxs, includeReceipts)
-    } catch (error) {
-      if (this.rpc) return this.rpc.getBlockByNumber(height, includeTxs, includeReceipts)
-      throw error
+    if (this.local) {
+      try {
+        return await this.local.getBlockByNumber(height, includeTxs, includeReceipts)
+      } catch (error) {
+        if (this.rpc) return this.rpc.getBlockByNumber(height, includeTxs, includeReceipts)
+        throw error
+      }
     }
+    if (this.rpc) return this.rpc.getBlockByNumber(height, includeTxs, includeReceipts)
+    throw new Error('RPC unavailable')
   }
 
   async getBlockByHash(hash: string, includeTxs = false, includeReceipts = false): Promise<unknown> {
-    try {
-      return await this.local.getBlockByHash(hash, includeTxs, includeReceipts)
-    } catch (error) {
-      if (this.rpc) return this.rpc.getBlockByHash(hash, includeTxs, includeReceipts)
-      throw error
+    if (this.local) {
+      try {
+        return await this.local.getBlockByHash(hash, includeTxs, includeReceipts)
+      } catch (error) {
+        if (this.rpc) return this.rpc.getBlockByHash(hash, includeTxs, includeReceipts)
+        throw error
+      }
     }
+    if (this.rpc) return this.rpc.getBlockByHash(hash, includeTxs, includeReceipts)
+    throw new Error('RPC unavailable')
   }
 
   async getTransactionByHash(hash: string): Promise<unknown> {
-    try {
-      return await this.local.getTransactionByHash(hash)
-    } catch (error) {
-      if (this.rpc) return this.rpc.getTransactionByHash(hash)
-      throw error
+    if (this.local) {
+      try {
+        return await this.local.getTransactionByHash(hash)
+      } catch (error) {
+        if (this.rpc) return this.rpc.getTransactionByHash(hash)
+        throw error
+      }
     }
+    if (this.rpc) return this.rpc.getTransactionByHash(hash)
+    throw new Error('RPC unavailable')
   }
 
   async getTransactionReceipt(hash: string): Promise<unknown> {
-    try {
-      return await this.local.getTransactionReceipt(hash)
-    } catch (error) {
-      if (this.rpc) return this.rpc.getTransactionReceipt(hash)
-      throw error
+    if (this.local) {
+      try {
+        return await this.local.getTransactionReceipt(hash)
+      } catch (error) {
+        if (this.rpc) return this.rpc.getTransactionReceipt(hash)
+        throw error
+      }
     }
+    if (this.rpc) return this.rpc.getTransactionReceipt(hash)
+    throw new Error('RPC unavailable')
   }
 
   async getBalance(address: string, tag: BalanceTag = 'latest'): Promise<string> {
@@ -352,10 +389,13 @@ export class HybridChainClient {
       try {
         return await this.rpc.getBalance(address, tag)
       } catch (error) {
-        return this.local.getBalance(address, tag)
+        if (this.local) return this.local.getBalance(address, tag)
+        throw error
       }
     }
-    return this.local.getBalance(address, tag)
+    if (this.local) return this.local.getBalance(address, tag)
+    if (this.rpc) return this.rpc.getBalance(address, tag)
+    throw new Error('RPC unavailable')
   }
 
   async getMempoolPending(): Promise<string[]> {
