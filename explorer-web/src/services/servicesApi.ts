@@ -108,6 +108,18 @@ export interface ServicesApiOptions {
   timeoutMs?: number;
   /** Custom fetch, otherwise uses global fetch */
   fetch?: typeof fetch;
+
+  /** Cache TTL for GET requests (ms). Set to 0 to disable. */
+  cacheTtlMs?: number;
+
+  /** Allow using stale cache on failures for this long (ms). */
+  cacheStaleMs?: number;
+
+  /** Max cached entries (memory + storage). */
+  cacheMaxEntries?: number;
+
+  /** Persist cache in localStorage (default true when available). */
+  cachePersist?: boolean;
 }
 
 /* --------------------------------- Utilities --------------------------------- */
@@ -137,6 +149,37 @@ function toQuery(params?: Record<string, string | number | boolean | undefined |
   );
 }
 
+type CacheEntry<T> = {
+  value: T;
+  expiresAt: number;
+  storedAt: number;
+};
+
+const CACHE_STORAGE_PREFIX = 'animica-services-api-cache:v1';
+const CACHE_INDEX_KEY = `${CACHE_STORAGE_PREFIX}:index`;
+
+function storageKeyFor(cacheKey: string): string {
+  return `${CACHE_STORAGE_PREFIX}:${cacheKey}`;
+}
+
+function safeParseJson<T>(raw: string | null): T | null {
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    return null;
+  }
+}
+
+function safeStorage(kind: 'local' | 'session'): Storage | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    return kind === 'session' ? window.sessionStorage : window.localStorage;
+  } catch {
+    return null;
+  }
+}
+
 /* ----------------------------------- Client ---------------------------------- */
 
 export class ServicesApi {
@@ -151,6 +194,14 @@ export class ServicesApi {
   private backoffMaxMs: number;
   private timeoutMs: number;
   private _fetch: typeof fetch;
+  private cacheTtlMs: number;
+  private cacheStaleMs: number;
+  private cacheMaxEntries: number;
+  private cachePersist: boolean;
+  private cacheStorage: Storage | null;
+  private cache = new Map<string, CacheEntry<JsonValue>>();
+  private cacheOrder: string[] = [];
+  private inflight = new Map<string, Promise<JsonValue>>();
 
   constructor(opts: ServicesApiOptions) {
     this.base = trimRightSlash(opts.baseUrl);
@@ -168,6 +219,11 @@ export class ServicesApi {
     this.timeoutMs = opts.timeoutMs ?? 12_000;
     this._fetch = opts.fetch ?? (globalThis.fetch as any);
     if (!this._fetch) throw new Error('fetch is not available in this environment');
+    this.cacheTtlMs = opts.cacheTtlMs ?? 15_000;
+    this.cacheStaleMs = opts.cacheStaleMs ?? 120_000;
+    this.cacheMaxEntries = opts.cacheMaxEntries ?? 200;
+    this.cachePersist = opts.cachePersist ?? true;
+    this.cacheStorage = this.cachePersist ? safeStorage('local') : null;
   }
 
   /* ------------------------------ Core request ------------------------------ */
@@ -218,6 +274,18 @@ export class ServicesApi {
       ...(extraHeaders ?? {}),
     };
 
+    const cacheKey = url;
+    if (method === 'GET' && this.cacheTtlMs > 0) {
+      const cached = this.readCache<T>(cacheKey, false);
+      if (cached) {
+        return cached.value;
+      }
+      const inflight = this.inflight.get(cacheKey);
+      if (inflight) {
+        return inflight as Promise<T>;
+      }
+    }
+
     let body: BodyInit | undefined;
     if (method === 'POST') {
       if (formData) {
@@ -235,50 +303,150 @@ export class ServicesApi {
 
     let lastErr: any;
 
-    while (attempt <= maxAttempts) {
-      const controller = new AbortController();
-      const t = setTimeout(() => controller.abort(), this.timeoutMs);
+    const request = (async (): Promise<T> => {
+      while (attempt <= maxAttempts) {
+        const controller = new AbortController();
+        const t = setTimeout(() => controller.abort(), this.timeoutMs);
 
-      try {
-        const res = await this._fetch(url, {
-          method,
-          headers: hdrs,
-          body,
-          signal: controller.signal,
-        });
-        clearTimeout(t);
+        try {
+          const res = await this._fetch(url, {
+            method,
+            headers: hdrs,
+            body,
+            signal: controller.signal,
+          });
+          clearTimeout(t);
 
-        // Retry on 429/5xx
-        if (res.status === 429 || (res.status >= 500 && res.status <= 599)) {
-          lastErr = new Error(`HTTP ${res.status}`);
-        } else if (!res.ok) {
-          const text = await res.text().catch(() => '');
-          throw new Error(`HTTP ${res.status}: ${text || res.statusText}`);
-        } else {
-          if (asArrayBuffer) {
-            const buf = await res.arrayBuffer();
-            return buf as unknown as T;
+          // Retry on 429/5xx
+          if (res.status === 429 || (res.status >= 500 && res.status <= 599)) {
+            lastErr = new Error(`HTTP ${res.status}`);
+          } else if (!res.ok) {
+            const text = await res.text().catch(() => '');
+            throw new Error(`HTTP ${res.status}: ${text || res.statusText}`);
+          } else {
+            if (asArrayBuffer) {
+              const buf = await res.arrayBuffer();
+              return buf as unknown as T;
+            }
+            if (!expectJson) {
+              // @ts-ignore
+              return (await res.text()) as T;
+            }
+            const data = (await res.json()) as T;
+            if (method === 'GET' && this.cacheTtlMs > 0 && expectJson) {
+              this.writeCache(cacheKey, data as JsonValue);
+            }
+            return data;
           }
-          if (!expectJson) {
-            // @ts-ignore
-            return (await res.text()) as T;
-          }
-          const data = (await res.json()) as T;
-          return data;
+        } catch (e: any) {
+          lastErr = e;
+        } finally {
+          clearTimeout(t);
         }
-      } catch (e: any) {
-        lastErr = e;
-      } finally {
-        clearTimeout(t);
+
+        attempt++;
+        if (attempt > maxAttempts) break;
+        const exp = Math.min(this.backoffMaxMs, this.backoffBaseMs * 2 ** (attempt - 1));
+        await sleep(exp + jitter(exp));
       }
 
-      attempt++;
-      if (attempt > maxAttempts) break;
-      const exp = Math.min(this.backoffMaxMs, this.backoffBaseMs * 2 ** (attempt - 1));
-      await sleep(exp + jitter(exp));
+      if (method === 'GET' && this.cacheTtlMs > 0 && expectJson) {
+        const fallback = this.readCache<T>(cacheKey, true);
+        if (fallback) {
+          return fallback.value;
+        }
+      }
+
+      throw lastErr ?? new Error('Request failed');
+    })();
+
+    if (method === 'GET' && this.cacheTtlMs > 0) {
+      this.inflight.set(cacheKey, request as Promise<JsonValue>);
     }
 
-    throw lastErr ?? new Error('Request failed');
+    try {
+      return await request;
+    } finally {
+      this.inflight.delete(cacheKey);
+    }
+  }
+
+  private readCache<T>(cacheKey: string, allowStale: boolean): CacheEntry<T> | null {
+    const now = Date.now();
+    const fromMem = this.cache.get(cacheKey) as CacheEntry<T> | undefined;
+    if (fromMem) {
+      if (fromMem.expiresAt > now || (allowStale && now - fromMem.expiresAt <= this.cacheStaleMs)) {
+        return fromMem;
+      }
+      this.cache.delete(cacheKey);
+    }
+
+    if (!this.cacheStorage) return null;
+    const raw = this.cacheStorage.getItem(storageKeyFor(cacheKey));
+    const parsed = safeParseJson<CacheEntry<T>>(raw);
+    if (!parsed) return null;
+    if (parsed.expiresAt > now || (allowStale && now - parsed.expiresAt <= this.cacheStaleMs)) {
+      this.cache.set(cacheKey, parsed as CacheEntry<JsonValue>);
+      this.touchCacheKey(cacheKey);
+      return parsed;
+    }
+    return null;
+  }
+
+  private writeCache(cacheKey: string, value: JsonValue) {
+    if (this.cacheTtlMs <= 0) return;
+    const entry: CacheEntry<JsonValue> = {
+      value,
+      expiresAt: Date.now() + this.cacheTtlMs,
+      storedAt: Date.now(),
+    };
+    this.cache.set(cacheKey, entry);
+    this.touchCacheKey(cacheKey);
+    this.pruneCache();
+    if (!this.cacheStorage) return;
+    try {
+      this.cacheStorage.setItem(storageKeyFor(cacheKey), JSON.stringify(entry));
+      this.persistIndex(cacheKey, entry);
+    } catch {
+      // ignore storage failures
+    }
+  }
+
+  private touchCacheKey(cacheKey: string) {
+    const idx = this.cacheOrder.indexOf(cacheKey);
+    if (idx >= 0) {
+      this.cacheOrder.splice(idx, 1);
+    }
+    this.cacheOrder.unshift(cacheKey);
+  }
+
+  private pruneCache() {
+    if (this.cacheOrder.length <= this.cacheMaxEntries) return;
+    const toDrop = this.cacheOrder.splice(this.cacheMaxEntries);
+    for (const key of toDrop) {
+      this.cache.delete(key);
+    }
+  }
+
+  private persistIndex(cacheKey: string, entry: CacheEntry<JsonValue>) {
+    if (!this.cacheStorage) return;
+    const current = safeParseJson<Array<{ key: string; storedAt: number; expiresAt: number }>>(this.cacheStorage.getItem(CACHE_INDEX_KEY)) ?? [];
+    const filtered = current.filter((item) => item.key !== cacheKey && item.expiresAt > Date.now());
+    filtered.unshift({ key: cacheKey, storedAt: entry.storedAt, expiresAt: entry.expiresAt });
+    const pruned = filtered.slice(0, this.cacheMaxEntries);
+    const drop = filtered.slice(this.cacheMaxEntries);
+    for (const item of drop) {
+      try {
+        this.cacheStorage.removeItem(storageKeyFor(item.key));
+      } catch {
+        // ignore
+      }
+    }
+    try {
+      this.cacheStorage.setItem(CACHE_INDEX_KEY, JSON.stringify(pruned));
+    } catch {
+      // ignore
+    }
   }
 
   private get<T>(
