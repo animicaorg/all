@@ -11,13 +11,13 @@ from fastapi import (APIRouter, FastAPI, HTTPException, Request, Response,
                      WebSocket, WebSocketDisconnect)
 from fastapi.exception_handlers import http_exception_handler
 from fastapi.responses import JSONResponse, PlainTextResponse
+from starlette.middleware.cors import CORSMiddleware
 # Local modules
 from rpc import config as rpc_config
 from rpc import deps
 from rpc import errors as rpc_errors
 from rpc import version as rpc_version
 from rpc.access_policy import AccessPolicy, set_active_policy
-from rpc.middleware.cors import mount_strict_cors
 
 # Optional helpers (feature-detected)
 _jsonrpc_mod = importlib.import_module("rpc.jsonrpc")
@@ -292,7 +292,14 @@ def create_app(cfg: rpc_config.Config | None = None) -> FastAPI:
         return await http_exception_handler(request, exc)
 
     # CORS (strict allowlist)
-    mount_strict_cors(app, cfg)
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=cfg.cors_allow_origins or [],
+        allow_credentials=True,
+        allow_methods=["POST", "GET", "OPTIONS"],
+        allow_headers=["*"],
+        max_age=3600,
+    )
 
     # --- Lifecycle wiring (DBs, heads, pools) ---
     @app.on_event("startup")

@@ -52,7 +52,15 @@ async def rpc_call(
     }
     async with httpx.AsyncClient(timeout=resolved_timeout) as client:
         response = await client.post(rpc_url, json=payload)
-        data = response.json()
+        try:
+            data = response.json()
+        except json.JSONDecodeError as exc:
+            body = response.text.strip()
+            snippet = body[:200] + ("..." if len(body) > 200 else "")
+            detail = snippet if snippet else "<empty response>"
+            raise RuntimeError(
+                f"RPC returned non-JSON response (status {response.status_code}): {detail}"
+            ) from exc
     if "error" in data:
         error_info = data["error"]
         if isinstance(error_info, dict):
