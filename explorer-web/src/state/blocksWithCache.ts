@@ -179,8 +179,11 @@ export function useBlocksWithCache(opts?: {
 
     const syncManager = getSyncManager({
       batchSize: 20,
-      delayMs: 2000, // Check every 2 seconds
+      delayMs: 5 * 60 * 1000, // Poll head every 5 minutes
       catchupThreshold: 50,
+      bootstrapFromGenesis: true,
+      bootstrapBatchSize: 50,
+      bootstrapDelayMs: 200,
     });
 
     syncManager.setRpcClient(client);
