@@ -13,6 +13,9 @@
   },
   "dependencies": {
     "@animica/explorer2-shared": "workspace:*",
+    "bech32": "^2.0.0",
+    "better-sqlite3": "^11.5.0",
+    "cbor": "^10.0.3",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
