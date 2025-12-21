@@ -1,18 +1,14 @@
 /**
- * Computed deep links to first-party properties (Studio / Explorer / Docs).
- * All base URLs come from typed ENV (see src/env.ts).
- *
- * Usage:
- *   import { Links } from '@/config/links';
- *   const txUrl = Links.explorer.tx('0xabc...');
- *   const addrUrl = Links.explorer.address('anim1...');
- *   const studioSim = Links.studio.simulateCall('0xcontract...', 'increment', { by: 1 });
- *   const docsSdkPy = Links.docs.sdk('python');
+ * Computed deep links to first-party properties.
+ * Base URLs come from typed ENV (see src/env.ts).
  */
 
 import { ENV } from '../env';
 
 type Dict = Record<string, string | number | boolean | undefined | null>;
+
+type ExplorerTab = 'overview' | 'code' | 'events' | 'state';
+type TokenTab = 'holders' | 'transfers' | 'inventory';
 
 function withQuery(url: string, params?: Dict): string {
   if (!params) return url;
@@ -27,7 +23,6 @@ function withQuery(url: string, params?: Dict): string {
 }
 
 function join(base: string, path: string = '', params?: Dict): string {
-  // Normalize: remove extra slashes to avoid '//' when concatenating
   const b = base.replace(/\/+$/, '');
   const p = path.replace(/^\/+/, '');
   const url = p ? `${b}/${p}` : b;
@@ -44,34 +39,17 @@ function toHexOrRaw(x: string | number | bigint): string {
 
 export const Links = {
   chainId: ENV.CHAIN_ID,
-  rpc: { url: ENV.RPC_URL },
-
-  studio: {
-    root: ENV.STUDIO_URL,
-
-    /** Open Studio landing or project picker */
-    home(): string {
-      return join(ENV.STUDIO_URL, '/');
-    },
-
-    /** Open a quickstart template, e.g., "counter" or "escrow" */
-    template(name: 'counter' | 'escrow' | string): string {
-      return join(ENV.STUDIO_URL, '/templates/open', { t: name });
-    },
-
-    /** Simulate a read/write call against a locally compiled contract */
-    simulateCall(address: string, method: string, args?: Dict): string {
-      return join(ENV.STUDIO_URL, '/simulate/call', { address, method, ...args });
-    },
-
-    /** Open deploy wizard with a prefilled manifest URL (hosted JSON) */
-    deploy(manifestUrl?: string): string {
-      return join(ENV.STUDIO_URL, '/deploy', manifestUrl ? { manifest: manifestUrl } : undefined);
-    },
-
-    /** Link to verify source for a deployed address */
-    verify(address: string): string {
-      return join(ENV.STUDIO_URL, '/verify', { address });
+  rpc: {
+    url: ENV.RPC_URL,
+    ws(): string {
+      const u = new URL(ENV.RPC_URL);
+      const proto = u.protocol === 'https:' ? 'wss:' : 'ws:';
+      const path = u.pathname.endsWith('/rpc')
+        ? u.pathname.replace(/\/rpc$/, '/ws')
+        : u.pathname.endsWith('/')
+        ? `${u.pathname}ws`
+        : `${u.pathname}/ws`;
+      return `${proto}//${u.host}${path}${u.search}`;
     },
   },
 
@@ -82,37 +60,40 @@ export const Links = {
       return join(ENV.EXPLORER_URL, '/');
     },
 
-    /** Address (supports bech32m or 0x hex) */
     address(addr: string): string {
       return join(ENV.EXPLORER_URL, `/address/${encodeURIComponent(addr)}`);
     },
 
-    /** Transaction by hash */
     tx(hash: string): string {
       return join(ENV.EXPLORER_URL, `/tx/${encodeURIComponent(hash)}`);
     },
 
-    /** Block by number or hash */
     block(id: number | string | bigint): string {
       const norm = typeof id === 'string' ? id : toHexOrRaw(id);
       return join(ENV.EXPLORER_URL, `/block/${encodeURIComponent(norm)}`);
     },
 
-    /** Contract view (alias of address) with optional tab (code|events|state) */
-    contract(addr: string, tab?: 'overview' | 'code' | 'events' | 'state'): string {
+    contract(addr: string, tab?: ExplorerTab): string {
       return join(ENV.EXPLORER_URL, `/contract/${encodeURIComponent(addr)}`, tab ? { tab } : undefined);
     },
 
-    /** Token view (for fungible or NFT contracts) */
-    token(addr: string, tab?: 'holders' | 'transfers' | 'inventory'): string {
+    token(addr: string, tab?: TokenTab): string {
       return join(ENV.EXPLORER_URL, `/token/${encodeURIComponent(addr)}`, tab ? { tab } : undefined);
     },
 
-    /** Search box deep link */
     search(q: string): string {
       return join(ENV.EXPLORER_URL, '/search', { q });
     },
   },
+
+  explorer2: ENV.EXPLORER2_URL
+    ? {
+        root: ENV.EXPLORER2_URL,
+        home(): string {
+          return join(ENV.EXPLORER2_URL as string, '/');
+        },
+      }
+    : undefined,
 
   docs: {
     root: ENV.DOCS_URL,
@@ -121,24 +102,59 @@ export const Links = {
       return join(ENV.DOCS_URL, '/');
     },
 
-    /** Quick jump to Getting Started */
     gettingStarted(): string {
       return join(ENV.DOCS_URL, '/getting-started');
     },
 
-    /** SDK section by language */
     sdk(lang: 'python' | 'typescript' | 'rust'): string {
       return join(ENV.DOCS_URL, `/sdks/${lang}`);
     },
 
-    /** Concept or spec page by slug */
     page(slug: string): string {
       return join(ENV.DOCS_URL, `/${slug.replace(/^\/+/, '')}`);
     },
   },
+
+  studio: {
+    root: ENV.STUDIO_URL,
+    home(): string {
+      return join(ENV.STUDIO_URL, '/');
+    },
+    template(name: 'counter' | 'escrow' | string): string {
+      return join(ENV.STUDIO_URL, '/templates/open', { t: name });
+    },
+    deploy(manifestUrl?: string): string {
+      return join(ENV.STUDIO_URL, '/deploy', manifestUrl ? { manifest: manifestUrl } : undefined);
+    },
+  },
+
+  github: {
+    root: ENV.GITHUB_URL,
+    releases(): string {
+      return join(ENV.GITHUB_URL, '/releases/latest');
+    },
+    discussions(): string {
+      return join(ENV.GITHUB_URL, '/discussions');
+    },
+    issues(): string {
+      return join(ENV.GITHUB_URL, '/issues');
+    },
+  },
+
+  faucet: {
+    url: ENV.FAUCET_URL,
+  },
+
+  pool: {
+    url: ENV.POOL_URL,
+  },
+
+  community: {
+    discord: ENV.DISCORD_URL,
+    telegram: ENV.TELEGRAM_URL,
+    x: ENV.X_URL,
+  },
 };
 
-// Backward-compatible alias used by existing pages/components.
 export const links = Links;
-
 export type LinksType = typeof Links;

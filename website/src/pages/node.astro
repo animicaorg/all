@@ -1,0 +1,74 @@
+---
+import BaseLayout from "../layouts/BaseLayout.astro";
+import InlineLink from "../components/InlineLink.astro";
+import { links } from "../config/links";
+
+const pageTitle = "Run a Node — mainnet-ready";
+const pageDesc =
+  "Start an Animica node with Docker or native install. Includes ports, troubleshooting, and monitoring tips.";
+---
+
+<BaseLayout title={pageTitle} description={pageDesc}>
+  <section class="mx-auto max-w-5xl px-4 sm:px-6 lg:px-8 py-12">
+    <h1 class="text-3xl sm:text-4xl font-semibold tracking-tight">Run a Node</h1>
+    <p class="mt-3 opacity-80">
+      Production nodes are the backbone of the network. Use Docker for speed or run the native
+      service for deeper control.
+    </p>
+
+    <div class="mt-8 grid gap-6 md:grid-cols-2">
+      <div class="rounded-2xl border p-6 bg-[var(--bg-elevated)]
+                  border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
+        <h2 class="text-xl font-semibold">Quickstart (Docker)</h2>
+        <div class="mt-3 text-sm font-mono rounded-lg p-4 bg-black/40">
+          animica node up
+          <br />
+          animica node status
+          <br />
+          animica peer list
+        </div>
+        <p class="mt-3 text-xs opacity-70">Default RPC: http://127.0.0.1:8545/rpc</p>
+      </div>
+
+      <div class="rounded-2xl border p-6 bg-[var(--bg-elevated)]
+                  border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
+        <h2 class="text-xl font-semibold">Native install</h2>
+        <div class="mt-3 text-sm font-mono rounded-lg p-4 bg-black/40">
+          source .venv/bin/activate
+          <br />
+          python -m core.boot --genesis core/genesis/genesis.json
+        </div>
+        <p class="mt-3 text-xs opacity-70">See docs for full boot sequence.</p>
+      </div>
+    </div>
+
+    <div class="mt-10 rounded-2xl border p-6 bg-[var(--bg-elevated)]
+                border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
+      <h3 class="text-lg font-semibold">Required ports</h3>
+      <ul class="mt-3 text-sm opacity-80 list-disc pl-5 space-y-2">
+        <li>P2P: 30333 (TCP/QUIC)</li>
+        <li>RPC: 8545 (HTTP JSON-RPC)</li>
+        <li>WS: 8545/ws (WebSocket subscriptions)</li>
+        <li>Metrics: 9000 (optional)</li>
+      </ul>
+    </div>
+
+    <div class="mt-10 grid gap-6 md:grid-cols-2">
+      <div class="rounded-2xl border p-6 bg-[var(--bg-elevated)]
+                  border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
+        <h3 class="font-semibold">Troubleshooting</h3>
+        <ul class="mt-3 text-sm opacity-80 list-disc pl-5 space-y-2">
+          <li>Verify P2P ports are open and reachable.</li>
+          <li>Confirm seeds via ANIMICA_P2P_SEEDS if peer count stays 0.</li>
+          <li>Check logs: <code>animica node logs --tail 50</code>.</li>
+        </ul>
+      </div>
+      <div class="rounded-2xl border p-6 bg-[var(--bg-elevated)]
+                  border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
+        <h3 class="font-semibold">Need the full guide?</h3>
+        <p class="mt-2 text-sm opacity-80">The docs include config files, security, and monitoring.</p>
+        <InlineLink href={links.docs.page("ops/devnet")}>Read node operations docs →</InlineLink>
+      </div>
+    </div>
+  </section>
+</BaseLayout>

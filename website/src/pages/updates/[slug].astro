@@ -1,0 +1,33 @@
+---
+import BaseLayout from "../../layouts/BaseLayout.astro";
+import InlineLink from "../../components/InlineLink.astro";
+import { getCollection } from "astro:content";
+
+export async function getStaticPaths() {
+  const updates = await getCollection("updates");
+  return updates.filter((entry) => !entry.data.draft).map((entry) => ({
+    params: { slug: entry.slug },
+    props: { entry },
+  }));
+}
+
+const { entry } = Astro.props;
+
+const pageTitle = entry.data.title;
+const pageDesc = entry.data.description || "Animica update";
+---
+
+<BaseLayout title={pageTitle} description={pageDesc}>
+  <section class="mx-auto max-w-3xl px-4 sm:px-6 lg:px-8 py-12">
+    <div class="mb-6">
+      <InlineLink href="/updates">← All updates</InlineLink>
+    </div>
+    <h1 class="text-3xl sm:text-4xl font-semibold tracking-tight">{entry.data.title}</h1>
+    <p class="mt-2 text-sm opacity-70">
+      {entry.data.date.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "2-digit" })}
+    </p>
+    <article class="prose prose-invert mt-6">
+      <entry.Content />
+    </article>
+  </section>
+</BaseLayout>

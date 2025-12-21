@@ -1,0 +1,51 @@
+---
+import BaseLayout from "../layouts/BaseLayout.astro";
+import InlineLink from "../components/InlineLink.astro";
+import { links } from "../config/links";
+
+const pageTitle = "Community";
+const pageDesc = "Join the Animica community and contribute to the network.";
+---
+
+<BaseLayout title={pageTitle} description={pageDesc}>
+  <section class="mx-auto max-w-5xl px-4 sm:px-6 lg:px-8 py-12">
+    <h1 class="text-3xl sm:text-4xl font-semibold tracking-tight">Community</h1>
+    <p class="mt-3 opacity-80">Stay close to releases, discussions, and governance updates.</p>
+
+    <div class="mt-8 grid gap-6 md:grid-cols-2">
+      <div class="rounded-2xl border p-6 bg-[var(--bg-elevated)]
+                  border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
+        <h2 class="text-xl font-semibold">Official channels</h2>
+        <ul class="mt-4 space-y-2 text-sm opacity-80">
+          {links.community.discord && (
+            <li><InlineLink href={links.community.discord}>Discord</InlineLink></li>
+          )}
+          {links.community.telegram && (
+            <li><InlineLink href={links.community.telegram}>Telegram</InlineLink></li>
+          )}
+          {links.community.x && (
+            <li><InlineLink href={links.community.x}>X (Twitter)</InlineLink></li>
+          )}
+          <li><InlineLink href={links.github.root}>GitHub</InlineLink></li>
+        </ul>
+      </div>
+
+      <div class="rounded-2xl border p-6 bg-[var(--bg-elevated)]
+                  border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
+        <h2 class="text-xl font-semibold">Contribute</h2>
+        <p class="mt-2 text-sm opacity-80">Open issues, proposals, and pull requests are welcome.</p>
+        <InlineLink href={links.github.discussions()}>Join discussions →</InlineLink>
+        <div class="mt-3 text-sm opacity-80">
+          <InlineLink href="/docs">Read contributing docs →</InlineLink>
+        </div>
+      </div>
+    </div>
+
+    <div class="mt-10 rounded-2xl border p-6 bg-[var(--bg-elevated)]
+                border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
+      <h3 class="text-lg font-semibold">Code of Conduct</h3>
+      <p class="mt-2 text-sm opacity-80">We follow a strict code of conduct for inclusive collaboration.</p>
+      <InlineLink href="/docs">View policy →</InlineLink>
+    </div>
+  </section>
+</BaseLayout>

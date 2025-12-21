@@ -25,8 +25,13 @@ This monorepo contains:
 - **Studio & Tooling**: `studio-web/`, `studio-wasm/`, `studio-services/`, `templates/`
 - **SDKs & APIs**: `sdk/` (Python/TypeScript/Rust), `docs/` (specifications), `spec/` (canonical schemas)
 - **Operations**: `ops/`, `tests/devnet/`, `installers/`, `chains/` (network metadata)
+- **Website**: `website/` (Astro + TypeScript main site)
 
 Each module has its own README with detailed information. See the Copilot instructions at the bottom of this file for coding guidelines.
+
+## 🌍 Website
+
+The production website lives in `website/`. See `website/README.md` for local dev and Docker deployment (nginx on port 4321).
 
 ## 🌐 Decentralized Architecture
 
