@@ -30,7 +30,6 @@ DEV_NETWORKS = {"devnet", "local-devnet"}
 BOOTSTRAP_TIMEOUT_ENV = "ANIMICA_BOOTSTRAP_TIMEOUT"
 # Default bootstrap timeout: None = wait indefinitely during seed fetch.
 BOOTSTRAP_RPC_TIMEOUT: Optional[float] = None
-BOOTSTRAP_SEED_RETRIES: Optional[int] = None
 BOOTSTRAP_SEED_RETRY_DELAY = 1.0
 BOOTSTRAP_SEED_RETRY_DELAY_MAX = 30.0
 BOOTSTRAP_HEAD_RETRIES: Optional[int] = None
@@ -508,14 +507,10 @@ def _auto_bootstrap_if_needed(net_cfg: Any, bootstrap_url: str | None, *, force:
                 typer.secho("✓ Bootstrap metadata saved locally", fg=typer.colors.GREEN)
             return True
         except Exception as exc:
-            if BOOTSTRAP_SEED_RETRIES is not None and attempt >= BOOTSTRAP_SEED_RETRIES:
-                if not quiet:
-                    typer.secho(f"Warning: auto-bootstrap failed ({exc})", fg=typer.colors.YELLOW, err=True)
-                return False
             if not quiet:
                 typer.secho(
                     "Warning: auto-bootstrap failed "
-                    f"(attempt {attempt}: {exc}); retrying in {delay:.1f}s.",
+                    f"(attempt {attempt}: {exc}); retrying in {delay:.1f}s (will keep trying).",
                     fg=typer.colors.YELLOW,
                     err=True,
                 )
