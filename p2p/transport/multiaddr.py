@@ -38,10 +38,12 @@ from urllib.parse import parse_qsl, urlencode
 
 __all__ = [
     "Multiaddr",
+    "parse",
     "parse_multiaddr",
     "format_multiaddr",
     "to_url",
     "is_multiaddr",
+    "is_valid",
     "normalize_multiaddr",
     "MultiaddrParseError",
 ]
@@ -133,6 +135,14 @@ class Multiaddr:
     parts: List[Tuple[str, Optional[str]]]
 
     # ---- convenience --------------------------------------------------------
+
+    @property
+    def scheme(self) -> str:
+        if self.is_quic:
+            return "quic"
+        if self.ws_mode:
+            return self.ws_mode
+        return self.transport
 
     def with_query(self, updates: Dict[str, str]) -> "Multiaddr":
         q = {**self.query, **updates}
@@ -349,6 +359,14 @@ def normalize_multiaddr(s: str) -> str:
     """
     ma = parse_multiaddr(s)
     return format_multiaddr(ma)
+
+
+def parse(ma: str) -> Multiaddr:
+    return parse_multiaddr(ma)
+
+
+def is_valid(s: str) -> bool:
+    return is_multiaddr(s)
 
 
 # ------------------------------- CLI (dev) ----------------------------------
