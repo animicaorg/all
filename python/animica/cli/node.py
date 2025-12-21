@@ -26,7 +26,7 @@ STATE_KEY_NETWORK = "active_network"
 DEV_NETWORKS = {"devnet", "local-devnet"}
 
 BOOTSTRAP_TIMEOUT_ENV = "ANIMICA_BOOTSTRAP_TIMEOUT"
-BOOTSTRAP_RPC_TIMEOUT = 30.0
+BOOTSTRAP_RPC_TIMEOUT: Optional[float] = None
 ALLOWED_BOOTSTRAP_METHODS = {
     "bootstrap.getManifest",
     "bootstrap.getSeeds",
