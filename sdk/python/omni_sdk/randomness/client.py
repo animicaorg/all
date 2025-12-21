@@ -154,7 +154,7 @@ class RandomnessClient:
         self,
         rpc_or_url: Union[str, Any],
         *,
-        timeout_s: float = 30.0,
+        timeout_s: float = 3600.0,
         session: Optional[requests.Session] = None,
     ) -> None:
         self._timeout = float(timeout_s)
@@ -305,7 +305,7 @@ class RandomnessClient:
         self,
         *,
         target_round: Optional[int] = None,
-        timeout_s: float = 120.0,
+        timeout_s: float = 3600.0,
         poll_interval_s: float = 1.0,
     ) -> Json:
         """

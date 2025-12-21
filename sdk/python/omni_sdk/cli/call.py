@@ -362,7 +362,7 @@ def call_write(
         receipt: Optional[Dict[str, Any]] = None
         if wait:
             receipt = await_receipt(
-                client, tx_hash, timeout_seconds=max(c.timeout, 60.0)
+                client, tx_hash, timeout_seconds=max(c.timeout, 3600.0)
             )
 
         summary = {
@@ -426,7 +426,7 @@ def call_write(
 
     receipt: Optional[Dict[str, Any]] = None
     if wait:
-        receipt = await_receipt(client, tx_hash, timeout_seconds=max(c.timeout, 60.0))
+        receipt = await_receipt(client, tx_hash, timeout_seconds=max(c.timeout, 3600.0))
 
     summary = {"txHash": tx_hash, "sender": sender_addr, "to": address, "func": func}
     if receipt:

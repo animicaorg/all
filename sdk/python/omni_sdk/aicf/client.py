@@ -30,7 +30,7 @@ Example
     aicf = AICFClient(rpc)
 
     job_id = aicf.enqueue_ai(model="tiny", prompt=b"hello", fee=1234)
-    result = aicf.wait_result(job_id, timeout_s=30.0)
+    result = aicf.wait_result(job_id, timeout_s=3600.0)
 
 Design notes
 ------------
@@ -157,7 +157,7 @@ class AICFClient:
         self,
         rpc_or_url: Union[str, Any],
         *,
-        timeout_s: float = 30.0,
+        timeout_s: float = 3600.0,
         session: Optional[requests.Session] = None,
     ) -> None:
         self._timeout = float(timeout_s)
@@ -341,7 +341,7 @@ class AICFClient:
         self,
         job_id: str,
         *,
-        timeout_s: float = 120.0,
+        timeout_s: float = 3600.0,
         poll_interval_s: float = 0.5,
         on_progress: Optional[Any] = None,
     ) -> JsonDict:

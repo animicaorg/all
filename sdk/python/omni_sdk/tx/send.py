@@ -10,10 +10,10 @@ Primary entry points
     Sends the raw CBOR-encoded transaction via `tx.sendRawTransaction`.
     Returns the transaction hash as a hex string (0x-prefixed).
 
-- wait_for_receipt(rpc, tx_hash: str, *, timeout_s=60, poll_interval_s=0.5) -> dict
+- wait_for_receipt(rpc, tx_hash: str, *, timeout_s=3600, poll_interval_s=0.5) -> dict
     Polls `tx.getTransactionReceipt` until a receipt is available or timeout.
 
-- submit_and_wait(rpc, raw_tx: bytes, *, timeout_s=60, poll_interval_s=0.5) -> dict
+- submit_and_wait(rpc, raw_tx: bytes, *, timeout_s=3600, poll_interval_s=0.5) -> dict
     Convenience wrapper: submit via RPC then wait for the receipt with polling.
 
 Optional WebSocket assist
@@ -182,7 +182,7 @@ def wait_for_receipt(
     rpc: _RpcClient,
     tx_hash: str,
     *,
-    timeout_s: float = 60.0,
+    timeout_s: float = 3600.0,
     poll_interval_s: float = 0.5,
     max_interval_s: float = 2.5,
     backoff: float = 1.25,
@@ -215,7 +215,7 @@ def submit_and_wait(
     rpc: _RpcClient,
     raw_tx: bytes,
     *,
-    timeout_s: float = 60.0,
+    timeout_s: float = 3600.0,
     poll_interval_s: float = 0.5,
 ) -> Dict[str, Any]:
     """
@@ -248,7 +248,7 @@ def wait_for_receipt_ws(
     ws: _WsClient,
     tx_hash: str,
     *,
-    timeout_s: float = 60.0,
+    timeout_s: float = 3600.0,
     idle_check_s: float = 5.0,
 ) -> Dict[str, Any]:
     """
@@ -297,7 +297,7 @@ def submit_and_wait_ws(
     ws: _WsClient,
     raw_tx: bytes,
     *,
-    timeout_s: float = 60.0,
+    timeout_s: float = 3600.0,
     idle_check_s: float = 5.0,
 ) -> Dict[str, Any]:
     """
