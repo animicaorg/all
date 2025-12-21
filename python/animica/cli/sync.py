@@ -240,6 +240,16 @@ def _fetch_bootstrap_seeds(net_cfg, bootstrap_url: Optional[str]) -> tuple[list[
             fetch_errors.append(str(exc))
 
     if not seeds:
+        try:
+            os.environ.setdefault("ANIMICA_P2P_CHAIN_ID", str(net_cfg.chain_id))
+            from p2p.config import load_config as load_p2p_config
+
+            p2p_cfg = load_p2p_config()
+            seeds = list(getattr(p2p_cfg, "seeds", []) or [])
+        except Exception as exc:
+            fetch_errors.append(f"P2P config seeds unavailable: {exc}")
+
+    if not seeds:
         seeds = get_seed_nodes(net_cfg.name)
 
     return list(dict.fromkeys(seeds)), fetch_errors
