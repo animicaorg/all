@@ -446,12 +446,14 @@ def _bootstrap_rpc(bootstrap_url: str, method: str) -> Dict[str, Any]:
             f"Unsupported bootstrap method '{method}'. Only read-only bootstrap RPC calls are permitted."
         )
 
-    timeout = resolve_timeout(
-        "bootstrap RPC timeout",
-        None,
-        env_var=BOOTSTRAP_TIMEOUT_ENV,
-        default=BOOTSTRAP_RPC_TIMEOUT,
-    )
+    timeout = None
+    if method != "chain.getHead":
+        timeout = resolve_timeout(
+            "bootstrap RPC timeout",
+            None,
+            env_var=BOOTSTRAP_TIMEOUT_ENV,
+            default=BOOTSTRAP_RPC_TIMEOUT,
+        )
     payload = {"jsonrpc": "2.0", "id": 1, "method": method, "params": []}
     try:
         resp = httpx.post(bootstrap_url, json=payload, timeout=timeout)
