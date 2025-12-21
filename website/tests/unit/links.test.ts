@@ -15,8 +15,8 @@ type LinksModule = Record<string, any>;
 const ORIGINAL_ENV = { ...process.env };
 
 const BASE_ENV = {
-  PUBLIC_RPC_URL: 'https://rpc.example',
-  PUBLIC_CHAIN_ID: '1',
+  ANIMICA_RPC_URL: 'https://rpc.example',
+  ANIMICA_CHAIN_ID: '1',
 };
 
 function setEnv(env: Record<string, string | undefined>) {
@@ -75,9 +75,9 @@ describe('config/links → env to computed links', () => {
   it('honors PUBLIC_* env overrides', async () => {
     setEnv({
       ...BASE_ENV,
-      PUBLIC_STUDIO_URL: 'https://studio.example.dev',
-      PUBLIC_EXPLORER_URL: 'https://explorer.example.dev',
-      PUBLIC_DOCS_URL: 'https://docs.example.dev',
+      ANIMICA_STUDIO_URL: 'https://studio.example.dev',
+      ANIMICA_EXPLORER_URL: 'https://explorer.example.dev',
+      ANIMICA_DOCS_URL: 'https://docs.example.dev',
     });
 
     const mod = await loadLinksModule();
@@ -94,9 +94,9 @@ describe('config/links → env to computed links', () => {
   it('falls back to internal routes when env is unset', async () => {
     setEnv({
       ...BASE_ENV,
-      PUBLIC_STUDIO_URL: 'https://example.local/studio',
-      PUBLIC_EXPLORER_URL: 'https://example.local/explorer',
-      PUBLIC_DOCS_URL: 'https://example.local/docs',
+      ANIMICA_STUDIO_URL: 'https://example.local/studio',
+      ANIMICA_EXPLORER_URL: 'https://example.local/explorer',
+      ANIMICA_DOCS_URL: 'https://example.local/docs',
     });
 
     const mod = await loadLinksModule();
