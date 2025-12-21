@@ -21,6 +21,7 @@ from .state import get_cli_state
 DEFAULT_RPC_URL = load_network_config().rpc_url
 RPC_ENV = "ANIMICA_RPC_URL"
 STATE_KEY_NETWORK = "active_network"
+BOOTSTRAP_NODE_ENV = "ANIMICA_BOOTSTRAP_NODE"
 
 # Networks that use the 'dev' profile in docker-compose
 DEV_NETWORKS = {"devnet", "local-devnet"}
@@ -95,6 +96,16 @@ def _resolve_rpc_url(rpc_url: Optional[str]) -> str:
     
     # Fall back to network config
     return load_network_config().rpc_url
+
+
+def _is_truthy(value: str | None) -> bool:
+    if value is None:
+        return False
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _is_bootstrap_node() -> bool:
+    return _is_truthy(os.getenv(BOOTSTRAP_NODE_ENV))
 
 
 def _pretty(obj: Any) -> str:
@@ -856,8 +867,17 @@ def up(
     net_cfg = load_network_config(network)
     data_dir = str(Path(net_cfg.data_dir).expanduser())
 
-    _auto_bootstrap_if_needed(net_cfg, os.getenv("ANIMICA_BOOTSTRAP_RPC_URL"), quiet=False)
-    _record_bootstrap_head(net_cfg, os.getenv("ANIMICA_BOOTSTRAP_RPC_URL") or net_cfg.bootstrap_url, quiet=False)
+    bootstrap_node = _is_bootstrap_node()
+    if bootstrap_node:
+        typer.secho(
+            "Bootstrap node enabled: skipping auto-bootstrap checks.",
+            fg=typer.colors.CYAN,
+        )
+    else:
+        _auto_bootstrap_if_needed(net_cfg, os.getenv("ANIMICA_BOOTSTRAP_RPC_URL"), quiet=False)
+        _record_bootstrap_head(
+            net_cfg, os.getenv("ANIMICA_BOOTSTRAP_RPC_URL") or net_cfg.bootstrap_url, quiet=False
+        )
     
     typer.secho(f"Starting node for network: {network}", fg=typer.colors.CYAN, bold=True)
     typer.echo(f"Using compose file: {compose_file}")
@@ -900,6 +920,8 @@ def up(
         "ANIMICA_DATA_DIR": data_dir,
         "ANIMICA_P2P_DATA_DIR": str(Path(data_dir) / "p2p"),
     }
+    if bootstrap_node:
+        compose_env.setdefault("ANIMICA_RPC_BOOTSTRAP_NODE", "1")
 
     try:
         result = subprocess.run(
@@ -1029,8 +1051,12 @@ def up_all(
             skipped_networks.append(network)
             continue
         
-        _auto_bootstrap_if_needed(net_cfg, os.getenv("ANIMICA_BOOTSTRAP_RPC_URL"), quiet=True)
-        _record_bootstrap_head(net_cfg, os.getenv("ANIMICA_BOOTSTRAP_RPC_URL") or net_cfg.bootstrap_url, quiet=True)
+        bootstrap_node = _is_bootstrap_node()
+        if not bootstrap_node:
+            _auto_bootstrap_if_needed(net_cfg, os.getenv("ANIMICA_BOOTSTRAP_RPC_URL"), quiet=True)
+            _record_bootstrap_head(
+                net_cfg, os.getenv("ANIMICA_BOOTSTRAP_RPC_URL") or net_cfg.bootstrap_url, quiet=True
+            )
 
         typer.echo(f"Compose file: {compose_file}")
         typer.echo(f"Chain ID: {defaults['chain_id']}")
@@ -1068,6 +1094,8 @@ def up_all(
             "ANIMICA_DATA_DIR": data_dir,
             "ANIMICA_P2P_DATA_DIR": str(Path(data_dir) / "p2p"),
         }
+        if bootstrap_node:
+            compose_env.setdefault("ANIMICA_RPC_BOOTSTRAP_NODE", "1")
 
         try:
             result = subprocess.run(
