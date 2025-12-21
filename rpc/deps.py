@@ -601,7 +601,10 @@ def build_context(cfg: t.Any | None = None) -> RpcContext:
         try:
             import p2p
             from p2p.config import load_config as load_p2p_config
-            from p2p.node.service import P2PService
+            try:
+                from p2p.node.p2p_service import P2PService
+            except Exception:  # pragma: no cover - legacy fallback
+                from p2p.node.service import P2PServiceLegacy as P2PService
             import ipaddress
 
             # Set chain_id in environment so P2P config can auto-select network seeds
@@ -894,21 +897,13 @@ def attach_lifecycle(app, cfg: _ConfigView | None = None) -> None:
     @app.on_event("startup")
     async def _startup() -> None:
         nonlocal cfg
-        with _CTX_LOCK:
-            if cfg is None:
-                cfg = _load_rpc_config()
-            global _CTX
-            _CTX = build_context(cfg)
+        if cfg is None:
+            cfg = _load_rpc_config()
+        await startup(cfg)
 
     @app.on_event("shutdown")
     async def _shutdown() -> None:
-        with _CTX_LOCK:
-            global _CTX
-            if _CTX is not None:
-                try:
-                    _CTX.close()
-                finally:
-                    _CTX = None
+        await shutdown()
 
     # Optional: tiny health endpoints that do not require jsonrpc
     @app.get("/healthz", include_in_schema=False)
