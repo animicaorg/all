@@ -116,6 +116,21 @@ def _safe_int_from_env(env_var: str, default: int) -> int:
         return default
 
 
+def _env_bool(env_var: str, default: bool = False) -> bool:
+    """
+    Parse a boolean environment variable.
+
+    Accepts common truthy values ("1", "true", "yes", "on").
+    """
+    value = os.getenv(env_var)
+    if value is None:
+        return default
+    value = value.strip().lower()
+    if not value:
+        return default
+    return value in {"1", "true", "yes", "on"}
+
+
 def get_network_defaults(network: str) -> dict[str, any]:
     """
     Get default configuration values for a specific network.
@@ -244,11 +259,16 @@ def load_network_config(network: Optional[str] = None) -> NetworkConfig:
     if not rpc_url:
         rpc_url = defaults["rpc_url"]
 
+    is_bootstrap_node = _env_bool("ANIMICA_BOOTSTRAP_NODE", False)
+
     bootstrap_url = os.getenv("ANIMICA_BOOTSTRAP_RPC_URL")
     if bootstrap_url is not None:
         bootstrap_url = bootstrap_url.strip()
     if not bootstrap_url:
-        bootstrap_url = defaults.get("bootstrap_url", defaults["rpc_url"])
+        if is_bootstrap_node:
+            bootstrap_url = ""
+        else:
+            bootstrap_url = defaults.get("bootstrap_url", defaults["rpc_url"])
     chain_id = _safe_int_from_env("ANIMICA_CHAIN_ID", defaults["chain_id"])
 
     return NetworkConfig(
