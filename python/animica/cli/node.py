@@ -27,6 +27,8 @@ DEV_NETWORKS = {"devnet", "local-devnet"}
 
 BOOTSTRAP_TIMEOUT_ENV = "ANIMICA_BOOTSTRAP_TIMEOUT"
 BOOTSTRAP_RPC_TIMEOUT: Optional[float] = None
+BOOTSTRAP_HEAD_RETRIES = 3
+BOOTSTRAP_HEAD_RETRY_DELAY = 1.0
 ALLOWED_BOOTSTRAP_METHODS = {
     "bootstrap.getManifest",
     "bootstrap.getSeeds",
@@ -237,26 +239,49 @@ def _persist_sync_state(
 def _record_bootstrap_head(net_cfg: Any, bootstrap_url: Optional[str], *, quiet: bool = False) -> bool:
     if not bootstrap_url:
         return False
-    try:
-        head = _bootstrap_rpc(bootstrap_url, "chain.getHead")
-        if not head:
-            raise RuntimeError("empty head response")
-        _persist_sync_state(
-            net_cfg,
-            rpc_url=bootstrap_url,
-            head_info=head,
-            note="bootstrap head snapshot",
-        )
-        if not quiet:
-            typer.secho(
-                f"✓ Recorded bootstrap head at height {head.get('height') or head.get('number')}",
-                fg=typer.colors.GREEN,
+    last_exc: Optional[Exception] = None
+    delay = BOOTSTRAP_HEAD_RETRY_DELAY
+    for attempt in range(1, BOOTSTRAP_HEAD_RETRIES + 1):
+        try:
+            head = _bootstrap_rpc(bootstrap_url, "chain.getHead")
+            if not head:
+                raise RuntimeError("empty head response")
+            _persist_sync_state(
+                net_cfg,
+                rpc_url=bootstrap_url,
+                head_info=head,
+                note="bootstrap head snapshot",
             )
-        return True
-    except Exception as exc:
-        if not quiet:
-            typer.secho(f"Warning: bootstrap head fetch failed ({exc})", fg=typer.colors.YELLOW, err=True)
-        return False
+            if not quiet:
+                typer.secho(
+                    f"✓ Recorded bootstrap head at height {head.get('height') or head.get('number')}",
+                    fg=typer.colors.GREEN,
+                )
+            return True
+        except Exception as exc:
+            last_exc = exc
+            if attempt < BOOTSTRAP_HEAD_RETRIES:
+                time.sleep(delay)
+                delay *= 2
+                continue
+
+    cached = _load_sync_state(net_cfg)
+    if not quiet:
+        if cached and cached.get("height") is not None:
+            updated_at = _format_sync_timestamp(cached.get("updated_at")) or "unknown time"
+            typer.secho(
+                "Warning: bootstrap head fetch failed after retries; using cached sync state "
+                f"(height {cached.get('height')}, updated {updated_at}).",
+                fg=typer.colors.YELLOW,
+                err=True,
+            )
+        else:
+            typer.secho(
+                f"Warning: bootstrap head fetch failed after retries ({last_exc})",
+                fg=typer.colors.YELLOW,
+                err=True,
+            )
+    return False
 
 
 def _bootstrap_seeds_from_state(net_cfg: Any) -> list[str]:
@@ -288,7 +313,11 @@ def _bootstrap_rpc(bootstrap_url: str, method: str) -> Dict[str, Any]:
     payload = {"jsonrpc": "2.0", "id": 1, "method": method, "params": []}
     try:
         resp = httpx.post(bootstrap_url, json=payload, timeout=timeout)
-        resp.raise_for_status()
+        if resp.status_code >= 400:
+            body = resp.text.strip()
+            snippet = body[:200] + ("..." if len(body) > 200 else "")
+            detail = snippet if snippet else "<empty response>"
+            raise RuntimeError(f"HTTP {resp.status_code} {resp.reason_phrase}: {detail}")
         parsed = resp.json()
         if "error" in parsed and parsed["error"]:
             raise RuntimeError(parsed["error"])
