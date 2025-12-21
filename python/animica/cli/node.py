@@ -231,6 +231,20 @@ def _get_peers(rpc_url: str, rpc_timeout: Optional[float]) -> tuple[list[dict[st
     return [], "RPC peer list unavailable"
 
 
+def _get_p2p_status(
+    rpc_url: str, rpc_timeout: Optional[float]
+) -> tuple[Optional[dict[str, Any]], Optional[str]]:
+    try:
+        result = asyncio.run(
+            rpc_call("p2p.getStatus", [], rpc_url=rpc_url, timeout=rpc_timeout)
+        )
+        if isinstance(result, dict):
+            return result, None
+        return None, "unexpected p2p status response"
+    except Exception as exc:
+        return None, str(exc)
+
+
 def _persist_sync_state(
     cfg: Any,
     *,
@@ -633,6 +647,7 @@ def status(
             peer_error = peer_count_error or peers_error
             if peer_count is None and peers:
                 peer_count = len(peers)
+            p2p_status, p2p_status_error = _get_p2p_status(url, rpc_timeout)
 
             typer.echo(f"RPC URL: {url}")
             typer.echo(f"Chain ID: {chain_id}")
@@ -662,6 +677,36 @@ def status(
                     typer.echo(summary)
                 if len(peers) > 10:
                     typer.echo(f"  ... and {len(peers) - 10} more peers")
+            if p2p_status_error:
+                typer.echo(f"P2P status: unavailable ({p2p_status_error})")
+            elif p2p_status:
+                typer.echo(f"P2P running: {p2p_status.get('p2p_running')}")
+                typer.echo(
+                    "P2P peers: total={total} inbound={inbound} outbound={outbound}".format(
+                        total=p2p_status.get("peers_total"),
+                        inbound=p2p_status.get("peers_inbound"),
+                        outbound=p2p_status.get("peers_outbound"),
+                    )
+                )
+                typer.echo(
+                    "Bootstrap attempts (last 5m): {count}".format(
+                        count=p2p_status.get("bootstrap_attempts_last_5m")
+                    )
+                )
+                last_bootstrap = p2p_status.get("bootstrap_last_attempt") or {}
+                if last_bootstrap:
+                    last_bootstrap_at = _format_peer_timestamp(
+                        last_bootstrap.get("at")
+                    )
+                    last_bootstrap_addr = last_bootstrap.get("addr")
+                    last_bootstrap_ok = last_bootstrap.get("success")
+                    last_bootstrap_err = last_bootstrap.get("error")
+                    summary = f"Last bootstrap: {last_bootstrap_addr} success={last_bootstrap_ok}"
+                    if last_bootstrap_at:
+                        summary += f" at {last_bootstrap_at}"
+                    if last_bootstrap_err:
+                        summary += f" error={last_bootstrap_err}"
+                    typer.echo(summary)
             if block is not None:
                 typer.echo("Head block:")
                 typer.echo(_pretty(block))
@@ -1418,6 +1463,7 @@ def p2p_status(
     peers, peers_error = _get_peers(url, rpc_timeout)
     peer_error = peer_count_error or peers_error
     peers_len = len(peers) if peers else None
+    p2p_status, p2p_status_error = _get_p2p_status(url, rpc_timeout)
 
     typer.echo(f"RPC URL: {url}")
     if peer_error:
@@ -1429,6 +1475,22 @@ def p2p_status(
             typer.echo(f"Connected peers: {peers_len}")
         if peers_len is not None:
             typer.echo(f"Peer details available: {peers_len}")
+    if p2p_status_error:
+        typer.echo(f"P2P status: unavailable ({p2p_status_error})")
+    elif p2p_status:
+        typer.echo(f"P2P running: {p2p_status.get('p2p_running')}")
+        typer.echo(
+            "P2P peers: total={total} inbound={inbound} outbound={outbound}".format(
+                total=p2p_status.get("peers_total"),
+                inbound=p2p_status.get("peers_inbound"),
+                outbound=p2p_status.get("peers_outbound"),
+            )
+        )
+        typer.echo(
+            "Bootstrap attempts (last 5m): {count}".format(
+                count=p2p_status.get("bootstrap_attempts_last_5m")
+            )
+        )
 
     cfg, cfg_err = _load_p2p_config()
     if cfg_err:
