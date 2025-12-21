@@ -132,6 +132,21 @@ def test_status_and_head(monkeypatch: Any) -> None:
                 json={
                     "jsonrpc": "2.0",
                     "id": 1,
+                    "result": {
+                        "p2p_running": True,
+                        "peers_total": 1,
+                        "peers_inbound": 0,
+                        "peers_outbound": 1,
+                        "bootstrap_attempts_last_5m": 1,
+                        "bootstrap_last_attempt": {"addr": "seed", "success": True},
+                    },
+                },
+            ),
+            httpx.Response(
+                200,
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 1,
                     "result": {"height": 42, "hash": "0xabc", "chainId": 10},
                 },
             ),
@@ -141,6 +156,7 @@ def test_status_and_head(monkeypatch: Any) -> None:
     status_result = runner.invoke(node.app, ["status"])
     assert status_result.exit_code == 0
     assert "Head height: 42" in status_result.output
+    assert "P2P running: True" in status_result.output
 
     head_result = runner.invoke(node.app, ["head"])
     assert head_result.exit_code == 0
