@@ -125,6 +125,7 @@ class CMConfig:
     priority_boost_stable: float = 10.0  # Score boost for stable peers
     priority_boost_recent: float = 5.0  # Score boost for recently seen peers
     stability_threshold_s: float = 3600.0  # Consider peer stable after 1 hour uptime
+    bootstrap_priority_boost: float = 20.0  # Boost for bootstrap/seed-tagged peers
     verbosity: int = 0  # 0=normal, 1=verbose, 2=debug
 
 
@@ -294,7 +295,7 @@ class ConnectionManager:
                             self._log.info(f"Skipping {addr}: exceeded max retries ({self.cfg.max_dial_retries})")
                         continue
                     
-                    priority = self._calculate_peer_priority(addr)
+                    priority = self._calculate_peer_priority(addr, tag=e.tag)
                     candidates_with_priority.append((priority, addr))
                 
                 # Sort by priority (highest first)
@@ -633,12 +634,13 @@ class ConnectionManager:
     
     # -------------------- P2P rewrite: Enhanced peer prioritization -------------------- #
     
-    def _calculate_peer_priority(self, address: str) -> float:
+    def _calculate_peer_priority(self, address: str, tag: Optional[str] = None) -> float:
         """
         Calculate priority score for a peer based on:
         - Connection stability (long uptime)
         - Recent successful connections
         - Success/failure ratio
+        - Bootstrap/seed tags
         - Manual priority boosts
         """
         priority = 0.0
@@ -667,7 +669,18 @@ class ConnectionManager:
         if total_conn > 0:
             success_ratio = successful_conn / total_conn
             priority += success_ratio * 5.0  # Up to +5 for perfect success rate
-        
+
+        if tag is None:
+            try:
+                entry = self.ab.get(address)
+            except Exception:
+                entry = None
+            if entry:
+                tag = entry.tag
+
+        if tag and tag.lower() in {"seed", "bootstrap", "bootstrap_seed"}:
+            priority += self.cfg.bootstrap_priority_boost
+
         # Apply any manual priority overrides
         manual_priority = self._peer_priorities.get(address, 0.0)
         priority += manual_priority
