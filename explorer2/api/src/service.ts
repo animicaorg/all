@@ -19,13 +19,16 @@ const RECENT_BLOCK_WINDOW = 20
 const ADDRESS_SCAN_WINDOW = 50
 
 export class ExplorerService {
-  private cache = new TtlCache()
+  private cache: TtlCache
   private coalescer = new RequestCoalescer()
 
   constructor(
     private rpc: ChainClient,
-    private cacheTtls: { head: number; blocks: number; tx: number }
-  ) {}
+    private cacheTtls: { head: number; blocks: number; tx: number },
+    options?: { persistPath?: string }
+  ) {
+    this.cache = new TtlCache({ persistPath: options?.persistPath })
+  }
 
   async getHead(): Promise<{ head: HeadView; stats: any }> {
     return this.coalescer.run('head', async () => {
