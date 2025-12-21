@@ -85,6 +85,38 @@ def _resolve_sync_endpoints(
     return target, bootstrap
 
 
+def _sync_state_path(net_cfg) -> Path:
+    data_dir = Path(os.path.expanduser(net_cfg.data_dir))
+    data_dir.mkdir(parents=True, exist_ok=True)
+    return data_dir / "sync" / "progress.json"
+
+
+def _load_cached_bootstrap_head(
+    net_cfg,
+    bootstrap_url: Optional[str],
+) -> Optional[Dict[str, Any]]:
+    if not bootstrap_url:
+        return None
+    state_path = _sync_state_path(net_cfg)
+    if not state_path.exists():
+        return None
+    try:
+        payload = json.loads(state_path.read_text())
+    except Exception:
+        return None
+    if payload.get("rpc_url") != bootstrap_url:
+        return None
+    height = payload.get("height")
+    if height is None:
+        return None
+    head = {
+        "height": height,
+        "hash": payload.get("head_hash"),
+        "chainId": payload.get("chain_id"),
+    }
+    return head
+
+
 def _extract_height(head_info: Optional[Dict[str, Any]]) -> Optional[int]:
     """Extract the height field while preserving zero values."""
     if not head_info:
@@ -436,7 +468,9 @@ def sync_status(
         animica sync status --verbose
     """
     url, bootstrap_url = _resolve_sync_endpoints(rpc_url, bootstrap_rpc)
+    net_cfg = load_network_config()
     peer_count_error: Optional[Exception] = None
+    bootstrap_source = "live"
     
     try:
         # Gather all information concurrently
@@ -466,6 +500,12 @@ def sync_status(
             peers = []
         if isinstance(bootstrap_head, Exception):
             bootstrap_head = None
+
+        if bootstrap_head is None and bootstrap_url:
+            cached_bootstrap = _load_cached_bootstrap_head(net_cfg, bootstrap_url)
+            if cached_bootstrap:
+                bootstrap_head = cached_bootstrap
+                bootstrap_source = "cached"
         
     except Exception as e:
         typer.echo(f"Error: Unable to connect to node at {url}", err=True)
@@ -548,7 +588,10 @@ def sync_status(
     
     # Connection info
     typer.echo(f"Target RPC:    {url}")
-    typer.echo(f"Bootstrap RPC: {bootstrap_url or 'not configured'}")
+    bootstrap_label = bootstrap_url or "not configured"
+    if bootstrap_source == "cached" and bootstrap_url:
+        bootstrap_label = f"{bootstrap_label} (cached head)"
+    typer.echo(f"Bootstrap RPC: {bootstrap_label}")
     if chain_id:
         typer.echo(f"Chain ID:    {chain_id}")
     typer.echo()
