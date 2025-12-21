@@ -16,11 +16,15 @@ try {
 }
 const chain = new HybridChainClient(local, rpc)
 
-const service = new ExplorerService(chain, {
-  head: config.cacheHeadTtlMs,
-  blocks: config.cacheBlocksTtlMs,
-  tx: config.cacheTxTtlMs
-})
+const service = new ExplorerService(
+  chain,
+  {
+    head: config.cacheHeadTtlMs,
+    blocks: config.cacheBlocksTtlMs,
+    tx: config.cacheTxTtlMs
+  },
+  { persistPath: config.cachePersistPath || undefined }
+)
 
 const app = createServer(service, config.corsOrigin, config.logLevel)
 
