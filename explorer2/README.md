@@ -56,6 +56,7 @@ docker compose -f explorer2/docker/docker-compose.explorer2.yml up --build
 | `EXPLORER2_CACHE_HEAD_TTL_MS` | Cache TTL for head endpoint | `5000` |
 | `EXPLORER2_CACHE_BLOCKS_TTL_MS` | Cache TTL for blocks | `8000` |
 | `EXPLORER2_CACHE_TX_TTL_MS` | Cache TTL for transactions | `20000` |
+| `EXPLORER2_CACHE_PERSIST_PATH` | Cache persistence file path (enables warm-start cache) | unset |
 
 ## Notes
 
