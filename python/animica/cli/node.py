@@ -172,6 +172,23 @@ def _load_sync_state(cfg: Any) -> Optional[Dict[str, Any]]:
         return None
 
 
+def _load_cached_bootstrap_head(cfg: Any) -> Optional[Dict[str, Any]]:
+    bootstrap_url = getattr(cfg, "bootstrap_url", None)
+    if not bootstrap_url:
+        return None
+    payload = _load_sync_state(cfg)
+    if not payload or payload.get("rpc_url") != bootstrap_url:
+        return None
+    height = payload.get("height")
+    if height is None:
+        return None
+    return {
+        "height": height,
+        "hash": payload.get("head_hash"),
+        "chain_id": payload.get("chain_id"),
+    }
+
+
 def _format_sync_timestamp(raw: Any) -> Optional[str]:
     if raw is None:
         return None
@@ -652,6 +669,8 @@ def status(
     if max_retries < 1:
         typer.echo("Error: max-retries must be at least 1", err=True)
         raise typer.Exit(code=1)
+
+    net_cfg = load_network_config()
     
     # Bounded retry loop for RPC operations
     attempt = 0
@@ -665,6 +684,7 @@ def status(
                 height = 0
             chain_id = _extract_field(head, "chainId", "chain_id")
             head_hash = _extract_field(head, "hash", "blockHash")
+            cached_bootstrap = _load_cached_bootstrap_head(net_cfg)
             
             block = None
             if height is not None:
@@ -694,6 +714,13 @@ def status(
             typer.echo(f"Chain ID: {chain_id}")
             typer.echo(f"Head height: {height}")
             typer.echo(f"Head hash: {head_hash}")
+            if cached_bootstrap:
+                cached_height = cached_bootstrap.get("height")
+                cached_hash = cached_bootstrap.get("hash")
+                if cached_height is not None and (height == 0 or height < cached_height):
+                    typer.echo(f"Bootstrap head (cached): {cached_height}")
+                    if cached_hash:
+                        typer.echo(f"Bootstrap hash (cached): {cached_hash}")
             typer.echo(f"Sync status: {sync_status}")
             if peer_error:
                 typer.echo(f"Peer status: unavailable ({peer_error})")
