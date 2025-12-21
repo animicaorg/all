@@ -145,7 +145,7 @@ def test_theta_adjustment_clamping():
     # Should grow significantly due to fast blocks
     assert theta > initial_theta, f"Theta should have increased from {initial_theta} but is {theta}"
     
-    # Should respect hard cap (300M µ-nats)
+    # Should respect hard cap (3B µ-nats)
     assert theta <= THETA_HARD_CAP_MICRO, f"Theta {theta} exceeded hard cap {THETA_HARD_CAP_MICRO}"
     
     # Reset to high value
@@ -184,7 +184,7 @@ def test_theta_adjustment_disabled():
 
 
 def test_theta_adjustment_cap_enforcement():
-    """Test that theta adjustment enforces the 300M µ-nats hard cap."""
+    """Test that theta adjustment enforces the 3B µ-nats hard cap."""
     from rpc.methods.miner import _adjust_theta_for_mining, _MINING_STATE
     from consensus.difficulty import THETA_HARD_CAP_MICRO
     
@@ -212,7 +212,7 @@ def test_theta_adjustment_cap_enforcement():
     for _ in range(100):
         theta = _adjust_theta_for_mining(dt_seconds=0.1)
     
-    # Should be capped at exactly 300M µ-nats
+    # Should be capped at exactly 3B µ-nats
     assert theta == THETA_HARD_CAP_MICRO, (
         f"Theta should be capped at {THETA_HARD_CAP_MICRO}, got {theta}"
     )

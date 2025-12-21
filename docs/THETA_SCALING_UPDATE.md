@@ -347,15 +347,15 @@ This update addresses several reported issues:
 
 This version was superseded by v0.3.0 with a hard cap for stability.
 
-### v0.3.0 (Latest - Hard Cap at 300M µ-nats)
+### v0.3.0 (Latest - Hard Cap at 3B µ-nats)
 
 **Breaking Change** (Backward compatible):
-- **Implemented hard cap at 300M µ-nats (300 nats)** for network stability
+- **Implemented hard cap at 3B µ-nats (3,000 nats)** for network stability
 - All networks now use `theta_max_munats: 300000000` in config
 - When `theta_max_micro=None`, the hard cap is automatically applied
 
 **Safety Mechanisms**:
-- Hard cap: 300M µ-nats (300 nats) prevents runaway values
+- Hard cap: 3B µ-nats (3,000 nats) prevents runaway values
 - Step clamp (1.0 nats/block) limits rate of change
 - Overflow protection at 10^9 nats (10^15 µ-nats) as ultimate safety
 - EMA smoothing prevents wild fluctuations
@@ -364,8 +364,8 @@ This version was superseded by v0.3.0 with a hard cap for stability.
 
 **Benefits**:
 - Operational stability with predictable upper bound
-- 18.75x headroom over original mainnet cap (16 nats → 300 nats)
-- 5x headroom over previous temporary cap (60 nats → 300 nats)
+- 18.75x headroom over original mainnet cap (16 nats → 3,000 nats)
+- 5x headroom over previous temporary cap (60 nats → 3,000 nats)
 - Sufficient room for significant hash rate growth
 - Clear warnings for operators when approaching limits
 - Prevents extreme difficulty from impacting performance
