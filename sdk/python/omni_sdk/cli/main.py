@@ -27,7 +27,7 @@ Configuration
 -------------
 - RPC URL      : `--rpc` or env `OMNI_SDK_RPC_URL` (default: http://127.0.0.1:8545)
 - Chain ID     : `--chain-id` or env `OMNI_CHAIN_ID` (auto-detected from node, fallback: testnet chain ID 2)
-- HTTP Timeout : `--timeout` or env `OMNI_SDK_HTTP_TIMEOUT` seconds (default: 10.0)
+- HTTP Timeout : `--timeout` or env `OMNI_SDK_HTTP_TIMEOUT` seconds (default: 3600.0)
 
 """
 
@@ -131,7 +131,7 @@ def _root(
     effective_timeout = float(
         timeout
         if timeout is not None
-        else float(_env_default("OMNI_SDK_HTTP_TIMEOUT", "10.0"))
+        else float(_env_default("OMNI_SDK_HTTP_TIMEOUT", "3600.0"))
     )
     
     # Chain ID resolution with auto-detection and testnet fallback

@@ -79,8 +79,8 @@ def _jitter_backoff(base: float, factor: float, attempt: int, jitter: float) -> 
 class WsClient:
     url: str
     headers: Optional[Mapping[str, str]] = None
-    connect_timeout: float = 15.0
-    request_timeout: float = 30.0
+    connect_timeout: float = 3600.0
+    request_timeout: float = 3600.0
     ping_interval: Optional[float] = 20.0
     max_retries: int = 10
     backoff_base: float = 0.25

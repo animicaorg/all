@@ -57,8 +57,8 @@ class SDKConfig:
     # Optional WS (for subscriptions)
     ws_url: Optional[str] = field(default=None)
     # HTTP/WS behavior
-    request_timeout: float = 10.0
-    ws_connect_timeout: float = 10.0
+    request_timeout: float = 3600.0
+    ws_connect_timeout: float = 3600.0
     max_retries: int = 3
     backoff_factor: float = 0.25
     # Headers / identity
@@ -81,8 +81,8 @@ class SDKConfig:
         rpc = _env(f"{prefix}RPC_URL", _DEFAULT_RPC)
         ws = _env(f"{prefix}WS_URL", None)
         chain_id = _parse_chain_id(_env(f"{prefix}CHAIN_ID", None))
-        timeout = float(_env(f"{prefix}TIMEOUT", "10.0"))
-        ws_timeout = float(_env(f"{prefix}WS_TIMEOUT", "10.0"))
+        timeout = float(_env(f"{prefix}TIMEOUT", "3600.0"))
+        ws_timeout = float(_env(f"{prefix}WS_TIMEOUT", "3600.0"))
         retries = int(_env(f"{prefix}MAX_RETRIES", "3"))
         backoff = float(_env(f"{prefix}BACKOFF", "0.25"))
         ua = _env(f"{prefix}USER_AGENT", f"omni-sdk-py/{__version__}")
