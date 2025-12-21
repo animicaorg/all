@@ -129,8 +129,8 @@ class AccessPolicy:
         )
 
         if bootstrap_node_flag:
-            mode = AccessMode.LOCAL_DEV
-            bootstrap_only_flag = False
+            mode = AccessMode.PUBLIC_BOOTSTRAP
+            bootstrap_only_flag = True
 
         if bootstrap_only_flag:
             mode = AccessMode.PUBLIC_BOOTSTRAP
