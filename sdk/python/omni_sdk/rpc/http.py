@@ -94,7 +94,7 @@ class RpcClient:
     """Synchronous JSON-RPC 2.0 client over HTTP."""
 
     url: str
-    timeout: Optional[float] = 30.0
+    timeout: Optional[float] = 3600.0
     max_retries: int = 3
     backoff_base: float = 0.15
     backoff_factor: float = 1.8

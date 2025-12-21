@@ -29,7 +29,7 @@ Typical usage
     # raw_tx = encode.pack_signed(tx, signature=sig, alg_id=signer.alg_id, public_key=signer.public_key)
 
     # 5) Submit and wait for a receipt (helpers live in `send`)
-    # receipt = send.submit_and_wait(rpc_client, raw_tx, timeout_s=30)
+    # receipt = send.submit_and_wait(rpc_client, raw_tx, timeout_s=3600)
 
 Notes
 -----

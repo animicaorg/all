@@ -244,7 +244,7 @@ def deploy_package(
 
     receipt: Optional[Dict[str, Any]] = None
     if wait:
-        receipt = await_receipt(client, tx_hash, timeout_seconds=max(c.timeout, 60.0))
+        receipt = await_receipt(client, tx_hash, timeout_seconds=max(c.timeout, 3600.0))
 
     # Persist artifacts if requested
     _store_artifacts(out_dir, tx_cbor=raw, receipt=receipt)

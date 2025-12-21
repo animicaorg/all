@@ -350,7 +350,7 @@ class ContractClient:
         gas_limit: Optional[int] = None,
         value: int = 0,
         await_receipt: bool = True,
-        timeout_s: float = 60.0,
+        timeout_s: float = 3600.0,
         poll_interval_s: float = 0.5,
     ) -> JsonDict:
         """

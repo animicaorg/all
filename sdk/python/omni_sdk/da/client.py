@@ -122,7 +122,7 @@ class DAClient:
         self,
         rpc_or_url: Union[str, Any],
         *,
-        timeout_s: float = 30.0,
+        timeout_s: float = 3600.0,
         session: Optional[requests.Session] = None,
     ) -> None:
         base = _detect_base_url(rpc_or_url).rstrip("/") + "/"
