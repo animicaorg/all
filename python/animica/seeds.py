@@ -19,13 +19,17 @@ NETWORK_SEEDS: Dict[str, List[str]] = {
         "144.126.133.21:30333",
     ],
     "testnet": [
-        # Add testnet seed nodes here when available
+        "testnet.animica.org:30333",
+        "rpc.testnet.animica.org:30333",
+        "144.126.133.21:30333",
     ],
     "devnet": [
-        # Devnet typically uses local nodes
+        "devnet.animica.org:30333",
+        "144.126.133.21:30333",
     ],
     "local-devnet": [
-        # Local devnet uses local nodes
+        "127.0.0.1:30333",
+        "144.126.133.21:30333",
     ],
 }
 
