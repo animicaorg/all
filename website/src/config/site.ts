@@ -17,26 +17,25 @@ export type Brand = {
   name: string;
   tagline: string;
   logo: {
-    mark: string;     // /icons/logo.svg
-    wordmark: string; // /icons/wordmark.svg
+    mark: string;
+    wordmark: string;
   };
   theme: {
-    color: string;    // brand hex for meta/theme
-    bg: string;       // background color
+    color: string;
+    bg: string;
   };
 };
 
 export type Social = {
-  twitter?: string;
+  x?: string;
   github?: string;
   discord?: string;
-  youtube?: string;
-  linkedin?: string;
+  telegram?: string;
 };
 
 export type Contact = {
   email: string;
-  securityTxt: string;  // /.well-known/security.txt
+  securityTxt: string;
   securityPolicy: string;
   acknowledgments: string;
 };
@@ -44,11 +43,14 @@ export type Contact = {
 export type SiteConfig = {
   brand: Brand;
   urls: {
-    site: string;       // set via SITE_URL in env at build (astro.config)
-    studio: string;
-    explorer: string;
+    site: string;
     docs: string;
+    explorer: string;
+    explorer2?: string;
     rpc: string;
+    github: string;
+    faucet?: string;
+    pool?: string;
   };
   nav: {
     top: NavItem[];
@@ -70,7 +72,7 @@ export type SiteConfig = {
 export const SITE: SiteConfig = {
   brand: {
     name: 'Animica',
-    tagline: 'Post-quantum chain • Useful work • Python VM',
+    tagline: 'Post-quantum blockchain for durable, verifiable compute.',
     logo: {
       mark: '/icons/logo.svg',
       wordmark: '/icons/wordmark.svg',
@@ -83,88 +85,96 @@ export const SITE: SiteConfig = {
 
   urls: {
     site: (import.meta.env.SITE_URL as string) || 'https://animica.org',
-    studio: ENV.STUDIO_URL,
-    explorer: ENV.EXPLORER_URL,
     docs: ENV.DOCS_URL,
+    explorer: ENV.EXPLORER_URL,
+    explorer2: ENV.EXPLORER2_URL,
     rpc: ENV.RPC_URL,
+    github: ENV.GITHUB_URL,
+    faucet: ENV.FAUCET_URL,
+    pool: ENV.POOL_URL,
   },
 
   nav: {
     top: [
       { label: 'Home', href: '/' },
-      { label: 'Developers', href: '/developers' },
+      { label: 'Docs', href: '/docs' },
+      { label: 'Explorer', href: '/explorer' },
       { label: 'Wallet', href: '/wallet' },
-      { label: 'Explorer', href: ENV.EXPLORER_URL, external: true, target: '_blank', rel: 'noopener' },
-      { label: 'Studio', href: ENV.STUDIO_URL, external: true, target: '_blank', rel: 'noopener' },
-      { label: 'Docs', href: ENV.DOCS_URL, external: true, target: '_blank', rel: 'noopener' }
+      { label: 'Run a Node', href: '/node' },
+      { label: 'Mine', href: '/mine' },
+      { label: 'Community', href: '/community' },
+      { label: 'Status', href: '/status' },
+      { label: 'Updates', href: '/updates' },
     ],
     footer: [
       {
-        title: 'Build',
-        items: [
-          { label: 'Studio', href: ENV.STUDIO_URL, external: true, target: '_blank', rel: 'noopener' },
-          { label: 'SDKs', href: '/sdks' },
-          { label: 'OpenRPC', href: '/openrpc' }
-        ]
-      },
-      {
         title: 'Network',
         items: [
-          { label: 'Explorer', href: ENV.EXPLORER_URL, external: true, target: '_blank', rel: 'noopener' },
+          { label: 'Explorer', href: '/explorer' },
+          ...(ENV.EXPLORER2_URL ? [{ label: 'Explorer 2', href: '/explorer#explorer-2' }] : []),
+          { label: 'RPC', href: ENV.RPC_URL, external: true, target: '_blank', rel: 'noopener' },
           { label: 'Status', href: '/status' },
-          { label: 'RPC', href: ENV.RPC_URL, external: true }
-        ]
+        ],
       },
       {
-        title: 'Company',
+        title: 'Developers',
         items: [
-          { label: 'About', href: '/about' },
-          { label: 'Careers', href: '/careers' },
-          { label: 'Press', href: '/press' }
-        ]
+          { label: 'Docs', href: '/docs' },
+          { label: 'Run a Node', href: '/node' },
+          { label: 'Mine', href: '/mine' },
+          { label: 'GitHub', href: ENV.GITHUB_URL, external: true, target: '_blank', rel: 'noopener' },
+        ],
+      },
+      {
+        title: 'Community',
+        items: [
+          ...(ENV.DISCORD_URL ? [{ label: 'Discord', href: ENV.DISCORD_URL, external: true, target: '_blank', rel: 'noopener' }] : []),
+          ...(ENV.TELEGRAM_URL ? [{ label: 'Telegram', href: ENV.TELEGRAM_URL, external: true, target: '_blank', rel: 'noopener' }] : []),
+          ...(ENV.X_URL ? [{ label: 'X (Twitter)', href: ENV.X_URL, external: true, target: '_blank', rel: 'noopener' }] : []),
+          { label: 'Updates', href: '/updates' },
+        ],
       },
       {
         title: 'Legal',
         items: [
           { label: 'Privacy', href: '/privacy' },
           { label: 'Terms', href: '/terms' },
-          { label: 'Security', href: '/security' }
-        ]
-      }
-    ]
+          { label: 'Security', href: '/security' },
+        ],
+      },
+    ],
   },
 
   contact: {
     email: 'contact@animica.org',
     securityTxt: '/.well-known/security.txt',
     securityPolicy: '/security',
-    acknowledgments: '/security/hall-of-fame'
+    acknowledgments: '/security/hall-of-fame',
   },
 
   social: {
-    twitter: 'https://x.com/animica',
-    github: 'https://github.com/animicaorg',
-    discord: 'https://discord.gg/animica',
-    youtube: 'https://www.youtube.com/@animica'
+    x: ENV.X_URL,
+    github: ENV.GITHUB_URL,
+    discord: ENV.DISCORD_URL,
+    telegram: ENV.TELEGRAM_URL,
   },
 
   i18n: {
     defaultLocale: 'en',
-    locales: ['en', 'es']
+    locales: ['en', 'es'],
   },
 
   meta: {
-    title: 'Animica — Post-quantum chain with useful work & Python VM',
+    title: 'Animica — Post-quantum blockchain for real-world compute',
     description:
-      'Animica is a post-quantum blockchain with Useful-Work consensus, Python smart contracts, and tooling for builders: wallet, explorer, studio, and SDKs.',
-    ogImage: '/images/og/landing-light.png'
-  }
+      'Animica is a post-quantum blockchain with useful-work consensus, deterministic Python VM, and production tooling for wallets, explorers, and node operators.',
+    ogImage: '/images/og/landing-light.png',
+  },
 };
 
 export const NAV = SITE.nav;
 export const BRAND = SITE.brand;
 
-// Backward-compatible shape consumed by pages/components
 export const site = {
   brand: SITE.brand.name,
   tagline: SITE.brand.tagline,

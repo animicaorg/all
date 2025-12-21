@@ -1,0 +1,48 @@
+---
+import BaseLayout from "../../layouts/BaseLayout.astro";
+import InlineLink from "../../components/InlineLink.astro";
+import { getCollection } from "astro:content";
+
+const updates = (await getCollection("updates"))
+  .filter((entry) => !entry.data.draft)
+  .sort((a, b) => b.data.date.getTime() - a.data.date.getTime());
+
+const pageTitle = "Updates";
+const pageDesc = "Release notes and network updates from the Animica team.";
+---
+
+<BaseLayout title={pageTitle} description={pageDesc}>
+  <section class="mx-auto max-w-4xl px-4 sm:px-6 lg:px-8 py-12">
+    <h1 class="text-3xl sm:text-4xl font-semibold tracking-tight">Updates</h1>
+    <p class="mt-3 opacity-80">Short-form updates for operators, miners, and builders.</p>
+
+    <div class="mt-8 space-y-6">
+      {updates.map((entry) => (
+        <article class="rounded-2xl border p-6 bg-[var(--bg-elevated)]
+                      border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
+          <h2 class="text-xl font-semibold">
+            <a href={`/updates/${entry.slug}`} class="inline-link">{entry.data.title}</a>
+          </h2>
+          <p class="mt-2 text-sm opacity-80">{entry.data.description}</p>
+          <div class="mt-3 text-xs opacity-60">
+            {entry.data.date.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "2-digit" })}
+          </div>
+          {entry.data.tags?.length ? (
+            <div class="mt-2 flex flex-wrap gap-2">
+              {entry.data.tags.map((tag) => (
+                <span class="rounded-full border px-2 py-0.5 text-xs opacity-70">#{tag}</span>
+              ))}
+            </div>
+          ) : null}
+        </article>
+      ))}
+
+      {updates.length === 0 && (
+        <div class="rounded-2xl border p-6 bg-[var(--bg-elevated)]
+                    border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
+          <p>No updates published yet. Check the <InlineLink href="/status">status page</InlineLink>.</p>
+        </div>
+      )}
+    </div>
+  </section>
+</BaseLayout>

@@ -31,6 +31,18 @@ const blog = defineCollection({
     }),
 });
 
+// Updates: shorter release-style updates for /updates.
+const updates = defineCollection({
+  type: "content",
+  schema: z.object({
+    title: z.string().min(1, "Update title is required"),
+    description: z.string().max(280).optional(),
+    date: z.coerce.date(),
+    draft: z.boolean().default(false),
+    tags: z.array(z.string()).default([]),
+  }),
+});
+
 // Docs pages: optional in-repo docs rendered by the site (not the main docs site).
 const docs = defineCollection({
   type: "content",
@@ -46,8 +58,9 @@ const docs = defineCollection({
   }),
 });
 
-export const collections = { blog, docs };
+export const collections = { blog, updates, docs };
 
 // Handy exported types
 export type BlogEntry = CollectionEntry<"blog">;
+export type UpdatesEntry = CollectionEntry<"updates">;
 export type DocsEntry = CollectionEntry<"docs">;

@@ -1,0 +1,61 @@
+---
+import BaseLayout from "../layouts/BaseLayout.astro";
+import InlineLink from "../components/InlineLink.astro";
+import { links } from "../config/links";
+
+const pageTitle = "Mine — secure the network";
+const pageDesc =
+  "Run mining software, connect to pools, and learn about Animica's useful-work consensus.";
+---
+
+<BaseLayout title={pageTitle} description={pageDesc}>
+  <section class="mx-auto max-w-5xl px-4 sm:px-6 lg:px-8 py-12">
+    <h1 class="text-3xl sm:text-4xl font-semibold tracking-tight">Mine</h1>
+    <p class="mt-3 opacity-80">
+      Animica uses useful-work consensus (PoIES). Mine with CPU/GPU or connect to a pool
+      for steady rewards.
+    </p>
+
+    <div class="mt-8 grid gap-6 md:grid-cols-2">
+      <div class="rounded-2xl border p-6 bg-[var(--bg-elevated)]
+                  border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
+        <h2 class="text-xl font-semibold">Start mining</h2>
+        <div class="mt-3 text-sm font-mono rounded-lg p-4 bg-black/40">
+          python -m mining.cli.miner start \
+          <br />
+          &nbsp;&nbsp;--threads 4 --device cpu \
+          <br />
+          &nbsp;&nbsp;--rpc-url http://127.0.0.1:8545
+        </div>
+        <p class="mt-3 text-xs opacity-70">Use your local RPC endpoint.</p>
+      </div>
+
+      <div class="rounded-2xl border p-6 bg-[var(--bg-elevated)]
+                  border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
+        <h2 class="text-xl font-semibold">Pool mining</h2>
+        <p class="mt-2 text-sm opacity-80">
+          {links.pool.url
+            ? `Primary pool endpoint: ${links.pool.url}`
+            : "Pool endpoints will be published as they come online."}
+        </p>
+        {links.pool.url && (
+          <a href={links.pool.url} class="inline-link">Open pool dashboard →</a>
+        )}
+      </div>
+    </div>
+
+    <div class="mt-10 rounded-2xl border p-6 bg-[var(--bg-elevated)]
+                border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
+      <h3 class="text-lg font-semibold">Mining checklist</h3>
+      <ul class="mt-3 text-sm opacity-80 list-disc pl-5 space-y-2">
+        <li>Ensure your node is fully synced before mining.</li>
+        <li>Set <code>ANIMICA_MINER_ADDRESS</code> for payouts.</li>
+        <li>Monitor hashrate and block rewards from the node logs.</li>
+      </ul>
+    </div>
+
+    <p class="mt-8 text-sm opacity-80">
+      More details in the <InlineLink href={links.docs.page("mining/overview")}>Mining docs</InlineLink>.
+    </p>
+  </section>
+</BaseLayout>

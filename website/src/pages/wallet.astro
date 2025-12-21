@@ -1,0 +1,87 @@
+---
+import BaseLayout from "../layouts/BaseLayout.astro";
+import InlineLink from "../components/InlineLink.astro";
+import { links } from "../config/links";
+
+const pageTitle = "Wallet — secure storage for ANM";
+const pageDesc =
+  "Download official Animica wallets, verify signatures, and learn about address formats and CLI usage.";
+---
+
+<BaseLayout title={pageTitle} description={pageDesc}>
+  <section class="mx-auto max-w-5xl px-4 sm:px-6 lg:px-8 py-12">
+    <h1 class="text-3xl sm:text-4xl font-semibold tracking-tight">Wallet</h1>
+    <p class="mt-3 opacity-80">
+      Official wallets keep keys local and support post-quantum signatures. Verify every download
+      and always confirm addresses before sending funds.
+    </p>
+
+    <div class="mt-8 grid gap-6 md:grid-cols-2">
+      <div class="rounded-2xl border p-6 bg-[var(--bg-elevated)]
+                  border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
+        <h2 class="text-xl font-semibold">Desktop Wallet</h2>
+        <p class="mt-2 text-sm opacity-80">macOS, Windows, Linux builds with signed releases.</p>
+        <a
+          href={links.github.releases()}
+          class="mt-4 inline-flex items-center gap-2 rounded-lg px-4 py-2 font-medium
+                 bg-[var(--btn-primary-bg,#111)] text-[var(--btn-primary-fg,#fff)]
+                 hover:opacity-90"
+          target="_blank" rel="noopener noreferrer"
+        >
+          Download latest release
+        </a>
+        <p class="mt-2 text-xs opacity-70">Verify checksums before installing.</p>
+      </div>
+
+      <div class="rounded-2xl border p-6 bg-[var(--bg-elevated)]
+                  border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
+        <h2 class="text-xl font-semibold">Browser Extension</h2>
+        <p class="mt-2 text-sm opacity-80">Lightweight wallet for dApps and contract approvals.</p>
+        <p class="mt-4 text-sm">Coming from the official store. Track progress on GitHub.</p>
+        <a href={links.github.issues()} class="inline-link">Follow extension work →</a>
+      </div>
+    </div>
+
+    <div class="mt-10 rounded-2xl border p-6 bg-[var(--bg-elevated)]
+                border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
+      <h2 class="text-xl font-semibold">CLI wallet</h2>
+      <p class="mt-2 text-sm opacity-80">Use the CLI for automation, cold storage, and batch ops.</p>
+      <div class="mt-4 text-sm font-mono rounded-lg p-4 bg-black/40">
+        animica wallet create --label mywallet
+        <br />
+        animica wallet show mywallet
+        <br />
+        animica wallet export mywallet --out cold.key
+      </div>
+      <p class="mt-2 text-xs opacity-70">
+        Learn more in <InlineLink href={links.docs.page("wallet/overview")}>Wallet docs</InlineLink>.
+      </p>
+    </div>
+
+    <div class="mt-10 grid gap-6 md:grid-cols-2">
+      <div class="rounded-2xl border p-6 bg-[var(--bg-elevated)]
+                  border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
+        <h3 class="font-semibold">Address format</h3>
+        <p class="mt-2 text-sm opacity-80">Animica uses bech32m addresses starting with <code>anim1</code>.</p>
+        <p class="mt-2 text-sm opacity-80">Always verify the full address and checksum.</p>
+      </div>
+      <div class="rounded-2xl border p-6 bg-[var(--bg-elevated)]
+                  border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
+        <h3 class="font-semibold">Verify downloads</h3>
+        <p class="mt-2 text-sm opacity-80">Compare SHA-256 hashes and signed manifests before use.</p>
+        <p class="mt-2 text-sm opacity-80">Use release signatures from {links.github.root}.</p>
+      </div>
+    </div>
+
+    {links.faucet.url && (
+      <div class="mt-10 rounded-2xl border p-6 bg-[var(--bg-elevated)]
+                  border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
+        <h3 class="font-semibold">Faucet (testnet/devnet)</h3>
+        <p class="mt-2 text-sm opacity-80">
+          Request test tokens for development and QA environments.
+        </p>
+        <InlineLink href={links.faucet.url}>Open faucet →</InlineLink>
+      </div>
+    )}
+  </section>
+</BaseLayout>
