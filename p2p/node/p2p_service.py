@@ -6,8 +6,9 @@ import hashlib
 import ipaddress
 import logging
 import os
+import random
 import time
-from collections import OrderedDict
+from collections import OrderedDict, deque
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Awaitable, Dict, Optional, Set
@@ -49,6 +50,42 @@ class _PeerState:
     connected_at: float = field(default_factory=time.time)
 
 
+@dataclass(slots=True)
+class P2PStatusSnapshot:
+    p2p_running: bool
+    listen_addrs: list[str]
+    peers_total: int
+    peers_inbound: int
+    peers_outbound: int
+    bootstrap_attempts_last_5m: int
+    last_peer_connect_at: Optional[float]
+    last_peer_disconnect_at: Optional[float]
+    seed_sources: dict[str, list[str]]
+    dial_queue_depth: int
+    addrman_size: Optional[int]
+    bootstrap_last_attempt: Optional[dict[str, Any]] = None
+    bootstrap_last_success: Optional[dict[str, Any]] = None
+    bootstrap_last_error: Optional[dict[str, Any]] = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "p2p_running": self.p2p_running,
+            "listen_addrs": list(self.listen_addrs),
+            "peers_total": self.peers_total,
+            "peers_inbound": self.peers_inbound,
+            "peers_outbound": self.peers_outbound,
+            "bootstrap_attempts_last_5m": self.bootstrap_attempts_last_5m,
+            "last_peer_connect_at": self.last_peer_connect_at,
+            "last_peer_disconnect_at": self.last_peer_disconnect_at,
+            "seed_sources": self.seed_sources,
+            "dial_queue_depth": self.dial_queue_depth,
+            "addrman_size": self.addrman_size,
+            "bootstrap_last_attempt": self.bootstrap_last_attempt,
+            "bootstrap_last_success": self.bootstrap_last_success,
+            "bootstrap_last_error": self.bootstrap_last_error,
+        }
+
+
 class P2PService:
     """
     Production P2P service: inv/getdata gossip + P2P-first sync.
@@ -75,13 +112,16 @@ class P2PService:
         _ = (enable_quic, enable_ws, nat)
 
         self.listen_addrs = listen_addrs or ["/ip4/0.0.0.0/tcp/30333"]
-        merged_seeds = list(seeds or [])
+        self._configured_seeds = list(seeds or [])
+        merged_seeds = list(self._configured_seeds)
         for addr in DEFAULT_BOOTSTRAP_SEEDS:
             if addr not in merged_seeds:
                 merged_seeds.append(addr)
         self.seeds = merged_seeds
         self.chain_id = int(chain_id)
         self.deps = deps
+        self._seed_sources = self._build_seed_sources(self._configured_seeds)
+        self._seed_keys = {self._addr_key(s) for s in self.seeds}
 
         # Resolve peerstore path (prefer chain-specific data dir)
         if peerstore_path is None:
@@ -132,6 +172,9 @@ class P2PService:
         self._running = False
         self._tasks: list[asyncio.Task] = []
         self._child_tasks: Set[asyncio.Task] = set()
+        self._dial_inflight: Set[str] = set()
+        self._dial_backoff: dict[str, float] = {}
+        self._dial_attempts: dict[str, int] = {}
 
         self._peer_lock = asyncio.Lock()
         self._peers: dict[str, _PeerState] = {}  # remote -> state
@@ -163,6 +206,12 @@ class P2PService:
 
         self._sync_lock = asyncio.Lock()
         self._sync_wakeup = asyncio.Event()
+        self._bootstrap_attempts: deque[dict[str, Any]] = deque(maxlen=512)
+        self._last_bootstrap_attempt: Optional[dict[str, Any]] = None
+        self._last_bootstrap_success: Optional[dict[str, Any]] = None
+        self._last_bootstrap_error: Optional[dict[str, Any]] = None
+        self._last_peer_connect_at: Optional[float] = None
+        self._last_peer_disconnect_at: Optional[float] = None
 
         class _Metrics:
             def __init__(self, svc: "P2PService") -> None:
@@ -198,6 +247,11 @@ class P2PService:
         # Persist configured seeds so a restarted node reuses them immediately
         if self.seeds:
             self._seed_peerstore(self.seeds)
+        log.info(
+            "Loaded %d seed(s)",
+            len(self.seeds),
+            extra={"seed_sources": self._seed_sources},
+        )
 
         # Listen
         for ma in self.listen_addrs:
@@ -276,6 +330,103 @@ class P2PService:
     @property
     def peer_registry(self) -> PeerRegistry:
         return self._peer_registry
+
+    def _parse_seed_env(self, raw: str | None) -> list[str]:
+        if not raw:
+            return []
+        return [item.strip() for item in raw.split(",") if item.strip()]
+
+    def _build_seed_sources(self, configured: list[str]) -> dict[str, list[str]]:
+        sources: dict[str, list[str]] = {
+            "defaults": list(DEFAULT_BOOTSTRAP_SEEDS),
+        }
+        env_seeds = []
+        for env_name in ("ANIMICA_P2P_SEEDS", "P2P_SEEDS"):
+            env_seeds.extend(self._parse_seed_env(os.environ.get(env_name)))
+        if env_seeds:
+            sources["env"] = env_seeds
+        if configured:
+            sources["config"] = list(configured)
+        dns_seeds = [s for s in self.seeds if "/dns" in s]
+        if dns_seeds:
+            sources["dns"] = dns_seeds
+        return sources
+
+    def _record_bootstrap_attempt(
+        self, addr: str, *, success: bool, error: Optional[str] = None
+    ) -> None:
+        now = time.time()
+        entry = {
+            "at": now,
+            "addr": addr,
+            "success": success,
+        }
+        if error:
+            entry["error"] = error
+        self._bootstrap_attempts.append(entry)
+        self._last_bootstrap_attempt = entry
+        if success:
+            self._last_bootstrap_success = entry
+        else:
+            self._last_bootstrap_error = entry
+
+    def _dial_delay(self, addr_key: str) -> float:
+        attempts = self._dial_attempts.get(addr_key, 0)
+        base = 2.0 * (2 ** min(attempts, 5))
+        jitter = random.uniform(0.6, 1.4)
+        return min(60.0, base * jitter)
+
+    def _mark_dial_failure(self, addr: str, *, is_seed: bool, error: str) -> None:
+        addr_key = self._addr_key(addr)
+        attempts = self._dial_attempts.get(addr_key, 0) + 1
+        self._dial_attempts[addr_key] = attempts
+        delay = self._dial_delay(addr_key)
+        next_retry = time.time() + delay
+        self._dial_backoff[addr_key] = next_retry
+        if is_seed:
+            self._record_bootstrap_attempt(addr, success=False, error=error)
+            log.warning(
+                "Seed %s failed: %s; next retry in %.1fs", addr, error, delay
+            )
+
+    def _mark_dial_success(self, addr: str, *, is_seed: bool) -> None:
+        addr_key = self._addr_key(addr)
+        self._dial_attempts.pop(addr_key, None)
+        self._dial_backoff.pop(addr_key, None)
+        if is_seed:
+            self._record_bootstrap_attempt(addr, success=True)
+            log.info("Seed %s handshake complete", addr)
+
+    def status_snapshot(self) -> P2PStatusSnapshot:
+        snapshot = self._peer_registry.snapshot()
+        inbound = sum(1 for p in snapshot if p.get("direction") == "inbound")
+        outbound = sum(1 for p in snapshot if p.get("direction") == "outbound")
+        now = time.time()
+        attempts_last_5m = sum(
+            1 for entry in self._bootstrap_attempts if now - entry.get("at", 0) <= 300
+        )
+        addrman_size = None
+        try:
+            addrman_size = self.peerstore.count_known()
+        except Exception:
+            addrman_size = None
+
+        return P2PStatusSnapshot(
+            p2p_running=self._running,
+            listen_addrs=list(self.listen_addrs),
+            peers_total=self._peer_registry.peer_count(),
+            peers_inbound=inbound,
+            peers_outbound=outbound,
+            bootstrap_attempts_last_5m=attempts_last_5m,
+            last_peer_connect_at=self._last_peer_connect_at,
+            last_peer_disconnect_at=self._last_peer_disconnect_at,
+            seed_sources=dict(self._seed_sources),
+            dial_queue_depth=len(self._dial_inflight),
+            addrman_size=addrman_size,
+            bootstrap_last_attempt=self._last_bootstrap_attempt,
+            bootstrap_last_success=self._last_bootstrap_success,
+            bootstrap_last_error=self._last_bootstrap_error,
+        )
 
     def _normalize_seed(self, address: str) -> str:
         if address.startswith("/"):
@@ -435,7 +586,6 @@ class P2PService:
 
     async def _dial_loop(self) -> None:
         target_outbound = int(os.environ.get("ANIMICA_P2P_OUTBOUND", "8") or 8)
-        backoff: dict[str, float] = {}
         try:
             while self._running:
                 await asyncio.sleep(1.0)
@@ -474,23 +624,38 @@ class P2PService:
                 now = time.time()
                 for addr in addrs:
                     # Skip peers we're already connected to so we can reach new ones.
-                    if self._addr_key(addr) in active_keys:
+                    addr_key = self._addr_key(addr)
+                    if addr_key in active_keys:
                         continue
-                    if backoff.get(addr, 0.0) > now:
+                    if addr_key in self._dial_inflight:
                         continue
-                    backoff[addr] = now + 10.0
-                    self._create_child_task(self._dial(addr), name=f"p2p.dial@{addr}")
+                    if self._dial_backoff.get(addr_key, 0.0) > now:
+                        continue
+                    self._dial_inflight.add(addr_key)
+                    is_seed = addr_key in self._seed_keys
+                    if is_seed:
+                        log.info("Attempting dial to seed %s", addr)
+                    self._create_child_task(
+                        self._dial(addr, is_seed=is_seed),
+                        name=f"p2p.dial@{addr}",
+                    )
                     break
         except asyncio.CancelledError:
             return
 
-    async def _dial(self, addr: str) -> None:
+    async def _dial(self, addr: str, *, is_seed: bool = False) -> None:
+        addr_key = self._addr_key(addr)
         try:
             conn = await self._transport.dial(addr, timeout=5.0)
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception as exc:
+            err = f"{exc.__class__.__name__}: {exc}"
+            self._mark_dial_failure(addr, is_seed=is_seed, error=err)
             return
+        finally:
+            self._dial_inflight.discard(addr_key)
+        self._mark_dial_success(addr, is_seed=is_seed)
         await self._register_conn(conn, direction="outbound")
 
     async def _register_conn(self, conn: Any, *, direction: str) -> None:
@@ -524,6 +689,7 @@ class P2PService:
             self._peers[remote] = peer
             self._peers_by_session[peer.session_id] = peer
             self._stats["peers"] = self._peer_registry.peer_count()
+            self._last_peer_connect_at = time.time()
 
         self._create_child_task(self._peer_loop(peer), name=f"p2p.peer@{remote}")
         self._create_child_task(
@@ -570,6 +736,7 @@ class P2PService:
             self._peers.pop(peer.remote, None)
             self._peers_by_session.pop(peer.session_id, None)
             self._stats["peers"] = self._peer_registry.peer_count()
+            self._last_peer_disconnect_at = time.time()
 
         if peer.peer_id:
             with contextlib.suppress(Exception):

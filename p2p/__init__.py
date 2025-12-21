@@ -18,6 +18,7 @@ __all__ = [
     # Lazy re-exports (see __getattr__)
     "P2PService",
     "HandshakeParams",
+    "clear_service",
 ]
 
 if TYPE_CHECKING:
@@ -70,6 +71,12 @@ def get_service() -> "P2PService | None":  # type: ignore
     Returns None if no service has been registered (e.g., P2P not started).
     """
     return _global_service
+
+
+def clear_service() -> None:
+    """Clear the globally registered P2P service (test helper)."""
+    global _global_service
+    _global_service = None
 
 
 def get_connection_manager():

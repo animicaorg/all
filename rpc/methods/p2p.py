@@ -422,6 +422,70 @@ async def list_peers() -> list[dict[str, t.Any]]:
     return []
 
 
+@method("p2p.getStatus", desc="Return the live P2P status snapshot")
+async def get_status() -> dict[str, t.Any]:
+    p2p_svc = _get_p2p_service()
+    if p2p_svc is not None:
+        if hasattr(p2p_svc, "status_snapshot"):
+            snap = p2p_svc.status_snapshot()
+            if hasattr(snap, "to_dict"):
+                return snap.to_dict()
+            if isinstance(snap, dict):
+                return snap
+        if hasattr(p2p_svc, "status"):
+            try:
+                status = p2p_svc.status()
+                if isinstance(status, dict):
+                    status.setdefault("p2p_running", True)
+                    return status
+            except Exception:
+                pass
+
+    core_svc = _get_core_p2p_service()
+    if core_svc is not None:
+        inbound = 0
+        outbound = 0
+        peers_total = 0
+        try:
+            peers = core_svc.connman.peers() if hasattr(core_svc, "connman") else {}
+            if isinstance(peers, dict):
+                for peer in peers.values():
+                    peers_total += 1
+                    if getattr(peer, "inbound", False):
+                        inbound += 1
+                    else:
+                        outbound += 1
+        except Exception:
+            pass
+        return {
+            "p2p_running": True,
+            "listen_addrs": [],
+            "peers_total": peers_total,
+            "peers_inbound": inbound,
+            "peers_outbound": outbound,
+            "bootstrap_attempts_last_5m": 0,
+            "last_peer_connect_at": None,
+            "last_peer_disconnect_at": None,
+            "seed_sources": {},
+            "dial_queue_depth": 0,
+            "addrman_size": None,
+        }
+
+    return {
+        "p2p_running": False,
+        "listen_addrs": [],
+        "peers_total": 0,
+        "peers_inbound": 0,
+        "peers_outbound": 0,
+        "bootstrap_attempts_last_5m": 0,
+        "last_peer_connect_at": None,
+        "last_peer_disconnect_at": None,
+        "seed_sources": {},
+        "dial_queue_depth": 0,
+        "addrman_size": None,
+    }
+
+
 @method("p2p.addPeer", desc="Add a peer by address")
 async def add_peer(address: str) -> dict[str, t.Any]:
     """
@@ -648,6 +712,7 @@ async def get_peer_info(peer_id: str) -> dict[str, t.Any] | None:
 # Export for RPC method discovery
 __all__ = [
     "list_peers",
+    "get_status",
     "add_peer",
     "remove_peer",
     "get_peer_info",
