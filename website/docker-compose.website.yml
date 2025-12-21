@@ -1,0 +1,13 @@
+version: "3.9"
+
+services:
+  website:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    ports:
+      - "4321:4321"
+    env_file:
+      - .env
+    environment:
+      - NODE_ENV=production

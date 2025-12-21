@@ -1,6 +1,7 @@
 ---
 import DocsLayout from "../../layouts/DocsLayout.astro";
 import InlineLink from "../../components/InlineLink.astro";
+import { links } from "../../config/links";
 
 const title = "Documentation";
 const description = "Browse Animica docs: consensus (PoIES), data availability, VM (Python), SDKs, ZK, AICF, wallet, explorer, P2P, randomness, and more.";
@@ -132,7 +133,7 @@ const cards: Card[] = [
 
     <p class="mt-8 text-sm opacity-70">
       Can’t find what you’re looking for? Try the <InlineLink href="/search">site search</InlineLink>,
-      open an issue on <InlineLink href="https://github.com/animica">GitHub</InlineLink>, or ask in the community chat.
+      open an issue on <InlineLink href={links.github.issues()}>GitHub</InlineLink>, or ask in the community chat.
     </p>
   </section>
 

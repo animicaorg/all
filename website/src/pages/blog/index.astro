@@ -1,6 +1,7 @@
 ---
 import BaseLayout from "../../layouts/BaseLayout.astro";
 import InlineLink from "../../components/InlineLink.astro";
+import { links } from "../../config/links";
 
 // Discover all MD/MDX blog posts located under this directory (excluding this index page)
 const modMap = import.meta.glob("./**/*.{md,mdx}", { eager: true });
@@ -37,7 +38,7 @@ const PAGE_DESC =
         {" "}
         <InlineLink href="/status">Status page</InlineLink>
         {" "}or the{" "}
-        <InlineLink href="https://github.com/animicaorg">GitHub org</InlineLink>.
+        <InlineLink href={links.github.root}>GitHub org</InlineLink>.
       </p>
     </header>
 
