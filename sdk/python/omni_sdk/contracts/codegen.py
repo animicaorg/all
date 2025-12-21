@@ -14,7 +14,7 @@ exposes per-function helpers:
 - For *state-changing* (non-view) functions:
     def send_inc(..., *, signer: PQSigner, nonce: int, max_fee: int,
                  gas_limit: int | None = None, value: int = 0,
-                 await_receipt: bool = True, timeout_s: float = 60.0,
+                 await_receipt: bool = True, timeout_s: float = 3600.0,
                  poll_interval_s: float = 0.5) -> dict:
         return self._client.send("inc", [...], ...)
 
@@ -232,7 +232,7 @@ _FN_VIEW_TMPL = '''
 _FN_SEND_TMPL = '''
     def send_{py_name}(self{sig_args}, *, signer: PQSigner, nonce: int, max_fee: int,
                        gas_limit: int | None = None, value: int = 0,
-                       await_receipt: bool = True, timeout_s: float = 60.0,
+                       await_receipt: bool = True, timeout_s: float = 3600.0,
                        poll_interval_s: float = 0.5) -> dict:
         """State-changing tx: {fn_name}({human_sig})"""
         return self._client.send(
