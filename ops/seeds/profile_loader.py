@@ -50,14 +50,19 @@ def load_profile_file(profile: str, seed_dir: Path = SEED_DIR) -> list[SeedEntry
     except Exception as exc:  # pragma: no cover - user facing
         raise SystemExit(f"Failed to read seeds file {chosen}: {exc}") from exc
 
-    seeds: list[SeedEntry] = []
-    for raw in data.get("seeds", []):
+    seeds_with_order: list[tuple[int, int, SeedEntry]] = []
+    for idx, raw in enumerate(data.get("seeds", [])):
         peer_id = str(raw.get("peer_id") or raw.get("id") or raw.get("name") or "seed")
         addrs = [str(a) for a in raw.get("multiaddrs", []) if a]
         if not addrs:
             continue
-        seeds.append(SeedEntry(peer_id=peer_id, multiaddrs=addrs))
-    return seeds
+        before = bool(raw.get("before"))
+        order_key = 0 if before else 1
+        seeds_with_order.append(
+            (order_key, idx, SeedEntry(peer_id=peer_id, multiaddrs=addrs))
+        )
+    seeds_with_order.sort()
+    return [seed for _, _, seed in seeds_with_order]
 
 
 def dedupe_multiaddrs(seeds: Iterable[SeedEntry]) -> list[str]:
