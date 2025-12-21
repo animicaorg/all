@@ -28,7 +28,8 @@ BOOTSTRAP_NODE_ENV = "ANIMICA_BOOTSTRAP_NODE"
 DEV_NETWORKS = {"devnet", "local-devnet"}
 
 BOOTSTRAP_TIMEOUT_ENV = "ANIMICA_BOOTSTRAP_TIMEOUT"
-BOOTSTRAP_RPC_TIMEOUT: Optional[float] = None
+# Default bootstrap timeout: 1 hour to avoid premature failures during seed fetch.
+BOOTSTRAP_RPC_TIMEOUT: Optional[float] = 60 * 60
 BOOTSTRAP_SEED_RETRIES: Optional[int] = None
 BOOTSTRAP_SEED_RETRY_DELAY = 1.0
 BOOTSTRAP_SEED_RETRY_DELAY_MAX = 30.0
