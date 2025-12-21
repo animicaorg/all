@@ -29,6 +29,9 @@ DEV_NETWORKS = {"devnet", "local-devnet"}
 
 BOOTSTRAP_TIMEOUT_ENV = "ANIMICA_BOOTSTRAP_TIMEOUT"
 BOOTSTRAP_RPC_TIMEOUT: Optional[float] = None
+BOOTSTRAP_SEED_RETRIES: Optional[int] = None
+BOOTSTRAP_SEED_RETRY_DELAY = 1.0
+BOOTSTRAP_SEED_RETRY_DELAY_MAX = 30.0
 BOOTSTRAP_HEAD_RETRIES: Optional[int] = None
 BOOTSTRAP_HEAD_RETRY_DELAY = 1.0
 BOOTSTRAP_HEAD_RETRY_DELAY_MAX = 30.0
@@ -472,15 +475,29 @@ def _auto_bootstrap_if_needed(net_cfg: Any, bootstrap_url: str | None, *, force:
     if not quiet:
         typer.echo(f"Auto-bootstrap: fetching seeds from {endpoint}")
 
-    try:
-        _fetch_bootstrap_data(net_cfg, endpoint)
-        if not quiet:
-            typer.secho("✓ Bootstrap metadata saved locally", fg=typer.colors.GREEN)
-        return True
-    except Exception as exc:
-        if not quiet:
-            typer.secho(f"Warning: auto-bootstrap failed ({exc})", fg=typer.colors.YELLOW, err=True)
-        return False
+    delay = BOOTSTRAP_SEED_RETRY_DELAY
+    attempt = 1
+    while True:
+        try:
+            _fetch_bootstrap_data(net_cfg, endpoint)
+            if not quiet:
+                typer.secho("✓ Bootstrap metadata saved locally", fg=typer.colors.GREEN)
+            return True
+        except Exception as exc:
+            if BOOTSTRAP_SEED_RETRIES is not None and attempt >= BOOTSTRAP_SEED_RETRIES:
+                if not quiet:
+                    typer.secho(f"Warning: auto-bootstrap failed ({exc})", fg=typer.colors.YELLOW, err=True)
+                return False
+            if not quiet:
+                typer.secho(
+                    "Warning: auto-bootstrap failed "
+                    f"(attempt {attempt}: {exc}); retrying in {delay:.1f}s.",
+                    fg=typer.colors.YELLOW,
+                    err=True,
+                )
+            time.sleep(delay)
+            delay = min(delay * 2, BOOTSTRAP_SEED_RETRY_DELAY_MAX)
+            attempt += 1
 
 
 def _ensure_network_set() -> str:
