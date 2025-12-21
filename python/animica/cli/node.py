@@ -32,7 +32,7 @@ BOOTSTRAP_TIMEOUT_ENV = "ANIMICA_BOOTSTRAP_TIMEOUT"
 BOOTSTRAP_RPC_TIMEOUT: Optional[float] = None
 BOOTSTRAP_SEED_RETRY_DELAY = 1.0
 BOOTSTRAP_SEED_RETRY_DELAY_MAX = 30.0
-BOOTSTRAP_HEAD_RETRIES: Optional[int] = None
+BOOTSTRAP_HEAD_RETRIES: Optional[int] = 1
 BOOTSTRAP_HEAD_RETRY_DELAY = 1.0
 BOOTSTRAP_HEAD_RETRY_DELAY_MAX = 30.0
 ALLOWED_BOOTSTRAP_METHODS = {
@@ -310,10 +310,7 @@ def _record_bootstrap_head(net_cfg: Any, bootstrap_url: Optional[str], *, quiet:
                 note="bootstrap head snapshot",
             )
             if not quiet:
-                typer.secho(
-                    f"✓ Recorded bootstrap head at height {head.get('height') or head.get('number')}",
-                    fg=typer.colors.GREEN,
-                )
+                typer.secho("✓ Bootstrap metadata saved locally", fg=typer.colors.GREEN)
             return True
         except Exception as exc:
             last_exc = exc
@@ -336,14 +333,14 @@ def _record_bootstrap_head(net_cfg: Any, bootstrap_url: Optional[str], *, quiet:
         if cached and cached.get("height") is not None:
             updated_at = _format_sync_timestamp(cached.get("updated_at")) or "unknown time"
             typer.secho(
-                "Warning: bootstrap head fetch failed after retries; using cached sync state "
+                "Warning: bootstrap head fetch failed; using cached sync state "
                 f"(height {cached.get('height')}, updated {updated_at}).",
                 fg=typer.colors.YELLOW,
                 err=True,
             )
         else:
             typer.secho(
-                f"Warning: bootstrap head fetch failed after retries ({last_exc})",
+                f"Warning: bootstrap head fetch failed ({last_exc})",
                 fg=typer.colors.YELLOW,
                 err=True,
             )
