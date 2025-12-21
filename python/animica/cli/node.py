@@ -462,8 +462,20 @@ def _local_rpc(rpc_url: str, method: str, params: list[Any] | None = None) -> An
     return parsed.get("result")
 
 
-def _fetch_bootstrap_data(net_cfg: Any, bootstrap_url: str) -> tuple[dict[str, Any], list[str], Path]:
-    manifest = _bootstrap_rpc(bootstrap_url, "bootstrap.getManifest")
+def _fetch_bootstrap_data(
+    net_cfg: Any,
+    bootstrap_url: str,
+    *,
+    quiet: bool = False,
+) -> tuple[dict[str, Any], list[str], Path]:
+    manifest: dict[str, Any] = {}
+    manifest_error: Optional[Exception] = None
+    seed_error: Optional[Exception] = None
+
+    try:
+        manifest = _bootstrap_rpc(bootstrap_url, "bootstrap.getManifest")
+    except Exception as exc:
+        manifest_error = exc
 
     seeds: list[str] = []
     p2p_info = manifest.get("p2p") if isinstance(manifest, dict) else None
@@ -474,8 +486,31 @@ def _fetch_bootstrap_data(net_cfg: Any, bootstrap_url: str) -> tuple[dict[str, A
         try:
             seed_resp = _bootstrap_rpc(bootstrap_url, "bootstrap.getSeeds")
             seeds = list(seed_resp.get("seeds") or [])
-        except Exception:
+        except Exception as exc:
+            seed_error = exc
             seeds = []
+
+    if not seeds:
+        fallback_seeds = get_seed_nodes(getattr(net_cfg, "name", "mainnet"))
+        if fallback_seeds:
+            seeds = list(fallback_seeds)
+            if not quiet:
+                typer.secho(
+                    "Warning: bootstrap RPC unavailable; using bundled seed list.",
+                    fg=typer.colors.YELLOW,
+                    err=True,
+                )
+
+    if not seeds and (manifest_error or seed_error):
+        exc = manifest_error or seed_error
+        raise RuntimeError(f"Bootstrap RPC failed and no fallback seeds available: {exc}") from exc
+
+    if manifest_error and not quiet:
+        typer.secho(
+            f"Warning: bootstrap manifest fetch failed ({manifest_error}); continuing.",
+            fg=typer.colors.YELLOW,
+            err=True,
+        )
 
     state_path = _persist_bootstrap_state(net_cfg, manifest, seeds)
     if seeds:
@@ -502,7 +537,7 @@ def _auto_bootstrap_if_needed(net_cfg: Any, bootstrap_url: str | None, *, force:
     attempt = 1
     while True:
         try:
-            _fetch_bootstrap_data(net_cfg, endpoint)
+            _fetch_bootstrap_data(net_cfg, endpoint, quiet=quiet)
             if not quiet:
                 typer.secho("✓ Bootstrap metadata saved locally", fg=typer.colors.GREEN)
             return True
@@ -814,7 +849,11 @@ def bootstrap(
     typer.echo(f"Data dir: {net_cfg.data_dir} (db exists: {'yes' if db_exists else 'no'})")
 
     try:
-        manifest, seeds, state_path = _fetch_bootstrap_data(net_cfg, bootstrap_endpoint)
+        manifest, seeds, state_path = _fetch_bootstrap_data(
+            net_cfg,
+            bootstrap_endpoint,
+            quiet=False,
+        )
         typer.echo(f"Saved bootstrap state to {state_path}")
     except Exception as exc:
         typer.secho(f"Warning: failed to fetch bootstrap manifest ({exc})", fg=typer.colors.YELLOW, err=True)
