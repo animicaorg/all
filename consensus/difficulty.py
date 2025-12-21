@@ -45,18 +45,18 @@ Exports
 - compute_share_micro(theta_micro, shares_per_block)
 - compute_share_tiers(theta_micro, factors=(2,4,8,16,32,64,128,256))
 - micro_to_nats, nats_to_micro
-- THETA_HARD_CAP_MICRO: Network stability cap (300M µ-nats = 300 nats)
+- THETA_HARD_CAP_MICRO: Network stability cap (3B µ-nats = 3,000 nats)
 - MAX_SAFE_THETA_MICRO: Overflow protection constant (10^15 µ-nats = 10^9 nats)
 
 All functions are deterministic and side-effect free.
 
 Note on Theta Hard Cap
 ----------------------
-Theta micro has a hard cap at THETA_HARD_CAP_MICRO (300M µ-nats = 300 nats) to
+Theta micro has a hard cap at THETA_HARD_CAP_MICRO (3B µ-nats = 3,000 nats) to
 maintain network stability and prevent runaway difficulty values from negatively
 impacting blockchain performance. When theta_max_micro is None (default), this
 hard cap is automatically applied. Stability is ensured by:
-  1. Hard cap: Maximum at 300M µ-nats (300 nats)
+  1. Hard cap: Maximum at 3B µ-nats (3,000 nats)
   2. step_clamp_micro: Limits rate of change per block
   3. Overflow protection: Ultimate safety cap at MAX_SAFE_THETA_MICRO (10^15 µ-nats = 10^9 nats)
   4. EMA smoothing: Prevents wild fluctuations from transient spikes
@@ -90,10 +90,10 @@ _MICRO: float = 1_000_000.0
 MAX_SAFE_THETA_MICRO: MicroNat = 10 ** 15
 
 # Hard cap for theta_micro to maintain network stability
-# 300M micro-nats = 300 nats (operational ceiling for network performance)
+# 3B micro-nats = 3,000 nats (operational ceiling for network performance)
 # This cap prevents runaway theta values from negatively impacting blockchain performance
 # while allowing dynamic adjustment below the threshold.
-THETA_HARD_CAP_MICRO: MicroNat = 300_000_000
+THETA_HARD_CAP_MICRO: MicroNat = 3_000_000_000
 
 
 def micro_to_nats(theta_micro: MicroNat) -> float:
@@ -144,7 +144,7 @@ class RetargetParams:
     theta_min_micro : MicroNat
         Lower bound for Θ (do not go below).
     theta_max_micro : MicroNat | None
-        Optional upper bound for Θ. If None, uses THETA_HARD_CAP_MICRO (300M µ-nats).
+        Optional upper bound for Θ. If None, uses THETA_HARD_CAP_MICRO (3B µ-nats).
         The hard cap ensures network stability by preventing excessive theta values
         that could negatively impact blockchain performance.
         Default is None (uses hard cap).
@@ -262,7 +262,7 @@ def update_theta(
     theta_next = max(int(p.theta_min_micro), int(theta_next))
     
     # Enforce maximum: use hard cap if not specified, otherwise use provided max
-    # The hard cap (300M µ-nats) ensures network stability
+    # The hard cap (3B µ-nats) ensures network stability
     effective_max = int(p.theta_max_micro) if p.theta_max_micro is not None else THETA_HARD_CAP_MICRO
     
     # Check if we're hitting the cap and log a warning

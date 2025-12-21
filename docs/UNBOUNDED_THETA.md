@@ -2,7 +2,7 @@
 
 ## Overview
 
-The Animica blockchain implements a hard cap on Theta (Θ) at 300M µ-nats (300 nats) to maintain network stability while preserving dynamic difficulty adjustment below the threshold. This cap prevents runaway theta values from negatively impacting blockchain performance, balancing flexibility with operational reliability.
+The Animica blockchain implements a hard cap on Theta (Θ) at 3B µ-nats (3,000 nats) to maintain network stability while preserving dynamic difficulty adjustment below the threshold. This cap prevents runaway theta values from negatively impacting blockchain performance, balancing flexibility with operational reliability.
 
 ## What Changed
 
@@ -16,7 +16,7 @@ The Animica blockchain implements a hard cap on Theta (Θ) at 300M µ-nats (300 
 **Version 2** - Temporary unbounded approach:
 Theta caps were removed entirely, allowing unlimited growth.
 
-### Current: Hard Cap at 300M µ-nats
+### Current: Hard Cap at 3B µ-nats
 
 Theta is now capped at a practical maximum to ensure network stability:
 
@@ -24,7 +24,7 @@ Theta is now capped at a practical maximum to ensure network stability:
 # spec/params.yaml
 consensus:
   poies:
-    theta_max_munats: 300000000  # Hard cap at 300M µ-nats (300 nats)
+    theta_max_munats: 3000000000  # Hard cap at 3B µ-nats (3,000 nats)
 ```
 
 This cap:
@@ -36,20 +36,20 @@ This cap:
 
 The hard cap design maintains network stability through multiple safeguards:
 
-### 1. **Hard Cap at 300M µ-nats**
+### 1. **Hard Cap at 3B µ-nats**
 
 The primary stability mechanism is the hard cap:
 
 ```python
-THETA_HARD_CAP_MICRO = 300_000_000  # 300 nats
+THETA_HARD_CAP_MICRO = 3_000_000_000  # 3,000 nats
 ```
 
-**Effect:** Theta cannot exceed 300 nats, preventing runaway values from impacting network performance.
+**Effect:** Theta cannot exceed 3,000 nats, preventing runaway values from impacting network performance.
 
 **Context:**
 - Current mainnet Theta: ~16 nats (16M µ-nats)
 - Previous max: 60 nats (60M µ-nats)
-- New hard cap: 300 nats (300M µ-nats)
+- New hard cap: 3,000 nats (3B µ-nats)
 - Headroom: **18.75x the original cap, 5x the previous temporary cap**
 
 **When Hit:** The system logs warnings:
@@ -223,8 +223,8 @@ PYTHONPATH=/home/runner/work/all/all python mining/tests/test_theta_unbounded.py
 ```
 
 Tests verify:
-- ✅ Theta can grow beyond old 60M limit (up to 300M cap)
-- ✅ Hard cap enforcement at 300M µ-nats
+- ✅ Theta can grow beyond old 60M limit (up to 3B cap)
+- ✅ Hard cap enforcement at 3B µ-nats
 - ✅ Warning logs when approaching/hitting cap
 - ✅ Backward compatibility with explicit max values
 - ✅ Step clamp prevents wild fluctuations
@@ -234,7 +234,7 @@ Tests verify:
 
 ## FAQ
 
-### Q: Why 300M µ-nats (300 nats)?
+### Q: Why 3B µ-nats (3,000 nats)?
 
 **A:** This value provides:
 - 18.75x headroom over the original 16 nat mainnet cap
@@ -245,7 +245,7 @@ Tests verify:
 ### Q: What happens when the cap is reached?
 
 **A:** 
-1. Theta stops increasing and remains at 300M µ-nats
+1. Theta stops increasing and remains at 3B µ-nats
 2. A warning is logged: "Theta micro capped at maximum"
 3. Dynamic adjustment continues below the cap if hash rate decreases
 4. Block times may be faster than target if sustained extreme load continues
@@ -269,13 +269,13 @@ params = RetargetParams(
 )
 ```
 
-Setting it to `None` uses the hard cap (300M µ-nats).
+Setting it to `None` uses the hard cap (3B µ-nats).
 
 ### Q: How do I monitor theta levels?
 
 **A:** Watch for:
 - Log messages about approaching cap (>270M µ-nats)
-- Log messages about hitting cap (=300M µ-nats)
+- Log messages about hitting cap (=3B µ-nats)
 - Block intervals significantly off target when at cap
 - Sustained fast blocks indicating the cap may need review
 
@@ -292,7 +292,7 @@ Setting it to `None` uses the hard cap (300M µ-nats).
 ### Code Changes
 
 **Core module:** `consensus/difficulty.py`
-- New constant `THETA_HARD_CAP_MICRO = 300_000_000` (300 nats)
+- New constant `THETA_HARD_CAP_MICRO = 3_000_000_000` (3,000 nats)
 - `RetargetParams.theta_max_micro` defaults to `None` (uses hard cap)
 - `update_theta()` enforces hard cap when `theta_max_micro` is `None`
 - Warning logged when capping theta at maximum
@@ -301,10 +301,10 @@ Setting it to `None` uses the hard cap (300M µ-nats).
 **Mining adjustment:** `rpc/methods/miner.py`
 - Updated default params to use `theta_max_micro=None` (hard cap)
 - Warning logged when approaching cap (>90% threshold)
-- Initialization message shows effective maximum (300 nats)
+- Initialization message shows effective maximum (3,000 nats)
 
 **Configuration:** `spec/params.yaml`
-- All networks now use `theta_max_munats: 300000000`
+- All networks now use `theta_max_munats: 3000000000`
 - Comments explain stability purpose
 
 ### Performance Impact
@@ -323,7 +323,7 @@ Setting it to `None` uses the hard cap (300M µ-nats).
 
 ## Conclusion
 
-The 300M µ-nats (300 nats) hard cap on Theta balances flexibility with operational stability. It provides:
+The 3B µ-nats (3,000 nats) hard cap on Theta balances flexibility with operational stability. It provides:
 - **Significant headroom** for hash rate growth (18.75x original cap)
 - **Network stability** through a predictable upper bound
 - **Warning system** for operators to detect extreme conditions

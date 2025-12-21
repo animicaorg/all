@@ -6,7 +6,7 @@ import consensus.difficulty as diff
 
 
 def test_theta_can_grow_beyond_old_limits():
-    """Test that theta can now grow beyond the previous 60M limit but respects 300M hard cap."""
+    """Test that theta can now grow beyond the previous 60M limit but respects 3B hard cap."""
     # Use default params (theta_max_micro=None uses hard cap)
     params = diff.RetargetParams(
         target_block_time_s=12.0,
@@ -14,7 +14,7 @@ def test_theta_can_grow_beyond_old_limits():
         gain_beta=0.9,
         step_clamp_micro=5_000_000,  # Large step for faster growth in test
         theta_min_micro=300_000,
-        theta_max_micro=None,  # None = use hard cap (300M)
+        theta_max_micro=None,  # None = use hard cap (3B)
     )
     
     # Start at a high value (old max was 60M)
@@ -30,14 +30,14 @@ def test_theta_can_grow_beyond_old_limits():
         f"Theta should grow beyond old 60M limit, got {state.theta_micro}"
     )
     
-    # But should respect the hard cap (300M µ-nats)
+    # But should respect the hard cap (3B µ-nats)
     assert state.theta_micro <= diff.THETA_HARD_CAP_MICRO, (
         f"Theta {state.theta_micro} exceeded hard cap {diff.THETA_HARD_CAP_MICRO}"
     )
 
 
 def test_theta_respects_hard_cap():
-    """Test that hard cap prevents theta from exceeding 300M µ-nats."""
+    """Test that hard cap prevents theta from exceeding 3B µ-nats."""
     params = diff.RetargetParams(
         target_block_time_s=12.0,
         half_life_blocks=4.0,  # Very fast adaptation
@@ -48,7 +48,7 @@ def test_theta_respects_hard_cap():
     )
     
     # Start near hard cap
-    theta_init = 280_000_000  # 280M µ-nats (close to 300M cap)
+    theta_init = 2_800_000_000  # 2.8B µ-nats (close to 3B cap)
     state = diff.init_state(params, theta_init_micro=theta_init)
     
     # Try to push it beyond cap with sustained fast blocks
@@ -191,10 +191,10 @@ def test_theta_with_hard_cap_handles_extreme_variance():
 
 if __name__ == "__main__":
     test_theta_can_grow_beyond_old_limits()
-    print("✓ Theta can grow beyond old limits (up to 300M cap)")
+    print("✓ Theta can grow beyond old limits (up to 3B cap)")
     
     test_theta_respects_hard_cap()
-    print("✓ Theta respects 300M hard cap")
+    print("✓ Theta respects 3B hard cap")
     
     test_theta_with_max_specified_still_works()
     print("✓ Backward compatibility with specified max")
