@@ -30,6 +30,8 @@ from p2p.node.peer_registry import PeerRegistry
 log = logging.getLogger("animica.p2p.service")
 
 DEFAULT_BOOTSTRAP_SEEDS = [
+    "/dns4/mainnet.animica.org/tcp/30333",
+    "/dns4/rpc.animica.org/tcp/30333",
     "/ip4/144.126.133.21/tcp/30333",
 ]
 
