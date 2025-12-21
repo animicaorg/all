@@ -16,6 +16,7 @@ Key env vars (examples):
 - ANIMICA_P2P_LISTEN_QUIC=0.0.0.0:30334
 - ANIMICA_P2P_LISTEN_WS=0.0.0.0:30335
 - ANIMICA_P2P_ADVERTISED_ADDRS=/ip4/203.0.113.5/tcp/30333,/dns4/node.example.com/quic/30334
+- ANIMICA_P2P_ADVERTISE_ADDR=203.0.113.5:30333
 - ANIMICA_P2P_SEEDS=/dnsaddr/bootstrap.animica.dev,/dns4/seed1.animica.dev/tcp/30333
 - ANIMICA_P2P_MAX_PEERS=64
 - ANIMICA_P2P_MAX_OUTBOUND=16
@@ -389,9 +390,13 @@ def load_config() -> P2PConfig:
     )
     listen_ws = _parse_host_port(_getenv("ANIMICA_P2P_LISTEN_WS"), DEFAULT_WS_PORT)
 
-    advertised_addrs = tuple(
-        _validate_advertised_addrs(_csv(_getenv("ANIMICA_P2P_ADVERTISED_ADDRS")))
-    )
+    advertised_raw = _getenv("ANIMICA_P2P_ADVERTISED_ADDRS")
+    if not advertised_raw:
+        advertised_raw = _getenv("ANIMICA_P2P_ADVERTISE_ADDR")
+    if not advertised_raw:
+        advertised_raw = _getenv("P2P_ADVERTISE_ADDR")
+
+    advertised_addrs = tuple(_validate_advertised_addrs(_csv(advertised_raw)))
     # Try to get chain_id for network-specific seeds (best effort)
     chain_id = _parse_chain_id(_getenv("ANIMICA_P2P_CHAIN_ID"))
     seeds = _load_seeds_from_env(chain_id)

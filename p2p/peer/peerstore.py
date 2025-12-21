@@ -439,6 +439,24 @@ class PeerStore:
             rows = conn.execute(sql, tuple(args)).fetchall()
             return [self._row_to_peer(r) for r in rows]
 
+    def count_known(self, status_in: Optional[Sequence[PeerStatus]] = None) -> int:
+        """
+        Return the number of peers stored in the peerstore.
+
+        Optionally filter by peer status.
+        """
+        with self._locked_conn() as conn:
+            query = "SELECT COUNT(*) as c FROM peers"
+            args: list[object] = []
+            if status_in:
+                placeholders = ",".join("?" for _ in status_in)
+                query += f" WHERE status IN ({placeholders})"
+                args.extend([s.value for s in status_in])
+            row = conn.execute(query, args).fetchone()
+            if row is None:
+                return 0
+            return int(row["c"] or 0)
+
     def list_addresses(
         self, *, limit: int = 200, since: Optional[float] = None
     ) -> List[Tuple[str, str, float]]:
