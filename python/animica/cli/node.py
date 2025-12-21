@@ -13,6 +13,7 @@ from typing import Any, Dict, Optional
 import httpx
 import typer
 from animica.config import get_network_defaults, load_network_config
+from animica.seeds import get_seed_nodes
 
 from .timeouts import DEFAULT_RPC_TIMEOUT, RPC_TIMEOUT_ENV, describe_timeout, resolve_timeout
 
@@ -318,6 +319,82 @@ def _bootstrap_seeds_from_state(net_cfg: Any) -> list[str]:
     except Exception:
         return []
     return []
+
+
+def _collect_seed_candidates(net_cfg: Any) -> list[str]:
+    seeds: list[str] = []
+    seeds.extend(_bootstrap_seeds_from_state(net_cfg))
+
+    try:
+        os.environ.setdefault("ANIMICA_P2P_CHAIN_ID", str(getattr(net_cfg, "chain_id", "")))
+        p2p_cfg, _ = _load_p2p_config()
+        if p2p_cfg and getattr(p2p_cfg, "seeds", None):
+            seeds.extend(list(p2p_cfg.seeds))
+    except Exception:
+        pass
+
+    seeds.extend(get_seed_nodes(net_cfg.name))
+    return list(dict.fromkeys([str(seed) for seed in seeds if seed]))
+
+
+def _wait_for_rpc_ready(rpc_url: str, *, timeout_s: float = 60.0, interval_s: float = 2.0) -> bool:
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        try:
+            _local_rpc(rpc_url, "chain.getHead", [])
+            return True
+        except Exception:
+            time.sleep(interval_s)
+    return False
+
+
+def _post_start_peer_bootstrap(
+    net_cfg: Any,
+    *,
+    rpc_url: str,
+    bootstrap_url: Optional[str],
+    wait_timeout: float = 30.0,
+) -> None:
+    try:
+        from .sync import _seed_local_peerstores, _trigger_sync
+    except Exception:
+        return
+
+    if not _wait_for_rpc_ready(rpc_url, timeout_s=60.0):
+        typer.secho(
+            "Warning: local RPC not ready yet; skipping auto peer bootstrap.",
+            fg=typer.colors.YELLOW,
+            err=True,
+        )
+        return
+
+    peer_count, _ = _get_peer_count(rpc_url, None)
+    if peer_count and peer_count > 0:
+        return
+
+    typer.secho(
+        "No peers connected yet; seeding peers from bootstrap sources...",
+        fg=typer.colors.YELLOW,
+    )
+    _seed_local_peerstores(
+        net_cfg,
+        target_rpc_url=rpc_url,
+        bootstrap_url=bootstrap_url,
+        quiet=False,
+    )
+
+    deadline = time.time() + wait_timeout
+    while time.time() < deadline:
+        peer_count, _ = _get_peer_count(rpc_url, None)
+        if peer_count and peer_count > 0:
+            typer.secho(f"✓ Peers connected: {peer_count}", fg=typer.colors.GREEN)
+            try:
+                if asyncio.run(_trigger_sync(rpc_url)):
+                    typer.secho("✓ Sync trigger sent", fg=typer.colors.GREEN)
+            except Exception:
+                pass
+            return
+        time.sleep(2.0)
 
 
 def _bootstrap_rpc(bootstrap_url: str, method: str) -> Dict[str, Any]:
@@ -669,11 +746,20 @@ def bootstrap(
 
     try:
         manifest, seeds, state_path = _fetch_bootstrap_data(net_cfg, bootstrap_endpoint)
+        typer.echo(f"Saved bootstrap state to {state_path}")
     except Exception as exc:
-        typer.echo(f"Failed to fetch bootstrap manifest: {exc}", err=True)
-        raise typer.Exit(code=1)
-
-    typer.echo(f"Saved bootstrap state to {state_path}")
+        typer.secho(f"Warning: failed to fetch bootstrap manifest ({exc})", fg=typer.colors.YELLOW, err=True)
+        manifest = {}
+        seeds = _collect_seed_candidates(net_cfg)
+        state_path = None
+        if seeds:
+            try:
+                state_path = _persist_bootstrap_state(net_cfg, manifest, seeds)
+                typer.echo(f"Saved bootstrap state to {state_path}")
+            except Exception:
+                state_path = None
+        if not seeds:
+            typer.secho("Warning: no bootstrap seeds available; continuing without seeds.", fg=typer.colors.YELLOW, err=True)
 
     # Ensure subsequent commands use this network
     os.environ["ANIMICA_NETWORK"] = net_cfg.name
@@ -715,15 +801,22 @@ def bootstrap(
             typer.secho(f"Peers connected: {peer_count}. Bootstrap complete.", fg=typer.colors.GREEN)
             break
 
-        if peer_count == 0 and refreshes > 0 and attempt and attempt % 10 == 0:
+        if peer_count == 0 and seeds and attempt == 0:
             try:
-                refreshed = _bootstrap_rpc(bootstrap_endpoint, "bootstrap.getSeeds")
-                new_seeds = list(refreshed.get("seeds") or [])
-                if new_seeds:
-                    seeds = new_seeds
-                refreshes -= 1
+                _local_rpc(local_rpc, "p2p.importPeers", [seeds])
             except Exception:
                 pass
+
+        if peer_count == 0 and refreshes > 0 and attempt and attempt % 10 == 0:
+            if bootstrap_endpoint:
+                try:
+                    refreshed = _bootstrap_rpc(bootstrap_endpoint, "bootstrap.getSeeds")
+                    new_seeds = list(refreshed.get("seeds") or [])
+                    if new_seeds:
+                        seeds = new_seeds
+                    refreshes -= 1
+                except Exception:
+                    pass
             for seed in seeds:
                 try:
                     _local_rpc(local_rpc, "p2p.addPeer", [str(seed)])
@@ -949,6 +1042,11 @@ def up(
                     typer.echo("\n--- Devnet Node Running ---")
                     typer.echo("Premine accounts available for testing")
                 typer.echo("\nWallet file location: ~/.animica/wallets.json")
+                _post_start_peer_bootstrap(
+                    net_cfg,
+                    rpc_url=net_cfg.rpc_url,
+                    bootstrap_url=os.getenv("ANIMICA_BOOTSTRAP_RPC_URL") or net_cfg.bootstrap_url,
+                )
         else:
             typer.secho(
                 f"Error: Node startup failed with exit code {result.returncode}",
