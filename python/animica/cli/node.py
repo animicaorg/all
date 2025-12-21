@@ -32,6 +32,19 @@ ALLOWED_BOOTSTRAP_METHODS = {
     "bootstrap.getSeeds",
     "chain.getHead",
 }
+PEER_LIST_METHODS = (
+    "p2p.listPeers",
+    "p2p.getPeers",
+    "p2p.peers",
+    "admin_peers",
+    "net_peers",
+)
+PEER_COUNT_METHODS = (
+    "net.peerCount",
+    "p2p.peerCount",
+    "p2p.peer_count",
+    "net_peerCount",
+)
 
 app = typer.Typer(help="Manage and query Animica nodes.")
 p2p_app = typer.Typer(help="P2P diagnostics and peer helpers.")
@@ -141,6 +154,64 @@ def _format_sync_timestamp(raw: Any) -> Optional[str]:
         return None
 
 
+def _format_peer_timestamp(raw: Any) -> Optional[str]:
+    if raw is None:
+        return None
+    try:
+        return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(float(raw)))
+    except (TypeError, ValueError):
+        return None
+
+
+def _coerce_peer_count(raw: Any) -> Optional[int]:
+    if isinstance(raw, int):
+        return raw
+    if isinstance(raw, str):
+        value = raw.strip()
+        if value.startswith("0x"):
+            try:
+                return int(value, 16)
+            except ValueError:
+                return None
+        if value.isdigit():
+            return int(value)
+    return None
+
+
+def _get_peer_count(rpc_url: str, rpc_timeout: Optional[float]) -> tuple[Optional[int], Optional[str]]:
+    last_error = None
+    for method in PEER_COUNT_METHODS:
+        try:
+            result = asyncio.run(rpc_call(method, [], rpc_url=rpc_url, timeout=rpc_timeout))
+            count = _coerce_peer_count(result)
+            if count is not None:
+                return count, None
+        except Exception as exc:
+            last_error = exc
+            continue
+    if last_error:
+        return None, str(last_error)
+    return None, "RPC peer count unavailable"
+
+
+def _get_peers(rpc_url: str, rpc_timeout: Optional[float]) -> tuple[list[dict[str, Any]], Optional[str]]:
+    last_error = None
+    for method in PEER_LIST_METHODS:
+        try:
+            peers = asyncio.run(rpc_call(method, [], rpc_url=rpc_url, timeout=rpc_timeout))
+            if isinstance(peers, list):
+                return peers, None
+            if peers is None:
+                continue
+            return [], None
+        except Exception as exc:
+            last_error = exc
+            continue
+    if last_error:
+        return [], str(last_error)
+    return [], "RPC peer list unavailable"
+
+
 def _persist_sync_state(
     cfg: Any,
     *,
@@ -166,20 +237,6 @@ def _persist_sync_state(
 def _record_bootstrap_head(net_cfg: Any, bootstrap_url: Optional[str], *, quiet: bool = False) -> bool:
     if not bootstrap_url:
         return False
-
-
-def _bootstrap_seeds_from_state(net_cfg: Any) -> list[str]:
-    state_path = _bootstrap_state_path(net_cfg)
-    if not state_path.exists():
-        return []
-    try:
-        payload = json.loads(state_path.read_text())
-        seeds = payload.get("seeds")
-        if isinstance(seeds, list):
-            return [str(s) for s in seeds if s]
-    except Exception:
-        return []
-    return []
     try:
         head = _bootstrap_rpc(bootstrap_url, "chain.getHead")
         if not head:
@@ -200,6 +257,20 @@ def _bootstrap_seeds_from_state(net_cfg: Any) -> list[str]:
         if not quiet:
             typer.secho(f"Warning: bootstrap head fetch failed ({exc})", fg=typer.colors.YELLOW, err=True)
         return False
+
+
+def _bootstrap_seeds_from_state(net_cfg: Any) -> list[str]:
+    state_path = _bootstrap_state_path(net_cfg)
+    if not state_path.exists():
+        return []
+    try:
+        payload = json.loads(state_path.read_text())
+        seeds = payload.get("seeds")
+        if isinstance(seeds, list):
+            return [str(s) for s in seeds if s]
+    except Exception:
+        return []
+    return []
 
 
 def _bootstrap_rpc(bootstrap_url: str, method: str) -> Dict[str, Any]:
@@ -254,7 +325,9 @@ def _fetch_bootstrap_data(net_cfg: Any, bootstrap_url: str) -> tuple[dict[str, A
 
     state_path = _persist_bootstrap_state(net_cfg, manifest, seeds)
     if seeds:
-        os.environ["ANIMICA_P2P_SEEDS"] = ",".join(str(s) for s in seeds)
+        seed_csv = ",".join(str(s) for s in seeds)
+        os.environ["ANIMICA_P2P_SEEDS"] = seed_csv
+        os.environ["P2P_SEEDS"] = seed_csv
     return manifest, seeds, state_path
 
 
@@ -409,11 +482,40 @@ def status(
                 except Exception:
                     continue
 
+            peer_count, peer_count_error = _get_peer_count(url, rpc_timeout)
+            peers, peers_error = _get_peers(url, rpc_timeout)
+            peer_error = peer_count_error or peers_error
+            if peer_count is None and peers:
+                peer_count = len(peers)
+
             typer.echo(f"RPC URL: {url}")
             typer.echo(f"Chain ID: {chain_id}")
             typer.echo(f"Head height: {height}")
             typer.echo(f"Head hash: {head_hash}")
             typer.echo(f"Sync status: {sync_status}")
+            if peer_error:
+                typer.echo(f"Peer status: unavailable ({peer_error})")
+            elif peer_count is not None:
+                typer.echo(f"Peer count: {peer_count}")
+            if peers:
+                typer.echo("Peers:")
+                for index, peer in enumerate(peers[:10], 1):
+                    peer_id = peer.get("id") or peer.get("peerId") or peer.get("peer_id") or "unknown"
+                    addr = peer.get("addr") or peer.get("address") or peer.get("multiaddr") or "unknown"
+                    status = peer.get("status") or peer.get("state") or "connected"
+                    direction = peer.get("direction")
+                    height_info = peer.get("height")
+                    last_seen = _format_peer_timestamp(peer.get("lastSeen") or peer.get("last_seen"))
+                    summary = f"  {index}. {peer_id} ({addr}) [{status}]"
+                    if direction:
+                        summary += f" {direction}"
+                    if height_info is not None:
+                        summary += f" height={height_info}"
+                    if last_seen:
+                        summary += f" last_seen={last_seen}"
+                    typer.echo(summary)
+                if len(peers) > 10:
+                    typer.echo(f"  ... and {len(peers) - 10} more peers")
             if block is not None:
                 typer.echo("Head block:")
                 typer.echo(_pretty(block))
@@ -1128,22 +1230,19 @@ def p2p_status(
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(code=1)
 
-    peer_count = None
-    peers_len = None
-    peer_error = None
-    try:
-        peer_count = asyncio.run(rpc_call("net.peerCount", [], rpc_url=url, timeout=rpc_timeout))
-        peers = asyncio.run(rpc_call("p2p.listPeers", [], rpc_url=url, timeout=rpc_timeout))
-        if isinstance(peers, list):
-            peers_len = len(peers)
-    except Exception as exc:
-        peer_error = str(exc)
+    peer_count, peer_count_error = _get_peer_count(url, rpc_timeout)
+    peers, peers_error = _get_peers(url, rpc_timeout)
+    peer_error = peer_count_error or peers_error
+    peers_len = len(peers) if peers else None
 
     typer.echo(f"RPC URL: {url}")
     if peer_error:
         typer.echo(f"Peer query error: {peer_error}")
     else:
-        typer.echo(f"Connected peers: {peer_count}")
+        if peer_count is not None:
+            typer.echo(f"Connected peers: {peer_count}")
+        elif peers_len is not None:
+            typer.echo(f"Connected peers: {peers_len}")
         if peers_len is not None:
             typer.echo(f"Peer details available: {peers_len}")
 
@@ -1182,8 +1281,11 @@ def p2p_peers(
     except ValueError as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(code=1)
-    result = asyncio.run(rpc_call("p2p.listPeers", [], rpc_url=url, timeout=rpc_timeout))
-    typer.echo(_pretty(result))
+    peers, peer_error = _get_peers(url, rpc_timeout)
+    if peer_error and not peers:
+        typer.echo(f"Error: Unable to retrieve peers ({peer_error})", err=True)
+        raise typer.Exit(code=1)
+    typer.echo(_pretty(peers))
 
 
 @p2p_app.command("add")

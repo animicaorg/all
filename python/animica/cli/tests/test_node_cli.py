@@ -117,6 +117,18 @@ def test_status_and_head(monkeypatch: Any) -> None:
             ),
             httpx.Response(
                 200,
+                json={"jsonrpc": "2.0", "id": 1, "result": 2},
+            ),
+            httpx.Response(
+                200,
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "result": [{"id": "peer-1", "addr": "127.0.0.1:30333"}],
+                },
+            ),
+            httpx.Response(
+                200,
                 json={
                     "jsonrpc": "2.0",
                     "id": 1,
