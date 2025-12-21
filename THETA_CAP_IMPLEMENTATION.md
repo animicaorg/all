@@ -2,7 +2,7 @@
 
 ## Overview
 
-Successfully implemented a hard cap for Theta micro at **300,000,000 µ-nats (300 nats)** to maintain network stability and prevent runaway theta values from negatively impacting blockchain performance.
+Successfully implemented a hard cap for Theta micro at **3,000,000,000 µ-nats (3,000 nats)** to maintain network stability and prevent runaway theta values from negatively impacting blockchain performance.
 
 ## Implementation Date
 
@@ -18,7 +18,7 @@ Without an upper bound, theta micro could grow indefinitely under extreme networ
 
 ## Solution
 
-Implemented a hard cap at 300M µ-nats (300 nats) that:
+Implemented a hard cap at 3B µ-nats (3,000 nats) that:
 - Prevents excessive theta growth
 - Maintains dynamic adjustment below the threshold
 - Provides 18.75x headroom over original mainnet cap (16 nats)
@@ -29,7 +29,7 @@ Implemented a hard cap at 300M µ-nats (300 nats) that:
 ### 1. Core Module (`consensus/difficulty.py`)
 
 **Added:**
-- `THETA_HARD_CAP_MICRO = 300_000_000` constant
+- `THETA_HARD_CAP_MICRO = 3_000_000_000` constant
 - Cap enforcement in `update_theta()` function
 - Warning logging when capping theta
 
@@ -78,7 +78,7 @@ Implemented a hard cap at 300M µ-nats (300 nats) that:
 ### 1. Hard Cap Enforcement
 
 ```python
-THETA_HARD_CAP_MICRO = 300_000_000  # 300 nats
+THETA_HARD_CAP_MICRO = 3_000_000_000  # 3,000 nats
 
 if theta_next > effective_max:
     log.warning("Theta micro capped at maximum...")
@@ -117,7 +117,7 @@ Below the cap, theta adjusts normally using:
 - Mixed interval tests
 
 ✅ **Validation tests passing**
-- Hard cap enforced at 300M µ-nats
+- Hard cap enforced at 3B µ-nats
 - Custom max support verified
 - Dynamic adjustment preserved
 - Theta can decrease from cap
@@ -136,8 +136,8 @@ Below the cap, theta adjusts normally using:
 - Ensures consistent performance under stress
 
 ### Sufficient Headroom  
-- 18.75x original mainnet cap (16 → 300 nats)
-- 5x previous temporary cap (60 → 300 nats)
+- 18.75x original mainnet cap (16 → 3,000 nats)
+- 5x previous temporary cap (60 → 3,000 nats)
 - Accommodates significant hash rate growth
 
 ### Warning System
@@ -187,7 +187,7 @@ rate(animica_blocks_total[5m])
 - Monitor for approaching cap warnings
 
 ### For Miners
-- Mining difficulty now capped at 300 nats
+- Mining difficulty now capped at 3,000 nats
 - Share difficulty scales proportionally
 - Update profitability calculations to use real-time theta
 
@@ -228,7 +228,7 @@ docs/THETA_SCALING_UPDATE.md                 +50 -23
 
 ## Conclusion
 
-The 300M µ-nats hard cap successfully balances network stability with flexibility:
+The 3B µ-nats hard cap successfully balances network stability with flexibility:
 - ✅ Prevents runaway theta values
 - ✅ Provides substantial headroom for growth  
 - ✅ Maintains dynamic adjustment below cap

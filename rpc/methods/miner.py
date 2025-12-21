@@ -31,7 +31,7 @@ except Exception:  # pragma: no cover
 try:
     from consensus.difficulty import THETA_HARD_CAP_MICRO
 except Exception:  # pragma: no cover
-    THETA_HARD_CAP_MICRO = 300_000_000  # Fallback if import fails
+    THETA_HARD_CAP_MICRO = 3_000_000_000  # Fallback if import fails
 
 try:  # canonical zero constant
     from core.types.hash import ZERO32
@@ -480,7 +480,7 @@ def _adjust_theta_for_mining(dt_seconds: float | None = None) -> int:
                 
                 # Initialize retarget params with mining-friendly settings
                 # Use faster response for mining (smaller half-life, higher gain)
-                # Theta is capped at THETA_HARD_CAP_MICRO (300M µ-nats = 300 nats)
+                # Theta is capped at THETA_HARD_CAP_MICRO (3B µ-nats = 3,000 nats)
                 # to maintain network stability and prevent runaway values
                 # Stability is ensured by hard cap, step_clamp_micro, and overflow protection
                 params = RetargetParams(
@@ -489,7 +489,7 @@ def _adjust_theta_for_mining(dt_seconds: float | None = None) -> int:
                     gain_beta=0.9,                   # More aggressive response (vs 0.75 for consensus)
                     step_clamp_micro=1_000_000,      # Allow larger steps (~1.0 nats per update)
                     theta_min_micro=300_000,         # Lower minimum for easier mining (~0.3 nats)
-                    theta_max_micro=None,            # None = use hard cap (300M µ-nats)
+                    theta_max_micro=None,            # None = use hard cap (3B µ-nats)
                 )
                 
                 _MINING_STATE["theta_state"] = init_state(params, current_theta)
