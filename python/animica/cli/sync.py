@@ -91,7 +91,9 @@ def _extract_height(head_info: Optional[Dict[str, Any]]) -> Optional[int]:
         return None
     for key in ("height", "number", "blockNumber"):
         if key in head_info:
-            return head_info.get(key)
+            value = head_info.get(key)
+            if value is not None:
+                return value
     return None
 
 
@@ -101,7 +103,9 @@ def _extract_chain_id(head_info: Optional[Dict[str, Any]]) -> Optional[int]:
         return None
     for key in ("chainId", "chain_id"):
         if key in head_info:
-            return head_info.get(key)
+            value = head_info.get(key)
+            if value is not None:
+                return value
     return None
 
 
