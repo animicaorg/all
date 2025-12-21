@@ -27,8 +27,9 @@ DEV_NETWORKS = {"devnet", "local-devnet"}
 
 BOOTSTRAP_TIMEOUT_ENV = "ANIMICA_BOOTSTRAP_TIMEOUT"
 BOOTSTRAP_RPC_TIMEOUT: Optional[float] = None
-BOOTSTRAP_HEAD_RETRIES = 3
+BOOTSTRAP_HEAD_RETRIES: Optional[int] = None
 BOOTSTRAP_HEAD_RETRY_DELAY = 1.0
+BOOTSTRAP_HEAD_RETRY_DELAY_MAX = 30.0
 ALLOWED_BOOTSTRAP_METHODS = {
     "bootstrap.getManifest",
     "bootstrap.getSeeds",
@@ -241,7 +242,8 @@ def _record_bootstrap_head(net_cfg: Any, bootstrap_url: Optional[str], *, quiet:
         return False
     last_exc: Optional[Exception] = None
     delay = BOOTSTRAP_HEAD_RETRY_DELAY
-    for attempt in range(1, BOOTSTRAP_HEAD_RETRIES + 1):
+    attempt = 1
+    while True:
         try:
             head = _bootstrap_rpc(bootstrap_url, "chain.getHead")
             if not head:
@@ -260,10 +262,19 @@ def _record_bootstrap_head(net_cfg: Any, bootstrap_url: Optional[str], *, quiet:
             return True
         except Exception as exc:
             last_exc = exc
-            if attempt < BOOTSTRAP_HEAD_RETRIES:
-                time.sleep(delay)
-                delay *= 2
-                continue
+            if BOOTSTRAP_HEAD_RETRIES is not None and attempt >= BOOTSTRAP_HEAD_RETRIES:
+                break
+            if not quiet:
+                typer.secho(
+                    "Warning: bootstrap head fetch failed "
+                    f"(attempt {attempt}: {exc}); retrying in {delay:.1f}s.",
+                    fg=typer.colors.YELLOW,
+                    err=True,
+                )
+            time.sleep(delay)
+            delay = min(delay * 2, BOOTSTRAP_HEAD_RETRY_DELAY_MAX)
+            attempt += 1
+            continue
 
     cached = _load_sync_state(net_cfg)
     if not quiet:
