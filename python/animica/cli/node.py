@@ -117,6 +117,15 @@ def _pretty(obj: Any) -> str:
     return json.dumps(obj, indent=2)
 
 
+def _extract_field(data: dict[str, Any], *keys: str) -> Any:
+    for key in keys:
+        if key in data:
+            value = data.get(key)
+            if value is not None:
+                return value
+    return None
+
+
 def _load_p2p_config() -> tuple[Optional[Any], Optional[str]]:
     try:
         from p2p.config import load_config as load_p2p_config
@@ -256,9 +265,9 @@ def _persist_sync_state(
     state_path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "rpc_url": rpc_url,
-        "height": head_info.get("height") or head_info.get("number"),
-        "head_hash": head_info.get("hash") or head_info.get("blockHash"),
-        "chain_id": head_info.get("chainId") or head_info.get("chain_id"),
+        "height": _extract_field(head_info, "height", "number", "blockNumber"),
+        "head_hash": _extract_field(head_info, "hash", "blockHash"),
+        "chain_id": _extract_field(head_info, "chainId", "chain_id"),
         "peer_count": 0,
         "updated_at": time.time(),
     }
@@ -621,9 +630,11 @@ def status(
         attempt += 1
         try:
             head = asyncio.run(rpc_call("chain.getHead", [], rpc_url=url, timeout=rpc_timeout))
-            height = head.get("height") or head.get("number") or 0
-            chain_id = head.get("chainId") or head.get("chain_id")
-            head_hash = head.get("hash") or head.get("blockHash")
+            height = _extract_field(head, "height", "number", "blockNumber")
+            if height is None:
+                height = 0
+            chain_id = _extract_field(head, "chainId", "chain_id")
+            head_hash = _extract_field(head, "hash", "blockHash")
             
             block = None
             if height is not None:
