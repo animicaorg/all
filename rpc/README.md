@@ -20,7 +20,7 @@ The RPC server enforces an access mode selected via `ANIMICA_RPC_ACCESS_MODE`:
 - `PRIVATE_FULL`: all methods require admin authorization.
 
 Admin access can be granted via `ANIMICA_RPC_ADMIN_TOKEN` (header: `X-Animica-Admin-Token`) or IP/CIDR allowlist (`ANIMICA_RPC_ADMIN_ALLOWLIST`). Bootstrap endpoints can be rate limited with `ANIMICA_BOOTSTRAP_RATE_LIMIT` (requests/min per IP).
-Bootstrap nodes can opt into full access by setting `ANIMICA_RPC_BOOTSTRAP_NODE=true`, which disables bootstrap-only restrictions.
+Bootstrap nodes (`ANIMICA_RPC_BOOTSTRAP_NODE=true`) are forced into bootstrap-only mode to prevent public mining or state-changing RPC usage.
 
 ## Features (v0)
 
