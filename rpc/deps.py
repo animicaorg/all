@@ -894,21 +894,13 @@ def attach_lifecycle(app, cfg: _ConfigView | None = None) -> None:
     @app.on_event("startup")
     async def _startup() -> None:
         nonlocal cfg
-        with _CTX_LOCK:
-            if cfg is None:
-                cfg = _load_rpc_config()
-            global _CTX
-            _CTX = build_context(cfg)
+        if cfg is None:
+            cfg = _load_rpc_config()
+        await startup(cfg)
 
     @app.on_event("shutdown")
     async def _shutdown() -> None:
-        with _CTX_LOCK:
-            global _CTX
-            if _CTX is not None:
-                try:
-                    _CTX.close()
-                finally:
-                    _CTX = None
+        await shutdown()
 
     # Optional: tiny health endpoints that do not require jsonrpc
     @app.get("/healthz", include_in_schema=False)
