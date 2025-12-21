@@ -188,8 +188,14 @@ def _rpc_operation_succeeded(result: Any) -> tuple[bool, Optional[str]]:
         if "result" in result and isinstance(result.get("result"), bool):
             return bool(result.get("result")), result.get("error") or result.get("message")
         for key in ("added", "connected", "removed"):
-            if key in result and isinstance(result.get(key), bool):
-                return bool(result.get(key)), result.get("error") or result.get("message")
+            if key in result:
+                value = result.get(key)
+                if isinstance(value, bool):
+                    return bool(value), result.get("error") or result.get("message")
+                if isinstance(value, (int, float)):
+                    return value > 0, result.get("error") or result.get("message")
+                if isinstance(value, (list, tuple, set)):
+                    return len(value) > 0, result.get("error") or result.get("message")
         # Unknown dict payload - treat as failure to avoid false positives
         return False, result.get("error") or result.get("message") or "Unexpected RPC response"
 
