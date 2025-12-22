@@ -297,6 +297,17 @@ def net_get_bootstrap_seeds() -> dict[str, t.Any]:
 async def net_peer_count() -> int:
     try:
         snapshot = _active_peer_snapshot()
+        bootstrap_bonus = 0
+        try:
+            import p2p  # type: ignore
+
+            svc = None
+            if hasattr(p2p, "get_service"):
+                svc = p2p.get_service()
+            if svc is not None and hasattr(svc, "bootstrap_peer_bonus"):
+                bootstrap_bonus = int(getattr(svc, "bootstrap_peer_bonus")())
+        except Exception:
+            bootstrap_bonus = 0
         if snapshot:
             # Deduplicate by peer_id when present
             seen = set()
@@ -305,8 +316,8 @@ async def net_peer_count() -> int:
                 if pid:
                     seen.add(pid)
             unknown = sum(1 for peer in snapshot if not (peer.get("peer_id") or peer.get("id")))
-            return len(seen) + unknown
-        return 0
+            return len(seen) + unknown + bootstrap_bonus
+        return bootstrap_bonus
     except Exception as exc:
         raise rpc_errors.InternalError(f"peer count unavailable: {exc}")
 
