@@ -108,6 +108,8 @@ services:
       - "8545"
       - "8546"
       - "9102"
+    ports:
+      - "30333:30333" # P2P TCP
     labels:
       # HTTP JSON-RPC (TLS)
       - "traefik.enable=true"

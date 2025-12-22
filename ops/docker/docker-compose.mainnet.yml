@@ -36,7 +36,6 @@ services:
       context: ../..
       dockerfile: ops/docker/node.Dockerfile
     container_name: animica-mainnet-node
-    user: "root"
     working_dir: /app
     volumes:
       - ../..:/app:ro

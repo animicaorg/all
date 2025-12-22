@@ -4,17 +4,19 @@ import asyncio
 import contextlib
 import hashlib
 import ipaddress
+import json
 import logging
 import os
 import random
 import socket
 import time
+import uuid
 from collections import OrderedDict, deque
-from urllib.parse import urlparse
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Awaitable, Deque, Dict, List, Optional, Set, Tuple
-
+from urllib.parse import urlparse
+from urllib.request import urlopen
 from p2p import version as p2p_version
 from p2p.crypto import keys as keys_mod
 from p2p.crypto import peer_id as peer_id_mod
@@ -69,6 +71,74 @@ class _PeerState:
     pending_headers: Optional[asyncio.Future] = None
     connected_at: float = field(default_factory=time.time)
     feeler: bool = False
+    known_addrs: Set[str] = field(default_factory=set)
+
+
+@dataclass(slots=True)
+class _AddrRecord:
+    address: str
+    last_seen: float
+    last_success: Optional[float] = None
+    failures: int = 0
+    score: float = 0.0
+
+    def touch_seen(self, now: float) -> None:
+        self.last_seen = now
+
+    def mark_success(self, now: float) -> None:
+        self.last_success = now
+        self.failures = 0
+        self.score = min(self.score + 1.0, 100.0)
+
+    def mark_failure(self) -> None:
+        self.failures += 1
+        self.score = max(self.score - 0.5, -10.0)
+
+
+class _AddrMan:
+    def __init__(self) -> None:
+        self._records: dict[str, _AddrRecord] = {}
+
+    def add(self, address: str, *, now: Optional[float] = None) -> None:
+        now = time.time() if now is None else now
+        rec = self._records.get(address)
+        if rec:
+            rec.touch_seen(now)
+            return
+        self._records[address] = _AddrRecord(address=address, last_seen=now)
+
+    def mark_success(self, address: str) -> None:
+        rec = self._records.get(address)
+        now = time.time()
+        if rec is None:
+            rec = _AddrRecord(address=address, last_seen=now)
+            self._records[address] = rec
+        rec.mark_success(now)
+
+    def mark_failure(self, address: str) -> None:
+        rec = self._records.get(address)
+        if rec is None:
+            rec = _AddrRecord(address=address, last_seen=time.time())
+            self._records[address] = rec
+        rec.mark_failure()
+
+    def size(self) -> int:
+        return len(self._records)
+
+    def sample(self, *, limit: int, exclude: Optional[set[str]] = None) -> list[str]:
+        exclude = exclude or set()
+        candidates = [
+            rec for rec in self._records.values() if rec.address not in exclude
+        ]
+        if not candidates:
+            return []
+        candidates.sort(key=lambda r: (r.score, r.last_seen), reverse=True)
+        pool = candidates[: max(limit * 3, limit)]
+        random.shuffle(pool)
+        return [rec.address for rec in pool[:limit]]
+
+    def records(self) -> list[_AddrRecord]:
+        return list(self._records.values())
 
 
 @dataclass(slots=True)
@@ -86,6 +156,9 @@ class P2PStatusSnapshot:
     addrman_size: Optional[int]
     dial_attempts: int
     dial_successes: int
+    learned_addrs_1m: int
+    announced_addrs_1m: int
+    persisted_peer_count: Optional[int]
     dial_last_error: Optional[dict[str, Any]] = None
     bootstrap_last_attempt: Optional[dict[str, Any]] = None
     bootstrap_last_success: Optional[dict[str, Any]] = None
@@ -106,6 +179,9 @@ class P2PStatusSnapshot:
             "addrman_size": self.addrman_size,
             "dial_attempts": self.dial_attempts,
             "dial_successes": self.dial_successes,
+            "learned_addrs_1m": self.learned_addrs_1m,
+            "announced_addrs_1m": self.announced_addrs_1m,
+            "persisted_peer_count": self.persisted_peer_count,
             "dial_last_error": self.dial_last_error,
             "bootstrap_last_attempt": self.bootstrap_last_attempt,
             "bootstrap_last_success": self.bootstrap_last_success,
@@ -214,13 +290,15 @@ class P2PService:
 
         peerstore_path = Path(peerstore_path).expanduser()
         peerstore_dir = peerstore_path if not peerstore_path.suffix else peerstore_path.parent
+        self._peerstore_dir = peerstore_dir
+        self._peers_json_path = peerstore_dir / "peers.json"
 
         # Identity + stable peer id (co-locate with peerstore by default)
         identity_path = os.environ.get("ANIMICA_P2P_IDENTITY_PATH")
         if not identity_path:
             identity_path = peerstore_dir / "identity.json"
         identity_path = Path(identity_path).expanduser()
-        identity_path.parent.mkdir(parents=True, exist_ok=True)
+        self._ensure_peerstore_dir(identity_path.parent)
 
         passphrase = os.environ.get("ANIMICA_P2P_KEY_PASSPHRASE", "")
         try:
@@ -239,6 +317,7 @@ class P2PService:
             self._peer_id_bytes = hashlib.sha3_256(os.urandom(32)).digest()
 
         # Persistent peerstore
+        self._ensure_peerstore_dir(peerstore_dir)
         self.peerstore = pstore.PeerStore(peerstore_path)
 
         # Transport (TCP only for now)
@@ -295,12 +374,38 @@ class P2PService:
         self._addr_request_max = int(
             os.environ.get("ANIMICA_P2P_ADDR_REQUEST_MAX", "32") or 32
         )
+        self._addr_relay_interval = float(
+            os.environ.get("ANIMICA_P2P_ADDR_RELAY_INTERVAL", "45") or 45
+        )
+        self._addr_relay_sample = int(
+            os.environ.get("ANIMICA_P2P_ADDR_RELAY_SAMPLE", "24") or 24
+        )
+        self._addr_peer_known_cap = int(
+            os.environ.get("ANIMICA_P2P_ADDR_KNOWN_CAP", "2048") or 2048
+        )
         self._addr_last_request: dict[str, float] = {}
         self._addr_last_response: dict[str, float] = {}
         self._addr_seen: "OrderedDict[str, float]" = OrderedDict()
         self._addr_seen_cap = int(
             os.environ.get("ANIMICA_P2P_ADDR_SEEN_CAP", "5000") or 5000
         )
+        self._addrman = _AddrMan()
+        self._addr_learned_events: deque[float] = deque(maxlen=10_000)
+        self._addr_announced_events: deque[float] = deque(maxlen=10_000)
+        self._persist_peers_event = asyncio.Event()
+        self._persist_peers_interval = float(
+            os.environ.get("ANIMICA_P2P_PEER_PERSIST_INTERVAL", "20") or 20
+        )
+        self._persisted_peer_count: Optional[int] = None
+        self._allow_private_addrs = os.environ.get(
+            "ANIMICA_P2P_PRIVATE_NETWORK", "false"
+        ).lower() in ("1", "true", "yes", "on")
+        self._external_ip = os.environ.get("ANIMICA_P2P_EXTERNAL_IP")
+        self._external_ip_endpoint = (
+            os.environ.get("ANIMICA_P2P_EXTERNAL_IP_ENDPOINT")
+            or os.environ.get("ANIMICA_PUBLIC_IP_ENDPOINT")
+        )
+        self._seeding_mode = True
         self._feeler_interval = float(
             os.environ.get("ANIMICA_P2P_FEELER_INTERVAL", "25") or 25
         )
@@ -373,10 +478,14 @@ class P2PService:
         if self._running:
             return
         self._running = True
+        await self._maybe_detect_external_ip()
 
         # Persist configured seeds so a restarted node reuses them immediately
         if self.seeds:
             self._seed_peerstore(self.seeds)
+        self._load_addrman_from_peerstore()
+        for addr in self._advertised_addrs():
+            self._addrman.add(addr)
         discovered = await self._discover_seed_peers()
         if discovered:
             self._seed_peerstore(discovered)
@@ -410,6 +519,9 @@ class P2PService:
             asyncio.create_task(self._sync_loop(), name="p2p.sync"),
             asyncio.create_task(self._addr_request_loop(), name="p2p.addr_request"),
             asyncio.create_task(self._feeler_loop(), name="p2p.feeler"),
+            asyncio.create_task(self._addr_relay_loop(), name="p2p.addr_relay"),
+            asyncio.create_task(self._persist_peers_loop(), name="p2p.peer_persist"),
+            asyncio.create_task(self._metrics_loop(), name="p2p.metrics"),
         ]
         self._sync_wakeup.set()
         log.info(
@@ -498,12 +610,75 @@ class P2PService:
             return []
         return [item.strip() for item in raw.split(",") if item.strip()]
 
+    def _ensure_peerstore_dir(self, path: Path) -> None:
+        try:
+            path.mkdir(parents=True, exist_ok=True)
+        except Exception as exc:
+            log.warning("Failed to ensure peerstore dir %s: %s", path, exc)
+            return
+        try:
+            path.chmod(0o755)
+        except Exception:
+            return
+
+    async def _maybe_detect_external_ip(self) -> None:
+        if self._external_ip or not self._external_ip_endpoint:
+            return
+        endpoint = self._external_ip_endpoint
+        try:
+            ip_text = await asyncio.to_thread(self._fetch_external_ip, endpoint)
+        except Exception as exc:
+            log.debug("External IP detection failed: %s", exc)
+            return
+        if not ip_text:
+            return
+        try:
+            ipaddress.ip_address(ip_text)
+        except ValueError:
+            log.debug("External IP endpoint returned invalid ip: %s", ip_text)
+            return
+        self._external_ip = ip_text
+        log.info("Detected external IP %s", ip_text)
+
+    def _fetch_external_ip(self, endpoint: str) -> Optional[str]:
+        with urlopen(endpoint, timeout=3.0) as resp:
+            raw = resp.read()
+        try:
+            text = raw.decode().strip()
+        except Exception:
+            return None
+        return text or None
+
+    def _addr_events_last_minute(self, events: deque[float]) -> int:
+        cutoff = time.time() - 60.0
+        while events and events[0] < cutoff:
+            events.popleft()
+        return len(events)
+
+    def _record_addr_learned(self, count: int) -> None:
+        now = time.time()
+        for _ in range(max(0, count)):
+            self._addr_learned_events.append(now)
+
+    def _record_addr_announced(self, count: int) -> None:
+        now = time.time()
+        for _ in range(max(0, count)):
+            self._addr_announced_events.append(now)
+
+    def _schedule_peer_persist(self) -> None:
+        if not self._persist_peers_event.is_set():
+            self._persist_peers_event.set()
+
     def _advertised_addrs(self) -> list[str]:
         addrs: list[str] = []
         for key in ("ANIMICA_P2P_ADVERTISED_ADDRS", "ANIMICA_P2P_ADVERTISE_ADDR"):
             for entry in self._env_list(key):
                 addrs.append(self._normalize_seed(entry))
         if addrs:
+            return list(dict.fromkeys(addrs))
+        if self._external_ip:
+            port = self._local_listen_port()
+            addrs.append(self._normalize_seed(f"{self._external_ip}:{port}"))
             return list(dict.fromkeys(addrs))
         for addr in self.listen_addrs:
             try:
@@ -536,6 +711,26 @@ class P2PService:
 
     def _is_ephemeral_port(self, port: int) -> bool:
         return int(port) >= 49152
+
+    def _is_routable_host(self, host: str) -> bool:
+        lowered = host.lower()
+        if lowered in {"localhost"}:
+            return self._allow_private_addrs
+        try:
+            ip_obj = ipaddress.ip_address(host)
+        except ValueError:
+            return True
+        if self._allow_private_addrs:
+            return True
+        if ip_obj.is_global:
+            return True
+        if ip_obj.is_private or ip_obj.is_loopback:
+            return False
+        if ip_obj.is_multicast or ip_obj.is_unspecified or ip_obj.is_reserved:
+            return False
+        if ip_obj.is_link_local:
+            return False
+        return False
 
     def _sanitize_peer_addr(self, address: str, *, fallback_port: int) -> Optional[str]:
         if not address:
@@ -571,6 +766,8 @@ class P2PService:
                     port = None
         if not host:
             return None
+        if not self._is_routable_host(host):
+            return None
         if not port or port <= 0 or port > 65535:
             port = fallback_port
         if self._is_ephemeral_port(port) and fallback_port and port != fallback_port:
@@ -585,6 +782,15 @@ class P2PService:
         while len(self._addr_seen) > self._addr_seen_cap:
             self._addr_seen.popitem(last=False)
 
+    def _load_addrman_from_peerstore(self) -> None:
+        try:
+            for _, address, _ in self.peerstore.list_addresses(limit=5000):
+                if address:
+                    normalized = self._normalize_seed(address)
+                    self._addrman.add(normalized)
+        except Exception:
+            return
+
     async def _send_get_peers(self, peer: _PeerState) -> None:
         if not peer.hello_done.is_set():
             return
@@ -595,11 +801,63 @@ class P2PService:
         self._addr_last_request[peer.session_id] = now
         await self._send(peer, MsgID.GET_PEERS, GetPeers(max_peers=self._addr_request_max))
 
+    def _peer_knows_addr(self, peer: _PeerState, addr: str) -> bool:
+        return self._addr_key(addr) in peer.known_addrs
+
+    def _mark_peer_known(self, peer: _PeerState, addr: str) -> None:
+        if not addr:
+            return
+        peer.known_addrs.add(self._addr_key(addr))
+        while len(peer.known_addrs) > self._addr_peer_known_cap:
+            peer.known_addrs.pop()
+
+    def _sample_addrs_for_peer(self, peer: _PeerState, *, limit: int) -> list[str]:
+        if limit <= 0:
+            return []
+        exclude_keys = {self._addr_key(peer.remote)}
+        exclude_keys.update(peer.known_addrs)
+        candidates = self._addrman.sample(limit=limit * 3, exclude=set())
+        results: list[str] = []
+        for addr in candidates:
+            if self._addr_key(addr) in exclude_keys:
+                continue
+            results.append(addr)
+            if len(results) >= limit:
+                break
+        return results
+
+    async def _send_addr_sample(
+        self,
+        peer: _PeerState,
+        *,
+        limit: int,
+        include_advertised: bool = False,
+    ) -> None:
+        if not peer.hello_done.is_set():
+            return
+        addrs: list[str] = []
+        if include_advertised:
+            for addr in self._advertised_addrs():
+                if not self._peer_knows_addr(peer, addr):
+                    addrs.append(addr)
+        addrs.extend(self._sample_addrs_for_peer(peer, limit=limit))
+        addrs = list(dict.fromkeys(addrs))
+        if not addrs:
+            return
+        await self._send(peer, MsgID.ADDRESS_ANNOUNCE, AddressAnnounce(addresses=addrs))
+        for addr in addrs:
+            self._mark_peer_known(peer, addr)
+        self._record_addr_announced(len(addrs))
+
     def _collect_peer_addrs(
         self, *, limit: int, exclude: Optional[set[str]] = None
     ) -> list[str]:
         exclude = exclude or set()
         addrs: list[str] = []
+        for addr in self._addrman.sample(limit=limit, exclude=set()):
+            if self._addr_key(addr) in exclude:
+                continue
+            addrs.append(addr)
         try:
             for peer_id, address, _ in self.peerstore.list_addresses(limit=limit):
                 if not address:
@@ -622,6 +880,7 @@ class P2PService:
             if not normalized:
                 continue
             self._remember_addr(normalized)
+            self._addrman.add(normalized)
             try:
                 peer_id = self._peer_id_from_addr(normalized)
                 self.peerstore.add(peer_id=peer_id, addrs=[normalized], direction="outbound")
@@ -631,6 +890,8 @@ class P2PService:
                 continue
         if stored:
             log.debug("Discovered %d peer(s) from %s", stored, source)
+            self._record_addr_learned(stored)
+            self._schedule_peer_persist()
         return stored
 
     async def _discover_seed_peers(self) -> list[str]:
@@ -691,6 +952,135 @@ class P2PService:
                 await self._send_get_peers(peer)
         except asyncio.CancelledError:
             return
+
+    async def _addr_relay_loop(self) -> None:
+        try:
+            while self._running:
+                await asyncio.sleep(self._addr_relay_interval)
+                if not self._running:
+                    return
+                peers = list(self._peers_by_session.values())
+                for peer in peers:
+                    await self._send_addr_sample(
+                        peer,
+                        limit=self._addr_relay_sample,
+                        include_advertised=False,
+                    )
+        except asyncio.CancelledError:
+            return
+
+    async def _persist_peers_loop(self) -> None:
+        try:
+            while self._running:
+                try:
+                    await asyncio.wait_for(
+                        self._persist_peers_event.wait(),
+                        timeout=self._persist_peers_interval,
+                    )
+                except asyncio.TimeoutError:
+                    pass
+                if not self._running:
+                    return
+                if self._persist_peers_event.is_set():
+                    self._persist_peers_event.clear()
+                await self._persist_peers_snapshot()
+        except asyncio.CancelledError:
+            return
+
+    async def _metrics_loop(self) -> None:
+        try:
+            while self._running:
+                await asyncio.sleep(60.0)
+                addrman_size = self._addrman.size()
+                learned_1m = self._addr_events_last_minute(self._addr_learned_events)
+                announced_1m = self._addr_events_last_minute(self._addr_announced_events)
+                log.info(
+                    "P2P addr metrics",
+                    extra={
+                        "addrman_size": addrman_size,
+                        "learned_addrs_1m": learned_1m,
+                        "announced_addrs_1m": announced_1m,
+                        "persisted_peer_count": self._persisted_peer_count,
+                    },
+                )
+        except asyncio.CancelledError:
+            return
+
+    async def _persist_peers_snapshot(self) -> None:
+        data = self._build_peers_snapshot()
+        if not data:
+            return
+        ok = await asyncio.to_thread(self._write_peers_snapshot, data)
+        if ok:
+            self._persisted_peer_count = len(data.get("peers", []))
+
+    def _build_peers_snapshot(self) -> dict[str, Any]:
+        peers: dict[str, dict[str, Any]] = {}
+        for record in self._addrman.records():
+            peer_id = self._peer_id_from_addr(record.address)
+            entry = peers.setdefault(
+                peer_id,
+                {
+                    "peer_id": peer_id,
+                    "addrs": [],
+                    "score": record.score,
+                    "last_seen": record.last_seen,
+                    "connected": False,
+                    "banned_until": None,
+                    "tags": {},
+                },
+            )
+            if record.address not in entry["addrs"]:
+                entry["addrs"].append(record.address)
+            entry["last_seen"] = max(entry["last_seen"], record.last_seen)
+            entry["score"] = max(float(entry["score"]), float(record.score))
+        try:
+            for peer_id, address, last_seen in self.peerstore.list_addresses(limit=5000):
+                if not address:
+                    continue
+                normalized = self._normalize_seed(address)
+                entry = peers.setdefault(
+                    peer_id,
+                    {
+                        "peer_id": peer_id,
+                        "addrs": [],
+                        "score": 0.0,
+                        "last_seen": last_seen,
+                        "connected": False,
+                        "banned_until": None,
+                        "tags": {},
+                    },
+                )
+                if normalized not in entry["addrs"]:
+                    entry["addrs"].append(normalized)
+                entry["last_seen"] = max(entry["last_seen"], last_seen)
+        except Exception:
+            pass
+        return {"peers": list(peers.values())}
+
+    def _write_peers_snapshot(self, data: dict[str, Any]) -> bool:
+        path = self._peers_json_path
+        self._ensure_peerstore_dir(path.parent)
+        attempts = 3
+        for attempt in range(attempts):
+            tmp_name = f".{path.name}.{uuid.uuid4().hex}.tmp"
+            tmp_path = path.parent / tmp_name
+            try:
+                with tmp_path.open("w", encoding="utf-8") as handle:
+                    json.dump(data, handle, indent=2)
+                os.replace(tmp_path, path)
+                return True
+            except Exception as exc:
+                log.warning(
+                    "Failed to persist peers.json (attempt %d/%d): %s",
+                    attempt + 1,
+                    attempts,
+                    exc,
+                )
+                with contextlib.suppress(Exception):
+                    tmp_path.unlink()
+                time.sleep(0.2)
+        return False
 
     async def _feeler_loop(self) -> None:
         try:
@@ -766,6 +1156,9 @@ class P2PService:
         delay = self._dial_delay(addr_key)
         next_retry = time.time() + delay
         self._dial_backoff[addr_key] = next_retry
+        normalized = self._sanitize_peer_addr(addr, fallback_port=self._local_listen_port())
+        if normalized:
+            self._addrman.mark_failure(normalized)
         if is_seed:
             self._record_bootstrap_attempt(addr, success=False, error=error)
             log.warning(
@@ -787,6 +1180,9 @@ class P2PService:
         self._dial_attempts.pop(addr_key, None)
         self._dial_backoff.pop(addr_key, None)
         self._dial_success_total += 1
+        normalized = self._sanitize_peer_addr(addr, fallback_port=self._local_listen_port())
+        if normalized:
+            self._addrman.mark_success(normalized)
         if is_seed:
             self._record_bootstrap_attempt(addr, success=True)
             log.info("Seed %s handshake complete", addr)
@@ -823,11 +1219,9 @@ class P2PService:
         attempts_last_5m = sum(
             1 for entry in self._bootstrap_attempts if now - entry.get("at", 0) <= 300
         )
-        addrman_size = None
-        try:
-            addrman_size = self.peerstore.count_known()
-        except Exception:
-            addrman_size = None
+        addrman_size = self._addrman.size()
+        learned_1m = self._addr_events_last_minute(self._addr_learned_events)
+        announced_1m = self._addr_events_last_minute(self._addr_announced_events)
 
         return P2PStatusSnapshot(
             p2p_running=self._running,
@@ -843,6 +1237,9 @@ class P2PService:
             addrman_size=addrman_size,
             dial_attempts=self._dial_attempt_total,
             dial_successes=self._dial_success_total,
+            learned_addrs_1m=learned_1m,
+            announced_addrs_1m=announced_1m,
+            persisted_peer_count=self._persisted_peer_count,
             dial_last_error=self._dial_last_error,
             bootstrap_last_attempt=self._last_bootstrap_attempt,
             bootstrap_last_success=self._last_bootstrap_success,
@@ -967,9 +1364,12 @@ class P2PService:
             try:
                 self.peerstore.add(peer_id=peer_id, addrs=[addr], direction="outbound")
                 self.peerstore.record_seen(peer_id, addr)
+                self._addrman.add(addr)
                 added += 1
             except Exception:
                 continue
+        if added:
+            self._schedule_peer_persist()
         return added
 
     def peer_count(self) -> int:
@@ -1074,10 +1474,19 @@ class P2PService:
                     ]
                     active_keys = {self._addr_key(p.remote) for p in outbound}
                 if len(outbound) >= target_outbound:
+                    if self._seeding_mode:
+                        self._seeding_mode = False
+                        log.info("Seeding mode complete: outbound peers at target")
                     continue
 
+                if not self._seeding_mode and self._addrman.size() < target_outbound:
+                    self._seeding_mode = True
+                    log.info("Re-entering seeding mode (addrman size low)")
+
                 candidates: list[str] = []
-                candidates.extend(self.seeds)
+                candidates.extend(self._addrman.sample(limit=64, exclude=set()))
+                if self._seeding_mode or not candidates:
+                    candidates.extend(self.seeds)
                 try:
                     for peer in self.peerstore.list_known(
                         limit=64, order_by="last_seen"
@@ -1421,6 +1830,8 @@ class P2PService:
             if sanitized:
                 reported_addrs.append(sanitized)
         reported_addrs = list(dict.fromkeys(reported_addrs))
+        for addr in reported_addrs:
+            self._addrman.add(addr)
 
         self._peer_registry.update_meta(
             peer.session_id,
@@ -1456,19 +1867,18 @@ class P2PService:
                 self.peerstore.record_seen(peer.peer_id, reported_addr)
             self.peerstore.record_connection(peer.peer_id)
             self.peerstore.update_head_height(peer.peer_id, int(hello.head_height))
+            self._schedule_peer_persist()
 
         await self._send(peer, MsgID.HELLO_ACK, HelloAck(accepted=True, reason=None))
         self._sync_wakeup.set()
-        advertised = self._advertised_addrs()
-        if advertised:
-            self._create_child_task(
-                self._send(
-                    peer,
-                    MsgID.ADDRESS_ANNOUNCE,
-                    AddressAnnounce(addresses=advertised),
-                ),
-                name=f"p2p.addr_announce@{peer.remote}",
-            )
+        self._create_child_task(
+            self._send_addr_sample(
+                peer,
+                limit=max(10, min(self._addr_relay_sample, 50)),
+                include_advertised=True,
+            ),
+            name=f"p2p.addr_sample@{peer.remote}",
+        )
         self._create_child_task(
             self._send_get_peers(peer),
             name=f"p2p.get_peers@{peer.remote}",
@@ -1491,7 +1901,11 @@ class P2PService:
         max_peers = max(1, min(max_peers, 256))
 
         exclude = {self._addr_key(peer.remote)}
-        addresses = self._collect_peer_addrs(limit=max_peers, exclude=exclude)
+        addresses = [
+            addr
+            for addr in self._collect_peer_addrs(limit=max_peers, exclude=exclude)
+            if not self._peer_knows_addr(peer, addr)
+        ]
         entries: list[tuple[bytes, str]] = []
         for addr in addresses:
             try:
@@ -1499,6 +1913,7 @@ class P2PService:
             except Exception:
                 pid = b"\x00" * 32
             entries.append((pid, addr))
+            self._mark_peer_known(peer, addr)
         await self._send(peer, MsgID.PEERS, Peers(entries=entries))
 
     async def _handle_peers(self, peer: _PeerState, payload: bytes) -> None:
@@ -1521,6 +1936,8 @@ class P2PService:
                 addrs.append(addr)
 
         if addrs:
+            for addr in addrs:
+                self._mark_peer_known(peer, addr)
             self._ingest_peer_addrs(addrs, source=f"peer:{peer.remote}")
             self._sync_wakeup.set()
 
@@ -1537,6 +1954,8 @@ class P2PService:
             if isinstance(addr, str) and addr:
                 addrs.append(addr)
         if addrs:
+            for addr in addrs:
+                self._mark_peer_known(peer, addr)
             self._ingest_peer_addrs(addrs, source=f"announce:{peer.remote}")
 
     async def _close_feeler_after_delay(self, peer: _PeerState) -> None:

@@ -34,8 +34,17 @@ The `version` payload includes protocol version, service flags, timestamps, `add
 ## Peer discovery
 
 * `addr` and `getaddr` are supported
-* Addresses are stored in a reference-like addrman with `new` and `tried` buckets
-* Outbound selection favors `tried` addresses but still samples `new`
+* Nodes maintain an in-memory addr manager (last_seen/last_success/failures/score)
+* On handshake, nodes request addresses and relay a small sample (10–50)
+* Every ~30–60s connected peers receive a randomized address sample excluding already-announced entries
+* Learned peers are persisted to `p2p/peers.json` (plus `peers.db` when available)
+* RFC1918/loopback addresses are filtered unless `ANIMICA_P2P_PRIVATE_NETWORK=true`
+
+### External address announcement
+
+* Prefer explicit config: `ANIMICA_P2P_ADVERTISE_ADDR` or `ANIMICA_P2P_EXTERNAL_IP`
+* Optional auto-detect: set `ANIMICA_P2P_EXTERNAL_IP_ENDPOINT` to a public IP service URL
+* If no external address is known, the node advertises nothing (but still accepts inbound)
 
 ## Inventory relay
 
