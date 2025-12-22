@@ -13,8 +13,8 @@ from p2p.wire.frames import Framer
 @pytest.mark.parametrize(
     "address,expected",
     [
-        ("203.0.113.10:30333", "/ip4/203.0.113.10/tcp/30333"),
-        ("/ip4/203.0.113.11/tcp/30333", "/ip4/203.0.113.11/tcp/30333"),
+        ("203.0.113.10:30333", "tcp://203.0.113.10:30333"),
+        ("/ip4/203.0.113.11/tcp/30333", "tcp://203.0.113.11:30333"),
     ],
 )
 def test_sanitize_peer_addr_normalizes_public(address: str, expected: str, tmp_path: Path) -> None:
@@ -54,7 +54,7 @@ def test_sanitize_peer_addr_allows_private_when_enabled(tmp_path: Path, monkeypa
         deps=None,
         peerstore_path=str(tmp_path / "p2p"),
     )
-    assert svc._sanitize_peer_addr("127.0.0.1:30333", fallback_port=30333) == "/ip4/127.0.0.1/tcp/30333"
+    assert svc._sanitize_peer_addr("127.0.0.1:30333", fallback_port=30333) == "tcp://127.0.0.1:30333"
 
 
 @pytest.mark.asyncio
@@ -66,8 +66,8 @@ async def test_peer_known_tracking_filters_samples(tmp_path: Path) -> None:
         deps=None,
         peerstore_path=str(tmp_path / "p2p"),
     )
-    addr_a = "/ip4/203.0.113.12/tcp/30333"
-    addr_b = "/ip4/203.0.113.13/tcp/30333"
+    addr_a = "tcp://203.0.113.12:30333"
+    addr_b = "tcp://203.0.113.13:30333"
     svc._addrman.add(addr_a)
     svc._addrman.add(addr_b)
 

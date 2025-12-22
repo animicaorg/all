@@ -5,13 +5,15 @@ import logging
 import sqlite3
 import threading
 import time
-from dataclasses import asdict
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, List, Optional, Sequence, Tuple
 
 from .peer import Peer, PeerRole, PeerStatus
+from .p2p_store import read_peers_json, write_peers_json
 
 log = logging.getLogger(__name__)
+_READONLY_WARNED = False
 
 
 def _now() -> float:
@@ -19,7 +21,11 @@ def _now() -> float:
 
 
 def _connect(path: Path) -> sqlite3.Connection:
-    conn = sqlite3.connect(str(path), isolation_level=None)  # autocommit
+    if str(path) == ":memory:":
+        conn = sqlite3.connect(str(path), isolation_level=None)  # autocommit
+    else:
+        uri = f"file:{path}?mode=rwc"
+        conn = sqlite3.connect(uri, isolation_level=None, uri=True)  # autocommit
     conn.row_factory = sqlite3.Row
     c = conn.cursor()
     # Pragmas tuned for an append-mostly metadata DB.
@@ -623,3 +629,181 @@ class PeerStore:
 # Convenience factory: memory store (for tests)
 def in_memory_store() -> PeerStore:
     return PeerStore(":memory:")
+
+
+@dataclass
+class _JsonPeer:
+    peer_id: str
+    address: str
+    score: float = 0.0
+    last_seen: Optional[float] = None
+    connected: bool = False
+    direction: Optional[str] = None
+
+
+class JsonPeerStore:
+    """
+    Minimal JSON-backed peer store used when SQLite is unavailable or read-only.
+    """
+
+    def __init__(self, path: Path):
+        self.path = Path(path)
+        self._peers: dict[str, dict] = {}
+        self._load()
+
+    def _load(self) -> None:
+        if not self.path.exists():
+            self._peers = {}
+            return
+        data = read_peers_json(self.path)
+        self._peers = {
+            p.get("peer_id"): dict(p)
+            for p in data.get("peers", [])
+            if isinstance(p, dict) and p.get("peer_id")
+        }
+
+    def _save(self) -> None:
+        data = {"peers": list(self._peers.values())}
+        write_peers_json(self.path, data)
+
+    def add(
+        self,
+        peer_id: str,
+        addrs: Optional[list[str]] = None,
+        score: float = 0.0,
+        direction: Optional[str] = None,
+    ) -> None:
+        now = _now()
+        entry = self._peers.get(peer_id) or {
+            "peer_id": peer_id,
+            "addrs": [],
+            "score": float(score),
+            "last_seen": now,
+            "connected": False,
+            "direction": direction,
+        }
+        entry["score"] = float(score)
+        entry["last_seen"] = now
+        if direction:
+            entry["direction"] = direction
+        if addrs:
+            entry["addrs"] = list(dict.fromkeys((entry.get("addrs") or []) + addrs))
+            if entry["addrs"]:
+                entry["address"] = entry["addrs"][0]
+        self._peers[peer_id] = entry
+        self._save()
+
+    def record_seen(self, peer_id: str, address: Optional[str] = None) -> None:
+        now = _now()
+        entry = self._peers.get(peer_id) or {"peer_id": peer_id, "addrs": []}
+        entry["last_seen"] = now
+        if address:
+            entry["addrs"] = list(
+                dict.fromkeys((entry.get("addrs") or []) + [address])
+            )
+            entry["address"] = entry["addrs"][0]
+        self._peers[peer_id] = entry
+        self._save()
+
+    def record_connection(self, peer_id: str) -> None:
+        entry = self._peers.get(peer_id) or {"peer_id": peer_id, "addrs": []}
+        entry["connected"] = True
+        entry["last_seen"] = _now()
+        self._peers[peer_id] = entry
+        self._save()
+
+    def record_disconnection(self, peer_id: str, reason: Optional[str] = None) -> None:
+        entry = self._peers.get(peer_id) or {"peer_id": peer_id, "addrs": []}
+        entry["connected"] = False
+        entry["last_seen"] = _now()
+        if reason:
+            entry["last_disconnect_reason"] = reason
+        self._peers[peer_id] = entry
+        self._save()
+
+    def update_head_height(self, peer_id: str, height: int) -> None:
+        entry = self._peers.get(peer_id) or {"peer_id": peer_id, "addrs": []}
+        entry["head_height"] = int(height)
+        entry["last_seen"] = _now()
+        self._peers[peer_id] = entry
+        self._save()
+
+    def increment_score(self, peer_id: str, delta: float) -> None:
+        entry = self._peers.get(peer_id)
+        if not entry:
+            return
+        entry["score"] = float(entry.get("score", 0.0)) + float(delta)
+        entry["last_seen"] = _now()
+        self._peers[peer_id] = entry
+        self._save()
+
+    def list_known(
+        self,
+        *,
+        limit: int = 100,
+        min_score: Optional[float] = None,
+        status_in: Optional[Sequence[PeerStatus]] = None,
+        order_by: str = "score",
+    ) -> List[_JsonPeer]:
+        peers = []
+        for pid, entry in self._peers.items():
+            if min_score is not None and float(entry.get("score", 0.0)) < min_score:
+                continue
+            addr = entry.get("address") or (entry.get("addrs") or [None])[0]
+            if not addr:
+                continue
+            peers.append(
+                _JsonPeer(
+                    peer_id=pid,
+                    address=addr,
+                    score=float(entry.get("score", 0.0)),
+                    last_seen=entry.get("last_seen"),
+                    connected=bool(entry.get("connected", False)),
+                    direction=entry.get("direction"),
+                )
+            )
+        if order_by == "last_seen":
+            peers.sort(key=lambda p: p.last_seen or 0, reverse=True)
+        else:
+            peers.sort(key=lambda p: p.score, reverse=True)
+        return peers[: int(limit)]
+
+    def list_addresses(
+        self, *, limit: int = 200, since: Optional[float] = None
+    ) -> List[Tuple[str, str, float]]:
+        rows: list[Tuple[str, str, float]] = []
+        for pid, entry in self._peers.items():
+            last_seen = float(entry.get("last_seen") or 0)
+            if since is not None and last_seen < since:
+                continue
+            for addr in entry.get("addrs") or []:
+                rows.append((pid, addr, last_seen))
+        rows.sort(key=lambda r: r[2], reverse=True)
+        return rows[: int(limit)]
+
+    def count_known(self, status_in: Optional[Sequence[PeerStatus]] = None) -> int:
+        return len(self._peers)
+
+
+def open_peerstore(path: str | Path, *, json_fallback: Optional[Path] = None):
+    """
+    Open a PeerStore, falling back to JSON when the sqlite DB is read-only.
+    """
+    global _READONLY_WARNED
+    try:
+        return PeerStore(path)
+    except sqlite3.OperationalError as exc:
+        msg = str(exc).lower()
+        if (
+            "readonly" not in msg
+            and "read-only" not in msg
+            and "unable to open database file" not in msg
+        ):
+            raise
+        if not _READONLY_WARNED:
+            log.warning(
+                "PeerStore database is read-only; falling back to JSON store: %s", exc
+            )
+            _READONLY_WARNED = True
+        fallback_path = Path(json_fallback) if json_fallback else Path(path).with_suffix(".json")
+        return JsonPeerStore(fallback_path)

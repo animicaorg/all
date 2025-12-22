@@ -15,10 +15,10 @@ Examples
 python -m p2p.cli.peer list
 
 # Add a peer
-python -m p2p.cli.peer add /ip4/203.0.113.10/tcp/42069
+python -m p2p.cli.peer add tcp://203.0.113.10:42069
 
-# Connect probe (TCP open) to a multiaddr
-python -m p2p.cli.peer connect /ip4/127.0.0.1/tcp/42069 --probe
+# Connect probe (TCP open) to an address
+python -m p2p.cli.peer connect tcp://127.0.0.1:42069 --probe
 
 # Ban for 1h
 python -m p2p.cli.peer ban peer12ab... --for 1h
@@ -42,30 +42,28 @@ import time
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
+from p2p.peer.peer_addr import normalize_peer_addr
+from p2p.peer.p2p_store import ensure_writable
+
 DEFAULT_HOME = Path(os.environ.get("ANIMICA_HOME", Path.home() / ".animica"))
 DEFAULT_STORE = DEFAULT_HOME / "p2p" / "peers.json"
 
 # ---- Optional imports from full stack -------------------------------------------------
 # We do imports lazily and guard everything with fallbacks so this CLI works standalone.
 try:  # peer store & types
-    from p2p.peer.peerstore import PeerStore as _PeerStore  # type: ignore
+    from p2p.peer.peerstore import PeerStore as _PeerStore, open_peerstore as _open_peerstore  # type: ignore
 except Exception:  # pragma: no cover - environment-dependent
     _PeerStore = None  # type: ignore[assignment]
-
-try:  # multiaddr helpers
-    from p2p.transport.multiaddr import \
-        parse_multiaddr as _parse_multiaddr  # type: ignore
-except Exception:  # pragma: no cover
-    _parse_multiaddr = None  # type: ignore[assignment]
+    _open_peerstore = None  # type: ignore[assignment]
 
 # --------------------------------------------------------------------------------------
 
 
 def _ensure_dirs(path: Path) -> None:
-    """Ensure parent directory exists with appropriate permissions (0o755 for p2p data)."""
+    """Ensure parent directory exists with appropriate permissions (0o775 for p2p data)."""
     path.parent.mkdir(parents=True, exist_ok=True)
     try:
-        path.parent.chmod(0o755)
+        path.parent.chmod(0o775)
     except (OSError, PermissionError):
         # Ignore permission errors on Windows or restricted filesystems
         pass
@@ -240,12 +238,14 @@ class JsonPeerStore:
 
     def _save(self) -> None:
         _ensure_dirs(self.path)
-        with self.path.open("w", encoding="utf-8") as f:
+        tmp_path = self.path.parent / f".{self.path.name}.{int(time.time())}.tmp"
+        with tmp_path.open("w", encoding="utf-8") as f:
             json.dump(
                 {"peers": [dataclasses.asdict(p) for p in self._peers.values()]},
                 f,
                 indent=2,
             )
+        os.replace(tmp_path, self.path)
 
 
 # =========================
@@ -259,15 +259,24 @@ class StoreFacade:
     """
 
     def __init__(self, path: Path):
-        self.path = path
+        writable = ensure_writable(path)
+        if writable.used_fallback:
+            print(
+                f"Peer store not writable at {path}; using fallback {writable.path}",
+                file=sys.stderr,
+            )
+        self.path = writable.path
         self._impl = None
         if _PeerStore is not None:
             try:
-                self._impl = _PeerStore.open(str(path))  # type: ignore[attr-defined]
+                if _open_peerstore is not None and self.path.suffix != ".json":
+                    self._impl = _open_peerstore(str(self.path))
+                elif self.path.suffix != ".json":
+                    self._impl = _PeerStore.open(str(self.path))  # type: ignore[attr-defined]
             except Exception:
                 self._impl = None
         if self._impl is None:
-            self._impl = JsonPeerStore(path)
+            self._impl = JsonPeerStore(self.path)
 
     # Dispatch methods with graceful fallbacks
     def list(self) -> List[Dict[str, Any]]:
@@ -279,13 +288,20 @@ class StoreFacade:
     def upsert(self, peer_id: str, addr: Optional[str] = None) -> None:
         if isinstance(self._impl, JsonPeerStore):
             if addr:
-                self._impl.ensure_addr(peer_id, addr)
+                parsed = normalize_peer_addr(addr, allow_quic=True, allow_ws=True)
+                if parsed.addr:
+                    self._impl.ensure_addr(peer_id, parsed.addr.canonical)
             else:
                 self._impl.upsert(JPeer(peer_id=peer_id, addrs=[]))
             return
+        if addr:
+            parsed = normalize_peer_addr(addr, allow_quic=True, allow_ws=True)
+            addr = parsed.addr.canonical if parsed.addr else addr
         self._impl.upsert(peer_id=peer_id, addr=addr)  # type: ignore[attr-defined]
 
     def ensure_addr(self, peer_id: str, addr: str) -> None:
+        parsed = normalize_peer_addr(addr, allow_quic=True, allow_ws=True)
+        addr = parsed.addr.canonical if parsed.addr else addr
         if isinstance(self._impl, JsonPeerStore):
             self._impl.ensure_addr(peer_id, addr)
             return
@@ -365,29 +381,9 @@ def _fallback_parse_multiaddr(s: str) -> Tuple[str, int]:
 
 
 def parse_addr(s: str) -> Tuple[str, int]:
-    if _parse_multiaddr is not None:
-        parsed = _parse_multiaddr(s)  # type: ignore[misc]
-        host = getattr(parsed, "host", None)
-        port = getattr(parsed, "port", None)
-
-        # Legacy tuple behaviour
-        if host is None or port is None:
-            try:
-                host, port = parsed  # type: ignore[misc]
-            except Exception:
-                host = None
-                port = None
-
-        # Fallback: tolerate Multiaddr types without host/port by reparsing str(parsed)
-        if host is None or port is None:
-            try:
-                host, port = _fallback_parse_multiaddr(str(parsed))
-            except Exception as exc:
-                raise ValueError(f"missing host/port in multiaddr: {s}") from exc
-
-        if port is None:
-            raise ValueError(f"missing port in multiaddr: {s}")
-        return str(host), int(port)
+    result = normalize_peer_addr(s, allow_quic=True, allow_ws=True)
+    if result.addr:
+        return result.addr.host, result.addr.port
     return _fallback_parse_multiaddr(s)
 
 
@@ -473,7 +469,11 @@ def cmd_list(args: argparse.Namespace) -> int:
 def cmd_add(args: argparse.Namespace) -> int:
     store = StoreFacade(args.store)
     peer_id = args.peer_id
-    addr = args.addr
+    parsed = normalize_peer_addr(args.addr, allow_quic=True, allow_ws=True)
+    if not parsed.addr:
+        print(f"[!] invalid address: {args.addr} ({parsed.reason})")
+        return 1
+    addr = parsed.addr.canonical
     store.ensure_addr(peer_id, addr)
     print(f"[+] ensured addr for {peer_id}: {addr}")
     if args.probe:
@@ -541,13 +541,19 @@ def cmd_connect(args: argparse.Namespace) -> int:
     Otherwise, this simply ensures the addr is recorded; the running node can pick it up.
     """
     store = StoreFacade(args.store)
-    peer_id = args.peer_id or f"peer:{args.addr}"
-    store.ensure_addr(peer_id, args.addr)
-    print(f"[+] recorded desired connection: {peer_id} @ {args.addr}")
+    parsed = normalize_peer_addr(args.addr, allow_quic=True, allow_ws=True)
+    if not parsed.addr:
+        print(f"[!] invalid address: {args.addr} ({parsed.reason})")
+        return 1
+    addr = parsed.addr.canonical
+    peer_id = args.peer_id or f"peer:{addr}"
+    store.ensure_addr(peer_id, addr)
+    print(f"[+] recorded desired connection: {peer_id} @ {addr}")
     if args.probe:
-        ok, rtt, err = tcp_probe(args.addr, timeout=args.timeout)
+        ok, rtt, err = tcp_probe(addr, timeout=args.timeout)
         if ok:
             print(f"[probe] TCP connect OK in {_fmt_dur(rtt)}")
+            store.mark_seen(peer_id, addr)
             return 0
         print(f"[probe] FAILED: {err}")
         return 2
@@ -594,7 +600,7 @@ def build_parser() -> argparse.ArgumentParser:
     add_common_store_arg(sp)
     sp.add_argument("peer_id", help="Peer ID (e.g., peer12abc...)")
     sp.add_argument(
-        "addr", help="Multiaddr or host:port (e.g., /ip4/1.2.3.4/tcp/42069)"
+        "addr", help="tcp://host:port (canonical), multiaddr, or host:port"
     )
     sp.add_argument(
         "--probe",
@@ -657,7 +663,7 @@ def build_parser() -> argparse.ArgumentParser:
         "connect", help="Record a desired connection (and optionally probe it)"
     )
     add_common_store_arg(sp)
-    sp.add_argument("addr", help="Multiaddr or host:port")
+    sp.add_argument("addr", help="tcp://host:port (canonical), multiaddr, or host:port")
     sp.add_argument("--peer-id", help="Optional peer id; defaults to derived label")
     sp.add_argument(
         "--probe", action="store_true", help="TCP connect() probe immediately"
