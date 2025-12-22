@@ -7,8 +7,10 @@ import ipaddress
 import logging
 import os
 import random
+import socket
 import time
 from collections import OrderedDict, deque
+from urllib.parse import urlparse
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Awaitable, Deque, Dict, List, Optional, Set, Tuple
@@ -18,7 +20,8 @@ from p2p.crypto import keys as keys_mod
 from p2p.crypto import peer_id as peer_id_mod
 from p2p.peer import peerstore as pstore
 from p2p.transport.base import ListenConfig
-from p2p.transport.multiaddr import parse_multiaddr
+from p2p.constants import DEFAULT_TCP_PORT
+from p2p.transport.multiaddr import normalize_multiaddr, parse_multiaddr
 from p2p.transport.tcp import TcpTransport
 from p2p.wire.encoding import decode_payload, encode_payload
 from p2p.wire.frames import Framer, unpack_frame
@@ -81,6 +84,9 @@ class P2PStatusSnapshot:
     seed_sources: dict[str, list[str]]
     dial_queue_depth: int
     addrman_size: Optional[int]
+    dial_attempts: int
+    dial_successes: int
+    dial_last_error: Optional[dict[str, Any]] = None
     bootstrap_last_attempt: Optional[dict[str, Any]] = None
     bootstrap_last_success: Optional[dict[str, Any]] = None
     bootstrap_last_error: Optional[dict[str, Any]] = None
@@ -98,6 +104,9 @@ class P2PStatusSnapshot:
             "seed_sources": self.seed_sources,
             "dial_queue_depth": self.dial_queue_depth,
             "addrman_size": self.addrman_size,
+            "dial_attempts": self.dial_attempts,
+            "dial_successes": self.dial_successes,
+            "dial_last_error": self.dial_last_error,
             "bootstrap_last_attempt": self.bootstrap_last_attempt,
             "bootstrap_last_success": self.bootstrap_last_success,
             "bootstrap_last_error": self.bootstrap_last_error,
@@ -244,6 +253,9 @@ class P2PService:
         self._dial_inflight: Set[str] = set()
         self._dial_backoff: dict[str, float] = {}
         self._dial_attempts: dict[str, int] = {}
+        self._dial_attempt_total: int = 0
+        self._dial_success_total: int = 0
+        self._dial_last_error: Optional[dict[str, Any]] = None
 
         self._peer_lock = asyncio.Lock()
         self._peers: dict[str, _PeerState] = {}  # remote -> state
@@ -436,7 +448,7 @@ class P2PService:
                 await p.conn.close()
             if p.peer_id:
                 with contextlib.suppress(Exception):
-                    self.peerstore.record_disconnection(p.peer_id)
+                    self.peerstore.record_disconnection(p.peer_id, reason="shutdown")
 
         with contextlib.suppress(Exception):
             await self._transport.close()
@@ -505,6 +517,66 @@ class P2PService:
                 continue
         return list(dict.fromkeys(addrs))
 
+    def _local_listen_port(self) -> int:
+        for addr in self.listen_addrs:
+            try:
+                parsed = parse_multiaddr(addr)
+            except Exception:
+                continue
+            if parsed.transport != "tcp":
+                continue
+            if parsed.port:
+                try:
+                    port = int(parsed.port)
+                    if 1 <= port <= 65535:
+                        return port
+                except (TypeError, ValueError):
+                    continue
+        return int(os.environ.get("ANIMICA_P2P_TCP_PORT", DEFAULT_TCP_PORT))
+
+    def _is_ephemeral_port(self, port: int) -> bool:
+        return int(port) >= 49152
+
+    def _sanitize_peer_addr(self, address: str, *, fallback_port: int) -> Optional[str]:
+        if not address:
+            return None
+        normalized = self._normalize_seed(address)
+        host = None
+        port: Optional[int] = None
+        if normalized.startswith("/"):
+            try:
+                parsed = parse_multiaddr(normalized)
+            except Exception:
+                return None
+            if parsed.transport != "tcp":
+                return None
+            host = parsed.host or ""
+            if parsed.port:
+                try:
+                    port = int(parsed.port)
+                except (TypeError, ValueError):
+                    port = None
+        else:
+            raw = normalized
+            if "://" in raw:
+                parsed = urlparse(raw)
+                host = parsed.hostname
+                port = parsed.port
+            else:
+                h, _, p = raw.rpartition(":")
+                host = h or raw
+                try:
+                    port = int(p) if p else None
+                except (TypeError, ValueError):
+                    port = None
+        if not host:
+            return None
+        if not port or port <= 0 or port > 65535:
+            port = fallback_port
+        if self._is_ephemeral_port(port) and fallback_port and port != fallback_port:
+            port = fallback_port
+        return self._normalize_seed(f"{host}:{port}")
+
     def _remember_addr(self, addr: str) -> None:
         addr_key = self._addr_key(addr)
         now = time.time()
@@ -544,8 +616,11 @@ class P2PService:
         if not addrs:
             return 0
         stored = 0
+        fallback_port = self._local_listen_port()
         for addr in addrs:
-            normalized = self._normalize_seed(addr)
+            normalized = self._sanitize_peer_addr(addr, fallback_port=fallback_port)
+            if not normalized:
+                continue
             self._remember_addr(normalized)
             try:
                 peer_id = self._peer_id_from_addr(normalized)
@@ -682,6 +757,12 @@ class P2PService:
         addr_key = self._addr_key(addr)
         attempts = self._dial_attempts.get(addr_key, 0) + 1
         self._dial_attempts[addr_key] = attempts
+        self._dial_last_error = {
+            "addr": addr,
+            "error": error,
+            "attempts": attempts,
+            "at": time.time(),
+        }
         delay = self._dial_delay(addr_key)
         next_retry = time.time() + delay
         self._dial_backoff[addr_key] = next_retry
@@ -690,11 +771,22 @@ class P2PService:
             log.warning(
                 "Seed %s failed: %s; next retry in %.1fs", addr, error, delay
             )
+        else:
+            log.info("Dial to %s failed: %s (retry in %.1fs)", addr, error, delay)
+            if attempts >= 3:
+                fallback_port = self._local_listen_port()
+                normalized = self._sanitize_peer_addr(addr, fallback_port=fallback_port)
+                if normalized:
+                    peer_id = self._peer_id_from_addr(normalized)
+                    with contextlib.suppress(Exception):
+                        self.peerstore.increment_score(peer_id, -1.0)
+                        self.peerstore.record_seen(peer_id, normalized)
 
     def _mark_dial_success(self, addr: str, *, is_seed: bool) -> None:
         addr_key = self._addr_key(addr)
         self._dial_attempts.pop(addr_key, None)
         self._dial_backoff.pop(addr_key, None)
+        self._dial_success_total += 1
         if is_seed:
             self._record_bootstrap_attempt(addr, success=True)
             log.info("Seed %s handshake complete", addr)
@@ -749,6 +841,9 @@ class P2PService:
             seed_sources=dict(self._seed_sources),
             dial_queue_depth=len(self._dial_inflight),
             addrman_size=addrman_size,
+            dial_attempts=self._dial_attempt_total,
+            dial_successes=self._dial_success_total,
+            dial_last_error=self._dial_last_error,
             bootstrap_last_attempt=self._last_bootstrap_attempt,
             bootstrap_last_success=self._last_bootstrap_success,
             bootstrap_last_error=self._last_bootstrap_error,
@@ -780,7 +875,10 @@ class P2PService:
 
     def _normalize_seed(self, address: str) -> str:
         if address.startswith("/"):
-            return address
+            try:
+                return normalize_multiaddr(address)
+            except Exception:
+                return address
 
         # strip scheme if present
         if "://" in address:
@@ -798,7 +896,10 @@ class P2PService:
         except Exception:
             ip_tag = "dns4"
 
-        return f"/{ip_tag}/{host}/tcp/{port}"
+        try:
+            return normalize_multiaddr(f"/{ip_tag}/{host}/tcp/{port}")
+        except Exception:
+            return f"/{ip_tag}/{host}/tcp/{port}"
 
     def _addr_key(self, address: str) -> str:
         """
@@ -829,6 +930,25 @@ class P2PService:
             return f"{parts[0]}:{parts[1]}"
         return address
 
+    def _reported_peer_addr(self, remote: str, listen_port: int) -> Optional[str]:
+        host: Optional[str] = None
+        if "://" in remote:
+            parsed = urlparse(remote)
+            host = parsed.hostname
+        elif remote.startswith("[") and "]" in remote:
+            host = remote.split("]", 1)[0].lstrip("[")
+        elif ":" in remote:
+            host = remote.rsplit(":", 1)[0]
+        else:
+            host = remote
+        if not host:
+            return None
+        port = int(listen_port) if 1 <= int(listen_port) <= 65535 else 0
+        fallback_port = self._local_listen_port()
+        if not port:
+            port = fallback_port
+        return self._sanitize_peer_addr(f"{host}:{port}", fallback_port=fallback_port)
+
     def _peer_id_from_addr(self, address: str) -> str:
         if "/p2p/" in address:
             return address.split("/p2p/", 1)[1].split("/")[0]
@@ -838,8 +958,11 @@ class P2PService:
 
     def _seed_peerstore(self, addresses: list[str]) -> int:
         added = 0
+        fallback_port = self._local_listen_port()
         for raw in addresses:
-            addr = self._normalize_seed(raw)
+            addr = self._sanitize_peer_addr(raw, fallback_port=fallback_port)
+            if not addr:
+                continue
             peer_id = self._peer_id_from_addr(addr)
             try:
                 self.peerstore.add(peer_id=peer_id, addrs=[addr], direction="outbound")
@@ -856,7 +979,12 @@ class P2PService:
         if not addresses:
             return {"added": 0, "dialing": 0}
 
-        normalized = [self._normalize_seed(a) for a in addresses]
+        fallback_port = self._local_listen_port()
+        normalized = [
+            addr
+            for addr in (self._sanitize_peer_addr(a, fallback_port=fallback_port) for a in addresses)
+            if addr
+        ]
         added = self._seed_peerstore(normalized)
 
         dial_targets: list[str] = []
@@ -993,10 +1121,59 @@ class P2PService:
         except asyncio.CancelledError:
             return
 
+    async def _resolve_seed_host(self, addr: str) -> bool:
+        raw = addr
+        host: Optional[str] = None
+        port: Optional[int] = None
+        if raw.startswith("/"):
+            try:
+                parsed = parse_multiaddr(raw)
+                host = parsed.host
+                port = int(parsed.port) if parsed.port else None
+            except Exception:
+                return True
+        else:
+            if "://" in raw:
+                parsed = urlparse(raw)
+                host = parsed.hostname
+                port = parsed.port
+            else:
+                host, _, port_str = raw.rpartition(":")
+                host = host or raw
+                try:
+                    port = int(port_str) if port_str else None
+                except ValueError:
+                    port = None
+        if not host:
+            return True
+        try:
+            ipaddress.ip_address(host)
+            return True
+        except ValueError:
+            pass
+        try:
+            loop = asyncio.get_running_loop()
+            infos = await asyncio.wait_for(
+                loop.getaddrinfo(host, port, proto=socket.IPPROTO_TCP),
+                timeout=3.0,
+            )
+            log.info("Resolved seed host %s to %d address(es)", host, len(infos))
+            return True
+        except Exception as exc:
+            log.warning("Failed to resolve seed host %s: %s", host, exc)
+            return False
+
     async def _dial(
         self, addr: str, *, is_seed: bool = False, feeler: bool = False
     ) -> None:
         addr_key = self._addr_key(addr)
+        self._dial_attempt_total += 1
+        if is_seed:
+            resolved = await self._resolve_seed_host(addr)
+            if not resolved:
+                self._mark_dial_failure(addr, is_seed=True, error="dns_lookup_failed")
+                self._dial_inflight.discard(addr_key)
+                return
         try:
             conn = await self._transport.dial(addr, timeout=5.0)
         except asyncio.CancelledError:
@@ -1067,20 +1244,27 @@ class P2PService:
         except Exception:
             pass
 
+        disconnect_reason = "loop_exit"
         try:
             while self._running:
                 data = await peer.stream.recv()
                 if data == b"":
+                    disconnect_reason = "remote_closed"
                     break
                 self._peer_registry.mark_seen(peer.session_id)
                 frame = unpack_frame(data, aead=None)
                 await self._handle(peer, frame.msg_id, frame.payload)
         except asyncio.CancelledError:
-            pass
-        except Exception:
-            log.debug("peer loop error", extra={"remote": peer.remote}, exc_info=True)
+            disconnect_reason = "cancelled"
+        except Exception as exc:
+            disconnect_reason = f"error:{type(exc).__name__}"
+            log.warning(
+                "peer loop error",
+                extra={"remote": peer.remote, "reason": disconnect_reason},
+                exc_info=True,
+            )
         finally:
-            await self._drop_peer(peer, reason="loop_exit")
+            await self._drop_peer(peer, reason=disconnect_reason)
 
     async def _drop_peer(self, peer: _PeerState, *, reason: str) -> None:
         with contextlib.suppress(Exception):
@@ -1095,7 +1279,7 @@ class P2PService:
 
         if peer.peer_id:
             with contextlib.suppress(Exception):
-                self.peerstore.record_disconnection(peer.peer_id)
+                self.peerstore.record_disconnection(peer.peer_id, reason=reason)
 
         uptime = time.time() - peer.connected_at if peer.connected_at else 0.0
         log.info(
@@ -1141,10 +1325,14 @@ class P2PService:
         head_hash = (
             bytes.fromhex(head_hash_hex[2:]) if head_hash_hex else (b"\x00" * 32)
         )
+        listen_port = self._local_listen_port()
+        listen_addrs = self._advertised_addrs()
         hello = Hello(
             version="2",
             agent=f"animica-p2p/{p2p_version.__version__}",
             chain_id=self.chain_id,
+            listen_port=listen_port,
+            listen_addrs=listen_addrs,
             genesis_hash=self._genesis_hash(),
             peer_id=self._peer_id_bytes,
             head_height=height,
@@ -1199,7 +1387,8 @@ class P2PService:
 
     async def _handle_hello(self, peer: _PeerState, payload: bytes) -> None:
         data = self._decode_map(payload)
-        hello = Hello(**data)
+        allowed = set(Hello.__dataclass_fields__)
+        hello = Hello(**{k: v for k, v in data.items() if k in allowed})
 
         if int(hello.chain_id) != int(self.chain_id):
             await self._send(
@@ -1221,6 +1410,18 @@ class P2PService:
         peer.hello = data
         peer.hello_done.set()
 
+        listen_port = int(getattr(hello, "listen_port", 0) or 0)
+        reported_addr = self._reported_peer_addr(peer.remote, listen_port)
+        reported_addrs: list[str] = []
+        if reported_addr:
+            reported_addrs.append(reported_addr)
+        fallback_port = self._local_listen_port()
+        for addr in list(getattr(hello, "listen_addrs", []) or []):
+            sanitized = self._sanitize_peer_addr(addr, fallback_port=fallback_port)
+            if sanitized:
+                reported_addrs.append(sanitized)
+        reported_addrs = list(dict.fromkeys(reported_addrs))
+
         self._peer_registry.update_meta(
             peer.session_id,
             peer_id=peer.peer_id,
@@ -1229,6 +1430,8 @@ class P2PService:
             remote=peer.remote,
             direction=peer.direction,
             feeler=peer.feeler,
+            reported_addr=reported_addr,
+            listen_port=listen_port or None,
         )
 
         # Deduplicate connections for the same peer_id (keep the newest).
@@ -1243,9 +1446,14 @@ class P2PService:
         self._stats["peers"] = self._peer_registry.peer_count()
 
         with contextlib.suppress(Exception):
+            addrs = reported_addrs or ([reported_addr] if reported_addr else [])
+            if not addrs:
+                addrs = []
             self.peerstore.add(
-                peer.peer_id, addrs=[peer.remote], score=0.0, direction=peer.direction
+                peer.peer_id, addrs=addrs, score=0.0, direction=peer.direction
             )
+            if reported_addr:
+                self.peerstore.record_seen(peer.peer_id, reported_addr)
             self.peerstore.record_connection(peer.peer_id)
             self.peerstore.update_head_height(peer.peer_id, int(hello.head_height))
 

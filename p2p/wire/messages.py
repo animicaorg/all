@@ -57,6 +57,8 @@ class Hello:
     version: str = "1"
     agent: str = "animica-node/unknown"
     chain_id: ChainId = 0
+    listen_port: int = 0
+    listen_addrs: List[Address] = dc.field(default_factory=list)
     # Optional genesis hash for strict network matching (recommended).
     # If empty, receivers should fall back to chain_id/alg_policy_root checks only.
     genesis_hash: Hash32 = b""
@@ -76,6 +78,8 @@ class Hello:
         _ensure_len("head_hash", self.head_hash, 32)
         if self.alg_policy_root:
             _ensure_len("alg_policy_root", self.alg_policy_root, 64)
+        if self.listen_port and not (1 <= int(self.listen_port) <= 65535):
+            raise ValueError(f"listen_port must be 1-65535, got {self.listen_port}")
 
 
 @dataclass(frozen=True)
