@@ -81,9 +81,16 @@ def _resolve_sync_endpoints(
 ) -> tuple[str, Optional[str]]:
     """Resolve target and bootstrap RPC endpoints."""
     net_cfg = load_network_config()
-    target = rpc_url or os.environ.get(RPC_ENV) or net_cfg.rpc_url
-    bootstrap = bootstrap_rpc or os.environ.get(BOOTSTRAP_RPC_ENV) or net_cfg.bootstrap_url
-    target = target.strip()
+    target = rpc_url if rpc_url and rpc_url.strip() else None
+    if not target:
+        env_url = os.environ.get(RPC_ENV)
+        target = env_url.strip() if env_url and env_url.strip() else None
+    target = target or net_cfg.rpc_url
+    bootstrap = bootstrap_rpc if bootstrap_rpc and bootstrap_rpc.strip() else None
+    if not bootstrap:
+        env_bootstrap = os.environ.get(BOOTSTRAP_RPC_ENV)
+        bootstrap = env_bootstrap.strip() if env_bootstrap and env_bootstrap.strip() else None
+    bootstrap = bootstrap or net_cfg.bootstrap_url
     if not allow_bootstrap_rpc:
         bootstrap = None
     bootstrap = bootstrap.strip() if bootstrap else None
