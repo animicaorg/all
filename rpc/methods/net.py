@@ -148,6 +148,19 @@ def _collect_live_peer_seeds() -> tuple[list[str], list[str]]:
     return _dedupe(inbound), _dedupe(outbound)
 
 
+def _normalize_peer_snapshot(peer: dict[str, object]) -> dict[str, object]:
+    normalized = dict(peer)
+    if "addr" not in normalized:
+        addr = normalized.get("remote") or normalized.get("address")
+        if addr:
+            normalized["addr"] = addr
+    if "lastSeen" not in normalized and "last_seen" in normalized:
+        normalized["lastSeen"] = normalized.get("last_seen")
+    if "connectedAt" not in normalized and "connected_at" in normalized:
+        normalized["connectedAt"] = normalized.get("connected_at")
+    return normalized
+
+
 def _active_peer_snapshot() -> list[dict[str, object]]:
     """
     Return a list of active peer sessions from the running P2P service.
@@ -162,16 +175,26 @@ def _active_peer_snapshot() -> list[dict[str, object]]:
             try:
                 registry = getattr(svc, "peer_registry")
                 if registry is not None and hasattr(registry, "snapshot"):
-                    return list(registry.snapshot())
+                    return [
+                        _normalize_peer_snapshot(p)
+                        for p in list(registry.snapshot())
+                        if isinstance(p, dict)
+                    ]
             except Exception:
                 pass
         if svc is not None and hasattr(svc, "peers"):
             peers = svc.peers() if callable(getattr(svc, "peers")) else svc.peers
             if isinstance(peers, dict):
-                return list(peers.values())
+                return [
+                    _normalize_peer_snapshot(p)
+                    for p in list(peers.values())
+                    if isinstance(p, dict)
+                ]
             if peers is None:
                 return []
-            return list(peers)
+            return [
+                _normalize_peer_snapshot(p) for p in list(peers) if isinstance(p, dict)
+            ]
     except Exception:
         pass
 
@@ -210,7 +233,7 @@ def _active_peer_snapshot() -> list[dict[str, object]]:
                 if hasattr(peer, "user_agent") and getattr(peer, "user_agent"):
                     peer_dict["info"] = {"userAgent": getattr(peer, "user_agent")}
                 snapshot.append(peer_dict)
-            return snapshot
+            return [_normalize_peer_snapshot(p) for p in snapshot]
     except Exception:
         pass
     return []
