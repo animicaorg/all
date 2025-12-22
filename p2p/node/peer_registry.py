@@ -65,7 +65,7 @@ class PeerRegistry:
 
     def __init__(self, *, max_inbound_per_ip: int = 8, handshake_timeout_s: float = 6.0) -> None:
         self._sessions: Dict[str, PeerSession] = {}
-        self._sessions_by_peer_id: Dict[str, PeerSession] = {}
+        self._sessions_by_peer_key: Dict[tuple[str, str], PeerSession] = {}
         self._max_inbound_per_ip = max(1, int(max_inbound_per_ip))
         self.handshake_timeout_s = max(0.01, float(handshake_timeout_s))
 
@@ -91,7 +91,8 @@ class PeerRegistry:
     def mark_identified(self, session_id: str, peer_id: str) -> List[str]:
         """
         Attach a peer_id to a session. Returns a list of session_ids that should be dropped
-        because a newer connection replaced them.
+        because a newer connection replaced them. Tracks one inbound and one outbound
+        session per peer_id.
         """
         session = self._sessions.get(session_id)
         if session is None:
@@ -101,17 +102,18 @@ class PeerRegistry:
         session.last_seen = time.time()
 
         replaced: List[str] = []
-        existing = self._sessions_by_peer_id.get(peer_id)
+        peer_key = (peer_id, session.direction)
+        existing = self._sessions_by_peer_key.get(peer_key)
         if existing and existing.session_id != session_id:
-            # Keep the newest connection.
+            # Keep the newest connection per direction.
             if existing.connected_at <= session.connected_at:
                 replaced.append(existing.session_id)
-                self._sessions_by_peer_id[peer_id] = session
+                self._sessions_by_peer_key[peer_key] = session
             else:
                 # Older connection is newer than this one; drop the current session instead.
                 replaced.append(session.session_id)
         else:
-            self._sessions_by_peer_id[peer_id] = session
+            self._sessions_by_peer_key[peer_key] = session
 
         for rid in replaced:
             if rid != session.session_id:
@@ -137,9 +139,10 @@ class PeerRegistry:
     def remove(self, session_id: str) -> None:
         session = self._sessions.pop(session_id, None)
         if session and session.peer_id:
-            mapped = self._sessions_by_peer_id.get(session.peer_id)
+            peer_key = (session.peer_id, session.direction)
+            mapped = self._sessions_by_peer_key.get(peer_key)
             if mapped and mapped.session_id == session_id:
-                self._sessions_by_peer_id.pop(session.peer_id, None)
+                self._sessions_by_peer_key.pop(peer_key, None)
 
     def purge_stale(self, now: Optional[float] = None) -> List[str]:
         """
@@ -160,19 +163,25 @@ class PeerRegistry:
 
     def peer_count(self) -> int:
         """
-        Count unique peers, preferring identified peers and including pending handshakes.
+        Count active sessions, preferring identified peers and including pending handshakes.
         """
-        identified = set(self._sessions_by_peer_id)
+        identified = set(self._sessions_by_peer_key)
         unknown = sum(1 for s in self._sessions.values() if not s.peer_id)
         return len(identified) + unknown
 
     def snapshot(self) -> List[Dict[str, object]]:
         """
         Return a deduplicated list of peer snapshots for RPC/CLI consumption.
+
+        Keeps at most one inbound and one outbound session per peer_id while
+        retaining anonymous sessions for in-progress handshakes.
         """
         snapshots: Dict[str, PeerSession] = {}
         for session in self._sessions.values():
-            key = session.peer_id or session.session_id
+            if session.peer_id:
+                key = f"{session.peer_id}:{session.direction}"
+            else:
+                key = session.session_id
             snapshots[key] = session
         return [s.snapshot() for s in snapshots.values()]
 
