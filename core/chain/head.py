@@ -72,7 +72,9 @@ def _get_height(hdr: Header) -> int:
 
 
 def _header_hash(hdr: Header) -> bytes:
-    """Canonical header hash: sha3_256(SignBytes(header))."""
+    """Canonical header hash. Prefer header.hash() to match BlockDB storage."""
+    if hasattr(hdr, "hash") and callable(getattr(hdr, "hash")):
+        return bytes(hdr.hash())  # type: ignore[no-any-return]
     return sha3_256(header_signing_bytes(hdr))
 
 
