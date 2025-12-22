@@ -18,6 +18,7 @@ from animica.seeds import get_seed_nodes
 from .timeouts import DEFAULT_RPC_TIMEOUT, RPC_TIMEOUT_ENV, describe_timeout, resolve_timeout
 
 from .state import get_cli_state
+from .rpc_utils import candidate_rpc_urls, is_method_not_found
 
 DEFAULT_RPC_URL = load_network_config().rpc_url
 RPC_ENV = "ANIMICA_RPC_URL"
@@ -763,6 +764,11 @@ def status(
     max_retries: int = typer.Option(
         3, "--max-retries", help="Maximum number of RPC attempts before failing fast"
     ),
+    use_cached: bool = typer.Option(
+        False,
+        "--use-cached",
+        help="Show last persisted sync state if RPC is unavailable (not live data)",
+    ),
     timeout: Optional[float] = typer.Option(
         None,
         "--timeout",
@@ -788,13 +794,52 @@ def status(
 
     net_cfg = load_network_config()
     
+    candidate_urls = candidate_rpc_urls(url)
     # Bounded retry loop for RPC operations
     attempt = 0
     backoff_delay = retry_delay
     while attempt < max_retries:
         attempt += 1
         try:
-            head = asyncio.run(rpc_call("chain.getHead", [], rpc_url=url, timeout=rpc_timeout))
+            head = None
+            status_payload = None
+            used_url = None
+            last_error: Optional[Exception] = None
+
+            for candidate in candidate_urls:
+                try:
+                    status_payload = asyncio.run(
+                        rpc_call("node.getStatus", [], rpc_url=candidate, timeout=rpc_timeout)
+                    )
+                    if isinstance(status_payload, dict):
+                        used_url = candidate
+                        break
+                except Exception as exc:
+                    if is_method_not_found(exc):
+                        try:
+                            head = asyncio.run(
+                                rpc_call("chain.getHead", [], rpc_url=candidate, timeout=rpc_timeout)
+                            )
+                            used_url = candidate
+                            break
+                        except Exception as legacy_exc:
+                            last_error = legacy_exc
+                            continue
+                    last_error = exc
+                    continue
+
+            if used_url is None:
+                raise RuntimeError(
+                    f"All connection attempts failed (tried: {', '.join(candidate_urls)}): {last_error}"
+                )
+
+            url = used_url
+            if status_payload and isinstance(status_payload, dict):
+                head = status_payload.get("chain", {}).get("head") or status_payload.get("head")
+
+            if head is None:
+                head = asyncio.run(rpc_call("chain.getHead", [], rpc_url=url, timeout=rpc_timeout))
+
             height = _extract_field(head, "height", "number", "blockNumber")
             if height is None:
                 height = 0
@@ -812,21 +857,37 @@ def status(
                     block = None
 
             sync_status = None
-            for method in ("node.syncStatus", "chain.syncing", "sync.isSyncing"):
-                try:
-                    sync_status = asyncio.run(rpc_call(method, [], rpc_url=url, timeout=rpc_timeout))
-                    break
-                except Exception:
-                    continue
+            if status_payload and isinstance(status_payload, dict):
+                sync_status = status_payload.get("sync")
+            if sync_status is None:
+                for method in ("node.syncStatus", "chain.syncing", "sync.isSyncing"):
+                    try:
+                        sync_status = asyncio.run(rpc_call(method, [], rpc_url=url, timeout=rpc_timeout))
+                        break
+                    except Exception:
+                        continue
 
-            peer_count, peer_count_error = _get_peer_count(url, rpc_timeout)
-            peers, peers_error = _get_peers(url, rpc_timeout)
-            peer_error = peer_count_error or peers_error
-            if peer_count is None and peers:
-                peer_count = len(peers)
-            p2p_status, p2p_status_error = _get_p2p_status(url, rpc_timeout)
+            peer_count = None
+            peers = []
+            p2p_status = None
+            peer_error = None
+            p2p_status_error = None
+
+            if status_payload and isinstance(status_payload, dict):
+                p2p_status = status_payload.get("p2p")
+            if p2p_status is None:
+                peer_count, peer_count_error = _get_peer_count(url, rpc_timeout)
+                peers, peers_error = _get_peers(url, rpc_timeout)
+                peer_error = peer_count_error or peers_error
+                if peer_count is None and peers:
+                    peer_count = len(peers)
+                p2p_status, p2p_status_error = _get_p2p_status(url, rpc_timeout)
+            else:
+                peer_counts = p2p_status.get("peer_counts") or {}
+                peer_count = peer_counts.get("total") or p2p_status.get("peers_total")
 
             typer.echo(f"RPC URL: {url}")
+            typer.echo("RPC reachable: yes")
             typer.echo(f"Chain ID: {chain_id}")
             typer.echo(f"Head height: {height}")
             typer.echo(f"Head hash: {head_hash}")
@@ -912,10 +973,11 @@ def status(
                     err=True,
                 )
                 cached = _load_sync_state(load_network_config())
-                if cached:
+                if cached and use_cached:
                     typer.secho(
-                        "\n⚠ RPC unavailable. Showing last persisted sync state from 'animica sync force'.",
+                        "\nLast known cached state (not live):",
                         fg=typer.colors.YELLOW,
+                        bold=True,
                     )
                     typer.echo(f"RPC URL: {cached.get('rpc_url', 'unknown')} (cached)")
                     typer.echo(f"Chain ID: {cached.get('chain_id')}")
@@ -926,10 +988,17 @@ def status(
                     if updated_at:
                         typer.echo(f"Updated at: {updated_at}")
                     raise typer.Exit(code=0)
+                if cached and not use_cached:
+                    typer.secho(
+                        "Cached sync state available. Re-run with --use-cached to view it (not live).",
+                        fg=typer.colors.YELLOW,
+                        err=True,
+                    )
                 raise typer.Exit(code=1)
 
             typer.echo(
-                f"[{timestamp}] Retrying node status (attempt {attempt} failed: {error_message}). Retrying in {backoff_delay:.1f}s...",
+                f"[{timestamp}] Retrying node status (attempt {attempt} failed: {error_message}). "
+                f"Retried URLs: {', '.join(candidate_urls)}. Retrying in {backoff_delay:.1f}s...",
                 err=True,
             )
             time.sleep(backoff_delay)

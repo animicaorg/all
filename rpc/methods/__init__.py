@@ -117,6 +117,7 @@ def _iter_builtin_modules() -> Iterable[str]:
     return [
         "rpc.methods.bootstrap",
         "rpc.methods.net",
+        "rpc.methods.node",
         "rpc.methods.tx",
         "rpc.methods.receipt",  # tx.getTransactionReceipt
         "rpc.methods.state",
