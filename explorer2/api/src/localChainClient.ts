@@ -304,113 +304,42 @@ export class LocalChainClient {
 }
 
 export class HybridChainClient {
-  constructor(
-    private local: LocalChainClient | null,
-    private rpc: {
-      getHead: () => Promise<unknown>
-      getBlockByNumber: (height: number | string, includeTxs?: boolean, includeReceipts?: boolean) => Promise<unknown>
-      getBlockByHash: (hash: string, includeTxs?: boolean, includeReceipts?: boolean) => Promise<unknown>
-      getTransactionByHash: (hash: string) => Promise<unknown>
-      getTransactionReceipt: (hash: string) => Promise<unknown>
-      getBalance: (address: string, tag?: BalanceTag) => Promise<string>
-      getMempoolPending: () => Promise<string[]>
-      getMempoolStats: () => Promise<{ count: number; totalBytes: number; oldestAgeSec: number | null }>
-      getPeers: () => Promise<unknown[]>
-    } | null
-  ) {}
+  constructor(private local: LocalChainClient) {}
 
   async getHead(): Promise<unknown> {
-    if (this.local) {
-      try {
-        return await this.local.getHead()
-      } catch (error) {
-        if (this.rpc) return this.rpc.getHead()
-        throw error
-      }
-    }
-    if (this.rpc) return this.rpc.getHead()
-    throw new Error('RPC unavailable')
+    return this.local.getHead()
   }
 
   async getBlockByNumber(height: number | string, includeTxs = false, includeReceipts = false): Promise<unknown> {
-    if (this.local) {
-      try {
-        return await this.local.getBlockByNumber(height, includeTxs, includeReceipts)
-      } catch (error) {
-        if (this.rpc) return this.rpc.getBlockByNumber(height, includeTxs, includeReceipts)
-        throw error
-      }
-    }
-    if (this.rpc) return this.rpc.getBlockByNumber(height, includeTxs, includeReceipts)
-    throw new Error('RPC unavailable')
+    return this.local.getBlockByNumber(height, includeTxs, includeReceipts)
   }
 
   async getBlockByHash(hash: string, includeTxs = false, includeReceipts = false): Promise<unknown> {
-    if (this.local) {
-      try {
-        return await this.local.getBlockByHash(hash, includeTxs, includeReceipts)
-      } catch (error) {
-        if (this.rpc) return this.rpc.getBlockByHash(hash, includeTxs, includeReceipts)
-        throw error
-      }
-    }
-    if (this.rpc) return this.rpc.getBlockByHash(hash, includeTxs, includeReceipts)
-    throw new Error('RPC unavailable')
+    return this.local.getBlockByHash(hash, includeTxs, includeReceipts)
   }
 
   async getTransactionByHash(hash: string): Promise<unknown> {
-    if (this.local) {
-      try {
-        return await this.local.getTransactionByHash(hash)
-      } catch (error) {
-        if (this.rpc) return this.rpc.getTransactionByHash(hash)
-        throw error
-      }
-    }
-    if (this.rpc) return this.rpc.getTransactionByHash(hash)
-    throw new Error('RPC unavailable')
+    return this.local.getTransactionByHash(hash)
   }
 
   async getTransactionReceipt(hash: string): Promise<unknown> {
-    if (this.local) {
-      try {
-        return await this.local.getTransactionReceipt(hash)
-      } catch (error) {
-        if (this.rpc) return this.rpc.getTransactionReceipt(hash)
-        throw error
-      }
-    }
-    if (this.rpc) return this.rpc.getTransactionReceipt(hash)
-    throw new Error('RPC unavailable')
+    return this.local.getTransactionReceipt(hash)
   }
 
   async getBalance(address: string, tag: BalanceTag = 'latest'): Promise<string> {
-    if (tag === 'pending' && this.rpc) {
-      try {
-        return await this.rpc.getBalance(address, tag)
-      } catch (error) {
-        if (this.local) return this.local.getBalance(address, tag)
-        throw error
-      }
-    }
-    if (this.local) return this.local.getBalance(address, tag)
-    if (this.rpc) return this.rpc.getBalance(address, tag)
-    throw new Error('RPC unavailable')
+    return this.local.getBalance(address, tag)
   }
 
   async getMempoolPending(): Promise<string[]> {
-    if (!this.rpc) throw new Error('RPC unavailable')
-    return this.rpc.getMempoolPending()
+    return []
   }
 
   async getMempoolStats(): Promise<{ count: number; totalBytes: number; oldestAgeSec: number | null }> {
-    if (!this.rpc) throw new Error('RPC unavailable')
-    return this.rpc.getMempoolStats()
+    return { count: 0, totalBytes: 0, oldestAgeSec: null }
   }
 
   async getPeers(): Promise<unknown[]> {
-    if (!this.rpc) throw new Error('RPC unavailable')
-    return this.rpc.getPeers()
+    return []
   }
 }
 
