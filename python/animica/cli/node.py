@@ -388,6 +388,58 @@ def _wait_for_rpc_ready(rpc_url: str, *, timeout_s: float = 60.0, interval_s: fl
     return False
 
 
+def _wait_for_sync_completion(
+    net_cfg: Any,
+    *,
+    rpc_url: str,
+    bootstrap_url: Optional[str],
+    timeout_s: float = 600.0,
+    interval_s: float = 5.0,
+) -> bool:
+    if not bootstrap_url:
+        return True
+
+    try:
+        bootstrap_head = _bootstrap_rpc(bootstrap_url, "chain.getHead")
+    except Exception:
+        bootstrap_head = _load_cached_bootstrap_head(net_cfg)
+
+    target_height = _extract_field(bootstrap_head or {}, "height", "number", "blockNumber")
+    if target_height is None:
+        return True
+
+    typer.secho(
+        f"Waiting for sync to reach height {target_height}...",
+        fg=typer.colors.CYAN,
+    )
+
+    deadline = time.time() + timeout_s
+    last_height: Optional[int] = None
+    while time.time() < deadline:
+        try:
+            head = _local_rpc(rpc_url, "chain.getHead", [])
+        except Exception:
+            time.sleep(interval_s)
+            continue
+
+        height = _extract_field(head or {}, "height", "number", "blockNumber")
+        if height is not None:
+            if last_height is None or height != last_height:
+                typer.echo(f"Sync progress: {height}/{target_height}")
+                last_height = height
+            if height >= target_height:
+                typer.secho("✓ Node synced to bootstrap head", fg=typer.colors.GREEN)
+                return True
+
+        time.sleep(interval_s)
+
+    typer.secho(
+        "⚠ Sync did not reach bootstrap head before timeout.",
+        fg=typer.colors.YELLOW,
+    )
+    return False
+
+
 def _post_start_peer_bootstrap(
     net_cfg: Any,
     *,
@@ -1041,6 +1093,21 @@ def up(
         "--with-miner",
         help="Also start miner service (uses 'miner' profile)"
     ),
+    wait_sync: bool = typer.Option(
+        True,
+        "--wait-sync/--no-wait-sync",
+        help="Wait for the node to sync to the bootstrap head before returning",
+    ),
+    sync_timeout: int = typer.Option(
+        600,
+        "--sync-timeout",
+        help="Maximum time to wait for sync completion (seconds)",
+    ),
+    sync_interval: int = typer.Option(
+        5,
+        "--sync-interval",
+        help="Seconds between sync progress checks",
+    ),
 ) -> None:
     """
     Start an Animica node using Docker Compose.
@@ -1181,6 +1248,14 @@ def up(
                     rpc_url=net_cfg.rpc_url,
                     bootstrap_url=os.getenv("ANIMICA_BOOTSTRAP_RPC_URL") or net_cfg.bootstrap_url,
                 )
+                if wait_sync and not bootstrap_node:
+                    _wait_for_sync_completion(
+                        net_cfg,
+                        rpc_url=net_cfg.rpc_url,
+                        bootstrap_url=os.getenv("ANIMICA_BOOTSTRAP_RPC_URL") or net_cfg.bootstrap_url,
+                        timeout_s=sync_timeout,
+                        interval_s=sync_interval,
+                    )
         else:
             typer.secho(
                 f"Error: Node startup failed with exit code {result.returncode}",

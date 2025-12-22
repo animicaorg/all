@@ -269,7 +269,7 @@ def test_up_without_network(monkeypatch: Any) -> None:
         # Clear ANIMICA_NETWORK env var if set
         monkeypatch.delenv("ANIMICA_NETWORK", raising=False)
         
-        result = runner.invoke(node.app, ["up"])
+        result = runner.invoke(node.app, ["up", "--no-wait-sync"])
         assert result.exit_code == 1
         assert "No network configured" in result.output
         assert "animica network set" in result.output
@@ -306,7 +306,7 @@ def test_up_with_network_from_state(monkeypatch: Any) -> None:
         mock_result = MagicMock()
         mock_result.returncode = 0
         with patch("animica.cli.node.subprocess.run", return_value=mock_result) as mock_run:
-            result = runner.invoke(node.app, ["up"])
+            result = runner.invoke(node.app, ["up", "--no-wait-sync"])
             
             assert result.exit_code == 0
             assert "Starting node for network: devnet" in result.output
@@ -341,7 +341,7 @@ def test_up_with_network_from_env(monkeypatch: Any) -> None:
         mock_result = MagicMock()
         mock_result.returncode = 0
         with patch("animica.cli.node.subprocess.run", return_value=mock_result) as mock_run:
-            result = runner.invoke(node.app, ["up"])
+            result = runner.invoke(node.app, ["up", "--no-wait-sync"])
             
             assert result.exit_code == 0
             assert "Starting node for network: testnet" in result.output
@@ -426,7 +426,7 @@ def test_up_with_miner_flag(monkeypatch: Any) -> None:
         mock_result = MagicMock()
         mock_result.returncode = 0
         with patch("animica.cli.node.subprocess.run", return_value=mock_result) as mock_run:
-            result = runner.invoke(node.app, ["up", "--with-miner"])
+            result = runner.invoke(node.app, ["up", "--with-miner", "--no-wait-sync"])
             
             assert result.exit_code == 0
             assert "Starting node for network: mainnet" in result.output
@@ -453,7 +453,7 @@ def test_up_docker_not_found(monkeypatch: Any) -> None:
         
         # Mock subprocess.run to raise FileNotFoundError
         with patch("animica.cli.node.subprocess.run", side_effect=FileNotFoundError()):
-            result = runner.invoke(node.app, ["up"])
+            result = runner.invoke(node.app, ["up", "--no-wait-sync"])
             
             assert result.exit_code == 1
             assert "docker' command not found" in result.output
@@ -469,7 +469,7 @@ def test_up_compose_file_not_found(monkeypatch: Any) -> None:
         
         # Don't mock _get_compose_file, let it try to find the real one
         # but change the repo root to point to empty dir
-        result = runner.invoke(node.app, ["up"])
+        result = runner.invoke(node.app, ["up", "--no-wait-sync"])
         
         # Either it finds the real compose file (ok) or fails to find it
         # Since we're in the real repo, it might actually find the file
@@ -494,7 +494,7 @@ def test_up_does_not_start_studio_services(monkeypatch: Any) -> None:
         mock_result = MagicMock()
         mock_result.returncode = 0
         with patch("animica.cli.node.subprocess.run", return_value=mock_result) as mock_run:
-            result = runner.invoke(node.app, ["up"])
+            result = runner.invoke(node.app, ["up", "--no-wait-sync"])
             
             assert result.exit_code == 0
             
@@ -535,7 +535,7 @@ services:
         mock_result = MagicMock()
         mock_result.returncode = 0
         with patch("animica.cli.node.subprocess.run", return_value=mock_result):
-            result = runner.invoke(node.app, ["up"])
+            result = runner.invoke(node.app, ["up", "--no-wait-sync"])
             
             # Should succeed even without studio services
             assert result.exit_code == 0
@@ -565,7 +565,7 @@ def test_mainnet_uses_correct_compose_file(monkeypatch: Any) -> None:
         mock_result = MagicMock()
         mock_result.returncode = 0
         with patch("animica.cli.node.subprocess.run", return_value=mock_result):
-            result = runner.invoke(node.app, ["up"])
+            result = runner.invoke(node.app, ["up", "--no-wait-sync"])
             
             assert result.exit_code == 0
             assert "Starting node for network: mainnet" in result.output
@@ -596,7 +596,7 @@ def test_testnet_uses_correct_compose_file(monkeypatch: Any) -> None:
         mock_result = MagicMock()
         mock_result.returncode = 0
         with patch("animica.cli.node.subprocess.run", return_value=mock_result):
-            result = runner.invoke(node.app, ["up"])
+            result = runner.invoke(node.app, ["up", "--no-wait-sync"])
             
             assert result.exit_code == 0
             assert "Starting node for network: testnet" in result.output
@@ -627,7 +627,7 @@ def test_devnet_uses_correct_compose_file(monkeypatch: Any) -> None:
         mock_result = MagicMock()
         mock_result.returncode = 0
         with patch("animica.cli.node.subprocess.run", return_value=mock_result):
-            result = runner.invoke(node.app, ["up"])
+            result = runner.invoke(node.app, ["up", "--no-wait-sync"])
             
             assert result.exit_code == 0
             assert "Starting node for network: devnet" in result.output
@@ -861,7 +861,7 @@ def test_network_switching_affects_compose_file(monkeypatch: Any) -> None:
         assert result1.exit_code == 0
         
         with patch("animica.cli.node.subprocess.run", return_value=mock_result):
-            result2 = runner.invoke(node.app, ["up"])
+            result2 = runner.invoke(node.app, ["up", "--no-wait-sync"])
             assert result2.exit_code == 0
             assert captured_networks[-1] == "mainnet"
         
@@ -870,7 +870,7 @@ def test_network_switching_affects_compose_file(monkeypatch: Any) -> None:
         assert result3.exit_code == 0
         
         with patch("animica.cli.node.subprocess.run", return_value=mock_result):
-            result4 = runner.invoke(node.app, ["up"])
+            result4 = runner.invoke(node.app, ["up", "--no-wait-sync"])
             assert result4.exit_code == 0
             assert captured_networks[-1] == "testnet"
 
