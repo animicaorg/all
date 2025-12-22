@@ -1197,6 +1197,9 @@ class P2PService:
                 return int(head[0]), "0x" + bytes(head[1]).hex()
         except Exception:
             pass
+        genesis = self._block_db().get_genesis_hash()
+        if genesis:
+            return 0, "0x" + bytes(genesis).hex()
         return 0, None
 
     def _genesis_hash(self) -> bytes:
@@ -1247,7 +1250,10 @@ class P2PService:
         bdb = self._block_db()
         head = bdb.get_head()
         if not head:
-            return []
+            genesis = bdb.get_canonical_hash(0) or bdb.get_genesis_hash()
+            if genesis:
+                return [bytes(genesis)]
+            return [self._genesis_hash()]
         height = int(head[0])
         out: list[bytes] = []
         step = 1
