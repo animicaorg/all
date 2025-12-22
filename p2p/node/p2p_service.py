@@ -11,7 +11,7 @@ import time
 from collections import OrderedDict, deque
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Awaitable, Dict, Optional, Set
+from typing import Any, Awaitable, Deque, Dict, List, Optional, Set, Tuple
 
 from p2p import version as p2p_version
 from p2p.crypto import keys as keys_mod
@@ -88,6 +88,53 @@ class P2PStatusSnapshot:
         }
 
 
+@dataclass(slots=True)
+class _SyncHeader:
+    hash: bytes
+    parent_hash: bytes
+    height: int
+    theta_micro: int
+    timestamp: int
+
+
+@dataclass(slots=True)
+class _SyncBlock:
+    block: Any
+    hash: bytes
+    parent_hash: bytes
+    origin_peer: Optional[str] = None
+
+
+@dataclass(slots=True)
+class SyncStatusSnapshot:
+    phase: str
+    best_header_height: int
+    best_header_hash: Optional[str]
+    best_block_height: int
+    best_block_hash: Optional[str]
+    in_flight: int
+    last_progress_at: float
+    last_header_at: float
+    last_block_at: float
+    pending_header_batches: int
+    peer_penalties: Dict[str, int]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "phase": self.phase,
+            "best_header_height": self.best_header_height,
+            "best_header_hash": self.best_header_hash,
+            "best_block_height": self.best_block_height,
+            "best_block_hash": self.best_block_hash,
+            "in_flight": self.in_flight,
+            "last_progress_at": self.last_progress_at,
+            "last_header_at": self.last_header_at,
+            "last_block_at": self.last_block_at,
+            "pending_header_batches": self.pending_header_batches,
+            "peer_penalties": dict(self.peer_penalties),
+        }
+
+
 class P2PService:
     """
     Production P2P service: inv/getdata gossip + P2P-first sync.
@@ -116,9 +163,13 @@ class P2PService:
         self.listen_addrs = listen_addrs or ["/ip4/0.0.0.0/tcp/30333"]
         self._configured_seeds = list(seeds or [])
         merged_seeds = list(self._configured_seeds)
-        for addr in DEFAULT_BOOTSTRAP_SEEDS:
-            if addr not in merged_seeds:
-                merged_seeds.append(addr)
+        disable_default_seeds = os.environ.get(
+            "ANIMICA_P2P_DISABLE_DEFAULT_SEEDS", ""
+        ).lower() in ("1", "true", "yes", "on")
+        if not disable_default_seeds:
+            for addr in DEFAULT_BOOTSTRAP_SEEDS:
+                if addr not in merged_seeds:
+                    merged_seeds.append(addr)
         self.seeds = merged_seeds
         self.chain_id = int(chain_id)
         self.deps = deps
@@ -208,6 +259,32 @@ class P2PService:
 
         self._sync_lock = asyncio.Lock()
         self._sync_wakeup = asyncio.Event()
+        self._sync_phase = "idle"
+        self._sync_best_header: Optional[_SyncHeader] = None
+        self._sync_headers: Dict[bytes, _SyncHeader] = {}
+        self._sync_header_queue: Deque[Tuple[str, List[HeaderCompact]]] = deque()
+        self._sync_inflight_blocks: Dict[bytes, float] = {}
+        self._sync_inflight_peers: Dict[bytes, str] = {}
+        self._sync_block_buffer: Dict[bytes, _SyncBlock] = {}
+        self._sync_peer_penalties: Dict[str, int] = {}
+        self._sync_last_progress_at = time.time()
+        self._sync_last_header_at = 0.0
+        self._sync_last_block_at = 0.0
+        self._sync_max_inflight = int(
+            os.environ.get("ANIMICA_P2P_SYNC_INFLIGHT", "32") or 32
+        )
+        self._sync_headers_batch = int(
+            os.environ.get("ANIMICA_P2P_SYNC_HEADERS_BATCH", "128") or 128
+        )
+        self._sync_request_timeout = float(
+            os.environ.get("ANIMICA_P2P_SYNC_TIMEOUT", "8.0") or 8.0
+        )
+        self._sync_peer_penalty_threshold = int(
+            os.environ.get("ANIMICA_P2P_SYNC_PENALTY_THRESHOLD", "3") or 3
+        )
+        self._sync_stall_timeout = float(
+            os.environ.get("ANIMICA_P2P_SYNC_STALL_TIMEOUT", "20.0") or 20.0
+        )
         self._bootstrap_attempts: deque[dict[str, Any]] = deque(maxlen=512)
         self._last_bootstrap_attempt: Optional[dict[str, Any]] = None
         self._last_bootstrap_success: Optional[dict[str, Any]] = None
@@ -452,6 +529,30 @@ class P2PService:
             bootstrap_last_attempt=self._last_bootstrap_attempt,
             bootstrap_last_success=self._last_bootstrap_success,
             bootstrap_last_error=self._last_bootstrap_error,
+        )
+
+    def sync_status_snapshot(self) -> SyncStatusSnapshot:
+        height, head_hash = self._local_head()
+        head_hex = head_hash
+        best_header_hash = (
+            "0x" + self._sync_best_header.hash.hex()
+            if self._sync_best_header is not None
+            else None
+        )
+        return SyncStatusSnapshot(
+            phase=self._sync_phase,
+            best_header_height=(
+                self._sync_best_header.height if self._sync_best_header else 0
+            ),
+            best_header_hash=best_header_hash,
+            best_block_height=int(height or 0),
+            best_block_hash=head_hex,
+            in_flight=len(self._sync_inflight_blocks),
+            last_progress_at=self._sync_last_progress_at,
+            last_header_at=self._sync_last_header_at,
+            last_block_at=self._sync_last_block_at,
+            pending_header_batches=len(self._sync_header_queue),
+            peer_penalties=dict(self._sync_peer_penalties),
         )
 
     def _normalize_seed(self, address: str) -> str:
@@ -911,6 +1012,7 @@ class P2PService:
             self.peerstore.update_head_height(peer.peer_id, int(hello.head_height))
 
         await self._send(peer, MsgID.HELLO_ACK, HelloAck(accepted=True, reason=None))
+        self._sync_wakeup.set()
 
     async def _handle_inv(self, peer: _PeerState, payload: bytes) -> None:
         data = self._decode_map(payload)
@@ -936,6 +1038,8 @@ class P2PService:
 
         if want:
             await self._send(peer, MsgID.GETDATA, GetData(items=want))
+            if any(int(it.typ) == int(InvType.BLOCK) for it in want):
+                self._sync_wakeup.set()
 
     async def _handle_getdata(self, peer: _PeerState, payload: bytes) -> None:
         data = self._decode_map(payload)
@@ -1023,14 +1127,11 @@ class P2PService:
         if fut is not None and not fut.done():
             fut.set_result(msg)
             peer.pending_headers = None
-
-        # Opportunistic: treat as announcements for sync (request missing bodies).
-        want: list[bytes] = []
-        for hc in msg.headers:
-            hh = bytes(hc.hash)
-            if not self._has_block(hh):
-                want.append(hh)
-        await self._request_blocks(peer, want)
+        else:
+            # Treat as announcements; queue for sync loop to validate & download.
+            if msg.headers:
+                self._sync_header_queue.append((peer.remote, list(msg.headers)))
+                self._sync_wakeup.set()
 
     async def _handle_get_blocks(self, peer: _PeerState, payload: bytes) -> None:
         data = self._decode_map(payload)
@@ -1059,7 +1160,30 @@ class P2PService:
         msg = Blocks(**data)
         for rawb in msg.blocks:
             self._stats["blocks_recv"] += 1
-            await self._import_block_raw(bytes(rawb), origin_remote=peer.remote)
+            raw_bytes = bytes(rawb)
+            try:
+                sync_block = self._decode_block(raw_bytes)
+            except Exception as e:
+                self._penalize_peer(peer, f"bad_block_decode:{e.__class__.__name__}")
+                continue
+            ok, reason = await self._import_block_payload(
+                sync_block.block, origin_remote=peer.remote
+            )
+            if ok:
+                self._sync_inflight_blocks.pop(sync_block.hash, None)
+                self._sync_inflight_peers.pop(sync_block.hash, None)
+                self._sync_last_block_at = time.time()
+                self._sync_last_progress_at = self._sync_last_block_at
+                self._sync_wakeup.set()
+                await self._drain_block_buffer()
+            else:
+                self._sync_inflight_blocks.pop(sync_block.hash, None)
+                self._sync_inflight_peers.pop(sync_block.hash, None)
+                if self._is_orphan_reason(reason):
+                    sync_block.origin_peer = peer.remote
+                    self._sync_block_buffer[sync_block.hash] = sync_block
+                else:
+                    self._penalize_peer(peer, "block_rejected")
 
     # ---------------------------------------------------------------------
     # Gossip + sync loops
@@ -1078,6 +1202,196 @@ class P2PService:
         except asyncio.CancelledError:
             return
 
+    def _header_meta(self, h: bytes) -> Optional[Tuple[int, int]]:
+        cached = self._sync_headers.get(h)
+        if cached is not None:
+            return cached.height, cached.timestamp
+        try:
+            hdr = self._block_db().get_header_by_hash(h)
+        except Exception:
+            hdr = None
+        if hdr is None:
+            return None
+        try:
+            height = int(getattr(hdr, "height"))
+            ts = int(getattr(hdr, "timestamp", 0))
+            return height, ts
+        except Exception:
+            return None
+
+    def _header_from_compact(self, hc: HeaderCompact) -> _SyncHeader:
+        return _SyncHeader(
+            hash=bytes(hc.hash),
+            parent_hash=bytes(hc.parent),
+            height=int(hc.height),
+            theta_micro=int(hc.theta_micro),
+            timestamp=int(hc.timestamp),
+        )
+
+    def _sync_update_best_header(self, header: _SyncHeader) -> None:
+        best = self._sync_best_header
+        if best is None:
+            self._sync_best_header = header
+            return
+        if header.height > best.height:
+            self._sync_best_header = header
+            return
+        if header.height == best.height and header.hash > best.hash:
+            self._sync_best_header = header
+
+    def _is_orphan_reason(self, reason: Optional[str]) -> bool:
+        if not reason:
+            return False
+        lowered = str(reason).lower()
+        return "missing parent" in lowered or "orphan" in lowered
+
+    async def _drain_block_buffer(self) -> None:
+        if not self._sync_block_buffer:
+            return
+        progressed = True
+        while progressed:
+            progressed = False
+            for h, blk in list(self._sync_block_buffer.items()):
+                if not self._has_header(blk.parent_hash):
+                    continue
+                ok, reason = await self._import_block_payload(
+                    blk.block, origin_remote=blk.origin_peer
+                )
+                if ok:
+                    self._sync_block_buffer.pop(h, None)
+                    progressed = True
+                    self._sync_wakeup.set()
+                    continue
+                if not self._is_orphan_reason(reason):
+                    self._sync_block_buffer.pop(h, None)
+                    if blk.origin_peer:
+                        self._penalize_peer(
+                            self._peers.get(blk.origin_peer), "block_rejected"
+                        )
+
+    def _expire_inflight_blocks(self) -> None:
+        if not self._sync_inflight_blocks:
+            return
+        now = time.time()
+        timeout = max(1.0, self._sync_request_timeout)
+        expired = [
+            h
+            for h, started in list(self._sync_inflight_blocks.items())
+            if now - started >= timeout
+        ]
+        for h in expired:
+            self._sync_inflight_blocks.pop(h, None)
+            peer_remote = self._sync_inflight_peers.pop(h, None)
+            if peer_remote:
+                self._penalize_peer(self._peers.get(peer_remote), "block_timeout")
+
+    async def _fetch_headers(self, peer: _PeerState) -> Optional[List[HeaderCompact]]:
+        locator = self._build_locator()
+        fut: asyncio.Future = asyncio.get_event_loop().create_future()
+        peer.pending_headers = fut
+        await self._send(
+            peer,
+            MsgID.GET_HEADERS,
+            GetHeaders(locator=locator, max_headers=self._sync_headers_batch),
+        )
+
+        try:
+            headers_msg: Headers = await asyncio.wait_for(
+                fut, timeout=self._sync_request_timeout
+            )
+        except Exception:
+            peer.pending_headers = None
+            self._penalize_peer(peer, "headers_timeout")
+            return None
+
+        return list(headers_msg.headers)
+
+    def _process_headers(
+        self, peer: _PeerState, headers: List[HeaderCompact]
+    ) -> List[bytes]:
+        if not headers:
+            return []
+
+        contiguous: List[_SyncHeader] = []
+        prev: Optional[_SyncHeader] = None
+
+        for idx, hc in enumerate(headers):
+            header = self._header_from_compact(hc)
+            if header.theta_micro < 0 or header.theta_micro > 10**12:
+                self._penalize_peer(peer, "header_theta_out_of_range")
+                break
+            if idx == 0:
+                parent_info = self._header_meta(header.parent_hash)
+                if parent_info is None:
+                    break
+                parent_height, parent_ts = parent_info
+                if header.height != parent_height + 1:
+                    self._penalize_peer(peer, "header_height_mismatch")
+                    break
+                if parent_ts and header.timestamp < parent_ts:
+                    self._penalize_peer(peer, "header_timestamp_regress")
+                    break
+            else:
+                if prev is None:
+                    break
+                if header.parent_hash != prev.hash:
+                    self._penalize_peer(peer, "header_parent_mismatch")
+                    break
+                if header.height != prev.height + 1:
+                    self._penalize_peer(peer, "header_height_gap")
+                    break
+                if header.timestamp < prev.timestamp:
+                    self._penalize_peer(peer, "header_timestamp_regress")
+                    break
+
+            self._sync_headers[header.hash] = header
+            contiguous.append(header)
+            prev = header
+
+        if not contiguous:
+            return []
+
+        self._sync_last_header_at = time.time()
+        self._sync_last_progress_at = self._sync_last_header_at
+        for h in contiguous:
+            self._sync_update_best_header(h)
+        return [h.hash for h in contiguous]
+
+    async def _queue_block_requests(
+        self, peer: _PeerState, hashes: List[bytes]
+    ) -> int:
+        if not hashes:
+            return 0
+
+        requested: List[bytes] = []
+        for h in hashes:
+            if (
+                self._has_block(h)
+                or h in self._sync_inflight_blocks
+                or h in self._sync_block_buffer
+            ):
+                continue
+            if len(self._sync_inflight_blocks) >= self._sync_max_inflight:
+                break
+            self._sync_inflight_blocks[h] = time.time()
+            self._sync_inflight_peers[h] = peer.remote
+            requested.append(h)
+
+        if not requested:
+            return 0
+
+        # Chunk requests to keep payloads small.
+        for i in range(0, len(requested), 16):
+            chunk = requested[i : i + 16]
+            with contextlib.suppress(Exception):
+                await self._send(
+                    peer,
+                    MsgID.GET_BLOCKS,
+                    GetBlocks(by_hash=chunk, max_blocks=len(chunk)),
+                )
+            await asyncio.sleep(0)
+        return len(requested)
+
     async def _sync_once(self, *, force: bool = False) -> dict[str, Any]:
         result: dict[str, Any] = {
             "started": False,
@@ -1087,46 +1401,58 @@ class P2PService:
         }
 
         async with self._sync_lock:
-            peer = self._best_peer()
+            peer = self._select_sync_peer()
             if peer is None or not peer.hello_done.is_set():
                 return result
 
             local_height, _ = self._local_head()
             remote_height = int((peer.hello or {}).get("head_height") or 0)
-            result.update({
-                "peer": peer.remote,
-                "remoteHeight": remote_height,
-                "localHeight": local_height,
-            })
+            result.update(
+                {
+                    "peer": peer.remote,
+                    "remoteHeight": remote_height,
+                    "localHeight": local_height,
+                }
+            )
 
-            if remote_height <= local_height and not force:
+            if remote_height <= local_height and not force and not self._sync_header_queue:
+                self._sync_phase = "steady"
                 return result
 
             self._stats["sync_rounds"] += 1
+            self._sync_phase = "headers"
 
-            locator = self._build_locator()
-            fut: asyncio.Future = asyncio.get_event_loop().create_future()
-            peer.pending_headers = fut
-            await self._send(
-                peer,
-                MsgID.GET_HEADERS,
-                GetHeaders(locator=locator, max_headers=128),
-            )
+            if force and self._sync_inflight_blocks:
+                self._sync_inflight_blocks.clear()
+                self._sync_inflight_peers.clear()
 
-            try:
-                headers_msg: Headers = await asyncio.wait_for(fut, timeout=6.0)
-            except Exception:
-                peer.pending_headers = None
-                result["error"] = "timeout"
-                return result
+            headers: Optional[List[HeaderCompact]] = None
+            if self._sync_header_queue:
+                queued_peer, headers = self._sync_header_queue.popleft()
+                if queued_peer != peer.remote:
+                    peer = self._peers.get(queued_peer, peer)
 
-            if not headers_msg.headers:
+            if headers is None:
+                headers = await self._fetch_headers(peer)
+            if not headers:
                 result["error"] = "no-headers"
                 return result
 
-            hashes = [bytes(h.hash) for h in headers_msg.headers]
-            await self._request_blocks(peer, hashes)
+            order = self._process_headers(peer, headers)
+            if not order:
+                result["error"] = "invalid-headers"
+                return result
+
+            self._sync_phase = "blocks"
+            self._expire_inflight_blocks()
+            requested = await self._queue_block_requests(peer, order)
+
+            new_height, _ = self._local_head()
+            if new_height >= remote_height:
+                self._sync_phase = "steady"
+
             result["started"] = True
+            result["blocksRequested"] = requested
             return result
 
     async def _sync_loop(self) -> None:
@@ -1137,7 +1463,10 @@ class P2PService:
                 except asyncio.TimeoutError:
                     pass
                 self._sync_wakeup.clear()
-                await self._sync_once()
+                now = time.time()
+                last_block = self._sync_last_block_at or self._sync_last_progress_at
+                stalled = (now - last_block) > self._sync_stall_timeout
+                await self._sync_once(force=stalled)
         except asyncio.CancelledError:
             return
 
@@ -1161,10 +1490,15 @@ class P2PService:
             await asyncio.sleep(0)
 
     def _best_peer(self) -> Optional[_PeerState]:
+        return self._select_sync_peer()
+
+    def _select_sync_peer(self) -> Optional[_PeerState]:
         best: Optional[_PeerState] = None
         best_height = -1
         for p in self._peers.values():
             if not p.peer_id or not isinstance(p.hello, dict):
+                continue
+            if self._sync_peer_penalties.get(p.remote, 0) >= self._sync_peer_penalty_threshold:
                 continue
             try:
                 h = int(p.hello.get("head_height") or 0)
@@ -1293,6 +1627,12 @@ class P2PService:
         except Exception:
             return False
 
+    def _has_header(self, block_hash: bytes) -> bool:
+        try:
+            return self._block_db().get_header_by_hash(block_hash) is not None
+        except Exception:
+            return False
+
     def _get_block_raw(self, block_hash: bytes) -> bytes | None:
         try:
             blk = self._block_db().get_block_by_hash(block_hash)
@@ -1304,21 +1644,58 @@ class P2PService:
         except Exception:
             return None
 
-    async def _import_block_raw(self, rawb: bytes, *, origin_remote: str) -> None:
+    def _decode_block(self, rawb: bytes) -> _SyncBlock:
+        from core.types.block import Block
+
+        blk = Block.from_cbor(rawb)
+        block_hash = blk.header.hash()
+        parent_hash = bytes(blk.header.parentHash)
+        return _SyncBlock(block=blk, hash=block_hash, parent_hash=parent_hash)
+
+    def _penalize_peer(self, peer: Optional[_PeerState], reason: str) -> None:
+        if peer is None:
+            return
+        count = self._sync_peer_penalties.get(peer.remote, 0) + 1
+        self._sync_peer_penalties[peer.remote] = count
+        log.warning(
+            "Sync peer penalty: %s",
+            reason,
+            extra={"remote": peer.remote, "penalties": count, "reason": reason},
+        )
+        if count >= self._sync_peer_penalty_threshold:
+            self._create_child_task(
+                self._drop_peer(peer, reason=f"sync_penalty:{reason}"),
+                name=f"p2p.drop_peer@{peer.remote}",
+            )
+
+    async def _import_block_payload(
+        self, payload: Any, *, origin_remote: Optional[str]
+    ) -> Tuple[bool, Optional[str]]:
         from core.utils.hash import sha3_256
 
         bh: bytes | None = None
         ok = False
-        try:
-            from core.types.block import Block
+        reason: Optional[str] = None
+        blk = None
 
-            blk = Block.from_cbor(rawb)
-            bh = blk.header.hash()
-            ok = await self._deps_call_ok("import_block", blk)
-        except Exception:
-            # Fallback: allow deps to import raw bytes directly (dev/test networks).
-            bh = sha3_256(rawb)
-            ok = await self._deps_call_ok("import_block", rawb)
+        if isinstance(payload, (bytes, bytearray)):
+            rawb = bytes(payload)
+            try:
+                blk = self._decode_block(rawb).block
+                bh = blk.header.hash()
+                ok, reason = await self._deps_call_import(blk)
+            except Exception:
+                # Fallback: allow deps to import raw bytes directly (dev/test networks).
+                bh = sha3_256(rawb)
+                ok, reason = await self._deps_call_import(rawb)
+        else:
+            blk = payload
+            try:
+                if hasattr(blk, "header") and hasattr(blk.header, "hash"):
+                    bh = blk.header.hash()
+            except Exception:
+                bh = None
+            ok, reason = await self._deps_call_import(blk)
 
         if ok and bh is not None:
             self._remember(self._seen_blocks, bh, self._seen_block_cap)
@@ -1327,6 +1704,9 @@ class P2PService:
                 exclude_remote=origin_remote,
                 is_tx=False,
             )
+            self._sync_last_block_at = time.time()
+            self._sync_last_progress_at = self._sync_last_block_at
+        return ok, reason
 
     # ---------------------------------------------------------------------
     # Broadcast helpers
@@ -1404,3 +1784,22 @@ class P2PService:
         if isinstance(res, tuple) and res:
             return bool(res[0])
         return bool(res)
+
+    async def _deps_call_import(self, payload: Any) -> Tuple[bool, Optional[str]]:
+        if self.deps is None:
+            return False, "deps_missing"
+        fn = getattr(self.deps, "import_block", None)
+        if fn is None:
+            return False, "import_unavailable"
+        try:
+            if asyncio.iscoroutinefunction(fn):
+                res = await fn(payload)
+            else:
+                res = fn(payload)
+        except Exception as e:
+            return False, str(e)
+        if isinstance(res, tuple):
+            ok = bool(res[0]) if res else False
+            reason = res[1] if len(res) > 1 else None
+            return ok, reason
+        return bool(res), None

@@ -99,4 +99,28 @@ async def sync_force() -> dict[str, t.Any]:
     return result
 
 
-__all__ = ["sync_force"]
+@method("sync.getStatus", desc="Return current sync status")
+async def sync_get_status() -> dict[str, t.Any]:
+    svc = _get_p2p_service()
+    if svc is not None and hasattr(svc, "sync_status_snapshot"):
+        snap = svc.sync_status_snapshot()
+        if hasattr(snap, "to_dict"):
+            return snap.to_dict()
+        if isinstance(snap, dict):
+            return snap
+    return {
+        "phase": "inactive",
+        "best_header_height": 0,
+        "best_header_hash": None,
+        "best_block_height": 0,
+        "best_block_hash": None,
+        "in_flight": 0,
+        "last_progress_at": None,
+        "last_header_at": None,
+        "last_block_at": None,
+        "pending_header_batches": 0,
+        "peer_penalties": {},
+    }
+
+
+__all__ = ["sync_force", "sync_get_status"]

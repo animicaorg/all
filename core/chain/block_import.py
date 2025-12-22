@@ -164,8 +164,10 @@ def _timestamp_of(header: Header, payload: Optional[Dict[str, Any]] = None) -> O
 
 def compute_header_hash(header: Header) -> bytes:
     """
-    Canonical header hash (sha3_256 over header SignBytes).
+    Canonical header hash. Prefer header.hash() to match BlockDB storage.
     """
+    if hasattr(header, "hash") and callable(getattr(header, "hash")):
+        return bytes(header.hash())  # type: ignore[no-any-return]
     sb = header_signing_bytes(header)
     return sha3_256(sb)
 
@@ -416,8 +418,8 @@ class BlockImporter:
                 # Minimal header sanity
                 self._sanity_header(header)
                 # Persist
-                self.block_db.put_header(0, h, header)
-                self.block_db.put_block(h, block)
+                self._store_header(0, h, header)
+                self._store_block(h, block)
                 # Update head
                 self.block_db.set_canonical_head(0, h)
                 self.fork_choice.reset()
@@ -452,8 +454,8 @@ class BlockImporter:
             self._sanity_header(header)
 
             # Persist header & block
-            self.block_db.put_header(height, h, header)
-            self.block_db.put_block(h, block)
+            self._store_header(height, h, header)
+            self._store_block(h, block)
 
             # Optional: index txs
             if self.tx_index is not None and getattr(block, "txs", None):
@@ -487,6 +489,66 @@ class BlockImporter:
         cur = self.block_db.get_canonical_head()
         if cur != best:
             self.block_db.set_canonical_head(best[0], best[1])
+
+    def _store_header(self, height: int, h: bytes, header: Header) -> None:
+        """
+        Persist header using whichever BlockDB interface is available.
+
+        Legacy mock DBs expose put_header(height, hash, header); modern BlockDB
+        exposes put_header(header) and derives the hash internally.
+        """
+        if hasattr(self.block_db, "put_header"):
+            try:
+                self.block_db.put_header(header)
+                return
+            except TypeError:
+                pass
+            try:
+                self.block_db.put_header(header, None)
+                return
+            except TypeError:
+                pass
+            try:
+                self.block_db.put_header(height, h, header)
+                return
+            except TypeError:
+                pass
+        if hasattr(self.block_db, "write_header"):
+            try:
+                self.block_db.write_header(height, header)
+                return
+            except TypeError:
+                try:
+                    self.block_db.write_header(height, h, header)
+                    return
+                except TypeError:
+                    pass
+        raise BlockImportError("block_db missing header writer")
+
+    def _store_block(self, h: bytes, block: Block) -> None:
+        """
+        Persist block using whichever BlockDB interface is available.
+
+        Legacy mock DBs expose put_block(hash, block); modern BlockDB exposes
+        put_block(block) and derives the hash internally.
+        """
+        if hasattr(self.block_db, "put_block"):
+            try:
+                self.block_db.put_block(block)
+                return
+            except TypeError:
+                pass
+            try:
+                self.block_db.put_block(block, None)
+                return
+            except TypeError:
+                pass
+            try:
+                self.block_db.put_block(h, block)
+                return
+            except TypeError:
+                pass
+        raise BlockImportError("block_db missing block writer")
 
     def _sanity_header(self, header: Header) -> None:
         """

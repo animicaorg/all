@@ -161,7 +161,7 @@ class BlocksDownloader:
             timeout = self.cfg.request_timeout_sec
             for attempt in range(self.cfg.max_retries + 1):
                 try:
-                    with asyncio.timeout(timeout):
+                    async with asyncio.timeout(timeout):
                         blk = await self.fetcher.get_block(h, timeout_sec=timeout)
                     if blk is None:
                         # Peer(s) failed to provide; mark as miss and stop retrying immediately.
