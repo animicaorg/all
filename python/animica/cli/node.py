@@ -6,6 +6,7 @@ import asyncio
 import json
 import os
 import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -142,6 +143,50 @@ def _db_path(cfg: Any) -> Path:
     data_dir.mkdir(parents=True, exist_ok=True)
     db_name = getattr(cfg, "db_name", "animica.db")
     return data_dir / db_name
+
+
+def _resolve_genesis_path(cfg: Any) -> Path:
+    genesis_path = Path(getattr(cfg, "genesis_path", ""))
+    if genesis_path.is_absolute():
+        return genesis_path
+    repo_root = Path(__file__).resolve().parents[3]
+    return repo_root / genesis_path
+
+
+def _ensure_db_initialized(net_cfg: Any, *, quiet: bool = False) -> bool:
+    db_path = _db_path(net_cfg)
+    db_exists = db_path.exists() and db_path.stat().st_size > 0
+    if db_exists:
+        return False
+
+    genesis_path = _resolve_genesis_path(net_cfg)
+    if not genesis_path.exists():
+        raise RuntimeError(f"Genesis file not found at {genesis_path}")
+
+    db_uri = f"sqlite:///{db_path}"
+    cmd = [
+        sys.executable,
+        "-m",
+        "core.boot",
+        "--genesis",
+        str(genesis_path),
+        "--db",
+        db_uri,
+    ]
+    if not quiet:
+        typer.echo(f"Initializing database at {db_path} from {genesis_path}")
+    result = subprocess.run(
+        cmd,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        stderr = result.stderr.strip() if result.stderr else "Unknown error"
+        raise RuntimeError(f"Database initialization failed: {stderr}")
+    if not quiet:
+        typer.secho("✓ Database initialized from genesis.", fg=typer.colors.GREEN)
+    return True
 
 
 def _bootstrap_state_path(cfg: Any) -> Path:
@@ -1321,6 +1366,12 @@ def up(
             "Bootstrap RPC usage disabled; relying on P2P discovery.",
             fg=typer.colors.CYAN,
         )
+
+    try:
+        _ensure_db_initialized(net_cfg)
+    except Exception as exc:
+        typer.secho(f"Error: {exc}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1)
     
     typer.secho(f"Starting node for network: {network}", fg=typer.colors.CYAN, bold=True)
     typer.echo(f"Using compose file: {compose_file}")
@@ -1529,6 +1580,16 @@ def up_all(
                 os.getenv("ANIMICA_BOOTSTRAP_RPC_URL") or net_cfg.bootstrap_url,
                 quiet=True,
             )
+
+        try:
+            _ensure_db_initialized(net_cfg, quiet=True)
+        except Exception as exc:
+            typer.secho(
+                f"✗ {network} database initialization failed: {exc}",
+                fg=typer.colors.RED,
+            )
+            failed_networks.append(network)
+            continue
 
         typer.echo(f"Compose file: {compose_file}")
         typer.echo(f"Chain ID: {defaults['chain_id']}")
