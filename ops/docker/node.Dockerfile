@@ -62,7 +62,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # Install only runtime libraries (no build tools). We include librocksdb for the
 # python-rocksdb wheel we built in the previous stage.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates curl tini \
+    ca-certificates curl gosu tini \
     librocksdb-dev libsnappy1v5 zlib1g libbz2-1.0 liblz4-1 libzstd1 \
  && rm -rf /var/lib/apt/lists/*
 
@@ -110,8 +110,9 @@ COPY . /app
 # available inside the container.
 RUN python -m pip install --no-cache-dir -e /app/python -e /app/pq
 
-# Run as non-root from here on.
-USER ${USER}
+ENV ANIMICA_USER=${USER} \
+    ANIMICA_UID=${UID} \
+    ANIMICA_GID=${GID}
 
 # Export common ports:
 # - 8545: JSON-RPC HTTP
@@ -135,7 +136,7 @@ LABEL org.opencontainers.image.title="animica-node" \
       org.opencontainers.image.licenses="Apache-2.0"
 
 # tini as PID 1 for proper signal handling
-ENTRYPOINT ["/usr/bin/tini", "-g", "--"]
+ENTRYPOINT ["/usr/bin/tini", "-g", "--", "/app/ops/docker/entrypoints/entrypoint.sh"]
 
 # By default start the RPC server; override with:
 #   docker run ... -- python -m core.boot --genesis core/genesis/genesis.json ...

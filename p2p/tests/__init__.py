@@ -26,6 +26,7 @@ from typing import AsyncIterator, Awaitable, Callable, Iterable, Optional
 # This allows tests to run without requiring a production PQ library installation.
 # WARNING: This is NOT secure and must never be used in production environments.
 os.environ.setdefault("ANIMICA_UNSAFE_PQ_FAKE", "1")
+os.environ.setdefault("ANIMICA_P2P_PRIVATE_NETWORK", "1")
 
 # Try to speed up asyncio if uvloop is present (harmless if not).
 try:  # pragma: no cover
