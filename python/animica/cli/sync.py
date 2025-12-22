@@ -416,6 +416,37 @@ async def _trigger_sync(rpc_url: str) -> bool:
     
     Returns True if sync was triggered successfully, False otherwise.
     """
+    def _trigger_succeeded(result: Any) -> bool:
+        if isinstance(result, dict):
+            if result.get("error"):
+                return False
+            for key in ("success", "started", "ok", "triggered"):
+                if key in result:
+                    return bool(result.get(key))
+            status = result.get("status")
+            if isinstance(status, str):
+                normalized = status.strip().lower()
+                if normalized in {"ok", "success", "started", "triggered", "running"}:
+                    return True
+                if normalized in {"error", "failed", "failure"}:
+                    return False
+            inner = result.get("result")
+            if isinstance(inner, bool):
+                return inner
+            return True
+        if isinstance(result, bool):
+            return result
+        if isinstance(result, str):
+            normalized = result.strip().lower()
+            if normalized in {"ok", "success", "started", "triggered", "running", "true"}:
+                return True
+            if any(token in normalized for token in ("error", "fail")):
+                return False
+            return True
+        if result is None:
+            return False
+        return True
+
     methods_to_try = [
         "sync.force",
         "sync.start",
@@ -427,8 +458,8 @@ async def _trigger_sync(rpc_url: str) -> bool:
     for method in methods_to_try:
         try:
             result = await rpc_call(method, [], rpc_url=rpc_url, timeout=DEFAULT_RPC_TIMEOUT)
-            # Consider any non-error response as success
-            return True
+            if _trigger_succeeded(result):
+                return True
         except Exception:
             continue
     
