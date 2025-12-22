@@ -182,7 +182,37 @@ def test_sync_status_syncing(mock_rpc_syncing):
         assert result.exit_code == 0
         assert "SYNCING" in result.stdout
         assert "50 / 100" in result.stdout
-        assert "50.0%" in result.stdout
+    assert "50.0%" in result.stdout
+
+
+def test_sync_status_node_get_status():
+    """Test sync status using node.getStatus response."""
+    node_status = {
+        "rpc_reachable": True,
+        "chain": {"head": {"height": 25, "hash": "0x" + "d" * 64, "chainId": 1337}},
+        "p2p": {
+            "p2p_running": True,
+            "peers_total": 3,
+            "peers_inbound": 1,
+            "peers_outbound": 2,
+        },
+        "sync": {
+            "phase": "headers",
+            "best_header_height": 25,
+            "best_block_height": 20,
+        },
+    }
+
+    with patch("httpx.AsyncClient") as mock_client:
+        mock_client.return_value = MockAsyncClient({"node.getStatus": node_status})
+
+        result = runner.invoke(app, ["sync", "status", "--json"])
+
+        assert result.exit_code == 0
+        output = json.loads(result.stdout)
+        assert output["height"] == 25
+        assert output["peer_count"] == 3
+        assert output["p2p_running"] is True
 
 
 def test_sync_status_no_peers(mock_rpc_no_peers):
@@ -507,7 +537,7 @@ def test_sync_status_help():
     assert "--json" in result.stdout
     assert "--verbose" in result.stdout
     assert "--bootstrap-rpc" in result.stdout
-    assert "--allow-bootstrap-rpc" in result.stdout
+    assert "--allow-bootstrap" in result.stdout
 
 
 def test_sync_force_help():
@@ -519,7 +549,7 @@ def test_sync_force_help():
     assert "--timeout" in result.stdout
     assert "--check-interval" in result.stdout
     assert "--bootstrap-rpc" in result.stdout
-    assert "--allow-bootstrap-rpc" in result.stdout
+    assert "--allow-bootstrap" in result.stdout
 
 
 def test_sync_status_fallback_methods():
