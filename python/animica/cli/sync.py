@@ -153,6 +153,59 @@ def _extract_chain_id(head_info: Optional[Dict[str, Any]]) -> Optional[int]:
     return None
 
 
+def _coerce_int(value: Any) -> Optional[int]:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.isdigit():
+        return int(value)
+    return None
+
+
+def _extract_peer_head_height(peer: Dict[str, Any]) -> Optional[int]:
+    for key in ("height", "head", "headHeight", "head_height", "blockNumber", "block_number"):
+        if key in peer:
+            return _coerce_int(peer.get(key))
+    meta = peer.get("meta") if isinstance(peer.get("meta"), dict) else None
+    if meta:
+        for key in ("headHeight", "height", "head", "blockNumber"):
+            if key in meta:
+                return _coerce_int(meta.get(key))
+    return None
+
+
+def _extract_peer_head_hash(peer: Dict[str, Any]) -> Optional[str]:
+    for key in ("headHash", "head_hash", "hash"):
+        value = peer.get(key)
+        if isinstance(value, str) and value:
+            return value
+    meta = peer.get("meta") if isinstance(peer.get("meta"), dict) else None
+    if meta:
+        for key in ("headHash", "head_hash", "hash"):
+            value = meta.get(key)
+            if isinstance(value, str) and value:
+                return value
+    return None
+
+
+def _select_best_peer_head(peers: List[Dict[str, Any]]) -> tuple[Optional[int], Optional[str], Optional[Dict[str, Any]]]:
+    best_height = None
+    best_hash = None
+    best_peer = None
+    for peer in peers:
+        height = _extract_peer_head_height(peer)
+        if height is None:
+            continue
+        if best_height is None or height > best_height:
+            best_height = height
+            best_hash = _extract_peer_head_hash(peer)
+            best_peer = peer
+    return best_height, best_hash, best_peer
+
+
 def _pretty(obj: Any) -> str:
     """Pretty-print JSON object."""
     return json.dumps(obj, indent=2)
@@ -445,6 +498,9 @@ def _persist_sync_state(
     rpc_url: str,
     head_info: Optional[Dict[str, Any]],
     peers: List[Dict[str, Any]],
+    network_head_height: Optional[int] = None,
+    network_head_hash: Optional[str] = None,
+    network_peer: Optional[Dict[str, Any]] = None,
     note: Optional[str] = None,
 ) -> None:
     """Persist sync progress to disk for continuity across restarts."""
@@ -465,6 +521,13 @@ def _persist_sync_state(
         "updated_at": time.time(),
         "peers": peers,
     }
+    if network_head_height is not None:
+        payload["network_height"] = network_head_height
+    if network_head_hash is not None:
+        payload["network_head_hash"] = network_head_hash
+    if network_peer:
+        payload["network_peer_id"] = network_peer.get("id") or network_peer.get("peerId") or network_peer.get("peer_id")
+        payload["network_peer_addr"] = network_peer.get("addr") or network_peer.get("address")
     if note:
         payload["note"] = note
 
@@ -655,6 +718,18 @@ def sync_status(
     head_hash = head_info.get("hash") or head_info.get("blockHash") if head_info else None
     chain_id = _extract_chain_id(head_info)
     bootstrap_height = _extract_height(bootstrap_head)
+    bootstrap_hash = bootstrap_head.get("hash") if bootstrap_head else None
+
+    best_peer_height, best_peer_hash, best_peer = _select_best_peer_head(peers)
+    network_height = bootstrap_height
+    network_hash = bootstrap_hash
+    network_source = None
+    if bootstrap_height is not None:
+        network_source = "bootstrap"
+    if best_peer_height is not None and (network_height is None or best_peer_height > network_height):
+        network_height = best_peer_height
+        network_hash = best_peer_hash
+        network_source = "peer"
     
     is_syncing = False
     sync_progress = None
@@ -709,6 +784,10 @@ def sync_status(
             "syncing": is_syncing,
             "peer_count": peer_count,
         }
+        if network_height is not None:
+            output["network_height"] = network_height
+            output["network_head_hash"] = network_hash
+            output["network_source"] = network_source
         if sync_progress:
             output["sync_progress"] = sync_progress
         if p2p_status:
@@ -719,6 +798,16 @@ def sync_status(
             output["peer_error"] = peer_error_msg
         if verbose and peers:
             output["peers"] = peers
+        _persist_sync_state(
+            net_cfg,
+            rpc_url=url,
+            head_info=head_info,
+            peers=peers,
+            network_head_height=network_height,
+            network_head_hash=network_hash,
+            network_peer=best_peer,
+            note="status",
+        )
         typer.echo(_pretty(output))
         return
     
@@ -751,6 +840,19 @@ def sync_status(
     if head_hash:
         typer.echo(f"  Hash:      {head_hash}")
     typer.echo()
+
+    if network_height is not None and network_height > 0 and (height is None or height < network_height):
+        source_label = "bootstrap" if network_source == "bootstrap" else "peer"
+        typer.secho("Network Head:", fg=typer.colors.BRIGHT_BLUE, bold=True)
+        typer.echo(f"  Height:    {network_height} ({source_label})")
+        if network_hash:
+            typer.echo(f"  Hash:      {network_hash}")
+        if best_peer and network_source == "peer":
+            peer_id = best_peer.get("id") or best_peer.get("peerId") or best_peer.get("peer_id")
+            peer_addr = best_peer.get("addr") or best_peer.get("address")
+            if peer_id or peer_addr:
+                typer.echo(f"  Source:    {peer_id or 'unknown'} {f'({peer_addr})' if peer_addr else ''}")
+        typer.echo()
     
     # Sync status
     typer.secho("Sync Status:", fg=typer.colors.BRIGHT_BLUE, bold=True)
@@ -762,11 +864,11 @@ def sync_status(
             remaining = target_height - height
             typer.echo(f"  Remaining: {remaining} blocks")
     else:
-        if height is not None and height > 0:
+        if height is not None and height > 0 and (network_height is None or height >= network_height):
             typer.secho("  Status:    SYNCHRONIZED", fg=typer.colors.GREEN, bold=True)
-        elif height == 0 and bootstrap_height and bootstrap_height > 0:
+        elif height == 0 and network_height and network_height > 0:
             typer.secho(
-                f"  Status:    NOT SYNCED (local=0, network={bootstrap_height})",
+                f"  Status:    NOT SYNCED (local=0, network={network_height})",
                 fg=typer.colors.RED,
                 bold=True,
             )
@@ -824,10 +926,24 @@ def sync_status(
     elif is_syncing:
         typer.secho("💡 Syncing in progress... Check back later or run:", fg=typer.colors.CYAN)
         typer.echo("   animica sync status")
-    elif height == 0 and bootstrap_height and bootstrap_height > 0:
+    elif height == 0 and network_height and network_height > 0:
         typer.secho("⚠ Node is not synced yet. Wait for peers or run sync force.", fg=typer.colors.YELLOW)
+    elif height == 0:
+        typer.secho("⚠ Node is at genesis; waiting for sync data.", fg=typer.colors.YELLOW)
+        typer.echo("   Try: animica sync force")
     else:
         typer.secho("✓ Node is synchronized with the network", fg=typer.colors.GREEN)
+
+    _persist_sync_state(
+        net_cfg,
+        rpc_url=url,
+        head_info=head_info,
+        peers=peers,
+        network_head_height=network_height,
+        network_head_hash=network_hash,
+        network_peer=best_peer,
+        note="status",
+    )
 
 
 @app.command(name="force")
