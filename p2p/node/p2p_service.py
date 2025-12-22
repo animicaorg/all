@@ -23,8 +23,23 @@ from p2p.transport.tcp import TcpTransport
 from p2p.wire.encoding import decode_payload, encode_payload
 from p2p.wire.frames import Framer, unpack_frame
 from p2p.wire.message_ids import MsgID
-from p2p.wire.messages import (Blocks, GetBlocks, GetData, GetHeaders, HeaderCompact,
-                               Headers, Hello, HelloAck, Inv, InvItem, InvType, Tx)
+from p2p.wire.messages import (
+    AddressAnnounce,
+    Blocks,
+    GetBlocks,
+    GetData,
+    GetHeaders,
+    GetPeers,
+    HeaderCompact,
+    Headers,
+    Hello,
+    HelloAck,
+    Inv,
+    InvItem,
+    InvType,
+    Peers,
+    Tx,
+)
 from p2p.node.peer_registry import PeerRegistry
 
 log = logging.getLogger("animica.p2p.service")
@@ -50,6 +65,7 @@ class _PeerState:
     hello_done: asyncio.Event = field(default_factory=asyncio.Event)
     pending_headers: Optional[asyncio.Future] = None
     connected_at: float = field(default_factory=time.time)
+    feeler: bool = False
 
 
 @dataclass(slots=True)
@@ -257,6 +273,29 @@ class P2PService:
             "sync_rounds": 0,
         }
 
+        # Address discovery / relay state
+        self._addr_request_interval = float(
+            os.environ.get("ANIMICA_P2P_ADDR_REQUEST_INTERVAL", "30") or 30
+        )
+        self._addr_response_interval = float(
+            os.environ.get("ANIMICA_P2P_ADDR_RESPONSE_INTERVAL", "15") or 15
+        )
+        self._addr_request_max = int(
+            os.environ.get("ANIMICA_P2P_ADDR_REQUEST_MAX", "32") or 32
+        )
+        self._addr_last_request: dict[str, float] = {}
+        self._addr_last_response: dict[str, float] = {}
+        self._addr_seen: "OrderedDict[str, float]" = OrderedDict()
+        self._addr_seen_cap = int(
+            os.environ.get("ANIMICA_P2P_ADDR_SEEN_CAP", "5000") or 5000
+        )
+        self._feeler_interval = float(
+            os.environ.get("ANIMICA_P2P_FEELER_INTERVAL", "25") or 25
+        )
+        self._feeler_hold_s = float(
+            os.environ.get("ANIMICA_P2P_FEELER_HOLD_S", "5") or 5
+        )
+
         self._sync_lock = asyncio.Lock()
         self._sync_wakeup = asyncio.Event()
         self._sync_phase = "idle"
@@ -326,6 +365,14 @@ class P2PService:
         # Persist configured seeds so a restarted node reuses them immediately
         if self.seeds:
             self._seed_peerstore(self.seeds)
+        discovered = await self._discover_seed_peers()
+        if discovered:
+            self._seed_peerstore(discovered)
+            for addr in discovered:
+                if addr not in self.seeds:
+                    self.seeds.append(addr)
+            self._seed_keys.update({self._addr_key(a) for a in discovered})
+            self._seed_sources.setdefault("discovery", []).extend(discovered)
         log.info(
             "Loaded %d seed(s)",
             len(self.seeds),
@@ -349,6 +396,8 @@ class P2PService:
             asyncio.create_task(self._dial_loop(), name="p2p.dial"),
             asyncio.create_task(self._head_watch_loop(), name="p2p.head_watch"),
             asyncio.create_task(self._sync_loop(), name="p2p.sync"),
+            asyncio.create_task(self._addr_request_loop(), name="p2p.addr_request"),
+            asyncio.create_task(self._feeler_loop(), name="p2p.feeler"),
         ]
         self._sync_wakeup.set()
         log.info(
@@ -430,6 +479,180 @@ class P2PService:
         if dns_seeds:
             sources["dns"] = dns_seeds
         return sources
+
+    def _env_list(self, name: str) -> list[str]:
+        raw = os.environ.get(name, "").strip()
+        if not raw:
+            return []
+        return [item.strip() for item in raw.split(",") if item.strip()]
+
+    def _advertised_addrs(self) -> list[str]:
+        addrs: list[str] = []
+        for key in ("ANIMICA_P2P_ADVERTISED_ADDRS", "ANIMICA_P2P_ADVERTISE_ADDR"):
+            for entry in self._env_list(key):
+                addrs.append(self._normalize_seed(entry))
+        if addrs:
+            return list(dict.fromkeys(addrs))
+        for addr in self.listen_addrs:
+            try:
+                parsed = parse_multiaddr(addr)
+                host = parsed.host or ""
+                if host in {"0.0.0.0", "::"}:
+                    continue
+                if parsed.transport == "tcp" and parsed.port:
+                    addrs.append(self._normalize_seed(f"{host}:{parsed.port}"))
+            except Exception:
+                continue
+        return list(dict.fromkeys(addrs))
+
+    def _remember_addr(self, addr: str) -> None:
+        addr_key = self._addr_key(addr)
+        now = time.time()
+        self._addr_seen[addr_key] = now
+        self._addr_seen.move_to_end(addr_key)
+        while len(self._addr_seen) > self._addr_seen_cap:
+            self._addr_seen.popitem(last=False)
+
+    async def _send_get_peers(self, peer: _PeerState) -> None:
+        if not peer.hello_done.is_set():
+            return
+        now = time.time()
+        last = self._addr_last_request.get(peer.session_id, 0.0)
+        if now - last < self._addr_request_interval:
+            return
+        self._addr_last_request[peer.session_id] = now
+        await self._send(peer, MsgID.GET_PEERS, GetPeers(max_peers=self._addr_request_max))
+
+    def _collect_peer_addrs(
+        self, *, limit: int, exclude: Optional[set[str]] = None
+    ) -> list[str]:
+        exclude = exclude or set()
+        addrs: list[str] = []
+        try:
+            for peer_id, address, _ in self.peerstore.list_addresses(limit=limit):
+                if not address:
+                    continue
+                normalized = self._normalize_seed(address)
+                if self._addr_key(normalized) in exclude:
+                    continue
+                addrs.append(normalized)
+        except Exception:
+            pass
+        return list(dict.fromkeys(addrs))[:limit]
+
+    def _ingest_peer_addrs(self, addrs: list[str], *, source: str) -> int:
+        if not addrs:
+            return 0
+        stored = 0
+        for addr in addrs:
+            normalized = self._normalize_seed(addr)
+            self._remember_addr(normalized)
+            try:
+                peer_id = self._peer_id_from_addr(normalized)
+                self.peerstore.add(peer_id=peer_id, addrs=[normalized], direction="outbound")
+                self.peerstore.record_seen(peer_id, normalized)
+                stored += 1
+            except Exception:
+                continue
+        if stored:
+            log.debug("Discovered %d peer(s) from %s", stored, source)
+        return stored
+
+    async def _discover_seed_peers(self) -> list[str]:
+        if os.environ.get("ANIMICA_P2P_ENABLE_DNS_SEEDS", "true").lower() in (
+            "0",
+            "false",
+            "no",
+            "off",
+        ):
+            return []
+        dns_names = self._env_list("ANIMICA_P2P_SEEDS_DNS")
+        https_urls = self._env_list("ANIMICA_P2P_SEEDS_HTTPS")
+        try:
+            from p2p.discovery import seeds as seed_discovery
+        except Exception:
+            return []
+        try:
+            if dns_names or https_urls:
+                bundle = await seed_discovery.discover_all(
+                    dns_names=dns_names,
+                    https_urls=https_urls,
+                    static_addrs=[],
+                    resolve=True,
+                    include_fallbacks=False,
+                )
+                source = "custom discovery"
+            else:
+                bundle = await seed_discovery.discover_for_network(
+                    self.chain_id, resolve=True, include_fallbacks=False
+                )
+                source = "network discovery"
+        except Exception as exc:
+            log.debug("Seed discovery failed: %s", exc)
+            return []
+        discovered: list[str] = []
+        for endpoint in bundle.endpoints:
+            if getattr(endpoint, "scheme", "") != "tcp":
+                continue
+            host = getattr(endpoint, "host", "")
+            port = getattr(endpoint, "port", None)
+            if not host or not port:
+                continue
+            discovered.append(self._normalize_seed(f"{host}:{port}"))
+        if discovered:
+            log.info("Discovered %d seed(s) via %s", len(discovered), source)
+        return list(dict.fromkeys(discovered))
+
+    async def _addr_request_loop(self) -> None:
+        try:
+            while self._running:
+                await asyncio.sleep(self._addr_request_interval)
+                if not self._running:
+                    return
+                peers = list(self._peers_by_session.values())
+                if not peers:
+                    continue
+                peer = random.choice(peers)
+                await self._send_get_peers(peer)
+        except asyncio.CancelledError:
+            return
+
+    async def _feeler_loop(self) -> None:
+        try:
+            while self._running:
+                await asyncio.sleep(self._feeler_interval)
+                if not self._running:
+                    return
+                candidate = None
+                try:
+                    known = self.peerstore.list_known(limit=64, order_by="last_seen")
+                except Exception:
+                    known = []
+                random.shuffle(known)
+                async with self._peer_lock:
+                    active_keys = {self._addr_key(p.remote) for p in self._peers.values()}
+                now = time.time()
+                for peer in known:
+                    addr = getattr(peer, "address", None)
+                    if not isinstance(addr, str) or not addr:
+                        continue
+                    addr_key = self._addr_key(addr)
+                    if addr_key in active_keys:
+                        continue
+                    if addr_key in self._dial_inflight:
+                        continue
+                    if self._dial_backoff.get(addr_key, 0.0) > now:
+                        continue
+                    candidate = addr
+                    break
+                if candidate:
+                    self._dial_inflight.add(self._addr_key(candidate))
+                    self._create_child_task(
+                        self._dial(candidate, feeler=True),
+                        name=f"p2p.feeler@{candidate}",
+                    )
+        except asyncio.CancelledError:
+            return
 
     def _record_bootstrap_attempt(
         self, addr: str, *, success: bool, error: Optional[str] = None
@@ -770,7 +993,9 @@ class P2PService:
         except asyncio.CancelledError:
             return
 
-    async def _dial(self, addr: str, *, is_seed: bool = False) -> None:
+    async def _dial(
+        self, addr: str, *, is_seed: bool = False, feeler: bool = False
+    ) -> None:
         addr_key = self._addr_key(addr)
         try:
             conn = await self._transport.dial(addr, timeout=5.0)
@@ -783,9 +1008,11 @@ class P2PService:
         finally:
             self._dial_inflight.discard(addr_key)
         self._mark_dial_success(addr, is_seed=is_seed)
-        await self._register_conn(conn, direction="outbound")
+        await self._register_conn(conn, direction="outbound", feeler=feeler)
 
-    async def _register_conn(self, conn: Any, *, direction: str) -> None:
+    async def _register_conn(
+        self, conn: Any, *, direction: str, feeler: bool = False
+    ) -> None:
         remote = getattr(conn.info, "remote_addr", None) or "unknown"
         try:
             stream = await conn.open_stream()
@@ -810,6 +1037,7 @@ class P2PService:
             framer=Framer(aead=None),
             write_lock=asyncio.Lock(),
             connected_at=session.connected_at,
+            feeler=feeler,
         )
 
         async with self._peer_lock:
@@ -938,6 +1166,15 @@ class P2PService:
             return
         if mid == int(MsgID.HELLO_ACK):
             return
+        if mid == int(MsgID.GET_PEERS):
+            await self._handle_get_peers(peer, payload)
+            return
+        if mid == int(MsgID.PEERS):
+            await self._handle_peers(peer, payload)
+            return
+        if mid == int(MsgID.ADDRESS_ANNOUNCE):
+            await self._handle_address_announce(peer, payload)
+            return
         if mid == int(MsgID.HEADERS):
             await self._handle_headers(peer, payload)
             return
@@ -991,6 +1228,7 @@ class P2PService:
             height=int(hello.head_height),
             remote=peer.remote,
             direction=peer.direction,
+            feeler=peer.feeler,
         )
 
         # Deduplicate connections for the same peer_id (keep the newest).
@@ -1013,6 +1251,92 @@ class P2PService:
 
         await self._send(peer, MsgID.HELLO_ACK, HelloAck(accepted=True, reason=None))
         self._sync_wakeup.set()
+        advertised = self._advertised_addrs()
+        if advertised:
+            self._create_child_task(
+                self._send(
+                    peer,
+                    MsgID.ADDRESS_ANNOUNCE,
+                    AddressAnnounce(addresses=advertised),
+                ),
+                name=f"p2p.addr_announce@{peer.remote}",
+            )
+        self._create_child_task(
+            self._send_get_peers(peer),
+            name=f"p2p.get_peers@{peer.remote}",
+        )
+        if peer.feeler:
+            self._create_child_task(
+                self._close_feeler_after_delay(peer),
+                name=f"p2p.feeler_close@{peer.remote}",
+            )
+
+    async def _handle_get_peers(self, peer: _PeerState, payload: bytes) -> None:
+        now = time.time()
+        last = self._addr_last_response.get(peer.session_id, 0.0)
+        if now - last < self._addr_response_interval:
+            return
+        self._addr_last_response[peer.session_id] = now
+
+        data = self._decode_map(payload)
+        max_peers = int(data.get("max_peers") or self._addr_request_max)
+        max_peers = max(1, min(max_peers, 256))
+
+        exclude = {self._addr_key(peer.remote)}
+        addresses = self._collect_peer_addrs(limit=max_peers, exclude=exclude)
+        entries: list[tuple[bytes, str]] = []
+        for addr in addresses:
+            try:
+                pid = hashlib.sha3_256(addr.encode()).digest()
+            except Exception:
+                pid = b"\x00" * 32
+            entries.append((pid, addr))
+        await self._send(peer, MsgID.PEERS, Peers(entries=entries))
+
+    async def _handle_peers(self, peer: _PeerState, payload: bytes) -> None:
+        data = self._decode_map(payload)
+        entries = data.get("entries") or []
+        addrs: list[str] = []
+        for entry in entries:
+            if isinstance(entry, (list, tuple)) and len(entry) >= 2:
+                addr = entry[1]
+            elif isinstance(entry, dict):
+                addr = entry.get("addr") or entry.get("address")
+            else:
+                continue
+            if isinstance(addr, bytes):
+                try:
+                    addr = addr.decode()
+                except Exception:
+                    continue
+            if isinstance(addr, str) and addr:
+                addrs.append(addr)
+
+        if addrs:
+            self._ingest_peer_addrs(addrs, source=f"peer:{peer.remote}")
+            self._sync_wakeup.set()
+
+    async def _handle_address_announce(self, peer: _PeerState, payload: bytes) -> None:
+        data = self._decode_map(payload)
+        addresses = data.get("addresses") or []
+        addrs: list[str] = []
+        for addr in addresses:
+            if isinstance(addr, bytes):
+                try:
+                    addr = addr.decode()
+                except Exception:
+                    continue
+            if isinstance(addr, str) and addr:
+                addrs.append(addr)
+        if addrs:
+            self._ingest_peer_addrs(addrs, source=f"announce:{peer.remote}")
+
+    async def _close_feeler_after_delay(self, peer: _PeerState) -> None:
+        try:
+            await asyncio.sleep(self._feeler_hold_s)
+            await self._drop_peer(peer, reason="feeler_complete")
+        except asyncio.CancelledError:
+            return
 
     async def _handle_inv(self, peer: _PeerState, payload: bytes) -> None:
         data = self._decode_map(payload)

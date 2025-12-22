@@ -75,12 +75,16 @@ async def rpc_call(
 def _resolve_sync_endpoints(
     rpc_url: Optional[str],
     bootstrap_rpc: Optional[str],
+    *,
+    allow_bootstrap_rpc: bool = False,
 ) -> tuple[str, Optional[str]]:
     """Resolve target and bootstrap RPC endpoints."""
     net_cfg = load_network_config()
     target = rpc_url or os.environ.get(RPC_ENV) or net_cfg.rpc_url
     bootstrap = bootstrap_rpc or os.environ.get(BOOTSTRAP_RPC_ENV) or net_cfg.bootstrap_url
     target = target.strip()
+    if not allow_bootstrap_rpc:
+        bootstrap = None
     bootstrap = bootstrap.strip() if bootstrap else None
     return target, bootstrap
 
@@ -253,13 +257,18 @@ async def _get_peer_count(rpc_url: str) -> Optional[int]:
     return None
 
 
-def _fetch_bootstrap_seeds(net_cfg, bootstrap_url: Optional[str]) -> tuple[list[str], list[str]]:
-    """Fetch seed peers from bootstrap RPC or static defaults."""
+def _fetch_bootstrap_seeds(
+    net_cfg,
+    bootstrap_url: Optional[str],
+    *,
+    allow_bootstrap_rpc: bool = False,
+) -> tuple[list[str], list[str]]:
+    """Fetch seed peers from discovery sources or bootstrap RPC (optional)."""
 
     seeds: list[str] = []
     fetch_errors: list[str] = []
 
-    if bootstrap_url:
+    if allow_bootstrap_rpc and bootstrap_url:
         try:
             guard_bootstrap_rpc(
                 bootstrap_url,
@@ -286,6 +295,27 @@ def _fetch_bootstrap_seeds(net_cfg, bootstrap_url: Optional[str]) -> tuple[list[
             fetch_errors.append(f"P2P config seeds unavailable: {exc}")
 
     if not seeds:
+        try:
+            from p2p.discovery import seeds as seed_discovery
+
+            bundle = asyncio.run(
+                seed_discovery.discover_for_network(
+                    net_cfg.chain_id, resolve=False, include_fallbacks=False
+                )
+            )
+            discovered = []
+            for endpoint in bundle.endpoints:
+                if getattr(endpoint, "scheme", "") != "tcp":
+                    continue
+                host = getattr(endpoint, "host", "")
+                port = getattr(endpoint, "port", None)
+                if host and port:
+                    discovered.append(f"{host}:{port}")
+            seeds = discovered
+        except Exception as exc:
+            fetch_errors.append(f"DNS seed discovery unavailable: {exc}")
+
+    if not seeds:
         seeds = get_seed_nodes(net_cfg.name)
 
     return list(dict.fromkeys(seeds)), fetch_errors
@@ -296,11 +326,14 @@ def _seed_local_peerstores(
     *,
     target_rpc_url: str,
     bootstrap_url: Optional[str],
+    allow_bootstrap_rpc: bool = False,
     quiet: bool = False,
 ) -> tuple[int, bool, list[str]]:
     """Persist bootstrap seeds locally and push them into a running node."""
 
-    seeds, fetch_errors = _fetch_bootstrap_seeds(net_cfg, bootstrap_url)
+    seeds, fetch_errors = _fetch_bootstrap_seeds(
+        net_cfg, bootstrap_url, allow_bootstrap_rpc=allow_bootstrap_rpc
+    )
     store_path = Path(net_cfg.data_dir).expanduser() / "p2p" / "peers.json"
 
     if not seeds:
@@ -322,12 +355,19 @@ def _seed_local_peerstores(
     rpc_added = False
     rpc_error: Optional[str] = None
     try:
-        import_resp = asyncio.run(rpc_call("p2p.importPeers", [seeds], rpc_url=target_rpc_url))
+        import_resp = asyncio.run(rpc_call("p2p.addPeers", [seeds], rpc_url=target_rpc_url))
         rpc_added, rpc_error = _rpc_operation_succeeded(import_resp)
         if not rpc_added:
-            rpc_error = rpc_error or "p2p.importPeers did not report success"
+            rpc_error = rpc_error or "p2p.addPeers did not report success"
     except Exception as exc:
         rpc_error = str(exc)
+        try:
+            import_resp = asyncio.run(rpc_call("p2p.importPeers", [seeds], rpc_url=target_rpc_url))
+            rpc_added, rpc_error = _rpc_operation_succeeded(import_resp)
+            if not rpc_added:
+                rpc_error = rpc_error or "p2p.importPeers did not report success"
+        except Exception:
+            pass
 
     if not quiet:
         if stored:
@@ -477,6 +517,11 @@ def sync_status(
         help="Bootstrap RPC endpoint for discovery/seed info",
         envvar=BOOTSTRAP_RPC_ENV,
     ),
+    allow_bootstrap_rpc: bool = typer.Option(
+        False,
+        "--allow-bootstrap-rpc/--no-allow-bootstrap-rpc",
+        help="Allow bootstrap RPC usage for optional network tip comparison",
+    ),
     json_output: bool = typer.Option(
         False, "--json", help="Output JSON format"
     ),
@@ -498,7 +543,9 @@ def sync_status(
         animica sync status --json
         animica sync status --verbose
     """
-    url, bootstrap_url = _resolve_sync_endpoints(rpc_url, bootstrap_rpc)
+    url, bootstrap_url = _resolve_sync_endpoints(
+        rpc_url, bootstrap_rpc, allow_bootstrap_rpc=allow_bootstrap_rpc
+    )
     net_cfg = load_network_config()
     peer_count_error: Optional[Exception] = None
     bootstrap_source = "live"
@@ -619,7 +666,7 @@ def sync_status(
     
     # Connection info
     typer.echo(f"Target RPC:    {url}")
-    bootstrap_label = bootstrap_url or "not configured"
+    bootstrap_label = "disabled" if not allow_bootstrap_rpc else (bootstrap_url or "not configured")
     if bootstrap_source == "cached" and bootstrap_url:
         bootstrap_label = f"{bootstrap_label} (cached head)"
     typer.echo(f"Bootstrap RPC: {bootstrap_label}")
@@ -719,6 +766,11 @@ def force_sync(
         help="Bootstrap RPC endpoint for discovery/seed info",
         envvar=BOOTSTRAP_RPC_ENV,
     ),
+    allow_bootstrap_rpc: bool = typer.Option(
+        False,
+        "--allow-bootstrap-rpc/--no-allow-bootstrap-rpc",
+        help="Allow bootstrap RPC usage for optional discovery fallback",
+    ),
     timeout: int = typer.Option(
         300, "--timeout", help="Maximum time to wait for sync to start (seconds)"
     ),
@@ -745,17 +797,26 @@ def force_sync(
         animica sync force --timeout 600
     """
     net_cfg = load_network_config()
-    url, bootstrap_url = _resolve_sync_endpoints(rpc_url, bootstrap_rpc)
+    url, bootstrap_url = _resolve_sync_endpoints(
+        rpc_url, bootstrap_rpc, allow_bootstrap_rpc=allow_bootstrap_rpc
+    )
 
     bootstrap_host = urlparse(bootstrap_url).hostname if bootstrap_url else None
     target_host = urlparse(url).hostname if url else None
 
     if bootstrap_url and bootstrap_host and target_host and bootstrap_host != target_host:
-        _seed_local_peerstores(net_cfg, target_rpc_url=url, bootstrap_url=bootstrap_url, quiet=True)
+        _seed_local_peerstores(
+            net_cfg,
+            target_rpc_url=url,
+            bootstrap_url=bootstrap_url,
+            allow_bootstrap_rpc=allow_bootstrap_rpc,
+            quiet=True,
+        )
 
     typer.secho("\n🔄 Forcing blockchain synchronization...", fg=typer.colors.CYAN, bold=True)
     typer.echo(f"Target RPC:    {url}")
-    typer.echo(f"Bootstrap RPC: {bootstrap_url or 'not configured'}")
+    bootstrap_label = "disabled" if not allow_bootstrap_rpc else (bootstrap_url or "not configured")
+    typer.echo(f"Bootstrap RPC: {bootstrap_label}")
     typer.echo()
     
     # Get initial state
@@ -788,11 +849,12 @@ def force_sync(
             typer.echo("  animica peer add <address>")
             typer.echo()
 
-            typer.echo("Auto-bootstrapping peers from configured seeds...")
+            typer.echo("Auto-bootstrapping peers from discovery sources...")
             stored, rpc_added, _ = _seed_local_peerstores(
                 net_cfg,
                 target_rpc_url=url,
                 bootstrap_url=bootstrap_url,
+                allow_bootstrap_rpc=allow_bootstrap_rpc,
                 quiet=False,
             )
             if stored:
@@ -892,6 +954,7 @@ def force_sync(
                             net_cfg,
                             target_rpc_url=url,
                             bootstrap_url=bootstrap_url,
+                            allow_bootstrap_rpc=allow_bootstrap_rpc,
                             quiet=True,
                         )
                         if added:

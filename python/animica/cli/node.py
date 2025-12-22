@@ -393,10 +393,11 @@ def _wait_for_sync_completion(
     *,
     rpc_url: str,
     bootstrap_url: Optional[str],
+    allow_bootstrap_rpc: bool = False,
     timeout_s: float = 600.0,
     interval_s: float = 5.0,
 ) -> bool:
-    if not bootstrap_url:
+    if not bootstrap_url or not allow_bootstrap_rpc:
         return True
 
     try:
@@ -460,11 +461,12 @@ def _wait_for_sync_completion(
                                 net_cfg,
                                 target_rpc_url=rpc_url,
                                 bootstrap_url=bootstrap_url,
+                                allow_bootstrap_rpc=allow_bootstrap_rpc,
                                 quiet=True,
                             )
                             if stored or rpc_added:
                                 typer.secho(
-                                    "✓ Re-seeded peer store from bootstrap sources",
+                                    "✓ Re-seeded peer store from discovery sources",
                                     fg=typer.colors.GREEN,
                                 )
                         except Exception:
@@ -506,6 +508,7 @@ def _post_start_peer_bootstrap(
     *,
     rpc_url: str,
     bootstrap_url: Optional[str],
+    allow_bootstrap_rpc: bool = False,
     wait_timeout: float = 30.0,
 ) -> None:
     try:
@@ -526,13 +529,14 @@ def _post_start_peer_bootstrap(
         return
 
     typer.secho(
-        "No peers connected yet; seeding peers from bootstrap sources...",
+        "No peers connected yet; seeding peers from discovery sources...",
         fg=typer.colors.YELLOW,
     )
     _seed_local_peerstores(
         net_cfg,
         target_rpc_url=rpc_url,
         bootstrap_url=bootstrap_url,
+        allow_bootstrap_rpc=allow_bootstrap_rpc,
         quiet=False,
     )
 
@@ -1169,6 +1173,11 @@ def up(
         "--sync-interval",
         help="Seconds between sync progress checks",
     ),
+    allow_bootstrap_rpc: bool = typer.Option(
+        False,
+        "--allow-bootstrap-rpc/--no-allow-bootstrap-rpc",
+        help="Allow bootstrap RPC usage for optional discovery/sync comparison",
+    ),
 ) -> None:
     """
     Start an Animica node using Docker Compose.
@@ -1222,16 +1231,26 @@ def up(
     net_cfg = load_network_config(network)
     data_dir = str(Path(net_cfg.data_dir).expanduser())
 
+    allow_bootstrap = allow_bootstrap_rpc or os.getenv("ANIMICA_ALLOW_BOOTSTRAP_RPC") == "1"
     bootstrap_node = _is_bootstrap_node()
     if bootstrap_node:
         typer.secho(
             "Bootstrap node enabled: skipping auto-bootstrap checks.",
             fg=typer.colors.CYAN,
         )
-    else:
-        _auto_bootstrap_if_needed(net_cfg, os.getenv("ANIMICA_BOOTSTRAP_RPC_URL"), quiet=False)
+    elif allow_bootstrap:
+        _auto_bootstrap_if_needed(
+            net_cfg, os.getenv("ANIMICA_BOOTSTRAP_RPC_URL"), quiet=False
+        )
         _record_bootstrap_head(
-            net_cfg, os.getenv("ANIMICA_BOOTSTRAP_RPC_URL") or net_cfg.bootstrap_url, quiet=False
+            net_cfg,
+            os.getenv("ANIMICA_BOOTSTRAP_RPC_URL") or net_cfg.bootstrap_url,
+            quiet=False,
+        )
+    else:
+        typer.secho(
+            "Bootstrap RPC usage disabled; relying on P2P discovery.",
+            fg=typer.colors.CYAN,
         )
     
     typer.secho(f"Starting node for network: {network}", fg=typer.colors.CYAN, bold=True)
@@ -1307,13 +1326,19 @@ def up(
                 _post_start_peer_bootstrap(
                     net_cfg,
                     rpc_url=net_cfg.rpc_url,
-                    bootstrap_url=os.getenv("ANIMICA_BOOTSTRAP_RPC_URL") or net_cfg.bootstrap_url,
+                    bootstrap_url=os.getenv("ANIMICA_BOOTSTRAP_RPC_URL")
+                    if allow_bootstrap
+                    else None,
+                    allow_bootstrap_rpc=allow_bootstrap,
                 )
                 if wait_sync and not bootstrap_node:
                     _wait_for_sync_completion(
                         net_cfg,
                         rpc_url=net_cfg.rpc_url,
-                        bootstrap_url=os.getenv("ANIMICA_BOOTSTRAP_RPC_URL") or net_cfg.bootstrap_url,
+                        bootstrap_url=os.getenv("ANIMICA_BOOTSTRAP_RPC_URL")
+                        if allow_bootstrap
+                        else None,
+                        allow_bootstrap_rpc=allow_bootstrap,
                         timeout_s=sync_timeout,
                         interval_s=sync_interval,
                     )
@@ -1353,6 +1378,11 @@ def up_all(
         "--with-miner",
         help="Also start miner service for applicable networks"
     ),
+    allow_bootstrap_rpc: bool = typer.Option(
+        False,
+        "--allow-bootstrap-rpc/--no-allow-bootstrap-rpc",
+        help="Allow bootstrap RPC usage for optional discovery/sync comparison",
+    ),
 ) -> None:
     """
     Start all Animica node networks at once.
@@ -1390,6 +1420,7 @@ def up_all(
     skipped_networks = []
     successful_networks = []
     
+    allow_bootstrap = allow_bootstrap_rpc or os.getenv("ANIMICA_ALLOW_BOOTSTRAP_RPC") == "1"
     for network in all_networks:
         typer.secho(f"\n{'='*60}", fg=typer.colors.CYAN)
         typer.secho(f"Starting network: {network}", fg=typer.colors.CYAN, bold=True)
@@ -1420,10 +1451,14 @@ def up_all(
             continue
         
         bootstrap_node = _is_bootstrap_node()
-        if not bootstrap_node:
-            _auto_bootstrap_if_needed(net_cfg, os.getenv("ANIMICA_BOOTSTRAP_RPC_URL"), quiet=True)
+        if not bootstrap_node and allow_bootstrap:
+            _auto_bootstrap_if_needed(
+                net_cfg, os.getenv("ANIMICA_BOOTSTRAP_RPC_URL"), quiet=True
+            )
             _record_bootstrap_head(
-                net_cfg, os.getenv("ANIMICA_BOOTSTRAP_RPC_URL") or net_cfg.bootstrap_url, quiet=True
+                net_cfg,
+                os.getenv("ANIMICA_BOOTSTRAP_RPC_URL") or net_cfg.bootstrap_url,
+                quiet=True,
             )
 
         typer.echo(f"Compose file: {compose_file}")
