@@ -205,12 +205,13 @@ def block_from_mapping(m: Dict[str, Any]) -> Block:
         else:
             raise BlockImportError("each tx must decode to a map")
 
-    block_payload = {"header": header, "txs": txs}
+    block_payload = {"header": header, "txs": txs, "proofs": []}
 
     # Optional fields (pass through if your Block dataclass has them)
-    for opt_key in ("proofs", "receipts"):
-        if opt_key in m:
-            block_payload[opt_key] = m[opt_key]
+    if "proofs" in m:
+        block_payload["proofs"] = m["proofs"]
+    if "receipts" in m:
+        block_payload["receipts"] = m["receipts"]
 
     return _dataclass_from_dict(Block, block_payload)  # type: ignore[return-value]
 
