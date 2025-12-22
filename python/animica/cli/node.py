@@ -418,9 +418,11 @@ def _wait_for_sync_completion(
     last_progress = time.time()
     last_report = 0.0
     last_trigger: Optional[float] = None
+    last_seed_attempt: Optional[float] = None
     warned_no_peers = False
     report_interval = max(interval_s * 3.0, 15.0)
     trigger_interval = max(interval_s * 6.0, 30.0)
+    seed_interval = max(interval_s * 6.0, 30.0)
     while time.time() < deadline:
         try:
             head = _local_rpc(rpc_url, "chain.getHead", [])
@@ -449,6 +451,25 @@ def _wait_for_sync_completion(
                         fg=typer.colors.YELLOW,
                     )
                     warned_no_peers = True
+                if peer_count == 0:
+                    if last_seed_attempt is None or now - last_seed_attempt >= seed_interval:
+                        try:
+                            from .sync import _seed_local_peerstores
+
+                            stored, rpc_added, _ = _seed_local_peerstores(
+                                net_cfg,
+                                target_rpc_url=rpc_url,
+                                bootstrap_url=bootstrap_url,
+                                quiet=True,
+                            )
+                            if stored or rpc_added:
+                                typer.secho(
+                                    "✓ Re-seeded peer store from bootstrap sources",
+                                    fg=typer.colors.GREEN,
+                                )
+                        except Exception:
+                            pass
+                        last_seed_attempt = now
             if height >= target_height:
                 typer.secho("✓ Node synced to bootstrap head", fg=typer.colors.GREEN)
                 return True
