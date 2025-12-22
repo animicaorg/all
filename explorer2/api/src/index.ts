@@ -1,20 +1,20 @@
 import { config } from './config'
 import { defaultChainDbPath, HybridChainClient, LocalChainClient } from './localChainClient'
-import { RpcClient } from './rpcClient'
 import { ExplorerService } from './service'
 import { createServer } from './server'
 
-const rpc = new RpcClient({ url: config.rpcUrl })
 const chainDbPath = config.dbPath || defaultChainDbPath(config.chainId, config.dataRoot)
 let local: LocalChainClient | null = null
 try {
   local = new LocalChainClient(chainDbPath)
 } catch (error) {
   const message = error instanceof Error ? error.message : String(error)
-  // eslint-disable-next-line no-console
-  console.warn(`Local chain database unavailable, falling back to RPC-only mode:\n${message}`)
+  throw new Error(`Local chain database unavailable:\n${message}`)
 }
-const chain = new HybridChainClient(local, rpc)
+if (!local) {
+  throw new Error('Local chain database unavailable.')
+}
+const chain = new HybridChainClient(local)
 
 const service = new ExplorerService(
   chain,
