@@ -12,6 +12,8 @@ from .addrman import AddressManager
 from .errors import ProtocolError
 from .netaddress import NetAddress
 from .peer import PeerState
+from p2p.constants import DEFAULT_TCP_PORT
+
 from .protocol import (
     AddrMessage,
     GetHeadersMessage,
@@ -65,6 +67,25 @@ class NetProcessing:
             peer.user_agent = msg.user_agent
             peer.start_height = msg.start_height
             peer.relay = msg.relay
+            try:
+                reported_ip = msg.addr_from.ip
+                if not reported_ip or reported_ip in {"0.0.0.0", "::"}:
+                    reported_ip = peer.address.ip
+                reported_port = int(msg.addr_from.port or 0)
+                if not (1 <= reported_port <= 65535):
+                    reported_port = DEFAULT_TCP_PORT
+                if reported_port >= 49152 and DEFAULT_TCP_PORT:
+                    reported_port = DEFAULT_TCP_PORT
+                reported = NetAddress(
+                    services=msg.services,
+                    ip=reported_ip,
+                    port=reported_port,
+                    timestamp=int(time.time()),
+                )
+                self.addrman.add([reported])
+                peer.address = reported
+            except Exception:
+                pass
             if not peer.version_sent:
                 version = self.build_version(peer, local_addr, self.chain_height())
                 await send("version", version.serialize())

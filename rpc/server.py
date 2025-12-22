@@ -444,6 +444,10 @@ def main() -> None:
     # Lazy import uvicorn so the module is importable in tests without uvicorn installed
     import uvicorn
 
+    log.info(
+        "RPC server listening",
+        extra={"host": cfg.host, "port": cfg.port, "ping": "node.ping"},
+    )
     uvicorn.run(
         app,
         host=cfg.host,
