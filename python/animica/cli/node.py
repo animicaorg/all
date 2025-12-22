@@ -1243,7 +1243,7 @@ def up(
         help="Seconds between sync progress checks",
     ),
     allow_bootstrap_rpc: bool = typer.Option(
-        False,
+        True,
         "--allow-bootstrap-rpc/--no-allow-bootstrap-rpc",
         help="Allow bootstrap RPC usage for optional discovery/sync comparison",
     ),
