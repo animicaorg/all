@@ -8,14 +8,8 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, List, Optional, Tuple
-from urllib.parse import urlparse
 
-# Try to use our multiaddr helper if present; fall back to a basic parser.
-try:
-    from p2p.transport import multiaddr as _ma  # type: ignore
-except Exception:  # pragma: no cover
-    _ma = None  # type: ignore
-
+from p2p.peer.peer_addr import normalize_peer_addr
 
 @dataclass(frozen=True)
 class AddressEntry:
@@ -31,18 +25,6 @@ class AddressEntry:
     bad_count: int
     good_count: int
     score: Optional[float]
-
-
-_MULTIADDR_SIMPLE_RE = re.compile(
-    # Examples: /ip4/1.2.3.4/tcp/30303  |  /dns/seed.example.com/tcp/30303  |  /ip6/[::1]/tcp/9000
-    r"^/(ip4|ip6|dns|dns4|dns6)/([^/]+)/tcp/([0-9]{1,5})(?:/(quic|ws|wss))?$",
-    re.IGNORECASE,
-)
-
-_HOST_PORT_RE = re.compile(
-    # host:port where host can be domain or IPv4; for IPv6 require [::1]:port
-    r"^(?P<host>(?:\[?[0-9a-fA-F:]+\]?|[A-Za-z0-9.\-]+)):(?P<port>\d{1,5})$"
-)
 
 
 def _now() -> float:
@@ -114,62 +96,14 @@ class AddressBook:
 
         Returns (norm, proto, host, port). Raises ValueError on invalid input.
         """
-        a = addr.strip()
-        if not a:
-            raise ValueError("empty address")
-
-        # Multiaddr path
-        if a.startswith("/"):
-            if _ma and hasattr(_ma, "is_valid") and _ma.is_valid(a):  # type: ignore[attr-defined]
-                comp = _ma.parse(a)  # type: ignore[attr-defined]
-                proto = comp.get("transport", "tcp")
-                host = comp.get("host")
-                port = int(comp.get("port"))
-                _validate_host(host)
-                _validate_port(port)
-                return a, proto, host, port
-
-            # Basic multiaddr regex fallback
-            m = _MULTIADDR_SIMPLE_RE.match(a)
-            if not m:
-                raise ValueError(f"invalid multiaddr: {a}")
-            _net, host_raw, port_s, transport = m.groups()
-            host = _normalize_host_token(_net.lower(), host_raw)
-            port = int(port_s)
-            _validate_port(port)
-            proto = (transport or "tcp").lower()
-            return a, proto, host, port
-
-        # URL form
-        if "://" in a:
-            u = urlparse(a)
-            if not (u.scheme and u.hostname and u.port):
-                raise ValueError(f"invalid URL address: {a}")
-            proto = u.scheme.lower()
-            if proto not in ("tcp", "quic", "ws", "wss"):
-                raise ValueError(f"unsupported URL scheme: {proto}")
-            host = u.hostname
-            _validate_host(host)
-            port = int(u.port)
-            _validate_port(port)
-            host_disp = host if _is_ipv6(host) is False else f"[{host}]"
-            norm = f"{proto}://{host_disp}:{port}"
-            return norm, proto, host, port
-
-        # host:port fallback
-        m = _HOST_PORT_RE.match(a)
-        if m:
-            host_token = m.group("host")
-            port = int(m.group("port"))
-            _validate_port(port)
-            host = _strip_ipv6_brackets(host_token)
-            _validate_host(host)
-            proto = "tcp"
-            host_disp = host if not _is_ipv6(host) else f"[{host}]"
-            norm = f"{proto}://{host_disp}:{port}"
-            return norm, proto, host, port
-
-        raise ValueError(f"unrecognized address format: {a}")
+        parsed = normalize_peer_addr(addr, allow_quic=True, allow_ws=True)
+        if not parsed.addr:
+            raise ValueError(parsed.reason or "unrecognized address format")
+        host = parsed.addr.host
+        port = parsed.addr.port
+        _validate_host(host)
+        _validate_port(port)
+        return parsed.addr.canonical, parsed.addr.scheme, host, port
 
     # --------------- Storage ops ---------------- #
 
@@ -372,12 +306,6 @@ def _row_to_entry(r: sqlite3.Row) -> AddressEntry:
     )
 
 
-def _strip_ipv6_brackets(host: str) -> str:
-    if host.startswith("[") and host.endswith("]"):
-        return host[1:-1]
-    return host
-
-
 def _is_ipv6(host: str) -> bool:
     try:
         return isinstance(ipaddress.ip_address(host), ipaddress.IPv6Address)
@@ -403,13 +331,3 @@ def _validate_port(port: int) -> None:
     if not (0 < int(port) < 65536):
         raise ValueError(f"invalid port: {port}")
 
-
-def _normalize_host_token(net: str, token: str) -> str:
-    """
-    Convert multiaddr host token to plain host string.
-    """
-    if net == "ip6":
-        return _strip_ipv6_brackets(token)  # token may already be without brackets
-    if net in ("ip4", "dns", "dns4", "dns6"):
-        return token
-    raise ValueError(f"unsupported multiaddr net: {net}")

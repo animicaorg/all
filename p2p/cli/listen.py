@@ -356,7 +356,10 @@ def _build_argparser() -> argparse.ArgumentParser:
         help="Listen multiaddr (repeatable), e.g. /ip4/0.0.0.0/tcp/30333",
     )
     p.add_argument(
-        "--seed", action="append", default=[], help="Seed multiaddr (repeatable)"
+        "--seed",
+        action="append",
+        default=[],
+        help="Seed address (tcp://host:port or multiaddr; repeatable)",
     )
     p.add_argument(
         "--enable-quic",
