@@ -162,9 +162,9 @@ def get_network_defaults(network: str) -> dict[str, any]:
             "p2p_port": 30333,
             "metrics_port": 9000,
             "compose_file": repo_root / "ops" / "docker" / "docker-compose.mainnet.yml",
-            "genesis_path": "core/genesis/genesis.mainnet.json",
+            "genesis_path": "core/genesis/genesis.json",
             "data_dir": _network_data_dir(1),
-            "db_name": "mainnet.db",
+            "db_name": "animica.db",
         },
         "testnet": {
             "chain_id": 2,
@@ -174,9 +174,9 @@ def get_network_defaults(network: str) -> dict[str, any]:
             "p2p_port": 31334,
             "metrics_port": 19000,
             "compose_file": repo_root / "ops" / "docker" / "docker-compose.testnet.yml",
-            "genesis_path": "core/genesis/genesis.testnet.json",
+            "genesis_path": "genesis/genesis.sample.testnet.json",
             "data_dir": _network_data_dir(2),
-            "db_name": "testnet.db",
+            "db_name": "animica.db",
         },
         "devnet": {
             "chain_id": 1337,
@@ -186,9 +186,9 @@ def get_network_defaults(network: str) -> dict[str, any]:
             "p2p_port": 31335,
             "metrics_port": 29000,
             "compose_file": repo_root / "ops" / "docker" / "docker-compose.devnet.yml",
-            "genesis_path": "core/genesis/genesis.json",
+            "genesis_path": "genesis/genesis.sample.devnet.json",
             "data_dir": _network_data_dir(1337),
-            "db_name": "devnet.db",
+            "db_name": "animica.db",
         },
         "local-devnet": {
             "chain_id": 1337,
@@ -198,9 +198,9 @@ def get_network_defaults(network: str) -> dict[str, any]:
             "p2p_port": 31336,
             "metrics_port": 39000,
             "compose_file": repo_root / "tests" / "devnet" / "docker-compose.yml",
-            "genesis_path": "core/genesis/genesis.json",
+            "genesis_path": "genesis/genesis.sample.devnet.json",
             "data_dir": _network_data_dir(1337),
-            "db_name": "devnet.db",
+            "db_name": "animica.db",
         },
     }
     
