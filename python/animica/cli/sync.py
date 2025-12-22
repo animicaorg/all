@@ -27,6 +27,7 @@ from animica.cli.peer import (
 )
 from animica.cli.rpc_guard import guard_bootstrap_rpc
 from animica.seeds import get_seed_nodes
+from animica.cli.rpc_utils import candidate_rpc_urls, is_method_not_found
 from .timeouts import DEFAULT_RPC_TIMEOUT, RPC_TIMEOUT_ENV, resolve_timeout
 
 app = typer.Typer(help="Manage blockchain synchronization.")
@@ -193,6 +194,19 @@ async def _get_sync_status(rpc_url: str) -> Optional[Dict[str, Any]]:
     
     # No sync status method available
     return None
+
+
+def _extract_node_status(payload: Dict[str, Any]) -> tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
+    chain_info = payload.get("chain") if isinstance(payload, dict) else None
+    head_info = None
+    if isinstance(chain_info, dict):
+        head_info = chain_info.get("head") or chain_info.get("summary")
+    if head_info is None:
+        head_info = payload.get("head")
+
+    sync_status = payload.get("sync") if isinstance(payload, dict) else None
+    p2p_status = payload.get("p2p") if isinstance(payload, dict) else None
+    return head_info if isinstance(head_info, dict) else None, sync_status if isinstance(sync_status, dict) else None, p2p_status if isinstance(p2p_status, dict) else None
 
 
 async def _get_head_info(rpc_url: str) -> Optional[Dict[str, Any]]:
@@ -551,33 +565,68 @@ def sync_status(
     bootstrap_source = "live"
     
     try:
-        # Gather all information concurrently
-        async def gather_info():
-            return await asyncio.gather(
-                _get_head_info(url),
-                _get_sync_status(url),
-                _get_peer_count(url),
-                _get_peers(url),
-                _get_bootstrap_head_info(bootstrap_url),
-                return_exceptions=True
+        candidate_urls = candidate_rpc_urls(url)
+        head_info: Optional[Dict[str, Any]] = None
+        sync_status: Optional[Dict[str, Any]] = None
+        p2p_status: Optional[Dict[str, Any]] = None
+        peer_count_result: Optional[int] = None
+        peer_count_error = None
+        peers: List[Dict[str, Any]] = []
+        bootstrap_head: Optional[Dict[str, Any]] = None
+        last_error: Optional[Exception] = None
+        used_url: Optional[str] = None
+
+        for candidate in candidate_urls:
+            try:
+                node_status = asyncio.run(
+                    rpc_call("node.getStatus", [], rpc_url=candidate, timeout=DEFAULT_RPC_TIMEOUT)
+                )
+                if isinstance(node_status, dict):
+                    head_info, sync_status, p2p_status = _extract_node_status(node_status)
+                    used_url = candidate
+                    break
+            except Exception as exc:
+                if is_method_not_found(exc):
+                    try:
+                        async def gather_info():
+                            return await asyncio.gather(
+                                _get_head_info(candidate),
+                                _get_sync_status(candidate),
+                                _get_peer_count(candidate),
+                                _get_peers(candidate),
+                                _get_bootstrap_head_info(bootstrap_url),
+                                return_exceptions=True
+                            )
+
+                        head_info, sync_status, peer_count_result, peers, bootstrap_head = asyncio.run(gather_info())
+
+                        if isinstance(head_info, Exception):
+                            head_info = None
+                        if isinstance(sync_status, Exception):
+                            sync_status = None
+                        if isinstance(peer_count_result, Exception):
+                            peer_count_error = peer_count_result
+                            peer_count_result = None
+                        if isinstance(peers, Exception):
+                            peer_count_error = peer_count_error or peers
+                            peers = []
+                        if isinstance(bootstrap_head, Exception):
+                            bootstrap_head = None
+
+                        used_url = candidate
+                        break
+                    except Exception as legacy_exc:
+                        last_error = legacy_exc
+                        continue
+                last_error = exc
+                continue
+
+        if used_url is None:
+            raise RuntimeError(
+                f"All connection attempts failed (tried: {', '.join(candidate_urls)}): {last_error}"
             )
-        
-        head_info, sync_status, peer_count_result, peers, bootstrap_head = asyncio.run(gather_info())
-        
-        # Handle exceptions
-        if isinstance(head_info, Exception):
-            head_info = None
-        if isinstance(sync_status, Exception):
-            sync_status = None
-        peer_count_error: Optional[Exception] = None
-        if isinstance(peer_count_result, Exception):
-            peer_count_error = peer_count_result
-            peer_count_result = None
-        if isinstance(peers, Exception):
-            peer_count_error = peer_count_error or peers
-            peers = []
-        if isinstance(bootstrap_head, Exception):
-            bootstrap_head = None
+
+        url = used_url
 
         if bootstrap_head is None and bootstrap_url:
             cached_bootstrap = _load_cached_bootstrap_head(net_cfg, bootstrap_url)
@@ -625,15 +674,18 @@ def sync_status(
         peer_count = peer_count_result
     elif peers:
         peer_count = len(peers)
+    elif p2p_status:
+        peer_count = p2p_status.get("peers_total")
     
     # JSON output
     peer_error_msg = None
-    if peer_count_result is None and peer_count is None and "peer_count_result" in locals():
-        peer_error_msg = "RPC peer methods unavailable"
-    if peer_count_error:
-        peer_error_msg = str(peer_count_error)
+    if p2p_status is None:
+        if peer_count_result is None and peer_count is None and "peer_count_result" in locals():
+            peer_error_msg = "RPC peer methods unavailable"
+        if peer_count_error:
+            peer_error_msg = str(peer_count_error)
 
-    rpc_unavailable = head_info is None and sync_status is None and peer_error_msg
+    rpc_unavailable = head_info is None and sync_status is None and (peer_error_msg or peer_count_error)
     if rpc_unavailable and not peers:
         typer.secho(f"RPC unavailable at {url}: {peer_error_msg}", fg=typer.colors.RED, err=True)
         raise typer.Exit(code=1)
@@ -641,6 +693,7 @@ def sync_status(
     if json_output:
         output = {
             "rpc_url": url,
+            "rpc_reachable": True,
             "bootstrap_rpc": bootstrap_url,
             "chain_id": chain_id,
             "height": height,
@@ -651,6 +704,10 @@ def sync_status(
         }
         if sync_progress:
             output["sync_progress"] = sync_progress
+        if p2p_status:
+            output["p2p_running"] = p2p_status.get("p2p_running")
+            output["peers_inbound"] = p2p_status.get("peers_inbound")
+            output["peers_outbound"] = p2p_status.get("peers_outbound")
         if peer_error_msg:
             output["peer_error"] = peer_error_msg
         if verbose and peers:
@@ -666,6 +723,7 @@ def sync_status(
     
     # Connection info
     typer.echo(f"Target RPC:    {url}")
+    typer.echo("RPC reachable: yes")
     bootstrap_label = "disabled" if not allow_bootstrap_rpc else (bootstrap_url or "not configured")
     if bootstrap_source == "cached" and bootstrap_url:
         bootstrap_label = f"{bootstrap_label} (cached head)"
@@ -713,7 +771,17 @@ def sync_status(
     
     # Peer info
     typer.secho("Network:", fg=typer.colors.BRIGHT_BLUE, bold=True)
-    if peer_count is None:
+    if p2p_status:
+        typer.echo(f"  P2P running: {p2p_status.get('p2p_running')}")
+        inbound = p2p_status.get("peers_inbound")
+        outbound = p2p_status.get("peers_outbound")
+        if peer_count is None:
+            peer_count = p2p_status.get("peers_total")
+        if peer_count is not None:
+            typer.echo(f"  Peers:     {peer_count} connected (in={inbound}, out={outbound})")
+        elif peer_error_msg:
+            typer.echo(f"  Peers:     unavailable ({peer_error_msg})")
+    elif peer_count is None:
         typer.echo(
             f"  Peers:     unavailable{f' ({peer_error_msg})' if peer_error_msg else ''}"
         )

@@ -21,6 +21,11 @@ runner = CliRunner()
 respx_mock = respx if respx is not None else pytest.mark.skip(reason="respx not installed")
 
 
+@pytest.fixture(autouse=True)
+def _disable_post_start_peer_bootstrap(monkeypatch: Any) -> None:
+    monkeypatch.setattr(node, "_post_start_peer_bootstrap", lambda *args, **kwargs: None)
+
+
 # Test helper functions for up_all tests
 def create_mock_compose_files(tmpdir: Path, networks: list[str]) -> dict[str, Path]:
     """Create mock compose files for testing."""
@@ -99,59 +104,51 @@ def test_status_and_head(monkeypatch: Any) -> None:
     rpc_url = "http://localhost:9999/rpc"
     monkeypatch.setenv("ANIMICA_RPC_URL", rpc_url)
 
-    head_route = respx.post(rpc_url)(
-        side_effect=[
-            httpx.Response(
-                200,
-                json={
-                    "jsonrpc": "2.0",
-                    "id": 1,
-                    "result": {"height": 42, "hash": "0xabc", "chainId": 10},
-                },
-            ),
-            httpx.Response(
-                200, json={"jsonrpc": "2.0", "id": 1, "result": {"transactions": []}}
-            ),
-            httpx.Response(
-                200, json={"jsonrpc": "2.0", "id": 1, "result": {"syncing": False}}
-            ),
-            httpx.Response(
-                200,
-                json={"jsonrpc": "2.0", "id": 1, "result": 2},
-            ),
-            httpx.Response(
-                200,
-                json={
-                    "jsonrpc": "2.0",
-                    "id": 1,
-                    "result": [{"id": "peer-1", "addr": "127.0.0.1:30333"}],
-                },
-            ),
-            httpx.Response(
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content.decode("utf-8"))
+        method = payload.get("method")
+        if method == "node.getStatus":
+            return httpx.Response(
                 200,
                 json={
                     "jsonrpc": "2.0",
                     "id": 1,
                     "result": {
-                        "p2p_running": True,
-                        "peers_total": 1,
-                        "peers_inbound": 0,
-                        "peers_outbound": 1,
-                        "bootstrap_attempts_last_5m": 1,
-                        "bootstrap_last_attempt": {"addr": "seed", "success": True},
+                        "rpc_reachable": True,
+                        "chain": {
+                            "head": {"height": 42, "hash": "0xabc", "chainId": 10},
+                        },
+                        "p2p": {
+                            "p2p_running": True,
+                            "peers_total": 1,
+                            "peers_inbound": 0,
+                            "peers_outbound": 1,
+                            "bootstrap_attempts_last_5m": 1,
+                            "bootstrap_last_attempt": {"addr": "seed", "success": True},
+                        },
+                        "sync": {"syncing": False},
                     },
                 },
-            ),
-            httpx.Response(
+            )
+        if method == "chain.getBlockByHeight":
+            return httpx.Response(
+                200, json={"jsonrpc": "2.0", "id": 1, "result": {"transactions": []}}
+            )
+        if method == "chain.getHead":
+            return httpx.Response(
                 200,
                 json={
                     "jsonrpc": "2.0",
                     "id": 1,
                     "result": {"height": 42, "hash": "0xabc", "chainId": 10},
                 },
-            ),
-        ]
-    )
+            )
+        return httpx.Response(
+            200,
+            json={"jsonrpc": "2.0", "id": 1, "error": {"message": "Method not found"}},
+        )
+
+    head_route = respx.post(rpc_url).mock(side_effect=handler)
 
     status_result = runner.invoke(node.app, ["status"])
     assert status_result.exit_code == 0
@@ -172,6 +169,7 @@ def test_status_stops_after_max_retries(monkeypatch: Any) -> None:
         raise RuntimeError("boom")
 
     monkeypatch.setattr(node, "rpc_call", failing_rpc_call)
+    monkeypatch.setenv("ANIMICA_RPC_URL", "http://rpc.invalid:9999/rpc")
     result = runner.invoke(
         node.app,
         ["status", "--max-retries", "2", "--retry-delay", "0.01"],
@@ -180,6 +178,112 @@ def test_status_stops_after_max_retries(monkeypatch: Any) -> None:
     assert result.exit_code == 1
     assert len(attempts) == 2
     assert "failed after 2 attempts" in result.stdout or "failed after 2 attempts" in result.stderr
+
+
+@respx_mock
+def test_status_prefers_env_over_cached(monkeypatch: Any, tmp_path: Path) -> None:
+    cfg = _dummy_net_cfg(tmp_path)
+    monkeypatch.setattr(node, "load_network_config", lambda *args, **kwargs: cfg)
+
+    rpc_url = "http://localhost:9999/rpc"
+    monkeypatch.setenv("ANIMICA_RPC_URL", rpc_url)
+
+    state_path = node._sync_state_path(cfg)
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(json.dumps({"rpc_url": "https://rpc.other.org/rpc", "height": 99}))
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content.decode("utf-8"))
+        if payload.get("method") == "node.getStatus":
+            return httpx.Response(
+                200,
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "result": {
+                        "rpc_reachable": True,
+                        "chain": {
+                            "head": {"height": 12, "hash": "0xabc", "chainId": 1},
+                        },
+                        "p2p": {"p2p_running": False, "peers_total": 0, "peers_inbound": 0, "peers_outbound": 0},
+                        "sync": {"syncing": False},
+                    },
+                },
+            )
+        return httpx.Response(
+            200, json={"jsonrpc": "2.0", "id": 1, "error": {"message": "Method not found"}}
+        )
+
+    respx.post(rpc_url).mock(side_effect=handler)
+
+    result = runner.invoke(node.app, ["status"])
+    assert result.exit_code == 0
+    assert f"RPC URL: {rpc_url}" in result.output
+    assert "cached" not in result.output.lower()
+
+
+@respx_mock
+def test_status_rpc_url_flag_overrides_env(monkeypatch: Any, tmp_path: Path) -> None:
+    cfg = _dummy_net_cfg(tmp_path)
+    monkeypatch.setattr(node, "load_network_config", lambda *args, **kwargs: cfg)
+
+    env_url = "http://localhost:9998/rpc"
+    cli_url = "http://localhost:9997/rpc"
+    monkeypatch.setenv("ANIMICA_RPC_URL", env_url)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content.decode("utf-8"))
+        assert str(request.url) == cli_url
+        if payload.get("method") == "node.getStatus":
+            return httpx.Response(
+                200,
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "result": {
+                        "rpc_reachable": True,
+                        "chain": {
+                            "head": {"height": 7, "hash": "0xabc", "chainId": 1},
+                        },
+                        "p2p": {"p2p_running": False, "peers_total": 0, "peers_inbound": 0, "peers_outbound": 0},
+                        "sync": {"syncing": False},
+                    },
+                },
+            )
+        return httpx.Response(
+            200, json={"jsonrpc": "2.0", "id": 1, "error": {"message": "Method not found"}}
+        )
+
+    respx.post(cli_url).mock(side_effect=handler)
+
+    result = runner.invoke(node.app, ["status", "--rpc-url", cli_url])
+    assert result.exit_code == 0
+    assert f"RPC URL: {cli_url}" in result.output
+
+
+def test_status_cached_requires_flag(monkeypatch: Any, tmp_path: Path) -> None:
+    cfg = _dummy_net_cfg(tmp_path)
+    monkeypatch.setattr(node, "load_network_config", lambda *args, **kwargs: cfg)
+
+    state_path = node._sync_state_path(cfg)
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(json.dumps({"rpc_url": "https://rpc.animica.org/rpc", "height": 99}))
+
+    async def failing_rpc_call(*args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(node, "rpc_call", failing_rpc_call)
+
+    result = runner.invoke(node.app, ["status", "--max-retries", "1", "--retry-delay", "0.01"])
+    assert result.exit_code == 1
+    output = result.stdout + (result.stderr or "")
+    assert "Cached sync state available" in output
+
+    result_cached = runner.invoke(
+        node.app, ["status", "--max-retries", "1", "--retry-delay", "0.01", "--use-cached"]
+    )
+    assert result_cached.exit_code == 0
+    assert "Last known cached state" in result_cached.output
 
 
 def test_auto_bootstrap_fetches_when_db_missing(monkeypatch: Any, tmp_path: Path) -> None:
@@ -666,6 +770,8 @@ def test_status_retries_on_connection_error(monkeypatch: Any) -> None:
         original_sleep(duration)
     
     head_route = respx.post(rpc_url)(side_effect=side_effect_fn)
+    respx.post("http://127.0.0.1:9997/rpc")(side_effect=side_effect_fn)
+    respx.post("http://[::1]:9997/rpc")(side_effect=side_effect_fn)
     
     # Patch time.sleep to track retry attempts
     import time
