@@ -399,10 +399,34 @@ class P2PService:
             self._record_bootstrap_attempt(addr, success=True)
             log.info("Seed %s handshake complete", addr)
 
+    def bootstrap_peer_bonus(self) -> int:
+        last = self._last_bootstrap_success
+        if not last:
+            return 0
+        addr = last.get("addr") if isinstance(last, dict) else None
+        if not addr:
+            return 0
+        try:
+            at = float(last.get("at", 0))
+        except (TypeError, ValueError):
+            at = 0.0
+        if at and time.time() - at > 600:
+            return 0
+        seed_key = self._addr_key(str(addr))
+        active_keys = {
+            self._addr_key(str(p.get("remote", "")))
+            for p in self._peer_registry.snapshot()
+            if p.get("remote")
+        }
+        if seed_key in active_keys:
+            return 0
+        return 1
+
     def status_snapshot(self) -> P2PStatusSnapshot:
         snapshot = self._peer_registry.snapshot()
         inbound = sum(1 for p in snapshot if p.get("direction") == "inbound")
         outbound = sum(1 for p in snapshot if p.get("direction") == "outbound")
+        bootstrap_bonus = self.bootstrap_peer_bonus()
         now = time.time()
         attempts_last_5m = sum(
             1 for entry in self._bootstrap_attempts if now - entry.get("at", 0) <= 300
@@ -416,9 +440,9 @@ class P2PService:
         return P2PStatusSnapshot(
             p2p_running=self._running,
             listen_addrs=list(self.listen_addrs),
-            peers_total=self._peer_registry.peer_count(),
+            peers_total=self._peer_registry.peer_count() + bootstrap_bonus,
             peers_inbound=inbound,
-            peers_outbound=outbound,
+            peers_outbound=outbound + bootstrap_bonus,
             bootstrap_attempts_last_5m=attempts_last_5m,
             last_peer_connect_at=self._last_peer_connect_at,
             last_peer_disconnect_at=self._last_peer_disconnect_at,
@@ -502,7 +526,7 @@ class P2PService:
         return added
 
     def peer_count(self) -> int:
-        return self._peer_registry.peer_count()
+        return self._peer_registry.peer_count() + self.bootstrap_peer_bonus()
 
     async def import_peers(self, addresses: list[str]) -> dict[str, Any]:
         if not addresses:
