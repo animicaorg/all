@@ -21,9 +21,16 @@ from p2p import version as p2p_version
 from p2p.crypto import keys as keys_mod
 from p2p.crypto import peer_id as peer_id_mod
 from p2p.peer import peerstore as pstore
+from p2p.peer.peer_addr import PeerAddrParseResult, normalize_peer_addr
+from p2p.peer.p2p_store import (
+    apply_umask_from_env,
+    ensure_writable,
+    merge_peer_files,
+    read_peers_json,
+)
 from p2p.transport.base import ListenConfig
 from p2p.constants import DEFAULT_TCP_PORT
-from p2p.transport.multiaddr import normalize_multiaddr, parse_multiaddr
+from p2p.transport.multiaddr import parse_multiaddr
 from p2p.transport.tcp import TcpTransport
 from p2p.wire.encoding import decode_payload, encode_payload
 from p2p.wire.frames import Framer, unpack_frame
@@ -71,7 +78,7 @@ class _PeerState:
     pending_headers: Optional[asyncio.Future] = None
     connected_at: float = field(default_factory=time.time)
     feeler: bool = False
-    known_addrs: Set[str] = field(default_factory=set)
+    known_addrs: "OrderedDict[str, float]" = field(default_factory=OrderedDict)
 
 
 @dataclass(slots=True)
@@ -79,8 +86,12 @@ class _AddrRecord:
     address: str
     last_seen: float
     last_success: Optional[float] = None
+    last_failure: Optional[float] = None
+    failure_reason: Optional[str] = None
     failures: int = 0
     score: float = 0.0
+    penalty_score: float = 0.0
+    source: str = "unknown"
 
     def touch_seen(self, now: float) -> None:
         self.last_seen = now
@@ -90,22 +101,58 @@ class _AddrRecord:
         self.failures = 0
         self.score = min(self.score + 1.0, 100.0)
 
-    def mark_failure(self) -> None:
+    def mark_failure(self, now: float, reason: Optional[str] = None) -> None:
+        self.last_failure = now
+        if reason:
+            self.failure_reason = reason
         self.failures += 1
         self.score = max(self.score - 0.5, -10.0)
+        self.penalty_score = min(self.penalty_score + 1.0, 100.0)
 
 
 class _AddrMan:
     def __init__(self) -> None:
         self._records: dict[str, _AddrRecord] = {}
 
-    def add(self, address: str, *, now: Optional[float] = None) -> None:
+    def add(
+        self,
+        address: str,
+        *,
+        now: Optional[float] = None,
+        source: Optional[str] = None,
+        last_seen: Optional[float] = None,
+        last_success: Optional[float] = None,
+        last_failure: Optional[float] = None,
+        failure_reason: Optional[str] = None,
+        score: Optional[float] = None,
+    ) -> None:
         now = time.time() if now is None else now
         rec = self._records.get(address)
         if rec:
-            rec.touch_seen(now)
+            rec.touch_seen(last_seen or now)
+            if last_success:
+                rec.last_success = last_success
+            if last_failure:
+                rec.last_failure = last_failure
+            if failure_reason:
+                rec.failure_reason = failure_reason
+            if score is not None:
+                rec.score = max(rec.score, float(score))
+            if source:
+                rec.source = source
             return
-        self._records[address] = _AddrRecord(address=address, last_seen=now)
+        rec = _AddrRecord(address=address, last_seen=last_seen or now)
+        if last_success:
+            rec.last_success = last_success
+        if last_failure:
+            rec.last_failure = last_failure
+        if failure_reason:
+            rec.failure_reason = failure_reason
+        if score is not None:
+            rec.score = float(score)
+        if source:
+            rec.source = source
+        self._records[address] = rec
 
     def mark_success(self, address: str) -> None:
         rec = self._records.get(address)
@@ -115,12 +162,13 @@ class _AddrMan:
             self._records[address] = rec
         rec.mark_success(now)
 
-    def mark_failure(self, address: str) -> None:
+    def mark_failure(self, address: str, *, reason: Optional[str] = None) -> None:
         rec = self._records.get(address)
+        now = time.time()
         if rec is None:
-            rec = _AddrRecord(address=address, last_seen=time.time())
+            rec = _AddrRecord(address=address, last_seen=now)
             self._records[address] = rec
-        rec.mark_failure()
+        rec.mark_failure(now, reason=reason)
 
     def size(self) -> int:
         return len(self._records)
@@ -260,6 +308,7 @@ class P2PService:
         # Parameters kept for backward compatibility; TCP-only transport is used
         # by default in this service implementation.
         _ = (enable_quic, enable_ws, nat)
+        apply_umask_from_env()
 
         self.listen_addrs = listen_addrs or ["/ip4/0.0.0.0/tcp/30333"]
         self._configured_seeds = list(seeds or [])
@@ -289,9 +338,14 @@ class P2PService:
                 peerstore_path = base_dir / f"chain-{self.chain_id}" / "p2p"
 
         peerstore_path = Path(peerstore_path).expanduser()
-        peerstore_dir = peerstore_path if not peerstore_path.suffix else peerstore_path.parent
+        writable_peerstore = ensure_writable(peerstore_path)
+        peerstore_path = writable_peerstore.path
+        peerstore_dir = (
+            peerstore_path if not peerstore_path.suffix else peerstore_path.parent
+        )
         self._peerstore_dir = peerstore_dir
         self._peers_json_path = peerstore_dir / "peers.json"
+        self._peerstore_fallback_path = writable_peerstore.fallback_path
 
         # Identity + stable peer id (co-locate with peerstore by default)
         identity_path = os.environ.get("ANIMICA_P2P_IDENTITY_PATH")
@@ -318,7 +372,12 @@ class P2PService:
 
         # Persistent peerstore
         self._ensure_peerstore_dir(peerstore_dir)
-        self.peerstore = pstore.PeerStore(peerstore_path)
+        fallback_json = (
+            self._peerstore_fallback_path / "peers.json"
+            if self._peerstore_fallback_path
+            else None
+        )
+        self.peerstore = pstore.open_peerstore(peerstore_path, json_fallback=fallback_json)
 
         # Transport (TCP only for now)
         prologue = f"animica/tcp/{self.chain_id}".encode()
@@ -335,6 +394,8 @@ class P2PService:
         self._dial_attempt_total: int = 0
         self._dial_success_total: int = 0
         self._dial_last_error: Optional[dict[str, Any]] = None
+        self._allow_ws_addrs = False
+        self._allow_quic_addrs = False
 
         self._peer_lock = asyncio.Lock()
         self._peers: dict[str, _PeerState] = {}  # remote -> state
@@ -349,6 +410,17 @@ class P2PService:
         self._seen_blocks: "OrderedDict[bytes, float]" = OrderedDict()
         self._seen_tx_cap = 50_000
         self._seen_block_cap = 10_000
+        self._addr_peer_known_ttl = float(
+            os.environ.get("ANIMICA_P2P_ADDR_KNOWN_TTL", "600") or 600
+        )
+        self._peer_addr_rate_limit = int(
+            os.environ.get("ANIMICA_P2P_ADDR_RATE_LIMIT", "256") or 256
+        )
+        self._peer_addr_rate_window = float(
+            os.environ.get("ANIMICA_P2P_ADDR_RATE_WINDOW", "60") or 60
+        )
+        self._peer_addr_rate: dict[str, Deque[float]] = {}
+        self._sync_peer_backoff: dict[str, float] = {}
 
         # Tiny metrics snapshot used by RPC/CLI
         self._stats: dict[str, int] = {
@@ -373,6 +445,9 @@ class P2PService:
         )
         self._addr_request_max = int(
             os.environ.get("ANIMICA_P2P_ADDR_REQUEST_MAX", "32") or 32
+        )
+        self._peer_exchange_limit = int(
+            os.environ.get("ANIMICA_P2P_PEER_EXCHANGE_LIMIT", "128") or 128
         )
         self._addr_relay_interval = float(
             os.environ.get("ANIMICA_P2P_ADDR_RELAY_INTERVAL", "45") or 45
@@ -470,6 +545,10 @@ class P2PService:
 
         def _discard(t: asyncio.Task) -> None:
             self._child_tasks.discard(t)
+            with contextlib.suppress(asyncio.CancelledError):
+                exc = t.exception()
+                if exc is not None:
+                    log.warning("Child task %s failed: %s", t.get_name(), exc, exc_info=True)
 
         task.add_done_callback(_discard)
         return task
@@ -479,6 +558,12 @@ class P2PService:
             return
         self._running = True
         await self._maybe_detect_external_ip()
+
+        if self._peerstore_fallback_path:
+            fallback_snapshot = self._peerstore_fallback_path / "peers.json"
+            merged = merge_peer_files(self._peers_json_path, [fallback_snapshot])
+            if merged:
+                log.info("Merged fallback peer snapshot into primary store")
 
         # Persist configured seeds so a restarted node reuses them immediately
         if self.seeds:
@@ -617,7 +702,7 @@ class P2PService:
             log.warning("Failed to ensure peerstore dir %s: %s", path, exc)
             return
         try:
-            path.chmod(0o755)
+            path.chmod(0o775)
         except Exception:
             return
 
@@ -673,12 +758,16 @@ class P2PService:
         addrs: list[str] = []
         for key in ("ANIMICA_P2P_ADVERTISED_ADDRS", "ANIMICA_P2P_ADVERTISE_ADDR"):
             for entry in self._env_list(key):
-                addrs.append(self._normalize_seed(entry))
+                normalized = self._normalize_seed(entry)
+                if normalized:
+                    addrs.append(normalized)
         if addrs:
             return list(dict.fromkeys(addrs))
         if self._external_ip:
             port = self._local_listen_port()
-            addrs.append(self._normalize_seed(f"{self._external_ip}:{port}"))
+            normalized = self._normalize_seed(f"{self._external_ip}:{port}")
+            if normalized:
+                addrs.append(normalized)
             return list(dict.fromkeys(addrs))
         for addr in self.listen_addrs:
             try:
@@ -687,7 +776,9 @@ class P2PService:
                 if host in {"0.0.0.0", "::"}:
                     continue
                 if parsed.transport == "tcp" and parsed.port:
-                    addrs.append(self._normalize_seed(f"{host}:{parsed.port}"))
+                    normalized = self._normalize_seed(f"{host}:{parsed.port}")
+                    if normalized:
+                        addrs.append(normalized)
             except Exception:
                 continue
         return list(dict.fromkeys(addrs))
@@ -735,35 +826,13 @@ class P2PService:
     def _sanitize_peer_addr(self, address: str, *, fallback_port: int) -> Optional[str]:
         if not address:
             return None
-        normalized = self._normalize_seed(address)
-        host = None
-        port: Optional[int] = None
-        if normalized.startswith("/"):
-            try:
-                parsed = parse_multiaddr(normalized)
-            except Exception:
-                return None
-            if parsed.transport != "tcp":
-                return None
-            host = parsed.host or ""
-            if parsed.port:
-                try:
-                    port = int(parsed.port)
-                except (TypeError, ValueError):
-                    port = None
-        else:
-            raw = normalized
-            if "://" in raw:
-                parsed = urlparse(raw)
-                host = parsed.hostname
-                port = parsed.port
-            else:
-                h, _, p = raw.rpartition(":")
-                host = h or raw
-                try:
-                    port = int(p) if p else None
-                except (TypeError, ValueError):
-                    port = None
+        result = self._normalize_peer_addr(
+            address, fallback_port=fallback_port, source="sanitize"
+        )
+        if not result.addr:
+            return None
+        host = result.addr.host
+        port = result.addr.port
         if not host:
             return None
         if not self._is_routable_host(host):
@@ -772,7 +841,10 @@ class P2PService:
             port = fallback_port
         if self._is_ephemeral_port(port) and fallback_port and port != fallback_port:
             port = fallback_port
-        return self._normalize_seed(f"{host}:{port}")
+        normalized = self._normalize_peer_addr(
+            f"{host}:{port}", fallback_port=fallback_port, source="sanitize"
+        )
+        return normalized.addr.canonical if normalized.addr else None
 
     def _remember_addr(self, addr: str) -> None:
         addr_key = self._addr_key(addr)
@@ -787,9 +859,37 @@ class P2PService:
             for _, address, _ in self.peerstore.list_addresses(limit=5000):
                 if address:
                     normalized = self._normalize_seed(address)
-                    self._addrman.add(normalized)
+                    if normalized:
+                        self._addrman.add(normalized, source="peerstore")
         except Exception:
+            pass
+
+        self._load_addrman_from_snapshot(self._peers_json_path, source="snapshot")
+        if self._peerstore_fallback_path:
+            fallback_snapshot = self._peerstore_fallback_path / "peers.json"
+            self._load_addrman_from_snapshot(fallback_snapshot, source="fallback")
+
+    def _load_addrman_from_snapshot(self, path: Path, *, source: str) -> None:
+        if not path.exists():
             return
+        data = read_peers_json(path)
+        for peer in data.get("peers", []) or []:
+            if not isinstance(peer, dict):
+                continue
+            addrs = peer.get("addrs") or []
+            for addr in addrs:
+                normalized = self._normalize_seed(str(addr))
+                if not normalized:
+                    continue
+                self._addrman.add(
+                    normalized,
+                    source=peer.get("source") or source,
+                    last_seen=peer.get("last_seen"),
+                    last_success=peer.get("last_success"),
+                    last_failure=peer.get("last_failure"),
+                    failure_reason=peer.get("failure_reason"),
+                    score=peer.get("score"),
+                )
 
     async def _send_get_peers(self, peer: _PeerState) -> None:
         if not peer.hello_done.is_set():
@@ -802,14 +902,23 @@ class P2PService:
         await self._send(peer, MsgID.GET_PEERS, GetPeers(max_peers=self._addr_request_max))
 
     def _peer_knows_addr(self, peer: _PeerState, addr: str) -> bool:
-        return self._addr_key(addr) in peer.known_addrs
+        key = self._addr_key(addr)
+        ts = peer.known_addrs.get(key)
+        if ts is None:
+            return False
+        if time.time() - ts > self._addr_peer_known_ttl:
+            peer.known_addrs.pop(key, None)
+            return False
+        return True
 
     def _mark_peer_known(self, peer: _PeerState, addr: str) -> None:
         if not addr:
             return
-        peer.known_addrs.add(self._addr_key(addr))
+        key = self._addr_key(addr)
+        peer.known_addrs[key] = time.time()
+        peer.known_addrs.move_to_end(key)
         while len(peer.known_addrs) > self._addr_peer_known_cap:
-            peer.known_addrs.pop()
+            peer.known_addrs.popitem(last=False)
 
     def _sample_addrs_for_peer(self, peer: _PeerState, *, limit: int) -> list[str]:
         if limit <= 0:
@@ -849,45 +958,143 @@ class P2PService:
             self._mark_peer_known(peer, addr)
         self._record_addr_announced(len(addrs))
 
-    def _collect_peer_addrs(
-        self, *, limit: int, exclude: Optional[set[str]] = None
-    ) -> list[str]:
-        exclude = exclude or set()
-        addrs: list[str] = []
-        for addr in self._addrman.sample(limit=limit, exclude=set()):
-            if self._addr_key(addr) in exclude:
+    async def _send_peer_exchange(self, peer: _PeerState, *, limit: int) -> None:
+        if not peer.hello_done.is_set():
+            return
+        exclude = {self._addr_key(peer.remote)}
+        entries = []
+        for entry in self._collect_peer_entries(limit=limit, exclude=exclude):
+            addr = entry.get("addr")
+            if not isinstance(addr, str) or not addr:
                 continue
-            addrs.append(addr)
+            if self._peer_knows_addr(peer, addr):
+                continue
+            entry = dict(entry)
+            entry["peer_id"] = hashlib.sha3_256(addr.encode()).digest()
+            entries.append(entry)
+            self._mark_peer_known(peer, addr)
+        if not entries:
+            return
+        await self._send(peer, MsgID.PEERS, Peers(entries=entries))
+
+    def _collect_peer_entries(
+        self, *, limit: int, exclude: Optional[set[str]] = None
+    ) -> list[dict[str, Any]]:
+        exclude = exclude or set()
+        records: dict[str, dict[str, Any]] = {}
+        for rec in self._addrman.records():
+            key = self._addr_key(rec.address)
+            if key in exclude:
+                continue
+            records[key] = {
+                "addr": rec.address,
+                "last_seen": rec.last_seen,
+                "last_success": rec.last_success,
+                "last_failure": rec.last_failure,
+                "failure_reason": rec.failure_reason,
+                "score": rec.score,
+                "source": rec.source,
+            }
         try:
-            for peer_id, address, _ in self.peerstore.list_addresses(limit=limit):
+            for peer_id, address, last_seen in self.peerstore.list_addresses(
+                limit=limit
+            ):
                 if not address:
                     continue
                 normalized = self._normalize_seed(address)
-                if self._addr_key(normalized) in exclude:
+                if not normalized:
                     continue
-                addrs.append(normalized)
+                key = self._addr_key(normalized)
+                if key in exclude or key in records:
+                    continue
+                records[key] = {
+                    "addr": normalized,
+                    "last_seen": last_seen,
+                    "score": 0.0,
+                    "source": "peerstore",
+                }
         except Exception:
             pass
-        return list(dict.fromkeys(addrs))[:limit]
+        entries = list(records.values())
+        entries.sort(
+            key=lambda e: (
+                float(e.get("score") or 0.0),
+                float(e.get("last_seen") or 0.0),
+            ),
+            reverse=True,
+        )
+        return entries[:limit]
 
-    def _ingest_peer_addrs(self, addrs: list[str], *, source: str) -> int:
-        if not addrs:
+    def _ingest_peer_entries(
+        self,
+        entries: list[dict[str, Any]],
+        *,
+        source: str,
+        source_peer: Optional[_PeerState] = None,
+    ) -> int:
+        if not entries:
             return 0
+        now = time.time()
+        rate: Optional[Deque[float]] = None
+        if source_peer is not None:
+            rate = self._peer_addr_rate.setdefault(source_peer.session_id, deque())
+            cutoff = now - self._peer_addr_rate_window
+            while rate and rate[0] < cutoff:
+                rate.popleft()
+            if len(rate) >= self._peer_addr_rate_limit:
+                log.debug(
+                    "Rate-limiting peer addr intake",
+                    extra={"peer": source_peer.remote, "source": source},
+                )
+                return 0
         stored = 0
         fallback_port = self._local_listen_port()
-        for addr in addrs:
+        for entry in entries:
+            if source_peer is not None and rate is not None and len(rate) >= self._peer_addr_rate_limit:
+                break
+            addr = entry.get("addr") or entry.get("address")
+            if not isinstance(addr, str) or not addr:
+                continue
             normalized = self._sanitize_peer_addr(addr, fallback_port=fallback_port)
             if not normalized:
                 continue
             self._remember_addr(normalized)
-            self._addrman.add(normalized)
+            last_seen = entry.get("last_seen")
+            last_success = entry.get("last_success")
+            last_failure = entry.get("last_failure")
+            failure_reason = entry.get("failure_reason")
+            score = entry.get("score")
+            self._addrman.add(
+                normalized,
+                source=entry.get("source") or source,
+                last_seen=last_seen if isinstance(last_seen, (int, float)) else None,
+                last_success=(
+                    float(last_success)
+                    if isinstance(last_success, (int, float))
+                    else None
+                ),
+                last_failure=(
+                    float(last_failure)
+                    if isinstance(last_failure, (int, float))
+                    else None
+                ),
+                failure_reason=(
+                    str(failure_reason) if isinstance(failure_reason, str) else None
+                ),
+                score=float(score) if isinstance(score, (int, float)) else None,
+            )
             try:
                 peer_id = self._peer_id_from_addr(normalized)
-                self.peerstore.add(peer_id=peer_id, addrs=[normalized], direction="outbound")
+                self.peerstore.add(
+                    peer_id=peer_id, addrs=[normalized], direction="outbound"
+                )
                 self.peerstore.record_seen(peer_id, normalized)
                 stored += 1
             except Exception:
                 continue
+            if source_peer is not None:
+                rate = self._peer_addr_rate.setdefault(source_peer.session_id, deque())
+                rate.append(now)
         if stored:
             log.debug("Discovered %d peer(s) from %s", stored, source)
             self._record_addr_learned(stored)
@@ -934,7 +1141,9 @@ class P2PService:
             port = getattr(endpoint, "port", None)
             if not host or not port:
                 continue
-            discovered.append(self._normalize_seed(f"{host}:{port}"))
+            normalized = self._normalize_seed(f"{host}:{port}")
+            if normalized:
+                discovered.append(normalized)
         if discovered:
             log.info("Discovered %d seed(s) via %s", len(discovered), source)
         return list(dict.fromkeys(discovered))
@@ -1025,6 +1234,10 @@ class P2PService:
                     "addrs": [],
                     "score": record.score,
                     "last_seen": record.last_seen,
+                    "last_success": record.last_success,
+                    "last_failure": record.last_failure,
+                    "failure_reason": record.failure_reason,
+                    "source": record.source,
                     "connected": False,
                     "banned_until": None,
                     "tags": {},
@@ -1039,6 +1252,8 @@ class P2PService:
                 if not address:
                     continue
                 normalized = self._normalize_seed(address)
+                if not normalized:
+                    continue
                 entry = peers.setdefault(
                     peer_id,
                     {
@@ -1046,6 +1261,7 @@ class P2PService:
                         "addrs": [],
                         "score": 0.0,
                         "last_seen": last_seen,
+                        "source": "peerstore",
                         "connected": False,
                         "banned_until": None,
                         "tags": {},
@@ -1158,7 +1374,7 @@ class P2PService:
         self._dial_backoff[addr_key] = next_retry
         normalized = self._sanitize_peer_addr(addr, fallback_port=self._local_listen_port())
         if normalized:
-            self._addrman.mark_failure(normalized)
+            self._addrman.mark_failure(normalized, reason=error)
         if is_seed:
             self._record_bootstrap_attempt(addr, success=False, error=error)
             log.warning(
@@ -1270,33 +1486,38 @@ class P2PService:
             peer_penalties=dict(self._sync_peer_penalties),
         )
 
-    def _normalize_seed(self, address: str) -> str:
-        if address.startswith("/"):
-            try:
-                return normalize_multiaddr(address)
-            except Exception:
-                return address
+    def _normalize_peer_addr(
+        self,
+        address: str,
+        *,
+        fallback_port: Optional[int] = None,
+        source: Optional[str] = None,
+    ) -> PeerAddrParseResult:
+        result = normalize_peer_addr(
+            address,
+            fallback_port=fallback_port,
+            allow_ws=self._allow_ws_addrs,
+            allow_quic=self._allow_quic_addrs,
+            allow_tcp=True,
+        )
+        if not result.addr:
+            reason = result.reason or "invalid"
+            log_fn = log.info if reason.startswith("unsupported") else log.debug
+            log_fn(
+                "Ignoring unsupported peer address",
+                extra={"addr": address, "reason": reason, "source": source or "unknown"},
+            )
+        return result
 
-        # strip scheme if present
-        if "://" in address:
-            address = address.split("://", 1)[1]
-
-        host, _, port = address.rpartition(":")
-        if not host:
-            host = address
-        if not port:
-            return address
-
-        try:
-            ip_obj = ipaddress.ip_address(host)
-            ip_tag = "ip6" if ip_obj.version == 6 else "ip4"
-        except Exception:
-            ip_tag = "dns4"
-
-        try:
-            return normalize_multiaddr(f"/{ip_tag}/{host}/tcp/{port}")
-        except Exception:
-            return f"/{ip_tag}/{host}/tcp/{port}"
+    def _normalize_seed(self, address: str) -> Optional[str]:
+        result = self._normalize_peer_addr(
+            address,
+            fallback_port=self._local_listen_port(),
+            source="seed",
+        )
+        if not result.addr:
+            return None
+        return result.addr.canonical
 
     def _addr_key(self, address: str) -> str:
         """
@@ -1308,23 +1529,15 @@ class P2PService:
         are already connected to and proceed to additional candidates.
         """
 
-        if address.startswith("/"):
-            try:
-                parsed = parse_multiaddr(address)
-                if parsed.host and parsed.port:
-                    return f"{parsed.host}:{parsed.port}"
-            except Exception:
-                pass
-
-        # Strip common schemes like tcp://, quic://, ws://, wss://
-        if "://" in address:
-            address = address.split("://", 1)[1]
-
-        # At this point the address should resemble host:port; fall back to the raw
-        # string if we cannot parse cleanly.
-        parts = address.rsplit(":", 1)
-        if len(parts) == 2 and parts[0] and parts[1]:
-            return f"{parts[0]}:{parts[1]}"
+        result = normalize_peer_addr(
+            address,
+            fallback_port=self._local_listen_port(),
+            allow_ws=True,
+            allow_quic=True,
+            allow_tcp=True,
+        )
+        if result.addr:
+            return f"{result.addr.host}:{result.addr.port}"
         return address
 
     def _reported_peer_addr(self, remote: str, listen_port: int) -> Optional[str]:
@@ -1364,7 +1577,7 @@ class P2PService:
             try:
                 self.peerstore.add(peer_id=peer_id, addrs=[addr], direction="outbound")
                 self.peerstore.record_seen(peer_id, addr)
-                self._addrman.add(addr)
+                self._addrman.add(addr, source="seed")
                 added += 1
             except Exception:
                 continue
@@ -1389,12 +1602,6 @@ class P2PService:
 
         dial_targets: list[str] = []
         for addr in normalized:
-            if addr.startswith("/"):
-                with contextlib.suppress(Exception):
-                    parsed = parse_multiaddr(addr)
-                    if parsed.transport == "tcp":
-                        dial_targets.append(f"tcp://{parsed.host}:{parsed.port}")
-                        continue
             dial_targets.append(addr)
 
         for addr in list(dict.fromkeys(dial_targets)):
@@ -1408,11 +1615,11 @@ class P2PService:
         return await self._sync_once(force=True)
 
     async def dial(self, addr: str) -> None:
-        if addr.startswith("/"):
-            parsed = parse_multiaddr(addr)
-            if parsed.transport == "tcp":
-                addr = f"tcp://{parsed.host}:{parsed.port}"
-        await self._dial(addr)
+        normalized = self._sanitize_peer_addr(
+            addr, fallback_port=self._local_listen_port()
+        )
+        if normalized:
+            await self._dial(normalized)
 
     def status(self) -> Dict[str, Any]:
         height, hh = self._local_head()
@@ -1498,14 +1705,11 @@ class P2PService:
                     pass
 
                 addrs: list[str] = []
+                fallback_port = self._local_listen_port()
                 for c in candidates:
-                    if c.startswith("/"):
-                        with contextlib.suppress(Exception):
-                            parsed = parse_multiaddr(c)
-                            if parsed.transport == "tcp":
-                                addrs.append(f"tcp://{parsed.host}:{parsed.port}")
-                    else:
-                        addrs.append(c)
+                    normalized = self._sanitize_peer_addr(c, fallback_port=fallback_port)
+                    if normalized:
+                        addrs.append(normalized)
 
                 addrs = list(dict.fromkeys(addrs))
                 now = time.time()
@@ -1531,28 +1735,14 @@ class P2PService:
             return
 
     async def _resolve_seed_host(self, addr: str) -> bool:
-        raw = addr
         host: Optional[str] = None
         port: Optional[int] = None
-        if raw.startswith("/"):
-            try:
-                parsed = parse_multiaddr(raw)
-                host = parsed.host
-                port = int(parsed.port) if parsed.port else None
-            except Exception:
-                return True
-        else:
-            if "://" in raw:
-                parsed = urlparse(raw)
-                host = parsed.hostname
-                port = parsed.port
-            else:
-                host, _, port_str = raw.rpartition(":")
-                host = host or raw
-                try:
-                    port = int(port_str) if port_str else None
-                except ValueError:
-                    port = None
+        parsed = self._normalize_peer_addr(
+            addr, fallback_port=self._local_listen_port(), source="seed_resolve"
+        )
+        if parsed.addr:
+            host = parsed.addr.host
+            port = parsed.addr.port
         if not host:
             return True
         try:
@@ -1575,6 +1765,13 @@ class P2PService:
     async def _dial(
         self, addr: str, *, is_seed: bool = False, feeler: bool = False
     ) -> None:
+        parsed = self._normalize_peer_addr(
+            addr, fallback_port=self._local_listen_port(), source="dial"
+        )
+        if not parsed.addr:
+            log.info("Skipping unsupported dial target %s", addr)
+            return
+        addr = parsed.addr.canonical
         addr_key = self._addr_key(addr)
         self._dial_attempt_total += 1
         if is_seed:
@@ -1895,6 +2092,10 @@ class P2PService:
             name=f"p2p.addr_sample@{peer.remote}",
         )
         self._create_child_task(
+            self._send_peer_exchange(peer, limit=self._peer_exchange_limit),
+            name=f"p2p.peer_exchange@{peer.remote}",
+        )
+        self._create_child_task(
             self._send_get_peers(peer),
             name=f"p2p.get_peers@{peer.remote}",
         )
@@ -1916,50 +2117,54 @@ class P2PService:
         max_peers = max(1, min(max_peers, 256))
 
         exclude = {self._addr_key(peer.remote)}
-        addresses = [
-            addr
-            for addr in self._collect_peer_addrs(limit=max_peers, exclude=exclude)
-            if not self._peer_knows_addr(peer, addr)
-        ]
-        entries: list[tuple[bytes, str]] = []
-        for addr in addresses:
+        entries = []
+        for entry in self._collect_peer_entries(limit=max_peers, exclude=exclude):
+            addr = entry.get("addr")
+            if not isinstance(addr, str) or not addr:
+                continue
+            if self._peer_knows_addr(peer, addr):
+                continue
             try:
                 pid = hashlib.sha3_256(addr.encode()).digest()
             except Exception:
                 pid = b"\x00" * 32
-            entries.append((pid, addr))
+            entry = dict(entry)
+            entry["peer_id"] = pid
+            entries.append(entry)
             self._mark_peer_known(peer, addr)
         await self._send(peer, MsgID.PEERS, Peers(entries=entries))
 
     async def _handle_peers(self, peer: _PeerState, payload: bytes) -> None:
         data = self._decode_map(payload)
-        entries = data.get("entries") or []
-        addrs: list[str] = []
-        for entry in entries:
+        raw_entries = data.get("entries") or []
+        entries: list[dict[str, Any]] = []
+        for entry in raw_entries:
             if isinstance(entry, (list, tuple)) and len(entry) >= 2:
                 addr = entry[1]
-            elif isinstance(entry, dict):
-                addr = entry.get("addr") or entry.get("address")
-            else:
+                entries.append({"addr": addr})
                 continue
+            if isinstance(entry, dict):
+                entries.append(entry)
+                continue
+        for entry in entries:
+            addr = entry.get("addr") or entry.get("address")
             if isinstance(addr, bytes):
                 try:
-                    addr = addr.decode()
+                    entry["addr"] = addr.decode()
                 except Exception:
-                    continue
-            if isinstance(addr, str) and addr:
-                addrs.append(addr)
-
-        if addrs:
-            for addr in addrs:
-                self._mark_peer_known(peer, addr)
-            self._ingest_peer_addrs(addrs, source=f"peer:{peer.remote}")
+                    entry["addr"] = ""
+        if entries:
+            for entry in entries:
+                addr = entry.get("addr")
+                if isinstance(addr, str) and addr:
+                    self._mark_peer_known(peer, addr)
+            self._ingest_peer_entries(entries, source=f"peer:{peer.remote}", source_peer=peer)
             self._sync_wakeup.set()
 
     async def _handle_address_announce(self, peer: _PeerState, payload: bytes) -> None:
         data = self._decode_map(payload)
         addresses = data.get("addresses") or []
-        addrs: list[str] = []
+        entries: list[dict[str, Any]] = []
         for addr in addresses:
             if isinstance(addr, bytes):
                 try:
@@ -1967,11 +2172,13 @@ class P2PService:
                 except Exception:
                     continue
             if isinstance(addr, str) and addr:
-                addrs.append(addr)
-        if addrs:
-            for addr in addrs:
-                self._mark_peer_known(peer, addr)
-            self._ingest_peer_addrs(addrs, source=f"announce:{peer.remote}")
+                entries.append({"addr": addr, "source": f"announce:{peer.remote}"})
+        if entries:
+            for entry in entries:
+                addr = entry.get("addr")
+                if isinstance(addr, str) and addr:
+                    self._mark_peer_known(peer, addr)
+            self._ingest_peer_entries(entries, source=f"announce:{peer.remote}", source_peer=peer)
 
     async def _close_feeler_after_delay(self, peer: _PeerState) -> None:
         try:
@@ -2149,7 +2356,20 @@ class P2PService:
                     sync_block.origin_peer = peer.remote
                     self._sync_block_buffer[sync_block.hash] = sync_block
                 else:
-                    self._penalize_peer(peer, "block_rejected")
+                    reject_reason = reason or "block_rejected"
+                    log.warning(
+                        "Block rejected",
+                        extra={
+                            "remote": peer.remote,
+                            "reason": reject_reason,
+                        },
+                    )
+                    self._penalize_peer(
+                        peer,
+                        f"block_rejected:{reject_reason}",
+                        severity=2,
+                        quarantine_s=300.0,
+                    )
 
     # ---------------------------------------------------------------------
     # Gossip + sync loops
@@ -2231,8 +2451,12 @@ class P2PService:
                 if not self._is_orphan_reason(reason):
                     self._sync_block_buffer.pop(h, None)
                     if blk.origin_peer:
+                        reject_reason = reason or "block_rejected"
                         self._penalize_peer(
-                            self._peers.get(blk.origin_peer), "block_rejected"
+                            self._peers.get(blk.origin_peer),
+                            f"block_rejected:{reject_reason}",
+                            severity=2,
+                            quarantine_s=300.0,
                         )
 
     def _expire_inflight_blocks(self) -> None:
@@ -2289,6 +2513,10 @@ class P2PService:
             if idx == 0:
                 parent_info = self._header_meta(header.parent_hash)
                 if parent_info is None:
+                    log.info(
+                        "Ignoring unanchored header batch",
+                        extra={"remote": peer.remote, "parent_hash": header.parent_hash.hex()},
+                    )
                     break
                 parent_height, parent_ts = parent_info
                 if header.height != parent_height + 1:
@@ -2316,6 +2544,24 @@ class P2PService:
 
         if not contiguous:
             return []
+
+        anchor_height = int((peer.hello or {}).get("head_height") or 0)
+        anchor_hash = bytes((peer.hello or {}).get("head_hash") or b"")
+        if anchor_height and anchor_hash:
+            found_anchor = False
+            for h in contiguous:
+                if h.height == anchor_height:
+                    found_anchor = True
+                    if h.hash != anchor_hash:
+                        self._penalize_peer(peer, "header_anchor_mismatch", severity=2)
+                        return []
+                    break
+            if (
+                not found_anchor
+                and contiguous[0].height <= anchor_height <= contiguous[-1].height
+            ):
+                self._penalize_peer(peer, "header_anchor_missing", severity=2)
+                return []
 
         self._sync_last_header_at = time.time()
         self._sync_last_progress_at = self._sync_last_header_at
@@ -2461,10 +2707,14 @@ class P2PService:
     def _select_sync_peer(self) -> Optional[_PeerState]:
         best: Optional[_PeerState] = None
         best_height = -1
+        now = time.time()
         for p in self._peers.values():
             if not p.peer_id or not isinstance(p.hello, dict):
                 continue
             if self._sync_peer_penalties.get(p.remote, 0) >= self._sync_peer_penalty_threshold:
+                continue
+            backoff_until = self._sync_peer_backoff.get(p.remote, 0.0)
+            if backoff_until and backoff_until > now:
                 continue
             try:
                 h = int(p.hello.get("head_height") or 0)
@@ -2623,11 +2873,23 @@ class P2PService:
         parent_hash = bytes(blk.header.parentHash)
         return _SyncBlock(block=blk, hash=block_hash, parent_hash=parent_hash)
 
-    def _penalize_peer(self, peer: Optional[_PeerState], reason: str) -> None:
+    def _penalize_peer(
+        self,
+        peer: Optional[_PeerState],
+        reason: str,
+        *,
+        severity: int = 1,
+        quarantine_s: Optional[float] = None,
+    ) -> None:
         if peer is None:
             return
-        count = self._sync_peer_penalties.get(peer.remote, 0) + 1
+        count = self._sync_peer_penalties.get(peer.remote, 0) + max(1, severity)
         self._sync_peer_penalties[peer.remote] = count
+        if "timeout" in reason:
+            delay = min(60.0, 2.0 ** min(count, 6))
+            self._sync_peer_backoff[peer.remote] = time.time() + delay
+        if quarantine_s:
+            self._sync_peer_backoff[peer.remote] = time.time() + quarantine_s
         log.warning(
             "Sync peer penalty: %s",
             reason,
