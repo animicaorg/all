@@ -1816,7 +1816,22 @@ class P2PService:
             raise ValueError("genesis mismatch")
 
         peer.peer_id = bytes(hello.peer_id).hex()
-        peer.hello = data
+        normalized = dict(data)
+        normalized["chain_id"] = int(getattr(hello, "chain_id", 0) or 0)
+        normalized["head_height"] = int(
+            getattr(hello, "head_height", 0)
+            or data.get("head_height")
+            or data.get("headHeight")
+            or data.get("height")
+            or 0
+        )
+        normalized["head_hash"] = bytes(getattr(hello, "head_hash", b"")) or data.get(
+            "head_hash"
+        ) or data.get("headHash")
+        normalized["genesis_hash"] = bytes(
+            getattr(hello, "genesis_hash", b"")
+        ) or data.get("genesis_hash") or data.get("genesisHash")
+        peer.hello = normalized
         peer.hello_done.set()
 
         listen_port = int(getattr(hello, "listen_port", 0) or 0)
@@ -1837,7 +1852,7 @@ class P2PService:
             peer.session_id,
             peer_id=peer.peer_id,
             last_seen=time.time(),
-            height=int(hello.head_height),
+            height=int(normalized["head_height"]),
             remote=peer.remote,
             direction=peer.direction,
             feeler=peer.feeler,
@@ -1866,7 +1881,7 @@ class P2PService:
             if reported_addr:
                 self.peerstore.record_seen(peer.peer_id, reported_addr)
             self.peerstore.record_connection(peer.peer_id)
-            self.peerstore.update_head_height(peer.peer_id, int(hello.head_height))
+            self.peerstore.update_head_height(peer.peer_id, int(normalized["head_height"]))
             self._schedule_peer_persist()
 
         await self._send(peer, MsgID.HELLO_ACK, HelloAck(accepted=True, reason=None))
@@ -2477,7 +2492,12 @@ class P2PService:
 
     def _local_head(self) -> tuple[int, Optional[str]]:
         try:
-            head = self._block_db().get_head()
+            bdb = self._block_db()
+            head = None
+            if hasattr(bdb, "get_canonical_head"):
+                head = bdb.get_canonical_head()
+            if head is None:
+                head = bdb.get_head()
             if head:
                 return int(head[0]), "0x" + bytes(head[1]).hex()
         except Exception:
