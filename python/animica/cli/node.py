@@ -415,6 +415,12 @@ def _wait_for_sync_completion(
 
     deadline = time.time() + timeout_s
     last_height: Optional[int] = None
+    last_progress = time.time()
+    last_report = 0.0
+    last_trigger: Optional[float] = None
+    warned_no_peers = False
+    report_interval = max(interval_s * 3.0, 15.0)
+    trigger_interval = max(interval_s * 6.0, 30.0)
     while time.time() < deadline:
         try:
             head = _local_rpc(rpc_url, "chain.getHead", [])
@@ -424,12 +430,46 @@ def _wait_for_sync_completion(
 
         height = _extract_field(head or {}, "height", "number", "blockNumber")
         if height is not None:
+            now = time.time()
             if last_height is None or height != last_height:
                 typer.echo(f"Sync progress: {height}/{target_height}")
                 last_height = height
+                last_progress = now
+                last_report = now
+            elif now - last_report >= report_interval:
+                peer_count, _ = _get_peer_count(rpc_url, None)
+                if peer_count is None:
+                    typer.echo(f"Sync progress: {height}/{target_height}")
+                else:
+                    typer.echo(f"Sync progress: {height}/{target_height} (peers: {peer_count})")
+                last_report = now
+                if peer_count == 0 and not warned_no_peers:
+                    typer.secho(
+                        "⚠ No peers connected yet; sync will remain stalled until peers connect.",
+                        fg=typer.colors.YELLOW,
+                    )
+                    warned_no_peers = True
             if height >= target_height:
                 typer.secho("✓ Node synced to bootstrap head", fg=typer.colors.GREEN)
                 return True
+
+            if now - last_progress >= trigger_interval:
+                peer_count, _ = _get_peer_count(rpc_url, None)
+                if peer_count and peer_count > 0:
+                    if last_trigger is None or now - last_trigger >= trigger_interval:
+                        try:
+                            from .sync import _trigger_sync
+
+                            if asyncio.run(_trigger_sync(rpc_url)):
+                                typer.secho("✓ Sync trigger sent", fg=typer.colors.GREEN)
+                            else:
+                                typer.secho(
+                                    "⚠ Unable to trigger sync via RPC; continuing to wait.",
+                                    fg=typer.colors.YELLOW,
+                                )
+                        except Exception:
+                            pass
+                        last_trigger = now
 
         time.sleep(interval_s)
 
