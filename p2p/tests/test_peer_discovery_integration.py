@@ -169,6 +169,57 @@ async def test_gossip_addr_relay_expands_peer_set(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_gossip_seed_chain_discovers_new_peer(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("ANIMICA_P2P_ADDR_REQUEST_INTERVAL", "1")
+    monkeypatch.setenv("ANIMICA_P2P_ADDR_RESPONSE_INTERVAL", "1")
+    monkeypatch.setenv("ANIMICA_P2P_ADDR_RELAY_INTERVAL", "1")
+    monkeypatch.setenv("ANIMICA_P2P_OUTBOUND", "2")
+    monkeypatch.setenv("ANIMICA_P2P_PRIVATE_NETWORK", "1")
+
+    deps_a_sync, deps_a = _make_deps(tmp_path, "node_a")
+    deps_b_sync, deps_b = _make_deps(tmp_path, "node_b")
+    deps_c_sync, deps_c = _make_deps(tmp_path, "node_c")
+
+    addr_a = tcp_multiaddr(free_port())
+    addr_b = tcp_multiaddr(free_port())
+    addr_c = tcp_multiaddr(free_port())
+
+    node_a = P2PService(
+        listen_addrs=[addr_a],
+        seeds=[addr_b],
+        chain_id=deps_a_sync.chain_id,
+        deps=deps_a,
+        peerstore_path=str(tmp_path / "node_a" / "p2p"),
+    )
+    node_b = P2PService(
+        listen_addrs=[addr_b],
+        seeds=[addr_c],
+        chain_id=deps_b_sync.chain_id,
+        deps=deps_b,
+        peerstore_path=str(tmp_path / "node_b" / "p2p"),
+    )
+    node_c = P2PService(
+        listen_addrs=[addr_c],
+        seeds=[],
+        chain_id=deps_c_sync.chain_id,
+        deps=deps_c,
+        peerstore_path=str(tmp_path / "node_c" / "p2p"),
+    )
+
+    await node_c.start()
+    await node_b.start()
+    await node_a.start()
+    try:
+        assert await _wait_for_peers(node_b, 1, timeout=15.0)
+        assert await _wait_for_peers(node_a, 1, timeout=15.0)
+        assert await _wait_for_peers(node_a, 2, timeout=20.0)
+    finally:
+        await node_a.stop()
+        await node_b.stop()
+        await node_c.stop()
+
+
+@pytest.mark.asyncio
 async def test_p2p_sync_converges_without_bootstrap_rpc(tmp_path: Path) -> None:
     deps_a_sync, deps_a = _make_deps(tmp_path, "node_a")
     deps_b_sync, deps_b = _make_deps(tmp_path, "node_b")
