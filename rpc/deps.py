@@ -504,6 +504,8 @@ class RpcContext:
     head: _HeadAccessor
     p2p_service: t.Any = None  # Optional P2P service for peer management
     core_p2p_service: t.Any = None  # Optional core-style P2P service
+    p2p_enabled: bool = False
+    p2p_start_error: str | None = None
 
     def get_head(self) -> dict[str, t.Any]:
         return self.head.get()
@@ -591,6 +593,7 @@ def build_context(cfg: t.Any | None = None) -> RpcContext:
     p2p_service = None
     core_p2p_service = None
     p2p_deps_sync = None
+    p2p_start_error = None
     enable_p2p = os.environ.get("ANIMICA_P2P_ENABLE", "true").lower() in (
         "1",
         "true",
@@ -689,7 +692,8 @@ def build_context(cfg: t.Any | None = None) -> RpcContext:
                 log_msg += ", no seeds configured"
             log.info(log_msg)
         except Exception as e:
-            log.warning(f"Failed to initialize P2P service: {e}", exc_info=True)
+            p2p_start_error = f"init_failed: {type(e).__name__}: {e}"
+            log.error(f"Failed to initialize P2P service: {p2p_start_error}", exc_info=True)
             p2p_service = None
             p2p_deps_sync = None
 
@@ -766,6 +770,8 @@ def build_context(cfg: t.Any | None = None) -> RpcContext:
         head=head,
         p2p_service=p2p_service,
         core_p2p_service=core_p2p_service,
+        p2p_enabled=enable_p2p,
+        p2p_start_error=p2p_start_error,
     )
 
 
@@ -813,9 +819,17 @@ async def startup(cfg: t.Any | None = None) -> RpcContext:
                     "P2P service started successfully"
                 )
             except Exception as e:
-                logging.getLogger("animica.rpc.deps").warning(
-                    f"Failed to start P2P service: {e}", exc_info=True
+                _CTX.p2p_start_error = f"start_failed: {type(e).__name__}: {e}"
+                logging.getLogger("animica.rpc.deps").error(
+                    f"Failed to start P2P service: {_CTX.p2p_start_error}",
+                    exc_info=True,
                 )
+                if _CTX.p2p_enabled:
+                    raise RuntimeError("P2P enabled but failed to start")
+        elif _CTX.p2p_enabled:
+            error = _CTX.p2p_start_error or "P2P enabled but service not initialized"
+            logging.getLogger("animica.rpc.deps").error(error)
+            raise RuntimeError(error)
 
         if _CTX.core_p2p_service is not None:
             try:

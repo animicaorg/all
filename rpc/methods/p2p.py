@@ -424,19 +424,34 @@ async def list_peers() -> list[dict[str, t.Any]]:
 
 @method("p2p.getStatus", desc="Return the live P2P status snapshot")
 async def get_status() -> dict[str, t.Any]:
+    startup_error = None
+    try:
+        from rpc import deps
+
+        ctx = deps.get_ctx()
+        startup_error = getattr(ctx, "p2p_start_error", None)
+    except Exception:
+        startup_error = None
     p2p_svc = _get_p2p_service()
     if p2p_svc is not None:
         if hasattr(p2p_svc, "status_snapshot"):
             snap = p2p_svc.status_snapshot()
             if hasattr(snap, "to_dict"):
-                return snap.to_dict()
+                result = snap.to_dict()
+                if startup_error:
+                    result.setdefault("startup_error", startup_error)
+                return result
             if isinstance(snap, dict):
+                if startup_error:
+                    snap.setdefault("startup_error", startup_error)
                 return snap
         if hasattr(p2p_svc, "status"):
             try:
                 status = p2p_svc.status()
                 if isinstance(status, dict):
                     status.setdefault("p2p_running", True)
+                    if startup_error:
+                        status.setdefault("startup_error", startup_error)
                     return status
             except Exception:
                 pass
@@ -469,6 +484,7 @@ async def get_status() -> dict[str, t.Any]:
             "seed_sources": {},
             "dial_queue_depth": 0,
             "addrman_size": None,
+            "startup_error": startup_error,
         }
 
     return {
@@ -483,6 +499,7 @@ async def get_status() -> dict[str, t.Any]:
         "seed_sources": {},
         "dial_queue_depth": 0,
         "addrman_size": None,
+        "startup_error": startup_error,
     }
 
 
@@ -615,6 +632,20 @@ async def import_peers(addresses: list[str]) -> dict[str, t.Any]:
         return {"success": False, "error": str(e)}
 
 
+@method("p2p.addPeers", desc="Add multiple peers by address")
+async def add_peers(addresses: list[str]) -> dict[str, t.Any]:
+    """
+    Add multiple peers by address and attempt to connect.
+
+    Args:
+        addresses: List of peer addresses (multiaddr or host:port format)
+
+    Returns:
+        Success status and counts of added/dialed peers.
+    """
+    return await import_peers(addresses)
+
+
 @method("p2p.removePeer", desc="Remove a peer by ID")
 async def remove_peer(peer_id: str) -> dict[str, t.Any]:
     """
@@ -717,4 +748,5 @@ __all__ = [
     "remove_peer",
     "get_peer_info",
     "import_peers",
+    "add_peers",
 ]

@@ -278,7 +278,7 @@ def test_sync_force_auto_bootstrap_and_reseed():
             )
 
             assert result.exit_code == 0
-            assert "Auto-bootstrapping peers from configured seeds" in result.stdout
+            assert "Auto-bootstrapping peers from discovery sources" in result.stdout
             # Should reseed at least once more when progress stalls
             assert seed_mock.call_count >= 2
 
@@ -481,7 +481,7 @@ def test_sync_status_not_synced_when_bootstrap_ahead(monkeypatch):
     with patch("httpx.AsyncClient") as mock_client:
         mock_client.return_value = UrlAwareClient()
 
-        result = runner.invoke(app, ["sync", "status"])
+        result = runner.invoke(app, ["sync", "status", "--allow-bootstrap-rpc"])
 
     assert result.exit_code == 0
     assert "NOT SYNCED" in result.stdout
@@ -507,6 +507,7 @@ def test_sync_status_help():
     assert "--json" in result.stdout
     assert "--verbose" in result.stdout
     assert "--bootstrap-rpc" in result.stdout
+    assert "--allow-bootstrap-rpc" in result.stdout
 
 
 def test_sync_force_help():
@@ -518,6 +519,7 @@ def test_sync_force_help():
     assert "--timeout" in result.stdout
     assert "--check-interval" in result.stdout
     assert "--bootstrap-rpc" in result.stdout
+    assert "--allow-bootstrap-rpc" in result.stdout
 
 
 def test_sync_status_fallback_methods():
