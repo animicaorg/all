@@ -71,7 +71,7 @@ services:
       P2P_SEEDS: "${P2P_SEEDS:-}"
     command: ["/bin/bash", "-c", "python -m rpc"]
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://localhost:8546/healthz || exit 1"]
+      test: ["CMD-SHELL", "curl -fsS -X POST http://localhost:8546/rpc -H 'content-type: application/json' -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"node.ping\",\"params\":[]}' >/dev/null || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 20

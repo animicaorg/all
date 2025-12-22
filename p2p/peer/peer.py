@@ -129,6 +129,7 @@ class Peer:
     connected_at_s: Optional[float] = None
     last_seen_s: float = field(default_factory=lambda: time.time())
     last_disconnect_s: Optional[float] = None
+    last_disconnect_reason: Optional[str] = None
 
     # Traffic & counters
     bytes_in: int = 0
@@ -356,6 +357,7 @@ class Peer:
             "caps": sorted(self.caps),
             "last_seen_s": self.last_seen_s,
             "connected_at_s": self.connected_at_s,
+            "last_disconnect_reason": self.last_disconnect_reason,
             "bytes_in": self.bytes_in,
             "bytes_out": self.bytes_out,
             "msgs_in": self.msgs_in,

@@ -44,6 +44,7 @@ CREATE TABLE IF NOT EXISTS peers (
   last_seen REAL NOT NULL,
   connected_at REAL,
   last_disconnect REAL,
+  last_disconnect_reason TEXT,
   rtt_ms REAL,
   score REAL,
   snapshot TEXT,                       -- JSON snapshot (optional but preferred)
@@ -116,6 +117,7 @@ class PeerStore:
                     conn.execute(s)
             # Migration: Add direction column if it doesn't exist
             self._migrate_add_direction_column(conn)
+            self._migrate_add_disconnect_reason_column(conn)
 
     def _locked_conn(self) -> sqlite3.Connection:
         # Acquire a re-entrant lock and return a connection bound to this thread.
@@ -154,6 +156,19 @@ class PeerStore:
             # If migration fails, don't crash - the column may already exist
             pass
 
+    def _migrate_add_disconnect_reason_column(self, conn: sqlite3.Connection) -> None:
+        """
+        Add the last_disconnect_reason column to the peers table if it doesn't exist.
+        This migration is safe to run multiple times.
+        """
+        try:
+            cursor = conn.execute("PRAGMA table_info(peers)")
+            columns = [row[1] for row in cursor.fetchall()]
+            if "last_disconnect_reason" not in columns:
+                conn.execute("ALTER TABLE peers ADD COLUMN last_disconnect_reason TEXT")
+        except Exception:
+            pass
+
     # ------------------------------------------------------------------ #
     # Upserts & updates
     # ------------------------------------------------------------------ #
@@ -178,8 +193,9 @@ class PeerStore:
             conn.execute(
                 """
                 INSERT INTO peers (peer_id, address, roles, chain_id, alg_policy_root, head_height, caps,
-                                   status, first_seen, last_seen, connected_at, last_disconnect, rtt_ms, score, snapshot, direction)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                   status, first_seen, last_seen, connected_at, last_disconnect, last_disconnect_reason,
+                                   rtt_ms, score, snapshot, direction)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(peer_id) DO UPDATE SET
                   address=excluded.address,
                   last_seen=excluded.last_seen,
@@ -199,6 +215,7 @@ class PeerStore:
                     now,
                     None,  # connected_at
                     None,  # last_disconnect
+                    None,  # last_disconnect_reason
                     None,  # rtt_ms
                     float(score),
                     "{}",  # snapshot: empty
@@ -230,8 +247,9 @@ class PeerStore:
             conn.execute(
                 """
                 INSERT INTO peers (peer_id, address, roles, chain_id, alg_policy_root, head_height, caps,
-                                   status, first_seen, last_seen, connected_at, last_disconnect, rtt_ms, score, snapshot)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                   status, first_seen, last_seen, connected_at, last_disconnect, last_disconnect_reason,
+                                   rtt_ms, score, snapshot)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(peer_id) DO UPDATE SET
                   address=excluded.address,
                   roles=excluded.roles,
@@ -243,6 +261,7 @@ class PeerStore:
                   last_seen=excluded.last_seen,
                   connected_at=excluded.connected_at,
                   last_disconnect=excluded.last_disconnect,
+                  last_disconnect_reason=excluded.last_disconnect_reason,
                   rtt_ms=excluded.rtt_ms,
                   score=excluded.score,
                   snapshot=excluded.snapshot
@@ -264,6 +283,7 @@ class PeerStore:
                         if peer.last_disconnect_s
                         else None
                     ),
+                    peer.last_disconnect_reason,
                     (
                         float(peer.rtt_ms_ewma or 0.0)
                         if peer.rtt_ms_ewma is not None
@@ -305,12 +325,12 @@ class PeerStore:
                 (PeerStatus.CONNECTED.value, now, now, peer_id),
             )
 
-    def record_disconnection(self, peer_id: str) -> None:
+    def record_disconnection(self, peer_id: str, reason: Optional[str] = None) -> None:
         now = _now()
         with self._locked_conn() as conn:
             conn.execute(
-                "UPDATE peers SET status=?, last_disconnect=?, last_seen=? WHERE peer_id=?",
-                (PeerStatus.DISCONNECTED.value, now, now, peer_id),
+                "UPDATE peers SET status=?, last_disconnect=?, last_disconnect_reason=?, last_seen=? WHERE peer_id=?",
+                (PeerStatus.DISCONNECTED.value, now, reason, now, peer_id),
             )
 
     def note_rtt_sample(
@@ -529,6 +549,9 @@ class PeerStore:
                 p.last_disconnect_s = (
                     snap.get("last_disconnect_s") or row["last_disconnect"]
                 )
+                p.last_disconnect_reason = snap.get("last_disconnect_reason")
+                if p.last_disconnect_reason is None and "last_disconnect_reason" in row.keys():
+                    p.last_disconnect_reason = row["last_disconnect_reason"]
                 # Restore RTT if present
                 rtt = snap.get("rtt_ms_ewma")
                 if rtt is None:
@@ -575,6 +598,8 @@ class PeerStore:
             p.connected_at_s = row["connected_at"]
             p.last_seen_s = row["last_seen"]
             p.last_disconnect_s = row["last_disconnect"]
+            if "last_disconnect_reason" in row.keys():
+                p.last_disconnect_reason = row["last_disconnect_reason"]
             try:
                 p.rtt_ms_ewma = float(row["rtt_ms"]) if row["rtt_ms"] is not None else None
             except Exception:
