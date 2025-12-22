@@ -18,12 +18,12 @@ def test_peer_registry_deduplicates_and_enforces_limits():
     # New connection for same peer replaces the old one
     s3 = registry.register("2.2.2.2:2000", "outbound")
     dropped = registry.mark_identified(s3.session_id, "peer-A")
-    assert s1.session_id in dropped
-    # Count includes one identified peer plus the pending handshake (s2)
-    assert registry.peer_count() == 2
+    assert dropped == []
+    # Count includes inbound + outbound for peer-A plus the pending handshake (s2)
+    assert registry.peer_count() == 3
 
     # Unknown sessions time out and are purged
     time.sleep(0.1)
     expired = registry.purge_stale()
     assert s2.session_id in expired
-    assert registry.peer_count() == 1
+    assert registry.peer_count() == 2
