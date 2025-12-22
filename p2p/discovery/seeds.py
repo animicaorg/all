@@ -51,6 +51,8 @@ import urllib.request
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
+from p2p.peer.peer_addr import normalize_peer_addr
+
 # Optional DNS dependency (dnspython). If missing, TXT discovery is skipped gracefully.
 try:
     import dns.resolver  # type: ignore
@@ -183,6 +185,15 @@ _ADDR_RE = re.compile(
 
 
 def _normalize_addr(addr: str) -> Optional[SeedEndpoint]:
+    parsed = normalize_peer_addr(addr, allow_quic=True, allow_ws=True)
+    if parsed.addr:
+        return SeedEndpoint(
+            scheme=parsed.addr.scheme,
+            host=parsed.addr.host,
+            port=parsed.addr.port,
+            path=None,
+            params={},
+        )
     try:
         m = parse_multiaddr(addr)
     except Exception:

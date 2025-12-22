@@ -50,5 +50,5 @@ async def test_inbound_hello_stores_listen_port(tmp_path, monkeypatch):
     await service._handle_hello(peer, payload)
 
     addrs = [addr for _, addr, _ in service.peerstore.list_addresses(limit=10)]
-    assert "/ip4/203.0.113.10/tcp/30333" in addrs
+    assert "tcp://203.0.113.10:30333" in addrs
     assert not any(":54321" in addr for addr in addrs)

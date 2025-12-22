@@ -29,7 +29,7 @@ from .message_ids import WIRE_SCHEMA_VERSION, MsgID
 Hash32 = bytes  # 32-byte keccak/sha3 digest
 Hash64 = bytes  # 64-byte sha3-512 (e.g., alg-policy root)
 PeerID = bytes  # 32-byte (sha3(pubkey||alg_id)) from p2p.crypto.peer_id
-Address = str  # multiaddr-like string ("/ip4/…/tcp/…")
+Address = str  # canonical peer address string (e.g., "tcp://host:port")
 NamespaceID = int  # DA namespace (uint32/uint64 per spec)
 Height = int
 ChainId = int
@@ -152,11 +152,18 @@ class GetPeers:
 @dataclass(frozen=True)
 class Peers:
     msg_id: MsgID = MsgID.PEERS
-    entries: List[Tuple[PeerID, Address]] = dc.field(default_factory=list)
+    entries: List[dict[str, Any]] = dc.field(default_factory=list)
 
     def __post_init__(self):
-        for pid, _addr in self.entries:
-            _ensure_len("peer_id", pid, 32)
+        for entry in self.entries:
+            if isinstance(entry, (list, tuple)) and entry:
+                pid = entry[0]
+            elif isinstance(entry, dict):
+                pid = entry.get("peer_id")
+            else:
+                continue
+            if pid is not None:
+                _ensure_len("peer_id", pid, 32)
 
 
 @dataclass(frozen=True)

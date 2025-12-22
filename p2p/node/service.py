@@ -9,6 +9,7 @@ import os
 import signal
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import (Any, Awaitable, Callable, Dict, Iterable, List, Optional,
                     Tuple)
 
@@ -20,6 +21,7 @@ from ..metrics import \
 from ..peer import connection_manager as conman
 from ..peer import identify as idsvc
 from ..peer import peerstore as pstore
+from ..peer.p2p_store import apply_umask_from_env, ensure_writable
 from ..peer import ping as pingsvc
 from ..peer import ratelimit as prlimit
 from ..transport import base as tbase
@@ -586,6 +588,7 @@ class P2PServiceLegacy:
         from ..transport.multiaddr import parse_multiaddr
         from ..transport.tcp import TcpTransport  # lazy import
 
+        apply_umask_from_env()
         self.listen_addrs = listen_addrs or ["/ip4/0.0.0.0/tcp/42069"]
         self.seeds = seeds or []
         self.chain_id = chain_id
@@ -614,8 +617,11 @@ class P2PServiceLegacy:
                 chain_id, "custom"
             )
             peerstore_path = os.path.expanduser(f"~/.animica/p2p/{network_name}")
-        self.peerstore = pstore.PeerStore(peerstore_path)
-        self._log.info(f"Initialized persistent peer store at {peerstore_path}")
+        writable_peerstore = ensure_writable(Path(peerstore_path))
+        self.peerstore = pstore.open_peerstore(writable_peerstore.path)
+        self._log.info(
+            "Initialized persistent peer store at %s", writable_peerstore.path
+        )
 
         # Lazy identify helper (filled on-demand). We intentionally keep the
         # devnet-friendly service light, but still want peers to exchange
