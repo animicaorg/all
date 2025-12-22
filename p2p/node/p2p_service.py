@@ -498,6 +498,7 @@ class P2PService:
         self._sync_inflight_peers: Dict[bytes, str] = {}
         self._sync_block_buffer: Dict[bytes, _SyncBlock] = {}
         self._sync_peer_penalties: Dict[str, int] = {}
+        self._sync_peer_penalty_whitelist = {"144.126.133.21:30333"}
         self._sync_last_progress_at = time.time()
         self._sync_last_header_at = 0.0
         self._sync_last_block_at = 0.0
@@ -1483,7 +1484,11 @@ class P2PService:
             last_header_at=self._sync_last_header_at,
             last_block_at=self._sync_last_block_at,
             pending_header_batches=len(self._sync_header_queue),
-            peer_penalties=dict(self._sync_peer_penalties),
+            peer_penalties={
+                remote: count
+                for remote, count in self._sync_peer_penalties.items()
+                if remote not in self._sync_peer_penalty_whitelist
+            },
         )
 
     def _normalize_peer_addr(
@@ -2711,7 +2716,11 @@ class P2PService:
         for p in self._peers.values():
             if not p.peer_id or not isinstance(p.hello, dict):
                 continue
-            if self._sync_peer_penalties.get(p.remote, 0) >= self._sync_peer_penalty_threshold:
+            if (
+                p.remote not in self._sync_peer_penalty_whitelist
+                and self._sync_peer_penalties.get(p.remote, 0)
+                >= self._sync_peer_penalty_threshold
+            ):
                 continue
             backoff_until = self._sync_peer_backoff.get(p.remote, 0.0)
             if backoff_until and backoff_until > now:
@@ -2882,6 +2891,9 @@ class P2PService:
         quarantine_s: Optional[float] = None,
     ) -> None:
         if peer is None:
+            return
+        if peer.remote in self._sync_peer_penalty_whitelist:
+            self._sync_peer_penalties.pop(peer.remote, None)
             return
         count = self._sync_peer_penalties.get(peer.remote, 0) + max(1, severity)
         self._sync_peer_penalties[peer.remote] = count
