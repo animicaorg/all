@@ -721,6 +721,8 @@ def mine_blocks(
                 bold=True,
             )
     
+    except typer.Exit:
+        raise
     except (RuntimeError, ConnectionError, OSError, TimeoutError) as e:
         typer.secho(
             f"Error: Failed to connect to RPC: {e}",
