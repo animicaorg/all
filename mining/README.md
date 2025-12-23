@@ -104,6 +104,51 @@ HashShare includes:
 
 ⸻
 
+## 6) How to run (CLI)
+
+Start a node (example):
+
+```bash
+animica node up
+```
+
+Start a pool (Stratum server):
+
+```bash
+animica miner pool --rpc-url http://127.0.0.1:8547 --listen 0.0.0.0 --port 5333 --coinbase-address anim1...
+```
+
+Mine solo:
+
+```bash
+animica miner solo --address anim1... --rpc-url http://127.0.0.1:8547 --device cpu --proof sha256d
+```
+
+Mine CPU (shortcut):
+
+```bash
+animica miner cpu --address anim1... --rpc-url http://127.0.0.1:8547 --threads 4
+```
+
+Mine AICF:
+
+```bash
+animica miner aicf --address anim1... --rpc-url http://127.0.0.1:8547
+```
+
+Mine Quantum:
+
+```bash
+animica miner quantum --address anim1... --rpc-url http://127.0.0.1:8547
+```
+
+Run DA worker / commit DA root:
+
+```bash
+animica miner da run
+animica miner da push ./blob.bin
+```
+
 3) Flows
 
 3.1 getWork → scan → submitShare (WS)
@@ -339,4 +384,3 @@ A: No private chain secrets. Device auth (for pools) and provider credentials (f
 	•	orchestrator.py — runs the whole pipeline
 	•	ws_getwork.py, stratum_server.py — external miner APIs
 	•	adapters/* — glue to core/consensus/proofs/aicf
-
