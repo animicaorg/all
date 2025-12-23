@@ -99,6 +99,16 @@ async def sync_force() -> dict[str, t.Any]:
     return result
 
 
+@method("sync.trigger", desc="Trigger a P2P sync round (canonical alias)")
+async def sync_trigger() -> dict[str, t.Any]:
+    return await sync_force()
+
+
+@method("sync.start", desc="Trigger a P2P sync round (legacy alias)")
+async def sync_start() -> dict[str, t.Any]:
+    return await sync_force()
+
+
 @method("sync.getStatus", desc="Return current sync status")
 async def sync_get_status() -> dict[str, t.Any]:
     svc = _get_p2p_service()
@@ -123,4 +133,21 @@ async def sync_get_status() -> dict[str, t.Any]:
     }
 
 
-__all__ = ["sync_force", "sync_get_status"]
+@method("sync.status", desc="Return current sync status (alias)")
+async def sync_status() -> dict[str, t.Any]:
+    return await sync_get_status()
+
+
+@method("node.syncStatus", desc="Return current sync status (compat alias)")
+async def node_sync_status() -> dict[str, t.Any]:
+    return await sync_get_status()
+
+
+__all__ = [
+    "sync_force",
+    "sync_trigger",
+    "sync_start",
+    "sync_get_status",
+    "sync_status",
+    "node_sync_status",
+]

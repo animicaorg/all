@@ -10,6 +10,7 @@ import pytest
 from typer.testing import CliRunner
 
 from animica.cli.main import app
+from animica.cli import sync as sync_cli
 
 runner = CliRunner()
 
@@ -514,8 +515,66 @@ def test_sync_status_not_synced_when_bootstrap_ahead(monkeypatch):
         result = runner.invoke(app, ["sync", "status", "--allow-bootstrap-rpc"])
 
     assert result.exit_code == 0
-    assert "NOT SYNCED" in result.stdout
+    assert "SYNCING" in result.stdout
     assert "synchronized with the network" not in result.stdout
+
+
+def test_sync_state_syncing_headers():
+    """Sync state should show header sync when headers are ahead of blocks."""
+    metrics = {
+        "syncing": False,
+        "synchronized": False,
+        "best_header_height": 12,
+        "best_block_height": 0,
+        "phase": "headers",
+    }
+
+    state = sync_cli._compute_sync_state(
+        head_height=0,
+        network_height=None,
+        metrics=metrics,
+    )
+
+    assert state == "SYNCING_HEADERS"
+
+
+def test_sync_state_syncing_blocks():
+    """Sync state should show block sync when blocks lag headers."""
+    metrics = {
+        "syncing": False,
+        "synchronized": False,
+        "best_header_height": 20,
+        "best_block_height": 15,
+        "phase": None,
+    }
+
+    state = sync_cli._compute_sync_state(
+        head_height=15,
+        network_height=None,
+        metrics=metrics,
+    )
+
+    assert state == "SYNCING_BLOCKS"
+
+
+def test_sync_state_near_tip():
+    """Sync state should show near-tip when close to network height."""
+    metrics = {
+        "syncing": False,
+        "synchronized": False,
+        "best_header_height": None,
+        "best_block_height": None,
+        "phase": None,
+    }
+
+    state = sync_cli._compute_sync_state(
+        head_height=95,
+        network_height=100,
+        metrics=metrics,
+        near_tip_blocks=10,
+    )
+
+    assert state == "NEAR_TIP"
 
 
 def test_sync_main_help():
