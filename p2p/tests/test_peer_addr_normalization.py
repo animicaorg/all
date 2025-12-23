@@ -9,8 +9,13 @@ from p2p.peer.peer_addr import normalize_peer_addr
     "raw,expected",
     [
         ("tcp://example.com:30333", "tcp://example.com:30333"),
+        ("p2p://example.com:30333", "tcp://example.com:30333"),
         ("/ip4/144.126.133.21/tcp/30333", "tcp://144.126.133.21:30333"),
         ("/dns4/mainnet.animica.org/tcp/30333", "tcp://mainnet.animica.org:30333"),
+        (
+            "/dns4/mainnet.animica.org/tcp/30333/p2p/12D3KooWXYZ",
+            "tcp://mainnet.animica.org:30333",
+        ),
         ("203.0.113.10:30333", "tcp://203.0.113.10:30333"),
     ],
 )
