@@ -15,7 +15,7 @@
 # Notes:
 # - Uses testnet chain ID (2)
 # - Isolated volumes: testnet_node_data, testnet_services_data
-# - Genesis: core/genesis/genesis.testnet.json (or default if not exists)
+# - Genesis: /app/genesis/genesis.sample.testnet.json (bundled in image)
 # - Data directory isolated to prevent cross-network contamination
 # - Faucet enabled by default for testnet (requires FAUCET_KEY)
 # -------------------------------------------------------------------
@@ -45,7 +45,7 @@ services:
       # Testnet chain config
       ANIMICA_NETWORK: "testnet"
       ANIMICA_CHAIN_ID: "${ANIMICA_CHAIN_ID:-2}"
-      GENESIS_PATH: "${GENESIS_PATH:-core/genesis/genesis.testnet.json}"
+      GENESIS_PATH: "${GENESIS_PATH:-/app/genesis/genesis.sample.testnet.json}"
       ANIMICA_DATA_DIR: "/data"
       ANIMICA_RPC_BOOTSTRAP_ONLY: "${ANIMICA_RPC_BOOTSTRAP_ONLY:-0}"
       # RPC server config

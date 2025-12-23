@@ -45,7 +45,6 @@ Fork choice (from core/chain/fork_choice.py):
 - ForkChoice.best() -> Optional[tuple[int, bytes]]
 """
 
-import os
 from dataclasses import asdict, is_dataclass
 from functools import lru_cache
 from typing import Any, Dict, List, NamedTuple, Optional, Tuple, Union
@@ -56,7 +55,8 @@ from core.encoding.canonical import \
 from core.encoding.cbor import dumps as cbor_dumps
 from core.encoding.cbor import loads as cbor_loads
 from core.errors import AnimicaError
-from core.genesis.loader import load_genesis
+from core.genesis.genesis_loader import get_genesis
+from core.genesis.loader import load_chain_params_from_genesis
 from core.types.block import Block
 from core.types.header import Header
 from core.types.params import ChainParams
@@ -628,14 +628,10 @@ class BlockImporter:
 _IMPORTER_CACHE: Dict[int, BlockImporter] = {}
 
 
-def _resolve_genesis_path(genesis_path: Optional[str]) -> Optional[str]:
-    return genesis_path or os.getenv("GENESIS_PATH") or os.getenv("ANIMICA_GENESIS_PATH")
-
-
 @lru_cache(maxsize=4)
 def _load_chain_params_for_import(genesis_path: Optional[str]) -> ChainParams:
-    params, _header = load_genesis(genesis_path)
-    return params
+    bundle = get_genesis(genesis_path)
+    return load_chain_params_from_genesis(bundle.genesis, base_dir=bundle.base_dir)
 
 
 def _get_importer(
@@ -665,7 +661,7 @@ def import_block(
     provided block.
     """
     try:
-        params = _load_chain_params_for_import(_resolve_genesis_path(genesis_path))
+        params = _load_chain_params_for_import(genesis_path)
         importer = _get_importer(block_db, tx_index, params)
         result = importer.import_block(raw_block)
         accepted = result.code in (
@@ -690,7 +686,7 @@ if __name__ == "__main__":  # pragma: no cover
         description="Import a CBOR-encoded block into the local DB"
     )
     ap.add_argument("--db", default="sqlite:///animica.db")
-    ap.add_argument("--genesis", default="core/genesis/genesis.json")
+    ap.add_argument("--genesis", default=None)
     ap.add_argument("--block", required=True, help="path to block.cbor")
     args = ap.parse_args()
 
