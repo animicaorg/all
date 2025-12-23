@@ -591,6 +591,75 @@ def _ctx():
         return deps.build_context()
 
 
+def _mining_gate() -> tuple[bool, str | None]:
+    if os.getenv("ANIMICA_MINING_FORCE", "").lower() in ("1", "true", "yes", "on"):
+        return True, None
+    try:
+        import p2p
+
+        svc = p2p.get_service()
+    except Exception:
+        svc = None
+    if svc is None:
+        return True, None
+    try:
+        p2p_status = svc.status_snapshot().to_dict()
+        sync_status = svc.sync_status_snapshot().to_dict()
+    except Exception:
+        return True, None
+
+    min_peers = int(os.getenv("ANIMICA_MINING_MIN_PEERS", "1"))
+    if min_peers > 0 and int(p2p_status.get("peers_total", 0)) < min_peers:
+        return False, "insufficient_peers"
+
+    phase = str(sync_status.get("phase") or "")
+    if phase in {"STALLED", "HEADERS", "BLOCKS", "VERIFYING"}:
+        return False, f"sync_phase:{phase.lower()}"
+
+    max_lag = int(os.getenv("ANIMICA_MINING_MAX_LAG", "2"))
+    head_height = int(sync_status.get("head_height") or 0)
+    best_header_height = int(sync_status.get("best_header_height") or 0)
+    if best_header_height - head_height > max_lag:
+        return False, "behind_headers"
+
+    return True, None
+
+
+def _mining_disabled_payload(reason: str | None) -> dict[str, Any]:
+    head = _current_head_snapshot()
+    return {
+        "disabled": True,
+        "miningEnabled": False,
+        "reason": reason,
+        "head": {"height": head.get("height"), "hash": head.get("hash")},
+    }
+
+
+def _parent_within_canonical_window(
+    *,
+    block_db: Any,
+    parent_hash: bytes,
+    head_height: int,
+    window: int,
+) -> bool:
+    if window <= 0:
+        return False
+    getter = getattr(block_db, "get_canonical_hash", None)
+    if not callable(getter):
+        return False
+    start = max(0, head_height - window)
+    for height in range(head_height, start - 1, -1):
+        try:
+            h = getter(height)
+        except Exception:
+            h = None
+        if h is None:
+            continue
+        if bytes(h) == parent_hash:
+            return True
+    return False
+
+
 def _current_head_snapshot() -> dict[str, Any]:
     ctx = _ctx()
     snap = ctx.get_head()
@@ -1201,6 +1270,14 @@ def _build_child_header(
     )
 
 
+def _cleanup_tracked_txs(txs: list[Any]) -> None:
+    try:
+        for tx in txs:
+            _TX_HASH_MAP.pop(id(tx), None)
+    except Exception as e:
+        log.warning(f"Failed to clean up hash mapping: {e}")
+
+
 def _convert_receipts_dict_to_objects(receipts_dict: list[dict[str, Any]]) -> list:
     """
     Convert dict receipts from _execute_transactions to Receipt objects.
@@ -1583,6 +1660,11 @@ def _mine_once(payout_address: bytes | None = None, threads: int = 1) -> tuple[b
             - success: True if block was mined and accepted, False otherwise
             - reward_amount: Miner reward in nANM (0 if mining failed or no reward)
     """
+    allowed, reason = _mining_gate()
+    if not allowed:
+        log.warning("Mining disabled", extra={"reason": reason})
+        return (False, 0)
+
     ctx = _ctx()
     adapter = _adapter()
     txs: list[Tx] = []
@@ -1864,6 +1946,7 @@ def _mine_once(payout_address: bytes | None = None, threads: int = 1) -> tuple[b
     parent_height = int(head.get("height") or 0)
     parent_hash_val = head.get("hash") or head.get("hash_hex")
     parent_header = head.get("obj") or head.get("header")
+    start_head_height = parent_height
 
     if parent_header is None:
         # If the DB is empty, force bootstrap and retry once
@@ -1876,10 +1959,13 @@ def _mine_once(payout_address: bytes | None = None, threads: int = 1) -> tuple[b
                 parent_height = int(head.get("height") or 0)
                 parent_hash_val = head.get("hash") or head.get("hash_hex")
                 parent_header = head.get("obj") or head.get("header")
+                start_head_height = parent_height
             except Exception:
                 parent_header = None
 
     parent_hash_bytes = _bytes32(parent_hash_val or ZERO32)
+    start_head_hash_bytes = parent_hash_bytes
+    start_head_hash_bytes = parent_hash_bytes
     if parent_header is None:
         # Build a minimal synthetic parent header so hashes/roots have sane defaults
         pq_root, poies_root = _policy_roots()
@@ -2119,6 +2205,27 @@ def _mine_once(payout_address: bytes | None = None, threads: int = 1) -> tuple[b
     
     # Check if we found a valid nonce
     if valid_nonce is not None and block_hash_bytes is not None and block_hash_int is not None:
+        try:
+            latest_head = adapter.get_head()
+            latest_height = int(latest_head.get("height") or 0)
+            latest_hash_val = latest_head.get("hash") or latest_head.get("hash_hex")
+            latest_hash_bytes = _bytes32(latest_hash_val or ZERO32)
+        except Exception:
+            latest_height = start_head_height
+            latest_hash_bytes = start_head_hash_bytes
+
+        if latest_height != start_head_height or latest_hash_bytes != start_head_hash_bytes:
+            log.info(
+                "Discarding mined block due to head update during mining",
+                extra={
+                    "start_height": start_head_height,
+                    "start_hash": start_head_hash_bytes.hex(),
+                    "current_height": latest_height,
+                    "current_hash": latest_hash_bytes.hex(),
+                },
+            )
+            _cleanup_tracked_txs(txs)
+            return (False, 0)
         # Found a valid block! Now execute txs and generate receipts before persisting.
         # Import Receipt, ReceiptStatus, Log, and BlockEnv at block level (once per mined block)
         from core.types.receipt import Receipt, ReceiptStatus, Log
@@ -2442,6 +2549,10 @@ def miner_get_work(params: Any | None = None) -> Dict[str, Any]:
     elif algo_hint is None:
         algo_hint = "asic_sha256"
 
+    allowed, reason = _mining_gate()
+    if not allowed:
+        return _mining_disabled_payload(reason)
+
     tb = TemplateBuilder(
         get_head_info=_head_info,
         get_theta=_resolve_theta,
@@ -2510,6 +2621,7 @@ def miner_get_work(params: Any | None = None) -> Dict[str, Any]:
         "templateId": job_id,
         "header": header_view,
         "thetaMicro": int(theta),
+        "miningEnabled": True,
         "shareTarget": float(share_target),
         "target": hex(block_target),
         "height": int(tpl.height),
@@ -2601,14 +2713,26 @@ def miner_submit_work(*args: Any, **payload: Any) -> Dict[str, Any]:
             head_hash_hex[2:] if head_hash_hex.startswith("0x") else head_hash_hex
         )
         if job.get("parent_hash") and head_hash_bytes != job.get("parent_hash"):
-            _JOB_CACHE.pop(str(job_id), None)
-            return {
-                "accepted": False,
-                "jobId": job_id,
-                "stale": True,
-                "reason": "stale-parent",
-                "head": {"height": head_height, "hash": head_hash_hex},
-            }
+            window = int(os.getenv("ANIMICA_MINER_REORG_WINDOW", "6"))
+            in_window = False
+            try:
+                in_window = _parent_within_canonical_window(
+                    block_db=_ctx().block_db,
+                    parent_hash=job.get("parent_hash"),
+                    head_height=head_height,
+                    window=window,
+                )
+            except Exception:
+                in_window = False
+            if not in_window:
+                _JOB_CACHE.pop(str(job_id), None)
+                return {
+                    "accepted": False,
+                    "jobId": job_id,
+                    "stale": True,
+                    "reason": "stale-parent",
+                    "head": {"height": head_height, "hash": head_hash_hex},
+                }
 
     nonce = _parse_nonce(nonce_val)
     sign_bytes: bytes = job["sign_bytes"]
@@ -2677,6 +2801,17 @@ def miner_mine(count: int | None = None, address: str | None = None, threads: in
         head_before = ctx.get_head()
     except Exception:
         head_before = {"height": None, "hash": None}
+
+    allowed, reason = _mining_gate()
+    if not allowed:
+        return {
+            "mined": 0,
+            "height": int(head_before.get("height") or 0),
+            "totalReward": 0,
+            "rewards": [],
+            "disabled": True,
+            "reason": reason,
+        }
     
     # Validate threads parameter
     if threads is not None:

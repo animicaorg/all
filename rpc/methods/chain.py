@@ -246,6 +246,30 @@ def chain_get_head() -> dict:
 
 
 @method(
+    "chain.getForks",
+    desc="Return fork-choice tips (top competing branches).",
+    aliases=("chain_getForks",),
+)
+def chain_get_forks(limit: int | None = None) -> dict:
+    ctx = deps.get_ctx()
+    try:
+        from core.chain.block_import import fork_choice_snapshot
+    except Exception as exc:  # pragma: no cover
+        return {"tips": [], "error": str(exc)}
+    snap = fork_choice_snapshot(
+        ctx.block_db,
+        ctx.tx_index,
+        genesis_path=getattr(ctx.cfg, "genesis_path", None),
+        limit=int(limit or 5),
+    )
+    return {
+        "head": chain_get_head(),
+        "tips": snap.get("tips", []),
+        **({"error": snap["error"]} if "error" in snap else {}),
+    }
+
+
+@method(
     "chain.getCheckpoints",
     desc="Return built-in checkpoints for the requested chain.",
     aliases=("chain_getCheckpoints",),

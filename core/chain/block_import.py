@@ -84,6 +84,9 @@ except Exception:  # pragma: no cover - consensus optional
 
 log = logging.getLogger("animica.chain.block_import")
 
+_DEFAULT_SHARE_TARGET = float(os.getenv("ANIMICA_DEFAULT_SHARE_TARGET", "0.01"))
+_MAX_TARGET = (1 << 256) - 1
+
 
 class ImportErrorCode(str):
     INVALID = "invalid"
@@ -200,6 +203,15 @@ def _weight_micro_of(
                 except Exception:
                     pass
     return int(params.theta_initial)
+
+
+def _theta_to_target(theta_micro: int) -> int:
+    """Derive a loose block target from θ for lightweight validation."""
+    base = int(_MAX_TARGET * _DEFAULT_SHARE_TARGET)
+    if theta_micro <= 0:
+        return base
+    scaled = max(1, int(base / max(theta_micro / 1_000_000, 1)))
+    return min(_MAX_TARGET, scaled)
 
 
 def _dataclass_from_dict(dc_type, data: Dict[str, Any]):
@@ -517,6 +529,12 @@ class BlockImporter:
             # Basic header sanity
             self._sanity_header(header)
 
+            pow_error = self._pow_sanity(
+                header=header, header_hash=h, payload=hdr_map
+            )
+            if pow_error is not None:
+                return ImportResult(ImportErrorCode.INVALID, height, h, False, pow_error)
+
             # Persist header & block
             self._store_header(height, h, header)
             self._store_block(h, block)
@@ -671,6 +689,25 @@ class BlockImporter:
             # upper bound guard (µ-nats scale) — policy will clamp tighter
             if t > 10**12:
                 raise BlockImportError("theta unreasonably large")
+
+    def _pow_sanity(
+        self,
+        *,
+        header: Header,
+        header_hash: bytes,
+        payload: Dict[str, Any],
+    ) -> Optional[str]:
+        """
+        Lightweight PoW threshold check aligned with miner target rules.
+        """
+        try:
+            theta_micro = _weight_micro_of(header, payload, self.params)
+            target = _theta_to_target(int(theta_micro))
+            if int.from_bytes(header_hash, "big") > target:
+                return "pow target not met"
+        except Exception as e:
+            return f"pow check failed: {e}"
+        return None
 
     def _tx_hash(self, tx: Tx) -> bytes:
         # Canonical: sha3_256 over the tx SignBytes (encoding/ canonical domain).
@@ -870,6 +907,26 @@ class BlockImporter:
         else:
             self.block_db.set_canonical_head(best.height, best.h)
 
+    def fork_tips(self, limit: int = 5) -> List[Dict[str, Any]]:
+        if self.fork_choice is None:
+            return []
+        tips = []
+        best = self.fork_choice.best_tip
+        for h in self.fork_choice.tip_set():
+            node = self.fork_choice.nodes.get(h)
+            if node is None:
+                continue
+            tips.append(
+                {
+                    "hash": "0x" + node.h.hex(),
+                    "height": int(node.height),
+                    "total_work": int(node.cum_weight_micro),
+                    "is_best": node.h == best.h,
+                }
+            )
+        tips.sort(key=lambda item: (-item["total_work"], item["hash"]))
+        return tips[: max(1, int(limit))]
+
     def _delete_canonical_range(self, start: int, end: int) -> None:
         if start > end:
             return
@@ -1038,6 +1095,23 @@ def import_block(
         return accepted, result.reason or result.code
     except Exception as e:
         return False, str(e)
+
+
+def fork_choice_snapshot(
+    block_db,
+    tx_index=None,
+    *,
+    genesis_path: Optional[str] = None,
+    limit: int = 5,
+) -> Dict[str, Any]:
+    try:
+        params = _load_chain_params_for_import(genesis_path)
+        importer = _get_importer(block_db, tx_index, params)
+        return {
+            "tips": importer.fork_tips(limit=limit),
+        }
+    except Exception as e:
+        return {"tips": [], "error": str(e)}
 
 
 # Convenience: tiny CLI for manual testing

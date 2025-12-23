@@ -9,10 +9,8 @@ This module implements a *weight-aware* and *deterministic* fork-choice rule:
      any monotone function of validated difficulty/score. Callers supply the
      `weight_micro` for each header inserted (usually the block's Θ at seal time).
 
-2) On equal cumulative weight, prefer *greater height*.
-
-3) If still tied, choose the *lexicographically smallest block hash* (bytes-wise).
-   This is deterministic and avoids oscillations.
+2) On equal cumulative weight, choose the *lexicographically smallest block hash*
+   (bytes-wise). This is deterministic and avoids oscillations.
 
 The structure is self-contained, has no DB dependency, and exposes:
 - `ForkChoice.add_block(...)` to insert a header (parent-first or orphan-ok).
@@ -202,19 +200,15 @@ class ForkChoice:
             best_hash = getattr(best, "hash", b"")
             
             # Apply fork choice rules:
-            # 1. Prefer higher height (longest chain)
-            if c_height > best_height:
+            # 1. Prefer higher cumulative weight
+            if c_weight > best_weight:
                 best = c
-            elif c_height == best_height:
-                # 2. On equal height, prefer higher weight
-                if c_weight > best_weight:
+            elif c_weight == best_weight:
+                # 2. On equal weight, use deterministic hash tie-breaker
+                c_hash_bytes = _hex_to_bytes(c_hash) if isinstance(c_hash, str) else c_hash
+                best_hash_bytes = _hex_to_bytes(best_hash) if isinstance(best_hash, str) else best_hash
+                if _hash_lt(c_hash_bytes, best_hash_bytes):
                     best = c
-                elif c_weight == best_weight:
-                    # 3. On equal height and weight, use deterministic hash tie-breaker
-                    c_hash_bytes = _hex_to_bytes(c_hash) if isinstance(c_hash, str) else c_hash
-                    best_hash_bytes = _hex_to_bytes(best_hash) if isinstance(best_hash, str) else best_hash
-                    if _hash_lt(c_hash_bytes, best_hash_bytes):
-                        best = c
         
         return best
 
@@ -310,13 +304,10 @@ class ForkChoice:
         """
         True if `a` is strictly better than `b`:
           1) higher cumulative weight
-          2) higher height
-          3) lexicographically smaller hash
+          2) lexicographically smaller hash
         """
         if a.cum_weight_micro != b.cum_weight_micro:
             return a.cum_weight_micro > b.cum_weight_micro
-        if a.height != b.height:
-            return a.height > b.height
         return _hash_lt(a.h, b.h)
 
     def _collect_tip(self, h: bytes) -> Node:
