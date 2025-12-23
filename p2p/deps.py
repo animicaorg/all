@@ -94,6 +94,14 @@ def _open_kv(db_uri: str):
     return c["SQLiteKV"](db_uri)
 
 
+def _db_uri_hint(db_uri: str) -> str:
+    if db_uri.startswith("sqlite:///"):
+        return db_uri[len("sqlite:///") :]
+    if db_uri.startswith("rocksdb:///"):
+        return db_uri[len("rocksdb:///") :]
+    return db_uri
+
+
 # --------------------------------------------------------------------------- #
 # Locators & small helpers
 # --------------------------------------------------------------------------- #
@@ -175,7 +183,22 @@ class P2PDeps:
         tx_index = c["TxIndex"](kv)
 
         # Ensure genesis finalized (idempotent)
-        c["finalize_genesis_if_needed"](block_db, state_db, genesis_path)
+        try:
+            c["finalize_genesis_if_needed"](block_db, state_db, genesis_path)
+        except Exception as exc:
+            from core.errors import GenesisError
+
+            if isinstance(exc, GenesisError):
+                expected = exc.data.get("expected") if hasattr(exc, "data") else None
+                found = exc.data.get("found") if hasattr(exc, "data") else None
+                data_dir = _db_uri_hint(db_uri)
+                raise P2PError(
+                    "DB genesis mismatch (wrong network or corrupted DB). "
+                    f"expected={expected} found={found} data_dir={data_dir}. "
+                    "Fix: remove or reset the data dir for this chain "
+                    "(e.g., delete ~/.animica/chain-<id> or docker volumes)."
+                ) from exc
+            raise
 
         # Load chain params from state/meta; fall back to genesis file if exposed there
         # We try common locations in BlockDB/StateDB meta; exact path depends on core implementation.

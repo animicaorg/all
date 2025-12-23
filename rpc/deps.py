@@ -420,6 +420,16 @@ def _maybe_bootstrap_genesis(
                 need_boot = True
 
         if not need_boot:
+            if genesis_path is None:
+                genesis_loader = _import("core.genesis.genesis_loader")
+                genesis_path = genesis_loader.resolve_genesis_path(None)
+            loader = _import("core.genesis.loader")
+            head_mod = _import("core.chain.head")
+            if hasattr(loader, "load_genesis") and hasattr(head_mod, "finalize_genesis"):
+                params, header = loader.load_genesis(
+                    genesis_path, kv=bundle.kv, block_db=bundle.block_db, log=False
+                )
+                head_mod.finalize_genesis(bundle.block_db, params, header)  # type: ignore[arg-type]
             # DB already has a head; do not reinitialize
             return
 
@@ -449,6 +459,18 @@ def _maybe_bootstrap_genesis(
         # DO NOT use load_and_init_genesis here as it opens a second DB connection
         # else: silently ignore (RPC will report null head)
     except Exception as e:
+        from core.errors import GenesisError
+
+        if isinstance(e, GenesisError):
+            expected = e.data.get("expected") if hasattr(e, "data") else None
+            found = e.data.get("found") if hasattr(e, "data") else None
+            data_dir = db_uri or "<unknown>"
+            raise RuntimeError(
+                "DB genesis mismatch (wrong network or corrupted DB). "
+                f"expected={expected} found={found} data_dir={data_dir}. "
+                "Fix: remove or reset the data dir for this chain "
+                "(e.g., delete ~/.animica/chain-<id> or docker volumes)."
+            ) from e
         # We deliberately swallow errors here to avoid bringing down the RPC
         # process if core/genesis evolves. The node CLI (core.boot) handles
         # authoritative bootstrapping for production.
