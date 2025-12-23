@@ -114,7 +114,7 @@ services:
       - ./entrypoints:/entrypoints:ro
       - ./healthchecks:/healthchecks:ro
     ports:
-      - "0.0.0.0:${HOST_RPC_PORT:-28545}:8545"   # RPC/WS (WS served at /ws)
+      - "127.0.0.1:${HOST_RPC_PORT:-28545}:8545"   # RPC/WS (WS served at /ws)
       - "${HOST_P2P_PORT:-31335}:30333"  # P2P TCP port
       - "${HOST_P2P_QUIC_PORT:-31443}:443/udp"  # P2P QUIC port (UDP)
       - "0.0.0.0:${HOST_METRICS_PORT:-29000}:9000"   # Metrics

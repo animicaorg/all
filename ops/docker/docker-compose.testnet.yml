@@ -70,12 +70,12 @@ services:
       P2P_SEEDS: "${P2P_SEEDS:-}"
     command: ["/bin/bash", "-c", "python -m rpc"]
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS -X POST http://localhost:8546/rpc -H 'content-type: application/json' -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"node.ping\",\"params\":[]}' >/dev/null || exit 1"]
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8546/healthz >/dev/null || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 20
     ports:
-      - "0.0.0.0:${HOST_RPC_PORT:-18546}:8546"
+      - "127.0.0.1:${HOST_RPC_PORT:-18546}:8546"
       - "${HOST_P2P_PORT:-31334}:30334"  # P2P TCP port
       - "${HOST_P2P_QUIC_PORT:-30443}:443/udp"  # P2P QUIC port (UDP)
       - "0.0.0.0:${HOST_METRICS_PORT:-19000}:9000"
