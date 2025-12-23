@@ -259,7 +259,7 @@ def load_network_config(network: Optional[str] = None) -> NetworkConfig:
     if not rpc_url:
         rpc_url = defaults["rpc_url"]
 
-    is_bootstrap_node = _env_bool("ANIMICA_BOOTSTRAP_NODE", False)
+    is_bootstrap_node = _env_bool("ANIMICA_BOOTSTRAP_NODE", True)
 
     bootstrap_url = os.getenv("ANIMICA_BOOTSTRAP_RPC_URL")
     if bootstrap_url is not None:
