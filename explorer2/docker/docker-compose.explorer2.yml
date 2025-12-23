@@ -7,7 +7,6 @@ services:
       dockerfile: explorer2/docker/Dockerfile.api
     environment:
       EXPLORER2_PORT: 8081
-      EXPLORER2_RPC_URL: ${EXPLORER2_RPC_URL:-http://host.docker.internal:8545/rpc}
       EXPLORER2_CORS_ORIGIN: "*"
     ports:
       - "8081:8081"
