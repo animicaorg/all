@@ -250,25 +250,55 @@ def _ensure_ports_available(
     raise typer.Exit(code=1)
 
 
-def _wait_for_rpc_ready(
-    rpc_url: str,
-    timeout_s: int,
-    interval_s: float = 2.0,
-) -> bool:
-    deadline = time.time() + timeout_s
-    payload = {"jsonrpc": "2.0", "id": 1, "method": "chain.getHead", "params": []}
-    with httpx.Client(timeout=3.0) as client:
-        while time.time() < deadline:
-            try:
-                response = client.post(rpc_url, json=payload)
-                if response.status_code == 200:
-                    data = response.json()
-                    if "result" in data:
-                        return True
-            except Exception:
-                pass
-            time.sleep(interval_s)
-    return False
+def _container_name_for_network(network: str) -> str:
+    return {
+        "mainnet": "animica-mainnet-node",
+        "testnet": "animica-testnet-node",
+        "devnet": "animica-node",
+        "local-devnet": "animica-node",
+    }.get(network, f"animica-{network}-node")
+
+
+def _docker_container_running(compose_file: Path, network: str) -> bool:
+    container_name = _container_name_for_network(network)
+    status = subprocess.run(
+        ["docker", "ps", "--filter", f"name={container_name}", "--format", "{{.ID}}"],
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=compose_file.parent,
+    )
+    return bool(status.stdout.strip())
+
+
+def _is_port_bound(port: int) -> bool:
+    ss_path = shutil.which("ss")
+    if ss_path:
+        result = subprocess.run(
+            [ss_path, "-ltn", "sport", f"=:{port}"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode == 0 and str(port) in result.stdout:
+            return True
+
+    lsof_path = shutil.which("lsof")
+    if lsof_path:
+        result = subprocess.run(
+            [lsof_path, "-nP", f"-iTCP:{port}", "-sTCP:LISTEN"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return True
+
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=0.5):
+            return True
+    except Exception:
+        return False
 
 
 def _print_docker_diagnostics(compose_file: Path, network: str) -> None:
@@ -299,12 +329,7 @@ def _print_docker_diagnostics(compose_file: Path, network: str) -> None:
             err=True,
         )
 
-    container_name = {
-        "mainnet": "animica-mainnet-node",
-        "testnet": "animica-testnet-node",
-        "devnet": "animica-node",
-        "local-devnet": "animica-node",
-    }.get(network, f"animica-{network}-node")
+    container_name = _container_name_for_network(network)
     typer.secho("\nContainer status:", fg=typer.colors.YELLOW, bold=True)
     status = subprocess.run(
         ["docker", "ps", "--filter", f"name={container_name}"],
@@ -698,6 +723,57 @@ def _collect_seed_candidates(net_cfg: Any) -> list[str]:
 
     seeds.extend(get_seed_nodes(net_cfg.name))
     return list(dict.fromkeys([str(seed) for seed in seeds if seed]))
+
+
+def _health_url_from_rpc(rpc_url: str) -> str:
+    if rpc_url.endswith("/rpc"):
+        return rpc_url[: -len("/rpc")] + "/healthz"
+    return rpc_url.rstrip("/") + "/healthz"
+
+
+def _wait_for_node_ready(
+    *,
+    compose_file: Path,
+    network: str,
+    rpc_url: str,
+    rpc_port: int,
+    timeout_s: float,
+    interval_s: float = 2.0,
+) -> tuple[bool, str | None]:
+    deadline = time.time() + timeout_s
+    last_error: Optional[str] = None
+    health_url = _health_url_from_rpc(rpc_url)
+    with httpx.Client(timeout=3.0) as client:
+        while time.time() < deadline:
+            if not _docker_container_running(compose_file, network):
+                last_error = "container not running"
+                time.sleep(interval_s)
+                continue
+
+            if not _is_port_bound(rpc_port):
+                last_error = "host RPC port not bound"
+                time.sleep(interval_s)
+                continue
+
+            try:
+                response = client.get(health_url)
+                if response.status_code != 200:
+                    last_error = f"healthz returned {response.status_code}"
+                    time.sleep(interval_s)
+                    continue
+            except Exception as exc:
+                last_error = f"healthz check failed: {exc}"
+                time.sleep(interval_s)
+                continue
+
+            try:
+                _local_rpc(rpc_url, "chain.getHead", [])
+                return True, None
+            except Exception as exc:
+                last_error = f"chain.getHead failed: {exc}"
+                time.sleep(interval_s)
+
+    return False, last_error
 
 
 def _wait_for_rpc_ready(rpc_url: str, *, timeout_s: float = 60.0, interval_s: float = 2.0) -> bool:
@@ -1732,18 +1808,28 @@ def up(
         )
         
         if result.returncode == 0:
-            typer.secho("✓ Node started successfully!", fg=typer.colors.GREEN, bold=True)
             if detach:
                 rpc_ready_url = f"http://127.0.0.1:{rpc_port}/rpc"
                 typer.echo(f"\nWaiting for RPC readiness on {rpc_ready_url}...")
-                if not _wait_for_rpc_ready(rpc_ready_url, timeout_s=rpc_ready_timeout):
+                ready, ready_error = _wait_for_node_ready(
+                    compose_file=compose_file,
+                    network=network,
+                    rpc_url=rpc_ready_url,
+                    rpc_port=rpc_port,
+                    timeout_s=rpc_ready_timeout,
+                )
+                if not ready:
+                    detail = f" ({ready_error})" if ready_error else ""
                     typer.secho(
-                        f"RPC not reachable after {rpc_ready_timeout}s.",
+                        f"RPC not reachable after {rpc_ready_timeout}s{detail}.",
                         fg=typer.colors.RED,
                         err=True,
                     )
                     _print_docker_diagnostics(compose_file, network)
                     raise typer.Exit(code=1)
+
+            typer.secho("✓ Node started successfully!", fg=typer.colors.GREEN, bold=True)
+            if detach:
                 local_rpc_url = f"http://127.0.0.1:{rpc_port}/rpc"
                 typer.echo(f"\nNode is running in the background on network: {network}")
                 typer.echo(f"View logs with: docker compose -f {compose_file} logs -f")
