@@ -15,23 +15,31 @@ VENV_DIR="$ROOT/.venv"
 # ----------------------------
 FRESH_INSTALL=false
 ENABLE_P2P=true
-P2P_PORT="${P2P_PORT:-30333}"
+ENABLE_P2P_EXPLICIT=false
+P2P_PORT="${P2P_PORT:-30334}"
 P2P_BIND_IP="${P2P_BIND_IP:-0.0.0.0}"
 P2P_ADVERTISE_IP="${P2P_ADVERTISE_IP:-}"   # if empty we auto-detect
 P2P_LOG_DIR="${P2P_LOG_DIR:-$ROOT/logs}"
 P2P_PID_FILE="${P2P_PID_FILE:-$P2P_LOG_DIR/animica-p2p.pid}"
+AUTO_STOP_CONFLICTS="${AUTO_STOP_CONFLICTS:-0}"
 
 if [ "${FRESH:-}" = "1" ]; then
   FRESH_INSTALL=true
 fi
+if [ "${ENABLE_P2P:-}" = "1" ]; then
+  ENABLE_P2P=true
+  ENABLE_P2P_EXPLICIT=true
+fi
 if [ "${DISABLE_P2P:-}" = "1" ]; then
   ENABLE_P2P=false
+  ENABLE_P2P_EXPLICIT=true
 fi
 
 for arg in "$@"; do
   case "$arg" in
     --fresh) FRESH_INSTALL=true ;;
-    --no-p2p) ENABLE_P2P=false ;;
+    --p2p) ENABLE_P2P=true; ENABLE_P2P_EXPLICIT=true ;;
+    --no-p2p) ENABLE_P2P=false; ENABLE_P2P_EXPLICIT=true ;;
     --p2p-port=*) P2P_PORT="${arg#*=}" ;;
     --p2p-bind=*) P2P_BIND_IP="${arg#*=}" ;;
     --p2p-advertise=*) P2P_ADVERTISE_IP="${arg#*=}" ;;
@@ -41,17 +49,20 @@ Usage: $0 [OPTIONS]
 
 Options:
   --fresh              Remove existing .venv and perform a clean installation
+  --p2p                Start P2P listener/broadcaster after install (opt-in)
   --no-p2p             Do not start P2P listener/broadcaster after install
-  --p2p-port=PORT      P2P port (default: 30333)
+  --p2p-port=PORT      P2P port (default: 30334 for host P2P)
   --p2p-bind=IP        Bind IP for listener (default: 0.0.0.0)
   --p2p-advertise=IP   Advertise IP for peers (default: auto-detect)
 
 Environment Variables:
   FRESH=1              Same as --fresh flag
+  ENABLE_P2P=1         Same as --p2p
   DISABLE_P2P=1        Same as --no-p2p
   P2P_PORT             Same as --p2p-port
   P2P_BIND_IP          Same as --p2p-bind
   P2P_ADVERTISE_IP     Same as --p2p-advertise
+  AUTO_STOP_CONFLICTS=1  Stop conflicting host P2P automatically
   PIP_INDEX_URL        If set, use this as the primary pip index
   PIP_EXTRA_INDEX_URL  If set, use this as an additional pip index
 
@@ -67,6 +78,9 @@ Examples:
   # Disable P2P autostart
   ./setup.sh --no-p2p
 
+  # Opt in to host P2P autostart (default port 30334)
+  ./setup.sh --p2p
+
   # Explicit P2P advertise IP/port
   ./setup.sh --p2p-advertise=144.126.133.21 --p2p-port=30333
 EOF
@@ -74,6 +88,15 @@ EOF
       ;;
   esac
 done
+
+DOCKER_COMPOSE_PRESENT=false
+if [ -f "$ROOT/ops/docker/docker-compose.mainnet.yml" ]; then
+  DOCKER_COMPOSE_PRESENT=true
+fi
+
+if [ "$DOCKER_COMPOSE_PRESENT" = true ] && [ "$ENABLE_P2P_EXPLICIT" = false ]; then
+  ENABLE_P2P=false
+fi
 
 install_system_deps() {
   if ! have apt-get; then
@@ -182,6 +205,94 @@ verify_installation() {
 # ----------------------------
 # P2P autostart helpers
 # ----------------------------
+read_p2p_pid() {
+  if [ ! -f "$P2P_PID_FILE" ]; then
+    echo ""
+    return 0
+  fi
+
+  local content
+  content="$(cat "$P2P_PID_FILE" 2>/dev/null || true)"
+  if [[ "$content" =~ ^[0-9]+$ ]]; then
+    echo "$content"
+    return 0
+  fi
+
+  local pid_line
+  pid_line="$(echo "$content" | awk -F= '/^pid=/{print $2; exit}')"
+  echo "${pid_line:-}"
+}
+
+port_in_use() {
+  local port="$1"
+  if have ss; then
+    ss -ltn 2>/dev/null | awk '{print $4}' | grep -qE ":${port}$"
+    return $?
+  fi
+
+  if have lsof; then
+    lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1
+    return $?
+  fi
+
+  return 1
+}
+
+port_owner() {
+  local port="$1"
+  if have lsof; then
+    lsof -nP -iTCP:"$port" -sTCP:LISTEN 2>/dev/null | awk 'NR==2 {print $1 " (pid " $2 ")"}'
+    return 0
+  fi
+
+  if have ss; then
+    ss -ltnp 2>/dev/null | awk -v p=":${port}" '$4 ~ p {print $0}' | head -n 1
+    return 0
+  fi
+
+  echo ""
+}
+
+stop_running_p2p() {
+  local pid="$1"
+  if [ -z "$pid" ]; then
+    return 1
+  fi
+  if ! kill -0 "$pid" >/dev/null 2>&1; then
+    rm -f "$P2P_PID_FILE" || true
+    return 0
+  fi
+  kill "$pid" >/dev/null 2>&1 || true
+  rm -f "$P2P_PID_FILE" || true
+  return 0
+}
+
+check_for_conflicting_p2p() {
+  if [ "$DOCKER_COMPOSE_PRESENT" != true ]; then
+    return 0
+  fi
+
+  local docker_p2p_port=30333
+  local pid
+  pid="$(read_p2p_pid)"
+
+  if port_in_use "$docker_p2p_port"; then
+    local owner
+    owner="$(port_owner "$docker_p2p_port")"
+    warn "Host P2P appears to be using port ${docker_p2p_port} (${owner:-unknown process})."
+    warn "This will conflict with docker compose P2P port mapping."
+    if [ "$AUTO_STOP_CONFLICTS" = "1" ] && [ -n "$pid" ]; then
+      log "AUTO_STOP_CONFLICTS=1 set; stopping host P2P pid ${pid}."
+      stop_running_p2p "$pid"
+    else
+      warn "Stop the host P2P process or rerun with AUTO_STOP_CONFLICTS=1."
+    fi
+  elif [ -n "$pid" ] && kill -0 "$pid" >/dev/null 2>&1; then
+    warn "Host P2P pid file exists (pid $pid)."
+    warn "If this process binds 30333 it will conflict with docker. Consider stopping it."
+  fi
+}
+
 detect_advertise_ip() {
   # Prefer explicit env/flag
   if [ -n "${P2P_ADVERTISE_IP:-}" ]; then
@@ -270,7 +381,11 @@ p2p_start_command() {
 
 start_p2p() {
   if [ "$ENABLE_P2P" != true ]; then
-    log "P2P autostart disabled (--no-p2p / DISABLE_P2P=1)."
+    if [ "$DOCKER_COMPOSE_PRESENT" = true ]; then
+      log "P2P autostart disabled (docker compose detected). Use --p2p or ENABLE_P2P=1 to opt in."
+    else
+      log "P2P autostart disabled (--no-p2p / DISABLE_P2P=1)."
+    fi
     return 0
   fi
 
@@ -298,6 +413,11 @@ start_p2p() {
   cmd="$(p2p_start_command)"
   if [ -z "$cmd" ]; then
     warn "Could not determine how to start the Animica node/P2P from CLI. Skipping P2P autostart."
+    return 0
+  fi
+
+  if port_in_use "$P2P_PORT"; then
+    warn "P2P port ${P2P_PORT} is already in use (${port_owner "$P2P_PORT"}). Skipping autostart."
     return 0
   fi
 
@@ -343,8 +463,14 @@ start_p2p() {
     exec $cmd ${args[*]}
   " >"$P2P_LOG_DIR/animica-p2p.log" 2>&1 &
 
-  echo $! >"$P2P_PID_FILE"
-  log "P2P started (pid $(cat "$P2P_PID_FILE")). Logs: $P2P_LOG_DIR/animica-p2p.log"
+  cat >"$P2P_PID_FILE" <<EOF
+pid=$!
+port=$P2P_PORT
+bind_ip=$P2P_BIND_IP
+advertise_ip=${advertise_ip:-}
+started_at=$(date -u +%FT%TZ)
+EOF
+  log "P2P started (pid $(read_p2p_pid), port ${P2P_PORT}). Logs: $P2P_LOG_DIR/animica-p2p.log"
 }
 
 print_usage() {
@@ -373,7 +499,10 @@ P2P autostart:
   - If enabled, setup.sh attempted to start a P2P listener and broadcast/advertise address.
   - P2P PID file: $P2P_PID_FILE
   - P2P log file:  $P2P_LOG_DIR/animica-p2p.log
+  - To enable:     ./setup.sh --p2p  (or ENABLE_P2P=1)
   - To disable:    ./setup.sh --no-p2p  (or DISABLE_P2P=1)
+  - Default host P2P port: $P2P_PORT (set via --p2p-port or P2P_PORT)
+  - AUTO_STOP_CONFLICTS=1 stops conflicting host P2P before docker compose runs
 
 Post-quantum cryptography is enabled by default using pure-Python
 implementations (no liboqs/oqs dependencies required).
@@ -403,6 +532,8 @@ main() {
   install_animica
   verify_installation
 
+  check_for_conflicting_p2p
+
   # Start P2P (best-effort; never fails the install)
   set +e
   start_p2p
@@ -411,5 +542,9 @@ main() {
   print_usage
   log "Setup complete!"
 }
+
+if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
+  return 0
+fi
 
 main "$@"

@@ -58,7 +58,8 @@ services:
       # Primary config (ANIMICA_P2P_* vars are canonical):
       ANIMICA_P2P_ENABLE: "${ANIMICA_P2P_ENABLE:-true}"
       ANIMICA_P2P_CHAIN_ID: "${ANIMICA_P2P_CHAIN_ID:-2}"  # Auto-loads testnet seeds
-      ANIMICA_P2P_LISTEN_TCP: "${ANIMICA_P2P_LISTEN_TCP:-0.0.0.0:30334}"
+      ANIMICA_P2P_PORT: "${ANIMICA_P2P_PORT:-30334}"
+      ANIMICA_P2P_LISTEN_TCP: "${ANIMICA_P2P_LISTEN_TCP:-0.0.0.0:${ANIMICA_P2P_PORT:-30334}}"
       ANIMICA_P2P_LISTEN_QUIC: "${ANIMICA_P2P_LISTEN_QUIC:-0.0.0.0:443}"
       ANIMICA_P2P_ENABLE_TCP: "${ANIMICA_P2P_ENABLE_TCP:-true}"
       ANIMICA_P2P_ENABLE_QUIC: "${ANIMICA_P2P_ENABLE_QUIC:-true}"
@@ -66,7 +67,7 @@ services:
       ANIMICA_PEER_STORE_PATH: "${ANIMICA_PEER_STORE_PATH:-/data/chain-${ANIMICA_CHAIN_ID:-2}/p2p}"
       # Legacy P2P config (backward compatibility - deprecated):
       P2P_ENABLE: "${P2P_ENABLE:-true}"
-      P2P_LISTEN: "${P2P_LISTEN:-0.0.0.0:30334}"
+      P2P_LISTEN: "${P2P_LISTEN:-0.0.0.0:${ANIMICA_P2P_PORT:-30334}}"
       P2P_SEEDS: "${P2P_SEEDS:-}"
     command: ["/bin/bash", "-c", "python -m rpc"]
     healthcheck:
@@ -76,7 +77,7 @@ services:
       retries: 20
     ports:
       - "0.0.0.0:${HOST_RPC_PORT:-18546}:8546"
-      - "${HOST_P2P_TCP_PORT:-31334}:30334"  # P2P TCP port
+      - "${HOST_P2P_PORT:-31334}:30334"  # P2P TCP port
       - "${HOST_P2P_QUIC_PORT:-30443}:443/udp"  # P2P QUIC port (UDP)
       - "0.0.0.0:${HOST_METRICS_PORT:-19000}:9000"
     networks: [testnet]
