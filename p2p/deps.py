@@ -35,6 +35,7 @@ import os
 import time
 from dataclasses import dataclass
 import shutil
+from pathlib import Path
 from typing import (TYPE_CHECKING, Any, Callable, Iterable, List, Optional,
                     Sequence, Tuple)
 
@@ -102,6 +103,44 @@ def _db_uri_hint(db_uri: str) -> str:
     if db_uri.startswith("rocksdb:///"):
         return db_uri[len("rocksdb:///") :]
     return db_uri
+
+
+def _volume_name_for_chain(network: Optional[str], chain_id: Optional[int]) -> Optional[str]:
+    if not network or chain_id is None:
+        return None
+    safe_network = network.replace("-", "_")
+    return f"animica_{safe_network}_chain_{chain_id}_data"
+
+
+def _format_genesis_reset_guidance(data_dir: str, chain_id: Optional[int]) -> str:
+    network = os.getenv("ANIMICA_NETWORK")
+    compose_file = os.getenv("ANIMICA_COMPOSE_FILE")
+    data_dir_path = data_dir
+    data_dir_hint = data_dir_path or "<unknown>"
+    is_docker_mount = data_dir_path.startswith("/data")
+    lines: list[str] = []
+    lines.append("Reset guidance:")
+    backend = "docker volume" if is_docker_mount else "host path"
+    lines.append(f"- Data backend: {backend} ({data_dir_hint})")
+    if network:
+        lines.append(f"- Network: {network}")
+    if compose_file:
+        lines.append(f"- Compose file: {compose_file}")
+    lines.append("Suggested recovery commands:")
+    lines.append("  animica node down --volumes")
+    if is_docker_mount:
+        volume_name = _volume_name_for_chain(network, chain_id)
+        if volume_name:
+            lines.append(f"  docker volume ls | grep {volume_name}")
+            lines.append(f"  docker volume rm {volume_name}")
+        if compose_file:
+            lines.append(f"  docker compose -f {compose_file} down -v --remove-orphans")
+    else:
+        data_path = Path(data_dir_path)
+        if data_path.suffix and data_path.name.endswith(".db"):
+            data_path = data_path.parent
+        lines.append(f"  rm -rf {data_path}")
+    return "\n".join(lines)
 
 
 def _allow_genesis_reset() -> bool:
@@ -291,11 +330,13 @@ class P2PDeps:
                     )
                 expected_str = expected or "<unknown>"
                 found_str = found or "<unknown>"
+                guidance = _format_genesis_reset_guidance(data_dir, chain_id)
                 raise P2PError(
                     f"GENESIS_MISMATCH expected={expected_str} got={found_str} "
                     f"chain_id={chain_id} data_dir={data_dir}. "
                     "Refusing to sync. Reset the data dir for this chain "
-                    "(e.g., delete ~/.animica/chain-<id> or docker volumes)."
+                    "(e.g., delete ~/.animica/chain-<id> or docker volumes).\n"
+                    f"{guidance}"
                 ) from exc
             raise
 
@@ -316,11 +357,13 @@ class P2PDeps:
                     genesis_path,
                     allow_genesis_reset=False,
                 )
+            guidance = _format_genesis_reset_guidance(data_dir, chain_id)
             raise P2PError(
                 f"GENESIS_MISMATCH expected={expected_hex} got={found_hex} "
                 f"chain_id={chain_id} data_dir={data_dir}. "
                 "Refusing to sync. Reset the data dir for this chain "
-                "(e.g., delete ~/.animica/chain-<id> or docker volumes)."
+                "(e.g., delete ~/.animica/chain-<id> or docker volumes).\n"
+                f"{guidance}"
             )
 
         return cls(

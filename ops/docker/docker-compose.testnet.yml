@@ -26,7 +26,10 @@ networks:
     driver: bridge
 
 volumes:
+  animica_testnet_chain_2_data:
+    name: animica_testnet_chain_2_data
   testnet_services_data:
+    name: animica_testnet_services_data
 
 services:
   # ---------------------------------------------------------------
@@ -40,10 +43,11 @@ services:
     working_dir: /app
     volumes:
       - ../..:/app:ro
-      - ${ANIMICA_DATA_ROOT:-~/.animica}:/data
+      - ${ANIMICA_DATA_ROOT:-animica_testnet_chain_2_data}:/data
     environment:
       # Testnet chain config
       ANIMICA_NETWORK: "testnet"
+      ANIMICA_COMPOSE_FILE: "${ANIMICA_COMPOSE_FILE:-/app/ops/docker/docker-compose.testnet.yml}"
       ANIMICA_CHAIN_ID: "${ANIMICA_CHAIN_ID:-2}"
       GENESIS_PATH: "${GENESIS_PATH:-/app/genesis/genesis.sample.testnet.json}"
       ANIMICA_DATA_DIR: "/data"
