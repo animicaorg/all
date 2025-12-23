@@ -1,0 +1,17 @@
+{
+  "name": "Mining Proof Script",
+  "version": "1.0.0",
+  "entrypoints": [
+    "derive_challenge",
+    "verify_proof",
+    "commit_outputs"
+  ],
+  "allowed_stdlib": ["hash", "abi"],
+  "limits": {
+    "maxBytes": 4096,
+    "maxGas": 500000
+  },
+  "abi": {
+    "functions": []
+  }
+}

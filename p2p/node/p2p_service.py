@@ -417,6 +417,16 @@ class P2PService:
         if not identity_path:
             identity_path = peerstore_dir / "identity.json"
         identity_path = Path(identity_path).expanduser()
+        writable_identity = ensure_writable(identity_path)
+        identity_path = writable_identity.path
+        if writable_identity.used_fallback:
+            log.warning(
+                "P2P identity path not writable; using fallback",
+                extra={
+                    "requested": str(writable_identity.fallback_path),
+                    "effective": str(identity_path),
+                },
+            )
         self._ensure_peerstore_dir(identity_path.parent)
 
         passphrase = os.environ.get("ANIMICA_P2P_KEY_PASSPHRASE", "")

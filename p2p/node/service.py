@@ -118,12 +118,13 @@ class NodeService:
         from ..crypto import keys as node_keys_mod
         from ..crypto import peer_id as peer_id_mod
 
+        keys_path = self.cfg.keys_path or str(Path(self.cfg.data_dir) / "identity.json")
+        writable_keys = ensure_writable(Path(keys_path))
+        passphrase = os.environ.get("ANIMICA_P2P_KEY_PASSPHRASE", "")
         self.node_keys = node_keys_mod.load_or_create(
-            self.cfg.keys_path, alg=self.cfg.identity_alg
+            str(writable_keys.path), passphrase, alg=self.cfg.identity_alg
         )
-        self.peer_id = peer_id_mod.derive_peer_id(
-            self.node_keys.public_key, self.node_keys.alg_id
-        )
+        self.peer_id = peer_id_mod.peer_id_from_identity(self.node_keys)
 
         # Core services
         self.peerstore = pstore.PeerStore(self.cfg.data_dir)
