@@ -79,6 +79,8 @@ _MINING_STATE: dict[str, Any] = {
     "block_times": [],         # Recent block intervals (seconds) for EMA calculation
     "theta_state": None,       # RetargetState from consensus.difficulty
     "adjustment_enabled": True, # Whether to dynamically adjust theta during mining
+    "last_network_height": None,  # last observed chain head height
+    "last_network_timestamp": None,  # last observed chain head timestamp
 }
 
 # Hash tracking map for transactions from adapter and fallback pending cache
@@ -489,9 +491,13 @@ def _adjust_theta_for_mining(dt_seconds: float | None = None) -> int:
                     half_life_blocks=8.0,            # Faster adaptation for mining (vs 24 for consensus)
                     gain_beta=0.9,                   # More aggressive response (vs 0.75 for consensus)
                     step_clamp_micro=1_000_000,      # Allow larger steps (~1.0 nats per update)
-                    theta_min_micro=300_000,         # Lower minimum for easier mining (~0.3 nats)
+                    theta_min_micro=100_000,         # Lower minimum for easier mining (~0.1 nats)
                     theta_max_micro=None,            # None = use hard cap (3B µ-nats)
                 )
+
+                head_snapshot = _current_head_snapshot()
+                if int(head_snapshot.get("height") or 0) == 0:
+                    current_theta = min(current_theta, params.theta_min_micro)
                 
                 _MINING_STATE["theta_state"] = init_state(params, current_theta)
                 # Display effective maximum (hard cap when None)
@@ -582,6 +588,29 @@ def _adjust_theta_for_mining(dt_seconds: float | None = None) -> int:
         return _resolve_theta()
 
 
+def _network_block_interval(head_height: int, head_timestamp: int) -> float | None:
+    if head_height <= 0 or head_timestamp <= 0:
+        _MINING_STATE["last_network_height"] = head_height
+        _MINING_STATE["last_network_timestamp"] = head_timestamp
+        return None
+
+    last_height = _MINING_STATE.get("last_network_height")
+    last_timestamp = _MINING_STATE.get("last_network_timestamp")
+    if last_height is None or last_timestamp is None:
+        _MINING_STATE["last_network_height"] = head_height
+        _MINING_STATE["last_network_timestamp"] = head_timestamp
+        return None
+    if int(last_height) == head_height:
+        return None
+
+    dt_seconds = int(head_timestamp) - int(last_timestamp)
+    _MINING_STATE["last_network_height"] = head_height
+    _MINING_STATE["last_network_timestamp"] = head_timestamp
+    if dt_seconds <= 0:
+        return None
+    return float(dt_seconds)
+
+
 def _ctx():
     try:
         return deps.get_ctx()
@@ -612,13 +641,15 @@ def _mining_gate() -> tuple[bool, str | None]:
     if min_peers > 0 and int(p2p_status.get("peers_total", 0)) < min_peers:
         return False, "insufficient_peers"
 
-    phase = str(sync_status.get("phase") or "")
-    if phase in {"STALLED", "HEADERS", "BLOCKS", "VERIFYING"}:
-        return False, f"sync_phase:{phase.lower()}"
-
     max_lag = int(os.getenv("ANIMICA_MINING_MAX_LAG", "2"))
     head_height = int(sync_status.get("head_height") or 0)
     best_header_height = int(sync_status.get("best_header_height") or 0)
+    phase = str(sync_status.get("phase") or "")
+    if phase in {"STALLED", "HEADERS", "BLOCKS", "VERIFYING"}:
+        if phase == "STALLED" and head_height == 0 and best_header_height == 0:
+            return True, None
+        return False, f"sync_phase:{phase.lower()}"
+
     if best_header_height - head_height > max_lag:
         return False, "behind_headers"
 
@@ -1995,26 +2026,40 @@ def _mine_once(payout_address: bytes | None = None, threads: int = 1) -> tuple[b
     # Apply dynamic theta adjustment based on recent block times
     # This adapts mining difficulty to network conditions (hash rate, block times)
     global _MINING_STATE
-    last_block_time = _MINING_STATE.get("last_block_time")
-    if last_block_time is not None:
-        # Calculate time since last block
-        current_time = time.time()
-        dt_seconds = current_time - last_block_time
-        
-        # Adjust theta based on observed interval
-        adjusted_theta = _adjust_theta_for_mining(dt_seconds)
-        
-        # Update header template with adjusted theta
-        # Use dataclasses.replace for efficiency
+    network_dt_seconds = None
+    if parent_header is not None:
+        head_timestamp = int(getattr(parent_header, "timestamp", 0) or 0)
+        network_dt_seconds = _network_block_interval(parent_height, head_timestamp)
+    if network_dt_seconds is not None:
+        adjusted_theta = _adjust_theta_for_mining(network_dt_seconds)
         try:
             header_template = replace(header_template, thetaMicro=adjusted_theta)
-            log.debug(f"Applied dynamic theta adjustment: {adjusted_theta/1e6:.3f} nats (dt={dt_seconds:.2f}s)")
+            log.debug(
+                "Applied dynamic theta adjustment: %.3f nats (network dt=%.2fs)",
+                adjusted_theta / 1e6,
+                network_dt_seconds,
+            )
         except Exception as e:
             log.warning(f"Failed to apply theta adjustment to header: {e}")
     else:
-        # First block - initialize adjustment state
-        _adjust_theta_for_mining(dt_seconds=None)
-        log.info("Initialized theta adjustment for first mined block")
+        last_block_time = _MINING_STATE.get("last_block_time")
+        if last_block_time is not None:
+            current_time = time.time()
+            dt_seconds = current_time - last_block_time
+            adjusted_theta = _adjust_theta_for_mining(dt_seconds)
+            try:
+                header_template = replace(header_template, thetaMicro=adjusted_theta)
+                log.debug(
+                    "Applied dynamic theta adjustment: %.3f nats (local dt=%.2fs)",
+                    adjusted_theta / 1e6,
+                    dt_seconds,
+                )
+            except Exception as e:
+                log.warning(f"Failed to apply theta adjustment to header: {e}")
+        else:
+            # First block - initialize adjustment state
+            _adjust_theta_for_mining(dt_seconds=None)
+            log.info("Initialized theta adjustment for first mined block")
 
     if txs:
         # Build merkle root from CANONICAL tx hashes (from original raw CBOR)
