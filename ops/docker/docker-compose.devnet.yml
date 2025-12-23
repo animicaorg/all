@@ -37,13 +37,14 @@ x-node-env: &node_env
   # Primary config (ANIMICA_P2P_* vars are canonical):
   ANIMICA_P2P_ENABLE: true
   ANIMICA_P2P_CHAIN_ID: "${ANIMICA_P2P_CHAIN_ID:-1337}"  # Auto-loads devnet seeds
-  ANIMICA_P2P_LISTEN_TCP: 0.0.0.0:30333
+  ANIMICA_P2P_PORT: "${ANIMICA_P2P_PORT:-30333}"
+  ANIMICA_P2P_LISTEN_TCP: 0.0.0.0:${ANIMICA_P2P_PORT:-30333}
   ANIMICA_P2P_LISTEN_QUIC: 0.0.0.0:443
   ANIMICA_P2P_ENABLE_TCP: true
   ANIMICA_P2P_ENABLE_QUIC: true
   # Legacy P2P config (backward compatibility - deprecated):
   P2P_ENABLE: true
-  P2P_LISTEN: 0.0.0.0:30333
+  P2P_LISTEN: 0.0.0.0:${ANIMICA_P2P_PORT:-30333}
   P2P_SEEDS: ${P2P_SEEDS:-}
   # Metrics
   METRICS_ENABLE: true
@@ -114,7 +115,7 @@ services:
       - ./healthchecks:/healthchecks:ro
     ports:
       - "0.0.0.0:${HOST_RPC_PORT:-28545}:8545"   # RPC/WS (WS served at /ws)
-      - "${HOST_P2P_TCP_PORT:-31335}:30333"  # P2P TCP port
+      - "${HOST_P2P_PORT:-31335}:30333"  # P2P TCP port
       - "${HOST_P2P_QUIC_PORT:-31443}:443/udp"  # P2P QUIC port (UDP)
       - "0.0.0.0:${HOST_METRICS_PORT:-29000}:9000"   # Metrics
     healthcheck:
