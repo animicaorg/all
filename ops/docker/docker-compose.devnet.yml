@@ -20,6 +20,8 @@ x-common-env: &common_env
 
 x-node-env: &node_env
   <<: *common_env
+  ANIMICA_NETWORK: ${ANIMICA_NETWORK:-devnet}
+  ANIMICA_COMPOSE_FILE: ${ANIMICA_COMPOSE_FILE:-/app/ops/docker/docker-compose.devnet.yml}
   # RPC / WS
   RPC_HOST: 0.0.0.0
   RPC_PORT: 8545
@@ -94,6 +96,8 @@ networks:
     driver: bridge
 
 volumes:
+  animica_devnet_chain_1337_data:
+    name: animica_devnet_chain_1337_data
   miner-data:
   services-data:
   explorer-data:
@@ -110,7 +114,7 @@ services:
     environment: *node_env
     command: ["/bin/sh", "-lc", "/app/ops/docker/entrypoints/node.sh"]
     volumes:
-      - ${ANIMICA_DATA_DIR:-~/.animica/chain-1337}:/data
+      - ${ANIMICA_DATA_DIR:-animica_devnet_chain_1337_data}:/data
       - ./entrypoints:/entrypoints:ro
       - ./healthchecks:/healthchecks:ro
     ports:

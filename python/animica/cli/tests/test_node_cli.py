@@ -4,6 +4,7 @@ import json
 import os
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -21,6 +22,7 @@ runner = CliRunner()
 respx_mock = respx if respx is not None else pytest.mark.skip(reason="respx not installed")
 ORIGINAL_ENSURE_PORTS = node._ensure_ports_available
 ORIGINAL_AUTO_BOOTSTRAP = node._auto_bootstrap_if_needed
+ORIGINAL_ENSURE_DB_INITIALIZED = node._ensure_db_initialized
 
 
 @pytest.fixture(autouse=True)
@@ -574,6 +576,59 @@ def test_down_with_volumes(monkeypatch: Any) -> None:
             call_args = mock_run.call_args
             cmd = call_args[0][0]
             assert "-v" in cmd or "--volumes" in cmd
+
+
+def test_reset_with_volumes_removes_named_volume(monkeypatch: Any) -> None:
+    """Test 'node reset' wipes volumes and calls compose down with -v."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        mock_compose_file = Path(tmpdir) / "docker-compose.yml"
+        mock_compose_file.write_text("version: '3'\nservices:\n  node:\n    image: test\n")
+        mock_data_dir = Path(tmpdir) / "chain-1"
+
+        monkeypatch.setattr("animica.cli.node._get_compose_file", lambda network: mock_compose_file)
+        monkeypatch.setattr(
+            "animica.cli.node.load_network_config",
+            lambda network: SimpleNamespace(data_dir=str(mock_data_dir), chain_id=1, name=network),
+        )
+        monkeypatch.setattr("animica.cli.node._wait_for_compose_stop", lambda *args, **kwargs: True)
+        monkeypatch.setattr("animica.cli.node._remove_path_with_retry", lambda *args, **kwargs: None)
+
+        def fake_run(cmd: list[str], **kwargs: Any) -> MagicMock:
+            result = MagicMock()
+            result.returncode = 0
+            result.stderr = ""
+            return result
+
+        with patch("animica.cli.node.subprocess.run", side_effect=fake_run) as mock_run:
+            result = runner.invoke(node.app, ["reset", "--network", "mainnet", "--yes"])
+
+        assert result.exit_code == 0
+        assert "Reset complete" in result.output
+        assert "animica_mainnet_chain_1_data" in result.output
+
+        called_commands = [" ".join(call.args[0]) for call in mock_run.call_args_list]
+        assert any("docker compose" in cmd and "down" in cmd and "-v" in cmd for cmd in called_commands)
+        assert any("docker volume rm animica_mainnet_chain_1_data" in cmd for cmd in called_commands)
+
+
+def test_ensure_db_initialized_existing_db_message(
+    monkeypatch: Any, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Test existing DB prints 'Using existing database' instead of init message."""
+    monkeypatch.setattr(node, "_ensure_db_initialized", ORIGINAL_ENSURE_DB_INITIALIZED)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        data_dir = Path(tmpdir)
+        db_path = data_dir / "animica.db"
+        db_path.write_text("existing db")
+
+        net_cfg = SimpleNamespace(data_dir=str(data_dir), db_name="animica.db")
+        result = node._ensure_db_initialized(net_cfg)
+
+        assert result is False
+        output = capsys.readouterr().out
+        assert "Using existing database" in output
+        assert "Database initialized from genesis" not in output
 
 
 def test_up_with_miner_flag(monkeypatch: Any) -> None:
