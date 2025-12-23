@@ -954,45 +954,10 @@ def test_add_peer_with_port_auto_detection(monkeypatch: Any, tmp_path: Any) -> N
 
 
 @respx_mock
-def test_bootstrap_mainnet(monkeypatch: Any, tmp_path: Any) -> None:
-    """Test bootstrap command for mainnet."""
-    
-    rpc_url = "http://localhost:9999/rpc"
-    monkeypatch.setenv("ANIMICA_RPC_URL", rpc_url)
-    monkeypatch.setenv("ANIMICA_NETWORK", "mainnet")
-    
-    store_path = tmp_path / "peers.json"
-    
-    # Mock RPC to succeed
-    respx.post(rpc_url)(
-        return_value=httpx.Response(
-            200,
-            json={"jsonrpc": "2.0", "id": 1, "result": True},
-        )
-    )
-    
-    result = runner.invoke(peer.app, ["bootstrap", "--store", str(store_path)])
-    assert result.exit_code == 0
-    assert "mainnet seed nodes" in result.output.lower()
-    assert "144.126.133.21:30333" in result.output
-    assert "Successfully added" in result.output
-    
-    # Verify seed was written to store
-    with store_path.open("r") as f:
-        data = json.load(f)
-    peers = data.get("peers", [])
-    assert len(peers) >= 1
-    # Check that at least one peer has the mainnet seed address
-    addrs = [addr for p in peers for addr in p.get("addrs", [])]
-    assert "144.126.133.21:30333" in addrs
+def test_bootstrap_remote_rpc_skips_injection(monkeypatch: Any, tmp_path: Any) -> None:
+    """Test bootstrap skips injection for remote RPC endpoints."""
 
-
-@respx_mock
-def test_bootstrap_unsuccessful_rpc_response(monkeypatch: Any, tmp_path: Any) -> None:
-    """Test bootstrap when RPC returns a failure payload for addPeer."""
-
-    rpc_url = "http://localhost:9999/rpc"
-    monkeypatch.setenv("ANIMICA_RPC_URL", rpc_url)
+    rpc_url = "https://rpc.animica.org/rpc"
     monkeypatch.setenv("ANIMICA_NETWORK", "mainnet")
 
     store_path = tmp_path / "peers.json"
@@ -1000,21 +965,91 @@ def test_bootstrap_unsuccessful_rpc_response(monkeypatch: Any, tmp_path: Any) ->
     respx.post(rpc_url)(
         return_value=httpx.Response(
             200,
-            json={"jsonrpc": "2.0", "id": 1, "result": {"success": False, "error": "P2P disabled"}},
+            json={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": {"seeds": ["144.126.133.21:30333", "198.58.119.73:30333"]},
+            },
         )
     )
 
-    result = runner.invoke(peer.app, ["bootstrap", "--store", str(store_path)])
+    result = runner.invoke(peer.app, ["bootstrap", "--rpc-url", rpc_url, "--store", str(store_path)])
     assert result.exit_code == 0
-    assert "RPC add failed" in result.output
-    assert "Saved to local peer store" in result.output
-    assert "Saved 2 seed node(s) to local store after RPC failure" in result.output
+    assert "Remote RPC endpoints do not accept peer injection" in result.output
+    assert "Next: start your local node" in result.output
+    assert "Could not push seeds" not in result.output
 
-    # Verify seeds were written to store even though RPC failed
     with store_path.open("r") as f:
         data = json.load(f)
     peers = data.get("peers", [])
     assert len(peers) >= 2
+
+
+@respx_mock
+def test_bootstrap_local_rpc_injects(monkeypatch: Any, tmp_path: Any) -> None:
+    """Test bootstrap pushes seeds into a running local node."""
+
+    rpc_url = "http://127.0.0.1:9999/rpc"
+    monkeypatch.setenv("ANIMICA_NETWORK", "mainnet")
+
+    store_path = tmp_path / "peers.json"
+
+    respx.post(rpc_url).mock(
+        side_effect=[
+            httpx.Response(
+                200,
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "result": {"seeds": ["144.126.133.21:30333"]},
+                },
+            ),
+            httpx.Response(200, json={"jsonrpc": "2.0", "id": 1, "result": {"ok": True}}),
+            httpx.Response(200, json={"jsonrpc": "2.0", "id": 1, "result": []}),
+            httpx.Response(200, json={"jsonrpc": "2.0", "id": 1, "result": True}),
+            httpx.Response(
+                200,
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "result": [{"id": "peer1"}, {"id": "peer2"}],
+                },
+            ),
+        ]
+    )
+
+    result = runner.invoke(peer.app, ["bootstrap", "--rpc-url", rpc_url, "--store", str(store_path), "--push"])
+    assert result.exit_code == 0
+    assert "Pushed 1 seed(s) into running node" in result.output
+    assert "Node now has 2 peer(s)" in result.output
+
+
+@respx_mock
+def test_bootstrap_local_rpc_not_running(monkeypatch: Any, tmp_path: Any) -> None:
+    """Test bootstrap instructs to start node when local RPC is unavailable."""
+
+    rpc_url = "http://127.0.0.1:9999/rpc"
+    monkeypatch.setenv("ANIMICA_NETWORK", "mainnet")
+
+    store_path = tmp_path / "peers.json"
+
+    respx.post(rpc_url).mock(
+        side_effect=[
+            httpx.Response(
+                200,
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "result": {"seeds": ["144.126.133.21:30333"]},
+                },
+            ),
+            httpx.ConnectError("Connection refused"),
+        ]
+    )
+
+    result = runner.invoke(peer.app, ["bootstrap", "--rpc-url", rpc_url, "--store", str(store_path)])
+    assert result.exit_code == 0
+    assert "Saved seeds. Start your local node" in result.output
 
 
 @respx_mock
@@ -1035,6 +1070,7 @@ def test_peer_commands_block_bootstrap_rpc(monkeypatch: Any) -> None:
     """Ensure peer CLI refuses bootstrap RPC without explicit override."""
 
     monkeypatch.setenv("ANIMICA_NETWORK", "mainnet")
+    monkeypatch.setenv("ANIMICA_BOOTSTRAP_NODE", "0")
     result = runner.invoke(
         peer.app,
         ["list", "--rpc-url", "https://rpc.animica.org/rpc"],
