@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import dataclasses as _dc
+import time
 import typing as t
 
 from rpc import deps
+from rpc.hashrate import difficulty_to_work
 from rpc.methods import method
 from rpc.methods.block import (_block_view, _fallback_block,
                                _resolve_block_by_number)
@@ -89,6 +91,10 @@ def _fallback_header(chain_id: int) -> dict[str, t.Any]:
     }
 
 
+_NETWORK_HASHRATE_TTL_SEC = 10.0
+_NETWORK_HASHRATE_CACHE: dict[str, t.Any] = {"at": 0.0, "key": None, "payload": None}
+
+
 def _header_view(
     height: int | None, header: t.Any, chain_id_fallback: int | None = None
 ) -> dict[str, t.Any]:
@@ -161,6 +167,46 @@ def _header_view(
         hv.update(roots_view)
     # Drop Nones for tidiness
     return {k: v for k, v in hv.items() if v is not None}
+
+
+def _header_timestamp(header: t.Any) -> int | None:
+    ts = getattr(header, "timestamp", None)
+    if isinstance(header, dict):
+        ts = header.get("timestamp", ts)
+    if ts is None:
+        return None
+    try:
+        return int(ts)
+    except (TypeError, ValueError):
+        return None
+
+
+def _header_theta_micro(header: t.Any) -> int | None:
+    theta = getattr(header, "theta_micro", getattr(header, "thetaMicro", None))
+    if isinstance(header, dict):
+        theta = header.get("thetaMicro", header.get("theta_micro", theta))
+    if theta is None:
+        return None
+    try:
+        return int(theta)
+    except (TypeError, ValueError):
+        return None
+
+
+def _get_header_by_height(ctx: t.Any, height: int) -> t.Any | None:
+    block_db = getattr(ctx, "block_db", None)
+    if block_db is None:
+        return None
+    getter = getattr(block_db, "get_header_by_height", None)
+    if callable(getter):
+        return getter(int(height))
+    block_getter = getattr(block_db, "get_block_by_height", None)
+    if callable(block_getter):
+        block = block_getter(int(height))
+        if block is None:
+            return None
+        return getattr(block, "header", None) or getattr(block, "Header", None) or block
+    return None
 
 
 @method(
@@ -243,6 +289,121 @@ def chain_get_head() -> dict:
     except Exception:
         pass
     return view
+
+
+def _network_hashrate_unknown(
+    *,
+    reason: str,
+    window_blocks: int,
+    height_end: int | None = None,
+    height_start: int | None = None,
+) -> dict[str, t.Any]:
+    return {
+        "hashrate_hps": None,
+        "window_blocks": int(window_blocks),
+        "window_seconds": None,
+        "height_start": height_start,
+        "height_end": height_end,
+        "method": "theta_micro_expected_trials",
+        "unknown_reason": reason,
+    }
+
+
+@method(
+    "chain.getNetworkHashrate",
+    desc="Estimate network hashrate over a recent window.",
+    aliases=("chain_getNetworkHashrate",),
+)
+def chain_get_network_hashrate(window_blocks: int | None = None) -> dict[str, t.Any]:
+    window_blocks = int(window_blocks or 120)
+    if window_blocks <= 0:
+        raise ValueError("window_blocks must be > 0")
+
+    head = deps.get_head()
+    height_end = head.get("height") if isinstance(head, dict) else None
+    if height_end is None:
+        return _network_hashrate_unknown(
+            reason="no_head", window_blocks=window_blocks, height_end=None
+        )
+    height_end = int(height_end)
+    if height_end < window_blocks - 1:
+        return _network_hashrate_unknown(
+            reason="insufficient_blocks",
+            window_blocks=window_blocks,
+            height_end=height_end,
+        )
+
+    cache_key = (window_blocks, height_end)
+    now = time.time()
+    if (
+        _NETWORK_HASHRATE_CACHE["payload"] is not None
+        and _NETWORK_HASHRATE_CACHE["key"] == cache_key
+        and (now - float(_NETWORK_HASHRATE_CACHE["at"] or 0.0)) < _NETWORK_HASHRATE_TTL_SEC
+    ):
+        return t.cast(dict[str, t.Any], _NETWORK_HASHRATE_CACHE["payload"])
+
+    height_start = max(0, height_end - window_blocks + 1)
+    ctx = deps.get_ctx()
+    total_work = 0.0
+    ts_start = None
+    ts_end = None
+    for height in range(height_start, height_end + 1):
+        header = _get_header_by_height(ctx, height)
+        if header is None:
+            payload = _network_hashrate_unknown(
+                reason="missing_header",
+                window_blocks=window_blocks,
+                height_end=height_end,
+                height_start=height_start,
+            )
+            _NETWORK_HASHRATE_CACHE.update({"at": now, "key": cache_key, "payload": payload})
+            return payload
+        ts = _header_timestamp(header)
+        if ts is None:
+            payload = _network_hashrate_unknown(
+                reason="missing_timestamp",
+                window_blocks=window_blocks,
+                height_end=height_end,
+                height_start=height_start,
+            )
+            _NETWORK_HASHRATE_CACHE.update({"at": now, "key": cache_key, "payload": payload})
+            return payload
+        theta_micro = _header_theta_micro(header)
+        if theta_micro is None:
+            payload = _network_hashrate_unknown(
+                reason="no_difficulty",
+                window_blocks=window_blocks,
+                height_end=height_end,
+                height_start=height_start,
+            )
+            _NETWORK_HASHRATE_CACHE.update({"at": now, "key": cache_key, "payload": payload})
+            return payload
+        total_work += difficulty_to_work(theta_micro)
+        if ts_start is None:
+            ts_start = ts
+        ts_end = ts
+
+    if ts_start is None or ts_end is None:
+        payload = _network_hashrate_unknown(
+            reason="missing_timestamp",
+            window_blocks=window_blocks,
+            height_end=height_end,
+            height_start=height_start,
+        )
+        _NETWORK_HASHRATE_CACHE.update({"at": now, "key": cache_key, "payload": payload})
+        return payload
+
+    dt = max(1.0, float(ts_end - ts_start))
+    payload = {
+        "hashrate_hps": total_work / dt,
+        "window_blocks": int(window_blocks),
+        "window_seconds": dt,
+        "height_start": height_start,
+        "height_end": height_end,
+        "method": "theta_micro_expected_trials",
+    }
+    _NETWORK_HASHRATE_CACHE.update({"at": now, "key": cache_key, "payload": payload})
+    return payload
 
 
 @method(
