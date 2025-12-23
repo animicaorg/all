@@ -146,6 +146,17 @@ def _expected_genesis_hash(genesis_path: Optional[str]) -> Optional[bytes]:
     return None
 
 
+def _canonical_genesis_hash(chain_id: Optional[int]) -> Optional[bytes]:
+    if chain_id is None:
+        return None
+    try:
+        from core.config import get_expected_genesis_hash
+
+        return get_expected_genesis_hash(int(chain_id))
+    except Exception:
+        return None
+
+
 def _db_genesis_hash(block_db: Any) -> Optional[bytes]:
     try:
         if hasattr(block_db, "get_canonical_hash"):
@@ -214,6 +225,7 @@ class P2PDeps:
     """
 
     db_uri: str
+    genesis_path: Optional[str]
     chain_id: int
     _kv: Any
     _block_db: Any
@@ -252,9 +264,46 @@ class P2PDeps:
         state_db = c["StateDB"](kv)
         tx_index = c["TxIndex"](kv)
 
-        expected_genesis_hash = _expected_genesis_hash(genesis_path)
-        db_genesis_hash = _db_genesis_hash(block_db)
         allow_reset = _allow_genesis_reset() if allow_genesis_reset is None else allow_genesis_reset
+        expected_from_file = _expected_genesis_hash(genesis_path)
+
+        # Ensure genesis finalized (idempotent)
+        try:
+            c["finalize_genesis_if_needed"](block_db, state_db, genesis_path)
+        except Exception as exc:
+            from core.errors import GenesisError
+
+            if isinstance(exc, GenesisError):
+                expected = exc.data.get("expected") if hasattr(exc, "data") else None
+                found = exc.data.get("found") if hasattr(exc, "data") else None
+                data_dir = _db_uri_hint(db_uri)
+                chain_id = _read_chain_id(block_db, state_db)
+                canonical_expected = _canonical_genesis_hash(chain_id)
+                if canonical_expected:
+                    expected = "0x" + canonical_expected.hex()
+                if allow_reset:
+                    _close_if_possible(kv, block_db, state_db, tx_index)
+                    _wipe_db(db_uri)
+                    return cls.open(
+                        db_uri,
+                        genesis_path,
+                        allow_genesis_reset=False,
+                    )
+                expected_str = expected or "<unknown>"
+                found_str = found or "<unknown>"
+                raise P2PError(
+                    f"GENESIS_MISMATCH expected={expected_str} got={found_str} "
+                    f"chain_id={chain_id} data_dir={data_dir}. "
+                    "Refusing to sync. Reset the data dir for this chain "
+                    "(e.g., delete ~/.animica/chain-<id> or docker volumes)."
+                ) from exc
+            raise
+
+        # Load chain params from state/meta; fall back to genesis file if exposed there
+        # We try common locations in BlockDB/StateDB meta; exact path depends on core implementation.
+        chain_id = _read_chain_id(block_db, state_db)
+        expected_genesis_hash = _canonical_genesis_hash(chain_id) or expected_from_file
+        db_genesis_hash = _db_genesis_hash(block_db)
         if expected_genesis_hash and db_genesis_hash and expected_genesis_hash != db_genesis_hash:
             expected_hex = "0x" + expected_genesis_hash.hex()
             found_hex = "0x" + db_genesis_hash.hex()
@@ -268,44 +317,15 @@ class P2PDeps:
                     allow_genesis_reset=False,
                 )
             raise P2PError(
-                "local_genesis_mismatch: configured genesis does not match DB "
-                f"(expected={expected_hex} found={found_hex} data_dir={data_dir}). "
+                f"GENESIS_MISMATCH expected={expected_hex} got={found_hex} "
+                f"chain_id={chain_id} data_dir={data_dir}. "
                 "Refusing to sync. Reset the data dir for this chain "
                 "(e.g., delete ~/.animica/chain-<id> or docker volumes)."
             )
 
-        # Ensure genesis finalized (idempotent)
-        try:
-            c["finalize_genesis_if_needed"](block_db, state_db, genesis_path)
-        except Exception as exc:
-            from core.errors import GenesisError
-
-            if isinstance(exc, GenesisError):
-                expected = exc.data.get("expected") if hasattr(exc, "data") else None
-                found = exc.data.get("found") if hasattr(exc, "data") else None
-                data_dir = _db_uri_hint(db_uri)
-                if allow_reset:
-                    _close_if_possible(kv, block_db, state_db, tx_index)
-                    _wipe_db(db_uri)
-                    return cls.open(
-                        db_uri,
-                        genesis_path,
-                        allow_genesis_reset=False,
-                    )
-                raise P2PError(
-                    "local_genesis_mismatch: configured genesis does not match DB "
-                    f"(expected={expected} found={found} data_dir={data_dir}). "
-                    "Refusing to sync. Reset the data dir for this chain "
-                    "(e.g., delete ~/.animica/chain-<id> or docker volumes)."
-                ) from exc
-            raise
-
-        # Load chain params from state/meta; fall back to genesis file if exposed there
-        # We try common locations in BlockDB/StateDB meta; exact path depends on core implementation.
-        chain_id = _read_chain_id(block_db, state_db)
-
         return cls(
             db_uri=db_uri,
+            genesis_path=genesis_path,
             chain_id=chain_id,
             _kv=kv,
             _block_db=block_db,
@@ -355,7 +375,11 @@ class P2PDeps:
         """
         try:
             res = self._core_import_block(
-                self._block_db, self._state_db, self._tx_index, block
+                self._block_db,
+                self._state_db,
+                self._tx_index,
+                block,
+                genesis_path=self.genesis_path,
             )
             # res is expected to be a small object/tuple; support both shapes:
             if isinstance(res, tuple) and len(res) == 2:
@@ -453,25 +477,26 @@ class P2PDeps:
                     f"chain_mismatch:{getattr(header, 'chainId', None)}!= {self.chain_id}",
                 )
             if header.height == 0:
-                # genesis hash must match stored genesis
+                # genesis hash must match expected
                 g = (
                     self._block_db.get_canonical_hash(0)
                     or self._block_db.get_genesis_hash()
                 )
+                expected = self.expected_genesis_hash or g
                 if (
-                    g
+                    expected
                     and getattr(header, "hash", None)
                     and callable(getattr(header, "hash"))
                 ):
                     hh = header.hash()  # type: ignore[operator]
-                    if hh != g:
+                    if hh != expected:
                         return False, "genesis_hash_mismatch"
                 elif (
-                    g
+                    expected
                     and getattr(header, "hash", None)
                     and isinstance(getattr(header, "hash"), (bytes, bytearray))
                 ):
-                    if bytes(getattr(header, "hash")) != g:
+                    if bytes(getattr(header, "hash")) != expected:
                         return False, "genesis_hash_mismatch"
                 return True, None
             # parent must exist
