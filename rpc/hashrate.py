@@ -25,5 +25,18 @@ def difficulty_to_work(theta_micro: int) -> float:
     except OverflowError:
         return float("inf")
 
+HASHSHARE_TRIALS = 2**32
 
-__all__ = ["difficulty_to_work"]
+
+def work_to_hashshare_rate(trials_per_sec: float) -> float:
+    """
+    Convert expected trials/sec into HashShare/sec (HS/s).
+
+    HashShare is a higher-order unit so values remain readable for large networks.
+    """
+    if trials_per_sec <= 0.0:
+        return 0.0
+    return float(trials_per_sec) / float(HASHSHARE_TRIALS)
+
+
+__all__ = ["difficulty_to_work", "work_to_hashshare_rate", "HASHSHARE_TRIALS"]
