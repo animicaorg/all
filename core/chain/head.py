@@ -219,8 +219,12 @@ def finalize_genesis(
     if cur_height == 0:
         # If DB points to genesis, ensure it's OUR genesis
         if cur_hash != h0:
+            expected = "0x" + h0.hex()
+            found = "0x" + bytes(cur_hash).hex()
             raise GenesisError(
-                "existing DB has different genesis hash (wrong network or corrupted DB)"
+                "existing DB has different genesis hash (wrong network or corrupted DB)",
+                expected=expected,
+                found=found,
             )
         # Nothing to do
         return head
@@ -238,8 +242,12 @@ def finalize_genesis(
         except TypeError:
             gh = None  # method exists but different signature
         if gh is not None and gh != h0:
+            expected = "0x" + h0.hex()
+            found = "0x" + bytes(gh).hex()
             raise GenesisError(
-                "existing DB genesis hash does not match provided genesis header"
+                "existing DB genesis hash does not match provided genesis header",
+                expected=expected,
+                found=found,
             )
 
     # Otherwise we accept the current head as-is.

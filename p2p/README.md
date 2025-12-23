@@ -150,6 +150,17 @@ Environment overrides (examples):
 export ANIMICA_P2P_LISTEN="tcp://0.0.0.0:41000"
 export ANIMICA_P2P_SEEDS="dns://seeds.animica.org"
 
+Peer defense tuning (examples):
+
+```
+export ANIMICA_P2P_MAX_OUTBOUND_PER_NETGROUP=1
+export ANIMICA_P2P_MAX_INBOUND_PER_NETGROUP=2
+export ANIMICA_P2P_SCORE_DECAY_INTERVAL=60
+export ANIMICA_P2P_BAN_SCORE_TEMP=200
+export ANIMICA_P2P_BAN_TEMP_S=1800
+export ANIMICA_P2P_MISSING_PARENT_THRESHOLD=3
+```
+
 
 ⸻
 
@@ -216,4 +227,3 @@ Threats & mitigations (brief)
 	•	Resource exhaustion → strict frame sizes, message caps, back-pressure.
 
 See p2p/specs/* for detailed protocol, handshake, gossip, and sync docs.
-
