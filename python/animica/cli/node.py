@@ -368,7 +368,10 @@ def _is_truthy(value: str | None) -> bool:
 
 
 def _is_bootstrap_node() -> bool:
-    return _is_truthy(os.getenv(BOOTSTRAP_NODE_ENV))
+    raw = os.getenv(BOOTSTRAP_NODE_ENV)
+    if raw is None:
+        return True
+    return _is_truthy(raw)
 
 
 def _pretty(obj: Any) -> str:
