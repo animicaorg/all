@@ -31,7 +31,7 @@ def guard_bootstrap_rpc(
     if allow_bootstrap_methods and method and (
         method.startswith("bootstrap.") or method in _BOOTSTRAP_SAFE_METHODS
     ):
-        # Caller explicitly allowed bootstrap-only methods; only guard if host is different.
+        # Caller explicitly allowed bootstrap methods; only guard if host is different.
         pass
 
     cfg = load_network_config()
@@ -72,8 +72,8 @@ def guard_bootstrap_rpc(
 
     host_hint = bootstrap_host or target_host
     typer.secho(
-        f"{host_hint} is bootstrap-only. Run `animica node up` and use localhost RPC, "
-        "or run `animica node bootstrap` first.",
+        f"{host_hint} is a bootstrap RPC endpoint. Run `animica node up` and use localhost RPC, "
+        "or pass --allow-remote-rpc with ANIMICA_I_UNDERSTAND_REMOTE_RISK=1.",
         fg=typer.colors.RED,
         err=True,
     )

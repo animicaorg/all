@@ -73,7 +73,11 @@ class AccessPolicy:
     admin_token: str | None = None
     admin_allowlist: list[ipaddress._BaseNetwork] = field(default_factory=list)
     bootstrap_rate_limit_rpm: int = 0
-    bootstrap_only: bool = False
+    admin_methods: set[str] = field(default_factory=lambda: {
+        "p2p.addPeer",
+        "p2p.addPeers",
+        "p2p.importPeers",
+    })
     bootstrap_methods: set[str] = field(default_factory=lambda: {
         "bootstrap.getManifest",
         "bootstrap.getSeeds",
@@ -122,17 +126,8 @@ class AccessPolicy:
             or getattr(getattr(cfg, "access", None), "bootstrap_rate_limit", None)
             or os.getenv("ANIMICA_BOOTSTRAP_RATE_LIMIT")
         )
-        bootstrap_only_flag = (
-            _is_truthy(os.getenv("ANIMICA_RPC_BOOTSTRAP_ONLY"))
-            or getattr(cfg, "bootstrap_only", False)
-            or getattr(getattr(cfg, "access", None), "bootstrap_only", False)
-        )
 
         if bootstrap_node_flag:
-            mode = AccessMode.PUBLIC_BOOTSTRAP
-            bootstrap_only_flag = True
-
-        if bootstrap_only_flag:
             mode = AccessMode.PUBLIC_BOOTSTRAP
         try:
             rate_limit = int(rate_limit_raw) if rate_limit_raw not in (None, "", False) else 0
@@ -144,8 +139,16 @@ class AccessPolicy:
             admin_token=str(token) if token else None,
             admin_allowlist=_parse_allowlist(allowlist_raw),
             bootstrap_rate_limit_rpm=max(0, rate_limit),
-            bootstrap_only=bootstrap_only_flag,
         )
+
+    def _is_local_client(self, client_ip: str | None) -> bool:
+        if not client_ip:
+            return False
+        try:
+            ip_obj = ipaddress.ip_address(client_ip)
+        except Exception:
+            return False
+        return bool(ip_obj.is_loopback or ip_obj.is_unspecified)
 
     def _authorized(self, ctx: t.Any, client_ip: str | None) -> bool:
         if self.admin_token:
@@ -161,6 +164,9 @@ class AccessPolicy:
             except Exception:
                 return False
         return False
+
+    def _peer_injection_authorized(self, ctx: t.Any, client_ip: str | None) -> bool:
+        return self._authorized(ctx, client_ip) or self._is_local_client(client_ip)
 
     def _enforce_rate_limit(self, client_ip: str | None) -> None:
         if self.bootstrap_rate_limit_rpm <= 0:
@@ -184,6 +190,14 @@ class AccessPolicy:
         client_ip = _extract_ip(ctx)
         is_admin = self._authorized(ctx, client_ip)
 
+        if method in self.admin_methods:
+            if self._peer_injection_authorized(ctx, client_ip):
+                return
+            raise errors.AccessDenied(
+                "UNAUTHORIZED: admin token required or localhost",
+                method=method,
+            )
+
         if self.mode == AccessMode.PRIVATE_FULL:
             if is_admin:
                 return
@@ -195,11 +209,6 @@ class AccessPolicy:
             return
         if is_admin:
             return
-        if self.bootstrap_only:
-            raise errors.BootstrapOnlyEndpoint(
-                "BOOTSTRAP_ONLY endpoint: run a local node and use localhost RPC",
-                mode=self.mode.value,
-            )
         raise errors.RpcMethodRestricted("RPC method restricted", mode=self.mode.value)
 
 
