@@ -67,6 +67,9 @@ class StratumPool:
                     chain_id=int(tpl.get("chainId") or 0),
                     expires_at=time.time() + 20,
                     proof_type=tpl.get("proofType"),
+                    script_hash=tpl.get("scriptHash"),
+                    inputs_commit=tpl.get("inputsCommit"),
+                    outputs_commit=tpl.get("outputsCommit"),
                 )
                 await self._server.publish_job(job)
             await asyncio.sleep(self.cfg.template_interval_sec)
@@ -107,6 +110,7 @@ class StratumPool:
                 "P2P port %s is in use; using RPC-only pool mode (suggest --no-p2p).",
                 port,
             )
+            self.cfg.no_p2p = True
             if alt is not None:
                 log.info("Suggested available P2P port: %s", alt)
             return

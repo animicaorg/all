@@ -109,6 +109,9 @@ class MiningJob:
     template_version: int
     header: HeaderTemplate
     sign_bytes: bytes
+    script_hash: Optional[str] = None
+    inputs_commit: Optional[str] = None
+    outputs_commit: Optional[str] = None
     work_type: int | None = None
 
     def to_dict(self) -> Dict[str, Any]:
@@ -126,6 +129,9 @@ class MiningJob:
             "thetaMicro": int(self.theta_target_micro),
             "proofType": self.proof_type,
             "challenge": self.challenge,
+            "scriptHash": self.script_hash,
+            "inputsCommit": self.inputs_commit,
+            "outputsCommit": self.outputs_commit,
             "expiresAt": int(self.expires_at) if self.expires_at else None,
             "templateVersion": int(self.template_version),
             "header": header_view,
@@ -276,6 +282,9 @@ class TemplateBuilder:
         force: bool = False,
         proof_type: str = "sha256d",
         challenge: Optional[Dict[str, Any]] = None,
+        script_hash: Optional[str] = None,
+        inputs_commit: Optional[str] = None,
+        outputs_commit: Optional[str] = None,
         max_age_secs: Optional[int] = 20,
         template_version: int = 1,
     ) -> MiningJob:
@@ -291,6 +300,9 @@ class TemplateBuilder:
             template_version=template_version,
             header=wt.header,
             challenge=challenge,
+            script_hash=script_hash,
+            inputs_commit=inputs_commit,
+            outputs_commit=outputs_commit,
         )
         expires_at = (
             time.time() + max_age_secs if max_age_secs is not None else None
@@ -304,6 +316,9 @@ class TemplateBuilder:
             theta_target_micro=wt.theta_target_micro,
             proof_type=proof_type,
             challenge=challenge,
+            script_hash=script_hash,
+            inputs_commit=inputs_commit,
+            outputs_commit=outputs_commit,
             expires_at=expires_at,
             template_version=template_version,
             header=wt.header,
@@ -391,6 +406,9 @@ def compute_job_id(
     template_version: int,
     header: HeaderTemplate,
     challenge: Optional[Dict[str, Any]],
+    script_hash: Optional[str],
+    inputs_commit: Optional[str],
+    outputs_commit: Optional[str],
 ) -> str:
     payload = {
         "parentHash": parent_hash.hex(),
@@ -401,6 +419,9 @@ def compute_job_id(
         "proofType": proof_type,
         "templateVersion": int(template_version),
         "challenge": challenge,
+        "scriptHash": script_hash,
+        "inputsCommit": inputs_commit,
+        "outputsCommit": outputs_commit,
         "header": {
             "stateRoot": header.state_root.hex(),
             "txsRoot": header.txs_root.hex(),

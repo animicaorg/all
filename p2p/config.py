@@ -447,6 +447,9 @@ def load_config() -> P2PConfig:
     identity_alg = _getenv("ANIMICA_P2P_IDENTITY_ALG") or "dilithium3"
     dial_timeout = float(_getenv("ANIMICA_P2P_DIAL_TIMEOUT") or "5.0")
 
+    if keys_path is None:
+        keys_path = str(Path(data_dir) / "identity.json")
+
     # Build listen_multiaddrs from individual listen addresses
     listen_multiaddrs = []
     if enable_tcp:
