@@ -140,17 +140,17 @@ class Hdr:
 # ------------------------------------ tests -------------------------------------
 
 
-def test_longest_chain_wins_basic():
-    """Higher height should win when weight difference is not decisive."""
+def test_heavier_chain_wins_over_height():
+    """Higher cumulative weight should win even if shorter."""
     prev = Hdr(100, 100.0, "0xprev")
     a = Hdr(101, 101.0, "0xaaa1")
     b = Hdr(100, 200.0, "0xbbb1")  # shorter, even if heavier
     head = _call_choose(prev, [a, b])
-    assert head.height == 101, f"expected longest (height 101) to win, got {head}"
+    assert head == b, f"expected heavier chain to win, got {head}"
 
 
 def test_weight_tie_breaker_when_heights_equal():
-    """When heights are equal, heavier chain should win."""
+    """When weights differ, heavier chain should win."""
     prev = Hdr(200, 1000.0, "0xprev")
     a = Hdr(210, 500.0, "0xaaa2")
     b = Hdr(210, 700.0, "0xbbb2")  # heavier at same height

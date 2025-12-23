@@ -141,12 +141,57 @@ def test_submit_work_rejects_invalid_or_stale_jobs():
     assert result["stale"] is True
 
 
+def test_submit_work_rejects_stale_parent():
+    client, _, _ = new_test_client()
+    job = rpc_call(client, "miner.getWork")["result"]
+
+    miner_methods._JOB_CACHE[job["jobId"]]["parent_hash"] = b"\x01" * 32
+
+    res = rpc_call(
+        client,
+        "miner.submitWork",
+        {"jobId": job["jobId"], "nonce": "0x00"},
+    )
+    result = res["result"]
+    assert result["accepted"] is False
+    assert result["stale"] is True
+    assert result["reason"] == "stale-parent"
+
+
 def test_get_work_rejects_wrong_param_type():
     client, _, _ = new_test_client()
 
     res = rpc_call(client, "miner.getWork", "bad-type", expect_error=True)
 
     assert res["error"]["code"] == -32602
+
+
+def test_get_work_disabled_when_stalled(monkeypatch: pytest.MonkeyPatch):
+    class _Snap:
+        def __init__(self, data):
+            self._data = data
+
+        def to_dict(self):
+            return dict(self._data)
+
+    class _Svc:
+        def status_snapshot(self):
+            return _Snap({"peers_total": 3})
+
+        def sync_status_snapshot(self):
+            return _Snap(
+                {"phase": "STALLED", "head_height": 0, "best_header_height": 10}
+            )
+
+    import p2p
+
+    monkeypatch.setenv("ANIMICA_MINING_MIN_PEERS", "1")
+    monkeypatch.setattr(p2p, "get_service", lambda: _Svc())
+
+    client, _, _ = new_test_client()
+    res = rpc_call(client, "miner.getWork")["result"]
+    assert res["disabled"] is True
+    assert res["reason"] == "sync_phase:stalled"
 
 
 @pytest.mark.asyncio

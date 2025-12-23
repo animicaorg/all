@@ -127,3 +127,36 @@ def test_missing_parent_escalation(tmp_path: Path) -> None:
     sync_block = types.SimpleNamespace(hash=b"x" * 32, parent_hash=b"y" * 32)
     node._handle_missing_parent(peer, sync_block)
     assert node._sync_block_stalled_reason == "missing parent"
+
+
+@pytest.mark.asyncio
+async def test_genesis_mismatch_bans_peer(tmp_path: Path) -> None:
+    from p2p.wire.encoding import encode_payload
+    from p2p.wire.messages import Hello
+
+    node = _make_service(tmp_path, "genesis-mismatch")
+    peer = _register_peer(node, "203.0.113.77:30333", direction="inbound")
+
+    async def _noop_send(*_args, **_kwargs) -> None:
+        return None
+
+    node._send = _noop_send  # type: ignore[assignment]
+
+    hello = Hello(
+        version="2",
+        agent="animica-test",
+        chain_id=node.chain_id,
+        listen_port=30333,
+        listen_addrs=[],
+        genesis_hash=b"\x01" * 32,
+        peer_id=b"\x02" * 32,
+        head_height=0,
+        head_hash=b"\x00" * 32,
+        alg_policy_root=b"",
+        capabilities=["tx"],
+        timestamp=0,
+    )
+    with pytest.raises(Exception) as excinfo:
+        await node._handle_hello(peer, encode_payload(hello))
+
+    assert "genesis_mismatch" in str(excinfo.value)
