@@ -27,6 +27,7 @@ ORIGINAL_AUTO_BOOTSTRAP = node._auto_bootstrap_if_needed
 def _disable_post_start_peer_bootstrap(monkeypatch: Any) -> None:
     monkeypatch.setattr(node, "_post_start_peer_bootstrap", lambda *args, **kwargs: None)
     monkeypatch.setattr(node, "_wait_for_rpc_ready", lambda *args, **kwargs: True)
+    monkeypatch.setattr(node, "_wait_for_node_ready", lambda *args, **kwargs: (True, None))
     monkeypatch.setattr(node, "_ensure_ports_available", lambda *args, **kwargs: None)
     monkeypatch.setattr(node, "_auto_bootstrap_if_needed", lambda *args, **kwargs: None)
     monkeypatch.setattr(node, "_record_bootstrap_head", lambda *args, **kwargs: None)
@@ -706,6 +707,31 @@ services:
             # Should succeed even without studio services
             assert result.exit_code == 0
             assert "Node started successfully" in result.output
+
+
+def test_up_reports_rpc_not_ready(monkeypatch: Any) -> None:
+    """Test 'node up' fails when RPC readiness checks do not pass."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state_file = Path(tmpdir) / "state.json"
+        state = CLIState(state_file)
+        state.set("active_network", "mainnet")
+        monkeypatch.setattr("animica.cli.node.get_cli_state", lambda: CLIState(state_file))
+
+        mock_compose_file = Path(tmpdir) / "docker-compose.yml"
+        mock_compose_file.write_text("version: '3'\nservices:\n  node:\n    image: test\n")
+        monkeypatch.setattr("animica.cli.node._get_compose_file", lambda network: mock_compose_file)
+
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        monkeypatch.setattr("animica.cli.node._wait_for_node_ready", lambda *args, **kwargs: (False, "timeout"))
+        monkeypatch.setattr("animica.cli.node._print_docker_diagnostics", lambda *args, **kwargs: print("Docker diagnostics"))
+
+        with patch("animica.cli.node.subprocess.run", return_value=mock_result):
+            result = runner.invoke(node.app, ["up", "--no-wait-sync"])
+
+            assert result.exit_code == 1
+            assert "RPC not reachable" in result.output
+            assert "Docker diagnostics" in result.output
 
 
 def test_mainnet_uses_correct_compose_file(monkeypatch: Any) -> None:

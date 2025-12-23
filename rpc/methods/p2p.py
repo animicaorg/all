@@ -116,6 +116,68 @@ def _resolve_core_host(host: str) -> str | None:
     return None
 
 
+def _peer_counts_snapshot() -> dict[str, int]:
+    p2p_svc = _get_p2p_service()
+    if p2p_svc is not None:
+        if hasattr(p2p_svc, "status_snapshot"):
+            try:
+                snap = p2p_svc.status_snapshot()
+                if hasattr(snap, "to_dict"):
+                    snap = snap.to_dict()
+                if isinstance(snap, dict):
+                    return {
+                        "peers_total": int(snap.get("peers_total") or 0),
+                        "peers_inbound": int(snap.get("peers_inbound") or 0),
+                        "peers_outbound": int(snap.get("peers_outbound") or 0),
+                    }
+            except Exception:
+                pass
+        if hasattr(p2p_svc, "status"):
+            try:
+                status = p2p_svc.status()
+                if isinstance(status, dict):
+                    return {
+                        "peers_total": int(status.get("peers_total") or 0),
+                        "peers_inbound": int(status.get("peers_inbound") or 0),
+                        "peers_outbound": int(status.get("peers_outbound") or 0),
+                    }
+            except Exception:
+                pass
+        if hasattr(p2p_svc, "peer_count"):
+            try:
+                return {
+                    "peers_total": int(p2p_svc.peer_count()),
+                    "peers_inbound": 0,
+                    "peers_outbound": 0,
+                }
+            except Exception:
+                pass
+
+    core_svc = _get_core_p2p_service()
+    if core_svc is not None and hasattr(core_svc, "connman"):
+        inbound = 0
+        outbound = 0
+        total = 0
+        try:
+            peers = core_svc.connman.peers()
+            if isinstance(peers, dict):
+                for peer in peers.values():
+                    total += 1
+                    if getattr(peer, "inbound", False):
+                        inbound += 1
+                    else:
+                        outbound += 1
+        except Exception:
+            pass
+        return {
+            "peers_total": total,
+            "peers_inbound": inbound,
+            "peers_outbound": outbound,
+        }
+
+    return {"peers_total": 0, "peers_inbound": 0, "peers_outbound": 0}
+
+
 def _parse_core_address(address: str) -> tuple[t.Any | None, str | None]:
     try:
         from p2p.core_p2p.netaddress import NetAddress
@@ -631,12 +693,17 @@ async def import_peers(addresses: list[str]) -> dict[str, t.Any]:
     if svc is None:
         core_svc = _get_core_p2p_service()
         if core_svc is None or not hasattr(core_svc, "addrman"):
+            peer_counts = _peer_counts_snapshot()
             return {
                 "success": False,
                 "added": 0,
                 "skipped": 0,
                 "dial_attempted": 0,
                 "dial_success": 0,
+                "seeds_added": 0,
+                "seeds_skipped": 0,
+                "dial_attempts_started": 0,
+                **peer_counts,
                 "errors": ["P2P service not available"],
             }
         added = 0
@@ -662,12 +729,17 @@ async def import_peers(addresses: list[str]) -> dict[str, t.Any]:
                         errors.append(str(exc))
             except Exception as exc:  # pragma: no cover - defensive
                 errors.append(str(exc))
+        peer_counts = _peer_counts_snapshot()
         return {
             "success": bool(added or dial_attempted),
             "added": added,
             "skipped": skipped,
             "dial_attempted": dial_attempted,
             "dial_success": dial_success,
+            "seeds_added": added,
+            "seeds_skipped": skipped,
+            "dial_attempts_started": dial_attempted,
+            **peer_counts,
             "errors": errors,
         }
 
@@ -675,15 +747,24 @@ async def import_peers(addresses: list[str]) -> dict[str, t.Any]:
         try:
             result = await svc.import_peers(addresses)
             result.setdefault("success", True)
+            result.setdefault("seeds_added", result.get("added", 0))
+            result.setdefault("seeds_skipped", result.get("skipped", 0))
+            result.setdefault("dial_attempts_started", result.get("dial_attempted", 0))
+            result.update(_peer_counts_snapshot())
             return result
         except Exception as e:  # pragma: no cover - defensive
             log.error("import_peers failed", exc_info=True)
+            peer_counts = _peer_counts_snapshot()
             return {
                 "success": False,
                 "added": 0,
                 "skipped": 0,
                 "dial_attempted": 0,
                 "dial_success": 0,
+                "seeds_added": 0,
+                "seeds_skipped": 0,
+                "dial_attempts_started": 0,
+                **peer_counts,
                 "errors": [str(e)],
             }
 
@@ -695,12 +776,17 @@ async def import_peers(addresses: list[str]) -> dict[str, t.Any]:
     try:
         peerstore = getattr(svc, "peerstore", None)
         if peerstore is None:
+            peer_counts = _peer_counts_snapshot()
             return {
                 "success": False,
                 "added": 0,
                 "skipped": 0,
                 "dial_attempted": 0,
                 "dial_success": 0,
+                "seeds_added": 0,
+                "seeds_skipped": 0,
+                "dial_attempts_started": 0,
+                **peer_counts,
                 "errors": ["Peerstore unavailable"],
             }
         for addr in addresses:
@@ -711,21 +797,31 @@ async def import_peers(addresses: list[str]) -> dict[str, t.Any]:
             except Exception:
                 skipped += 1
                 continue
+        peer_counts = _peer_counts_snapshot()
         return {
             "success": bool(added),
             "added": added,
             "skipped": skipped,
             "dial_attempted": dial_attempted,
             "dial_success": dial_success,
+            "seeds_added": added,
+            "seeds_skipped": skipped,
+            "dial_attempts_started": dial_attempted,
+            **peer_counts,
             "errors": [],
         }
     except Exception as e:  # pragma: no cover - defensive
+        peer_counts = _peer_counts_snapshot()
         return {
             "success": False,
             "added": 0,
             "skipped": 0,
             "dial_attempted": 0,
             "dial_success": 0,
+            "seeds_added": 0,
+            "seeds_skipped": 0,
+            "dial_attempts_started": 0,
+            **peer_counts,
             "errors": [str(e)],
         }
 

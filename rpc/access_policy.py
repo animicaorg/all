@@ -197,7 +197,11 @@ class AccessPolicy:
         if method in self.admin_methods:
             if self._peer_injection_authorized(ctx, client_ip):
                 return
-            raise errors.RpcMethodRestricted(method=method)
+            raise errors.AccessDenied(
+                "Unauthorized",
+                method=method,
+                required="localhost or valid admin token",
+            )
 
         if self.mode == AccessMode.PRIVATE_FULL:
             if self._authorized(ctx, client_ip):

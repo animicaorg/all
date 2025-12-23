@@ -445,7 +445,9 @@ def main() -> None:
     import uvicorn
 
     log.info(
-        "RPC server listening",
+        "RPC listening on http://%s:%s",
+        cfg.host,
+        cfg.port,
         extra={"host": cfg.host, "port": cfg.port, "ping": "node.ping"},
     )
     uvicorn.run(

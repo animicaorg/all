@@ -284,9 +284,13 @@ def _rpc_operation_succeeded(result: Any) -> tuple[bool, Optional[str]]:
             return bool(result.get("success")), result.get("error") or result.get("message")
         if "result" in result and isinstance(result.get("result"), bool):
             return bool(result.get("result")), result.get("error") or result.get("message")
-        if "dial_attempted" in result or "dial_success" in result:
+        if (
+            "dial_attempted" in result
+            or "dial_success" in result
+            or "dial_attempts_started" in result
+        ):
             added = result.get("added") or 0
-            dial_attempted = result.get("dial_attempted") or 0
+            dial_attempted = result.get("dial_attempted") or result.get("dial_attempts_started") or 0
             dial_success = result.get("dial_success") or 0
             errors = result.get("errors") or []
             success = bool(added or dial_attempted or dial_success)
