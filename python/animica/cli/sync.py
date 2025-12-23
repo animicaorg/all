@@ -225,6 +225,14 @@ def _extract_sync_metrics(sync_status: Optional[Dict[str, Any]]) -> Dict[str, An
 
     metrics["best_header_height"] = best_header_height
     metrics["best_block_height"] = best_block_height
+    if (
+        best_header_height is not None
+        and best_block_height is not None
+        and best_header_height > best_block_height
+    ):
+        metrics["synchronized"] = False
+    if best_block_height == 0 and metrics.get("synchronized"):
+        metrics["synchronized"] = False
     return metrics
 
 
