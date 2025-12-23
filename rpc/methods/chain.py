@@ -5,7 +5,7 @@ import time
 import typing as t
 
 from rpc import deps
-from rpc.hashrate import difficulty_to_work
+from rpc.hashrate import difficulty_to_work, work_to_hashshare_rate
 from rpc.methods import method
 from rpc.methods.block import (_block_view, _fallback_block,
                                _resolve_block_by_number)
@@ -299,7 +299,7 @@ def _network_hashrate_unknown(
     height_start: int | None = None,
 ) -> dict[str, t.Any]:
     return {
-        "hashrate_hps": None,
+        "hashrate_hsps": None,
         "window_blocks": int(window_blocks),
         "window_seconds": None,
         "height_start": height_start,
@@ -394,8 +394,9 @@ def chain_get_network_hashrate(window_blocks: int | None = None) -> dict[str, t.
         return payload
 
     dt = max(1.0, float(ts_end - ts_start))
+    trials_per_sec = total_work / dt
     payload = {
-        "hashrate_hps": total_work / dt,
+        "hashrate_hsps": work_to_hashshare_rate(trials_per_sec),
         "window_blocks": int(window_blocks),
         "window_seconds": dt,
         "height_start": height_start,

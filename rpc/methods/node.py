@@ -46,7 +46,7 @@ async def node_get_status(hashrate_window: int | None = None) -> dict[str, t.Any
         )
     except Exception as exc:
         network_hashrate = {
-            "hashrate_hps": None,
+            "hashrate_hsps": None,
             "window_blocks": int(hashrate_window or 120),
             "window_seconds": None,
             "height_start": None,
