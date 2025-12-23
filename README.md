@@ -40,7 +40,7 @@ The production website lives in `website/`. See `website/README.md` for local de
 - ✅ **Peer Discovery**: Automatic discovery via DNS seeds, mDNS, and Kademlia DHT
 - ✅ **Gossip Protocol**: Efficient block/transaction/proof propagation
 - ✅ **Consensus**: Deterministic PoIES validation by all nodes
-- ✅ **No Central Authority**: Public RPC nodes like `rpc.animica.org` are bootstrap-only helpers; run your own node for day-to-day queries and mining.
+- ✅ **No Central Authority**: Public RPC nodes like `rpc.animica.org` provide public discovery/sync helpers; run your own node for day-to-day queries and mining.
 
 **Run your own node** to strengthen the network and maintain decentralization. See [P2P Networking Guide](docs/P2P_NETWORKING_GUIDE.md) for details.
 

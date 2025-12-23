@@ -22,15 +22,19 @@ from animica.cli.peer import (
     _generate_peer_id,
     _rpc_call_with_error,
     _rpc_error_message,
-    _is_bootstrap_only_error,
+    _is_method_not_found_error,
+    _is_unauthorized_error,
     _probe_rpc_for_peer_injection,
     _rpc_operation_succeeded,
+    _rpc_headers,
+    _fetch_peer_status,
+    _print_peer_status,
     _write_peer_to_sqlite,
     _write_peer_to_store,
 )
 from animica.cli.rpc_guard import guard_bootstrap_rpc
 from animica.seeds import get_seed_nodes
-from animica.cli.rpc_utils import candidate_rpc_urls, is_local_rpc_url, is_method_not_found
+from animica.cli.rpc_utils import candidate_rpc_urls, is_method_not_found
 from .timeouts import DEFAULT_RPC_TIMEOUT, RPC_TIMEOUT_ENV, resolve_timeout
 
 app = typer.Typer(help="Manage blockchain synchronization.")
@@ -56,7 +60,7 @@ async def rpc_call(
         "params": params or [],
     }
     async with httpx.AsyncClient(timeout=resolved_timeout) as client:
-        response = await client.post(rpc_url, json=payload)
+        response = await client.post(rpc_url, json=payload, headers=_rpc_headers())
         try:
             data = response.json()
         except json.JSONDecodeError as exc:
@@ -547,72 +551,60 @@ def _seed_local_peerstores(
 
     rpc_added = False
     rpc_error: Optional[str] = None
-    policy_blocked = False
-    node_running = False
-    is_local = is_local_rpc_url(target_rpc_url)
-    if is_local:
-        node_running, policy_blocked, probe_error = _probe_rpc_for_peer_injection(target_rpc_url)
-        if policy_blocked:
-            rpc_error = probe_error
-        if node_running and not policy_blocked:
+    node_running, probe_error = _probe_rpc_for_peer_injection(target_rpc_url)
+    if not node_running:
+        rpc_error = probe_error
+    else:
+        for method_name in ("p2p.addPeers", "p2p.importPeers"):
             try:
                 import_resp, error = asyncio.run(
-                    _rpc_call_with_error("p2p.addPeers", [seeds], rpc_url=target_rpc_url)
+                    _rpc_call_with_error(method_name, [seeds], rpc_url=target_rpc_url)
                 )
-                if error and _is_bootstrap_only_error(error):
-                    policy_blocked = True
-                    rpc_error = _rpc_error_message(error)
-                else:
-                    rpc_added, rpc_error = _rpc_operation_succeeded(import_resp)
-                    if not rpc_added:
-                        rpc_error = rpc_error or _rpc_error_message(error) or "p2p.addPeers did not report success"
             except Exception as exc:
                 rpc_error = str(exc)
-            if not rpc_added and not policy_blocked:
-                try:
-                    import_resp, error = asyncio.run(
-                        _rpc_call_with_error("p2p.importPeers", [seeds], rpc_url=target_rpc_url)
-                    )
-                    if error and _is_bootstrap_only_error(error):
-                        policy_blocked = True
-                        rpc_error = _rpc_error_message(error)
-                    else:
-                        rpc_added, rpc_error = _rpc_operation_succeeded(import_resp)
-                        if not rpc_added:
-                            rpc_error = (
-                                rpc_error
-                                or _rpc_error_message(error)
-                                or "p2p.importPeers did not report success"
-                            )
-                except Exception:
-                    pass
-    else:
-        policy_blocked = True
+                break
+
+            if error and _is_unauthorized_error(error):
+                rpc_error = _rpc_error_message(error) or "UNAUTHORIZED"
+                break
+            if error and _is_method_not_found_error(error):
+                rpc_error = "RPC method not available on this node"
+                continue
+
+            rpc_added, rpc_error = _rpc_operation_succeeded(import_resp)
+            if rpc_added:
+                break
+            rpc_error = rpc_error or _rpc_error_message(error) or f"{method_name} did not report success"
 
     if not quiet:
         if stored:
             typer.secho(f"✓ Added {stored} seed(s) to local peer store", fg=typer.colors.GREEN)
         if rpc_added:
             typer.secho("✓ Seeds imported into running node", fg=typer.colors.GREEN)
-        else:
-            if policy_blocked:
-                if not is_local:
-                    typer.secho(
-                        "ℹ️ Remote RPC endpoints do not accept peer injection (BOOTSTRAP_ONLY).",
-                        fg=typer.colors.CYAN,
-                    )
-                else:
-                    typer.secho(
-                        "ℹ️ This RPC endpoint does not accept peer injection (BOOTSTRAP_ONLY).",
-                        fg=typer.colors.CYAN,
-                    )
-                typer.echo("Seeds will be loaded on next restart.")
-            elif not node_running:
+            status, status_error = _fetch_peer_status(target_rpc_url)
+            if status:
+                _print_peer_status(status)
+            elif status_error:
+                typer.secho(f"⚠ Unable to refresh peer status: {status_error}", fg=typer.colors.YELLOW)
+        elif not node_running:
+            if rpc_error:
+                typer.secho(f"⚠ RPC not reachable: {rpc_error}", fg=typer.colors.YELLOW)
+            typer.secho(
+                "✓ Saved seeds. Start your node and re-run sync force.",
+                fg=typer.colors.GREEN,
+            )
+        elif rpc_error:
+            if "method not available" in rpc_error.lower():
                 typer.secho(
-                    "✓ Saved seeds. Start your local node and re-run with --push, or use --start-node.",
-                    fg=typer.colors.GREEN,
+                    "⚠ RPC method missing: update the node to enable peer injection.",
+                    fg=typer.colors.YELLOW,
                 )
-            elif rpc_error:
+            elif "unauthorized" in rpc_error.lower():
+                typer.secho(
+                    "⚠ Peer injection unauthorized. Use localhost or set ANIMICA_RPC_ADMIN_TOKEN.",
+                    fg=typer.colors.YELLOW,
+                )
+            else:
                 typer.secho(
                     f"⚠ Unable to push seeds into running node: {rpc_error}",
                     fg=typer.colors.YELLOW,
