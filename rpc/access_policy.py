@@ -77,6 +77,9 @@ class AccessPolicy:
         "p2p.addPeer",
         "p2p.addPeers",
         "p2p.importPeers",
+        "sync.force",
+        "sync.trigger",
+        "sync.start",
     })
     bootstrap_methods: set[str] = field(default_factory=lambda: {
         "bootstrap.getManifest",
@@ -166,7 +169,9 @@ class AccessPolicy:
         return False
 
     def _peer_injection_authorized(self, ctx: t.Any, client_ip: str | None) -> bool:
-        return True
+        if self._is_local_client(client_ip):
+            return True
+        return self._authorized(ctx, client_ip)
 
     def _enforce_rate_limit(self, client_ip: str | None) -> None:
         if self.bootstrap_rate_limit_rpm <= 0:
@@ -184,7 +189,30 @@ class AccessPolicy:
             raise errors.RateLimited(retry_after_ms=retry_ms)
 
     def authorize(self, method: str, ctx: t.Any) -> None:
-        return
+        client_ip = _extract_ip(ctx)
+
+        if self.mode == AccessMode.LOCAL_DEV:
+            return
+
+        if method in self.admin_methods:
+            if self._peer_injection_authorized(ctx, client_ip):
+                return
+            raise errors.RpcMethodRestricted(method=method)
+
+        if self.mode == AccessMode.PRIVATE_FULL:
+            if self._authorized(ctx, client_ip):
+                return
+            raise errors.RpcMethodRestricted(method=method)
+
+        if self.mode == AccessMode.PUBLIC_BOOTSTRAP:
+            if method in self.bootstrap_methods or method.startswith("bootstrap."):
+                self._enforce_rate_limit(client_ip)
+                return
+            if self._authorized(ctx, client_ip):
+                return
+            raise errors.RpcMethodRestricted(method=method)
+
+        raise errors.RpcMethodRestricted(method=method)
 
 
 _ACTIVE_POLICY: AccessPolicy = AccessPolicy.from_config(object())
