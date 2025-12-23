@@ -1,0 +1,32 @@
+# Core chain parameters for Animica mainnet (chain_id=1).
+# This file is referenced by core/genesis/genesis.json via paramsRef.path.
+
+chain:
+  id: 1
+  name: "Animica Mainnet"
+
+genesis:
+  time: "2025-01-01T00:00:00Z"
+  hash: "0x0000000000000000000000000000000000000000000000000000000000000000"
+
+policy_roots:
+  alg_policy_root: "0x0000000000000000000000000000000000000000000000000000000000000000"
+  poies_policy_root: "0x0000000000000000000000000000000000000000000000000000000000000000"
+
+consensus:
+  # Mainnet PoIES parameters (see spec/params.yaml networks.animica:1.consensus.poies)
+  theta_initial: 16000000
+  gamma_total_cap: 12000000
+  retarget:
+    window: 1800
+    ema_alpha: 0.15
+    bounds:
+      min: 0.5
+      max: 2.0
+
+block:
+  target_seconds: 2.0
+  max_bytes: 2000000
+  max_gas: 40000000
+  tx_max_bytes: 131072
+  min_gas_price: 0
