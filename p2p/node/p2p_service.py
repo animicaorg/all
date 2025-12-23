@@ -545,6 +545,7 @@ class P2PService:
             "blocks_imported": 0,
             "blocks_rejected": 0,
             "sync_rounds": 0,
+            "p2p_peers_rejected_genesis_mismatch": 0,
         }
 
         # Address discovery / relay state
@@ -3005,7 +3006,26 @@ class P2PService:
                 "chain_id_mismatch", points=0
             )
 
-        if hello.genesis_hash and bytes(hello.genesis_hash) != self._genesis_hash():
+        if not hello.genesis_hash:
+            self._stats["p2p_peers_rejected_genesis_mismatch"] += 1
+            self._log_handshake_mismatch(
+                peer,
+                reason="genesis_missing",
+                peer_chain_id=int(hello.chain_id or 0),
+                peer_genesis_hash=None,
+            )
+            await self._send(
+                peer,
+                MsgID.HELLO_ACK,
+                HelloAck(accepted=False, reason="genesis_missing"),
+            )
+            raise PeerMisbehavior(
+                "genesis_missing",
+                points=self._score_points["wrong_genesis"],
+            )
+
+        if bytes(hello.genesis_hash) != self._genesis_hash():
+            self._stats["p2p_peers_rejected_genesis_mismatch"] += 1
             self._log_handshake_mismatch(
                 peer,
                 reason="genesis_mismatch",
@@ -3019,7 +3039,7 @@ class P2PService:
             )
             raise PeerMisbehavior(
                 "genesis_mismatch",
-                points=0,
+                points=self._score_points["wrong_genesis"],
             )
 
         if hello.version and str(hello.version) not in {"1", "2"}:
@@ -3801,6 +3821,7 @@ class P2PService:
         contiguous: List[_SyncHeader] = []
         prev: Optional[_SyncHeader] = None
         seen_hashes: set[bytes] = set()
+        expected_genesis = self._genesis_hash()
 
         for idx, hc in enumerate(headers):
             header = self._header_from_compact(hc)
@@ -3811,6 +3832,14 @@ class P2PService:
                 self._penalize_peer(peer, "header_theta_out_of_range")
                 break
             if idx == 0:
+                if header.height == 0 and header.hash != expected_genesis:
+                    self._stats["p2p_peers_rejected_genesis_mismatch"] += 1
+                    self._penalize_peer(peer, "genesis_mismatch", severity=2)
+                    return []
+                if header.height == 1 and header.parent_hash != expected_genesis:
+                    self._stats["p2p_peers_rejected_genesis_mismatch"] += 1
+                    self._penalize_peer(peer, "genesis_mismatch", severity=2)
+                    return []
                 parent_info = self._header_meta(header.parent_hash)
                 if parent_info is None:
                     log.info(
@@ -4425,6 +4454,13 @@ class P2PService:
         return None
 
     def _genesis_hash(self) -> bytes:
+        expected = None
+        if self.deps is not None:
+            expected = getattr(self.deps, "expected_genesis_hash", None)
+            if not expected and hasattr(self.deps, "_sync"):
+                expected = getattr(self.deps._sync, "expected_genesis_hash", None)
+        if expected:
+            return bytes(expected)
         bdb = self._block_db()
         g = bdb.get_genesis_hash()
         if g:
@@ -4532,8 +4568,6 @@ class P2PService:
         if genesis_hash and genesis_hash != self._genesis_hash():
             return "genesis_mismatch"
         if remote_height <= 0:
-            if local_height <= 0:
-                return "peer_at_genesis"
             return "peer_behind"
         if remote_height <= local_height:
             return "at_tip"
