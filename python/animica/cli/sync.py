@@ -34,7 +34,7 @@ from animica.cli.peer import (
 )
 from animica.cli.rpc_guard import guard_bootstrap_rpc
 from animica.seeds import get_seed_nodes
-from animica.cli.rpc_utils import candidate_rpc_urls, is_method_not_found
+from animica.cli.rpc_utils import candidate_rpc_urls, is_local_rpc_url, is_method_not_found
 from .timeouts import DEFAULT_RPC_TIMEOUT, RPC_TIMEOUT_ENV, resolve_timeout
 
 app = typer.Typer(help="Manage blockchain synchronization.")
@@ -642,10 +642,14 @@ def _seed_local_peerstores(
                     fg=typer.colors.YELLOW,
                 )
             elif "unauthorized" in rpc_error.lower():
-                typer.secho(
-                    "⚠ Peer injection unauthorized. Use localhost or set ANIMICA_RPC_ADMIN_TOKEN.",
-                    fg=typer.colors.YELLOW,
-                )
+                typer.secho("⚠ Peer injection unauthorized.", fg=typer.colors.YELLOW)
+                if is_local_rpc_url(target_rpc_url):
+                    typer.echo("  - Not local: RPC did not treat this request as localhost.")
+                else:
+                    typer.echo("  - Not local: RPC URL is not localhost.")
+                if not os.getenv("ANIMICA_RPC_ADMIN_TOKEN"):
+                    typer.echo("  - Missing token: set ANIMICA_RPC_ADMIN_TOKEN.")
+                typer.echo("  Fix: use localhost RPC or provide X-Animica-Admin-Token.")
             else:
                 typer.secho(
                     f"⚠ Unable to push seeds into running node: {rpc_error}",
