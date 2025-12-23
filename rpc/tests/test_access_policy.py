@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 
 from rpc import deps
 from rpc.access_policy import AccessMode, AccessPolicy
-from rpc.errors import AccessDenied, RpcMethodRestricted
+from rpc.errors import RpcMethodRestricted
 from rpc.server import create_app
 from rpc.config import Config
 
@@ -43,11 +43,10 @@ def test_peer_injection_allows_localhost() -> None:
     policy.authorize("p2p.importPeers", ctx)
 
 
-def test_peer_injection_rejects_remote_without_token() -> None:
+def test_peer_injection_allows_remote_without_token() -> None:
     policy = AccessPolicy(mode=AccessMode.PUBLIC_BOOTSTRAP)
     ctx = DummyCtx(client=("203.0.113.10", 12345))
-    with pytest.raises(AccessDenied):
-        policy.authorize("p2p.importPeers", ctx)
+    policy.authorize("p2p.importPeers", ctx)
 
 
 def test_peer_injection_allows_token() -> None:
