@@ -28,8 +28,9 @@ settings. Stop the dashboard with `Ctrl+C` to clean up the background services.
 Thin Typer surface for quick JSON-RPC checks. Available as `animica-node` or
 `python -m animica.cli.node`:
 
-- `status` prints RPC URL, chain ID, head, sync status, and (when available) the
-  full head block.
+- `status` prints RPC URL, chain ID, head, sync status, network hashrate, and
+  (when available) the full head block. Use `--hashrate-window` or
+  `ANIMICA_HASHRATE_WINDOW` to tune the sample size.
 - `head` dumps the JSON head payload.
 - `block --height N` or `block --hash 0x...` fetches a block; height lookups
   fall back to hash queries when needed.
