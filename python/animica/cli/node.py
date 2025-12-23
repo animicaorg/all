@@ -146,11 +146,11 @@ def _db_path(cfg: Any) -> Path:
 
 
 def _resolve_genesis_path(cfg: Any) -> Path:
-    genesis_path = Path(getattr(cfg, "genesis_path", ""))
-    if genesis_path.is_absolute():
-        return genesis_path
-    repo_root = Path(__file__).resolve().parents[3]
-    return repo_root / genesis_path
+    from core.genesis.genesis_loader import resolve_genesis_path
+
+    genesis_path = getattr(cfg, "genesis_path", None)
+    chain_id = getattr(cfg, "chain_id", None)
+    return resolve_genesis_path(genesis_path, chain_id=chain_id)
 
 
 def _ensure_db_initialized(net_cfg: Any, *, quiet: bool = False) -> bool:

@@ -15,7 +15,7 @@
 # Notes:
 # - Uses mainnet chain ID (1)
 # - Isolated volumes: mainnet_node_data, mainnet_services_data
-# - Genesis: core/genesis/genesis.mainnet.json (or default if not exists)
+# - Genesis: /app/core/genesis/genesis.json (bundled in image)
 # - Data directory isolated to prevent cross-network contamination
 # -------------------------------------------------------------------
 name: animica-mainnet
@@ -44,7 +44,7 @@ services:
       # Mainnet chain config
       ANIMICA_NETWORK: "mainnet"
       ANIMICA_CHAIN_ID: "${ANIMICA_CHAIN_ID:-1}"
-      GENESIS_PATH: "${GENESIS_PATH:-core/genesis/genesis.mainnet.json}"
+      GENESIS_PATH: "${GENESIS_PATH:-/app/core/genesis/genesis.json}"
       ANIMICA_DATA_DIR: "/data"
       ANIMICA_RPC_BOOTSTRAP_ONLY: "${ANIMICA_RPC_BOOTSTRAP_ONLY:-0}"
       # RPC server config

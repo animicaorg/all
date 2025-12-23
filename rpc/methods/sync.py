@@ -112,11 +112,22 @@ async def sync_start() -> dict[str, t.Any]:
 @method("sync.getStatus", desc="Return current sync status")
 async def sync_get_status() -> dict[str, t.Any]:
     svc = _get_p2p_service()
+    fatal_error = None
+    try:
+        ctx = deps.get_ctx()
+        fatal_error = getattr(ctx, "p2p_start_error", None)
+    except Exception:
+        fatal_error = None
     if svc is not None and hasattr(svc, "sync_status_snapshot"):
         snap = svc.sync_status_snapshot()
         if hasattr(snap, "to_dict"):
-            return snap.to_dict()
+            payload = snap.to_dict()
+            if fatal_error and not payload.get("fatal_error"):
+                payload["fatal_error"] = fatal_error
+            return payload
         if isinstance(snap, dict):
+            if fatal_error and not snap.get("fatal_error"):
+                snap["fatal_error"] = fatal_error
             return snap
     return {
         "phase": "IDLE",
@@ -140,6 +151,7 @@ async def sync_get_status() -> dict[str, t.Any]:
         "last_block_request_at": None,
         "last_block_response_at": None,
         "last_block_error": None,
+        "fatal_error": fatal_error,
         "active_peer_for_headers": None,
         "active_peer_for_blocks": None,
         "active_peers_for_headers": [],

@@ -1276,18 +1276,23 @@ def force_sync(
             best_header_height = metrics.get("best_header_height") or 0
             best_block_height = metrics.get("best_block_height") or 0
             current_height = _extract_height(head_info) or 0
+            phase = metrics.get("phase")
             sync_state = _compute_sync_state(
                 head_height=current_height,
                 network_height=None,
                 metrics=metrics,
             )
+            phase_label = str(phase).upper() if phase else None
+            display_state = phase_label or sync_state
+            if best_header_height > best_block_height and display_state == "IDLE":
+                display_state = "BLOCKS"
 
             progress_height = max(current_height, best_block_height)
 
             status_line = (
                 f"Height {current_height} | headers {best_header_height} | "
                 f"blocks {best_block_height} | peers {peer_count if peer_count is not None else 'n/a'} | "
-                f"{sync_state}"
+                f"{display_state}"
             )
             if status_line != last_status_line:
                 typer.echo(status_line)
@@ -1336,11 +1341,16 @@ def force_sync(
         metrics = _extract_sync_metrics(sync_status)
         best_header_height = metrics.get("best_header_height") or 0
         best_block_height = metrics.get("best_block_height") or 0
+        phase = metrics.get("phase")
         sync_state = _compute_sync_state(
             head_height=final_height,
             network_height=None,
             metrics=metrics,
         )
+        phase_label = str(phase).upper() if phase else None
+        display_state = phase_label or sync_state
+        if best_header_height > best_block_height and display_state == "IDLE":
+            display_state = "BLOCKS"
 
         blocks_synced = final_height - initial_height
 
@@ -1350,7 +1360,7 @@ def force_sync(
         typer.echo(f"  Final height:   {final_height}")
         typer.echo(f"  Headers:        {best_header_height}")
         typer.echo(f"  Blocks:         {best_block_height}")
-        typer.echo(f"  Sync state:     {sync_state}")
+        typer.echo(f"  Sync state:     {display_state}")
         typer.echo(f"  Blocks synced:  {blocks_synced}")
 
         if blocks_synced > 0:
