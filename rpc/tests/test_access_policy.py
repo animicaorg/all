@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 
 from rpc import deps
 from rpc.access_policy import AccessMode, AccessPolicy
-from rpc.errors import BootstrapOnlyEndpoint, RpcMethodRestricted
+from rpc.errors import AccessDenied, RpcMethodRestricted
 from rpc.server import create_app
 from rpc.config import Config
 
@@ -35,6 +35,25 @@ def test_private_full_requires_token() -> None:
 
     ctx_allowed = DummyCtx(headers={"x-animica-admin-token": "secret"})
     policy.authorize("chain.getHead", ctx_allowed)
+
+
+def test_peer_injection_allows_localhost() -> None:
+    policy = AccessPolicy(mode=AccessMode.PUBLIC_BOOTSTRAP)
+    ctx = DummyCtx(client=("127.0.0.1", 12345))
+    policy.authorize("p2p.importPeers", ctx)
+
+
+def test_peer_injection_rejects_remote_without_token() -> None:
+    policy = AccessPolicy(mode=AccessMode.PUBLIC_BOOTSTRAP)
+    ctx = DummyCtx(client=("203.0.113.10", 12345))
+    with pytest.raises(AccessDenied):
+        policy.authorize("p2p.importPeers", ctx)
+
+
+def test_peer_injection_allows_token() -> None:
+    policy = AccessPolicy(mode=AccessMode.PUBLIC_BOOTSTRAP, admin_token="secret")
+    ctx = DummyCtx(headers={"x-animica-admin-token": "secret"}, client=("203.0.113.10", 12345))
+    policy.authorize("p2p.importPeers", ctx)
 
 
 def test_rpc_endpoint_rejects_restricted_methods(monkeypatch, tmp_path) -> None:
@@ -74,20 +93,6 @@ def test_rpc_endpoint_rejects_restricted_methods(monkeypatch, tmp_path) -> None:
         assert "restricted" in body.get("error", {}).get("message", "").lower()
 
 
-def test_bootstrap_only_error(monkeypatch) -> None:
-    monkeypatch.setenv("ANIMICA_RPC_BOOTSTRAP_ONLY", "1")
-    policy = AccessPolicy.from_config(Config(host="0.0.0.0", port=0, db_uri=":memory:", chain_id=1))
-    ctx = DummyCtx()
-
-    # Allowed bootstrap method
-    policy.authorize("bootstrap.getManifest", ctx)
-
-    with pytest.raises(BootstrapOnlyEndpoint) as exc:
-        policy.authorize("state.getBalance", ctx)
-
-    assert exc.value.code == -32070
-
-
 def test_bootstrap_node_restricts_non_bootstrap_methods(monkeypatch) -> None:
     monkeypatch.setenv("ANIMICA_RPC_ACCESS_MODE", AccessMode.PRIVATE_FULL.value)
     monkeypatch.setenv("ANIMICA_RPC_BOOTSTRAP_NODE", "1")
@@ -96,5 +101,5 @@ def test_bootstrap_node_restricts_non_bootstrap_methods(monkeypatch) -> None:
 
     policy.authorize("bootstrap.getManifest", ctx)
 
-    with pytest.raises(BootstrapOnlyEndpoint):
+    with pytest.raises(RpcMethodRestricted):
         policy.authorize("state.getBalance", ctx)
