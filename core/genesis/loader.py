@@ -37,7 +37,6 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
-import json
 import os
 from dataclasses import asdict, replace
 from pathlib import Path
@@ -47,6 +46,7 @@ from core.db.kv import KV
 from core.db.sqlite import SQLiteKV  # default backend
 from core.encoding import cbor as cbor
 # --- Core imports (stable surfaces) ---
+from core.genesis.genesis_loader import get_genesis
 from core.utils import hash as uhash
 from core.utils import merkle as umerkle
 from core.utils.address import address_to_bytes
@@ -309,7 +309,10 @@ def _build_genesis_block(h: Header) -> Block:
 
 
 def _load_chain_params(
-    genesis: Dict[str, Any], params_override: Optional[Mapping[str, Any]]
+    genesis: Dict[str, Any],
+    params_override: Optional[Mapping[str, Any]],
+    *,
+    base_dir: Optional[Path] = None,
 ) -> ChainParams:
     """
     Resolve and load ChainParams referenced by the genesis file.
@@ -325,6 +328,8 @@ def _load_chain_params(
         params_path = Path(str(params_ref["path"])).expanduser()
     if params_path is None:
         params_path = default_params_path()
+    elif base_dir is not None and not params_path.is_absolute():
+        params_path = (base_dir / params_path).resolve()
 
     params = ChainParams.load_yaml(
         params_path, chain_id_hint=int(genesis.get("chainId", 0) or 0)
@@ -356,15 +361,10 @@ def load_genesis(
     handled by core.chain.head.finalize_genesis).
     """
 
-    if genesis_path is None:
-        # Default to the bundled genesis.json next to this file.
-        here = Path(__file__).resolve().parent
-        genesis_path = here / "genesis.json"
+    bundle = get_genesis(genesis_path)
+    genesis = bundle.genesis
 
-    with open(genesis_path, "r", encoding="utf-8") as f:
-        genesis = json.load(f)
-
-    params = _load_chain_params(genesis, params_override)
+    params = _load_chain_params(genesis, params_override, base_dir=bundle.base_dir)
 
     # Validate mainnet premine if applicable (chain_id == 1, height == 0)
     # Note: Import is done here to avoid circular dependencies between
@@ -448,8 +448,8 @@ def load_and_init_genesis(
           "head_hash": bytes
         }
     """
-    with open(genesis_path, "r", encoding="utf-8") as f:
-        genesis = json.load(f)
+    bundle = get_genesis(genesis_path)
+    genesis = bundle.genesis
 
     _validate_genesis(genesis, override_chain_id=override_chain_id)
 
@@ -514,6 +514,15 @@ def load_and_init_genesis(
         "head_height": head_height,
         "head_hash": head_hash,
     }
+
+
+def load_chain_params_from_genesis(
+    genesis: Dict[str, Any],
+    *,
+    params_override: Optional[Mapping[str, Any]] = None,
+    base_dir: Optional[Path] = None,
+) -> ChainParams:
+    return _load_chain_params(genesis, params_override, base_dir=base_dir)
 
 
 # -------------------------

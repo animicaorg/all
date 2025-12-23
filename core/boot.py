@@ -21,13 +21,14 @@ from core.db import open_kv
 from core.db.block_db import BlockDB
 from core.db.state_db import StateDB
 from core.errors import AnimicaError
+from core.genesis.genesis_loader import GenesisNotFoundError, resolve_genesis_path
 from core.genesis.loader import load_genesis
 # Core deps
 from core.logging import setup_logging
 from core.types.header import Header
 from core.types.params import ChainParams
 
-DEFAULT_GENESIS = "core/genesis/genesis.json"
+DEFAULT_GENESIS = None
 DEFAULT_DB = "sqlite:///animica.db"
 
 
@@ -66,7 +67,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         nargs="?",
         default=DEFAULT_GENESIS,
         const=DEFAULT_GENESIS,
-        help=f"Path to genesis file (default: {DEFAULT_GENESIS})",
+        help="Path to genesis file (default: auto-detect bundled genesis.json)",
     )
     ap.add_argument(
         "--db",
@@ -86,9 +87,10 @@ def main(argv: Optional[list[str]] = None) -> int:
     args = ap.parse_args(argv)
 
     setup_logging(level=args.log.upper())
-    genesis_path = Path(args.genesis)
-    if not genesis_path.exists():
-        print(f"[boot] genesis file not found: {genesis_path}", file=sys.stderr)
+    try:
+        genesis_path = resolve_genesis_path(args.genesis)
+    except GenesisNotFoundError as exc:
+        print(f"[boot] genesis file not found: {exc}", file=sys.stderr)
         print(
             "\nFor mainnet genesis creation, run the bootstrap command:\n"
             "    python -m core.bootstrap --network mainnet --genesis-sample <path> --db <uri>",

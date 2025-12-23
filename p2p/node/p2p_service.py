@@ -277,6 +277,7 @@ class SyncStatusSnapshot:
     last_block_request_at: float
     last_block_response_at: float
     last_block_error: Optional[str]
+    fatal_error: Optional[str]
     active_peer_for_headers: Optional[str]
     active_peer_for_blocks: Optional[str]
     active_peers_for_headers: list[str]
@@ -308,6 +309,7 @@ class SyncStatusSnapshot:
             "last_block_request_at": self.last_block_request_at,
             "last_block_response_at": self.last_block_response_at,
             "last_block_error": self.last_block_error,
+            "fatal_error": self.fatal_error,
             "active_peer_for_headers": self.active_peer_for_headers,
             "active_peer_for_blocks": self.active_peer_for_blocks,
             "active_peers_for_headers": list(self.active_peers_for_headers),
@@ -541,6 +543,7 @@ class P2PService:
         self._sync_block_queue_heights: Dict[bytes, int] = {}
         self._sync_last_block_error: Optional[str] = None
         self._sync_last_block_error_at: Optional[float] = None
+        self._sync_fatal_error: Optional[str] = None
         self._sync_block_stalled_reason: Optional[str] = None
         self._sync_peer_penalties: Dict[str, int] = {}
         self._sync_peer_penalty_whitelist = {"144.126.133.21:30333"}
@@ -1570,6 +1573,7 @@ class P2PService:
             last_block_request_at=self._sync_last_block_request_at,
             last_block_response_at=self._sync_last_block_response_at,
             last_block_error=self._sync_last_block_error,
+            fatal_error=self._sync_fatal_error,
             active_peer_for_headers=self._sync_active_header_peer,
             active_peer_for_blocks=self._sync_active_block_peer,
             active_peers_for_headers=active_peers_for_headers,
@@ -3325,6 +3329,7 @@ class P2PService:
             )
             self._sync_last_block_error = None
             self._sync_last_block_error_at = None
+            self._sync_fatal_error = None
             self._sync_block_stalled_reason = None
             self._stats["blocks_validated_ok"] += 1
             self._stats["blocks_imported"] += 1
@@ -3445,9 +3450,14 @@ class P2PService:
             else:
                 res = fn(payload)
         except Exception as e:
-            return False, str(e)
+            reason = str(e)
+            if "genesis" in reason.lower():
+                self._sync_fatal_error = reason
+            return False, reason
         if isinstance(res, tuple):
             ok = bool(res[0]) if res else False
             reason = res[1] if len(res) > 1 else None
+            if not ok and reason and "genesis" in str(reason).lower():
+                self._sync_fatal_error = str(reason)
             return ok, reason
         return bool(res), None
