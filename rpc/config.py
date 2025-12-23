@@ -284,7 +284,7 @@ class AccessControlConfig:
     admin_token: Optional[str] = None
     admin_allowlist: List[str] = field(default_factory=list)
     bootstrap_rate_limit: int = 0
-    bootstrap_node: bool = True
+    bootstrap_node: bool = False
 
 
 @dataclass(frozen=True)
