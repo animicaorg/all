@@ -1733,7 +1733,7 @@ def up(
             if detach:
                 rpc_ready_url = f"http://127.0.0.1:{rpc_port}/rpc"
                 typer.echo(f"\nWaiting for RPC readiness on {rpc_ready_url}...")
-                if not _wait_for_rpc_ready(rpc_ready_url, rpc_ready_timeout):
+                if not _wait_for_rpc_ready(rpc_ready_url, timeout_s=rpc_ready_timeout):
                     typer.secho(
                         f"RPC not reachable after {rpc_ready_timeout}s.",
                         fg=typer.colors.RED,
