@@ -165,6 +165,113 @@ def _coerce_int(value: Any) -> Optional[int]:
     return None
 
 
+def _extract_sync_metrics(sync_status: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Normalize sync status payload into consistent metrics."""
+    metrics: Dict[str, Any] = {
+        "syncing": False,
+        "synchronized": False,
+        "best_header_height": None,
+        "best_block_height": None,
+        "phase": None,
+        "target_height": None,
+    }
+
+    if not isinstance(sync_status, dict):
+        return metrics
+
+    metrics["phase"] = sync_status.get("phase") or sync_status.get("state")
+    metrics["synchronized"] = bool(sync_status.get("synchronized"))
+
+    best_header_height = _coerce_int(
+        sync_status.get("best_header_height")
+        or sync_status.get("bestHeaderHeight")
+        or sync_status.get("best_header")
+    )
+    best_block_height = _coerce_int(
+        sync_status.get("best_block_height")
+        or sync_status.get("bestBlockHeight")
+        or sync_status.get("best_block")
+    )
+
+    sync_flag = sync_status.get("syncing")
+    sync_progress: Optional[Dict[str, Any]] = None
+    if isinstance(sync_flag, dict):
+        metrics["syncing"] = True
+        sync_progress = sync_flag
+    elif isinstance(sync_flag, bool):
+        metrics["syncing"] = sync_flag
+        if sync_flag:
+            sync_progress = sync_status
+    elif sync_status.get("currentBlock") is not None or sync_status.get("highestBlock") is not None:
+        metrics["syncing"] = True
+        sync_progress = sync_status
+
+    if sync_progress:
+        current_block = _coerce_int(
+            sync_progress.get("currentBlock")
+            or sync_progress.get("current_block")
+            or sync_progress.get("height")
+        )
+        target_height = _coerce_int(
+            sync_progress.get("highestBlock")
+            or sync_progress.get("targetHeight")
+            or sync_progress.get("target_height")
+        )
+        if current_block is not None and best_block_height is None:
+            best_block_height = current_block
+        if target_height is not None and best_header_height is None:
+            best_header_height = target_height
+        metrics["target_height"] = target_height
+
+    metrics["best_header_height"] = best_header_height
+    metrics["best_block_height"] = best_block_height
+    return metrics
+
+
+def _compute_sync_state(
+    *,
+    head_height: Optional[int],
+    network_height: Optional[int],
+    metrics: Dict[str, Any],
+    near_tip_blocks: int = 10,
+) -> str:
+    """Compute a truthful sync state label based on local and network data."""
+    if head_height is None:
+        return "UNKNOWN"
+
+    best_header_height = metrics.get("best_header_height")
+    best_block_height = metrics.get("best_block_height")
+    phase = metrics.get("phase")
+    syncing = bool(metrics.get("syncing"))
+    synchronized = bool(metrics.get("synchronized"))
+
+    if best_header_height is not None and best_block_height is not None and best_header_height > best_block_height:
+        if phase and str(phase).lower() in {"headers", "header", "syncing_headers"}:
+            return "SYNCING_HEADERS"
+        return "SYNCING_BLOCKS"
+
+    if syncing:
+        return "SYNCING"
+
+    if head_height == 0:
+        if network_height is not None and network_height > 0:
+            return "SYNCING"
+        return "IDLE"
+
+    if network_height is not None:
+        delta = network_height - head_height
+        if delta <= 0:
+            return "SYNCHRONIZED"
+        if delta <= near_tip_blocks:
+            return "NEAR_TIP"
+        return "SYNCING"
+
+    if synchronized:
+        return "SYNCHRONIZED"
+
+    return "IDLE"
+
+
 def _extract_peer_head_height(peer: Dict[str, Any]) -> Optional[int]:
     for key in ("height", "head", "headHeight", "head_height", "blockNumber", "block_number"):
         if key in peer:
@@ -230,8 +337,9 @@ async def _get_sync_status(rpc_url: str) -> Optional[Dict[str, Any]]:
     Tries multiple possible RPC method names for compatibility.
     """
     methods_to_try = [
-        "node.syncStatus",
+        "sync.getStatus",
         "sync.status",
+        "node.syncStatus",
         "chain.syncing",
         "sync.isSyncing",
         "eth_syncing",  # Ethereum compatibility
@@ -572,10 +680,10 @@ async def _trigger_sync(rpc_url: str) -> bool:
         return True
 
     methods_to_try = [
+        "sync.trigger",
         "sync.force",
         "sync.start",
         "node.startSync",
-        "sync.trigger",
         "p2p.sync",
     ]
     
@@ -590,6 +698,45 @@ async def _trigger_sync(rpc_url: str) -> bool:
     return False
 
 
+async def _get_local_sync_snapshot(
+    rpc_url: str,
+) -> Dict[str, Any]:
+    """Fetch local node sync snapshot with best-effort fallbacks."""
+    head_info: Optional[Dict[str, Any]] = None
+    sync_status: Optional[Dict[str, Any]] = None
+    p2p_status: Optional[Dict[str, Any]] = None
+    peer_count: Optional[int] = None
+    peers: List[Dict[str, Any]] = []
+
+    try:
+        node_status = await rpc_call("node.getStatus", [], rpc_url=rpc_url, timeout=DEFAULT_RPC_TIMEOUT)
+        if isinstance(node_status, dict):
+            head_info, sync_status, p2p_status = _extract_node_status(node_status)
+            if p2p_status:
+                peer_count = p2p_status.get("peers_total")
+    except Exception as exc:
+        if not is_method_not_found(exc):
+            raise
+
+    if head_info is None:
+        head_info = await _get_head_info(rpc_url)
+    if sync_status is None:
+        sync_status = await _get_sync_status(rpc_url)
+    if peer_count is None:
+        peer_count = await _get_peer_count(rpc_url)
+    if peer_count is None:
+        peers = await _get_peers(rpc_url)
+        peer_count = len(peers) if peers else None
+
+    return {
+        "head_info": head_info,
+        "sync_status": sync_status,
+        "p2p_status": p2p_status,
+        "peer_count": peer_count,
+        "peers": peers,
+    }
+
+
 @app.command(name="status")
 def sync_status(
     rpc_url: Optional[str] = typer.Option(
@@ -598,7 +745,7 @@ def sync_status(
     bootstrap_rpc: Optional[str] = typer.Option(
         None,
         "--bootstrap-rpc",
-        help="Bootstrap RPC endpoint for discovery/seed info",
+        help="Bootstrap RPC endpoint (discovery/snapshots only; never used for local progress)",
         envvar=BOOTSTRAP_RPC_ENV,
     ),
     allow_bootstrap_rpc: bool = typer.Option(
@@ -731,25 +878,16 @@ def sync_status(
         network_hash = best_peer_hash
         network_source = "peer"
     
-    is_syncing = False
-    sync_progress = None
-    target_height = None
-    
-    if sync_status:
-        is_syncing = sync_status.get("syncing", False)
-        if isinstance(is_syncing, dict):
-            # Some nodes return syncing status as a dict
-            sync_progress = is_syncing
-            is_syncing = True
-        elif is_syncing:
-            sync_progress = sync_status
-        
-        if sync_progress:
-            target_height = (
-                sync_progress.get("highestBlock") or
-                sync_progress.get("targetHeight") or
-                sync_progress.get("target_height")
-            )
+    metrics = _extract_sync_metrics(sync_status)
+    is_syncing = bool(metrics.get("syncing"))
+    target_height = metrics.get("target_height")
+    best_header_height = metrics.get("best_header_height")
+    best_block_height = metrics.get("best_block_height")
+    sync_state = _compute_sync_state(
+        head_height=height or 0 if height is not None else None,
+        network_height=network_height,
+        metrics=metrics,
+    )
     
     peer_count: Optional[int] = None
     if isinstance(peer_count_result, int):
@@ -782,14 +920,19 @@ def sync_status(
             "bootstrap_height": bootstrap_height,
             "head_hash": head_hash,
             "syncing": is_syncing,
+            "sync_state": sync_state,
             "peer_count": peer_count,
         }
         if network_height is not None:
             output["network_height"] = network_height
             output["network_head_hash"] = network_hash
             output["network_source"] = network_source
-        if sync_progress:
-            output["sync_progress"] = sync_progress
+        if target_height is not None:
+            output["target_height"] = target_height
+        if best_header_height is not None:
+            output["best_header_height"] = best_header_height
+        if best_block_height is not None:
+            output["best_block_height"] = best_block_height
         if p2p_status:
             output["p2p_running"] = p2p_status.get("p2p_running")
             output["peers_inbound"] = p2p_status.get("peers_inbound")
@@ -856,26 +999,27 @@ def sync_status(
     
     # Sync status
     typer.secho("Sync Status:", fg=typer.colors.BRIGHT_BLUE, bold=True)
-    if is_syncing:
-        typer.secho("  Status:    SYNCING", fg=typer.colors.YELLOW, bold=True)
+    if sync_state in {"SYNCING_HEADERS", "SYNCING_BLOCKS", "SYNCING"}:
+        typer.secho(f"  Status:    {sync_state}", fg=typer.colors.YELLOW, bold=True)
+        if best_header_height is not None or best_block_height is not None:
+            typer.echo(
+                f"  Headers:   {best_header_height or 0} | Blocks: {best_block_height or 0}"
+            )
         if target_height is not None and height is not None:
             progress_pct = (height / target_height * 100) if target_height > 0 else 0
             typer.echo(f"  Progress:  {height} / {target_height} ({progress_pct:.1f}%)")
             remaining = target_height - height
             typer.echo(f"  Remaining: {remaining} blocks")
+    elif sync_state == "SYNCHRONIZED":
+        typer.secho("  Status:    SYNCHRONIZED", fg=typer.colors.GREEN, bold=True)
+    elif sync_state == "NEAR_TIP":
+        typer.secho("  Status:    NEAR_TIP", fg=typer.colors.YELLOW, bold=True)
+    elif sync_state == "UNKNOWN":
+        typer.secho("  Status:    UNKNOWN", fg=typer.colors.YELLOW)
+    elif height == 0:
+        typer.secho("  Status:    IDLE (genesis)", fg=typer.colors.YELLOW)
     else:
-        if height is not None and height > 0 and (network_height is None or height >= network_height):
-            typer.secho("  Status:    SYNCHRONIZED", fg=typer.colors.GREEN, bold=True)
-        elif height == 0 and network_height and network_height > 0:
-            typer.secho(
-                f"  Status:    NOT SYNCED (local=0, network={network_height})",
-                fg=typer.colors.RED,
-                bold=True,
-            )
-        elif height == 0:
-            typer.secho("  Status:    IDLE (genesis)", fg=typer.colors.YELLOW)
-        else:
-            typer.secho("  Status:    IDLE (no blocks)", fg=typer.colors.YELLOW)
+        typer.secho("  Status:    IDLE (no blocks)", fg=typer.colors.YELLOW)
     typer.echo()
     
     # Peer info
@@ -923,7 +1067,7 @@ def sync_status(
         typer.echo("   animica peer bootstrap")
     elif peer_count is None and peer_error_msg:
         typer.secho("💡 RPC peer data unavailable. Check node RPC or logs.", fg=typer.colors.YELLOW)
-    elif is_syncing:
+    elif sync_state in {"SYNCING_HEADERS", "SYNCING_BLOCKS", "SYNCING", "NEAR_TIP"}:
         typer.secho("💡 Syncing in progress... Check back later or run:", fg=typer.colors.CYAN)
         typer.echo("   animica sync status")
     elif height == 0 and network_height and network_height > 0:
@@ -931,8 +1075,10 @@ def sync_status(
     elif height == 0:
         typer.secho("⚠ Node is at genesis; waiting for sync data.", fg=typer.colors.YELLOW)
         typer.echo("   Try: animica sync force")
-    else:
+    elif sync_state == "SYNCHRONIZED":
         typer.secho("✓ Node is synchronized with the network", fg=typer.colors.GREEN)
+    else:
+        typer.secho("⚠ Node is not yet synchronized.", fg=typer.colors.YELLOW)
 
     _persist_sync_state(
         net_cfg,
@@ -954,13 +1100,13 @@ def force_sync(
     bootstrap_rpc: Optional[str] = typer.Option(
         None,
         "--bootstrap-rpc",
-        help="Bootstrap RPC endpoint for discovery/seed info",
+        help="Bootstrap RPC endpoint (discovery/snapshots only; never used for local progress)",
         envvar=BOOTSTRAP_RPC_ENV,
     ),
     allow_bootstrap_rpc: bool = typer.Option(
         False,
         "--allow-bootstrap-rpc/--no-allow-bootstrap-rpc",
-        help="Allow bootstrap RPC usage for optional discovery fallback",
+        help="Allow bootstrap RPC usage for discovery fallback only",
     ),
     timeout: int = typer.Option(
         300, "--timeout", help="Maximum time to wait for sync to start (seconds)"
@@ -1102,79 +1248,103 @@ def force_sync(
     last_height = initial_height
     stall_count = 0
     max_stalls = 3
-    
-    with typer.progressbar(
-        length=timeout,
-        label="Waiting for sync progress",
-        show_eta=True,
-    ) as progress:
-        elapsed = 0
-        while elapsed < timeout:
-            time.sleep(min(check_interval, timeout - elapsed))
-            elapsed = int(time.time() - start_time)
-            progress.update(check_interval)
-            
-            try:
-                head_info = asyncio.run(_get_head_info(url))
-                current_height = _extract_height(head_info) or 0
-                try:
-                    peers = asyncio.run(_get_peers(url))
-                except Exception:
-                    peers = []
-                _persist_connected_peers(net_cfg, peers, quiet=True)
-                _persist_sync_state(net_cfg, rpc_url=url, head_info=head_info, peers=peers)
-                
-                if current_height > last_height:
-                    blocks_synced = current_height - last_height
-                    typer.echo(
-                        f"\n✓ Progress: height {current_height} "
-                        f"(+{blocks_synced} blocks)",
-                        nl=False
+
+    elapsed = 0
+    last_status_line: Optional[str] = None
+    last_progress = last_height
+
+    while elapsed < timeout:
+        time.sleep(min(check_interval, timeout - elapsed))
+        elapsed = int(time.time() - start_time)
+
+        try:
+            snapshot = asyncio.run(_get_local_sync_snapshot(url))
+            head_info = snapshot.get("head_info")
+            sync_status = snapshot.get("sync_status")
+            peers = snapshot.get("peers") or []
+            peer_count = snapshot.get("peer_count")
+
+            metrics = _extract_sync_metrics(sync_status)
+            best_header_height = metrics.get("best_header_height") or 0
+            best_block_height = metrics.get("best_block_height") or 0
+            current_height = _extract_height(head_info) or 0
+            sync_state = _compute_sync_state(
+                head_height=current_height,
+                network_height=None,
+                metrics=metrics,
+            )
+
+            progress_height = max(current_height, best_block_height)
+
+            status_line = (
+                f"Height {current_height} | headers {best_header_height} | "
+                f"blocks {best_block_height} | peers {peer_count if peer_count is not None else 'n/a'} | "
+                f"{sync_state}"
+            )
+            if status_line != last_status_line:
+                typer.echo(status_line)
+                last_status_line = status_line
+
+            _persist_connected_peers(net_cfg, peers, quiet=True)
+            _persist_sync_state(net_cfg, rpc_url=url, head_info=head_info, peers=peers)
+
+            if progress_height > last_progress:
+                blocks_synced = progress_height - last_progress
+                typer.echo(f"✓ Progress: +{blocks_synced} blocks")
+                last_progress = progress_height
+                stall_count = 0
+            else:
+                stall_count += 1
+                if stall_count >= max_stalls:
+                    typer.echo(f"⚠ No progress for {stall_count * check_interval} seconds")
+                    # Try to re-import seeds and retrigger sync to keep progress moving
+                    added, _, _ = _seed_local_peerstores(
+                        net_cfg,
+                        target_rpc_url=url,
+                        bootstrap_url=bootstrap_url,
+                        allow_bootstrap_rpc=allow_bootstrap_rpc,
+                        quiet=True,
                     )
-                    last_height = current_height
-                    stall_count = 0
-                else:
-                    stall_count += 1
-                    if stall_count >= max_stalls:
-                        typer.echo(
-                            f"\n⚠ No progress for {stall_count * check_interval} seconds",
-                            nl=False
-                        )
-                        # Try to re-import seeds and retrigger sync to keep progress moving
-                        added, _, _ = _seed_local_peerstores(
-                            net_cfg,
-                            target_rpc_url=url,
-                            bootstrap_url=bootstrap_url,
-                            allow_bootstrap_rpc=allow_bootstrap_rpc,
-                            quiet=True,
-                        )
-                        if added:
-                            try:
-                                peers = asyncio.run(_get_peers(url))
-                                peer_count = len(peers)
-                                typer.echo(f"\n✓ Re-seeded peers; {peer_count} connected")
-                            except Exception:
-                                typer.secho("\n⚠ Could not refresh peer list after re-seeding", fg=typer.colors.YELLOW, nl=False)
-                        asyncio.run(_trigger_sync(url))
-            except Exception:
-                typer.echo("\n⚠ Connection error", nl=False)
+                    if added:
+                        try:
+                            peers = asyncio.run(_get_peers(url))
+                            peer_count = len(peers)
+                            typer.echo(f"✓ Re-seeded peers; {peer_count} connected")
+                        except Exception:
+                            typer.secho("⚠ Could not refresh peer list after re-seeding", fg=typer.colors.YELLOW)
+                    asyncio.run(_trigger_sync(url))
+        except Exception:
+            typer.echo("⚠ Connection error")
     
     typer.echo()
     typer.echo()
     
     # Final status
     try:
-        final_head = asyncio.run(_get_head_info(url))
+        snapshot = asyncio.run(_get_local_sync_snapshot(url))
+        final_head = snapshot.get("head_info")
         final_height = _extract_height(final_head) or 0
-        
+        sync_status = snapshot.get("sync_status")
+        metrics = _extract_sync_metrics(sync_status)
+        best_header_height = metrics.get("best_header_height") or 0
+        best_block_height = metrics.get("best_block_height") or 0
+        sync_state = _compute_sync_state(
+            head_height=final_height,
+            network_height=None,
+            metrics=metrics,
+        )
+
         blocks_synced = final_height - initial_height
-        
+
         typer.secho("━" * 60, fg=typer.colors.CYAN)
         typer.secho("Final Status:", fg=typer.colors.CYAN, bold=True)
         typer.echo(f"  Initial height: {initial_height}")
         typer.echo(f"  Final height:   {final_height}")
+        typer.echo(f"  Headers:        {best_header_height}")
+        typer.echo(f"  Blocks:         {best_block_height}")
+        typer.echo(f"  Sync state:     {sync_state}")
         typer.echo(f"  Blocks synced:  {blocks_synced}")
-        
+
         if blocks_synced > 0:
             rate = blocks_synced / (elapsed / 60)  # blocks per minute
             typer.echo(f"  Sync rate:      {rate:.1f} blocks/minute")
@@ -1188,10 +1358,7 @@ def force_sync(
             typer.echo("  - Sync is disabled or stuck")
             typer.echo()
             typer.echo("Check peer status with: animica peer list")
-        try:
-            peers = asyncio.run(_get_peers(url))
-        except Exception:
-            peers = []
+        peers = snapshot.get("peers") or []
         _persist_connected_peers(net_cfg, peers, quiet=True)
         _persist_sync_state(net_cfg, rpc_url=url, head_info=final_head, peers=peers, note="final")
     except Exception as e:
