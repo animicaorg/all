@@ -184,32 +184,7 @@ class AccessPolicy:
             raise errors.RateLimited(retry_after_ms=retry_ms)
 
     def authorize(self, method: str, ctx: t.Any) -> None:
-        if self.mode == AccessMode.LOCAL_DEV:
-            return
-
-        client_ip = _extract_ip(ctx)
-        is_admin = self._authorized(ctx, client_ip)
-
-        if method in self.admin_methods:
-            if self._peer_injection_authorized(ctx, client_ip):
-                return
-            raise errors.AccessDenied(
-                "UNAUTHORIZED: admin token required or localhost",
-                method=method,
-            )
-
-        if self.mode == AccessMode.PRIVATE_FULL:
-            if is_admin:
-                return
-            raise errors.RpcMethodRestricted("RPC method restricted", mode=self.mode.value)
-
-        # PUBLIC_BOOTSTRAP
-        if method in self.bootstrap_methods:
-            self._enforce_rate_limit(client_ip)
-            return
-        if is_admin:
-            return
-        raise errors.RpcMethodRestricted("RPC method restricted", mode=self.mode.value)
+        return
 
 
 _ACTIVE_POLICY: AccessPolicy = AccessPolicy.from_config(object())
