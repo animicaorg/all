@@ -119,6 +119,8 @@ async def test_two_nodes_sync_from_genesis(tmp_path: Path) -> None:
         assert await _wait_for_peers(node_b, 1)
         assert await _wait_for_height(deps_b, 3, timeout=20.0)
         assert await _wait_for_header_responses(node_b, timeout=10.0)
+        status = node_b.sync_status_snapshot()
+        assert status.best_header_height > 0
     finally:
         await node_a.stop()
         await node_b.stop()
