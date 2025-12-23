@@ -7,7 +7,7 @@ import pytest
 from core.types.block import Block
 from core.utils.hash import ZERO32
 from rpc import deps
-from rpc.hashrate import difficulty_to_work
+from rpc.hashrate import difficulty_to_work, work_to_hashshare_rate
 from rpc.tests import new_test_client, rpc_call
 
 
@@ -53,16 +53,18 @@ def test_chain_get_network_hashrate_computes_from_headers():
     assert result["window_blocks"] == 3
     assert result["height_start"] == 0
     assert result["height_end"] == 2
-    assert result["hashrate_hps"] is not None
+    assert result["hashrate_hsps"] is not None
 
     expected_work = 3 * difficulty_to_work(theta_micro)
     dt = header2.timestamp - genesis.timestamp
-    assert result["hashrate_hps"] == pytest.approx(expected_work / dt, rel=1e-6)
+    assert result["hashrate_hsps"] == pytest.approx(
+        work_to_hashshare_rate(expected_work / dt), rel=1e-6
+    )
 
 
 def test_chain_get_network_hashrate_insufficient_blocks():
     client, _, _ = new_test_client()
     res = rpc_call(client, "chain.getNetworkHashrate", params={"window_blocks": 10})
     result = res["result"]
-    assert result["hashrate_hps"] is None
+    assert result["hashrate_hsps"] is None
     assert result["unknown_reason"] == "insufficient_blocks"
