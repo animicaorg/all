@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from core.chain.block_import import BlockImporter, ImportErrorCode
+from core.chain.block_import import BlockImporter, ImportErrorCode, _theta_to_target
 from core.db.block_db import BlockDB
 from core.db.sqlite import SQLiteKV
 from core.types.block import Block
@@ -43,7 +43,7 @@ def _header(
     theta_micro: int,
     chain_id: int = 1337,
 ) -> Header:
-    return Header(
+    header = Header(
         v=1,
         chainId=chain_id,
         height=height,
@@ -61,6 +61,33 @@ def _header(
         nonce=0,
         extra=b"",
     )
+    return _seal_header(header)
+
+
+def _seal_header(header: Header) -> Header:
+    target = _theta_to_target(int(header.thetaMicro))
+    for nonce in range(10000):
+        candidate = Header(
+            v=header.v,
+            chainId=header.chainId,
+            height=header.height,
+            parentHash=header.parentHash,
+            timestamp=header.timestamp,
+            stateRoot=header.stateRoot,
+            txsRoot=header.txsRoot,
+            receiptsRoot=header.receiptsRoot,
+            proofsRoot=header.proofsRoot,
+            daRoot=header.daRoot,
+            mixSeed=header.mixSeed,
+            poiesPolicyRoot=header.poiesPolicyRoot,
+            pqAlgPolicyRoot=header.pqAlgPolicyRoot,
+            thetaMicro=header.thetaMicro,
+            nonce=nonce,
+            extra=header.extra,
+        )
+        if int.from_bytes(candidate.hash(), "big") <= target:
+            return candidate
+    raise AssertionError("Unable to find a valid nonce for test header")
 
 
 def _block(header: Header) -> Block:
@@ -126,3 +153,26 @@ def test_orphan_block_resolves_when_parent_arrives(tmp_path: Path) -> None:
     head = bdb.get_canonical_head()
     assert head is not None
     assert head[0] == 2
+
+
+def test_fork_choice_tiebreaks_by_lowest_hash(tmp_path: Path) -> None:
+    params = _params()
+    bdb = _db(tmp_path)
+    importer = BlockImporter(params=params, block_db=bdb)
+
+    genesis = _header(height=0, parent_hash=b"\x00" * 32, timestamp=1000, theta_micro=100)
+    res0 = importer.import_block(_block(genesis))
+    assert res0.code == ImportErrorCode.ACCEPTED
+
+    a1 = _header(height=1, parent_hash=res0.block_hash, timestamp=1010, theta_micro=100)
+    b1 = _header(height=1, parent_hash=res0.block_hash, timestamp=1011, theta_micro=100)
+
+    res_a1 = importer.import_block(_block(a1))
+    res_b1 = importer.import_block(_block(b1))
+    assert res_a1.code == ImportErrorCode.ACCEPTED
+    assert res_b1.code == ImportErrorCode.ACCEPTED
+
+    head = bdb.get_canonical_head()
+    assert head is not None
+    expected = min(res_a1.block_hash, res_b1.block_hash)
+    assert head[1] == expected
