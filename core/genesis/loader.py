@@ -331,6 +331,18 @@ def _load_chain_params(
     elif base_dir is not None and not params_path.is_absolute():
         params_path = (base_dir / params_path).resolve()
 
+    if not params_path.exists():
+        origin = (
+            f"genesis paramsRef.path={params_ref.get('path')!r}"
+            if isinstance(params_ref, dict) and params_ref.get("path")
+            else "default params path"
+        )
+        raise GenesisError(
+            "Chain params file not found. "
+            f"{origin} resolved to {params_path}. "
+            "Ensure the file exists or update paramsRef.path in genesis.json."
+        )
+
     params = ChainParams.load_yaml(
         params_path, chain_id_hint=int(genesis.get("chainId", 0) or 0)
     )
