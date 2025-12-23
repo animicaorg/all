@@ -284,7 +284,7 @@ class AccessControlConfig:
     admin_token: Optional[str] = None
     admin_allowlist: List[str] = field(default_factory=list)
     bootstrap_rate_limit: int = 0
-    bootstrap_node: bool = False
+    bootstrap_node: bool = True
 
 
 @dataclass(frozen=True)
@@ -342,7 +342,7 @@ def load() -> RpcConfig:
         admin_token=_env("ANIMICA_RPC_ADMIN_TOKEN"),
         admin_allowlist=_env_list("ANIMICA_RPC_ADMIN_ALLOWLIST", []),
         bootstrap_rate_limit=_env_int("ANIMICA_BOOTSTRAP_RATE_LIMIT", 0),
-        bootstrap_node=_env_bool("ANIMICA_RPC_BOOTSTRAP_NODE", False),
+        bootstrap_node=_env_bool("ANIMICA_RPC_BOOTSTRAP_NODE", True),
     )
 
     explicit_chain_id = "ANIMICA_CHAIN_ID" in os.environ
