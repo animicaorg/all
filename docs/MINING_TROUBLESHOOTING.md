@@ -218,6 +218,31 @@ animica miner mine-blocks --address anim1... --count 5 \
    - Check ping to RPC endpoint
    - Consider setting up local validator
 
+### Frequent Forks / Stale Shares at Short Block Times
+
+**Symptoms**:
+- Blocks are found quickly but your node reports frequent forks or stale work.
+- Miners are submitting solutions that are rejected as stale.
+
+**Why it happens**:
+- When the target block time is only a few seconds, normal internet propagation
+  delays can be comparable to the block interval. That means two miners can
+  legitimately mine different tips before hearing about each other.
+
+**What to tune**:
+- **Increase the target block interval** in `spec/params.yaml` (`block.target_seconds`)
+  if you want fewer forks and more stable convergence.
+- Ensure miners **refresh templates on head changes** (the node now tags each
+  template with a head generation and marks stale submissions explicitly).
+- Optionally enforce a **minimum spacing** on block timestamps for dev/test
+  networks by setting:
+  - `ANIMICA_MIN_BLOCK_SPACING_MS` (e.g., `1000` for a 1s floor)
+  - `ANIMICA_MAX_FUTURE_SECONDS` (default `5`) to reject far-future timestamps
+
+**Reality check**: With 2–3 second blocks, forks are expected in real networks
+unless propagation is extremely fast. The fix is reliable fork-choice/reorg
+handling plus clear stale signaling—not eliminating forks entirely.
+
 4. **Mempool congestion**:
    - Block building may be slow with many pending txs
    - This is normal behavior (ensures tx ordering)
