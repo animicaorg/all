@@ -30,6 +30,7 @@ DEFAULT_RPC_URL = load_network_config().rpc_url
 RPC_ENV = "ANIMICA_RPC_URL"
 STATE_KEY_NETWORK = "active_network"
 BOOTSTRAP_NODE_ENV = "ANIMICA_BOOTSTRAP_NODE"
+HASHRATE_WINDOW_ENV = "ANIMICA_HASHRATE_WINDOW"
 
 # Networks that use the 'dev' profile in docker-compose
 DEV_NETWORKS = {"devnet", "local-devnet"}
@@ -103,6 +104,40 @@ def _parse_pid_file(pid_file: Path) -> dict[str, Optional[int]]:
         if key == "port" and value.isdigit():
             data["port"] = int(value)
     return data
+
+
+def _format_hashrate(hps: float) -> tuple[str, str]:
+    units = ["H/s", "kH/s", "MH/s", "GH/s", "TH/s"]
+    value = float(hps)
+    unit_idx = 0
+    while value >= 1000.0 and unit_idx < len(units) - 1:
+        value /= 1000.0
+        unit_idx += 1
+    return f"{value:.2f}", units[unit_idx]
+
+
+def _hashrate_summary(payload: Dict[str, Any] | None) -> str | None:
+    if not isinstance(payload, dict):
+        return None
+    hps = payload.get("hashrate_hps")
+    window_blocks = payload.get("window_blocks")
+    window_seconds = payload.get("window_seconds")
+    method = payload.get("method") or "unknown"
+    if hps is None:
+        reason = payload.get("unknown_reason") or "unavailable"
+        if isinstance(reason, str):
+            reason = reason.replace("_", " ")
+        span = "unknown" if window_seconds is None else f"{window_seconds:.0f}"
+        return (
+            f"Network hashrate: unknown ({reason}) "
+            f"(window={window_blocks} blocks, span={span}s, method={method})"
+        )
+    value, unit = _format_hashrate(float(hps))
+    span = "unknown" if window_seconds is None else f"{window_seconds:.0f}"
+    return (
+        f"Network hashrate: {value} {unit} "
+        f"(window={window_blocks} blocks, span={span}s, method={method})"
+    )
 
 
 def _pid_is_running(pid: int) -> bool:
@@ -1172,6 +1207,12 @@ def status(
         "--timeout",
         help=f"JSON-RPC request timeout in seconds (default: {describe_timeout(DEFAULT_RPC_TIMEOUT)})",
         envvar=RPC_TIMEOUT_ENV,
+    ),
+    hashrate_window: int = typer.Option(
+        120,
+        "--hashrate-window",
+        help="Blocks to sample for network hashrate (default: 120)",
+        envvar=HASHRATE_WINDOW_ENV,
     )
 ) -> None:
     """Show chain head, block info and sync state. Retries with bounded attempts on RPC errors."""
@@ -1188,6 +1229,9 @@ def status(
         raise typer.Exit(code=1)
     if max_retries < 1:
         typer.echo("Error: max-retries must be at least 1", err=True)
+        raise typer.Exit(code=1)
+    if hashrate_window < 1:
+        typer.echo("Error: hashrate-window must be at least 1", err=True)
         raise typer.Exit(code=1)
 
     net_cfg = load_network_config()
@@ -1207,7 +1251,12 @@ def status(
             for candidate in candidate_urls:
                 try:
                     status_payload = asyncio.run(
-                        rpc_call("node.getStatus", [], rpc_url=candidate, timeout=rpc_timeout)
+                        rpc_call(
+                            "node.getStatus",
+                            [hashrate_window],
+                            rpc_url=candidate,
+                            timeout=rpc_timeout,
+                        )
                     )
                     if isinstance(status_payload, dict):
                         used_url = candidate
@@ -1265,6 +1314,24 @@ def status(
                     except Exception:
                         continue
 
+            hashrate_payload = None
+            if status_payload and isinstance(status_payload, dict):
+                hashrate_payload = status_payload.get("network_hashrate")
+                if hashrate_payload is None:
+                    hashrate_payload = status_payload.get("chain", {}).get("network_hashrate")
+            if hashrate_payload is None:
+                try:
+                    hashrate_payload = asyncio.run(
+                        rpc_call(
+                            "chain.getNetworkHashrate",
+                            [hashrate_window],
+                            rpc_url=url,
+                            timeout=rpc_timeout,
+                        )
+                    )
+                except Exception:
+                    hashrate_payload = None
+
             peer_count = None
             peers = []
             p2p_status = None
@@ -1297,6 +1364,9 @@ def status(
                     if cached_hash:
                         typer.echo(f"Bootstrap hash (cached): {cached_hash}")
             typer.echo(f"Sync status: {sync_status}")
+            hashrate_line = _hashrate_summary(hashrate_payload)
+            if hashrate_line:
+                typer.echo(hashrate_line)
             if peer_error:
                 typer.echo(f"Peer status: unavailable ({peer_error})")
             elif peer_count is not None:
