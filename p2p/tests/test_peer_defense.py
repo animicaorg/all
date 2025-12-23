@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 import types
 from pathlib import Path
 
@@ -86,6 +87,30 @@ def test_netgroup_calculation(tmp_path: Path) -> None:
     assert node._netgroup_key("[2001:db8::1]:30333").startswith("2001:db8::/48")
 
 
+def test_legacy_banlist_port_does_not_block_other_ports(tmp_path: Path) -> None:
+    node = _make_service(tmp_path, "ban-port")
+    node._banlist["203.0.113.10:30333"] = {
+        "ban_until": time.time() + 60,
+        "reason": "legacy",
+        "score": 0,
+    }
+    assert not node._is_banned("203.0.113.10:56638")
+
+
+def test_banlist_prefers_peer_id(tmp_path: Path) -> None:
+    node = _make_service(tmp_path, "ban-peer-id")
+    peer = _register_peer(node, "203.0.113.44:30333", direction="outbound")
+    peer.peer_id = "peer-123"
+    node._create_child_task = lambda coro, **_kwargs: coro.close()
+
+    node._ban_peer(peer, ban_ttl=60, reason="test")
+
+    assert "peer-123" in node._banlist
+    assert "203.0.113.44" not in node._banlist
+    assert "203.0.113.44:30333" not in node._banlist
+    assert node._is_banned("peer-123")
+
+
 @pytest.mark.asyncio
 async def test_netgroup_limits_reject_connections(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     node = _make_service(tmp_path, "netgroup-limit")
@@ -110,8 +135,19 @@ def test_sync_stall_rotation(tmp_path: Path) -> None:
     peer_b = _register_peer(node, "203.0.113.2:30333", direction="outbound")
     peer_a.peer_id = "peer-a"
     peer_b.peer_id = "peer-b"
-    peer_a.hello = {"head_height": 10}
-    peer_b.hello = {"head_height": 11}
+    genesis_hash = node._genesis_hash()
+    peer_a.hello = {
+        "head_height": 10,
+        "chain_id": node.chain_id,
+        "genesis_hash": genesis_hash,
+        "capabilities": ["sync"],
+    }
+    peer_b.hello = {
+        "head_height": 11,
+        "chain_id": node.chain_id,
+        "genesis_hash": genesis_hash,
+        "capabilities": ["sync"],
+    }
     node._sync_active_block_peer = peer_a.remote
 
     node._handle_sync_stall(reason="blocks stalled")
