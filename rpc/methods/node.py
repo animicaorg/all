@@ -36,10 +36,24 @@ def node_ping() -> dict[str, t.Any]:
 
 
 @method("node.getStatus", desc="Return a live snapshot of chain, P2P, and sync status")
-async def node_get_status() -> dict[str, t.Any]:
+async def node_get_status(hashrate_window: int | None = None) -> dict[str, t.Any]:
     from rpc.methods import chain as chain_methods
 
     head = chain_methods.chain_get_head()
+    try:
+        network_hashrate = chain_methods.chain_get_network_hashrate(
+            window_blocks=hashrate_window
+        )
+    except Exception as exc:
+        network_hashrate = {
+            "hashrate_hps": None,
+            "window_blocks": int(hashrate_window or 120),
+            "window_seconds": None,
+            "height_start": None,
+            "height_end": head.get("height"),
+            "method": "theta_micro_expected_trials",
+            "unknown_reason": f"error: {exc}",
+        }
     p2p_status: dict[str, t.Any]
     sync_status: dict[str, t.Any]
 
@@ -79,6 +93,7 @@ async def node_get_status() -> dict[str, t.Any]:
             "summary": _head_summary(head),
             "chain_id": head.get("chainId") or head.get("chain_id") or deps.get_chain_id(),
         },
+        "network_hashrate": network_hashrate,
         "p2p": {
             **p2p_status,
             "peer_counts": _safe_peer_counts(p2p_status),
