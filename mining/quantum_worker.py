@@ -81,6 +81,9 @@ except Exception:  # pragma: no cover
     def sha3_256(data: bytes) -> bytes:
         return hashlib.sha3_256(data).digest()
 
+from .challenges import Challenge
+from .proof_payloads import ProofPayload, build_payload
+
 
 # --- try to import trap math & units; provide fallbacks if missing ---
 try:
@@ -98,6 +101,16 @@ except Exception:
         lo = max(0.0, (centre - rad) / denom)
         hi = min(1.0, (centre + rad) / denom)
         return (lo, hi)
+
+
+def _wilson_interval(k: int, n: int) -> tuple[float, float]:
+    try:
+        res = wilson_interval(k, n, 0.05)  # type: ignore[arg-type]
+    except TypeError:
+        res = wilson_interval(k, n)
+    if hasattr(res, "lower") and hasattr(res, "upper"):
+        return float(res.lower), float(res.upper)
+    return float(res[0]), float(res[1])
 
 
 try:
@@ -209,7 +222,7 @@ class DevSimBackend:
         traps_pass = self._simulate_traps(
             seed=spec.trap_seed or self._seed_from_spec(spec), n=traps_total
         )
-        lo, hi = wilson_interval(traps_pass, traps_total)
+        lo, hi = _wilson_interval(traps_pass, traps_total)
         t_ratio = traps_pass / traps_total
         q_units = units_for(spec.width, spec.depth, spec.shots)
         out_digest = self._output_digest(spec)
@@ -605,6 +618,46 @@ async def _http_json(
             raise RuntimeError(f"http error: {e.reason}") from None
 
     return await loop.run_in_executor(None, _do)
+
+
+# ---------- Provider abstraction ----------
+
+
+class QuantumProvider(t.Protocol):
+    async def solve(self, challenge: Challenge) -> ProofPayload: ...
+
+
+class SimulatedQuantumProvider:
+    def __init__(self) -> None:
+        self._backend = DevSimBackend()
+
+    async def solve(self, challenge: Challenge) -> ProofPayload:
+        spec = QuantumJobSpec(
+            width=8,
+            depth=12,
+            shots=256,
+            trap_fraction=0.1,
+            circuit_json=b'{"name":"devsim"}',
+            trap_seed=challenge.seed,
+        )
+        ticket = await self._backend.enqueue(spec)
+        await self._backend.status(ticket.task_id)
+        result = await self._backend.fetch_result(ticket.task_id)
+        return build_payload(
+            challenge=challenge,
+            output_digest=result.output_digest,
+            metrics=result.metrics,
+        )
+
+
+class ExternalQuantumProvider:
+    def __init__(self, endpoint: str = "") -> None:
+        self.endpoint = endpoint
+
+    async def solve(self, challenge: Challenge) -> ProofPayload:
+        raise NotImplementedError(
+            "External quantum provider is not implemented yet."
+        )
 
 
 # ---------- CLI (dev) ----------

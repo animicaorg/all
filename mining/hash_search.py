@@ -295,6 +295,123 @@ class HashScanner:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Async scan loop (device-backed)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+async def scan_forever(
+    *,
+    template_iter: Iterable[dict],
+    out_queue: "asyncio.Queue[dict]",
+    stop_evt: "asyncio.Event",
+    device: str = "cpu",
+    threads: int = 0,
+    batch_size: int = 50_000,
+) -> None:
+    """
+    Async scan loop that uses mining.device backends to find CPU shares.
+    """
+    import asyncio
+
+    from mining import device as device_mod
+
+    dev = device_mod.create(device, threads=threads, batch_size=batch_size)
+    current_tpl: Optional[dict] = None
+    current_job_id: Optional[str] = None
+    prepared = None
+    nonce = 0
+
+    tpl_iter = template_iter.__aiter__()
+    try:
+        current_tpl = await tpl_iter.__anext__()
+    except StopAsyncIteration:
+        return
+    next_tpl_task = asyncio.create_task(tpl_iter.__anext__())
+
+    while not stop_evt.is_set():
+        if next_tpl_task.done():
+            try:
+                current_tpl = next_tpl_task.result()
+            except StopAsyncIteration:
+                break
+            next_tpl_task = asyncio.create_task(tpl_iter.__anext__())
+            prepared = None
+            nonce = 0
+
+        if not current_tpl:
+            await asyncio.sleep(0.05)
+            continue
+
+        job_id = str(
+            current_tpl.get("jobId")
+            or current_tpl.get("job_id")
+            or current_tpl.get("templateId")
+            or ""
+        )
+        if job_id != current_job_id:
+            current_job_id = job_id
+            prepared = None
+            nonce = 0
+
+        sign_hex = current_tpl.get("signBytes") or current_tpl.get("sign_bytes")
+        if not isinstance(sign_hex, str) or not sign_hex.startswith("0x"):
+            await asyncio.sleep(0.05)
+            continue
+        header_bytes = bytes.fromhex(sign_hex[2:])
+        mix_hex = (
+            current_tpl.get("hints", {}).get("mixSeed")
+            if isinstance(current_tpl.get("hints"), dict)
+            else current_tpl.get("mixSeed")
+        )
+        if isinstance(mix_hex, str) and mix_hex.startswith("0x"):
+            mix_seed = bytes.fromhex(mix_hex[2:])
+        else:
+            mix_seed = b"\x00" * 32
+
+        if prepared is None:
+            prepared = dev.prepare_header(header_bytes, mix_seed)
+
+        theta_micro = int(current_tpl.get("thetaMicro") or 0)
+        share_ratio = float(current_tpl.get("shareTarget") or 0.0)
+        t_share_micro = max(0, int(theta_micro * share_ratio))
+
+        found = dev.scan(
+            prepared,
+            theta_micro=float(t_share_micro),
+            start_nonce=nonce,
+            iterations=batch_size,
+            max_found=4,
+            thread_id=0,
+        )
+        nonce += batch_size
+
+        for share in found:
+            nonce_val = int(share.get("nonce"))
+            share_payload = {
+                "jobId": current_job_id,
+                "header": current_tpl.get("header"),
+                "nonce": nonce_val,
+                "mixSeed": "0x" + mix_seed.hex(),
+                "shareTarget": share_ratio,
+                "d_ratio": float(share.get("d_ratio") or 0.0),
+                "proof": {
+                    "type": "hashshare",
+                    "body": {
+                        "headerHash": header_bytes[:32],
+                        "nonce": nonce_val,
+                        "u": share.get("hash"),
+                        "mixSeed": mix_seed,
+                        "targetMu": int(t_share_micro),
+                        "algo": "sha3-256",
+                    },
+                },
+            }
+            await out_queue.put(share_payload)
+
+        await asyncio.sleep(0)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Self-test / smoke
 # ─────────────────────────────────────────────────────────────────────────────
 
