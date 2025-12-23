@@ -744,6 +744,7 @@ class P2PService:
         self._last_bootstrap_error: Optional[dict[str, Any]] = None
         self._last_peer_connect_at: Optional[float] = None
         self._last_peer_disconnect_at: Optional[float] = None
+        self._invalid_seed_addrs: set[str] = set()
 
         class _Metrics:
             def __init__(self, svc: "P2PService") -> None:
@@ -1769,6 +1770,10 @@ class P2PService:
         jitter = random.uniform(0.6, 1.4)
         return min(60.0, base * jitter)
 
+    def _is_invalid_seed_error(self, error: str) -> bool:
+        lowered = error.lower()
+        return "invalid handshake magic" in lowered or "handshakeerror" in lowered
+
     def _mark_dial_failure(self, addr: str, *, is_seed: bool, error: str) -> None:
         addr_key = self._addr_key(addr)
         attempts = self._dial_attempts.get(addr_key, 0) + 1
@@ -1787,6 +1792,15 @@ class P2PService:
             self._addrman.mark_failure(normalized, reason=error)
         if is_seed:
             self._record_bootstrap_attempt(addr, success=False, error=error)
+            if self._is_invalid_seed_error(error):
+                self._invalid_seed_addrs.add(addr)
+                with contextlib.suppress(ValueError):
+                    self.seeds.remove(addr)
+                self._seed_keys.discard(addr_key)
+                log.warning(
+                    "Dropping invalid P2P seed %s (non-P2P endpoint): %s", addr, error
+                )
+                return
             log.warning(
                 "Seed %s failed: %s; next retry in %.1fs", addr, error, delay
             )
@@ -2468,6 +2482,8 @@ class P2PService:
                     # Skip peers we're already connected to so we can reach new ones.
                     addr_key = self._addr_key(addr)
                     if addr_key in active_keys:
+                        continue
+                    if addr in self._invalid_seed_addrs:
                         continue
                     if self._is_banned(addr):
                         continue
@@ -3922,7 +3938,7 @@ class P2PService:
                     if not headers:
                         if not saw_headers:
                             empty_reason = self._empty_headers_reason(
-                                local_height, remote_height
+                                peer, local_height, remote_height
                             )
                             result.setdefault(
                                 "error", empty_reason.replace("_", "-")
@@ -3930,7 +3946,38 @@ class P2PService:
                             self._sync_last_header_error = empty_reason
                             self._sync_last_header_error_at = time.time()
                             self._sync_last_header_error_peer = peer.remote
-                            if empty_reason == "headers_empty":
+                            if empty_reason == "genesis_mismatch":
+                                self._set_sync_backoff(
+                                    peer,
+                                    reason="genesis_mismatch",
+                                    delay=self._sync_no_headers_backoff,
+                                )
+                                self._penalize_peer(peer, "genesis_mismatch")
+                                tried_peers.add(peer.remote)
+                            elif empty_reason == "headers_empty_unexpected":
+                                self._set_sync_backoff(
+                                    peer,
+                                    reason="headers_empty_unexpected",
+                                    delay=self._sync_no_headers_backoff,
+                                )
+                                self._penalize_peer(peer, "headers_empty_unexpected")
+                                no_headers_responses += 1
+                                tried_peers.add(peer.remote)
+                                if eligible_count and no_headers_responses >= min(
+                                    self._sync_no_headers_threshold, eligible_count
+                                ):
+                                    self._sync_fatal_error = (
+                                        "headers_unavailable: empty response from peers"
+                                    )
+                                    log.error(
+                                        "Header sync unavailable from peers",
+                                        extra={
+                                            "eligible_peers": eligible_count,
+                                            "tried_peers": len(tried_peers),
+                                            "last_error": empty_reason,
+                                        },
+                                    )
+                            elif empty_reason == "headers_empty":
                                 self._set_sync_backoff(
                                     peer,
                                     reason="no_headers",
@@ -4190,6 +4237,22 @@ class P2PService:
         raise RuntimeError("deps has no block_db")
 
     def _local_head(self) -> tuple[int, Optional[str]]:
+        header = None
+        height = None
+        try:
+            if self.deps is not None:
+                sync = getattr(self.deps, "_sync", None)
+                if sync is not None and hasattr(sync, "head"):
+                    height, header = sync.head()
+                elif hasattr(self.deps, "head"):
+                    height, header = self.deps.head()
+        except Exception:
+            header = None
+            height = None
+        if header is not None:
+            head_hash = self._header_hash_for_status(header)
+            if head_hash:
+                return int(height or 0), head_hash
         try:
             bdb = self._block_db()
             head = None
@@ -4198,13 +4261,38 @@ class P2PService:
             if head is None:
                 head = bdb.get_head()
             if head:
-                return int(head[0]), "0x" + bytes(head[1]).hex()
+                height = int(head[0])
+                header = None
+                if hasattr(bdb, "get_header_by_hash"):
+                    header = bdb.get_header_by_hash(head[1])
+                if header is None and hasattr(bdb, "get_header_by_height"):
+                    header = bdb.get_header_by_height(height)
+                if header is not None:
+                    head_hash = self._header_hash_for_status(header)
+                    if head_hash:
+                        return height, head_hash
+                return height, "0x" + bytes(head[1]).hex()
         except Exception:
             pass
         genesis = self._block_db().get_genesis_hash()
         if genesis:
             return 0, "0x" + bytes(genesis).hex()
         return 0, None
+
+    def _header_hash_for_status(self, header: Any) -> Optional[str]:
+        try:
+            if hasattr(header, "hash"):
+                return "0x" + bytes(header.hash()).hex()
+        except Exception:
+            pass
+        try:
+            from core.encoding.cbor import dumps as _cbor_dumps
+            from core.utils.hash import sha3_256
+
+            return "0x" + sha3_256(_cbor_dumps(header)).hex()
+        except Exception:
+            pass
+        return None
 
     def _genesis_hash(self) -> bytes:
         bdb = self._block_db()
@@ -4306,12 +4394,20 @@ class P2PService:
             "last_hash": bytes(last.hash).hex(),
         }
 
-    def _empty_headers_reason(self, local_height: int, remote_height: int) -> str:
-        if remote_height <= 0 and local_height <= 0:
-            return "peer_at_genesis"
+    def _empty_headers_reason(
+        self, peer: _PeerState, local_height: int, remote_height: int
+    ) -> str:
+        hello = peer.hello or {}
+        genesis_hash = bytes(hello.get("genesis_hash") or b"")
+        if genesis_hash and genesis_hash != self._genesis_hash():
+            return "genesis_mismatch"
+        if remote_height <= 0:
+            if local_height <= 0:
+                return "peer_at_genesis"
+            return "peer_behind"
         if remote_height <= local_height:
             return "peer_behind"
-        return "headers_empty"
+        return "headers_empty_unexpected"
 
     def _record_sync_header_event(self, event: dict[str, Any]) -> None:
         payload = dict(event)

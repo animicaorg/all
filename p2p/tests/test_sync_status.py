@@ -121,6 +121,19 @@ def test_header_advancement_enqueues_blocks(tmp_path: Path) -> None:
     assert node._queued_blocks_count() == 1
 
 
+def test_sync_status_head_hash_matches_chain_head(tmp_path: Path) -> None:
+    node, deps_sync = _make_service(tmp_path, "head-hash")
+    height, header = deps_sync.head()
+    assert header is not None
+
+    expected_hash = node._header_hash_for_status(header)
+    snap = node.sync_status_snapshot()
+
+    assert snap.head_height == height
+    assert snap.head_hash == expected_hash
+    assert snap.best_block_hash == expected_hash
+
+
 @pytest.mark.asyncio
 async def test_mocked_peer_headers_and_blocks_advance_head(tmp_path: Path) -> None:
     node, deps_sync = _make_service(tmp_path, "mocked")

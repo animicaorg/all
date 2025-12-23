@@ -29,10 +29,12 @@ Environment
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
 import time
 from dataclasses import dataclass
+import shutil
 from typing import (TYPE_CHECKING, Any, Callable, Iterable, List, Optional,
                     Sequence, Tuple)
 
@@ -102,6 +104,66 @@ def _db_uri_hint(db_uri: str) -> str:
     return db_uri
 
 
+def _allow_genesis_reset() -> bool:
+    return os.getenv("ANIMICA_ALLOW_GENESIS_RESET", "").lower() in {"1", "true", "yes", "on"}
+
+
+def _close_if_possible(*handles: Any) -> None:
+    for handle in handles:
+        if handle is None:
+            continue
+        close = getattr(handle, "close", None)
+        if callable(close):
+            with contextlib.suppress(Exception):
+                close()
+
+
+def _wipe_db(db_uri: str) -> None:
+    path = _db_uri_hint(db_uri)
+    if db_uri.startswith("sqlite:///"):
+        for suffix in ("", "-wal", "-shm"):
+            candidate = f"{path}{suffix}"
+            with contextlib.suppress(FileNotFoundError):
+                os.remove(candidate)
+        return
+    if db_uri.startswith("rocksdb:///"):
+        with contextlib.suppress(FileNotFoundError):
+            shutil.rmtree(path)
+        return
+    with contextlib.suppress(FileNotFoundError):
+        os.remove(path)
+
+
+def _expected_genesis_hash(genesis_path: Optional[str]) -> Optional[bytes]:
+    try:
+        from core.genesis.loader import load_genesis
+
+        _params, header = load_genesis(genesis_path, log=False)
+        if hasattr(header, "hash"):
+            return bytes(header.hash())
+    except Exception:
+        return None
+    return None
+
+
+def _db_genesis_hash(block_db: Any) -> Optional[bytes]:
+    try:
+        if hasattr(block_db, "get_canonical_hash"):
+            h0 = block_db.get_canonical_hash(0)
+            if h0:
+                return bytes(h0)
+    except Exception:
+        pass
+    try:
+        if hasattr(block_db, "get_genesis_hash"):
+            h0 = block_db.get_genesis_hash()
+            if h0:
+                return bytes(h0)
+    except Exception:
+        pass
+    return None
+
+
 # --------------------------------------------------------------------------- #
 # Locators & small helpers
 # --------------------------------------------------------------------------- #
@@ -159,6 +221,8 @@ class P2PDeps:
     _tx_index: Any
     _core_import_block: Callable[..., Any]
     _core_get_head: Callable[[Any], Tuple[int, "Header"]]
+    expected_genesis_hash: Optional[bytes]
+    db_genesis_hash: Optional[bytes]
 
     @classmethod
     def from_env(cls) -> "P2PDeps":
@@ -175,12 +239,40 @@ class P2PDeps:
         return inst
 
     @classmethod
-    def open(cls, db_uri: str, genesis_path: Optional[str] = None) -> "P2PDeps":
+    def open(
+        cls,
+        db_uri: str,
+        genesis_path: Optional[str] = None,
+        *,
+        allow_genesis_reset: Optional[bool] = None,
+    ) -> "P2PDeps":
         c = _lazy_core()
         kv = _open_kv(db_uri)
         block_db = c["BlockDB"](kv)
         state_db = c["StateDB"](kv)
         tx_index = c["TxIndex"](kv)
+
+        expected_genesis_hash = _expected_genesis_hash(genesis_path)
+        db_genesis_hash = _db_genesis_hash(block_db)
+        allow_reset = _allow_genesis_reset() if allow_genesis_reset is None else allow_genesis_reset
+        if expected_genesis_hash and db_genesis_hash and expected_genesis_hash != db_genesis_hash:
+            expected_hex = "0x" + expected_genesis_hash.hex()
+            found_hex = "0x" + db_genesis_hash.hex()
+            data_dir = _db_uri_hint(db_uri)
+            if allow_reset:
+                _close_if_possible(kv, block_db, state_db, tx_index)
+                _wipe_db(db_uri)
+                return cls.open(
+                    db_uri,
+                    genesis_path,
+                    allow_genesis_reset=False,
+                )
+            raise P2PError(
+                "local_genesis_mismatch: configured genesis does not match DB "
+                f"(expected={expected_hex} found={found_hex} data_dir={data_dir}). "
+                "Refusing to sync. Reset the data dir for this chain "
+                "(e.g., delete ~/.animica/chain-<id> or docker volumes)."
+            )
 
         # Ensure genesis finalized (idempotent)
         try:
@@ -192,10 +284,18 @@ class P2PDeps:
                 expected = exc.data.get("expected") if hasattr(exc, "data") else None
                 found = exc.data.get("found") if hasattr(exc, "data") else None
                 data_dir = _db_uri_hint(db_uri)
+                if allow_reset:
+                    _close_if_possible(kv, block_db, state_db, tx_index)
+                    _wipe_db(db_uri)
+                    return cls.open(
+                        db_uri,
+                        genesis_path,
+                        allow_genesis_reset=False,
+                    )
                 raise P2PError(
-                    "DB genesis mismatch (wrong network or corrupted DB). "
-                    f"expected={expected} found={found} data_dir={data_dir}. "
-                    "Fix: remove or reset the data dir for this chain "
+                    "local_genesis_mismatch: configured genesis does not match DB "
+                    f"(expected={expected} found={found} data_dir={data_dir}). "
+                    "Refusing to sync. Reset the data dir for this chain "
                     "(e.g., delete ~/.animica/chain-<id> or docker volumes)."
                 ) from exc
             raise
@@ -213,6 +313,8 @@ class P2PDeps:
             _tx_index=tx_index,
             _core_import_block=c["core_import_block"],
             _core_get_head=c["core_get_head"],
+            expected_genesis_hash=expected_genesis_hash,
+            db_genesis_hash=db_genesis_hash,
         )
 
     # ---- Head & headers -----------------------------------------------------
