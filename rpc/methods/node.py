@@ -63,7 +63,9 @@ async def node_get_status() -> dict[str, t.Any]:
         sync_status = await sync_methods.sync_get_status()
     except Exception:
         sync_status = {
-            "phase": "inactive",
+            "phase": "IDLE",
+            "head_height": 0,
+            "head_hash": None,
             "best_header_height": 0,
             "best_header_hash": None,
             "best_block_height": 0,
