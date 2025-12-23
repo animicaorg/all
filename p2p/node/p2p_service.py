@@ -2181,25 +2181,56 @@ class P2PService:
 
     async def import_peers(self, addresses: list[str]) -> dict[str, Any]:
         if not addresses:
-            return {"added": 0, "dialing": 0}
+            return {
+                "success": False,
+                "added": 0,
+                "skipped": 0,
+                "dial_attempted": 0,
+                "dial_success": 0,
+                "errors": ["no addresses provided"],
+            }
 
         fallback_port = self._local_listen_port()
-        normalized = [
-            addr
-            for addr in (self._sanitize_peer_addr(a, fallback_port=fallback_port) for a in addresses)
-            if addr
-        ]
-        added = self._seed_peerstore(normalized)
+        normalized: list[str] = []
+        errors: list[str] = []
+        skipped = 0
+        for raw in addresses:
+            addr = self._sanitize_peer_addr(raw, fallback_port=fallback_port)
+            if not addr:
+                skipped += 1
+                errors.append(f"invalid address: {raw}")
+                continue
+            normalized.append(addr)
 
-        dial_targets: list[str] = []
-        for addr in normalized:
-            dial_targets.append(addr)
+        deduped = list(dict.fromkeys(normalized))
+        added = self._seed_peerstore(deduped)
 
-        for addr in list(dict.fromkeys(dial_targets)):
+        tasks = [
             self._create_child_task(self._dial(addr), name=f"p2p.import_dial@{addr}")
+            for addr in deduped
+        ]
+        dial_attempted = len(tasks)
+        dial_success = 0
+        if tasks:
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            for addr, result in zip(deduped, results):
+                if isinstance(result, Exception):
+                    errors.append(f"{addr}: {result}")
+                    continue
+                if result:
+                    dial_success += 1
+                else:
+                    errors.append(f"{addr}: dial failed")
 
         self._sync_wakeup.set()
-        return {"added": added, "dialing": len(dial_targets)}
+        return {
+            "success": bool(added or dial_attempted),
+            "added": added,
+            "skipped": skipped,
+            "dial_attempted": dial_attempted,
+            "dial_success": dial_success,
+            "errors": errors,
+        }
 
     async def force_sync(self) -> dict[str, Any]:
         self._sync_wakeup.set()
@@ -2374,13 +2405,13 @@ class P2PService:
 
     async def _dial(
         self, addr: str, *, is_seed: bool = False, feeler: bool = False
-    ) -> None:
+    ) -> bool:
         parsed = self._normalize_peer_addr(
             addr, fallback_port=self._local_listen_port(), source="dial"
         )
         if not parsed.addr:
             log.info("Skipping unsupported dial target %s", addr)
-            return
+            return False
         addr = parsed.addr.canonical
         addr_key = self._addr_key(addr)
         self._dial_attempt_total += 1
@@ -2389,7 +2420,7 @@ class P2PService:
             if not resolved:
                 self._mark_dial_failure(addr, is_seed=True, error="dns_lookup_failed")
                 self._dial_inflight.discard(addr_key)
-                return
+                return False
         try:
             conn = await self._transport.dial(addr, timeout=5.0)
         except asyncio.CancelledError:
@@ -2397,11 +2428,12 @@ class P2PService:
         except Exception as exc:
             err = f"{exc.__class__.__name__}: {exc}"
             self._mark_dial_failure(addr, is_seed=is_seed, error=err)
-            return
+            return False
         finally:
             self._dial_inflight.discard(addr_key)
         self._mark_dial_success(addr, is_seed=is_seed)
         await self._register_conn(conn, direction="outbound", feeler=feeler)
+        return True
 
     async def _register_conn(
         self, conn: Any, *, direction: str, feeler: bool = False

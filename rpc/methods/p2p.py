@@ -631,25 +631,45 @@ async def import_peers(addresses: list[str]) -> dict[str, t.Any]:
     if svc is None:
         core_svc = _get_core_p2p_service()
         if core_svc is None or not hasattr(core_svc, "addrman"):
-            return {"success": False, "error": "P2P service not available"}
+            return {
+                "success": False,
+                "added": 0,
+                "skipped": 0,
+                "dial_attempted": 0,
+                "dial_success": 0,
+                "errors": ["P2P service not available"],
+            }
         added = 0
+        skipped = 0
+        dial_attempted = 0
+        dial_success = 0
         errors: list[str] = []
         for addr in addresses:
             net_addr, err = _parse_core_address(addr)
             if net_addr is None:
+                skipped += 1
                 errors.append(err or f"invalid address {addr}")
                 continue
             try:
                 core_svc.addrman.add([net_addr])
                 added += 1
                 if hasattr(core_svc, "connman"):
-                    await core_svc.connman.dial(net_addr)
+                    dial_attempted += 1
+                    try:
+                        await core_svc.connman.dial(net_addr)
+                        dial_success += 1
+                    except Exception as exc:
+                        errors.append(str(exc))
             except Exception as exc:  # pragma: no cover - defensive
                 errors.append(str(exc))
-        result = {"success": added > 0, "added": added}
-        if errors and added == 0:
-            result["error"] = errors[0]
-        return result
+        return {
+            "success": bool(added or dial_attempted),
+            "added": added,
+            "skipped": skipped,
+            "dial_attempted": dial_attempted,
+            "dial_success": dial_success,
+            "errors": errors,
+        }
 
     if hasattr(svc, "import_peers"):
         try:
@@ -658,24 +678,56 @@ async def import_peers(addresses: list[str]) -> dict[str, t.Any]:
             return result
         except Exception as e:  # pragma: no cover - defensive
             log.error("import_peers failed", exc_info=True)
-            return {"success": False, "error": str(e)}
+            return {
+                "success": False,
+                "added": 0,
+                "skipped": 0,
+                "dial_attempted": 0,
+                "dial_success": 0,
+                "errors": [str(e)],
+            }
 
     # Fallback: seed peerstore directly if available
     added = 0
+    skipped = 0
+    dial_attempted = 0
+    dial_success = 0
     try:
         peerstore = getattr(svc, "peerstore", None)
         if peerstore is None:
-            return {"success": False, "error": "Peerstore unavailable"}
+            return {
+                "success": False,
+                "added": 0,
+                "skipped": 0,
+                "dial_attempted": 0,
+                "dial_success": 0,
+                "errors": ["Peerstore unavailable"],
+            }
         for addr in addresses:
             peer_id = addr
             try:
                 peerstore.add(peer_id=peer_id, addrs=[addr], direction="outbound")
                 added += 1
             except Exception:
+                skipped += 1
                 continue
-        return {"success": True, "added": added}
+        return {
+            "success": bool(added),
+            "added": added,
+            "skipped": skipped,
+            "dial_attempted": dial_attempted,
+            "dial_success": dial_success,
+            "errors": [],
+        }
     except Exception as e:  # pragma: no cover - defensive
-        return {"success": False, "error": str(e)}
+        return {
+            "success": False,
+            "added": 0,
+            "skipped": 0,
+            "dial_attempted": 0,
+            "dial_success": 0,
+            "errors": [str(e)],
+        }
 
 
 @method("p2p.addPeers", desc="Add multiple peers by address")

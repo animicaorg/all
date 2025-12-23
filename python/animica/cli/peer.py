@@ -33,6 +33,15 @@ RPC_ENV = "ANIMICA_RPC_URL"
 _DEFAULT_DATA_DIR = Path(load_network_config().data_dir).expanduser()
 DEFAULT_STORE_PATH = _DEFAULT_DATA_DIR / "p2p" / "peers.json"
 STORE_ENV = "ANIMICA_PEER_STORE"
+ADMIN_TOKEN_ENV = "ANIMICA_RPC_ADMIN_TOKEN"
+ADMIN_TOKEN_HEADER = "X-Animica-Admin-Token"
+
+
+def _rpc_headers() -> Dict[str, str]:
+    token = os.getenv(ADMIN_TOKEN_ENV)
+    if token:
+        return {ADMIN_TOKEN_HEADER: token}
+    return {}
 
 
 async def rpc_call(
@@ -51,7 +60,7 @@ async def rpc_call(
         "params": params or [],
     }
     async with httpx.AsyncClient(timeout=resolved_timeout) as client:
-        response = await client.post(rpc_url, json=payload)
+        response = await client.post(rpc_url, json=payload, headers=_rpc_headers())
         try:
             data = response.json()
         except json.JSONDecodeError as exc:
@@ -87,7 +96,7 @@ async def _rpc_call_with_error(
         "params": params or [],
     }
     async with httpx.AsyncClient(timeout=resolved_timeout) as client:
-        response = await client.post(rpc_url, json=payload)
+        response = await client.post(rpc_url, json=payload, headers=_rpc_headers())
         try:
             data = response.json()
         except json.JSONDecodeError as exc:
@@ -121,46 +130,42 @@ def _is_method_not_found_error(error: Optional[Dict[str, Any]]) -> bool:
     return "method not found" in message
 
 
-def _is_bootstrap_only_error(error: Optional[Dict[str, Any]]) -> bool:
+def _is_unauthorized_error(error: Optional[Dict[str, Any]]) -> bool:
     if not error:
         return False
-    if error.get("code") == -32070:
+    if error.get("code") == -32003:
         return True
     message = str(error.get("message", "")).lower()
-    return "bootstrap_only" in message or "bootstrap-only" in message
+    return "unauthorized" in message or "access denied" in message
 
 
-def _probe_rpc_for_peer_injection(rpc_url: str) -> tuple[bool, bool, Optional[str]]:
-    """Return (running, policy_blocked, error_message)."""
+def _probe_rpc_for_peer_injection(rpc_url: str) -> tuple[bool, Optional[str]]:
+    """Return (running, error_message)."""
     try:
         _result, error = asyncio.run(_rpc_call_with_error("node.ping", [], rpc_url=rpc_url))
     except Exception as exc:
-        return False, False, str(exc)
+        return False, str(exc)
 
     if error:
-        if _is_bootstrap_only_error(error):
-            return True, True, _rpc_error_message(error)
         if _is_method_not_found_error(error):
             try:
                 _result, error = asyncio.run(_rpc_call_with_error("chain.getHead", [], rpc_url=rpc_url))
             except Exception as exc:
-                return False, False, str(exc)
+                return False, str(exc)
             if error:
-                if _is_bootstrap_only_error(error):
-                    return True, True, _rpc_error_message(error)
-                return False, False, _rpc_error_message(error)
+                return True, _rpc_error_message(error)
         else:
-            return False, False, _rpc_error_message(error)
+            return True, _rpc_error_message(error)
 
     try:
         _, error = asyncio.run(_rpc_call_with_error("p2p.listPeers", [], rpc_url=rpc_url))
     except Exception as exc:
-        return False, False, str(exc)
+        return False, str(exc)
 
-    if error and _is_bootstrap_only_error(error):
-        return True, True, _rpc_error_message(error)
+    if error:
+        return True, _rpc_error_message(error)
 
-    return True, False, None
+    return True, None
 
 
 def _resolve_rpc_url(
@@ -279,6 +284,16 @@ def _rpc_operation_succeeded(result: Any) -> tuple[bool, Optional[str]]:
             return bool(result.get("success")), result.get("error") or result.get("message")
         if "result" in result and isinstance(result.get("result"), bool):
             return bool(result.get("result")), result.get("error") or result.get("message")
+        if "dial_attempted" in result or "dial_success" in result:
+            added = result.get("added") or 0
+            dial_attempted = result.get("dial_attempted") or 0
+            dial_success = result.get("dial_success") or 0
+            errors = result.get("errors") or []
+            success = bool(added or dial_attempted or dial_success)
+            error_msg = None
+            if errors:
+                error_msg = errors[0] if isinstance(errors, list) else str(errors)
+            return success, error_msg or result.get("error") or result.get("message")
         for key in ("added", "connected", "removed"):
             if key in result:
                 value = result.get(key)
@@ -293,6 +308,34 @@ def _rpc_operation_succeeded(result: Any) -> tuple[bool, Optional[str]]:
 
     # Primitive responses (bool/int/str) - treat truthy as success
     return bool(result), None
+
+
+def _fetch_peer_status(rpc_url: str) -> tuple[Optional[Dict[str, Any]], Optional[str]]:
+    try:
+        status, error = asyncio.run(_rpc_call_with_error("p2p.getStatus", [], rpc_url=rpc_url))
+    except Exception as exc:
+        return None, str(exc)
+    if error:
+        return None, _rpc_error_message(error)
+    if isinstance(status, dict):
+        return status, None
+    return None, "Unexpected p2p.getStatus response"
+
+
+def _print_peer_status(status: Dict[str, Any]) -> None:
+    peers_total = status.get("peers_total")
+    inbound = status.get("peers_inbound")
+    outbound = status.get("peers_outbound")
+    dial_error = status.get("dial_last_error")
+    typer.secho(
+        f"Peers: {peers_total} total (inbound {inbound} / outbound {outbound})",
+        fg=typer.colors.GREEN,
+    )
+    if dial_error:
+        typer.secho(
+            f"Last dial error: {dial_error}",
+            fg=typer.colors.YELLOW,
+        )
 
 
 def _generate_peer_id(address: str) -> str:
@@ -1094,12 +1137,9 @@ def bootstrap_peers(
     store_path = store_base
 
     bootstrap_url = rpc_url or net_cfg.bootstrap_url
-    if rpc_url and not is_local_rpc_url(rpc_url):
-        target_rpc = None
-    else:
-        target_rpc = rpc_url or net_cfg.rpc_url
+    target_rpc = rpc_url or net_cfg.rpc_url
 
-    if start_node and not target_rpc:
+    if start_node and (not target_rpc or not is_local_rpc_url(target_rpc)):
         raise typer.BadParameter("--start-node requires a local --rpc-url endpoint")
     if start_node and push is False:
         raise typer.BadParameter("--start-node cannot be combined with --no-push")
@@ -1167,77 +1207,36 @@ def bootstrap_peers(
     )
     typer.echo(f"Store location: {_resolve_store_paths(store_path)[0]} | db: {_resolve_store_paths(store_path)[1]}")
 
-    push_mode = "auto" if push is None else ("push" if push else "no-push")
     should_push = push is not False
-    if not target_rpc:
-        should_push = False
-        if push_mode != "no-push":
-            typer.secho(
-                "ℹ️ Remote RPC endpoints do not accept peer injection (BOOTSTRAP_ONLY).",
-                fg=typer.colors.CYAN,
-            )
-            typer.echo(
-                "Next: start your local node and it will load the peer store automatically, "
-                "or run: animica peer bootstrap --rpc-url http://127.0.0.1:8545/rpc --push."
-            )
-    elif not is_local_rpc_url(target_rpc):
-        should_push = False
-        if push_mode != "no-push":
-            typer.secho(
-                "ℹ️ Remote RPC endpoints do not accept peer injection (BOOTSTRAP_ONLY).",
-                fg=typer.colors.CYAN,
-            )
-            typer.echo(
-                "Next: start your local node and it will load the peer store automatically, "
-                "or run: animica peer bootstrap --rpc-url http://127.0.0.1:8545/rpc --push."
-            )
 
     rpc_added = False
     rpc_error: Optional[str] = None
-    peer_count: Optional[int] = None
     if should_push and target_rpc:
-        running, policy_blocked, _probe_error = _probe_rpc_for_peer_injection(target_rpc)
-        if policy_blocked:
-            typer.secho(
-                "ℹ️ This RPC endpoint does not accept peer injection (BOOTSTRAP_ONLY).",
-                fg=typer.colors.CYAN,
-            )
-            typer.echo(
-                "Seeds will be loaded on next restart. "
-                "Next: start your local node and it will load the peer store automatically, "
-                "or run: animica peer bootstrap --rpc-url http://127.0.0.1:8545/rpc --push."
-            )
-        elif not running:
+        running, probe_error = _probe_rpc_for_peer_injection(target_rpc)
+        if not running:
             if start_node:
                 from animica.cli import node as node_cli
 
                 os.environ.setdefault("ANIMICA_NETWORK", net_cfg.name)
                 node_cli.up(detach=True, build=True, with_miner=False, wait_sync=False)
-                running, policy_blocked, _probe_error = _probe_rpc_for_peer_injection(target_rpc)
+                running, probe_error = _probe_rpc_for_peer_injection(target_rpc)
             if not running:
+                if probe_error:
+                    typer.secho(f"⚠ RPC not reachable: {probe_error}", fg=typer.colors.YELLOW)
                 typer.secho(
-                    "✓ Saved seeds. Start your local node and re-run with --push, or use --start-node.",
+                    "✓ Saved seeds. Start your node and re-run with --push (or use --start-node for local RPC).",
                     fg=typer.colors.GREEN,
                 )
-            elif policy_blocked:
-                typer.secho(
-                    "ℹ️ This RPC endpoint does not accept peer injection (BOOTSTRAP_ONLY).",
-                    fg=typer.colors.CYAN,
-                )
-                typer.echo("Seeds will be loaded on next restart.")
-        if running and not policy_blocked:
+        if running:
             try:
                 url = _resolve_rpc_url(target_rpc, allow_remote_rpc=allow_remote_rpc, method="p2p.importPeers")
                 import_result, error = asyncio.run(
                     _rpc_call_with_error("p2p.importPeers", [seeds], rpc_url=url)
                 )
-                if error and _is_bootstrap_only_error(error):
-                    rpc_error = _rpc_error_message(error)
-                    typer.secho(
-                        "ℹ️ This RPC endpoint does not accept peer injection (BOOTSTRAP_ONLY).",
-                        fg=typer.colors.CYAN,
-                    )
-                    typer.echo("Seeds will be loaded on next restart.")
+                if error and _is_unauthorized_error(error):
+                    rpc_error = _rpc_error_message(error) or "UNAUTHORIZED"
+                elif error and _is_method_not_found_error(error):
+                    rpc_error = "RPC method not available on this node"
                 else:
                     rpc_added, rpc_error = _rpc_operation_succeeded(import_result)
                     if not rpc_added:
@@ -1250,24 +1249,27 @@ def bootstrap_peers(
                     f"✓ Pushed {stored} seed(s) into running node",
                     fg=typer.colors.GREEN,
                 )
-                try:
-                    peers_result, peer_error = asyncio.run(
-                        _rpc_call_with_error("p2p.listPeers", [], rpc_url=target_rpc)
-                    )
-                    if not peer_error and isinstance(peers_result, list):
-                        peer_count = len(peers_result)
-                except Exception:
-                    peer_count = None
-                if peer_count is not None:
+                status, status_error = _fetch_peer_status(target_rpc)
+                if status:
+                    _print_peer_status(status)
+                elif status_error:
+                    typer.secho(f"⚠ Unable to refresh peer status: {status_error}", fg=typer.colors.YELLOW)
+            elif rpc_error:
+                if "method not available" in rpc_error.lower():
                     typer.secho(
-                        f"✓ Node now has {peer_count} peer(s); bootstrap initiated.",
-                        fg=typer.colors.GREEN,
+                        "⚠ RPC method missing: update the node to enable peer injection.",
+                        fg=typer.colors.YELLOW,
                     )
-            elif rpc_error and not _is_bootstrap_only_error({"message": rpc_error}):
-                typer.secho(
-                    f"⚠ Unable to push seeds into running node: {rpc_error}",
-                    fg=typer.colors.YELLOW,
-                )
+                elif "unauthorized" in rpc_error.lower():
+                    typer.secho(
+                        "⚠ Peer injection unauthorized. Use localhost or set ANIMICA_RPC_ADMIN_TOKEN.",
+                        fg=typer.colors.YELLOW,
+                    )
+                else:
+                    typer.secho(
+                        f"⚠ Unable to push seeds into running node: {rpc_error}",
+                        fg=typer.colors.YELLOW,
+                    )
 
     if probe:
         typer.echo()
