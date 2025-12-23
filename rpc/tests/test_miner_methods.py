@@ -130,16 +130,15 @@ def test_submit_work_rejects_invalid_or_stale_jobs():
     assert bad["error"]["code"] == -32602
 
     # Mark head as advanced past the template height to force stale rejection
-    miner_methods._LOCAL_HEAD.update(
-        {"height": job["height"], "hash": "0x01", "header": None}
-    )
+    miner_methods._record_local_block(job["height"], "0x01", None)
     stale = rpc_call(
         client,
         "miner.submitWork",
         {"jobId": job["jobId"], "nonce": "0x00"},
-        expect_error=True,
     )
-    assert stale["error"]["code"] == -32602
+    result = stale["result"]
+    assert result["accepted"] is False
+    assert result["stale"] is True
 
 
 def test_get_work_rejects_wrong_param_type():

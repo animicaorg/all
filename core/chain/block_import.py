@@ -45,11 +45,15 @@ Fork choice (from core/chain/fork_choice.py):
 - ForkChoice.best() -> Optional[tuple[int, bytes]]
 """
 
-from dataclasses import asdict, is_dataclass
+from collections import OrderedDict, deque
+from dataclasses import asdict, dataclass, is_dataclass
 from functools import lru_cache
-from typing import Any, Dict, List, NamedTuple, Optional, Tuple, Union
+import logging
+import os
+import time
+from typing import Any, Deque, Dict, Iterable, List, NamedTuple, Optional, Tuple, Union
 
-from core.chain.fork_choice import ForkChoice
+from core.db.block_db import k_hix
 from core.encoding.canonical import \
     header_signing_bytes  # canonical SignBytes for header hashing
 from core.encoding.cbor import dumps as cbor_dumps
@@ -72,6 +76,13 @@ try:
 except ImportError:
     DIFFICULTY_AVAILABLE = False
     diff = None  # type: ignore[assignment]
+
+try:
+    from consensus.fork_choice import ForkChoice as WeightForkChoice
+except Exception:  # pragma: no cover - consensus optional
+    WeightForkChoice = None  # type: ignore[assignment]
+
+log = logging.getLogger("animica.chain.block_import")
 
 
 class ImportErrorCode(str):
@@ -172,6 +183,25 @@ def compute_header_hash(header: Header) -> bytes:
     return sha3_256(sb)
 
 
+def _weight_micro_of(
+    header: Header, payload: Optional[Dict[str, Any]], params: ChainParams
+) -> int:
+    for attr in ("thetaMicro", "theta_micro", "theta", "Θ"):
+        if hasattr(header, attr):
+            try:
+                return int(getattr(header, attr))
+            except Exception:
+                pass
+    if payload:
+        for key in ("thetaMicro", "theta_micro", "theta", "Θ"):
+            if key in payload:
+                try:
+                    return int(payload[key])
+                except Exception:
+                    pass
+    return int(params.theta_initial)
+
+
 def _dataclass_from_dict(dc_type, data: Dict[str, Any]):
     # Best-effort constructor: pass through only fields known to the dataclass
     # so loose CBOR maps don't break construction.
@@ -247,7 +277,19 @@ class BlockImporter:
     update fork choice & canonical head. Tracks difficulty (Θ) adjustments.
     """
 
-    __slots__ = ("params", "block_db", "tx_index", "fork_choice", "difficulty_state", "_last_block_time")
+    __slots__ = (
+        "params",
+        "block_db",
+        "tx_index",
+        "fork_choice",
+        "difficulty_state",
+        "_last_block_time",
+        "_orphan_pool",
+        "_orphan_parents",
+        "_max_orphans",
+        "_max_future_seconds",
+        "_min_block_spacing_ms",
+    )
 
     def __init__(
         self,
@@ -255,18 +297,24 @@ class BlockImporter:
         params: ChainParams,
         block_db,
         tx_index=None,
-        fork_choice: Optional[ForkChoice] = None,
+        fork_choice: Optional[Any] = None,
     ):
         self.params = params
         self.block_db = block_db
         self.tx_index = tx_index
-        self.fork_choice = fork_choice or ForkChoice()
+        self.fork_choice = fork_choice
         
         # Initialize difficulty adjustment state
         self.difficulty_state = None
         self._last_block_time: Optional[int] = None
         if DIFFICULTY_AVAILABLE:
             self._init_difficulty_state()
+        self._orphan_pool: "OrderedDict[bytes, _OrphanBlock]" = OrderedDict()
+        self._orphan_parents: Dict[bytes, Deque[bytes]] = {}
+        self._max_orphans = int(os.getenv("ANIMICA_ORPHAN_POOL_MAX", "1000"))
+        self._max_future_seconds = int(os.getenv("ANIMICA_MAX_FUTURE_SECONDS", "5"))
+        self._min_block_spacing_ms = int(os.getenv("ANIMICA_MIN_BLOCK_SPACING_MS", "0"))
+        self._init_fork_choice_from_db()
 
     # --- Basics -------------------------------------------------------------
 
@@ -381,15 +429,24 @@ class BlockImporter:
             # Duplicate?
             if self.block_db.get_header_by_hash(h) is not None:
                 # already persisted
-                head_changed = self.fork_choice.consider(
-                    height=_height_of(header, hdr_map), block_hash=h
-                )
-                self._maybe_update_canonical_head()
+                parent_hash = _parent_hash_of(header, hdr_map)
+                self._ensure_fork_choice_parent(parent_hash)
+                if self.fork_choice is None:
+                    self._init_fork_choice_from_db()
+                if self.fork_choice is not None and not self.fork_choice.has(h):
+                    result = self.fork_choice.add_block(
+                        h=h,
+                        parent=parent_hash,
+                        height=_height_of(header, hdr_map),
+                        weight_micro=_weight_micro_of(header, hdr_map, self.params),
+                    )
+                    if result.became_best:
+                        self._apply_reorg(result.detached, result.attached, result.best)
                 return ImportResult(
                     ImportErrorCode.DUPLICATE,
                     _height_of(header, hdr_map),
                     h,
-                    head_changed,
+                    False,
                     "duplicate",
                 )
 
@@ -422,19 +479,22 @@ class BlockImporter:
                 self._store_block(h, block)
                 # Update head
                 self.block_db.set_canonical_head(0, h)
-                self.fork_choice.reset()
-                self.fork_choice.consider(height=0, block_hash=h)
+                self._init_fork_choice(genesis_hash=h, header=header, payload=hdr_map)
                 
                 # Initialize difficulty tracking with genesis timestamp
                 timestamp = _timestamp_of(header, hdr_map)
                 if timestamp is not None:
                     self._last_block_time = timestamp
                 
+                # Index canonical txs if any
+                self._index_block_if_canonical(height=0, block_hash=h, block=block)
+
                 return ImportResult(ImportErrorCode.ACCEPTED, 0, h, True, None)
 
             # Non-genesis needs parent
             parent_header = self.block_db.get_header_by_hash(parent_hash)
             if parent_header is None:
+                self._remember_orphan(h, block, mapping, parent_hash, height)
                 return ImportResult(
                     ImportErrorCode.ORPHAN, height, h, False, "missing parent"
                 )
@@ -450,6 +510,10 @@ class BlockImporter:
                     f"height continuity failed: got {height}, parent at {parent_height}",
                 )
 
+            timestamp_error = self._timestamp_sanity(header, parent_header, hdr_map)
+            if timestamp_error is not None:
+                return ImportResult(ImportErrorCode.INVALID, height, h, False, timestamp_error)
+
             # Basic header sanity
             self._sanity_header(header)
 
@@ -457,23 +521,16 @@ class BlockImporter:
             self._store_header(height, h, header)
             self._store_block(h, block)
 
-            # Optional: index txs
-            if self.tx_index is not None and getattr(block, "txs", None):
-                for idx, tx in enumerate(block.txs):
-                    try:
-                        tx_hash = self._tx_hash(tx)
-                        self.tx_index.put(tx_hash, height, idx)
-                    except Exception:  # pragma: no cover - non-critical
-                        pass
-
-            # Update difficulty based on block timestamp
-            timestamp = _timestamp_of(header, hdr_map)
-            if timestamp is not None:
-                self._update_difficulty(timestamp)
-
             # Fork choice & canonical head update
-            head_changed = self.fork_choice.consider(height=height, block_hash=h)
-            self._maybe_update_canonical_head()
+            head_changed = self._apply_fork_choice(
+                header=header,
+                header_hash=h,
+                parent_hash=parent_hash,
+                payload=hdr_map,
+                block=block,
+            )
+
+            self._process_orphans(parent_hash=h)
 
             return ImportResult(ImportErrorCode.ACCEPTED, height, h, head_changed, None)
 
@@ -483,12 +540,7 @@ class BlockImporter:
     # --- Helpers ------------------------------------------------------------
 
     def _maybe_update_canonical_head(self) -> None:
-        best = self.fork_choice.best()
-        if best is None:
-            return
-        cur = self.block_db.get_canonical_head()
-        if cur != best:
-            self.block_db.set_canonical_head(best[0], best[1])
+        return
 
     def _store_header(self, height: int, h: bytes, header: Header) -> None:
         """
@@ -609,7 +661,9 @@ class BlockImporter:
                 raise BlockImportError(f"{fld}: too long ({len(bb)} bytes)")
 
         # Θ (theta) sanity (if present)
-        theta = get("theta", "Θ")
+        theta = get("thetaMicro", "theta_micro")
+        if theta is None:
+            theta = get("theta", "Θ")
         if theta is not None:
             t = int(theta)
             if t < 0:
@@ -623,6 +677,319 @@ class BlockImporter:
         from core.encoding.canonical import tx_signing_bytes
 
         return sha3_256(tx_signing_bytes(tx))
+
+    # --- Fork choice & reorg ------------------------------------------------
+
+    def _init_fork_choice(
+        self,
+        *,
+        genesis_hash: bytes,
+        header: Optional[Header] = None,
+        payload: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        if self.fork_choice is not None or WeightForkChoice is None:
+            return
+        genesis_weight = (
+            _weight_micro_of(header, payload, self.params) if header is not None else 0
+        )
+        self.fork_choice = WeightForkChoice(
+            genesis_hash=genesis_hash,
+            genesis_weight_micro=genesis_weight,
+            genesis_height=0,
+        )
+
+    def _init_fork_choice_from_db(self) -> None:
+        if self.fork_choice is not None or WeightForkChoice is None:
+            return
+        head = self.block_db.get_canonical_head()
+        genesis_hash = None
+        if head is not None and hasattr(self.block_db, "get_canonical_hash"):
+            genesis_hash = self.block_db.get_canonical_hash(0)
+        if genesis_hash is None and hasattr(self.block_db, "get_genesis_hash"):
+            genesis_hash = self.block_db.get_genesis_hash()
+        if genesis_hash is None:
+            genesis_hash = self.params.genesis_hash
+        if not genesis_hash:
+            return
+        genesis_header = self.block_db.get_header_by_hash(genesis_hash)
+        if genesis_header is None and head is None:
+            return
+        genesis_weight = (
+            _weight_micro_of(genesis_header, None, self.params)
+            if genesis_header is not None
+            else int(self.params.theta_initial)
+        )
+        self.fork_choice = WeightForkChoice(
+            genesis_hash=genesis_hash,
+            genesis_weight_micro=genesis_weight,
+            genesis_height=0,
+        )
+        self._seed_fork_choice_from_canonical()
+
+    def _seed_fork_choice_from_canonical(self) -> None:
+        if self.fork_choice is None:
+            return
+        head = self.block_db.get_canonical_head()
+        if not head or head[0] <= 0:
+            return
+        head_hash = head[1]
+        chain: List[Tuple[Header, bytes]] = []
+        cursor = head_hash
+        while True:
+            header = self.block_db.get_header_by_hash(cursor)
+            if header is None:
+                break
+            if _height_of(header) == 0:
+                break
+            chain.append((header, cursor))
+            cursor = _parent_hash_of(header)
+        for header, h in reversed(chain):
+            self.fork_choice.add_block(
+                h=h,
+                parent=_parent_hash_of(header),
+                height=_height_of(header),
+                weight_micro=_weight_micro_of(header, None, self.params),
+            )
+
+    def _ensure_fork_choice_parent(self, parent_hash: bytes) -> None:
+        if self.fork_choice is None or WeightForkChoice is None:
+            return
+        if self.fork_choice.has(parent_hash):
+            return
+        chain: List[Tuple[Header, bytes]] = []
+        cursor = parent_hash
+        while True:
+            header = self.block_db.get_header_by_hash(cursor)
+            if header is None:
+                break
+            chain.append((header, cursor))
+            if _height_of(header) == 0:
+                break
+            cursor = _parent_hash_of(header)
+        for header, h in reversed(chain):
+            if self.fork_choice.has(h):
+                continue
+            self.fork_choice.add_block(
+                h=h,
+                parent=_parent_hash_of(header),
+                height=_height_of(header),
+                weight_micro=_weight_micro_of(header, None, self.params),
+            )
+
+    def _apply_fork_choice(
+        self,
+        *,
+        header: Header,
+        header_hash: bytes,
+        parent_hash: bytes,
+        payload: Dict[str, Any],
+        block: Block,
+    ) -> bool:
+        if self.fork_choice is None:
+            self._init_fork_choice_from_db()
+        if self.fork_choice is None:
+            return False
+        self._ensure_fork_choice_parent(parent_hash)
+        weight = _weight_micro_of(header, payload, self.params)
+        result = self.fork_choice.add_block(
+            h=header_hash,
+            parent=parent_hash,
+            height=_height_of(header, payload),
+            weight_micro=weight,
+        )
+        if not result.became_best:
+            return False
+        self._apply_reorg(result.detached, result.attached, result.best)
+        return True
+
+    def _apply_reorg(
+        self,
+        detached: Iterable[bytes],
+        attached: Iterable[bytes],
+        best,
+    ) -> None:
+        old_head = self.block_db.get_canonical_head()
+        old_height = old_head[0] if old_head else None
+        old_hash = old_head[1] if old_head else None
+
+        detached_list = list(detached)
+        attached_list = list(attached)
+        if detached_list or attached_list:
+            log.info(
+                "reorg",
+                extra={
+                    "depth": len(detached_list),
+                    "old_head": old_hash.hex() if old_hash else None,
+                    "new_head": best.h.hex(),
+                    "new_height": best.height,
+                },
+            )
+
+        # Reset difficulty anchor to the LCA timestamp if possible.
+        if attached_list:
+            first_header = self.block_db.get_header_by_hash(attached_list[0])
+            if first_header is not None:
+                parent_header = self.block_db.get_header_by_hash(
+                    _parent_hash_of(first_header)
+                )
+                parent_ts = _timestamp_of(parent_header) if parent_header else None
+                if parent_ts is not None:
+                    self._last_block_time = parent_ts
+
+        # Remove canonical indices for detached blocks
+        if self.tx_index is not None:
+            for h in detached_list:
+                header = self.block_db.get_header_by_hash(h)
+                if header is None:
+                    continue
+                height = _height_of(header)
+                self._remove_block_index(height)
+
+        # Apply new canonical blocks
+        for h in attached_list:
+            header = self.block_db.get_header_by_hash(h)
+            if header is None:
+                continue
+            height = _height_of(header)
+            if hasattr(self.block_db, "set_canonical"):
+                self.block_db.set_canonical(height, h)
+            if self.tx_index is not None:
+                block = self.block_db.get_block_by_hash(h)
+                if block is not None:
+                    self._index_block_if_canonical(height=height, block_hash=h, block=block)
+
+            ts = _timestamp_of(header)
+            if ts is not None:
+                self._update_difficulty(ts)
+
+        if old_height is not None and best.height < old_height:
+            self._delete_canonical_range(best.height + 1, old_height)
+
+        if hasattr(self.block_db, "set_head"):
+            self.block_db.set_head(best.height, best.h)
+        else:
+            self.block_db.set_canonical_head(best.height, best.h)
+
+    def _delete_canonical_range(self, start: int, end: int) -> None:
+        if start > end:
+            return
+        kv = getattr(self.block_db, "kv", None)
+        if kv is None or not hasattr(kv, "delete"):
+            return
+        for height in range(start, end + 1):
+            try:
+                kv.delete(k_hix(height))
+            except Exception:
+                pass
+            self._remove_block_index(height)
+
+    def _index_block_if_canonical(
+        self, *, height: int, block_hash: bytes, block: Block
+    ) -> None:
+        if self.tx_index is None or not getattr(block, "txs", None):
+            return
+        tx_hashes = []
+        for tx in block.txs:
+            try:
+                tx_hashes.append(self._tx_hash(tx))
+            except Exception:  # pragma: no cover
+                return
+        if hasattr(self.tx_index, "index_block"):
+            try:
+                self.tx_index.index_block(height, block_hash, tx_hashes)
+                return
+            except Exception:
+                pass
+        if hasattr(self.tx_index, "put"):
+            for idx, tx_hash in enumerate(tx_hashes):
+                try:
+                    self.tx_index.put(tx_hash, height, idx)
+                except Exception:  # pragma: no cover
+                    continue
+
+    def _remove_block_index(self, height: int) -> None:
+        if self.tx_index is None:
+            return
+        if hasattr(self.tx_index, "remove_block"):
+            try:
+                self.tx_index.remove_block(height)
+                return
+            except Exception:
+                return
+
+    # --- Orphan handling ----------------------------------------------------
+
+    def _remember_orphan(
+        self,
+        header_hash: bytes,
+        block: Block,
+        mapping: Dict[str, Any],
+        parent_hash: bytes,
+        height: int,
+    ) -> None:
+        if header_hash in self._orphan_pool:
+            return
+        entry = _OrphanBlock(
+            header_hash=header_hash,
+            parent_hash=parent_hash,
+            height=height,
+            block=block,
+            mapping=mapping,
+            received_at=time.time(),
+        )
+        self._orphan_pool[header_hash] = entry
+        self._orphan_parents.setdefault(parent_hash, deque()).append(header_hash)
+        while len(self._orphan_pool) > self._max_orphans:
+            old_hash, old_entry = self._orphan_pool.popitem(last=False)
+            parent_q = self._orphan_parents.get(old_entry.parent_hash)
+            if parent_q and old_hash in parent_q:
+                parent_q.remove(old_hash)
+            if parent_q and not parent_q:
+                self._orphan_parents.pop(old_entry.parent_hash, None)
+        log.debug(
+            "orphan stored",
+            extra={"hash": header_hash.hex(), "parent": parent_hash.hex(), "height": height},
+        )
+
+    def _process_orphans(self, parent_hash: bytes) -> None:
+        queue = self._orphan_parents.pop(parent_hash, deque())
+        while queue:
+            child_hash = queue.popleft()
+            entry = self._orphan_pool.pop(child_hash, None)
+            if entry is None:
+                continue
+            self.import_block(entry.block)
+
+    # --- Timestamp guardrails ----------------------------------------------
+
+    def _timestamp_sanity(
+        self, header: Header, parent_header: Header, payload: Dict[str, Any]
+    ) -> Optional[str]:
+        ts = _timestamp_of(header, payload)
+        if ts is None:
+            return None
+        parent_ts = _timestamp_of(parent_header)
+        if parent_ts is not None and ts < parent_ts:
+            return "timestamp regression"
+        if self._max_future_seconds > 0:
+            now = int(time.time())
+            if ts > now + self._max_future_seconds:
+                return "timestamp too far in future"
+        if self._min_block_spacing_ms > 0 and parent_ts is not None:
+            delta_ms = (ts - parent_ts) * 1000
+            if delta_ms < self._min_block_spacing_ms:
+                return "timestamp spacing too short"
+        return None
+
+
+@dataclass(frozen=True)
+class _OrphanBlock:
+    header_hash: bytes
+    parent_hash: bytes
+    height: int
+    block: Block
+    mapping: Dict[str, Any]
+    received_at: float
 
 
 _IMPORTER_CACHE: Dict[int, BlockImporter] = {}

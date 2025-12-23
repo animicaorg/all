@@ -68,6 +68,7 @@ DEFAULT_TX_GAS_LIMIT = INTRINSIC_GAS_TRANSFER  # 21,000 gas for simple transfers
 # In-memory job cache for miner.getWork / miner.submitWork flows
 _JOB_CACHE: dict[str, dict[str, Any]] = {}
 _LOCAL_HEAD: dict[str, Any] = {}
+_HEAD_STATE: dict[str, Any] = {"height": None, "hash": None, "generation": 0}
 _AUTO_MINE: bool = False
 _AUTO_TASK: asyncio.Task | None = None
 
@@ -590,7 +591,7 @@ def _ctx():
         return deps.build_context()
 
 
-def _head_info() -> Tuple[bytes, int, bytes, int, bytes]:
+def _current_head_snapshot() -> dict[str, Any]:
     ctx = _ctx()
     snap = ctx.get_head()
     if _LOCAL_HEAD and isinstance(_LOCAL_HEAD, dict):
@@ -600,11 +601,36 @@ def _head_info() -> Tuple[bytes, int, bytes, int, bytes]:
             snap = _LOCAL_HEAD
     if (snap.get("height") is None or snap.get("hash") is None) and _LOCAL_HEAD:
         snap = _LOCAL_HEAD
+
     header = snap.get("header") if isinstance(snap, dict) else None
     height = int(snap.get("height") or 0)
-    chain_id = int(getattr(header, "chain_id", None) or ctx.cfg.chain_id)
+    hash_hex = snap.get("hash") if isinstance(snap, dict) else None
+    if hash_hex is None and header is not None:
+        header_hash = getattr(header, "hash", None)
+        if callable(header_hash):
+            hash_hex = "0x" + header_hash().hex()
+        elif isinstance(header_hash, (bytes, bytearray)):
+            hash_hex = "0x" + bytes(header_hash).hex()
 
-    parent_hash_hex = snap.get("hash") if isinstance(snap, dict) else None
+    if hash_hex != _HEAD_STATE.get("hash") or height != _HEAD_STATE.get("height"):
+        _HEAD_STATE["hash"] = hash_hex
+        _HEAD_STATE["height"] = height
+        _HEAD_STATE["generation"] = int(_HEAD_STATE.get("generation", 0)) + 1
+    return {
+        "height": height,
+        "hash": hash_hex,
+        "header": header,
+        "generation": int(_HEAD_STATE.get("generation", 0)),
+    }
+
+
+def _head_info() -> Tuple[bytes, int, bytes, int, bytes]:
+    snap = _current_head_snapshot()
+    header = snap.get("header")
+    height = int(snap.get("height") or 0)
+    chain_id = int(getattr(header, "chain_id", None) or _ctx().cfg.chain_id)
+
+    parent_hash_hex = snap.get("hash")
     if parent_hash_hex and isinstance(parent_hash_hex, str):
         parent_hash = bytes.fromhex(
             parent_hash_hex[2:] if parent_hash_hex.startswith("0x") else parent_hash_hex
@@ -866,6 +892,10 @@ def _record_local_block(
     height: int, block_hash: str, header: dict[str, Any] | None = None
 ) -> None:
     _LOCAL_HEAD.update({"height": height, "hash": block_hash, "header": header})
+    if _HEAD_STATE.get("height") != height or _HEAD_STATE.get("hash") != block_hash:
+        _HEAD_STATE["height"] = height
+        _HEAD_STATE["hash"] = block_hash
+        _HEAD_STATE["generation"] = int(_HEAD_STATE.get("generation", 0)) + 1
 
 
 def auto_mine_enabled() -> bool:
@@ -2452,6 +2482,16 @@ def miner_get_work(params: Any | None = None) -> Dict[str, Any]:
         sign_bytes = json.dumps(body, sort_keys=True, separators=(",", ":")).encode(
             "utf-8"
         )
+    head_snapshot = _current_head_snapshot()
+    now = time.time()
+    for cached_job_id, cached in list(_JOB_CACHE.items()):
+        created_at = float(cached.get("created_at") or 0)
+        if (
+            created_at < now - 120
+            or cached.get("head_generation") != head_snapshot.get("generation")
+        ):
+            _JOB_CACHE.pop(cached_job_id, None)
+
     job_id = uuid.uuid4().hex
     _JOB_CACHE[job_id] = {
         "template": tpl,
@@ -2460,15 +2500,24 @@ def miner_get_work(params: Any | None = None) -> Dict[str, Any]:
         "share_target": share_target,
         "height": int(tpl.height),
         "created_at": time.time(),
+        "parent_hash": tpl.parent_hash,
+        "chain_id": int(tpl.header.chain_id),
+        "head_generation": head_snapshot.get("generation"),
     }
 
     return {
         "jobId": job_id,
+        "templateId": job_id,
         "header": header_view,
         "thetaMicro": int(theta),
         "shareTarget": float(share_target),
         "target": hex(block_target),
         "height": int(tpl.height),
+        "parentHash": _to_hex(tpl.parent_hash),
+        "parentHeight": int(tpl.height) - 1,
+        "chainId": int(tpl.header.chain_id),
+        "createdAt": int(time.time()),
+        "headGeneration": head_snapshot.get("generation"),
         "hints": {"mixSeed": _to_hex(tpl.mix_seed)},
         "signBytes": _to_hex(sign_bytes),
         "algo": algo_hint,
@@ -2522,12 +2571,44 @@ def miner_submit_work(*args: Any, **payload: Any) -> Dict[str, Any]:
     if job is None:
         raise ValueError("unknown or stale jobId")
 
+    current_head = _current_head_snapshot()
+    head_height = int(current_head.get("height") or 0)
+    head_hash_hex = current_head.get("hash")
+    head_generation = current_head.get("generation")
+    if head_generation != job.get("head_generation"):
+        _JOB_CACHE.pop(str(job_id), None)
+        return {
+            "accepted": False,
+            "jobId": job_id,
+            "stale": True,
+            "reason": "stale-head",
+            "head": {"height": head_height, "hash": head_hash_hex},
+        }
+
     # Guard against stale work: if the head advanced to this height or beyond,
-    # reject and evict the job.
-    _parent_hash, head_height, _mix, _chain_id, _state_root = _head_info()
+    # or parent differs from current canonical head, reject and evict the job.
     if head_height >= int(job.get("height", 0)):
         _JOB_CACHE.pop(str(job_id), None)
-        raise ValueError("stale work for current head")
+        return {
+            "accepted": False,
+            "jobId": job_id,
+            "stale": True,
+            "reason": "stale-height",
+            "head": {"height": head_height, "hash": head_hash_hex},
+        }
+    if head_hash_hex:
+        head_hash_bytes = bytes.fromhex(
+            head_hash_hex[2:] if head_hash_hex.startswith("0x") else head_hash_hex
+        )
+        if job.get("parent_hash") and head_hash_bytes != job.get("parent_hash"):
+            _JOB_CACHE.pop(str(job_id), None)
+            return {
+                "accepted": False,
+                "jobId": job_id,
+                "stale": True,
+                "reason": "stale-parent",
+                "head": {"height": head_height, "hash": head_hash_hex},
+            }
 
     nonce = _parse_nonce(nonce_val)
     sign_bytes: bytes = job["sign_bytes"]
