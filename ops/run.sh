@@ -280,8 +280,8 @@ ensure_pool_rpc() {
       return 0
     fi
 
-    echo "[animica] RPC ${rpc_url} unreachable; auto-starting local node for the pool"
-    start_node &
+    echo "[animica] RPC ${rpc_url} unreachable; auto-starting local node for the pool (P2P disabled)"
+    ANIMICA_P2P_REQUIRED=0 ANIMICA_P2P_ENABLE=0 ANIMICA_P2P_CORE_ENABLE=0 start_node &
     AUTO_NODE_PID=$!
     trap cleanup_auto_node EXIT INT TERM
 
