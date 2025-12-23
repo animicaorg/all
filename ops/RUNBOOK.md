@@ -12,6 +12,18 @@ docker compose -f ops/docker/docker-compose.devnet.yml --profile devnet up -d no
 ./ops/run.sh --profile devnet node
   ```
 
+## Host P2P vs Docker nodes (port conflicts)
+- `./setup.sh` now defaults to **not** starting a host P2P listener when docker compose files are present.
+  - Opt in: `./setup.sh --p2p` or `ENABLE_P2P=1 ./setup.sh`
+  - Opt out: `./setup.sh --no-p2p` or `DISABLE_P2P=1 ./setup.sh`
+- Docker nodes use host ports `8545` (RPC) and `30333` (P2P TCP) by default.
+- Host P2P (outside docker) defaults to port `30334` to avoid collisions unless you override it.
+- If you previously started host P2P on `30333`, stop it or run:
+  ```bash
+animica node up --kill-conflicts
+  ```
+  This stops the Animica-owned PID in `logs/animica-p2p.pid` before docker starts.
+
 ## Restart a node
 - Docker compose:
   ```bash

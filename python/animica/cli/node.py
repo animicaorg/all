@@ -5,9 +5,14 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
+import shutil
+import signal
+import socket
 import subprocess
 import sys
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -59,6 +64,258 @@ PEER_COUNT_METHODS = (
 app = typer.Typer(help="Manage and query Animica nodes.")
 p2p_app = typer.Typer(help="P2P diagnostics and peer helpers.")
 
+
+@dataclass(frozen=True)
+class ProcessInfo:
+    pid: int
+    command: str
+    source: str
+
+
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parents[3]
+
+
+def _resolve_pid_file() -> Path:
+    cwd_candidate = Path.cwd() / "logs" / "animica-p2p.pid"
+    if cwd_candidate.exists():
+        return cwd_candidate
+    return _repo_root() / "logs" / "animica-p2p.pid"
+
+
+def _parse_pid_file(pid_file: Path) -> dict[str, Optional[int]]:
+    if not pid_file.exists():
+        return {}
+    content = pid_file.read_text(encoding="utf-8").strip()
+    if not content:
+        return {}
+    if content.isdigit():
+        return {"pid": int(content), "port": None}
+    data: dict[str, Optional[int]] = {"pid": None, "port": None}
+    for line in content.splitlines():
+        if "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip().lower()
+        value = value.strip()
+        if key == "pid" and value.isdigit():
+            data["pid"] = int(value)
+        if key == "port" and value.isdigit():
+            data["port"] = int(value)
+    return data
+
+
+def _pid_is_running(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
+def _process_command(pid: int) -> str:
+    if shutil.which("ps") is None:
+        return "unknown"
+    result = subprocess.run(
+        ["ps", "-p", str(pid), "-o", "comm="],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    command = result.stdout.strip()
+    return command if command else "unknown"
+
+
+def _port_in_use(port: int, host: str = "0.0.0.0") -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            sock.bind((host, port))
+        except OSError:
+            return True
+    return False
+
+
+def _process_on_port(port: int) -> Optional[ProcessInfo]:
+    if shutil.which("lsof"):
+        result = subprocess.run(
+            ["lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        lines = result.stdout.splitlines()
+        if len(lines) > 1:
+            parts = lines[1].split()
+            if len(parts) >= 2 and parts[1].isdigit():
+                return ProcessInfo(pid=int(parts[1]), command=parts[0], source="lsof")
+    if shutil.which("ss"):
+        result = subprocess.run(
+            ["ss", "-ltnp"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        for line in result.stdout.splitlines():
+            if f":{port} " not in line and not line.endswith(f":{port}"):
+                continue
+            match = re.search(r'"([^"]+)",pid=(\d+)', line)
+            if match:
+                return ProcessInfo(
+                    pid=int(match.group(2)),
+                    command=match.group(1),
+                    source="ss",
+                )
+    return None
+
+
+def _animica_p2p_process(pid_file: Path, port: int) -> Optional[ProcessInfo]:
+    data = _parse_pid_file(pid_file)
+    pid = data.get("pid")
+    if not pid or not _pid_is_running(pid):
+        return None
+    if data.get("port") not in (None, port):
+        return None
+    return ProcessInfo(pid=pid, command=_process_command(pid), source="pid_file")
+
+
+def _terminate_process(pid: int) -> None:
+    os.kill(pid, signal.SIGTERM)
+
+
+def _ensure_ports_available(
+    rpc_port: int,
+    p2p_port: int,
+    *,
+    kill_conflicts: bool,
+    pid_file: Path,
+) -> None:
+    if _port_in_use(rpc_port):
+        proc = _process_on_port(rpc_port)
+        detail = (
+            f"{proc.command} (pid {proc.pid}, via {proc.source})"
+            if proc
+            else "unknown process"
+        )
+        typer.secho(
+            f"Error: RPC port {rpc_port} is already in use by {detail}.",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    if not _port_in_use(p2p_port):
+        return
+
+    animica_proc = _animica_p2p_process(pid_file, p2p_port)
+    if animica_proc:
+        if kill_conflicts:
+            typer.secho(
+                f"Stopping Animica host P2P process (pid {animica_proc.pid}) occupying {p2p_port}.",
+                fg=typer.colors.YELLOW,
+            )
+            _terminate_process(animica_proc.pid)
+            if pid_file.exists():
+                pid_file.unlink(missing_ok=True)
+            time.sleep(1)
+            if _port_in_use(p2p_port):
+                typer.secho(
+                    f"Error: P2P port {p2p_port} is still in use after stopping pid {animica_proc.pid}.",
+                    fg=typer.colors.RED,
+                    err=True,
+                )
+                raise typer.Exit(code=1)
+            return
+        typer.secho(
+            (
+                f"Host P2P started by setup.sh is occupying port {p2p_port} "
+                f"(pid {animica_proc.pid}). Stop it or run with --kill-conflicts."
+            ),
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    proc = _process_on_port(p2p_port)
+    detail = (
+        f"{proc.command} (pid {proc.pid}, via {proc.source})"
+        if proc
+        else "unknown process"
+    )
+    typer.secho(
+        f"Error: P2P port {p2p_port} is already in use by {detail}.",
+        fg=typer.colors.RED,
+        err=True,
+    )
+    raise typer.Exit(code=1)
+
+
+def _wait_for_rpc_ready(
+    rpc_url: str,
+    timeout_s: int,
+    interval_s: float = 2.0,
+) -> bool:
+    deadline = time.time() + timeout_s
+    payload = {"jsonrpc": "2.0", "id": 1, "method": "chain.getHead", "params": []}
+    with httpx.Client(timeout=3.0) as client:
+        while time.time() < deadline:
+            try:
+                response = client.post(rpc_url, json=payload)
+                if response.status_code == 200:
+                    data = response.json()
+                    if "result" in data:
+                        return True
+            except Exception:
+                pass
+            time.sleep(interval_s)
+    return False
+
+
+def _print_docker_diagnostics(compose_file: Path, network: str) -> None:
+    typer.secho("\nDocker diagnostics (last 200 lines):", fg=typer.colors.YELLOW, bold=True)
+    logs = subprocess.run(
+        ["docker", "compose", "-f", str(compose_file), "logs", "--tail=200", "node"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    log_output = logs.stdout.strip()
+    if log_output:
+        typer.echo(log_output)
+    elif logs.stderr:
+        typer.echo(logs.stderr, err=True)
+
+    lowered = log_output.lower()
+    if "address already in use" in lowered or "bind" in lowered:
+        typer.secho(
+            "Likely cause: port binding failure (address already in use).",
+            fg=typer.colors.RED,
+            err=True,
+        )
+    if "permission denied" in lowered:
+        typer.secho(
+            "Likely cause: permission error while binding ports or accessing data.",
+            fg=typer.colors.RED,
+            err=True,
+        )
+
+    container_name = {
+        "mainnet": "animica-mainnet-node",
+        "testnet": "animica-testnet-node",
+        "devnet": "animica-node",
+        "local-devnet": "animica-node",
+    }.get(network, f"animica-{network}-node")
+    typer.secho("\nContainer status:", fg=typer.colors.YELLOW, bold=True)
+    status = subprocess.run(
+        ["docker", "ps", "--filter", f"name={container_name}"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if status.stdout.strip():
+        typer.echo(status.stdout.strip())
+    elif status.stderr:
+        typer.echo(status.stderr.strip(), err=True)
 
 async def rpc_call(
     method: str, params: Optional[list[Any]] = None, *, rpc_url: str, timeout: Optional[float] = None
@@ -116,6 +373,23 @@ def _is_bootstrap_node() -> bool:
 
 def _pretty(obj: Any) -> str:
     return json.dumps(obj, indent=2)
+
+
+def _resolve_host_port(
+    env_primary: str,
+    default: int,
+    *,
+    env_fallback: Optional[str] = None,
+) -> int:
+    value = os.environ.get(env_primary)
+    if not value and env_fallback:
+        value = os.environ.get(env_fallback)
+    if not value:
+        return default
+    try:
+        return int(value)
+    except ValueError as exc:
+        raise typer.BadParameter(f"{env_primary} must be an integer") from exc
 
 
 def _extract_field(data: dict[str, Any], *keys: str) -> Any:
@@ -1292,6 +1566,16 @@ def up(
         "--allow-bootstrap-rpc/--no-allow-bootstrap-rpc",
         help="Allow bootstrap RPC usage for optional discovery/sync comparison",
     ),
+    kill_conflicts: bool = typer.Option(
+        False,
+        "--kill-conflicts",
+        help="Stop Animica-owned host P2P processes that block required ports",
+    ),
+    rpc_ready_timeout: int = typer.Option(
+        60,
+        "--rpc-ready-timeout",
+        help="Seconds to wait for local RPC readiness after docker start",
+    ),
 ) -> None:
     """
     Start an Animica node using Docker Compose.
@@ -1328,6 +1612,9 @@ def up(
       
       # Override default ports
       HOST_RPC_PORT=9545 animica node up
+
+      # Stop Animica-owned host P2P conflicts before starting docker
+      animica node up --kill-conflicts
       
     To also start Studio Services (optional):
       animica node up
@@ -1338,12 +1625,17 @@ def up(
     
     # Get network-specific compose file
     compose_file = _get_compose_file(network)
-    net_cfg = load_network_config(network)
-    data_dir = str(Path(net_cfg.data_dir).expanduser())
-    
     defaults = get_network_defaults(network)
     net_cfg = load_network_config(network)
     data_dir = str(Path(net_cfg.data_dir).expanduser())
+
+    rpc_port = _resolve_host_port("HOST_RPC_PORT", defaults["rpc_port"])
+    p2p_port = _resolve_host_port(
+        "HOST_P2P_PORT",
+        defaults["p2p_port"],
+        env_fallback="HOST_P2P_TCP_PORT",
+    )
+    metrics_port = _resolve_host_port("HOST_METRICS_PORT", defaults["metrics_port"])
 
     allow_bootstrap = allow_bootstrap_rpc or os.getenv("ANIMICA_ALLOW_BOOTSTRAP_RPC") == "1"
     bootstrap_node = _is_bootstrap_node()
@@ -1372,13 +1664,20 @@ def up(
     except Exception as exc:
         typer.secho(f"Error: {exc}", fg=typer.colors.RED, err=True)
         raise typer.Exit(code=1)
+
+    _ensure_ports_available(
+        rpc_port,
+        p2p_port,
+        kill_conflicts=kill_conflicts,
+        pid_file=_resolve_pid_file(),
+    )
     
     typer.secho(f"Starting node for network: {network}", fg=typer.colors.CYAN, bold=True)
     typer.echo(f"Using compose file: {compose_file}")
     typer.echo(f"Chain ID: {defaults['chain_id']}")
-    typer.echo(f"Host RPC Port: {os.environ.get('HOST_RPC_PORT', defaults['rpc_port'])}")
-    typer.echo(f"Host P2P Port: {os.environ.get('HOST_P2P_PORT', defaults['p2p_port'])}")
-    typer.echo(f"Host Metrics Port: {os.environ.get('HOST_METRICS_PORT', defaults['metrics_port'])}")
+    typer.echo(f"Host RPC Port: {rpc_port}")
+    typer.echo(f"Host P2P Port: {p2p_port}")
+    typer.echo(f"Host Metrics Port: {metrics_port}")
     typer.echo(f"Data directory: {data_dir}")
     
     # Build docker-compose command
@@ -1414,6 +1713,10 @@ def up(
         "ANIMICA_DATA_DIR": data_dir,
         "ANIMICA_P2P_DATA_DIR": str(Path(data_dir) / "p2p"),
     }
+    compose_env.setdefault("HOST_RPC_PORT", str(rpc_port))
+    compose_env.setdefault("HOST_P2P_PORT", str(p2p_port))
+    compose_env.setdefault("HOST_P2P_TCP_PORT", str(p2p_port))
+    compose_env.setdefault("HOST_METRICS_PORT", str(metrics_port))
     if bootstrap_node:
         compose_env.setdefault("ANIMICA_RPC_BOOTSTRAP_NODE", "1")
 
@@ -1428,6 +1731,17 @@ def up(
         if result.returncode == 0:
             typer.secho("✓ Node started successfully!", fg=typer.colors.GREEN, bold=True)
             if detach:
+                rpc_ready_url = f"http://127.0.0.1:{rpc_port}/rpc"
+                typer.echo(f"\nWaiting for RPC readiness on {rpc_ready_url}...")
+                if not _wait_for_rpc_ready(rpc_ready_url, rpc_ready_timeout):
+                    typer.secho(
+                        f"RPC not reachable after {rpc_ready_timeout}s.",
+                        fg=typer.colors.RED,
+                        err=True,
+                    )
+                    _print_docker_diagnostics(compose_file, network)
+                    raise typer.Exit(code=1)
+                local_rpc_url = f"http://127.0.0.1:{rpc_port}/rpc"
                 typer.echo(f"\nNode is running in the background on network: {network}")
                 typer.echo(f"View logs with: docker compose -f {compose_file} logs -f")
                 typer.echo("Check status with: animica node status")
@@ -1445,7 +1759,7 @@ def up(
                 typer.echo("\nWallet file location: ~/.animica/wallets.json")
                 _post_start_peer_bootstrap(
                     net_cfg,
-                    rpc_url=net_cfg.rpc_url,
+                    rpc_url=local_rpc_url,
                     bootstrap_url=os.getenv("ANIMICA_BOOTSTRAP_RPC_URL")
                     if allow_bootstrap
                     else None,
@@ -1454,7 +1768,7 @@ def up(
                 if wait_sync and not bootstrap_node:
                     _wait_for_sync_completion(
                         net_cfg,
-                        rpc_url=net_cfg.rpc_url,
+                        rpc_url=local_rpc_url,
                         bootstrap_url=os.getenv("ANIMICA_BOOTSTRAP_RPC_URL")
                         if allow_bootstrap
                         else None,
@@ -1655,8 +1969,8 @@ def up_all(
                 
         except FileNotFoundError:
             typer.secho(
-                f"✗ Error: 'docker' command not found.",
-                fg=typer.colors.RED
+                "✗ Error: 'docker' command not found.",
+                fg=typer.colors.RED,
             )
             typer.echo("Please install Docker and Docker Compose.", err=True)
             failed_networks.append(network)
