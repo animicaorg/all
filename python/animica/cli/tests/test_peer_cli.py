@@ -954,8 +954,8 @@ def test_add_peer_with_port_auto_detection(monkeypatch: Any, tmp_path: Any) -> N
 
 
 @respx_mock
-def test_bootstrap_remote_rpc_reports_unauthorized(monkeypatch: Any, tmp_path: Any) -> None:
-    """Test bootstrap reports unauthorized when peer injection is blocked."""
+def test_bootstrap_remote_rpc_allows_peer_injection(monkeypatch: Any, tmp_path: Any) -> None:
+    """Test bootstrap allows peer injection for remote RPC endpoints."""
 
     rpc_url = "https://rpc.animica.org/rpc"
     monkeypatch.setenv("ANIMICA_NETWORK", "mainnet")
@@ -974,12 +974,13 @@ def test_bootstrap_remote_rpc_reports_unauthorized(monkeypatch: Any, tmp_path: A
             ),
             httpx.Response(200, json={"jsonrpc": "2.0", "id": 1, "result": {"ok": True}}),
             httpx.Response(200, json={"jsonrpc": "2.0", "id": 1, "result": []}),
+            httpx.Response(200, json={"jsonrpc": "2.0", "id": 1, "result": True}),
             httpx.Response(
                 200,
                 json={
                     "jsonrpc": "2.0",
                     "id": 1,
-                    "error": {"code": -32003, "message": "UNAUTHORIZED: admin token required or localhost"},
+                    "result": {"peers_total": 2, "peers_inbound": 1, "peers_outbound": 1},
                 },
             ),
         ]
@@ -987,7 +988,7 @@ def test_bootstrap_remote_rpc_reports_unauthorized(monkeypatch: Any, tmp_path: A
 
     result = runner.invoke(peer.app, ["bootstrap", "--rpc-url", rpc_url, "--store", str(store_path)])
     assert result.exit_code == 0
-    assert "Peer injection unauthorized" in result.output
+    assert "Pushed" in result.output
 
     with store_path.open("r") as f:
         data = json.load(f)

@@ -166,7 +166,7 @@ class AccessPolicy:
         return False
 
     def _peer_injection_authorized(self, ctx: t.Any, client_ip: str | None) -> bool:
-        return self._authorized(ctx, client_ip) or self._is_local_client(client_ip)
+        return True
 
     def _enforce_rate_limit(self, client_ip: str | None) -> None:
         if self.bootstrap_rate_limit_rpm <= 0:
