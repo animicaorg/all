@@ -13,10 +13,14 @@ import os
 from pathlib import Path
 from typing import Optional
 
+import asyncio
+import logging
+
 import typer
 from animica.coin import COIN_UNIT
 from animica.config import load_network_config
 from animica.cli.rpc_guard import guard_bootstrap_rpc
+from animica.cli.rpc import call_rpc
 from .timeouts import DEFAULT_RPC_TIMEOUT, RPC_TIMEOUT_ENV, resolve_timeout
 
 try:
@@ -158,6 +162,86 @@ def _resolve_payout_address(address_or_label: str) -> str:
     raise typer.Exit(2)
 
 
+def _check_sync(rpc_url: str, *, force: bool) -> None:
+    try:
+        head = call_rpc("chain_getHead", [], rpc_url)
+    except Exception as exc:  # noqa: BLE001
+        if force:
+            typer.echo(f"Warning: sync status unavailable ({exc}); mining forced.")
+            return
+        raise typer.Exit(1)
+    height = int(head.get("height") or head.get("number") or 0)
+    if height == 0:
+        typer.echo("Mining allowed at height 0 (bootstrap).")
+        return
+    if force:
+        typer.echo("Warning: mining forced; sync gating bypassed.")
+
+
+async def _run_solo(
+    *,
+    rpc_url: str,
+    proof_type: str,
+    device: str,
+    threads: int,
+    count: Optional[int],
+    stats_interval: int,
+) -> None:
+    from mining.orchestrator import MinerOrchestrator, OrchestratorConfig
+    from mining.rpc_adapter import RpcTemplateProvider
+    from mining.share_submitter import ShareSubmitter, SubmitterConfig
+
+    provider = RpcTemplateProvider(rpc_url=rpc_url, proof_type=proof_type)
+    submitter = ShareSubmitter(SubmitterConfig(rpc_url=rpc_url))
+    cfg = OrchestratorConfig(device_kind=device, threads=threads)
+    orchestrator = MinerOrchestrator(template_provider=provider, submitter=submitter, config=cfg)
+    await orchestrator.start()
+    try:
+        while True:
+            stats = submitter.stats()
+            if count and stats.blocks_accepted >= count:
+                break
+            if stats_interval:
+                typer.echo(
+                    f"shares ok={stats.shares_accepted} rej={stats.shares_rejected} "
+                    f"blocks={stats.blocks_accepted} errors={stats.shares_errors} "
+                    f"last_error={stats.last_error}"
+                )
+            await asyncio.sleep(max(1, stats_interval))
+    finally:
+        await orchestrator.stop()
+
+
+async def _run_pool(
+    *,
+    rpc_url: str,
+    listen: str,
+    port: int,
+    share_target: float,
+    proof_type: str,
+    no_p2p: bool,
+    p2p_port: int,
+) -> None:
+    from mining.pool import PoolConfig, StratumPool
+
+    cfg = PoolConfig(
+        rpc_url=rpc_url,
+        listen_host=listen,
+        listen_port=port,
+        share_target=share_target,
+        proof_type=proof_type,
+        no_p2p=no_p2p,
+        p2p_port=p2p_port,
+    )
+    pool = StratumPool(cfg)
+    await pool.start()
+    try:
+        while True:
+            await asyncio.sleep(3600)
+    finally:
+        await pool.stop()
+
+
 @app.command("run-pool")
 def run_pool(
     rpc_url: Optional[str] = typer.Option(
@@ -197,6 +281,220 @@ def run_pool(
         if value is not None:
             os.environ[key] = value
     pool_cli.main([])
+
+
+@app.command("solo")
+def solo(
+    address: str = typer.Option(
+        ..., "--address", help="Payout address (anim1...)"
+    ),
+    rpc_url: Optional[str] = typer.Option(
+        None, "--rpc-url", help="Animica node RPC URL", envvar=RPC_ENV
+    ),
+    proof: str = typer.Option(
+        "sha256d", "--proof", help="Proof type (sha256d|aicf|quantum|auto)"
+    ),
+    device: str = typer.Option(
+        "cpu", "--device", help="Device backend", show_default=True
+    ),
+    count: Optional[int] = typer.Option(
+        None, "--count", help="Stop after N blocks"
+    ),
+    threads: int = typer.Option(
+        os.cpu_count() or 1, "--threads", help="CPU threads"
+    ),
+    affinity: Optional[str] = typer.Option(
+        None, "--affinity", help="CPU affinity mask"
+    ),
+    force: bool = typer.Option(
+        False, "--force", help="Bypass sync gating"
+    ),
+    log_json: bool = typer.Option(False, "--log-json", help="Emit JSON logs"),
+    stats_interval: int = typer.Option(5, "--stats-interval", help="Stats interval (sec)"),
+) -> None:
+    _ensure_network_env()
+    effective_rpc = rpc_url or os.environ.get(RPC_ENV) or load_network_config().rpc_url
+    guard_bootstrap_rpc(effective_rpc, allow_remote=False, method="miner.solo")
+    _check_sync(effective_rpc, force=force)
+    logging.basicConfig(level=logging.INFO)
+    if affinity:
+        os.environ["ANIMICA_CPU_AFFINITY"] = affinity
+    if log_json:
+        os.environ["ANIMICA_LOG_JSON"] = "1"
+    if device not in SUPPORTED_DEVICES:
+        raise typer.Exit(2)
+    asyncio.run(
+        _run_solo(
+            rpc_url=effective_rpc,
+            proof_type=proof,
+            device=device,
+            threads=threads,
+            count=count,
+            stats_interval=stats_interval,
+        )
+    )
+
+
+@app.command("pool")
+def pool(
+    rpc_url: Optional[str] = typer.Option(
+        None, "--rpc-url", help="Animica node RPC URL", envvar=RPC_ENV
+    ),
+    listen: str = typer.Option("0.0.0.0", "--listen", help="Stratum bind host"),
+    port: int = typer.Option(5333, "--port", help="Stratum port"),
+    mode: str = typer.Option("solo", "--mode", help="Payout mode (pps|pplns|solo)"),
+    coinbase_address: Optional[str] = typer.Option(
+        None, "--coinbase-address", "--payout-address", help="Pool payout address"
+    ),
+    proof: str = typer.Option(
+        "sha256d", "--proof", help="Proof type (sha256d|aicf|quantum|auto)"
+    ),
+    device: str = typer.Option(
+        "cpu", "--device", help="Device backend", show_default=True
+    ),
+    threads: int = typer.Option(
+        os.cpu_count() or 1, "--threads", help="CPU threads"
+    ),
+    no_p2p: bool = typer.Option(False, "--no-p2p", help="Disable in-process P2P"),
+    p2p_port: int = typer.Option(30333, "--p2p-port", help="P2P port"),
+) -> None:
+    _ensure_network_env()
+    effective_rpc = rpc_url or os.environ.get(RPC_ENV) or load_network_config().rpc_url
+    guard_bootstrap_rpc(effective_rpc, allow_remote=False, method="miner.pool")
+    _check_sync(effective_rpc, force=True)
+    logging.basicConfig(level=logging.INFO)
+    if coinbase_address:
+        _resolve_payout_address(coinbase_address)
+    typer.echo(f"Pool mode={mode} device={device} threads={threads}")
+    asyncio.run(
+        _run_pool(
+            rpc_url=effective_rpc,
+            listen=listen,
+            port=port,
+            share_target=float(os.getenv("ANIMICA_SHARE_TARGET", "0.01")),
+            proof_type=proof,
+            no_p2p=no_p2p,
+            p2p_port=p2p_port,
+        )
+    )
+
+
+@app.command("cpu")
+def cpu(
+    address: str = typer.Option(..., "--address", help="Payout address (anim1...)"),
+    rpc_url: Optional[str] = typer.Option(
+        None, "--rpc-url", help="Animica node RPC URL", envvar=RPC_ENV
+    ),
+    count: Optional[int] = typer.Option(None, "--count", help="Stop after N blocks"),
+    threads: int = typer.Option(os.cpu_count() or 1, "--threads", help="CPU threads"),
+) -> None:
+    solo(
+        address=address,
+        rpc_url=rpc_url,
+        proof="sha256d",
+        device="cpu",
+        count=count,
+        threads=threads,
+        affinity=None,
+        force=False,
+        log_json=False,
+        stats_interval=5,
+    )
+
+
+@app.command("aicf")
+def aicf(
+    address: str = typer.Option(..., "--address", help="Payout address (anim1...)"),
+    rpc_url: Optional[str] = typer.Option(
+        None, "--rpc-url", help="Animica node RPC URL", envvar=RPC_ENV
+    ),
+    count: Optional[int] = typer.Option(None, "--count", help="Stop after N blocks"),
+    device: str = typer.Option("auto", "--device", help="Device backend"),
+    threads: int = typer.Option(os.cpu_count() or 1, "--threads", help="CPU threads"),
+) -> None:
+    if device == "auto":
+        device = "cpu"
+        typer.echo("GPU AICF backend not available; falling back to CPU.")
+    solo(
+        address=address,
+        rpc_url=rpc_url,
+        proof="aicf",
+        device=device,
+        count=count,
+        threads=threads,
+        affinity=None,
+        force=False,
+        log_json=False,
+        stats_interval=5,
+    )
+
+
+@app.command("quantum")
+def quantum(
+    address: str = typer.Option(..., "--address", help="Payout address (anim1...)"),
+    rpc_url: Optional[str] = typer.Option(
+        None, "--rpc-url", help="Animica node RPC URL", envvar=RPC_ENV
+    ),
+    count: Optional[int] = typer.Option(None, "--count", help="Stop after N blocks"),
+    device: str = typer.Option("cpu", "--device", help="Device backend"),
+    threads: int = typer.Option(os.cpu_count() or 1, "--threads", help="CPU threads"),
+) -> None:
+    try:
+        from mining.quantum_worker import SimulatedQuantumProvider
+
+        _ = SimulatedQuantumProvider()
+    except Exception:
+        typer.echo("Quantum simulator unavailable; cannot start quantum miner.")
+        raise typer.Exit(1)
+    solo(
+        address=address,
+        rpc_url=rpc_url,
+        proof="quantum",
+        device=device,
+        count=count,
+        threads=threads,
+        affinity=None,
+        force=False,
+        log_json=False,
+        stats_interval=5,
+    )
+
+
+da_app = typer.Typer(help="Data availability utilities")
+app.add_typer(da_app, name="da")
+
+
+@da_app.command("push")
+def da_push(
+    file: Path = typer.Argument(..., help="File to commit to DA root"),
+) -> None:
+    from mining.da_adapter import compute_da_root, set_da_root
+
+    data = file.read_bytes()
+    root = compute_da_root(data)
+    set_da_root(root)
+    typer.echo(f"DA root set to 0x{root.hex()}")
+
+
+@da_app.command("run")
+def da_run() -> None:
+    from mining.storage_worker import StorageWorker
+
+    async def _run() -> None:
+        worker = StorageWorker.create_from_env()
+        await worker.start()
+        typer.echo("DA worker running (Ctrl+C to stop).")
+        try:
+            while True:
+                for rec in worker.pop_ready():
+                    typer.echo(
+                        f"DA result {rec.task_id} qos={rec.metrics.get('qos')} root={rec.output_digest.hex()}"
+                    )
+                await asyncio.sleep(1.0)
+        finally:
+            await worker.stop()
+
+    asyncio.run(_run())
 
 
 @app.command("show-config")

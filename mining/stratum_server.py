@@ -23,7 +23,7 @@ from .stratum_protocol import (InvalidParams, InvalidRequest, Method,
                                req_subscribe, res_authorize, res_authorize_v1,
                                res_submit, res_submit_v1, res_subscribe,
                                res_subscribe_v1, validate_request)
-from .templates import share_target_to_difficulty
+from .templates import MiningJob, share_target_to_difficulty
 
 try:
     # Prefer our shared logger if present
@@ -57,6 +57,11 @@ class StratumJob:
     target: Optional[str] = None  # optional full block target (hex int)
     sign_bytes: Optional[str] = None  # optional explicit signBytes prefix (0x…)
     height: Optional[int] = None
+    parent_hash: Optional[str] = None
+    parent_height: Optional[int] = None
+    chain_id: Optional[int] = None
+    expires_at: Optional[float] = None
+    proof_type: Optional[str] = None
     created_ts: float = field(default_factory=lambda: time.time())
 
 
@@ -151,11 +156,31 @@ class ShareValidator:
         except Exception:
             return False, "bad nonce", False, 0
 
-        # Compute digest(prefix || nonce_le8) and check against the share/block targets.
-        h = hashlib.sha3_256()
-        h.update(prefix)
-        h.update(nonce_int.to_bytes(8, "little", signed=False))
-        digest = h.digest()
+        # Compute digest(prefix || mixSeed || nonce_le8) and check against targets.
+        mix_hex = None
+        if isinstance(submit_params.get("hints"), dict):
+            mix_hex = submit_params.get("hints", {}).get("mixSeed")
+        if mix_hex is None and isinstance(job.hints, dict):
+            mix_hex = job.hints.get("mixSeed")
+        mix_seed = b""
+        if isinstance(mix_hex, str) and mix_hex.startswith("0x"):
+            try:
+                mix_seed = bytes.fromhex(mix_hex[2:])
+            except Exception:
+                mix_seed = b""
+
+        try:
+            from mining import nonce_domain as nd  # type: ignore
+
+            digest = nd.sha3_256(
+                prefix + mix_seed + nonce_int.to_bytes(8, "little", signed=False)
+            )
+        except Exception:
+            h = hashlib.sha3_256()
+            h.update(prefix)
+            h.update(mix_seed)
+            h.update(nonce_int.to_bytes(8, "little", signed=False))
+            digest = h.digest()
         digest_int = digest_to_int256(digest)
         h_micro = h_micro_from_digest(digest)
 
@@ -272,10 +297,30 @@ class StratumServer:
 
     # ---------------- job control ----------------
 
-    async def publish_job(self, job: StratumJob) -> None:
+    def _from_mining_job(self, job: MiningJob) -> StratumJob:
+        header_view = job.to_dict().get("header", {})
+        return StratumJob(
+            job_id=job.job_id,
+            header=header_view,
+            share_target=self._default_share_target,
+            theta_micro=job.theta_target_micro,
+            hints={"mixSeed": "0x" + job.header.mix_seed.hex()},
+            target=hex(job.target),
+            sign_bytes="0x" + job.sign_bytes.hex(),
+            height=job.header.number,
+            parent_hash="0x" + job.parent_hash.hex(),
+            parent_height=job.parent_height,
+            chain_id=job.chain_id,
+            expires_at=job.expires_at,
+            proof_type=job.proof_type,
+        )
+
+    async def publish_job(self, job: StratumJob | MiningJob) -> None:
         """
         Publish a new job (header template) to all connected sessions.
         """
+        if isinstance(job, MiningJob):
+            job = self._from_mining_job(job)
         self._jobs[job.job_id] = job
         self._current_job_id = job.job_id
         await self._broadcast_job(job, clean_jobs=True)
@@ -694,6 +739,18 @@ class StratumServer:
                 )
                 return
             job = self._jobs[job_id]
+            if job_id != self._current_job_id:
+                await self._send(
+                    session,
+                    make_error(id_val, RpcErrorCodes.STALE_JOB, "stale job"),
+                )
+                return
+            if job.expires_at and time.time() >= job.expires_at:
+                await self._send(
+                    session,
+                    make_error(id_val, RpcErrorCodes.STALE_JOB, "job expired"),
+                )
+                return
             ok, reason, is_block, tx_count = await self._validator.validate(job, params)
             if ok:
                 self._accepted += 1
