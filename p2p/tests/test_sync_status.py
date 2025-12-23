@@ -11,7 +11,8 @@ from p2p.deps import P2PDeps
 from p2p.node.p2p_service import P2PService, _PeerState, _SyncHeader
 from p2p.tests import tcp_multiaddr
 from p2p.wire.encoding import encode_payload
-from p2p.wire.messages import Blocks, HeaderCompact
+from p2p.wire.frames import Framer
+from p2p.wire.messages import Blocks, HeaderCompact, Hello
 
 GENESIS_PATH = Path(__file__).resolve().parents[2] / "core" / "genesis" / "genesis.json"
 
@@ -53,6 +54,22 @@ def _make_peer() -> _PeerState:
         write_lock=asyncio.Lock(),
     )
     peer.hello = {}
+    return peer
+
+
+def _register_peer(node: P2PService, remote: str) -> _PeerState:
+    session = node._peer_registry.register(remote, "inbound")
+    peer = _PeerState(
+        session_id=session.session_id,
+        remote=remote,
+        direction="inbound",
+        conn=None,
+        stream=None,
+        framer=Framer(aead=None),
+        write_lock=asyncio.Lock(),
+    )
+    node._peers[remote] = peer
+    node._peers_by_session[peer.session_id] = peer
     return peer
 
 
@@ -124,3 +141,40 @@ async def test_mocked_peer_headers_and_blocks_advance_head(tmp_path: Path) -> No
 
     height, _ = deps_sync.head()
     assert height >= 1
+
+
+@pytest.mark.asyncio
+async def test_peer_ready_triggers_header_request(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    node, _deps_sync = _make_service(tmp_path, "ready-trigger")
+    peer = _register_peer(node, "203.0.113.10:30333")
+
+    async def _noop_send(*_args, **_kwargs) -> None:
+        return None
+
+    def _noop_task(coro, **_kwargs):
+        if asyncio.iscoroutine(coro):
+            coro.close()
+
+    monkeypatch.setattr(node, "_send", _noop_send)
+    monkeypatch.setattr(node, "_create_child_task", _noop_task)
+
+    hello = Hello(
+        chain_id=node.chain_id,
+        listen_port=30333,
+        peer_id=b"\x11" * 32,
+        head_hash=b"\x00" * 32,
+        head_height=10,
+    )
+    await node._handle_hello(peer, encode_payload(hello))
+
+    called = False
+
+    async def _fake_fetch_headers(_peer: _PeerState):
+        nonlocal called
+        called = True
+        return []
+
+    monkeypatch.setattr(node, "_fetch_headers", _fake_fetch_headers)
+
+    await node._sync_once()
+    assert called is True

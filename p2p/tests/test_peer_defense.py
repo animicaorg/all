@@ -52,6 +52,8 @@ def _register_peer(node: P2PService, remote: str, direction: str = "inbound") ->
         write_lock=asyncio.Lock(),
         netgroup=node._netgroup_key(remote),
     )
+    peer.hello_done.set()
+    peer.ready_for_sync = True
     node._peers[remote] = peer
     node._peers_by_session[peer.session_id] = peer
     return peer

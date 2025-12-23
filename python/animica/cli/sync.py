@@ -243,6 +243,48 @@ def _extract_sync_metrics(sync_status: Optional[Dict[str, Any]]) -> Dict[str, An
     return metrics
 
 
+def _format_sync_age(ts: Optional[float]) -> str:
+    if not ts:
+        return "n/a"
+    try:
+        age = max(0, int(time.time() - float(ts)))
+    except Exception:
+        return "n/a"
+    return f"{age}s ago"
+
+
+def _sync_diagnostics_lines(sync_status: Optional[Dict[str, Any]]) -> list[str]:
+    if not isinstance(sync_status, dict):
+        return []
+    lines: list[str] = []
+    eligible = sync_status.get("eligible_peers_for_headers") or []
+    ineligible = sync_status.get("ineligible_peers_for_headers") or {}
+    last_req_peer = sync_status.get("last_header_request_peer")
+    last_resp_peer = sync_status.get("last_header_response_peer")
+    last_req_at = sync_status.get("last_header_request_at")
+    last_resp_at = sync_status.get("last_header_response_at")
+    last_resp_count = sync_status.get("last_header_response_count")
+    last_error = sync_status.get("last_header_error")
+    if eligible:
+        lines.append(f"  eligible_peers_for_headers: {eligible}")
+    if ineligible:
+        lines.append(f"  ineligible_peers_for_headers: {ineligible}")
+    if last_req_peer or last_req_at:
+        lines.append(
+            f"  last_header_request: peer={last_req_peer or 'n/a'} "
+            f"({ _format_sync_age(last_req_at) })"
+        )
+    if last_resp_peer or last_resp_at:
+        lines.append(
+            f"  last_header_response: peer={last_resp_peer or 'n/a'} "
+            f"count={last_resp_count if last_resp_count is not None else 'n/a'} "
+            f"({ _format_sync_age(last_resp_at) })"
+        )
+    if last_error:
+        lines.append(f"  last_header_error: {last_error}")
+    return lines
+
+
 def _compute_sync_state(
     *,
     head_height: Optional[int],
@@ -1350,6 +1392,11 @@ def force_sync(
                 stall_count += 1
                 if stall_count >= max_stalls:
                     typer.echo(f"⚠ No progress for {stall_count * check_interval} seconds")
+                    diag_lines = _sync_diagnostics_lines(sync_status)
+                    if diag_lines:
+                        typer.echo("Diagnostics:")
+                        for line in diag_lines:
+                            typer.echo(line)
                     # Try to re-import seeds and retrigger sync to keep progress moving
                     added, _, _ = _seed_local_peerstores(
                         net_cfg,
@@ -1415,6 +1462,12 @@ def force_sync(
             typer.echo("  - No peers have newer blocks")
             typer.echo("  - Sync is disabled or stuck")
             typer.echo()
+            diag_lines = _sync_diagnostics_lines(sync_status)
+            if diag_lines:
+                typer.echo("Diagnostics:")
+                for line in diag_lines:
+                    typer.echo(line)
+                typer.echo()
             typer.echo("Check peer status with: animica peer list")
         peers = snapshot.get("peers") or []
         _persist_connected_peers(net_cfg, peers, quiet=True)
