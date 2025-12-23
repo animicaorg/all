@@ -503,6 +503,52 @@ async def get_status() -> dict[str, t.Any]:
     }
 
 
+@method("p2p.getPeerStats", desc="Return detailed peer stats for the P2P service")
+async def get_peer_stats() -> list[dict[str, t.Any]]:
+    p2p_svc = _get_p2p_service()
+    if p2p_svc is not None and hasattr(p2p_svc, "peer_stats_snapshot"):
+        try:
+            return list(p2p_svc.peer_stats_snapshot())
+        except Exception as exc:
+            log.debug("Failed to read peer stats: %s", exc)
+    return []
+
+
+@method("p2p.getBans", desc="Return the current P2P ban list")
+async def get_bans() -> list[dict[str, t.Any]]:
+    p2p_svc = _get_p2p_service()
+    if p2p_svc is not None and hasattr(p2p_svc, "banlist_snapshot"):
+        try:
+            return list(p2p_svc.banlist_snapshot())
+        except Exception as exc:
+            log.debug("Failed to read ban list: %s", exc)
+    return []
+
+
+@method("p2p.banPeer", desc="Ban a peer or address for a duration (seconds)")
+async def ban_peer(key: str, ttl_s: float, reason: str | None = None) -> dict[str, t.Any]:
+    p2p_svc = _get_p2p_service()
+    if p2p_svc is None or not hasattr(p2p_svc, "ban_peer"):
+        return {"success": False, "error": "p2p service unavailable"}
+    try:
+        p2p_svc.ban_peer(key, ttl_s=float(ttl_s), reason=reason or "manual")
+        return {"success": True, "key": key, "ttl_s": float(ttl_s)}
+    except Exception as exc:
+        return {"success": False, "error": str(exc)}
+
+
+@method("p2p.unbanPeer", desc="Remove a peer or address from the ban list")
+async def unban_peer(key: str) -> dict[str, t.Any]:
+    p2p_svc = _get_p2p_service()
+    if p2p_svc is None or not hasattr(p2p_svc, "unban_peer"):
+        return {"success": False, "error": "p2p service unavailable"}
+    try:
+        p2p_svc.unban_peer(key)
+        return {"success": True, "key": key}
+    except Exception as exc:
+        return {"success": False, "error": str(exc)}
+
+
 @method("p2p.addPeer", desc="Add a peer by address")
 async def add_peer(address: str) -> dict[str, t.Any]:
     """

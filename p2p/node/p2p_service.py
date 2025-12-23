@@ -79,6 +79,35 @@ class _PeerState:
     connected_at: float = field(default_factory=time.time)
     feeler: bool = False
     known_addrs: "OrderedDict[str, float]" = field(default_factory=OrderedDict)
+    misbehavior_score: int = 0
+    invalid_headers: int = 0
+    invalid_blocks: int = 0
+    invalid_msgs: int = 0
+    timeouts: int = 0
+    notfound: int = 0
+    missing_parent: int = 0
+    stall_events: int = 0
+    last_msg_at: float = field(default_factory=time.time)
+    last_progress_at: float = field(default_factory=time.time)
+    ban_until: Optional[float] = None
+    latency_ewma: Optional[float] = None
+    netgroup: Optional[str] = None
+    last_header_request_at: Optional[float] = None
+    last_block_request_at: Optional[float] = None
+
+
+class PeerMisbehavior(Exception):
+    def __init__(
+        self,
+        reason: str,
+        *,
+        points: Optional[int] = None,
+        ban_ttl: Optional[float] = None,
+    ) -> None:
+        super().__init__(reason)
+        self.reason = reason
+        self.points = points
+        self.ban_ttl = ban_ttl
 
 
 @dataclass(slots=True)
@@ -528,6 +557,98 @@ class P2PService:
         self._feeler_hold_s = float(
             os.environ.get("ANIMICA_P2P_FEELER_HOLD_S", "5") or 5
         )
+        self._max_payload_bytes = int(
+            os.environ.get("ANIMICA_P2P_MAX_PAYLOAD_BYTES", str(8 * 1024 * 1024))
+            or 8 * 1024 * 1024
+        )
+        self._max_blocks_per_message = int(
+            os.environ.get("ANIMICA_P2P_MAX_BLOCKS_PER_MSG", "64") or 64
+        )
+        self._max_headers_per_message = int(
+            os.environ.get("ANIMICA_P2P_MAX_HEADERS_PER_MSG", "512") or 512
+        )
+        self._clock_skew_s = float(
+            os.environ.get("ANIMICA_P2P_CLOCK_SKEW", "300") or 300
+        )
+
+        self._netgroup_v4_bits = int(
+            os.environ.get("ANIMICA_P2P_NETGROUP_V4", "16") or 16
+        )
+        self._netgroup_v6_bits = int(
+            os.environ.get("ANIMICA_P2P_NETGROUP_V6", "48") or 48
+        )
+        self._max_outbound_per_netgroup = int(
+            os.environ.get("ANIMICA_P2P_MAX_OUTBOUND_PER_NETGROUP", "1") or 1
+        )
+        self._max_inbound_per_netgroup = int(
+            os.environ.get("ANIMICA_P2P_MAX_INBOUND_PER_NETGROUP", "2") or 2
+        )
+        self._min_outbound = int(
+            os.environ.get("ANIMICA_P2P_MIN_OUTBOUND", "4") or 4
+        )
+
+        self._misbehavior_decay_interval = float(
+            os.environ.get("ANIMICA_P2P_SCORE_DECAY_INTERVAL", "60") or 60
+        )
+        self._misbehavior_decay_points = int(
+            os.environ.get("ANIMICA_P2P_SCORE_DECAY_POINTS", "5") or 5
+        )
+        self._misbehavior_score_cap = int(
+            os.environ.get("ANIMICA_P2P_SCORE_CAP", "2000") or 2000
+        )
+        self._score_points = {
+            "malformed_message": int(
+                os.environ.get("ANIMICA_P2P_SCORE_MALFORMED", "50") or 50
+            ),
+            "wrong_genesis": int(
+                os.environ.get("ANIMICA_P2P_SCORE_GENESIS", "1000") or 1000
+            ),
+            "wrong_chain": int(
+                os.environ.get("ANIMICA_P2P_SCORE_CHAIN", "1000") or 1000
+            ),
+            "invalid_header": int(
+                os.environ.get("ANIMICA_P2P_SCORE_HEADER", "200") or 200
+            ),
+            "invalid_block": int(
+                os.environ.get("ANIMICA_P2P_SCORE_BLOCK", "500") or 500
+            ),
+            "timeout": int(os.environ.get("ANIMICA_P2P_SCORE_TIMEOUT", "10") or 10),
+            "missing_parent": int(
+                os.environ.get("ANIMICA_P2P_SCORE_MISSING_PARENT", "25") or 25
+            ),
+            "stall": int(os.environ.get("ANIMICA_P2P_SCORE_STALL", "25") or 25),
+        }
+        self._ban_thresholds = [
+            (
+                int(os.environ.get("ANIMICA_P2P_BAN_SCORE_TEMP", "200") or 200),
+                float(os.environ.get("ANIMICA_P2P_BAN_TEMP_S", "1800") or 1800),
+            ),
+            (
+                int(os.environ.get("ANIMICA_P2P_BAN_SCORE_LONG", "500") or 500),
+                float(os.environ.get("ANIMICA_P2P_BAN_LONG_S", "21600") or 21600),
+            ),
+            (
+                int(os.environ.get("ANIMICA_P2P_BAN_SCORE_MAX", "1000") or 1000),
+                float(os.environ.get("ANIMICA_P2P_BAN_MAX_S", "86400") or 86400),
+            ),
+        ]
+        self._banlist_path = peerstore_dir / "bans.json"
+        self._banlist: dict[str, dict[str, Any]] = {}
+        self._banlist_event = asyncio.Event()
+        self._banlist_persist_interval = float(
+            os.environ.get("ANIMICA_P2P_BAN_PERSIST_INTERVAL", "15") or 15
+        )
+        self._last_score_decay_at = time.time()
+        self._last_rotation_at = 0.0
+        self._rotation_interval = float(
+            os.environ.get("ANIMICA_P2P_ROTATE_INTERVAL", "300") or 300
+        )
+        self._max_orphan_blocks = int(
+            os.environ.get("ANIMICA_P2P_MAX_ORPHANS", "128") or 128
+        )
+        self._missing_parent_threshold = int(
+            os.environ.get("ANIMICA_P2P_MISSING_PARENT_THRESHOLD", "3") or 3
+        )
 
         self._sync_lock = asyncio.Lock()
         self._sync_wakeup = asyncio.Event()
@@ -537,7 +658,7 @@ class P2PService:
         self._sync_header_queue: Deque[Tuple[str, List[HeaderCompact]]] = deque()
         self._sync_inflight_blocks: Dict[bytes, float] = {}
         self._sync_inflight_peers: Dict[bytes, str] = {}
-        self._sync_block_buffer: Dict[bytes, _SyncBlock] = {}
+        self._sync_block_buffer: "OrderedDict[bytes, _SyncBlock]" = OrderedDict()
         self._sync_block_queue: Deque[bytes] = deque()
         self._sync_block_queue_set: set[bytes] = set()
         self._sync_block_queue_heights: Dict[bytes, int] = {}
@@ -559,6 +680,9 @@ class P2PService:
         self._sync_inflight_headers = 0
         self._sync_max_inflight = int(
             os.environ.get("ANIMICA_P2P_SYNC_INFLIGHT", "32") or 32
+        )
+        self._sync_max_inflight_per_peer = int(
+            os.environ.get("ANIMICA_P2P_SYNC_INFLIGHT_PER_PEER", "16") or 16
         )
         self._sync_headers_batch = int(
             os.environ.get("ANIMICA_P2P_SYNC_HEADERS_BATCH", "128") or 128
@@ -621,6 +745,8 @@ class P2PService:
             if merged:
                 log.info("Merged fallback peer snapshot into primary store")
 
+        self._load_banlist()
+
         # Persist configured seeds so a restarted node reuses them immediately
         if self.seeds:
             self._seed_peerstore(self.seeds)
@@ -662,6 +788,8 @@ class P2PService:
             asyncio.create_task(self._feeler_loop(), name="p2p.feeler"),
             asyncio.create_task(self._addr_relay_loop(), name="p2p.addr_relay"),
             asyncio.create_task(self._persist_peers_loop(), name="p2p.peer_persist"),
+            asyncio.create_task(self._persist_banlist_loop(), name="p2p.ban_persist"),
+            asyncio.create_task(self._score_decay_loop(), name="p2p.score_decay"),
             asyncio.create_task(self._metrics_loop(), name="p2p.metrics"),
         ]
         self._sync_wakeup.set()
@@ -723,6 +851,83 @@ class P2PService:
     @property
     def peer_registry(self) -> PeerRegistry:
         return self._peer_registry
+
+    def peer_stats_snapshot(self) -> list[dict[str, Any]]:
+        stats: list[dict[str, Any]] = []
+        now = time.time()
+        for peer in list(self._peers.values()):
+            stats.append(
+                {
+                    "remote": peer.remote,
+                    "peer_id": peer.peer_id,
+                    "direction": peer.direction,
+                    "score": peer.misbehavior_score,
+                    "invalid_headers": peer.invalid_headers,
+                    "invalid_blocks": peer.invalid_blocks,
+                    "invalid_msgs": peer.invalid_msgs,
+                    "timeouts": peer.timeouts,
+                    "notfound": peer.notfound,
+                    "missing_parent": peer.missing_parent,
+                    "stall_events": peer.stall_events,
+                    "connected_at": peer.connected_at,
+                    "last_msg_at": peer.last_msg_at,
+                    "last_progress_at": peer.last_progress_at,
+                    "ban_until": peer.ban_until,
+                    "latency_ms": round(peer.latency_ewma * 1000, 2)
+                    if peer.latency_ewma is not None
+                    else None,
+                    "netgroup": peer.netgroup,
+                    "is_banned": self._is_banned(peer.remote, now=now),
+                }
+            )
+        return stats
+
+    def banlist_snapshot(self) -> list[dict[str, Any]]:
+        now = time.time()
+        bans = []
+        for key, info in list(self._banlist.items()):
+            until = info.get("ban_until")
+            try:
+                until_f = float(until)
+            except (TypeError, ValueError):
+                continue
+            if until_f <= now:
+                continue
+            bans.append(
+                {
+                    "key": key,
+                    "ban_until": until_f,
+                    "reason": info.get("reason"),
+                    "score": info.get("score"),
+                }
+            )
+        return bans
+
+    def ban_peer(self, key: str, *, ttl_s: float, reason: str = "manual") -> None:
+        until = time.time() + max(0.0, float(ttl_s))
+        self._banlist[str(key)] = {"ban_until": until, "reason": reason, "score": None}
+        self._banlist_event.set()
+
+    def unban_peer(self, key: str) -> None:
+        self._banlist.pop(str(key), None)
+        self._banlist_event.set()
+
+    def penalize_peer(
+        self, peer: _PeerState, reason: str, points: int, *, ban_ttl: float | None = None
+    ) -> None:
+        self._apply_misbehavior(peer, reason, points=points, ban_ttl=ban_ttl)
+
+    def decay_scores(self) -> None:
+        if self._misbehavior_decay_points <= 0:
+            return
+        for peer in list(self._peers.values()):
+            if peer.misbehavior_score <= 0:
+                continue
+            peer.misbehavior_score = max(
+                0, peer.misbehavior_score - self._misbehavior_decay_points
+            )
+            self._update_peer_meta(peer)
+        self._last_score_decay_at = time.time()
 
     def _parse_seed_env(self, raw: str | None) -> list[str]:
         if not raw:
@@ -1279,6 +1484,98 @@ class P2PService:
         if ok:
             self._persisted_peer_count = len(data.get("peers", []))
 
+    def _load_banlist(self) -> None:
+        if not self._banlist_path.exists():
+            return
+        try:
+            raw = self._banlist_path.read_text(encoding="utf-8")
+            data = json.loads(raw)
+        except Exception as exc:
+            log.warning("Failed to load banlist: %s", exc)
+            return
+        now = time.time()
+        items = {}
+        for entry in data.get("bans", []) if isinstance(data, dict) else []:
+            if not isinstance(entry, dict):
+                continue
+            key = str(entry.get("key") or "")
+            until = entry.get("ban_until")
+            if not key or until is None:
+                continue
+            try:
+                until_f = float(until)
+            except (TypeError, ValueError):
+                continue
+            if until_f <= now:
+                continue
+            items[key] = {
+                "ban_until": until_f,
+                "reason": entry.get("reason"),
+                "score": entry.get("score"),
+            }
+        self._banlist = items
+
+    async def _persist_banlist_loop(self) -> None:
+        try:
+            while self._running:
+                try:
+                    await asyncio.wait_for(
+                        self._banlist_event.wait(), timeout=self._banlist_persist_interval
+                    )
+                except asyncio.TimeoutError:
+                    pass
+                if not self._running:
+                    return
+                if self._banlist_event.is_set():
+                    self._banlist_event.clear()
+                await asyncio.to_thread(self._persist_banlist)
+        except asyncio.CancelledError:
+            return
+
+    def _persist_banlist(self) -> None:
+        self._ensure_peerstore_dir(self._banlist_path.parent)
+        now = time.time()
+        bans = []
+        for key, info in list(self._banlist.items()):
+            until = info.get("ban_until")
+            try:
+                until_f = float(until)
+            except (TypeError, ValueError):
+                self._banlist.pop(key, None)
+                continue
+            if until_f <= now:
+                self._banlist.pop(key, None)
+                continue
+            bans.append(
+                {
+                    "key": key,
+                    "ban_until": until_f,
+                    "reason": info.get("reason"),
+                    "score": info.get("score"),
+                }
+            )
+        data = {"bans": bans, "updated_at": now}
+        tmp_name = f".{self._banlist_path.name}.{uuid.uuid4().hex}.tmp"
+        tmp_path = self._banlist_path.parent / tmp_name
+        try:
+            with tmp_path.open("w", encoding="utf-8") as handle:
+                json.dump(data, handle, indent=2)
+            os.replace(tmp_path, self._banlist_path)
+        except Exception as exc:
+            log.warning("Failed to persist banlist: %s", exc)
+            with contextlib.suppress(Exception):
+                tmp_path.unlink()
+
+    async def _score_decay_loop(self) -> None:
+        try:
+            while self._running:
+                await asyncio.sleep(max(1.0, self._misbehavior_decay_interval))
+                if not self._running:
+                    return
+                self.decay_scores()
+        except asyncio.CancelledError:
+            return
+
     def _build_peers_snapshot(self) -> dict[str, Any]:
         peers: dict[str, dict[str, Any]] = {}
         for record in self._addrman.records():
@@ -1641,6 +1938,62 @@ class P2PService:
             return f"{result.addr.host}:{result.addr.port}"
         return address
 
+    def _extract_host(self, remote: str) -> str:
+        if "://" in remote:
+            parsed = urlparse(remote)
+            if parsed.hostname:
+                return parsed.hostname
+        if remote.startswith("[") and "]" in remote:
+            return remote.split("]", 1)[0].lstrip("[")
+        if ":" in remote:
+            return remote.rsplit(":", 1)[0]
+        return remote
+
+    def _netgroup_key(self, remote: str) -> str:
+        host = self._extract_host(remote)
+        try:
+            ip_obj = ipaddress.ip_address(host)
+        except ValueError:
+            return host
+        if isinstance(ip_obj, ipaddress.IPv4Address):
+            bits = max(1, min(32, self._netgroup_v4_bits))
+            network = ipaddress.ip_network(f"{ip_obj}/{bits}", strict=False)
+        else:
+            bits = max(1, min(128, self._netgroup_v6_bits))
+            network = ipaddress.ip_network(f"{ip_obj}/{bits}", strict=False)
+        return str(network.network_address) + f"/{bits}"
+
+    def _ban_keys_for_peer(self, peer: _PeerState) -> set[str]:
+        keys = {peer.remote}
+        host = self._extract_host(peer.remote)
+        if host:
+            keys.add(host)
+        if peer.peer_id:
+            keys.add(peer.peer_id)
+        return keys
+
+    def _is_banned(self, key: str, *, now: Optional[float] = None) -> bool:
+        now = time.time() if now is None else now
+        if not key:
+            return False
+        entries = [key]
+        host = self._extract_host(key)
+        if host and host != key:
+            entries.append(host)
+        for entry in entries:
+            info = self._banlist.get(entry)
+            if not info:
+                continue
+            until = info.get("ban_until")
+            try:
+                until_f = float(until)
+            except (TypeError, ValueError):
+                continue
+            if until_f > now:
+                return True
+            self._banlist.pop(entry, None)
+        return False
+
     def _derive_sync_phase(
         self,
         *,
@@ -1686,6 +2039,75 @@ class P2PService:
                 },
             )
 
+    def _handle_sync_stall(self, *, reason: str) -> None:
+        now = time.time()
+        if self._sync_best_header is None:
+            return
+        if self._last_rotation_at and now - self._last_rotation_at < 5.0:
+            return
+        old_peer = None
+        if self._sync_active_block_peer:
+            old_peer = self._peers.get(self._sync_active_block_peer)
+        if old_peer:
+            self._penalize_peer(
+                old_peer,
+                "stall",
+                points=self._score_points["stall"],
+                severity=2,
+                quarantine_s=30.0,
+            )
+            old_peer.last_progress_at = now
+        self._sync_inflight_blocks.clear()
+        self._sync_inflight_peers.clear()
+        new_peer = self._select_sync_peer(avoid_peer=old_peer)
+        if new_peer:
+            self._sync_active_block_peer = new_peer.remote
+        self._last_rotation_at = now
+        local_height, _ = self._local_head()
+        best_header_height = self._sync_best_header.height
+        log.warning(
+            "Block sync stall handled",
+            extra={
+                "reason": reason,
+                "old_peer": old_peer.remote if old_peer else None,
+                "new_peer": new_peer.remote if new_peer else None,
+                "old_peer_score": old_peer.misbehavior_score if old_peer else None,
+                "new_peer_score": new_peer.misbehavior_score if new_peer else None,
+                "local_height": local_height,
+                "best_header_height": best_header_height,
+                "queued_blocks": len(self._sync_block_queue),
+            },
+        )
+
+    def _rotate_sync_peer(self) -> None:
+        active = self._peers.get(self._sync_active_block_peer) if self._sync_active_block_peer else None
+        candidate = self._select_sync_peer(avoid_peer=active)
+        if not candidate or (active and candidate.remote == active.remote):
+            return
+        if active is None:
+            self._sync_active_block_peer = candidate.remote
+            return
+        active_latency = active.latency_ewma if active.latency_ewma is not None else 9999.0
+        candidate_latency = (
+            candidate.latency_ewma if candidate.latency_ewma is not None else 9999.0
+        )
+        if (
+            candidate.misbehavior_score < active.misbehavior_score
+            or candidate_latency < active_latency
+        ):
+            self._sync_active_block_peer = candidate.remote
+            log.info(
+                "Rotated sync peer",
+                extra={
+                    "old_peer": active.remote,
+                    "new_peer": candidate.remote,
+                    "old_score": active.misbehavior_score,
+                    "new_score": candidate.misbehavior_score,
+                    "old_latency_ms": round(active_latency * 1000, 2),
+                    "new_latency_ms": round(candidate_latency * 1000, 2),
+                },
+            )
+
     def _reported_peer_addr(self, remote: str, listen_port: int) -> Optional[str]:
         host: Optional[str] = None
         if "://" in remote:
@@ -1704,6 +2126,19 @@ class P2PService:
         if not port:
             port = fallback_port
         return self._sanitize_peer_addr(f"{host}:{port}", fallback_port=fallback_port)
+
+    def _update_peer_meta(self, peer: _PeerState) -> None:
+        self._peer_registry.update_meta(
+            peer.session_id,
+            score=peer.misbehavior_score,
+            ban_until=peer.ban_until,
+            netgroup=peer.netgroup,
+            latency_ms=round(peer.latency_ewma * 1000, 2)
+            if peer.latency_ewma is not None
+            else None,
+            last_msg_at=peer.last_msg_at,
+            last_progress_at=peer.last_progress_at,
+        )
 
     def _peer_id_from_addr(self, address: str) -> str:
         if "/p2p/" in address:
@@ -1817,6 +2252,7 @@ class P2PService:
 
     async def _dial_loop(self) -> None:
         target_outbound = int(os.environ.get("ANIMICA_P2P_OUTBOUND", "8") or 8)
+        target_outbound = max(target_outbound, self._min_outbound)
         try:
             while self._running:
                 await asyncio.sleep(1.0)
@@ -1864,9 +2300,27 @@ class P2PService:
                     addr_key = self._addr_key(addr)
                     if addr_key in active_keys:
                         continue
+                    if self._is_banned(addr):
+                        continue
                     if addr_key in self._dial_inflight:
                         continue
                     if self._dial_backoff.get(addr_key, 0.0) > now:
+                        continue
+                    if (
+                        self._max_outbound_per_netgroup > 0
+                        and self._netgroup_key(addr)
+                        in {
+                            p.netgroup
+                            for p in outbound
+                            if p.netgroup is not None
+                        }
+                        and sum(
+                            1
+                            for p in outbound
+                            if p.netgroup == self._netgroup_key(addr)
+                        )
+                        >= self._max_outbound_per_netgroup
+                    ):
                         continue
                     self._dial_inflight.add(addr_key)
                     is_seed = addr_key in self._seed_keys
@@ -1943,6 +2397,11 @@ class P2PService:
         self, conn: Any, *, direction: str, feeler: bool = False
     ) -> None:
         remote = getattr(conn.info, "remote_addr", None) or "unknown"
+        if self._is_banned(remote):
+            log.info("Rejecting banned peer %s", remote)
+            with contextlib.suppress(Exception):
+                await conn.close()
+            return
         try:
             stream = await conn.open_stream()
         except Exception:
@@ -1957,6 +2416,29 @@ class P2PService:
                 await conn.close()
             return
 
+        netgroup = self._netgroup_key(remote)
+        async with self._peer_lock:
+            existing = [
+                p
+                for p in self._peers.values()
+                if p.direction == direction and p.netgroup == netgroup
+            ]
+        limit = (
+            self._max_inbound_per_netgroup
+            if direction == "inbound"
+            else self._max_outbound_per_netgroup
+        )
+        if limit > 0 and len(existing) >= limit:
+            log.info(
+                "Rejecting %s peer %s: netgroup %s limit reached",
+                direction,
+                remote,
+                netgroup,
+            )
+            with contextlib.suppress(Exception):
+                await conn.close()
+            return
+
         peer = _PeerState(
             session_id=session.session_id,
             remote=remote,
@@ -1967,6 +2449,7 @@ class P2PService:
             write_lock=asyncio.Lock(),
             connected_at=session.connected_at,
             feeler=feeler,
+            netgroup=netgroup,
         )
 
         async with self._peer_lock:
@@ -2004,8 +2487,28 @@ class P2PService:
                     disconnect_reason = "remote_closed"
                     break
                 self._peer_registry.mark_seen(peer.session_id)
-                frame = unpack_frame(data, aead=None)
-                await self._handle(peer, frame.msg_id, frame.payload)
+                peer.last_msg_at = time.time()
+                try:
+                    frame = unpack_frame(data, aead=None)
+                except Exception:
+                    self._penalize_peer(
+                        peer,
+                        "malformed_frame",
+                        points=self._score_points["malformed_message"],
+                    )
+                    disconnect_reason = "malformed_frame"
+                    break
+                try:
+                    await self._handle(peer, frame.msg_id, frame.payload)
+                except PeerMisbehavior as exc:
+                    self._penalize_peer(
+                        peer,
+                        exc.reason,
+                        points=exc.points,
+                        ban_ttl=exc.ban_ttl,
+                    )
+                    disconnect_reason = f"peer_error:{exc.reason}"
+                    break
         except asyncio.CancelledError:
             disconnect_reason = "cancelled"
         except Exception as exc:
@@ -2066,9 +2569,20 @@ class P2PService:
             await peer.stream.send(framed)
 
     def _decode_map(self, payload: bytes) -> dict:
-        obj = decode_payload(payload)
+        if len(payload) > self._max_payload_bytes:
+            raise PeerMisbehavior(
+                "payload_too_large", points=self._score_points["malformed_message"]
+            )
+        try:
+            obj = decode_payload(payload, max_bytes=self._max_payload_bytes)
+        except Exception as exc:
+            raise PeerMisbehavior(
+                "decode_failed", points=self._score_points["malformed_message"]
+            ) from exc
         if not isinstance(obj, dict):
-            raise ValueError("payload must be a map")
+            raise PeerMisbehavior(
+                "payload_not_map", points=self._score_points["malformed_message"]
+            )
         obj.pop("msg_id", None)
         return obj
 
@@ -2136,6 +2650,9 @@ class P2PService:
         if mid == int(MsgID.BLOCKS):
             await self._handle_blocks(peer, payload)
             return
+        raise PeerMisbehavior(
+            "unknown_message", points=self._score_points["malformed_message"]
+        )
 
     async def _handle_hello(self, peer: _PeerState, payload: bytes) -> None:
         data = self._decode_map(payload)
@@ -2148,7 +2665,9 @@ class P2PService:
                 MsgID.HELLO_ACK,
                 HelloAck(accepted=False, reason="chain_id_mismatch"),
             )
-            raise ValueError("chain mismatch")
+            raise PeerMisbehavior(
+                "chain_id_mismatch", points=self._score_points["wrong_chain"], ban_ttl=86400
+            )
 
         if hello.genesis_hash and bytes(hello.genesis_hash) != self._genesis_hash():
             await self._send(
@@ -2156,9 +2675,41 @@ class P2PService:
                 MsgID.HELLO_ACK,
                 HelloAck(accepted=False, reason="genesis_mismatch"),
             )
-            raise ValueError("genesis mismatch")
+            raise PeerMisbehavior(
+                "genesis_mismatch",
+                points=self._score_points["wrong_genesis"],
+                ban_ttl=86400,
+            )
+
+        if hello.version and str(hello.version) not in {"1", "2"}:
+            await self._send(
+                peer,
+                MsgID.HELLO_ACK,
+                HelloAck(accepted=False, reason="version_mismatch"),
+            )
+            raise PeerMisbehavior("version_mismatch", points=50)
+
+        now = time.time()
+        try:
+            peer_ts = int(getattr(hello, "timestamp", 0) or 0)
+        except Exception:
+            peer_ts = 0
+        if peer_ts and abs(now - peer_ts) > self._clock_skew_s:
+            await self._send(
+                peer,
+                MsgID.HELLO_ACK,
+                HelloAck(accepted=False, reason="clock_skew"),
+            )
+            raise PeerMisbehavior("clock_skew", points=20)
 
         peer.peer_id = bytes(hello.peer_id).hex()
+        if peer.peer_id and self._is_banned(peer.peer_id):
+            await self._send(
+                peer,
+                MsgID.HELLO_ACK,
+                HelloAck(accepted=False, reason="banned"),
+            )
+            raise PeerMisbehavior("banned", points=0)
         normalized = dict(data)
         normalized["chain_id"] = int(getattr(hello, "chain_id", 0) or 0)
         normalized["head_height"] = int(
@@ -2202,6 +2753,7 @@ class P2PService:
             reported_addr=reported_addr,
             listen_port=listen_port or None,
         )
+        self._update_peer_meta(peer)
 
         # Deduplicate connections for the same peer_id (keep the newest).
         to_drop = self._peer_registry.mark_identified(peer.session_id, peer.peer_id)
@@ -2440,10 +2992,16 @@ class P2PService:
             elif isinstance(h, HeaderCompact):
                 headers.append(h)
         msg = Headers(headers=headers)
+        if len(msg.headers) > self._max_headers_per_message:
+            raise PeerMisbehavior(
+                "headers_oversized", points=self._score_points["malformed_message"]
+            )
 
         # If we have a pending request waiting on this response, fulfill it.
         fut = peer.pending_headers
         if fut is not None and not fut.done():
+            if peer.last_header_request_at:
+                self._update_latency(peer, peer.last_header_request_at)
             fut.set_result(msg)
             peer.pending_headers = None
         else:
@@ -2478,6 +3036,12 @@ class P2PService:
     async def _handle_blocks(self, peer: _PeerState, payload: bytes) -> None:
         data = self._decode_map(payload)
         msg = Blocks(**data)
+        if len(msg.blocks) > self._max_blocks_per_message:
+            raise PeerMisbehavior(
+                "blocks_oversized", points=self._score_points["malformed_message"]
+            )
+        if peer.last_block_request_at:
+            self._update_latency(peer, peer.last_block_request_at)
         for rawb in msg.blocks:
             self._stats["blocks_recv"] += 1
             self._stats["blocks_received"] += 1
@@ -2501,6 +3065,7 @@ class P2PService:
                 self._sync_inflight_peers.pop(sync_block.hash, None)
                 self._sync_last_block_at = time.time()
                 self._sync_last_progress_at = self._sync_last_block_at
+                peer.last_progress_at = self._sync_last_block_at
                 self._sync_block_stalled_reason = None
                 self._sync_wakeup.set()
                 await self._drain_block_buffer()
@@ -2510,6 +3075,9 @@ class P2PService:
                 if self._is_orphan_reason(reason):
                     sync_block.origin_peer = peer.remote
                     self._sync_block_buffer[sync_block.hash] = sync_block
+                    self._handle_missing_parent(peer, sync_block)
+                    while len(self._sync_block_buffer) > self._max_orphan_blocks:
+                        self._sync_block_buffer.popitem(last=False)
                 else:
                     reject_reason = reason or "block_rejected"
                     if self._is_db_write_error(reject_reason):
@@ -2664,6 +3232,26 @@ class P2PService:
         lowered = str(reason).lower()
         return "missing parent" in lowered or "orphan" in lowered
 
+    def _handle_missing_parent(self, peer: _PeerState, sync_block: _SyncBlock) -> None:
+        peer.missing_parent += 1
+        if sync_block.parent_hash and not self._has_block(sync_block.parent_hash):
+            if sync_block.parent_hash not in self._sync_block_queue_set:
+                self._sync_block_queue.appendleft(sync_block.parent_hash)
+                self._sync_block_queue_set.add(sync_block.parent_hash)
+                self._sync_block_queue_heights[sync_block.parent_hash] = (
+                    self._sync_block_queue_heights.get(sync_block.hash, -1) - 1
+                )
+        if peer.missing_parent >= self._missing_parent_threshold:
+            self._penalize_peer(
+                peer,
+                "missing_parent",
+                points=self._score_points["missing_parent"],
+                severity=2,
+                quarantine_s=30.0,
+            )
+            self._sync_block_stalled_reason = "missing parent"
+            self._sync_last_block_error = "missing parent"
+
     def _is_db_write_error(self, reason: Optional[str]) -> bool:
         if not reason:
             return False
@@ -2739,6 +3327,7 @@ class P2PService:
         fut: asyncio.Future = asyncio.get_event_loop().create_future()
         peer.pending_headers = fut
         self._sync_last_header_request_at = time.time()
+        peer.last_header_request_at = self._sync_last_header_request_at
         self._sync_active_header_peer = peer.remote
         self._sync_inflight_headers = 1
         await self._send(
@@ -2836,6 +3425,7 @@ class P2PService:
         self._sync_last_header_at = time.time()
         self._sync_last_header_response_at = self._sync_last_header_at
         self._sync_last_progress_at = self._sync_last_header_at
+        peer.last_progress_at = self._sync_last_header_at
         for h in contiguous:
             self._sync_update_best_header(h)
         log.info(
@@ -2863,6 +3453,9 @@ class P2PService:
             return 0
 
         requested: List[bytes] = []
+        inflight_for_peer = sum(
+            1 for remote in self._sync_inflight_peers.values() if remote == peer.remote
+        )
         for h in hashes:
             if (
                 self._has_block(h)
@@ -2872,9 +3465,12 @@ class P2PService:
                 continue
             if len(self._sync_inflight_blocks) >= self._sync_max_inflight:
                 break
+            if inflight_for_peer >= self._sync_max_inflight_per_peer:
+                break
             self._sync_inflight_blocks[h] = time.time()
             self._sync_inflight_peers[h] = peer.remote
             requested.append(h)
+            inflight_for_peer += 1
 
         if not requested:
             return 0
@@ -2884,6 +3480,7 @@ class P2PService:
             chunk = requested[i : i + 16]
             with contextlib.suppress(Exception):
                 self._sync_last_block_request_at = time.time()
+                peer.last_block_request_at = self._sync_last_block_request_at
                 self._sync_active_block_peer = peer.remote
                 await self._send(
                     peer,
@@ -3038,6 +3635,16 @@ class P2PService:
                 now = time.time()
                 self._maybe_mark_block_stalled(now)
                 stalled = self._sync_block_stalled_reason is not None
+                if stalled:
+                    self._handle_sync_stall(
+                        reason=self._sync_block_stalled_reason or "stalled"
+                    )
+                elif (
+                    self._rotation_interval > 0
+                    and now - self._last_rotation_at >= self._rotation_interval
+                ):
+                    self._rotate_sync_peer()
+                    self._last_rotation_at = now
                 await self._sync_once(force=stalled)
                 if self._sync_block_stalled_reason is None:
                     await self._schedule_block_requests()
@@ -3066,10 +3673,13 @@ class P2PService:
     def _best_peer(self) -> Optional[_PeerState]:
         return self._select_sync_peer()
 
-    def _select_sync_peer(self) -> Optional[_PeerState]:
+    def _select_sync_peer(
+        self, *, avoid_peer: Optional[_PeerState] = None
+    ) -> Optional[_PeerState]:
         best: Optional[_PeerState] = None
-        best_height = -1
+        best_score = None
         now = time.time()
+        avoid_netgroup = avoid_peer.netgroup if avoid_peer else None
         for p in self._peers.values():
             if not p.peer_id or not isinstance(p.hello, dict):
                 continue
@@ -3082,13 +3692,19 @@ class P2PService:
             backoff_until = self._sync_peer_backoff.get(p.remote, 0.0)
             if backoff_until and backoff_until > now:
                 continue
+            if self._is_banned(p.remote, now=now):
+                continue
             try:
                 h = int(p.hello.get("head_height") or 0)
             except Exception:
                 h = 0
-            if h > best_height:
+            latency = p.latency_ewma if p.latency_ewma is not None else 9999.0
+            outbound_bonus = 1 if p.direction == "outbound" else 0
+            netgroup_penalty = 1 if avoid_netgroup and p.netgroup == avoid_netgroup else 0
+            score = (h, outbound_bonus, -p.misbehavior_score, -latency, -netgroup_penalty)
+            if best_score is None or score > best_score:
                 best = p
-                best_height = h
+                best_score = score
         return best
 
     # ---------------------------------------------------------------------
@@ -3266,9 +3882,12 @@ class P2PService:
         *,
         severity: int = 1,
         quarantine_s: Optional[float] = None,
+        points: Optional[int] = None,
+        ban_ttl: Optional[float] = None,
     ) -> None:
         if peer is None:
             return
+        self._apply_misbehavior(peer, reason, points=points, ban_ttl=ban_ttl)
         if peer.remote in self._sync_peer_penalty_whitelist:
             self._sync_peer_penalties.pop(peer.remote, None)
             return
@@ -3289,6 +3908,98 @@ class P2PService:
                 self._drop_peer(peer, reason=f"sync_penalty:{reason}"),
                 name=f"p2p.drop_peer@{peer.remote}",
             )
+
+    def _update_latency(self, peer: _PeerState, request_at: float) -> None:
+        now = time.time()
+        if request_at <= 0:
+            return
+        delta = max(0.0, now - request_at)
+        alpha = 0.2
+        if peer.latency_ewma is None:
+            peer.latency_ewma = delta
+        else:
+            peer.latency_ewma = alpha * delta + (1 - alpha) * peer.latency_ewma
+
+    def _apply_misbehavior(
+        self,
+        peer: _PeerState,
+        reason: str,
+        *,
+        points: Optional[int] = None,
+        ban_ttl: Optional[float] = None,
+    ) -> None:
+        if points is None:
+            points = self._reason_points(reason)
+        if points <= 0 and ban_ttl is None:
+            return
+        peer.misbehavior_score = min(
+            self._misbehavior_score_cap, peer.misbehavior_score + max(0, points)
+        )
+        self._increment_peer_counters(peer, reason)
+        if ban_ttl is None:
+            ban_ttl = self._ban_ttl_for_score(peer.misbehavior_score)
+        if ban_ttl:
+            self._ban_peer(peer, ban_ttl=ban_ttl, reason=reason)
+        self._update_peer_meta(peer)
+
+    def _reason_points(self, reason: str) -> int:
+        lowered = reason.lower()
+        if "genesis" in lowered:
+            return self._score_points["wrong_genesis"]
+        if "chain" in lowered and "mismatch" in lowered:
+            return self._score_points["wrong_chain"]
+        if lowered.startswith("header_"):
+            return self._score_points["invalid_header"]
+        if "bad_header" in lowered or "invalid_header" in lowered:
+            return self._score_points["invalid_header"]
+        if lowered.startswith("block_rejected") or "invalid_block" in lowered:
+            return self._score_points["invalid_block"]
+        if "timeout" in lowered:
+            return self._score_points["timeout"]
+        if "missing parent" in lowered or "missing_parent" in lowered:
+            return self._score_points["missing_parent"]
+        if "stall" in lowered:
+            return self._score_points["stall"]
+        if "decode" in lowered or "malformed" in lowered or "oversized" in lowered:
+            return self._score_points["malformed_message"]
+        return 0
+
+    def _increment_peer_counters(self, peer: _PeerState, reason: str) -> None:
+        lowered = reason.lower()
+        if "timeout" in lowered:
+            peer.timeouts += 1
+        if "missing parent" in lowered or "missing_parent" in lowered:
+            peer.missing_parent += 1
+        if "stall" in lowered:
+            peer.stall_events += 1
+        if lowered.startswith("header_") or "invalid_header" in lowered:
+            peer.invalid_headers += 1
+        if lowered.startswith("block_rejected") or "invalid_block" in lowered:
+            peer.invalid_blocks += 1
+        if "decode" in lowered or "malformed" in lowered or "oversized" in lowered:
+            peer.invalid_msgs += 1
+
+    def _ban_ttl_for_score(self, score: int) -> Optional[float]:
+        ttl = None
+        for threshold, ttl_s in self._ban_thresholds:
+            if score >= threshold:
+                ttl = ttl_s
+        return ttl
+
+    def _ban_peer(self, peer: _PeerState, *, ban_ttl: float, reason: str) -> None:
+        until = time.time() + max(0.0, ban_ttl)
+        peer.ban_until = until
+        for key in self._ban_keys_for_peer(peer):
+            self._banlist[key] = {
+                "ban_until": until,
+                "reason": reason,
+                "score": peer.misbehavior_score,
+            }
+        self._banlist_event.set()
+        self._create_child_task(
+            self._drop_peer(peer, reason=f"banned:{reason}"),
+            name=f"p2p.drop_peer@{peer.remote}",
+        )
 
     async def _import_block_payload(
         self, payload: Any, *, origin_remote: Optional[str]
