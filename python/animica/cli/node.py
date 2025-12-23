@@ -18,6 +18,7 @@ from typing import Any, Dict, Optional
 
 import httpx
 import typer
+from rpc.hashrate import HASHSHARE_TRIALS
 from animica.config import get_network_defaults, load_network_config
 from animica.seeds import get_seed_nodes
 
@@ -106,9 +107,8 @@ def _parse_pid_file(pid_file: Path) -> dict[str, Optional[int]]:
     return data
 
 
-def _format_hashrate(hps: float) -> tuple[str, str]:
-    units = ["H/s", "kH/s", "MH/s", "GH/s", "TH/s"]
-    value = float(hps)
+def _format_rate(rate: float, units: list[str]) -> tuple[str, str]:
+    value = float(rate)
     unit_idx = 0
     while value >= 1000.0 and unit_idx < len(units) - 1:
         value /= 1000.0
@@ -116,14 +116,20 @@ def _format_hashrate(hps: float) -> tuple[str, str]:
     return f"{value:.2f}", units[unit_idx]
 
 
+def _format_hashshare_rate(hsps: float) -> tuple[str, str]:
+    units = ["HS/s", "kHS/s", "MHS/s", "GHS/s", "THS/s"]
+    return _format_rate(hsps, units)
+
+
 def _hashrate_summary(payload: Dict[str, Any] | None) -> str | None:
     if not isinstance(payload, dict):
         return None
+    hsps = payload.get("hashrate_hsps")
     hps = payload.get("hashrate_hps")
     window_blocks = payload.get("window_blocks")
     window_seconds = payload.get("window_seconds")
     method = payload.get("method") or "unknown"
-    if hps is None:
+    if hsps is None and hps is None:
         reason = payload.get("unknown_reason") or "unavailable"
         if isinstance(reason, str):
             reason = reason.replace("_", " ")
@@ -132,7 +138,9 @@ def _hashrate_summary(payload: Dict[str, Any] | None) -> str | None:
             f"Network hashrate: unknown ({reason}) "
             f"(window={window_blocks} blocks, span={span}s, method={method})"
         )
-    value, unit = _format_hashrate(float(hps))
+    if hsps is None:
+        hsps = float(hps) / float(HASHSHARE_TRIALS)
+    value, unit = _format_hashshare_rate(float(hsps))
     span = "unknown" if window_seconds is None else f"{window_seconds:.0f}"
     return (
         f"Network hashrate: {value} {unit} "
