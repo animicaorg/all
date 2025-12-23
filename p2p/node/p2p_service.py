@@ -3589,7 +3589,19 @@ class P2PService:
                 }
             )
 
-            if remote_height <= local_height and not force and not self._sync_header_queue:
+            probe_headers = (
+                local_height == 0
+                and remote_height == 0
+                and self._sync_best_header is None
+                and not self._sync_header_queue
+            )
+
+            if (
+                remote_height <= local_height
+                and not force
+                and not self._sync_header_queue
+                and not probe_headers
+            ):
                 if (
                     self._sync_best_header is None
                     or self._sync_best_header.height <= local_height
