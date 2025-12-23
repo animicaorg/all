@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import errno
 import json
 import os
 import re
@@ -490,6 +491,20 @@ def _db_path(cfg: Any) -> Path:
     return data_dir / db_name
 
 
+def _volume_name_for_chain(network: str, chain_id: int) -> str:
+    safe_network = network.replace("-", "_")
+    return f"animica_{safe_network}_chain_{chain_id}_data"
+
+
+def _compose_file_container_path(compose_file: Path) -> str:
+    repo_root = _repo_root()
+    try:
+        rel = compose_file.resolve().relative_to(repo_root)
+    except ValueError:
+        return str(compose_file)
+    return str(Path("/app") / rel)
+
+
 def _resolve_genesis_path(cfg: Any) -> Path:
     from core.genesis.genesis_loader import resolve_genesis_path
 
@@ -502,6 +517,8 @@ def _ensure_db_initialized(net_cfg: Any, *, quiet: bool = False) -> bool:
     db_path = _db_path(net_cfg)
     db_exists = db_path.exists() and db_path.stat().st_size > 0
     if db_exists:
+        if not quiet:
+            typer.echo(f"Using existing database at {db_path}")
         return False
 
     genesis_path = _resolve_genesis_path(net_cfg)
@@ -532,6 +549,66 @@ def _ensure_db_initialized(net_cfg: Any, *, quiet: bool = False) -> bool:
     if not quiet:
         typer.secho("✓ Database initialized from genesis.", fg=typer.colors.GREEN)
     return True
+
+
+def _compose_base_cmd(compose_file: Path, network: str) -> list[str]:
+    cmd = [
+        "docker",
+        "compose",
+        "-f",
+        str(compose_file),
+    ]
+    if network in DEV_NETWORKS:
+        cmd.extend(["--profile", "dev"])
+    return cmd
+
+
+def _compose_down_cmd(compose_file: Path, network: str, *, volumes: bool) -> list[str]:
+    cmd = _compose_base_cmd(compose_file, network)
+    cmd.append("down")
+    cmd.append("--remove-orphans")
+    if volumes:
+        cmd.append("-v")
+    return cmd
+
+
+def _wait_for_compose_stop(
+    compose_file: Path,
+    network: str,
+    *,
+    timeout: float = 30.0,
+    interval: float = 1.0,
+) -> bool:
+    deadline = time.time() + timeout
+    cmd = _compose_base_cmd(compose_file, network) + ["ps", "-q"]
+    while time.time() < deadline:
+        result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        if not result.stdout.strip():
+            return True
+        time.sleep(interval)
+    return False
+
+
+def _remove_path_with_retry(path: Path, *, retries: int = 3, delay: float = 0.5) -> None:
+    if not path.exists():
+        return
+    last_exc: Optional[Exception] = None
+    for attempt in range(1, retries + 1):
+        try:
+            if path.is_dir():
+                shutil.rmtree(path)
+            else:
+                path.unlink()
+            return
+        except OSError as exc:
+            last_exc = exc
+            if exc.errno not in (errno.ENOTEMPTY, errno.EBUSY):
+                raise
+            if attempt >= retries:
+                break
+            time.sleep(delay * attempt)
+    if last_exc:
+        raise last_exc
 
 
 def _bootstrap_state_path(cfg: Any) -> Path:
@@ -1869,6 +1946,7 @@ def up(
         "ANIMICA_NETWORK": network,
         "ANIMICA_DATA_DIR": data_dir,
         "ANIMICA_P2P_DATA_DIR": str(Path(data_dir) / "p2p"),
+        "ANIMICA_COMPOSE_FILE": _compose_file_container_path(compose_file),
     }
     compose_env.setdefault("HOST_RPC_PORT", str(rpc_port))
     compose_env.setdefault("HOST_P2P_PORT", str(p2p_port))
@@ -2107,6 +2185,7 @@ def up_all(
             "ANIMICA_NETWORK": network,
             "ANIMICA_DATA_DIR": data_dir,
             "ANIMICA_P2P_DATA_DIR": str(Path(data_dir) / "p2p"),
+            "ANIMICA_COMPOSE_FILE": _compose_file_container_path(compose_file),
         }
         if bootstrap_node:
             compose_env.setdefault("ANIMICA_RPC_BOOTSTRAP_NODE", "1")
@@ -2234,20 +2313,7 @@ def down(
             bold=True
         )
     
-    # Build docker-compose command
-    cmd = [
-        "docker", "compose",
-        "-f", str(compose_file),
-    ]
-    
-    # Add profiles for devnet
-    if network in DEV_NETWORKS:
-        cmd.extend(["--profile", "dev"])
-    
-    cmd.append("down")
-    
-    if volumes:
-        cmd.append("-v")
+    cmd = _compose_down_cmd(compose_file, network, volumes=volumes)
     
     typer.echo(f"\nRunning: {' '.join(cmd)}\n")
 
@@ -2256,6 +2322,7 @@ def down(
         "ANIMICA_NETWORK": network,
         "ANIMICA_DATA_DIR": data_dir,
         "ANIMICA_P2P_DATA_DIR": str(Path(data_dir) / "p2p"),
+        "ANIMICA_COMPOSE_FILE": _compose_file_container_path(compose_file),
     }
 
     try:
@@ -2268,11 +2335,17 @@ def down(
         
         if result.returncode == 0:
             typer.secho("✓ Node stopped successfully!", fg=typer.colors.GREEN, bold=True)
+            if not _wait_for_compose_stop(compose_file, network):
+                typer.secho(
+                    "Warning: containers may still be stopping; retry if cleanup fails.",
+                    fg=typer.colors.YELLOW,
+                    err=True,
+                )
             if volumes:
                 typer.echo(f"All volumes and {network} blockchain data have been removed.")
             else:
                 typer.echo(f"{network.capitalize()} blockchain data has been preserved in volumes.")
-                typer.echo("Use 'animica node down --volumes' to remove data.")
+                typer.echo("Use 'animica node down --volumes' or 'animica node reset' to remove data.")
         else:
             typer.secho(
                 f"Error: Node shutdown failed with exit code {result.returncode}",
@@ -2290,6 +2363,140 @@ def down(
     except KeyboardInterrupt:
         typer.echo("\n\nInterrupted by user", err=True)
         raise typer.Exit(code=130)
+
+
+@app.command()
+def reset(
+    network: Optional[str] = typer.Option(
+        None,
+        "--network",
+        help="Network to reset (defaults to the active network)",
+    ),
+    volumes: bool = typer.Option(
+        True,
+        "--volumes/--no-volumes",
+        help="Remove docker volumes for the network (deletes chain data)",
+    ),
+    host: bool = typer.Option(
+        True,
+        "--host/--no-host",
+        help="Remove host data directories for the network",
+    ),
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        "-y",
+        help="Run non-interactively (assume yes)",
+    ),
+    up_node: bool = typer.Option(
+        False,
+        "--up/--no-up",
+        help="Start the node again after reset completes",
+    ),
+) -> None:
+    """
+    Stop the node and wipe network data (docker volumes and/or host directories).
+
+    Defaults to wiping both docker volumes and host data for the selected network.
+    """
+    resolved_network = network or _ensure_network_set()
+    compose_file = _get_compose_file(resolved_network)
+    net_cfg = load_network_config(resolved_network)
+    data_dir = Path(net_cfg.data_dir).expanduser()
+
+    targets: list[str] = []
+    if volumes:
+        targets.append("docker volumes")
+    if host:
+        targets.append(f"host data at {data_dir}")
+    if not targets:
+        typer.secho("Nothing to reset: both volumes and host cleanup are disabled.", fg=typer.colors.YELLOW)
+        raise typer.Exit(code=0)
+
+    if not yes:
+        confirm = typer.confirm(
+            f"Reset {resolved_network} data? This will remove {', '.join(targets)}."
+        )
+        if not confirm:
+            typer.echo("Reset cancelled.")
+            raise typer.Exit(code=0)
+
+    typer.secho(f"Resetting node data for network: {resolved_network}", fg=typer.colors.CYAN, bold=True)
+    typer.echo(f"Using compose file: {compose_file}")
+
+    cmd = _compose_down_cmd(compose_file, resolved_network, volumes=volumes)
+    typer.echo(f"\nRunning: {' '.join(cmd)}\n")
+
+    compose_env = {
+        **os.environ,
+        "ANIMICA_NETWORK": resolved_network,
+        "ANIMICA_DATA_DIR": str(data_dir),
+        "ANIMICA_P2P_DATA_DIR": str(Path(data_dir) / "p2p"),
+        "ANIMICA_COMPOSE_FILE": _compose_file_container_path(compose_file),
+    }
+
+    try:
+        result = subprocess.run(
+            cmd,
+            cwd=compose_file.parent,
+            check=False,
+            env=compose_env,
+        )
+    except FileNotFoundError:
+        typer.echo(
+            "Error: 'docker' command not found. Please install Docker and Docker Compose.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    if result.returncode != 0:
+        typer.secho(
+            f"Error: Node shutdown failed with exit code {result.returncode}",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(code=result.returncode)
+
+    if not _wait_for_compose_stop(compose_file, resolved_network):
+        typer.secho(
+            "Warning: containers may still be stopping; retry if cleanup fails.",
+            fg=typer.colors.YELLOW,
+            err=True,
+        )
+
+    if volumes:
+        volume_name = _volume_name_for_chain(resolved_network, net_cfg.chain_id)
+        typer.echo(f"Removing volume: {volume_name}")
+        volume_result = subprocess.run(
+            ["docker", "volume", "rm", volume_name],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if volume_result.returncode != 0:
+            typer.secho(
+                f"Warning: failed to remove volume {volume_name}: {volume_result.stderr.strip()}",
+                fg=typer.colors.YELLOW,
+                err=True,
+            )
+
+    if host:
+        try:
+            _remove_path_with_retry(data_dir)
+            typer.echo(f"Removed host data directory: {data_dir}")
+        except OSError as exc:
+            typer.secho(
+                f"Warning: failed to remove {data_dir} ({exc}). "
+                "Ensure the node is stopped, then retry.",
+                fg=typer.colors.YELLOW,
+                err=True,
+            )
+
+    typer.secho("✓ Reset complete.", fg=typer.colors.GREEN, bold=True)
+
+    if up_node:
+        os.environ["ANIMICA_NETWORK"] = resolved_network
+        up()
 
 
 @p2p_app.command("status")

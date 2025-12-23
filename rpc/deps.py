@@ -153,6 +153,51 @@ def _params_from_spec(chain_id: int | None = None) -> t.Dict[str, t.Any]:
     return out
 
 
+def _db_uri_hint(db_uri: str) -> str:
+    if db_uri.startswith("sqlite:///"):
+        return db_uri[len("sqlite:///") :]
+    if db_uri.startswith("rocksdb:///"):
+        return db_uri[len("rocksdb:///") :]
+    return db_uri
+
+
+def _volume_name_for_chain(network: str | None, chain_id: int | None) -> str | None:
+    if not network or chain_id is None:
+        return None
+    safe_network = network.replace("-", "_")
+    return f"animica_{safe_network}_chain_{chain_id}_data"
+
+
+def _format_genesis_reset_guidance(data_dir: str, chain_id: int | None) -> str:
+    network = os.getenv("ANIMICA_NETWORK")
+    compose_file = os.getenv("ANIMICA_COMPOSE_FILE")
+    data_dir_hint = data_dir or "<unknown>"
+    is_docker_mount = data_dir_hint.startswith("/data")
+    lines: list[str] = []
+    lines.append("Reset guidance:")
+    backend = "docker volume" if is_docker_mount else "host path"
+    lines.append(f"- Data backend: {backend} ({data_dir_hint})")
+    if network:
+        lines.append(f"- Network: {network}")
+    if compose_file:
+        lines.append(f"- Compose file: {compose_file}")
+    lines.append("Suggested recovery commands:")
+    lines.append("  animica node down --volumes")
+    if is_docker_mount:
+        volume_name = _volume_name_for_chain(network, chain_id)
+        if volume_name:
+            lines.append(f"  docker volume ls | grep {volume_name}")
+            lines.append(f"  docker volume rm {volume_name}")
+        if compose_file:
+            lines.append(f"  docker compose -f {compose_file} down -v --remove-orphans")
+    else:
+        data_path = Path(data_dir_hint)
+        if data_path.suffix and data_path.name.endswith(".db"):
+            data_path = data_path.parent
+        lines.append(f"  rm -rf {data_path}")
+    return "\n".join(lines)
+
+
 # ---- Config glue ------------------------------------------------------------
 
 
@@ -485,12 +530,14 @@ def _maybe_bootstrap_genesis(
         if isinstance(e, GenesisError):
             expected = e.data.get("expected") if hasattr(e, "data") else None
             found = e.data.get("found") if hasattr(e, "data") else None
-            data_dir = db_uri or "<unknown>"
+            data_dir = _db_uri_hint(db_uri or "<unknown>")
+            guidance = _format_genesis_reset_guidance(data_dir, chain_id)
             raise RuntimeError(
                 "DB genesis mismatch (wrong network or corrupted DB). "
                 f"expected={expected} found={found} data_dir={data_dir}. "
                 "Fix: remove or reset the data dir for this chain "
-                "(e.g., delete ~/.animica/chain-<id> or docker volumes)."
+                "(e.g., delete ~/.animica/chain-<id> or docker volumes).\n"
+                f"{guidance}"
             ) from e
         # We deliberately swallow errors here to avoid bringing down the RPC
         # process if core/genesis evolves. The node CLI (core.boot) handles

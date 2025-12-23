@@ -25,7 +25,10 @@ networks:
     driver: bridge
 
 volumes:
+  animica_mainnet_chain_1_data:
+    name: animica_mainnet_chain_1_data
   mainnet_services_data:
+    name: animica_mainnet_services_data
 
 services:
   # ---------------------------------------------------------------
@@ -39,10 +42,11 @@ services:
     working_dir: /app
     volumes:
       - ../..:/app:ro
-      - ${ANIMICA_DATA_ROOT:-~/.animica}:/data
+      - ${ANIMICA_DATA_ROOT:-animica_mainnet_chain_1_data}:/data
     environment:
       # Mainnet chain config
       ANIMICA_NETWORK: "mainnet"
+      ANIMICA_COMPOSE_FILE: "${ANIMICA_COMPOSE_FILE:-/app/ops/docker/docker-compose.mainnet.yml}"
       ANIMICA_CHAIN_ID: "${ANIMICA_CHAIN_ID:-1}"
       GENESIS_PATH: "${GENESIS_PATH:-/app/core/genesis/genesis.json}"
       ANIMICA_DATA_DIR: "/data"
