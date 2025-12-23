@@ -400,9 +400,15 @@ class P2PService:
             for addr in DEFAULT_BOOTSTRAP_SEEDS:
                 if addr not in merged_seeds:
                     merged_seeds.append(addr)
-        self.seeds = merged_seeds
         self.chain_id = int(chain_id)
         self.deps = deps
+        self._allow_ws_addrs = False
+        self._allow_quic_addrs = False
+        self.seeds = []
+        for addr in merged_seeds:
+            normalized = self._normalize_seed(addr)
+            if normalized and normalized not in self.seeds:
+                self.seeds.append(normalized)
         self._seed_sources = self._build_seed_sources(self._configured_seeds)
         self._seed_keys = {self._addr_key(s) for s in self.seeds}
 
@@ -484,8 +490,6 @@ class P2PService:
         self._dial_attempt_total: int = 0
         self._dial_success_total: int = 0
         self._dial_last_error: Optional[dict[str, Any]] = None
-        self._allow_ws_addrs = False
-        self._allow_quic_addrs = False
         self._seed_hosts = self._seed_hostnames(self.seeds)
 
         self._peer_lock = asyncio.Lock()
@@ -516,6 +520,7 @@ class P2PService:
         self._sync_header_events: Deque[dict[str, Any]] = deque(
             maxlen=int(os.environ.get("ANIMICA_P2P_SYNC_DEBUG_EVENTS", "50") or 50)
         )
+        self._sync_header_sources: Dict[bytes, str] = {}
         self._sync_no_headers_threshold = int(
             os.environ.get("ANIMICA_P2P_NO_HEADERS_THRESHOLD", "3") or 3
         )
@@ -1087,6 +1092,79 @@ class P2PService:
                 continue
         return list(dict.fromkeys(addrs))
 
+    def _listen_ports(self) -> set[int]:
+        ports: set[int] = set()
+        for addr in self.listen_addrs:
+            try:
+                parsed = parse_multiaddr(addr)
+            except Exception:
+                continue
+            if parsed.transport != "tcp":
+                continue
+            if parsed.port:
+                with contextlib.suppress(TypeError, ValueError):
+                    port = int(parsed.port)
+                    if 1 <= port <= 65535:
+                        ports.add(port)
+        if not ports:
+            ports.add(self._local_listen_port())
+        return ports
+
+    def _self_endpoints(self) -> list[tuple[str, int]]:
+        endpoints: list[tuple[str, int]] = []
+        for addr in self._advertised_addrs():
+            parsed = self._normalize_peer_addr(
+                addr, fallback_port=self._local_listen_port()
+            )
+            if parsed.addr and parsed.addr.host and parsed.addr.port:
+                endpoints.append((parsed.addr.host, int(parsed.addr.port)))
+        for addr in self.listen_addrs:
+            try:
+                parsed = parse_multiaddr(addr)
+            except Exception:
+                continue
+            host = parsed.host or ""
+            if host and parsed.transport == "tcp" and parsed.port:
+                with contextlib.suppress(TypeError, ValueError):
+                    endpoints.append((host, int(parsed.port)))
+        if self._external_ip:
+            endpoints.append((self._external_ip, self._local_listen_port()))
+        return endpoints
+
+    def _is_self_address(self, host: str, port: int) -> bool:
+        if not host or not port:
+            return False
+        listen_ports = self._listen_ports()
+        lowered = host.lower()
+        if lowered == "localhost":
+            return port in listen_ports
+        try:
+            ip_obj = ipaddress.ip_address(host)
+        except ValueError:
+            ip_obj = None
+        if ip_obj is not None and ip_obj.is_loopback:
+            return port in listen_ports
+        for local_host, local_port in self._self_endpoints():
+            if local_port != port:
+                continue
+            if local_host == host:
+                return True
+            try:
+                local_ip = ipaddress.ip_address(local_host)
+            except ValueError:
+                local_ip = None
+            if ip_obj is not None and local_ip is not None and ip_obj == local_ip:
+                return True
+        if self._external_ip:
+            try:
+                ext_ip = ipaddress.ip_address(self._external_ip)
+            except ValueError:
+                ext_ip = None
+            if ext_ip is not None and ip_obj is not None and ip_obj == ext_ip:
+                if port in listen_ports or self._is_ephemeral_port(port):
+                    return True
+        return False
+
     def _local_listen_port(self) -> int:
         for addr in self.listen_addrs:
             try:
@@ -1151,6 +1229,8 @@ class P2PService:
             return None
         if not port or port <= 0 or port > 65535:
             port = fallback_port
+        if self._is_self_address(host, port):
+            return None
         if self._is_ephemeral_port(port) and fallback_port and port != fallback_port:
             port = fallback_port
         normalized = self._normalize_peer_addr(
@@ -1790,17 +1870,16 @@ class P2PService:
         normalized = self._sanitize_peer_addr(addr, fallback_port=self._local_listen_port())
         if normalized:
             self._addrman.mark_failure(normalized, reason=error)
-        if is_seed:
-            self._record_bootstrap_attempt(addr, success=False, error=error)
-            if self._is_invalid_seed_error(error):
-                self._invalid_seed_addrs.add(addr)
+        if self._is_invalid_seed_error(error):
+            self._invalid_seed_addrs.add(addr)
+            if is_seed:
                 with contextlib.suppress(ValueError):
                     self.seeds.remove(addr)
                 self._seed_keys.discard(addr_key)
-                log.warning(
-                    "Dropping invalid P2P seed %s (non-P2P endpoint): %s", addr, error
-                )
-                return
+            log.warning("Dropping invalid P2P endpoint %s: %s", addr, error)
+            return
+        if is_seed:
+            self._record_bootstrap_attempt(addr, success=False, error=error)
             log.warning(
                 "Seed %s failed: %s; next retry in %.1fs", addr, error, delay
             )
@@ -2040,6 +2119,18 @@ class P2PService:
         )
         if not result.addr:
             return None
+        if result.addr.port == 443:
+            seed_hosts = {"mainnet.animica.org", "rpc.animica.org"}
+            if result.addr.host in seed_hosts:
+                upgraded = self._normalize_peer_addr(
+                    f"{result.addr.host}:{DEFAULT_TCP_PORT}",
+                    fallback_port=DEFAULT_TCP_PORT,
+                    source="seed_https_upgrade",
+                )
+                if upgraded.addr:
+                    return upgraded.addr.canonical
+            log.warning("Ignoring HTTPS seed for P2P transport: %s", address)
+            return None
         return result.addr.canonical
 
     def _seed_hostnames(self, seeds: list[str]) -> set[str]:
@@ -2084,6 +2175,22 @@ class P2PService:
         if ":" in remote:
             return remote.rsplit(":", 1)[0]
         return remote
+
+    def _extract_port(self, remote: str) -> Optional[int]:
+        if "://" in remote:
+            parsed = urlparse(remote)
+            if parsed.port:
+                return int(parsed.port)
+        if remote.startswith("[") and "]" in remote:
+            remainder = remote.split("]", 1)[-1]
+            if remainder.startswith(":"):
+                with contextlib.suppress(ValueError):
+                    return int(remainder[1:])
+            return None
+        if ":" in remote:
+            with contextlib.suppress(ValueError):
+                return int(remote.rsplit(":", 1)[1])
+        return None
 
     def _netgroup_key(self, remote: str) -> str:
         host = self._extract_host(remote)
@@ -2556,6 +2663,9 @@ class P2PService:
         if not parsed.addr:
             log.info("Skipping unsupported dial target %s", addr)
             return False
+        if self._is_self_address(parsed.addr.host, parsed.addr.port):
+            log.info("Skipping self dial target %s", parsed.addr.canonical)
+            return False
         addr = parsed.addr.canonical
         addr_key = self._addr_key(addr)
         self._dial_attempt_total += 1
@@ -2583,6 +2693,13 @@ class P2PService:
         self, conn: Any, *, direction: str, feeler: bool = False
     ) -> None:
         remote = getattr(conn.info, "remote_addr", None) or "unknown"
+        if self._is_self_address(
+            self._extract_host(remote), self._extract_port(remote) or 0
+        ):
+            log.info("Rejecting self peer %s", remote)
+            with contextlib.suppress(Exception):
+                await conn.close()
+            return
         if self._is_banned(remote):
             log.info("Rejecting banned peer %s", remote)
             with contextlib.suppress(Exception):
@@ -3492,11 +3609,19 @@ class P2PService:
         peer.missing_parent += 1
         if sync_block.parent_hash and not self._has_block(sync_block.parent_hash):
             if sync_block.parent_hash not in self._sync_block_queue_set:
+                parent_height = None
+                if sync_block.hash in self._sync_block_queue_heights:
+                    parent_height = self._sync_block_queue_heights.get(sync_block.hash)
+                    if parent_height is not None:
+                        parent_height = parent_height - 1
+                if parent_height is None:
+                    meta = self._header_meta(sync_block.parent_hash)
+                    if meta is not None:
+                        parent_height = meta[0]
                 self._sync_block_queue.appendleft(sync_block.parent_hash)
                 self._sync_block_queue_set.add(sync_block.parent_hash)
-                self._sync_block_queue_heights[sync_block.parent_hash] = (
-                    self._sync_block_queue_heights.get(sync_block.hash, -1) - 1
-                )
+                if parent_height is not None:
+                    self._sync_block_queue_heights[sync_block.parent_hash] = parent_height
                 self._sync_wakeup.set()
         if peer.missing_parent >= self._missing_parent_threshold:
             self._penalize_peer(
@@ -3715,6 +3840,7 @@ class P2PService:
 
             if header.hash not in self._sync_headers and not self._has_header(header.hash):
                 self._sync_headers[header.hash] = header
+                self._sync_header_sources[header.hash] = peer.remote
                 contiguous.append(header)
             prev = header
 
@@ -3821,14 +3947,29 @@ class P2PService:
             peer = self._select_sync_peer()
         if peer is None or not peer.hello_done.is_set():
             return 0
+        local_height, _ = self._local_head()
+        expected_height = int(local_height or 0) + 1
+        queued = list(self._sync_block_queue)
+        self._sync_block_queue.clear()
+        ordered = sorted(
+            queued,
+            key=lambda h: (
+                self._sync_block_queue_heights.get(h)
+                or (self._sync_headers.get(h).height if h in self._sync_headers else None)
+                or (self._header_meta(h)[0] if self._header_meta(h) else 1_000_000_000)
+            ),
+        )
         to_request: list[bytes] = []
         deferred: list[tuple[bytes, Optional[int]]] = []
-        while (
-            self._sync_block_queue
-            and len(self._sync_inflight_blocks) < self._sync_max_inflight
-        ):
-            h = self._sync_block_queue.popleft()
+        for h in ordered:
             height_hint = self._sync_block_queue_heights.get(h)
+            if height_hint is None:
+                if h in self._sync_headers:
+                    height_hint = self._sync_headers[h].height
+                else:
+                    meta = self._header_meta(h)
+                    if meta is not None:
+                        height_hint = meta[0]
             if (
                 self._has_block(h)
                 or h in self._sync_inflight_blocks
@@ -3838,21 +3979,43 @@ class P2PService:
                 self._sync_block_queue_heights.pop(h, None)
                 continue
             if not (self._has_header(h) or h in self._sync_headers):
-                self._sync_block_queue_set.discard(h)
-                self._sync_block_queue_heights.pop(h, None)
+                deferred.append((h, height_hint))
+                continue
+            if height_hint is not None and height_hint > expected_height:
+                deferred.append((h, height_hint))
+                continue
+            if len(self._sync_inflight_blocks) >= self._sync_max_inflight:
                 deferred.append((h, height_hint))
                 continue
             self._sync_block_queue_set.discard(h)
             self._sync_block_queue_heights.pop(h, None)
             to_request.append(h)
-        for h, height_hint in reversed(deferred):
-            self._sync_block_queue.appendleft(h)
+            if height_hint == expected_height:
+                expected_height += 1
+        for h, height_hint in deferred:
+            self._sync_block_queue.append(h)
             self._sync_block_queue_set.add(h)
             if height_hint is not None:
                 self._sync_block_queue_heights[h] = height_hint
         if not to_request:
             return 0
-        return await self._queue_block_requests(peer, to_request)
+        groups: "OrderedDict[str, list[bytes]]" = OrderedDict()
+        for h in to_request:
+            preferred_remote = self._sync_header_sources.get(h)
+            preferred_peer = (
+                self._peers.get(preferred_remote) if preferred_remote else None
+            )
+            target_peer = (
+                preferred_peer
+                if preferred_peer and preferred_peer.hello_done.is_set()
+                else peer
+            )
+            groups.setdefault(target_peer.remote, []).append(h)
+        requested = 0
+        for remote, hashes in groups.items():
+            target_peer = self._peers.get(remote) or peer
+            requested += await self._queue_block_requests(target_peer, hashes)
+        return requested
 
     async def _sync_once(self, *, force: bool = False) -> dict[str, Any]:
         result: dict[str, Any] = {
@@ -3954,51 +4117,14 @@ class P2PService:
                                 )
                                 self._penalize_peer(peer, "genesis_mismatch")
                                 tried_peers.add(peer.remote)
-                            elif empty_reason == "headers_empty_unexpected":
+                            else:
                                 self._set_sync_backoff(
                                     peer,
-                                    reason="headers_empty_unexpected",
-                                    delay=self._sync_no_headers_backoff,
-                                )
-                                self._penalize_peer(peer, "headers_empty_unexpected")
-                                no_headers_responses += 1
-                                tried_peers.add(peer.remote)
-                                if eligible_count and no_headers_responses >= min(
-                                    self._sync_no_headers_threshold, eligible_count
-                                ):
-                                    self._sync_fatal_error = (
-                                        "headers_unavailable: empty response from peers"
-                                    )
-                                    log.error(
-                                        "Header sync unavailable from peers",
-                                        extra={
-                                            "eligible_peers": eligible_count,
-                                            "tried_peers": len(tried_peers),
-                                            "last_error": empty_reason,
-                                        },
-                                    )
-                            elif empty_reason == "headers_empty":
-                                self._set_sync_backoff(
-                                    peer,
-                                    reason="no_headers",
+                                    reason=empty_reason,
                                     delay=self._sync_no_headers_backoff,
                                 )
                                 no_headers_responses += 1
                                 tried_peers.add(peer.remote)
-                                if eligible_count and no_headers_responses >= min(
-                                    self._sync_no_headers_threshold, eligible_count
-                                ):
-                                    self._sync_fatal_error = (
-                                        "headers_unavailable: empty response from peers"
-                                    )
-                                    log.error(
-                                        "Header sync unavailable from peers",
-                                        extra={
-                                            "eligible_peers": eligible_count,
-                                            "tried_peers": len(tried_peers),
-                                            "last_error": empty_reason,
-                                        },
-                                    )
                         break
 
                     saw_headers = True
@@ -4136,6 +4262,10 @@ class P2PService:
             return False, "handshake_pending"
         if not peer.ready_for_sync:
             return False, "not_ready"
+        if self._is_self_address(
+            self._extract_host(peer.remote), self._extract_port(peer.remote) or 0
+        ):
+            return False, "self"
         if peer.peer_id and self._is_banned(peer.peer_id, now=now):
             return False, "banned_peer_id"
         if self._is_banned(peer.remote, now=now):
@@ -4406,8 +4536,8 @@ class P2PService:
                 return "peer_at_genesis"
             return "peer_behind"
         if remote_height <= local_height:
-            return "peer_behind"
-        return "headers_empty_unexpected"
+            return "at_tip"
+        return "headers_empty"
 
     def _record_sync_header_event(self, event: dict[str, Any]) -> None:
         payload = dict(event)

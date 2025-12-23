@@ -111,6 +111,35 @@ def test_banlist_prefers_peer_id(tmp_path: Path) -> None:
     assert node._is_banned("peer-123")
 
 
+def test_self_addresses_are_not_sanitized(tmp_path: Path) -> None:
+    node = _make_service(tmp_path, "self-filter")
+    node._external_ip = "203.0.113.10"
+    fallback_port = node._local_listen_port()
+
+    assert (
+        node._sanitize_peer_addr(
+            "127.0.0.1:30333", fallback_port=fallback_port, source="test"
+        )
+        is None
+    )
+    assert (
+        node._sanitize_peer_addr(
+            "203.0.113.10:55555", fallback_port=fallback_port, source="test"
+        )
+        is None
+    )
+
+
+def test_https_seed_normalization(tmp_path: Path) -> None:
+    node = _make_service(tmp_path, "seed-https")
+
+    assert (
+        node._normalize_seed("mainnet.animica.org:443")
+        == "tcp://mainnet.animica.org:30333"
+    )
+    assert node._normalize_seed("example.com:443") is None
+
+
 @pytest.mark.asyncio
 async def test_netgroup_limits_reject_connections(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     node = _make_service(tmp_path, "netgroup-limit")

@@ -8,7 +8,7 @@ import pytest
 from core.types.block import Block
 from core.utils.hash import ZERO32
 from p2p.deps import P2PDeps
-from p2p.node.p2p_service import P2PService, _PeerState, _SyncHeader
+from p2p.node.p2p_service import P2PService, _PeerState, _SyncBlock, _SyncHeader
 from p2p.tests import tcp_multiaddr
 from p2p.wire.encoding import encode_payload
 from p2p.wire.frames import Framer
@@ -134,6 +134,158 @@ def test_sync_status_head_hash_matches_chain_head(tmp_path: Path) -> None:
     assert snap.best_block_hash == expected_hash
 
 
+def test_sync_status_head_hash_stable_without_progress(tmp_path: Path) -> None:
+    node, _deps_sync = _make_service(tmp_path, "head-stable")
+
+    first = node.sync_status_snapshot()
+    second = node.sync_status_snapshot()
+
+    assert first.head_height == second.head_height
+    assert first.head_hash == second.head_hash
+
+
+@pytest.mark.asyncio
+async def test_empty_headers_response_is_not_fatal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    node, _deps_sync = _make_service(tmp_path, "empty-headers")
+    peer = _register_peer(node, "203.0.113.10:30333")
+    peer.peer_id = "peer-1"
+    peer.hello_done.set()
+    peer.ready_for_sync = True
+    peer.hello = {
+        "chain_id": node.chain_id,
+        "genesis_hash": node._genesis_hash(),
+        "capabilities": ["sync"],
+        "head_height": 10,
+        "head_hash": b"\x11" * 32,
+    }
+    node._sync_no_headers_threshold = 1
+
+    async def _fake_fetch_headers(_peer: _PeerState):
+        return []
+
+    monkeypatch.setattr(node, "_fetch_headers", _fake_fetch_headers)
+
+    await node._sync_once(force=True)
+
+    assert node._sync_fatal_error is None
+    assert node._sync_last_header_response_count == 0
+    assert node._sync_last_header_error != "peer_at_genesis"
+
+
+@pytest.mark.asyncio
+async def test_empty_headers_at_tip_not_fatal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    node, deps_sync = _make_service(tmp_path, "empty-at-tip")
+    peer = _register_peer(node, "203.0.113.11:30333")
+    peer.peer_id = "peer-2"
+    peer.hello_done.set()
+    peer.ready_for_sync = True
+    peer.hello = {
+        "chain_id": node.chain_id,
+        "genesis_hash": node._genesis_hash(),
+        "capabilities": ["sync"],
+        "head_height": 1,
+        "head_hash": b"\x22" * 32,
+    }
+    node._sync_no_headers_threshold = 1
+
+    block = _make_child_block(deps_sync)
+    accepted, reason = deps_sync.import_block(block)
+    assert accepted, reason
+
+    async def _fake_fetch_headers(_peer: _PeerState):
+        return []
+
+    monkeypatch.setattr(node, "_fetch_headers", _fake_fetch_headers)
+
+    await node._sync_once(force=True)
+
+    assert node._sync_fatal_error is None
+    assert node._sync_last_header_error == "at_tip"
+
+
+@pytest.mark.asyncio
+async def test_block_requests_sequential_by_height(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    node, _deps_sync = _make_service(tmp_path, "block-order")
+    peer = _register_peer(node, "203.0.113.12:30333")
+    peer.peer_id = "peer-3"
+    peer.hello_done.set()
+    peer.ready_for_sync = True
+    peer.hello = {
+        "chain_id": node.chain_id,
+        "genesis_hash": node._genesis_hash(),
+        "capabilities": ["sync"],
+        "head_height": 3,
+        "head_hash": b"\x33" * 32,
+    }
+
+    h1 = b"\x01" * 32
+    h2 = b"\x02" * 32
+    h3 = b"\x03" * 32
+    node._sync_headers[h1] = _SyncHeader(
+        hash=h1, parent_hash=b"\x00" * 32, height=1, theta_micro=0, timestamp=1
+    )
+    node._sync_headers[h2] = _SyncHeader(
+        hash=h2, parent_hash=h1, height=2, theta_micro=0, timestamp=2
+    )
+    node._sync_headers[h3] = _SyncHeader(
+        hash=h3, parent_hash=h2, height=3, theta_micro=0, timestamp=3
+    )
+    node._sync_block_queue.extend([h3, h1, h2])
+    node._sync_block_queue_set.update([h1, h2, h3])
+    node._sync_block_queue_heights.update({h1: 1, h2: 2, h3: 3})
+
+    requested: list[bytes] = []
+
+    async def _capture_send(_peer: _PeerState, _msg_id, payload):
+        requested.extend(list(payload.by_hash))
+
+    monkeypatch.setattr(node, "_send", _capture_send)
+
+    await node._schedule_block_requests(peer)
+
+    assert requested == [h1, h2, h3]
+
+
+@pytest.mark.asyncio
+async def test_missing_parent_enqueues_parent_first(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    node, _deps_sync = _make_service(tmp_path, "missing-parent")
+    peer = _register_peer(node, "203.0.113.13:30333")
+    peer.peer_id = "peer-4"
+    peer.hello_done.set()
+    peer.ready_for_sync = True
+    peer.hello = {
+        "chain_id": node.chain_id,
+        "genesis_hash": node._genesis_hash(),
+        "capabilities": ["sync"],
+        "head_height": 2,
+        "head_hash": b"\x44" * 32,
+    }
+
+    parent = b"\x10" * 32
+    child = b"\x20" * 32
+    node._sync_headers[parent] = _SyncHeader(
+        hash=parent, parent_hash=b"\x00" * 32, height=1, theta_micro=0, timestamp=1
+    )
+    node._sync_headers[child] = _SyncHeader(
+        hash=child, parent_hash=parent, height=2, theta_micro=0, timestamp=2
+    )
+    node._sync_block_queue.extend([child])
+    node._sync_block_queue_set.add(child)
+    node._sync_block_queue_heights[child] = 2
+
+    sync_block = _SyncBlock(block=b"", hash=child, parent_hash=parent, origin_peer=peer.remote)
+    node._handle_missing_parent(peer, sync_block)
+
+    requested: list[bytes] = []
+
+    async def _capture_send(_peer: _PeerState, _msg_id, payload):
+        requested.extend(list(payload.by_hash))
+
+    monkeypatch.setattr(node, "_send", _capture_send)
+
+    await node._schedule_block_requests(peer)
+
+    assert requested[0] == parent
 @pytest.mark.asyncio
 async def test_mocked_peer_headers_and_blocks_advance_head(tmp_path: Path) -> None:
     node, deps_sync = _make_service(tmp_path, "mocked")
@@ -175,6 +327,7 @@ async def test_peer_ready_triggers_header_request(tmp_path: Path, monkeypatch: p
         chain_id=node.chain_id,
         listen_port=30333,
         peer_id=b"\x11" * 32,
+        genesis_hash=node._genesis_hash(),
         head_hash=b"\x00" * 32,
         head_height=10,
     )
