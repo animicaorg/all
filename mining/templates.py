@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import time
 from dataclasses import asdict, dataclass
-from typing import Callable, Dict, Optional, Tuple
+from typing import Any, Callable, Dict, Optional, Tuple
 
 from mining.hash_search import micro_threshold_to_target256
 
@@ -89,6 +89,55 @@ class WorkTemplate:
     @property
     def mix_seed(self) -> bytes:
         return self.header.mix_seed
+
+
+@dataclass(frozen=True)
+class MiningJob:
+    """
+    Canonical mining job model shared by solo, pool, stratum, and submit paths.
+    """
+
+    job_id: str
+    parent_hash: bytes
+    parent_height: int
+    chain_id: int
+    target: int
+    theta_target_micro: int
+    proof_type: str
+    challenge: Optional[Dict[str, Any]]
+    expires_at: Optional[float]
+    template_version: int
+    header: HeaderTemplate
+    sign_bytes: bytes
+    work_type: int | None = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        header_dict = asdict(self.header)
+        header_view = {
+            k: (_to_hex(v) if isinstance(v, (bytes, bytearray)) else v)
+            for k, v in header_dict.items()
+        }
+        return {
+            "jobId": self.job_id,
+            "parentHash": _to_hex(self.parent_hash),
+            "parentHeight": int(self.parent_height),
+            "chainId": int(self.chain_id),
+            "target": hex(int(self.target)),
+            "thetaMicro": int(self.theta_target_micro),
+            "proofType": self.proof_type,
+            "challenge": self.challenge,
+            "expiresAt": int(self.expires_at) if self.expires_at else None,
+            "templateVersion": int(self.template_version),
+            "header": header_view,
+            "signBytes": _to_hex(self.sign_bytes),
+            "hints": {"mixSeed": _to_hex(self.header.mix_seed)},
+            "workType": int(self.work_type) if self.work_type is not None else None,
+        }
+
+    def is_expired(self, now: Optional[float] = None) -> bool:
+        if self.expires_at is None:
+            return False
+        return (now or time.time()) >= self.expires_at
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -221,6 +270,47 @@ class TemplateBuilder:
         self._cached = wt
         return wt
 
+    def current_job(
+        self,
+        *,
+        force: bool = False,
+        proof_type: str = "sha256d",
+        challenge: Optional[Dict[str, Any]] = None,
+        max_age_secs: Optional[int] = 20,
+        template_version: int = 1,
+    ) -> MiningJob:
+        wt = self.current_template(force=force)
+        target = micro_threshold_to_target256(wt.theta_target_micro)
+        job_id = compute_job_id(
+            parent_hash=wt.parent_hash,
+            parent_height=wt.height - 1,
+            chain_id=wt.header.chain_id,
+            theta_target_micro=wt.theta_target_micro,
+            target=target,
+            proof_type=proof_type,
+            template_version=template_version,
+            header=wt.header,
+            challenge=challenge,
+        )
+        expires_at = (
+            time.time() + max_age_secs if max_age_secs is not None else None
+        )
+        return MiningJob(
+            job_id=job_id,
+            parent_hash=wt.parent_hash,
+            parent_height=wt.height - 1,
+            chain_id=wt.header.chain_id,
+            target=target,
+            theta_target_micro=wt.theta_target_micro,
+            proof_type=proof_type,
+            challenge=challenge,
+            expires_at=expires_at,
+            template_version=template_version,
+            header=wt.header,
+            sign_bytes=wt.sign_bytes,
+            work_type=wt.work_type,
+        )
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Helpers
@@ -254,6 +344,78 @@ def _sign_bytes(body: Dict[str, object]) -> bytes:
             for k, v in body.items()
         }
         return json.dumps(norm, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def _to_hex(b: bytes) -> str:
+    return "0x" + b.hex()
+
+
+def _json_stable(obj: Any) -> str:
+    def _default(o: Any) -> Any:
+        if isinstance(o, (bytes, bytearray)):
+            return o.hex()
+        if isinstance(o, (int, float, str, bool)) or o is None:
+            return o
+        if isinstance(o, dict):
+            return {k: _default(v) for k, v in o.items()}
+        if isinstance(o, (list, tuple)):
+            return [_default(v) for v in o]
+        return str(o)
+
+    normalized = _default(obj)
+    import json
+
+    return json.dumps(normalized, sort_keys=True, separators=(",", ":"))
+
+
+def _hash_job_payload(payload: Dict[str, Any]) -> str:
+    try:
+        from proofs.utils.hash import sha3_256  # type: ignore
+
+        digest = sha3_256(_json_stable(payload).encode("utf-8"))
+    except Exception:
+        import hashlib
+
+        digest = hashlib.sha3_256(_json_stable(payload).encode("utf-8")).digest()
+    return digest.hex()
+
+
+def compute_job_id(
+    *,
+    parent_hash: bytes,
+    parent_height: int,
+    chain_id: int,
+    theta_target_micro: int,
+    target: int,
+    proof_type: str,
+    template_version: int,
+    header: HeaderTemplate,
+    challenge: Optional[Dict[str, Any]],
+) -> str:
+    payload = {
+        "parentHash": parent_hash.hex(),
+        "parentHeight": int(parent_height),
+        "chainId": int(chain_id),
+        "thetaTargetMicro": int(theta_target_micro),
+        "target": int(target),
+        "proofType": proof_type,
+        "templateVersion": int(template_version),
+        "challenge": challenge,
+        "header": {
+            "stateRoot": header.state_root.hex(),
+            "txsRoot": header.txs_root.hex(),
+            "receiptsRoot": header.receipts_root.hex(),
+            "proofsRoot": header.proofs_root.hex(),
+            "daRoot": header.da_root.hex(),
+            "pqAlgPolicyRoot": header.pq_alg_policy_root.hex(),
+            "poiesPolicyRoot": header.poies_policy_root.hex(),
+            "mixSeed": header.mix_seed.hex(),
+            "timestamp": int(header.timestamp),
+            "workType": int(header.work_type) if header.work_type is not None else None,
+            "number": int(header.number),
+        },
+    }
+    return _hash_job_payload(payload)
 
 
 def _enc_hook_msgspec(obj):  # pragma: no cover

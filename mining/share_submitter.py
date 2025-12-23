@@ -115,6 +115,11 @@ def _default_share_encoder(share: Any) -> Dict[str, Any]:
 
     # Normalize common keys/casing
     payload: Dict[str, Any] = {}
+    # Job id (for stale rejection)
+    job_id = m.get("jobId") or m.get("job_id") or m.get("job")
+    if job_id is not None:
+        payload["jobId"] = job_id
+
     # Header/template
     header = m.get("header") or m.get("header_template") or m.get("candidate_header")
     if header is None:
@@ -148,6 +153,8 @@ def _default_share_encoder(share: Any) -> Dict[str, Any]:
         payload["d_ratio"] = m["d_ratio"]
     if "height" in m:
         payload["height"] = m["height"]
+    if "shareTarget" in m:
+        payload["shareTarget"] = m["shareTarget"]
 
     return payload
 
@@ -324,8 +331,12 @@ class ShareSubmitter:
                     accepted = bool(res.get("accepted", False))
                     if accepted:
                         self._stats.shares_accepted += 1
+                        if res.get("isBlock"):
+                            self._stats.blocks_accepted += 1
                     else:
                         self._stats.shares_rejected += 1
+                        if res.get("isBlock"):
+                            self._stats.blocks_rejected += 1
                     return ShareResult(
                         accepted=accepted,
                         reason=str(res.get("reason", "")),
