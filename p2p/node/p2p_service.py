@@ -76,6 +76,7 @@ class _PeerState:
     hello: Optional[dict] = None
     hello_done: asyncio.Event = field(default_factory=asyncio.Event)
     pending_headers: Optional[asyncio.Future] = None
+    ready_for_sync: bool = False
     connected_at: float = field(default_factory=time.time)
     feeler: bool = False
     known_addrs: "OrderedDict[str, float]" = field(default_factory=OrderedDict)
@@ -303,14 +304,21 @@ class SyncStatusSnapshot:
     last_block_at: float
     last_header_request_at: float
     last_header_response_at: float
+    last_header_response_count: int
     last_block_request_at: float
     last_block_response_at: float
+    last_header_request_peer: Optional[str]
+    last_header_response_peer: Optional[str]
+    last_header_error: Optional[str]
+    last_header_error_at: Optional[float]
     last_block_error: Optional[str]
     fatal_error: Optional[str]
     active_peer_for_headers: Optional[str]
     active_peer_for_blocks: Optional[str]
     active_peers_for_headers: list[str]
     active_peers_for_blocks: list[str]
+    eligible_peers_for_headers: list[str]
+    ineligible_peers_for_headers: Dict[str, str]
     pending_header_batches: int
     synchronized: bool
     peer_penalties: Dict[str, int]
@@ -335,14 +343,21 @@ class SyncStatusSnapshot:
             "last_block_at": self.last_block_at,
             "last_header_request_at": self.last_header_request_at,
             "last_header_response_at": self.last_header_response_at,
+            "last_header_response_count": self.last_header_response_count,
             "last_block_request_at": self.last_block_request_at,
             "last_block_response_at": self.last_block_response_at,
+            "last_header_request_peer": self.last_header_request_peer,
+            "last_header_response_peer": self.last_header_response_peer,
+            "last_header_error": self.last_header_error,
+            "last_header_error_at": self.last_header_error_at,
             "last_block_error": self.last_block_error,
             "fatal_error": self.fatal_error,
             "active_peer_for_headers": self.active_peer_for_headers,
             "active_peer_for_blocks": self.active_peer_for_blocks,
             "active_peers_for_headers": list(self.active_peers_for_headers),
             "active_peers_for_blocks": list(self.active_peers_for_blocks),
+            "eligible_peers_for_headers": list(self.eligible_peers_for_headers),
+            "ineligible_peers_for_headers": dict(self.ineligible_peers_for_headers),
             "pending_header_batches": self.pending_header_batches,
             "synchronized": self.synchronized,
             "peer_penalties": dict(self.peer_penalties),
@@ -683,8 +698,14 @@ class P2PService:
         self._sync_last_block_at = 0.0
         self._sync_last_header_request_at = 0.0
         self._sync_last_header_response_at = 0.0
+        self._sync_last_header_response_count = 0
         self._sync_last_block_request_at = 0.0
         self._sync_last_block_response_at = 0.0
+        self._sync_last_header_request_peer: Optional[str] = None
+        self._sync_last_header_response_peer: Optional[str] = None
+        self._sync_last_header_error: Optional[str] = None
+        self._sync_last_header_error_at: Optional[float] = None
+        self._sync_last_header_error_peer: Optional[str] = None
         self._sync_active_header_peer: Optional[str] = None
         self._sync_active_block_peer: Optional[str] = None
         self._sync_inflight_headers = 0
@@ -1839,10 +1860,12 @@ class P2PService:
         best_block_height = int(height or 0)
         best_block_hash = head_hex
         synchronized = best_block_height > 0 and best_header_height <= best_block_height
+        eligible_peers, ineligible_peers = self._eligible_sync_peers()
         phase = self._derive_sync_phase(
             best_header_height=best_header_height,
             best_block_height=best_block_height,
             pending_header_batches=len(self._sync_header_queue),
+            eligible_header_peers=len(eligible_peers),
         )
         active_peers_for_headers = (
             [self._sync_active_header_peer] if self._sync_active_header_peer else []
@@ -1877,14 +1900,21 @@ class P2PService:
             last_block_at=self._sync_last_block_at,
             last_header_request_at=self._sync_last_header_request_at,
             last_header_response_at=self._sync_last_header_response_at,
+            last_header_response_count=self._sync_last_header_response_count,
             last_block_request_at=self._sync_last_block_request_at,
             last_block_response_at=self._sync_last_block_response_at,
+            last_header_request_peer=self._sync_last_header_request_peer,
+            last_header_response_peer=self._sync_last_header_response_peer,
+            last_header_error=self._sync_last_header_error,
+            last_header_error_at=self._sync_last_header_error_at,
             last_block_error=self._sync_last_block_error,
             fatal_error=self._sync_fatal_error,
             active_peer_for_headers=self._sync_active_header_peer,
             active_peer_for_blocks=self._sync_active_block_peer,
             active_peers_for_headers=active_peers_for_headers,
             active_peers_for_blocks=active_peers_for_blocks,
+            eligible_peers_for_headers=[peer.remote for peer in eligible_peers],
+            ineligible_peers_for_headers=dict(ineligible_peers),
             pending_header_batches=len(self._sync_header_queue),
             synchronized=synchronized,
             peer_penalties={
@@ -2010,6 +2040,7 @@ class P2PService:
         best_header_height: int,
         best_block_height: int,
         pending_header_batches: int,
+        eligible_header_peers: int = 0,
     ) -> str:
         if self._sync_block_stalled_reason:
             return "STALLED"
@@ -2021,6 +2052,8 @@ class P2PService:
             return "VERIFYING"
         if best_block_height > 0:
             return "SYNCED"
+        if eligible_header_peers > 0:
+            return "SYNCING_PENDING"
         return "IDLE"
 
     def _maybe_mark_block_stalled(self, now: float) -> None:
@@ -2769,6 +2802,7 @@ class P2PService:
         ) or data.get("genesis_hash") or data.get("genesisHash")
         peer.hello = normalized
         peer.hello_done.set()
+        peer.ready_for_sync = True
 
         listen_port = int(getattr(hello, "listen_port", 0) or 0)
         reported_addr = self._reported_peer_addr(peer.remote, listen_port)
@@ -3046,11 +3080,23 @@ class P2PService:
                 self._update_latency(peer, peer.last_header_request_at)
             fut.set_result(msg)
             peer.pending_headers = None
+            self._sync_last_header_response_at = time.time()
+            self._sync_last_header_response_peer = peer.remote
+            self._sync_last_header_response_count = len(msg.headers)
+            if msg.headers:
+                self._sync_last_header_error = None
+                self._sync_last_header_error_at = None
+                self._sync_last_header_error_peer = None
         else:
             # Treat as announcements; queue for sync loop to validate & download.
             if msg.headers:
                 self._sync_header_queue.append((peer.remote, list(msg.headers)))
                 self._sync_last_header_response_at = time.time()
+                self._sync_last_header_response_peer = peer.remote
+                self._sync_last_header_response_count = len(msg.headers)
+                self._sync_last_header_error = None
+                self._sync_last_header_error_at = None
+                self._sync_last_header_error_peer = None
                 self._sync_wakeup.set()
 
     async def _handle_get_blocks(self, peer: _PeerState, payload: bytes) -> None:
@@ -3372,6 +3418,7 @@ class P2PService:
         peer.last_header_request_at = self._sync_last_header_request_at
         self._sync_active_header_peer = peer.remote
         self._sync_inflight_headers = 1
+        self._sync_last_header_request_peer = peer.remote
         await self._send(
             peer,
             MsgID.GET_HEADERS,
@@ -3384,12 +3431,20 @@ class P2PService:
             )
         except Exception:
             peer.pending_headers = None
+            self._sync_last_header_error = "headers_timeout"
+            self._sync_last_header_error_at = time.time()
+            self._sync_last_header_error_peer = peer.remote
             self._penalize_peer(peer, "headers_timeout")
             return None
         finally:
             self._sync_inflight_headers = 0
             self._sync_active_header_peer = None
         self._sync_last_header_response_at = time.time()
+        self._sync_last_header_response_peer = peer.remote
+        self._sync_last_header_response_count = len(headers_msg.headers)
+        self._sync_last_header_error = None
+        self._sync_last_header_error_at = None
+        self._sync_last_header_error_peer = None
         return list(headers_msg.headers)
 
     def _process_headers(
@@ -3629,6 +3684,11 @@ class P2PService:
                 if not headers:
                     if requested == 0:
                         result["error"] = "no-headers"
+                        self._sync_last_header_error = "no_headers"
+                        self._sync_last_header_error_at = time.time()
+                        self._sync_last_header_error_peer = peer.remote
+                        if remote_height > local_height:
+                            self._penalize_peer(peer, "no_headers")
                     break
 
                 order = self._process_headers(peer, headers)
@@ -3641,6 +3701,9 @@ class P2PService:
                     if not all_known:
                         if requested == 0:
                             result["error"] = "invalid-headers"
+                            self._sync_last_header_error = "invalid_headers"
+                            self._sync_last_header_error_at = time.time()
+                            self._sync_last_header_error_peer = peer.remote
                         break
                     break
 
@@ -3727,27 +3790,57 @@ class P2PService:
     def _best_peer(self) -> Optional[_PeerState]:
         return self._select_sync_peer()
 
+    def _sync_peer_eligibility(
+        self, peer: _PeerState, *, now: Optional[float] = None
+    ) -> tuple[bool, str]:
+        now = time.time() if now is None else now
+        if peer.hello is None or not isinstance(peer.hello, dict):
+            return False, "hello_missing"
+        if not peer.peer_id:
+            return False, "peer_id_missing"
+        if not peer.hello_done.is_set():
+            return False, "handshake_pending"
+        if not peer.ready_for_sync:
+            return False, "not_ready"
+        if self._is_banned(peer.remote, now=now):
+            return False, "banned"
+        if (
+            peer.remote not in self._sync_peer_penalty_whitelist
+            and self._sync_peer_penalties.get(peer.remote, 0)
+            >= self._sync_peer_penalty_threshold
+        ):
+            return False, "penalized"
+        backoff_until = self._sync_peer_backoff.get(peer.remote, 0.0)
+        if backoff_until and backoff_until > now:
+            return False, "backoff"
+        caps = peer.hello.get("capabilities")
+        if isinstance(caps, list) and caps:
+            if "sync" not in caps and "blocks" not in caps:
+                return False, "no_sync_capability"
+        return True, "eligible"
+
+    def _eligible_sync_peers(
+        self,
+    ) -> tuple[list[_PeerState], dict[str, str]]:
+        eligible: list[_PeerState] = []
+        ineligible: dict[str, str] = {}
+        now = time.time()
+        for peer in self._peers.values():
+            ok, reason = self._sync_peer_eligibility(peer, now=now)
+            if ok:
+                eligible.append(peer)
+            else:
+                ineligible[peer.remote] = reason
+        return eligible, ineligible
+
     def _select_sync_peer(
         self, *, avoid_peer: Optional[_PeerState] = None
     ) -> Optional[_PeerState]:
         best: Optional[_PeerState] = None
         best_score = None
-        now = time.time()
         avoid_netgroup = avoid_peer.netgroup if avoid_peer else None
-        for p in self._peers.values():
-            if not p.peer_id or not isinstance(p.hello, dict):
-                continue
-            if (
-                p.remote not in self._sync_peer_penalty_whitelist
-                and self._sync_peer_penalties.get(p.remote, 0)
-                >= self._sync_peer_penalty_threshold
-            ):
-                continue
-            backoff_until = self._sync_peer_backoff.get(p.remote, 0.0)
-            if backoff_until and backoff_until > now:
-                continue
-            if self._is_banned(p.remote, now=now):
-                continue
+        eligible, _ = self._eligible_sync_peers()
+        for p in eligible:
             try:
                 h = int(p.hello.get("head_height") or 0)
             except Exception:

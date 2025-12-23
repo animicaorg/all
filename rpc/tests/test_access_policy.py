@@ -46,7 +46,8 @@ def test_peer_injection_allows_localhost() -> None:
 def test_peer_injection_allows_remote_without_token() -> None:
     policy = AccessPolicy(mode=AccessMode.PUBLIC_BOOTSTRAP)
     ctx = DummyCtx(client=("203.0.113.10", 12345))
-    policy.authorize("p2p.importPeers", ctx)
+    with pytest.raises(RpcMethodRestricted):
+        policy.authorize("p2p.importPeers", ctx)
 
 
 def test_peer_injection_allows_token() -> None:
