@@ -77,6 +77,7 @@ class AccessPolicy:
         "p2p.addPeer",
         "p2p.addPeers",
         "p2p.importPeers",
+        "p2p.syncDebug",
         "sync.force",
         "sync.trigger",
         "sync.start",

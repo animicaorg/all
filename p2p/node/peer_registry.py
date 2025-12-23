@@ -63,7 +63,7 @@ class PeerRegistry:
       - Track handshake timeouts for unknown peer_ids.
     """
 
-    def __init__(self, *, max_inbound_per_ip: int = 8, handshake_timeout_s: float = 6.0) -> None:
+    def __init__(self, *, max_inbound_per_ip: int = 8, handshake_timeout_s: float = 3.0) -> None:
         self._sessions: Dict[str, PeerSession] = {}
         self._sessions_by_peer_key: Dict[tuple[str, str], PeerSession] = {}
         self._max_inbound_per_ip = max(1, int(max_inbound_per_ip))
@@ -163,11 +163,10 @@ class PeerRegistry:
 
     def peer_count(self) -> int:
         """
-        Count active sessions, preferring identified peers and including pending handshakes.
+        Count active sessions with completed handshakes.
         """
         identified = set(self._sessions_by_peer_key)
-        unknown = sum(1 for s in self._sessions.values() if not s.peer_id)
-        return len(identified) + unknown
+        return len(identified)
 
     def snapshot(self) -> List[Dict[str, object]]:
         """
