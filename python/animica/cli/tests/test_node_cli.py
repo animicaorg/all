@@ -19,11 +19,71 @@ from typer.testing import CliRunner
 
 runner = CliRunner()
 respx_mock = respx if respx is not None else pytest.mark.skip(reason="respx not installed")
+ORIGINAL_ENSURE_PORTS = node._ensure_ports_available
+ORIGINAL_AUTO_BOOTSTRAP = node._auto_bootstrap_if_needed
 
 
 @pytest.fixture(autouse=True)
 def _disable_post_start_peer_bootstrap(monkeypatch: Any) -> None:
     monkeypatch.setattr(node, "_post_start_peer_bootstrap", lambda *args, **kwargs: None)
+    monkeypatch.setattr(node, "_wait_for_rpc_ready", lambda *args, **kwargs: True)
+    monkeypatch.setattr(node, "_ensure_ports_available", lambda *args, **kwargs: None)
+    monkeypatch.setattr(node, "_auto_bootstrap_if_needed", lambda *args, **kwargs: None)
+    monkeypatch.setattr(node, "_record_bootstrap_head", lambda *args, **kwargs: None)
+    monkeypatch.setattr(node, "_ensure_db_initialized", lambda *args, **kwargs: None)
+
+
+def test_port_conflict_detection(monkeypatch: Any) -> None:
+    monkeypatch.setattr(node, "_ensure_ports_available", ORIGINAL_ENSURE_PORTS)
+
+    class DummySocket:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def setsockopt(self, *args, **kwargs):
+            return None
+
+        def bind(self, *args, **kwargs):
+            raise OSError("in use")
+
+    monkeypatch.setattr(node.socket, "socket", lambda *args, **kwargs: DummySocket())
+    assert node._port_in_use(30333) is True
+
+
+def test_kill_conflicts_stops_animica_pid(monkeypatch: Any, tmp_path: Path) -> None:
+    monkeypatch.setattr(node, "_ensure_ports_available", ORIGINAL_ENSURE_PORTS)
+    pid_file = tmp_path / "animica-p2p.pid"
+    pid_file.write_text("pid=4242\nport=30333\n")
+
+    monkeypatch.setattr(node, "_pid_is_running", lambda pid: True)
+    monkeypatch.setattr(node, "_process_command", lambda pid: "animica")
+
+    state = {"in_use": True}
+
+    def fake_port_in_use(port: int, host: str = "0.0.0.0") -> bool:
+        if port == 30333:
+            return state["in_use"]
+        return False
+
+    monkeypatch.setattr(node, "_port_in_use", fake_port_in_use)
+    terminated = {"pid": None}
+
+    def fake_terminate(pid: int) -> None:
+        terminated["pid"] = pid
+        state["in_use"] = False
+
+    monkeypatch.setattr(node, "_terminate_process", fake_terminate)
+
+    node._ensure_ports_available(
+        rpc_port=8545,
+        p2p_port=30333,
+        kill_conflicts=True,
+        pid_file=pid_file,
+    )
+    assert terminated["pid"] == 4242
 
 
 # Test helper functions for up_all tests
@@ -148,7 +208,7 @@ def test_status_and_head(monkeypatch: Any) -> None:
             json={"jsonrpc": "2.0", "id": 1, "error": {"message": "Method not found"}},
         )
 
-    head_route = respx.post(rpc_url).mock(side_effect=handler)
+    respx.post(rpc_url).mock(side_effect=handler)
 
     status_result = runner.invoke(node.app, ["status"])
     assert status_result.exit_code == 0
@@ -287,6 +347,7 @@ def test_status_cached_requires_flag(monkeypatch: Any, tmp_path: Path) -> None:
 
 
 def test_auto_bootstrap_fetches_when_db_missing(monkeypatch: Any, tmp_path: Path) -> None:
+    monkeypatch.setattr(node, "_auto_bootstrap_if_needed", ORIGINAL_AUTO_BOOTSTRAP)
     cfg = _dummy_net_cfg(tmp_path)
     monkeypatch.delenv("ANIMICA_P2P_SEEDS", raising=False)
 
@@ -312,6 +373,7 @@ def test_auto_bootstrap_fetches_when_db_missing(monkeypatch: Any, tmp_path: Path
 
 
 def test_auto_bootstrap_skips_when_db_exists(monkeypatch: Any, tmp_path: Path) -> None:
+    monkeypatch.setattr(node, "_auto_bootstrap_if_needed", ORIGINAL_AUTO_BOOTSTRAP)
     cfg = _dummy_net_cfg(tmp_path)
     db_dir = Path(cfg.data_dir)
     db_dir.mkdir(parents=True, exist_ok=True)
@@ -444,7 +506,7 @@ def test_up_with_network_from_env(monkeypatch: Any) -> None:
         # Mock subprocess.run
         mock_result = MagicMock()
         mock_result.returncode = 0
-        with patch("animica.cli.node.subprocess.run", return_value=mock_result) as mock_run:
+        with patch("animica.cli.node.subprocess.run", return_value=mock_result):
             result = runner.invoke(node.app, ["up", "--no-wait-sync"])
             
             assert result.exit_code == 0
@@ -769,7 +831,7 @@ def test_status_retries_on_connection_error(monkeypatch: Any) -> None:
         retry_attempt_count[0] += 1
         original_sleep(duration)
     
-    head_route = respx.post(rpc_url)(side_effect=side_effect_fn)
+    respx.post(rpc_url)(side_effect=side_effect_fn)
     respx.post("http://127.0.0.1:9997/rpc")(side_effect=side_effect_fn)
     respx.post("http://[::1]:9997/rpc")(side_effect=side_effect_fn)
     
@@ -942,7 +1004,6 @@ def test_network_switching_affects_compose_file(monkeypatch: Any) -> None:
     """Test that switching networks changes the compose file used."""
     with tempfile.TemporaryDirectory() as tmpdir:
         state_file = Path(tmpdir) / "state.json"
-        state = CLIState(state_file)
         monkeypatch.setattr("animica.cli.node.get_cli_state", lambda: CLIState(state_file))
         monkeypatch.setattr("animica.cli.network.get_cli_state", lambda: CLIState(state_file))
         
