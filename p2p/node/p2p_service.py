@@ -486,6 +486,7 @@ class P2PService:
         self._dial_last_error: Optional[dict[str, Any]] = None
         self._allow_ws_addrs = False
         self._allow_quic_addrs = False
+        self._seed_hosts = self._seed_hostnames(self.seeds)
 
         self._peer_lock = asyncio.Lock()
         self._peers: dict[str, _PeerState] = {}  # remote -> state
@@ -1125,11 +1126,19 @@ class P2PService:
             return False
         return False
 
-    def _sanitize_peer_addr(self, address: str, *, fallback_port: int) -> Optional[str]:
+    def _sanitize_peer_addr(
+        self,
+        address: str,
+        *,
+        fallback_port: int,
+        source: Optional[str] = None,
+    ) -> Optional[str]:
         if not address:
             return None
         result = self._normalize_peer_addr(
-            address, fallback_port=fallback_port, source="sanitize"
+            address,
+            fallback_port=fallback_port,
+            source=source or "sanitize",
         )
         if not result.addr:
             return None
@@ -1144,7 +1153,9 @@ class P2PService:
         if self._is_ephemeral_port(port) and fallback_port and port != fallback_port:
             port = fallback_port
         normalized = self._normalize_peer_addr(
-            f"{host}:{port}", fallback_port=fallback_port, source="sanitize"
+            f"{host}:{port}",
+            fallback_port=fallback_port,
+            source=source or "sanitize",
         )
         return normalized.addr.canonical if normalized.addr else None
 
@@ -1357,7 +1368,12 @@ class P2PService:
             addr = entry.get("addr") or entry.get("address")
             if not isinstance(addr, str) or not addr:
                 continue
-            normalized = self._sanitize_peer_addr(addr, fallback_port=fallback_port)
+            source_label = entry.get("source") or source
+            normalized = self._sanitize_peer_addr(
+                addr,
+                fallback_port=fallback_port,
+                source=str(source_label) if source_label else None,
+            )
             if not normalized:
                 continue
             self._remember_addr(normalized)
@@ -1993,7 +2009,12 @@ class P2PService:
             log_fn = log.info if reason.startswith("unsupported") else log.debug
             log_fn(
                 "Ignoring unsupported peer address",
-                extra={"addr": address, "reason": reason, "source": source or "unknown"},
+                extra={
+                    "addr": address,
+                    "reason": reason,
+                    "source": source or "unknown",
+                    "advertised_by": source or "unknown",
+                },
             )
         return result
 
@@ -2006,6 +2027,17 @@ class P2PService:
         if not result.addr:
             return None
         return result.addr.canonical
+
+    def _seed_hostnames(self, seeds: list[str]) -> set[str]:
+        hosts: set[str] = set()
+        fallback_port = self._local_listen_port()
+        for seed in seeds:
+            parsed = self._normalize_peer_addr(
+                seed, fallback_port=fallback_port, source="seed_host"
+            )
+            if parsed.addr and parsed.addr.host:
+                hosts.add(parsed.addr.host)
+        return hosts
 
     def _addr_key(self, address: str) -> str:
         """
@@ -2054,13 +2086,25 @@ class P2PService:
         return str(network.network_address) + f"/{bits}"
 
     def _ban_keys_for_peer(self, peer: _PeerState) -> set[str]:
-        keys = {peer.remote}
+        keys: set[str] = set()
+        if peer.peer_id:
+            keys.add(peer.peer_id)
+            return keys
         host = self._extract_host(peer.remote)
         if host:
             keys.add(host)
-        if peer.peer_id:
-            keys.add(peer.peer_id)
+            return keys
+        keys.add(peer.remote)
         return keys
+
+    def _is_seed_peer(self, peer: _PeerState) -> bool:
+        addr_key = self._addr_key(peer.remote)
+        if addr_key in self._seed_keys:
+            return True
+        host = self._extract_host(peer.remote)
+        if host and host in self._seed_hosts:
+            return True
+        return False
 
     def _is_banned(self, key: str, *, now: Optional[float] = None) -> bool:
         now = time.time() if now is None else now
@@ -2784,22 +2828,57 @@ class P2PService:
             "unknown_message", points=self._score_points["malformed_message"]
         )
 
+    def _log_handshake_mismatch(
+        self,
+        peer: _PeerState,
+        *,
+        reason: str,
+        peer_chain_id: Optional[int],
+        peer_genesis_hash: Optional[bytes],
+    ) -> None:
+        local_genesis = self._genesis_hash()
+        log.warning(
+            "Peer handshake mismatch",
+            extra={
+                "remote": peer.remote,
+                "reason": reason,
+                "local_chain_id": self.chain_id,
+                "local_genesis_hash": local_genesis.hex(),
+                "peer_chain_id": peer_chain_id,
+                "peer_genesis_hash": peer_genesis_hash.hex()
+                if peer_genesis_hash
+                else None,
+            },
+        )
+
     async def _handle_hello(self, peer: _PeerState, payload: bytes) -> None:
         data = self._decode_map(payload)
         allowed = set(Hello.__dataclass_fields__)
         hello = Hello(**{k: v for k, v in data.items() if k in allowed})
 
         if int(hello.chain_id) != int(self.chain_id):
+            self._log_handshake_mismatch(
+                peer,
+                reason="chain_id_mismatch",
+                peer_chain_id=int(hello.chain_id or 0),
+                peer_genesis_hash=bytes(hello.genesis_hash or b""),
+            )
             await self._send(
                 peer,
                 MsgID.HELLO_ACK,
                 HelloAck(accepted=False, reason="chain_id_mismatch"),
             )
             raise PeerMisbehavior(
-                "chain_id_mismatch", points=self._score_points["wrong_chain"], ban_ttl=86400
+                "chain_id_mismatch", points=0
             )
 
         if hello.genesis_hash and bytes(hello.genesis_hash) != self._genesis_hash():
+            self._log_handshake_mismatch(
+                peer,
+                reason="genesis_mismatch",
+                peer_chain_id=int(hello.chain_id or 0),
+                peer_genesis_hash=bytes(hello.genesis_hash or b""),
+            )
             await self._send(
                 peer,
                 MsgID.HELLO_ACK,
@@ -2807,8 +2886,7 @@ class P2PService:
             )
             raise PeerMisbehavior(
                 "genesis_mismatch",
-                points=self._score_points["wrong_genesis"],
-                ban_ttl=86400,
+                points=0,
             )
 
         if hello.version and str(hello.version) not in {"1", "2"}:
@@ -2866,7 +2944,9 @@ class P2PService:
             reported_addrs.append(reported_addr)
         fallback_port = self._local_listen_port()
         for addr in list(getattr(hello, "listen_addrs", []) or []):
-            sanitized = self._sanitize_peer_addr(addr, fallback_port=fallback_port)
+            sanitized = self._sanitize_peer_addr(
+                addr, fallback_port=fallback_port, source=f"hello:{peer.remote}"
+            )
             if sanitized:
                 reported_addrs.append(sanitized)
         reported_addrs = list(dict.fromkeys(reported_addrs))
@@ -3841,30 +3921,37 @@ class P2PService:
                         headers = await self._fetch_headers(peer)
                     if not headers:
                         if not saw_headers:
-                            result.setdefault("error", "no-headers")
-                            self._sync_last_header_error = "no_headers"
+                            empty_reason = self._empty_headers_reason(
+                                local_height, remote_height
+                            )
+                            result.setdefault(
+                                "error", empty_reason.replace("_", "-")
+                            )
+                            self._sync_last_header_error = empty_reason
                             self._sync_last_header_error_at = time.time()
                             self._sync_last_header_error_peer = peer.remote
-                            self._set_sync_backoff(
-                                peer,
-                                reason="no_headers",
-                                delay=self._sync_no_headers_backoff,
-                            )
-                            no_headers_responses += 1
-                            tried_peers.add(peer.remote)
-                            if eligible_count and no_headers_responses >= min(
-                                self._sync_no_headers_threshold, eligible_count
-                            ):
-                                self._sync_fatal_error = (
-                                    "headers_unavailable: check genesis/chain_id"
+                            if empty_reason == "headers_empty":
+                                self._set_sync_backoff(
+                                    peer,
+                                    reason="no_headers",
+                                    delay=self._sync_no_headers_backoff,
                                 )
-                                log.error(
-                                    "Header sync unavailable from peers",
-                                    extra={
-                                        "eligible_peers": eligible_count,
-                                        "tried_peers": len(tried_peers),
-                                    },
-                                )
+                                no_headers_responses += 1
+                                tried_peers.add(peer.remote)
+                                if eligible_count and no_headers_responses >= min(
+                                    self._sync_no_headers_threshold, eligible_count
+                                ):
+                                    self._sync_fatal_error = (
+                                        "headers_unavailable: empty response from peers"
+                                    )
+                                    log.error(
+                                        "Header sync unavailable from peers",
+                                        extra={
+                                            "eligible_peers": eligible_count,
+                                            "tried_peers": len(tried_peers),
+                                            "last_error": empty_reason,
+                                        },
+                                    )
                         break
 
                     saw_headers = True
@@ -4002,6 +4089,8 @@ class P2PService:
             return False, "handshake_pending"
         if not peer.ready_for_sync:
             return False, "not_ready"
+        if peer.peer_id and self._is_banned(peer.peer_id, now=now):
+            return False, "banned_peer_id"
         if self._is_banned(peer.remote, now=now):
             return False, "banned"
         if (
@@ -4021,7 +4110,7 @@ class P2PService:
         except Exception:
             chain_id = 0
         if chain_id != int(self.chain_id):
-            return False, "chain_id_mismatch"
+            return False, "chain_mismatch"
         genesis_hash = bytes(peer.hello.get("genesis_hash") or b"")
         if not genesis_hash:
             return False, "genesis_missing"
@@ -4125,7 +4214,36 @@ class P2PService:
         h0 = bdb.get_canonical_hash(0)
         if h0:
             return bytes(h0)
+        params_hash = self._genesis_hash_from_params()
+        if params_hash:
+            return params_hash
         return b"\x00" * 32
+
+    def _genesis_hash_from_params(self) -> Optional[bytes]:
+        params = getattr(self.deps, "params", None)
+        if params is None and hasattr(self.deps, "_sync"):
+            params = getattr(self.deps._sync, "params", None)
+        if params is not None:
+            if hasattr(params, "genesis_hash"):
+                gh = getattr(params, "genesis_hash")
+                if isinstance(gh, (bytes, bytearray)):
+                    return bytes(gh)
+                if isinstance(gh, str):
+                    with contextlib.suppress(ValueError):
+                        return bytes.fromhex(gh[2:] if gh.startswith("0x") else gh)
+            if isinstance(params, dict):
+                genesis = params.get("genesis") if isinstance(params.get("genesis"), dict) else {}
+                gh = genesis.get("hash") or params.get("genesis_hash")
+                if isinstance(gh, str):
+                    with contextlib.suppress(ValueError):
+                        return bytes.fromhex(gh[2:] if gh.startswith("0x") else gh)
+        try:
+            from core.types.params import load_default_params
+
+            loaded = load_default_params(chain_id_hint=self.chain_id)
+            return bytes(loaded.genesis_hash)
+        except Exception:
+            return None
 
     def _headers_after_locator(self, locator: list[bytes], *, limit: int) -> list[Any]:
         from p2p.wire.messages import HeaderCompact
@@ -4187,6 +4305,13 @@ class P2PService:
             "last_height": int(last.height),
             "last_hash": bytes(last.hash).hex(),
         }
+
+    def _empty_headers_reason(self, local_height: int, remote_height: int) -> str:
+        if remote_height <= 0 and local_height <= 0:
+            return "peer_at_genesis"
+        if remote_height <= local_height:
+            return "peer_behind"
+        return "headers_empty"
 
     def _record_sync_header_event(self, event: dict[str, Any]) -> None:
         payload = dict(event)
@@ -4397,6 +4522,12 @@ class P2PService:
         return ttl
 
     def _ban_peer(self, peer: _PeerState, *, ban_ttl: float, reason: str) -> None:
+        if self._is_seed_peer(peer):
+            log.warning(
+                "Skipping ban for seed peer",
+                extra={"remote": peer.remote, "reason": reason},
+            )
+            return
         until = time.time() + max(0.0, ban_ttl)
         peer.ban_until = until
         for key in self._ban_keys_for_peer(peer):
