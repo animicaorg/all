@@ -266,8 +266,12 @@ class Config:
     policies: PolicyRoots
 
     def ensure_dirs(self) -> None:
-        self.paths.data_dir.mkdir(parents=True, exist_ok=True)
-        self.paths.logs_dir.mkdir(parents=True, exist_ok=True)
+        for path in (self.paths.data_dir, self.paths.logs_dir):
+            path.mkdir(parents=True, exist_ok=True)
+            try:
+                path.chmod(0o775)
+            except (OSError, PermissionError):
+                pass
 
     # Convenience accessors
     @property

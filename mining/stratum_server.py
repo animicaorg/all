@@ -62,6 +62,9 @@ class StratumJob:
     chain_id: Optional[int] = None
     expires_at: Optional[float] = None
     proof_type: Optional[str] = None
+    script_hash: Optional[str] = None
+    inputs_commit: Optional[str] = None
+    outputs_commit: Optional[str] = None
     created_ts: float = field(default_factory=lambda: time.time())
 
 
@@ -298,13 +301,18 @@ class StratumServer:
     # ---------------- job control ----------------
 
     def _from_mining_job(self, job: MiningJob) -> StratumJob:
-        header_view = job.to_dict().get("header", {})
+        job_view = job.to_dict()
+        header_view = job_view.get("header", {})
+        hints = {"mixSeed": "0x" + job.header.mix_seed.hex()}
+        for key in ("scriptHash", "inputsCommit", "outputsCommit"):
+            if job_view.get(key):
+                hints[key] = job_view[key]
         return StratumJob(
             job_id=job.job_id,
             header=header_view,
             share_target=self._default_share_target,
             theta_micro=job.theta_target_micro,
-            hints={"mixSeed": "0x" + job.header.mix_seed.hex()},
+            hints=hints,
             target=hex(job.target),
             sign_bytes="0x" + job.sign_bytes.hex(),
             height=job.header.number,
@@ -313,6 +321,9 @@ class StratumServer:
             chain_id=job.chain_id,
             expires_at=job.expires_at,
             proof_type=job.proof_type,
+            script_hash=job.script_hash,
+            inputs_commit=job.inputs_commit,
+            outputs_commit=job.outputs_commit,
         )
 
     async def publish_job(self, job: StratumJob | MiningJob) -> None:

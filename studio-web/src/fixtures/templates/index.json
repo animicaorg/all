@@ -22,5 +22,11 @@
     "name": "Quantum RNG",
     "description": "Requests a quantum job and mixes the result into on-chain state.",
     "tags": ["quantum", "randomness", "capabilities"]
+  },
+  {
+    "id": "mining_proof",
+    "name": "Mining Proof Script",
+    "description": "Deterministic proof script scaffold (derive/verify/commit).",
+    "tags": ["mining", "proofs", "deterministic"]
   }
 ]
