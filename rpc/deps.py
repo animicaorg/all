@@ -424,8 +424,8 @@ def _maybe_bootstrap_genesis(
             return
 
         if genesis_path is None:
-            # Default to repo genesis
-            genesis_path = _repo_root() / "core" / "genesis" / "genesis.json"
+            genesis_loader = _import("core.genesis.genesis_loader")
+            genesis_path = genesis_loader.resolve_genesis_path(None)
 
         loader = _import("core.genesis.loader")
         head_mod = _import("core.chain.head")
