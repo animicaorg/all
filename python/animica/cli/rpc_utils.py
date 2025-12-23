@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ipaddress
 from urllib.parse import urlparse, urlunparse
 
 
@@ -44,6 +45,31 @@ def candidate_rpc_urls(url: str) -> list[str]:
         if candidate not in candidates:
             candidates.append(candidate)
     return candidates
+
+
+def is_local_rpc_url(url: str) -> bool:
+    if not url:
+        return False
+
+    normalized = url
+    if "://" not in normalized:
+        normalized = f"http://{normalized}"
+
+    parsed = urlparse(normalized)
+    host = parsed.hostname
+    if not host:
+        return False
+
+    host_key = host.lower()
+    if host_key == "localhost":
+        return True
+
+    try:
+        ip_obj = ipaddress.ip_address(host_key)
+    except ValueError:
+        return False
+
+    return bool(ip_obj.is_loopback or ip_obj.is_unspecified)
 
 
 def is_method_not_found(exc: Exception) -> bool:
