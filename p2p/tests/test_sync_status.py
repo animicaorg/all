@@ -1,14 +1,26 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 
 import pytest
 
+from core.config import get_expected_genesis_hash
+from core.db.block_db import BlockDB
+from core.db.sqlite import SQLiteKV
+from core.chain.block_import import _theta_to_target, compute_header_hash
 from core.types.block import Block
 from core.utils.hash import ZERO32
 from p2p.deps import P2PDeps
-from p2p.node.p2p_service import P2PService, _PeerState, _SyncBlock, _SyncHeader
+from p2p.errors import P2PError
+from p2p.node.p2p_service import (
+    P2PService,
+    PeerMisbehavior,
+    _PeerState,
+    _SyncBlock,
+    _SyncHeader,
+)
 from p2p.tests import tcp_multiaddr
 from p2p.wire.encoding import encode_payload
 from p2p.wire.frames import Framer
@@ -17,9 +29,29 @@ from p2p.wire.messages import Blocks, HeaderCompact, Hello
 GENESIS_PATH = Path(__file__).resolve().parents[2] / "core" / "genesis" / "genesis.json"
 
 
+def _make_devnet_genesis(tmp_path: Path) -> Path:
+    genesis_path = tmp_path / "genesis.devnet.json"
+    if genesis_path.exists():
+        return genesis_path
+    base_genesis = json.loads(GENESIS_PATH.read_text(encoding="utf-8"))
+    base_genesis["chainId"] = 1337
+    base_genesis["network"] = "animica-devnet"
+    consensus = base_genesis.get("consensus") or {}
+    consensus["initialThetaMicro"] = 1
+    base_genesis["consensus"] = consensus
+    params_ref = base_genesis.get("paramsRef") or {}
+    params_ref["path"] = str(
+        Path(__file__).resolve().parents[2] / "spec" / "params.yaml"
+    )
+    base_genesis["paramsRef"] = params_ref
+    genesis_path.write_text(json.dumps(base_genesis, indent=2), encoding="utf-8")
+    return genesis_path
+
+
 def _make_deps(tmp_path: Path, name: str) -> P2PDeps:
     db_path = tmp_path / f"{name}.db"
-    return P2PDeps.open(f"sqlite:///{db_path}", str(GENESIS_PATH))
+    genesis_path = _make_devnet_genesis(tmp_path)
+    return P2PDeps.open(f"sqlite:///{db_path}", str(genesis_path))
 
 
 def _make_child_block(sync_deps: P2PDeps) -> Block:
@@ -30,16 +62,25 @@ def _make_child_block(sync_deps: P2PDeps) -> Block:
     assert header is not None
 
     timestamp = int(getattr(header, "timestamp", 0)) + 1
-    child = header.build_child(
-        timestamp=timestamp,
-        state_root=header.stateRoot,
-        txs_root=ZERO32,
-        receipts_root=ZERO32,
-        proofs_root=ZERO32,
-        da_root=ZERO32,
-        nonce=0,
-        extra=b"",
-    )
+    target = _theta_to_target(int(getattr(header, "thetaMicro", 0)))
+    child = None
+    for nonce in range(0, 10000):
+        candidate = header.build_child(
+            timestamp=timestamp,
+            state_root=header.stateRoot,
+            txs_root=ZERO32,
+            receipts_root=ZERO32,
+            proofs_root=ZERO32,
+            da_root=ZERO32,
+            nonce=nonce,
+            extra=b"",
+        )
+        header_hash = compute_header_hash(candidate)
+        if int.from_bytes(header_hash, "big") <= target:
+            child = candidate
+            break
+    if child is None:
+        raise AssertionError("Failed to find nonce meeting pow target for test block")
     return Block(header=child, txs=(), proofs=(), receipts=None)
 
 
@@ -104,6 +145,19 @@ def test_phase_not_idle_when_headers_ahead(tmp_path: Path) -> None:
     assert snap.phase != "IDLE"
 
 
+def test_mainnet_genesis_is_enforced_on_startup(tmp_path: Path) -> None:
+    db_path = tmp_path / "genesis-mismatch.db"
+    kv = SQLiteKV(str(db_path))
+    block_db = BlockDB(kv)
+    wrong_hash = b"\x11" * 32
+    block_db.set_chain_id(1)
+    block_db.set_canonical_head(0, wrong_hash)
+    kv.close()
+
+    with pytest.raises(P2PError, match="GENESIS_MISMATCH"):
+        P2PDeps.open(f"sqlite:///{db_path}", str(GENESIS_PATH))
+
+
 def test_header_advancement_enqueues_blocks(tmp_path: Path) -> None:
     node, deps_sync = _make_service(tmp_path, "enqueue")
     block = _make_child_block(deps_sync)
@@ -134,6 +188,40 @@ def test_sync_status_head_hash_matches_chain_head(tmp_path: Path) -> None:
     assert snap.best_block_hash == expected_hash
 
 
+def test_sync_status_head_hash_matches_mainnet_genesis(tmp_path: Path) -> None:
+    expected = get_expected_genesis_hash(1)
+    assert expected is not None
+    expected_hex = "0x" + expected.hex()
+
+    class _StubHeader:
+        def __init__(self, h: bytes) -> None:
+            self._h = h
+            self.height = 0
+
+        def hash(self) -> bytes:
+            return self._h
+
+    class _StubDeps:
+        def __init__(self, h: bytes) -> None:
+            self._h = h
+
+        def head(self):
+            return 0, _StubHeader(self._h)
+
+    node = P2PService(
+        listen_addrs=[tcp_multiaddr(0)],
+        seeds=[],
+        chain_id=1,
+        deps=_StubDeps(expected),
+        peerstore_path=str(tmp_path / "head-genesis" / "p2p"),
+    )
+
+    snap = node.sync_status_snapshot()
+
+    assert snap.head_height == 0
+    assert snap.head_hash == expected_hex
+
+
 def test_sync_status_head_hash_stable_without_progress(tmp_path: Path) -> None:
     node, _deps_sync = _make_service(tmp_path, "head-stable")
 
@@ -142,6 +230,43 @@ def test_sync_status_head_hash_stable_without_progress(tmp_path: Path) -> None:
 
     assert first.head_height == second.head_height
     assert first.head_hash == second.head_hash
+
+
+@pytest.mark.asyncio
+async def test_peer_rejected_on_genesis_mismatch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    node, _deps_sync = _make_service(tmp_path, "genesis-peer")
+    peer = _register_peer(node, "203.0.113.50:30333")
+
+    async def _noop_send(*_args, **_kwargs) -> None:
+        return None
+
+    monkeypatch.setattr(node, "_send", _noop_send)
+
+    hello = Hello(
+        version="2",
+        agent="test",
+        chain_id=node.chain_id,
+        listen_port=0,
+        listen_addrs=[],
+        genesis_hash=b"\x22" * 32,
+        peer_id=b"\x33" * 32,
+        head_height=0,
+        head_hash=b"\x00" * 32,
+        capabilities=["sync"],
+        timestamp=0,
+    )
+    payload = encode_payload(
+        {k: getattr(hello, k) for k in hello.__dataclass_fields__.keys() if k != "msg_id"}
+    )
+
+    with pytest.raises(PeerMisbehavior) as excinfo:
+        await node._handle_hello(peer, payload)
+
+    err = excinfo.value
+    assert err.points == node._score_points["wrong_genesis"]
+    assert node._stats["p2p_peers_rejected_genesis_mismatch"] == 1
 
 
 @pytest.mark.asyncio
