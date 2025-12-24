@@ -51,7 +51,10 @@ def _create_signed_tx(chain_id: int = 1, alg: str = "dilithium3"):
     
     # Sign
     msg = sign_bytes(tx)
-    sig_bytes = signer.sign_tx(msg, chain_id)
+    from core.genesis.loader import compute_chain_identity
+
+    fork_id = compute_chain_identity(None, chain_id=chain_id).fork_id
+    sig_bytes = signer.sign_tx(msg, chain_id, fork_id=fork_id)
     
     # Pack into signed envelope
     raw_tx = pack_signed(
@@ -215,7 +218,10 @@ async def test_sendRawTransaction_rejects_wrong_chain_id(monkeypatch):
     
     # Sign with chain_id=999
     msg = sign_bytes(tx)
-    sig_bytes = signer.sign_tx(msg, chain_id)
+    from core.genesis.loader import compute_chain_identity
+
+    fork_id = compute_chain_identity(None, chain_id=chain_id).fork_id
+    sig_bytes = signer.sign_tx(msg, chain_id, fork_id=fork_id)
     
     raw_tx = pack_signed(
         tx,
@@ -271,7 +277,10 @@ def test_verify_uses_envelope_body_for_sign_bytes(monkeypatch):
     )
 
     msg_cli = sign_bytes(tx)
-    sig = signer.sign_tx(msg_cli, chain_id=2)
+    from core.genesis.loader import compute_chain_identity
+
+    fork_id = compute_chain_identity(None, chain_id=2).fork_id
+    sig = signer.sign_tx(msg_cli, chain_id=2, fork_id=fork_id)
     raw = pack_signed(tx, signature=sig, alg_id=signer.alg_id, public_key=signer.public_key)
 
     # Decoded envelope preserves the exact body the CLI signed
@@ -395,7 +404,10 @@ def _create_signed_tx_sphincs(chain_id: int = 1):
     
     # Sign
     msg = sign_bytes(tx)
-    sig_bytes = signer.sign_tx(msg, chain_id)
+    from core.genesis.loader import compute_chain_identity
+
+    fork_id = compute_chain_identity(None, chain_id=chain_id).fork_id
+    sig_bytes = signer.sign_tx(msg, chain_id, fork_id=fork_id)
     
     # Pack into signed envelope
     raw_tx = pack_signed(

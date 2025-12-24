@@ -48,17 +48,13 @@ from .constants import PROTOCOL_ID
 
 # Default fallback seeds (mainnet) - prefer the public RPC host with IP fallback.
 MAINNET_SEEDS: Final[tuple[str, ...]] = (
-    # Primary: resolve the mainnet seed domain first.
-    "/dns4/mainnet.animica.org/udp/443/quic-v1",
-    "/dns4/mainnet.animica.org/tcp/30333",
-    "/dns4/mainnet.animica.org/tcp/30333/ws",
-    # Public RPC host for additional reachability.
-    "/dns4/rpc.animica.org/udp/443/quic-v1",
-    "/dns4/rpc.animica.org/tcp/30333",
-    "/dns4/rpc.animica.org/tcp/30333/ws",
-    # Fallback: direct IP in case DNS is unavailable.
-    "/ip4/144.126.133.21/udp/443/quic-v1",
-    "/ip4/144.126.133.21/tcp/30333",
+    # Mainnet reset: use the new genesis seed domains only.
+    "/dns4/mainnet-reset.animica.org/udp/443/quic-v1",
+    "/dns4/mainnet-reset.animica.org/tcp/30333",
+    "/dns4/mainnet-reset.animica.org/tcp/30333/ws",
+    "/dns4/rpc-reset.animica.org/udp/443/quic-v1",
+    "/dns4/rpc-reset.animica.org/tcp/30333",
+    "/dns4/rpc-reset.animica.org/tcp/30333/ws",
 )
 
 TESTNET_SEEDS: Final[tuple[str, ...]] = (

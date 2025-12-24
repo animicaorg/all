@@ -18,6 +18,7 @@ def _build_signed_tx_chainid2(client, cfg):
     """Build a signed transaction for chainId 2 using core Tx types."""
     try:
         from core.encoding.canonical import tx_sign_bytes
+        from core.genesis.loader import compute_chain_identity
         from core.types.tx import Tx, UnsignedTx, TxKind, TxTransfer, PqSignature
         from pq.py import keygen, sign
         from pq.py.address import decode_address
@@ -55,7 +56,15 @@ def _build_signed_tx_chainid2(client, cfg):
     
     # Sign transaction
     sign_bytes = tx_sign_bytes(unsigned.to_obj(), 2)
-    sig_env = sign.sign_detached(sign_bytes, alg_name, kp.secret_key, domain="tx")
+    fork_id = compute_chain_identity(None, chain_id=cfg.chain_id).fork_id
+    sig_env = sign.sign_detached(
+        sign_bytes,
+        alg_name,
+        kp.secret_key,
+        domain="tx",
+        chain_id=cfg.chain_id,
+        fork_id=fork_id,
+    )
     
     # Create signed tx
     sig = PqSignature(alg_id=ALG_ID[alg_name], pubkey=kp.public_key, sig=sig_env.sig)
