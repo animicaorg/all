@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional
+
+from core.utils.hash import sha3_256
 
 
 @dataclass(frozen=True)
@@ -52,6 +55,33 @@ def get_expected_genesis_hash(chain_id: int) -> Optional[bytes]:
     if params is None:
         return None
     return params.expected_genesis_block_hash
+
+
+def compute_network_params_hash(chain_id: Optional[int] = None) -> bytes:
+    """
+    Compute a fingerprint that captures network parameters and consensus constants.
+
+    This is used for P2P compatibility checks to avoid syncing incompatible chains.
+    """
+    base_dir = Path(__file__).resolve().parents[1]
+    repo_root = base_dir.parent
+    files = [
+        Path(__file__).resolve(),
+        base_dir / "types" / "params.py",
+        repo_root / "consensus" / "types.py",
+    ]
+    payload = bytearray()
+    if chain_id is not None:
+        payload.extend(f"chain_id:{int(chain_id)}".encode())
+        expected = get_expected_genesis_hash(int(chain_id))
+        if expected:
+            payload.extend(b"genesis:")
+            payload.extend(expected)
+    for path in files:
+        if path.exists():
+            payload.extend(b"|")
+            payload.extend(path.read_bytes())
+    return sha3_256(bytes(payload))
 
 
 def is_mainnet_name(network_name: Optional[str]) -> bool:

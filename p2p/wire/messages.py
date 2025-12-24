@@ -62,6 +62,9 @@ class Hello:
     # Optional genesis hash for strict network matching (recommended).
     # If empty, receivers should fall back to chain_id/alg_policy_root checks only.
     genesis_hash: Hash32 = b""
+    # Consensus compatibility fields (required for sync)
+    genesis_identity: Hash32 = b""
+    network_params_hash: Hash32 = b""
     peer_id: PeerID = b""
     head_height: Height = 0
     head_hash: Hash32 = b""
@@ -74,6 +77,10 @@ class Hello:
     def __post_init__(self):
         if self.genesis_hash:
             _ensure_len("genesis_hash", self.genesis_hash, 32)
+        if self.genesis_identity:
+            _ensure_len("genesis_identity", self.genesis_identity, 32)
+        if self.network_params_hash:
+            _ensure_len("network_params_hash", self.network_params_hash, 32)
         _ensure_len("peer_id", self.peer_id, 32)
         _ensure_len("head_hash", self.head_hash, 32)
         if self.alg_policy_root:

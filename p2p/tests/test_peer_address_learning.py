@@ -16,6 +16,9 @@ async def test_inbound_hello_stores_listen_port(tmp_path, monkeypatch):
         chain_id=1337,
         peerstore_path=tmp_path / "peerstore",
     )
+    monkeypatch.setattr(service, "_genesis_hash", lambda: b"\x00" * 32)
+    monkeypatch.setattr(service, "_genesis_identity", lambda: b"\x00" * 32)
+    monkeypatch.setattr(service, "_network_params_hash", lambda: b"\x11" * 32)
 
     async def _noop_send(*_args, **_kwargs) -> None:
         return None
@@ -43,6 +46,9 @@ async def test_inbound_hello_stores_listen_port(tmp_path, monkeypatch):
         chain_id=service.chain_id,
         listen_port=30333,
         peer_id=b"\x11" * 32,
+        genesis_hash=service._genesis_hash(),
+        genesis_identity=service._genesis_identity(),
+        network_params_hash=service._network_params_hash(),
         head_hash=b"\x00" * 32,
     )
     payload = encode_payload(hello)
