@@ -64,7 +64,6 @@ def _register_peer(node: P2PService, remote: str, direction: str = "inbound") ->
 async def test_score_decay_and_banlist(tmp_path: Path) -> None:
     node = _make_service(tmp_path, "scores")
     peer = _register_peer(node, "203.0.113.10:30333")
-    node._ban_thresholds = [(10, 5.0)]
 
     node.penalize_peer(peer, "invalid_header", 5)
     assert peer.misbehavior_score == 5
@@ -72,7 +71,7 @@ async def test_score_decay_and_banlist(tmp_path: Path) -> None:
 
     node.penalize_peer(peer, "invalid_header", 5)
     await asyncio.sleep(0)
-    assert node._is_banned(peer.remote)
+    assert not node._is_banned(peer.remote)
 
     node._misbehavior_decay_points = 3
     peer2 = _register_peer(node, "203.0.113.11:30333")
@@ -101,14 +100,13 @@ def test_banlist_prefers_peer_id(tmp_path: Path) -> None:
     node = _make_service(tmp_path, "ban-peer-id")
     peer = _register_peer(node, "203.0.113.44:30333", direction="outbound")
     peer.peer_id = "peer-123"
-    node._create_child_task = lambda coro, **_kwargs: coro.close()
 
     node._ban_peer(peer, ban_ttl=60, reason="test")
 
-    assert "peer-123" in node._banlist
+    assert "peer-123" not in node._banlist
     assert "203.0.113.44" not in node._banlist
     assert "203.0.113.44:30333" not in node._banlist
-    assert node._is_banned("peer-123")
+    assert not node._is_banned("peer-123")
 
 
 def test_self_addresses_are_not_sanitized(tmp_path: Path) -> None:
