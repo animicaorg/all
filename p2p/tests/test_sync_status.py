@@ -98,6 +98,30 @@ def _make_child_block(sync_deps: P2PDeps) -> Block:
     return Block(header=child, txs=(), proofs=(), receipts=None)
 
 
+def _make_child_block_from_header(parent) -> Block:
+    timestamp = int(getattr(parent, "timestamp", 0)) + 1
+    target = _theta_to_target(int(getattr(parent, "thetaMicro", 0)))
+    child = None
+    for nonce in range(0, 10000):
+        candidate = parent.build_child(
+            timestamp=timestamp,
+            state_root=parent.stateRoot,
+            txs_root=ZERO32,
+            receipts_root=ZERO32,
+            proofs_root=ZERO32,
+            da_root=ZERO32,
+            nonce=nonce,
+            extra=b"",
+        )
+        header_hash = compute_header_hash(candidate)
+        if int.from_bytes(header_hash, "big") <= target:
+            child = candidate
+            break
+    if child is None:
+        raise AssertionError("Failed to find nonce meeting pow target for test block")
+    return Block(header=child, txs=(), proofs=(), receipts=None)
+
+
 def _make_peer() -> _PeerState:
     peer = _PeerState(
         session_id="peer-1",
@@ -207,12 +231,110 @@ def test_header_advancement_enqueues_blocks(tmp_path: Path) -> None:
     assert node._queued_blocks_count() == 1
 
 
+@pytest.mark.asyncio
+async def test_block_import_order_no_missing_parent_stall(tmp_path: Path) -> None:
+    node, deps_sync = _make_service(tmp_path, "missing-parent")
+    peer = _register_peer(node, "peer-order:0")
+    peer.ready_for_sync = True
+    peer.hello_done.set()
+    peer.peer_id = "peer-order"
+    peer.hello = {
+        "chain_id": node.chain_id,
+        "genesis_hash": node._genesis_hash(),
+        "genesis_identity": node._genesis_identity(),
+        "network_params_hash": node._network_params_hash(),
+        "head_height": 0,
+        "capabilities": ["sync"],
+    }
+
+    block1 = _make_child_block(deps_sync)
+    block2 = _make_child_block_from_header(block1.header)
+
+    payload2 = encode_payload(Blocks(blocks=[block2.to_cbor()]))
+    await node._handle_blocks(peer, payload2)
+
+    assert block2.header.hash() in node._sync_block_buffer
+    assert node._sync_block_stalled_reason is None
+
+    payload1 = encode_payload(Blocks(blocks=[block1.to_cbor()]))
+    await node._handle_blocks(peer, payload1)
+
+    height, _ = deps_sync.head()
+    assert height == 2
+    assert block2.header.hash() not in node._sync_block_buffer
+
+
+def test_header_batch_must_anchor(tmp_path: Path) -> None:
+    node, deps_sync = _make_service(tmp_path, "anchor")
+    block = _make_child_block(deps_sync)
+    accepted, _reason = deps_sync.import_block(block)
+    assert accepted
+
+    header = HeaderCompact(
+        hash=b"\x11" * 32,
+        height=2,
+        parent=b"\x22" * 32,
+        theta_micro=1,
+        timestamp=int(block.header.timestamp) + 1,
+    )
+    peer = _make_peer()
+
+    accepted_hashes = node._process_headers(peer, [header])
+
+    assert accepted_hashes == []
+    assert node._sync_peer_backoff_reason.get(peer.remote) == "wrong_chain"
+    assert node._queued_blocks_count() == 0
+
+
+@pytest.mark.asyncio
+async def test_self_peer_filtered(tmp_path: Path) -> None:
+    deps_sync = _make_deps(tmp_path, "self-peer")
+    node = P2PService(
+        listen_addrs=["/ip4/127.0.0.1/tcp/30333"],
+        seeds=[],
+        chain_id=deps_sync.chain_id,
+        deps=deps_sync,
+        peerstore_path=str(tmp_path / "self-peer" / "p2p"),
+    )
+    peer = _register_peer(node, "127.0.0.1:30333")
+    peer.stream = AsyncMock()
+    hello = Hello(
+        version="2",
+        agent="animica-p2p/test",
+        chain_id=node.chain_id,
+        listen_port=30333,
+        listen_addrs=["127.0.0.1:30333"],
+        genesis_hash=node._genesis_hash(),
+        genesis_identity=node._genesis_identity(),
+        network_params_hash=node._network_params_hash(),
+        peer_id=b"\x11" * 32,
+        head_height=0,
+        head_hash=b"\x00" * 32,
+        alg_policy_root=b"",
+        capabilities=["sync"],
+        timestamp=0,
+    )
+
+    payload = encode_payload(hello)
+    with pytest.raises(PeerMisbehavior, match="self_peer"):
+        await node._handle_hello(peer, payload)
+
+
 def test_sync_status_head_hash_matches_chain_head(tmp_path: Path) -> None:
     node, deps_sync = _make_service(tmp_path, "head-hash")
     height, header = deps_sync.head()
     assert header is not None
 
-    expected_hash = node._header_hash_for_status(header)
+    head_tuple = deps_sync._block_db.get_head()
+    assert head_tuple is not None
+    expected_hash = "0x" + bytes(head_tuple[1]).hex()
+    node._sync_best_header = _SyncHeader(
+        hash=b"\x99" * 32,
+        parent_hash=b"\x00" * 32,
+        height=999,
+        theta_micro=0,
+        timestamp=0,
+    )
     snap = node.sync_status_snapshot()
 
     assert snap.head_height == height
@@ -452,6 +574,19 @@ async def test_empty_headers_at_tip_not_fatal(tmp_path: Path, monkeypatch: pytes
         "head_hash": b"\x22" * 32,
     }
     node._sync_no_headers_threshold = 1
+    peer_b = _register_peer(node, "203.0.113.12:30333")
+    peer_b.peer_id = "peer-3"
+    peer_b.hello_done.set()
+    peer_b.ready_for_sync = True
+    peer_b.hello = {
+        "chain_id": node.chain_id,
+        "genesis_hash": node._genesis_hash(),
+        "genesis_identity": node._genesis_identity(),
+        "network_params_hash": node._network_params_hash(),
+        "capabilities": ["sync"],
+        "head_height": 1,
+        "head_hash": b"\x22" * 32,
+    }
 
     block = _make_child_block(deps_sync)
     accepted, reason = deps_sync.import_block(block)
@@ -497,6 +632,8 @@ async def test_block_requests_sequential_by_height(tmp_path: Path, monkeypatch: 
     node._sync_headers[h3] = _SyncHeader(
         hash=h3, parent_hash=h2, height=3, theta_micro=0, timestamp=3
     )
+    node._sync_best_header = node._sync_headers[h3]
+    node._sync_max_inflight = 3
     node._sync_block_queue.extend([h3, h1, h2])
     node._sync_block_queue_set.update([h1, h2, h3])
     node._sync_block_queue_heights.update({h1: 1, h2: 2, h3: 3})
