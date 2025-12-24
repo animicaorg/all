@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import (Any, Awaitable, Callable, Dict, Iterable, List, Optional,
                     Tuple)
+from urllib.parse import urlparse
 
 # Local imports are intentionally late/dynamic in a few places to avoid import cycles.
 from .. import version as p2p_version
@@ -781,16 +782,77 @@ class P2PServiceLegacy:
         except Exception as e:
             self._log.warning(f"Failed to dial {addr}: {e.__class__.__name__}: {e}")
             return
-        self._track_peer(conn, direction="outbound")
+        self._track_peer(conn, direction="outbound", dial_addr=addr)
 
-    def _track_peer(self, conn: Any, direction: str = "outbound") -> None:
+    def _peer_id_from_conn(self, conn: Any, remote: str) -> str:
+        peer_id = getattr(conn.info, "peer_id", None) or getattr(conn, "peer_id", None)
+        if isinstance(peer_id, (bytes, bytearray)):
+            return peer_id.hex()
+        if isinstance(peer_id, str) and peer_id:
+            return peer_id
+        host = self._extract_host(remote)
+        return f"peer_{hashlib.sha256(str(host).encode()).hexdigest()[:32]}"
+
+    def _extract_host(self, remote: str) -> str:
+        if "://" in remote:
+            parsed = urlparse(remote)
+            return parsed.hostname or remote
+        if remote.startswith("[") and "]" in remote:
+            return remote.split("]", 1)[0].lstrip("[")
+        if ":" in remote:
+            return remote.rsplit(":", 1)[0]
+        return remote
+
+    def _normalize_peer_addr(self, addr: Optional[str]) -> Optional[str]:
+        if not addr:
+            return None
+        addr = addr.strip()
+        if not addr:
+            return None
+        if addr.startswith("/"):
+            try:
+                return ma.normalize_multiaddr(addr)
+            except Exception:
+                return None
+        host = None
+        port: Optional[int] = None
+        scheme = None
+        if "://" in addr:
+            parsed = urlparse(addr)
+            scheme = parsed.scheme
+            host = parsed.hostname
+            port = parsed.port
+        elif ":" in addr:
+            host, port_s = addr.rsplit(":", 1)
+            try:
+                port = int(port_s)
+            except ValueError:
+                port = None
+        if not host or not port or not (1 <= port <= 65535):
+            return None
+        try:
+            ip = ipaddress.ip_address(host)
+            host_proto = "ip4" if ip.version == 4 else "ip6"
+        except ValueError:
+            host_proto = "dns"
+        transport = "tcp" if scheme in (None, "", "tcp") else scheme
+        if transport not in {"tcp"}:
+            return None
+        return f"/{host_proto}/{host}/{transport}/{port}"
+
+    def _track_peer(
+        self,
+        conn: Any,
+        direction: str = "outbound",
+        dial_addr: Optional[str] = None,
+    ) -> None:
         remote = (
             getattr(conn.info, "remote_addr", None)
             or getattr(conn, "remote_addr", None)
             or "unknown"
         )
-        # Generate peer_id from remote address
-        peer_id = f"peer_{hashlib.sha256(str(remote).encode()).hexdigest()[:32]}"
+        peer_id = self._peer_id_from_conn(conn, remote)
+        dial_addr = self._normalize_peer_addr(dial_addr)
 
         self._peers[remote] = {
             "remote": remote,
@@ -799,23 +861,32 @@ class P2PServiceLegacy:
             "conn": conn,
             "peer_id": peer_id,
             "direction": direction,
+            "dial_addr": dial_addr,
+            "reported_addr": None,
         }
         self._log.info(
             "peer connected",
             extra={"remote": remote, "peer_id": peer_id, "direction": direction},
         )
 
-        # Persist peer to PeerStore
-        try:
-            self.peerstore.add(
-                peer_id=peer_id, addrs=[str(remote)], score=0.0, direction=direction
-            )
-            self.peerstore.record_connection(peer_id)
-            self._log.debug(
-                f"Persisted peer {peer_id} to store with direction={direction}"
-            )
-        except Exception as e:
-            self._log.warning(f"Failed to persist peer to store: {e}", exc_info=True)
+        if dial_addr:
+            try:
+                self.peerstore.add(
+                    peer_id=peer_id,
+                    addrs=[dial_addr],
+                    score=0.0,
+                    direction=direction,
+                )
+                self.peerstore.record_connection(peer_id)
+                self._log.debug(
+                    "Persisted peer %s to store with direction=%s",
+                    peer_id,
+                    direction,
+                )
+            except Exception as e:
+                self._log.warning(
+                    "Failed to persist peer to store: %s", e, exc_info=True
+                )
 
         # Best-effort IDENTIFY so peers exchange heights/caps/versions.
         async def _do_identify() -> None:
@@ -835,6 +906,14 @@ class P2PServiceLegacy:
                     "identify failed", exc_info=True, extra={"remote": remote}
                 )
             if info:
+                resolved_peer_id = info.get("peer_id") or peer_id
+                reported_addr = self._normalize_peer_addr(info.get("addr"))
+                if not reported_addr and direction == "outbound":
+                    reported_addr = dial_addr
+                self._peers[remote].update(
+                    peer_id=resolved_peer_id,
+                    reported_addr=reported_addr,
+                )
                 self._peers[remote].update(
                     info=info,
                     height=info.get("height"),
@@ -851,7 +930,17 @@ class P2PServiceLegacy:
                 )
                 # Update peer store with identified info
                 try:
-                    self.peerstore.record_seen(peer_id, str(remote))
+                    if reported_addr:
+                        self.peerstore.add(
+                            peer_id=resolved_peer_id,
+                            addrs=[reported_addr],
+                            score=0.0,
+                            direction=direction,
+                        )
+                        self.peerstore.record_connection(resolved_peer_id)
+                        self.peerstore.record_seen(resolved_peer_id, reported_addr)
+                    else:
+                        self.peerstore.record_seen(resolved_peer_id)
                 except Exception:
                     pass
 
@@ -892,9 +981,10 @@ class P2PServiceLegacy:
                         # Persist latest height for prioritization/dialing
                         try:
                             self.peerstore.update_head_height(peer_id, remote_height)
-                            self.peerstore.record_seen(
-                                peer_id, peer.get("remote") or remote
+                            reported_addr = peer.get("reported_addr") or peer.get(
+                                "dial_addr"
                             )
+                            self.peerstore.record_seen(peer_id, reported_addr)
                         except Exception:
                             pass
 
