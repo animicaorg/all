@@ -148,9 +148,13 @@ def compute_genesis_sha256(
     *,
     chain_id: Optional[int] = None,
 ) -> bytes:
+    from core.utils.serialization import canonical_dumps
+
     resolved = resolve_genesis_path(genesis_path, chain_id=chain_id)
-    data = resolved.read_bytes()
-    return hashlib.sha256(data).digest()
+    with open(resolved, "r", encoding="utf-8") as f:
+        genesis = json.load(f)
+    canonical = canonical_dumps(genesis)
+    return hashlib.sha256(canonical).digest()
 
 
 def genesis_tag(
