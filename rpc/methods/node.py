@@ -109,4 +109,33 @@ async def node_get_status(hashrate_window: int | None = None) -> dict[str, t.Any
     }
 
 
-__all__ = ["node_get_status", "node_ping"]
+@method("node.syncTrigger", desc="Trigger sync and report queued status")
+async def node_sync_trigger() -> dict[str, t.Any]:
+    try:
+        from rpc.methods import sync as sync_methods
+    except Exception as exc:  # pragma: no cover - defensive
+        return {"ok": False, "queued": False, "error": f"sync methods unavailable: {exc}"}
+
+    trigger = await sync_methods.sync_force()
+    sync_status = await sync_methods.sync_get_status()
+
+    peer_count = 0
+    try:
+        from rpc.methods import p2p as p2p_methods
+
+        p2p_status = await p2p_methods.get_status()
+        peer_count = _safe_peer_counts(p2p_status).get("total", 0)
+    except Exception:
+        peer_count = 0
+
+    ok = bool(trigger.get("success") or trigger.get("started") or trigger.get("ok"))
+    return {
+        "ok": ok,
+        "queued": ok,
+        "peerCount": peer_count,
+        "phase": sync_status.get("phase") or sync_status.get("state"),
+        "trigger": trigger,
+    }
+
+
+__all__ = ["node_get_status", "node_ping", "node_sync_trigger"]

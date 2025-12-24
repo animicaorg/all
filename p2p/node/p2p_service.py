@@ -88,6 +88,7 @@ class _PeerState:
     notfound: int = 0
     missing_parent: int = 0
     stall_events: int = 0
+    empty_header_responses: int = 0
     last_msg_at: float = field(default_factory=time.time)
     last_progress_at: float = field(default_factory=time.time)
     ban_until: Optional[float] = None
@@ -2054,6 +2055,8 @@ class P2PService:
         for peer in self._peers.values():
             hello = peer.hello or {}
             genesis_hash = bytes(hello.get("genesis_hash") or b"")
+            genesis_identity = bytes(hello.get("genesis_identity") or b"")
+            params_hash = bytes(hello.get("network_params_hash") or b"")
             head_hash = bytes(hello.get("head_hash") or b"")
             peers.append(
                 {
@@ -2066,6 +2069,8 @@ class P2PService:
                     "agent": hello.get("agent"),
                     "chain_id": hello.get("chain_id"),
                     "genesis_hash": genesis_hash.hex() if genesis_hash else None,
+                    "genesis_identity": genesis_identity.hex() if genesis_identity else None,
+                    "network_params_hash": params_hash.hex() if params_hash else None,
                     "head_height": hello.get("head_height"),
                     "head_hash": head_hash.hex() if head_hash else None,
                     "capabilities": list(hello.get("capabilities") or []),
@@ -2077,6 +2082,8 @@ class P2PService:
         return {
             "expected_chain_id": self.chain_id,
             "expected_genesis_hash": self._genesis_hash().hex(),
+            "expected_genesis_identity": self._genesis_identity().hex(),
+            "expected_network_params_hash": self._network_params_hash().hex(),
             "locator": self._locator_debug(locator),
             "eligible_peers_for_headers": [peer.remote for peer in eligible],
             "ineligible_peers_for_headers": dict(ineligible),
@@ -2908,6 +2915,8 @@ class P2PService:
             listen_port=listen_port,
             listen_addrs=listen_addrs,
             genesis_hash=self._genesis_hash(),
+            genesis_identity=self._genesis_identity(),
+            network_params_hash=self._network_params_hash(),
             peer_id=self._peer_id_bytes,
             head_height=height,
             head_hash=head_hash,
@@ -2969,8 +2978,12 @@ class P2PService:
         reason: str,
         peer_chain_id: Optional[int],
         peer_genesis_hash: Optional[bytes],
+        peer_genesis_identity: Optional[bytes] = None,
+        peer_network_params_hash: Optional[bytes] = None,
     ) -> None:
         local_genesis = self._genesis_hash()
+        local_genesis_identity = self._genesis_identity()
+        local_params_hash = self._network_params_hash()
         log.warning(
             "Peer handshake mismatch",
             extra={
@@ -2978,9 +2991,17 @@ class P2PService:
                 "reason": reason,
                 "local_chain_id": self.chain_id,
                 "local_genesis_hash": local_genesis.hex(),
+                "local_genesis_identity": local_genesis_identity.hex(),
+                "local_network_params_hash": local_params_hash.hex(),
                 "peer_chain_id": peer_chain_id,
                 "peer_genesis_hash": peer_genesis_hash.hex()
                 if peer_genesis_hash
+                else None,
+                "peer_genesis_identity": peer_genesis_identity.hex()
+                if peer_genesis_identity
+                else None,
+                "peer_network_params_hash": peer_network_params_hash.hex()
+                if peer_network_params_hash
                 else None,
             },
         )
@@ -3042,6 +3063,78 @@ class P2PService:
                 points=self._score_points["wrong_genesis"],
             )
 
+        if not hello.genesis_identity:
+            self._log_handshake_mismatch(
+                peer,
+                reason="genesis_identity_missing",
+                peer_chain_id=int(hello.chain_id or 0),
+                peer_genesis_hash=bytes(hello.genesis_hash or b""),
+            )
+            await self._send(
+                peer,
+                MsgID.HELLO_ACK,
+                HelloAck(accepted=False, reason="genesis_identity_missing"),
+            )
+            raise PeerMisbehavior(
+                "genesis_identity_missing",
+                points=self._score_points["wrong_chain"],
+            )
+
+        if bytes(hello.genesis_identity) != self._genesis_identity():
+            self._log_handshake_mismatch(
+                peer,
+                reason="genesis_identity_mismatch",
+                peer_chain_id=int(hello.chain_id or 0),
+                peer_genesis_hash=bytes(hello.genesis_hash or b""),
+                peer_genesis_identity=bytes(hello.genesis_identity or b""),
+            )
+            await self._send(
+                peer,
+                MsgID.HELLO_ACK,
+                HelloAck(accepted=False, reason="genesis_identity_mismatch"),
+            )
+            raise PeerMisbehavior(
+                "genesis_identity_mismatch",
+                points=self._score_points["wrong_chain"],
+            )
+
+        if not hello.network_params_hash:
+            self._log_handshake_mismatch(
+                peer,
+                reason="network_params_missing",
+                peer_chain_id=int(hello.chain_id or 0),
+                peer_genesis_hash=bytes(hello.genesis_hash or b""),
+                peer_genesis_identity=bytes(hello.genesis_identity or b""),
+            )
+            await self._send(
+                peer,
+                MsgID.HELLO_ACK,
+                HelloAck(accepted=False, reason="network_params_missing"),
+            )
+            raise PeerMisbehavior(
+                "network_params_missing",
+                points=self._score_points["wrong_chain"],
+            )
+
+        if bytes(hello.network_params_hash) != self._network_params_hash():
+            self._log_handshake_mismatch(
+                peer,
+                reason="network_params_mismatch",
+                peer_chain_id=int(hello.chain_id or 0),
+                peer_genesis_hash=bytes(hello.genesis_hash or b""),
+                peer_genesis_identity=bytes(hello.genesis_identity or b""),
+                peer_network_params_hash=bytes(hello.network_params_hash or b""),
+            )
+            await self._send(
+                peer,
+                MsgID.HELLO_ACK,
+                HelloAck(accepted=False, reason="network_params_mismatch"),
+            )
+            raise PeerMisbehavior(
+                "network_params_mismatch",
+                points=self._score_points["wrong_chain"],
+            )
+
         if hello.version and str(hello.version) not in {"1", "2"}:
             await self._send(
                 peer,
@@ -3086,6 +3179,12 @@ class P2PService:
         normalized["genesis_hash"] = bytes(
             getattr(hello, "genesis_hash", b"")
         ) or data.get("genesis_hash") or data.get("genesisHash")
+        normalized["genesis_identity"] = bytes(
+            getattr(hello, "genesis_identity", b"")
+        ) or data.get("genesis_identity") or data.get("genesisIdentity")
+        normalized["network_params_hash"] = bytes(
+            getattr(hello, "network_params_hash", b"")
+        ) or data.get("network_params_hash") or data.get("networkParamsHash")
         peer.hello = normalized
         peer.hello_done.set()
         peer.ready_for_sync = True
@@ -3487,6 +3586,22 @@ class P2PService:
                             "reason": reject_reason,
                         },
                     )
+                    if "pow target not met" in reject_reason.lower():
+                        self._set_sync_backoff(
+                            peer,
+                            reason="consensus_mismatch_pow",
+                            delay=600.0,
+                        )
+                        self._penalize_peer(
+                            peer,
+                            "consensus_mismatch_pow",
+                            severity=3,
+                            quarantine_s=600.0,
+                        )
+                        self._create_child_task(
+                            self._drop_peer(peer, reason="consensus_mismatch_pow"),
+                            name=f"p2p.drop_peer@{peer.remote}",
+                        )
                     self._penalize_peer(
                         peer,
                         f"block_rejected:{reject_reason}",
@@ -3817,6 +3932,7 @@ class P2PService:
     ) -> List[bytes]:
         if not headers:
             return []
+        peer.empty_header_responses = 0
 
         contiguous: List[_SyncHeader] = []
         prev: Optional[_SyncHeader] = None
@@ -4146,6 +4262,15 @@ class P2PService:
                                 )
                                 self._penalize_peer(peer, "genesis_mismatch")
                                 tried_peers.add(peer.remote)
+                            elif empty_reason == "headers_empty":
+                                peer.empty_header_responses += 1
+                                if peer.empty_header_responses >= self._sync_no_headers_threshold:
+                                    self._set_sync_backoff(
+                                        peer,
+                                        reason="headers_empty",
+                                        delay=self._sync_no_headers_backoff,
+                                    )
+                                    tried_peers.add(peer.remote)
                             else:
                                 self._set_sync_backoff(
                                     peer,
@@ -4157,6 +4282,7 @@ class P2PService:
                         break
 
                     saw_headers = True
+                    peer.empty_header_responses = 0
                     order = self._process_headers(peer, headers)
                     if not order and len(headers) > 0:
                         all_known = all(
@@ -4264,6 +4390,8 @@ class P2PService:
     def _sync_peer_log_context(self, peer: _PeerState) -> dict[str, Any]:
         hello = peer.hello or {}
         genesis_hash = bytes(hello.get("genesis_hash") or b"")
+        genesis_identity = bytes(hello.get("genesis_identity") or b"")
+        params_hash = bytes(hello.get("network_params_hash") or b"")
         return {
             "remote": peer.remote,
             "peer_id": peer.peer_id,
@@ -4272,6 +4400,8 @@ class P2PService:
             "agent": hello.get("agent"),
             "chain_id": hello.get("chain_id"),
             "genesis_hash": genesis_hash.hex() if genesis_hash else None,
+            "genesis_identity": genesis_identity.hex() if genesis_identity else None,
+            "network_params_hash": params_hash.hex() if params_hash else None,
             "head_height": hello.get("head_height"),
             "head_hash": bytes(hello.get("head_hash") or b"").hex()
             if hello.get("head_hash")
@@ -4322,6 +4452,16 @@ class P2PService:
             return False, "genesis_missing"
         if genesis_hash != self._genesis_hash():
             return False, "genesis_mismatch"
+        genesis_identity = bytes(peer.hello.get("genesis_identity") or b"")
+        if not genesis_identity:
+            return False, "genesis_identity_missing"
+        if genesis_identity != self._genesis_identity():
+            return False, "genesis_identity_mismatch"
+        params_hash = bytes(peer.hello.get("network_params_hash") or b"")
+        if not params_hash:
+            return False, "network_params_missing"
+        if params_hash != self._network_params_hash():
+            return False, "network_params_mismatch"
         caps = peer.hello.get("capabilities")
         head_height = int(peer.hello.get("head_height") or 0)
         if isinstance(caps, list) and caps:
@@ -4472,6 +4612,17 @@ class P2PService:
         if params_hash:
             return params_hash
         return b"\x00" * 32
+
+    def _genesis_identity(self) -> bytes:
+        return self._genesis_hash()
+
+    def _network_params_hash(self) -> bytes:
+        try:
+            from core.network_params import compute_network_params_hash
+
+            return compute_network_params_hash(self.chain_id)
+        except Exception:
+            return b"\x00" * 32
 
     def _genesis_hash_from_params(self) -> Optional[bytes]:
         params = getattr(self.deps, "params", None)
@@ -4741,6 +4892,8 @@ class P2PService:
         lowered = reason.lower()
         if "genesis" in lowered:
             return self._score_points["wrong_genesis"]
+        if "consensus" in lowered or "network_params" in lowered:
+            return self._score_points["wrong_chain"]
         if "chain" in lowered and "mismatch" in lowered:
             return self._score_points["wrong_chain"]
         if lowered.startswith("header_"):
@@ -4864,6 +5017,41 @@ class P2PService:
                 self._stats["blocks_rejected"] += 1
             self._sync_last_block_error = reason_str
             self._sync_last_block_error_at = time.time()
+            if "pow target not met" in reason_str.lower():
+                header_hash_hex = None
+                theta_micro = None
+                target_hex = None
+                peer_id = None
+                if origin_remote:
+                    origin_peer = self._peers.get(origin_remote)
+                    peer_id = origin_peer.peer_id if origin_peer else None
+                if blk is not None and hasattr(blk, "header"):
+                    try:
+                        header_hash_hex = bytes(blk.header.hash()).hex()
+                    except Exception:
+                        header_hash_hex = None
+                    try:
+                        theta_micro = int(getattr(blk.header, "thetaMicro", 0))
+                    except Exception:
+                        theta_micro = None
+                    if theta_micro is not None:
+                        try:
+                            from core.chain.block_import import _theta_to_target
+
+                            target_hex = hex(_theta_to_target(theta_micro))
+                        except Exception:
+                            target_hex = None
+                log.debug(
+                    "PoW target mismatch",
+                    extra={
+                        "remote": origin_remote,
+                        "peer_id": peer_id,
+                        "header_hash": header_hash_hex,
+                        "theta_micro": theta_micro,
+                        "computed_target": target_hex,
+                        "reason": reason_str,
+                    },
+                )
             if self._is_db_write_error(reason_str):
                 self._sync_block_stalled_reason = "db not writable"
                 self._sync_last_block_error = f"db not writable: {reason_str}"
