@@ -5,15 +5,17 @@
     {
       "peer_id": "mainnet-primary-1",
       "multiaddrs": [
-        "/dns4/rpc-reset.animica.org/udp/443/quic-v1",
-        "/dns4/rpc-reset.animica.org/tcp/30333",
-        "/dns4/rpc-reset.animica.org/tcp/30333/ws",
-        "/dns4/mainnet-reset.animica.org/udp/443/quic-v1",
-        "/dns4/mainnet-reset.animica.org/tcp/30333",
-        "/dns4/mainnet-reset.animica.org/tcp/30333/ws"
+        "/dns4/mainnet.animica.org/udp/443/quic-v1",
+        "/dns4/mainnet.animica.org/tcp/30333",
+        "/dns4/mainnet.animica.org/tcp/30333/ws",
+        "/dns4/rpc.animica.org/udp/443/quic-v1",
+        "/dns4/rpc.animica.org/tcp/30333",
+        "/dns4/rpc.animica.org/tcp/30333/ws",
+        "/ip4/144.126.133.21/udp/443/quic-v1",
+        "/ip4/144.126.133.21/tcp/30333"
       ],
       "region": "primary",
-      "comment": "Primary Animica mainnet reset seed - DNS only"
+      "comment": "Primary Animica mainnet seeds with DNS + IP fallback"
     }
   ]
 }
