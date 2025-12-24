@@ -17,6 +17,9 @@ Wire shape (CBOR/msgpack via msgspec):
   "pk":  bytes,             # node identity public key (raw)
   "pid": str,               # peer-id (sha3-256 over derivation), hex
   "cid": int,               # chain_id
+  "fid": int,               # fork_id (uint32, derived from genesis)
+  "cons": str,              # consensus_id (string)
+  "pv": str,                # protocol_version (string)
   "apr": bytes,             # alg-policy Merkle root (SHA3-512 digest)
   "caps": dict,             # HelloCaps (see p2p.protocol.__init__.py)
   "th":  bytes,             # transcript hash from PQ handshake (binds sessions)
@@ -64,6 +67,9 @@ class _HelloStruct(msgspec.Struct, omit_defaults=True):
     pk: bytes
     pid: str
     cid: int
+    fid: int
+    cons: str
+    pv: str
     apr: bytes
     caps: Dict[str, Any]
     th: bytes
@@ -98,6 +104,9 @@ def _sign_bytes(blob_wo_sig: _HelloStruct) -> bytes:
         pk=blob_wo_sig.pk,
         pid=blob_wo_sig.pid,
         cid=blob_wo_sig.cid,
+        fid=blob_wo_sig.fid,
+        cons=blob_wo_sig.cons,
+        pv=blob_wo_sig.pv,
         apr=blob_wo_sig.apr,
         caps=blob_wo_sig.caps,
         th=blob_wo_sig.th,
@@ -116,6 +125,9 @@ class VerifiedHello:
     alg_id: int
     pubkey: bytes
     chain_id: int
+    fork_id: int
+    consensus_id: str
+    protocol_version: str
     alg_policy_root: bytes
     caps: HelloCaps
     transcript_hash: bytes
@@ -127,6 +139,9 @@ def build_hello_message(
     public_key: bytes,
     sign_key: Any,
     chain_id: int,
+    fork_id: int,
+    consensus_id: str,
+    protocol_version: str,
     alg_policy_root: bytes,
     caps: Optional[HelloCaps],
     transcript_hash: bytes,
@@ -151,6 +166,9 @@ def build_hello_message(
         pk=bytes(public_key),
         pid=pid,
         cid=int(chain_id),
+        fid=int(fork_id),
+        cons=str(consensus_id),
+        pv=str(protocol_version),
         apr=bytes(alg_policy_root),
         caps=caps or build_hello_caps(chain_id=chain_id),
         th=bytes(transcript_hash),
@@ -166,6 +184,9 @@ def verify_hello_message(
     data: bytes,
     *,
     expected_chain_id: Optional[int],
+    expected_fork_id: Optional[int] = None,
+    expected_consensus_id: Optional[str] = None,
+    expected_protocol_version: Optional[str] = None,
     expected_transcript_hash: bytes,
     expected_alg_policy_root: Optional[bytes] = None,
 ) -> VerifiedHello:
@@ -201,6 +222,22 @@ def verify_hello_message(
         raise ProtocolError(
             f"chain_id mismatch: remote={hello.cid} expected={expected_chain_id}"
         )
+    if expected_fork_id is not None and int(hello.fid) != int(expected_fork_id):
+        raise ProtocolError(
+            f"fork_id mismatch: remote={hello.fid} expected={expected_fork_id}"
+        )
+    if expected_consensus_id is not None and str(hello.cons) != str(
+        expected_consensus_id
+    ):
+        raise ProtocolError(
+            f"consensus_id mismatch: remote={hello.cons} expected={expected_consensus_id}"
+        )
+    if expected_protocol_version is not None and str(hello.pv) != str(
+        expected_protocol_version
+    ):
+        raise ProtocolError(
+            f"protocol_version mismatch: remote={hello.pv} expected={expected_protocol_version}"
+        )
 
     # Recompute peer-id
     recomputed_pid = _peer_id_from_pubkey(hello.alg, hello.pk)
@@ -223,6 +260,9 @@ def verify_hello_message(
         alg_id=int(hello.alg),
         pubkey=bytes(hello.pk),
         chain_id=int(hello.cid),
+        fork_id=int(hello.fid),
+        consensus_id=str(hello.cons),
+        protocol_version=str(hello.pv),
         alg_policy_root=bytes(hello.apr),
         caps=hello.caps,  # type: ignore
         transcript_hash=bytes(hello.th),
@@ -241,6 +281,7 @@ def pretty_print_hello(data: bytes) -> str:
 
     return (
         f"HELLO[v{h.vmaj}/wire{h.wire}] pid={h.pid[:16]}… alg={h.alg} cid={h.cid} "
-        f"apr={hx(h.apr)[:16]}… th={hx(h.th)[:16]}… sig={hx(h.sig)[:16]}… "
+        f"fid={h.fid} cons={h.cons} pv={h.pv} apr={hx(h.apr)[:16]}… "
+        f"th={hx(h.th)[:16]}… sig={hx(h.sig)[:16]}… "
         f"caps.transports={h.caps.get('transports')} roles={h.caps.get('roles')}"
     )

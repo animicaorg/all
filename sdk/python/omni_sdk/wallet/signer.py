@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import hmac
 import logging
+import os
 from dataclasses import dataclass
 from typing import Any, Dict, Literal, Optional, Tuple
 
@@ -134,6 +135,22 @@ def _lookup_alg_id(alg_name: AlgName) -> int:
     if isinstance(mapping, dict) and alg_name in mapping:
         return int(mapping[alg_name])
     raise RuntimeError(f"Unable to resolve algorithm id for '{alg_name}' from pq registry.")
+
+
+def _fork_id_from_env() -> Optional[int]:
+    for key in ("ANIMICA_FORK_ID", "ANIMICA_CHAIN_FORK_ID"):
+        val = os.getenv(key)
+        if not val:
+            continue
+        try:
+            v = val.strip().lower()
+            if v.startswith("0x"):
+                return int(v, 16)
+            return int(v)
+        except Exception:
+            logging.warning("Invalid fork_id in %s=%s", key, val)
+            return None
+    return None
 
 
 def _derive_address(alg_id: int, public_key: bytes, hrp: str = "anim") -> Optional[str]:
@@ -424,12 +441,12 @@ class PQSigner:
             pq_sign, alg_name=self._alg_name, sk=self._sk, msg=message, domain=domain
         )
 
-    def sign_tx(self, message: bytes, chain_id: int) -> bytes:
+    def sign_tx(self, message: bytes, chain_id: int, fork_id: int | None = None) -> bytes:
         """
         Sign a transaction message with proper domain separation for Animica transactions.
         
-        This method uses the standard "tx" domain and includes chain_id in the
-        signature construction, matching the node's verification expectations.
+        This method uses the standard "tx" domain and includes chain_id + fork_id
+        in the signature construction, matching the node's verification expectations.
         
         Parameters
         ----------
@@ -437,6 +454,9 @@ class PQSigner:
             The transaction body (CBOR-encoded canonical body dict from omni_sdk.tx.encode.sign_bytes)
         chain_id : int
             Chain ID for domain separation
+        fork_id : Optional[int]
+            Fork identifier (domain separation between genesis resets). If None,
+            attempt to read ANIMICA_FORK_ID from the environment.
         
         Returns
         -------
@@ -444,14 +464,16 @@ class PQSigner:
             Raw signature bytes
         """
         _, _, pq_sign, _ = _import_pq()
-        # Call sign_detached with domain="tx" and chain_id to match node verification
+        resolved_fork_id = fork_id if fork_id is not None else _fork_id_from_env()
+        # Call sign_detached with domain="tx" and chain_id/fork_id to match node verification
         try:
             result = pq_sign.sign_detached(
                 message,
                 self._alg_name,
                 self._sk,
                 domain="tx",
-                chain_id=chain_id
+                chain_id=chain_id,
+                fork_id=resolved_fork_id,
             )
             # Extract raw signature bytes from result
             if isinstance(result, bytes):
@@ -464,8 +486,9 @@ class PQSigner:
         except TypeError as e:
             logging.warning(
                 "PQ backend does not support domain/chain_id parameters; "
-                "using manual SignBytes construction with chain_id=%s (%s)",
+                "using manual SignBytes construction with chain_id=%s fork_id=%s (%s)",
                 chain_id,
+                resolved_fork_id,
                 e,
             )
 
@@ -475,6 +498,7 @@ class PQSigner:
                     message,
                     domain="tx",
                     chain_id=chain_id,
+                    fork_id=resolved_fork_id,
                     alg_id=self._alg_id,
                 )
             except Exception as build_err:

@@ -136,6 +136,9 @@ def main(argv: Optional[list[str]] = None) -> int:
         print(f"DB:            {args.db}")
         print(f"Genesis:       {genesis_path}")
         print(f"Chain ID:      {params.chain_id}")
+        print(f"Fork ID:       {identity.fork_id}")
+        print(f"Consensus ID:  {identity.consensus_id}")
+        print(f"Protocol Ver:  {identity.protocol_version}")
         print(f"Head height:   {h_height}")
         print(f"Head hash:     0x{h_hash.hex()}")
         if h_height == 0:

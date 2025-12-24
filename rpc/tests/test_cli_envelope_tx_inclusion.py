@@ -24,6 +24,7 @@ def _build_cli_format_tx(chain_id: int = 1):
         from pq.py.address import decode_address
         from pq.py.registry import ALG_ID
         from animica.tx.signing import build_signable_tx_bytes
+        from core.genesis.loader import compute_chain_identity
         import cbor2
     except ImportError:
         pytest.skip("PQ or animica.tx.signing not available")
@@ -56,7 +57,15 @@ def _build_cli_format_tx(chain_id: int = 1):
         # Fallback to CBOR if build_signable_tx_bytes not available
         sign_bytes = cbor2.dumps(body, canonical=True)
     
-    sig_env = sign.sign_detached(sign_bytes, alg_name, kp.secret_key, domain="tx")
+    fork_id = compute_chain_identity(None, chain_id=chain_id).fork_id
+    sig_env = sign.sign_detached(
+        sign_bytes,
+        alg_name,
+        kp.secret_key,
+        domain="tx",
+        chain_id=chain_id,
+        fork_id=fork_id,
+    )
     
     # Build CLI envelope
     envelope = {

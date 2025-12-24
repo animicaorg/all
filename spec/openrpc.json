@@ -38,6 +38,16 @@
       }
     },
     {
+      "name": "chain_getChainIdentity",
+      "summary": "Return chain identity (chainId + genesis/fork/consensus/protocol).",
+      "result": {
+        "name": "chainIdentity",
+        "schema": {
+          "$ref": "#/components/schemas/ChainIdentity"
+        }
+      }
+    },
+    {
       "name": "chain_getHead",
       "summary": "Return current canonical head (header + number).",
       "result": {
@@ -392,6 +402,37 @@
       "Quantity": {
         "type": "integer",
         "minimum": 0
+      },
+      "ChainIdentity": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "chainId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "genesisHash": {
+            "$ref": "#/components/schemas/Hash"
+          },
+          "forkId": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
+          },
+          "consensusId": {
+            "type": "string"
+          },
+          "protocolVersion": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "chainId",
+          "genesisHash",
+          "forkId",
+          "consensusId",
+          "protocolVersion"
+        ]
       },
       "ChainParams": {
         "type": "object",

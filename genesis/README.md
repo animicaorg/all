@@ -24,3 +24,19 @@ DEST_GENESIS_PATH=/data/genesis.json bash genesis/devnet.sh
 
 All helpers resolve paths relative to the repo root, so you can run them from
 anywhere.
+
+## Deterministic genesis generation
+
+Use `tools/genesis/create_genesis.py` to deterministically build a new genesis bundle
+(genesis.json + genesis.hash) from explicit inputs:
+
+```bash
+python tools/genesis/create_genesis.py \
+  --chain-id 1 \
+  --genesis-time 2026-01-01T00:00:00Z \
+  --alloc-file /path/to/alloc.json \
+  --consensus-file /path/to/consensus.json \
+  --output-dir /path/to/output
+```
+
+Optional: pass `--db-uri sqlite:///...` to bootstrap a DB from the generated genesis.

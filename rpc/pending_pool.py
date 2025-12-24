@@ -36,7 +36,8 @@ from core.utils.hash import sha3_256, sha3_256_hex
 # PQ primitives (address & signature verification)
 from pq.py.address import decode_address as pq_decode_address
 from pq.py.address import encode_address as pq_encode_address
-from pq.py.verify import verify as pq_verify
+from pq.py import verify as pq_verify
+from rpc import deps
 
 from .models import TxView
 # Local RPC helpers
@@ -255,8 +256,33 @@ class PendingPool:
         except Exception as e:
             raise MalformedTx(f"missing signature fields: {e}") from e
 
-        # 3) Verify signature against domain-separated sign-bytes
-        ok = pq_verify(alg_id, pubkey, sign_bytes, signature)
+        # 3) Verify signature against domain-separated sign-bytes (chain_id + fork_id)
+        try:
+            from pq.py.sign import Signature
+            from pq.py.registry import ALG_NAME
+
+            alg_name = ALG_NAME.get(alg_id, f"alg_0x{alg_id:02x}")
+            sig_env = Signature(
+                alg_id=alg_id,
+                alg_name=alg_name,
+                domain="tx",
+                prehash="sha3-512",
+                sig=signature,
+            )
+            fork_id = None
+            if hasattr(deps, "get_chain_identity"):
+                ident = deps.get_chain_identity()
+                if isinstance(ident, dict):
+                    fork_id = ident.get("forkId")
+            ok = pq_verify.verify_detached(  # type: ignore[attr-defined]
+                sign_bytes,
+                sig_env,
+                pubkey,
+                chain_id=int(getattr(tx, "chain_id", getattr(tx, "chainId", 0))),
+                fork_id=fork_id,
+            )
+        except Exception as e:
+            raise BadSignature(f"post-quantum signature verification failed: {e}") from e
         if not ok:
             raise BadSignature("post-quantum signature verification failed")
 

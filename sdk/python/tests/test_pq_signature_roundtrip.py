@@ -41,7 +41,10 @@ def test_pq_signer_sign_tx_with_chain_id():
     msg = sign_bytes(tx)
     
     # Sign with sign_tx method
-    signature = signer.sign_tx(msg, chain_id)
+    from core.genesis.loader import compute_chain_identity
+
+    fork_id = compute_chain_identity(None, chain_id=chain_id).fork_id
+    signature = signer.sign_tx(msg, chain_id, fork_id=fork_id)
     
     # Check signature is valid bytes
     assert isinstance(signature, bytes)
@@ -95,7 +98,10 @@ def test_sign_tx_handles_legacy_sign_detached(monkeypatch):
     monkeypatch.setattr(pq_sign, "sign_detached", legacy_sign_detached)
     monkeypatch.setattr(pq_sign, "_backend_sign", capturing_backend_sign)
 
-    signature = signer.sign_tx(msg, chain_id)
+    from core.genesis.loader import compute_chain_identity
+
+    fork_id = compute_chain_identity(None, chain_id=chain_id).fork_id
+    signature = signer.sign_tx(msg, chain_id, fork_id=fork_id)
 
     assert isinstance(signature, bytes) and len(signature) > 0
 
@@ -167,7 +173,10 @@ def test_node_verification_matches_sdk_signature():
     
     # Sign using SDK
     msg = sign_bytes(tx)
-    sig_bytes = signer.sign_tx(msg, chain_id)
+    from core.genesis.loader import compute_chain_identity
+
+    fork_id = compute_chain_identity(None, chain_id=chain_id).fork_id
+    sig_bytes = signer.sign_tx(msg, chain_id, fork_id=fork_id)
     
     # Create signature envelope (as node does)
     sig_env = Signature(
@@ -179,7 +188,9 @@ def test_node_verification_matches_sdk_signature():
     )
     
     # Verify using node's verification path
-    ok = verify_detached(msg, sig_env, signer.public_key, chain_id=chain_id)
+    ok = verify_detached(
+        msg, sig_env, signer.public_key, chain_id=chain_id, fork_id=fork_id
+    )
     
     assert ok is True, "Node verification should accept SDK signature"
 
@@ -213,7 +224,10 @@ def test_node_verification_rejects_flipped_signature():
     
     # Sign using SDK
     msg = sign_bytes(tx)
-    sig_bytes = signer.sign_tx(msg, chain_id)
+    from core.genesis.loader import compute_chain_identity
+
+    fork_id = compute_chain_identity(None, chain_id=chain_id).fork_id
+    sig_bytes = signer.sign_tx(msg, chain_id, fork_id=fork_id)
     
     # Tamper with signature (flip a byte in the middle)
     tampered_sig = bytearray(sig_bytes)
@@ -232,7 +246,9 @@ def test_node_verification_rejects_flipped_signature():
     )
     
     # Verify should fail
-    ok = verify_detached(msg, sig_env, signer.public_key, chain_id=chain_id)
+    ok = verify_detached(
+        msg, sig_env, signer.public_key, chain_id=chain_id, fork_id=fork_id
+    )
     
     assert ok is False, "Node verification should reject tampered signature"
 
@@ -266,7 +282,10 @@ def test_node_verification_rejects_wrong_chain_id():
     
     # Sign using SDK with chain_id=1
     msg = sign_bytes(tx)
-    sig_bytes = signer.sign_tx(msg, chain_id)
+    from core.genesis.loader import compute_chain_identity
+
+    fork_id = compute_chain_identity(None, chain_id=chain_id).fork_id
+    sig_bytes = signer.sign_tx(msg, chain_id, fork_id=fork_id)
     
     # Create signature envelope
     sig_env = Signature(
@@ -278,7 +297,10 @@ def test_node_verification_rejects_wrong_chain_id():
     )
     
     # Try to verify with wrong chain_id=2
-    ok = verify_detached(msg, sig_env, signer.public_key, chain_id=2)
+    wrong_fork_id = compute_chain_identity(None, chain_id=2).fork_id
+    ok = verify_detached(
+        msg, sig_env, signer.public_key, chain_id=2, fork_id=wrong_fork_id
+    )
     
     assert ok is False, "Node verification should reject signature with wrong chain_id"
 
@@ -309,7 +331,10 @@ def test_packed_signed_envelope_has_required_fields():
     
     # Sign
     msg = sign_bytes(tx)
-    sig_bytes = signer.sign_tx(msg, chain_id)
+    from core.genesis.loader import compute_chain_identity
+
+    fork_id = compute_chain_identity(None, chain_id=chain_id).fork_id
+    sig_bytes = signer.sign_tx(msg, chain_id, fork_id=fork_id)
     
     # Pack into signed envelope
     raw_tx = pack_signed(

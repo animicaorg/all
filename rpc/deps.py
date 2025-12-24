@@ -656,6 +656,7 @@ def _maybe_bootstrap_genesis(
 class RpcContext:
     cfg: _ConfigView
     params: dict[str, t.Any]
+    chain_identity: t.Any | None
     kv: t.Any
     state_db: t.Any
     block_db: t.Any
@@ -734,11 +735,16 @@ def build_context(cfg: t.Any | None = None) -> RpcContext:
 
     params = _params_from_spec(cfg_view.chain_id)
     identity = None
+    chain_identity = None
     try:
         from core.genesis.loader import compute_genesis_identity
+        from core.genesis.loader import compute_chain_identity
         from core.network_params import enforce_pinned_genesis
 
         identity = compute_genesis_identity(
+            cfg_view.genesis_path, chain_id=cfg_view.chain_id
+        )
+        chain_identity = compute_chain_identity(
             cfg_view.genesis_path, chain_id=cfg_view.chain_id
         )
         enforce_pinned_genesis(
@@ -753,6 +759,15 @@ def build_context(cfg: t.Any | None = None) -> RpcContext:
             identity.genesis_block_hash.hex(),
             identity.genesis_file_hash.hex(),
         )
+        if chain_identity is not None:
+            log.info(
+                "Chain identity: chain_id=%s genesis_hash=0x%s fork_id=%s consensus_id=%s protocol_version=%s",
+                chain_identity.chain_id,
+                chain_identity.genesis_hash.hex(),
+                chain_identity.fork_id,
+                chain_identity.consensus_id,
+                chain_identity.protocol_version,
+            )
     except Exception:
         raise
     kv = _open_kv(cfg_view.db_uri)
@@ -981,6 +996,7 @@ def build_context(cfg: t.Any | None = None) -> RpcContext:
     return RpcContext(
         cfg=cfg_view,
         params=params,
+        chain_identity=chain_identity,
         kv=bundle.kv,
         state_db=bundle.state_db,
         block_db=bundle.block_db,
@@ -1192,6 +1208,27 @@ def get_params() -> dict[str, t.Any]:
     """Return the chain params loaded during startup (possibly empty)."""
 
     return ensure_started().params
+
+
+def get_chain_identity() -> dict[str, t.Any]:
+    """Return the chain identity (chain_id + genesis/fork/consensus/protocol bindings)."""
+    ctx = ensure_started()
+    identity = getattr(ctx, "chain_identity", None)
+    if identity is None:
+        return {
+            "chainId": int(ctx.cfg.chain_id),
+            "genesisHash": None,
+            "forkId": None,
+            "consensusId": None,
+            "protocolVersion": None,
+        }
+    return {
+        "chainId": int(identity.chain_id),
+        "genesisHash": "0x" + bytes(identity.genesis_hash).hex(),
+        "forkId": int(identity.fork_id),
+        "consensusId": str(identity.consensus_id),
+        "protocolVersion": str(identity.protocol_version),
+    }
 
 
 def get_chain_id() -> int:

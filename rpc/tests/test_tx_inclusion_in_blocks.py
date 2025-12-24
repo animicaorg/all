@@ -32,6 +32,7 @@ def _build_signed_transfer(client, cfg, nonce: int = 0, value: int = 1_000_000_0
     from core.types.tx import Tx
     from pq.py import keygen
     from pq.py import sign
+    from core.genesis.loader import compute_chain_identity
     from pq.py.address import address_from_pubkey
     from pq.py.registry import ALG_ID
     
@@ -71,7 +72,15 @@ def _build_signed_transfer(client, cfg, nonce: int = 0, value: int = 1_000_000_0
     
     # Sign transaction
     sign_bytes = tx_sign_bytes(unsigned.to_obj(), cfg.chain_id)
-    sig_env = sign.sign_detached(sign_bytes, alg_name, kp.secret_key, domain="tx")
+    fork_id = compute_chain_identity(None, chain_id=cfg.chain_id).fork_id
+    sig_env = sign.sign_detached(
+        sign_bytes,
+        alg_name,
+        kp.secret_key,
+        domain="tx",
+        chain_id=cfg.chain_id,
+        fork_id=fork_id,
+    )
     
     # Create signed tx
     from core.types.tx import PqSignature

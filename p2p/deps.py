@@ -187,7 +187,14 @@ def _wipe_db(db_uri: str) -> None:
 
 def _compute_genesis_identity(
     genesis_path: Optional[str],
-) -> tuple[Optional[bytes], Optional[bytes], Optional[str]]:
+) -> tuple[
+    Optional[bytes],
+    Optional[bytes],
+    Optional[str],
+    Optional[int],
+    Optional[str],
+    Optional[str],
+]:
     try:
         from core.genesis.loader import compute_genesis_identity
 
@@ -196,9 +203,12 @@ def _compute_genesis_identity(
             identity.genesis_block_hash,
             identity.genesis_file_hash,
             str(identity.genesis_path),
+            int(identity.fork_id),
+            str(identity.consensus_id),
+            str(identity.protocol_version),
         )
     except Exception:
-        return None, None, genesis_path
+        return None, None, genesis_path, None, None, None
 
 
 def _db_genesis_hash(block_db: Any) -> Optional[bytes]:
@@ -292,6 +302,9 @@ class P2PDeps:
     expected_genesis_file_hash: Optional[bytes]
     db_genesis_hash: Optional[bytes]
     db_genesis_file_hash: Optional[bytes]
+    fork_id: Optional[int]
+    consensus_id: Optional[str]
+    protocol_version: Optional[str]
 
     @classmethod
     def from_env(cls) -> "P2PDeps":
@@ -326,6 +339,9 @@ class P2PDeps:
             expected_from_file,
             expected_file_hash,
             resolved_genesis_path,
+            fork_id,
+            consensus_id,
+            protocol_version,
         ) = _compute_genesis_identity(genesis_path)
         if resolved_genesis_path:
             genesis_path = resolved_genesis_path
@@ -443,6 +459,9 @@ class P2PDeps:
             expected_genesis_file_hash=expected_file_hash,
             db_genesis_hash=db_genesis_hash,
             db_genesis_file_hash=db_genesis_file_hash,
+            fork_id=fork_id,
+            consensus_id=consensus_id,
+            protocol_version=protocol_version,
         )
 
     # ---- Head & headers -----------------------------------------------------

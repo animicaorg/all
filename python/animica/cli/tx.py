@@ -173,6 +173,16 @@ def _get_chain_id(rpc_url: str) -> int:
     raise RuntimeError("Could not determine chain id from node")
 
 
+def _get_chain_identity(rpc_url: str) -> dict:
+    try:
+        ident = _rpc(rpc_url, "chain.getChainIdentity", [])
+        if isinstance(ident, dict):
+            return ident
+    except Exception:
+        pass
+    return {"chainId": _get_chain_id(rpc_url), "forkId": None}
+
+
 def _get_nonce(rpc_url: str, addr: str) -> int:
     # Try pending nonce first (includes mempool transactions)
     # This ensures back-to-back sends use incrementing nonces
@@ -287,8 +297,10 @@ def send(
     rpc = _resolve_rpc_url(rpc_url)
     guard_bootstrap_rpc(rpc, allow_remote=allow_remote_rpc, method="tx.sendRawTransaction")
 
-    # Resolve chain id
-    cid = int(chain_id) if chain_id is not None else _get_chain_id(rpc)
+    # Resolve chain identity
+    chain_identity = _get_chain_identity(rpc)
+    cid = int(chain_id) if chain_id is not None else int(chain_identity.get("chainId"))
+    fork_id = chain_identity.get("forkId")
 
     # Nonce + fee defaults
     nonce = _get_nonce(rpc, from_addr)
@@ -326,6 +338,7 @@ def send(
         body_bytes,
         domain=domain,
         chain_id=cid,
+        fork_id=fork_id,
         alg_id=alg_id,
         prehash=prehash,  # type: ignore[arg-type]
     )
@@ -344,6 +357,7 @@ def send(
                 "domain": domain,
                 "prehash": prehash,
                 "chain_id_in_pq": cid,
+                "fork_id_in_pq": fork_id,
                 "pubkey_len": len(pk),
                 "seckey_len": len(sk),
                 "message_len": len(body_bytes),
@@ -361,6 +375,7 @@ def send(
         pk=pk,
         domain=domain,
         chain_id=cid,
+        fork_id=fork_id,
         prehash=prehash,  # type: ignore[arg-type]
     )
 
@@ -371,6 +386,7 @@ def send(
             pk,
             domain=domain,
             chain_id=cid,
+            fork_id=fork_id,
             prehash=prehash,  # type: ignore[arg-type]
         )
     except Exception as e:
