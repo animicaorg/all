@@ -1580,15 +1580,16 @@ def status(
 
             typer.echo(f"RPC URL: {url}")
             typer.echo("RPC reachable: yes")
-            typer.echo(f"Chain ID: {chain_id}")
-            typer.echo(f"Head height: {height}")
-            typer.echo(f"Head hash: {head_hash}")
+            typer.echo("Animica blockchain info:")
+            typer.echo(f"  Chain ID: {chain_id}")
+            typer.echo(f"  Head height: {height}")
+            typer.echo(f"  Head hash: {head_hash}")
             formatted_head_time, head_age = _format_block_time(head_time)
             if formatted_head_time:
                 if head_age:
-                    typer.echo(f"Head time: {formatted_head_time} (age {head_age})")
+                    typer.echo(f"  Head time: {formatted_head_time} (age {head_age})")
                 else:
-                    typer.echo(f"Head time: {formatted_head_time}")
+                    typer.echo(f"  Head time: {formatted_head_time}")
             if height == 0:
                 typer.echo("Chain: genesis only")
             if cached_bootstrap:
@@ -1708,9 +1709,10 @@ def status(
                         bold=True,
                     )
                     typer.echo(f"RPC URL: {cached.get('rpc_url', 'unknown')} (cached)")
-                    typer.echo(f"Chain ID: {cached.get('chain_id')}")
-                    typer.echo(f"Head height: {cached.get('height')}")
-                    typer.echo(f"Head hash: {cached.get('head_hash')}")
+                    typer.echo("Animica blockchain info (cached):")
+                    typer.echo(f"  Chain ID: {cached.get('chain_id')}")
+                    typer.echo(f"  Head height: {cached.get('height')}")
+                    typer.echo(f"  Head hash: {cached.get('head_hash')}")
                     typer.echo(f"Peer count: {cached.get('peer_count')}")
                     updated_at = _format_sync_timestamp(cached.get("updated_at"))
                     if updated_at:
