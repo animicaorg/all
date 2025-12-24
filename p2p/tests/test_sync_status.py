@@ -48,6 +48,19 @@ def _make_devnet_genesis(tmp_path: Path) -> Path:
     return genesis_path
 
 
+def _make_alt_genesis(tmp_path: Path) -> Path:
+    genesis_path = tmp_path / "genesis.devnet.alt.json"
+    if genesis_path.exists():
+        return genesis_path
+    base_genesis = json.loads(_make_devnet_genesis(tmp_path).read_text(encoding="utf-8"))
+    alloc = base_genesis.get("alloc", [])
+    if alloc:
+        alloc[0]["balance"] = int(alloc[0].get("balance", 0)) + 1
+    base_genesis["alloc"] = alloc
+    genesis_path.write_text(json.dumps(base_genesis, indent=2), encoding="utf-8")
+    return genesis_path
+
+
 def _make_deps(tmp_path: Path, name: str) -> P2PDeps:
     db_path = tmp_path / f"{name}.db"
     genesis_path = _make_devnet_genesis(tmp_path)
@@ -156,6 +169,24 @@ def test_mainnet_genesis_is_enforced_on_startup(tmp_path: Path) -> None:
 
     with pytest.raises(P2PError, match="GENESIS_MISMATCH"):
         P2PDeps.open(f"sqlite:///{db_path}", str(GENESIS_PATH))
+
+
+def test_genesis_mismatch_can_auto_reset(tmp_path: Path) -> None:
+    from core.genesis.loader import load_and_init_genesis, load_genesis
+
+    genesis_a = _make_devnet_genesis(tmp_path)
+    genesis_b = _make_alt_genesis(tmp_path)
+    db_path = tmp_path / "genesis-reset.db"
+    db_uri = f"sqlite:///{db_path}"
+
+    load_and_init_genesis(str(genesis_a), db_uri, log=False)
+
+    with pytest.raises(P2PError, match="GENESIS_MISMATCH"):
+        P2PDeps.open(db_uri, str(genesis_b))
+
+    deps = P2PDeps.open(db_uri, str(genesis_b), allow_genesis_reset=True)
+    _params, header = load_genesis(str(genesis_b))
+    assert deps.db_genesis_hash == bytes(header.hash())
 
 
 def test_header_advancement_enqueues_blocks(tmp_path: Path) -> None:

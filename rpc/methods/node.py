@@ -40,6 +40,12 @@ async def node_get_status(hashrate_window: int | None = None) -> dict[str, t.Any
     from rpc.methods import chain as chain_methods
 
     head = chain_methods.chain_get_head()
+    init_error = None
+    try:
+        ctx = deps.get_ctx()
+        init_error = ctx.init_error
+    except Exception:
+        init_error = None
     try:
         network_hashrate = chain_methods.chain_get_network_hashrate(
             window_blocks=hashrate_window
@@ -88,6 +94,7 @@ async def node_get_status(hashrate_window: int | None = None) -> dict[str, t.Any
 
     return {
         "rpc_reachable": True,
+        "init_error": init_error,
         "chain": {
             "head": head,
             "summary": _head_summary(head),

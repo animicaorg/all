@@ -372,6 +372,37 @@ def _print_docker_diagnostics(compose_file: Path, network: str) -> None:
             fg=typer.colors.RED,
             err=True,
         )
+    if "genesis_mismatch" in lowered or "genesis mismatch" in lowered:
+        try:
+            defaults = get_network_defaults(network)
+            net_cfg = load_network_config(network)
+            genesis_tag = _genesis_tag_for_network(net_cfg)
+            volume_name = _volume_name_for_chain(
+                network, defaults["chain_id"], genesis_tag
+            )
+        except Exception:
+            volume_name = None
+        typer.secho(
+            "Likely cause: genesis mismatch (data volume initialized with a different genesis).",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        typer.secho(
+            "Recommended recovery:", fg=typer.colors.YELLOW, bold=True, err=True
+        )
+        typer.secho("  animica node down --volumes", err=True)
+        if volume_name:
+            typer.secho(f"  docker volume rm {volume_name}", err=True)
+        typer.secho(
+            "To auto-reset on startup, re-run with:",
+            fg=typer.colors.YELLOW,
+            err=True,
+        )
+        typer.secho(
+            "  animica node up --auto-reset-genesis-mismatch",
+            fg=typer.colors.YELLOW,
+            err=True,
+        )
 
     container_name = _container_name_for_network(network)
     typer.secho("\nContainer status:", fg=typer.colors.YELLOW, bold=True)
@@ -491,9 +522,12 @@ def _db_path(cfg: Any) -> Path:
     return data_dir / db_name
 
 
-def _volume_name_for_chain(network: str, chain_id: int) -> str:
+def _volume_name_for_chain(
+    network: str, chain_id: int, genesis_tag: Optional[str] = None
+) -> str:
     safe_network = network.replace("-", "_")
-    return f"animica_{safe_network}_chain_{chain_id}_data"
+    tag = f"_{genesis_tag}" if genesis_tag else ""
+    return f"animica_{safe_network}_chain_{chain_id}{tag}_data"
 
 
 def _compose_file_container_path(compose_file: Path) -> str:
@@ -511,6 +545,15 @@ def _resolve_genesis_path(cfg: Any) -> Path:
     genesis_path = getattr(cfg, "genesis_path", None)
     chain_id = getattr(cfg, "chain_id", None)
     return resolve_genesis_path(genesis_path, chain_id=chain_id)
+
+
+def _genesis_tag_for_network(cfg: Any) -> Optional[str]:
+    try:
+        from core.genesis.genesis_loader import genesis_tag
+
+        return genesis_tag(_resolve_genesis_path(cfg))
+    except Exception:
+        return None
 
 
 def _ensure_db_initialized(net_cfg: Any, *, quiet: bool = False) -> bool:
@@ -1810,6 +1853,11 @@ def up(
         "--rpc-ready-timeout",
         help="Seconds to wait for local RPC readiness after docker start",
     ),
+    auto_reset_genesis_mismatch: bool = typer.Option(
+        False,
+        "--auto-reset-genesis-mismatch",
+        help="Auto-reset chain data if genesis mismatch is detected (destructive)",
+    ),
 ) -> None:
     """
     Start an Animica node using Docker Compose.
@@ -1870,6 +1918,8 @@ def up(
         env_fallback="HOST_P2P_TCP_PORT",
     )
     metrics_port = _resolve_host_port("HOST_METRICS_PORT", defaults["metrics_port"])
+    genesis_tag = _genesis_tag_for_network(net_cfg)
+    volume_name = _volume_name_for_chain(network, defaults["chain_id"], genesis_tag)
 
     allow_bootstrap = allow_bootstrap_rpc or os.getenv("ANIMICA_ALLOW_BOOTSTRAP_RPC") == "1"
     bootstrap_node = _is_bootstrap_node()
@@ -1948,12 +1998,19 @@ def up(
         "ANIMICA_P2P_DATA_DIR": str(Path(data_dir) / "p2p"),
         "ANIMICA_COMPOSE_FILE": _compose_file_container_path(compose_file),
     }
+    if genesis_tag:
+        compose_env.setdefault("GENESIS_TAG", genesis_tag)
+        compose_env.setdefault("ANIMICA_GENESIS_TAG", genesis_tag)
+    if volume_name:
+        compose_env.setdefault("ANIMICA_DATA_ROOT", volume_name)
     compose_env.setdefault("HOST_RPC_PORT", str(rpc_port))
     compose_env.setdefault("HOST_P2P_PORT", str(p2p_port))
     compose_env.setdefault("HOST_P2P_TCP_PORT", str(p2p_port))
     compose_env.setdefault("HOST_METRICS_PORT", str(metrics_port))
     if bootstrap_node:
         compose_env.setdefault("ANIMICA_RPC_BOOTSTRAP_NODE", "1")
+    if auto_reset_genesis_mismatch:
+        compose_env.setdefault("ANIMICA_AUTO_RESET_GENESIS_MISMATCH", "1")
 
     try:
         result = subprocess.run(
@@ -2062,6 +2119,11 @@ def up_all(
         "--allow-bootstrap-rpc/--no-allow-bootstrap-rpc",
         help="Allow bootstrap RPC usage for optional discovery/sync comparison",
     ),
+    auto_reset_genesis_mismatch: bool = typer.Option(
+        False,
+        "--auto-reset-genesis-mismatch",
+        help="Auto-reset chain data if genesis mismatch is detected (destructive)",
+    ),
 ) -> None:
     """
     Start all Animica node networks at once.
@@ -2111,6 +2173,10 @@ def up_all(
             compose_file = defaults["compose_file"]
             net_cfg = load_network_config(network)
             data_dir = str(Path(net_cfg.data_dir).expanduser())
+            genesis_tag = _genesis_tag_for_network(net_cfg)
+            volume_name = _volume_name_for_chain(
+                network, defaults["chain_id"], genesis_tag
+            )
             
             if not compose_file.exists():
                 typer.secho(
@@ -2187,8 +2253,15 @@ def up_all(
             "ANIMICA_P2P_DATA_DIR": str(Path(data_dir) / "p2p"),
             "ANIMICA_COMPOSE_FILE": _compose_file_container_path(compose_file),
         }
+        if genesis_tag:
+            compose_env.setdefault("GENESIS_TAG", genesis_tag)
+            compose_env.setdefault("ANIMICA_GENESIS_TAG", genesis_tag)
+        if volume_name:
+            compose_env.setdefault("ANIMICA_DATA_ROOT", volume_name)
         if bootstrap_node:
             compose_env.setdefault("ANIMICA_RPC_BOOTSTRAP_NODE", "1")
+        if auto_reset_genesis_mismatch:
+            compose_env.setdefault("ANIMICA_AUTO_RESET_GENESIS_MISMATCH", "1")
 
         try:
             result = subprocess.run(
@@ -2465,7 +2538,10 @@ def reset(
         )
 
     if volumes:
-        volume_name = _volume_name_for_chain(resolved_network, net_cfg.chain_id)
+        genesis_tag = _genesis_tag_for_network(net_cfg)
+        volume_name = _volume_name_for_chain(
+            resolved_network, net_cfg.chain_id, genesis_tag
+        )
         typer.echo(f"Removing volume: {volume_name}")
         volume_result = subprocess.run(
             ["docker", "volume", "rm", volume_name],

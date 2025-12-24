@@ -421,6 +421,31 @@ animica network set <correct-network>
 animica node up
 ```
 
+### Genesis Mismatch / Stale Volume Recovery
+
+If you see a `GENESIS_MISMATCH` error, your Docker volume likely contains a
+database initialized with a different genesis file. By default, `animica node up`
+will refuse to start and instruct you to wipe the stale volume.
+
+Recovery options:
+
+```bash
+# Destructive reset (recommended)
+animica node down --volumes
+animica node up
+
+# Opt-in auto-reset on startup (destructive)
+animica node up --auto-reset-genesis-mismatch
+```
+
+When starting via the CLI, volumes are genesis-aware and look like:
+
+```
+animica_<network>_chain_<id>_<genesis8>_data
+```
+
+Use that exact volume name in `docker volume rm` if you need to remove it manually.
+
 ## Advanced Usage
 
 ### Running Multiple Networks

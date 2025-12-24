@@ -36,11 +36,12 @@ Public API
 """
 
 from dataclasses import asdict
+import time
 from typing import Any, Optional, Tuple
 
 from core.db.block_db import PFX_HIX, _from_u64be
 from core.encoding.canonical import header_signing_bytes
-from core.errors import GenesisError
+from core.errors import GenesisError, GenesisMismatchError
 from core.types.header import Header
 from core.types.params import ChainParams
 from core.utils.hash import sha3_256
@@ -155,8 +156,50 @@ def get_head(block_db) -> Tuple[int, bytes]:
 # --- Genesis finalization ---------------------------------------------------
 
 
+def _persist_chain_meta(
+    block_db,
+    *,
+    chain_id: int,
+    genesis_hash: bytes,
+    genesis_sha256: bytes | None,
+    created_at: int | None,
+) -> None:
+    if hasattr(block_db, "set_chain_id"):
+        try:
+            block_db.set_chain_id(chain_id)
+        except Exception:
+            pass
+    if hasattr(block_db, "set_genesis_hash"):
+        try:
+            block_db.set_genesis_hash(genesis_hash)
+        except Exception:
+            pass
+    if genesis_sha256 is not None and hasattr(block_db, "set_genesis_sha256"):
+        try:
+            block_db.set_genesis_sha256(genesis_sha256)
+        except Exception:
+            pass
+    if created_at is not None and hasattr(block_db, "set_genesis_created_at"):
+        try:
+            existing = (
+                block_db.get_genesis_created_at()
+                if hasattr(block_db, "get_genesis_created_at")
+                else None
+            )
+            if existing is None:
+                block_db.set_genesis_created_at(created_at)
+        except Exception:
+            pass
+
+
 def finalize_genesis(
-    block_db, params: ChainParams, genesis_header: Header
+    block_db,
+    params: ChainParams,
+    genesis_header: Header,
+    *,
+    genesis_sha256: bytes | None = None,
+    genesis_path: str | None = None,
+    created_at: int | None = None,
 ) -> Tuple[int, bytes]:
     """
     Ensure the DB has a consistent genesis and a canonical head.
@@ -212,6 +255,13 @@ def finalize_genesis(
         if hasattr(block_db, "set_canonical"):
             block_db.set_canonical(0, h0)  # type: ignore[attr-defined]
         write_head(block_db, 0, h0)
+        _persist_chain_meta(
+            block_db,
+            chain_id=chain_id,
+            genesis_hash=h0,
+            genesis_sha256=genesis_sha256,
+            created_at=created_at,
+        )
         return (0, h0)
 
     # (4) Head exists; sanity-check against our genesis
@@ -221,11 +271,33 @@ def finalize_genesis(
         if cur_hash != h0:
             expected = "0x" + h0.hex()
             found = "0x" + bytes(cur_hash).hex()
-            raise GenesisError(
+            raise GenesisMismatchError(
                 "existing DB has different genesis hash (wrong network or corrupted DB)",
                 expected=expected,
                 found=found,
+                chain_id=chain_id,
+                genesis_path=str(genesis_path) if genesis_path else None,
             )
+        if genesis_sha256 is not None and hasattr(block_db, "get_genesis_sha256"):
+            try:
+                stored_sha = block_db.get_genesis_sha256()
+            except Exception:
+                stored_sha = None
+            if stored_sha is not None and stored_sha != genesis_sha256:
+                raise GenesisMismatchError(
+                    "existing DB genesis sha256 does not match configured genesis file",
+                    expected="0x" + genesis_sha256.hex(),
+                    found="0x" + bytes(stored_sha).hex(),
+                    chain_id=chain_id,
+                    genesis_path=str(genesis_path) if genesis_path else None,
+                )
+        _persist_chain_meta(
+            block_db,
+            chain_id=chain_id,
+            genesis_hash=h0,
+            genesis_sha256=genesis_sha256,
+            created_at=created_at,
+        )
         # Nothing to do
         return head
 
@@ -244,11 +316,35 @@ def finalize_genesis(
         if gh is not None and gh != h0:
             expected = "0x" + h0.hex()
             found = "0x" + bytes(gh).hex()
-            raise GenesisError(
+            raise GenesisMismatchError(
                 "existing DB genesis hash does not match provided genesis header",
                 expected=expected,
                 found=found,
+                chain_id=chain_id,
+                genesis_path=str(genesis_path) if genesis_path else None,
             )
+
+    if genesis_sha256 is not None and hasattr(block_db, "get_genesis_sha256"):
+        try:
+            stored_sha = block_db.get_genesis_sha256()
+        except Exception:
+            stored_sha = None
+        if stored_sha is not None and stored_sha != genesis_sha256:
+            raise GenesisMismatchError(
+                "existing DB genesis sha256 does not match configured genesis file",
+                expected="0x" + genesis_sha256.hex(),
+                found="0x" + bytes(stored_sha).hex(),
+                chain_id=chain_id,
+                genesis_path=str(genesis_path) if genesis_path else None,
+            )
+
+    _persist_chain_meta(
+        block_db,
+        chain_id=chain_id,
+        genesis_hash=h0,
+        genesis_sha256=genesis_sha256,
+        created_at=created_at,
+    )
 
     # Otherwise we accept the current head as-is.
     return head
@@ -292,4 +388,17 @@ def finalize_genesis_if_needed(
     from core.genesis.loader import load_genesis
 
     params, header = load_genesis(genesis_path)
-    return finalize_genesis(block_db, params, header)
+    try:
+        from core.genesis.genesis_loader import compute_genesis_sha256
+
+        genesis_sha256 = compute_genesis_sha256(genesis_path)
+    except Exception:
+        genesis_sha256 = None
+    return finalize_genesis(
+        block_db,
+        params,
+        header,
+        genesis_sha256=genesis_sha256,
+        genesis_path=str(genesis_path) if genesis_path else None,
+        created_at=int(time.time()),
+    )

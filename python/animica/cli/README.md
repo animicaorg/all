@@ -497,6 +497,9 @@ Examples:
   # Use a different profile
   animica node up --profile prod
 
+  # Auto-reset if a genesis mismatch is detected (destructive)
+  animica node up --auto-reset-genesis-mismatch
+
   # Stop the node (preserves data)
   animica node down
 

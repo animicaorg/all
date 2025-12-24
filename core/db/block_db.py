@@ -54,6 +54,8 @@ META_HEAD_HASH = PFX_META + b"head_hash"
 META_HEAD_HEIGHT = PFX_META + b"head_height"
 META_GENESIS = PFX_META + b"genesis_hash"
 META_CHAIN_ID = PFX_META + b"chain_id"
+META_GENESIS_SHA256 = PFX_META + b"genesis_sha256"
+META_GENESIS_CREATED_AT = PFX_META + b"genesis_created_at"
 
 
 def _u64be(n: int) -> bytes:
@@ -261,6 +263,29 @@ class BlockDB:
 
     def get_genesis_hash(self) -> Optional[bytes]:
         return self.kv.get(META_GENESIS)
+
+    def set_genesis_sha256(
+        self, sha256: bytes, batch: Optional[Batch] = None
+    ) -> None:
+        if batch is None:
+            self.kv.put(META_GENESIS_SHA256, sha256)
+        else:
+            batch.put(META_GENESIS_SHA256, sha256)
+
+    def get_genesis_sha256(self) -> Optional[bytes]:
+        return self.kv.get(META_GENESIS_SHA256)
+
+    def set_genesis_created_at(
+        self, created_at: int, batch: Optional[Batch] = None
+    ) -> None:
+        if batch is None:
+            self.kv.put(META_GENESIS_CREATED_AT, _u64be(created_at))
+        else:
+            batch.put(META_GENESIS_CREATED_AT, _u64be(created_at))
+
+    def get_genesis_created_at(self) -> Optional[int]:
+        v = self.kv.get(META_GENESIS_CREATED_AT)
+        return None if v is None else _from_u64be(v)
 
     def set_chain_id(self, chain_id: int, batch: Optional[Batch] = None) -> None:
         if batch is None:
