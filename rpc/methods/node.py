@@ -99,6 +99,7 @@ async def node_get_status(hashrate_window: int | None = None) -> dict[str, t.Any
             "head": head,
             "summary": _head_summary(head),
             "chain_id": head.get("chainId") or head.get("chain_id") or deps.get_chain_id(),
+            "identity": deps.get_chain_identity(),
         },
         "network_hashrate": network_hashrate,
         "p2p": {

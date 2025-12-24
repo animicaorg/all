@@ -26,8 +26,10 @@ class TxSigner(Protocol):
     alg_id: int
     public_key: bytes
 
-    def sign_tx(self, message: bytes, chain_id: int) -> bytes:
-        """Sign CBOR-encoded transaction body bytes with chain_id separation."""
+    def sign_tx(
+        self, message: bytes, chain_id: int, fork_id: int | None = None
+    ) -> bytes:
+        """Sign CBOR-encoded transaction body bytes with chain_id/fork_id separation."""
 
 
 @dataclass(frozen=True)
@@ -39,7 +41,9 @@ class SignedTx:
     raw_tx: bytes
 
 
-def sign_transaction(tx: object, signer: TxSigner, chain_id: int) -> SignedTx:
+def sign_transaction(
+    tx: object, signer: TxSigner, chain_id: int, fork_id: int | None = None
+) -> SignedTx:
     """
     Sign a transaction using the provided signer and pack into a raw envelope.
 
@@ -51,6 +55,8 @@ def sign_transaction(tx: object, signer: TxSigner, chain_id: int) -> SignedTx:
         Signer implementing alg_id, public_key, and sign_tx(message, chain_id).
     chain_id : int
         Chain ID for domain separation.
+    fork_id : Optional[int]
+        Fork identifier for replay protection (genesis reset domain separation).
 
     Returns
     -------
@@ -59,7 +65,7 @@ def sign_transaction(tx: object, signer: TxSigner, chain_id: int) -> SignedTx:
     """
 
     msg = sign_bytes(tx)
-    sig = signer.sign_tx(msg, chain_id)
+    sig = signer.sign_tx(msg, chain_id, fork_id=fork_id)
     raw = pack_signed(
         tx,
         signature=sig,
@@ -67,4 +73,3 @@ def sign_transaction(tx: object, signer: TxSigner, chain_id: int) -> SignedTx:
         public_key=signer.public_key,
     )
     return SignedTx(sign_bytes=msg, signature=sig, raw_tx=raw)
-

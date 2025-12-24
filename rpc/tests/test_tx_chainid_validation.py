@@ -70,6 +70,47 @@ def _choose_working_sig_alg():
     pytest.skip(f"No working PQ signature backend available (last error: {last_err})")
 
 
+def test_tx_signature_replay_protection_with_fork_id() -> None:
+    from pq.py import sign as pq_sign
+    from pq.py import verify as pq_verify
+
+    alg, kp, _sign_fn, _verify_fn, _addr_fn = _choose_working_sig_alg()
+    msg = b"animica fork-id replay test"
+    fork_a = 1
+    fork_b = 2
+
+    sig_env = pq_sign.sign_detached(
+        msg,
+        alg,
+        kp.secret_key,
+        domain="tx",
+        chain_id=1,
+        fork_id=fork_a,
+    )
+    assert (
+        pq_verify.verify_detached(
+            msg,
+            sig_env,
+            kp.public_key,
+            domain="tx",
+            chain_id=1,
+            fork_id=fork_a,
+        )
+        is True
+    )
+    assert (
+        pq_verify.verify_detached(
+            msg,
+            sig_env,
+            kp.public_key,
+            domain="tx",
+            chain_id=1,
+            fork_id=fork_b,
+        )
+        is False
+    )
+
+
 def _build_signed_transfer_cbor(
     chain_id: int, from_nonce: int = 0
 ) -> tuple[bytes, str, str]:
