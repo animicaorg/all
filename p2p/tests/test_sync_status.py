@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -24,7 +25,7 @@ from p2p.node.p2p_service import (
 from p2p.tests import tcp_multiaddr
 from p2p.wire.encoding import encode_payload
 from p2p.wire.frames import Framer
-from p2p.wire.messages import Blocks, HeaderCompact, Hello
+from p2p.wire.messages import Blocks, HeaderCompact, Headers, Hello
 
 GENESIS_PATH = Path(__file__).resolve().parents[2] / "core" / "genesis" / "genesis.json"
 
@@ -217,6 +218,108 @@ def test_sync_status_head_hash_matches_chain_head(tmp_path: Path) -> None:
     assert snap.head_height == height
     assert snap.head_hash == expected_hash
     assert snap.best_block_hash == expected_hash
+
+
+@pytest.mark.asyncio
+async def test_phantom_cursor_reset_clears_inflight_and_restarts(tmp_path: Path) -> None:
+    node, deps_sync = _make_service(tmp_path, "phantom-reset")
+    block = _make_child_block(deps_sync)
+    accepted, _reason = deps_sync.import_block(block)
+    assert accepted
+
+    phantom_hash = b"\x22" * 32
+    node._sync_best_header = _SyncHeader(
+        hash=phantom_hash,
+        parent_hash=b"\x00" * 32,
+        height=1,
+        theta_micro=0,
+        timestamp=0,
+    )
+    node._sync_inflight_blocks[phantom_hash] = 0.0
+    node._sync_inflight_peers[phantom_hash] = "peer-1:0"
+    node._sync_inflight_header_requests[("peer-1:0", "req-1")] = 0.0
+    node._sync_inflight_headers = 1
+
+    peer = _register_peer(node, "peer-1:0")
+    peer.ready_for_sync = True
+    peer.hello_done.set()
+    peer.peer_id = "peer-1"
+    peer.hello = {
+        "chain_id": node.chain_id,
+        "genesis_hash": node._genesis_hash(),
+        "genesis_identity": node._genesis_identity(),
+        "network_params_hash": node._network_params_hash(),
+        "head_height": 10,
+        "capabilities": ["sync"],
+    }
+    node._fetch_headers = AsyncMock(return_value=[])
+
+    await node._sync_once(force=True)
+
+    _height, head = deps_sync.head()
+    head_hash = head if isinstance(head, (bytes, bytearray)) else head.hash()
+    assert node._sync_best_header is not None
+    assert node._sync_best_header.hash == head_hash
+    assert node._sync_inflight_headers == 0
+    assert not node._sync_inflight_blocks
+    assert len(node._sync_header_queue) == 0
+    node._fetch_headers.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_header_response_attribution_requires_request_match(
+    tmp_path: Path,
+) -> None:
+    node, _deps_sync = _make_service(tmp_path, "header-attrib")
+    peer_a = _register_peer(node, "peer-a:0")
+    peer_b = _register_peer(node, "peer-b:0")
+
+    fut = asyncio.get_event_loop().create_future()
+    peer_a.pending_headers = fut
+    peer_a.pending_header_request_id = "req-123"
+    node._sync_inflight_header_requests[(peer_a.remote, "req-123")] = 0.0
+    node._sync_inflight_headers = 1
+
+    header = HeaderCompact(
+        hash=b"\x01" * 32,
+        height=1,
+        parent=b"\x00" * 32,
+        theta_micro=1,
+        timestamp=1,
+    )
+    payload = encode_payload(Headers(headers=[header]))
+
+    await node._handle_headers(peer_b, payload)
+
+    assert node._sync_last_header_response_peer is None
+    assert node._sync_inflight_headers == 1
+    assert peer_a.pending_headers is fut
+
+
+@pytest.mark.asyncio
+async def test_at_tip_requires_network_confirmation(tmp_path: Path) -> None:
+    node, deps_sync = _make_service(tmp_path, "tip-confirm")
+    block = _make_child_block(deps_sync)
+    accepted, _reason = deps_sync.import_block(block)
+    assert accepted
+
+    peer = _register_peer(node, "peer-tip:0")
+    peer.ready_for_sync = True
+    peer.hello_done.set()
+    peer.peer_id = "peer-tip"
+    peer.hello = {
+        "chain_id": node.chain_id,
+        "genesis_hash": node._genesis_hash(),
+        "genesis_identity": node._genesis_identity(),
+        "network_params_hash": node._network_params_hash(),
+        "head_height": 5000,
+        "capabilities": ["sync"],
+    }
+
+    node._fetch_headers = AsyncMock(return_value=[])
+    await node._sync_once(force=True)
+
+    assert node._sync_last_header_error != "at_tip"
 
 
 def test_sync_status_head_hash_matches_mainnet_genesis(tmp_path: Path) -> None:
