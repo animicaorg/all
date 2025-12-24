@@ -70,7 +70,17 @@ async def test_sync_paginates_header_batches(tmp_path: Path) -> None:
         write_lock=asyncio.Lock(),
     )
     peer.peer_id = "peer"
-    peer.hello = {"head_height": 129}
+    peer.hello = {
+        "head_height": 129,
+        "chain_id": node.chain_id,
+        "genesis_hash": node._genesis_hash(),
+        "fork_id": node._fork_id(),
+        "consensus_id": node._consensus_id(),
+        "protocol_version": node._protocol_version(),
+        "genesis_identity": node._genesis_identity(),
+        "network_params_hash": node._network_params_hash(),
+        "capabilities": ["sync"],
+    }
     peer.hello_done.set()
     node._peers[peer.remote] = peer
 
@@ -117,7 +127,17 @@ async def test_sync_schedules_blocks_after_multi_batch_headers(tmp_path: Path) -
         write_lock=asyncio.Lock(),
     )
     peer.peer_id = "peer"
-    peer.hello = {"head_height": 256}
+    peer.hello = {
+        "head_height": 256,
+        "chain_id": node.chain_id,
+        "genesis_hash": node._genesis_hash(),
+        "fork_id": node._fork_id(),
+        "consensus_id": node._consensus_id(),
+        "protocol_version": node._protocol_version(),
+        "genesis_identity": node._genesis_identity(),
+        "network_params_hash": node._network_params_hash(),
+        "capabilities": ["sync"],
+    }
     peer.hello_done.set()
     node._peers[peer.remote] = peer
 

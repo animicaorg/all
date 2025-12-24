@@ -174,6 +174,10 @@ Node Management & Network Selection
   animica node down
   animica node down --volumes     # Also delete blockchain data (DESTRUCTIVE)
 
+  # Hard-reset a network (new genesis, chain_id stays 1)
+  animica node reset --network mainnet --yes
+  animica node reset --network mainnet --yes --up   # reset + restart
+
   # Check node status (retries indefinitely on RPC errors)
   animica node status
   
@@ -190,6 +194,17 @@ Node Management & Network Selection
   # Set a longer RPC timeout globally for CLI commands
   export ANIMICA_RPC_TIMEOUT=60
   animica node status
+
+Chain Identity (Mainnet Reset)
+------------------------------
+  Mainnet keeps `chain_id = 1` even after a hard reset. Nodes and wallets must
+  use the **chain identity** `(chainId, genesisHash, forkId, consensusId, protocolVersion)`
+  to avoid mixing old/new mainnet data and to prevent signature replay.
+
+  - RPC: `chain.getChainIdentity` returns the active identity.
+  - P2P: peers with mismatched `genesisHash`/`forkId` are rejected immediately.
+  - Operators: run `animica node reset --network mainnet --yes` (or delete volumes
+    and `~/.animica/chain-1`) before restarting on the new genesis.
 
   # View node logs
   # The exact compose file path depends on the active network

@@ -84,6 +84,9 @@ class GenesisIdentity:
     genesis_file_hash: bytes
     chain_id: int
     genesis_path: Path
+    fork_id: int
+    consensus_id: str
+    protocol_version: str
 
 
 def _sha3_256(data: bytes) -> bytes:
@@ -462,14 +465,44 @@ def compute_genesis_identity(
     state_root = compute_state_root_from_alloc(genesis["alloc"])
     header = _build_genesis_header(genesis, state_root)
     from core.genesis.genesis_loader import compute_genesis_sha256
+    from core.chain.identity import (
+        consensus_id_from_genesis,
+        derive_fork_id,
+        protocol_version_from_runtime,
+    )
 
     resolved_path = bundle.resolved_path or Path(str(genesis_path))
     file_hash = compute_genesis_sha256(resolved_path)
+    fork_id = derive_fork_id(
+        bytes(header.hash()), explicit=genesis.get("forkId") or genesis.get("fork_id")
+    )
+    consensus_id = consensus_id_from_genesis(genesis)
+    protocol_version = protocol_version_from_runtime()
     return GenesisIdentity(
         genesis_block_hash=bytes(header.hash()),
         genesis_file_hash=file_hash,
         chain_id=int(genesis.get("chainId", 0)),
         genesis_path=resolved_path,
+        fork_id=fork_id,
+        consensus_id=consensus_id,
+        protocol_version=protocol_version,
+    )
+
+
+def compute_chain_identity(
+    genesis_path: str | os.PathLike[str] | None,
+    *,
+    chain_id: int | None = None,
+) -> "ChainIdentity":
+    from core.chain.identity import ChainIdentity
+
+    identity = compute_genesis_identity(genesis_path, chain_id=chain_id)
+    return ChainIdentity(
+        chain_id=int(identity.chain_id),
+        genesis_hash=bytes(identity.genesis_block_hash),
+        fork_id=int(identity.fork_id),
+        consensus_id=str(identity.consensus_id),
+        protocol_version=str(identity.protocol_version),
     )
 
 

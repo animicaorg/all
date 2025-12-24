@@ -235,6 +235,18 @@ def chain_get_chain_id() -> int:
 
 
 @method(
+    "chain.getChainIdentity",
+    desc="Return the full chain identity (chainId + genesis/fork/consensus/protocol).",
+    aliases=("chain_getChainIdentity",),
+)
+def chain_get_chain_identity() -> dict:
+    """
+    Returns an object: { chainId, genesisHash, forkId, consensusId, protocolVersion }.
+    """
+    return deps.get_chain_identity()
+
+
+@method(
     "chain.getHead",
     desc="Return the current best head (height + header view).",
     aliases=("chain_getHead",),

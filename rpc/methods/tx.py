@@ -347,7 +347,12 @@ def _build_sig_env(
 
 
 def _verify_pq_candidates(
-    candidates: list[tuple[str, bytes]], sig_env, pub: bytes, *, chain_id: int
+    candidates: list[tuple[str, bytes]],
+    sig_env,
+    pub: bytes,
+    *,
+    chain_id: int,
+    fork_id: int | None,
 ) -> tuple[bool, str | None, list[str]]:
     ok = False
     used_label: str | None = None
@@ -356,7 +361,7 @@ def _verify_pq_candidates(
     for label, candidate in candidates:
         try:
             attempt_ok = _pq_verify.verify_detached(  # type: ignore[attr-defined]
-                candidate, sig_env, pub, chain_id=chain_id
+                candidate, sig_env, pub, chain_id=chain_id, fork_id=fork_id
             )
         except Exception as verify_exc:  # pragma: no cover - defensive
             verify_errors.append(f"{label}: {verify_exc}")
@@ -397,6 +402,19 @@ def _chain_id_required() -> int:
 
     # Fallback mainnet id
     return 1
+
+
+def _fork_id_required() -> int | None:
+    """Return the configured fork_id for this node (derived from genesis)."""
+    if hasattr(deps, "get_chain_identity"):
+        try:
+            ident = deps.get_chain_identity()  # type: ignore[arg-type]
+            fork_id = ident.get("forkId") if isinstance(ident, dict) else None
+            if fork_id is not None:
+                return int(fork_id)
+        except Exception:
+            pass
+    return None
 
 
 def _extract_sig(obj: dict) -> tuple[int, bytes, bytes, str, str]:
@@ -674,7 +692,7 @@ def _verify_pq_signature(tx_like: t.Any, obj: dict, *, chain_id: int) -> None:
         # Call verify_detached with the signature envelope and chain_id
         # verify_detached signature: (msg: bytes, sig: Signature, pk: bytes, chain_id: int, **kwargs) -> bool
         ok, used_label, verify_errors = _verify_pq_candidates(
-            candidates, sig_env, pub, chain_id=chain_id
+            candidates, sig_env, pub, chain_id=chain_id, fork_id=_fork_id_required()
         )
 
         if ok and used_label and used_label != msg_label:
@@ -1529,7 +1547,7 @@ def tx_debug_verify_raw_transaction(rawTx: str) -> dict:
     sig_env, alg_name = _build_sig_env(alg_id, sig, domain=domain, prehash=prehash)
 
     ok, used_label, verify_errors = _verify_pq_candidates(
-        candidates, sig_env, pub, chain_id=chain_id
+        candidates, sig_env, pub, chain_id=chain_id, fork_id=_fork_id_required()
     )
 
     candidate_views = [

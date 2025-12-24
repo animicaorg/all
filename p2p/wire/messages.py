@@ -62,6 +62,9 @@ class Hello:
     # Optional genesis hash for strict network matching (recommended).
     # If empty, receivers should fall back to chain_id/alg_policy_root checks only.
     genesis_hash: Hash32 = b""
+    fork_id: int = 0
+    consensus_id: str = ""
+    protocol_version: str = ""
     # Consensus compatibility fields (required for sync)
     genesis_identity: Hash32 = b""
     network_params_hash: Hash32 = b""
@@ -77,6 +80,9 @@ class Hello:
     def __post_init__(self):
         if self.genesis_hash:
             _ensure_len("genesis_hash", self.genesis_hash, 32)
+        if self.fork_id:
+            if int(self.fork_id) < 0 or int(self.fork_id) > 0xFFFFFFFF:
+                raise ValueError(f"fork_id must be uint32, got {self.fork_id}")
         if self.genesis_identity:
             _ensure_len("genesis_identity", self.genesis_identity, 32)
         if self.network_params_hash:

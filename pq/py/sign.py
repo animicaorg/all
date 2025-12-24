@@ -13,11 +13,11 @@ Design goals
 
 Public API
 ----------
-- sign_detached(msg, alg, sk, *, domain="generic", chain_id=None, context=b"", prehash="sha3-512")
+- sign_detached(msg, alg, sk, *, domain="generic", chain_id=None, fork_id=None, context=b"", prehash="sha3-512")
       -> Signature
 - sign_attached(msg, alg, sk, **kwargs)
       -> SignedMessage (includes original msg + detached envelope)
-- build_sign_bytes(msg, *, domain, chain_id, alg_id, context=b"", prehash="sha3-512")
+- build_sign_bytes(msg, *, domain, chain_id, fork_id, alg_id, context=b"", prehash="sha3-512")
       -> bytes  (what gets signed)
 
 Where `alg` can be an int alg_id or a canonical name:
@@ -36,7 +36,7 @@ Security notes
 - Domain separation is *mandatory*. Use specific domains like:
     "tx/sign", "header/proposer", "p2p/identity", "da/receipt", etc.
   These should align with spec/domains.yaml at the repo root.
-- The canonical SignBytes includes (domain, chain_id?, alg_id, context?, msg).
+- The canonical SignBytes includes (domain, chain_id?, fork_id?, alg_id, context?, msg).
   All fields are length-delimited to avoid ambiguity.
 - We prehash with SHA3-512 to a fixed 64-byte digest, then sign that digest.
   This aligns behavior across algorithms and makes signatures size-predictable.
@@ -125,6 +125,7 @@ def build_sign_bytes(
     *,
     domain: Union[str, bytes],
     chain_id: Optional[int],
+    fork_id: Optional[int] = None,
     alg_id: int,
     context: bytes = b"",
     prehash: PrehashKind = "sha3-512",
@@ -136,6 +137,7 @@ def build_sign_bytes(
       TAG        = "animica:sign/v1"
       DOMAIN     = domain (bytes)
       CHAIN_ID?  = if provided (uvarint)
+      FORK_ID?   = if provided (uvarint, uint32)
       ALG_ID     = uvarint(alg_id)
       CONTEXT    = freeform domain-specific bytes (e.g., tx-kind, header fields)
       MESSAGE    = the original message bytes
@@ -144,6 +146,7 @@ def build_sign_bytes(
           len(TAG)||TAG
         ||len(DOMAIN)||DOMAIN
         ||len(CHAIN_ID_enc)?? (0 length if None)
+        ||len(FORK_ID_enc)?? (0 length if None)
         ||len(ALG_ID_enc)||ALG_ID_enc
         ||len(CONTEXT)||CONTEXT
         ||len(MESSAGE)||MESSAGE
@@ -157,6 +160,10 @@ def build_sign_bytes(
         chain_enc = b""
     else:
         chain_enc = _uvarint(chain_id)
+    if fork_id is None:
+        fork_enc = b""
+    else:
+        fork_enc = _uvarint(int(fork_id))
 
     alg_enc = _uvarint(alg_id)
 
@@ -164,6 +171,7 @@ def build_sign_bytes(
         _len_bytes(tag)
         + _len_bytes(domain_b)
         + _len_bytes(chain_enc)
+        + _len_bytes(fork_enc)
         + _len_bytes(alg_enc)
         + _len_bytes(context)
         + _len_bytes(msg)
@@ -350,6 +358,7 @@ def sign_detached(
     *,
     domain: Union[str, bytes] = b"generic",
     chain_id: Optional[int] = None,
+    fork_id: Optional[int] = None,
     context: bytes = b"",
     prehash: PrehashKind = "sha3-512",
     pk: bytes | None = None,
@@ -362,6 +371,7 @@ def sign_detached(
         msg,
         domain=domain,
         chain_id=chain_id,
+        fork_id=fork_id,
         alg_id=alg_id,
         context=context,
         prehash=prehash,
@@ -384,6 +394,7 @@ def sign_attached(
     *,
     domain: Union[str, bytes] = b"generic",
     chain_id: Optional[int] = None,
+    fork_id: Optional[int] = None,
     context: bytes = b"",
     prehash: PrehashKind = "sha3-512",
     pk: bytes | None = None,
@@ -399,6 +410,7 @@ def sign_attached(
             sk,
             domain=domain,
             chain_id=chain_id,
+            fork_id=fork_id,
             context=context,
             prehash=prehash,
             pk=pk,
@@ -418,6 +430,7 @@ def verify_detached(
     *,
     domain: Optional[Union[str, bytes]] = None,
     chain_id: Optional[int] = None,
+    fork_id: Optional[int] = None,
     context: bytes = b"",
     prehash: Optional[PrehashKind] = None,
     strict_domain: bool = True,
@@ -464,6 +477,7 @@ def verify_detached(
         msg,
         domain=domain_effective,
         chain_id=chain_id,
+        fork_id=fork_id,
         alg_id=alg_id,
         context=context,
         prehash=prehash_effective,

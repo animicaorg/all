@@ -73,6 +73,7 @@ async def test_value_transfer_updates_balance():
     
     # Build and sign transaction
     from core.encoding.canonical import tx_sign_bytes
+    from core.genesis.loader import compute_chain_identity
     from core.types.tx import Tx, UnsignedTx, TxKind, TxTransfer, PqSignature
     from pq.py import sign
     from pq.py.registry import ALG_ID
@@ -96,7 +97,15 @@ async def test_value_transfer_updates_balance():
     
     # Sign transaction
     sign_bytes_data = tx_sign_bytes(unsigned.to_obj())
-    sig_env = sign.sign_detached(sign_bytes_data, "dilithium3", sender_kp.secret_key, domain="tx", chain_id=cfg.chain_id)
+    fork_id = compute_chain_identity(None, chain_id=cfg.chain_id).fork_id
+    sig_env = sign.sign_detached(
+        sign_bytes_data,
+        "dilithium3",
+        sender_kp.secret_key,
+        domain="tx",
+        chain_id=cfg.chain_id,
+        fork_id=fork_id,
+    )
     sig = PqSignature(alg_id=ALG_ID["dilithium3"], pubkey=sender_kp.public_key, sig=sig_env.sig)
     tx = Tx(unsigned=unsigned, sigs=(sig,))
     
