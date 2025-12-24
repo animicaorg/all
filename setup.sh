@@ -253,6 +253,31 @@ port_owner() {
   echo ""
 }
 
+port_owner_command() {
+  local port="$1"
+  if have lsof; then
+    lsof -nP -iTCP:"$port" -sTCP:LISTEN 2>/dev/null | awk 'NR==2 {print $1}'
+    return 0
+  fi
+
+  if have ss; then
+    ss -ltnp 2>/dev/null | awk -v p=":${port}" '$4 ~ p {if (match($0, /users:\\(\\(\"([^\"]+)\"/, m)) {print m[1]; exit}}'
+    return 0
+  fi
+
+  echo ""
+}
+
+is_docker_port_helper() {
+  local cmd="$1"
+  case "$cmd" in
+    docker-proxy|docker-pr|docker-proxy*)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
 stop_running_p2p() {
   local pid="$1"
   if [ -z "$pid" ]; then
@@ -279,6 +304,12 @@ check_for_conflicting_p2p() {
   if port_in_use "$docker_p2p_port"; then
     local owner
     owner="$(port_owner "$docker_p2p_port")"
+    local owner_cmd
+    owner_cmd="$(port_owner_command "$docker_p2p_port")"
+    if is_docker_port_helper "$owner_cmd"; then
+      log "Ignoring docker port helper on ${docker_p2p_port} (${owner:-$owner_cmd})."
+      return 0
+    fi
     warn "Host P2P appears to be using port ${docker_p2p_port} (${owner:-unknown process})."
     warn "This will conflict with docker compose P2P port mapping."
     if [ "$AUTO_STOP_CONFLICTS" = "1" ] && [ -n "$pid" ]; then

@@ -68,6 +68,7 @@ from core.types.receipt import \
     Receipt  # imported for type completeness; not used here
 from core.types.tx import Tx
 from core.utils.hash import sha3_256
+from core.utils.pow import micro_threshold_to_target256
 
 # Import difficulty adjustment functions
 try:
@@ -83,9 +84,6 @@ except Exception:  # pragma: no cover - consensus optional
     WeightForkChoice = None  # type: ignore[assignment]
 
 log = logging.getLogger("animica.chain.block_import")
-
-_DEFAULT_SHARE_TARGET = float(os.getenv("ANIMICA_DEFAULT_SHARE_TARGET", "0.01"))
-_MAX_TARGET = (1 << 256) - 1
 
 
 class ImportErrorCode(str):
@@ -206,12 +204,8 @@ def _weight_micro_of(
 
 
 def _theta_to_target(theta_micro: int) -> int:
-    """Derive a loose block target from θ for lightweight validation."""
-    base = int(_MAX_TARGET * _DEFAULT_SHARE_TARGET)
-    if theta_micro <= 0:
-        return base
-    scaled = max(1, int(base / max(theta_micro / 1_000_000, 1)))
-    return min(_MAX_TARGET, scaled)
+    """Derive a block target from θ for lightweight validation."""
+    return micro_threshold_to_target256(theta_micro)
 
 
 def _dataclass_from_dict(dc_type, data: Dict[str, Any]):
@@ -703,9 +697,29 @@ class BlockImporter:
         try:
             theta_micro = _weight_micro_of(header, payload, self.params)
             target = _theta_to_target(int(theta_micro))
-            if int.from_bytes(header_hash, "big") > target:
+            pow_hash_int = int.from_bytes(header_hash, "big")
+            if pow_hash_int > target:
+                if os.getenv("ANIMICA_SYNC_DEBUG") == "1":
+                    log.debug(
+                        "PoW target mismatch",
+                        extra={
+                            "height": _height_of(header, payload),
+                            "header_hash": header_hash.hex(),
+                            "theta_micro": int(theta_micro),
+                            "pow_hash_int": pow_hash_int,
+                            "target": target,
+                        },
+                    )
                 return "pow target not met"
         except Exception as e:
+            if os.getenv("ANIMICA_SYNC_DEBUG") == "1":
+                log.debug(
+                    "PoW check failed",
+                    extra={
+                        "header_hash": header_hash.hex(),
+                        "reason": str(e),
+                    },
+                )
             return f"pow check failed: {e}"
         return None
 
