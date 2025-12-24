@@ -282,6 +282,8 @@ async def test_peer_rejected_on_genesis_mismatch(
         listen_port=0,
         listen_addrs=[],
         genesis_hash=b"\x22" * 32,
+        genesis_identity=node._genesis_identity(),
+        network_params_hash=node._network_params_hash(),
         peer_id=b"\x33" * 32,
         head_height=0,
         head_hash=b"\x00" * 32,
@@ -310,6 +312,8 @@ async def test_empty_headers_response_is_not_fatal(tmp_path: Path, monkeypatch: 
     peer.hello = {
         "chain_id": node.chain_id,
         "genesis_hash": node._genesis_hash(),
+        "genesis_identity": node._genesis_identity(),
+        "network_params_hash": node._network_params_hash(),
         "capabilities": ["sync"],
         "head_height": 10,
         "head_hash": b"\x11" * 32,
@@ -338,6 +342,8 @@ async def test_empty_headers_at_tip_not_fatal(tmp_path: Path, monkeypatch: pytes
     peer.hello = {
         "chain_id": node.chain_id,
         "genesis_hash": node._genesis_hash(),
+        "genesis_identity": node._genesis_identity(),
+        "network_params_hash": node._network_params_hash(),
         "capabilities": ["sync"],
         "head_height": 1,
         "head_hash": b"\x22" * 32,
@@ -369,6 +375,8 @@ async def test_block_requests_sequential_by_height(tmp_path: Path, monkeypatch: 
     peer.hello = {
         "chain_id": node.chain_id,
         "genesis_hash": node._genesis_hash(),
+        "genesis_identity": node._genesis_identity(),
+        "network_params_hash": node._network_params_hash(),
         "capabilities": ["sync"],
         "head_height": 3,
         "head_hash": b"\x33" * 32,
@@ -412,6 +420,8 @@ async def test_missing_parent_enqueues_parent_first(tmp_path: Path, monkeypatch:
     peer.hello = {
         "chain_id": node.chain_id,
         "genesis_hash": node._genesis_hash(),
+        "genesis_identity": node._genesis_identity(),
+        "network_params_hash": node._network_params_hash(),
         "capabilities": ["sync"],
         "head_height": 2,
         "head_hash": b"\x44" * 32,
@@ -484,6 +494,8 @@ async def test_peer_ready_triggers_header_request(tmp_path: Path, monkeypatch: p
         listen_port=30333,
         peer_id=b"\x11" * 32,
         genesis_hash=node._genesis_hash(),
+        genesis_identity=node._genesis_identity(),
+        network_params_hash=node._network_params_hash(),
         head_hash=b"\x00" * 32,
         head_height=10,
     )
