@@ -2009,7 +2009,7 @@ class P2PService:
         )
 
     def sync_status_snapshot(self) -> SyncStatusSnapshot:
-        height, head_hash = self._local_head()
+        height, head_hash = self._canonical_head_for_status()
         head_hex = head_hash
         best_header_hash = (
             "0x" + self._sync_best_header.hash.hex()
@@ -2037,6 +2037,7 @@ class P2PService:
             best_block_height=best_block_height,
             pending_header_batches=len(self._sync_header_queue),
             eligible_header_peers=len(eligible_peers),
+            synchronized=synchronized,
         )
         active_peers_for_headers = (
             [self._sync_active_header_peer] if self._sync_active_header_peer else []
@@ -2312,6 +2313,7 @@ class P2PService:
         best_block_height: int,
         pending_header_batches: int,
         eligible_header_peers: int = 0,
+        synchronized: bool = False,
     ) -> str:
         if self._sync_block_stalled_reason:
             return "STALLED"
@@ -2321,11 +2323,25 @@ class P2PService:
             return "BLOCKS"
         if self._sync_inflight_blocks or self._sync_block_buffer:
             return "VERIFYING"
-        if best_block_height > 0:
+        if synchronized:
             return "SYNCED"
         if eligible_header_peers > 0:
-            return "SYNCING_PENDING"
+            return "SYNCING"
         return "IDLE"
+
+    def _canonical_head_for_status(self) -> tuple[int, Optional[str]]:
+        try:
+            bdb = self._block_db()
+        except Exception:
+            return self._local_head()
+        head = None
+        if hasattr(bdb, "get_canonical_head"):
+            head = bdb.get_canonical_head()
+        if head is None:
+            head = bdb.get_head()
+        if head:
+            return int(head[0]), "0x" + bytes(head[1]).hex()
+        return self._local_head()
 
     def _maybe_mark_block_stalled(self, now: float) -> None:
         if self._sync_best_header is None:
@@ -3933,6 +3949,16 @@ class P2PService:
             self._sync_wakeup.set()
 
     async def _fetch_headers(self, peer: _PeerState) -> Optional[List[HeaderCompact]]:
+        local_height, local_hash_hex = self._local_head()
+        local_hash = None
+        if local_hash_hex:
+            with contextlib.suppress(ValueError):
+                local_hash = bytes.fromhex(
+                    local_hash_hex[2:] if local_hash_hex.startswith("0x") else local_hash_hex
+                )
+        anchor_height = int(local_height or 0)
+        anchor_hash = local_hash
+        request_start_height = anchor_height + 1 if anchor_hash else anchor_height
         locator = self._build_locator()
         locator_info = self._locator_debug(locator)
         locator_start = locator_info[0] if locator_info else None
@@ -3950,6 +3976,9 @@ class P2PService:
                 "remote": peer.remote,
                 "peer_id": peer.peer_id,
                 "request_id": request_id,
+                "anchor_height": anchor_height,
+                "anchor_hash": anchor_hash.hex() if anchor_hash else None,
+                "request_start_height": request_start_height,
                 "locator": locator_info,
                 "locator_start": locator_start,
                 "locator_end": locator_end,
@@ -3962,6 +3991,9 @@ class P2PService:
                 "peer": peer.remote,
                 "peer_id": peer.peer_id,
                 "request_id": request_id,
+                "anchor_height": anchor_height,
+                "anchor_hash": anchor_hash.hex() if anchor_hash else None,
+                "request_start_height": request_start_height,
                 "locator": locator_info,
                 "locator_start": locator_start,
                 "locator_end": locator_end,
@@ -4028,9 +4060,9 @@ class P2PService:
 
     def _process_headers(
         self, peer: _PeerState, headers: List[HeaderCompact]
-    ) -> List[bytes]:
+    ) -> tuple[List[bytes], Optional[str]]:
         if not headers:
-            return []
+            return [], None
         peer.empty_header_responses = 0
         local_height, local_hash_hex = self._local_head()
         local_hash: Optional[bytes] = None
@@ -4043,6 +4075,22 @@ class P2PService:
                 )
             except Exception:
                 local_hash = None
+        anchor_height = int(local_height or 0)
+        anchor_hash = local_hash
+        if headers and anchor_hash is not None:
+            first = self._header_from_compact(headers[0])
+            if first.height == anchor_height and first.hash == anchor_hash:
+                log.info(
+                    "Trimming inclusive anchor header",
+                    extra={
+                        "remote": peer.remote,
+                        "anchor_height": anchor_height,
+                        "anchor_hash": anchor_hash.hex(),
+                    },
+                )
+                headers = headers[1:]
+                if not headers:
+                    return [], None
 
         contiguous: List[_SyncHeader] = []
         prev: Optional[_SyncHeader] = None
@@ -4065,41 +4113,108 @@ class P2PService:
                 if header.height == 1 and header.parent_hash != expected_genesis:
                     self._stats["p2p_peers_rejected_genesis_mismatch"] += 1
                     self._penalize_peer(peer, "genesis_mismatch", severity=2)
-                    return []
+                    return [], "genesis_mismatch"
+                if anchor_hash is not None and header.height <= anchor_height:
+                    if header.height == anchor_height and header.hash == anchor_hash:
+                        pass
+                    else:
+                        self._sync_last_header_error = "not_anchored"
+                        self._sync_last_header_error_at = time.time()
+                        self._sync_last_header_error_peer = peer.remote
+                        self._penalize_peer(peer, "header_not_anchored", severity=1)
+                        strikes = peer.invalid_headers
+                        if strikes >= 2:
+                            self._set_sync_backoff(
+                                peer,
+                                reason="wrong_chain",
+                                delay=self._sync_no_headers_backoff,
+                            )
+                            self._penalize_peer(
+                                peer, "wrong_chain", severity=2, quarantine_s=60.0
+                            )
+                        else:
+                            self._set_sync_backoff(
+                                peer,
+                                reason="not_anchored",
+                                delay=min(2.0, self._sync_no_headers_backoff),
+                            )
+                        log.info(
+                            "Rejecting header batch: not anchored to local head",
+                            extra={
+                                "remote": peer.remote,
+                                "anchor_height": anchor_height,
+                                "anchor_hash": anchor_hash.hex(),
+                                "first_height": header.height,
+                                "first_hash": header.hash.hex(),
+                                "strikes": strikes,
+                            },
+                        )
+                        return [], "not_anchored"
                 if (
-                    local_hash is not None
-                    and header.height == int(local_height or 0) + 1
-                    and header.parent_hash != local_hash
+                    anchor_hash is not None
+                    and header.height == anchor_height + 1
+                    and header.parent_hash != anchor_hash
                 ):
+                    self._sync_last_header_error = "not_anchored"
+                    self._sync_last_header_error_at = time.time()
+                    self._sync_last_header_error_peer = peer.remote
+                    self._penalize_peer(peer, "header_not_anchored", severity=1)
+                    strikes = peer.invalid_headers
+                    if strikes >= 2:
+                        self._set_sync_backoff(
+                            peer,
+                            reason="wrong_chain",
+                            delay=self._sync_no_headers_backoff,
+                        )
+                        self._penalize_peer(
+                            peer, "wrong_chain", severity=2, quarantine_s=60.0
+                        )
+                    else:
+                        self._set_sync_backoff(
+                            peer,
+                            reason="not_anchored",
+                            delay=min(2.0, self._sync_no_headers_backoff),
+                        )
                     log.info(
-                        "Rejecting header batch: anchor mismatch",
+                        "Rejecting header batch: anchor parent mismatch",
                         extra={
                             "remote": peer.remote,
-                            "expected_parent": local_hash.hex(),
+                            "anchor_height": anchor_height,
+                            "anchor_hash": anchor_hash.hex(),
+                            "first_height": header.height,
+                            "expected_parent": anchor_hash.hex(),
                             "got_parent": header.parent_hash.hex(),
-                            "local_height": local_height,
+                            "strikes": strikes,
                         },
                     )
-                    self._set_sync_backoff(
-                        peer,
-                        reason="wrong_chain",
-                        delay=self._sync_no_headers_backoff,
-                    )
-                    self._penalize_peer(peer, "wrong_chain", severity=2, quarantine_s=60.0)
-                    return []
+                    return [], "not_anchored"
                 parent_info = self._header_meta(header.parent_hash)
                 if parent_info is None:
+                    self._sync_last_header_error = "not_anchored"
+                    self._sync_last_header_error_at = time.time()
+                    self._sync_last_header_error_peer = peer.remote
                     log.info(
                         "Ignoring unanchored header batch",
                         extra={"remote": peer.remote, "parent_hash": header.parent_hash.hex()},
                     )
-                    self._set_sync_backoff(
-                        peer,
-                        reason="wrong_chain",
-                        delay=self._sync_no_headers_backoff,
-                    )
-                    self._penalize_peer(peer, "wrong_chain", severity=2, quarantine_s=60.0)
-                    break
+                    self._penalize_peer(peer, "header_not_anchored", severity=1)
+                    strikes = peer.invalid_headers
+                    if strikes >= 2:
+                        self._set_sync_backoff(
+                            peer,
+                            reason="wrong_chain",
+                            delay=self._sync_no_headers_backoff,
+                        )
+                        self._penalize_peer(
+                            peer, "wrong_chain", severity=2, quarantine_s=60.0
+                        )
+                    else:
+                        self._set_sync_backoff(
+                            peer,
+                            reason="not_anchored",
+                            delay=min(2.0, self._sync_no_headers_backoff),
+                        )
+                    return [], "not_anchored"
                 parent_height, parent_ts = parent_info
                 if header.height != parent_height + 1:
                     self._penalize_peer(peer, "header_height_mismatch")
@@ -4127,7 +4242,7 @@ class P2PService:
             prev = header
 
         if not contiguous:
-            return []
+            return [], "invalid_headers"
 
         anchor_height = int((peer.hello or {}).get("head_height") or 0)
         anchor_hash = bytes((peer.hello or {}).get("head_hash") or b"")
@@ -4138,14 +4253,14 @@ class P2PService:
                     found_anchor = True
                     if h.hash != anchor_hash:
                         self._penalize_peer(peer, "header_anchor_mismatch", severity=2)
-                        return []
+                        return [], "invalid_headers"
                     break
             if (
                 not found_anchor
                 and contiguous[0].height <= anchor_height <= contiguous[-1].height
             ):
                 self._penalize_peer(peer, "header_anchor_missing", severity=2)
-                return []
+                return [], "invalid_headers"
 
         self._sync_last_header_at = time.time()
         self._sync_last_header_response_at = self._sync_last_header_at
@@ -4169,7 +4284,7 @@ class P2PService:
                 "Blocks queued from headers",
                 extra={"remote": peer.remote, "count": queued},
             )
-        return [h.hash for h in contiguous]
+        return [h.hash for h in contiguous], None
 
     async def _queue_block_requests(
         self, peer: _PeerState, hashes: List[bytes]
@@ -4428,7 +4543,7 @@ class P2PService:
                                     self._set_sync_backoff(
                                         peer,
                                         reason="headers_empty",
-                                        delay=self._sync_no_headers_backoff,
+                                        delay=min(2.0, self._sync_no_headers_backoff),
                                     )
                                     tried_peers.add(peer.remote)
                             else:
@@ -4443,7 +4558,13 @@ class P2PService:
 
                     saw_headers = True
                     peer.empty_header_responses = 0
-                    order = self._process_headers(peer, headers)
+                    order, header_error = self._process_headers(peer, headers)
+                    if header_error:
+                        if result.get("error") is None:
+                            result["error"] = header_error.replace("_", "-")
+                        self._sync_last_header_error = header_error
+                        self._sync_last_header_error_at = time.time()
+                        self._sync_last_header_error_peer = peer.remote
                     if not order and len(headers) > 0:
                         all_known = all(
                             self._has_header(bytes(h.hash))
@@ -4453,6 +4574,7 @@ class P2PService:
                         if not all_known:
                             if result.get("error") is None:
                                 result["error"] = "invalid-headers"
+                            if self._sync_last_header_error is None:
                                 self._sync_last_header_error = "invalid_headers"
                                 self._sync_last_header_error_at = time.time()
                                 self._sync_last_header_error_peer = peer.remote
