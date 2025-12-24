@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any, Dict, List, Optional
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -83,6 +84,7 @@ def mock_rpc_success():
         ],
         "sync.force": {"success": True},
         "sync.start": {"success": True},
+        "node.syncTrigger": {"ok": True, "queued": True},
     }
 
 
@@ -685,6 +687,20 @@ def test_sync_force_trigger_fails(mock_rpc_no_peers):
             # Command should handle gracefully
             assert result.exit_code == 0
             assert "Could not trigger sync via RPC" in result.stdout
+
+
+def test_trigger_sync_uses_node_sync_trigger(monkeypatch):
+    """Ensure sync trigger prefers node.syncTrigger."""
+    called: list[str] = []
+
+    async def _fake_rpc_call(method: str, *_args, **_kwargs):
+        called.append(method)
+        return {"ok": True, "queued": True}
+
+    monkeypatch.setattr(sync_cli, "rpc_call", _fake_rpc_call)
+
+    assert asyncio.run(sync_cli._trigger_sync("http://localhost:8545")) is True
+    assert called[0] == "node.syncTrigger"
 
 
 if __name__ == "__main__":

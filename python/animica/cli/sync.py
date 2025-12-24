@@ -774,10 +774,12 @@ async def _trigger_sync(rpc_url: str) -> bool:
         return True
 
     methods_to_try = [
+        "node.syncTrigger",
         "sync.trigger",
         "sync.force",
         "sync.start",
         "node.startSync",
+        "node.triggerSync",
         "p2p.sync",
     ]
     

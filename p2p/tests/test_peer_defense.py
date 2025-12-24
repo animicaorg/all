@@ -169,12 +169,16 @@ def test_sync_stall_rotation(tmp_path: Path) -> None:
         "head_height": 10,
         "chain_id": node.chain_id,
         "genesis_hash": genesis_hash,
+        "genesis_identity": node._genesis_identity(),
+        "network_params_hash": node._network_params_hash(),
         "capabilities": ["sync"],
     }
     peer_b.hello = {
         "head_height": 11,
         "chain_id": node.chain_id,
         "genesis_hash": genesis_hash,
+        "genesis_identity": node._genesis_identity(),
+        "network_params_hash": node._network_params_hash(),
         "capabilities": ["sync"],
     }
     node._sync_active_block_peer = peer_a.remote
@@ -216,6 +220,8 @@ async def test_genesis_mismatch_bans_peer(tmp_path: Path) -> None:
         listen_port=30333,
         listen_addrs=[],
         genesis_hash=b"\x01" * 32,
+        genesis_identity=node._genesis_identity(),
+        network_params_hash=node._network_params_hash(),
         peer_id=b"\x02" * 32,
         head_height=0,
         head_hash=b"\x00" * 32,
@@ -227,3 +233,73 @@ async def test_genesis_mismatch_bans_peer(tmp_path: Path) -> None:
         await node._handle_hello(peer, encode_payload(hello))
 
     assert "genesis_mismatch" in str(excinfo.value)
+
+
+@pytest.mark.asyncio
+async def test_network_params_missing_rejects_peer(tmp_path: Path) -> None:
+    from p2p.wire.encoding import encode_payload
+    from p2p.wire.messages import Hello
+
+    node = _make_service(tmp_path, "params-missing")
+    peer = _register_peer(node, "203.0.113.78:30333", direction="inbound")
+
+    async def _noop_send(*_args, **_kwargs) -> None:
+        return None
+
+    node._send = _noop_send  # type: ignore[assignment]
+
+    hello = Hello(
+        version="2",
+        agent="animica-test",
+        chain_id=node.chain_id,
+        listen_port=30333,
+        listen_addrs=[],
+        genesis_hash=node._genesis_hash(),
+        genesis_identity=node._genesis_identity(),
+        network_params_hash=b"",
+        peer_id=b"\x03" * 32,
+        head_height=0,
+        head_hash=b"\x00" * 32,
+        alg_policy_root=b"",
+        capabilities=["tx"],
+        timestamp=0,
+    )
+    with pytest.raises(Exception) as excinfo:
+        await node._handle_hello(peer, encode_payload(hello))
+
+    assert "network_params_missing" in str(excinfo.value)
+
+
+@pytest.mark.asyncio
+async def test_network_params_mismatch_rejects_peer(tmp_path: Path) -> None:
+    from p2p.wire.encoding import encode_payload
+    from p2p.wire.messages import Hello
+
+    node = _make_service(tmp_path, "params-mismatch")
+    peer = _register_peer(node, "203.0.113.79:30333", direction="inbound")
+
+    async def _noop_send(*_args, **_kwargs) -> None:
+        return None
+
+    node._send = _noop_send  # type: ignore[assignment]
+
+    hello = Hello(
+        version="2",
+        agent="animica-test",
+        chain_id=node.chain_id,
+        listen_port=30333,
+        listen_addrs=[],
+        genesis_hash=node._genesis_hash(),
+        genesis_identity=node._genesis_identity(),
+        network_params_hash=b"\x10" * 32,
+        peer_id=b"\x04" * 32,
+        head_height=0,
+        head_hash=b"\x00" * 32,
+        alg_policy_root=b"",
+        capabilities=["tx"],
+        timestamp=0,
+    )
+    with pytest.raises(Exception) as excinfo:
+        await node._handle_hello(peer, encode_payload(hello))
+
+    assert "network_params_mismatch" in str(excinfo.value)
