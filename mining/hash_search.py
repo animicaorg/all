@@ -41,6 +41,8 @@ import time
 from dataclasses import dataclass
 from typing import Callable, Iterable, Iterator, Optional
 
+from core.utils.pow import micro_threshold_to_target256 as _micro_threshold_to_target256
+
 # Constants
 UINT256_MAX = (1 << 256) - 1
 MICRO = 1_000_000
@@ -81,19 +83,8 @@ def micro_threshold_to_target256(t_micro: int) -> int:
     """
     Convert a µ-nats threshold t into a 256-bit integer target T such that:
       accept(digest)  iff  int256(digest) ≤ T
-
-    We set:
-        u* = e^{-t}  and  X ~ Uniform{0..2^256-1}
-        accept iff X / 2^256 ≤ u*  ⇒  X ≤ floor(u* * 2^256) - 1
-
-    The -1 is optional (boundary); we keep it inside floor by scaling with (2^256 - 1).
     """
-    p = pr_share_from_threshold(t_micro)  # in (0, 1]
-    if p >= 1.0:
-        return UINT256_MAX
-    if p <= 0.0:
-        return 0
-    return int(p * UINT256_MAX)
+    return _micro_threshold_to_target256(t_micro)
 
 
 def digest_to_int256(digest: bytes) -> int:
