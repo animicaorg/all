@@ -185,27 +185,20 @@ def _wipe_db(db_uri: str) -> None:
         os.remove(path)
 
 
-def _expected_genesis_hash(genesis_path: Optional[str]) -> Optional[bytes]:
+def _compute_genesis_identity(
+    genesis_path: Optional[str],
+) -> tuple[Optional[bytes], Optional[bytes], Optional[str]]:
     try:
-        from core.genesis.loader import load_genesis
+        from core.genesis.loader import compute_genesis_identity
 
-        _params, header = load_genesis(genesis_path, log=False)
-        if hasattr(header, "hash"):
-            return bytes(header.hash())
+        identity = compute_genesis_identity(genesis_path)
+        return (
+            identity.genesis_block_hash,
+            identity.genesis_file_hash,
+            str(identity.genesis_path),
+        )
     except Exception:
-        return None
-    return None
-
-
-def _canonical_genesis_hash(chain_id: Optional[int]) -> Optional[bytes]:
-    if chain_id is None:
-        return None
-    try:
-        from core.config import get_expected_genesis_hash
-
-        return get_expected_genesis_hash(int(chain_id))
-    except Exception:
-        return None
+        return None, None, genesis_path
 
 
 def _db_genesis_hash(block_db: Any) -> Optional[bytes]:
@@ -219,6 +212,17 @@ def _db_genesis_hash(block_db: Any) -> Optional[bytes]:
     try:
         if hasattr(block_db, "get_genesis_hash"):
             h0 = block_db.get_genesis_hash()
+            if h0:
+                return bytes(h0)
+    except Exception:
+        pass
+    return None
+
+
+def _db_genesis_file_hash(block_db: Any) -> Optional[bytes]:
+    try:
+        if hasattr(block_db, "get_genesis_sha256"):
+            h0 = block_db.get_genesis_sha256()
             if h0:
                 return bytes(h0)
     except Exception:
@@ -285,7 +289,9 @@ class P2PDeps:
     _core_import_block: Callable[..., Any]
     _core_get_head: Callable[[Any], Tuple[int, "Header"]]
     expected_genesis_hash: Optional[bytes]
+    expected_genesis_file_hash: Optional[bytes]
     db_genesis_hash: Optional[bytes]
+    db_genesis_file_hash: Optional[bytes]
 
     @classmethod
     def from_env(cls) -> "P2PDeps":
@@ -316,7 +322,13 @@ class P2PDeps:
         tx_index = c["TxIndex"](kv)
 
         allow_reset = _allow_genesis_reset() if allow_genesis_reset is None else allow_genesis_reset
-        expected_from_file = _expected_genesis_hash(genesis_path)
+        (
+            expected_from_file,
+            expected_file_hash,
+            resolved_genesis_path,
+        ) = _compute_genesis_identity(genesis_path)
+        if resolved_genesis_path:
+            genesis_path = resolved_genesis_path
 
         # Ensure genesis finalized (idempotent)
         try:
@@ -325,13 +337,34 @@ class P2PDeps:
             from core.errors import GenesisError, GenesisMismatchError
 
             if isinstance(exc, (GenesisError, GenesisMismatchError)):
-                expected = exc.data.get("expected") if hasattr(exc, "data") else None
-                found = exc.data.get("found") if hasattr(exc, "data") else None
                 data_dir = _db_uri_hint(db_uri)
                 chain_id = _read_chain_id(block_db, state_db)
-                canonical_expected = _canonical_genesis_hash(chain_id)
-                if canonical_expected:
-                    expected = "0x" + canonical_expected.hex()
+                db_genesis_hash = _db_genesis_hash(block_db)
+                db_genesis_file_hash = _db_genesis_file_hash(block_db)
+                expected = exc.data.get("expected") if hasattr(exc, "data") else None
+                found = exc.data.get("found") if hasattr(exc, "data") else None
+                expected_hex = (
+                    "0x" + expected_from_file.hex()
+                    if expected_from_file
+                    else expected
+                    or "<unknown>"
+                )
+                found_hex = (
+                    "0x" + db_genesis_hash.hex()
+                    if db_genesis_hash
+                    else found
+                    or "<unknown>"
+                )
+                expected_file_hex = (
+                    "0x" + expected_file_hash.hex()
+                    if expected_file_hash
+                    else "<unknown>"
+                )
+                db_file_hex = (
+                    "0x" + db_genesis_file_hash.hex()
+                    if db_genesis_file_hash
+                    else "<unknown>"
+                )
                 if allow_reset:
                     _close_if_possible(kv, block_db, state_db, tx_index)
                     _wipe_db(db_uri)
@@ -340,12 +373,11 @@ class P2PDeps:
                         genesis_path,
                         allow_genesis_reset=False,
                     )
-                expected_str = expected or "<unknown>"
-                found_str = found or "<unknown>"
                 guidance = _format_genesis_reset_guidance(data_dir, chain_id)
                 raise P2PError(
-                    f"GENESIS_MISMATCH expected={expected_str} got={found_str} "
-                    f"chain_id={chain_id} data_dir={data_dir}. "
+                    f"GENESIS_MISMATCH expected={expected_hex} got={found_hex} "
+                    f"chain_id={chain_id} genesis_path={genesis_path} data_dir={data_dir}. "
+                    f"genesis_file_hash expected={expected_file_hex} got={db_file_hex}. "
                     "Refusing to sync. Reset the data dir for this chain "
                     "(e.g., delete ~/.animica/chain-<id> or docker volumes). "
                     "To auto-reset on startup, set ANIMICA_AUTO_RESET_GENESIS_MISMATCH=1 "
@@ -357,11 +389,22 @@ class P2PDeps:
         # Load chain params from state/meta; fall back to genesis file if exposed there
         # We try common locations in BlockDB/StateDB meta; exact path depends on core implementation.
         chain_id = _read_chain_id(block_db, state_db)
-        expected_genesis_hash = _canonical_genesis_hash(chain_id) or expected_from_file
+        expected_genesis_hash = expected_from_file
         db_genesis_hash = _db_genesis_hash(block_db)
+        db_genesis_file_hash = _db_genesis_file_hash(block_db)
         if expected_genesis_hash and db_genesis_hash and expected_genesis_hash != db_genesis_hash:
             expected_hex = "0x" + expected_genesis_hash.hex()
             found_hex = "0x" + db_genesis_hash.hex()
+            expected_file_hex = (
+                "0x" + expected_file_hash.hex()
+                if expected_file_hash
+                else "<unknown>"
+            )
+            db_file_hex = (
+                "0x" + db_genesis_file_hash.hex()
+                if db_genesis_file_hash
+                else "<unknown>"
+            )
             data_dir = _db_uri_hint(db_uri)
             if allow_reset:
                 _close_if_possible(kv, block_db, state_db, tx_index)
@@ -374,13 +417,17 @@ class P2PDeps:
             guidance = _format_genesis_reset_guidance(data_dir, chain_id)
             raise P2PError(
                 f"GENESIS_MISMATCH expected={expected_hex} got={found_hex} "
-                f"chain_id={chain_id} data_dir={data_dir}. "
+                f"chain_id={chain_id} genesis_path={genesis_path} data_dir={data_dir}. "
+                f"genesis_file_hash expected={expected_file_hex} got={db_file_hex}. "
                 "Refusing to sync. Reset the data dir for this chain "
                 "(e.g., delete ~/.animica/chain-<id> or docker volumes). "
                 "To auto-reset on startup, set ANIMICA_AUTO_RESET_GENESIS_MISMATCH=1 "
                 "or use `animica node up --auto-reset-genesis-mismatch`.\n"
                 f"{guidance}"
             )
+
+        if expected_genesis_hash is None:
+            expected_genesis_hash = db_genesis_hash
 
         return cls(
             db_uri=db_uri,
@@ -393,7 +440,9 @@ class P2PDeps:
             _core_import_block=c["core_import_block"],
             _core_get_head=c["core_get_head"],
             expected_genesis_hash=expected_genesis_hash,
+            expected_genesis_file_hash=expected_file_hash,
             db_genesis_hash=db_genesis_hash,
+            db_genesis_file_hash=db_genesis_file_hash,
         )
 
     # ---- Head & headers -----------------------------------------------------

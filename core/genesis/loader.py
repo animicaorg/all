@@ -72,6 +72,14 @@ from core.types.params import ChainParams, default_params_path
 ZERO32 = b"\x00" * 32
 
 
+@dataclass(frozen=True)
+class GenesisIdentity:
+    genesis_block_hash: bytes
+    genesis_file_hash: bytes
+    chain_id: int
+    genesis_path: Path
+
+
 def _sha3_256(data: bytes) -> bytes:
     return uhash.sha3_256(data)
 
@@ -433,6 +441,32 @@ def load_genesis(
     return params, header
 
 
+def compute_genesis_identity(
+    genesis_path: str | os.PathLike[str] | None,
+    *,
+    chain_id: int | None = None,
+) -> GenesisIdentity:
+    """
+    Compute the canonical genesis identity for a given genesis file:
+      - genesis_block_hash: hash of the genesis header (block id)
+      - genesis_file_hash: sha256 of canonicalized genesis JSON
+    """
+    bundle = get_genesis(genesis_path, chain_id=chain_id)
+    genesis = bundle.genesis
+    state_root = compute_state_root_from_alloc(genesis["alloc"])
+    header = _build_genesis_header(genesis, state_root)
+    from core.genesis.genesis_loader import compute_genesis_sha256
+
+    resolved_path = bundle.resolved_path or Path(str(genesis_path))
+    file_hash = compute_genesis_sha256(resolved_path)
+    return GenesisIdentity(
+        genesis_block_hash=bytes(header.hash()),
+        genesis_file_hash=file_hash,
+        chain_id=int(genesis.get("chainId", 0)),
+        genesis_path=resolved_path,
+    )
+
+
 def load_and_init_genesis(
     genesis_path: str,
     db_uri: str,
@@ -465,6 +499,18 @@ def load_and_init_genesis(
     genesis = bundle.genesis
 
     _validate_genesis(genesis, override_chain_id=override_chain_id)
+    identity = compute_genesis_identity(genesis_path)
+    try:
+        from core.network_params import enforce_pinned_genesis
+
+        enforce_pinned_genesis(
+            chain_id=identity.chain_id,
+            genesis_block_hash=identity.genesis_block_hash,
+            genesis_path=str(identity.genesis_path),
+            network_name=os.getenv("ANIMICA_NETWORK"),
+        )
+    except Exception:
+        raise
 
     # Compute state root directly from alloc (pure) to have a deterministic target,
     # then write alloc to the DB and (optionally) re-check root if desired later.
@@ -496,12 +542,7 @@ def load_and_init_genesis(
     header = _build_genesis_header(genesis, computed_state_root)
     block = _build_genesis_block(header)
 
-    try:
-        from core.genesis.genesis_loader import compute_genesis_sha256
-
-        genesis_sha256 = compute_genesis_sha256(genesis_path)
-    except Exception:
-        genesis_sha256 = None
+    genesis_sha256 = identity.genesis_file_hash
     # Persist genesis
     # BlockDB is expected to provide put_genesis(block) that returns (height, hash),
     # otherwise we fall back to put_header + set_canonical + set_head.

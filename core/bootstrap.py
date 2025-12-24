@@ -39,7 +39,8 @@ from core.db import open_kv
 from core.db.block_db import BlockDB
 from core.db.state_db import StateDB
 from core.errors import AnimicaError
-from core.genesis.loader import load_genesis
+from core.genesis.loader import load_genesis, compute_genesis_identity
+from core.network_params import enforce_pinned_genesis
 from core.logging import setup_logging
 from core.types.params import ChainParams
 
@@ -198,17 +199,18 @@ def bootstrap_mainnet_genesis(
 
     # Step 4: Load and initialize genesis
     try:
+        identity = compute_genesis_identity(genesis_path)
+        enforce_pinned_genesis(
+            chain_id=identity.chain_id,
+            genesis_block_hash=identity.genesis_block_hash,
+            genesis_path=str(identity.genesis_path),
+            network_name="mainnet" if is_mainnet else None,
+        )
         params, genesis_header = load_genesis(genesis_path)
         kv = open_kv(db_uri)
         block_db = BlockDB(kv)
         state_db = StateDB(kv)
-
-        try:
-            from core.genesis.genesis_loader import compute_genesis_sha256
-
-            genesis_sha256 = compute_genesis_sha256(genesis_path)
-        except Exception:
-            genesis_sha256 = None
+        genesis_sha256 = identity.genesis_file_hash
         # Finalize genesis (write to DB and set canonical head)
         head_height, head_hash = finalize_genesis(
             block_db,
