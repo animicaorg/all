@@ -56,23 +56,20 @@ class TestQuicV1MultiaddrParsing:
         assert result.is_quic is True
     
     def test_all_default_mainnet_seeds_parse(self):
-        """Test that all 4 default mainnet seeds parse correctly."""
-        seeds = [
-            "/dns4/mainnet.animica.org/udp/443/quic-v1",
-            "/dns4/mainnet.animica.org/tcp/30333",
-            "/ip4/144.126.133.21/udp/443/quic-v1",
-            "/ip4/144.126.133.21/tcp/30333",
-        ]
+        """Test that all default mainnet seeds parse correctly."""
+        from p2p import config as p2p_config
+
+        seeds = list(p2p_config.DEFAULT_SEEDS_BY_NETWORK[1])
         
         # All should parse without errors
         results = [parse_multiaddr(seed) for seed in seeds]
         
-        # Should have 2 QUIC and 2 TCP
+        # Should have at least one QUIC and TCP seed
         quic_count = sum(1 for r in results if r.is_quic)
         tcp_count = sum(1 for r in results if r.transport == "tcp" and not r.is_quic)
         
-        assert quic_count == 2, f"Expected 2 QUIC seeds, got {quic_count}"
-        assert tcp_count == 2, f"Expected 2 TCP seeds, got {tcp_count}"
+        assert quic_count >= 1, f"Expected QUIC seeds, got {quic_count}"
+        assert tcp_count >= 1, f"Expected TCP seeds, got {tcp_count}"
 
 
 class TestP2PServiceSeedFiltering:
@@ -93,8 +90,10 @@ class TestP2PServiceSeedFiltering:
             if parsed.transport == "tcp":
                 tcp_seeds.append(seed)
         
-        # Should have exactly 2 TCP seeds in mainnet config
-        assert len(tcp_seeds) == 2, f"Expected 2 TCP seeds, got {len(tcp_seeds)}"
+        # Should have TCP seeds for mainnet + rpc + IP fallback
+        assert any("mainnet.animica.org" in seed for seed in tcp_seeds)
+        assert any("rpc.animica.org" in seed for seed in tcp_seeds)
+        assert any("144.126.133.21" in seed for seed in tcp_seeds)
         
         # Verify they can be dialed
         for seed in tcp_seeds:

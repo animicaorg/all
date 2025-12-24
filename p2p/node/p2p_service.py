@@ -1877,7 +1877,12 @@ class P2PService:
             return
 
     def _record_bootstrap_attempt(
-        self, addr: str, *, success: bool, error: Optional[str] = None
+        self,
+        addr: str,
+        *,
+        success: bool,
+        error: Optional[str] = None,
+        record_error: bool = True,
     ) -> None:
         now = time.time()
         entry = {
@@ -1891,7 +1896,7 @@ class P2PService:
         self._last_bootstrap_attempt = entry
         if success:
             self._last_bootstrap_success = entry
-        else:
+        elif record_error:
             self._last_bootstrap_error = entry
 
     def _dial_delay(self, addr_key: str) -> float:
@@ -1929,7 +1934,16 @@ class P2PService:
             log.warning("Dropping invalid P2P endpoint %s: %s", addr, error)
             return
         if is_seed:
-            self._record_bootstrap_attempt(addr, success=False, error=error)
+            recent_success = False
+            last_success = self._last_bootstrap_success
+            if isinstance(last_success, dict):
+                try:
+                    recent_success = time.time() - float(last_success.get("at", 0)) <= 600
+                except (TypeError, ValueError):
+                    recent_success = False
+            self._record_bootstrap_attempt(
+                addr, success=False, error=error, record_error=not recent_success
+            )
             log.warning(
                 "Seed %s failed: %s; next retry in %.1fs", addr, error, delay
             )
@@ -2395,7 +2409,14 @@ class P2PService:
         if head is None:
             head = bdb.get_head()
         if head:
-            return int(head[0]), "0x" + bytes(head[1]).hex()
+            height = int(head[0])
+            head_hash = bytes(head[1])
+            if self._has_header(head_hash):
+                return height, "0x" + head_hash.hex()
+            recovered = self._recover_head_from_canonical(height)
+            if recovered is not None:
+                recovered_height, recovered_hash = recovered
+                return recovered_height, "0x" + recovered_hash.hex()
         return self._local_head()
 
     def _maybe_mark_block_stalled(self, now: float) -> None:
@@ -2777,8 +2798,7 @@ class P2PService:
             )
             log.info("Resolved seed host %s to %d address(es)", host, len(infos))
             return True
-        except Exception as exc:
-            log.warning("Failed to resolve seed host %s: %s", host, exc)
+        except Exception:
             return False
 
     async def _dial(

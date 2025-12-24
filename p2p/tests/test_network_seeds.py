@@ -24,6 +24,7 @@ class TestNetworkSpecificSeeds:
         for host in MAINNET_SEED_HOSTS:
             assert any(host in s for s in seeds)
         assert any(FALLBACK_SEED_IP in s for s in seeds)
+        assert not any("rpc-reset.animica.org" in s for s in seeds)
         # Should include both QUIC and TCP
         assert any("quic" in s for s in seeds)
         assert any("tcp/30333" in s for s in seeds)
