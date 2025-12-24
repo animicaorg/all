@@ -499,6 +499,21 @@ class P2PService:
         self._peer_registry = PeerRegistry(
             max_inbound_per_ip=int(os.environ.get("ANIMICA_P2P_MAX_INBOUND_PER_IP", "10") or 10),
             handshake_timeout_s=float(os.environ.get("ANIMICA_P2P_HANDSHAKE_TIMEOUT", "3.0") or 3.0),
+            handshake_rate_limit_per_ip=int(
+                os.environ.get("ANIMICA_P2P_HANDSHAKE_RATE_PER_IP", "30") or 30
+            ),
+            handshake_rate_limit_per_netgroup=int(
+                os.environ.get("ANIMICA_P2P_HANDSHAKE_RATE_PER_NETGROUP", "120") or 120
+            ),
+            handshake_rate_window_s=float(
+                os.environ.get("ANIMICA_P2P_HANDSHAKE_RATE_WINDOW", "60.0") or 60.0
+            ),
+            handshake_rate_netgroup_v4_bits=int(
+                os.environ.get("ANIMICA_P2P_HANDSHAKE_RATE_NETGROUP_V4", "24") or 24
+            ),
+            handshake_rate_netgroup_v6_bits=int(
+                os.environ.get("ANIMICA_P2P_HANDSHAKE_RATE_NETGROUP_V6", "48") or 48
+            ),
         )
 
         # Seen LRU (dedupe + rebroadcast suppression)

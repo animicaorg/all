@@ -59,15 +59,39 @@ class PeerRegistry:
 
     Responsibilities:
       - Enforce per-IP inbound limits.
+      - Rate-limit inbound handshakes per IP and netgroup.
       - Deduplicate by peer_id (keep the newest connection).
       - Track handshake timeouts for unknown peer_ids.
     """
 
-    def __init__(self, *, max_inbound_per_ip: int = 8, handshake_timeout_s: float = 3.0) -> None:
+    def __init__(
+        self,
+        *,
+        max_inbound_per_ip: int = 8,
+        handshake_timeout_s: float = 3.0,
+        handshake_rate_limit_per_ip: int = 30,
+        handshake_rate_limit_per_netgroup: int = 120,
+        handshake_rate_window_s: float = 60.0,
+        handshake_rate_netgroup_v4_bits: int = 24,
+        handshake_rate_netgroup_v6_bits: int = 48,
+    ) -> None:
         self._sessions: Dict[str, PeerSession] = {}
         self._sessions_by_peer_key: Dict[tuple[str, str], PeerSession] = {}
         self._max_inbound_per_ip = max(1, int(max_inbound_per_ip))
         self.handshake_timeout_s = max(0.01, float(handshake_timeout_s))
+        self._handshake_rate_limit_per_ip = max(0, int(handshake_rate_limit_per_ip))
+        self._handshake_rate_limit_per_netgroup = max(
+            0, int(handshake_rate_limit_per_netgroup)
+        )
+        self._handshake_rate_window_s = max(0.1, float(handshake_rate_window_s))
+        self._handshake_rate_netgroup_v4_bits = max(
+            1, min(32, int(handshake_rate_netgroup_v4_bits))
+        )
+        self._handshake_rate_netgroup_v6_bits = max(
+            1, min(128, int(handshake_rate_netgroup_v6_bits))
+        )
+        self._handshake_rate_ip: Dict[str, List[float]] = {}
+        self._handshake_rate_netgroup: Dict[str, List[float]] = {}
 
     # --------------------------- registration --------------------------- #
 
@@ -77,6 +101,7 @@ class PeerRegistry:
         """
         if direction == "inbound":
             ip = _extract_ip(remote)
+            self._enforce_handshake_rate(ip)
             if self._inbound_count(ip) >= self._max_inbound_per_ip:
                 raise ValueError(f"inbound limit reached for {ip}")
 
@@ -194,6 +219,40 @@ class PeerRegistry:
             if _extract_ip(session.remote) == ip:
                 count += 1
         return count
+
+    def _enforce_handshake_rate(self, ip: str) -> None:
+        now = time.time()
+        if self._handshake_rate_limit_per_ip > 0:
+            ip_events = self._handshake_rate_ip.setdefault(ip, [])
+            self._prune_rate_window(ip_events, now)
+            if len(ip_events) >= self._handshake_rate_limit_per_ip:
+                raise ValueError(f"handshake rate limit reached for {ip}")
+            ip_events.append(now)
+
+        if self._handshake_rate_limit_per_netgroup > 0:
+            netgroup = self._netgroup_key(ip)
+            ng_events = self._handshake_rate_netgroup.setdefault(netgroup, [])
+            self._prune_rate_window(ng_events, now)
+            if len(ng_events) >= self._handshake_rate_limit_per_netgroup:
+                raise ValueError(f"handshake netgroup rate limit reached for {netgroup}")
+            ng_events.append(now)
+
+    def _prune_rate_window(self, events: List[float], now: float) -> None:
+        cutoff = now - self._handshake_rate_window_s
+        while events and events[0] < cutoff:
+            events.pop(0)
+
+    def _netgroup_key(self, ip: str) -> str:
+        try:
+            addr = ipaddress.ip_address(ip)
+        except Exception:
+            return ip
+        if addr.version == 4:
+            bits = self._handshake_rate_netgroup_v4_bits
+        else:
+            bits = self._handshake_rate_netgroup_v6_bits
+        net = ipaddress.ip_network(f"{addr}/{bits}", strict=False)
+        return str(net)
 
 
 __all__ = ["PeerRegistry", "PeerSession"]
