@@ -195,7 +195,12 @@ def test_status_and_head(monkeypatch: Any) -> None:
             )
         if method == "chain.getBlockByHeight":
             return httpx.Response(
-                200, json={"jsonrpc": "2.0", "id": 1, "result": {"transactions": []}}
+                200,
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "result": {"hash": "0xabc", "timestamp": 1700000000, "transactions": []},
+                },
             )
         if method == "chain.getHead":
             return httpx.Response(
@@ -203,7 +208,7 @@ def test_status_and_head(monkeypatch: Any) -> None:
                 json={
                     "jsonrpc": "2.0",
                     "id": 1,
-                    "result": {"height": 42, "hash": "0xabc", "chainId": 10},
+                    "result": {"height": 42, "hash": "0xabc", "chainId": 10, "timestamp": 1700000000},
                 },
             )
         return httpx.Response(
@@ -213,7 +218,7 @@ def test_status_and_head(monkeypatch: Any) -> None:
 
     respx.post(rpc_url).mock(side_effect=handler)
 
-    status_result = runner.invoke(node.app, ["status"])
+    status_result = runner.invoke(node.app, ["status", "--recent-blocks", "1"])
     assert status_result.exit_code == 0
     assert "Head height: 42" in status_result.output
     assert "P2P running: True" in status_result.output
@@ -244,6 +249,51 @@ def test_status_stops_after_max_retries(monkeypatch: Any) -> None:
 
 
 @respx_mock
+def test_status_prefers_chain_head_over_status(monkeypatch: Any) -> None:
+    rpc_url = "http://localhost:9999/rpc"
+    monkeypatch.setenv("ANIMICA_RPC_URL", rpc_url)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content.decode("utf-8"))
+        method = payload.get("method")
+        if method == "node.getStatus":
+            return httpx.Response(
+                200,
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "result": {
+                        "rpc_reachable": True,
+                        "chain": {
+                            "head": {"height": 1, "hash": "0xold", "chainId": 10},
+                        },
+                        "sync": {"syncing": False},
+                    },
+                },
+            )
+        if method == "chain.getHead":
+            return httpx.Response(
+                200,
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "result": {"height": 5, "hash": "0xnew", "chainId": 10, "timestamp": 1700000100},
+                },
+            )
+        return httpx.Response(
+            200,
+            json={"jsonrpc": "2.0", "id": 1, "error": {"message": "Method not found"}},
+        )
+
+    respx.post(rpc_url).mock(side_effect=handler)
+
+    result = runner.invoke(node.app, ["status", "--recent-blocks", "0"])
+    assert result.exit_code == 0
+    assert "Head height: 5" in result.output
+    assert "Head hash: 0xnew" in result.output
+
+
+@respx_mock
 def test_status_prefers_env_over_cached(monkeypatch: Any, tmp_path: Path) -> None:
     cfg = _dummy_net_cfg(tmp_path)
     monkeypatch.setattr(node, "load_network_config", lambda *args, **kwargs: cfg)
@@ -257,7 +307,8 @@ def test_status_prefers_env_over_cached(monkeypatch: Any, tmp_path: Path) -> Non
 
     def handler(request: httpx.Request) -> httpx.Response:
         payload = json.loads(request.content.decode("utf-8"))
-        if payload.get("method") == "node.getStatus":
+        method = payload.get("method")
+        if method == "node.getStatus":
             return httpx.Response(
                 200,
                 json={
@@ -273,13 +324,31 @@ def test_status_prefers_env_over_cached(monkeypatch: Any, tmp_path: Path) -> Non
                     },
                 },
             )
+        if method == "chain.getHead":
+            return httpx.Response(
+                200,
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "result": {"height": 12, "hash": "0xabc", "chainId": 1, "timestamp": 1700000000},
+                },
+            )
+        if method == "chain.getBlockByHeight":
+            return httpx.Response(
+                200,
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "result": {"hash": "0xabc", "timestamp": 1700000000, "transactions": []},
+                },
+            )
         return httpx.Response(
             200, json={"jsonrpc": "2.0", "id": 1, "error": {"message": "Method not found"}}
         )
 
     respx.post(rpc_url).mock(side_effect=handler)
 
-    result = runner.invoke(node.app, ["status"])
+    result = runner.invoke(node.app, ["status", "--recent-blocks", "1"])
     assert result.exit_code == 0
     assert f"RPC URL: {rpc_url}" in result.output
     assert "cached" not in result.output.lower()
@@ -297,7 +366,8 @@ def test_status_rpc_url_flag_overrides_env(monkeypatch: Any, tmp_path: Path) -> 
     def handler(request: httpx.Request) -> httpx.Response:
         payload = json.loads(request.content.decode("utf-8"))
         assert str(request.url) == cli_url
-        if payload.get("method") == "node.getStatus":
+        method = payload.get("method")
+        if method == "node.getStatus":
             return httpx.Response(
                 200,
                 json={
@@ -313,13 +383,31 @@ def test_status_rpc_url_flag_overrides_env(monkeypatch: Any, tmp_path: Path) -> 
                     },
                 },
             )
+        if method == "chain.getHead":
+            return httpx.Response(
+                200,
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "result": {"height": 7, "hash": "0xabc", "chainId": 1, "timestamp": 1700000000},
+                },
+            )
+        if method == "chain.getBlockByHeight":
+            return httpx.Response(
+                200,
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "result": {"hash": "0xabc", "timestamp": 1700000000, "transactions": []},
+                },
+            )
         return httpx.Response(
             200, json={"jsonrpc": "2.0", "id": 1, "error": {"message": "Method not found"}}
         )
 
     respx.post(cli_url).mock(side_effect=handler)
 
-    result = runner.invoke(node.app, ["status", "--rpc-url", cli_url])
+    result = runner.invoke(node.app, ["status", "--rpc-url", cli_url, "--recent-blocks", "1"])
     assert result.exit_code == 0
     assert f"RPC URL: {cli_url}" in result.output
 
