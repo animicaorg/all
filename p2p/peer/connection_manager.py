@@ -168,6 +168,7 @@ class ConnectionManager:
         # backoff state
         self._backoff: Dict[str, DialBackoff] = {}
         self._banned_until: Dict[str, float] = {}
+        self._ban_enabled = False
 
         # async iter guard
         self._event_iter_open = 0
@@ -249,6 +250,8 @@ class ConnectionManager:
             self._event_iter_open = max(0, self._event_iter_open - 1)
 
     def ban(self, address_or_peer_id: str, seconds: Optional[float] = None) -> None:
+        if not self._ban_enabled:
+            return
         until = time.time() + (seconds if seconds is not None else self.cfg.ban_s)
         self._banned_until[address_or_peer_id] = until
 
@@ -618,6 +621,8 @@ class ConnectionManager:
     # -------------------- utilities -------------------- #
 
     def _is_banned(self, key: str) -> bool:
+        if not self._ban_enabled:
+            return False
         if not key:
             return False
         until = self._banned_until.get(key)
