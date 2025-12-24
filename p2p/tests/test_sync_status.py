@@ -693,6 +693,27 @@ def test_sync_status_head_hash_matches_mainnet_genesis(tmp_path: Path) -> None:
     assert snap.head_hash == expected_hex
 
 
+def test_sync_status_head_hash_matches_genesis_block(tmp_path: Path) -> None:
+    db_path = tmp_path / "genesis-block.db"
+    deps = P2PDeps.open(f"sqlite:///{db_path}", str(GENESIS_PATH))
+    node = P2PService(
+        listen_addrs=[tcp_multiaddr(0)],
+        seeds=[],
+        chain_id=deps.chain_id,
+        deps=deps,
+        peerstore_path=str(tmp_path / "head-genesis-block" / "p2p"),
+    )
+
+    genesis_block = deps.block_by_number(0)
+    assert genesis_block is not None
+    expected_hash = "0x" + genesis_block.header.hash().hex()
+
+    snap = node.sync_status_snapshot()
+
+    assert snap.head_height == 0
+    assert snap.head_hash == expected_hash
+
+
 def test_sync_status_head_hash_stable_without_progress(tmp_path: Path) -> None:
     node, _deps_sync = _make_service(tmp_path, "head-stable")
 
