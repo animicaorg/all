@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from pathlib import Path
 from unittest.mock import AsyncMock
 
@@ -368,7 +369,7 @@ def test_do_not_mark_wrong_chain_on_single_invalid_headers(tmp_path: Path) -> No
 
     assert accepted_hashes == []
     assert reason == "not_anchored"
-    assert node._sync_peer_backoff_reason.get(peer.remote) == "wrong_chain"
+    assert node._sync_peer_backoff_reason.get(peer.remote) == "not_anchored"
 
 
 @pytest.mark.asyncio
@@ -437,6 +438,102 @@ def test_sync_status_phase_not_synced_when_unsynchronized(tmp_path: Path) -> Non
 
     assert snap.synchronized is False
     assert snap.phase != "SYNCED"
+
+
+def test_sync_status_synced_invariants(tmp_path: Path) -> None:
+    node, deps_sync = _make_service(tmp_path, "phase-synced")
+    block = _make_child_block(deps_sync)
+    accepted, _reason = deps_sync.import_block(block)
+    assert accepted
+
+    node._sync_best_header = _SyncHeader(
+        hash=block.header.hash(),
+        parent_hash=bytes(block.header.parentHash),
+        height=int(block.header.height),
+        theta_micro=int(getattr(block.header, "thetaMicro", 0)),
+        timestamp=int(getattr(block.header, "timestamp", 0)),
+    )
+
+    peer = _register_peer(node, "peer-synced:0")
+    peer.peer_id = "peer-synced"
+    peer.hello_done.set()
+    peer.ready_for_sync = True
+    peer.hello = {
+        "chain_id": node.chain_id,
+        "genesis_hash": node._genesis_hash(),
+        "genesis_identity": node._genesis_identity(),
+        "network_params_hash": node._network_params_hash(),
+        "capabilities": ["sync"],
+        "head_height": int(block.header.height),
+        "head_hash": block.header.hash(),
+    }
+
+    snap = node.sync_status_snapshot()
+
+    assert snap.synchronized is True
+    assert snap.phase == "SYNCED"
+    assert snap.queued_blocks_count == 0
+    assert snap.in_flight_headers == 0
+    assert snap.in_flight_blocks == 0
+    assert snap.best_header_height <= snap.head_height
+    assert snap.best_block_height == snap.head_height
+
+
+def test_sync_status_not_synced_with_inflight_headers(tmp_path: Path) -> None:
+    node, deps_sync = _make_service(tmp_path, "phase-inflight")
+    block = _make_child_block(deps_sync)
+    accepted, _reason = deps_sync.import_block(block)
+    assert accepted
+
+    node._sync_best_header = _SyncHeader(
+        hash=block.header.hash(),
+        parent_hash=bytes(block.header.parentHash),
+        height=int(block.header.height),
+        theta_micro=int(getattr(block.header, "thetaMicro", 0)),
+        timestamp=int(getattr(block.header, "timestamp", 0)),
+    )
+    node._sync_inflight_headers = 1
+
+    peer = _register_peer(node, "peer-inflight:0")
+    peer.peer_id = "peer-inflight"
+    peer.hello_done.set()
+    peer.ready_for_sync = True
+    peer.hello = {
+        "chain_id": node.chain_id,
+        "genesis_hash": node._genesis_hash(),
+        "genesis_identity": node._genesis_identity(),
+        "network_params_hash": node._network_params_hash(),
+        "capabilities": ["sync"],
+        "head_height": int(block.header.height),
+        "head_hash": block.header.hash(),
+    }
+
+    snap = node.sync_status_snapshot()
+
+    assert snap.synchronized is False
+    assert snap.phase != "SYNCED"
+
+
+def test_wrong_chain_peer_is_ineligible(tmp_path: Path) -> None:
+    node, _deps_sync = _make_service(tmp_path, "wrong-chain")
+    peer = _register_peer(node, "peer-wrong:0")
+    peer.peer_id = "peer-wrong"
+    peer.hello_done.set()
+    peer.ready_for_sync = True
+    peer.hello = {
+        "chain_id": node.chain_id + 1,
+        "genesis_hash": node._genesis_hash(),
+        "genesis_identity": node._genesis_identity(),
+        "network_params_hash": node._network_params_hash(),
+        "capabilities": ["sync"],
+        "head_height": 1,
+        "head_hash": b"\x00" * 32,
+    }
+
+    ok, reason = node._sync_peer_eligibility(peer, now=time.time())
+
+    assert ok is False
+    assert reason == "chain_mismatch"
 
 
 @pytest.mark.asyncio
@@ -698,6 +795,10 @@ async def test_empty_headers_at_tip_not_fatal(tmp_path: Path, monkeypatch: pytes
 
     assert node._sync_fatal_error is None
     assert node._sync_last_header_error == "at_tip"
+    assert node._sync_peer_penalties == {}
+    assert node._sync_peer_backoff_reason.get(peer.remote) is None
+    snap = node.sync_status_snapshot()
+    assert snap.phase != "STALLED"
 
 
 @pytest.mark.asyncio
