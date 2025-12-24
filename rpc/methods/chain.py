@@ -52,6 +52,14 @@ def _compute_header_hash(header: t.Any) -> str | None:
     This is an RPC view hash; consensus-critical hashing should live in core.
     """
     try:
+        if hasattr(header, "hash") and callable(getattr(header, "hash")):
+            return _hex(bytes(header.hash()))
+        if isinstance(header, dict) and header.get("hash") is not None:
+            value = header.get("hash")
+            if isinstance(value, (bytes, bytearray)):
+                return _hex(value)
+            if isinstance(value, str):
+                return value
         if _header_sign_bytes is not None:
             data = _header_sign_bytes(header)
         elif _cbor_dumps is not None:
