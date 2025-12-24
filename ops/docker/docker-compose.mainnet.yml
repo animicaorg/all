@@ -25,8 +25,8 @@ networks:
     driver: bridge
 
 volumes:
-  animica_mainnet_chain_1_data:
-    name: animica_mainnet_chain_1_data
+  mainnet_chain_data:
+    name: ${ANIMICA_DATA_ROOT:-animica_mainnet_chain_1_data}
   mainnet_services_data:
     name: animica_mainnet_services_data
 
@@ -42,7 +42,7 @@ services:
     working_dir: /app
     volumes:
       - ../..:/app:ro
-      - ${ANIMICA_DATA_ROOT:-animica_mainnet_chain_1_data}:/data
+      - mainnet_chain_data:/data
     environment:
       # Mainnet chain config
       ANIMICA_NETWORK: "mainnet"

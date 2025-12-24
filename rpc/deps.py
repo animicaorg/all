@@ -32,11 +32,13 @@ head = ctx.get_head()           # {'height': int, 'hash': '0x..', 'header': <obj
 params = ctx.params             # dict (subset of spec/params.yaml)
 """
 
+import contextlib
 import errno
 import json
 import logging
 import os
 import re
+import shutil
 import threading
 import time
 import typing as t
@@ -161,16 +163,21 @@ def _db_uri_hint(db_uri: str) -> str:
     return db_uri
 
 
-def _volume_name_for_chain(network: str | None, chain_id: int | None) -> str | None:
+def _volume_name_for_chain(
+    network: str | None, chain_id: int | None, genesis_tag: str | None = None
+) -> str | None:
     if not network or chain_id is None:
         return None
     safe_network = network.replace("-", "_")
-    return f"animica_{safe_network}_chain_{chain_id}_data"
+    tag = genesis_tag or os.getenv("ANIMICA_GENESIS_TAG")
+    suffix = f"_{tag}" if tag else ""
+    return f"animica_{safe_network}_chain_{chain_id}{suffix}_data"
 
 
 def _format_genesis_reset_guidance(data_dir: str, chain_id: int | None) -> str:
     network = os.getenv("ANIMICA_NETWORK")
     compose_file = os.getenv("ANIMICA_COMPOSE_FILE")
+    genesis_tag = os.getenv("ANIMICA_GENESIS_TAG")
     data_dir_hint = data_dir or "<unknown>"
     is_docker_mount = data_dir_hint.startswith("/data")
     lines: list[str] = []
@@ -184,7 +191,7 @@ def _format_genesis_reset_guidance(data_dir: str, chain_id: int | None) -> str:
     lines.append("Suggested recovery commands:")
     lines.append("  animica node down --volumes")
     if is_docker_mount:
-        volume_name = _volume_name_for_chain(network, chain_id)
+        volume_name = _volume_name_for_chain(network, chain_id, genesis_tag)
         if volume_name:
             lines.append(f"  docker volume ls | grep {volume_name}")
             lines.append(f"  docker volume rm {volume_name}")
@@ -196,6 +203,40 @@ def _format_genesis_reset_guidance(data_dir: str, chain_id: int | None) -> str:
             data_path = data_path.parent
         lines.append(f"  rm -rf {data_path}")
     return "\n".join(lines)
+
+
+def _allow_genesis_reset() -> bool:
+    return (
+        os.getenv("ANIMICA_AUTO_RESET_GENESIS_MISMATCH", "").lower()
+        in {"1", "true", "yes", "on"}
+        or os.getenv("ANIMICA_ALLOW_GENESIS_RESET", "").lower()
+        in {"1", "true", "yes", "on"}
+    )
+
+
+def _close_if_possible(handle: t.Any) -> None:
+    if handle is None:
+        return
+    close = getattr(handle, "close", None)
+    if callable(close):
+        with contextlib.suppress(Exception):
+            close()
+
+
+def _wipe_db(db_uri: str) -> None:
+    path = _db_uri_hint(db_uri)
+    if db_uri.startswith("sqlite:///"):
+        for suffix in ("", "-wal", "-shm"):
+            candidate = f"{path}{suffix}"
+            with contextlib.suppress(FileNotFoundError):
+                os.remove(candidate)
+        return
+    if db_uri.startswith("rocksdb:///"):
+        with contextlib.suppress(FileNotFoundError):
+            shutil.rmtree(path)
+        return
+    with contextlib.suppress(FileNotFoundError):
+        os.remove(path)
 
 
 # ---- Config glue ------------------------------------------------------------
@@ -495,7 +536,19 @@ def _maybe_bootstrap_genesis(
                 params, header = loader.load_genesis(
                     genesis_path, kv=bundle.kv, block_db=bundle.block_db, log=False
                 )
-                head_mod.finalize_genesis(bundle.block_db, params, header)  # type: ignore[arg-type]
+                try:
+                    genesis_loader = _import("core.genesis.genesis_loader")
+                    genesis_sha256 = genesis_loader.compute_genesis_sha256(genesis_path)
+                except Exception:
+                    genesis_sha256 = None
+                head_mod.finalize_genesis(  # type: ignore[arg-type]
+                    bundle.block_db,
+                    params,
+                    header,
+                    genesis_sha256=genesis_sha256,
+                    genesis_path=str(genesis_path),
+                    created_at=int(time.time()),
+                )
             # DB already has a head; do not reinitialize
             return
 
@@ -513,7 +566,19 @@ def _maybe_bootstrap_genesis(
                 genesis_path, kv=bundle.kv, block_db=bundle.block_db, log=True
             )
             if hasattr(head_mod, "finalize_genesis"):
-                head_mod.finalize_genesis(bundle.block_db, params, header)  # type: ignore[arg-type]
+                try:
+                    genesis_loader = _import("core.genesis.genesis_loader")
+                    genesis_sha256 = genesis_loader.compute_genesis_sha256(genesis_path)
+                except Exception:
+                    genesis_sha256 = None
+                head_mod.finalize_genesis(  # type: ignore[arg-type]
+                    bundle.block_db,
+                    params,
+                    header,
+                    genesis_sha256=genesis_sha256,
+                    genesis_path=str(genesis_path),
+                    created_at=int(time.time()),
+                )
             return
         # Fallback to older bootstrap signatures that accept KV instance
         if hasattr(loader, "bootstrap"):
@@ -525,8 +590,10 @@ def _maybe_bootstrap_genesis(
         # DO NOT use load_and_init_genesis here as it opens a second DB connection
         # else: silently ignore (RPC will report null head)
     except Exception as e:
-        from core.errors import GenesisError
+        from core.errors import GenesisError, GenesisMismatchError
 
+        if isinstance(e, GenesisMismatchError):
+            raise
         if isinstance(e, GenesisError):
             expected = e.data.get("expected") if hasattr(e, "data") else None
             found = e.data.get("found") if hasattr(e, "data") else None
@@ -592,6 +659,8 @@ class RpcContext:
     block_db: t.Any
     tx_index: t.Any
     head: _HeadAccessor
+    init_error: str | None = None
+    init_error_code: str | None = None
     p2p_service: t.Any = None  # Optional P2P service for peer management
     core_p2p_service: t.Any = None  # Optional core-style P2P service
     p2p_enabled: bool = False
@@ -638,6 +707,8 @@ def build_context(cfg: t.Any | None = None) -> RpcContext:
 
     cfg_view = _coerce_config(cfg) if cfg is not None else _load_rpc_config()
     data_root = _infer_data_root(cfg_view)
+    init_error: str | None = None
+    init_error_code: str | None = None
 
     # Determine network name for logging
     network = os.environ.get("ANIMICA_NETWORK", "").strip().lower()
@@ -664,9 +735,39 @@ def build_context(cfg: t.Any | None = None) -> RpcContext:
     bundle = _build_db_facades(kv)
 
     # Check if genesis bootstrap is needed (only if no head exists)
-    _maybe_bootstrap_genesis(
-        bundle, cfg_view.chain_id, cfg_view.genesis_path, cfg_view.db_uri
-    )
+    allow_reset = _allow_genesis_reset()
+    for attempt in range(2):
+        try:
+            _maybe_bootstrap_genesis(
+                bundle, cfg_view.chain_id, cfg_view.genesis_path, cfg_view.db_uri
+            )
+            break
+        except Exception as exc:
+            from core.errors import GenesisMismatchError
+
+            if isinstance(exc, GenesisMismatchError):
+                data_dir = _db_uri_hint(cfg_view.db_uri)
+                guidance = _format_genesis_reset_guidance(data_dir, cfg_view.chain_id)
+                init_error = (
+                    f"NODE_INIT_FAILED: GENESIS_MISMATCH. {exc}. "
+                    "Refusing to start with mismatched genesis. "
+                    "Reset the data dir or set ANIMICA_AUTO_RESET_GENESIS_MISMATCH=1 "
+                    "to wipe and reinitialize.\n"
+                    f"{guidance}"
+                )
+                init_error_code = "GENESIS_MISMATCH"
+                log.error(init_error)
+                if allow_reset and attempt == 0:
+                    log.warning(
+                        "Genesis mismatch detected; auto-resetting local chain DB"
+                    )
+                    _close_if_possible(bundle.kv)
+                    _wipe_db(cfg_view.db_uri)
+                    kv = _open_kv(cfg_view.db_uri)
+                    bundle = _build_db_facades(kv)
+                    continue
+                break
+            raise
 
     head = _HeadAccessor(bundle)
     head_info = head.get()
@@ -687,6 +788,10 @@ def build_context(cfg: t.Any | None = None) -> RpcContext:
     p2p_start_error = None
     p2p_required = _bool_env("ANIMICA_P2P_REQUIRED", cfg_view.p2p_required)
     enable_p2p = _bool_env("ANIMICA_P2P_ENABLE", True)
+    if init_error:
+        p2p_required = False
+        enable_p2p = False
+        p2p_start_error = init_error
     if enable_p2p:
         try:
             import p2p
@@ -850,6 +955,8 @@ def build_context(cfg: t.Any | None = None) -> RpcContext:
         block_db=bundle.block_db,
         tx_index=bundle.tx_index,
         head=head,
+        init_error=init_error,
+        init_error_code=init_error_code,
         p2p_service=p2p_service,
         core_p2p_service=core_p2p_service,
         p2p_enabled=enable_p2p,
@@ -989,6 +1096,9 @@ async def ready() -> tuple[bool, dict[str, t.Any]]:
         ctx = get_ctx()
     except Exception as e:  # pragma: no cover - defensive path
         return False, {"error": str(e)}
+
+    if ctx.init_error:
+        return False, {"error": ctx.init_error, "code": ctx.init_error_code}
 
     head = ctx.get_head()
     hash_val = head.get("hash")

@@ -38,6 +38,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import os
+import time
 from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
@@ -495,6 +496,12 @@ def load_and_init_genesis(
     header = _build_genesis_header(genesis, computed_state_root)
     block = _build_genesis_block(header)
 
+    try:
+        from core.genesis.genesis_loader import compute_genesis_sha256
+
+        genesis_sha256 = compute_genesis_sha256(genesis_path)
+    except Exception:
+        genesis_sha256 = None
     # Persist genesis
     # BlockDB is expected to provide put_genesis(block) that returns (height, hash),
     # otherwise we fall back to put_header + set_canonical + set_head.
@@ -507,6 +514,15 @@ def load_and_init_genesis(
         blocks.set_canonical(0, header_hash)
         blocks.set_head(0, header_hash)
         head_height, head_hash = 0, header_hash
+
+    if hasattr(blocks, "set_chain_id"):
+        blocks.set_chain_id(int(genesis["chainId"]))
+    if hasattr(blocks, "set_genesis_hash"):
+        blocks.set_genesis_hash(head_hash)
+    if genesis_sha256 is not None and hasattr(blocks, "set_genesis_sha256"):
+        blocks.set_genesis_sha256(genesis_sha256)
+    if hasattr(blocks, "set_genesis_created_at"):
+        blocks.set_genesis_created_at(int(time.time()))
 
     if log:
         import logging

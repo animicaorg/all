@@ -12,6 +12,7 @@ python -m core.boot --genesis core/genesis/genesis.json --db sqlite:///animica.d
 """
 
 import argparse
+import time
 import sys
 from pathlib import Path
 from typing import Optional, Tuple
@@ -103,7 +104,20 @@ def main(argv: Optional[list[str]] = None) -> int:
         block_db, state_db = _open_dbs(args.db)
 
         # Ensure canonical head exists and points at our genesis if DB is fresh.
-        head_height, head_hash = finalize_genesis(block_db, params, genesis_header)
+        try:
+            from core.genesis.genesis_loader import compute_genesis_sha256
+
+            genesis_sha256 = compute_genesis_sha256(genesis_path)
+        except Exception:
+            genesis_sha256 = None
+        head_height, head_hash = finalize_genesis(
+            block_db,
+            params,
+            genesis_header,
+            genesis_sha256=genesis_sha256,
+            genesis_path=str(genesis_path),
+            created_at=int(time.time()),
+        )
 
         # A tiny sanity read just to prove we can fetch it back:
         head = read_head(block_db)

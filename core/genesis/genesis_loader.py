@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from dataclasses import dataclass
@@ -140,3 +141,22 @@ def get_genesis(
     )
     _GENESIS_CACHE[cache_key] = bundle
     return bundle
+
+
+def compute_genesis_sha256(
+    genesis_path: Optional[str | os.PathLike[str]] = None,
+    *,
+    chain_id: Optional[int] = None,
+) -> bytes:
+    resolved = resolve_genesis_path(genesis_path, chain_id=chain_id)
+    data = resolved.read_bytes()
+    return hashlib.sha256(data).digest()
+
+
+def genesis_tag(
+    genesis_path: Optional[str | os.PathLike[str]] = None,
+    *,
+    chain_id: Optional[int] = None,
+    length: int = 8,
+) -> str:
+    return compute_genesis_sha256(genesis_path, chain_id=chain_id).hex()[:length]
