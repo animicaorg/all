@@ -298,6 +298,11 @@ class GenesisError(AnimicaError):
         )
 
 
+class GenesisMismatchError(GenesisError):
+    def __init__(self, message="genesis mismatch", **data: Any) -> None:
+        super().__init__(message=message, **data)
+
+
 class ChainIdMismatch(AnimicaError):
     def __init__(self, expected: int | str, got: int | str) -> None:
         super().__init__(

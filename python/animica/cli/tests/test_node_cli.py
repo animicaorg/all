@@ -590,6 +590,7 @@ def test_reset_with_volumes_removes_named_volume(monkeypatch: Any) -> None:
             "animica.cli.node.load_network_config",
             lambda network: SimpleNamespace(data_dir=str(mock_data_dir), chain_id=1, name=network),
         )
+        monkeypatch.setattr("animica.cli.node._genesis_tag_for_network", lambda cfg: "deadbeef")
         monkeypatch.setattr("animica.cli.node._wait_for_compose_stop", lambda *args, **kwargs: True)
         monkeypatch.setattr("animica.cli.node._remove_path_with_retry", lambda *args, **kwargs: None)
 
@@ -604,11 +605,14 @@ def test_reset_with_volumes_removes_named_volume(monkeypatch: Any) -> None:
 
         assert result.exit_code == 0
         assert "Reset complete" in result.output
-        assert "animica_mainnet_chain_1_data" in result.output
+        assert "animica_mainnet_chain_1_deadbeef_data" in result.output
 
         called_commands = [" ".join(call.args[0]) for call in mock_run.call_args_list]
         assert any("docker compose" in cmd and "down" in cmd and "-v" in cmd for cmd in called_commands)
-        assert any("docker volume rm animica_mainnet_chain_1_data" in cmd for cmd in called_commands)
+        assert any(
+            "docker volume rm animica_mainnet_chain_1_deadbeef_data" in cmd
+            for cmd in called_commands
+        )
 
 
 def test_ensure_db_initialized_existing_db_message(

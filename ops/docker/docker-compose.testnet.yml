@@ -26,8 +26,8 @@ networks:
     driver: bridge
 
 volumes:
-  animica_testnet_chain_2_data:
-    name: animica_testnet_chain_2_data
+  testnet_chain_data:
+    name: ${ANIMICA_DATA_ROOT:-animica_testnet_chain_2_data}
   testnet_services_data:
     name: animica_testnet_services_data
 
@@ -43,7 +43,7 @@ services:
     working_dir: /app
     volumes:
       - ../..:/app:ro
-      - ${ANIMICA_DATA_ROOT:-animica_testnet_chain_2_data}:/data
+      - testnet_chain_data:/data
     environment:
       # Testnet chain config
       ANIMICA_NETWORK: "testnet"

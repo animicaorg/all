@@ -29,6 +29,7 @@ from __future__ import annotations
 import argparse
 import getpass
 import json
+import time
 import sys
 from pathlib import Path
 from typing import Optional
@@ -202,8 +203,21 @@ def bootstrap_mainnet_genesis(
         block_db = BlockDB(kv)
         state_db = StateDB(kv)
 
+        try:
+            from core.genesis.genesis_loader import compute_genesis_sha256
+
+            genesis_sha256 = compute_genesis_sha256(genesis_path)
+        except Exception:
+            genesis_sha256 = None
         # Finalize genesis (write to DB and set canonical head)
-        head_height, head_hash = finalize_genesis(block_db, params, genesis_header)
+        head_height, head_hash = finalize_genesis(
+            block_db,
+            params,
+            genesis_header,
+            genesis_sha256=genesis_sha256,
+            genesis_path=str(genesis_path),
+            created_at=int(time.time()),
+        )
 
         print("=== Animica mainnet bootstrap complete ===")
         print(f"DB:            {db_uri}")
