@@ -675,6 +675,7 @@ class P2PService:
                 float(os.environ.get("ANIMICA_P2P_BAN_MAX_S", "86400") or 86400),
             ),
         ]
+        self._ban_enabled = False
         self._banlist_path = peerstore_dir / "bans.json"
         self._banlist: dict[str, dict[str, Any]] = {}
         self._banlist_event = asyncio.Event()
@@ -795,7 +796,10 @@ class P2PService:
             if merged:
                 log.info("Merged fallback peer snapshot into primary store")
 
-        self._load_banlist()
+        if self._ban_enabled:
+            self._load_banlist()
+        else:
+            self._banlist.clear()
 
         # Persist configured seeds so a restarted node reuses them immediately
         if self.seeds:
@@ -838,7 +842,11 @@ class P2PService:
             asyncio.create_task(self._feeler_loop(), name="p2p.feeler"),
             asyncio.create_task(self._addr_relay_loop(), name="p2p.addr_relay"),
             asyncio.create_task(self._persist_peers_loop(), name="p2p.peer_persist"),
-            asyncio.create_task(self._persist_banlist_loop(), name="p2p.ban_persist"),
+            *(
+                [asyncio.create_task(self._persist_banlist_loop(), name="p2p.ban_persist")]
+                if self._ban_enabled
+                else []
+            ),
             asyncio.create_task(self._score_decay_loop(), name="p2p.score_decay"),
             asyncio.create_task(self._metrics_loop(), name="p2p.metrics"),
         ]
@@ -933,6 +941,8 @@ class P2PService:
         return stats
 
     def banlist_snapshot(self) -> list[dict[str, Any]]:
+        if not self._ban_enabled:
+            return []
         now = time.time()
         bans = []
         for key, info in list(self._banlist.items()):
@@ -954,11 +964,15 @@ class P2PService:
         return bans
 
     def ban_peer(self, key: str, *, ttl_s: float, reason: str = "manual") -> None:
+        if not self._ban_enabled:
+            return
         until = time.time() + max(0.0, float(ttl_s))
         self._banlist[str(key)] = {"ban_until": until, "reason": reason, "score": None}
         self._banlist_event.set()
 
     def unban_peer(self, key: str) -> None:
+        if not self._ban_enabled:
+            return
         self._banlist.pop(str(key), None)
         self._banlist_event.set()
 
@@ -1625,6 +1639,9 @@ class P2PService:
             self._persisted_peer_count = len(data.get("peers", []))
 
     def _load_banlist(self) -> None:
+        if not self._ban_enabled:
+            self._banlist.clear()
+            return
         if not self._banlist_path.exists():
             return
         try:
@@ -2236,6 +2253,8 @@ class P2PService:
         return False
 
     def _is_banned(self, key: str, *, now: Optional[float] = None) -> bool:
+        if not self._ban_enabled:
+            return False
         now = time.time() if now is None else now
         if not key:
             return False
@@ -4928,6 +4947,8 @@ class P2PService:
             peer.invalid_msgs += 1
 
     def _ban_ttl_for_score(self, score: int) -> Optional[float]:
+        if not self._ban_enabled:
+            return None
         ttl = None
         for threshold, ttl_s in self._ban_thresholds:
             if score >= threshold:
@@ -4935,6 +4956,8 @@ class P2PService:
         return ttl
 
     def _ban_peer(self, peer: _PeerState, *, ban_ttl: float, reason: str) -> None:
+        if not self._ban_enabled:
+            return
         if self._is_seed_peer(peer):
             log.warning(
                 "Skipping ban for seed peer",
