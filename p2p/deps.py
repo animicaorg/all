@@ -105,16 +105,23 @@ def _db_uri_hint(db_uri: str) -> str:
     return db_uri
 
 
-def _volume_name_for_chain(network: Optional[str], chain_id: Optional[int]) -> Optional[str]:
+def _volume_name_for_chain(
+    network: Optional[str],
+    chain_id: Optional[int],
+    genesis_tag: Optional[str] = None,
+) -> Optional[str]:
     if not network or chain_id is None:
         return None
     safe_network = network.replace("-", "_")
-    return f"animica_{safe_network}_chain_{chain_id}_data"
+    tag = genesis_tag or os.getenv("ANIMICA_GENESIS_TAG")
+    suffix = f"_{tag}" if tag else ""
+    return f"animica_{safe_network}_chain_{chain_id}{suffix}_data"
 
 
 def _format_genesis_reset_guidance(data_dir: str, chain_id: Optional[int]) -> str:
     network = os.getenv("ANIMICA_NETWORK")
     compose_file = os.getenv("ANIMICA_COMPOSE_FILE")
+    genesis_tag = os.getenv("ANIMICA_GENESIS_TAG")
     data_dir_path = data_dir
     data_dir_hint = data_dir_path or "<unknown>"
     is_docker_mount = data_dir_path.startswith("/data")
@@ -129,7 +136,7 @@ def _format_genesis_reset_guidance(data_dir: str, chain_id: Optional[int]) -> st
     lines.append("Suggested recovery commands:")
     lines.append("  animica node down --volumes")
     if is_docker_mount:
-        volume_name = _volume_name_for_chain(network, chain_id)
+        volume_name = _volume_name_for_chain(network, chain_id, genesis_tag)
         if volume_name:
             lines.append(f"  docker volume ls | grep {volume_name}")
             lines.append(f"  docker volume rm {volume_name}")
@@ -144,7 +151,12 @@ def _format_genesis_reset_guidance(data_dir: str, chain_id: Optional[int]) -> st
 
 
 def _allow_genesis_reset() -> bool:
-    return os.getenv("ANIMICA_ALLOW_GENESIS_RESET", "").lower() in {"1", "true", "yes", "on"}
+    return (
+        os.getenv("ANIMICA_AUTO_RESET_GENESIS_MISMATCH", "").lower()
+        in {"1", "true", "yes", "on"}
+        or os.getenv("ANIMICA_ALLOW_GENESIS_RESET", "").lower()
+        in {"1", "true", "yes", "on"}
+    )
 
 
 def _close_if_possible(*handles: Any) -> None:
@@ -310,9 +322,9 @@ class P2PDeps:
         try:
             c["finalize_genesis_if_needed"](block_db, state_db, genesis_path)
         except Exception as exc:
-            from core.errors import GenesisError
+            from core.errors import GenesisError, GenesisMismatchError
 
-            if isinstance(exc, GenesisError):
+            if isinstance(exc, (GenesisError, GenesisMismatchError)):
                 expected = exc.data.get("expected") if hasattr(exc, "data") else None
                 found = exc.data.get("found") if hasattr(exc, "data") else None
                 data_dir = _db_uri_hint(db_uri)
@@ -335,7 +347,9 @@ class P2PDeps:
                     f"GENESIS_MISMATCH expected={expected_str} got={found_str} "
                     f"chain_id={chain_id} data_dir={data_dir}. "
                     "Refusing to sync. Reset the data dir for this chain "
-                    "(e.g., delete ~/.animica/chain-<id> or docker volumes).\n"
+                    "(e.g., delete ~/.animica/chain-<id> or docker volumes). "
+                    "To auto-reset on startup, set ANIMICA_AUTO_RESET_GENESIS_MISMATCH=1 "
+                    "or use `animica node up --auto-reset-genesis-mismatch`.\n"
                     f"{guidance}"
                 ) from exc
             raise
@@ -362,7 +376,9 @@ class P2PDeps:
                 f"GENESIS_MISMATCH expected={expected_hex} got={found_hex} "
                 f"chain_id={chain_id} data_dir={data_dir}. "
                 "Refusing to sync. Reset the data dir for this chain "
-                "(e.g., delete ~/.animica/chain-<id> or docker volumes).\n"
+                "(e.g., delete ~/.animica/chain-<id> or docker volumes). "
+                "To auto-reset on startup, set ANIMICA_AUTO_RESET_GENESIS_MISMATCH=1 "
+                "or use `animica node up --auto-reset-genesis-mismatch`.\n"
                 f"{guidance}"
             )
 
