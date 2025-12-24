@@ -3609,17 +3609,13 @@ class P2PService:
                         self._set_sync_backoff(
                             peer,
                             reason="consensus_mismatch_pow",
-                            delay=600.0,
+                            delay=120.0,
                         )
                         self._penalize_peer(
                             peer,
                             "consensus_mismatch_pow",
-                            severity=3,
-                            quarantine_s=600.0,
-                        )
-                        self._create_child_task(
-                            self._drop_peer(peer, reason="consensus_mismatch_pow"),
-                            name=f"p2p.drop_peer@{peer.remote}",
+                            severity=1,
+                            quarantine_s=120.0,
                         )
                     self._penalize_peer(
                         peer,
@@ -4191,6 +4187,12 @@ class P2PService:
 
         async with self._sync_lock:
             eligible_peers, _ = self._eligible_sync_peers()
+            allow_pow_backoff = False
+            if not eligible_peers:
+                eligible_peers, _ = self._eligible_sync_peers(
+                    ignore_backoff_reason="consensus_mismatch_pow"
+                )
+                allow_pow_backoff = True
             if not eligible_peers:
                 self._sync_phase = "IDLE"
                 return result
@@ -4208,7 +4210,9 @@ class P2PService:
             requested = 0
 
             while True:
-                peer = self._select_sync_peer(avoid_remotes=tried_peers)
+                peer = self._select_sync_peer(
+                    avoid_remotes=tried_peers, allow_pow_backoff=allow_pow_backoff
+                )
                 if peer is None or not peer.hello_done.is_set():
                     self._sync_phase = "IDLE"
                     return result
@@ -4429,7 +4433,11 @@ class P2PService:
         }
 
     def _sync_peer_eligibility(
-        self, peer: _PeerState, *, now: Optional[float] = None
+        self,
+        peer: _PeerState,
+        *,
+        now: Optional[float] = None,
+        ignore_backoff_reason: Optional[str] = None,
     ) -> tuple[bool, str]:
         now = time.time() if now is None else now
         if peer.hello is None or not isinstance(peer.hello, dict):
@@ -4456,7 +4464,9 @@ class P2PService:
             return False, "penalized"
         backoff_until = self._sync_peer_backoff.get(peer.remote, 0.0)
         if backoff_until and backoff_until > now:
-            return False, self._sync_peer_backoff_reason.get(peer.remote, "backoff")
+            reason = self._sync_peer_backoff_reason.get(peer.remote, "backoff")
+            if ignore_backoff_reason != reason:
+                return False, reason
         version = str(peer.hello.get("version") or "")
         if version and version not in {"1", "2"}:
             return False, "version_mismatch"
@@ -4493,12 +4503,16 @@ class P2PService:
 
     def _eligible_sync_peers(
         self,
+        *,
+        ignore_backoff_reason: Optional[str] = None,
     ) -> tuple[list[_PeerState], dict[str, str]]:
         eligible: list[_PeerState] = []
         ineligible: dict[str, str] = {}
         now = time.time()
         for peer in self._peers.values():
-            ok, reason = self._sync_peer_eligibility(peer, now=now)
+            ok, reason = self._sync_peer_eligibility(
+                peer, now=now, ignore_backoff_reason=ignore_backoff_reason
+            )
             if ok:
                 eligible.append(peer)
             else:
@@ -4517,11 +4531,14 @@ class P2PService:
         *,
         avoid_peer: Optional[_PeerState] = None,
         avoid_remotes: Optional[set[str]] = None,
+        allow_pow_backoff: bool = False,
     ) -> Optional[_PeerState]:
         best: Optional[_PeerState] = None
         best_score = None
         avoid_netgroup = avoid_peer.netgroup if avoid_peer else None
-        eligible, _ = self._eligible_sync_peers()
+        eligible, _ = self._eligible_sync_peers(
+            ignore_backoff_reason="consensus_mismatch_pow" if allow_pow_backoff else None
+        )
         avoid_remotes = avoid_remotes or set()
         for p in eligible:
             if p.remote in avoid_remotes:
