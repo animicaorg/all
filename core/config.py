@@ -51,16 +51,6 @@ MAINNET_CHAIN_ID = 1  # animica:1
 TESTNET_CHAIN_ID = 2  # animica:2
 DEVNET_CHAIN_ID = 1337  # animica:1337
 
-CANONICAL_MAINNET_GENESIS_HASH_HEX = (
-    "0x807e91b4bfaf532a2bfc96e24e2b4b0ed47df019b894bf77daef76d1f200cb73"
-)
-CANONICAL_MAINNET_GENESIS_HASH = bytes.fromhex(
-    CANONICAL_MAINNET_GENESIS_HASH_HEX[2:]
-)
-_CANONICAL_GENESIS_BY_CHAIN_ID: dict[int, bytes] = {
-    MAINNET_CHAIN_ID: CANONICAL_MAINNET_GENESIS_HASH,
-}
-
 DEFAULT_RPC_HOST = "127.0.0.1"
 DEFAULT_RPC_HTTP_PORT = 8547
 DEFAULT_RPC_WS_PORT = 8548
@@ -82,7 +72,12 @@ def get_expected_genesis_hash(chain_id: int) -> Optional[bytes]:
 
     For mainnet (chain_id=1) this returns the hard-coded canonical hash.
     """
-    return _CANONICAL_GENESIS_BY_CHAIN_ID.get(int(chain_id))
+    try:
+        from core.network_params import get_expected_genesis_hash as _expected
+
+        return _expected(int(chain_id))
+    except Exception:
+        return None
 
 
 def _xdg_data_home() -> Path:

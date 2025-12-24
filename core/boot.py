@@ -14,6 +14,7 @@ python -m core.boot --genesis core/genesis/genesis.json --db sqlite:///animica.d
 import argparse
 import time
 import sys
+import os
 from pathlib import Path
 from typing import Optional, Tuple
 
@@ -23,7 +24,8 @@ from core.db.block_db import BlockDB
 from core.db.state_db import StateDB
 from core.errors import AnimicaError
 from core.genesis.genesis_loader import GenesisNotFoundError, resolve_genesis_path
-from core.genesis.loader import load_genesis
+from core.genesis.loader import load_genesis, compute_genesis_identity
+from core.network_params import enforce_pinned_genesis
 # Core deps
 from core.logging import setup_logging
 from core.types.header import Header
@@ -100,16 +102,19 @@ def main(argv: Optional[list[str]] = None) -> int:
         return 2
 
     try:
+        identity = compute_genesis_identity(genesis_path)
+        enforce_pinned_genesis(
+            chain_id=identity.chain_id,
+            genesis_block_hash=identity.genesis_block_hash,
+            genesis_path=str(identity.genesis_path),
+            network_name=os.getenv("ANIMICA_NETWORK"),
+        )
+
         params, genesis_header = _load_genesis(genesis_path)
         block_db, state_db = _open_dbs(args.db)
 
         # Ensure canonical head exists and points at our genesis if DB is fresh.
-        try:
-            from core.genesis.genesis_loader import compute_genesis_sha256
-
-            genesis_sha256 = compute_genesis_sha256(genesis_path)
-        except Exception:
-            genesis_sha256 = None
+        genesis_sha256 = identity.genesis_file_hash
         head_height, head_hash = finalize_genesis(
             block_db,
             params,

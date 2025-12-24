@@ -537,8 +537,9 @@ def _maybe_bootstrap_genesis(
                     genesis_path, kv=bundle.kv, block_db=bundle.block_db, log=False
                 )
                 try:
-                    genesis_loader = _import("core.genesis.genesis_loader")
-                    genesis_sha256 = genesis_loader.compute_genesis_sha256(genesis_path)
+                    loader = _import("core.genesis.loader")
+                    identity = loader.compute_genesis_identity(genesis_path)
+                    genesis_sha256 = identity.genesis_file_hash
                 except Exception:
                     genesis_sha256 = None
                 head_mod.finalize_genesis(  # type: ignore[arg-type]
@@ -567,8 +568,9 @@ def _maybe_bootstrap_genesis(
             )
             if hasattr(head_mod, "finalize_genesis"):
                 try:
-                    genesis_loader = _import("core.genesis.genesis_loader")
-                    genesis_sha256 = genesis_loader.compute_genesis_sha256(genesis_path)
+                    loader = _import("core.genesis.loader")
+                    identity = loader.compute_genesis_identity(genesis_path)
+                    genesis_sha256 = identity.genesis_file_hash
                 except Exception:
                     genesis_sha256 = None
                 head_mod.finalize_genesis(  # type: ignore[arg-type]
@@ -731,6 +733,28 @@ def build_context(cfg: t.Any | None = None) -> RpcContext:
         log.info(f"Genesis file: {cfg_view.genesis_path}")
 
     params = _params_from_spec(cfg_view.chain_id)
+    identity = None
+    try:
+        from core.genesis.loader import compute_genesis_identity
+        from core.network_params import enforce_pinned_genesis
+
+        identity = compute_genesis_identity(
+            cfg_view.genesis_path, chain_id=cfg_view.chain_id
+        )
+        enforce_pinned_genesis(
+            chain_id=identity.chain_id,
+            genesis_block_hash=identity.genesis_block_hash,
+            genesis_path=str(identity.genesis_path),
+            network_name=network,
+        )
+        log.info(
+            "Genesis identity: path=%s genesis_hash=0x%s genesis_file_hash=0x%s",
+            identity.genesis_path,
+            identity.genesis_block_hash.hex(),
+            identity.genesis_file_hash.hex(),
+        )
+    except Exception:
+        raise
     kv = _open_kv(cfg_view.db_uri)
     bundle = _build_db_facades(kv)
 
@@ -888,8 +912,15 @@ def build_context(cfg: t.Any | None = None) -> RpcContext:
             log.error(f"Failed to initialize P2P service: {p2p_start_error}", exc_info=True)
             p2p_service = None
             p2p_deps_sync = None
+            if "GENESIS_MISMATCH" in str(e):
+                if "ANIMICA_P2P_REQUIRED" not in os.environ:
+                    p2p_required = False
+                if not p2p_required:
+                    enable_p2p = False
 
     enable_core_p2p = _bool_env("ANIMICA_P2P_CORE_ENABLE", True)
+    if p2p_start_error and "GENESIS_MISMATCH" in p2p_start_error and not p2p_required:
+        enable_core_p2p = False
     if enable_core_p2p:
         try:
             from p2p.config import load_config as load_p2p_config

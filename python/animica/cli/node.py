@@ -539,6 +539,25 @@ def _compose_file_container_path(compose_file: Path) -> str:
     return str(Path("/app") / rel)
 
 
+def _compose_uses_data_volume(compose_file: Path) -> bool:
+    try:
+        import yaml
+
+        doc = yaml.safe_load(compose_file.read_text(encoding="utf-8")) or {}
+        services = doc.get("services", {}) if isinstance(doc, dict) else {}
+        for svc in services.values():
+            volumes = svc.get("volumes") or []
+            for vol in volumes:
+                if isinstance(vol, str) and ":/data" in vol:
+                    return True
+        return False
+    except Exception:
+        try:
+            return ":/data" in compose_file.read_text(encoding="utf-8")
+        except Exception:
+            return False
+
+
 def _resolve_genesis_path(cfg: Any) -> Path:
     from core.genesis.genesis_loader import resolve_genesis_path
 
@@ -1943,11 +1962,17 @@ def up(
             fg=typer.colors.CYAN,
         )
 
-    try:
-        _ensure_db_initialized(net_cfg)
-    except Exception as exc:
-        typer.secho(f"Error: {exc}", fg=typer.colors.RED, err=True)
-        raise typer.Exit(code=1)
+    if _compose_uses_data_volume(compose_file):
+        typer.echo(
+            "Skipping host DB initialization (compose uses a /data volume; "
+            "container will initialize genesis if needed)."
+        )
+    else:
+        try:
+            _ensure_db_initialized(net_cfg)
+        except Exception as exc:
+            typer.secho(f"Error: {exc}", fg=typer.colors.RED, err=True)
+            raise typer.Exit(code=1)
 
     _ensure_ports_available(
         rpc_port,
