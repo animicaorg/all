@@ -279,11 +279,96 @@ def test_header_batch_must_anchor(tmp_path: Path) -> None:
     )
     peer = _make_peer()
 
-    accepted_hashes = node._process_headers(peer, [header])
+    accepted_hashes, reason = node._process_headers(peer, [header])
 
     assert accepted_hashes == []
-    assert node._sync_peer_backoff_reason.get(peer.remote) == "wrong_chain"
+    assert reason == "not_anchored"
+    assert node._sync_peer_backoff_reason.get(peer.remote) == "not_anchored"
     assert node._queued_blocks_count() == 0
+
+
+def test_headers_anchor_off_by_one_inclusive_response_ok(tmp_path: Path) -> None:
+    node, deps_sync = _make_service(tmp_path, "anchor-inclusive")
+    block1 = _make_child_block(deps_sync)
+    accepted, _reason = deps_sync.import_block(block1)
+    assert accepted
+    block2 = _make_child_block_from_header(block1.header)
+
+    header1 = HeaderCompact(
+        hash=block1.header.hash(),
+        height=int(block1.header.height),
+        parent=bytes(block1.header.parentHash),
+        theta_micro=int(getattr(block1.header, "thetaMicro", 0)),
+        timestamp=int(getattr(block1.header, "timestamp", 0)),
+    )
+    header2 = HeaderCompact(
+        hash=block2.header.hash(),
+        height=int(block2.header.height),
+        parent=bytes(block2.header.parentHash),
+        theta_micro=int(getattr(block2.header, "thetaMicro", 0)),
+        timestamp=int(getattr(block2.header, "timestamp", 0)),
+    )
+
+    peer = _make_peer()
+    accepted_hashes, reason = node._process_headers(peer, [header1, header2])
+
+    assert reason is None
+    assert accepted_hashes == [block2.header.hash()]
+    assert node._sync_best_header is not None
+    assert node._sync_best_header.hash == block2.header.hash()
+
+
+def test_headers_anchor_exclusive_response_ok(tmp_path: Path) -> None:
+    node, deps_sync = _make_service(tmp_path, "anchor-exclusive")
+    block1 = _make_child_block(deps_sync)
+    accepted, _reason = deps_sync.import_block(block1)
+    assert accepted
+    block2 = _make_child_block_from_header(block1.header)
+
+    header2 = HeaderCompact(
+        hash=block2.header.hash(),
+        height=int(block2.header.height),
+        parent=bytes(block2.header.parentHash),
+        theta_micro=int(getattr(block2.header, "thetaMicro", 0)),
+        timestamp=int(getattr(block2.header, "timestamp", 0)),
+    )
+
+    peer = _make_peer()
+    accepted_hashes, reason = node._process_headers(peer, [header2])
+
+    assert reason is None
+    assert accepted_hashes == [block2.header.hash()]
+    assert node._sync_best_header is not None
+    assert node._sync_best_header.hash == block2.header.hash()
+
+
+def test_do_not_mark_wrong_chain_on_single_invalid_headers(tmp_path: Path) -> None:
+    node, deps_sync = _make_service(tmp_path, "anchor-strike")
+    node._sync_peer_penalty_threshold = 99
+    block = _make_child_block(deps_sync)
+    accepted, _reason = deps_sync.import_block(block)
+    assert accepted
+
+    bad_header = HeaderCompact(
+        hash=b"\x11" * 32,
+        height=int(block.header.height) + 1,
+        parent=b"\x22" * 32,
+        theta_micro=1,
+        timestamp=int(block.header.timestamp) + 1,
+    )
+    peer = _make_peer()
+
+    accepted_hashes, reason = node._process_headers(peer, [bad_header])
+
+    assert accepted_hashes == []
+    assert reason == "not_anchored"
+    assert node._sync_peer_backoff_reason.get(peer.remote) == "not_anchored"
+
+    accepted_hashes, reason = node._process_headers(peer, [bad_header])
+
+    assert accepted_hashes == []
+    assert reason == "not_anchored"
+    assert node._sync_peer_backoff_reason.get(peer.remote) == "wrong_chain"
 
 
 @pytest.mark.asyncio
@@ -340,6 +425,18 @@ def test_sync_status_head_hash_matches_chain_head(tmp_path: Path) -> None:
     assert snap.head_height == height
     assert snap.head_hash == expected_hash
     assert snap.best_block_hash == expected_hash
+
+
+def test_sync_status_phase_not_synced_when_unsynchronized(tmp_path: Path) -> None:
+    node, deps_sync = _make_service(tmp_path, "phase-unsynced")
+    block = _make_child_block(deps_sync)
+    accepted, _reason = deps_sync.import_block(block)
+    assert accepted
+
+    snap = node.sync_status_snapshot()
+
+    assert snap.synchronized is False
+    assert snap.phase != "SYNCED"
 
 
 @pytest.mark.asyncio
