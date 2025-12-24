@@ -389,9 +389,10 @@ def finalize_genesis_if_needed(
 
     params, header = load_genesis(genesis_path)
     try:
-        from core.genesis.genesis_loader import compute_genesis_sha256
+        from core.genesis.loader import compute_genesis_identity
 
-        genesis_sha256 = compute_genesis_sha256(genesis_path)
+        identity = compute_genesis_identity(genesis_path)
+        genesis_sha256 = identity.genesis_file_hash
     except Exception:
         genesis_sha256 = None
     return finalize_genesis(
