@@ -16,3 +16,10 @@ repos:
   # Temporarily omit mypy from pre-commit to allow an initial formatting
   # pass across the monorepo. We'll add a dedicated CI mypy job later and
   # re-enable this hook after addressing the remaining typing issues.
+  - repo: local
+    hooks:
+      - id: genesis-loader-compile
+        name: Compile core/genesis/loader.py
+        entry: python -m compileall core/genesis/loader.py
+        language: system
+        pass_filenames: false

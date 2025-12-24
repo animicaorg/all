@@ -39,9 +39,15 @@ import argparse
 import datetime as dt
 import os
 import time
-from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
+
+try:
+    from dataclasses import asdict, dataclass, replace
+except ImportError as exc:  # pragma: no cover - stdlib guard
+    raise RuntimeError(
+        "core.genesis.loader requires Python 3.10+ with the dataclasses module."
+    ) from exc
 
 from core.db.kv import KV
 from core.db.sqlite import SQLiteKV  # default backend
