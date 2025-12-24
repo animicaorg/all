@@ -13,6 +13,7 @@ import socket
 import subprocess
 import sys
 import time
+from datetime import datetime
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -501,6 +502,67 @@ def _extract_field(data: dict[str, Any], *keys: str) -> Any:
             value = data.get(key)
             if value is not None:
                 return value
+    return None
+
+
+def _parse_timestamp(raw: Any) -> Optional[float]:
+    if raw is None:
+        return None
+    if isinstance(raw, (int, float)):
+        return float(raw)
+    if isinstance(raw, str):
+        value = raw.strip()
+        if not value:
+            return None
+        try:
+            return float(value)
+        except ValueError:
+            pass
+        try:
+            if value.endswith("Z"):
+                value = value[:-1] + "+00:00"
+            return datetime.fromisoformat(value).timestamp()
+        except ValueError:
+            return None
+    return None
+
+
+def _format_duration(seconds: Optional[float]) -> Optional[str]:
+    if seconds is None:
+        return None
+    if seconds < 0:
+        seconds = 0
+    minutes, sec = divmod(int(seconds), 60)
+    hours, minutes = divmod(minutes, 60)
+    days, hours = divmod(hours, 24)
+    if days:
+        return f"{days}d {hours}h"
+    if hours:
+        return f"{hours}h {minutes}m"
+    if minutes:
+        return f"{minutes}m {sec}s"
+    return f"{sec}s"
+
+
+def _format_block_time(raw: Any) -> tuple[Optional[str], Optional[str]]:
+    ts = _parse_timestamp(raw)
+    if ts is None:
+        return None, None
+    formatted = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ts))
+    age = _format_duration(time.time() - ts)
+    return formatted, age
+
+
+def _extract_tx_count(block: dict[str, Any]) -> Optional[int]:
+    for key in ("tx_count", "txCount", "transactionsCount"):
+        value = block.get(key)
+        if isinstance(value, int):
+            return value
+        if isinstance(value, str) and value.isdigit():
+            return int(value)
+    txs = block.get("transactions") or block.get("txs")
+    if isinstance(txs, list):
+        return len(txs)
     return None
 
 
@@ -1355,6 +1417,11 @@ def status(
         help=f"JSON-RPC request timeout in seconds (default: {describe_timeout(DEFAULT_RPC_TIMEOUT)})",
         envvar=RPC_TIMEOUT_ENV,
     ),
+    recent_blocks: int = typer.Option(
+        5,
+        "--recent-blocks",
+        help="Number of recent blocks to display (default: 5, set 0 to disable)",
+    ),
     hashrate_window: int = typer.Option(
         120,
         "--hashrate-window",
@@ -1377,6 +1444,9 @@ def status(
     if max_retries < 1:
         typer.echo("Error: max-retries must be at least 1", err=True)
         raise typer.Exit(code=1)
+    if recent_blocks < 0:
+        typer.echo("Error: recent-blocks must be 0 or greater", err=True)
+        raise typer.Exit(code=1)
     if hashrate_window < 1:
         typer.echo("Error: hashrate-window must be at least 1", err=True)
         raise typer.Exit(code=1)
@@ -1393,6 +1463,7 @@ def status(
             head = None
             status_payload = None
             used_url = None
+            status_payload_selected = None
             last_error: Optional[Exception] = None
 
             for candidate in candidate_urls:
@@ -1405,20 +1476,24 @@ def status(
                             timeout=rpc_timeout,
                         )
                     )
-                    if isinstance(status_payload, dict):
-                        used_url = candidate
-                        break
                 except Exception as exc:
-                    if is_method_not_found(exc):
-                        try:
-                            head = asyncio.run(
-                                rpc_call("chain.getHead", [], rpc_url=candidate, timeout=rpc_timeout)
-                            )
+                    if not is_method_not_found(exc):
+                        last_error = exc
+                try:
+                    head = asyncio.run(
+                        rpc_call("chain.getHead", [], rpc_url=candidate, timeout=rpc_timeout)
+                    )
+                    used_url = candidate
+                    status_payload_selected = status_payload if isinstance(status_payload, dict) else None
+                    break
+                except Exception as exc:
+                    if is_method_not_found(exc) and isinstance(status_payload, dict):
+                        status_head = status_payload.get("chain", {}).get("head") or status_payload.get("head")
+                        if status_head:
+                            head = status_head
                             used_url = candidate
+                            status_payload_selected = status_payload
                             break
-                        except Exception as legacy_exc:
-                            last_error = legacy_exc
-                            continue
                     last_error = exc
                     continue
 
@@ -1428,8 +1503,7 @@ def status(
                 )
 
             url = used_url
-            if status_payload and isinstance(status_payload, dict):
-                head = status_payload.get("chain", {}).get("head") or status_payload.get("head")
+            status_payload = status_payload_selected
 
             if head is None:
                 head = asyncio.run(rpc_call("chain.getHead", [], rpc_url=url, timeout=rpc_timeout))
@@ -1439,16 +1513,22 @@ def status(
                 height = 0
             chain_id = _extract_field(head, "chainId", "chain_id")
             head_hash = _extract_field(head, "hash", "blockHash")
+            head_time = _extract_field(head, "timestamp", "time", "ts")
             cached_bootstrap = _load_cached_bootstrap_head(net_cfg)
             
             block = None
-            if height is not None:
+            if height is not None and (recent_blocks > 0 or head_hash is None or head_time is None):
                 try:
                     block = asyncio.run(
                         rpc_call("chain.getBlockByHeight", [height], rpc_url=url, timeout=rpc_timeout)
                     )
                 except Exception:
                     block = None
+            if block is not None:
+                if head_hash is None:
+                    head_hash = _extract_field(block, "hash", "blockHash")
+                if head_time is None:
+                    head_time = _extract_field(block, "timestamp", "time", "ts")
 
             sync_status = None
             if status_payload and isinstance(status_payload, dict):
@@ -1503,6 +1583,14 @@ def status(
             typer.echo(f"Chain ID: {chain_id}")
             typer.echo(f"Head height: {height}")
             typer.echo(f"Head hash: {head_hash}")
+            formatted_head_time, head_age = _format_block_time(head_time)
+            if formatted_head_time:
+                if head_age:
+                    typer.echo(f"Head time: {formatted_head_time} (age {head_age})")
+                else:
+                    typer.echo(f"Head time: {formatted_head_time}")
+            if height == 0:
+                typer.echo("Chain: genesis only")
             if cached_bootstrap:
                 cached_height = cached_bootstrap.get("height")
                 cached_hash = cached_bootstrap.get("hash")
@@ -1567,7 +1655,32 @@ def status(
                     if last_bootstrap_err:
                         summary += f" error={last_bootstrap_err}"
                     typer.echo(summary)
-            if block is not None:
+            if recent_blocks > 0 and height is not None:
+                typer.echo("Recent blocks:")
+                start = max(height - recent_blocks + 1, 0)
+                for h in range(height, start - 1, -1):
+                    block_data = None
+                    if block is not None and h == height:
+                        block_data = block
+                    else:
+                        try:
+                            block_data = asyncio.run(
+                                rpc_call("chain.getBlockByHeight", [h], rpc_url=url, timeout=rpc_timeout)
+                            )
+                        except Exception:
+                            block_data = None
+                    if not isinstance(block_data, dict):
+                        typer.echo(f"  {h}: unavailable")
+                        continue
+                    block_hash = _extract_field(block_data, "hash", "blockHash") or "-"
+                    block_hash_prefix = block_hash[:10] if block_hash != "-" else "-"
+                    block_time = _extract_field(block_data, "timestamp", "time", "ts")
+                    block_time_fmt, _ = _format_block_time(block_time)
+                    tx_count = _extract_tx_count(block_data)
+                    tx_count_display = tx_count if tx_count is not None else 0
+                    time_display = block_time_fmt or "unknown time"
+                    typer.echo(f"  {h}: {block_hash_prefix} {time_display} txs={tx_count_display}")
+            if block is not None and recent_blocks == 0:
                 typer.echo("Head block:")
                 typer.echo(_pretty(block))
             
