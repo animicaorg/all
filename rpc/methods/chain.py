@@ -249,7 +249,8 @@ def chain_get_chain_id() -> int:
 )
 def chain_get_chain_identity() -> dict:
     """
-    Returns an object: { chainId, genesisHash, forkId, consensusId, protocolVersion }.
+    Returns an object:
+      { chainId, genesisHash, genesisHeaderHash, genesisBlockHash, forkId, consensusId, protocolVersion }.
     """
     return deps.get_chain_identity()
 

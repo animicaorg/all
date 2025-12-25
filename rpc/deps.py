@@ -1218,13 +1218,18 @@ def get_chain_identity() -> dict[str, t.Any]:
         return {
             "chainId": int(ctx.cfg.chain_id),
             "genesisHash": None,
+            "genesisHeaderHash": None,
+            "genesisBlockHash": None,
             "forkId": None,
             "consensusId": None,
             "protocolVersion": None,
         }
+    genesis_hex = "0x" + bytes(identity.genesis_hash).hex()
     return {
         "chainId": int(identity.chain_id),
-        "genesisHash": "0x" + bytes(identity.genesis_hash).hex(),
+        "genesisHash": genesis_hex,
+        "genesisHeaderHash": genesis_hex,
+        "genesisBlockHash": genesis_hex,
         "forkId": int(identity.fork_id),
         "consensusId": str(identity.consensus_id),
         "protocolVersion": str(identity.protocol_version),
