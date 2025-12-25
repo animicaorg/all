@@ -21,7 +21,15 @@ from typing import Any, Dict, Optional
 import httpx
 import typer
 from rpc.hashrate import HASHSHARE_TRIALS
-from animica.config import get_network_defaults, load_network_config
+from animica.config import (
+    ENV_FILE_VAR,
+    EnvBoolSetting,
+    get_network_defaults,
+    load_dotenv,
+    load_network_config,
+    parse_env_bool,
+    resolve_bootstrap_mode,
+)
 from animica.seeds import get_seed_nodes
 
 from .timeouts import DEFAULT_RPC_TIMEOUT, RPC_TIMEOUT_ENV, describe_timeout, resolve_timeout
@@ -29,6 +37,7 @@ from .timeouts import DEFAULT_RPC_TIMEOUT, RPC_TIMEOUT_ENV, describe_timeout, re
 from .state import get_cli_state
 from .rpc_utils import candidate_rpc_urls, is_method_not_found
 
+load_dotenv()
 DEFAULT_RPC_URL = load_network_config().rpc_url
 RPC_ENV = "ANIMICA_RPC_URL"
 STATE_KEY_NETWORK = "active_network"
@@ -348,8 +357,9 @@ def _is_port_bound(port: int) -> bool:
 
 def _print_docker_diagnostics(compose_file: Path, network: str) -> None:
     typer.secho("\nDocker diagnostics (last 200 lines):", fg=typer.colors.YELLOW, bold=True)
+    cmd = _compose_base_cmd(compose_file, network) + ["logs", "--tail=200", "node"]
     logs = subprocess.run(
-        ["docker", "compose", "-f", str(compose_file), "logs", "--tail=200", "node"],
+        cmd,
         capture_output=True,
         text=True,
         check=False,
@@ -462,17 +472,22 @@ def _resolve_rpc_url(rpc_url: Optional[str]) -> str:
     return load_network_config().rpc_url
 
 
-def _is_truthy(value: str | None) -> bool:
-    if value is None:
-        return False
-    return value.strip().lower() in {"1", "true", "yes", "on"}
+def _resolve_bootstrap_mode(cli_value: Optional[bool] = None) -> EnvBoolSetting:
+    return resolve_bootstrap_mode(cli_value)
 
 
-def _is_bootstrap_node() -> bool:
-    raw = os.getenv(BOOTSTRAP_NODE_ENV)
-    if raw is None:
-        return True
-    return _is_truthy(raw)
+def _resolve_env_file() -> Optional[Path]:
+    configured = os.getenv(ENV_FILE_VAR)
+    if configured:
+        candidate = Path(configured).expanduser()
+        return candidate if candidate.exists() else None
+    cwd_env = Path.cwd() / ".env"
+    if cwd_env.exists():
+        return cwd_env
+    repo_env = _repo_root() / ".env"
+    if repo_env.exists():
+        return repo_env
+    return None
 
 
 def _pretty(obj: Any) -> str:
@@ -679,9 +694,14 @@ def _compose_base_cmd(compose_file: Path, network: str) -> list[str]:
     cmd = [
         "docker",
         "compose",
+    ]
+    env_file = _resolve_env_file()
+    if env_file:
+        cmd.extend(["--env-file", str(env_file)])
+    cmd.extend([
         "-f",
         str(compose_file),
-    ]
+    ])
     if network in DEV_NETWORKS:
         cmd.extend(["--profile", "dev"])
     return cmd
@@ -1452,6 +1472,10 @@ def status(
         raise typer.Exit(code=1)
 
     net_cfg = load_network_config()
+    bootstrap_setting = _resolve_bootstrap_mode()
+    bootstrap_rpc_url = (
+        os.getenv("ANIMICA_BOOTSTRAP_RPC_URL") or net_cfg.bootstrap_url
+    )
     
     candidate_urls = candidate_rpc_urls(url)
     # Bounded retry loop for RPC operations
@@ -1580,6 +1604,11 @@ def status(
 
             typer.echo(f"RPC URL: {url}")
             typer.echo("RPC reachable: yes")
+            typer.echo(f"bootstrap_mode: {bootstrap_setting.value}")
+            typer.echo(f"bootstrap_config_source: {bootstrap_setting.source}")
+            typer.echo(
+                f"bootstrap_rpc_url: {bootstrap_rpc_url or '(empty)'}"
+            )
             typer.echo("Animica blockchain info:")
             typer.echo(f"  Chain ID: {chain_id}")
             typer.echo(f"  Head height: {height}")
@@ -1977,6 +2006,11 @@ def up(
         "--allow-bootstrap-rpc/--no-allow-bootstrap-rpc",
         help="Allow bootstrap RPC usage for optional discovery/sync comparison",
     ),
+    bootstrap_node: Optional[bool] = typer.Option(
+        None,
+        "--bootstrap-node/--no-bootstrap-node",
+        help="Force bootstrap-only mode on/off (overrides env)",
+    ),
     kill_conflicts: bool = typer.Option(
         False,
         "--kill-conflicts",
@@ -2055,9 +2089,15 @@ def up(
     genesis_tag = _genesis_tag_for_network(net_cfg)
     volume_name = _volume_name_for_chain(network, defaults["chain_id"], genesis_tag)
 
-    allow_bootstrap = allow_bootstrap_rpc or os.getenv("ANIMICA_ALLOW_BOOTSTRAP_RPC") == "1"
-    bootstrap_node = _is_bootstrap_node()
-    if bootstrap_node:
+    allow_bootstrap = allow_bootstrap_rpc or parse_env_bool(
+        os.getenv("ANIMICA_ALLOW_BOOTSTRAP_RPC"), False
+    )
+    bootstrap_setting = _resolve_bootstrap_mode(bootstrap_node)
+    typer.echo(
+        f"bootstrap_mode={bootstrap_setting.value} "
+        f"source={bootstrap_setting.source} env={bootstrap_setting.raw}"
+    )
+    if bootstrap_setting.value:
         typer.secho(
             "Bootstrap node enabled: skipping auto-bootstrap checks.",
             fg=typer.colors.CYAN,
@@ -2106,15 +2146,7 @@ def up(
     
     # Build docker-compose command
     # For devnet, we need to use profiles; for mainnet/testnet, services run by default
-    cmd = [
-        "docker", "compose",
-        "-f", str(compose_file),
-    ]
-    
-    # Add profiles based on network and options
-    if network in DEV_NETWORKS:
-        # Devnet uses profiles: 'dev' for node+miner by default
-        cmd.extend(["--profile", "dev"])
+    cmd = _compose_base_cmd(compose_file, network)
     
     if with_miner and network not in DEV_NETWORKS:
         # For mainnet/testnet, miner is in separate profile
@@ -2147,8 +2179,13 @@ def up(
     compose_env.setdefault("HOST_P2P_PORT", str(p2p_port))
     compose_env.setdefault("HOST_P2P_TCP_PORT", str(p2p_port))
     compose_env.setdefault("HOST_METRICS_PORT", str(metrics_port))
-    if bootstrap_node:
-        compose_env.setdefault("ANIMICA_RPC_BOOTSTRAP_NODE", "1")
+    if bootstrap_setting.source == "cli_flag":
+        compose_env["ANIMICA_BOOTSTRAP_NODE"] = (
+            "true" if bootstrap_setting.value else "false"
+        )
+    compose_env.setdefault(
+        "ANIMICA_RPC_BOOTSTRAP_NODE", "1" if bootstrap_setting.value else "0"
+    )
     if auto_reset_genesis_mismatch:
         compose_env.setdefault("ANIMICA_AUTO_RESET_GENESIS_MISMATCH", "1")
 
@@ -2207,7 +2244,7 @@ def up(
                     else None,
                     allow_bootstrap_rpc=allow_bootstrap,
                 )
-                if wait_sync and not bootstrap_node:
+                if wait_sync and not bootstrap_setting.value:
                     _wait_for_sync_completion(
                         net_cfg,
                         rpc_url=local_rpc_url,
@@ -2259,6 +2296,11 @@ def up_all(
         "--allow-bootstrap-rpc/--no-allow-bootstrap-rpc",
         help="Allow bootstrap RPC usage for optional discovery/sync comparison",
     ),
+    bootstrap_node: Optional[bool] = typer.Option(
+        None,
+        "--bootstrap-node/--no-bootstrap-node",
+        help="Force bootstrap-only mode on/off (overrides env)",
+    ),
     auto_reset_genesis_mismatch: bool = typer.Option(
         False,
         "--auto-reset-genesis-mismatch",
@@ -2301,7 +2343,14 @@ def up_all(
     skipped_networks = []
     successful_networks = []
     
-    allow_bootstrap = allow_bootstrap_rpc or os.getenv("ANIMICA_ALLOW_BOOTSTRAP_RPC") == "1"
+    allow_bootstrap = allow_bootstrap_rpc or parse_env_bool(
+        os.getenv("ANIMICA_ALLOW_BOOTSTRAP_RPC"), False
+    )
+    bootstrap_setting = _resolve_bootstrap_mode(bootstrap_node)
+    typer.echo(
+        f"bootstrap_mode={bootstrap_setting.value} "
+        f"source={bootstrap_setting.source} env={bootstrap_setting.raw}"
+    )
     for network in all_networks:
         typer.secho(f"\n{'='*60}", fg=typer.colors.CYAN)
         typer.secho(f"Starting network: {network}", fg=typer.colors.CYAN, bold=True)
@@ -2335,8 +2384,7 @@ def up_all(
             skipped_networks.append(network)
             continue
         
-        bootstrap_node = _is_bootstrap_node()
-        if not bootstrap_node and allow_bootstrap:
+        if not bootstrap_setting.value and allow_bootstrap:
             _auto_bootstrap_if_needed(
                 net_cfg, os.getenv("ANIMICA_BOOTSTRAP_RPC_URL"), quiet=True
             )
@@ -2364,14 +2412,7 @@ def up_all(
         typer.echo(f"Data directory: {data_dir}")
         
         # Build docker-compose command
-        cmd = [
-            "docker", "compose",
-            "-f", str(compose_file),
-        ]
-        
-        # Add profiles based on network and options
-        if network in DEV_NETWORKS:
-            cmd.extend(["--profile", "dev"])
+        cmd = _compose_base_cmd(compose_file, network)
         
         if with_miner and network not in DEV_NETWORKS:
             cmd.extend(["--profile", "miner"])
@@ -2398,8 +2439,13 @@ def up_all(
             compose_env.setdefault("ANIMICA_GENESIS_TAG", genesis_tag)
         if volume_name:
             compose_env.setdefault("ANIMICA_DATA_ROOT", volume_name)
-        if bootstrap_node:
-            compose_env.setdefault("ANIMICA_RPC_BOOTSTRAP_NODE", "1")
+        if bootstrap_setting.source == "cli_flag":
+            compose_env["ANIMICA_BOOTSTRAP_NODE"] = (
+                "true" if bootstrap_setting.value else "false"
+            )
+        compose_env.setdefault(
+            "ANIMICA_RPC_BOOTSTRAP_NODE", "1" if bootstrap_setting.value else "0"
+        )
         if auto_reset_genesis_mismatch:
             compose_env.setdefault("ANIMICA_AUTO_RESET_GENESIS_MISMATCH", "1")
 

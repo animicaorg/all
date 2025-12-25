@@ -40,6 +40,10 @@ services:
       dockerfile: ops/docker/node.Dockerfile
     container_name: animica-mainnet-node
     working_dir: /app
+    # Env precedence: shell/--env-file > env_file > defaults in compose.
+    env_file:
+      - path: ../../.env
+        required: false
     volumes:
       - ../..:/app:ro
       - mainnet_chain_data:/data

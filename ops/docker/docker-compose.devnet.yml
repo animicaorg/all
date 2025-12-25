@@ -111,6 +111,10 @@ services:
       dockerfile: ops/docker/node.Dockerfile
     container_name: animica-node
     restart: unless-stopped
+    # Env precedence: shell/--env-file > env_file > defaults in compose.
+    env_file:
+      - path: ../../.env
+        required: false
     environment: *node_env
     command: ["/bin/sh", "-lc", "/app/ops/docker/entrypoints/node.sh"]
     volumes:
