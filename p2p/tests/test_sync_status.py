@@ -288,6 +288,8 @@ def test_header_batch_must_anchor(tmp_path: Path) -> None:
     assert accepted_hashes == []
     assert reason == "not_anchored"
     assert node._sync_peer_backoff_reason.get(peer.remote) == "not_anchored"
+    assert node._sync_peer_penalties == {}
+    assert peer.not_anchored_count == 1
     assert node._queued_blocks_count() == 0
 
 
@@ -346,6 +348,60 @@ def test_headers_anchor_exclusive_response_ok(tmp_path: Path) -> None:
     assert node._sync_best_header.hash == block2.header.hash()
 
 
+def test_header_sync_advances_from_height_one(tmp_path: Path) -> None:
+    node, deps_sync = _make_service(tmp_path, "advance-height-one")
+    block1 = _make_child_block(deps_sync)
+    accepted, _reason = deps_sync.import_block(block1)
+    assert accepted
+
+    headers: list[HeaderCompact] = []
+    parent = block1.header
+    for _ in range(4):
+        block = _make_child_block_from_header(parent)
+        parent = block.header
+        headers.append(
+            HeaderCompact(
+                hash=parent.hash(),
+                height=int(parent.height),
+                parent=bytes(parent.parentHash),
+                theta_micro=int(getattr(parent, "thetaMicro", 0)),
+                timestamp=int(getattr(parent, "timestamp", 0)),
+            )
+        )
+
+    peer = _make_peer()
+    accepted_hashes, reason = node._process_headers(peer, headers)
+
+    assert reason is None
+    assert accepted_hashes == [hdr.hash for hdr in headers]
+    assert node._sync_best_header is not None
+    assert node._sync_best_header.height == parent.height
+
+
+def test_not_anchored_sets_probe_without_penalty(tmp_path: Path) -> None:
+    node, deps_sync = _make_service(tmp_path, "not-anchored-probe")
+    block1 = _make_child_block(deps_sync)
+    accepted, _reason = deps_sync.import_block(block1)
+    assert accepted
+
+    bad_parent = b"\x99" * 32
+    bad_header = HeaderCompact(
+        hash=b"\x11" * 32,
+        height=2,
+        parent=bad_parent,
+        theta_micro=1,
+        timestamp=int(block1.header.timestamp) + 1,
+    )
+    peer = _make_peer()
+
+    accepted_hashes, reason = node._process_headers(peer, [bad_header])
+
+    assert accepted_hashes == []
+    assert reason == "not_anchored"
+    assert node._sync_anchor_probe_hash == bad_parent
+    assert node._sync_peer_penalties == {}
+
+
 def test_do_not_mark_wrong_chain_on_single_invalid_headers(tmp_path: Path) -> None:
     node, deps_sync = _make_service(tmp_path, "anchor-strike")
     node._sync_peer_penalty_threshold = 99
@@ -367,12 +423,14 @@ def test_do_not_mark_wrong_chain_on_single_invalid_headers(tmp_path: Path) -> No
     assert accepted_hashes == []
     assert reason == "not_anchored"
     assert node._sync_peer_backoff_reason.get(peer.remote) == "not_anchored"
+    assert node._sync_peer_penalties == {}
 
     accepted_hashes, reason = node._process_headers(peer, [bad_header])
 
     assert accepted_hashes == []
     assert reason == "not_anchored"
     assert node._sync_peer_backoff_reason.get(peer.remote) == "not_anchored"
+    assert node._sync_peer_penalties == {}
 
 
 @pytest.mark.asyncio
@@ -764,6 +822,46 @@ async def test_peer_rejected_on_genesis_mismatch(
     err = excinfo.value
     assert err.points == node._score_points["wrong_genesis"]
     assert node._stats["p2p_peers_rejected_genesis_mismatch"] == 1
+
+
+@pytest.mark.asyncio
+async def test_peer_rejected_on_chain_id_mismatch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    node, _deps_sync = _make_service(tmp_path, "chain-id-peer")
+    peer = _register_peer(node, "203.0.113.60:30333")
+
+    async def _noop_send(*_args, **_kwargs) -> None:
+        return None
+
+    monkeypatch.setattr(node, "_send", _noop_send)
+
+    hello = Hello(
+        version="2",
+        agent="test",
+        chain_id=node.chain_id + 1,
+        listen_port=0,
+        listen_addrs=[],
+        genesis_hash=node._genesis_hash(),
+        fork_id=node._fork_id(),
+        consensus_id=node._consensus_id(),
+        protocol_version=node._protocol_version(),
+        genesis_identity=node._genesis_identity(),
+        network_params_hash=node._network_params_hash(),
+        peer_id=b"\x44" * 32,
+        head_height=0,
+        head_hash=b"\x00" * 32,
+        capabilities=["sync"],
+        timestamp=0,
+    )
+    payload = encode_payload(
+        {k: getattr(hello, k) for k in hello.__dataclass_fields__.keys() if k != "msg_id"}
+    )
+
+    with pytest.raises(PeerMisbehavior) as excinfo:
+        await node._handle_hello(peer, payload)
+
+    assert excinfo.value.reason == "chain_id_mismatch"
 
 
 @pytest.mark.asyncio
