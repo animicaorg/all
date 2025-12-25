@@ -308,6 +308,10 @@ class SyncStatusSnapshot:
     last_header_request_at: float
     last_header_response_at: float
     last_header_response_count: int
+    last_headers_accepted_count: int
+    last_headers_discarded_count: int
+    last_headers_discard_reason_counts: Dict[str, int]
+    headers_accepted_total: int
     last_block_request_at: float
     last_block_response_at: float
     last_header_request_peer: Optional[str]
@@ -357,6 +361,12 @@ class SyncStatusSnapshot:
             "last_header_request_at": self.last_header_request_at,
             "last_header_response_at": self.last_header_response_at,
             "last_header_response_count": self.last_header_response_count,
+            "last_headers_accepted_count": self.last_headers_accepted_count,
+            "last_headers_discarded_count": self.last_headers_discarded_count,
+            "last_headers_discard_reason_counts": dict(
+                self.last_headers_discard_reason_counts
+            ),
+            "headers_accepted_total": self.headers_accepted_total,
             "last_block_request_at": self.last_block_request_at,
             "last_block_response_at": self.last_block_response_at,
             "last_header_request_peer": self.last_header_request_peer,
@@ -593,6 +603,9 @@ class P2PService:
         self._sync_not_anchored_window = float(
             os.environ.get("ANIMICA_P2P_NOT_ANCHORED_WINDOW", "300") or 300
         )
+        self._sync_duplicate_headers_threshold = int(
+            os.environ.get("ANIMICA_P2P_DUPLICATE_HEADERS_THRESHOLD", "2") or 2
+        )
         self._sync_not_anchored_attempts = 0
         self._sync_last_not_anchored_at = 0.0
         self._sync_recovery_attempts = 0
@@ -614,6 +627,9 @@ class P2PService:
         )
         self._sync_last_locator_info: list[dict[str, Any]] = []
         self._sync_last_locator_at = 0.0
+        self._sync_duplicate_header_ranges: dict[
+            str, tuple[tuple[str, str, int], int]
+        ] = {}
         self._sync_nonfatal_penalty_window_s = float(
             os.environ.get("ANIMICA_P2P_NONFATAL_PENALTY_WINDOW", "300") or 300
         )
@@ -812,6 +828,10 @@ class P2PService:
         self._sync_last_header_request_at = 0.0
         self._sync_last_header_response_at = 0.0
         self._sync_last_header_response_count = 0
+        self._sync_last_headers_accepted_count = 0
+        self._sync_last_headers_discarded_count = 0
+        self._sync_last_headers_discard_reason_counts: dict[str, int] = {}
+        self._sync_headers_accepted_total = 0
         self._sync_last_block_request_at = 0.0
         self._sync_last_block_response_at = 0.0
         self._sync_last_header_request_peer: Optional[str] = None
@@ -2189,6 +2209,12 @@ class P2PService:
             last_header_request_at=self._sync_last_header_request_at,
             last_header_response_at=self._sync_last_header_response_at,
             last_header_response_count=self._sync_last_header_response_count,
+            last_headers_accepted_count=self._sync_last_headers_accepted_count,
+            last_headers_discarded_count=self._sync_last_headers_discarded_count,
+            last_headers_discard_reason_counts=dict(
+                self._sync_last_headers_discard_reason_counts
+            ),
+            headers_accepted_total=self._sync_headers_accepted_total,
             last_block_request_at=self._sync_last_block_request_at,
             last_block_response_at=self._sync_last_block_response_at,
             last_header_request_peer=self._sync_last_header_request_peer,
@@ -3943,6 +3969,21 @@ class P2PService:
                 )
                 return
         headers = self._headers_after_locator(locator, limit=int(req.max_headers or 64))
+        info = self._headers_debug_info(headers)
+        log.debug(
+            "Serving headers",
+            extra={
+                "remote": peer.remote,
+                "locator_count": len(locator),
+                "locator_start": locator[0].hex() if locator else None,
+                "locator_end": locator[-1].hex() if locator else None,
+                "served_from_height": info.get("first_height"),
+                "served_to_height": info.get("last_height"),
+                "served_from_hash": info.get("first_hash"),
+                "served_to_hash": info.get("last_hash"),
+                "count": info.get("count"),
+            },
+        )
         await self._send(peer, MsgID.HEADERS, Headers(headers=headers))
 
     async def _handle_headers(self, peer: _PeerState, payload: bytes) -> None:
@@ -4630,8 +4671,22 @@ class P2PService:
             prev = header
 
         if not contiguous:
+            all_known = all(
+                self._has_header(bytes(h.hash))
+                or bytes(h.hash) in self._sync_headers
+                for h in headers
+            )
+            self._sync_last_headers_accepted_count = 0
+            self._sync_last_headers_discarded_count = len(headers)
+            self._sync_last_headers_discard_reason_counts = {
+                ("duplicate_headers" if all_known else "invalid_headers"): len(headers)
+            }
             return [], "invalid_headers"
 
+        self._sync_last_headers_accepted_count = len(contiguous)
+        self._sync_last_headers_discarded_count = max(0, len(headers) - len(contiguous))
+        self._sync_last_headers_discard_reason_counts = {}
+        self._sync_headers_accepted_total += len(contiguous)
         anchor_height = int((peer.hello or {}).get("head_height") or 0)
         anchor_hash = bytes((peer.hello or {}).get("head_hash") or b"")
         if anchor_height and anchor_hash:
@@ -4909,6 +4964,9 @@ class P2PService:
                     if headers is None:
                         headers = await self._fetch_headers(peer)
                     if not headers:
+                        self._sync_last_headers_accepted_count = 0
+                        self._sync_last_headers_discarded_count = 0
+                        self._sync_last_headers_discard_reason_counts = {}
                         if not saw_headers:
                             network_best_height = self._network_best_height()
                             empty_reason = self._empty_headers_reason(
@@ -4962,26 +5020,73 @@ class P2PService:
                     saw_headers = True
                     peer.empty_header_responses = 0
                     order, header_error = self._process_headers(peer, headers)
-                    if header_error:
-                        if result.get("error") is None:
-                            result["error"] = header_error.replace("_", "-")
-                        self._sync_last_header_error = header_error
-                        self._sync_last_header_error_at = time.time()
-                        self._sync_last_header_error_peer = peer.remote
+                    accepted_count = len(order)
+                    discarded_count = max(0, len(headers) - accepted_count)
+                    all_known = False
                     if not order and len(headers) > 0:
                         all_known = all(
                             self._has_header(bytes(h.hash))
                             or bytes(h.hash) in self._sync_headers
                             for h in headers
                         )
-                        if not all_known:
+                        if all_known:
+                            header_error = None
+                        else:
                             if result.get("error") is None:
                                 result["error"] = "invalid-headers"
-                            if self._sync_last_header_error is None:
-                                self._sync_last_header_error = "invalid_headers"
-                                self._sync_last_header_error_at = time.time()
-                                self._sync_last_header_error_peer = peer.remote
+                            if header_error is None:
+                                header_error = "invalid_headers"
+                            self._sync_last_header_error = header_error
+                            self._sync_last_header_error_at = time.time()
+                            self._sync_last_header_error_peer = peer.remote
                             break
+
+                    if header_error:
+                        if result.get("error") is None:
+                            result["error"] = header_error.replace("_", "-")
+                        self._sync_last_header_error = header_error
+                        self._sync_last_header_error_at = time.time()
+                        self._sync_last_header_error_peer = peer.remote
+                    elif headers:
+                        self._sync_last_header_error = None
+                        self._sync_last_header_error_at = None
+                        self._sync_last_header_error_peer = None
+
+                    discard_reason_counts: dict[str, int] = {}
+                    if accepted_count == 0 and headers:
+                        discard_reason = (
+                            "duplicate_headers" if all_known else header_error
+                        )
+                        if discard_reason:
+                            discard_reason_counts[discard_reason] = len(headers)
+                    elif discarded_count > 0:
+                        discard_reason_counts["duplicate_headers"] = discarded_count
+                    self._sync_last_headers_accepted_count = accepted_count
+                    self._sync_last_headers_discarded_count = discarded_count
+                    self._sync_last_headers_discard_reason_counts = discard_reason_counts
+
+                    rotate_peer = False
+                    if accepted_count > 0:
+                        self._reset_duplicate_header_range(peer)
+                    elif all_known and headers:
+                        duplicate_count = self._track_duplicate_header_range(peer, headers)
+                        if duplicate_count >= self._sync_duplicate_headers_threshold:
+                            self._set_sync_backoff(
+                                peer,
+                                reason="duplicate_headers",
+                                delay=self._sync_no_headers_backoff,
+                            )
+                            tried_peers.add(peer.remote)
+                            self._sync_last_header_error = "duplicate_headers"
+                            self._sync_last_header_error_at = time.time()
+                            self._sync_last_header_error_peer = peer.remote
+                            result.setdefault("error", "duplicate-headers")
+                            rotate_peer = True
+
+                    if rotate_peer:
+                        saw_headers = False
+                        break
+                    if not order and len(headers) > 0 and all_known:
                         break
 
                     if len(headers) >= self._sync_headers_batch:
@@ -5478,6 +5583,11 @@ class P2PService:
         self._sync_last_locator_info = []
         self._sync_last_locator_at = 0.0
         self._sync_last_locator_summary = None
+        self._sync_duplicate_header_ranges.clear()
+        self._sync_last_headers_accepted_count = 0
+        self._sync_last_headers_discarded_count = 0
+        self._sync_last_headers_discard_reason_counts = {}
+        self._sync_headers_accepted_total = 0
         self._sync_block_queue.clear()
         self._sync_block_queue_set.clear()
         self._sync_block_queue_heights.clear()
@@ -5702,6 +5812,27 @@ class P2PService:
             "last_hash": bytes(last.hash).hex(),
         }
 
+    def _track_duplicate_header_range(
+        self, peer: _PeerState, headers: list[HeaderCompact]
+    ) -> int:
+        if not headers:
+            return 0
+        range_key = (
+            bytes(headers[0].hash).hex(),
+            bytes(headers[-1].hash).hex(),
+            len(headers),
+        )
+        previous = self._sync_duplicate_header_ranges.get(peer.remote)
+        if previous and previous[0] == range_key:
+            count = previous[1] + 1
+        else:
+            count = 1
+        self._sync_duplicate_header_ranges[peer.remote] = (range_key, count)
+        return count
+
+    def _reset_duplicate_header_range(self, peer: _PeerState) -> None:
+        self._sync_duplicate_header_ranges.pop(peer.remote, None)
+
     def _parse_hash_bytes(self, value: Any) -> Optional[bytes]:
         if value is None:
             return None
@@ -5897,6 +6028,11 @@ class P2PService:
         self._sync_header_queue.clear()
         self._sync_headers.clear()
         self._sync_header_sources.clear()
+        self._sync_duplicate_header_ranges.clear()
+        self._sync_last_headers_accepted_count = 0
+        self._sync_last_headers_discarded_count = 0
+        self._sync_last_headers_discard_reason_counts = {}
+        self._sync_headers_accepted_total = 0
         self._sync_block_queue.clear()
         self._sync_block_queue_set.clear()
         self._sync_block_queue_heights.clear()

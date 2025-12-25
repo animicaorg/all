@@ -82,7 +82,10 @@ async def test_sync_paginates_header_batches(tmp_path: Path) -> None:
         "capabilities": ["sync"],
     }
     peer.hello_done.set()
+    peer.ready_for_sync = True
     node._peers[peer.remote] = peer
+    eligible, ineligible = node._eligible_sync_peers()
+    assert eligible, ineligible
 
     batch1, last_hash, last_ts = _make_header_batch(
         genesis.hash(), genesis_timestamp, 1, 128
@@ -139,7 +142,10 @@ async def test_sync_schedules_blocks_after_multi_batch_headers(tmp_path: Path) -
         "capabilities": ["sync"],
     }
     peer.hello_done.set()
+    peer.ready_for_sync = True
     node._peers[peer.remote] = peer
+    eligible, ineligible = node._eligible_sync_peers()
+    assert eligible, ineligible
 
     batch1, last_hash, last_ts = _make_header_batch(
         genesis.hash(), genesis_timestamp, 1, 128
@@ -158,3 +164,118 @@ async def test_sync_schedules_blocks_after_multi_batch_headers(tmp_path: Path) -
     assert node._sync_best_header.height >= 256
     assert result.get("blocksRequested", 0) > 0
     assert len(node._sync_inflight_blocks) > 0
+
+
+@pytest.mark.asyncio
+async def test_sync_headers_surpasses_4096(tmp_path: Path) -> None:
+    deps_sync, deps = _make_deps(tmp_path, "surpass-4096")
+    genesis = deps_sync.header_by_number(0)
+    assert genesis is not None
+    genesis_timestamp = int(getattr(genesis, "timestamp", 0))
+
+    node = P2PService(
+        listen_addrs=[tcp_multiaddr(free_port())],
+        seeds=[],
+        chain_id=deps_sync.chain_id,
+        deps=deps,
+        peerstore_path=str(tmp_path / "surpass-4096" / "p2p"),
+    )
+
+    peer = _PeerState(
+        session_id="peer",
+        remote="peer:0",
+        direction="inbound",
+        conn=None,
+        stream=None,
+        framer=None,
+        write_lock=asyncio.Lock(),
+    )
+    peer.peer_id = "peer"
+    peer.hello = {
+        "head_height": 5000,
+        "chain_id": node.chain_id,
+        "genesis_hash": node._genesis_hash(),
+        "fork_id": node._fork_id(),
+        "consensus_id": node._consensus_id(),
+        "protocol_version": node._protocol_version(),
+        "genesis_identity": node._genesis_identity(),
+        "network_params_hash": node._network_params_hash(),
+        "capabilities": ["sync"],
+    }
+    peer.hello_done.set()
+    node._peers[peer.remote] = peer
+
+    batches = []
+    parent = genesis.hash()
+    timestamp = genesis_timestamp
+    height = 1
+    remaining = 4097
+    batch_size = node._sync_headers_batch
+    while remaining > 0:
+        count = min(batch_size, remaining)
+        batch, parent, timestamp = _make_header_batch(parent, timestamp, height, count)
+        batches.append(batch)
+        height += count
+        remaining -= count
+    for batch in batches:
+        accepted, err = node._process_headers(peer, batch)
+        assert err is None
+        assert len(accepted) == len(batch)
+
+    assert node._sync_best_header is not None
+    assert node._sync_best_header.height > 4096
+
+
+@pytest.mark.asyncio
+async def test_sync_records_duplicate_headers(tmp_path: Path) -> None:
+    deps_sync, deps = _make_deps(tmp_path, "duplicate-headers")
+    genesis = deps_sync.header_by_number(0)
+    assert genesis is not None
+    genesis_timestamp = int(getattr(genesis, "timestamp", 0))
+
+    node = P2PService(
+        listen_addrs=[tcp_multiaddr(free_port())],
+        seeds=[],
+        chain_id=deps_sync.chain_id,
+        deps=deps,
+        peerstore_path=str(tmp_path / "duplicate-headers" / "p2p"),
+    )
+    node._sync_headers_batch = 2
+
+    peer = _PeerState(
+        session_id="peer",
+        remote="peer:0",
+        direction="inbound",
+        conn=None,
+        stream=None,
+        framer=None,
+        write_lock=asyncio.Lock(),
+    )
+    peer.peer_id = "peer"
+    peer.hello = {
+        "head_height": 10,
+        "chain_id": node.chain_id,
+        "genesis_hash": node._genesis_hash(),
+        "fork_id": node._fork_id(),
+        "consensus_id": node._consensus_id(),
+        "protocol_version": node._protocol_version(),
+        "genesis_identity": node._genesis_identity(),
+        "network_params_hash": node._network_params_hash(),
+        "capabilities": ["sync"],
+    }
+    peer.hello_done.set()
+    node._peers[peer.remote] = peer
+
+    batch, _, _ = _make_header_batch(genesis.hash(), genesis_timestamp, 1, 2)
+    accepted, err = node._process_headers(peer, batch)
+    assert err is None
+    assert len(accepted) == len(batch)
+
+    accepted, err = node._process_headers(peer, batch)
+    assert accepted == []
+    assert err == "invalid_headers"
+
+    snap = node.sync_status_snapshot()
+    assert snap.headers_accepted_total == len(batch)
+    assert snap.last_headers_accepted_count == 0
+    assert snap.last_headers_discard_reason_counts.get("duplicate_headers") == len(batch)
