@@ -164,6 +164,11 @@ async def sync_get_status() -> dict[str, t.Any]:
         "eligible_peers_for_headers": [],
         "ineligible_peers_for_headers": {},
         "pending_header_batches": 0,
+        "checkpoint_height": None,
+        "checkpoint_hash": None,
+        "checkpoint_mode_enabled": False,
+        "checkpoint_validation": None,
+        "last_checkpoint_action": None,
         "synchronized": False,
         "peer_penalties": {},
     }
