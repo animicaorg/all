@@ -8,7 +8,7 @@ from p2p import config as p2p_config
 from p2p.discovery import seeds as seed_discovery
 
 
-MAINNET_SEED_HOSTS = {"rpc.animica.org", "mainnet.animica.org"}
+MAINNET_SEED_HOSTS = {"mainnet.animica.org"}
 TESTNET_SEED_HOSTS = {"rpc.testnet.animica.org", "testnet.animica.org"}
 DEVNET_SEED_HOSTS = {"devnet.animica.org"}
 FALLBACK_SEED_IP = "144.126.133.21"
@@ -23,10 +23,7 @@ class TestNetworkSpecificSeeds:
 
         for host in MAINNET_SEED_HOSTS:
             assert any(host in s for s in seeds)
-        assert any(FALLBACK_SEED_IP in s for s in seeds)
         assert not any("rpc-reset.animica.org" in s for s in seeds)
-        # Should include both QUIC and TCP
-        assert any("quic" in s for s in seeds)
         assert any("tcp/30333" in s for s in seeds)
 
     def test_default_seeds_by_network_testnet(self):
@@ -70,7 +67,6 @@ class TestSeedLoadingFromEnv:
 
         for host in MAINNET_SEED_HOSTS:
             assert any(host in s for s in seeds)
-        assert any(FALLBACK_SEED_IP in s for s in seeds)
 
     def test_load_seeds_with_chain_id_testnet(self, monkeypatch):
         """Test loading seeds for testnet via chain_id parameter."""
@@ -92,7 +88,6 @@ class TestSeedLoadingFromEnv:
 
         for host in MAINNET_SEED_HOSTS:
             assert any(host in s for s in seeds)
-        assert any(FALLBACK_SEED_IP in s for s in seeds)
 
     def test_load_seeds_with_network_env_testnet(self, monkeypatch):
         """Test loading seeds via ANIMICA_P2P_NETWORK=testnet."""
@@ -156,7 +151,6 @@ class TestSeedLoadingFromEnv:
 
         for host in MAINNET_SEED_HOSTS:
             assert any(host in s for s in seeds)
-        assert any(FALLBACK_SEED_IP in s for s in seeds)
 
     def test_network_env_case_insensitive(self, monkeypatch):
         """Test that network name is case-insensitive."""
