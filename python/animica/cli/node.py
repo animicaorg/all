@@ -1330,6 +1330,17 @@ def _fetch_bootstrap_data(
             err=True,
         )
 
+    head = manifest.get("head") if isinstance(manifest, dict) else None
+    if isinstance(head, dict):
+        head_height = _extract_field(head, "height", "number", "blockNumber")
+        if head_height is not None:
+            _persist_sync_state(
+                net_cfg,
+                rpc_url=bootstrap_url,
+                head_info=head,
+                note="bootstrap manifest head snapshot",
+            )
+
     state_path = _persist_bootstrap_state(net_cfg, manifest, seeds)
     if seeds:
         seed_csv = ",".join(str(s) for s in seeds)
