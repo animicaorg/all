@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sys
 import time
 from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
 
+sys.path.append(str(Path(__file__).resolve().parents[2] / "python"))
+
+from animica.bootstrap.state import save_bootstrap_state
 from core.config import get_expected_genesis_hash
 from core.db.block_db import BlockDB
 from core.db.sqlite import SQLiteKV
@@ -503,6 +507,125 @@ def test_not_anchored_resets_small_chain_and_advances(tmp_path: Path) -> None:
     assert accepted_hashes == [hdr.hash for hdr in headers]
     assert node._sync_best_header is not None
     assert node._sync_best_header.height == alt_block2.header.height
+
+
+def test_checkpoint_anchor_advances_headers(tmp_path: Path) -> None:
+    deps_sync = _make_deps(tmp_path, "checkpoint-anchor")
+    block1_local = _make_child_block(deps_sync)
+    accepted, _reason = deps_sync.import_block(block1_local)
+    assert accepted
+
+    genesis = deps_sync.header_by_number(0)
+    assert genesis is not None
+    main_block1 = _make_child_block_from_header_with_offset(genesis, ts_offset=2)
+    main_block2 = _make_child_block_from_header(main_block1.header)
+    main_block3 = _make_child_block_from_header(main_block2.header)
+    main_block4 = _make_child_block_from_header(main_block3.header)
+    main_headers = [main_block1, main_block2, main_block3, main_block4]
+
+    checkpoint_height = int(main_block3.header.height)
+    checkpoint_hash = "0x" + main_block3.header.hash().hex()
+    save_bootstrap_state(
+        deps_sync.chain_id,
+        str(tmp_path),
+        checkpoint=(checkpoint_height, checkpoint_hash),
+    )
+
+    chain_dir = tmp_path / f"chain-{deps_sync.chain_id}"
+    node = P2PService(
+        listen_addrs=[tcp_multiaddr(0)],
+        seeds=[],
+        chain_id=deps_sync.chain_id,
+        deps=deps_sync,
+        peerstore_path=str(chain_dir / "p2p"),
+    )
+    node._sync_not_anchored_reset_threshold = 1
+    node._sync_not_anchored_reset_height = 10
+    node._sync_not_anchored_reset_threshold = 1
+    node._sync_not_anchored_reset_height = 10
+
+    headers = [
+        HeaderCompact(
+            hash=blk.header.hash(),
+            height=int(blk.header.height),
+            parent=bytes(blk.header.parentHash),
+            theta_micro=int(getattr(blk.header, "thetaMicro", 0)),
+            timestamp=int(getattr(blk.header, "timestamp", 0)),
+        )
+        for blk in main_headers
+    ]
+
+    peer = _make_peer()
+    _setup_peer_hello(
+        node,
+        peer,
+        head_height=int(main_block4.header.height),
+        head_hash=main_block4.header.hash(),
+    )
+    accepted_hashes, reason = node._process_headers(peer, headers)
+
+    assert accepted_hashes == []
+    assert reason == "not_anchored"
+
+    accepted_hashes, reason = node._process_headers(peer, headers)
+
+    assert reason is None
+    assert accepted_hashes == [hdr.hash for hdr in headers]
+    assert node._sync_best_header is not None
+    assert node._sync_best_header.height == main_block4.header.height
+    assert node._sync_checkpoint_validation == "verified"
+
+
+def test_checkpoint_mismatch_disables_checkpoint_mode(tmp_path: Path) -> None:
+    deps_sync = _make_deps(tmp_path, "checkpoint-mismatch")
+
+    genesis = deps_sync.header_by_number(0)
+    assert genesis is not None
+    main_block1 = _make_child_block_from_header_with_offset(genesis, ts_offset=2)
+    main_block2 = _make_child_block_from_header(main_block1.header)
+    main_headers = [main_block1, main_block2]
+
+    checkpoint_height = int(main_block2.header.height)
+    checkpoint_hash = "0x" + ("11" * 32)
+    save_bootstrap_state(
+        deps_sync.chain_id,
+        str(tmp_path),
+        checkpoint=(checkpoint_height, checkpoint_hash),
+    )
+
+    chain_dir = tmp_path / f"chain-{deps_sync.chain_id}"
+    node = P2PService(
+        listen_addrs=[tcp_multiaddr(0)],
+        seeds=[],
+        chain_id=deps_sync.chain_id,
+        deps=deps_sync,
+        peerstore_path=str(chain_dir / "p2p"),
+    )
+
+    headers = [
+        HeaderCompact(
+            hash=blk.header.hash(),
+            height=int(blk.header.height),
+            parent=bytes(blk.header.parentHash),
+            theta_micro=int(getattr(blk.header, "thetaMicro", 0)),
+            timestamp=int(getattr(blk.header, "timestamp", 0)),
+        )
+        for blk in main_headers
+    ]
+
+    peer = _make_peer()
+    _setup_peer_hello(
+        node,
+        peer,
+        head_height=int(main_block2.header.height),
+        head_hash=main_block2.header.hash(),
+    )
+    accepted_hashes, reason = node._process_headers(peer, headers)
+
+    assert reason is None
+    assert accepted_hashes == [hdr.hash for hdr in headers]
+    assert node._sync_checkpoint_validation == "mismatch"
+    assert node._sync_checkpoint_mode_enabled is False
 
 
 def test_not_anchored_cooldown_allows_other_peers(tmp_path: Path) -> None:

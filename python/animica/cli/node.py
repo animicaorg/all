@@ -13,6 +13,7 @@ import socket
 import subprocess
 import sys
 import time
+from collections import Counter
 from datetime import datetime
 from dataclasses import dataclass
 from pathlib import Path
@@ -30,6 +31,11 @@ from animica.config import (
     load_network_config,
     parse_env_bool,
     resolve_bootstrap_mode,
+)
+from animica.bootstrap.state import (
+    get_bootstrap_checkpoint,
+    load_bootstrap_state,
+    save_bootstrap_state,
 )
 from animica.seeds import get_seed_nodes
 
@@ -764,19 +770,6 @@ def _remove_path_with_retry(path: Path, *, retries: int = 3, delay: float = 0.5)
         raise last_exc
 
 
-def _bootstrap_state_path(cfg: Any) -> Path:
-    data_dir = Path(os.path.expanduser(cfg.data_dir))
-    data_dir.mkdir(parents=True, exist_ok=True)
-    return data_dir / "bootstrap.json"
-
-
-def _persist_bootstrap_state(cfg: Any, manifest: dict[str, Any], seeds: list[str]) -> Path:
-    state_path = _bootstrap_state_path(cfg)
-    payload = {"manifest": manifest, "seeds": seeds, "fetched_at": int(time.time())}
-    state_path.write_text(json.dumps(payload, indent=2))
-    return state_path
-
-
 def _sync_state_path(cfg: Any) -> Path:
     data_dir = Path(os.path.expanduser(cfg.data_dir))
     data_dir.mkdir(parents=True, exist_ok=True)
@@ -797,6 +790,14 @@ def _load_cached_bootstrap_head(cfg: Any) -> Optional[Dict[str, Any]]:
     bootstrap_url = getattr(cfg, "bootstrap_url", None)
     if not bootstrap_url:
         return None
+    checkpoint = get_bootstrap_checkpoint(getattr(cfg, "chain_id", 0), cfg.data_dir)
+    if checkpoint:
+        height, head_hash = checkpoint
+        return {
+            "height": height,
+            "hash": head_hash,
+            "chain_id": getattr(cfg, "chain_id", None),
+        }
     payload = _load_sync_state(cfg)
     if not payload or payload.get("rpc_url") != bootstrap_url:
         return None
@@ -930,6 +931,14 @@ def _record_bootstrap_head(net_cfg: Any, bootstrap_url: Optional[str], *, quiet:
                 head_info=head,
                 note="bootstrap head snapshot",
             )
+            height = _extract_field(head, "height", "number", "blockNumber")
+            head_hash = _extract_field(head, "hash", "blockHash")
+            if height is not None and head_hash:
+                save_bootstrap_state(
+                    getattr(net_cfg, "chain_id", 0),
+                    net_cfg.data_dir,
+                    checkpoint=(int(height), str(head_hash)),
+                )
             if not quiet:
                 typer.secho("✓ Bootstrap metadata saved locally", fg=typer.colors.GREEN)
             return True
@@ -969,17 +978,10 @@ def _record_bootstrap_head(net_cfg: Any, bootstrap_url: Optional[str], *, quiet:
 
 
 def _bootstrap_seeds_from_state(net_cfg: Any) -> list[str]:
-    state_path = _bootstrap_state_path(net_cfg)
-    if not state_path.exists():
+    state = load_bootstrap_state(getattr(net_cfg, "chain_id", 0), net_cfg.data_dir)
+    if state is None:
         return []
-    try:
-        payload = json.loads(state_path.read_text())
-        seeds = payload.get("seeds")
-        if isinstance(seeds, list):
-            return [str(s) for s in seeds if s]
-    except Exception:
-        return []
-    return []
+    return list(state.seeds)
 
 
 def _collect_seed_candidates(net_cfg: Any) -> list[str]:
@@ -1341,7 +1343,12 @@ def _fetch_bootstrap_data(
                 note="bootstrap manifest head snapshot",
             )
 
-    state_path = _persist_bootstrap_state(net_cfg, manifest, seeds)
+    state_path = save_bootstrap_state(
+        getattr(net_cfg, "chain_id", 0),
+        net_cfg.data_dir,
+        manifest=manifest,
+        seeds=seeds,
+    )
     if seeds:
         seed_csv = ",".join(str(s) for s in seeds)
         os.environ["ANIMICA_P2P_SEEDS"] = seed_csv
@@ -1662,6 +1669,34 @@ def status(
                     if cached_hash:
                         typer.echo(f"Bootstrap hash (cached): {cached_hash}")
             typer.echo(f"Sync status: {sync_status}")
+            if isinstance(sync_status, dict):
+                checkpoint_height = sync_status.get("checkpoint_height")
+                checkpoint_hash = sync_status.get("checkpoint_hash")
+                checkpoint_enabled = sync_status.get("checkpoint_mode_enabled")
+                checkpoint_validation = sync_status.get("checkpoint_validation")
+                checkpoint_action = sync_status.get("last_checkpoint_action")
+                if (
+                    checkpoint_height is not None
+                    or checkpoint_hash
+                    or checkpoint_enabled is not None
+                ):
+                    typer.echo("Checkpoint:")
+                    if checkpoint_enabled is not None:
+                        typer.echo(f"  Enabled: {checkpoint_enabled}")
+                    if checkpoint_height is not None:
+                        typer.echo(f"  Height: {checkpoint_height}")
+                    if checkpoint_hash:
+                        typer.echo(f"  Hash: {checkpoint_hash}")
+                    if checkpoint_validation:
+                        typer.echo(f"  Validation: {checkpoint_validation}")
+                    if checkpoint_action:
+                        typer.echo(f"  Last action: {checkpoint_action}")
+                ineligible = sync_status.get("ineligible_peers_for_headers") or {}
+                if isinstance(ineligible, dict) and ineligible:
+                    reason_counts = Counter(ineligible.values())
+                    typer.echo("Ineligible sync peers:")
+                    for reason, count in sorted(reason_counts.items()):
+                        typer.echo(f"  {reason}: {count}")
             hashrate_line = _hashrate_summary(hashrate_payload)
             if hashrate_line:
                 typer.echo(hashrate_line)
@@ -1866,7 +1901,12 @@ def bootstrap(
         state_path = None
         if seeds:
             try:
-                state_path = _persist_bootstrap_state(net_cfg, manifest, seeds)
+                state_path = save_bootstrap_state(
+                    getattr(net_cfg, "chain_id", 0),
+                    net_cfg.data_dir,
+                    manifest=manifest,
+                    seeds=seeds,
+                )
                 typer.echo(f"Saved bootstrap state to {state_path}")
             except Exception:
                 state_path = None
