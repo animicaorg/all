@@ -842,10 +842,17 @@ python -m mining.cli.miner start \
 
 ### P2P Networking
 
+Bootstrap-only mode is disabled by default. Enable it explicitly with
+`ANIMICA_BOOTSTRAP_NODE=true` (or `animica node up --bootstrap-node`) and disable
+it with `ANIMICA_BOOTSTRAP_NODE=false` or by unsetting the variable. You can also
+override the bootstrap RPC endpoint via `ANIMICA_BOOTSTRAP_RPC_URL`.
+
 | Variable | Description | Default | Example |
 |----------|-------------|---------|---------|
 | `ANIMICA_P2P_SEEDS` | Seed node addresses | Network-specific | `node1.example.com:30333` |
 | `ANIMICA_P2P_LISTEN` | P2P listen address | `0.0.0.0:30333` | `0.0.0.0:31337` |
+| `ANIMICA_BOOTSTRAP_NODE` | Enable bootstrap-only RPC mode | `false` | `true` |
+| `ANIMICA_BOOTSTRAP_RPC_URL` | Override bootstrap RPC endpoint | Network-specific | `https://rpc.animica.org/rpc` |
 | `ANIMICA_BOOTSTRAP_PASSWORD` | Bootstrap password (mainnet only) | None | `<secure-password>` |
 
 ### Wallet & Keys
