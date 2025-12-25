@@ -139,14 +139,11 @@ class SeedBundle:
     fetched_at: float = field(default_factory=time.time)
 
 
-# Embedded fallback seeds - always available even if DNS fails
-# Prefer dedicated network domains with RPC + IP fallback.
+# Embedded fallback seeds - always available even if DNS fails.
+# Prefer dedicated network domains.
 EMBEDDED_FALLBACK_SEEDS: List[str] = [
     # Mainnet
-    "quic://mainnet.animica.org:443",
     "tcp://mainnet.animica.org:30333",
-    "quic://rpc.animica.org:443",
-    "tcp://rpc.animica.org:30333",
     # Testnet
     "quic://testnet.animica.org:443",
     "tcp://testnet.animica.org:30333",
