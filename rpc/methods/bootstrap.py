@@ -99,6 +99,20 @@ def _network_defaults() -> dict[str, t.Any]:
     if gh:
         manifest["genesis_hash"] = gh
 
+    try:
+        from rpc.methods.chain import chain_get_checkpoints, chain_get_head
+
+        head = chain_get_head()
+        if isinstance(head, dict) and head:
+            manifest["head"] = head
+
+        checkpoints = chain_get_checkpoints(cid)
+        if isinstance(checkpoints, dict):
+            manifest["checkpoints"] = checkpoints.get("checkpoints", [])
+            manifest["checkpoint_source"] = checkpoints.get("source")
+    except Exception:
+        pass
+
     return manifest
 
 
