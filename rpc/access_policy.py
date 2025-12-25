@@ -7,6 +7,7 @@ import typing as t
 from dataclasses import dataclass, field
 from enum import Enum
 
+from animica.config import parse_env_bool
 from rpc import errors
 
 
@@ -44,9 +45,7 @@ def _parse_allowlist(raw: str | None) -> list[ipaddress._BaseNetwork]:
 
 
 def _is_truthy(raw: str | None) -> bool:
-    if raw is None:
-        return False
-    return raw.strip().lower() in {"1", "true", "yes", "on"}
+    return parse_env_bool(raw, False)
 
 
 def _extract_ip(ctx: t.Any) -> str | None:

@@ -41,6 +41,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from animica.config import parse_env_bool
+
+logger = logging.getLogger(__name__)
+
 from rpc.access_policy import AccessMode
 
 log = logging.getLogger(__name__)
@@ -103,7 +107,7 @@ def _env_bool(name: str, default: bool) -> bool:
     v = _env(name)
     if v is None:
         return default
-    return v.strip().lower() in ("1", "true", "yes", "y", "on")
+    return parse_env_bool(v, default, name=name, log=logger)
 
 
 def _env_int(name: str, default: int) -> int:
@@ -344,6 +348,18 @@ def load() -> RpcConfig:
         bootstrap_rate_limit=_env_int("ANIMICA_BOOTSTRAP_RATE_LIMIT", 0),
         bootstrap_node=_env_bool("ANIMICA_RPC_BOOTSTRAP_NODE", False),
     )
+    bootstrap_raw = os.getenv("ANIMICA_RPC_BOOTSTRAP_NODE")
+    bootstrap_enabled = parse_env_bool(
+        bootstrap_raw, False, name="ANIMICA_RPC_BOOTSTRAP_NODE", log=logger
+    )
+    if bootstrap_enabled:
+        bootstrap_source = "process_env" if bootstrap_raw is not None else "default"
+        logger.info(
+            "bootstrap_mode=%s source=%s env=%s",
+            bootstrap_enabled,
+            bootstrap_source,
+            bootstrap_raw,
+        )
 
     explicit_chain_id = "ANIMICA_CHAIN_ID" in os.environ
     # Respect explicit chain id first, then fall back to ANIMICA_NETWORK.

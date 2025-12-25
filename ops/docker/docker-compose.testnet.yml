@@ -41,6 +41,10 @@ services:
       dockerfile: ops/docker/node.Dockerfile
     container_name: animica-testnet-node
     working_dir: /app
+    # Env precedence: shell/--env-file > env_file > defaults in compose.
+    env_file:
+      - path: ../../.env
+        required: false
     volumes:
       - ../..:/app:ro
       - testnet_chain_data:/data
