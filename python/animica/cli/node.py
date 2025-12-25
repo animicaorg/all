@@ -20,6 +20,7 @@ from typing import Any, Dict, Optional
 
 import httpx
 import typer
+from typer.models import OptionInfo
 from rpc.hashrate import HASHSHARE_TRIALS
 from animica.config import (
     ENV_FILE_VAR,
@@ -39,6 +40,9 @@ from .rpc_utils import candidate_rpc_urls, is_method_not_found
 
 load_dotenv()
 DEFAULT_RPC_URL = load_network_config().rpc_url
+DEFAULT_RPC_READY_TIMEOUT = 60
+DEFAULT_SYNC_TIMEOUT = 600
+DEFAULT_SYNC_INTERVAL = 5
 RPC_ENV = "ANIMICA_RPC_URL"
 STATE_KEY_NETWORK = "active_network"
 BOOTSTRAP_NODE_ENV = "ANIMICA_BOOTSTRAP_NODE"
@@ -256,6 +260,11 @@ def _ensure_ports_available(
             fg=typer.colors.RED,
             err=True,
         )
+        typer.echo(
+            "Hint: stop the running node (animica node down --volumes) or inspect listeners with:",
+            err=True,
+        )
+        typer.echo(f"  ss -ltnp | grep {rpc_port}", err=True)
         raise typer.Exit(code=1)
 
     if not _port_in_use(p2p_port):
@@ -995,6 +1004,17 @@ def _health_url_from_rpc(rpc_url: str) -> str:
     return rpc_url.rstrip("/") + "/healthz"
 
 
+def _assert_numeric_params(**values: Any) -> None:
+    for name, value in values.items():
+        if isinstance(value, OptionInfo):
+            raise TypeError(
+                "BUG: received Typer OptionInfo instead of a numeric runtime value "
+                f"for '{name}'. Check CLI wiring."
+            )
+        if not isinstance(value, (int, float)):
+            raise TypeError(f"Expected numeric value for '{name}', got {type(value).__name__}.")
+
+
 def _wait_for_node_ready(
     *,
     compose_file: Path,
@@ -1004,6 +1024,7 @@ def _wait_for_node_ready(
     timeout_s: float,
     interval_s: float = 2.0,
 ) -> tuple[bool, str | None]:
+    _assert_numeric_params(timeout_s=timeout_s, interval_s=interval_s)
     deadline = time.time() + timeout_s
     last_error: Optional[str] = None
     health_url = _health_url_from_rpc(rpc_url)
@@ -1041,6 +1062,7 @@ def _wait_for_node_ready(
 
 
 def _wait_for_rpc_ready(rpc_url: str, *, timeout_s: float = 60.0, interval_s: float = 2.0) -> bool:
+    _assert_numeric_params(timeout_s=timeout_s, interval_s=interval_s)
     deadline = time.time() + timeout_s
     while time.time() < deadline:
         try:
@@ -1845,7 +1867,7 @@ def bootstrap(
 
     # Start node using existing up command
     try:
-        up(detach=detach, build=True, with_miner=False)
+        _up_impl(detach=detach, build=True, with_miner=False)
     except SystemExit as exc:  # Typer exits bubble up as SystemExit
         if exc.code not in (0, None):
             raise
@@ -1969,63 +1991,19 @@ def tx(
     typer.echo(_pretty(result))
 
 
-@app.command()
-def up(
-    detach: bool = typer.Option(
-        True,
-        "--detach/--no-detach",
-        help="Run in detached mode (background)"
-    ),
-    build: bool = typer.Option(
-        True,
-        "--build/--no-build",
-        help="Build images before starting"
-    ),
-    with_miner: bool = typer.Option(
-        False,
-        "--with-miner",
-        help="Also start miner service (uses 'miner' profile)"
-    ),
-    wait_sync: bool = typer.Option(
-        True,
-        "--wait-sync/--no-wait-sync",
-        help="Wait for the node to sync to the bootstrap head before returning",
-    ),
-    sync_timeout: int = typer.Option(
-        600,
-        "--sync-timeout",
-        help="Maximum time to wait for sync completion (seconds)",
-    ),
-    sync_interval: int = typer.Option(
-        5,
-        "--sync-interval",
-        help="Seconds between sync progress checks",
-    ),
-    allow_bootstrap_rpc: bool = typer.Option(
-        True,
-        "--allow-bootstrap-rpc/--no-allow-bootstrap-rpc",
-        help="Allow bootstrap RPC usage for optional discovery/sync comparison",
-    ),
-    bootstrap_node: Optional[bool] = typer.Option(
-        None,
-        "--bootstrap-node/--no-bootstrap-node",
-        help="Force bootstrap-only mode on/off (overrides env)",
-    ),
-    kill_conflicts: bool = typer.Option(
-        False,
-        "--kill-conflicts",
-        help="Stop Animica-owned host P2P processes that block required ports",
-    ),
-    rpc_ready_timeout: int = typer.Option(
-        60,
-        "--rpc-ready-timeout",
-        help="Seconds to wait for local RPC readiness after docker start",
-    ),
-    auto_reset_genesis_mismatch: bool = typer.Option(
-        False,
-        "--auto-reset-genesis-mismatch",
-        help="Auto-reset chain data if genesis mismatch is detected (destructive)",
-    ),
+def _up_impl(
+    *,
+    detach: bool = True,
+    build: bool = True,
+    with_miner: bool = False,
+    wait_sync: bool = True,
+    sync_timeout: int = DEFAULT_SYNC_TIMEOUT,
+    sync_interval: int = DEFAULT_SYNC_INTERVAL,
+    allow_bootstrap_rpc: bool = True,
+    bootstrap_node: Optional[bool] = None,
+    kill_conflicts: bool = False,
+    rpc_ready_timeout: int = DEFAULT_RPC_READY_TIMEOUT,
+    auto_reset_genesis_mismatch: bool = False,
 ) -> None:
     """
     Start an Animica node using Docker Compose.
@@ -2272,6 +2250,79 @@ def up(
     except KeyboardInterrupt:
         typer.echo("\n\nInterrupted by user", err=True)
         raise typer.Exit(code=130)
+
+
+@app.command()
+def up(
+    detach: bool = typer.Option(
+        True,
+        "--detach/--no-detach",
+        help="Run in detached mode (background)"
+    ),
+    build: bool = typer.Option(
+        True,
+        "--build/--no-build",
+        help="Build images before starting"
+    ),
+    with_miner: bool = typer.Option(
+        False,
+        "--with-miner",
+        help="Also start miner service (uses 'miner' profile)"
+    ),
+    wait_sync: bool = typer.Option(
+        True,
+        "--wait-sync/--no-wait-sync",
+        help="Wait for the node to sync to the bootstrap head before returning",
+    ),
+    sync_timeout: int = typer.Option(
+        DEFAULT_SYNC_TIMEOUT,
+        "--sync-timeout",
+        help="Maximum time to wait for sync completion (seconds)",
+    ),
+    sync_interval: int = typer.Option(
+        DEFAULT_SYNC_INTERVAL,
+        "--sync-interval",
+        help="Seconds between sync progress checks",
+    ),
+    allow_bootstrap_rpc: bool = typer.Option(
+        True,
+        "--allow-bootstrap-rpc/--no-allow-bootstrap-rpc",
+        help="Allow bootstrap RPC usage for optional discovery/sync comparison",
+    ),
+    bootstrap_node: Optional[bool] = typer.Option(
+        None,
+        "--bootstrap-node/--no-bootstrap-node",
+        help="Force bootstrap-only mode on/off (overrides env)",
+    ),
+    kill_conflicts: bool = typer.Option(
+        False,
+        "--kill-conflicts",
+        help="Stop Animica-owned host P2P processes that block required ports",
+    ),
+    rpc_ready_timeout: int = typer.Option(
+        DEFAULT_RPC_READY_TIMEOUT,
+        "--rpc-ready-timeout",
+        help="Seconds to wait for local RPC readiness after docker start",
+    ),
+    auto_reset_genesis_mismatch: bool = typer.Option(
+        False,
+        "--auto-reset-genesis-mismatch",
+        help="Auto-reset chain data if genesis mismatch is detected (destructive)",
+    ),
+) -> None:
+    _up_impl(
+        detach=detach,
+        build=build,
+        with_miner=with_miner,
+        wait_sync=wait_sync,
+        sync_timeout=sync_timeout,
+        sync_interval=sync_interval,
+        allow_bootstrap_rpc=allow_bootstrap_rpc,
+        bootstrap_node=bootstrap_node,
+        kill_conflicts=kill_conflicts,
+        rpc_ready_timeout=rpc_ready_timeout,
+        auto_reset_genesis_mismatch=auto_reset_genesis_mismatch,
+    )
 
 
 @app.command(name="up-all")

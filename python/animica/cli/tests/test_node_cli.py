@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import json
 import os
 import tempfile
@@ -10,6 +11,7 @@ from unittest.mock import MagicMock, patch
 
 import httpx
 import pytest
+import typer
 try:
     import respx  # type: ignore
 except Exception:  # pragma: no cover - optional dependency
@@ -23,6 +25,7 @@ respx_mock = respx if respx is not None else pytest.mark.skip(reason="respx not 
 ORIGINAL_ENSURE_PORTS = node._ensure_ports_available
 ORIGINAL_AUTO_BOOTSTRAP = node._auto_bootstrap_if_needed
 ORIGINAL_ENSURE_DB_INITIALIZED = node._ensure_db_initialized
+ORIGINAL_WAIT_FOR_NODE_READY = node._wait_for_node_ready
 
 
 @pytest.fixture(autouse=True)
@@ -87,6 +90,66 @@ def test_kill_conflicts_stops_animica_pid(monkeypatch: Any, tmp_path: Path) -> N
         pid_file=pid_file,
     )
     assert terminated["pid"] == 4242
+
+
+def test_up_impl_defaults_are_plain_types() -> None:
+    signature = inspect.signature(node._up_impl)
+    sync_timeout_default = signature.parameters["sync_timeout"].default
+    sync_interval_default = signature.parameters["sync_interval"].default
+    rpc_ready_default = signature.parameters["rpc_ready_timeout"].default
+    assert isinstance(sync_timeout_default, int)
+    assert isinstance(sync_interval_default, int)
+    assert isinstance(rpc_ready_default, int)
+    assert not isinstance(sync_timeout_default, node.OptionInfo)
+    assert not isinstance(sync_interval_default, node.OptionInfo)
+    assert not isinstance(rpc_ready_default, node.OptionInfo)
+
+
+def test_wait_for_node_ready_rejects_optioninfo(monkeypatch: Any, tmp_path: Path) -> None:
+    monkeypatch.setattr(node, "_wait_for_node_ready", ORIGINAL_WAIT_FOR_NODE_READY)
+    option_value = typer.Option(1, "--timeout")
+    with pytest.raises(TypeError, match="Typer OptionInfo"):
+        node._wait_for_node_ready(
+            compose_file=tmp_path / "compose.yml",
+            network="mainnet",
+            rpc_url="http://127.0.0.1:8545/rpc",
+            rpc_port=8545,
+            timeout_s=option_value,
+            interval_s=1.0,
+        )
+
+
+def test_wait_for_node_ready_accepts_numeric(monkeypatch: Any, tmp_path: Path) -> None:
+    monkeypatch.setattr(node, "_wait_for_node_ready", ORIGINAL_WAIT_FOR_NODE_READY)
+    monkeypatch.setattr(node, "_docker_container_running", lambda *args, **kwargs: True)
+    monkeypatch.setattr(node, "_is_port_bound", lambda *args, **kwargs: True)
+    monkeypatch.setattr(node, "_local_rpc", lambda *args, **kwargs: {"height": 1})
+
+    class DummyResponse:
+        status_code = 200
+
+    class DummyClient:
+        def __enter__(self) -> "DummyClient":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> bool:
+            return False
+
+        def get(self, url: str) -> DummyResponse:
+            return DummyResponse()
+
+    monkeypatch.setattr(node.httpx, "Client", lambda *args, **kwargs: DummyClient())
+
+    ready, error = node._wait_for_node_ready(
+        compose_file=tmp_path / "compose.yml",
+        network="mainnet",
+        rpc_url="http://127.0.0.1:8545/rpc",
+        rpc_port=8545,
+        timeout_s=1.0,
+        interval_s=0.0,
+    )
+    assert ready is True
+    assert error is None
 
 
 # Test helper functions for up_all tests
