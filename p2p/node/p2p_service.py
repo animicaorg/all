@@ -327,6 +327,11 @@ class SyncStatusSnapshot:
     recovery_attempts: int
     last_recovery_action: Optional[str]
     last_locator_summary: Optional[dict[str, Any]]
+    checkpoint_height: Optional[int]
+    checkpoint_hash: Optional[str]
+    checkpoint_mode_enabled: bool
+    checkpoint_validation: Optional[str]
+    last_checkpoint_action: Optional[str]
     synchronized: bool
     peer_penalties: Dict[str, int]
 
@@ -373,6 +378,11 @@ class SyncStatusSnapshot:
             "last_locator_summary": dict(self.last_locator_summary)
             if isinstance(self.last_locator_summary, dict)
             else self.last_locator_summary,
+            "checkpoint_height": self.checkpoint_height,
+            "checkpoint_hash": self.checkpoint_hash,
+            "checkpoint_mode_enabled": self.checkpoint_mode_enabled,
+            "checkpoint_validation": self.checkpoint_validation,
+            "last_checkpoint_action": self.last_checkpoint_action,
             "synchronized": self.synchronized,
             "peer_penalties": dict(self.peer_penalties),
         }
@@ -442,6 +452,9 @@ class P2PService:
         peerstore_path = writable_peerstore.path
         peerstore_dir = (
             peerstore_path if not peerstore_path.suffix else peerstore_path.parent
+        )
+        self._chain_data_dir = (
+            peerstore_dir.parent if peerstore_dir.name == "p2p" else peerstore_dir
         )
         self._peerstore_dir = peerstore_dir
         self._peers_json_path = peerstore_dir / "peers.json"
@@ -587,6 +600,17 @@ class P2PService:
         self._sync_anchor_probe_hash: Optional[bytes] = None
         self._sync_anchor_probe_until = 0.0
         self._sync_anchor_probe_peer: Optional[str] = None
+        self._sync_checkpoint_height: Optional[int] = None
+        self._sync_checkpoint_hash: Optional[bytes] = None
+        self._sync_checkpoint_mode_enabled = False
+        self._sync_checkpoint_validation: Optional[str] = None
+        self._sync_last_checkpoint_action: Optional[str] = None
+        self._sync_checkpoint_locator_after = float(
+            os.environ.get("ANIMICA_P2P_CHECKPOINT_LOCATOR_AFTER", "30") or 30
+        )
+        self._sync_checkpoint_safety_margin = int(
+            os.environ.get("ANIMICA_P2P_CHECKPOINT_SAFETY_MARGIN", "0") or 0
+        )
         self._sync_last_locator_info: list[dict[str, Any]] = []
         self._sync_last_locator_at = 0.0
         self._sync_nonfatal_penalty_window_s = float(
@@ -818,6 +842,7 @@ class P2PService:
         self._sync_tip_tolerance = int(
             os.environ.get("ANIMICA_P2P_SYNC_TIP_TOLERANCE", "2") or 2
         )
+        self._load_bootstrap_checkpoint()
         self._bootstrap_attempts: deque[dict[str, Any]] = deque(maxlen=512)
         self._last_bootstrap_attempt: Optional[dict[str, Any]] = None
         self._last_bootstrap_success: Optional[dict[str, Any]] = None
@@ -2138,6 +2163,11 @@ class P2PService:
         )
         if self._sync_active_block_peer and self._sync_active_block_peer not in active_peers_for_blocks:
             active_peers_for_blocks.append(self._sync_active_block_peer)
+        checkpoint_hash = (
+            "0x" + self._sync_checkpoint_hash.hex()
+            if self._sync_checkpoint_hash is not None
+            else None
+        )
         return SyncStatusSnapshot(
             phase=phase,
             head_height=best_block_height,
@@ -2178,6 +2208,11 @@ class P2PService:
             recovery_attempts=self._sync_recovery_attempts,
             last_recovery_action=self._sync_last_recovery_action,
             last_locator_summary=self._sync_last_locator_summary,
+            checkpoint_height=self._sync_checkpoint_height,
+            checkpoint_hash=checkpoint_hash,
+            checkpoint_mode_enabled=self._sync_checkpoint_mode_enabled,
+            checkpoint_validation=self._sync_checkpoint_validation,
+            last_checkpoint_action=self._sync_last_checkpoint_action,
             synchronized=synchronized,
             peer_penalties={
                 remote: count
@@ -4504,7 +4539,8 @@ class P2PService:
                         parent_height = 0
                         parent_ts = None
                     elif (
-                        not self._has_header(header.parent_hash)
+                        self._checkpoint_parent_meta(header.parent_hash) is None
+                        and not self._has_header(header.parent_hash)
                         and header.parent_hash not in self._sync_headers
                     ):
                         return self._note_not_anchored(
@@ -4521,16 +4557,20 @@ class P2PService:
                         parent_height = 0
                         parent_ts = None
                     else:
-                        parent_info = self._header_meta(header.parent_hash)
-                        if parent_info is None:
-                            return self._note_not_anchored(
-                                peer,
-                                header=header,
-                                anchor_height=anchor_height,
-                                anchor_hash=anchor_hash,
-                                reason="parent_meta_missing",
-                            )
-                        parent_height, parent_ts = parent_info
+                        checkpoint_parent = self._checkpoint_parent_meta(header.parent_hash)
+                        if checkpoint_parent is not None:
+                            parent_height, parent_ts = checkpoint_parent
+                        else:
+                            parent_info = self._header_meta(header.parent_hash)
+                            if parent_info is None:
+                                return self._note_not_anchored(
+                                    peer,
+                                    header=header,
+                                    anchor_height=anchor_height,
+                                    anchor_hash=anchor_hash,
+                                    reason="parent_meta_missing",
+                                )
+                            parent_height, parent_ts = parent_info
                     if header.height != parent_height + 1:
                         self._penalize_peer(peer, "header_height_mismatch")
                         break
@@ -4599,6 +4639,7 @@ class P2PService:
                 else None,
             },
         )
+        self._update_checkpoint_validation(contiguous)
         queued = self._enqueue_missing_blocks(contiguous)
         if queued:
             log.info(
@@ -4932,16 +4973,27 @@ class P2PService:
             )
             if best_header_height > local_height and self._sync_last_header_error != "not_anchored":
                 self._sync_phase = "SYNCING"
-                self._expire_inflight_blocks()
-                added = self._ensure_block_queue()
-                if added:
+                if self._should_defer_blocks_for_checkpoint(best_header_height):
+                    self._sync_last_checkpoint_action = "waiting_for_checkpoint_headers"
                     log.info(
-                        "Blocks queued",
-                        extra={"count": added, "best_header": best_header_height},
+                        "Deferring block sync until checkpoint headers reached",
+                        extra={
+                            "best_header_height": best_header_height,
+                            "checkpoint_height": self._sync_checkpoint_height,
+                            "checkpoint_validation": self._sync_checkpoint_validation,
+                        },
                     )
-                requested = await self._schedule_block_requests(peer)
-                if requested:
-                    self._sync_phase = "BLOCKS"
+                else:
+                    self._expire_inflight_blocks()
+                    added = self._ensure_block_queue()
+                    if added:
+                        log.info(
+                            "Blocks queued",
+                            extra={"count": added, "best_header": best_header_height},
+                        )
+                    requested = await self._schedule_block_requests(peer)
+                    if requested:
+                        self._sync_phase = "BLOCKS"
 
             new_height, _ = self._local_head()
             if new_height >= remote_height and best_header_height <= new_height:
@@ -5607,6 +5659,40 @@ class P2PService:
             "last_hash": bytes(last.hash).hex(),
         }
 
+    def _parse_hash_bytes(self, value: Any) -> Optional[bytes]:
+        if value is None:
+            return None
+        if isinstance(value, (bytes, bytearray)):
+            return bytes(value)
+        if isinstance(value, str):
+            cleaned = value.strip()
+            if not cleaned:
+                return None
+            if cleaned.startswith("0x"):
+                cleaned = cleaned[2:]
+            with contextlib.suppress(ValueError):
+                return bytes.fromhex(cleaned)
+        return None
+
+    def _load_bootstrap_checkpoint(self) -> None:
+        try:
+            from animica.bootstrap.state import get_bootstrap_checkpoint
+        except Exception as exc:
+            log.debug("Bootstrap checkpoint loader unavailable", extra={"error": str(exc)})
+            return
+        checkpoint = get_bootstrap_checkpoint(self.chain_id, str(self._chain_data_dir))
+        if not checkpoint:
+            return
+        height, hash_hex = checkpoint
+        hash_bytes = self._parse_hash_bytes(hash_hex)
+        if height is None or not hash_bytes:
+            return
+        self._sync_checkpoint_height = int(height)
+        self._sync_checkpoint_hash = hash_bytes
+        self._sync_checkpoint_mode_enabled = True
+        self._sync_checkpoint_validation = "unknown"
+        self._sync_last_checkpoint_action = "loaded"
+
     def _empty_headers_reason(
         self,
         peer: _PeerState,
@@ -5685,6 +5771,25 @@ class P2PService:
                 out.append(genesis_hash)
         return out
 
+    def _build_checkpoint_locator(self, max_entries: int = 32) -> list[bytes]:
+        checkpoint_hash = self._sync_checkpoint_hash
+        if checkpoint_hash is None:
+            return self._build_locator(max_entries=max_entries)
+        base = self._build_locator(max_entries=max(1, max_entries - 1))
+        locator = list(base)
+        if checkpoint_hash not in locator:
+            insert_at = 1 if locator else 0
+            locator.insert(insert_at, checkpoint_hash)
+        if len(locator) > max_entries:
+            locator = locator[:max_entries]
+        genesis = self._genesis_hash()
+        if genesis and genesis not in locator:
+            if locator:
+                locator[-1] = genesis
+            else:
+                locator.append(genesis)
+        return locator
+
     def _build_probe_locator(self, anchor_hash: bytes) -> list[bytes]:
         bdb = self._block_db()
         out = [bytes(anchor_hash)]
@@ -5697,6 +5802,13 @@ class P2PService:
         self, peer: _PeerState
     ) -> tuple[list[bytes], int, str]:
         now = time.time()
+        if self._should_use_checkpoint_locator(now):
+            self._sync_last_checkpoint_action = "locator_from_checkpoint"
+            return (
+                self._build_checkpoint_locator(),
+                self._sync_headers_batch,
+                "checkpoint",
+            )
         if (
             self._sync_anchor_probe_hash is not None
             and now <= self._sync_anchor_probe_until
@@ -5711,6 +5823,34 @@ class P2PService:
                 "probe",
             )
         return (self._build_locator(), self._sync_headers_batch, "default")
+
+    def _should_use_checkpoint_locator(self, now: float) -> bool:
+        if not self._sync_checkpoint_mode_enabled:
+            return False
+        if self._sync_checkpoint_validation == "mismatch":
+            return False
+        if self._sync_checkpoint_hash is None or self._sync_checkpoint_height is None:
+            return False
+        if self._sync_last_header_error == "not_anchored":
+            return True
+        if self._sync_last_header_at <= 0:
+            return True
+        best_height = self._sync_best_header.height if self._sync_best_header else 0
+        if best_height < self._sync_checkpoint_height:
+            return now - self._sync_last_header_at >= self._sync_checkpoint_locator_after
+        return False
+
+    def _should_defer_blocks_for_checkpoint(self, best_header_height: int) -> bool:
+        if not self._sync_checkpoint_mode_enabled:
+            return False
+        if self._sync_checkpoint_validation == "mismatch":
+            return False
+        if self._sync_checkpoint_height is None:
+            return False
+        target_height = max(
+            0, int(self._sync_checkpoint_height) - self._sync_checkpoint_safety_margin
+        )
+        return best_header_height < target_height
 
     def _reset_sync_state(self, *, reason: str) -> None:
         self._sync_inflight_blocks.clear()
@@ -5786,6 +5926,34 @@ class P2PService:
                 kv.delete(key)
         return len(deletions)
 
+    def _checkpoint_parent_meta(self, parent_hash: bytes) -> Optional[Tuple[int, int]]:
+        if not self._sync_checkpoint_mode_enabled:
+            return None
+        if self._sync_checkpoint_hash is None or self._sync_checkpoint_height is None:
+            return None
+        if parent_hash != self._sync_checkpoint_hash:
+            return None
+        return self._sync_checkpoint_height, 0
+
+    def _update_checkpoint_validation(self, headers: list[_SyncHeader]) -> None:
+        if not self._sync_checkpoint_mode_enabled:
+            return
+        if self._sync_checkpoint_validation == "mismatch":
+            return
+        if self._sync_checkpoint_hash is None or self._sync_checkpoint_height is None:
+            return
+        for header in headers:
+            if header.height != self._sync_checkpoint_height:
+                continue
+            if header.hash == self._sync_checkpoint_hash:
+                self._sync_checkpoint_validation = "verified"
+                self._sync_last_checkpoint_action = "accepted_chain"
+            else:
+                self._sync_checkpoint_validation = "mismatch"
+                self._sync_checkpoint_mode_enabled = False
+                self._sync_last_checkpoint_action = "checkpoint_mismatch"
+            return
+
     def _note_not_anchored(
         self,
         peer: _PeerState,
@@ -5839,6 +6007,18 @@ class P2PService:
                 reason="not_anchored_reset"
             ):
                 action = "reset_to_genesis"
+        if action == "reset_to_genesis":
+            self._sync_last_checkpoint_action = "reset_to_genesis"
+        if (
+            self._sync_checkpoint_mode_enabled
+            and self._sync_checkpoint_validation == "unknown"
+            and action != "reset_to_genesis"
+            and self._sync_last_checkpoint_action == "locator_from_checkpoint"
+            and self._sync_not_anchored_attempts
+            >= self._sync_not_anchored_reset_threshold
+        ):
+            self._sync_checkpoint_validation = "unreachable"
+            self._sync_last_checkpoint_action = "checkpoint_unreachable"
         self._sync_last_recovery_action = action
         best_header_height = (
             self._sync_best_header.height if self._sync_best_header else anchor_height
