@@ -38,6 +38,7 @@ from p2p.wire.message_ids import MsgID
 from p2p.wire.messages import (
     AddressAnnounce,
     Blocks,
+    Error,
     GetBlocks,
     GetData,
     GetHeaders,
@@ -3914,9 +3915,34 @@ class P2PService:
     async def _handle_get_headers(self, peer: _PeerState, payload: bytes) -> None:
         data = self._decode_map(payload)
         req = GetHeaders(**data)
-        headers = self._headers_after_locator(
-            list(req.locator), limit=int(req.max_headers or 64)
-        )
+        locator = [bytes(h) for h in req.locator if isinstance(h, (bytes, bytearray))]
+        bdb = self._block_db()
+        genesis = bdb.get_canonical_hash(0) or bdb.get_genesis_hash() or self._genesis_hash()
+        if not locator and genesis:
+            locator = [bytes(genesis)]
+        if locator and not any(self._has_header(h) for h in locator):
+            if genesis and bytes(genesis) in locator:
+                locator = [bytes(genesis)]
+            elif self._peer_chain_matches(peer):
+                if genesis:
+                    locator = [bytes(genesis)]
+            else:
+                log.warning(
+                    "Rejecting getheaders locator: unknown chain",
+                    extra={
+                        "remote": peer.remote,
+                        "locator_count": len(locator),
+                        "locator_start": locator[0].hex() if locator else None,
+                        "locator_end": locator[-1].hex() if locator else None,
+                    },
+                )
+                await self._send(
+                    peer,
+                    MsgID.ERROR,
+                    Error(code=1, message="wrong_network", details="unknown locator"),
+                )
+                return
+        headers = self._headers_after_locator(locator, limit=int(req.max_headers or 64))
         await self._send(peer, MsgID.HEADERS, Headers(headers=headers))
 
     async def _handle_headers(self, peer: _PeerState, payload: bytes) -> None:
@@ -4334,6 +4360,13 @@ class P2PService:
         anchor_hash = local_hash
         request_start_height = anchor_height + 1 if anchor_hash else anchor_height
         locator, max_headers, locator_mode = self._select_header_locator(peer)
+        if not locator:
+            fallback = self._genesis_hash()
+            if fallback:
+                log.error("Empty header locator generated; falling back to genesis")
+                locator = [fallback]
+            else:
+                log.error("Empty header locator generated without fallback genesis")
         locator_info = self._locator_debug(locator)
         self._sync_last_locator_info = locator_info
         self._sync_last_locator_at = time.time()
@@ -5610,6 +5643,18 @@ class P2PService:
             )
         return out
 
+    def _build_headers_locator(self, max_entries: int = 32) -> list[bytes]:
+        locator = self._build_locator(max_entries=max_entries)
+        if locator:
+            return locator
+        bdb = self._block_db()
+        genesis = bdb.get_canonical_hash(0) or bdb.get_genesis_hash() or self._genesis_hash()
+        if genesis:
+            log.error("Empty header locator; falling back to genesis")
+            return [bytes(genesis)]
+        log.error("Empty header locator and no genesis hash available")
+        return []
+
     def _locator_debug(self, locator: list[bytes]) -> list[dict[str, Any]]:
         out: list[dict[str, Any]] = []
         for h in locator:
@@ -5624,15 +5669,13 @@ class P2PService:
             )
         return out
 
-    def _locator_summary(
-        self, locator_info: list[dict[str, Any]]
-    ) -> Optional[dict[str, Any]]:
-        if not locator_info:
-            return None
+    def _locator_summary(self, locator_info: list[dict[str, Any]]) -> dict[str, Any]:
+        first = locator_info[0] if locator_info else None
+        last = locator_info[-1] if locator_info else None
         return {
             "count": len(locator_info),
-            "first": locator_info[0],
-            "last": locator_info[-1],
+            "first": first,
+            "last": last,
         }
 
     def _header_cooldown_snapshot(self) -> tuple[int, Optional[float]]:
@@ -5680,6 +5723,14 @@ class P2PService:
         except Exception as exc:
             log.debug("Bootstrap checkpoint loader unavailable", extra={"error": str(exc)})
             return
+        try:
+            bdb = self._block_db()
+            head = bdb.get_head()
+            head_height = int(head[0]) if head else 0
+        except Exception:
+            head_height = 0
+        if head_height > 10:
+            return
         checkpoint = get_bootstrap_checkpoint(self.chain_id, str(self._chain_data_dir))
         if not checkpoint:
             return
@@ -5691,7 +5742,7 @@ class P2PService:
         self._sync_checkpoint_hash = hash_bytes
         self._sync_checkpoint_mode_enabled = True
         self._sync_checkpoint_validation = "unknown"
-        self._sync_last_checkpoint_action = "loaded"
+        self._sync_last_checkpoint_action = "loaded_from_bootstrap_cache"
 
     def _empty_headers_reason(
         self,
@@ -5772,23 +5823,7 @@ class P2PService:
         return out
 
     def _build_checkpoint_locator(self, max_entries: int = 32) -> list[bytes]:
-        checkpoint_hash = self._sync_checkpoint_hash
-        if checkpoint_hash is None:
-            return self._build_locator(max_entries=max_entries)
-        base = self._build_locator(max_entries=max(1, max_entries - 1))
-        locator = list(base)
-        if checkpoint_hash not in locator:
-            insert_at = 1 if locator else 0
-            locator.insert(insert_at, checkpoint_hash)
-        if len(locator) > max_entries:
-            locator = locator[:max_entries]
-        genesis = self._genesis_hash()
-        if genesis and genesis not in locator:
-            if locator:
-                locator[-1] = genesis
-            else:
-                locator.append(genesis)
-        return locator
+        return self._build_headers_locator(max_entries=max_entries)
 
     def _build_probe_locator(self, anchor_hash: bytes) -> list[bytes]:
         bdb = self._block_db()
@@ -5822,7 +5857,7 @@ class P2PService:
                 1,
                 "probe",
             )
-        return (self._build_locator(), self._sync_headers_batch, "default")
+        return (self._build_headers_locator(), self._sync_headers_batch, "default")
 
     def _should_use_checkpoint_locator(self, now: float) -> bool:
         if not self._sync_checkpoint_mode_enabled:
@@ -5964,6 +5999,40 @@ class P2PService:
         reason: str,
     ) -> tuple[list[bytes], str]:
         now = time.time()
+        peer_genesis = bytes(
+            (peer.hello or {}).get("genesis_header_hash")
+            or (peer.hello or {}).get("genesis_hash")
+            or b""
+        )
+        peer_genesis_block = bytes((peer.hello or {}).get("genesis_block_hash") or b"")
+        expected_genesis = {
+            self._genesis_hash(),
+            self._genesis_header_hash(),
+            self._genesis_block_hash(),
+        }
+        if (peer_genesis and peer_genesis not in expected_genesis) or (
+            peer_genesis_block and peer_genesis_block not in expected_genesis
+        ):
+            self._sync_last_header_error = "wrong_network"
+            self._sync_last_header_error_at = now
+            self._sync_last_header_error_peer = peer.remote
+            self._set_sync_backoff(
+                peer,
+                reason="wrong_network",
+                delay=self._sync_not_anchored_backoff,
+            )
+            log.info(
+                "Rejecting header batch: wrong network",
+                extra={
+                    "remote": peer.remote,
+                    "anchor_height": anchor_height,
+                    "anchor_hash": anchor_hash.hex() if anchor_hash else None,
+                    "first_height": header.height,
+                    "first_hash": header.hash.hex(),
+                    "first_prev_hash": header.parent_hash.hex(),
+                },
+            )
+            return [], "wrong_network"
         prior_probe_hash = self._sync_anchor_probe_hash
         prior_probe_until = self._sync_anchor_probe_until
         if now - peer.last_not_anchored_at > self._sync_not_anchored_window:
@@ -5979,19 +6048,28 @@ class P2PService:
         self._sync_last_header_error_at = now
         self._sync_last_header_error_peer = peer.remote
         cooldown = self._sync_not_anchored_backoff * min(peer.not_anchored_count, 3)
-        self._set_sync_backoff(
-            peer,
-            reason="not_anchored",
-            delay=cooldown,
-        )
-        self._sync_anchor_probe_hash = header.parent_hash
-        self._sync_anchor_probe_peer = None
-        self._sync_anchor_probe_until = now + cooldown
+        genesis_bootstrap = anchor_height == 0 and self._sync_checkpoint_mode_enabled
+        if genesis_bootstrap and peer.not_anchored_count == 1:
+            genesis_hash = self._genesis_hash()
+            self._sync_anchor_probe_hash = genesis_hash
+            self._sync_anchor_probe_peer = peer.remote
+            self._sync_anchor_probe_until = now + max(1.0, self._sync_request_timeout)
+        else:
+            self._set_sync_backoff(
+                peer,
+                reason="not_anchored",
+                delay=cooldown,
+            )
+            self._sync_anchor_probe_hash = header.parent_hash
+            self._sync_anchor_probe_peer = None
+            self._sync_anchor_probe_until = now + cooldown
         locator_info = self._sync_last_locator_info or []
         locator_start = locator_info[0] if locator_info else None
         locator_end = locator_info[-1] if locator_info else None
         self._sync_last_locator_summary = self._locator_summary(locator_info)
         action = "fork_discovery"
+        if genesis_bootstrap and peer.not_anchored_count == 1:
+            action = "retry_genesis_locator"
         if (
             prior_probe_hash == header.parent_hash
             and prior_probe_until
