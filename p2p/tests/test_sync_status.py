@@ -5,6 +5,7 @@ import json
 import sys
 import time
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
@@ -30,7 +31,9 @@ from p2p.node.p2p_service import (
 from p2p.tests import tcp_multiaddr
 from p2p.wire.encoding import encode_payload
 from p2p.wire.frames import Framer
+from p2p.wire.message_ids import MsgID
 from p2p.wire.messages import Blocks, HeaderCompact, Headers, Hello
+from p2p.wire.messages import GetHeaders
 
 GENESIS_PATH = Path(__file__).resolve().parents[2] / "core" / "genesis" / "genesis.json"
 
@@ -659,6 +662,113 @@ def test_not_anchored_cooldown_allows_other_peers(tmp_path: Path) -> None:
     eligible_remotes = {peer.remote for peer in eligible}
     assert peer_a.remote in eligible_remotes
     assert peer_a.remote not in ineligible
+
+
+@pytest.mark.asyncio
+async def test_locator_defaults_to_genesis_and_sets_summary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    node, _deps_sync = _make_service(tmp_path, "locator-summary")
+    peer = _register_peer(node, "peer-locator:0")
+    _setup_peer_hello(node, peer, head_height=1)
+
+    async def _fake_send(peer_obj: _PeerState, msg_id: MsgID, payload: Any) -> None:
+        assert msg_id == MsgID.GET_HEADERS
+        assert payload.locator
+        assert payload.locator[0] == node._genesis_hash()
+        if peer_obj.pending_headers and not peer_obj.pending_headers.done():
+            peer_obj.pending_headers.set_result(Headers(headers=[]))
+
+    monkeypatch.setattr(node, "_send", _fake_send)
+
+    headers = await node._fetch_headers(peer)
+
+    assert headers == []
+    assert node._sync_last_locator_summary is not None
+    assert node._sync_last_locator_summary["count"] >= 1
+
+
+@pytest.mark.asyncio
+async def test_empty_locator_returns_headers_from_genesis(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    node, deps_sync = _make_service(tmp_path, "empty-locator")
+    block1 = _make_child_block(deps_sync)
+    accepted, _reason = deps_sync.import_block(block1)
+    assert accepted
+    peer = _register_peer(node, "peer-empty-locator:0")
+    _setup_peer_hello(node, peer, head_height=1, head_hash=block1.header.hash())
+    sent: dict[str, Any] = {}
+
+    async def _fake_send(peer_obj: _PeerState, msg_id: MsgID, payload: Any) -> None:
+        sent["msg_id"] = msg_id
+        sent["payload"] = payload
+
+    monkeypatch.setattr(node, "_send", _fake_send)
+    payload = encode_payload({"locator": [], "max_headers": 64})
+
+    await node._handle_get_headers(peer, payload)
+
+    assert sent["msg_id"] == MsgID.HEADERS
+    headers_msg: Headers = sent["payload"]
+    assert len(headers_msg.headers) > 0
+
+
+def test_bootstrap_checkpoint_loaded_for_genesis(tmp_path: Path) -> None:
+    deps_sync = _make_deps(tmp_path, "checkpoint-bootstrap")
+    checkpoint_height = 123
+    checkpoint_hash = "0x" + ("11" * 32)
+    save_bootstrap_state(
+        deps_sync.chain_id,
+        str(tmp_path),
+        checkpoint=(checkpoint_height, checkpoint_hash),
+    )
+
+    chain_dir = tmp_path / f"chain-{deps_sync.chain_id}"
+    node = P2PService(
+        listen_addrs=[tcp_multiaddr(0)],
+        seeds=[],
+        chain_id=deps_sync.chain_id,
+        deps=deps_sync,
+        peerstore_path=str(chain_dir / "p2p"),
+    )
+
+    assert node._sync_checkpoint_mode_enabled is True
+    assert node._sync_checkpoint_height == checkpoint_height
+    assert node._sync_checkpoint_hash == bytes.fromhex(checkpoint_hash[2:])
+    assert node._sync_checkpoint_validation == "unknown"
+    assert node._sync_last_checkpoint_action == "loaded_from_bootstrap_cache"
+
+
+@pytest.mark.asyncio
+async def test_fetch_headers_sets_response_count(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    node, deps_sync = _make_service(tmp_path, "headers-response-count")
+    block1 = _make_child_block(deps_sync)
+    accepted, _reason = deps_sync.import_block(block1)
+    assert accepted
+    peer = _register_peer(node, "peer-headers:0")
+    _setup_peer_hello(node, peer, head_height=1, head_hash=block1.header.hash())
+    header = HeaderCompact(
+        hash=block1.header.hash(),
+        height=int(block1.header.height),
+        parent=bytes(block1.header.parentHash),
+        theta_micro=int(getattr(block1.header, "thetaMicro", 0)),
+        timestamp=int(getattr(block1.header, "timestamp", 0)),
+    )
+
+    async def _fake_send(peer_obj: _PeerState, msg_id: MsgID, payload: Any) -> None:
+        assert msg_id == MsgID.GET_HEADERS
+        if peer_obj.pending_headers and not peer_obj.pending_headers.done():
+            peer_obj.pending_headers.set_result(Headers(headers=[header]))
+
+    monkeypatch.setattr(node, "_send", _fake_send)
+
+    headers = await node._fetch_headers(peer)
+
+    assert headers
+    assert node._sync_last_header_response_count > 0
 
 
 def test_wrong_genesis_peer_is_ineligible_without_not_anchored(
