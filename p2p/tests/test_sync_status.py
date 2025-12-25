@@ -123,6 +123,30 @@ def _make_child_block_from_header(parent) -> Block:
     return Block(header=child, txs=(), proofs=(), receipts=None)
 
 
+def _make_child_block_from_header_with_offset(parent, *, ts_offset: int) -> Block:
+    timestamp = int(getattr(parent, "timestamp", 0)) + ts_offset
+    target = _theta_to_target(int(getattr(parent, "thetaMicro", 0)))
+    child = None
+    for nonce in range(0, 10000):
+        candidate = parent.build_child(
+            timestamp=timestamp,
+            state_root=parent.stateRoot,
+            txs_root=ZERO32,
+            receipts_root=ZERO32,
+            proofs_root=ZERO32,
+            da_root=ZERO32,
+            nonce=nonce,
+            extra=b"",
+        )
+        header_hash = compute_header_hash(candidate)
+        if int.from_bytes(header_hash, "big") <= target:
+            child = candidate
+            break
+    if child is None:
+        raise AssertionError("Failed to find nonce meeting pow target for test block")
+    return Block(header=child, txs=(), proofs=(), receipts=None)
+
+
 def _make_peer() -> _PeerState:
     peer = _PeerState(
         session_id="peer-1",
@@ -151,6 +175,33 @@ def _register_peer(node: P2PService, remote: str) -> _PeerState:
     node._peers[remote] = peer
     node._peers_by_session[peer.session_id] = peer
     return peer
+
+
+def _setup_peer_hello(
+    node: P2PService,
+    peer: _PeerState,
+    *,
+    head_height: int = 1,
+    head_hash: bytes | None = None,
+) -> None:
+    peer.ready_for_sync = True
+    peer.hello_done.set()
+    peer.peer_id = peer.peer_id or "peer-test"
+    peer.hello = {
+        "version": "2",
+        "chain_id": node.chain_id,
+        "genesis_hash": node._genesis_hash(),
+        "genesis_header_hash": node._genesis_header_hash(),
+        "genesis_block_hash": node._genesis_block_hash(),
+        "fork_id": node._fork_id(),
+        "consensus_id": node._consensus_id(),
+        "protocol_version": node._protocol_version(),
+        "genesis_identity": node._genesis_identity(),
+        "network_params_hash": node._network_params_hash(),
+        "capabilities": ["sync"],
+        "head_height": head_height,
+        "head_hash": head_hash or b"\x00" * 32,
+    }
 
 
 def _make_service(tmp_path: Path, name: str) -> tuple[P2PService, P2PDeps]:
@@ -400,6 +451,107 @@ def test_not_anchored_sets_probe_without_penalty(tmp_path: Path) -> None:
     assert reason == "not_anchored"
     assert node._sync_anchor_probe_hash == bad_parent
     assert node._sync_peer_penalties == {}
+
+
+def test_not_anchored_resets_small_chain_and_advances(tmp_path: Path) -> None:
+    node, deps_sync = _make_service(tmp_path, "not-anchored-reset")
+    block1 = _make_child_block(deps_sync)
+    accepted, _reason = deps_sync.import_block(block1)
+    assert accepted
+
+    genesis = deps_sync.header_by_number(0)
+    assert genesis is not None
+    alt_block1 = _make_child_block_from_header_with_offset(genesis, ts_offset=2)
+    alt_block2 = _make_child_block_from_header(alt_block1.header)
+    headers = [
+        HeaderCompact(
+            hash=alt_block1.header.hash(),
+            height=int(alt_block1.header.height),
+            parent=bytes(alt_block1.header.parentHash),
+            theta_micro=int(getattr(alt_block1.header, "thetaMicro", 0)),
+            timestamp=int(getattr(alt_block1.header, "timestamp", 0)),
+        ),
+        HeaderCompact(
+            hash=alt_block2.header.hash(),
+            height=int(alt_block2.header.height),
+            parent=bytes(alt_block2.header.parentHash),
+            theta_micro=int(getattr(alt_block2.header, "thetaMicro", 0)),
+            timestamp=int(getattr(alt_block2.header, "timestamp", 0)),
+        ),
+    ]
+
+    node._sync_not_anchored_reset_threshold = 1
+    node._sync_not_anchored_reset_height = 1
+    peer = _make_peer()
+    peer.hello = {
+        "chain_id": node.chain_id,
+        "genesis_hash": node._genesis_hash(),
+        "genesis_header_hash": node._genesis_header_hash(),
+        "genesis_block_hash": node._genesis_block_hash(),
+    }
+
+    accepted_hashes, reason = node._process_headers(peer, headers)
+
+    assert accepted_hashes == []
+    assert reason == "not_anchored"
+    height, _ = deps_sync.head()
+    assert height == 0
+
+    accepted_hashes, reason = node._process_headers(peer, headers)
+
+    assert reason is None
+    assert accepted_hashes == [hdr.hash for hdr in headers]
+    assert node._sync_best_header is not None
+    assert node._sync_best_header.height == alt_block2.header.height
+
+
+def test_not_anchored_cooldown_allows_other_peers(tmp_path: Path) -> None:
+    node, deps_sync = _make_service(tmp_path, "not-anchored-cooldown")
+    _ = deps_sync
+    peer_a = _register_peer(node, "peer-a:0")
+    peer_b = _register_peer(node, "peer-b:0")
+    _setup_peer_hello(node, peer_a, head_height=5)
+    _setup_peer_hello(node, peer_b, head_height=6)
+
+    bad_header = HeaderCompact(
+        hash=b"\x11" * 32,
+        height=2,
+        parent=b"\x22" * 32,
+        theta_micro=1,
+        timestamp=1,
+    )
+
+    accepted_hashes, reason = node._process_headers(peer_a, [bad_header])
+
+    assert accepted_hashes == []
+    assert reason == "not_anchored"
+
+    eligible, ineligible = node._eligible_sync_peers()
+    eligible_remotes = {peer.remote for peer in eligible}
+    assert peer_b.remote in eligible_remotes
+    assert ineligible.get(peer_a.remote) == "not_anchored"
+
+    node._sync_peer_backoff[peer_a.remote] = time.time() - 1
+    eligible, ineligible = node._eligible_sync_peers()
+    eligible_remotes = {peer.remote for peer in eligible}
+    assert peer_a.remote in eligible_remotes
+    assert peer_a.remote not in ineligible
+
+
+def test_wrong_genesis_peer_is_ineligible_without_not_anchored(
+    tmp_path: Path,
+) -> None:
+    node, _deps_sync = _make_service(tmp_path, "wrong-genesis")
+    peer = _register_peer(node, "peer-wrong-genesis:0")
+    _setup_peer_hello(node, peer, head_height=5)
+    peer.hello["genesis_hash"] = b"\x11" * 32
+    peer.hello["genesis_header_hash"] = b"\x11" * 32
+
+    ok, reason = node._sync_peer_eligibility(peer, now=time.time())
+
+    assert ok is False
+    assert reason == "genesis_mismatch"
+    assert peer.not_anchored_count == 0
 
 
 def test_do_not_mark_wrong_chain_on_single_invalid_headers(tmp_path: Path) -> None:
@@ -731,8 +883,9 @@ def test_sync_status_head_hash_matches_mainnet_genesis(tmp_path: Path) -> None:
             return self._h
 
     class _StubDeps:
-        def __init__(self, h: bytes) -> None:
+        def __init__(self, h: bytes, expected: bytes) -> None:
             self._h = h
+            self.expected_genesis_hash = expected
 
         def head(self):
             return 0, _StubHeader(self._h)
@@ -741,7 +894,7 @@ def test_sync_status_head_hash_matches_mainnet_genesis(tmp_path: Path) -> None:
         listen_addrs=[tcp_multiaddr(0)],
         seeds=[],
         chain_id=1,
-        deps=_StubDeps(expected),
+        deps=_StubDeps(expected, expected),
         peerstore_path=str(tmp_path / "head-genesis" / "p2p"),
     )
 
