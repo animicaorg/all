@@ -61,7 +61,11 @@ class Hello:
     listen_addrs: List[Address] = dc.field(default_factory=list)
     # Optional genesis hash for strict network matching (recommended).
     # If empty, receivers should fall back to chain_id/alg_policy_root checks only.
+    # Legacy alias; prefer genesis_header_hash/genesis_block_hash.
     genesis_hash: Hash32 = b""
+    # Canonical anchoring hashes (header hash is the canonical P2P anchor).
+    genesis_header_hash: Hash32 = b""
+    genesis_block_hash: Hash32 = b""
     fork_id: int = 0
     consensus_id: str = ""
     protocol_version: str = ""
@@ -80,6 +84,10 @@ class Hello:
     def __post_init__(self):
         if self.genesis_hash:
             _ensure_len("genesis_hash", self.genesis_hash, 32)
+        if self.genesis_header_hash:
+            _ensure_len("genesis_header_hash", self.genesis_header_hash, 32)
+        if self.genesis_block_hash:
+            _ensure_len("genesis_block_hash", self.genesis_block_hash, 32)
         if self.fork_id:
             if int(self.fork_id) < 0 or int(self.fork_id) > 0xFFFFFFFF:
                 raise ValueError(f"fork_id must be uint32, got {self.fork_id}")

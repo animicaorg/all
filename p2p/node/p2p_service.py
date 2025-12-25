@@ -3045,6 +3045,8 @@ class P2PService:
         head_hash = (
             bytes.fromhex(head_hash_hex[2:]) if head_hash_hex else (b"\x00" * 32)
         )
+        genesis_header_hash = self._genesis_header_hash()
+        genesis_block_hash = self._genesis_block_hash()
         listen_port = self._local_listen_port()
         listen_addrs = self._advertised_addrs()
         hello = Hello(
@@ -3053,7 +3055,9 @@ class P2PService:
             chain_id=self.chain_id,
             listen_port=listen_port,
             listen_addrs=listen_addrs,
-            genesis_hash=self._genesis_hash(),
+            genesis_hash=genesis_header_hash,
+            genesis_header_hash=genesis_header_hash,
+            genesis_block_hash=genesis_block_hash,
             fork_id=self._fork_id(),
             consensus_id=self._consensus_id(),
             protocol_version=self._protocol_version(),
@@ -3120,6 +3124,8 @@ class P2PService:
         reason: str,
         peer_chain_id: Optional[int],
         peer_genesis_hash: Optional[bytes],
+        peer_genesis_header_hash: Optional[bytes] = None,
+        peer_genesis_block_hash: Optional[bytes] = None,
         peer_genesis_identity: Optional[bytes] = None,
         peer_network_params_hash: Optional[bytes] = None,
         peer_fork_id: Optional[int] = None,
@@ -3127,6 +3133,8 @@ class P2PService:
         peer_protocol_version: Optional[str] = None,
     ) -> None:
         local_genesis = self._genesis_hash()
+        local_genesis_header = self._genesis_header_hash()
+        local_genesis_block = self._genesis_block_hash()
         local_genesis_identity = self._genesis_identity()
         local_params_hash = self._network_params_hash()
         log.warning(
@@ -3136,6 +3144,8 @@ class P2PService:
                 "reason": reason,
                 "local_chain_id": self.chain_id,
                 "local_genesis_hash": local_genesis.hex(),
+                "local_genesis_header_hash": local_genesis_header.hex(),
+                "local_genesis_block_hash": local_genesis_block.hex(),
                 "local_genesis_identity": local_genesis_identity.hex(),
                 "local_network_params_hash": local_params_hash.hex(),
                 "local_fork_id": self._fork_id(),
@@ -3144,6 +3154,12 @@ class P2PService:
                 "peer_chain_id": peer_chain_id,
                 "peer_genesis_hash": peer_genesis_hash.hex()
                 if peer_genesis_hash
+                else None,
+                "peer_genesis_header_hash": peer_genesis_header_hash.hex()
+                if peer_genesis_header_hash
+                else None,
+                "peer_genesis_block_hash": peer_genesis_block_hash.hex()
+                if peer_genesis_block_hash
                 else None,
                 "peer_genesis_identity": peer_genesis_identity.hex()
                 if peer_genesis_identity
@@ -3178,7 +3194,14 @@ class P2PService:
                 "chain_id_mismatch", points=0
             )
 
-        if not hello.genesis_hash:
+        peer_genesis_header = bytes(getattr(hello, "genesis_header_hash", b"")) or bytes(
+            getattr(hello, "genesis_hash", b"")
+        )
+        peer_genesis_block = bytes(getattr(hello, "genesis_block_hash", b""))
+        local_genesis_header = self._genesis_header_hash()
+        local_genesis_block = self._genesis_block_hash()
+
+        if not peer_genesis_header and not peer_genesis_block:
             self._stats["p2p_peers_rejected_genesis_mismatch"] += 1
             self._log_handshake_mismatch(
                 peer,
@@ -3196,13 +3219,15 @@ class P2PService:
                 points=self._score_points["wrong_genesis"],
             )
 
-        if bytes(hello.genesis_hash) != self._genesis_hash():
+        if peer_genesis_header and peer_genesis_header != local_genesis_header:
             self._stats["p2p_peers_rejected_genesis_mismatch"] += 1
             self._log_handshake_mismatch(
                 peer,
                 reason="genesis_mismatch",
                 peer_chain_id=int(hello.chain_id or 0),
-                peer_genesis_hash=bytes(hello.genesis_hash or b""),
+                peer_genesis_hash=peer_genesis_header,
+                peer_genesis_header_hash=peer_genesis_header,
+                peer_genesis_block_hash=peer_genesis_block or None,
             )
             await self._send(
                 peer,
@@ -3213,13 +3238,41 @@ class P2PService:
                 "genesis_mismatch",
                 points=self._score_points["wrong_genesis"],
             )
+        if not peer_genesis_header and peer_genesis_block:
+            if peer_genesis_block != local_genesis_block:
+                self._stats["p2p_peers_rejected_genesis_mismatch"] += 1
+                self._log_handshake_mismatch(
+                    peer,
+                    reason="genesis_mismatch",
+                    peer_chain_id=int(hello.chain_id or 0),
+                    peer_genesis_hash=peer_genesis_block,
+                    peer_genesis_header_hash=peer_genesis_header or None,
+                    peer_genesis_block_hash=peer_genesis_block,
+                )
+                await self._send(
+                    peer,
+                    MsgID.HELLO_ACK,
+                    HelloAck(accepted=False, reason="genesis_mismatch"),
+                )
+                raise PeerMisbehavior(
+                    "genesis_mismatch",
+                    points=self._score_points["wrong_genesis"],
+                )
+            log.info(
+                "Peer provided legacy genesis block hash",
+                extra={
+                    "remote": peer.remote,
+                    "peer_genesis_block_hash": peer_genesis_block.hex(),
+                    "local_genesis_block_hash": local_genesis_block.hex(),
+                },
+            )
 
         if not getattr(hello, "fork_id", None):
             self._log_handshake_mismatch(
                 peer,
                 reason="fork_id_missing",
                 peer_chain_id=int(hello.chain_id or 0),
-                peer_genesis_hash=bytes(hello.genesis_hash or b""),
+                peer_genesis_hash=peer_genesis_header or peer_genesis_block or b"",
                 peer_fork_id=getattr(hello, "fork_id", None),
             )
             await self._send(
@@ -3237,7 +3290,7 @@ class P2PService:
                 peer,
                 reason="fork_id_mismatch",
                 peer_chain_id=int(hello.chain_id or 0),
-                peer_genesis_hash=bytes(hello.genesis_hash or b""),
+                peer_genesis_hash=peer_genesis_header or peer_genesis_block or b"",
                 peer_fork_id=int(getattr(hello, "fork_id", 0) or 0),
             )
             await self._send(
@@ -3255,7 +3308,7 @@ class P2PService:
                 peer,
                 reason="consensus_missing",
                 peer_chain_id=int(hello.chain_id or 0),
-                peer_genesis_hash=bytes(hello.genesis_hash or b""),
+                peer_genesis_hash=peer_genesis_header or peer_genesis_block or b"",
                 peer_consensus_id=getattr(hello, "consensus_id", None),
             )
             await self._send(
@@ -3273,7 +3326,7 @@ class P2PService:
                 peer,
                 reason="consensus_mismatch",
                 peer_chain_id=int(hello.chain_id or 0),
-                peer_genesis_hash=bytes(hello.genesis_hash or b""),
+                peer_genesis_hash=peer_genesis_header or peer_genesis_block or b"",
                 peer_consensus_id=str(getattr(hello, "consensus_id", "")),
             )
             await self._send(
@@ -3291,7 +3344,7 @@ class P2PService:
                 peer,
                 reason="protocol_missing",
                 peer_chain_id=int(hello.chain_id or 0),
-                peer_genesis_hash=bytes(hello.genesis_hash or b""),
+                peer_genesis_hash=peer_genesis_header or peer_genesis_block or b"",
                 peer_protocol_version=getattr(hello, "protocol_version", None),
             )
             await self._send(
@@ -3309,7 +3362,7 @@ class P2PService:
                 peer,
                 reason="protocol_mismatch",
                 peer_chain_id=int(hello.chain_id or 0),
-                peer_genesis_hash=bytes(hello.genesis_hash or b""),
+                peer_genesis_hash=peer_genesis_header or peer_genesis_block or b"",
                 peer_protocol_version=str(getattr(hello, "protocol_version", "")),
             )
             await self._send(
@@ -3327,7 +3380,7 @@ class P2PService:
                 peer,
                 reason="genesis_identity_missing",
                 peer_chain_id=int(hello.chain_id or 0),
-                peer_genesis_hash=bytes(hello.genesis_hash or b""),
+                peer_genesis_hash=peer_genesis_header or peer_genesis_block or b"",
             )
             await self._send(
                 peer,
@@ -3344,7 +3397,7 @@ class P2PService:
                 peer,
                 reason="genesis_identity_mismatch",
                 peer_chain_id=int(hello.chain_id or 0),
-                peer_genesis_hash=bytes(hello.genesis_hash or b""),
+                peer_genesis_hash=peer_genesis_header or peer_genesis_block or b"",
                 peer_genesis_identity=bytes(hello.genesis_identity or b""),
             )
             await self._send(
@@ -3362,7 +3415,7 @@ class P2PService:
                 peer,
                 reason="network_params_missing",
                 peer_chain_id=int(hello.chain_id or 0),
-                peer_genesis_hash=bytes(hello.genesis_hash or b""),
+                peer_genesis_hash=peer_genesis_header or peer_genesis_block or b"",
                 peer_genesis_identity=bytes(hello.genesis_identity or b""),
             )
             await self._send(
@@ -3380,7 +3433,7 @@ class P2PService:
                 peer,
                 reason="network_params_mismatch",
                 peer_chain_id=int(hello.chain_id or 0),
-                peer_genesis_hash=bytes(hello.genesis_hash or b""),
+                peer_genesis_hash=peer_genesis_header or peer_genesis_block or b"",
                 peer_genesis_identity=bytes(hello.genesis_identity or b""),
                 peer_network_params_hash=bytes(hello.network_params_hash or b""),
             )
@@ -3451,9 +3504,22 @@ class P2PService:
         normalized["head_hash"] = bytes(getattr(hello, "head_hash", b"")) or data.get(
             "head_hash"
         ) or data.get("headHash")
-        normalized["genesis_hash"] = bytes(
-            getattr(hello, "genesis_hash", b"")
-        ) or data.get("genesis_hash") or data.get("genesisHash")
+        normalized["genesis_hash"] = (
+            peer_genesis_header
+            or peer_genesis_block
+            or data.get("genesis_hash")
+            or data.get("genesisHash")
+        )
+        normalized["genesis_header_hash"] = (
+            peer_genesis_header
+            or data.get("genesis_header_hash")
+            or data.get("genesisHeaderHash")
+        )
+        normalized["genesis_block_hash"] = (
+            peer_genesis_block
+            or data.get("genesis_block_hash")
+            or data.get("genesisBlockHash")
+        )
         normalized["fork_id"] = int(
             getattr(hello, "fork_id", 0)
             or data.get("fork_id")
@@ -4308,7 +4374,8 @@ class P2PService:
         contiguous: List[_SyncHeader] = []
         prev: Optional[_SyncHeader] = None
         seen_hashes: set[bytes] = set()
-        expected_genesis = self._genesis_hash()
+        expected_genesis = self._genesis_header_hash()
+        expected_genesis_block = self._genesis_block_hash()
 
         for idx, hc in enumerate(headers):
             header = self._header_from_compact(hc)
@@ -4361,39 +4428,61 @@ class P2PService:
                         and header.height == anchor_height + 1
                         and header.parent_hash != anchor_hash
                     ):
-                        self._sync_last_header_error = "not_anchored"
-                        self._sync_last_header_error_at = time.time()
-                        self._sync_last_header_error_peer = peer.remote
-                        self._penalize_peer(peer, "header_not_anchored", severity=1)
-                        strikes = peer.invalid_headers
-                        delay = (
-                            self._sync_no_headers_backoff
-                            if strikes >= 2
-                            else min(2.0, self._sync_no_headers_backoff)
-                        )
-                        self._set_sync_backoff(
-                            peer,
-                            reason="not_anchored",
-                            delay=delay,
-                        )
-                        log.info(
-                            "Rejecting header batch: anchor parent mismatch",
-                            extra={
-                                "remote": peer.remote,
-                                "anchor_height": anchor_height,
-                                "anchor_hash": anchor_hash.hex(),
-                                "first_height": header.height,
-                                "expected_parent": anchor_hash.hex(),
-                                "got_parent": header.parent_hash.hex(),
-                                "strikes": strikes,
-                            },
-                        )
-                        return [], "not_anchored"
-                    if header.height == 1 and header.parent_hash != expected_genesis:
+                        if anchor_height == 0 and header.parent_hash in {
+                            expected_genesis,
+                            expected_genesis_block,
+                        }:
+                            pass
+                        else:
+                            self._sync_last_header_error = "not_anchored"
+                            self._sync_last_header_error_at = time.time()
+                            self._sync_last_header_error_peer = peer.remote
+                            self._penalize_peer(peer, "header_not_anchored", severity=1)
+                            strikes = peer.invalid_headers
+                            delay = (
+                                self._sync_no_headers_backoff
+                                if strikes >= 2
+                                else min(2.0, self._sync_no_headers_backoff)
+                            )
+                            self._set_sync_backoff(
+                                peer,
+                                reason="not_anchored",
+                                delay=delay,
+                            )
+                            log.info(
+                                "Rejecting header batch: anchor parent mismatch",
+                                extra={
+                                    "remote": peer.remote,
+                                    "anchor_height": anchor_height,
+                                    "anchor_hash": anchor_hash.hex(),
+                                    "first_height": header.height,
+                                    "expected_parent": anchor_hash.hex(),
+                                    "got_parent": header.parent_hash.hex(),
+                                    "strikes": strikes,
+                                },
+                            )
+                            return [], "not_anchored"
+                    if header.height == 1 and header.parent_hash not in {
+                        expected_genesis,
+                        expected_genesis_block,
+                    }:
                         self._stats["p2p_peers_rejected_genesis_mismatch"] += 1
                         self._penalize_peer(peer, "genesis_mismatch", severity=2)
                         return [], "genesis_mismatch"
-                    if not self._has_header(header.parent_hash):
+                    if (
+                        header.height == 1
+                        and header.parent_hash
+                        in {
+                            expected_genesis,
+                            expected_genesis_block,
+                        }
+                    ):
+                        parent_height = 0
+                        parent_ts = None
+                    elif (
+                        not self._has_header(header.parent_hash)
+                        and header.parent_hash not in self._sync_headers
+                    ):
                         self._sync_last_header_error = "not_anchored"
                         self._sync_last_header_error_at = time.time()
                         self._sync_last_header_error_peer = peer.remote
@@ -4417,32 +4506,39 @@ class P2PService:
                             delay=delay,
                         )
                         return [], "not_anchored"
-                    parent_info = self._header_meta(header.parent_hash)
-                    if parent_info is None:
-                        self._sync_last_header_error = "not_anchored"
-                        self._sync_last_header_error_at = time.time()
-                        self._sync_last_header_error_peer = peer.remote
-                        log.info(
-                            "Rejecting header batch: parent metadata missing",
-                            extra={
-                                "remote": peer.remote,
-                                "parent_hash": header.parent_hash.hex(),
-                            },
-                        )
-                        self._penalize_peer(peer, "header_not_anchored", severity=1)
-                        strikes = peer.invalid_headers
-                        delay = (
-                            self._sync_no_headers_backoff
-                            if strikes >= 2
-                            else min(2.0, self._sync_no_headers_backoff)
-                        )
-                        self._set_sync_backoff(
-                            peer,
-                            reason="not_anchored",
-                            delay=delay,
-                        )
-                        return [], "not_anchored"
-                    parent_height, parent_ts = parent_info
+                    if header.height == 1 and header.parent_hash in {
+                        expected_genesis,
+                        expected_genesis_block,
+                    }:
+                        parent_height = 0
+                        parent_ts = None
+                    else:
+                        parent_info = self._header_meta(header.parent_hash)
+                        if parent_info is None:
+                            self._sync_last_header_error = "not_anchored"
+                            self._sync_last_header_error_at = time.time()
+                            self._sync_last_header_error_peer = peer.remote
+                            log.info(
+                                "Rejecting header batch: parent metadata missing",
+                                extra={
+                                    "remote": peer.remote,
+                                    "parent_hash": header.parent_hash.hex(),
+                                },
+                            )
+                            self._penalize_peer(peer, "header_not_anchored", severity=1)
+                            strikes = peer.invalid_headers
+                            delay = (
+                                self._sync_no_headers_backoff
+                                if strikes >= 2
+                                else min(2.0, self._sync_no_headers_backoff)
+                            )
+                            self._set_sync_backoff(
+                                peer,
+                                reason="not_anchored",
+                                delay=delay,
+                            )
+                            return [], "not_anchored"
+                        parent_height, parent_ts = parent_info
                     if header.height != parent_height + 1:
                         self._penalize_peer(peer, "header_height_mismatch")
                         break
@@ -4906,6 +5002,8 @@ class P2PService:
     def _sync_peer_log_context(self, peer: _PeerState) -> dict[str, Any]:
         hello = peer.hello or {}
         genesis_hash = bytes(hello.get("genesis_hash") or b"")
+        genesis_header_hash = bytes(hello.get("genesis_header_hash") or b"")
+        genesis_block_hash = bytes(hello.get("genesis_block_hash") or b"")
         genesis_identity = bytes(hello.get("genesis_identity") or b"")
         params_hash = bytes(hello.get("network_params_hash") or b"")
         return {
@@ -4916,6 +5014,12 @@ class P2PService:
             "agent": hello.get("agent"),
             "chain_id": hello.get("chain_id"),
             "genesis_hash": genesis_hash.hex() if genesis_hash else None,
+            "genesis_header_hash": genesis_header_hash.hex()
+            if genesis_header_hash
+            else None,
+            "genesis_block_hash": genesis_block_hash.hex()
+            if genesis_block_hash
+            else None,
             "genesis_identity": genesis_identity.hex() if genesis_identity else None,
             "network_params_hash": params_hash.hex() if params_hash else None,
             "head_height": hello.get("head_height"),
@@ -4969,11 +5073,22 @@ class P2PService:
             chain_id = 0
         if chain_id != int(self.chain_id):
             return False, "chain_mismatch"
-        genesis_hash = bytes(peer.hello.get("genesis_hash") or b"")
-        if not genesis_hash:
+        genesis_header_hash = bytes(
+            peer.hello.get("genesis_header_hash")
+            or peer.hello.get("genesis_hash")
+            or b""
+        )
+        genesis_block_hash = bytes(peer.hello.get("genesis_block_hash") or b"")
+        if not genesis_header_hash and not genesis_block_hash:
             return False, "genesis_missing"
-        if genesis_hash != self._genesis_hash():
-            return False, "genesis_mismatch"
+        local_genesis_header = self._genesis_header_hash()
+        local_genesis_block = self._genesis_block_hash()
+        if genesis_header_hash:
+            if genesis_header_hash != local_genesis_header:
+                return False, "genesis_mismatch"
+        elif genesis_block_hash:
+            if genesis_block_hash != local_genesis_block:
+                return False, "genesis_mismatch"
         fork_id = int(peer.hello.get("fork_id") or 0)
         if not fork_id:
             return False, "fork_id_missing"
@@ -5300,6 +5415,16 @@ class P2PService:
         return b"\x00" * 32
 
     def _genesis_identity(self) -> bytes:
+        return self._genesis_hash()
+
+    def _genesis_header_hash(self) -> bytes:
+        return self._genesis_hash()
+
+    def _genesis_block_hash(self) -> bytes:
+        if self.deps is not None:
+            db_hash = getattr(self.deps, "db_genesis_hash", None)
+            if db_hash:
+                return bytes(db_hash)
         return self._genesis_hash()
 
     def _fork_id(self) -> int:
