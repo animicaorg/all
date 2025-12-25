@@ -46,18 +46,9 @@ from .constants import MAX_OUTBOUND_PEERS as CONST_MAX_OUTBOUND
 from .constants import MAX_PEERS as CONST_MAX_PEERS
 from .constants import PROTOCOL_ID
 
-# Default fallback seeds (mainnet) - prefer the public RPC host with IP fallback.
+# Default fallback seeds (mainnet).
 MAINNET_SEEDS: Final[tuple[str, ...]] = (
-    # Mainnet seeds: public RPC + dedicated seed host.
-    "/dns4/mainnet.animica.org/udp/443/quic-v1",
     "/dns4/mainnet.animica.org/tcp/30333",
-    "/dns4/mainnet.animica.org/tcp/30333/ws",
-    "/dns4/rpc.animica.org/udp/443/quic-v1",
-    "/dns4/rpc.animica.org/tcp/30333",
-    "/dns4/rpc.animica.org/tcp/30333/ws",
-    # Shared IP fallback for DNS-less environments.
-    "/ip4/144.126.133.21/udp/443/quic-v1",
-    "/ip4/144.126.133.21/tcp/30333",
 )
 
 TESTNET_SEEDS: Final[tuple[str, ...]] = (

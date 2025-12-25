@@ -64,11 +64,9 @@ class TestQuicV1MultiaddrParsing:
         # All should parse without errors
         results = [parse_multiaddr(seed) for seed in seeds]
         
-        # Should have at least one QUIC and TCP seed
-        quic_count = sum(1 for r in results if r.is_quic)
+        # Should have at least one TCP seed
         tcp_count = sum(1 for r in results if r.transport == "tcp" and not r.is_quic)
-        
-        assert quic_count >= 1, f"Expected QUIC seeds, got {quic_count}"
+
         assert tcp_count >= 1, f"Expected TCP seeds, got {tcp_count}"
 
 
@@ -90,10 +88,8 @@ class TestP2PServiceSeedFiltering:
             if parsed.transport == "tcp":
                 tcp_seeds.append(seed)
         
-        # Should have TCP seeds for mainnet + rpc + IP fallback
+        # Should have TCP seeds for mainnet
         assert any("mainnet.animica.org" in seed for seed in tcp_seeds)
-        assert any("rpc.animica.org" in seed for seed in tcp_seeds)
-        assert any("144.126.133.21" in seed for seed in tcp_seeds)
         
         # Verify they can be dialed
         for seed in tcp_seeds:
