@@ -443,6 +443,14 @@ class BlockDB:
         Returns the block hash.
         """
         hh = header_hash(block.header)  # type: ignore[attr-defined]
+        existing = self.get_canonical_hash(height)
+        if existing is not None:
+            if existing != hh:
+                raise ValueError(
+                    "refusing to overwrite canonical block at height "
+                    f"{height}: {to_hex(existing)} != {to_hex(hh)}"
+                )
+            return hh
         with self.kv.batch() as b:
             self.put_block(block, batch=b)
             self.set_canonical(height, hh, batch=b)

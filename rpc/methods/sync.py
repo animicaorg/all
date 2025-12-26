@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import typing as t
 
 from rpc import deps
@@ -56,6 +57,13 @@ async def _core_force_sync(core_svc: t.Any) -> dict[str, t.Any]:
         return {"success": False, "error": str(exc)}
 
 
+async def _run_in_background(coro: t.Awaitable[t.Any]) -> None:
+    try:
+        await coro
+    except Exception:
+        return
+
+
 @method("sync.force", desc="Trigger a P2P sync round and return status")
 async def sync_force(clear_cache: bool = False) -> dict[str, t.Any]:
     svc = _get_p2p_service()
@@ -75,21 +83,31 @@ async def sync_force(clear_cache: bool = False) -> dict[str, t.Any]:
             "peerCount": 0,
         }
 
-    result: dict[str, t.Any] = {}
-    if svc is not None and hasattr(svc, "force_sync_with_cache"):
-        try:
-            result = await svc.force_sync_with_cache(clear_cache=bool(clear_cache))
-        except Exception as exc:  # pragma: no cover - defensive
-            result = {"success": False, "error": str(exc)}
-    elif svc is not None and hasattr(svc, "force_sync"):
-        try:
-            result = await svc.force_sync()
-        except Exception as exc:  # pragma: no cover - defensive
-            result = {"success": False, "error": str(exc)}
+    queued = False
+    if svc is not None:
+        if hasattr(svc, "_sync_wakeup"):
+            try:
+                svc._sync_wakeup.set()
+            except Exception:
+                pass
+        if hasattr(svc, "force_sync_with_cache"):
+            asyncio.create_task(
+                _run_in_background(
+                    svc.force_sync_with_cache(clear_cache=bool(clear_cache))
+                )
+            )
+            queued = True
+        elif hasattr(svc, "force_sync"):
+            asyncio.create_task(_run_in_background(svc.force_sync()))
+            queued = True
     elif core_svc is not None:
-        result = await _core_force_sync(core_svc)
-    else:
-        result = {"success": False, "error": "force_sync not implemented"}
+        asyncio.create_task(_run_in_background(_core_force_sync(core_svc)))
+        queued = True
+
+    if not queued:
+        return {"success": False, "error": "force_sync not implemented"}
+
+    result: dict[str, t.Any] = {"success": True, "queued": True, "started": True}
 
     try:
         if svc is not None:

@@ -20,6 +20,7 @@ from core.types.header import Header
 from core.types.tx import Tx
 from core.utils.merkle import merkle_root
 from mining.adapters.core_chain import CoreChainAdapter
+import p2p
 from rpc import deps
 from rpc.methods import method
 
@@ -997,6 +998,17 @@ def _record_local_block(
         _HEAD_STATE["height"] = height
         _HEAD_STATE["hash"] = block_hash
         _HEAD_STATE["generation"] = int(_HEAD_STATE.get("generation", 0)) + 1
+
+
+def _relay_mined_block(block_hash: bytes) -> None:
+    svc = p2p.get_service()
+    if svc is None or not hasattr(svc, "relay_block"):
+        return
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    loop.create_task(svc.relay_block(block_hash))
 
 
 def auto_mine_enabled() -> bool:
@@ -2433,6 +2445,7 @@ def _mine_once(payout_address: bytes | None = None, threads: int = 1) -> tuple[b
         
         if accepted:
             _record_local_block(header.height, "0x" + block_hash_bytes.hex(), header)
+            _relay_mined_block(block_hash_bytes)
             
             # Update mining state for theta adjustment
             _MINING_STATE["last_block_time"] = time.time()
