@@ -342,6 +342,7 @@ class SyncStatusSnapshot:
     last_checkpoint_action: Optional[str]
     synchronized: bool
     peer_penalties: Dict[str, int]
+    peer_anchor_states: Dict[str, dict[str, Any]]
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -399,6 +400,7 @@ class SyncStatusSnapshot:
             "last_checkpoint_action": self.last_checkpoint_action,
             "synchronized": self.synchronized,
             "peer_penalties": dict(self.peer_penalties),
+            "peer_anchor_states": dict(self.peer_anchor_states),
         }
 
 
@@ -2192,6 +2194,16 @@ class P2PService:
             if self._sync_checkpoint_hash is not None
             else None
         )
+        peer_anchor_states = {
+            peer.remote: {
+                "anchored": bool(peer.anchored),
+                "anchor_reason": peer.anchor_reason,
+                "last_anchor_at": peer.last_anchor_at,
+                "not_anchored_count": peer.not_anchored_count,
+                "last_not_anchored_at": peer.last_not_anchored_at,
+            }
+            for peer in self._peers.values()
+        }
         return SyncStatusSnapshot(
             phase=phase,
             head_height=best_block_height,
@@ -2249,6 +2261,7 @@ class P2PService:
                 for remote, count in self._sync_peer_penalties.items()
                 if remote not in self._sync_peer_penalty_whitelist
             },
+            peer_anchor_states=peer_anchor_states,
         )
 
     def sync_debug_snapshot(self) -> dict[str, Any]:
@@ -4816,6 +4829,8 @@ class P2PService:
         self._sync_last_recovery_action = None
         for h in contiguous:
             self._sync_update_best_header(h)
+        if not peer.anchored:
+            self._mark_peer_anchored(peer, reason="headers_accepted")
         log.info(
             "Header batch accepted",
             extra={
