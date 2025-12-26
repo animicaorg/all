@@ -57,7 +57,7 @@ pnpm install
 Create `.env` (copy from `.env.example` if present) with your devnet values:
 
 VITE_RPC_URL=http://127.0.0.1:8545
-VITE_RPC_WS=wss://127.0.0.1:8546
+VITE_RPC_WS=ws://127.0.0.1:8546
 VITE_CHAIN_ID=1337
 # Optional (only if you run studio-services for verification links):
 VITE_SERVICES_URL=http://127.0.0.1:8787
@@ -81,22 +81,22 @@ To add additional domains, edit `vite.config.ts` and add them to the `server.all
 ### Configuration Options
 
 **Required Environment Variables**:
-- `VITE_RPC_URL` - HTTP JSON-RPC endpoint (e.g., `https://rpc.animica.org/rpc`)
+- `VITE_RPC_URL` - HTTP JSON-RPC endpoint (e.g., `http://127.0.0.1:8545/rpc`)
 - `VITE_CHAIN_ID` - Numeric chain ID (e.g., `1` for mainnet, `1337` for devnet)
 
 > Legacy prelaunch IDs such as `659658` / `0xa11ca` are automatically normalized to the
 > canonical mainnet chain ID `1`. Update any old `.env` files to avoid mismatch warnings.
 
 **Optional Environment Variables**:
-- `VITE_RPC_WS` - WebSocket endpoint for live updates (e.g., `wss://rpc.animica.org/ws`)
+- `VITE_RPC_WS` - WebSocket endpoint for live updates (e.g., `ws://127.0.0.1:8546/ws`)
 - `VITE_SERVICES_URL` - Studio services URL for contract verification (e.g., `http://localhost:8090`)
 
 **Quick Setup Examples**:
 
 ```bash
 # Mainnet
-VITE_RPC_URL=https://rpc.animica.org/rpc
-VITE_RPC_WS=wss://rpc.animica.org/ws
+VITE_RPC_URL=http://127.0.0.1:8545/rpc
+VITE_RPC_WS=ws://127.0.0.1:8546/ws
 VITE_CHAIN_ID=1
 
 # Local Development
@@ -145,8 +145,8 @@ server {
   }
 
   location /rpc {
-    proxy_pass https://rpc.animica.org/rpc;
-    proxy_set_header Host rpc.animica.org;
+    proxy_pass http://127.0.0.1:8545/rpc;
+    proxy_set_header Host 127.0.0.1;
     proxy_set_header X-Forwarded-For $remote_addr;
     proxy_set_header X-Forwarded-Proto $scheme;
     proxy_http_version 1.1;

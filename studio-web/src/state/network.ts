@@ -209,8 +209,8 @@ const DEFAULT_MAINNET: NetworkConfig = {
   id: 'mainnet',
   label: 'Animica Mainnet',
   chainId: 1,
-  rpcUrl: 'https://rpc.animica.org/rpc',
-  wsUrl: 'wss://rpc.animica.org/ws',
+  rpcUrl: 'http://127.0.0.1:8545/rpc',
+  wsUrl: 'ws://127.0.0.1:8546/ws',
   servicesUrl: 'https://services.animica.org',
 };
 

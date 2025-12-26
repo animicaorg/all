@@ -40,7 +40,7 @@ The production website lives in `website/`. See `website/README.md` for local de
 - ✅ **Peer Discovery**: Automatic discovery via DNS seeds, mDNS, and Kademlia DHT
 - ✅ **Gossip Protocol**: Efficient block/transaction/proof propagation
 - ✅ **Consensus**: Deterministic PoIES validation by all nodes
-- ✅ **No Central Authority**: Public RPC nodes like `rpc.animica.org` provide public discovery/sync helpers; run your own node for day-to-day queries and mining.
+- ✅ **No Central Authority**: Public RPC nodes like `127.0.0.1` provide public discovery/sync helpers; run your own node for day-to-day queries and mining.
 
 **Run your own node** to strengthen the network and maintain decentralization. See [P2P Networking Guide](docs/P2P_NETWORKING_GUIDE.md) for details.
 
@@ -269,7 +269,7 @@ Each network uses its own data directory to prevent state contamination:
 
 ## 🌐 Decentralized P2P Network
 
-**Animica is fully decentralized** - nodes connect directly to each other via P2P without any central authority. The public RPC at `rpc.animica.org` is provided only for bootstrapping; wallets, miners, and explorers should use a locally run node after syncing.
+**Animica is fully decentralized** - nodes connect directly to each other via P2P without any central authority. The public RPC at `127.0.0.1` is provided only for bootstrapping; wallets, miners, and explorers should use a locally run node after syncing.
 
 ### P2P Features
 
@@ -852,7 +852,7 @@ override the bootstrap RPC endpoint via `ANIMICA_BOOTSTRAP_RPC_URL`.
 | `ANIMICA_P2P_SEEDS` | Seed node addresses | Network-specific | `node1.example.com:30333` |
 | `ANIMICA_P2P_LISTEN` | P2P listen address | `0.0.0.0:30333` | `0.0.0.0:31337` |
 | `ANIMICA_BOOTSTRAP_NODE` | Enable bootstrap-only RPC mode | `false` | `true` |
-| `ANIMICA_BOOTSTRAP_RPC_URL` | Override bootstrap RPC endpoint | Network-specific | `https://rpc.animica.org/rpc` |
+| `ANIMICA_BOOTSTRAP_RPC_URL` | Override bootstrap RPC endpoint | Network-specific | `http://127.0.0.1:8545/rpc` |
 | `ANIMICA_BOOTSTRAP_PASSWORD` | Bootstrap password (mainnet only) | None | `<secure-password>` |
 
 ### Wallet & Keys

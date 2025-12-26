@@ -212,7 +212,7 @@ def create_mock_subprocess_with_failures(failed_networks: set[str]):
     return mock_subprocess_run
 
 
-def _dummy_net_cfg(tmpdir: Path, bootstrap_url: str = "https://rpc.animica.org/rpc") -> Any:
+def _dummy_net_cfg(tmpdir: Path, bootstrap_url: str = "http://127.0.0.1:8545/rpc") -> Any:
     endpoint = bootstrap_url
 
     class _Cfg:
@@ -481,7 +481,7 @@ def test_status_cached_requires_flag(monkeypatch: Any, tmp_path: Path) -> None:
 
     state_path = node._sync_state_path(cfg)
     state_path.parent.mkdir(parents=True, exist_ok=True)
-    state_path.write_text(json.dumps({"rpc_url": "https://rpc.animica.org/rpc", "height": 99}))
+    state_path.write_text(json.dumps({"rpc_url": "http://127.0.0.1:8545/rpc", "height": 99}))
 
     async def failing_rpc_call(*args: Any, **kwargs: Any) -> Any:
         raise RuntimeError("boom")

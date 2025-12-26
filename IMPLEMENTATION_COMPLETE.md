@@ -133,8 +133,8 @@ dist/assets/index-*.js         252.06 kB
 
 ### Mainnet
 ```env
-VITE_RPC_URL=https://rpc.animica.org/rpc
-VITE_RPC_WS=wss://rpc.animica.org/ws
+VITE_RPC_URL=http://127.0.0.1:8545/rpc
+VITE_RPC_WS=ws://127.0.0.1:8546/ws
 VITE_CHAIN_ID=659658
 ```
 

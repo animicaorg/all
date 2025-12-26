@@ -15,8 +15,8 @@
 /docs/*      https://docs.animica.org/:splat             301
 
 # --- RPC proxy (optional; uncomment & edit host) ---
-# /rpc/*     https://rpc.animica.org/:splat              200
-# /ws/*      wss://rpc.animica.org/:splat                200
+# /rpc/*     http://127.0.0.1:8545/:splat              200
+# /ws/*      ws://127.0.0.1:8546/:splat                200
 
 # --- Ensure API/serverless routes are not swallowed by SPA fallback ---
 /api/*       /api/:splat                                 200

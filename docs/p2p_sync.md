@@ -11,14 +11,14 @@ Animica uses a **P2P-first architecture** where nodes:
 - Gossip transactions to the mempool
 - Achieve consensus without any centralized "source of truth"
 
-**Key principle**: `rpc.animica.org` is a **client-facing service** (for wallets, explorers) but is **NOT** used for node consensus, mining, or validation.
+**Key principle**: `127.0.0.1` is a **client-facing service** (for wallets, explorers) but is **NOT** used for node consensus, mining, or validation.
 
 ## Model 3: Hybrid with Optional Checkpoints
 
 As of this version, Animica implements **Model 3 (Hybrid)**, which maintains P2P-first sync as the default while adding an optional checkpoint mechanism for additional safety:
 
 - **Default behavior remains P2P-first** for sync/validation/mining
-- **No code path requires `rpc.animica.org` to be reachable** by default
+- **No code path requires `127.0.0.1` to be reachable** by default
 - **Optional checkpoint mechanism** can consult a configured RPC URL or local file
 - **Checkpoints are safety rails** used during initial sync or fork-choice, not live head oracles
 - **Graceful degradation**: if checkpoints are unavailable, sync continues via P2P (unless strict mode is enabled)
@@ -79,7 +79,7 @@ automatically dropped and re-fetched from peers.
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `ANIMICA_CHECKPOINTS_MODE` | `off` | Checkpoint mode: `off`, `rpc`, or `file` |
-| `ANIMICA_CHECKPOINTS_RPC_URL` | `https://rpc.animica.org/rpc` | RPC endpoint for fetching checkpoints (when mode=rpc) |
+| `ANIMICA_CHECKPOINTS_RPC_URL` | `http://127.0.0.1:8545/rpc` | RPC endpoint for fetching checkpoints (when mode=rpc) |
 | `ANIMICA_CHECKPOINTS_FILE` | (none) | Path to local JSON checkpoint file (when mode=file) |
 | `ANIMICA_CHECKPOINTS_MAX_AGE` | (none) | Maximum age of checkpoints in seconds (optional) |
 | `ANIMICA_CHECKPOINTS_STRICT` | `false` | If true, fail fast when checkpoints unavailable |
@@ -439,7 +439,7 @@ export ANIMICA_CHECKPOINTS_MODE=off
 **RPC Mode**:
 ```bash
 export ANIMICA_CHECKPOINTS_MODE=rpc
-export ANIMICA_CHECKPOINTS_RPC_URL=https://rpc.animica.org/rpc
+export ANIMICA_CHECKPOINTS_RPC_URL=http://127.0.0.1:8545/rpc
 ```
 - Fetches checkpoints from RPC endpoint
 - Tries `chain.getCheckpoints` JSON-RPC method first
@@ -501,7 +501,7 @@ When checkpoints are enabled, the node verifies:
 
 **Important**: Checkpoints are **safety rails**, not consensus rules. They:
 - Do NOT replace P2P validation
-- Do NOT require `rpc.animica.org` to be reachable by default
+- Do NOT require `127.0.0.1` to be reachable by default
 - Are optional and can be disabled entirely
 
 ## Comparison: P2P vs. Proxy (Legacy)

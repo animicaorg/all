@@ -13,7 +13,7 @@ from animica.cli import rpc_utils
         ("http://[::1]:8545/rpc", True),
         ("http://0.0.0.0:8545/rpc", True),
         ("127.0.0.1:8545/rpc", True),
-        ("https://rpc.animica.org/rpc", False),
+        ("http://127.0.0.1:8545/rpc", False),
         ("http://192.168.1.10:8545/rpc", False),
     ],
 )
