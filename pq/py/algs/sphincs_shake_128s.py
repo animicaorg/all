@@ -26,6 +26,7 @@ from typing import Dict, Optional, Tuple
 _OQS_OK = False
 _OQS_MECH = None  # type: Optional[str]
 _sizes: Dict[str, int] = {"pk": 0, "sk": 0, "sig": 0}
+_CUSTOM_FALLBACK_OK = False
 
 # A few possible mechanism names used across oqs/liboqs versions
 # Note: liboqs 0.15.0+ uses "-simple" suffix for the simple parameter set
@@ -79,6 +80,27 @@ except Exception:
     _OQS_MECH = None
 
 # --------------------------------------------------------------------------------------
+# Custom pure-Python fallback (default when liboqs is unavailable)
+# --------------------------------------------------------------------------------------
+_CUSTOM_FALLBACK = None
+if not _OQS_OK:
+    try:
+        from . import pure_python_fallbacks as _custom_fallbacks
+
+        os.environ.setdefault("ANIMICA_ALLOW_PQ_PURE_FALLBACK", "1")
+        if os.environ.get("ANIMICA_ALLOW_PQ_PURE_FALLBACK") == "1":
+            _sizes = {
+                "pk": _custom_fallbacks.SPHINCS_SHAKE_128S.pk,
+                "sk": _custom_fallbacks.SPHINCS_SHAKE_128S.sk,
+                "sig": _custom_fallbacks.SPHINCS_SHAKE_128S.sig,
+            }
+            _CUSTOM_FALLBACK = _custom_fallbacks
+            _CUSTOM_FALLBACK_OK = True
+    except Exception:
+        _CUSTOM_FALLBACK = None
+        _CUSTOM_FALLBACK_OK = False
+
+# --------------------------------------------------------------------------------------
 # Unsafe dev fallback (only if explicitly enabled)
 # --------------------------------------------------------------------------------------
 _DEV_FAKE_OK = False
@@ -113,7 +135,7 @@ def is_available() -> bool:
     True when python-oqs exposes a compatible mechanism, or when the explicit
     ANIMICA_UNSAFE_PQ_FAKE=1 dev-only fallback is enabled.
     """
-    return _OQS_OK or _DEV_FAKE_OK
+    return _OQS_OK or _CUSTOM_FALLBACK_OK or _DEV_FAKE_OK
 
 
 def keypair(seed: Optional[bytes] = None) -> Tuple[bytes, bytes]:
@@ -130,6 +152,9 @@ def keypair(seed: Optional[bytes] = None) -> Tuple[bytes, bytes]:
             sk = signer.export_secret_key()
             return (sk, pk)
 
+    if _CUSTOM_FALLBACK_OK and _CUSTOM_FALLBACK is not None:
+        return _CUSTOM_FALLBACK.fallback_sig_keypair("sphincs-shake-128s")
+
     if _DEV_FAKE_OK:
         if seed is None:
             seed = os.urandom(32)
@@ -137,9 +162,7 @@ def keypair(seed: Optional[bytes] = None) -> Tuple[bytes, bytes]:
         pk = _sha3_256(b"animica-dev-fake-sphincs-pk|" + sk)
         return (sk, pk)
 
-    raise NotImplementedError(
-        "SPHINCS+-SHAKE-128s unavailable. Install python-oqs/liboqs or set ANIMICA_UNSAFE_PQ_FAKE=1 (DEV-ONLY)"
-    )
+    raise NotImplementedError("SPHINCS+-SHAKE-128s unavailable: no backend available")
 
 
 def generate_keypair(seed: Optional[bytes] = None) -> Tuple[bytes, bytes]:
@@ -160,14 +183,15 @@ def sign(sk: bytes, msg: bytes) -> bytes:
         with oqs.Signature(_OQS_MECH, secret_key=sk) as signer:  # type: ignore[arg-type]
             return signer.sign(msg)
 
+    if _CUSTOM_FALLBACK_OK and _CUSTOM_FALLBACK is not None:
+        return _CUSTOM_FALLBACK.fallback_sig_sign("sphincs-shake-128s", msg, sk)
+
     if _DEV_FAKE_OK:
         # Derive pk from sk to make verify work (matches keypair derivation)
         pk = _sha3_256(b"animica-dev-fake-sphincs-pk|" + sk)
         return _sha3_512(b"animica-dev-fake-sphincs-sig|" + pk + b"|" + msg)
 
-    raise NotImplementedError(
-        "SPHINCS+-SHAKE-128s unavailable. Install python-oqs/liboqs or enable ANIMICA_UNSAFE_PQ_FAKE=1 for local dev."
-    )
+    raise NotImplementedError("SPHINCS+-SHAKE-128s unavailable: no backend available")
 
 
 def verify(pk: bytes, msg: bytes, sig: bytes) -> bool:
@@ -187,6 +211,9 @@ def verify(pk: bytes, msg: bytes, sig: bytes) -> bool:
                     return bool(verifier.verify(msg, sig, pk))
                 except Exception:
                     return False
+
+    if _CUSTOM_FALLBACK_OK and _CUSTOM_FALLBACK is not None:
+        return _CUSTOM_FALLBACK.fallback_sig_verify("sphincs-shake-128s", msg, sig, pk)
 
     if _DEV_FAKE_OK:
         # In fake mode we don't have the real sk; accept signature tied to pk directly
