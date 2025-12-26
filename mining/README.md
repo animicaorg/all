@@ -112,6 +112,31 @@ Start a node (example):
 animica node up
 ```
 
+### Mining RPC configuration
+
+Miners and pools always target an explicit node RPC endpoint. There is **no** hardcoded
+central RPC fallback: configure your own node locally or remotely.
+
+Configuration options (priority order):
+
+1. **CLI flag**: `--rpc-url http://127.0.0.1:8545/rpc`
+2. **Env var**: `ANIMICA_RPC_URL` (CLI defaults)
+3. **Miner config env vars**: `ANIMICA_MINER_RPC_HTTP` / `ANIMICA_MINER_RPC_WS`
+
+Example (local node):
+
+```bash
+export ANIMICA_RPC_URL=http://127.0.0.1:8545/rpc
+animica miner solo --address anim1... --device cpu
+```
+
+Example (remote node you control):
+
+```bash
+export ANIMICA_RPC_URL=https://node.yourdomain.example/rpc
+animica miner pool --rpc-url https://node.yourdomain.example/rpc --listen 0.0.0.0 --port 5333
+```
+
 Start a pool (Stratum server):
 
 ```bash

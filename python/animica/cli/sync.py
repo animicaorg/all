@@ -46,7 +46,7 @@ BOOTSTRAP_RPC_ENV = "ANIMICA_BOOTSTRAP_RPC_URL"
 
 async def rpc_call(
     method: str,
-    params: Optional[List[Any]] = None,
+    params: Optional[List[Any] | Dict[str, Any]] = None,
     *,
     rpc_url: str,
     timeout: Optional[float] = None,
@@ -745,7 +745,7 @@ def _persist_sync_state(
     state_path.write_text(json.dumps(payload, indent=2))
 
 
-async def _trigger_sync(rpc_url: str) -> bool:
+async def _trigger_sync(rpc_url: str, *, clear_cache: bool = False) -> bool:
     """
     Trigger a sync operation on the node.
     
@@ -794,7 +794,10 @@ async def _trigger_sync(rpc_url: str) -> bool:
     
     for method in methods_to_try:
         try:
-            result = await rpc_call(method, [], rpc_url=rpc_url, timeout=DEFAULT_RPC_TIMEOUT)
+            params: list[Any] | dict[str, Any] = []
+            if method == "sync.force" and clear_cache:
+                params = {"clear_cache": True}
+            result = await rpc_call(method, params, rpc_url=rpc_url, timeout=DEFAULT_RPC_TIMEOUT)
             if _trigger_succeeded(result):
                 return True
         except Exception:
@@ -1197,6 +1200,44 @@ def sync_status(
     )
 
 
+@app.command(name="pause")
+def pause_sync(
+    rpc_url: Optional[str] = typer.Option(
+        None, "--rpc-url", help="JSON-RPC endpoint", envvar=RPC_ENV
+    ),
+) -> None:
+    """Pause background sync on the node."""
+    url, _ = _resolve_sync_endpoints(rpc_url, None, allow_bootstrap_rpc=False)
+    try:
+        result = asyncio.run(rpc_call("sync.pause", [], rpc_url=url))
+    except Exception as exc:  # noqa: BLE001
+        typer.secho(f"Failed to pause sync: {exc}", fg=typer.colors.RED)
+        raise typer.Exit(code=1)
+    if isinstance(result, dict) and result.get("paused") is True:
+        typer.secho("✓ Sync paused", fg=typer.colors.GREEN)
+    else:
+        typer.secho("⚠ Sync pause requested but may not be supported", fg=typer.colors.YELLOW)
+
+
+@app.command(name="resume")
+def resume_sync(
+    rpc_url: Optional[str] = typer.Option(
+        None, "--rpc-url", help="JSON-RPC endpoint", envvar=RPC_ENV
+    ),
+) -> None:
+    """Resume background sync on the node."""
+    url, _ = _resolve_sync_endpoints(rpc_url, None, allow_bootstrap_rpc=False)
+    try:
+        result = asyncio.run(rpc_call("sync.resume", [], rpc_url=url))
+    except Exception as exc:  # noqa: BLE001
+        typer.secho(f"Failed to resume sync: {exc}", fg=typer.colors.RED)
+        raise typer.Exit(code=1)
+    if isinstance(result, dict) and result.get("paused") is False:
+        typer.secho("✓ Sync resumed", fg=typer.colors.GREEN)
+    else:
+        typer.secho("⚠ Sync resume requested but may not be supported", fg=typer.colors.YELLOW)
+
+
 @app.command(name="force")
 def force_sync(
     rpc_url: Optional[str] = typer.Option(
@@ -1219,7 +1260,12 @@ def force_sync(
     check_interval: int = typer.Option(
         5, "--check-interval", help="How often to check sync progress (seconds)"
     ),
-) -> None:
+    clear_cache: bool = typer.Option(
+        False,
+        "--clear-cache",
+        help="Clear sync cache before forcing sync",
+    ),
+    ) -> None:
     """
     Force a blockchain resynchronization.
     
@@ -1237,6 +1283,7 @@ def force_sync(
     Examples:
         animica sync force
         animica sync force --timeout 600
+        animica sync force --clear-cache
     """
     net_cfg = load_network_config()
     url, bootstrap_url = _resolve_sync_endpoints(
@@ -1322,7 +1369,7 @@ def force_sync(
     typer.echo("Attempting to trigger sync...")
     
     # Try to trigger sync
-    triggered = asyncio.run(_trigger_sync(url))
+    triggered = asyncio.run(_trigger_sync(url, clear_cache=clear_cache))
     
     if not triggered:
         typer.secho(
