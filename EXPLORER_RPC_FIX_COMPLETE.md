@@ -121,8 +121,8 @@ createRpc({ url: rpcUrl })  // Passing options object
                                                    └─> TopBar shows GREEN dot
                                                        └─> HomePage shows live data
 
-[network] Creating RPC client with URL: https://rpc.animica.org/rpc
-[network] Connecting to RPC: https://rpc.animica.org/rpc
+[network] Creating RPC client with URL: http://127.0.0.1:8545/rpc
+[network] Connecting to RPC: http://127.0.0.1:8545/rpc
 [network] RPC client created successfully
 [network] Fetching chain ID...
 [network] Chain ID: 659658
@@ -171,7 +171,7 @@ After:  Detailed error with checklist:
   ❌ Unable to Connect to RPC Node
   
   Unable to establish connection with the RPC endpoint. Please check:
-  • RPC node is running and accessible at https://rpc.animica.org/rpc
+  • RPC node is running and accessible at http://127.0.0.1:8545/rpc
   • CORS is enabled on the RPC server for this origin
   • Network connectivity is stable
   • Chain ID is correct: 659658
@@ -184,8 +184,8 @@ After:  Detailed error with checklist:
 ### Environment Variable Support
 ```bash
 # Both formats now supported:
-VITE_RPC_URL=https://rpc.animica.org/rpc     # Primary
-VITE_RPC_HTTP=https://rpc.animica.org/rpc    # Alternative (for compatibility)
+VITE_RPC_URL=http://127.0.0.1:8545/rpc     # Primary
+VITE_RPC_HTTP=http://127.0.0.1:8545/rpc    # Alternative (for compatibility)
 
 # Hex chain IDs automatically normalized:
 VITE_CHAIN_ID=0xa11ca    # Converted to: "659658"
@@ -203,7 +203,7 @@ VITE_CHAIN_ID=659658     # Used as-is: "659658"
 ### Manual Testing Checklist
 Ready for validation:
 - [ ] Connect to local devnet (http://localhost:8545)
-- [ ] Connect to mainnet (https://rpc.animica.org/rpc)
+- [ ] Connect to mainnet (http://127.0.0.1:8545/rpc)
 - [ ] Verify chain ID detection (both hex and decimal)
 - [ ] Confirm WebSocket subscriptions work
 - [ ] Test error scenarios (bad URL, wrong chain ID)
@@ -217,8 +217,8 @@ Ready for validation:
 Users should look for these `[network]` prefixed logs:
 ```
 ✅ Good:
-[network] Creating RPC client with URL: https://rpc.animica.org/rpc
-[network] Connecting to RPC: https://rpc.animica.org/rpc
+[network] Creating RPC client with URL: http://127.0.0.1:8545/rpc
+[network] Connecting to RPC: http://127.0.0.1:8545/rpc
 [network] RPC client created successfully
 [network] Chain ID: 659658
 [network] Connection established successfully

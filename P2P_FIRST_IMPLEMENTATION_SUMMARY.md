@@ -8,7 +8,7 @@ Successfully removed trusted RPC dependency and implemented P2P-first decentrali
 
 ## Problem Statement
 
-Mainnet nodes were not decentralized because consensus, mining, and sync depended on a centralized "trusted RPC" endpoint (`https://rpc.animica.org/rpc`). This created:
+Mainnet nodes were not decentralized because consensus, mining, and sync depended on a centralized "trusted RPC" endpoint (`http://127.0.0.1:8545/rpc`). This created:
 - Single point of failure
 - Centralization risk
 - Security vulnerability
@@ -23,7 +23,7 @@ Implemented P2P-first architecture where:
 4. Gossip transactions to mempool
 5. Achieve consensus without any centralized "source of truth"
 
-**Key principle**: `rpc.animica.org` is now a **client-facing service** only (wallets, explorers), not used for node consensus.
+**Key principle**: `127.0.0.1` is now a **client-facing service** only (wallets, explorers), not used for node consensus.
 
 ## Implementation Details
 
@@ -32,7 +32,7 @@ Implemented P2P-first architecture where:
 **File**: `rpc/proxy.py`
 
 **Changes**:
-- `ANIMICA_TRUSTED_RPC_URL` has no default value (was `https://rpc.animica.org/rpc`)
+- `ANIMICA_TRUSTED_RPC_URL` has no default value (was `http://127.0.0.1:8545/rpc`)
 - Proxy creation fails with clear error if URL not configured
 - Updated docstrings to warn proxy is for testing only
 - Added deprecation warnings throughout
@@ -41,7 +41,7 @@ Implemented P2P-first architecture where:
 ```python
 # Before: Proxy enabled by default
 config = ProxyConfig.from_env()
-# config.trusted_rpc_url = "https://rpc.animica.org/rpc"
+# config.trusted_rpc_url = "http://127.0.0.1:8545/rpc"
 
 # After: Proxy requires explicit configuration
 config = ProxyConfig.from_env()
@@ -245,7 +245,7 @@ animica miner mine-blocks --count 5 premine --use-proxy
 
 All acceptance criteria from the problem statement are met:
 
-✅ **Running the node with `rpc.animica.org` unreachable still syncs/mines via P2P**
+✅ **Running the node with `127.0.0.1` unreachable still syncs/mines via P2P**
 - P2P networking is enabled by default
 - Seeds configured for all networks
 - No dependency on external RPC
@@ -314,14 +314,14 @@ animica miner mine-blocks --count 5 premine --use-proxy
 
 ```
 ┌─────────────┐     Proxy      ┌─────────────────┐
-│   Node A    │────────────────►│ rpc.animica.org │ (source of truth)
+│   Node A    │────────────────►│ 127.0.0.1 │ (source of truth)
 │  (Miner)    │                 │  (centralized)  │
 └─────────────┘                 └─────────────────┘
        │
        │ Proxy
        ▼
 ┌─────────────┐
-│   Node B    │────────────────►│ rpc.animica.org │ (source of truth)
+│   Node B    │────────────────►│ 127.0.0.1 │ (source of truth)
 │ (Validator) │                 │  (centralized)  │
 └─────────────┘                 └─────────────────┘
 ```
@@ -347,7 +347,7 @@ animica miner mine-blocks --count 5 premine --use-proxy
 │   (Full)    │     Discovery      │   (Light)   │
 └─────────────┘                    └─────────────┘
 
-rpc.animica.org = Client-facing only (wallets, explorers)
+127.0.0.1 = Client-facing only (wallets, explorers)
 ```
 
 **Benefits**:
@@ -360,7 +360,7 @@ rpc.animica.org = Client-facing only (wallets, explorers)
 ## Security Impact
 
 ### Before
-- Relied on `rpc.animica.org` for consensus truth
+- Relied on `127.0.0.1` for consensus truth
 - If endpoint compromised → network compromised
 - Single point of failure
 

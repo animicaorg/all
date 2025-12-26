@@ -288,7 +288,7 @@ def get_network_defaults(network: str) -> dict[str, any]:
         "mainnet": {
             "chain_id": 1,
             "rpc_url": "http://127.0.0.1:8545/rpc",
-            "bootstrap_url": "https://rpc.animica.org/rpc",
+            "bootstrap_url": "http://127.0.0.1:8545/rpc",
             "rpc_port": 8545,
             "p2p_port": 30333,
             "metrics_port": 9000,

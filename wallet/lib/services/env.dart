@@ -145,7 +145,7 @@ _FlavorDefaults _defaultsByFlavor(AppFlavor f) {
       return const _FlavorDefaults('https://rpc.testnet.animica.dev', 'wss://ws.testnet.animica.dev');
     case AppFlavor.prod:
       // Mainnet (placeholder; adjust when mainnet launches)
-      return const _FlavorDefaults('https://rpc.animica.org', 'wss://ws.animica.org');
+      return const _FlavorDefaults('http://127.0.0.1:8545', 'wss://ws.animica.org');
   }
 }
 

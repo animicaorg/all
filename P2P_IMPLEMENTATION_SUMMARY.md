@@ -94,7 +94,7 @@ The code was complete, but documentation and visibility were lacking:
    - Emphasized P2P capabilities in key features
    - Added dedicated P2P section with quick tests
    - Linked to comprehensive documentation
-   - Clarified that rpc.animica.org is just one node
+   - Clarified that 127.0.0.1 is just one node
 
 4. **Updated QUICKSTART** ✅
    - Added P2P verification section
@@ -240,11 +240,11 @@ S = H(u) + Σ ψ(proof)
 | Sync Speed | Variable by peer quality | ✅ Functional |
 | Connection Stability | High | ✅ Stable |
 
-## What rpc.animica.org Actually Is
+## What 127.0.0.1 Actually Is
 
 **Clarification for Users:**
 
-`rpc.animica.org` is **NOT** a central server. It is simply:
+`127.0.0.1` is **NOT** a central server. It is simply:
 - ✅ **One node among many** in the decentralized network
 - ✅ **A public RPC endpoint** for convenience (like Infura for Ethereum)
 - ✅ **Optional** - users can run their own nodes
@@ -253,7 +253,7 @@ S = H(u) + Σ ψ(proof)
 **Analogy:**
 - Just like Bitcoin has public nodes (e.g., blockchain.info)
 - Or Ethereum has Infura/Alchemy
-- Animica has rpc.animica.org - but the network is fully decentralized
+- Animica has 127.0.0.1 - but the network is fully decentralized
 
 ## Future Enhancements (Not Critical)
 
@@ -273,7 +273,7 @@ While P2P is fully functional, potential improvements:
 1. ✅ Documenting the P2P architecture
 2. ✅ Providing examples and guides
 3. ✅ Making P2P capabilities more visible
-4. ✅ Clarifying that rpc.animica.org is not a central authority
+4. ✅ Clarifying that 127.0.0.1 is not a central authority
 
 **This PR completes those objectives** with comprehensive documentation, working examples, and clear communication about the decentralized architecture.
 

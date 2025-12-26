@@ -32,7 +32,7 @@ Create .env (or set in your host) using .env.example:
 PUBLIC_STUDIO_URL=https://studio.animica.org
 PUBLIC_EXPLORER_URL=https://explorer.animica.org
 PUBLIC_DOCS_URL=https://docs.animica.org
-PUBLIC_RPC_URL=https://rpc.animica.org
+PUBLIC_RPC_URL=http://127.0.0.1:8545
 PUBLIC_CHAIN_ID=1
 
 Public variables are baked into the client bundle. Never put secrets in PUBLIC_*.

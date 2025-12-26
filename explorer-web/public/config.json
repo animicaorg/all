@@ -1,5 +1,5 @@
 {
-  "rpcHttp": "https://rpc.animica.org/rpc",
-  "rpcWs":   "wss://rpc.animica.org/ws",
+  "rpcHttp": "http://127.0.0.1:8545/rpc",
+  "rpcWs":   "ws://127.0.0.1:8546/ws",
   "chainId": "1"
 }

@@ -957,7 +957,7 @@ def test_add_peer_with_port_auto_detection(monkeypatch: Any, tmp_path: Any) -> N
 def test_bootstrap_remote_rpc_allows_peer_injection(monkeypatch: Any, tmp_path: Any) -> None:
     """Test bootstrap allows peer injection for remote RPC endpoints."""
 
-    rpc_url = "https://rpc.animica.org/rpc"
+    rpc_url = "http://127.0.0.1:8545/rpc"
     monkeypatch.setenv("ANIMICA_NETWORK", "mainnet")
 
     store_path = tmp_path / "peers.json"
@@ -1103,7 +1103,7 @@ def test_peer_commands_block_bootstrap_rpc(monkeypatch: Any) -> None:
     monkeypatch.setenv("ANIMICA_BOOTSTRAP_NODE", "0")
     result = runner.invoke(
         peer.app,
-        ["list", "--rpc-url", "https://rpc.animica.org/rpc"],
+        ["list", "--rpc-url", "http://127.0.0.1:8545/rpc"],
     )
     assert result.exit_code == 2
     assert "bootstrap RPC endpoint" in result.output
