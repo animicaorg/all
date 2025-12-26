@@ -850,7 +850,8 @@ class P2PService:
         self._sync_block_stalled_reason: Optional[str] = None
         self._sync_last_validated_height = 0
         self._sync_peer_penalties: Dict[str, int] = {}
-        self._sync_peer_penalty_whitelist = {"144.126.133.21:30333"}
+        self._peer_exemptions = {"144.126.133.21:30333", "144.126.133.21"}
+        self._sync_peer_penalty_whitelist = set(self._peer_exemptions)
         self._sync_last_progress_at = time.time()
         self._sync_last_header_at = 0.0
         self._sync_last_block_at = 0.0
@@ -1146,6 +1147,12 @@ class P2PService:
 
     def ban_peer(self, key: str, *, ttl_s: float, reason: str = "manual") -> None:
         if not self._ban_enabled:
+            return
+        if self._is_peer_exempt(key):
+            log.info(
+                "Skipping manual ban for exempt peer",
+                extra={"key": key, "reason": reason},
+            )
             return
         until = time.time() + max(0.0, float(ttl_s))
         self._banlist[str(key)] = {"ban_until": until, "reason": reason, "score": None}
@@ -2357,7 +2364,7 @@ class P2PService:
             peer_penalties={
                 remote: count
                 for remote, count in self._sync_peer_penalties.items()
-                if remote not in self._sync_peer_penalty_whitelist
+                if not self._is_peer_exempt(remote)
             },
             peer_anchor_states=peer_anchor_states,
             cache_interval_ms=0,
@@ -2560,11 +2567,23 @@ class P2PService:
             return True
         return False
 
+    def _is_peer_exempt(self, key: str) -> bool:
+        if not key:
+            return False
+        if key in self._peer_exemptions:
+            return True
+        host = self._extract_host(key)
+        if host and host in self._peer_exemptions:
+            return True
+        return False
+
     def _is_banned(self, key: str, *, now: Optional[float] = None) -> bool:
         if not self._ban_enabled:
             return False
         now = time.time() if now is None else now
         if not key:
+            return False
+        if self._is_peer_exempt(key):
             return False
         entries = [key]
         host = self._extract_host(key)
@@ -3007,7 +3026,7 @@ class P2PService:
                         continue
                     if addr in self._invalid_seed_addrs:
                         continue
-                    if self._is_banned(addr):
+                    if not self._is_peer_exempt(addr) and self._is_banned(addr):
                         continue
                     if addr_key in self._dial_inflight:
                         continue
@@ -3114,7 +3133,7 @@ class P2PService:
             with contextlib.suppress(Exception):
                 await conn.close()
             return
-        if self._is_banned(remote):
+        if not self._is_peer_exempt(remote) and self._is_banned(remote):
             log.info("Rejecting banned peer %s", remote)
             with contextlib.suppress(Exception):
                 await conn.close()
@@ -3743,7 +3762,11 @@ class P2PService:
                 HelloAck(accepted=False, reason="self_peer"),
             )
             raise PeerMisbehavior("self_peer", points=0)
-        if peer.peer_id and self._is_banned(peer.peer_id):
+        if (
+            not self._is_peer_exempt(peer.remote)
+            and peer.peer_id
+            and self._is_banned(peer.peer_id)
+        ):
             await self._send(
                 peer,
                 MsgID.HELLO_ACK,
@@ -5598,16 +5621,17 @@ class P2PService:
             self._extract_host(peer.remote), self._extract_port(peer.remote) or 0
         ):
             return False, "self"
-        if peer.peer_id and self._is_banned(peer.peer_id, now=now):
-            return False, "banned_peer_id"
-        if self._is_banned(peer.remote, now=now):
-            return False, "banned"
-        if (
-            peer.remote not in self._sync_peer_penalty_whitelist
-            and self._sync_peer_penalties.get(peer.remote, 0)
-            >= self._sync_peer_penalty_threshold
-        ):
-            return False, "penalized"
+        is_exempt = self._is_peer_exempt(peer.remote)
+        if not is_exempt:
+            if peer.peer_id and self._is_banned(peer.peer_id, now=now):
+                return False, "banned_peer_id"
+            if self._is_banned(peer.remote, now=now):
+                return False, "banned"
+            if (
+                self._sync_peer_penalties.get(peer.remote, 0)
+                >= self._sync_peer_penalty_threshold
+            ):
+                return False, "penalized"
         backoff_until = self._sync_peer_backoff.get(peer.remote, 0.0)
         if backoff_until and backoff_until > now:
             reason = self._sync_peer_backoff_reason.get(peer.remote, "backoff")
@@ -6899,6 +6923,12 @@ class P2PService:
     ) -> None:
         if peer is None:
             return
+        if "timeout" in reason.lower() and self._is_peer_exempt(peer.remote):
+            log.info(
+                "Skipping timeout penalty for exempt peer",
+                extra={"remote": peer.remote, "reason": reason},
+            )
+            return
         if nonfatal and not self._allow_nonfatal_penalty(peer):
             count = self._sync_peer_penalties.get(peer.remote, 0)
             if "timeout" in reason:
@@ -6912,7 +6942,7 @@ class P2PService:
             )
             return
         self._apply_misbehavior(peer, reason, points=points, ban_ttl=ban_ttl)
-        if peer.remote in self._sync_peer_penalty_whitelist:
+        if self._is_peer_exempt(peer.remote):
             self._sync_peer_penalties.pop(peer.remote, None)
             return
         count = self._sync_peer_penalties.get(peer.remote, 0) + max(1, severity)
@@ -7016,6 +7046,12 @@ class P2PService:
 
     def _ban_peer(self, peer: _PeerState, *, ban_ttl: float, reason: str) -> None:
         if not self._ban_enabled:
+            return
+        if self._is_peer_exempt(peer.remote):
+            log.info(
+                "Skipping ban for exempt peer",
+                extra={"remote": peer.remote, "reason": reason},
+            )
             return
         if self._is_seed_peer(peer):
             log.warning(
