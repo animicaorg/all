@@ -191,14 +191,23 @@ def _extract_sync_metrics(sync_status: Optional[Dict[str, Any]]) -> Dict[str, An
 
     best_header_height = _coerce_int(
         sync_status.get("best_header_height")
-        or sync_status.get("bestHeaderHeight")
-        or sync_status.get("best_header")
+        if "best_header_height" in sync_status
+        else None
     )
+    if best_header_height is None:
+        best_header_height = _coerce_int(sync_status.get("bestHeaderHeight"))
+    if best_header_height is None:
+        best_header_height = _coerce_int(sync_status.get("best_header"))
+
     best_block_height = _coerce_int(
         sync_status.get("best_block_height")
-        or sync_status.get("bestBlockHeight")
-        or sync_status.get("best_block")
+        if "best_block_height" in sync_status
+        else None
     )
+    if best_block_height is None:
+        best_block_height = _coerce_int(sync_status.get("bestBlockHeight"))
+    if best_block_height is None:
+        best_block_height = _coerce_int(sync_status.get("best_block"))
 
     sync_flag = sync_status.get("syncing")
     sync_progress: Optional[Dict[str, Any]] = None

@@ -663,6 +663,33 @@ def test_sync_status_no_sync_method_available():
         assert "Height:    100" in result.stdout
 
 
+def test_extract_sync_metrics_prefers_best_header_height():
+    status = {
+        "best_header_height": 6016,
+        "best_block_height": 0,
+        "syncing": {"targetHeight": 640},
+    }
+
+    metrics = sync_cli._extract_sync_metrics(status)
+
+    assert metrics["best_header_height"] == 6016
+    assert metrics["best_block_height"] == 0
+
+
+def test_extract_sync_metrics_preserves_zero_values():
+    status = {
+        "best_header_height": 0,
+        "best_block_height": 0,
+        "bestHeaderHeight": 1280,
+        "bestBlockHeight": 640,
+    }
+
+    metrics = sync_cli._extract_sync_metrics(status)
+
+    assert metrics["best_header_height"] == 0
+    assert metrics["best_block_height"] == 0
+
+
 def test_sync_force_trigger_fails(mock_rpc_no_peers):
     """Test force sync when trigger RPC methods are not available."""
     with patch("httpx.AsyncClient") as mock_client:

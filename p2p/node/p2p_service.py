@@ -91,6 +91,9 @@ class _PeerState:
     empty_header_responses: int = 0
     not_anchored_count: int = 0
     last_not_anchored_at: float = 0.0
+    anchored: bool = False
+    anchor_reason: Optional[str] = None
+    last_anchor_at: float = 0.0
     last_msg_at: float = field(default_factory=time.time)
     last_progress_at: float = field(default_factory=time.time)
     ban_until: Optional[float] = None
@@ -4389,25 +4392,41 @@ class P2PService:
         if expired:
             self._sync_wakeup.set()
 
-    async def _fetch_headers(self, peer: _PeerState) -> Optional[List[HeaderCompact]]:
-        local_height, local_hash_hex = self._local_head()
-        local_hash = None
-        if local_hash_hex:
-            with contextlib.suppress(ValueError):
-                local_hash = bytes.fromhex(
-                    local_hash_hex[2:] if local_hash_hex.startswith("0x") else local_hash_hex
-                )
-        anchor_height = int(local_height or 0)
-        anchor_hash = local_hash
-        request_start_height = anchor_height + 1 if anchor_hash else anchor_height
-        locator, max_headers, locator_mode = self._select_header_locator(peer)
-        if not locator:
-            fallback = self._genesis_hash()
-            if fallback:
-                log.error("Empty header locator generated; falling back to genesis")
-                locator = [fallback]
-            else:
-                log.error("Empty header locator generated without fallback genesis")
+    def _note_not_anchored_probe(self, peer: _PeerState, *, reason: str) -> None:
+        now = time.time()
+        if now - peer.last_not_anchored_at > self._sync_not_anchored_window:
+            peer.not_anchored_count = 0
+        peer.not_anchored_count += 1
+        peer.last_not_anchored_at = now
+        peer.anchored = False
+        peer.anchor_reason = reason
+        peer.last_anchor_at = now
+        if now - self._sync_last_not_anchored_at > self._sync_not_anchored_window:
+            self._sync_not_anchored_attempts = 0
+        self._sync_not_anchored_attempts += 1
+        self._sync_last_not_anchored_at = now
+        self._sync_recovery_attempts += 1
+        self._sync_last_header_error = "not_anchored"
+        self._sync_last_header_error_at = now
+        self._sync_last_header_error_peer = peer.remote
+        cooldown = self._sync_not_anchored_backoff * min(peer.not_anchored_count, 3)
+        self._set_sync_backoff(peer, reason="not_anchored", delay=cooldown)
+        peer.anchored = False
+        peer.anchor_reason = reason
+        peer.last_anchor_at = now
+        self._sync_last_checkpoint_action = f"checkpoint_probe_{reason}"
+
+    async def _request_headers_with_locator(
+        self,
+        peer: _PeerState,
+        *,
+        locator: list[bytes],
+        max_headers: int,
+        locator_mode: str,
+        anchor_height: int,
+        anchor_hash: Optional[bytes],
+        request_start_height: int,
+    ) -> Optional[List[HeaderCompact]]:
         locator_info = self._locator_debug(locator)
         self._sync_last_locator_info = locator_info
         self._sync_last_locator_at = time.time()
@@ -4511,6 +4530,77 @@ class P2PService:
         )
         return list(headers_msg.headers)
 
+    async def _checkpoint_anchor_probe(
+        self,
+        peer: _PeerState,
+        *,
+        anchor_height: int,
+        anchor_hash: Optional[bytes],
+    ) -> bool:
+        if not self._should_enforce_checkpoint_anchor():
+            return True
+        if self._sync_checkpoint_hash is None or self._sync_checkpoint_height is None:
+            return True
+        if peer.anchored:
+            return True
+        locator = [self._sync_checkpoint_hash]
+        probe_headers = await self._request_headers_with_locator(
+            peer,
+            locator=locator,
+            max_headers=1,
+            locator_mode="checkpoint_probe",
+            anchor_height=anchor_height,
+            anchor_hash=anchor_hash,
+            request_start_height=int(self._sync_checkpoint_height),
+        )
+        if probe_headers is None:
+            return False
+        if not probe_headers:
+            self._note_not_anchored_probe(peer, reason="checkpoint_empty")
+            return False
+        probe_header = self._header_from_compact(probe_headers[0])
+        if (
+            probe_header.parent_hash != self._sync_checkpoint_hash
+            or probe_header.height != int(self._sync_checkpoint_height) + 1
+        ):
+            self._note_not_anchored_probe(peer, reason="checkpoint_mismatch")
+            return False
+        self._mark_peer_anchored(peer, reason="checkpoint_verified")
+        return True
+
+    async def _fetch_headers(self, peer: _PeerState) -> Optional[List[HeaderCompact]]:
+        local_height, local_hash_hex = self._local_head()
+        local_hash = None
+        if local_hash_hex:
+            with contextlib.suppress(ValueError):
+                local_hash = bytes.fromhex(
+                    local_hash_hex[2:] if local_hash_hex.startswith("0x") else local_hash_hex
+                )
+        anchor_height = int(local_height or 0)
+        anchor_hash = local_hash
+        request_start_height = anchor_height + 1 if anchor_hash else anchor_height
+        if not await self._checkpoint_anchor_probe(
+            peer, anchor_height=anchor_height, anchor_hash=anchor_hash
+        ):
+            return None
+        locator, max_headers, locator_mode = self._select_header_locator(peer)
+        if not locator:
+            fallback = self._genesis_hash()
+            if fallback:
+                log.error("Empty header locator generated; falling back to genesis")
+                locator = [fallback]
+            else:
+                log.error("Empty header locator generated without fallback genesis")
+        return await self._request_headers_with_locator(
+            peer,
+            locator=locator,
+            max_headers=max_headers,
+            locator_mode=locator_mode,
+            anchor_height=anchor_height,
+            anchor_hash=anchor_hash,
+            request_start_height=request_start_height,
+        )
+
     def _process_headers(
         self, peer: _PeerState, headers: List[HeaderCompact]
     ) -> tuple[List[bytes], Optional[str]]:
@@ -4530,6 +4620,15 @@ class P2PService:
                 local_hash = None
         anchor_height = int(local_height or 0)
         anchor_hash = local_hash
+        if self._should_enforce_checkpoint_anchor() and not self._peer_is_anchored(peer):
+            first = self._header_from_compact(headers[0])
+            return self._note_not_anchored(
+                peer,
+                header=first,
+                anchor_height=anchor_height,
+                anchor_hash=anchor_hash,
+                reason="checkpoint_unverified",
+            )
         if headers and anchor_hash is not None:
             first = self._header_from_compact(headers[0])
             if first.height == anchor_height and first.hash == anchor_hash:
@@ -4791,8 +4890,14 @@ class P2PService:
         if not self._sync_block_queue:
             return 0
         if peer is None:
-            peer = self._select_sync_peer()
-        if peer is None or not peer.hello_done.is_set():
+            peer = self._select_sync_peer(
+                require_anchored=self._should_enforce_checkpoint_anchor()
+            )
+        if (
+            peer is None
+            or not peer.hello_done.is_set()
+            or not self._peer_is_anchored(peer)
+        ):
             return 0
         local_height, _ = self._local_head()
         expected_height = int(local_height or 0) + 1
@@ -5316,6 +5421,28 @@ class P2PService:
             return False, "no_chain_data"
         return True, "eligible"
 
+    def _should_enforce_checkpoint_anchor(self) -> bool:
+        if not self._sync_checkpoint_mode_enabled:
+            return False
+        if self._sync_checkpoint_validation in {"verified", "mismatch"}:
+            return False
+        if self._sync_checkpoint_hash is None or self._sync_checkpoint_height is None:
+            return False
+        return True
+
+    def _peer_is_anchored(self, peer: _PeerState) -> bool:
+        if not self._should_enforce_checkpoint_anchor():
+            return True
+        return bool(peer.anchored)
+
+    def _mark_peer_anchored(self, peer: _PeerState, *, reason: str) -> None:
+        peer.anchored = True
+        peer.anchor_reason = reason
+        peer.last_anchor_at = time.time()
+        if self._sync_peer_backoff_reason.get(peer.remote) == "not_anchored":
+            self._sync_peer_backoff.pop(peer.remote, None)
+            self._sync_peer_backoff_reason.pop(peer.remote, None)
+
     def _peer_chain_matches(self, peer: _PeerState) -> bool:
         if peer.hello is None or not isinstance(peer.hello, dict):
             return False
@@ -5368,6 +5495,7 @@ class P2PService:
         avoid_peer: Optional[_PeerState] = None,
         avoid_remotes: Optional[set[str]] = None,
         allow_pow_backoff: bool = False,
+        require_anchored: bool = False,
     ) -> Optional[_PeerState]:
         best: Optional[_PeerState] = None
         best_score = None
@@ -5378,6 +5506,8 @@ class P2PService:
         avoid_remotes = avoid_remotes or set()
         for p in eligible:
             if p.remote in avoid_remotes:
+                continue
+            if require_anchored and not self._peer_is_anchored(p):
                 continue
             try:
                 h = int(p.hello.get("head_height") or 0)
@@ -6007,16 +6137,12 @@ class P2PService:
         return False
 
     def _should_defer_blocks_for_checkpoint(self, best_header_height: int) -> bool:
-        if not self._sync_checkpoint_mode_enabled:
+        _ = best_header_height
+        if not self._should_enforce_checkpoint_anchor():
             return False
-        if self._sync_checkpoint_validation == "mismatch":
-            return False
-        if self._sync_checkpoint_height is None:
-            return False
-        target_height = max(
-            0, int(self._sync_checkpoint_height) - self._sync_checkpoint_safety_margin
-        )
-        return best_header_height < target_height
+        if not any(self._peer_is_anchored(peer) for peer in self._peers.values()):
+            return True
+        return False
 
     def _reset_sync_state(self, *, reason: str) -> None:
         self._sync_inflight_blocks.clear()
