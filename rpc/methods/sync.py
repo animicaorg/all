@@ -55,7 +55,7 @@ async def _core_force_sync(core_svc: t.Any) -> dict[str, t.Any]:
 
 
 @method("sync.force", desc="Trigger a P2P sync round and return status")
-async def sync_force() -> dict[str, t.Any]:
+async def sync_force(clear_cache: bool = False) -> dict[str, t.Any]:
     svc = _get_p2p_service()
     core_svc = _get_core_p2p_service()
     head_height = None
@@ -74,7 +74,12 @@ async def sync_force() -> dict[str, t.Any]:
         }
 
     result: dict[str, t.Any] = {}
-    if svc is not None and hasattr(svc, "force_sync"):
+    if svc is not None and hasattr(svc, "force_sync_with_cache"):
+        try:
+            result = await svc.force_sync_with_cache(clear_cache=bool(clear_cache))
+        except Exception as exc:  # pragma: no cover - defensive
+            result = {"success": False, "error": str(exc)}
+    elif svc is not None and hasattr(svc, "force_sync"):
         try:
             result = await svc.force_sync()
         except Exception as exc:  # pragma: no cover - defensive
@@ -170,6 +175,11 @@ async def sync_get_status() -> dict[str, t.Any]:
         "checkpoint_validation": None,
         "last_checkpoint_action": None,
         "synchronized": False,
+        "paused": False,
+        "target_height": None,
+        "peers_total": 0,
+        "cache_size_bytes": 0,
+        "cache_entries": 0,
         "peer_penalties": {},
         "cache_interval_ms": 0,
         "cache_age_ms": 0,
@@ -178,6 +188,39 @@ async def sync_get_status() -> dict[str, t.Any]:
         "cache_last_refresh_at": None,
         "cache_source": "refresh",
     }
+
+
+@method("sync.pause", desc="Pause background sync")
+async def sync_pause() -> dict[str, t.Any]:
+    svc = _get_p2p_service()
+    if svc is not None and hasattr(svc, "pause_sync"):
+        try:
+            return t.cast(dict[str, t.Any], svc.pause_sync())
+        except Exception as exc:  # pragma: no cover - defensive
+            return {"paused": False, "error": str(exc)}
+    return {"paused": False, "error": "sync pause not supported"}
+
+
+@method("sync.resume", desc="Resume background sync")
+async def sync_resume() -> dict[str, t.Any]:
+    svc = _get_p2p_service()
+    if svc is not None and hasattr(svc, "resume_sync"):
+        try:
+            return t.cast(dict[str, t.Any], svc.resume_sync())
+        except Exception as exc:  # pragma: no cover - defensive
+            return {"paused": True, "error": str(exc)}
+    return {"paused": True, "error": "sync resume not supported"}
+
+
+@method("sync.setTarget", desc="Set sync target height")
+async def sync_set_target(height: int | None = None) -> dict[str, t.Any]:
+    svc = _get_p2p_service()
+    if svc is not None and hasattr(svc, "set_sync_target"):
+        try:
+            return t.cast(dict[str, t.Any], svc.set_sync_target(height))
+        except Exception as exc:  # pragma: no cover - defensive
+            return {"target_height": None, "error": str(exc)}
+    return {"target_height": None, "error": "sync target not supported"}
 
 
 @method("sync.status", desc="Return current sync status (alias)")
@@ -197,4 +240,7 @@ __all__ = [
     "sync_get_status",
     "sync_status",
     "node_sync_status",
+    "sync_pause",
+    "sync_resume",
+    "sync_set_target",
 ]
