@@ -4325,23 +4325,20 @@ class P2PService:
                         },
                     )
                     if "pow target not met" in reject_reason.lower():
-                        self._set_sync_backoff(
-                            peer,
-                            reason="consensus_mismatch_pow",
-                            delay=120.0,
-                        )
                         self._penalize_peer(
                             peer,
                             "consensus_mismatch_pow",
                             severity=1,
-                            quarantine_s=120.0,
+                            points=0,
+                            nonfatal=True,
                         )
-                    self._penalize_peer(
-                        peer,
-                        f"block_rejected:{reject_reason}",
-                        severity=2,
-                        quarantine_s=300.0,
-                    )
+                    else:
+                        self._penalize_peer(
+                            peer,
+                            f"block_rejected:{reject_reason}",
+                            severity=2,
+                            quarantine_s=300.0,
+                        )
 
     # ---------------------------------------------------------------------
     # Gossip + sync loops
