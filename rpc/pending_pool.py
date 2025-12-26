@@ -511,6 +511,11 @@ class InMemoryPendingPool:
         with self._lock:
             return len(self._entries)
 
+    def remove(self, tx_hash: HashLike) -> bool:
+        tx_hash_hex = self._normalize_hash(tx_hash)
+        with self._lock:
+            return self._entries.pop(tx_hash_hex, None) is not None
+
 
 # Shared default pool instance (used by rpc.methods.tx)
 pool = InMemoryPendingPool()
