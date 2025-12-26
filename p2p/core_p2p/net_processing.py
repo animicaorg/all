@@ -164,10 +164,13 @@ class NetProcessing:
         if command == "headers":
             msg = HeadersMessage.parse(payload)
             self.sync.receive_headers(msg.headers)
+            await self._queue_header_blocks(msg.headers, send)
             return
 
         if command == "block":
             self.chain.process_block(payload)
+            self.sync.complete_inflight(self._block_hash(payload))
+            await self._request_pending_blocks(send)
             await self.announce_block(peers, self._block_hash(payload), send_peer)
             return
 
@@ -181,6 +184,28 @@ class NetProcessing:
         if not header:
             return 0
         return int.from_bytes(header[:4], "little")
+
+    async def _queue_header_blocks(
+        self, headers: Sequence[bytes], send
+    ) -> None:
+        block_hashes: list[bytes] = []
+        for header in headers:
+            block_hash = self._header_block_hash(header)
+            if self.chain.get_block(block_hash) is not None:
+                continue
+            block_hashes.append(block_hash)
+        if block_hashes:
+            self.sync.queue_blocks(block_hashes)
+            await self._request_pending_blocks(send)
+
+    async def _request_pending_blocks(self, send) -> None:
+        batch = self.sync.next_block_batch(self.max_inv)
+        if not batch:
+            return
+        payload = InvMessage(
+            [InventoryVector(inv_type=INV_TYPE_BLOCK, inv_hash=h) for h in batch]
+        ).serialize()
+        await send("getdata", payload)
 
     async def announce_block(self, peers: Iterable[PeerState], block_hash: bytes, send) -> None:
         inv = InventoryVector(inv_type=INV_TYPE_BLOCK, inv_hash=block_hash)
@@ -203,6 +228,13 @@ class NetProcessing:
         if callable(getter):
             return getter(payload)
         return hashlib.sha256(payload).digest()
+
+    def _header_block_hash(self, header: bytes) -> bytes:
+        if len(header) >= 72:
+            candidate = header[40:72]
+            if candidate != b"\x00" * 32:
+                return candidate
+        return hashlib.sha256(header).digest()
 
     def _tx_hash(self, payload: bytes) -> bytes:
         getter = getattr(self.chain, "tx_hash", None)
