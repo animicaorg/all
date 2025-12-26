@@ -4566,6 +4566,14 @@ class P2PService:
                 if h not in self._sync_block_queue_set:
                     self._sync_block_queue.appendleft(h)
                     self._sync_block_queue_set.add(h)
+                    if h not in self._sync_block_queue_heights:
+                        self._sync_block_queue_heights[h] = -1
+            if peer_remote:
+                self._penalize_peer(
+                    self._peers.get(peer_remote), "block_timeout", nonfatal=True
+                )
+        if expired:
+            self._sync_wakeup.set()
 
     def _handle_reorg(self, new_height: int, new_hash: Optional[str]) -> None:
         removed_headers = 0
@@ -4613,14 +4621,6 @@ class P2PService:
                 "cache_blocks_removed": removed_cache,
             },
         )
-                    if h not in self._sync_block_queue_heights:
-                        self._sync_block_queue_heights[h] = -1
-            if peer_remote:
-                self._penalize_peer(
-                    self._peers.get(peer_remote), "block_timeout", nonfatal=True
-                )
-        if expired:
-            self._sync_wakeup.set()
 
     def _note_not_anchored_probe(self, peer: _PeerState, *, reason: str) -> None:
         now = time.time()
