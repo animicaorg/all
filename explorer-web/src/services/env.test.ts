@@ -30,7 +30,7 @@ describe('env helpers', () => {
   it('uses the public Animica RPC by default even with a window location', () => {
     global.window = { location: { origin: 'http://site.local' } };
     expect(inferRpcUrl()).toBe(DEFAULT_RPC);
-    expect(inferWsUrl()).toBe('wss://rpc.animica.org/rpc');
+    expect(inferWsUrl()).toBe('ws://127.0.0.1:8546/ws');
   });
 
   it('defaults to the public Animica endpoints when nothing else is provided', () => {

@@ -5,8 +5,8 @@
     {
       "peer_id": "animica-primary-seed",
       "multiaddrs": [
-        "/dns4/rpc.animica.org/udp/443/quic-v1",
-        "/dns4/rpc.animica.org/tcp/30333",
+        "/dns4/127.0.0.1/udp/443/quic-v1",
+        "/dns4/127.0.0.1/tcp/30333",
         "/dns4/mainnet.animica.org/udp/443/quic-v1",
         "/dns4/mainnet.animica.org/tcp/30333",
         "/ip4/144.126.133.21/udp/443/quic-v1",

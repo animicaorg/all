@@ -22,7 +22,7 @@ Each chain is one JSON file named after its **id** (the filename stem). Minimal 
   "id": "animica-mainnet",
   "chainId": 1,
   "name": "Animica Mainnet",
-  "rpc": ["https://rpc.animica.org"],
+  "rpc": ["http://127.0.0.1:8545"],
   "explorer": "https://explorer.animica.org",
   "testnet": false,
   "docs": "https://docs.animica.org/network",

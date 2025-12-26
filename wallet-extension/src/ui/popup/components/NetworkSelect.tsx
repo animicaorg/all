@@ -31,7 +31,7 @@ const FALLBACK_NETWORKS: NetworkItem[] = [
     key: "animica-devnet",
   },
   { chainId: 2, name: "Animica Testnet", rpcUrl: "https://rpc.testnet.animica.org", key: "animica-testnet" },
-  { chainId: 1, name: "Animica Mainnet", rpcUrl: "https://rpc.animica.org", key: "animica-mainnet" },
+  { chainId: 1, name: "Animica Mainnet", rpcUrl: "http://127.0.0.1:8545", key: "animica-mainnet" },
 ];
 
 type BgListResp =

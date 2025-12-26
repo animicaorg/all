@@ -10,14 +10,14 @@
 
 **Note**: This describes the original implementation. The proxy is now disabled by default and should only be used for specialized testing scenarios.
 
-Originally implemented RPC proxy mechanism for Animica mining operations to validate against `rpc.animica.org/rpc`. This approach has been replaced with P2P-first networking for production use.
+Originally implemented RPC proxy mechanism for Animica mining operations to validate against `127.0.0.1/rpc`. This approach has been replaced with P2P-first networking for production use.
 
 ## Implementation Details
 
 ### 1. RPC Proxy Module (`rpc/proxy.py`)
 
 **Features:**
-- Forwards RPC requests to trusted endpoint (default: `https://rpc.animica.org/rpc`)
+- Forwards RPC requests to trusted endpoint (default: `http://127.0.0.1:8545/rpc`)
 - Automatic retry logic with configurable attempts and delays
 - Fallback to local node when trusted endpoint is unreachable
 - Enhanced logging for debugging and monitoring
@@ -31,7 +31,7 @@ Originally implemented RPC proxy mechanism for Animica mining operations to vali
 
 **Configuration (Environment Variables):**
 ```bash
-ANIMICA_TRUSTED_RPC_URL="https://rpc.animica.org/rpc"  # Trusted RPC endpoint
+ANIMICA_TRUSTED_RPC_URL="http://127.0.0.1:8545/rpc"  # Trusted RPC endpoint
 ANIMICA_PROXY_MAX_RETRIES=3                        # Max retry attempts
 ANIMICA_PROXY_RETRY_DELAY_MS=1000                  # Delay between retries (ms)
 ANIMICA_PROXY_TIMEOUT_SECONDS=30.0                 # Request timeout (seconds)
@@ -106,7 +106,7 @@ animica miner mine-blocks --count 5 premine --verbose
 ### ✅ Objectives Met
 
 1. **Every IP as RPC URL**: ✅ Nodes can proxy requests to trusted endpoint
-2. **Auto-confirm Source of Truth**: ✅ `rpc.animica.org/rpc` validated automatically
+2. **Auto-confirm Source of Truth**: ✅ `127.0.0.1/rpc` validated automatically
 3. **Fallback Mechanisms**: ✅ Automatic retry and local node fallback
 4. **Enhanced Logging**: ✅ Detailed logging at each step
 5. **Backward Compatibility**: ✅ Existing mining commands work unchanged
@@ -136,7 +136,7 @@ animica miner mine-blocks --count 5 premine
 
 Output:
 ```
-✓ Proxy mode enabled - validating against https://rpc.animica.org
+✓ Proxy mode enabled - validating against http://127.0.0.1:8545
 Mining 5 block(s) with proxy validation with payout to address anim1...
   Block 1/5 mined (height: 101, reward: 5.000000000 ANM)
   Block 2/5 mined (height: 102, reward: 5.000000000 ANM)
@@ -168,7 +168,7 @@ animica miner mine-blocks --count 1 premine --verbose
 
 Output includes:
 ```
-✓ Proxy mode enabled - validating against https://rpc.animica.org
+✓ Proxy mode enabled - validating against http://127.0.0.1:8545
   Max retries: 3, Retry delay: 1000ms, Timeout: 30.0s
 Mining 1 block(s) with proxy validation...
   [Proxy] Forwarding mining request to trusted RPC
@@ -313,7 +313,7 @@ Default configuration works out of the box. Optionally customize:
 
 ```bash
 # .env or shell profile
-export ANIMICA_TRUSTED_RPC_URL="https://rpc.animica.org/rpc"
+export ANIMICA_TRUSTED_RPC_URL="http://127.0.0.1:8545/rpc"
 export ANIMICA_PROXY_MAX_RETRIES=3
 export ANIMICA_PROXY_RETRY_DELAY_MS=1000
 export ANIMICA_PROXY_TIMEOUT_SECONDS=30.0
@@ -336,7 +336,7 @@ export ANIMICA_PROXY_TIMEOUT_SECONDS=30.0
 The RPC proxy implementation successfully meets all requirements from the problem statement:
 
 1. ✅ **Every IP as viable node**: Nodes proxy to trusted RPC
-2. ✅ **Auto-validate rpc.animica.org**: Default behavior validates against trusted endpoint
+2. ✅ **Auto-validate 127.0.0.1**: Default behavior validates against trusted endpoint
 3. ✅ **Fallback mechanisms**: Automatic retry + local node fallback
 4. ✅ **Enhanced logging**: Detailed logging at every step
 5. ✅ **Backward compatibility**: Existing workflows unchanged

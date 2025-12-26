@@ -132,8 +132,8 @@ Fixed test mock to include `text()` method for proper Response compatibility.
 
 ### Mainnet
 ```env
-VITE_RPC_URL=https://rpc.animica.org/rpc
-VITE_RPC_WS=wss://rpc.animica.org/ws
+VITE_RPC_URL=http://127.0.0.1:8545/rpc
+VITE_RPC_WS=ws://127.0.0.1:8546/ws
 VITE_CHAIN_ID=659658
 ```
 

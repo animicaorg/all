@@ -646,7 +646,7 @@ This multi-node setup demonstrates that **Animica is fully decentralized** with:
 ✅ Consensus achieved through independent validation  
 ✅ Network resilience to node failures  
 
-The `rpc.animica.org` endpoint is simply **one node among many**, not a central authority. Users can run their own nodes and participate in the decentralized network.
+The `127.0.0.1` endpoint is simply **one node among many**, not a central authority. Users can run their own nodes and participate in the decentralized network.
 
 ## Further Reading
 

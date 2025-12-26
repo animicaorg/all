@@ -16,7 +16,7 @@ Animica uses a **gossip-based P2P protocol** where nodes communicate directly wi
 4. **Share Proofs**: Distribute mining shares (hash work, AI, quantum proofs)
 5. **Reach Consensus**: Validate and agree on the canonical chain
 
-**There is no central server** - the network operates through direct peer-to-peer connections. The RPC endpoint at `rpc.animica.org` is simply **one node among many** that provides public API access, not a central authority.
+**There is no central server** - the network operates through direct peer-to-peer connections. The RPC endpoint at `127.0.0.1` is simply **one node among many** that provides public API access, not a central authority.
 
 ### Network Topology
 
@@ -659,7 +659,7 @@ See `docs/BRIDGE_SETUP.md` for details.
 ## FAQ
 
 **Q: Do I need to run a node to use Animica?**  
-A: No, wallets can connect to public RPC nodes like `rpc.animica.org`. But running your own node provides better privacy and helps decentralize the network.
+A: No, wallets can connect to public RPC nodes like `127.0.0.1`. But running your own node provides better privacy and helps decentralize the network.
 
 **Q: How much bandwidth does a node use?**  
 A: Typical usage: 5-10 GB/month for light sync, 50-100 GB/month for full archival node.

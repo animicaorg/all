@@ -33,10 +33,10 @@ This guide helps you diagnose and fix common issues with the Animica Blockchain 
 #### 2. Incorrect RPC URL Configuration
 - **Check**: Verify your `.env` file has the correct values:
   ```env
-  VITE_RPC_URL=https://rpc.animica.org/rpc
+  VITE_RPC_URL=http://127.0.0.1:8545/rpc
   VITE_CHAIN_ID=1
   ```
-- **For mainnet**: Use `https://rpc.animica.org/rpc`
+- **For mainnet**: Use `http://127.0.0.1:8545/rpc`
 - **For testnet**: Use your testnet RPC URL
 - **For local development**: Use `http://localhost:8545` or `http://127.0.0.1:8545`
 - **Fix**: Update the configuration and restart the dev server
@@ -106,7 +106,7 @@ This guide helps you diagnose and fix common issues with the Animica Blockchain 
 **Solution**:
 1. Check WebSocket URL configuration:
    ```env
-   VITE_RPC_WS=wss://rpc.animica.org/ws
+   VITE_RPC_WS=ws://127.0.0.1:8546/ws
    # or for local:
    VITE_RPC_WS=ws://localhost:8546
    ```

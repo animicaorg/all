@@ -44,7 +44,7 @@ pool.
 
 ```powershell
 opencl-miner `
-  --host rpc.animica.org `
+  --host 127.0.0.1 `
   --port 23454 `
   --worker arc-rig `
   --address anim1zqpd3myua8uyas7mwj0dxu7g9eaj0xyde7apx0s673xam0vay576xgg8z52dr `
@@ -56,7 +56,7 @@ opencl-miner `
 
 ```bash
 opencl-miner \
-  --host rpc.animica.org \
+  --host 127.0.0.1 \
   --port 23454 \
   --worker arc-rig \
   --address anim1zqpd3myua8uyas7mwj0dxu7g9eaj0xyde7apx0s673xam0vay576xgg8z52dr \
