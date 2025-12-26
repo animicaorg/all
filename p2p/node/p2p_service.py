@@ -5639,11 +5639,6 @@ class P2PService:
                 return False, "banned_peer_id"
             if self._is_banned(peer.remote, now=now):
                 return False, "banned"
-            if (
-                self._sync_peer_penalties.get(peer.remote, 0)
-                >= self._sync_peer_penalty_threshold
-            ):
-                return False, "penalized"
         backoff_until = self._sync_peer_backoff.get(peer.remote, 0.0)
         if backoff_until and backoff_until > now:
             reason = self._sync_peer_backoff_reason.get(peer.remote, "backoff")
