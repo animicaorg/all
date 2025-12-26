@@ -24,6 +24,9 @@ from rpc.methods import method
 
 log = logging.getLogger("animica.rpc.p2p")
 
+# Public-facing error message for unavailable P2P services.
+P2P_UNAVAILABLE_ERROR = "P2P disabled/unavailable"
+
 # Optional P2P service imports with graceful fallbacks
 _p2p_service: t.Any = None
 _connection_manager: t.Any = None
@@ -573,7 +576,7 @@ async def sync_debug() -> dict[str, t.Any]:
             return t.cast(dict[str, t.Any], p2p_svc.sync_debug_snapshot())
         except Exception as exc:  # pragma: no cover - defensive
             return {"error": str(exc)}
-    return {"error": "p2p service unavailable"}
+    return {"error": P2P_UNAVAILABLE_ERROR}
 
 
 @method("p2p.getPeerStats", desc="Return detailed peer stats for the P2P service")
@@ -602,7 +605,7 @@ async def get_bans() -> list[dict[str, t.Any]]:
 async def ban_peer(key: str, ttl_s: float, reason: str | None = None) -> dict[str, t.Any]:
     p2p_svc = _get_p2p_service()
     if p2p_svc is None or not hasattr(p2p_svc, "ban_peer"):
-        return {"success": False, "error": "p2p service unavailable"}
+        return {"success": False, "error": P2P_UNAVAILABLE_ERROR}
     try:
         p2p_svc.ban_peer(key, ttl_s=float(ttl_s), reason=reason or "manual")
         return {"success": True, "key": key, "ttl_s": float(ttl_s)}
@@ -614,7 +617,7 @@ async def ban_peer(key: str, ttl_s: float, reason: str | None = None) -> dict[st
 async def unban_peer(key: str) -> dict[str, t.Any]:
     p2p_svc = _get_p2p_service()
     if p2p_svc is None or not hasattr(p2p_svc, "unban_peer"):
-        return {"success": False, "error": "p2p service unavailable"}
+        return {"success": False, "error": P2P_UNAVAILABLE_ERROR}
     try:
         p2p_svc.unban_peer(key)
         return {"success": True, "key": key}
@@ -694,7 +697,7 @@ async def add_peer(address: str) -> dict[str, t.Any]:
 
     return {
         "success": False,
-        "error": "P2P service not available",
+        "error": P2P_UNAVAILABLE_ERROR,
     }
 
 
@@ -715,7 +718,7 @@ async def import_peers(addresses: list[str]) -> dict[str, t.Any]:
                 "seeds_skipped": 0,
                 "dial_attempts_started": 0,
                 **peer_counts,
-                "errors": ["P2P service not available"],
+                "errors": [P2P_UNAVAILABLE_ERROR],
             }
         added = 0
         skipped = 0
@@ -893,7 +896,7 @@ async def remove_peer(peer_id: str) -> dict[str, t.Any]:
 
     return {
         "success": False,
-        "error": "P2P service not available",
+        "error": P2P_UNAVAILABLE_ERROR,
     }
 
 
