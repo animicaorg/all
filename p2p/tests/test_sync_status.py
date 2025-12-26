@@ -495,6 +495,32 @@ def test_headers_anchor_exclusive_response_ok(tmp_path: Path) -> None:
     assert node._sync_best_header.hash == block2.header.hash()
 
 
+def test_headers_accept_marks_peer_anchored(tmp_path: Path) -> None:
+    node, deps_sync = _make_service(tmp_path, "anchor-accepted")
+    block1 = _make_child_block(deps_sync)
+    accepted, _reason = deps_sync.import_block(block1)
+    assert accepted
+    block2 = _make_child_block_from_header(block1.header)
+
+    header2 = HeaderCompact(
+        hash=block2.header.hash(),
+        height=int(block2.header.height),
+        parent=bytes(block2.header.parentHash),
+        theta_micro=int(getattr(block2.header, "thetaMicro", 0)),
+        timestamp=int(getattr(block2.header, "timestamp", 0)),
+    )
+
+    peer = _make_peer()
+    assert peer.anchored is False
+
+    accepted_hashes, reason = node._process_headers(peer, [header2])
+
+    assert reason is None
+    assert accepted_hashes == [block2.header.hash()]
+    assert peer.anchored is True
+    assert peer.anchor_reason == "headers_accepted"
+
+
 def test_header_sync_advances_from_height_one(tmp_path: Path) -> None:
     node, deps_sync = _make_service(tmp_path, "advance-height-one")
     block1 = _make_child_block(deps_sync)
