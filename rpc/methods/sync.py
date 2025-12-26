@@ -171,6 +171,12 @@ async def sync_get_status() -> dict[str, t.Any]:
         "last_checkpoint_action": None,
         "synchronized": False,
         "peer_penalties": {},
+        "cache_interval_ms": 0,
+        "cache_age_ms": 0,
+        "cache_hits": 0,
+        "cache_refreshes": 0,
+        "cache_last_refresh_at": None,
+        "cache_source": "refresh",
     }
 
 
