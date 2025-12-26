@@ -542,6 +542,11 @@ class P2PDeps:
 
         This allows transactions gossiped by peers to be added to the local
         mempool/pending pool so they can be included in blocks mined by this node.
+
+        Notes:
+            - Accepts either a decoded Tx object or raw CBOR bytes.
+            - When raw bytes are provided, we avoid re-encoding to preserve the
+              canonical hash and skip heavy decoding while syncing.
         """
         try:
             # Import RPC tx methods to access pending pool admission
@@ -554,16 +559,22 @@ class P2PDeps:
             ):
                 return False, "no_pending_pool_available"
 
-            # Encode the tx to CBOR (canonical format)
-            # Use the Tx object's built-in to_cbor() method which handles serialization correctly
+            # Encode the tx to CBOR (canonical format) or accept raw bytes
             try:
-                if hasattr(tx, "to_cbor") and callable(tx.to_cbor):
+                if isinstance(tx, (bytes, bytearray)):
+                    raw_cbor = bytes(tx)
+                elif hasattr(tx, "to_cbor") and callable(tx.to_cbor):
                     raw_cbor = tx.to_cbor()
-                else:
-                    # Fallback: manually encode using CBOR and to_obj()
+                elif hasattr(tx, "to_obj") and callable(tx.to_obj):
                     from core.encoding.cbor import dumps as cbor_encode
 
                     raw_cbor = cbor_encode(tx.to_obj())
+                elif isinstance(tx, dict):
+                    from core.encoding.cbor import dumps as cbor_encode
+
+                    raw_cbor = cbor_encode(tx)
+                else:
+                    return False, "unsupported_tx_type"
             except Exception as e:
                 return False, f"cbor_encode_failed:{e}"
 
