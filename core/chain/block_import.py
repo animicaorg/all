@@ -699,17 +699,40 @@ class BlockImporter:
             target = _theta_to_target(int(theta_micro))
             pow_hash_int = int.from_bytes(header_hash, "big")
             if pow_hash_int > target:
-                if os.getenv("ANIMICA_SYNC_DEBUG") == "1":
-                    log.debug(
-                        "PoW target mismatch",
-                        extra={
-                            "height": _height_of(header, payload),
-                            "header_hash": header_hash.hex(),
-                            "theta_micro": int(theta_micro),
-                            "pow_hash_int": pow_hash_int,
-                            "target": target,
-                        },
-                    )
+                height = None
+                parent_hash = None
+                try:
+                    height = _height_of(header, payload)
+                except Exception:
+                    height = None
+                try:
+                    parent_hash = _parent_hash_of(header, payload).hex()
+                except Exception:
+                    parent_hash = None
+                claimed_bits = None
+                for key in ("bits", "target", "targetBits", "target_bits"):
+                    if key in payload:
+                        claimed_bits = payload.get(key)
+                        break
+                log.warning(
+                    "PoW target mismatch",
+                    extra={
+                        "block_hash": header_hash.hex(),
+                        "header_hash": header_hash.hex(),
+                        "height": height,
+                        "prev_hash": parent_hash,
+                        "claimed_bits": claimed_bits,
+                        "claimed_theta_micro": int(theta_micro),
+                        "computed_target": target,
+                        "computed_target_hex": hex(int(target)),
+                        "computed_work_hash": header_hash.hex(),
+                        "pow_hash_int": pow_hash_int,
+                        "hash_endianness": "big",
+                        "chain_id": int(self.params.chain_id),
+                        "chain_name": self.params.chain_name,
+                        "genesis_hash": self.params.genesis_hash.hex(),
+                    },
+                )
                 return "pow target not met"
         except Exception as e:
             if os.getenv("ANIMICA_SYNC_DEBUG") == "1":
