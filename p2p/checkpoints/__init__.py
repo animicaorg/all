@@ -6,14 +6,14 @@ Optional checkpoint mechanism for P2P-first sync safety rails.
 
 Model 3 (Hybrid):
 - Default behavior remains P2P-first for sync/validation/mining.
-- No code path requires https://rpc.animica.org/rpc to be reachable.
+- No code path requires an external RPC host to be reachable.
 - Adds optional checkpoint mechanism that can consult a configured URL
   or local file to fetch/check pinned checkpoints (height->hash).
 - Used as a safety rail during initial sync or fork-choice, not as a live head oracle.
 
 Configuration:
 - ANIMICA_CHECKPOINTS_MODE=off|rpc|file (default: off)
-- ANIMICA_CHECKPOINTS_RPC_URL (default: https://rpc.animica.org/rpc)
+- ANIMICA_CHECKPOINTS_RPC_URL (default: http://144.126.133.21:30337/rpc)
 - ANIMICA_CHECKPOINTS_FILE (path to JSON checkpoints)
 - ANIMICA_CHECKPOINTS_MAX_AGE (optional; seconds)
 - ANIMICA_CHECKPOINTS_STRICT (default: false)

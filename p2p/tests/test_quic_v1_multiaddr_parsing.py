@@ -12,10 +12,10 @@ class TestQuicV1MultiaddrParsing:
     
     def test_parse_quic_v1_dns_seed(self):
         """Test parsing DNS-based QUIC seed with quic-v1 token."""
-        result = parse_multiaddr("/dns4/mainnet.animica.org/udp/443/quic-v1")
+        result = parse_multiaddr("/dns4/bootstrap.example.net/udp/443/quic-v1")
         
         assert result.transport == "udp"
-        assert result.host == "mainnet.animica.org"
+        assert result.host == "bootstrap.example.net"
         assert result.port == 443
         assert result.is_quic is True
     
@@ -30,10 +30,10 @@ class TestQuicV1MultiaddrParsing:
     
     def test_parse_tcp_dns_seed(self):
         """Test parsing DNS-based TCP seed (for comparison)."""
-        result = parse_multiaddr("/dns4/mainnet.animica.org/tcp/30333")
+        result = parse_multiaddr("/dns4/bootstrap.example.net/tcp/30333")
         
         assert result.transport == "tcp"
-        assert result.host == "mainnet.animica.org"
+        assert result.host == "bootstrap.example.net"
         assert result.port == 30333
         assert result.is_quic is False
     
@@ -89,7 +89,7 @@ class TestP2PServiceSeedFiltering:
                 tcp_seeds.append(seed)
         
         # Should have TCP seeds for mainnet
-        assert any("mainnet.animica.org" in seed for seed in tcp_seeds)
+        assert any("144.126.133.21" in seed for seed in tcp_seeds)
         
         # Verify they can be dialed
         for seed in tcp_seeds:
@@ -105,7 +105,7 @@ class TestMultiaddrRoundtrip:
         """Test parsing and formatting TCP seed."""
         from p2p.transport.multiaddr import format_multiaddr
         
-        original = "/dns4/mainnet.animica.org/tcp/30333"
+        original = "/ip4/144.126.133.21/tcp/30333"
         parsed = parse_multiaddr(original)
         formatted = format_multiaddr(parsed)
         reparsed = parse_multiaddr(formatted)

@@ -11,10 +11,10 @@ from p2p.peer.peer_addr import normalize_peer_addr
         ("tcp://example.com:30333", "tcp://example.com:30333"),
         ("p2p://example.com:30333", "tcp://example.com:30333"),
         ("/ip4/144.126.133.21/tcp/30333", "tcp://144.126.133.21:30333"),
-        ("/dns4/mainnet.animica.org/tcp/30333", "tcp://mainnet.animica.org:30333"),
+        ("/dns4/bootstrap.example.net/tcp/30333", "tcp://bootstrap.example.net:30333"),
         (
-            "/dns4/mainnet.animica.org/tcp/30333/p2p/12D3KooWXYZ",
-            "tcp://mainnet.animica.org:30333",
+            "/dns4/bootstrap.example.net/tcp/30333/p2p/12D3KooWXYZ",
+            "tcp://bootstrap.example.net:30333",
         ),
         ("203.0.113.10:30333", "tcp://203.0.113.10:30333"),
     ],
@@ -26,13 +26,13 @@ def test_normalize_peer_addr_tcp(raw: str, expected: str) -> None:
 
 
 def test_normalize_peer_addr_ws_multiaddr() -> None:
-    parsed = normalize_peer_addr("/dns4/ws.animica.org/tcp/443/ws", allow_ws=True)
+    parsed = normalize_peer_addr("/dns4/ws.example.net/tcp/443/ws", allow_ws=True)
     assert parsed.addr is not None
-    assert parsed.addr.canonical == "ws://ws.animica.org:443"
+    assert parsed.addr.canonical == "ws://ws.example.net:443"
 
 
 def test_normalize_peer_addr_ws_rejected() -> None:
-    parsed = normalize_peer_addr("/dns4/ws.animica.org/tcp/443/ws", allow_ws=False)
+    parsed = normalize_peer_addr("/dns4/ws.example.net/tcp/443/ws", allow_ws=False)
     assert parsed.addr is None
     assert parsed.reason == "unsupported_ws"
 

@@ -140,36 +140,19 @@ class SeedBundle:
 
 
 # Embedded fallback seeds - always available even if DNS fails.
-# Prefer dedicated network domains.
+# Use a neutral bootstrap IP so discovery does not depend on domain seeds.
 EMBEDDED_FALLBACK_SEEDS: List[str] = [
-    # Mainnet
-    "tcp://mainnet.animica.org:30333",
-    # Testnet
-    "quic://testnet.animica.org:443",
-    "tcp://testnet.animica.org:30333",
-    "quic://rpc.testnet.animica.org:443",
-    "tcp://rpc.testnet.animica.org:30333",
-    # Devnet
-    "quic://devnet.animica.org:443",
-    "tcp://devnet.animica.org:30333",
-    # Shared IP fallback for DNS-less environments.
     "quic://144.126.133.21:443",
     "tcp://144.126.133.21:30333",
 ]
 
 # Network-specific DNS seeds (for TXT record discovery)
-NETWORK_DNS_SEEDS: Dict[int, str] = {
-    1: "_p2p.mainnet.animica.org",      # Mainnet
-    2: "_p2p.testnet.animica.org",      # Testnet
-    1337: "_p2p.devnet.animica.org",    # Devnet
-}
+# Left empty by default to avoid reliance on domain seeds.
+NETWORK_DNS_SEEDS: Dict[int, str] = {}
 
 # Network-specific HTTPS seeds (for JSON discovery)
-NETWORK_HTTPS_SEEDS: Dict[int, str] = {
-    1: "https://seeds.mainnet.animica.org/seeds.json",
-    2: "https://seeds.testnet.animica.org/seeds.json",
-    1337: "https://seeds.devnet.animica.org/seeds.json",
-}
+# Left empty by default to avoid reliance on domain seeds.
+NETWORK_HTTPS_SEEDS: Dict[int, str] = {}
 
 _VALID_SCHEMES = {"tcp", "quic", "ws", "wss", "animica"}
 
