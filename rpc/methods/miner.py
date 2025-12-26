@@ -23,6 +23,7 @@ from mining.adapters.core_chain import CoreChainAdapter
 import p2p
 from rpc import deps
 from rpc.methods import method
+from mempool.select import PendingTxEntry, select_for_block
 
 try:  # Optional helper to compute share target from Θ
     from consensus.difficulty import share_microtarget
@@ -1704,57 +1705,49 @@ def _mine_once(payout_address: bytes | None = None, threads: int = 1) -> tuple[b
 
     ctx = _ctx()
     adapter = _adapter()
-    txs: list[Tx] = []
-    included_hashes: list[str] = []
-    
-    # Track per-sender nonces to enforce sequencing within this block
-    # Maps sender_bytes -> next_expected_nonce
-    # NOTE: This is intentionally reset per mining call - each block starts fresh
-    # from current state, ensuring nonce consistency even if transactions fail
-    sender_nonces: dict[bytes, int] = {}
+    pending_entries: list[PendingTxEntry] = []
 
-    # Collect pending transactions from the best available source (mempool → fallback cache)
     log.info("_mine_once: Starting transaction collection from mempool adapter")
     log.info(f"_mine_once: Adapter has miner_feed: {adapter.miner_feed is not None}")
     try:
-        txs = list(adapter.get_mempool_snapshot(limit=1000))
-        log.info(f"_mine_once: adapter.get_mempool_snapshot returned {len(txs)} transactions")
-        if txs:
-            log.info(f"_mine_once: Sample tx types from adapter: {[type(tx).__name__ for tx in txs[:3]]}")
-        # Track hashes of transactions from adapter for eviction later
-        # Use canonical hash (from raw CBOR) when available, else fall back to tx.hash()
-        for tx in txs:
-            try:
-                # Try to get canonical hash from tracked raw bytes first
-                tracked = _tracked(tx)
-                if tracked:
-                    tx_hash_hex, raw = tracked
-                    log.debug(f"Tracked canonical hash from adapter: {tx_hash_hex}")
+        snapshot = list(adapter.get_mempool_snapshot(limit=1000))
+        log.info(f"_mine_once: adapter.get_mempool_snapshot returned {len(snapshot)} transactions")
+        if snapshot:
+            log.info(f"_mine_once: Sample tx types from adapter: {[type(tx).__name__ for tx in snapshot[:3]]}")
+        for tx in snapshot:
+            tracked = _tracked(tx)
+            raw = b""
+            if tracked:
+                tx_hash_hex, raw = tracked
+            else:
+                raw = getattr(tx, "raw_cbor", None) or b""
+                if not raw and hasattr(tx, "to_cbor"):
+                    try:
+                        raw = tx.to_cbor()
+                    except Exception:
+                        raw = b""
+                if raw:
+                    from core.utils.hash import sha3_256
+
+                    tx_hash_hex = "0x" + sha3_256(raw).hex()
                 else:
-                    # Fallback: use tx.hash() if not tracked
-                    tx_hash_bytes = tx.hash()
-                    tx_hash_hex = "0x" + tx_hash_bytes.hex()
-                    log.debug(f"Tracked tx.hash() from adapter: {tx_hash_hex}")
-                included_hashes.append(tx_hash_hex)
-            except Exception as e:
-                # tx.hash() may fail for malformed tx; log and skip this tx for eviction tracking
-                log.debug(f"Could not get hash for tx from adapter; skipping eviction tracking: {e}")
-        if txs:
-            log.info(f"Retrieved {len(txs)} transactions from mempool adapter for mining (tracked {len(included_hashes)} hashes)")
+                    tx_hash_hex = _canonical_txid_hex(tx)
+                if raw:
+                    _TX_HASH_MAP[id(tx)] = (tx_hash_hex, raw)
+            pending_entries.append(PendingTxEntry(hash_hex=tx_hash_hex, raw=raw or b"", tx=tx))
     except Exception as e:
         log.warning(f"mempool snapshot unavailable; falling back to in-process cache: {e}", exc_info=True)
-    if not txs:
+
+    if not pending_entries:
         log.info("_mine_once: No transactions from adapter, trying fallback direct read")
         try:
             from rpc.methods import tx as tx_methods
 
-            # Check _PEND first (same priority as drain_fn)
             pend = getattr(tx_methods, "_PEND", None)
             pending_map = {}
-            
+
             if pend is not None:
                 log.info("_mine_once fallback: Using _PEND pool")
-                # Try to get items from _PEND
                 if hasattr(pend, "items") and callable(pend.items):
                     try:
                         pending_map = dict(pend.items())
@@ -1768,224 +1761,80 @@ def _mine_once(payout_address: bytes | None = None, threads: int = 1) -> tuple[b
                         log.info(f"_mine_once fallback: Got {len(pending_map)} txs from _PEND.list_raw()")
                     except Exception as e:
                         log.warning(f"_mine_once fallback: _PEND.list_raw() failed: {e}")
-            
-            # Fallback to _FALLBACK_PENDING if _PEND is None or didn't provide items
+
             if not pending_map:
                 fallback = getattr(tx_methods, "_FALLBACK_PENDING", {}) or {}
                 pending_map = fallback
                 log.info(f"_mine_once fallback: Using _FALLBACK_PENDING with {len(pending_map)} txs")
-            
-            pending_count = len(pending_map)
-            if pending_count > 0:
-                log.info(f"Attempting to retrieve {pending_count} transactions from pending pool")
+
             for tx_hash_hex, raw in pending_map.items():
                 try:
-                    log.debug(f"_mine_once: Decoding tx {tx_hash_hex} from fallback")
-                    decoded, obj = tx_methods._decode_tx(raw)  # type: ignore[attr-defined]
-                    log.debug(f"_mine_once: Decoded tx {tx_hash_hex}, type={type(decoded).__name__}")
-                    # Accept both Tx instances and dict/obj that can be used as Tx
-                    # _decode_tx returns (Tx, dict) when Tx.from_obj succeeds, or (dict, dict) when falling back to dict
+                    decoded, _obj = tx_methods._decode_tx(raw)  # type: ignore[attr-defined]
+                    tx_obj = None
                     if isinstance(decoded, Tx):
-                        # Verify chainId matches this node's chainId before including
-                        tx_chain_id = getattr(decoded, "chain_id", getattr(decoded, "chainId", None))
-                        if hasattr(decoded, "unsigned"):
-                            tx_chain_id = getattr(decoded.unsigned, "chain_id", tx_chain_id)
-                        
-                        node_chain_id = ctx.cfg.chain_id
-                        if tx_chain_id is not None and int(tx_chain_id) != int(node_chain_id):
-                            log.warning(
-                                f"_mine_once: Skipping tx {tx_hash_hex} - chainId mismatch "
-                                f"(tx={tx_chain_id}, node={node_chain_id})"
-                            )
-                            continue
-                        
-                        # Check nonce sequencing (optional, allows gaps but enforces order for same sender)
-                        sender, tx_nonce = _get_tx_sender_and_nonce(decoded)
-                        if sender is not None and tx_nonce is not None:
-                            # Get expected nonce for this sender (from state or tracked nonces)
-                            if sender not in sender_nonces:
-                                # First tx from this sender - get current nonce from state
-                                try:
-                                    state_nonce = ctx.state_db.get_nonce(sender) if ctx.state_db else 0
-                                    sender_nonces[sender] = int(state_nonce)
-                                except Exception:
-                                    sender_nonces[sender] = 0
-                            
-                            expected_nonce = sender_nonces[sender]
-                            if tx_nonce < expected_nonce:
-                                log.warning(
-                                    f"_mine_once: Skipping tx {tx_hash_hex} - nonce too low "
-                                    f"(tx_nonce={tx_nonce}, expected={expected_nonce})"
-                                )
-                                continue
-                            elif tx_nonce > expected_nonce:
-                                # Skip transactions with nonce gaps within this block
-                                # NOTE: This prevents out-of-order execution but means txs
-                                # with gaps stay in mempool until gap is filled. This is
-                                # standard Ethereum-style behavior and prevents stuck transactions.
-                                log.debug(
-                                    f"_mine_once: Skipping tx {tx_hash_hex} - nonce gap "
-                                    f"(tx_nonce={tx_nonce}, expected={expected_nonce})"
-                                )
-                                continue
-                            
-                            # Nonce matches - accept and increment expected nonce
-                            sender_nonces[sender] = expected_nonce + 1
-                        
-                        # Track tx hash and raw bytes for sender derivation later
-                        # This is critical for _attach_sender_if_possible to work
-                        _TX_HASH_MAP[id(decoded)] = (tx_hash_hex, raw)
-                        
-                        txs.append(decoded)
-                        included_hashes.append(tx_hash_hex)
-                        log.debug(f"_mine_once: Added Tx instance {tx_hash_hex} to txs list (tracked for sender derivation)")
-                    elif decoded is not None and isinstance(decoded, dict):
-                        # Try to construct Tx from the decoded dict
-                        # The dict may be in one of two formats:
-                        # 1. Core format: {"tx": {...}, "sigs": [...]}
-                        # 2. RPC envelope format: {"body": {...}, "sig": {...}} or {"body": {...}, "sigs": [...]}
-                        try:
-                            # Normalize RPC envelope format to core format if needed
-                            normalized = _normalize_tx_envelope(decoded)
-                            log.debug(f"_mine_once: Normalized tx {tx_hash_hex}, keys={list(normalized.keys())}")
-                            
-                            # Try to construct Tx using available constructor methods
-                            tx_obj = _construct_tx_from_dict(normalized)
-                            if tx_obj is not None:
-                                # Verify chainId matches this node's chainId before including
-                                tx_chain_id = getattr(tx_obj, "chain_id", getattr(tx_obj, "chainId", None))
-                                if hasattr(tx_obj, "unsigned"):
-                                    tx_chain_id = getattr(tx_obj.unsigned, "chain_id", tx_chain_id)
-                                
-                                # Also check the dict body if Tx attributes not available
-                                if tx_chain_id is None and isinstance(obj, dict):
-                                    body = obj.get("body", {}) if "body" in obj else obj.get("tx", {})
-                                    tx_chain_id = body.get("chainId", body.get("chain_id"))
-                                
-                                node_chain_id = ctx.cfg.chain_id
-                                if tx_chain_id is not None and int(tx_chain_id) != int(node_chain_id):
-                                    log.warning(
-                                        f"_mine_once: Skipping tx {tx_hash_hex} - chainId mismatch "
-                                        f"(tx={tx_chain_id}, node={node_chain_id})"
-                                    )
-                                    continue
-                                
-                                # Check nonce sequencing (optional, allows gaps but enforces order for same sender)
-                                sender, tx_nonce = _get_tx_sender_and_nonce(tx_obj)
-                                if sender is not None and tx_nonce is not None:
-                                    # Get expected nonce for this sender (from state or tracked nonces)
-                                    if sender not in sender_nonces:
-                                        # First tx from this sender - get current nonce from state
-                                        try:
-                                            state_nonce = ctx.state_db.get_nonce(sender) if ctx.state_db else 0
-                                            sender_nonces[sender] = int(state_nonce)
-                                        except Exception:
-                                            sender_nonces[sender] = 0
-                                    
-                                    expected_nonce = sender_nonces[sender]
-                                    if tx_nonce < expected_nonce:
-                                        log.warning(
-                                            f"_mine_once: Skipping tx {tx_hash_hex} - nonce too low "
-                                            f"(tx_nonce={tx_nonce}, expected={expected_nonce})"
-                                        )
-                                        continue
-                                    elif tx_nonce > expected_nonce:
-                                        log.debug(
-                                            f"_mine_once: Skipping tx {tx_hash_hex} - nonce gap "
-                                            f"(tx_nonce={tx_nonce}, expected={expected_nonce})"
-                                        )
-                                        continue
-                                    
-                                    # Nonce matches - accept and increment expected nonce
-                                    sender_nonces[sender] = expected_nonce + 1
-                                
-                                # Track tx hash and raw bytes for sender derivation later
-                                # This is critical for _attach_sender_if_possible to work
-                                _TX_HASH_MAP[id(tx_obj)] = (tx_hash_hex, raw)
-                                
-                                txs.append(tx_obj)
-                                included_hashes.append(tx_hash_hex)
-                                log.debug(f"_mine_once: Successfully constructed and added Tx from dict for {tx_hash_hex} (tracked for sender derivation)")
-                            else:
-                                log.warning(
-                                    "Tx class has no from_obj/from_dict method; skipping tx from fallback cache",
-                                    extra={"hash": tx_hash_hex},
-                                )
-                        except Exception as e:
-                            log.warning(
-                                "Could not convert decoded tx to Tx instance; skipping from fallback cache",
-                                extra={"hash": tx_hash_hex, "err": str(e), "keys": list(decoded.keys() if isinstance(decoded, dict) else [])},
-                                exc_info=True,
-                            )
+                        tx_obj = decoded
+                    elif isinstance(decoded, dict):
+                        normalized = _normalize_tx_envelope(decoded)
+                        tx_obj = _construct_tx_from_dict(normalized)
+                    if tx_obj is None:
+                        log.warning(
+                            "Could not construct Tx from pending entry; skipping",
+                            extra={"hash": tx_hash_hex},
+                        )
+                        continue
+                    _TX_HASH_MAP[id(tx_obj)] = (tx_hash_hex, raw)
+                    pending_entries.append(
+                        PendingTxEntry(hash_hex=tx_hash_hex, raw=raw, tx=tx_obj)
+                    )
                 except Exception as e:
                     log.warning(
                         "Failed to decode pending tx from fallback cache; skipping",
                         extra={"hash": tx_hash_hex, "err": str(e)},
                         exc_info=True,
                     )
-            if txs:
-                log.info(f"Retrieved {len(txs)}/{pending_count} transactions from fallback pending cache for mining")
-            elif pending_count > 0:
-                log.warning(f"Failed to retrieve any of {pending_count} transactions from fallback pending cache")
         except Exception as e:
             log.error("Fallback pending pool unavailable", extra={"err": str(e)}, exc_info=True)
-    
-    # Normalize transactions: attach sender where possible, drop txs with no sender
-    # This fixes the bug where miner pulls txs from _FALLBACK_PENDING but drops them
-    # with "Transaction missing sender; skipping" during execution.
-    if txs:
-        log.info(f"Normalizing {len(txs)} transactions before mining (attaching sender where possible)")
-        
-        # Ensure txs and included_hashes have matching lengths (pad with canonical hashes if needed)
-        if len(included_hashes) < len(txs):
-            log.warning(
-                f"included_hashes shorter than txs ({len(included_hashes)} < {len(txs)}), "
-                f"computing missing canonical hashes"
-            )
-            # Compute missing hashes
-            for i in range(len(included_hashes), len(txs)):
-                included_hashes.append(_canonical_txid_hex(txs[i]))
-        
-        txs_normalized = []
-        included_hashes_normalized = []
-        
-        # Use zip to ensure synchronization between txs and hashes
-        for tx, tx_hash_hex in zip(txs, included_hashes):
-            # Try to attach sender if missing
-            tx_normalized = _attach_sender_if_possible(tx)
 
-            # Preserve canonical hash tracking when normalization creates a new Tx object.
-            # This keeps txsRoot computation and mempool eviction aligned with the original
-            # raw CBOR hash (tx.sendRawTransaction output).
+    if pending_entries:
+        normalized_entries: list[PendingTxEntry] = []
+        for entry in pending_entries:
+            tx = entry.tx
+            if tx is None:
+                normalized_entries.append(entry)
+                continue
+            tx_normalized = _attach_sender_if_possible(tx)
             if tx_normalized is not tx:
                 tracked = _tracked(tx)
                 if tracked:
                     _TX_HASH_MAP[id(tx_normalized)] = tracked
-            
-            # Drop txs that still have no sender (can't execute without sender)
-            if not _has_valid_sender(tx_normalized):
-                log.warning(
-                    f"Dropping tx {tx_hash_hex[:16]}... - no sender after normalization "
-                    f"(envelope may be missing signature or pubkey)"
+            normalized_entries.append(
+                PendingTxEntry(
+                    hash_hex=entry.hash_hex, raw=entry.raw, tx=tx_normalized
                 )
-                continue
-            
-            # Keep normalized tx and its hash
-            txs_normalized.append(tx_normalized)
-            included_hashes_normalized.append(tx_hash_hex)
-        
-        # Replace with normalized lists
-        dropped_count = len(txs) - len(txs_normalized)
-        txs = txs_normalized
-        included_hashes = included_hashes_normalized
-        
-        if dropped_count > 0:
-            log.warning(
-                f"Dropped {dropped_count} transactions with missing sender "
-                f"(kept {len(txs)} txs with valid sender for block)"
             )
-        else:
-            log.info(f"All {len(txs)} transactions have valid sender after normalization")
+        selection = select_for_block(
+            head_state={"chain_id": ctx.cfg.chain_id},
+            limits={
+                "max_gas": DEFAULT_BLOCK_GAS_LIMIT,
+                "max_bytes": DEFAULT_BLOCK_BYTE_LIMIT,
+                "max_txs": 1000,
+            },
+            pending=normalized_entries,
+            state_db=getattr(ctx, "state_db", None),
+        )
+        txs: list[Tx] = list(selection.selected)
+        included_hashes: list[str] = list(selection.selected_hashes)
+        log.debug(
+            "mempool selection summary",
+            extra={
+                "pending": selection.total_pending,
+                "selected": len(txs),
+                "rejected": dict(selection.rejected),
+            },
+        )
+    else:
+        txs = []
+        included_hashes = []
     
     head = adapter.get_head()
     parent_height = int(head.get("height") or 0)
