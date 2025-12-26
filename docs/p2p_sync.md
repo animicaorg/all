@@ -57,6 +57,23 @@ All consensus happens via P2P. RPC endpoints are only for:
 | `ANIMICA_P2P_CHAIN_ID` | (from config) | Chain ID for network-specific seed selection |
 | `ANIMICA_PEER_STORE_PATH` | `~/.animica/p2p/{network}` | Persistent peer database location |
 
+### Sync Cache & Background Settings
+
+Animica maintains an on-disk sync cache for headers, block payloads, and sync metadata. The cache
+survives restarts and is automatically pruned.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ANIMICA_SYNC_CACHE_DIR` | `~/.animica/chain-<id>/sync` | Sync cache directory |
+| `ANIMICA_SYNC_CACHE_MAX_MB` | `256` | Max block cache size in MB |
+| `ANIMICA_SYNC_CACHE_MAX_BLOCKS` | `2000` | Max cached block payloads |
+| `ANIMICA_SYNC_CACHE_MAX_HEADERS` | `5000` | Max cached headers/tips to retain |
+| `ANIMICA_SYNC_CACHE_STATE_INTERVAL` | `5` | Seconds between cache state flushes |
+| `ANIMICA_SYNC_CACHE_PRUNE_INTERVAL` | `60` | Seconds between cache pruning |
+
+The sync cache is P2P-first and never depends on a trusted RPC endpoint. Invalid cache entries are
+automatically dropped and re-fetched from peers.
+
 ### Checkpoint Configuration (Optional)
 
 | Variable | Default | Description |
@@ -187,6 +204,23 @@ curl -X POST http://localhost:8545/rpc \
 curl -X POST http://localhost:8545/rpc \
   -H "Content-Type: application/json" \
   -d '{"jsonrpc":"2.0","method":"chain.getHead","id":1}'
+```
+
+You can also use the sync control RPCs (or the CLI wrappers below):
+
+```bash
+curl -X POST http://localhost:8545/rpc \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"sync.getStatus","id":1}'
+```
+
+### Sync Control (CLI)
+
+```bash
+animica sync status
+animica sync pause
+animica sync resume
+animica sync force --clear-cache
 ```
 
 ### Monitor Logs
