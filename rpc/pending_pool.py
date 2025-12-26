@@ -23,9 +23,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 import time
 from dataclasses import dataclass
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Dict, Iterable, List, Optional, Tuple, Union
 
 # Core / encoding (canonical SignBytes)
 from core.encoding import canonical as canonical_enc
@@ -396,3 +397,128 @@ def new_pool(ttl_seconds: int = 300, max_items: int = 50_000) -> PendingPool:
     Quick factory to create a pending pool.
     """
     return PendingPool(ttl_seconds=ttl_seconds, max_items=max_items)
+
+
+# --------------------------------------------------------------------------------------
+# Lightweight sync pending pool (RPC/P2P shared)
+# --------------------------------------------------------------------------------------
+
+
+HashLike = Union[str, bytes, bytearray]
+
+
+@dataclass
+class _SyncEntry:
+    raw: bytes
+    received_at: float
+    expires_at: float
+
+
+class InMemoryPendingPool:
+    """
+    Sync-friendly pending pool used by RPC + P2P glue.
+
+    This intentionally mirrors a tiny subset of the mempool/pending API so
+    callers can share a single in-process store without needing asyncio.
+    """
+
+    def __init__(self, ttl_seconds: int = 600, max_items: int = 50_000) -> None:
+        self._ttl = int(ttl_seconds)
+        self._max = int(max_items)
+        self._entries: Dict[str, _SyncEntry] = {}
+        self._lock = threading.RLock()
+
+    @staticmethod
+    def _normalize_hash(tx_hash: HashLike) -> str:
+        if isinstance(tx_hash, (bytes, bytearray)):
+            return "0x" + bytes(tx_hash).hex()
+        tx_hash = str(tx_hash)
+        return tx_hash if tx_hash.startswith("0x") else f"0x{tx_hash}"
+
+    def _purge_locked(self, now: Optional[float] = None) -> None:
+        t = time.time() if now is None else now
+        expired = [h for h, ent in self._entries.items() if ent.expires_at <= t]
+        for h in expired:
+            self._entries.pop(h, None)
+
+    def _evict_if_needed(self) -> None:
+        if len(self._entries) <= self._max:
+            return
+        # Drop oldest entries first (O(n) scan; acceptable at this scale).
+        oldest = sorted(self._entries.items(), key=lambda kv: kv[1].received_at)
+        overflow = len(self._entries) - self._max
+        for h, _ent in oldest[:overflow]:
+            self._entries.pop(h, None)
+
+    def add_raw(self, tx_hash: HashLike, raw: bytes, ttl: Optional[int] = None) -> None:
+        tx_hash_hex = self._normalize_hash(tx_hash)
+        now = time.time()
+        expires = now + (int(ttl) if ttl is not None else self._ttl)
+        with self._lock:
+            self._purge_locked(now)
+            self._entries[tx_hash_hex] = _SyncEntry(
+                raw=bytes(raw),
+                received_at=now,
+                expires_at=expires,
+            )
+            self._evict_if_needed()
+
+    # Sync-friendly aliases used by adapters
+    def put(self, tx_hash: HashLike, raw: bytes, ttl_s: Optional[int] = None) -> None:
+        self.add_raw(tx_hash, raw, ttl=ttl_s)
+
+    def add(self, tx_hash: HashLike, raw: bytes, ttl: Optional[int] = None) -> None:
+        self.add_raw(tx_hash, raw, ttl=ttl)
+
+    def enqueue(self, tx_hash: HashLike, raw: bytes, ttl: Optional[int] = None) -> None:
+        self.add_raw(tx_hash, raw, ttl=ttl)
+
+    def get_raw(self, tx_hash: HashLike) -> Optional[bytes]:
+        tx_hash_hex = self._normalize_hash(tx_hash)
+        now = time.time()
+        with self._lock:
+            entry = self._entries.get(tx_hash_hex)
+            if entry is None:
+                return None
+            if entry.expires_at <= now:
+                self._entries.pop(tx_hash_hex, None)
+                return None
+            return entry.raw
+
+    def get(self, tx_hash: HashLike) -> Optional[bytes]:
+        return self.get_raw(tx_hash)
+
+    def list_raw(self) -> List[Tuple[str, bytes]]:
+        now = time.time()
+        with self._lock:
+            expired = [h for h, ent in self._entries.items() if ent.expires_at <= now]
+            for h in expired:
+                self._entries.pop(h, None)
+            return [(h, ent.raw) for h, ent in self._entries.items()]
+
+    def list_raw_with_ts(self) -> List[Tuple[str, bytes, float]]:
+        now = time.time()
+        with self._lock:
+            expired = [h for h, ent in self._entries.items() if ent.expires_at <= now]
+            for h in expired:
+                self._entries.pop(h, None)
+            return [(h, ent.raw, ent.received_at) for h, ent in self._entries.items()]
+
+    def items(self) -> List[Tuple[str, bytes]]:
+        return self.list_raw()
+
+    def __len__(self) -> int:
+        with self._lock:
+            return len(self._entries)
+
+
+# Shared default pool instance (used by rpc.methods.tx)
+pool = InMemoryPendingPool()
+
+
+__all__ = [
+    "PendingPool",
+    "InMemoryPendingPool",
+    "new_pool",
+    "pool",
+]
