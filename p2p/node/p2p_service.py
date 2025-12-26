@@ -343,6 +343,12 @@ class SyncStatusSnapshot:
     synchronized: bool
     peer_penalties: Dict[str, int]
     peer_anchor_states: Dict[str, dict[str, Any]]
+    cache_interval_ms: int
+    cache_age_ms: int
+    cache_hits: int
+    cache_refreshes: int
+    cache_last_refresh_at: float
+    cache_source: str
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -401,6 +407,12 @@ class SyncStatusSnapshot:
             "synchronized": self.synchronized,
             "peer_penalties": dict(self.peer_penalties),
             "peer_anchor_states": dict(self.peer_anchor_states),
+            "cache_interval_ms": self.cache_interval_ms,
+            "cache_age_ms": self.cache_age_ms,
+            "cache_hits": self.cache_hits,
+            "cache_refreshes": self.cache_refreshes,
+            "cache_last_refresh_at": self.cache_last_refresh_at,
+            "cache_source": self.cache_source,
         }
 
 
@@ -867,6 +879,13 @@ class P2PService:
         )
         self._sync_tip_tolerance = int(
             os.environ.get("ANIMICA_P2P_SYNC_TIP_TOLERANCE", "2") or 2
+        )
+        self._sync_status_cache: Optional[SyncStatusSnapshot] = None
+        self._sync_status_cache_at = 0.0
+        self._sync_status_cache_hits = 0
+        self._sync_status_cache_refreshes = 0
+        self._sync_status_cache_interval = float(
+            os.environ.get("ANIMICA_SYNC_STATUS_CACHE_INTERVAL", "0.25") or 0.25
         )
         self._load_bootstrap_checkpoint()
         self._bootstrap_attempts: deque[dict[str, Any]] = deque(maxlen=512)
@@ -2126,6 +2145,39 @@ class P2PService:
         )
 
     def sync_status_snapshot(self) -> SyncStatusSnapshot:
+        now = time.time()
+        if (
+            self._sync_status_cache is not None
+            and self._sync_status_cache_interval > 0
+            and (now - self._sync_status_cache_at) < self._sync_status_cache_interval
+        ):
+            self._sync_status_cache_hits += 1
+            return self._apply_sync_status_cache_meta(
+                self._sync_status_cache, now, source="cache"
+            )
+        snapshot = self._build_sync_status_snapshot()
+        self._sync_status_cache = snapshot
+        self._sync_status_cache_at = now
+        self._sync_status_cache_refreshes += 1
+        return self._apply_sync_status_cache_meta(snapshot, now, source="refresh")
+
+    def _apply_sync_status_cache_meta(
+        self,
+        snapshot: SyncStatusSnapshot,
+        now: float,
+        *,
+        source: str,
+    ) -> SyncStatusSnapshot:
+        age = max(0.0, now - self._sync_status_cache_at)
+        snapshot.cache_interval_ms = int(self._sync_status_cache_interval * 1000)
+        snapshot.cache_age_ms = int(age * 1000)
+        snapshot.cache_hits = self._sync_status_cache_hits
+        snapshot.cache_refreshes = self._sync_status_cache_refreshes
+        snapshot.cache_last_refresh_at = self._sync_status_cache_at
+        snapshot.cache_source = source
+        return snapshot
+
+    def _build_sync_status_snapshot(self) -> SyncStatusSnapshot:
         height, head_hash = self._canonical_head_for_status()
         head_hex = head_hash
         raw_best_header_height = (
@@ -2262,6 +2314,12 @@ class P2PService:
                 if remote not in self._sync_peer_penalty_whitelist
             },
             peer_anchor_states=peer_anchor_states,
+            cache_interval_ms=0,
+            cache_age_ms=0,
+            cache_hits=0,
+            cache_refreshes=0,
+            cache_last_refresh_at=0.0,
+            cache_source="refresh",
         )
 
     def sync_debug_snapshot(self) -> dict[str, Any]:
