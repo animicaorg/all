@@ -65,7 +65,11 @@ async def _run_in_background(coro: t.Awaitable[t.Any]) -> None:
 
 
 @method("sync.force", desc="Trigger a P2P sync round and return status")
-async def sync_force(clear_cache: bool = False) -> dict[str, t.Any]:
+async def sync_force(
+    clear_cache: bool = False,
+    boost_seconds: int | None = None,
+    boost_tick_ms: int | None = None,
+) -> dict[str, t.Any]:
     svc = _get_p2p_service()
     core_svc = _get_core_p2p_service()
     head_height = None
@@ -85,9 +89,19 @@ async def sync_force(clear_cache: bool = False) -> dict[str, t.Any]:
 
     queued = False
     if svc is not None:
+        if hasattr(svc, "enable_sync"):
+            try:
+                svc.enable_sync(True)
+            except Exception:
+                pass
         if hasattr(svc, "_sync_wakeup"):
             try:
                 svc._sync_wakeup.set()
+            except Exception:
+                pass
+        if boost_seconds and hasattr(svc, "boost_sync"):
+            try:
+                svc.boost_sync(duration_s=float(boost_seconds), tick_ms=boost_tick_ms)
             except Exception:
                 pass
         if hasattr(svc, "force_sync_with_cache"):
@@ -188,6 +202,8 @@ async def sync_get_status() -> dict[str, t.Any]:
         "active_peers_for_blocks": [],
         "eligible_peers_for_headers": [],
         "ineligible_peers_for_headers": {},
+        "eligible_peers_for_blocks": [],
+        "ineligible_peers_for_blocks": {},
         "pending_header_batches": 0,
         "checkpoint_height": None,
         "checkpoint_hash": None,
@@ -196,11 +212,19 @@ async def sync_get_status() -> dict[str, t.Any]:
         "last_checkpoint_action": None,
         "synchronized": False,
         "paused": False,
+        "sync_enabled": False,
         "target_height": None,
         "peers_total": 0,
         "cache_size_bytes": 0,
         "cache_entries": 0,
         "peer_penalties": {},
+        "last_block_error_peer": None,
+        "block_error_summary": {},
+        "next_block_needed_height": None,
+        "next_block_needed_hash": None,
+        "stall_timeout_s": 0,
+        "stall_reason": None,
+        "stall_elapsed_s": 0,
         "cache_interval_ms": 0,
         "cache_age_ms": 0,
         "cache_hits": 0,
