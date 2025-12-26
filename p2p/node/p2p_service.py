@@ -4492,9 +4492,11 @@ class P2PService:
         )
 
         try:
-            headers_msg: Headers = await asyncio.wait_for(
+            headers_msg: Optional[Headers] = await asyncio.wait_for(
                 fut, timeout=self._sync_request_timeout
             )
+            if headers_msg is None:
+                raise asyncio.TimeoutError()
         except Exception:
             peer.pending_headers = None
             self._clear_header_request(peer)
@@ -5641,7 +5643,7 @@ class P2PService:
     def _register_header_request(self, peer: _PeerState) -> str:
         request_id = uuid.uuid4().hex
         peer.pending_header_request_id = request_id
-        self._sync_inflight_header_requests[(peer.remote, request_id)] = time.time()
+        self._sync_inflight_header_requests[(peer.remote, request_id)] = time.monotonic()
         self._sync_inflight_headers = len(self._sync_inflight_header_requests)
         return request_id
 
@@ -5661,7 +5663,7 @@ class P2PService:
     def _expire_inflight_headers(self) -> None:
         if not self._sync_inflight_header_requests:
             return
-        now = time.time()
+        now = time.monotonic()
         timeout = max(1.0, self._sync_request_timeout)
         expired: list[tuple[str, str]] = [
             key
