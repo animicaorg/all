@@ -132,8 +132,8 @@ def test_https_seed_normalization(tmp_path: Path) -> None:
     node = _make_service(tmp_path, "seed-https")
 
     assert (
-        node._normalize_seed("mainnet.animica.org:443")
-        == "tcp://mainnet.animica.org:30333"
+        node._normalize_seed("144.126.133.21:443")
+        == "tcp://144.126.133.21:30333"
     )
     assert node._normalize_seed("example.com:443") is None
 

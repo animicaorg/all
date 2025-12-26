@@ -8,10 +8,10 @@ from p2p import config as p2p_config
 from p2p.discovery import seeds as seed_discovery
 
 
-MAINNET_SEED_HOSTS = {"mainnet.animica.org"}
-TESTNET_SEED_HOSTS = {"rpc.testnet.animica.org", "testnet.animica.org"}
-DEVNET_SEED_HOSTS = {"devnet.animica.org"}
 FALLBACK_SEED_IP = "144.126.133.21"
+MAINNET_SEED_HOSTS = {FALLBACK_SEED_IP}
+TESTNET_SEED_HOSTS = {FALLBACK_SEED_IP}
+DEVNET_SEED_HOSTS = {FALLBACK_SEED_IP}
 
 
 class TestNetworkSpecificSeeds:
@@ -23,7 +23,6 @@ class TestNetworkSpecificSeeds:
 
         for host in MAINNET_SEED_HOSTS:
             assert any(host in s for s in seeds)
-        assert not any("rpc-reset.animica.org" in s for s in seeds)
         assert any("tcp/30333" in s for s in seeds)
 
     def test_default_seeds_by_network_testnet(self):
@@ -185,37 +184,21 @@ class TestEmbeddedFallbackSeeds:
         """Test that embedded fallback seeds are defined."""
         assert len(seed_discovery.EMBEDDED_FALLBACK_SEEDS) > 0
         
-        # Should include both DNS host and IP fallback
-        assert any(
-            host in s
-            for host in MAINNET_SEED_HOSTS | TESTNET_SEED_HOSTS | DEVNET_SEED_HOSTS
-            for s in seed_discovery.EMBEDDED_FALLBACK_SEEDS
-        )
         assert any(FALLBACK_SEED_IP in s for s in seed_discovery.EMBEDDED_FALLBACK_SEEDS)
 
     def test_network_dns_seeds_mapping(self):
-        """Test that network DNS seeds are defined for all networks."""
-        assert 1 in seed_discovery.NETWORK_DNS_SEEDS  # mainnet
-        assert 2 in seed_discovery.NETWORK_DNS_SEEDS  # testnet
-        assert 1337 in seed_discovery.NETWORK_DNS_SEEDS  # devnet
+        """Test that network DNS seeds are empty by default."""
+        assert seed_discovery.NETWORK_DNS_SEEDS == {}
 
     def test_network_https_seeds_mapping(self):
-        """Test that network HTTPS seeds are defined for all networks."""
-        assert 1 in seed_discovery.NETWORK_HTTPS_SEEDS  # mainnet
-        assert 2 in seed_discovery.NETWORK_HTTPS_SEEDS  # testnet
-        assert 1337 in seed_discovery.NETWORK_HTTPS_SEEDS  # devnet
+        """Test that network HTTPS seeds are empty by default."""
+        assert seed_discovery.NETWORK_HTTPS_SEEDS == {}
 
     def test_discover_from_static_includes_fallbacks(self):
         """Test that static discovery works with fallback seeds."""
         bundle = seed_discovery.discover_from_static(seed_discovery.EMBEDDED_FALLBACK_SEEDS)
         
         assert len(bundle.endpoints) > 0
-        # Should include both DNS host and IP
-        assert any(
-            host in ep.host
-            for host in MAINNET_SEED_HOSTS | TESTNET_SEED_HOSTS | DEVNET_SEED_HOSTS
-            for ep in bundle.endpoints
-        )
         assert any(FALLBACK_SEED_IP in ep.host for ep in bundle.endpoints)
 
 

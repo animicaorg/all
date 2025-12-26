@@ -3,7 +3,7 @@ Checkpoint configuration loader.
 
 Reads environment variables to configure checkpoint behavior:
 - ANIMICA_CHECKPOINTS_MODE: off|rpc|file (default: off)
-- ANIMICA_CHECKPOINTS_RPC_URL: URL to fetch checkpoints from (default: https://rpc.animica.org/rpc)
+- ANIMICA_CHECKPOINTS_RPC_URL: URL to fetch checkpoints from (default: http://144.126.133.21:30337/rpc)
 - ANIMICA_CHECKPOINTS_FILE: Path to local JSON checkpoint file
 - ANIMICA_CHECKPOINTS_MAX_AGE: Maximum age of checkpoints in seconds (optional)
 - ANIMICA_CHECKPOINTS_STRICT: If true, fail fast if checkpoints unavailable (default: false)
@@ -21,7 +21,7 @@ class CheckpointsConfig:
     """Configuration for checkpoint mechanism."""
     
     mode: Literal["off", "rpc", "file"] = "off"
-    rpc_url: str = "https://rpc.animica.org/rpc"
+    rpc_url: str = "http://144.126.133.21:30337/rpc"
     file_path: Optional[str] = None
     max_age_seconds: Optional[int] = None
     strict: bool = False
@@ -80,7 +80,7 @@ def load_checkpoints_config() -> CheckpointsConfig:
     
     mode = mode_str  # type: ignore[assignment]
     
-    rpc_url = _getenv("ANIMICA_CHECKPOINTS_RPC_URL", "https://rpc.animica.org/rpc")
+    rpc_url = _getenv("ANIMICA_CHECKPOINTS_RPC_URL", "http://144.126.133.21:30337/rpc")
     
     file_path = _getenv("ANIMICA_CHECKPOINTS_FILE")
     if file_path:

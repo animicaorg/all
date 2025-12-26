@@ -122,7 +122,7 @@ See `p2p/gossip/topics.py` and validators in `p2p/gossip/validator.py`.
 
 ## Discovery
 
-- **Bootstrap seeds**: DNS JSON/TXT endpoints (`p2p/discovery/seeds.py`).
+- **Bootstrap seeds**: embedded static endpoints (`p2p/discovery/seeds.py`).
 - **mDNS** (optional): LAN discovery for dev networks.
 - **Kademlia**: small DHT over `peer_id`; used for peer routing at scale.
 
@@ -135,7 +135,7 @@ See `p2p/config.py`. Example:
 ```toml
 # ~/.animica/p2p.toml
 listen = ["tcp://0.0.0.0:41000", "ws://0.0.0.0:41001"]
-seeds  = ["dns://seeds.animica.org"]
+seeds  = ["/ip4/144.126.133.21/tcp/30333"]
 max_peers = 50
 gossip:
   [gossip.limits]
@@ -148,7 +148,7 @@ sign_alg = "dilithium3"
 Environment overrides (examples):
 
 export ANIMICA_P2P_LISTEN="tcp://0.0.0.0:41000"
-export ANIMICA_P2P_SEEDS="dns://seeds.animica.org"
+export ANIMICA_P2P_SEEDS="/ip4/144.126.133.21/tcp/30333"
 
 Peer defense tuning (examples):
 

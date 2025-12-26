@@ -17,7 +17,7 @@ python -m p2p.cli.listen \
   --db sqlite:///animica.db \
   --chain-id 1 \
   --listen /ip4/0.0.0.0/tcp/30333 \
-  --seed /dns/mainnet.animica.org/tcp/30333 \
+  --seed /ip4/144.126.133.21/tcp/30333 \
   --enable-quic \
   --enable-ws
 
