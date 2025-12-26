@@ -52,9 +52,9 @@ class FakeChain:
         return self.txs.get(tx_hash)
 
     def process_block(self, block: bytes) -> None:
-        block_hash = hashlib.sha256(block).digest()
-        self.blocks[block_hash] = block
         header = block[:80]
+        block_hash = hashlib.sha256(header).digest()
+        self.blocks[block_hash] = block
         if header and header not in self.headers:
             self.headers.append(header)
 
@@ -111,7 +111,7 @@ async def test_three_node_sync_and_relay():
 
     new_block = make_block(4)
     chain_a.process_block(new_block)
-    block_hash = hashlib.sha256(new_block).digest()
+    block_hash = hashlib.sha256(new_block[:80]).digest()
     await net_a.announce_block(conn_a.peers().values(), block_hash, conn_a._send)
 
     await _wait_until(lambda: block_hash in chain_c.blocks)
