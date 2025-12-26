@@ -268,6 +268,15 @@ def _sync_diagnostics_lines(sync_status: Optional[Dict[str, Any]]) -> list[str]:
     lines: list[str] = []
     eligible = sync_status.get("eligible_peers_for_headers") or []
     ineligible = sync_status.get("ineligible_peers_for_headers") or {}
+    eligible_blocks = sync_status.get("eligible_peers_for_blocks") or []
+    ineligible_blocks = sync_status.get("ineligible_peers_for_blocks") or {}
+    next_block_height = sync_status.get("next_block_needed_height")
+    next_block_hash = sync_status.get("next_block_needed_hash")
+    stall_timeout = sync_status.get("stall_timeout_s")
+    stall_reason = sync_status.get("stall_reason")
+    stall_elapsed = sync_status.get("stall_elapsed_s")
+    last_block_error_peer = sync_status.get("last_block_error_peer")
+    block_error_summary = sync_status.get("block_error_summary") or {}
     last_req_peer = sync_status.get("last_header_request_peer")
     last_resp_peer = sync_status.get("last_header_response_peer")
     last_req_at = sync_status.get("last_header_request_at")
@@ -278,6 +287,24 @@ def _sync_diagnostics_lines(sync_status: Optional[Dict[str, Any]]) -> list[str]:
         lines.append(f"  eligible_peers_for_headers: {eligible}")
     if ineligible:
         lines.append(f"  ineligible_peers_for_headers: {ineligible}")
+    if eligible_blocks:
+        lines.append(f"  eligible_peers_for_blocks: {eligible_blocks}")
+    if ineligible_blocks:
+        lines.append(f"  ineligible_peers_for_blocks: {ineligible_blocks}")
+    if next_block_height or next_block_hash:
+        lines.append(
+            f"  next_block_needed: height={next_block_height or 'n/a'} hash={next_block_hash or 'n/a'}"
+        )
+    if stall_reason or stall_elapsed:
+        timeout_label = f"{stall_timeout}s" if stall_timeout is not None else "n/a"
+        elapsed_label = f"{stall_elapsed:.1f}s" if isinstance(stall_elapsed, (int, float)) else "n/a"
+        lines.append(
+            f"  stall: reason={stall_reason or 'n/a'} elapsed={elapsed_label} timeout={timeout_label}"
+        )
+    if last_block_error_peer:
+        lines.append(f"  last_block_error_peer: {last_block_error_peer}")
+    if block_error_summary:
+        lines.append(f"  block_errors: {block_error_summary}")
     if last_req_peer or last_req_at:
         lines.append(
             f"  last_header_request: peer={last_req_peer or 'n/a'} "
@@ -745,7 +772,13 @@ def _persist_sync_state(
     state_path.write_text(json.dumps(payload, indent=2))
 
 
-async def _trigger_sync(rpc_url: str, *, clear_cache: bool = False) -> bool:
+async def _trigger_sync(
+    rpc_url: str,
+    *,
+    clear_cache: bool = False,
+    boost_seconds: int | None = None,
+    boost_tick_ms: int | None = None,
+) -> bool:
     """
     Trigger a sync operation on the node.
     
@@ -795,8 +828,16 @@ async def _trigger_sync(rpc_url: str, *, clear_cache: bool = False) -> bool:
     for method in methods_to_try:
         try:
             params: list[Any] | dict[str, Any] = []
-            if method == "sync.force" and clear_cache:
-                params = {"clear_cache": True}
+            if method == "sync.force":
+                payload: dict[str, Any] = {}
+                if clear_cache:
+                    payload["clear_cache"] = True
+                if boost_seconds:
+                    payload["boost_seconds"] = int(boost_seconds)
+                if boost_tick_ms:
+                    payload["boost_tick_ms"] = int(boost_tick_ms)
+                if payload:
+                    params = payload
             result = await rpc_call(method, params, rpc_url=rpc_url, timeout=DEFAULT_RPC_TIMEOUT)
             if _trigger_succeeded(result):
                 return True
@@ -1260,10 +1301,25 @@ def force_sync(
     check_interval: int = typer.Option(
         5, "--check-interval", help="How often to check sync progress (seconds)"
     ),
+    follow: bool = typer.Option(
+        False,
+        "--follow/--no-follow",
+        help="Follow sync progress until timeout (default: no follow)",
+    ),
     clear_cache: bool = typer.Option(
         False,
         "--clear-cache",
         help="Clear sync cache before forcing sync",
+    ),
+    boost_seconds: int = typer.Option(
+        0,
+        "--boost-seconds",
+        help="Temporarily increase sync urgency for N seconds",
+    ),
+    boost_tick_ms: Optional[int] = typer.Option(
+        None,
+        "--boost-tick-ms",
+        help="Override sync tick rate during boost (milliseconds)",
     ),
     ) -> None:
     """
@@ -1272,8 +1328,8 @@ def force_sync(
     This command triggers the node to start or restart synchronization with
     peers. It will attempt to:
     1. Trigger sync via RPC
-    2. Monitor progress for a specified timeout period
-    3. Report final status
+    2. Optionally monitor progress (use --follow)
+    3. Report final status when following
     
     Use this when:
     - Sync appears stuck
@@ -1282,8 +1338,9 @@ def force_sync(
     
     Examples:
         animica sync force
-        animica sync force --timeout 600
+        animica sync force --follow --timeout 600
         animica sync force --clear-cache
+        animica sync force --boost-seconds 30
     """
     net_cfg = load_network_config()
     url, bootstrap_url = _resolve_sync_endpoints(
@@ -1369,7 +1426,14 @@ def force_sync(
     typer.echo("Attempting to trigger sync...")
     
     # Try to trigger sync
-    triggered = asyncio.run(_trigger_sync(url, clear_cache=clear_cache))
+    triggered = asyncio.run(
+        _trigger_sync(
+            url,
+            clear_cache=clear_cache,
+            boost_seconds=boost_seconds or None,
+            boost_tick_ms=boost_tick_ms,
+        )
+    )
     
     if not triggered:
         typer.secho(
@@ -1390,6 +1454,10 @@ def force_sync(
     else:
         typer.secho("✓ Sync triggered successfully", fg=typer.colors.GREEN)
     
+    if not follow:
+        typer.secho("Sync loop kicked. Use 'animica sync status' to follow progress.", fg=typer.colors.GREEN)
+        return
+
     # Monitor progress
     typer.echo()
     typer.echo(f"Monitoring sync progress for {timeout} seconds...")
