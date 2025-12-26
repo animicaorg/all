@@ -547,6 +547,19 @@ class TxRelayHandler:
                     "peer": peer_id,
                 },
             )
+            # Re-announce accepted tx to gossip mesh (best-effort, deduped by gate).
+            try:
+                await self.publish_local_tx(payload, allow_seen=True)
+            except Exception:
+                log.debug(
+                    "Failed to re-announce relayed tx",
+                    extra={
+                        "tx_hash": (
+                            admit_result.tx_hash.hex() if admit_result.tx_hash else "N/A"
+                        ),
+                        "peer": peer_id,
+                    },
+                )
         else:
             self._metrics["tx_rejected_mempool"] += 1
             log.debug(
@@ -559,7 +572,7 @@ class TxRelayHandler:
                 },
             )
 
-    async def publish_local_tx(self, tx_cbor: bytes) -> bool:
+    async def publish_local_tx(self, tx_cbor: bytes, *, allow_seen: bool = False) -> bool:
         """
         Publish a locally-submitted transaction to the gossip mesh.
 
@@ -576,7 +589,7 @@ class TxRelayHandler:
         try:
             # Check if we've already seen this tx (avoid re-broadcast)
             h = tx_hash(tx_cbor)
-            if self._gate.seen.contains(h):
+            if self._gate.seen.contains(h) and not allow_seen:
                 log.debug(f"Skipping publish of already-seen tx {h.hex()[:16]}...")
                 return False
 
