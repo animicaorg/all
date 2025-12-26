@@ -1166,6 +1166,24 @@ def _pending_get(tx_hash_hex: str) -> bytes | None:
     return _FALLBACK_PENDING.get(tx_hash_hex)
 
 
+def _pending_remove(tx_hash_hex: str) -> bool:
+    if _PEND is not None and hasattr(_PEND, "remove"):
+        try:
+            res = _PEND.remove(tx_hash_hex)  # type: ignore[attr-defined]
+            if asyncio.iscoroutine(res):
+                try:
+                    loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    return bool(asyncio.run(res))
+                else:
+                    loop.create_task(res)
+                    return True
+            return bool(res)
+        except Exception:
+            return False
+    return _FALLBACK_PENDING.pop(tx_hash_hex, None) is not None
+
+
 def _lookup_persisted_tx(
     tx_hash_hex: str,
 ) -> tuple[dict | None, int | None, int | None, bytes | None]:

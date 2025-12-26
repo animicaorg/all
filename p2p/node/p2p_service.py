@@ -63,6 +63,7 @@ from p2p.sync.cache_store import SyncCacheConfig, SyncCacheState, SyncCacheStore
 log = logging.getLogger("animica.p2p.service")
 
 DEFAULT_BOOTSTRAP_SEEDS = [
+    "/dns4/mainnet.animica.org/tcp/30333",
     "/ip4/144.126.133.21/tcp/30333",
 ]
 FORCE_SYNC_HEADER_PEERS = {
@@ -1302,6 +1303,15 @@ class P2PService:
                 host = parsed.host or ""
                 if host in {"0.0.0.0", "::"}:
                     continue
+                try:
+                    ip_obj = ipaddress.ip_address(host)
+                except ValueError:
+                    ip_obj = None
+                if ip_obj is not None:
+                    if ip_obj.is_loopback:
+                        continue
+                    if ip_obj.is_private and not self._allow_private_addrs:
+                        continue
                 if parsed.transport == "tcp" and parsed.port:
                     normalized = self._normalize_seed(f"{host}:{parsed.port}")
                     if normalized:
@@ -2572,6 +2582,23 @@ class P2PService:
         keys.add(peer.remote)
         return keys
 
+    def _penalty_key(self, peer: _PeerState) -> str:
+        if peer.peer_id:
+            return peer.peer_id
+        host = self._extract_host(peer.remote)
+        if host:
+            return host
+        return peer.remote
+
+    def _is_docker_local(self, host: str) -> bool:
+        try:
+            ip_obj = ipaddress.ip_address(host)
+        except ValueError:
+            return False
+        if ip_obj.version == 4 and ip_obj in ipaddress.ip_network("172.16.0.0/12"):
+            return True
+        return False
+
     def _is_seed_peer(self, peer: _PeerState) -> bool:
         addr_key = self._addr_key(peer.remote)
         if addr_key in self._seed_keys:
@@ -2667,7 +2694,7 @@ class P2PService:
             return False
         if last_block_error:
             return False
-        if last_header_error not in (None, "at_tip"):
+        if last_header_error not in (None, "at_tip", "duplicate_headers"):
             return False
         return True
 
@@ -3241,15 +3268,21 @@ class P2PService:
                 peer.hello_done.wait(), timeout=self._peer_registry.handshake_timeout_s
             )
         except asyncio.TimeoutError:
-            log.info("Dropping peer %s due to handshake timeout", peer.remote)
-            await self._drop_peer(peer, reason="handshake_timeout")
+            log.info("Dropping peer %s due to hello timeout", peer.remote)
+            await self._drop_peer(peer, reason="hello_timeout")
 
     async def _peer_loop(self, peer: _PeerState) -> None:
         # Send HELLO immediately (both sides do this; handler is symmetric).
         try:
             await self._send_hello(peer)
-        except Exception:
-            pass
+        except Exception as exc:
+            log.warning(
+                "Failed to send HELLO",
+                extra={"remote": peer.remote, "direction": peer.direction},
+                exc_info=exc,
+            )
+            await self._drop_peer(peer, reason="hello_send_failed")
+            return
 
         disconnect_reason = "loop_exit"
         try:
@@ -5754,12 +5787,12 @@ class P2PService:
         now = time.time() if now is None else now
         if peer.remote in FORCE_SYNC_HEADER_PEERS:
             return True, "force_eligible"
+        if not peer.hello_done.is_set():
+            return False, "handshake_pending"
         if peer.hello is None or not isinstance(peer.hello, dict):
             return False, "hello_missing"
         if not peer.peer_id:
             return False, "peer_id_missing"
-        if not peer.hello_done.is_set():
-            return False, "handshake_pending"
         if not peer.ready_for_sync:
             return False, "not_ready"
         if self._is_self_address(
@@ -6932,12 +6965,7 @@ class P2PService:
             and self._sync_not_anchored_attempts
             >= self._sync_not_anchored_reset_threshold
         ):
-            if self._peer_chain_matches(peer) and self._reset_chain_to_genesis(
-                reason="not_anchored_reset"
-            ):
-                action = "reset_to_genesis"
-        if action == "reset_to_genesis":
-            self._sync_last_checkpoint_action = "reset_to_genesis"
+            self._sync_last_checkpoint_action = "not_anchored_backoff"
         if (
             self._sync_checkpoint_mode_enabled
             and self._sync_checkpoint_validation == "unknown"
@@ -7064,6 +7092,14 @@ class P2PService:
     ) -> None:
         if peer is None:
             return
+        penalty_key = self._penalty_key(peer)
+        host = self._extract_host(peer.remote) or ""
+        if host and self._is_docker_local(host):
+            log.info(
+                "Skipping sync penalty for docker-local peer",
+                extra={"remote": peer.remote, "reason": reason},
+            )
+            return
         if "timeout" in reason.lower() and self._is_peer_exempt(peer.remote):
             log.info(
                 "Skipping timeout penalty for exempt peer",
@@ -7083,19 +7119,19 @@ class P2PService:
             )
             return
         self._apply_misbehavior(peer, reason, points=points, ban_ttl=ban_ttl)
-        if self._is_peer_exempt(peer.remote):
-            self._sync_peer_penalties.pop(peer.remote, None)
-            self._sync_peer_penalty_events.pop(peer.remote, None)
+        if self._is_peer_exempt(peer.remote) or self._is_peer_exempt(penalty_key):
+            self._sync_peer_penalties.pop(penalty_key, None)
+            self._sync_peer_penalty_events.pop(penalty_key, None)
             return
         now = time.time()
-        events = self._sync_peer_penalty_events.setdefault(peer.remote, deque())
+        events = self._sync_peer_penalty_events.setdefault(penalty_key, deque())
         window = self._sync_peer_penalty_window_s
         while events and now - events[0] > window:
             events.popleft()
         for _ in range(max(1, severity)):
             events.append(now)
         count = len(events)
-        self._sync_peer_penalties[peer.remote] = count
+        self._sync_peer_penalties[penalty_key] = count
         if "timeout" in reason:
             delay = min(60.0, 2.0 ** min(count, 6))
             self._set_sync_backoff(peer, reason="timeout", delay=delay)
@@ -7253,6 +7289,8 @@ class P2PService:
             ok, reason = await self._deps_call_import(blk)
 
         if ok and bh is not None:
+            if blk is not None:
+                self._reconcile_pending_pool(blk)
             self._remember(self._seen_blocks, bh, self._seen_block_cap)
             await self._broadcast_inv(
                 [InvItem(typ=InvType.BLOCK, h=bh)],
@@ -7329,6 +7367,43 @@ class P2PService:
                     extra={"origin": origin_remote, "error": reason_str},
                 )
         return ok, reason
+
+    def _reconcile_pending_pool(self, block: Any) -> int:
+        try:
+            from rpc.methods import tx as tx_methods
+        except Exception:
+            return 0
+        try:
+            from core.utils.hash import sha3_256
+        except Exception:
+            import hashlib
+
+            def sha3_256(data: bytes) -> bytes:
+                return hashlib.sha3_256(data).digest()
+
+        txs = None
+        if isinstance(block, dict):
+            txs = block.get("txs") or block.get("transactions")
+        if txs is None:
+            txs = getattr(block, "txs", None)
+        if not txs:
+            return 0
+        removed = 0
+        for tx in txs:
+            tx_hash_hex = ""
+            try:
+                if isinstance(tx, (bytes, bytearray)):
+                    tx_hash_hex = "0x" + sha3_256(bytes(tx)).hex()
+                elif hasattr(tx, "txid") and callable(getattr(tx, "txid")):
+                    tx_hash_hex = "0x" + bytes(tx.txid()).hex()
+                else:
+                    tx_hash_hex = tx_methods._compute_tx_hash(tx)
+            except Exception:
+                tx_hash_hex = ""
+            if tx_hash_hex:
+                if tx_methods._pending_remove(tx_hash_hex):
+                    removed += 1
+        return removed
 
     # ---------------------------------------------------------------------
     # Broadcast helpers
