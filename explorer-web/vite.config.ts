@@ -53,7 +53,7 @@ export default defineConfig({
     ],
     proxy: {
       '/rpc': {
-        target: 'https://rpc.animica.org',
+        target: 'http://127.0.0.1:8545',
         changeOrigin: true,
         secure: true,
         rewrite: (path) => path.replace(/^\/rpc/, '/rpc'),

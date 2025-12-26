@@ -53,7 +53,7 @@ The CLI automatically uses network-specific RPC URLs when `ANIMICA_RPC_URL` is n
 
 **No manual configuration needed!** Commands like `animica node status`, `animica rpc call`, and `animica wallet show` will work without setting `ANIMICA_RPC_URL`.
 
-> **Bootstrap-only public RPC:** `https://rpc.animica.org/rpc` is reserved for bootstrapping (seed discovery, headers, and manifests). Run `animica node up` and use your local RPC port for normal operations.
+> **Bootstrap-only public RPC:** `http://127.0.0.1:8545/rpc` is reserved for bootstrapping (seed discovery, headers, and manifests). Run `animica node up` and use your local RPC port for normal operations.
 
 To override the default:
 ```bash

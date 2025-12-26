@@ -18,12 +18,12 @@ def test_mine_blocks_with_proxy_enabled(monkeypatch: Any) -> None:
     test_address = "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz"
     monkeypatch.setattr(mining, "_validate_bech32_address", lambda x: True if x == test_address else False)
     # Set proxy URL to enable proxy
-    monkeypatch.setenv("ANIMICA_TRUSTED_RPC_URL", "https://rpc.animica.org/rpc")
+    monkeypatch.setenv("ANIMICA_TRUSTED_RPC_URL", "http://127.0.0.1:8545/rpc")
     
     # Mock proxy
     mock_proxy = Mock()
     mock_proxy.config = Mock()
-    mock_proxy.config.trusted_rpc_url = "https://rpc.animica.org/rpc"
+    mock_proxy.config.trusted_rpc_url = "http://127.0.0.1:8545/rpc"
     mock_proxy.config.max_retries = 3
     mock_proxy.config.retry_delay_ms = 1000
     mock_proxy.config.timeout_seconds = 30.0
@@ -125,7 +125,7 @@ def test_mine_blocks_proxy_with_fallback(monkeypatch: Any) -> None:
     test_address = "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz"
     monkeypatch.setattr(mining, "_validate_bech32_address", lambda x: True if x == test_address else False)
     # Set proxy URL to enable proxy
-    monkeypatch.setenv("ANIMICA_TRUSTED_RPC_URL", "https://rpc.animica.org/rpc")
+    monkeypatch.setenv("ANIMICA_TRUSTED_RPC_URL", "http://127.0.0.1:8545/rpc")
     
     fallback_called = {"count": 0}
     
@@ -139,7 +139,7 @@ def test_mine_blocks_proxy_with_fallback(monkeypatch: Any) -> None:
     
     mock_proxy = Mock()
     mock_proxy.config = Mock()
-    mock_proxy.config.trusted_rpc_url = "https://rpc.animica.org/rpc"
+    mock_proxy.config.trusted_rpc_url = "http://127.0.0.1:8545/rpc"
     mock_proxy.config.max_retries = 3
     mock_proxy.config.retry_delay_ms = 1000
     mock_proxy.config.timeout_seconds = 30.0
@@ -193,12 +193,12 @@ def test_mine_blocks_proxy_verbose_output(monkeypatch: Any) -> None:
     test_address = "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz"
     monkeypatch.setattr(mining, "_validate_bech32_address", lambda x: True if x == test_address else False)
     # Set proxy URL to enable proxy
-    monkeypatch.setenv("ANIMICA_TRUSTED_RPC_URL", "https://rpc.animica.org/rpc")
+    monkeypatch.setenv("ANIMICA_TRUSTED_RPC_URL", "http://127.0.0.1:8545/rpc")
     
     # Mock proxy
     mock_proxy = Mock()
     mock_proxy.config = Mock()
-    mock_proxy.config.trusted_rpc_url = "https://rpc.animica.org/rpc"
+    mock_proxy.config.trusted_rpc_url = "http://127.0.0.1:8545/rpc"
     mock_proxy.config.max_retries = 3
     mock_proxy.config.retry_delay_ms = 1000
     mock_proxy.config.timeout_seconds = 30.0
@@ -253,7 +253,7 @@ def test_mine_blocks_proxy_import_failure(monkeypatch: Any) -> None:
     test_address = "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz"
     monkeypatch.setattr(mining, "_validate_bech32_address", lambda x: True if x == test_address else False)
     # Set proxy URL to enable proxy
-    monkeypatch.setenv("ANIMICA_TRUSTED_RPC_URL", "https://rpc.animica.org/rpc")
+    monkeypatch.setenv("ANIMICA_TRUSTED_RPC_URL", "http://127.0.0.1:8545/rpc")
     
     # Mock RPC client
     class MockRpcClient:

@@ -157,7 +157,7 @@ ERROR: All 3 attempts failed for miner.mine
 2. **Check network connectivity**:
    ```bash
    # Test connectivity to trusted RPC
-   curl https://rpc.animica.org/rpc
+   curl http://127.0.0.1:8545/rpc
    ```
 
 3. **Use custom RPC endpoint**:
@@ -167,7 +167,7 @@ ERROR: All 3 attempts failed for miner.mine
    ```
 
 4. **Check proxy configuration**:
-   - Default trusted RPC: `https://rpc.animica.org/rpc`
+   - Default trusted RPC: `http://127.0.0.1:8545/rpc`
    - Max retries: 3 (configurable via `ANIMICA_PROXY_MAX_RETRIES`)
    - Retry delay: 1000ms (configurable via `ANIMICA_PROXY_RETRY_DELAY_MS`)
 
@@ -287,7 +287,7 @@ Useful environment variables for mining:
 export ANIMICA_RPC_URL="http://127.0.0.1:8545/rpc"
 
 # Trusted RPC for proxy validation
-export ANIMICA_TRUSTED_RPC_URL="https://rpc.animica.org/rpc"
+export ANIMICA_TRUSTED_RPC_URL="http://127.0.0.1:8545/rpc"
 
 # Default payout address
 export ANIMICA_MINER_ADDRESS="anim1..."

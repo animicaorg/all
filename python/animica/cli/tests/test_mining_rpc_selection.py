@@ -12,7 +12,7 @@ def test_mining_cli_defaults_to_local_rpc(monkeypatch) -> None:
     mining_cli._ensure_network_env()
     rpc_url = os.environ.get("ANIMICA_RPC_URL", "")
     assert rpc_url.startswith("http://127.0.0.1")
-    assert "rpc.animica.org" not in rpc_url
+    assert "127.0.0.1" not in rpc_url
 
 
 def test_mining_config_respects_env_rpc(monkeypatch) -> None:

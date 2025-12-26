@@ -32,7 +32,7 @@ Chain metadata summary for the active network (id, name, genesis hash, RPC URLs,
   "chainId": 1,
   "name": "Animica Mainnet",
   "genesisHash": "0xabc...",
-  "rpc": ["https://rpc.animica.org"],
+  "rpc": ["http://127.0.0.1:8545"],
   "explorerVersion": "v1.3.0"
 }
 

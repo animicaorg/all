@@ -40,7 +40,7 @@ class RpcDefaults {
   static const Map<int, List<String>> http = {
     ChainIds.mainnet: [
       // Placeholders — update when mainnet endpoints are live
-      'https://rpc.animica.org',
+      'http://127.0.0.1:8545',
     ],
     ChainIds.testnet: [
       'https://rpc.testnet.animica.org',

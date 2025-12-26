@@ -165,10 +165,10 @@ Set `ANIMICA_RPC_URL` to point to your target network:
 export ANIMICA_RPC_URL=http://127.0.0.1:8545/rpc
 
 # Testnet
-export ANIMICA_RPC_URL=https://testnet-rpc.animica.org/rpc
+export ANIMICA_RPC_URL=https://testnet-127.0.0.1/rpc
 
 # Mainnet (faucet will fail)
-export ANIMICA_RPC_URL=https://rpc.animica.org/rpc
+export ANIMICA_RPC_URL=http://127.0.0.1:8545/rpc
 ```
 
 ## Token Decimals

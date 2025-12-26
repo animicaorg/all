@@ -18,7 +18,7 @@ export type EnvLike = {
 };
 
 const DEFAULT_RPC = PRIMARY_RPC_URL;
-const DEFAULT_WS = "wss://rpc.animica.org/rpc";
+const DEFAULT_WS = "ws://127.0.0.1:8546/ws";
 const LEGACY_MAINNET_CHAIN_IDS = new Set(["659658", "659914", "0xa11ca"]);
 const CANONICAL_MAINNET_CHAIN_ID = "1";
 

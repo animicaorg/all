@@ -37,7 +37,7 @@ pnpm preview --host 0.0.0.0 --port 4321
 Create `website/.env` (or use `.env.local`) with the following:
 
 ```bash
-ANIMICA_RPC_URL=https://rpc.animica.org
+ANIMICA_RPC_URL=http://127.0.0.1:8545
 ANIMICA_EXPLORER_URL=https://explorer.animica.org
 ANIMICA_EXPLORER2_URL=
 ANIMICA_DOCS_URL=https://docs.animica.org

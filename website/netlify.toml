@@ -34,7 +34,7 @@
       img-src 'self' data: blob:;
       script-src 'self';
       style-src 'self' 'unsafe-inline';
-      connect-src 'self' https://rpc.animica.org https://studio.animica.org https://explorer.animica.org;
+      connect-src 'self' http://127.0.0.1:8545 ws://127.0.0.1:8546 https://studio.animica.org https://explorer.animica.org;
       upgrade-insecure-requests;
     """
 

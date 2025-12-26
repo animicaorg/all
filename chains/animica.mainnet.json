@@ -19,7 +19,7 @@
   "p2p": {
     "protocols": ["animica/1"],
     "port": 30303,
-    "seeds": ["mainnet.animica.org", "rpc.animica.org", "144.126.133.21"],
+    "seeds": ["mainnet.animica.org", "127.0.0.1", "144.126.133.21"],
     "bootnodes": []
   },
 

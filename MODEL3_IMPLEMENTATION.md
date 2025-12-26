@@ -6,7 +6,7 @@ This implementation adds **optional checkpoint mechanism** to Animica's P2P-firs
 
 ## Key Principles
 
-1. **P2P-first remains the default**: No code path requires `rpc.animica.org` to be reachable by default
+1. **P2P-first remains the default**: No code path requires `127.0.0.1` to be reachable by default
 2. **Checkpoints are optional**: Enabled via explicit configuration
 3. **Graceful degradation**: Non-strict mode continues without checkpoints if unavailable
 4. **Safety rail, not oracle**: Used for static validation, not live head queries
@@ -51,7 +51,7 @@ Checkpoints are verified during:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `ANIMICA_CHECKPOINTS_MODE` | `off` | Mode: `off`, `rpc`, or `file` |
-| `ANIMICA_CHECKPOINTS_RPC_URL` | `https://rpc.animica.org/rpc` | RPC endpoint for checkpoints |
+| `ANIMICA_CHECKPOINTS_RPC_URL` | `http://127.0.0.1:8545/rpc` | RPC endpoint for checkpoints |
 | `ANIMICA_CHECKPOINTS_FILE` | (none) | Path to local checkpoint file |
 | `ANIMICA_CHECKPOINTS_MAX_AGE` | (none) | Maximum age in seconds (optional) |
 | `ANIMICA_CHECKPOINTS_STRICT` | `false` | Fail fast if checkpoints unavailable |
@@ -70,7 +70,7 @@ export ANIMICA_CHECKPOINTS_MODE=off
 #### RPC Mode
 ```bash
 export ANIMICA_CHECKPOINTS_MODE=rpc
-export ANIMICA_CHECKPOINTS_RPC_URL=https://rpc.animica.org/rpc
+export ANIMICA_CHECKPOINTS_RPC_URL=http://127.0.0.1:8545/rpc
 ```
 - Fetches checkpoints from RPC endpoint
 - Tries `chain.getCheckpoints` JSON-RPC method
@@ -269,7 +269,7 @@ systemctl restart animica-node
 Recommended for production:
 ```bash
 export ANIMICA_CHECKPOINTS_MODE=rpc
-export ANIMICA_CHECKPOINTS_RPC_URL=https://rpc.animica.org/rpc
+export ANIMICA_CHECKPOINTS_RPC_URL=http://127.0.0.1:8545/rpc
 export ANIMICA_CHECKPOINTS_STRICT=true
 ```
 
@@ -306,7 +306,7 @@ Potential improvements:
 ### Model 3 Principles
 
 ✅ Default behavior remains P2P-first  
-✅ No code path requires `rpc.animica.org` by default  
+✅ No code path requires `127.0.0.1` by default  
 ✅ Optional checkpoint mechanism  
 ✅ Safety rail during sync/fork-choice, not live oracle  
 ✅ Graceful degradation (non-strict mode)  
