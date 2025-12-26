@@ -11,7 +11,7 @@ def test_default_config():
     config = CheckpointsConfig()
     
     assert config.mode == "off"
-    assert config.rpc_url == "https://rpc.animica.org/rpc"
+    assert config.rpc_url == "http://144.126.133.21:30337/rpc"
     assert config.file_path is None
     assert config.max_age_seconds is None
     assert config.strict is False

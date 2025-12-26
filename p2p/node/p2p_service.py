@@ -59,7 +59,7 @@ from p2p.sync.cache_store import SyncCacheConfig, SyncCacheState, SyncCacheStore
 log = logging.getLogger("animica.p2p.service")
 
 DEFAULT_BOOTSTRAP_SEEDS = [
-    "/dns4/mainnet.animica.org/tcp/30333",
+    "/ip4/144.126.133.21/tcp/30333",
 ]
 FORCE_SYNC_HEADER_PEERS = {
     "144.126.133.21:30333",
@@ -2463,7 +2463,7 @@ class P2PService:
         if not result.addr:
             return None
         if result.addr.port == 443:
-            seed_hosts = {"mainnet.animica.org"}
+            seed_hosts = {"144.126.133.21"}
             if result.addr.host in seed_hosts:
                 upgraded = self._normalize_peer_addr(
                     f"{result.addr.host}:{DEFAULT_TCP_PORT}",
