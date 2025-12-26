@@ -853,6 +853,7 @@ class P2PService:
         self._sync_block_stalled_reason: Optional[str] = None
         self._sync_last_validated_height = 0
         self._sync_peer_penalties: Dict[str, int] = {}
+        self._sync_peer_penalty_events: dict[str, Deque[float]] = {}
         self._peer_exemptions = {"144.126.133.21:30333", "144.126.133.21"}
         self._sync_peer_penalty_whitelist = set(self._peer_exemptions)
         self._sync_last_progress_at = time.time()
@@ -890,7 +891,10 @@ class P2PService:
             os.environ.get("ANIMICA_P2P_SYNC_TIMEOUT", "8.0") or 8.0
         )
         self._sync_peer_penalty_threshold = int(
-            os.environ.get("ANIMICA_P2P_SYNC_PENALTY_THRESHOLD", "3") or 3
+            os.environ.get("ANIMICA_P2P_SYNC_PENALTY_THRESHOLD", "6") or 6
+        )
+        self._sync_peer_penalty_window_s = float(
+            os.environ.get("ANIMICA_P2P_SYNC_PENALTY_WINDOW", "600") or 600
         )
         self._sync_stall_timeout = float(
             os.environ.get("ANIMICA_P2P_SYNC_STALL_TIMEOUT", "20.0") or 20.0
@@ -6953,8 +6957,16 @@ class P2PService:
         self._apply_misbehavior(peer, reason, points=points, ban_ttl=ban_ttl)
         if self._is_peer_exempt(peer.remote):
             self._sync_peer_penalties.pop(peer.remote, None)
+            self._sync_peer_penalty_events.pop(peer.remote, None)
             return
-        count = self._sync_peer_penalties.get(peer.remote, 0) + max(1, severity)
+        now = time.time()
+        events = self._sync_peer_penalty_events.setdefault(peer.remote, deque())
+        window = self._sync_peer_penalty_window_s
+        while events and now - events[0] > window:
+            events.popleft()
+        for _ in range(max(1, severity)):
+            events.append(now)
+        count = len(events)
         self._sync_peer_penalties[peer.remote] = count
         if "timeout" in reason:
             delay = min(60.0, 2.0 ** min(count, 6))
