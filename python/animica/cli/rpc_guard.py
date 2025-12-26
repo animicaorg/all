@@ -15,7 +15,17 @@ _BOOTSTRAP_SAFE_METHODS = {
     "bootstrap.getSnapshotManifest",
     "net.getBootstrapSeeds",
     "chain.getHead",
+    "chain.getHeaders",
+    "chain.getBlockByNumber",
+    "chain.getBlockByHash",
+    "chain.getBlockByHeight",
+    "chain.getCheckpoints",
+    "chain.getGenesis",
     "chain.getChainId",
+    "eth_chainId",
+    "eth_getBlockByNumber",
+    "eth_getBlockByHash",
+    "net_version",
 }
 
 
