@@ -41,6 +41,8 @@ def _iter_pending() -> Iterable[tuple[str, bytes, float | None]]:
     # Prefer real pool if exposed
     pend = getattr(tx_methods, "_PEND", None)
     if pend is not None:
+        if hasattr(pend, "list_raw_with_ts"):
+            return ((h, raw, ts) for h, raw, ts in pend.list_raw_with_ts())  # type: ignore[attr-defined]
         if hasattr(pend, "items"):
             return ((h, raw, None) for h, raw in pend.items())  # type: ignore[attr-defined]
         if hasattr(pend, "list_raw"):
