@@ -5,23 +5,11 @@
 # Comments start with '#'. Blank lines ignored.
 
 # ===== Primary Seed (All Networks) =====
-# DNS-first to follow the public RPC host, with IP fallback when DNS fails
-/dns4/rpc.animica.org/udp/443/quic-v1
-/dns4/rpc.animica.org/tcp/30333
+# Bootstrap via a neutral IP seed first, then rely on peer exchange
 /ip4/144.126.133.21/udp/443/quic-v1
 /ip4/144.126.133.21/tcp/30333
 
-# ===== Mainnet (animica:1) =====
-/dns4/mainnet.animica.org/udp/443/quic-v1
-/dns4/mainnet.animica.org/tcp/30333
-
-# ===== Testnet (animica:2) =====
-/dns4/testnet.animica.org/udp/443/quic-v1
-/dns4/testnet.animica.org/tcp/30333
-
 # ===== Devnet (animica:1337) =====
-/dns4/devnet.animica.org/udp/443/quic-v1
-/dns4/devnet.animica.org/tcp/30333
 /dns4/seed-1.dev.animica.local/tcp/7010/p2p/8f2c0d6e2a3b4c5d6e7f8091a2b3c4d5
 /dns4/seed-2.dev.animica.local/tcp/7011/ws/alpn/animica/1
 /dns4/seed-3.dev.animica.local/udp/7010/quic/alpn/animica/1

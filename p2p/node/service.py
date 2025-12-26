@@ -383,13 +383,13 @@ class NodeService:
     async def _seed_and_discover(self) -> None:
         """
         Dial configured seeds, then keep the discovery loop running (DNS seeds, Kademlia, mDNS).
-        Uses network-specific seeds from config with automatic DNS/IP fallback.
+        Uses network-specific seeds from config with automatic fallback to embedded bootstrap seeds.
         """
         from ..discovery import kademlia as kad
         from ..discovery import mdns as md
         from ..discovery import seeds as seedmod
 
-        # Use seeds from config (already network-specific with DNS + IP fallback)
+        # Use seeds from config (already network-specific with embedded fallback)
         # Seeds are provided as multiaddr strings, ready to dial
         seed_addrs = list(self.cfg.seeds) if self.cfg.seeds else []
 

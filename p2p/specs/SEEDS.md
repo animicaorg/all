@@ -13,24 +13,28 @@ Networks use CAIP-2 chain IDs (e.g., `animica:1` mainnet, `animica:2` testnet, `
 
 ## 1) Sources & precedence
 
-Nodes combine multiple seed sources and deduplicate:
+Nodes combine multiple seed sources and deduplicate. By default, only embedded
+bootstrap peers are used; DNS/HTTPS sources are optional and can be enabled by
+operators.
 
-1. **HTTPS JSON seed list** (signed; preferred)
-2. **DNS TXT/A/AAAA seed records** (DNSSEC-signed where available)
-3. **Embedded fallbacks** (static list compiled with release; very small)
+1. **Embedded fallbacks** (static list compiled with release; very small)
+2. **HTTPS JSON seed list** (signed; optional)
+3. **DNS TXT/A/AAAA seed records** (DNSSEC-signed where available; optional)
 
-Precedence rule: prefer HTTPS JSON if signature and freshness checks pass. Merge DNS entries that are fresh. Embedded entries are used only when both 1 and 2 fail.
+Precedence rule: prefer HTTPS JSON if configured and signature/freshness checks
+pass. Merge DNS entries if configured and fresh. Embedded entries are always
+available as a last resort.
 
 ---
 
 ## 2) HTTPS JSON Seed List
 
 ### 2.1 Endpoint
-Per network, publish at:
+Optional per network, published at:
 
-- Mainnet: `https://seeds.animica.org/v1/animica:1.json`
-- Testnet: `https://seeds.animica.org/v1/animica:2.json`
-- Devnet:  `https://seeds.animica.org/v1/animica:1337.json`
+- Mainnet: `https://seeds.example.net/v1/animica:1.json`
+- Testnet: `https://seeds.example.net/v1/animica:2.json`
+- Devnet:  `https://seeds.example.net/v1/animica:1337.json`
 
 Each JSON has a detached signature at the same path with `.sig` suffix (see **2.4 Signature**).
 
@@ -47,7 +51,7 @@ Each JSON has a detached signature at the same path with `.sig` suffix (see **2.
       "addrs": [
         "/ip4/203.0.113.10/tcp/37001",
         "/ip6/2001:db8::1/udp/37001/quic",
-        "/dns/seed1.animica.org/tcp/37001/ws"
+        "/dns/seed1.example.net/tcp/37001/ws"
       ],
       "features": ["full","tx","blocks","shares"], // tags
       "asn": 64496,                      // OPTIONAL (for diversity)
@@ -55,7 +59,7 @@ Each JSON has a detached signature at the same path with `.sig` suffix (see **2.
       "note": "EU-West, full archive"    // OPTIONAL human hint
     }
   ],
-  "contact": "ops@animica.org",          // OPTIONAL
+  "contact": "ops@example.net",          // OPTIONAL
   "metadata": { "source": "curated+telemetry", "minVersion": ">=1.0.0" }
 }
 
@@ -84,27 +88,27 @@ CLI verification example (minisign-format optional) is out-of-scope; implementat
 3) DNS Seeds (TXT + A/AAAA)
 
 3.1 Zones
-	•	Mainnet: _seed.animica.org
-	•	Testnet: _seed.testnet.animica.org
-	•	Devnet:  _seed.devnet.animica.org
+	•	Mainnet: _seed.example.net
+	•	Testnet: _seed.testnet.example.net
+	•	Devnet:  _seed.devnet.example.net
 
 3.2 Record formats
 
 TXT (multiaddr rows, comma-separated key=val):
 
-seedX._seed.animica.org.  300 IN TXT "ma=/ip4/203.0.113.21/tcp/37001,feat=full,asn=64496,w=10"
-seedY._seed.animica.org.  300 IN TXT "ma=/ip6/2001:db8::42/udp/37001/quic,feat=full,asn=64497,w=10"
-seedZ._seed.animica.org.  300 IN TXT "ma=/dns/seed3.animica.org/tcp/37001/ws,feat=tx,asn=64498,w=5"
+seedX._seed.example.net.  300 IN TXT "ma=/ip4/203.0.113.21/tcp/37001,feat=full,asn=64496,w=10"
+seedY._seed.example.net.  300 IN TXT "ma=/ip6/2001:db8::42/udp/37001/quic,feat=full,asn=64497,w=10"
+seedZ._seed.example.net.  300 IN TXT "ma=/dns/seed3.example.net/tcp/37001/ws,feat=tx,asn=64498,w=5"
 
 A / AAAA (legacy fallback):
 
-seed4._seed.animica.org. 300 IN A    203.0.113.44
-seed4._seed.animica.org. 300 IN AAAA 2001:db8::44
+seed4._seed.example.net. 300 IN A    203.0.113.44
+seed4._seed.example.net. 300 IN AAAA 2001:db8::44
 ; Default port 37001/tcp unless TXT overrides with ma=…
 
 Optional SRV is permitted:
 
-_p2p._tcp._seed.animica.org. 300 IN SRV 10 60 37001 seed4._seed.animica.org.
+_p2p._tcp._seed.example.net. 300 IN SRV 10 60 37001 seed4._seed.example.net.
 
 3.3 DNSSEC
 	•	Zones SHOULD be signed with DNSSEC.
@@ -123,9 +127,9 @@ _p2p._tcp._seed.animica.org. 300 IN SRV 10 60 37001 seed4._seed.animica.org.
 ⸻
 
 4) Bootstrapping flow
-	1.	Load embedded fallback (very small: 3–5 entries, diverse regions).
-	2.	Fetch HTTPS JSON; verify signature & freshness; merge.
-	3.	Query DNS TXT/A/AAAA; prefer DNSSEC-validated; merge.
+	1.	Load embedded fallback (very small: 1–3 entries, diverse regions).
+	2.	Fetch HTTPS JSON; verify signature & freshness; merge (if configured).
+	3.	Query DNS TXT/A/AAAA; prefer DNSSEC-validated; merge (if configured).
 	4.	Shuffle with weighted randomization; enforce diversity:
 	•	No more than 1 peer per ASN in the first 4 dials.
 	•	No more than 2 peers per /16 (IPv4) or /32 (IPv6) in the first 8 dials.
@@ -188,7 +192,7 @@ Client-side:
     },
     {
       "addrs": [
-        "/dns/seed-na.animica.org/tcp/37001/ws"
+        "/dns/seed-na.example.net/tcp/37001/ws"
       ],
       "asn": 64497,
       "features": ["full","tx"],
@@ -206,10 +210,10 @@ Detached signature: Base64 in animica:1.json.sig.
 
 7.2 Example DNS zone (TXT + A/AAAA)
 
-$ORIGIN _seed.animica.org.
+$ORIGIN _seed.example.net.
 seed1   300 IN TXT "ma=/ip4/203.0.113.21/tcp/37001,feat=full,asn=64496,w=10"
 seed2   300 IN TXT "ma=/ip6/2001:db8::22/udp/37001/quic,feat=full,asn=64497,w=10"
-seed3   300 IN TXT "ma=/dns/seed3.animica.org/tcp/37001/ws,feat=tx,asn=64498,w=5"
+seed3   300 IN TXT "ma=/dns/seed3.example.net/tcp/37001/ws,feat=tx,asn=64498,w=5"
 seed4   300 IN A    203.0.113.44
 seed4   300 IN AAAA 2001:db8::44
 _p2p._tcp 300 IN SRV 10 60 37001 seed4
