@@ -53,6 +53,10 @@ from p2p.wire.messages import (
     Peers,
     Tx,
 )
+try:
+    from p2p.protocol import block_announce as proto_blk
+except Exception:  # pragma: no cover - optional
+    proto_blk = None
 from p2p.node.peer_registry import PeerRegistry
 from p2p.sync.cache_store import SyncCacheConfig, SyncCacheState, SyncCacheStore
 
@@ -2815,6 +2819,27 @@ class P2PService:
             last_progress_at=peer.last_progress_at,
         )
 
+    def _update_peer_head(
+        self, peer: _PeerState, *, height: int, head_hash: Optional[bytes]
+    ) -> None:
+        if height < 0:
+            return
+        if peer.hello is None:
+            peer.hello = {}
+        try:
+            current = int(peer.hello.get("head_height") or 0)
+        except Exception:
+            current = 0
+        if height <= current:
+            return
+        peer.hello["head_height"] = int(height)
+        if head_hash:
+            peer.hello["head_hash"] = bytes(head_hash)
+        if peer.peer_id:
+            with contextlib.suppress(Exception):
+                self.peerstore.update_head_height(peer.peer_id, int(height))
+                self._schedule_peer_persist()
+
     def _peer_id_from_addr(self, address: str) -> str:
         if "/p2p/" in address:
             return address.split("/p2p/", 1)[1].split("/")[0]
@@ -2966,6 +2991,7 @@ class P2PService:
         await self._broadcast_inv(
             [InvItem(typ=InvType.BLOCK, h=block_hash)], exclude_remote=None, is_tx=False
         )
+        await self._broadcast_block_announce(block_hash, exclude_remote=None)
 
     # ---------------------------------------------------------------------
     # Connection management
@@ -3314,6 +3340,15 @@ class P2PService:
         async with peer.write_lock:
             await peer.stream.send(framed)
 
+    async def _send_raw(self, peer: _PeerState, msg_id: MsgID, payload: bytes) -> None:
+        if len(payload) > self._max_payload_bytes:
+            raise PeerMisbehavior(
+                "payload_too_large", points=self._score_points["malformed_message"]
+            )
+        framed = peer.framer.pack(int(msg_id), payload)
+        async with peer.write_lock:
+            await peer.stream.send(framed)
+
     def _decode_map(self, payload: bytes) -> dict:
         if len(payload) > self._max_payload_bytes:
             raise PeerMisbehavior(
@@ -3408,6 +3443,9 @@ class P2PService:
             return
         if mid == int(MsgID.BLOCKS):
             await self._handle_blocks(peer, payload)
+            return
+        if mid == int(MsgID.BLOCK_ANNOUNCE):
+            await self._handle_block_announce(peer, payload)
             return
         raise PeerMisbehavior(
             "unknown_message", points=self._score_points["malformed_message"]
@@ -4201,6 +4239,12 @@ class P2PService:
             self._sync_last_header_response_peer = peer.remote
             self._sync_last_header_response_count = len(msg.headers)
             if msg.headers:
+                last = msg.headers[-1]
+                self._update_peer_head(
+                    peer,
+                    height=int(last.height),
+                    head_hash=bytes(last.hash),
+                )
                 self._sync_last_header_error = None
                 self._sync_last_header_error_at = None
                 self._sync_last_header_error_peer = None
@@ -4213,6 +4257,12 @@ class P2PService:
             )
         # Treat as announcements; queue for sync loop to validate & download.
         if msg.headers:
+            last = msg.headers[-1]
+            self._update_peer_head(
+                peer,
+                height=int(last.height),
+                head_hash=bytes(last.hash),
+            )
             self._record_sync_header_event(
                 {
                     "type": "announce",
@@ -4287,6 +4337,15 @@ class P2PService:
                 sync_block.block, origin_remote=peer.remote
             )
             if ok:
+                try:
+                    if hasattr(sync_block.block, "header"):
+                        self._update_peer_head(
+                            peer,
+                            height=int(getattr(sync_block.block.header, "height", 0)),
+                            head_hash=sync_block.hash,
+                        )
+                except Exception:
+                    pass
                 self._sync_inflight_blocks.pop(sync_block.hash, None)
                 self._sync_inflight_peers.pop(sync_block.hash, None)
                 self._sync_last_block_at = time.time()
@@ -4339,6 +4398,73 @@ class P2PService:
                             severity=2,
                             quarantine_s=300.0,
                         )
+
+    async def _handle_block_announce(self, peer: _PeerState, payload: bytes) -> None:
+        if proto_blk is None:
+            log.debug("Block announce protocol unavailable")
+            return
+        if len(payload) > self._max_payload_bytes:
+            raise PeerMisbehavior(
+                "payload_too_large", points=self._score_points["malformed_message"]
+            )
+        announce = None
+        try:
+            announce = proto_blk.parse_announce(payload)
+        except Exception:
+            announce = None
+
+        if announce is not None:
+            if self._has_block(announce.header_hash) or self._seen(
+                self._seen_blocks, announce.header_hash
+            ):
+                return
+            self._remember(self._seen_blocks, announce.header_hash, self._seen_block_cap)
+            self._sync_header_sources[announce.header_hash] = peer.remote
+            self._update_peer_head(
+                peer,
+                height=announce.height,
+                head_hash=announce.header_hash,
+            )
+            if (
+                announce.parent_hash
+                and announce.parent_hash != b"\x00" * 32
+                and not self._has_block(announce.parent_hash)
+            ):
+                if announce.parent_hash not in self._sync_block_queue_set:
+                    parent_height = max(0, int(announce.height) - 1)
+                    self._sync_block_queue.appendleft(announce.parent_hash)
+                    self._sync_block_queue_set.add(announce.parent_hash)
+                    self._sync_block_queue_heights[announce.parent_hash] = parent_height
+            if announce.header_hash not in self._sync_block_queue_set:
+                self._sync_block_queue.append(announce.header_hash)
+                self._sync_block_queue_set.add(announce.header_hash)
+                self._sync_block_queue_heights[announce.header_hash] = int(
+                    announce.height
+                )
+            log.info(
+                "Block announced",
+                extra={
+                    "remote": peer.remote,
+                    "height": announce.height,
+                    "hash": announce.header_hash.hex(),
+                    "parent": announce.parent_hash.hex(),
+                },
+            )
+            self._sync_wakeup.set()
+            await self._schedule_block_requests(peer)
+            return
+
+        try:
+            req = proto_blk.parse_get_block(payload)
+        except Exception:
+            log.debug(
+                "Ignoring unrecognized block announce payload",
+                extra={"remote": peer.remote},
+            )
+            return
+        rawb = self._get_block_raw(req.header_hash)
+        if rawb:
+            await self._send(peer, MsgID.BLOCKS, Blocks(blocks=[rawb]))
 
     # ---------------------------------------------------------------------
     # Gossip + sync loops
@@ -7123,6 +7249,7 @@ class P2PService:
                 exclude_remote=origin_remote,
                 is_tx=False,
             )
+            await self._broadcast_block_announce(bh, exclude_remote=origin_remote)
             self._sync_last_block_error = None
             self._sync_last_block_error_at = None
             self._sync_fatal_error = None
@@ -7196,6 +7323,59 @@ class P2PService:
     # ---------------------------------------------------------------------
     # Broadcast helpers
     # ---------------------------------------------------------------------
+
+    async def _broadcast_block_announce(
+        self, header_hash: bytes, *, exclude_remote: Optional[str]
+    ) -> None:
+        if proto_blk is None:
+            return
+        header = None
+        try:
+            header = self._block_db().get_header_by_hash(header_hash)
+        except Exception:
+            header = None
+        if header is None:
+            return
+        try:
+            parent_hash = bytes(header.parentHash)
+        except Exception:
+            parent_hash = b"\x00" * 32
+        try:
+            height = int(getattr(header, "height", 0))
+        except Exception:
+            height = 0
+        try:
+            score = int(getattr(header, "thetaMicro", 0))
+        except Exception:
+            score = 0
+        tx_count = 0
+        proofs_count = 0
+        rawb = self._get_block_raw(header_hash)
+        if rawb:
+            with contextlib.suppress(Exception):
+                blk = self._decode_block(rawb).block
+                txs = getattr(blk, "txs", None) or ()
+                proofs = getattr(blk, "proofs", None) or ()
+                tx_count = len(txs)
+                proofs_count = len(proofs)
+        try:
+            payload = proto_blk.build_announce(
+                header_hash=header_hash,
+                parent_hash=parent_hash,
+                height=height,
+                score=score,
+                tx_count=tx_count,
+                proofs_count=proofs_count,
+            )
+        except Exception:
+            return
+        async with self._peer_lock:
+            peers = list(self._peers.values())
+        for p in peers:
+            if exclude_remote and p.remote == exclude_remote:
+                continue
+            with contextlib.suppress(Exception):
+                await self._send_raw(p, MsgID.BLOCK_ANNOUNCE, payload)
 
     async def _broadcast_inv(
         self,
