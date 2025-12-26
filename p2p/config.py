@@ -49,6 +49,7 @@ from .constants import PROTOCOL_ID
 # Default fallback seeds (mainnet).
 # Use a neutral bootstrap IP so the network does not depend on domain seeds.
 MAINNET_SEEDS: Final[tuple[str, ...]] = (
+    "/dns4/mainnet.animica.org/tcp/30333",
     "/ip4/144.126.133.21/udp/443/quic-v1",
     "/ip4/144.126.133.21/tcp/30333",
 )
