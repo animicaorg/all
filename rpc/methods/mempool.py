@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from typing import Iterable
 
 from rpc.methods import method
+from rpc import deps
+from mempool.select import PendingTxEntry, select_for_block
 
 try:  # pragma: no cover - optional dependency used for shared pending cache
     from rpc.methods import tx as tx_methods
@@ -85,3 +87,52 @@ def mempool_get_stats() -> dict:
 
 
 __all__ = ["mempool_get_pending", "mempool_get_stats"]
+
+
+@method(
+    "mempool.explain",
+    desc="Explain whether a pending transaction is mineable and why.",
+    aliases=("mempool_explain",),
+)
+def mempool_explain(tx_hash: str) -> dict:
+    target = tx_hash if tx_hash.startswith("0x") else f"0x{tx_hash}"
+    raw = None
+    for h, raw_bytes, _ts in _iter_pending():
+        if h == target:
+            raw = raw_bytes
+            break
+    if raw is None:
+        return {"hash": target, "status": "not_found"}
+
+    ctx = deps.get_ctx()
+    chain_id = getattr(ctx.cfg, "chain_id", None) if ctx is not None else None
+    state_db = getattr(ctx, "state_db", None) if ctx is not None else None
+
+    def _decode(raw_tx: bytes):
+        if tx_methods is None:
+            return None
+        return tx_methods._decode_tx(raw_tx)  # type: ignore[attr-defined]
+
+    selection = select_for_block(
+        head_state={"chain_id": chain_id},
+        limits={"max_gas": 0, "max_bytes": 0, "max_txs": 1},
+        pending=[PendingTxEntry(hash_hex=target, raw=raw, tx=None)],
+        decode=_decode,
+        state_db=state_db,
+    )
+    if selection.selected:
+        return {
+            "hash": target,
+            "status": "eligible",
+            "reason": None,
+        }
+    reason = selection.rejected_by_hash.get(target, "unknown")
+    return {
+        "hash": target,
+        "status": "rejected",
+        "reason": reason,
+        "rejected": dict(selection.rejected),
+    }
+
+
+__all__.append("mempool_explain")
