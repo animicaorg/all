@@ -777,12 +777,25 @@ class P2PServiceLegacy:
             return
 
     async def _dial(self, addr: str) -> None:
-        try:
-            conn = await self._transport.dial(addr, timeout=5.0)
-        except Exception as e:
-            self._log.warning(f"Failed to dial {addr}: {e.__class__.__name__}: {e}")
+        attempt = 0
+        while self._running:
+            try:
+                conn = await self._transport.dial(addr, timeout=5.0)
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                attempt += 1
+                self._log.warning(
+                    "Failed to dial %s (attempt %s): %s: %s",
+                    addr,
+                    attempt,
+                    e.__class__.__name__,
+                    e,
+                )
+                await asyncio.sleep(0)
+                continue
+            self._track_peer(conn, direction="outbound", dial_addr=addr)
             return
-        self._track_peer(conn, direction="outbound", dial_addr=addr)
 
     def _peer_id_from_conn(self, conn: Any, remote: str) -> str:
         peer_id = getattr(conn.info, "peer_id", None) or getattr(conn, "peer_id", None)
