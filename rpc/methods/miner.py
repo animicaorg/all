@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import hashlib
 import logging
 import math
@@ -2473,8 +2474,15 @@ def _mine_once(payout_address: bytes | None = None, threads: int = 1) -> tuple[b
                         evicted_count = 0
                         for h in included_hashes_canonical:
                             try:
-                                # Call remove method on _PEND pool
                                 removed = pend.remove(h)
+                                if inspect.isawaitable(removed):
+                                    try:
+                                        loop = asyncio.get_running_loop()
+                                    except RuntimeError:
+                                        removed = asyncio.run(removed)
+                                    else:
+                                        loop.create_task(removed)
+                                        removed = True
                                 if removed:
                                     evicted_count += 1
                             except Exception as e:
