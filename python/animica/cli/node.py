@@ -14,7 +14,7 @@ import subprocess
 import sys
 import time
 from collections import Counter
-from datetime import datetime
+from datetime import datetime, timezone
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -578,7 +578,8 @@ def _format_block_time(raw: Any) -> tuple[Optional[str], Optional[str]]:
     ts = _parse_timestamp(raw)
     if ts is None:
         return None, None
-    formatted = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ts))
+    dt = datetime.fromtimestamp(ts, tz=timezone.utc)
+    formatted = dt.strftime("%Y-%m-%d %H:%M:%SZ")
     age = _format_duration(time.time() - ts)
     return formatted, age
 
@@ -824,7 +825,8 @@ def _format_peer_timestamp(raw: Any) -> Optional[str]:
     if raw is None:
         return None
     try:
-        return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(float(raw)))
+        dt = datetime.fromtimestamp(float(raw), tz=timezone.utc)
+        return dt.strftime("%Y-%m-%d %H:%M:%SZ")
     except (TypeError, ValueError):
         return None
 
@@ -1623,24 +1625,26 @@ def status(
                 except Exception:
                     hashrate_payload = None
 
-            peer_count = None
             peers = []
-            p2p_status = None
             peer_error = None
+            p2p_status = None
             p2p_status_error = None
+            peer_counts: dict[str, int] = {}
 
             if status_payload and isinstance(status_payload, dict):
                 p2p_status = status_payload.get("p2p")
             if p2p_status is None:
-                peer_count, peer_count_error = _get_peer_count(url, rpc_timeout)
-                peers, peers_error = _get_peers(url, rpc_timeout)
-                peer_error = peer_count_error or peers_error
-                if peer_count is None and peers:
-                    peer_count = len(peers)
                 p2p_status, p2p_status_error = _get_p2p_status(url, rpc_timeout)
-            else:
-                peer_counts = p2p_status.get("peer_counts") or {}
-                peer_count = peer_counts.get("total") or p2p_status.get("peers_total")
+            if isinstance(p2p_status, dict):
+                counts = p2p_status.get("peer_counts") or {}
+                peer_counts = {
+                    "total": int(counts.get("total") or p2p_status.get("peers_total") or 0),
+                    "inbound": int(counts.get("inbound") or p2p_status.get("peers_inbound") or 0),
+                    "outbound": int(counts.get("outbound") or p2p_status.get("peers_outbound") or 0),
+                }
+
+            peers, peers_error = _get_peers(url, rpc_timeout)
+            peer_error = peers_error
 
             typer.echo(f"RPC URL: {url}")
             typer.echo("RPC reachable: yes")
@@ -1668,7 +1672,12 @@ def status(
                     typer.echo(f"Bootstrap head (cached): {cached_height}")
                     if cached_hash:
                         typer.echo(f"Bootstrap hash (cached): {cached_hash}")
-            typer.echo(f"Sync status: {sync_status}")
+            if isinstance(sync_status, dict) and sync_status.get("cache_source"):
+                typer.echo(
+                    f"Sync status (source={sync_status.get('cache_source')}): {sync_status}"
+                )
+            else:
+                typer.echo(f"Sync status: {sync_status}")
             if isinstance(sync_status, dict):
                 checkpoint_height = sync_status.get("checkpoint_height")
                 checkpoint_hash = sync_status.get("checkpoint_hash")
@@ -1700,12 +1709,20 @@ def status(
             hashrate_line = _hashrate_summary(hashrate_payload)
             if hashrate_line:
                 typer.echo(hashrate_line)
-            if peer_error:
-                typer.echo(f"Peer status: unavailable ({peer_error})")
-            elif peer_count is not None:
-                typer.echo(f"Peer count: {peer_count}")
+            if p2p_status_error:
+                typer.echo(f"P2P status: unavailable ({p2p_status_error})")
+            elif peer_counts:
+                typer.echo(
+                    "Peers: total={total} inbound={inbound} outbound={outbound}".format(
+                        total=peer_counts.get("total", 0),
+                        inbound=peer_counts.get("inbound", 0),
+                        outbound=peer_counts.get("outbound", 0),
+                    )
+                )
+            elif peer_error:
+                typer.echo(f"Peers: unavailable ({peer_error})")
             if peers:
-                typer.echo("Peers:")
+                typer.echo("Peers (live):")
                 for index, peer in enumerate(peers[:10], 1):
                     peer_id = peer.get("id") or peer.get("peerId") or peer.get("peer_id") or "unknown"
                     addr = peer.get("addr") or peer.get("address") or peer.get("multiaddr") or "unknown"
@@ -1723,17 +1740,8 @@ def status(
                     typer.echo(summary)
                 if len(peers) > 10:
                     typer.echo(f"  ... and {len(peers) - 10} more peers")
-            if p2p_status_error:
-                typer.echo(f"P2P status: unavailable ({p2p_status_error})")
-            elif p2p_status:
+            if p2p_status:
                 typer.echo(f"P2P running: {p2p_status.get('p2p_running')}")
-                typer.echo(
-                    "P2P peers: total={total} inbound={inbound} outbound={outbound}".format(
-                        total=p2p_status.get("peers_total"),
-                        inbound=p2p_status.get("peers_inbound"),
-                        outbound=p2p_status.get("peers_outbound"),
-                    )
-                )
                 typer.echo(
                     "Bootstrap attempts (last 5m): {count}".format(
                         count=p2p_status.get("bootstrap_attempts_last_5m")
