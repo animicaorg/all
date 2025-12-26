@@ -297,29 +297,40 @@ def _backend_sign(alg_name: str, sk: bytes, msg: bytes, pk: bytes | None = None)
             f"Backend {backend.__name__} lacks callable sign(sk, msg) implementation"
         )
 
-    # Defensive: ensure the backend matches the expected (sk, msg) signature to avoid
-    # surprising keyword-only mismatches (regression from liboqs-python 0.12.0 -> 0.15.x).
+    # Defensive: detect whether the backend expects (sk, msg) or (sk, msg, pk)
+    # to avoid surprising keyword-only mismatches (regression from liboqs-python 0.12.0 -> 0.15.x).
+    param_count = None
     try:
         sig = inspect.signature(sign_fn)
         params = list(sig.parameters.values())
-        if len(params) != 2:
+        if len(params) not in (2, 3):
             raise TypeError(
-                f"Backend {backend.__name__}.sign expected 2 parameters (sk, msg), got {len(params)}"
+                f"Backend {backend.__name__}.sign expected 2 or 3 parameters, got {len(params)}"
             )
+        param_count = len(params)
     except (TypeError, ValueError):
         # Some callables (e.g., Cython) may not expose signatures; fall back to a direct call.
-        pass
+        param_count = None
 
     try:
-        if pk is not None:
+        if param_count == 3:
             return sign_fn(sk, msg, pk)  # type: ignore[misc]
-        return sign_fn(sk, msg)
+        if param_count == 2 or pk is None:
+            return sign_fn(sk, msg)
+        # Unknown signature: try the common (sk, msg) first, then retry with pk.
+        try:
+            return sign_fn(sk, msg)
+        except TypeError:
+            return sign_fn(sk, msg, pk)  # type: ignore[misc]
     except TypeError:
         # As a last resort, try keyword arguments for backends that renamed parameters
         try:
-            if pk is not None:
+            if pk is None:
+                return sign_fn(secret_key=sk, message=msg)  # type: ignore[arg-type]
+            try:
+                return sign_fn(secret_key=sk, message=msg)  # type: ignore[arg-type]
+            except TypeError:
                 return sign_fn(secret_key=sk, message=msg, pk=pk)  # type: ignore[arg-type]
-            return sign_fn(secret_key=sk, message=msg)  # type: ignore[arg-type]
         except Exception as e:
             raise TypeError(
                 f"Calling {backend.__name__}.sign(sk, msg) failed: {e}."
