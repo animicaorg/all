@@ -898,6 +898,9 @@ class P2PService:
         self._sync_tip_tolerance = int(
             os.environ.get("ANIMICA_P2P_SYNC_TIP_TOLERANCE", "2") or 2
         )
+        self._sync_force_always = os.environ.get(
+            "ANIMICA_P2P_FORCE_SYNC_ALWAYS", "1"
+        ).lower() in ("1", "true", "yes", "on")
         self._sync_status_cache: Optional[SyncStatusSnapshot] = None
         self._sync_status_cache_at = 0.0
         self._sync_status_cache_hits = 0
@@ -5546,7 +5549,7 @@ class P2PService:
                 ):
                     self._rotate_sync_peer()
                     self._last_rotation_at = now
-                await self._sync_once(force=stalled)
+                await self._sync_once(force=stalled or self._sync_force_always)
                 if self._sync_block_stalled_reason is None:
                     await self._schedule_block_requests()
         except asyncio.CancelledError:
