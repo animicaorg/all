@@ -1947,6 +1947,14 @@ def _mine_once(payout_address: bytes | None = None, threads: int = 1) -> tuple[b
         for tx, tx_hash_hex in zip(txs, included_hashes):
             # Try to attach sender if missing
             tx_normalized = _attach_sender_if_possible(tx)
+
+            # Preserve canonical hash tracking when normalization creates a new Tx object.
+            # This keeps txsRoot computation and mempool eviction aligned with the original
+            # raw CBOR hash (tx.sendRawTransaction output).
+            if tx_normalized is not tx:
+                tracked = _tracked(tx)
+                if tracked:
+                    _TX_HASH_MAP[id(tx_normalized)] = tracked
             
             # Drop txs that still have no sender (can't execute without sender)
             if not _has_valid_sender(tx_normalized):
