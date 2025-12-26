@@ -948,17 +948,10 @@ def _bits_to_target(bits_hex: str) -> int:
 
 
 def _theta_to_target(theta_micro: int) -> int:
-    """Derive a loose block target from θ for lightweight validation."""
+    """Derive the block target from θ using consensus math."""
+    from core.utils.pow import micro_threshold_to_target256
 
-    # Keep the target reachable in tests and offline environments; default
-    # share target is a 1% slice of the 256-bit space.
-    max_target = (1 << 256) - 1
-    base = int(max_target * _DEFAULT_SHARE_TARGET)
-    if theta_micro <= 0:
-        return base
-    # Clamp so that higher θ lowers the target but never goes to zero.
-    scaled = max(1, int(base / max(theta_micro / 1_000_000, 1)))
-    return min(max_target, scaled)
+    return micro_threshold_to_target256(int(theta_micro))
 
 
 def _hex_to_bytes(hex_str: str) -> bytes:

@@ -59,6 +59,7 @@ services:
       ANIMICA_RPC_PORT: "${ANIMICA_RPC_PORT:-8545}"
       ANIMICA_RPC_CORS_ORIGINS: "${ANIMICA_RPC_CORS_ORIGINS:-[\"http://localhost:*\",\"http://127.0.0.1:*\"]}"
       ANIMICA_LOG_LEVEL: "${ANIMICA_LOG_LEVEL:-INFO}"
+      SYNC_ENABLED: "${SYNC_ENABLED:-1}"
       # P2P config - mainnet seeds auto-selected by chain_id
       # Primary config (ANIMICA_P2P_* vars are canonical):
       ANIMICA_P2P_ENABLE: "${ANIMICA_P2P_ENABLE:-true}"
