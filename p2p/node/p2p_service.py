@@ -61,6 +61,9 @@ log = logging.getLogger("animica.p2p.service")
 DEFAULT_BOOTSTRAP_SEEDS = [
     "/dns4/mainnet.animica.org/tcp/30333",
 ]
+FORCE_SYNC_HEADER_PEERS = {
+    "144.126.133.21:30333",
+}
 
 
 @dataclass(slots=True)
@@ -5609,6 +5612,8 @@ class P2PService:
         ignore_backoff_reason: Optional[str] = None,
     ) -> tuple[bool, str]:
         now = time.time() if now is None else now
+        if peer.remote in FORCE_SYNC_HEADER_PEERS:
+            return True, "force_eligible"
         if peer.hello is None or not isinstance(peer.hello, dict):
             return False, "hello_missing"
         if not peer.peer_id:
@@ -5786,7 +5791,8 @@ class P2PService:
             if require_anchored and not self._peer_is_anchored(p):
                 continue
             try:
-                h = int(p.hello.get("head_height") or 0)
+                hello = p.hello or {}
+                h = int(hello.get("head_height") or 0)
             except Exception:
                 h = 0
             latency = p.latency_ewma if p.latency_ewma is not None else 9999.0
