@@ -198,6 +198,25 @@ curl -X POST http://localhost:8545/rpc \
 }
 ```
 
+### Verify Mempool Inclusion and Mining
+
+```bash
+# List pending txs
+curl -X POST http://localhost:8545/rpc \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"mempool.getPending","id":1}'
+
+# Explain why a pending tx is (or is not) mineable
+curl -X POST http://localhost:8545/rpc \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"mempool.explain","params":["0x..."],"id":1}'
+
+# Mine a block and confirm it includes txs
+curl -X POST http://localhost:8545/rpc \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"miner.mine","params":{"count":1},"id":1}'
+```
+
 ### Check Sync Status
 
 ```bash
