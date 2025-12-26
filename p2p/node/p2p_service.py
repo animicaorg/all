@@ -54,6 +54,7 @@ from p2p.wire.messages import (
     Tx,
 )
 from p2p.node.peer_registry import PeerRegistry
+from p2p.sync.cache_store import SyncCacheConfig, SyncCacheState, SyncCacheStore
 
 log = logging.getLogger("animica.p2p.service")
 
@@ -341,6 +342,11 @@ class SyncStatusSnapshot:
     checkpoint_validation: Optional[str]
     last_checkpoint_action: Optional[str]
     synchronized: bool
+    paused: bool
+    target_height: Optional[int]
+    peers_total: int
+    cache_size_bytes: int
+    cache_entries: int
     peer_penalties: Dict[str, int]
     peer_anchor_states: Dict[str, dict[str, Any]]
     cache_interval_ms: int
@@ -405,6 +411,11 @@ class SyncStatusSnapshot:
             "checkpoint_validation": self.checkpoint_validation,
             "last_checkpoint_action": self.last_checkpoint_action,
             "synchronized": self.synchronized,
+            "paused": self.paused,
+            "target_height": self.target_height,
+            "peers_total": self.peers_total,
+            "cache_size_bytes": self.cache_size_bytes,
+            "cache_entries": self.cache_entries,
             "peer_penalties": dict(self.peer_penalties),
             "peer_anchor_states": dict(self.peer_anchor_states),
             "cache_interval_ms": self.cache_interval_ms,
@@ -837,6 +848,7 @@ class P2PService:
         self._sync_last_block_error_at: Optional[float] = None
         self._sync_fatal_error: Optional[str] = None
         self._sync_block_stalled_reason: Optional[str] = None
+        self._sync_last_validated_height = 0
         self._sync_peer_penalties: Dict[str, int] = {}
         self._sync_peer_penalty_whitelist = {"144.126.133.21:30333"}
         self._sync_last_progress_at = time.time()
@@ -859,6 +871,8 @@ class P2PService:
         self._sync_active_header_peer: Optional[str] = None
         self._sync_active_block_peer: Optional[str] = None
         self._sync_inflight_headers = 0
+        self._sync_paused = False
+        self._sync_target_height: Optional[int] = None
         self._sync_max_inflight = int(
             os.environ.get("ANIMICA_P2P_SYNC_INFLIGHT", "32") or 32
         )
@@ -887,7 +901,25 @@ class P2PService:
         self._sync_status_cache_interval = float(
             os.environ.get("ANIMICA_SYNC_STATUS_CACHE_INTERVAL", "0.25") or 0.25
         )
+        self._sync_cache: Optional[SyncCacheStore] = None
+        self._sync_cache_state_interval = float(
+            os.environ.get("ANIMICA_SYNC_CACHE_STATE_INTERVAL", "5") or 5
+        )
+        self._sync_cache_prune_interval = float(
+            os.environ.get("ANIMICA_SYNC_CACHE_PRUNE_INTERVAL", "60") or 60
+        )
+        self._sync_cache_max_bytes = int(
+            os.environ.get("ANIMICA_SYNC_CACHE_MAX_MB", "256") or 256
+        ) * 1024 * 1024
+        self._sync_cache_max_blocks = int(
+            os.environ.get("ANIMICA_SYNC_CACHE_MAX_BLOCKS", "2000") or 2000
+        )
+        self._sync_cache_max_headers = int(
+            os.environ.get("ANIMICA_SYNC_CACHE_MAX_HEADERS", "5000") or 5000
+        )
+        self._sync_cache_task: Optional[asyncio.Task] = None
         self._load_bootstrap_checkpoint()
+        self._load_sync_cache_state()
         self._bootstrap_attempts: deque[dict[str, Any]] = deque(maxlen=512)
         self._last_bootstrap_attempt: Optional[dict[str, Any]] = None
         self._last_bootstrap_success: Optional[dict[str, Any]] = None
@@ -930,6 +962,7 @@ class P2PService:
         if self._running:
             return
         self._running = True
+        self._sync_paused = False
         await self._maybe_detect_external_ip()
 
         if self._peerstore_fallback_path:
@@ -980,6 +1013,11 @@ class P2PService:
             asyncio.create_task(self._dial_loop(), name="p2p.dial"),
             asyncio.create_task(self._head_watch_loop(), name="p2p.head_watch"),
             asyncio.create_task(self._sync_loop(), name="p2p.sync"),
+            *(
+                [asyncio.create_task(self._sync_cache_loop(), name="p2p.sync_cache")]
+                if self._sync_cache is not None
+                else []
+            ),
             asyncio.create_task(self._addr_request_loop(), name="p2p.addr_request"),
             asyncio.create_task(self._feeler_loop(), name="p2p.feeler"),
             asyncio.create_task(self._addr_relay_loop(), name="p2p.addr_relay"),
@@ -1034,6 +1072,7 @@ class P2PService:
         with contextlib.suppress(Exception):
             await self._transport.close()
 
+        self._flush_sync_cache_state()
         log.info("P2P stopped")
 
     # ---------------------------------------------------------------------
@@ -2256,6 +2295,8 @@ class P2PService:
             }
             for peer in self._peers.values()
         }
+        cache_size_bytes = self._sync_cache.cache_size_bytes() if self._sync_cache else 0
+        cache_entries = self._sync_cache.cache_entries() if self._sync_cache else 0
         return SyncStatusSnapshot(
             phase=phase,
             head_height=best_block_height,
@@ -2308,6 +2349,11 @@ class P2PService:
             checkpoint_validation=self._sync_checkpoint_validation,
             last_checkpoint_action=self._sync_last_checkpoint_action,
             synchronized=synchronized,
+            paused=self._sync_paused,
+            target_height=self._sync_target_height,
+            peers_total=int(self._stats.get("peers", 0)),
+            cache_size_bytes=cache_size_bytes,
+            cache_entries=cache_entries,
             peer_penalties={
                 remote: count
                 for remote, count in self._sync_peer_penalties.items()
@@ -2825,6 +2871,33 @@ class P2PService:
     async def force_sync(self) -> dict[str, Any]:
         self._sync_wakeup.set()
         return await self._sync_once(force=True)
+
+    async def force_sync_with_cache(
+        self, *, clear_cache: bool = False
+    ) -> dict[str, Any]:
+        if clear_cache:
+            self._clear_sync_cache()
+        self._sync_wakeup.set()
+        result = await self._sync_once(force=True)
+        if clear_cache:
+            result["cache_cleared"] = True
+        return result
+
+    def pause_sync(self) -> dict[str, Any]:
+        self._sync_paused = True
+        return {"paused": True}
+
+    def resume_sync(self) -> dict[str, Any]:
+        self._sync_paused = False
+        self._sync_wakeup.set()
+        return {"paused": False}
+
+    def set_sync_target(self, height: Optional[int]) -> dict[str, Any]:
+        if height is not None and height < 0:
+            height = None
+        self._sync_target_height = height
+        self._sync_wakeup.set()
+        return {"target_height": self._sync_target_height}
 
     async def dial(self, addr: str) -> None:
         normalized = self._sanitize_peer_addr(
@@ -4164,6 +4237,19 @@ class P2PService:
             except Exception as e:
                 self._penalize_peer(peer, f"bad_block_decode:{e.__class__.__name__}")
                 continue
+            if self._sync_cache is not None:
+                height_hint = None
+                if hasattr(sync_block.block, "header"):
+                    try:
+                        height_hint = int(getattr(sync_block.block.header, "height", 0))
+                    except Exception:
+                        height_hint = None
+                self._sync_cache.put_block(
+                    sync_block.hash,
+                    raw_bytes,
+                    height=height_hint,
+                    source_peer=peer.remote,
+                )
             ok, reason = await self._import_block_payload(
                 sync_block.block, origin_remote=peer.remote
             )
@@ -4187,6 +4273,10 @@ class P2PService:
                         self._sync_block_buffer.popitem(last=False)
                 else:
                     reject_reason = reason or "block_rejected"
+                    if self._sync_cache is not None and not self._is_orphan_reason(
+                        reject_reason
+                    ):
+                        self._sync_cache.invalidate_block(sync_block.hash)
                     if self._is_db_write_error(reject_reason):
                         self._sync_block_stalled_reason = "db not writable"
                         self._sync_last_block_error = f"db not writable: {reject_reason}"
@@ -4226,12 +4316,19 @@ class P2PService:
 
     async def _head_watch_loop(self) -> None:
         last: Optional[str] = None
+        last_height = 0
         try:
             while self._running:
                 await asyncio.sleep(1.0)
-                _h, hh = self._local_head()
+                height, hh = self._local_head()
                 if hh and hh != last:
+                    if last is not None and (
+                        height < last_height
+                        or (height == last_height and hh != last)
+                    ):
+                        self._handle_reorg(height, hh)
                     last = hh
+                    last_height = height
                     with contextlib.suppress(Exception):
                         await self.relay_block(bytes.fromhex(hh[2:]))
         except asyncio.CancelledError:
@@ -4326,6 +4423,21 @@ class P2PService:
         self._sync_block_queue_heights.pop(block_hash, None)
         with contextlib.suppress(ValueError):
             self._sync_block_queue.remove(block_hash)
+
+    async def _try_import_cached_block(self, block_hash: bytes) -> bool:
+        if self._sync_cache is None:
+            return False
+        raw_bytes = self._sync_cache.get_block(block_hash)
+        if raw_bytes is None:
+            return False
+        ok, reason = await self._import_block_payload(
+            raw_bytes, origin_remote="sync-cache"
+        )
+        if ok:
+            return True
+        if not self._is_orphan_reason(reason):
+            self._sync_cache.invalidate_block(block_hash)
+        return False
 
     def _ensure_block_queue(self) -> int:
         if self._sync_best_header is None:
@@ -4454,6 +4566,53 @@ class P2PService:
                 if h not in self._sync_block_queue_set:
                     self._sync_block_queue.appendleft(h)
                     self._sync_block_queue_set.add(h)
+
+    def _handle_reorg(self, new_height: int, new_hash: Optional[str]) -> None:
+        removed_headers = 0
+        for h, header in list(self._sync_headers.items()):
+            if header.height > new_height:
+                self._sync_headers.pop(h, None)
+                self._sync_header_sources.pop(h, None)
+                removed_headers += 1
+        if self._sync_best_header and self._sync_best_header.height > new_height:
+            self._sync_best_header = None
+            if self._sync_headers:
+                self._sync_best_header = max(
+                    self._sync_headers.values(), key=lambda hdr: hdr.height
+                )
+        removed_queue = 0
+        for h in list(self._sync_block_queue):
+            height_hint = self._sync_block_queue_heights.get(h)
+            if height_hint is None and h in self._sync_headers:
+                height_hint = self._sync_headers[h].height
+            if height_hint is not None and height_hint > new_height:
+                self._drop_from_block_queue(h)
+                removed_queue += 1
+        removed_buffer = 0
+        for h, blk in list(self._sync_block_buffer.items()):
+            height_hint = None
+            if hasattr(blk.block, "header"):
+                try:
+                    height_hint = int(getattr(blk.block.header, "height", 0))
+                except Exception:
+                    height_hint = None
+            if height_hint is not None and height_hint > new_height:
+                self._sync_block_buffer.pop(h, None)
+                removed_buffer += 1
+        removed_cache = 0
+        if self._sync_cache is not None:
+            removed_cache = self._sync_cache.invalidate_from_height(new_height)
+        log.info(
+            "Reorg detected; cache invalidated",
+            extra={
+                "new_height": new_height,
+                "new_hash": new_hash,
+                "headers_removed": removed_headers,
+                "queue_removed": removed_queue,
+                "buffer_removed": removed_buffer,
+                "cache_blocks_removed": removed_cache,
+            },
+        )
                     if h not in self._sync_block_queue_heights:
                         self._sync_block_queue_heights[h] = -1
             if peer_remote:
@@ -4982,6 +5141,8 @@ class P2PService:
         target_height = min(
             best_header_height, expected_height + max(1, self._sync_max_inflight) - 1
         )
+        if self._sync_target_height is not None:
+            target_height = min(target_height, int(self._sync_target_height))
         parent_requests = {
             blk.parent_hash for blk in self._sync_block_buffer.values() if blk.parent_hash
         }
@@ -4999,6 +5160,10 @@ class P2PService:
         deferred: list[tuple[bytes, Optional[int]]] = []
         for h in ordered:
             height_hint = self._sync_block_queue_heights.get(h)
+            if await self._try_import_cached_block(h):
+                self._sync_block_queue_set.discard(h)
+                self._sync_block_queue_heights.pop(h, None)
+                continue
             if height_hint is None:
                 if h in self._sync_headers:
                     height_hint = self._sync_headers[h].height
@@ -5069,6 +5234,15 @@ class P2PService:
 
         async with self._sync_lock:
             self._ensure_sync_cursor_integrity()
+            local_height, _ = self._local_head()
+            result["localHeight"] = local_height
+            if (
+                self._sync_target_height is not None
+                and local_height >= self._sync_target_height
+                and not force
+            ):
+                self._sync_phase = "TARGET_REACHED"
+                return result
             eligible_peers, _ = self._eligible_sync_peers()
             if not eligible_peers:
                 self._sync_phase = "IDLE"
@@ -5324,6 +5498,9 @@ class P2PService:
     async def _sync_loop(self) -> None:
         try:
             while self._running:
+                if self._sync_paused:
+                    await asyncio.sleep(0.5)
+                    continue
                 try:
                     await asyncio.wait_for(self._sync_wakeup.wait(), timeout=2.0)
                 except asyncio.TimeoutError:
@@ -6080,6 +6257,178 @@ class P2PService:
         self._sync_checkpoint_validation = "unknown"
         self._sync_last_checkpoint_action = "loaded_from_bootstrap_cache"
 
+    def _sync_cache_dir(self) -> Path:
+        env_dir = os.environ.get("ANIMICA_SYNC_CACHE_DIR") or os.environ.get(
+            "ANIMICA_P2P_SYNC_CACHE_DIR"
+        )
+        if env_dir:
+            return Path(env_dir).expanduser()
+        return self._chain_data_dir / "sync"
+
+    def _init_sync_cache(self) -> None:
+        if self._sync_cache is not None:
+            return
+        cache_dir = self._sync_cache_dir()
+        config = SyncCacheConfig(
+            base_dir=cache_dir,
+            max_block_bytes=self._sync_cache_max_bytes,
+            max_block_entries=self._sync_cache_max_blocks,
+            max_header_entries=self._sync_cache_max_headers,
+            state_flush_interval_sec=self._sync_cache_state_interval,
+            prune_interval_sec=self._sync_cache_prune_interval,
+        )
+        self._sync_cache = SyncCacheStore(config)
+
+    def _decode_cached_header(self, payload: dict[str, Any]) -> Optional[_SyncHeader]:
+        try:
+            hash_hex = str(payload.get("hash") or "")
+            parent_hex = str(payload.get("parent_hash") or "")
+            if hash_hex.startswith("0x"):
+                hash_hex = hash_hex[2:]
+            if parent_hex.startswith("0x"):
+                parent_hex = parent_hex[2:]
+            if not hash_hex or not parent_hex:
+                return None
+            return _SyncHeader(
+                hash=bytes.fromhex(hash_hex),
+                parent_hash=bytes.fromhex(parent_hex),
+                height=int(payload.get("height") or 0),
+                theta_micro=int(payload.get("theta_micro") or 0),
+                timestamp=int(payload.get("timestamp") or 0),
+            )
+        except Exception:
+            return None
+
+    def _load_sync_cache_state(self) -> None:
+        self._init_sync_cache()
+        if self._sync_cache is None:
+            return
+        state = self._sync_cache.load_state()
+        self._sync_paused = bool(state.paused)
+        self._sync_target_height = state.target_height
+        self._sync_peer_penalties.update(state.peer_penalties)
+        self._sync_last_validated_height = int(state.last_validated_height or 0)
+        for header_payload in state.headers:
+            header = self._decode_cached_header(header_payload)
+            if header is None:
+                continue
+            if header.hash not in self._sync_headers:
+                self._sync_headers[header.hash] = header
+        best_hash_hex = state.best_header_hash or ""
+        if best_hash_hex.startswith("0x"):
+            best_hash_hex = best_hash_hex[2:]
+        if best_hash_hex:
+            best_hash = bytes.fromhex(best_hash_hex)
+            best = self._sync_headers.get(best_hash)
+            if best is not None:
+                self._sync_best_header = best
+        for h_hex in state.block_queue:
+            if not h_hex:
+                continue
+            if h_hex.startswith("0x"):
+                h_hex = h_hex[2:]
+            try:
+                h = bytes.fromhex(h_hex)
+            except Exception:
+                continue
+            if self._has_block(h):
+                continue
+            if h in self._sync_block_queue_set:
+                continue
+            self._sync_block_queue.append(h)
+            self._sync_block_queue_set.add(h)
+        for h_hex, height in state.block_queue_heights.items():
+            if not h_hex:
+                continue
+            if h_hex.startswith("0x"):
+                h_hex = h_hex[2:]
+            try:
+                h = bytes.fromhex(h_hex)
+            except Exception:
+                continue
+            self._sync_block_queue_heights[h] = int(height)
+
+    def _build_sync_cache_state(self) -> SyncCacheState:
+        head_height, _ = self._local_head()
+        self._sync_last_validated_height = max(
+            int(self._sync_last_validated_height or 0), int(head_height or 0)
+        )
+        headers = list(self._sync_headers.values())
+        headers.sort(key=lambda h: h.height)
+        if len(headers) > self._sync_cache_max_headers:
+            headers = headers[-self._sync_cache_max_headers :]
+        header_payloads = [
+            {
+                "hash": h.hash.hex(),
+                "parent_hash": h.parent_hash.hex(),
+                "height": h.height,
+                "theta_micro": h.theta_micro,
+                "timestamp": h.timestamp,
+            }
+            for h in headers
+        ]
+        best_hash = (
+            self._sync_best_header.hash.hex()
+            if self._sync_best_header is not None
+            else None
+        )
+        block_queue = [h.hex() for h in self._sync_block_queue]
+        block_queue_heights = {
+            h.hex(): int(height)
+            for h, height in self._sync_block_queue_heights.items()
+        }
+        return SyncCacheState(
+            headers=header_payloads,
+            best_header_hash=best_hash,
+            block_queue=block_queue,
+            block_queue_heights=block_queue_heights,
+            peer_penalties=dict(self._sync_peer_penalties),
+            last_validated_height=self._sync_last_validated_height,
+            target_height=self._sync_target_height,
+            paused=self._sync_paused,
+        )
+
+    def _flush_sync_cache_state(self) -> None:
+        if self._sync_cache is None:
+            return
+        try:
+            state = self._build_sync_cache_state()
+            self._sync_cache.save_state(state)
+        except Exception as exc:
+            log.debug("Failed to flush sync cache state", extra={"error": str(exc)})
+
+    def _clear_sync_cache(self) -> None:
+        if self._sync_cache is not None:
+            self._sync_cache.clear()
+        self._sync_headers.clear()
+        self._sync_best_header = None
+        self._sync_block_queue.clear()
+        self._sync_block_queue_set.clear()
+        self._sync_block_queue_heights.clear()
+        self._sync_block_buffer.clear()
+        self._sync_inflight_blocks.clear()
+        self._sync_inflight_peers.clear()
+
+    async def _sync_cache_loop(self) -> None:
+        last_state_flush = 0.0
+        last_prune = 0.0
+        try:
+            while self._running:
+                now = time.time()
+                if self._sync_cache is None:
+                    await asyncio.sleep(1.0)
+                    continue
+                if now - last_state_flush >= self._sync_cache_state_interval:
+                    self._flush_sync_cache_state()
+                    last_state_flush = now
+                if now - last_prune >= self._sync_cache_prune_interval:
+                    with contextlib.suppress(Exception):
+                        self._sync_cache.prune()
+                    last_prune = now
+                await asyncio.sleep(1.0)
+        except asyncio.CancelledError:
+            return
+
     def _empty_headers_reason(
         self,
         peer: _PeerState,
@@ -6740,6 +7089,7 @@ class P2PService:
             )
             after_height, _ = self._local_head()
             if after_height > before_height:
+                self._sync_last_validated_height = after_height
                 log.info(
                     "Head advanced",
                     extra={"height": after_height, "origin": origin_remote},
