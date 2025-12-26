@@ -4336,6 +4336,10 @@ class P2PService:
             ok, reason = await self._import_block_payload(
                 sync_block.block, origin_remote=peer.remote
             )
+            if not ok and self._is_duplicate_reason(reason):
+                self._drop_from_block_queue(sync_block.hash)
+                ok = True
+                reason = None
             if ok:
                 try:
                     if hasattr(sync_block.block, "header"):
@@ -4618,6 +4622,12 @@ class P2PService:
             return False
         lowered = str(reason).lower()
         return "missing parent" in lowered or "orphan" in lowered
+
+    def _is_duplicate_reason(self, reason: Optional[str]) -> bool:
+        if not reason:
+            return False
+        lowered = str(reason).lower()
+        return "duplicate" in lowered or "already exists" in lowered
 
     def _handle_missing_parent(self, peer: _PeerState, sync_block: _SyncBlock) -> None:
         peer.missing_parent += 1
