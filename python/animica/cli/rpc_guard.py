@@ -6,6 +6,7 @@ from urllib.parse import urlparse
 import typer
 
 from animica.config import load_network_config
+from animica.cli.rpc_utils import is_local_rpc_url
 
 _RISK_ENV = "ANIMICA_I_UNDERSTAND_REMOTE_RISK"
 _BOOTSTRAP_SAFE_METHODS = {
@@ -54,6 +55,9 @@ def guard_bootstrap_rpc(
 
     is_bootstrap = target_host == bootstrap_host
     if not is_bootstrap:
+        return False
+
+    if is_local_rpc_url(bootstrap) and is_local_rpc_url(rpc_url):
         return False
 
     if allow_bootstrap_methods and (method is None or method in _BOOTSTRAP_SAFE_METHODS or method.startswith("bootstrap.")):
