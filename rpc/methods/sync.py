@@ -5,6 +5,8 @@ import typing as t
 from rpc import deps
 from rpc.methods import method
 
+P2P_UNAVAILABLE_ERROR = "P2P disabled/unavailable"
+
 
 def _get_p2p_service() -> t.Any:
     try:
@@ -68,7 +70,7 @@ async def sync_force(clear_cache: bool = False) -> dict[str, t.Any]:
     if svc is None and core_svc is None:
         return {
             "success": False,
-            "error": "P2P service not available",
+            "error": P2P_UNAVAILABLE_ERROR,
             "height": head_height,
             "peerCount": 0,
         }
@@ -198,7 +200,7 @@ async def sync_pause() -> dict[str, t.Any]:
             return t.cast(dict[str, t.Any], svc.pause_sync())
         except Exception as exc:  # pragma: no cover - defensive
             return {"paused": False, "error": str(exc)}
-    return {"paused": False, "error": "sync pause not supported"}
+    return {"paused": False, "error": P2P_UNAVAILABLE_ERROR}
 
 
 @method("sync.resume", desc="Resume background sync")
@@ -209,7 +211,7 @@ async def sync_resume() -> dict[str, t.Any]:
             return t.cast(dict[str, t.Any], svc.resume_sync())
         except Exception as exc:  # pragma: no cover - defensive
             return {"paused": True, "error": str(exc)}
-    return {"paused": True, "error": "sync resume not supported"}
+    return {"paused": True, "error": P2P_UNAVAILABLE_ERROR}
 
 
 @method("sync.setTarget", desc="Set sync target height")
@@ -220,7 +222,7 @@ async def sync_set_target(height: int | None = None) -> dict[str, t.Any]:
             return t.cast(dict[str, t.Any], svc.set_sync_target(height))
         except Exception as exc:  # pragma: no cover - defensive
             return {"target_height": None, "error": str(exc)}
-    return {"target_height": None, "error": "sync target not supported"}
+    return {"target_height": None, "error": P2P_UNAVAILABLE_ERROR}
 
 
 @method("sync.status", desc="Return current sync status (alias)")

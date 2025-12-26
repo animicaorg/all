@@ -33,7 +33,6 @@ params = ctx.params             # dict (subset of spec/params.yaml)
 """
 
 import contextlib
-import errno
 import json
 import logging
 import os
@@ -282,7 +281,7 @@ def _coerce_config(cfg: t.Any) -> _ConfigView:
         chain_id=int(_get("chain_id", 1)),
         genesis_path=genesis,
         log_level=str(_get("log_level", "INFO")),
-        p2p_required=_parse_bool(_get("p2p_required", None), True),
+        p2p_required=_parse_bool(_get("p2p_required", None), False),
     )
 
 
@@ -667,7 +666,7 @@ class RpcContext:
     p2p_service: t.Any = None  # Optional P2P service for peer management
     core_p2p_service: t.Any = None  # Optional core-style P2P service
     p2p_enabled: bool = False
-    p2p_required: bool = True
+    p2p_required: bool = False
     p2p_start_error: str | None = None
 
     def get_head(self) -> dict[str, t.Any]:
@@ -927,6 +926,12 @@ def build_context(cfg: t.Any | None = None) -> RpcContext:
             log.error(f"Failed to initialize P2P service: {p2p_start_error}", exc_info=True)
             p2p_service = None
             p2p_deps_sync = None
+            if not p2p_required:
+                log.warning(
+                    "P2P unavailable; continuing without P2P",
+                    extra={"error": p2p_start_error},
+                )
+                enable_p2p = False
             if "GENESIS_MISMATCH" in str(e):
                 if "ANIMICA_P2P_REQUIRED" not in os.environ:
                     p2p_required = False
@@ -1036,14 +1041,6 @@ def ensure_started(cfg: t.Any | None = None) -> RpcContext:
         return _CTX
 
 
-def _is_addr_in_use(exc: Exception) -> bool:
-    if isinstance(exc, OSError):
-        if exc.errno == errno.EADDRINUSE:
-            return True
-    message = str(exc).lower()
-    return "address already in use" in message
-
-
 async def startup(cfg: t.Any | None = None) -> RpcContext:
     """Idempotently build and cache the RPC context for the server lifecycle."""
     with _CTX_LOCK:
@@ -1066,9 +1063,9 @@ async def startup(cfg: t.Any | None = None) -> RpcContext:
             except Exception as e:
                 _CTX.p2p_start_error = f"start_failed: {type(e).__name__}: {e}"
                 log = logging.getLogger("animica.rpc.deps")
-                if not _CTX.p2p_required and _is_addr_in_use(e):
+                if not _CTX.p2p_required:
                     log.warning(
-                        "P2P failed to start (address already in use); continuing with P2P disabled because p2p_required=false",
+                        "P2P unavailable; continuing without P2P",
                         exc_info=True,
                     )
                     _CTX.p2p_service = None
@@ -1087,7 +1084,8 @@ async def startup(cfg: t.Any | None = None) -> RpcContext:
                 log.error(error)
                 raise RuntimeError(error)
             log.warning(
-                f"{error}; continuing with P2P disabled because p2p_required=false"
+                "P2P unavailable; continuing without P2P",
+                extra={"error": error},
             )
             _CTX.p2p_enabled = False
 
