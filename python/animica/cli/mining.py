@@ -9,6 +9,7 @@ Provides commands for:
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 from typing import Optional
@@ -105,11 +106,38 @@ def _mine_header(header: "Header", target_int: int) -> tuple[int | None, bytes |
             )
         except Exception:
             candidate = header
-        digest = candidate.hash()
+        try:
+            from core.types.header import serialize_header
+            from core.utils.hash import sha3_256
+
+            digest = sha3_256(serialize_header(candidate))
+        except Exception:
+            digest = candidate.hash()
         digest_int = int.from_bytes(digest, "big")
         if digest_int <= target_int:
             return nonce, digest
     return None, None
+
+
+def _format_rpc_error(error: Exception) -> str:
+    code = getattr(error, "code", None)
+    message = getattr(error, "message", None)
+    data = getattr(error, "data", None)
+    parts = []
+    if code is not None:
+        parts.append(f"code={code}")
+    if message is not None:
+        parts.append(f"message={message}")
+    if data is not None:
+        parts.append(f"data={data}")
+    return " ".join(parts) if parts else str(error)
+
+
+def _emit_mining_summary(summary: dict, *, verbose: bool, force: bool = False) -> None:
+    if not (verbose or force):
+        return
+    payload = json.dumps(summary, sort_keys=True)
+    typer.echo(f"  Mining summary: {payload}")
 
 
 def _ensure_network_env() -> None:
@@ -973,145 +1001,222 @@ def mine_blocks(
             
             # Mine blocks one at a time with delay between them
             for i in range(count):
-                def get_template_via_local():
-                    if verbose:
-                        typer.echo(f"  [Fallback] Fetching block template via local RPC at {url}")
-                    return client.request(
-                        "miner.getBlockTemplate",
-                        {
-                            "address": resolved_address,
-                            "include_mempool": include_mempool,
-                        },
-                    )
+                stale_attempts = 0
+                submit_result = None
+                while True:
+                    def get_template_via_local():
+                        if verbose:
+                            typer.echo(f"  [Fallback] Fetching block template via local RPC at {url}")
+                        return client.request(
+                            "miner.getBlockTemplate",
+                            {
+                                "address": resolved_address,
+                                "include_mempool": include_mempool,
+                            },
+                        )
 
-                if proxy:
-                    if verbose:
-                        typer.echo("  [Proxy] Forwarding block template request to trusted RPC")
-                    template = proxy.sync_forward_request(
-                        "miner.getBlockTemplate",
-                        {
-                            "address": resolved_address,
-                            "include_mempool": include_mempool,
-                        },
-                        fallback_handler=get_template_via_local,
-                    )
-                else:
-                    template = get_template_via_local()
+                    if proxy:
+                        if verbose:
+                            typer.echo("  [Proxy] Forwarding block template request to trusted RPC")
+                        template = proxy.sync_forward_request(
+                            "miner.getBlockTemplate",
+                            {
+                                "address": resolved_address,
+                                "include_mempool": include_mempool,
+                            },
+                            fallback_handler=get_template_via_local,
+                        )
+                    else:
+                        template = get_template_via_local()
 
-                if not isinstance(template, dict) or not template.get("enabled", True):
-                    typer.secho(
-                        f"Warning: Block template unavailable ({template.get('reason') if isinstance(template, dict) else 'unknown'})",
-                        fg=typer.colors.YELLOW,
-                    )
-                    break
-
-                mempool_info = template.get("mempool", {}) if isinstance(template, dict) else {}
-                pending_before = pending_before or int(mempool_info.get("pending", 0) or 0)
-                selected = int(mempool_info.get("selected", 0) or 0)
-                total_included += selected
-                rejected = mempool_info.get("rejected", {})
-                if isinstance(rejected, dict):
-                    for reason, count in rejected.items():
-                        aggregated_rejected[reason] = aggregated_rejected.get(reason, 0) + int(count)
-                rejected_by_hash = mempool_info.get("rejectedByHash", {})
-                if isinstance(rejected_by_hash, dict):
-                    for tx_hash, reason in rejected_by_hash.items():
-                        if tx_hash not in rejected_by_hash_sample:
-                            rejected_by_hash_sample[tx_hash] = str(reason)
-                        if len(rejected_by_hash_sample) >= 10:
-                            break
-
-                header_view = template.get("header", {})
-                header = _header_from_template(header_view)
-                target_hex = template.get("target")
-                target_int = int(target_hex, 16) if isinstance(target_hex, str) else int(target_hex or 0)
-                nonce, digest = _mine_header(header, target_int)
-                if nonce is None or digest is None:
-                    typer.secho(
-                        f"Warning: Block {i + 1}/{count} failed to mine",
-                        fg=typer.colors.YELLOW,
-                    )
-                    break
-
-                header = header.__class__(
-                    v=header.v,
-                    chainId=header.chainId,
-                    height=header.height,
-                    parentHash=header.parentHash,
-                    timestamp=header.timestamp,
-                    stateRoot=header.stateRoot,
-                    txsRoot=header.txsRoot,
-                    receiptsRoot=header.receiptsRoot,
-                    proofsRoot=header.proofsRoot,
-                    daRoot=header.daRoot,
-                    mixSeed=header.mixSeed,
-                    poiesPolicyRoot=header.poiesPolicyRoot,
-                    pqAlgPolicyRoot=header.pqAlgPolicyRoot,
-                    thetaMicro=header.thetaMicro,
-                    workType=header.workType,
-                    nonce=nonce,
-                    extra=header.extra,
-                )
-
-                txs_raw = [tx.get("raw") for tx in template.get("txs", []) if isinstance(tx, dict)]
-                header_payload = {
-                    k: ("0x" + v.hex() if isinstance(v, (bytes, bytearray)) else v)
-                    for k, v in header.to_obj().items()
-                }
-                block_payload = {
-                    "header": header_payload,
-                    "txs": txs_raw,
-                    "proofs": [],
-                }
-
-                if proxy:
-                    submit_result = proxy.sync_forward_request(
-                        "miner.submitBlock",
-                        block_payload,
-                        fallback_handler=lambda: client.request("miner.submitBlock", block_payload),
-                    )
-                else:
-                    submit_result = client.request("miner.submitBlock", block_payload)
-
-                if not submit_result or not submit_result.get("accepted", False):
-                    typer.secho(
-                        f"Warning: Block {i + 1}/{count} rejected by node",
-                        fg=typer.colors.YELLOW,
-                    )
-                    break
-
-                total_mined += 1
-                final_height = int(template.get("header", {}).get("height", 0))
-                block_reward = template.get("coinbase", {}).get("amount") or 0
-                total_reward += int(block_reward or 0)
-                reward_anm = int(block_reward or 0) / COIN_UNIT
-
-                typer.echo(
-                    f"  Block {i + 1}/{count} mined (height: {final_height}, "
-                    f"reward: {reward_anm:.9f} ANM = {block_reward} nANM)"
-                )
-
-                if include_mempool and pending_before > 0 and selected == 0:
-                    exclusions = template.get("excluded", []) or []
-                    if exclusions:
+                    if not isinstance(template, dict) or not template.get("enabled", True):
                         typer.secho(
-                            f"Mempool had {pending_before} tx(s) but none were mineable:",
+                            f"Warning: Block template unavailable ({template.get('reason') if isinstance(template, dict) else 'unknown'})",
                             fg=typer.colors.YELLOW,
                         )
-                        for entry in exclusions[:5]:
-                            reason = entry.get("reason", "unknown")
-                            details = entry.get("details")
-                            if details:
-                                typer.echo(f"  {entry.get('hash')}: {reason} {details}")
-                            else:
-                                typer.echo(f"  {entry.get('hash')}: {reason}")
+                        stale_attempts = 0
+                        break
+
+                    mempool_info = template.get("mempool", {}) if isinstance(template, dict) else {}
+                    pending_before = pending_before or int(mempool_info.get("pending", 0) or 0)
+                    selected = int(mempool_info.get("selected", 0) or 0)
+                    total_included += selected
+                    rejected = mempool_info.get("rejected", {})
+                    if isinstance(rejected, dict):
+                        for reason, count in rejected.items():
+                            aggregated_rejected[reason] = aggregated_rejected.get(reason, 0) + int(count)
+                    rejected_by_hash = mempool_info.get("rejectedByHash", {})
+                    if isinstance(rejected_by_hash, dict):
+                        for tx_hash, reason in rejected_by_hash.items():
+                            if tx_hash not in rejected_by_hash_sample:
+                                rejected_by_hash_sample[tx_hash] = str(reason)
+                            if len(rejected_by_hash_sample) >= 10:
+                                break
+
+                    header_view = template.get("header", {})
+                    header = _header_from_template(header_view)
+                    target_hex = template.get("target")
+                    target_int = int(target_hex, 16) if isinstance(target_hex, str) else int(target_hex or 0)
+                    nonce, digest = _mine_header(header, target_int)
+                    if nonce is None or digest is None:
+                        typer.secho(
+                            f"Warning: Block {i + 1}/{count} failed to mine",
+                            fg=typer.colors.YELLOW,
+                        )
+                        stale_attempts = 0
+                        break
+
+                    header = header.__class__(
+                        v=header.v,
+                        chainId=header.chainId,
+                        height=header.height,
+                        parentHash=header.parentHash,
+                        timestamp=header.timestamp,
+                        stateRoot=header.stateRoot,
+                        txsRoot=header.txsRoot,
+                        receiptsRoot=header.receiptsRoot,
+                        proofsRoot=header.proofsRoot,
+                        daRoot=header.daRoot,
+                        mixSeed=header.mixSeed,
+                        poiesPolicyRoot=header.poiesPolicyRoot,
+                        pqAlgPolicyRoot=header.pqAlgPolicyRoot,
+                        thetaMicro=header.thetaMicro,
+                        workType=header.workType,
+                        nonce=nonce,
+                        extra=header.extra,
+                    )
+
+                    txs_raw = [tx.get("raw") for tx in template.get("txs", []) if isinstance(tx, dict)]
+                    header_payload = {
+                        k: ("0x" + v.hex() if isinstance(v, (bytes, bytearray)) else v)
+                        for k, v in header.to_obj().items()
+                    }
+                    parent_info = template.get("parent", {}) if isinstance(template, dict) else {}
+                    parent_hash = parent_info.get("hash") or template.get("parentHash")
+                    if not parent_hash:
+                        parent_hash = "0x" + header.parentHash.hex()
+                    parent_height = parent_info.get("height")
+                    template_id = template.get("templateId") or template.get("template_id")
+                    block_payload = {
+                        "header": header_payload,
+                        "txs": txs_raw,
+                        "proofs": [],
+                        "parentHash": parent_hash,
+                        "templateId": template_id,
+                    }
+
+                    digest_int = int.from_bytes(digest, "big")
+                    pow_valid = digest_int <= target_int
+                    summary = {
+                        "template": {
+                            "id": template_id,
+                            "parent_hash": parent_hash,
+                            "parent_height": parent_height,
+                            "target": target_hex,
+                            "timestamp_min": template.get("timestampMin"),
+                            "timestamp_max": template.get("timestampMax"),
+                        },
+                        "header": {
+                            "height": header.height,
+                            "parent": "0x" + header.parentHash.hex(),
+                            "timestamp": header.timestamp,
+                            "theta_micro": header.thetaMicro,
+                            "nonce": nonce,
+                        },
+                        "pow": {
+                            "hash": "0x" + digest.hex(),
+                            "valid": pow_valid,
+                        },
+                    }
+                    _emit_mining_summary(summary, verbose=verbose)
+
                     try:
-                        pending_hashes = client.request("mempool.getPending", [])
-                        for tx_hash in pending_hashes[:5]:
-                            explain = client.request("mempool.explain", [tx_hash])
-                            typer.echo(f"  explain {tx_hash}: {explain.get('reason')}")
-                    except Exception:
-                        pass
+                        if proxy:
+                            submit_result = proxy.sync_forward_request(
+                                "miner.submitBlock",
+                                block_payload,
+                                fallback_handler=lambda: client.request("miner.submitBlock", block_payload),
+                            )
+                        else:
+                            submit_result = client.request("miner.submitBlock", block_payload)
+                    except Exception as submit_error:
+                        error_str = _format_rpc_error(submit_error)
+                        error_data = getattr(submit_error, "data", None)
+                        reason = None
+                        if isinstance(error_data, dict):
+                            reason = error_data.get("reason")
+                        is_stale = (
+                            isinstance(reason, str) and reason == "stale_template"
+                        ) or "stale template" in error_str.lower()
+                        _emit_mining_summary(summary, verbose=verbose, force=True)
+                        typer.secho(
+                            f"Warning: Block {i + 1}/{count} rejected by node ({error_str})",
+                            fg=typer.colors.YELLOW,
+                        )
+                        if is_stale and stale_attempts < 3:
+                            stale_attempts += 1
+                            typer.secho(
+                                f"  Retrying with fresh template (stale attempt {stale_attempts}/3)",
+                                fg=typer.colors.YELLOW,
+                            )
+                            continue
+                        stale_attempts = 0
+                        break
+
+                    if not submit_result or not submit_result.get("accepted", False):
+                        rejection_reason = submit_result.get("reason")
+                        _emit_mining_summary(summary, verbose=verbose, force=True)
+                        typer.secho(
+                            f"Warning: Block {i + 1}/{count} rejected by node (reason={rejection_reason})",
+                            fg=typer.colors.YELLOW,
+                        )
+                        if isinstance(rejection_reason, str) and "stale" in rejection_reason and stale_attempts < 3:
+                            stale_attempts += 1
+                            typer.secho(
+                                f"  Retrying with fresh template (stale attempt {stale_attempts}/3)",
+                                fg=typer.colors.YELLOW,
+                            )
+                            continue
+                        stale_attempts = 0
+                        break
+
+                    total_mined += 1
+                    final_height = int(template.get("header", {}).get("height", 0))
+                    block_reward = template.get("coinbase", {}).get("amount") or 0
+                    total_reward += int(block_reward or 0)
+                    reward_anm = int(block_reward or 0) / COIN_UNIT
+
+                    typer.echo(
+                        f"  Block {i + 1}/{count} mined (height: {final_height}, "
+                        f"reward: {reward_anm:.9f} ANM = {block_reward} nANM)"
+                    )
+
+                    if include_mempool and pending_before > 0 and selected == 0:
+                        exclusions = template.get("excluded", []) or []
+                        if exclusions:
+                            typer.secho(
+                                f"Mempool had {pending_before} tx(s) but none were mineable:",
+                                fg=typer.colors.YELLOW,
+                            )
+                            for entry in exclusions[:5]:
+                                reason = entry.get("reason", "unknown")
+                                details = entry.get("details")
+                                if details:
+                                    typer.echo(f"  {entry.get('hash')}: {reason} {details}")
+                                else:
+                                    typer.echo(f"  {entry.get('hash')}: {reason}")
+                        try:
+                            pending_hashes = client.request("mempool.getPending", [])
+                            for tx_hash in pending_hashes[:5]:
+                                explain = client.request("mempool.explain", [tx_hash])
+                                typer.echo(f"  explain {tx_hash}: {explain.get('reason')}")
+                        except Exception:
+                            pass
+
+                    break
+
+                if stale_attempts == 0 and (not submit_result or not submit_result.get("accepted", False)):
+                    break
 
                 # Sleep between blocks (except after the last one)
                 if i < count - 1:
