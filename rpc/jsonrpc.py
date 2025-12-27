@@ -335,6 +335,36 @@ def _error_obj(exc: Exception) -> Json:
     }
 
 
+_REDACT_KEYS = {
+    "password",
+    "secret",
+    "seed",
+    "mnemonic",
+    "privkey",
+    "private_key",
+    "privateKey",
+    "token",
+    "auth",
+    "signature",
+    "sig",
+    "rawTx",
+}
+
+
+def _redact_params(params: Any) -> Any:
+    if isinstance(params, dict):
+        redacted: dict[str, Any] = {}
+        for key, value in params.items():
+            if key in _REDACT_KEYS:
+                redacted[key] = "<redacted>"
+            else:
+                redacted[key] = _redact_params(value)
+        return redacted
+    if isinstance(params, list):
+        return [_redact_params(item) for item in params]
+    return params
+
+
 # --------------------------------------------------------------------------------------
 # Arg binding & execution
 # --------------------------------------------------------------------------------------
@@ -461,8 +491,21 @@ async def dispatch_one(obj: Json, ctx: Optional[Context]) -> Optional[Json]:
     except Exception as exc:
         # Notification? Still no response, even on error per spec (but we *log* it)
         req_id = obj.get("id", _NO_ID)
+        method = obj.get("method")
+        params = obj.get("params")
+        rpc_err = to_error(exc)
+        if getattr(rpc_err, "code", None) == -32603:
+            log.exception(
+                "RPC internal error",
+                extra={
+                    "jsonrpc_method": method,
+                    "params": _redact_params(params),
+                },
+            )
+        elif req_id is _NO_ID:
+            log.debug("Error in notification %s: %s", method, exc)
+            return None
         if req_id is _NO_ID:
-            log.debug("Error in notification %s: %s", obj.get("method"), exc)
             return None
         return {"jsonrpc": "2.0", "id": req_id, "error": _error_obj(exc)}
 

@@ -3,6 +3,7 @@ import hashlib
 import pytest
 
 from core.types.header import Header
+from consensus.rewards import MAINNET_PREMINE_DISTRIBUTION
 from rpc.methods import miner as miner_methods
 from rpc.tests import new_test_client, rpc_call
 
@@ -45,28 +46,31 @@ def test_get_work_accepts_explicit_empty_params():
 def test_get_block_template_accepts_address_param(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("ANIMICA_MINING_FORCE", "1")
     client, _, _ = new_test_client()
+    payout_address = MAINNET_PREMINE_DISTRIBUTION[0][0]
 
-    res = rpc_call(client, "miner.getBlockTemplate", {"address": "anim1test"})
+    res = rpc_call(client, "miner.getBlockTemplate", {"address": payout_address})
 
-    assert res["result"]["coinbase"]["address"] == "anim1test"
+    assert res["result"]["coinbase"]["address"] == payout_address
 
 
 def test_get_block_template_accepts_payout_address_alias(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("ANIMICA_MINING_FORCE", "1")
     client, _, _ = new_test_client()
+    payout_address = MAINNET_PREMINE_DISTRIBUTION[0][0]
 
-    res = rpc_call(client, "miner.getBlockTemplate", {"payout_address": "anim1alias"})
+    res = rpc_call(client, "miner.getBlockTemplate", {"payout_address": payout_address})
 
-    assert res["result"]["coinbase"]["address"] == "anim1alias"
+    assert res["result"]["coinbase"]["address"] == payout_address
 
 
 def test_get_block_template_accepts_positional_address(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("ANIMICA_MINING_FORCE", "1")
     client, _, _ = new_test_client()
+    payout_address = MAINNET_PREMINE_DISTRIBUTION[0][0]
 
-    res = rpc_call(client, "miner.getBlockTemplate", ["anim1positional"])
+    res = rpc_call(client, "miner.getBlockTemplate", [payout_address])
 
-    assert res["result"]["coinbase"]["address"] == "anim1positional"
+    assert res["result"]["coinbase"]["address"] == payout_address
 
 
 def test_get_block_template_requires_address():
@@ -76,6 +80,23 @@ def test_get_block_template_requires_address():
 
     assert res["error"]["code"] == -32602
     assert res["error"]["data"]["detail"] == "address is required"
+
+
+def test_get_block_template_rejects_invalid_address():
+    client, _, _ = new_test_client()
+
+    res = rpc_call(
+        client,
+        "miner.getBlockTemplate",
+        {"address": "not-a-valid-address"},
+        expect_error=True,
+    )
+
+    assert res["error"]["code"] == -32602
+    assert (
+        "address must be a 32-byte 0x-prefixed hex or anim bech32 address"
+        in res["error"]["data"]["detail"]
+    )
 
 
 def test_jsonrpc_endpoint_accepts_empty_params_via_post_body():
