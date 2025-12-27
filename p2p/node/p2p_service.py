@@ -3647,6 +3647,45 @@ class P2PService:
         )
         await self._send(peer, MsgID.HELLO, hello)
 
+    async def _maybe_announce_headers_on_hello(
+        self, peer: _PeerState, *, remote_height: int, remote_head_hash: Optional[bytes]
+    ) -> None:
+        local_height, _ = self._local_head()
+        if int(local_height or 0) <= int(remote_height or 0):
+            return
+        locator: list[bytes] = []
+        if (
+            remote_head_hash
+            and remote_head_hash != b"\x00" * 32
+            and self._has_header(remote_head_hash)
+        ):
+            locator = [bytes(remote_head_hash)]
+        else:
+            bdb = self._block_db()
+            genesis = (
+                bdb.get_canonical_hash(0)
+                or bdb.get_genesis_hash()
+                or self._genesis_hash()
+            )
+            if genesis:
+                locator = [bytes(genesis)]
+        headers = self._headers_after_locator(
+            locator, limit=int(self._max_headers_per_message)
+        )
+        if not headers:
+            return
+        info = self._headers_debug_info(headers)
+        log.info(
+            "Proactively sending headers",
+            extra={
+                "remote": peer.remote,
+                "remote_head_height": int(remote_height or 0),
+                "local_head_height": int(local_height or 0),
+                **info,
+            },
+        )
+        await self._send(peer, MsgID.HEADERS, Headers(headers=headers))
+
     # ---------------------------------------------------------------------
     # Handlers
     # ---------------------------------------------------------------------
@@ -4204,6 +4243,14 @@ class P2PService:
 
         await self._send(peer, MsgID.HELLO_ACK, HelloAck(accepted=True, reason=None))
         self._sync_wakeup.set()
+        self._create_child_task(
+            self._maybe_announce_headers_on_hello(
+                peer,
+                remote_height=int(normalized["head_height"]),
+                remote_head_hash=bytes(normalized.get("head_hash") or b""),
+            ),
+            name=f"p2p.headers_hello@{peer.remote}",
+        )
         self._create_child_task(
             self._send_addr_sample(
                 peer,
