@@ -157,7 +157,13 @@ def test_mine_blocks_success(monkeypatch: Any) -> None:
             pass
         
         def request(self, method: str, params: Any):
-            return {"mined": 1, "height": 103}
+            assert isinstance(params, dict)
+            assert params.get("include_mempool") is True
+            return {
+                "mined": 1,
+                "height": 103,
+                "mempool": {"pending": 0, "included": 0, "rejected": {}, "rejectedByHash": {}},
+            }
     
     mock_module = Mock()
     mock_module.RpcClient = MockRpcClient
@@ -281,7 +287,12 @@ def test_mine_blocks_with_wallet_label(monkeypatch: Any, tmp_path: Path) -> None
             # Verify the resolved address is used
             if isinstance(params, dict):
                 assert params.get("address") == test_address
-            return {"mined": 1, "height": 1}
+                assert params.get("include_mempool") is True
+            return {
+                "mined": 1,
+                "height": 1,
+                "mempool": {"pending": 0, "included": 0, "rejected": {}, "rejectedByHash": {}},
+            }
     
     mock_module = Mock()
     mock_module.RpcClient = MockRpcClient
@@ -378,7 +389,12 @@ def _create_mock_rpc_client_with_device_tracking() -> tuple[type, dict[str, Any]
             if isinstance(params, dict):
                 params_tracker["params"] = params
                 params_tracker["has_device"] = "device" in params
-            return {"mined": 1, "height": 1, "totalReward": 5000000000}
+            return {
+                "mined": 1,
+                "height": 1,
+                "totalReward": 5000000000,
+                "mempool": {"pending": 0, "included": 0, "rejected": {}, "rejectedByHash": {}},
+            }
     
     return MockRpcClient, params_tracker
 

@@ -1092,6 +1092,74 @@ def _get_tx_sender_and_nonce(tx: Tx) -> tuple[bytes | None, int | None]:
         return (None, None)
 
 
+def _evict_conflicting_pending_txs(txs: list[Tx]) -> int:
+    """
+    Remove pending transactions that conflict with included txs (same sender+nonce).
+
+    This keeps the pending pool consistent after block acceptance, even when
+    transactions are present in the fallback pool or rpc.pending_pool.
+    """
+    if not txs:
+        return 0
+
+    try:
+        from rpc.methods import tx as tx_methods
+    except Exception:
+        return 0
+
+    included_pairs: set[tuple[bytes, int]] = set()
+    for tx in txs:
+        sender, nonce = _get_tx_sender_and_nonce(tx)
+        if sender is not None and nonce is not None:
+            included_pairs.add((sender, nonce))
+
+    if not included_pairs:
+        return 0
+
+    pending_items: list[tuple[str, bytes]] = []
+    pend = getattr(tx_methods, "_PEND", None)
+    if pend is not None:
+        if hasattr(pend, "list_raw") and callable(pend.list_raw):
+            try:
+                pending_items = list(pend.list_raw())
+            except Exception:
+                pending_items = []
+        elif hasattr(pend, "items") and callable(pend.items):
+            try:
+                pending_items = list(pend.items())
+            except Exception:
+                pending_items = []
+
+    if not pending_items:
+        fallback = getattr(tx_methods, "_FALLBACK_PENDING", {}) or {}
+        pending_items = list(fallback.items())
+
+    removed = 0
+    for pending_hash, raw in pending_items:
+        try:
+            decoded, obj = tx_methods._decode_tx(raw)  # type: ignore[attr-defined]
+            tx_obj: Tx | None = None
+            if isinstance(decoded, Tx):
+                tx_obj = decoded
+            elif isinstance(decoded, dict):
+                normalized = _normalize_tx_envelope(decoded)
+                tx_obj = _construct_tx_from_dict(normalized)
+            if tx_obj is None:
+                continue
+            sender, nonce = _get_tx_sender_and_nonce(tx_obj)
+            if sender is None or nonce is None:
+                continue
+            if (sender, nonce) not in included_pairs:
+                continue
+            removed_flag = tx_methods._pending_remove(pending_hash)  # type: ignore[attr-defined]
+            if removed_flag:
+                removed += 1
+        except Exception:
+            continue
+
+    return removed
+
+
 def _adapter() -> CoreChainAdapter:
     """
     Create a CoreChainAdapter with mempool feed for block building.
@@ -1667,7 +1735,12 @@ def _construct_tx_from_dict(normalized: dict) -> Tx | None:
         return None
 
 
-def _mine_once(payout_address: bytes | None = None, threads: int = 1) -> tuple[bool, int]:
+def _mine_once(
+    payout_address: bytes | None = None,
+    threads: int = 1,
+    *,
+    include_mempool: bool = True,
+) -> tuple[bool, int, dict[str, Any]]:
     """
     Mine a single block with proof-of-work.
     
@@ -1705,39 +1778,54 @@ def _mine_once(payout_address: bytes | None = None, threads: int = 1) -> tuple[b
     ctx = _ctx()
     adapter = _adapter()
     pending_entries: list[PendingTxEntry] = []
+    selection_summary: dict[str, Any] = {
+        "pending": 0,
+        "selected": 0,
+        "rejected": {},
+        "rejectedByHash": {},
+        "mempoolEnabled": include_mempool,
+    }
 
-    log.info("_mine_once: Starting transaction collection from mempool adapter")
-    log.info(f"_mine_once: Adapter has miner_feed: {adapter.miner_feed is not None}")
-    try:
-        snapshot = list(adapter.get_mempool_snapshot(limit=1000))
-        log.info(f"_mine_once: adapter.get_mempool_snapshot returned {len(snapshot)} transactions")
-        if snapshot:
-            log.info(f"_mine_once: Sample tx types from adapter: {[type(tx).__name__ for tx in snapshot[:3]]}")
-        for tx in snapshot:
-            tracked = _tracked(tx)
-            raw = b""
-            if tracked:
-                tx_hash_hex, raw = tracked
-            else:
-                raw = getattr(tx, "raw_cbor", None) or b""
-                if not raw and hasattr(tx, "to_cbor"):
-                    try:
-                        raw = tx.to_cbor()
-                    except Exception:
-                        raw = b""
-                if raw:
-                    from core.utils.hash import sha3_256
-
-                    tx_hash_hex = "0x" + sha3_256(raw).hex()
+    if include_mempool:
+        log.info("_mine_once: Starting transaction collection from mempool adapter")
+        log.info(f"_mine_once: Adapter has miner_feed: {adapter.miner_feed is not None}")
+        try:
+            snapshot = list(adapter.get_mempool_snapshot(limit=1000))
+            log.info(f"_mine_once: adapter.get_mempool_snapshot returned {len(snapshot)} transactions")
+            if snapshot:
+                log.info(f"_mine_once: Sample tx types from adapter: {[type(tx).__name__ for tx in snapshot[:3]]}")
+            for tx in snapshot:
+                tracked = _tracked(tx)
+                raw = b""
+                if tracked:
+                    tx_hash_hex, raw = tracked
                 else:
-                    tx_hash_hex = _canonical_txid_hex(tx)
-                if raw:
-                    _TX_HASH_MAP[id(tx)] = (tx_hash_hex, raw)
-            pending_entries.append(PendingTxEntry(hash_hex=tx_hash_hex, raw=raw or b"", tx=tx))
-    except Exception as e:
-        log.warning(f"mempool snapshot unavailable; falling back to in-process cache: {e}", exc_info=True)
+                    raw = getattr(tx, "raw_cbor", None) or b""
+                    if not raw and hasattr(tx, "to_cbor"):
+                        try:
+                            raw = tx.to_cbor()
+                        except Exception:
+                            raw = b""
+                    if raw:
+                        from core.utils.hash import sha3_256
 
-    if not pending_entries:
+                        tx_hash_hex = "0x" + sha3_256(raw).hex()
+                    else:
+                        tx_hash_hex = _canonical_txid_hex(tx)
+                    if raw:
+                        _TX_HASH_MAP[id(tx)] = (tx_hash_hex, raw)
+                pending_entries.append(
+                    PendingTxEntry(hash_hex=tx_hash_hex, raw=raw or b"", tx=tx)
+                )
+        except Exception as e:
+            log.warning(
+                f"mempool snapshot unavailable; falling back to in-process cache: {e}",
+                exc_info=True,
+            )
+    else:
+        log.info("_mine_once: Mempool inclusion disabled; mining payout-only block")
+
+    if include_mempool and not pending_entries:
         log.info("_mine_once: No transactions from adapter, trying fallback direct read")
         try:
             from rpc.methods import tx as tx_methods
@@ -1794,7 +1882,7 @@ def _mine_once(payout_address: bytes | None = None, threads: int = 1) -> tuple[b
         except Exception as e:
             log.error("Fallback pending pool unavailable", extra={"err": str(e)}, exc_info=True)
 
-    if pending_entries:
+    if include_mempool and pending_entries:
         normalized_entries: list[PendingTxEntry] = []
         for entry in pending_entries:
             tx = entry.tx
@@ -1831,17 +1919,43 @@ def _mine_once(payout_address: bytes | None = None, threads: int = 1) -> tuple[b
         )
         txs: list[Tx] = list(selection.selected)
         included_hashes: list[str] = list(selection.selected_hashes)
+        selection_summary = {
+            "pending": selection.total_pending,
+            "selected": len(txs),
+            "rejected": dict(selection.rejected),
+            "rejectedByHash": dict(list(selection.rejected_by_hash.items())[:10]),
+            "mempoolEnabled": True,
+        }
         log.debug(
             "mempool selection summary",
             extra={
                 "pending": selection.total_pending,
                 "selected": len(txs),
                 "rejected": dict(selection.rejected),
+                "rejected_by_hash_sample": dict(
+                    list(selection.rejected_by_hash.items())[:10]
+                ),
             },
         )
     else:
         txs = []
         included_hashes = []
+        if not include_mempool:
+            selection_summary = {
+                "pending": 0,
+                "selected": 0,
+                "rejected": {"mempool_disabled": 0},
+                "rejectedByHash": {},
+                "mempoolEnabled": False,
+            }
+        elif selection_summary.get("pending", 0) == 0:
+            selection_summary = {
+                "pending": 0,
+                "selected": 0,
+                "rejected": {},
+                "rejectedByHash": {},
+                "mempoolEnabled": True,
+            }
     
     head = adapter.get_head()
     parent_height = int(head.get("height") or 0)
@@ -2457,6 +2571,17 @@ def _mine_once(payout_address: bytes | None = None, threads: int = 1) -> tuple[b
                 except Exception as e:
                     log.warning(f"Failed to clean up hash mapping: {e}")
 
+                # 5. Evict conflicting pending transactions (same sender + nonce)
+                try:
+                    conflict_removed = _evict_conflicting_pending_txs(txs)
+                    if conflict_removed:
+                        log.info(
+                            "Evicted conflicting pending transactions",
+                            extra={"count": conflict_removed},
+                        )
+                except Exception as e:
+                    log.warning(f"Failed to evict conflicting pending txs: {e}")
+
             log.info(
                 f"Mined block at height {header.height} with nonce {valid_nonce} "
                 f"(hash {block_hash_int} <= target {target}), reward={reward_amount} nANM, "
@@ -2464,8 +2589,8 @@ def _mine_once(payout_address: bytes | None = None, threads: int = 1) -> tuple[b
                 f"included_tx_hashes={included_hashes_canonical[:MAX_DISPLAYED_TX_HASHES]}"
                 f"{' ...' if len(included_hashes_canonical) > MAX_DISPLAYED_TX_HASHES else ''}"
             )
-            return (True, reward_amount)
-        return (False, 0)
+            return (True, reward_amount, selection_summary)
+        return (False, 0, selection_summary)
     
     # Failed to mine a valid block within max_nonce iterations
     log.warning(
@@ -2481,7 +2606,7 @@ def _mine_once(payout_address: bytes | None = None, threads: int = 1) -> tuple[b
     except Exception as e:
         log.warning(f"Failed to clean up hash mapping after mining failure: {e}")
     
-    return (False, 0)
+    return (False, 0, selection_summary)
 
 
 async def _auto_mine_loop(interval: float = 1.0) -> None:
@@ -2787,7 +2912,12 @@ def miner_submit_work(*args: Any, **payload: Any) -> Dict[str, Any]:
 
 
 @method("miner.mine", desc="Mine up to N blocks locally")
-def miner_mine(count: int | None = None, address: str | None = None, threads: int | None = None) -> dict[str, int | list[dict[str, int]]]:
+def miner_mine(
+    count: int | None = None,
+    address: str | None = None,
+    threads: int | None = None,
+    include_mempool: bool | None = None,
+) -> dict[str, int | list[dict[str, int]] | dict[str, Any]]:
     """
     Mine N blocks locally with dynamic theta micro adjustment.
     
@@ -2796,6 +2926,7 @@ def miner_mine(count: int | None = None, address: str | None = None, threads: in
         address: Optional payout address (bech32 or hex). If omitted, uses default miner address.
         threads: Optional number of CPU threads to use for mining (default: CPU count).
                  The nonce search space is divided among threads for parallel mining.
+        include_mempool: Whether to include pending mempool transactions (default: True).
         
     Returns:
         dict: {
@@ -2825,6 +2956,8 @@ def miner_mine(count: int | None = None, address: str | None = None, threads: in
             "reason": reason,
         }
     
+    include_mempool_flag = True if include_mempool is None else bool(include_mempool)
+
     # Validate threads parameter
     if threads is not None:
         threads = max(1, int(threads))
@@ -2873,17 +3006,42 @@ def miner_mine(count: int | None = None, address: str | None = None, threads: in
     mined = 0
     total_reward = 0
     rewards_list: list[dict[str, int]] = []
+    mempool_pending_before_first = 0
+    total_included = 0
+    aggregated_rejected: dict[str, int] = {}
+    rejected_by_hash_sample: dict[str, str] = {}
     
     for _ in range(target):
-        success, reward_amount = _mine_once(payout_address=payout_address_bytes, threads=threads)
+        success, reward_amount, selection_summary = _mine_once(
+            payout_address=payout_address_bytes,
+            threads=threads,
+            include_mempool=include_mempool_flag,
+        )
         if success:
             mined += 1
             total_reward += reward_amount
+            mempool_pending_before = selection_summary.get("pending", 0)
+            mempool_selected = selection_summary.get("selected", 0)
+            mempool_rejected = selection_summary.get("rejected", {})
+            mempool_rejected_by_hash = selection_summary.get("rejectedByHash", {})
+            if mempool_pending_before and mempool_pending_before_first == 0:
+                mempool_pending_before_first = int(mempool_pending_before)
+            total_included += int(mempool_selected or 0)
+            if isinstance(mempool_rejected, dict):
+                for reason, count in mempool_rejected.items():
+                    aggregated_rejected[reason] = aggregated_rejected.get(reason, 0) + int(count)
+            if isinstance(mempool_rejected_by_hash, dict):
+                for tx_hash, reason in mempool_rejected_by_hash.items():
+                    if tx_hash not in rejected_by_hash_sample:
+                        rejected_by_hash_sample[tx_hash] = reason
+                    if len(rejected_by_hash_sample) >= 10:
+                        break
             # Get current head to record the height of this block
             head_current = ctx.get_head()
             current_height = int(head_current.get("height") or 0) if isinstance(head_current, dict) else 0
             rewards_list.append({"height": current_height, "reward": reward_amount})
         else:
+            selection_summary = selection_summary or {}
             break
     
     head = ctx.get_head()
@@ -2902,6 +3060,13 @@ def miner_mine(count: int | None = None, address: str | None = None, threads: in
         "height": height,
         "totalReward": total_reward,
         "rewards": rewards_list,
+        "mempool": {
+            "enabled": include_mempool_flag,
+            "pending": mempool_pending_before_first,
+            "included": total_included,
+            "rejected": aggregated_rejected,
+            "rejectedByHash": rejected_by_hash_sample,
+        },
     }
 
 
