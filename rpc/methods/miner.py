@@ -1511,6 +1511,66 @@ def _adapter() -> CoreChainAdapter:
     )
 
 
+def _collect_mempool_entries(
+    *,
+    ctx: Any,
+    adapter: CoreChainAdapter,
+    limit: int = 1000,
+) -> tuple[list[PendingTxEntry], dict[str, bytes], int]:
+    pending_entries: list[PendingTxEntry] = []
+    pending_raw_by_hash: dict[str, bytes] = {}
+    total = 0
+
+    mempool_service = getattr(ctx, "mempool", None)
+    if mempool_service is not None:
+        snapshot = mempool_service.snapshot(limit=limit)
+        total = int(snapshot.total)
+        pending_entries.extend(snapshot.entries)
+        pending_raw_by_hash.update(snapshot.raw_by_hash)
+        return pending_entries, pending_raw_by_hash, total
+
+    try:
+        snapshot = list(adapter.get_mempool_snapshot(limit=limit))
+        total = len(snapshot)
+        for tx in snapshot:
+            tracked = _tracked(tx)
+            raw = b""
+            if tracked:
+                tx_hash_hex, raw = tracked
+            else:
+                raw = getattr(tx, "raw_cbor", None) or b""
+                if not raw and hasattr(tx, "to_cbor"):
+                    try:
+                        raw = tx.to_cbor()
+                    except Exception:
+                        raw = b""
+                if raw:
+                    from core.utils.hash import sha3_256
+
+                    tx_hash_hex = "0x" + sha3_256(raw).hex()
+                else:
+                    tx_hash_hex = _canonical_txid_hex(tx)
+                if raw:
+                    _TX_HASH_MAP[id(tx)] = (_normalize_hash_hex(tx_hash_hex), raw)
+            tx_hash_hex = _normalize_hash_hex(tx_hash_hex)
+            if raw:
+                pending_raw_by_hash[tx_hash_hex] = raw
+            pending_entries.append(
+                PendingTxEntry(
+                    hash_hex=tx_hash_hex,
+                    raw=raw or b"",
+                    tx=None if raw else tx,
+                )
+            )
+    except Exception as e:
+        log.warning(
+            f"mempool snapshot unavailable; falling back to in-process cache: {e}",
+            exc_info=True,
+        )
+
+    return pending_entries, pending_raw_by_hash, total
+
+
 def _build_child_header(
     parent_height: int, parent_hash: bytes, parent_header: Any
 ) -> Header:
@@ -1972,6 +2032,8 @@ def _mine_once(
 
     ctx = _ctx()
     adapter = _adapter()
+    mempool_service = getattr(ctx, "mempool", None)
+    mempool_service = getattr(ctx, "mempool", None)
     pending_entries: list[PendingTxEntry] = []
     pending_raw_by_hash: dict[str, bytes] = {}
     selection_summary: dict[str, Any] = {
@@ -1985,50 +2047,24 @@ def _mine_once(
     if include_mempool:
         log.info("_mine_once: Starting transaction collection from mempool adapter")
         log.info(f"_mine_once: Adapter has miner_feed: {adapter.miner_feed is not None}")
-        try:
-            snapshot = list(adapter.get_mempool_snapshot(limit=1000))
-            log.info(f"_mine_once: adapter.get_mempool_snapshot returned {len(snapshot)} transactions")
-            if snapshot:
-                log.info(f"_mine_once: Sample tx types from adapter: {[type(tx).__name__ for tx in snapshot[:3]]}")
-            for tx in snapshot:
-                tracked = _tracked(tx)
-                raw = b""
-                if tracked:
-                    tx_hash_hex, raw = tracked
-                else:
-                    raw = getattr(tx, "raw_cbor", None) or b""
-                    if not raw and hasattr(tx, "to_cbor"):
-                        try:
-                            raw = tx.to_cbor()
-                        except Exception:
-                            raw = b""
-                    if raw:
-                        from core.utils.hash import sha3_256
-
-                        tx_hash_hex = "0x" + sha3_256(raw).hex()
-                    else:
-                        tx_hash_hex = _canonical_txid_hex(tx)
-                    if raw:
-                        _TX_HASH_MAP[id(tx)] = (_normalize_hash_hex(tx_hash_hex), raw)
-                tx_hash_hex = _normalize_hash_hex(tx_hash_hex)
-                if raw:
-                    pending_raw_by_hash[tx_hash_hex] = raw
-                pending_entries.append(
-                    PendingTxEntry(
-                        hash_hex=tx_hash_hex,
-                        raw=raw or b"",
-                        tx=None if raw else tx,
-                    )
-                )
-        except Exception as e:
-            log.warning(
-                f"mempool snapshot unavailable; falling back to in-process cache: {e}",
-                exc_info=True,
-            )
+        pending_entries, pending_raw_by_hash, pending_total = _collect_mempool_entries(
+            ctx=ctx,
+            adapter=adapter,
+            limit=1000,
+        )
+        log.info(
+            "_mine_once: mempool collection summary",
+            extra={
+                "entries": len(pending_entries),
+                "total": pending_total,
+                "source": "service" if mempool_service is not None else "adapter",
+            },
+        )
     else:
+        pending_total = 0
         log.info("_mine_once: Mempool inclusion disabled; mining payout-only block")
 
-    if include_mempool and not pending_entries:
+    if include_mempool and not pending_entries and mempool_service is None:
         log.info("_mine_once: No transactions from adapter, trying fallback direct read")
         try:
             from rpc.methods import tx as tx_methods
@@ -2160,14 +2196,29 @@ def _mine_once(
         merged_rejected_details_by_hash.update(dropped_details)
         selection_summary = {
             "pending": selection.total_pending,
+            "candidates": len(pending_entries),
+            "mempoolTotal": pending_total,
             "selected": len(txs),
             "rejected": dict(merged_rejected),
+            "rejectedCount": sum(int(v) for v in merged_rejected.values()),
             "rejectedByHash": dict(list(merged_rejected_by_hash.items())[:10]),
             "rejectedDetailsByHash": dict(
                 list(merged_rejected_details_by_hash.items())[:10]
             ),
             "mempoolEnabled": True,
         }
+        if selection.total_pending and len(txs) == 0:
+            selection_summary["warnings"] = [
+                "mempool_pending_but_not_included",
+                "top_rejected_reasons="
+                + ",".join(sorted(merged_rejected.keys())[:3]),
+            ]
+        if selection.total_pending and len(txs) == 0:
+            selection_summary["warnings"] = [
+                "mempool_pending_but_not_included",
+                "top_rejected_reasons="
+                + ",".join(sorted(merged_rejected.keys())[:3]),
+            ]
         _maybe_log_mempool_debug(
             phase="mine_once",
             pending_total=selection.total_pending,
@@ -2195,6 +2246,14 @@ def _mine_once(
                     "rejected_by_hash_sample": dict(
                         list(merged_rejected_by_hash.items())[:10]
                     ),
+                },
+            )
+        if selection.total_pending and len(txs) == 0:
+            log.warning(
+                "Mining produced empty block despite pending mempool txs",
+                extra={
+                    "pending": selection.total_pending,
+                    "rejected": dict(merged_rejected),
                 },
             )
     else:
@@ -2756,6 +2815,13 @@ def _mine_once(
                 included_hashes_canonical = [_canonical_txid_hex(tx) for tx in txs]
 
             try:
+                if mempool_service is not None and included_hashes_canonical:
+                    removed = mempool_service.remove_included(included_hashes_canonical)
+                    mempool_service.revalidate()
+                    log.info(
+                        "Evicted included txs from mempool",
+                        extra={"removed": removed},
+                    )
                 from mempool import on_block_accepted
 
                 reconcile_result = on_block_accepted(
@@ -3329,45 +3395,23 @@ def miner_get_block_template(*args: Any, **kwargs: Any) -> Dict[str, Any]:
     }
 
     if include_mempool_flag:
-        try:
-            snapshot = list(adapter.get_mempool_snapshot(limit=1000))
-            for tx in snapshot:
-                tracked = _tracked(tx)
-                raw = b""
-                if tracked:
-                    tx_hash_hex, raw = tracked
-                else:
-                    raw = getattr(tx, "raw_cbor", None) or b""
-                    if not raw and hasattr(tx, "to_cbor"):
-                        try:
-                            raw = tx.to_cbor()
-                        except Exception:
-                            raw = b""
-                    if raw:
-                        from core.utils.hash import sha3_256
+        pending_entries, pending_raw_by_hash, pending_total = _collect_mempool_entries(
+            ctx=ctx,
+            adapter=adapter,
+            limit=1000,
+        )
+        log.debug(
+            "block template mempool collection",
+            extra={
+                "entries": len(pending_entries),
+                "total": pending_total,
+                "source": "service" if mempool_service is not None else "adapter",
+            },
+        )
+    else:
+        pending_total = 0
 
-                        tx_hash_hex = "0x" + sha3_256(raw).hex()
-                    else:
-                        tx_hash_hex = _canonical_txid_hex(tx)
-                    if raw:
-                        _TX_HASH_MAP[id(tx)] = (_normalize_hash_hex(tx_hash_hex), raw)
-                tx_hash_hex = _normalize_hash_hex(tx_hash_hex)
-                if raw:
-                    pending_raw_by_hash[tx_hash_hex] = raw
-                pending_entries.append(
-                    PendingTxEntry(
-                        hash_hex=tx_hash_hex,
-                        raw=raw or b"",
-                        tx=None if raw else tx,
-                    )
-                )
-        except Exception as e:
-            log.warning(
-                f"mempool snapshot unavailable; falling back to in-process cache: {e}",
-                exc_info=True,
-            )
-
-    if include_mempool_flag and not pending_entries:
+    if include_mempool_flag and not pending_entries and mempool_service is None:
         try:
             from rpc.methods import tx as tx_methods
 
@@ -3481,8 +3525,11 @@ def miner_get_block_template(*args: Any, **kwargs: Any) -> Dict[str, Any]:
         merged_rejected_details_by_hash.update(dropped_details)
         selection_summary = {
             "pending": selection.total_pending,
+            "candidates": len(pending_entries),
+            "mempoolTotal": pending_total,
             "selected": len(txs),
             "rejected": dict(merged_rejected),
+            "rejectedCount": sum(int(v) for v in merged_rejected.values()),
             "rejectedByHash": dict(list(merged_rejected_by_hash.items())[:10]),
             "rejectedDetailsByHash": dict(
                 list(merged_rejected_details_by_hash.items())[:10]
@@ -3505,6 +3552,14 @@ def miner_get_block_template(*args: Any, **kwargs: Any) -> Dict[str, Any]:
                     "rejected_by_hash_sample": dict(
                         list(merged_rejected_by_hash.items())[:10]
                     ),
+                },
+            )
+        if selection.total_pending and len(txs) == 0:
+            log.warning(
+                "Block template has pending mempool txs but no eligible inclusions",
+                extra={
+                    "pending": selection.total_pending,
+                    "rejected": dict(merged_rejected),
                 },
             )
     else:
@@ -4010,6 +4065,14 @@ def miner_submit_block(**payload: Any) -> Dict[str, Any]:
                             tx_hashes.append("0x" + sha3_256(raw_bytes).hex())
                     else:
                         tx_hashes = [_canonical_txid_hex(tx) for tx in block_obj.txs]
+                    mempool_service = getattr(ctx, "mempool", None)
+                    if mempool_service is not None and tx_hashes:
+                        removed = mempool_service.remove_included(tx_hashes)
+                        mempool_service.revalidate()
+                        log.info(
+                            "Evicted included txs from mempool after submitBlock",
+                            extra={"removed": removed},
+                        )
                     from mempool import on_block_accepted
 
                     reconcile_result = on_block_accepted(
