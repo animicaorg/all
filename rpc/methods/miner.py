@@ -104,6 +104,10 @@ _MINING_STATE: dict[str, Any] = {
 # 3. If concurrent mining is needed in the future, add threading.Lock
 _TX_HASH_MAP: dict[int, tuple[str, bytes]] = {}
 
+# Block template cache for submit binding (template_id -> metadata)
+_TEMPLATE_CACHE: dict[str, dict[str, Any]] = {}
+_TEMPLATE_TTL_S = float(os.getenv("ANIMICA_TEMPLATE_TTL_S", "30"))
+
 
 def _tracked(tx: Any) -> tuple[str, bytes] | None:
     """
@@ -1346,6 +1350,7 @@ def _adapter() -> CoreChainAdapter:
 def _build_child_header(
     parent_height: int, parent_hash: bytes, parent_header: Any
 ) -> Header:
+    timestamp_min, timestamp_max, timestamp = _timestamp_bounds(parent_header)
     theta = getattr(
         parent_header, "thetaMicro", getattr(parent_header, "theta_micro", None)
     )
@@ -1361,7 +1366,7 @@ def _build_child_header(
         chainId=_ctx().cfg.chain_id,
         height=parent_height + 1,
         parentHash=_bytes32(parent_hash),
-        timestamp=int(time.time()),
+        timestamp=timestamp,
         stateRoot=_bytes32(state_root or ZERO32),
         txsRoot=ZERO32,
         receiptsRoot=ZERO32,
@@ -1374,6 +1379,31 @@ def _build_child_header(
         nonce=0,
         extra=b"",
     )
+
+
+def _prune_template_cache(now: float | None = None) -> None:
+    now = now if now is not None else time.time()
+    expired = [
+        key
+        for key, meta in _TEMPLATE_CACHE.items()
+        if float(meta.get("created_at", 0.0)) + _TEMPLATE_TTL_S < now
+    ]
+    for key in expired:
+        _TEMPLATE_CACHE.pop(key, None)
+
+
+def _timestamp_bounds(parent_header: Any) -> tuple[int, int | None, int]:
+    parent_ts = int(getattr(parent_header, "timestamp", 0) or 0)
+    min_spacing_ms = int(os.getenv("ANIMICA_MIN_BLOCK_SPACING_MS", "0"))
+    min_delta = int(math.ceil(min_spacing_ms / 1000)) if min_spacing_ms > 0 else 0
+    timestamp_min = parent_ts + min_delta if parent_ts else int(time.time())
+    now = int(time.time())
+    max_future = int(os.getenv("ANIMICA_MAX_FUTURE_SECONDS", "5"))
+    timestamp_max = now + max_future if max_future > 0 else None
+    candidate = max(now, timestamp_min)
+    if timestamp_max is not None and candidate > timestamp_max:
+        candidate = max(timestamp_min, timestamp_max)
+    return timestamp_min, timestamp_max, candidate
 
 
 def _cleanup_tracked_txs(txs: list[Any]) -> None:
@@ -2031,6 +2061,7 @@ def _mine_once(
 
     # Build child header template (nonce will be updated in mining loop). Update the
     # txsRoot to reflect any pending transactions we plan to include.
+    timestamp_min, timestamp_max, _ = _timestamp_bounds(parent_header)
     header_template = _build_child_header(parent_height, parent_hash_bytes, parent_header)
     
     # Apply dynamic theta adjustment based on recent block times
@@ -3374,12 +3405,28 @@ def miner_get_block_template(*args: Any, **kwargs: Any) -> Dict[str, Any]:
     except Exception:
         coinbase["amount"] = None
 
+    _prune_template_cache()
+    template_id = uuid.uuid4().hex
+    _TEMPLATE_CACHE[template_id] = {
+        "created_at": time.time(),
+        "parent_hash": _to_hex(parent_hash_bytes),
+        "parent_height": parent_height,
+        "target": hex(int(target)),
+        "theta_micro": int(header_template.thetaMicro),
+        "timestamp_min": int(timestamp_min),
+        "timestamp_max": int(timestamp_max) if timestamp_max is not None else None,
+        "payout_address": payout_address,
+    }
+
     return {
         "enabled": True,
+        "templateId": template_id,
         "parent": {"height": parent_height, "hash": _to_hex(parent_hash_bytes)},
         "header": header_view,
         "target": hex(int(target)),
         "thetaMicro": int(header_template.thetaMicro),
+        "timestampMin": int(timestamp_min),
+        "timestampMax": int(timestamp_max) if timestamp_max is not None else None,
         "coinbase": coinbase,
         "txs": tx_payloads,
         "excluded": excluded,
@@ -3521,7 +3568,9 @@ def miner_submit_block(**payload: Any) -> Dict[str, Any]:
     if isinstance(block, list) and block:
         block = block[0]
     if not isinstance(block, dict):
-        return {"accepted": False, "reason": "invalid block payload"}
+        raise rpc_errors.InvalidParams("invalid block payload")
+    template_id = block.get("templateId") or block.get("template_id")
+    parent_hash_field = block.get("parentHash") or block.get("parent_hash")
     if isinstance(block.get("header"), dict):
         header_map = dict(block["header"])
         for key, value in list(header_map.items()):
@@ -3547,12 +3596,138 @@ def miner_submit_block(**payload: Any) -> Dict[str, Any]:
                     continue
             normalized_txs.append(entry)
         block["txs"] = normalized_txs
+
+    header_parent = None
     try:
-        adapter = _adapter()
-        ok = adapter.submit_block(block)
-        return {"accepted": bool(ok)}
+        header = block.get("header")
+        if isinstance(header, dict):
+            header_parent = header.get("parentHash") or header.get("parent_hash")
+    except Exception:
+        header_parent = None
+
+    if parent_hash_field is None:
+        parent_hash_field = header_parent
+
+    if parent_hash_field is None:
+        raise rpc_errors.InvalidParams("parent_hash or template_id is required")
+
+    if isinstance(parent_hash_field, str):
+        parent_hash_bytes = _bytes32(parent_hash_field)
+        parent_hash_hex = _to_hex(parent_hash_bytes)
+    elif isinstance(parent_hash_field, (bytes, bytearray)):
+        parent_hash_bytes = _bytes32(parent_hash_field)
+        parent_hash_hex = _to_hex(parent_hash_bytes)
+    else:
+        raise rpc_errors.InvalidParams("parent_hash must be hex string or bytes")
+
+    _prune_template_cache()
+    if template_id:
+        cached = _TEMPLATE_CACHE.get(str(template_id))
+        if not cached:
+            raise rpc_errors.RpcError(
+                rpc_errors.AnimicaCode.STALE_TEMPLATE,
+                "stale template",
+                {
+                    "reason": "stale_template",
+                    "templateId": template_id,
+                    "detail": "template_not_found",
+                },
+            )
+        cached_parent = cached.get("parent_hash")
+        if cached_parent and parent_hash_hex and cached_parent != parent_hash_hex:
+            raise rpc_errors.RpcError(
+                rpc_errors.AnimicaCode.STALE_TEMPLATE,
+                "stale template",
+                {
+                    "reason": "stale_template",
+                    "templateId": template_id,
+                    "expected_parent": cached_parent,
+                    "got_parent": parent_hash_hex,
+                },
+            )
+
+    head_snapshot = _current_head_snapshot()
+    head_hash = head_snapshot.get("hash")
+    if parent_hash_hex and head_hash and parent_hash_hex != head_hash:
+        raise rpc_errors.RpcError(
+            rpc_errors.AnimicaCode.STALE_TEMPLATE,
+            "stale template",
+            {
+                "reason": "stale_template",
+                "expected_head": head_hash,
+                "got_parent": parent_hash_hex,
+                "head_height": head_snapshot.get("height"),
+            },
+        )
+
+    try:
+        ctx = _ctx()
+        from core.chain import block_import as block_import_mod
+
+        params = block_import_mod._load_chain_params_for_import(  # type: ignore[attr-defined]
+            getattr(ctx.cfg, "genesis_path", None)
+        )
+        importer = block_import_mod._get_importer(  # type: ignore[attr-defined]
+            ctx.block_db, ctx.tx_index, params
+        )
+        result = importer.import_block(block)
+
+        accepted = result.code in (
+            block_import_mod.ImportErrorCode.ACCEPTED,
+            block_import_mod.ImportErrorCode.DUPLICATE,
+        )
+        if not accepted:
+            reason = result.reason or result.code
+            reason_lower = str(reason).lower()
+            reject_reason = "invalid_state_transition"
+            code = rpc_errors.AnimicaCode.INVALID_STATE_TRANSITION
+            if "pow" in reason_lower:
+                reject_reason = "invalid_pow"
+                code = rpc_errors.AnimicaCode.INVALID_POW
+            elif "timestamp" in reason_lower:
+                reject_reason = "invalid_timestamp"
+                code = rpc_errors.AnimicaCode.INVALID_TIMESTAMP
+            elif "parent" in reason_lower or "height continuity" in reason_lower:
+                reject_reason = "invalid_parent"
+                code = rpc_errors.AnimicaCode.INVALID_PARENT
+            elif "coinbase" in reason_lower:
+                reject_reason = "invalid_coinbase"
+                code = rpc_errors.AnimicaCode.INVALID_COINBASE
+            elif "merkle" in reason_lower or "txsroot" in reason_lower:
+                reject_reason = "invalid_merkle_root"
+                code = rpc_errors.AnimicaCode.INVALID_MERKLE_ROOT
+
+            raise rpc_errors.RpcError(
+                code,
+                "block rejected",
+                {
+                    "reason": reject_reason,
+                    "detail": reason,
+                    "height": result.height,
+                    "block_hash": result.block_hash.hex() if result.block_hash else None,
+                },
+            )
+
+        payout_address = None
+        if template_id:
+            cached = _TEMPLATE_CACHE.get(str(template_id)) or {}
+            payout_address = cached.get("payout_address")
+        if payout_address:
+            try:
+                payout_bytes = _as_bytes32_addr(payout_address)
+                _apply_block_reward(_ctx(), int(result.height or 0), payout_bytes)
+            except Exception:
+                log.warning("Failed to apply block reward for submitted block", exc_info=True)
+
+        return {"accepted": True, "duplicate": result.code == block_import_mod.ImportErrorCode.DUPLICATE}
+    except rpc_errors.RpcError:
+        raise
     except Exception as e:
-        return {"accepted": False, "reason": f"submit_failed: {e}"}
+        raise rpc_errors.RpcError(
+            rpc_errors.AnimicaCode.SERVER_ERROR,
+            "block submission failed",
+            {"reason": "submit_failed", "detail": str(e)},
+        )
 
 
 @method("miner.get_sha256_job", desc="Return a Bitcoin-style Stratum v1 job template")

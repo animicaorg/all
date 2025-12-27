@@ -33,7 +33,7 @@ Notes:
 
 """
 
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, is_dataclass, replace
 from typing import Any, Mapping, Optional
 
 from core.encoding.cbor import cbor_dumps, cbor_loads
@@ -242,6 +242,25 @@ class Header:
     @staticmethod
     def from_cbor(b: bytes) -> "Header":
         return Header.from_obj(cbor_loads(b))
+
+
+def serialize_header(header: Any) -> bytes:
+    """
+    Canonical header serialization used for hashing across miner + node.
+
+    Accepts Header instances, dataclasses, mappings, or objects exposing to_cbor/to_obj.
+    """
+    if isinstance(header, Header):
+        return header.to_cbor()
+    if hasattr(header, "to_cbor") and callable(getattr(header, "to_cbor")):
+        return header.to_cbor()  # type: ignore[no-any-return]
+    if hasattr(header, "to_obj") and callable(getattr(header, "to_obj")):
+        return cbor_dumps(header.to_obj())
+    if isinstance(header, Mapping):
+        return cbor_dumps(dict(header))
+    if is_dataclass(header):
+        return cbor_dumps(asdict(header))
+    raise TypeError(f"Unsupported header type for serialization: {type(header).__name__}")
 
     def hash(self) -> bytes:
         """Consensus header hash (block id): sha3_256(CBOR(header))."""
