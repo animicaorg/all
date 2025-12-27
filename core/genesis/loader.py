@@ -473,15 +473,31 @@ def compute_genesis_identity(
 
     resolved_path = bundle.resolved_path or Path(str(genesis_path))
     file_hash = compute_genesis_sha256(resolved_path)
+    header_hash = header.hash()
+    network_name = genesis.get("network") or "unknown"
+    if not isinstance(header_hash, (bytes, bytearray)):
+        raise ValueError(
+            "Genesis header hash is not bytes-like. "
+            f"network={network_name} chain_id={genesis.get('chainId')} "
+            f"genesis_path={resolved_path} header={header.pretty()}"
+        )
+    if len(header_hash) != 32:
+        raise ValueError(
+            "Genesis header hash must be 32 bytes. "
+            f"got_len={len(header_hash)} network={network_name} "
+            f"chain_id={genesis.get('chainId')} genesis_path={resolved_path} "
+            f"header={header.pretty()}"
+        )
+    header_hash_bytes = bytes(header_hash)
     fork_id = derive_fork_id(
-        bytes(header.hash()), explicit=genesis.get("forkId") or genesis.get("fork_id")
+        header_hash_bytes, explicit=genesis.get("forkId") or genesis.get("fork_id")
     )
     consensus_id = consensus_id_from_genesis(
-        genesis, genesis_hash=bytes(header.hash()), chain_id=int(genesis.get("chainId", 0))
+        genesis, genesis_hash=header_hash_bytes, chain_id=int(genesis.get("chainId", 0))
     )
     protocol_version = protocol_version_from_runtime()
     return GenesisIdentity(
-        genesis_block_hash=bytes(header.hash()),
+        genesis_block_hash=header_hash_bytes,
         genesis_file_hash=file_hash,
         chain_id=int(genesis.get("chainId", 0)),
         genesis_path=resolved_path,
