@@ -768,6 +768,12 @@ def build_context(cfg: t.Any | None = None) -> RpcContext:
                 chain_identity.protocol_version,
             )
     except Exception:
+        log.exception(
+            "Failed to compute genesis identity (network=%s chain_id=%s genesis_path=%s)",
+            network,
+            cfg_view.chain_id,
+            cfg_view.genesis_path,
+        )
         raise
     kv = _open_kv(cfg_view.db_uri)
     bundle = _build_db_facades(kv)
