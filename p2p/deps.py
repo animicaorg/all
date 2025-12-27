@@ -510,11 +510,34 @@ class P2PDeps:
             )
             # res is expected to be a small object/tuple; support both shapes:
             if isinstance(res, tuple) and len(res) == 2:
-                return bool(res[0]), res[1]
+                accepted, reason = bool(res[0]), res[1]
+                if accepted:
+                    try:
+                        from mempool import on_block_accepted
+
+                        on_block_accepted(block, self._state_db)
+                    except Exception:
+                        pass
+                return accepted, reason
             if isinstance(res, bool):
+                if res:
+                    try:
+                        from mempool import on_block_accepted
+
+                        on_block_accepted(block, self._state_db)
+                    except Exception:
+                        pass
                 return res, None
             if hasattr(res, "accepted"):
-                return bool(getattr(res, "accepted")), getattr(res, "reason", None)
+                accepted = bool(getattr(res, "accepted"))
+                if accepted:
+                    try:
+                        from mempool import on_block_accepted
+
+                        on_block_accepted(block, self._state_db)
+                    except Exception:
+                        pass
+                return accepted, getattr(res, "reason", None)
             return True, None
         except Exception as e:
             return (False, f"import_error: {e}")

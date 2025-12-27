@@ -27,7 +27,67 @@ def test_mine_blocks_with_proxy_enabled(monkeypatch: Any) -> None:
     mock_proxy.config.max_retries = 3
     mock_proxy.config.retry_delay_ms = 1000
     mock_proxy.config.timeout_seconds = 30.0
-    mock_proxy.sync_forward_request = Mock(return_value={"mined": 1, "height": 100, "totalReward": 5000000000})
+    def _proxy_request(method, params, fallback_handler=None):
+        if method == "miner.getBlockTemplate":
+            return {
+                "enabled": True,
+                "header": {
+                    "v": 1,
+                    "chainId": 1337,
+                    "height": 100,
+                    "parentHash": "0x" + "00" * 32,
+                    "timestamp": 0,
+                    "stateRoot": "0x" + "00" * 32,
+                    "txsRoot": "0x" + "00" * 32,
+                    "receiptsRoot": "0x" + "00" * 32,
+                    "proofsRoot": "0x" + "00" * 32,
+                    "daRoot": "0x" + "00" * 32,
+                    "mixSeed": "0x" + "00" * 32,
+                    "poiesPolicyRoot": "0x" + "00" * 32,
+                    "pqAlgPolicyRoot": "0x" + "00" * 32,
+                    "thetaMicro": 1,
+                    "nonce": 0,
+                },
+                "target": hex((1 << 256) - 1),
+                "coinbase": {"amount": 0},
+                "txs": [],
+                "mempool": {"pending": 0, "selected": 0, "rejected": {}, "rejectedByHash": {}},
+            }
+        if method == "miner.submitBlock":
+            return {"accepted": True}
+        return {}
+
+    def _local_proxy_request(method, params, fallback_handler=None):
+        if method == "miner.getBlockTemplate":
+            return {
+                "enabled": True,
+                "header": {
+                    "v": 1,
+                    "chainId": 1337,
+                    "height": 100,
+                    "parentHash": "0x" + "00" * 32,
+                    "timestamp": 0,
+                    "stateRoot": "0x" + "00" * 32,
+                    "txsRoot": "0x" + "00" * 32,
+                    "receiptsRoot": "0x" + "00" * 32,
+                    "proofsRoot": "0x" + "00" * 32,
+                    "daRoot": "0x" + "00" * 32,
+                    "mixSeed": "0x" + "00" * 32,
+                    "poiesPolicyRoot": "0x" + "00" * 32,
+                    "pqAlgPolicyRoot": "0x" + "00" * 32,
+                    "thetaMicro": 1,
+                    "nonce": 0,
+                },
+                "target": hex((1 << 256) - 1),
+                "coinbase": {"amount": 0},
+                "txs": [],
+                "mempool": {"pending": 0, "selected": 0, "rejected": {}, "rejectedByHash": {}},
+            }
+        if method == "miner.submitBlock":
+            return {"accepted": True}
+        return {}
+
+    mock_proxy.sync_forward_request = Mock(side_effect=_local_proxy_request)
     
     # Mock RPC client
     class MockRpcClient:
@@ -93,7 +153,34 @@ def test_mine_blocks_with_proxy_disabled(monkeypatch: Any) -> None:
         
         def request(self, method: str, params: Any):
             request_called["count"] += 1
-            return {"mined": 1, "height": 100, "totalReward": 5000000000}
+            if method == "miner.getBlockTemplate":
+                return {
+                    "enabled": True,
+                    "header": {
+                        "v": 1,
+                        "chainId": 1337,
+                        "height": 100,
+                        "parentHash": "0x" + "00" * 32,
+                        "timestamp": 0,
+                        "stateRoot": "0x" + "00" * 32,
+                        "txsRoot": "0x" + "00" * 32,
+                        "receiptsRoot": "0x" + "00" * 32,
+                        "proofsRoot": "0x" + "00" * 32,
+                        "daRoot": "0x" + "00" * 32,
+                        "mixSeed": "0x" + "00" * 32,
+                        "poiesPolicyRoot": "0x" + "00" * 32,
+                        "pqAlgPolicyRoot": "0x" + "00" * 32,
+                        "thetaMicro": 1,
+                        "nonce": 0,
+                    },
+                    "target": hex((1 << 256) - 1),
+                    "coinbase": {"amount": 0},
+                    "txs": [],
+                    "mempool": {"pending": 0, "selected": 0, "rejected": {}, "rejectedByHash": {}},
+                }
+            if method == "miner.submitBlock":
+                return {"accepted": True}
+            return {}
     
     mock_module = Mock()
     mock_module.RpcClient = MockRpcClient
@@ -157,7 +244,34 @@ def test_mine_blocks_proxy_with_fallback(monkeypatch: Any) -> None:
             pass
         
         def request(self, method: str, params: Any):
-            return {"mined": 1, "height": 100, "totalReward": 5000000000}
+            if method == "miner.getBlockTemplate":
+                return {
+                    "enabled": True,
+                    "header": {
+                        "v": 1,
+                        "chainId": 1337,
+                        "height": 100,
+                        "parentHash": "0x" + "00" * 32,
+                        "timestamp": 0,
+                        "stateRoot": "0x" + "00" * 32,
+                        "txsRoot": "0x" + "00" * 32,
+                        "receiptsRoot": "0x" + "00" * 32,
+                        "proofsRoot": "0x" + "00" * 32,
+                        "daRoot": "0x" + "00" * 32,
+                        "mixSeed": "0x" + "00" * 32,
+                        "poiesPolicyRoot": "0x" + "00" * 32,
+                        "pqAlgPolicyRoot": "0x" + "00" * 32,
+                        "thetaMicro": 1,
+                        "nonce": 0,
+                    },
+                    "target": hex((1 << 256) - 1),
+                    "coinbase": {"amount": 0},
+                    "txs": [],
+                    "mempool": {"pending": 0, "selected": 0, "rejected": {}, "rejectedByHash": {}},
+                }
+            if method == "miner.submitBlock":
+                return {"accepted": True}
+            return {}
     
     mock_module = Mock()
     mock_module.RpcClient = MockRpcClient
@@ -202,7 +316,37 @@ def test_mine_blocks_proxy_verbose_output(monkeypatch: Any) -> None:
     mock_proxy.config.max_retries = 3
     mock_proxy.config.retry_delay_ms = 1000
     mock_proxy.config.timeout_seconds = 30.0
-    mock_proxy.sync_forward_request = Mock(return_value={"mined": 1, "height": 100, "totalReward": 5000000000})
+    def _verbose_proxy_request(method, params, fallback_handler=None):
+        if method == "miner.getBlockTemplate":
+            return {
+                "enabled": True,
+                "header": {
+                    "v": 1,
+                    "chainId": 1337,
+                    "height": 100,
+                    "parentHash": "0x" + "00" * 32,
+                    "timestamp": 0,
+                    "stateRoot": "0x" + "00" * 32,
+                    "txsRoot": "0x" + "00" * 32,
+                    "receiptsRoot": "0x" + "00" * 32,
+                    "proofsRoot": "0x" + "00" * 32,
+                    "daRoot": "0x" + "00" * 32,
+                    "mixSeed": "0x" + "00" * 32,
+                    "poiesPolicyRoot": "0x" + "00" * 32,
+                    "pqAlgPolicyRoot": "0x" + "00" * 32,
+                    "thetaMicro": 1,
+                    "nonce": 0,
+                },
+                "target": hex((1 << 256) - 1),
+                "coinbase": {"amount": 0},
+                "txs": [],
+                "mempool": {"pending": 0, "selected": 0, "rejected": {}, "rejectedByHash": {}},
+            }
+        if method == "miner.submitBlock":
+            return {"accepted": True}
+        return {}
+
+    mock_proxy.sync_forward_request = Mock(side_effect=_verbose_proxy_request)
     
     # Mock RPC client
     class MockRpcClient:
@@ -216,6 +360,33 @@ def test_mine_blocks_proxy_verbose_output(monkeypatch: Any) -> None:
             pass
         
         def request(self, method: str, params: Any):
+            if method == "miner.getBlockTemplate":
+                return {
+                    "enabled": True,
+                    "header": {
+                        "v": 1,
+                        "chainId": 1337,
+                        "height": 100,
+                        "parentHash": "0x" + "00" * 32,
+                        "timestamp": 0,
+                        "stateRoot": "0x" + "00" * 32,
+                        "txsRoot": "0x" + "00" * 32,
+                        "receiptsRoot": "0x" + "00" * 32,
+                        "proofsRoot": "0x" + "00" * 32,
+                        "daRoot": "0x" + "00" * 32,
+                        "mixSeed": "0x" + "00" * 32,
+                        "poiesPolicyRoot": "0x" + "00" * 32,
+                        "pqAlgPolicyRoot": "0x" + "00" * 32,
+                        "thetaMicro": 1,
+                        "nonce": 0,
+                    },
+                    "target": hex((1 << 256) - 1),
+                    "coinbase": {"amount": 0},
+                    "txs": [],
+                    "mempool": {"pending": 0, "selected": 0, "rejected": {}, "rejectedByHash": {}},
+                }
+            if method == "miner.submitBlock":
+                return {"accepted": True}
             return {"transactions": []}
     
     mock_module = Mock()

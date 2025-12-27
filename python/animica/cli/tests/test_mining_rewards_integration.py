@@ -26,6 +26,33 @@ runner = CliRunner()
 TEST_BECH32_ADDRESS = "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz"
 
 
+def _mock_template(height: int = 1) -> dict:
+    return {
+        "enabled": True,
+        "header": {
+            "v": 1,
+            "chainId": 1337,
+            "height": height,
+            "parentHash": "0x" + "00" * 32,
+            "timestamp": 0,
+            "stateRoot": "0x" + "00" * 32,
+            "txsRoot": "0x" + "00" * 32,
+            "receiptsRoot": "0x" + "00" * 32,
+            "proofsRoot": "0x" + "00" * 32,
+            "daRoot": "0x" + "00" * 32,
+            "mixSeed": "0x" + "00" * 32,
+            "poiesPolicyRoot": "0x" + "00" * 32,
+            "pqAlgPolicyRoot": "0x" + "00" * 32,
+            "thetaMicro": 1,
+            "nonce": 0,
+        },
+        "target": hex((1 << 256) - 1),
+        "coinbase": {"amount": 0},
+        "txs": [],
+        "mempool": {"pending": 0, "selected": 0, "rejected": {}, "rejectedByHash": {}},
+    }
+
+
 @pytest.fixture
 def wallet_with_premine(tmp_path: Path) -> tuple[Path, str, str]:
     """
@@ -154,7 +181,11 @@ def test_mine_blocks_with_label_uses_resolved_address(monkeypatch: Any, wallet_w
         
         def request(self, method: str, params: Any):
             rpc_calls.append({"method": method, "params": params})
-            return {"mined": 1, "height": 1}
+            if method == "miner.getBlockTemplate":
+                return _mock_template()
+            if method == "miner.submitBlock":
+                return {"accepted": True}
+            return {}
     
     mock_module = Mock()
     mock_module.RpcClient = MockRpcClient
@@ -179,14 +210,14 @@ def test_mine_blocks_with_label_uses_resolved_address(monkeypatch: Any, wallet_w
     )
     
     assert result.exit_code == 0, f"Command failed: {result.output}"
-    assert len(rpc_calls) == 1, f"Expected 1 RPC call, got {len(rpc_calls)}"
+    assert len(rpc_calls) == 2, f"Expected 2 RPC calls, got {len(rpc_calls)}"
     
     # Verify RPC call used resolved Bech32 address
     rpc_call = rpc_calls[0]
-    assert rpc_call["method"] == "miner.mine"
+    assert rpc_call["method"] == "miner.getBlockTemplate"
     assert isinstance(rpc_call["params"], dict)
-    assert rpc_call["params"]["address"] == test_address, \
-        f"RPC should use resolved address {test_address}, got {rpc_call['params']['address']}"
+    assert rpc_call["params"]["payout_address"] == test_address, \
+        f"RPC should use resolved address {test_address}, got {rpc_call['params']['payout_address']}"
 
 
 def test_mine_blocks_with_raw_bech32_address(monkeypatch: Any):
@@ -208,7 +239,11 @@ def test_mine_blocks_with_raw_bech32_address(monkeypatch: Any):
         
         def request(self, method: str, params: Any):
             rpc_calls.append({"method": method, "params": params})
-            return {"mined": 1, "height": 1}
+            if method == "miner.getBlockTemplate":
+                return _mock_template()
+            if method == "miner.submitBlock":
+                return {"accepted": True}
+            return {}
     
     mock_module = Mock()
     mock_module.RpcClient = MockRpcClient
@@ -229,14 +264,14 @@ def test_mine_blocks_with_raw_bech32_address(monkeypatch: Any):
     )
     
     assert result.exit_code == 0, f"Command failed: {result.output}"
-    assert len(rpc_calls) == 1, f"Expected 1 RPC call, got {len(rpc_calls)}"
+    assert len(rpc_calls) == 2, f"Expected 2 RPC calls, got {len(rpc_calls)}"
     
     # Verify RPC call used the raw Bech32 address
     rpc_call = rpc_calls[0]
-    assert rpc_call["method"] == "miner.mine"
+    assert rpc_call["method"] == "miner.getBlockTemplate"
     assert isinstance(rpc_call["params"], dict)
-    assert rpc_call["params"]["address"] == test_address, \
-        f"RPC should use raw address {test_address}, got {rpc_call['params']['address']}"
+    assert rpc_call["params"]["payout_address"] == test_address, \
+        f"RPC should use raw address {test_address}, got {rpc_call['params']['payout_address']}"
 
 
 def test_mine_blocks_help_text_mentions_label_and_address():
@@ -272,7 +307,11 @@ def test_mine_blocks_enforces_minimum_2s_delay_between_blocks(monkeypatch: Any):
             pass
         
         def request(self, method: str, params: Any):
-            return {"mined": 1, "height": 1}
+            if method == "miner.getBlockTemplate":
+                return _mock_template()
+            if method == "miner.submitBlock":
+                return {"accepted": True}
+            return {}
     
     mock_module = Mock()
     mock_module.RpcClient = MockRpcClient
@@ -322,7 +361,11 @@ def test_mine_blocks_no_delay_for_single_block(monkeypatch: Any):
             pass
         
         def request(self, method: str, params: Any):
-            return {"mined": 1, "height": 1}
+            if method == "miner.getBlockTemplate":
+                return _mock_template()
+            if method == "miner.submitBlock":
+                return {"accepted": True}
+            return {}
     
     mock_module = Mock()
     mock_module.RpcClient = MockRpcClient
@@ -363,27 +406,15 @@ def test_mine_blocks_cli_output_shows_reward_details(monkeypatch: Any):
             pass
         
         def request(self, method: str, params: Any):
-            # Simulate mining 2 blocks with 5 ANM base reward (80% miner share = 4 ANM each)
-            if params.get("count") == 1:
-                # First block
-                return {
-                    "mined": 1,
-                    "height": 1,
-                    "totalReward": 4000000000,  # 4 ANM in nANM
-                    "rewards": [
-                        {"height": 1, "reward": 4000000000}
-                    ]
-                }
-            else:
-                # Second block
-                return {
-                    "mined": 1,
-                    "height": 2,
-                    "totalReward": 4000000000,  # 4 ANM in nANM
-                    "rewards": [
-                        {"height": 2, "reward": 4000000000}
-                    ]
-                }
+            if method == "miner.getBlockTemplate":
+                height = 1 if not hasattr(self, "_height") else self._height + 1
+                self._height = height
+                template = _mock_template(height=height)
+                template["coinbase"] = {"amount": 4000000000}
+                return template
+            if method == "miner.submitBlock":
+                return {"accepted": True}
+            return {}
     
     mock_module = Mock()
     mock_module.RpcClient = MockRpcClient

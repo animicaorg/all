@@ -45,6 +45,73 @@ API_BIND_ENV = "ANIMICA_POOL_API_BIND"
 SUPPORTED_DEVICES = ["cpu", "cuda", "rocm", "opencl", "metal", "auto"]
 
 
+def _parse_hex_bytes(value: str) -> bytes:
+    hex_value = value[2:] if value.startswith("0x") else value
+    if len(hex_value) % 2:
+        hex_value = "0" + hex_value
+    return bytes.fromhex(hex_value)
+
+
+def _header_from_template(header_view: dict) -> "Header":
+    from core.types.header import Header
+
+    return Header(
+        v=int(header_view.get("v", 1)),
+        chainId=int(header_view.get("chainId", header_view.get("chain_id", 0))),
+        height=int(header_view.get("height", header_view.get("number", 0))),
+        parentHash=_parse_hex_bytes(header_view["parentHash"]),
+        timestamp=int(header_view.get("timestamp", 0)),
+        stateRoot=_parse_hex_bytes(header_view.get("stateRoot", "0x" + "00" * 32)),
+        txsRoot=_parse_hex_bytes(header_view.get("txsRoot", "0x" + "00" * 32)),
+        receiptsRoot=_parse_hex_bytes(header_view.get("receiptsRoot", "0x" + "00" * 32)),
+        proofsRoot=_parse_hex_bytes(header_view.get("proofsRoot", "0x" + "00" * 32)),
+        daRoot=_parse_hex_bytes(header_view.get("daRoot", "0x" + "00" * 32)),
+        mixSeed=_parse_hex_bytes(header_view.get("mixSeed", "0x" + "00" * 32)),
+        poiesPolicyRoot=_parse_hex_bytes(
+            header_view.get("poiesPolicyRoot", "0x" + "00" * 32)
+        ),
+        pqAlgPolicyRoot=_parse_hex_bytes(
+            header_view.get("pqAlgPolicyRoot", "0x" + "00" * 32)
+        ),
+        thetaMicro=int(header_view.get("thetaMicro", 0)),
+        workType=int(header_view.get("workType", 0)),
+        nonce=int(header_view.get("nonce", 0)),
+        extra=_parse_hex_bytes(header_view.get("extra", "0x")),
+    )
+
+
+def _mine_header(header: "Header", target_int: int) -> tuple[int | None, bytes | None]:
+    max_nonce = int(os.getenv("ANIMICA_MINER_MAX_NONCE", "100000"))
+    for nonce in range(max_nonce):
+        try:
+            candidate = header.__class__(
+                v=header.v,
+                chainId=header.chainId,
+                height=header.height,
+                parentHash=header.parentHash,
+                timestamp=header.timestamp,
+                stateRoot=header.stateRoot,
+                txsRoot=header.txsRoot,
+                receiptsRoot=header.receiptsRoot,
+                proofsRoot=header.proofsRoot,
+                daRoot=header.daRoot,
+                mixSeed=header.mixSeed,
+                poiesPolicyRoot=header.poiesPolicyRoot,
+                pqAlgPolicyRoot=header.pqAlgPolicyRoot,
+                thetaMicro=header.thetaMicro,
+                workType=header.workType,
+                nonce=nonce,
+                extra=header.extra,
+            )
+        except Exception:
+            candidate = header
+        digest = candidate.hash()
+        digest_int = int.from_bytes(digest, "big")
+        if digest_int <= target_int:
+            return nonce, digest
+    return None, None
+
+
 def _ensure_network_env() -> None:
     cfg = load_network_config()
     os.environ.setdefault("ANIMICA_NETWORK", cfg.name)
@@ -782,7 +849,7 @@ def mine_blocks(
     
     # Resolve RPC URL
     url = rpc_url or os.environ.get("ANIMICA_RPC_URL") or load_network_config().rpc_url
-    guard_bootstrap_rpc(url, allow_remote=allow_remote_rpc, method="miner.mineBlocks")
+    guard_bootstrap_rpc(url, allow_remote=allow_remote_rpc, method="miner.getBlockTemplate")
     
     # Initialize proxy if enabled (DEPRECATED - proxy is disabled by default)
     proxy = None
@@ -906,153 +973,146 @@ def mine_blocks(
             
             # Mine blocks one at a time with delay between them
             for i in range(count):
-                # Call miner.mine RPC method with address parameter (mine 1 block at a time)
-                # For backward compatibility, try with address first, fall back if not supported
-                
-                # Define mining function for proxy fallback
-                def mine_via_local():
-                    """Fallback: mine directly via local RPC."""
+                def get_template_via_local():
                     if verbose:
-                        typer.echo(f"  [Fallback] Mining via local RPC at {url}")
-                    # Note: device is CLI-only parameter, not sent to RPC
+                        typer.echo(f"  [Fallback] Fetching block template via local RPC at {url}")
                     return client.request(
-                        "miner.mine",
+                        "miner.getBlockTemplate",
                         {
-                            "count": 1,
-                            "address": resolved_address,
+                            "payout_address": resolved_address,
                             "include_mempool": include_mempool,
                         },
                     )
-                
-                try:
-                    if proxy:
-                        # Use proxy with fallback to local node
-                        if verbose:
-                            typer.echo(f"  [Proxy] Forwarding mining request to trusted RPC")
-                        # Note: device is CLI-only parameter for local device selection, not sent to RPC
-                        result = proxy.sync_forward_request(
-                            "miner.mine",
-                            {
-                                "count": 1,
-                                "address": resolved_address,
-                                "include_mempool": include_mempool,
-                            },
-                            fallback_handler=mine_via_local,
-                        )
-                    else:
-                        # Direct mining to specified RPC
-                        # Note: device is CLI-only parameter, not sent to RPC
-                        result = client.request(
-                            "miner.mine",
-                            {
-                                "count": 1,
-                                "address": resolved_address,
-                                "include_mempool": include_mempool,
-                            },
-                        )
-                        
-                except Exception as e:
-                    # If the RPC rejects the address parameter (older node), try without it
-                    # Check for INVALID_PARAMS error code or presence of "address" in error message
-                    is_param_error = False
-                    if RpcError is not None and isinstance(e, RpcError):
-                        is_param_error = (
-                            e.code == JsonRpcCode.INVALID_PARAMS if JsonRpcCode else e.code == JSONRPC_INVALID_PARAMS
-                        )
-                    elif "address" in str(e).lower() or "unexpected" in str(e).lower():
-                        is_param_error = True
-                    
-                    if is_param_error:
-                        # First retry without include_mempool (older nodes may not accept it)
-                        try:
-                            retry_params = {"count": 1, "address": resolved_address}
-                            if proxy:
-                                result = proxy.sync_forward_request(
-                                    "miner.mine",
-                                    retry_params,
-                                    fallback_handler=lambda: client.request(
-                                        "miner.mine", retry_params
-                                    ),
-                                )
-                            else:
-                                result = client.request("miner.mine", retry_params)
-                        except Exception:
-                            typer.secho(
-                                "Warning: Node does not support payout address selection (older version). "
-                                "Mining to node's default miner address.",
-                                fg=typer.colors.YELLOW,
-                            )
-                            if proxy:
-                                result = proxy.sync_forward_request(
-                                    "miner.mine",
-                                    [1],
-                                    fallback_handler=lambda: client.request("miner.mine", [1]),
-                                )
-                            else:
-                                result = client.request("miner.mine", [1])
-                    else:
-                        raise
-                
-                mined = result.get("mined", 0)
-                final_height = result.get("height", 0)
-                block_reward = result.get("totalReward", 0)
-                mempool_info = result.get("mempool", {}) if isinstance(result, dict) else {}
-                if mempool_info:
-                    if not pending_before:
-                        pending_before = int(mempool_info.get("pending", 0) or 0)
-                    total_included += int(mempool_info.get("included", 0) or 0)
-                    rejected = mempool_info.get("rejected", {})
-                    if isinstance(rejected, dict):
-                        for reason, count in rejected.items():
-                            aggregated_rejected[reason] = aggregated_rejected.get(reason, 0) + int(count)
-                    rejected_by_hash = mempool_info.get("rejectedByHash", {})
-                    if isinstance(rejected_by_hash, dict):
-                        for tx_hash, reason in rejected_by_hash.items():
-                            if tx_hash not in rejected_by_hash_sample:
-                                rejected_by_hash_sample[tx_hash] = str(reason)
-                            if len(rejected_by_hash_sample) >= 10:
-                                break
-                
-                if mined > 0:
-                    total_mined += mined
-                    total_reward += block_reward
-                    # Convert nANM to ANM for display (1 ANM = 10^9 nANM)
-                    reward_anm = block_reward / COIN_UNIT
-                    
-                    # Verbose output: show transaction details
-                    # Max number of tx hashes to display in verbose mode
-                    MAX_VERBOSE_TX_DISPLAY = 5
-                    tx_info = ""
+
+                if proxy:
                     if verbose:
-                        try:
-                            # Query block to get transaction count
-                            block_result = client.request("chain.getBlockByNumber", [final_height, False])
-                            if block_result and "transactions" in block_result:
-                                tx_count = len(block_result["transactions"])
-                                tx_info = f", txs: {tx_count}"
-                                if tx_count > 0:
-                                    # List tx hashes if there are any (ensure they're strings and truncate safely)
-                                    tx_hashes = block_result["transactions"][:MAX_VERBOSE_TX_DISPLAY]
-                                    formatted_hashes = []
-                                    for h in tx_hashes:
-                                        h_str = str(h) if h else ""
-                                        formatted_hashes.append(h_str[:10] + "..." if len(h_str) > 10 else h_str)
-                                    tx_info += f" ({', '.join(formatted_hashes)}{'...' if tx_count > MAX_VERBOSE_TX_DISPLAY else ''})"
-                        except Exception:
-                            # Ignore errors in verbose mode - don't fail mining for this
-                            pass
-                    
-                    typer.echo(
-                        f"  Block {i + 1}/{count} mined (height: {final_height}, "
-                        f"reward: {reward_anm:.9f} ANM = {block_reward} nANM{tx_info})"
+                        typer.echo("  [Proxy] Forwarding block template request to trusted RPC")
+                    template = proxy.sync_forward_request(
+                        "miner.getBlockTemplate",
+                        {
+                            "payout_address": resolved_address,
+                            "include_mempool": include_mempool,
+                        },
+                        fallback_handler=get_template_via_local,
                     )
                 else:
+                    template = get_template_via_local()
+
+                if not isinstance(template, dict) or not template.get("enabled", True):
+                    typer.secho(
+                        f"Warning: Block template unavailable ({template.get('reason') if isinstance(template, dict) else 'unknown'})",
+                        fg=typer.colors.YELLOW,
+                    )
+                    break
+
+                mempool_info = template.get("mempool", {}) if isinstance(template, dict) else {}
+                pending_before = pending_before or int(mempool_info.get("pending", 0) or 0)
+                selected = int(mempool_info.get("selected", 0) or 0)
+                total_included += selected
+                rejected = mempool_info.get("rejected", {})
+                if isinstance(rejected, dict):
+                    for reason, count in rejected.items():
+                        aggregated_rejected[reason] = aggregated_rejected.get(reason, 0) + int(count)
+                rejected_by_hash = mempool_info.get("rejectedByHash", {})
+                if isinstance(rejected_by_hash, dict):
+                    for tx_hash, reason in rejected_by_hash.items():
+                        if tx_hash not in rejected_by_hash_sample:
+                            rejected_by_hash_sample[tx_hash] = str(reason)
+                        if len(rejected_by_hash_sample) >= 10:
+                            break
+
+                header_view = template.get("header", {})
+                header = _header_from_template(header_view)
+                target_hex = template.get("target")
+                target_int = int(target_hex, 16) if isinstance(target_hex, str) else int(target_hex or 0)
+                nonce, digest = _mine_header(header, target_int)
+                if nonce is None or digest is None:
                     typer.secho(
                         f"Warning: Block {i + 1}/{count} failed to mine",
                         fg=typer.colors.YELLOW,
                     )
                     break
-                
+
+                header = header.__class__(
+                    v=header.v,
+                    chainId=header.chainId,
+                    height=header.height,
+                    parentHash=header.parentHash,
+                    timestamp=header.timestamp,
+                    stateRoot=header.stateRoot,
+                    txsRoot=header.txsRoot,
+                    receiptsRoot=header.receiptsRoot,
+                    proofsRoot=header.proofsRoot,
+                    daRoot=header.daRoot,
+                    mixSeed=header.mixSeed,
+                    poiesPolicyRoot=header.poiesPolicyRoot,
+                    pqAlgPolicyRoot=header.pqAlgPolicyRoot,
+                    thetaMicro=header.thetaMicro,
+                    workType=header.workType,
+                    nonce=nonce,
+                    extra=header.extra,
+                )
+
+                txs_raw = [tx.get("raw") for tx in template.get("txs", []) if isinstance(tx, dict)]
+                header_payload = {
+                    k: ("0x" + v.hex() if isinstance(v, (bytes, bytearray)) else v)
+                    for k, v in header.to_obj().items()
+                }
+                block_payload = {
+                    "header": header_payload,
+                    "txs": txs_raw,
+                    "proofs": [],
+                }
+
+                if proxy:
+                    submit_result = proxy.sync_forward_request(
+                        "miner.submitBlock",
+                        block_payload,
+                        fallback_handler=lambda: client.request("miner.submitBlock", block_payload),
+                    )
+                else:
+                    submit_result = client.request("miner.submitBlock", block_payload)
+
+                if not submit_result or not submit_result.get("accepted", False):
+                    typer.secho(
+                        f"Warning: Block {i + 1}/{count} rejected by node",
+                        fg=typer.colors.YELLOW,
+                    )
+                    break
+
+                total_mined += 1
+                final_height = int(template.get("header", {}).get("height", 0))
+                block_reward = template.get("coinbase", {}).get("amount") or 0
+                total_reward += int(block_reward or 0)
+                reward_anm = int(block_reward or 0) / COIN_UNIT
+
+                typer.echo(
+                    f"  Block {i + 1}/{count} mined (height: {final_height}, "
+                    f"reward: {reward_anm:.9f} ANM = {block_reward} nANM)"
+                )
+
+                if include_mempool and pending_before > 0 and selected == 0:
+                    exclusions = template.get("excluded", []) or []
+                    if exclusions:
+                        typer.secho(
+                            f"Mempool had {pending_before} tx(s) but none were mineable:",
+                            fg=typer.colors.YELLOW,
+                        )
+                        for entry in exclusions[:5]:
+                            reason = entry.get("reason", "unknown")
+                            details = entry.get("details")
+                            if details:
+                                typer.echo(f"  {entry.get('hash')}: {reason} {details}")
+                            else:
+                                typer.echo(f"  {entry.get('hash')}: {reason}")
+                    try:
+                        pending_hashes = client.request("mempool.getPending", [])
+                        for tx_hash in pending_hashes[:5]:
+                            explain = client.request("mempool.explain", [tx_hash])
+                            typer.echo(f"  explain {tx_hash}: {explain.get('reason')}")
+                    except Exception:
+                        pass
+
                 # Sleep between blocks (except after the last one)
                 if i < count - 1:
                     time.sleep(MIN_BLOCK_INTERVAL_SECONDS)
