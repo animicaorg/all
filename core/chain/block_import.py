@@ -66,7 +66,7 @@ from core.types.header import Header, serialize_header
 from core.types.params import ChainParams
 from core.types.receipt import \
     Receipt  # imported for type completeness; not used here
-from core.types.tx import Tx
+from core.types.tx import Tx, TxKind, UnsignedTx
 from core.utils.hash import sha3_256
 from core.utils.pow import micro_threshold_to_target256
 
@@ -224,6 +224,96 @@ def _dataclass_from_dict(dc_type, data: Dict[str, Any]):
     return dc_type(**filtered)  # type: ignore[call-arg]
 
 
+def _decode_address_bytes(addr: Any) -> bytes:
+    if isinstance(addr, (bytes, bytearray)):
+        return bytes(addr)
+    if isinstance(addr, str):
+        if addr.startswith("anim1"):
+            try:
+                from pq.py.address import decode_address  # type: ignore
+
+                record = decode_address(addr)
+                digest = bytes(record.digest) if isinstance(record.digest, list) else record.digest
+                return digest[:32].ljust(32, b"\x00")
+            except Exception:
+                pass
+        hex_str = addr[2:] if addr.startswith("0x") else addr
+        try:
+            raw = bytes.fromhex(hex_str)
+            return raw[:32].ljust(32, b"\x00")
+        except Exception:
+            return sha3_256(addr.encode("utf-8"))
+    raise BlockImportError("unsupported address type in tx")
+
+
+def _normalize_signature(sig: Dict[str, Any]) -> Dict[str, Any]:
+    alg_id = sig.get("alg") or sig.get("alg_id") or sig.get("algId")
+    pubkey = sig.get("pubkey") or sig.get("pub") or sig.get("pk")
+    signature = sig.get("sig") or sig.get("signature")
+    if isinstance(pubkey, str):
+        pubkey = bytes.fromhex(pubkey[2:]) if pubkey.startswith("0x") else pubkey.encode("utf-8")
+    if isinstance(signature, str):
+        signature = bytes.fromhex(signature[2:]) if signature.startswith("0x") else signature.encode("utf-8")
+    return {
+        "alg": int(alg_id) if alg_id is not None else 0,
+        "pubkey": bytes(pubkey) if pubkey is not None else b"",
+        "sig": bytes(signature) if signature is not None else b"",
+    }
+
+
+def _normalize_tx_envelope(decoded: Dict[str, Any]) -> Dict[str, Any]:
+    if "tx" in decoded and "sigs" in decoded:
+        return decoded
+
+    normalized: Dict[str, Any] = {}
+    if "body" in decoded:
+        body = decoded["body"] if isinstance(decoded["body"], dict) else {}
+        if "v" in body and "gas" in body and "payload" in body:
+            normalized["tx"] = body
+        else:
+            chain_id = body.get("chainId", body.get("chain_id"))
+            sender = _decode_address_bytes(body.get("from", body.get("sender")))
+            recipient = _decode_address_bytes(body.get("to"))
+            nonce = int(body.get("nonce", 0))
+            value = int(body.get("value", body.get("amount", 0)))
+            gas_limit = int(body.get("gasLimit", body.get("gas_limit", body.get("gas", 21000))))
+            gas_price = int(body.get("maxFee", body.get("max_fee", body.get("gasPrice", body.get("gas_price", body.get("tip", 0))))))
+            data = body.get("data", b"")
+            if isinstance(data, str):
+                data = bytes.fromhex(data[2:]) if data.startswith("0x") else data.encode("utf-8")
+            elif isinstance(data, (list, tuple)):
+                data = bytes(data)
+            normalized["tx"] = {
+                "v": 1,
+                "chainId": int(chain_id) if chain_id is not None else 0,
+                "from": sender,
+                "nonce": nonce,
+                "gas": {"price": gas_price, "limit": gas_limit},
+                "payload": {
+                    "t": int(TxKind.TRANSFER),
+                    "v": {"to": recipient, "amount": value, "data": bytes(data)},
+                },
+                "accessList": [],
+            }
+    elif "unsigned" in decoded:
+        unsigned = decoded["unsigned"]
+        if isinstance(unsigned, UnsignedTx):
+            normalized["tx"] = unsigned.to_obj()
+        elif isinstance(unsigned, dict):
+            normalized["tx"] = unsigned
+    elif "tx" in decoded:
+        normalized["tx"] = decoded["tx"]
+
+    if "sigs" in decoded and isinstance(decoded["sigs"], list):
+        normalized["sigs"] = decoded["sigs"]
+    elif "sig" in decoded and isinstance(decoded["sig"], dict):
+        normalized["sigs"] = [_normalize_signature(decoded["sig"])]
+    else:
+        normalized["sigs"] = []
+
+    return normalized or decoded
+
+
 def block_from_mapping(m: Dict[str, Any]) -> Block:
     """
     Construct a Block dataclass from a (already CBOR-decoded) mapping.
@@ -244,7 +334,11 @@ def block_from_mapping(m: Dict[str, Any]) -> Block:
     txs: List[Tx] = []
     for t in txs_payload:
         if isinstance(t, dict):
-            txs.append(_dataclass_from_dict(Tx, t))
+            normalized = _normalize_tx_envelope(t)
+            try:
+                txs.append(Tx.from_obj(normalized))
+            except Exception:
+                txs.append(_dataclass_from_dict(Tx, t))
         else:
             raise BlockImportError("each tx must decode to a map")
 

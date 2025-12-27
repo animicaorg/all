@@ -3816,6 +3816,7 @@ def miner_submit_block(**payload: Any) -> Dict[str, Any]:
     if not isinstance(block, dict):
         raise rpc_errors.InvalidParams("invalid block payload")
     template_id = block.get("templateId") or block.get("template_id")
+    raw_txs_hex: list[str] = []
     parent_hash_field = block.get("parentHash") or block.get("parent_hash")
     if isinstance(block.get("header"), dict):
         header_map = dict(block["header"])
@@ -3830,6 +3831,7 @@ def miner_submit_block(**payload: Any) -> Dict[str, Any]:
         normalized_txs = []
         for entry in block["txs"]:
             if isinstance(entry, str) and entry.startswith("0x"):
+                raw_txs_hex.append(entry)
                 try:
                     from core.encoding.cbor import loads as cbor_loads
 
@@ -3958,12 +3960,71 @@ def miner_submit_block(**payload: Any) -> Dict[str, Any]:
         if template_id:
             cached = _TEMPLATE_CACHE.get(str(template_id)) or {}
             payout_address = cached.get("payout_address")
-        if payout_address:
+        if result.code == block_import_mod.ImportErrorCode.ACCEPTED:
             try:
-                payout_bytes = _as_bytes32_addr(payout_address)
-                _apply_block_reward(_ctx(), int(result.height or 0), payout_bytes)
-            except Exception:
-                log.warning("Failed to apply block reward for submitted block", exc_info=True)
+                block_obj, _ = block_import_mod.decode_block(block)
+            except Exception as e:
+                log.warning("Failed to decode accepted block for state execution", extra={"err": str(e)})
+            else:
+                payout_bytes = None
+                if payout_address:
+                    try:
+                        payout_bytes = _as_bytes32_addr(payout_address)
+                    except Exception:
+                        payout_bytes = None
+                try:
+                    from execution.runtime.env import BlockEnv
+
+                    block_env = BlockEnv(
+                        height=block_obj.header.height,
+                        timestamp=block_obj.header.timestamp,
+                        coinbase=payout_bytes if payout_bytes is not None else _get_miner_address(),
+                        chain_id=block_obj.header.chainId,
+                    )
+                    receipts_dict = _execute_transactions(
+                        txs=list(block_obj.txs),
+                        state_db=ctx.state_db,
+                        block_env=block_env,
+                        logger=log,
+                    )
+                    _convert_receipts_dict_to_objects(receipts_dict)
+                except Exception as e:
+                    log.warning(
+                        "Failed to execute txs for submitted block",
+                        extra={"err": str(e)},
+                        exc_info=True,
+                    )
+
+                try:
+                    _apply_block_reward(_ctx(), int(result.height or 0), payout_bytes)
+                except Exception:
+                    log.warning("Failed to apply block reward for submitted block", exc_info=True)
+
+                try:
+                    tx_hashes = []
+                    if raw_txs_hex:
+                        from core.utils.hash import sha3_256
+
+                        for raw_hex in raw_txs_hex:
+                            raw_bytes = bytes.fromhex(raw_hex[2:])
+                            tx_hashes.append("0x" + sha3_256(raw_bytes).hex())
+                    else:
+                        tx_hashes = [_canonical_txid_hex(tx) for tx in block_obj.txs]
+                    from mempool import on_block_accepted
+
+                    reconcile_result = on_block_accepted(
+                        block_obj, getattr(ctx, "state_db", None), tx_hashes=tx_hashes
+                    )
+                    if reconcile_result:
+                        log.info(
+                            "Reconciled mempool after submitBlock acceptance",
+                            extra=reconcile_result,
+                        )
+                except Exception as e:
+                    log.warning(
+                        "Failed to reconcile mempool after submitBlock",
+                        extra={"err": str(e)},
+                    )
 
         return {"accepted": True, "duplicate": result.code == block_import_mod.ImportErrorCode.DUPLICATE}
     except rpc_errors.RpcError:
