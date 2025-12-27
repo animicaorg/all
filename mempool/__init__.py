@@ -20,12 +20,18 @@ try:
 except Exception:  # pragma: no cover - falls back in early bring-up
     __version__ = "0.0.0+dev"
 
-__all__ = ["__version__", "get_version"]
+__all__ = ["__version__", "get_version", "on_block_accepted"]
 
 
 def get_version() -> str:
     """Return the mempool package version string."""
     return __version__
+
+
+def on_block_accepted(block: Any, new_state: Any | None = None, *, tx_hashes=None) -> dict[str, int]:
+    from .reconcile import on_block_accepted as _on_block_accepted
+
+    return _on_block_accepted(block, new_state, tx_hashes=tx_hashes)
 
 
 # --- Lazy exports for common submodules ------------------------------------

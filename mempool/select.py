@@ -11,6 +11,8 @@ class PendingTxEntry:
     hash_hex: str
     raw: bytes
     tx: Any | None = None
+    received_at: float | None = None
+    expires_at: float | None = None
 
 
 @dataclass
@@ -19,13 +21,15 @@ class BlockSelection:
     selected_hashes: list[str] = field(default_factory=list)
     rejected: dict[str, int] = field(default_factory=dict)
     rejected_by_hash: dict[str, str] = field(default_factory=dict)
+    rejected_details_by_hash: dict[str, dict[str, Any]] = field(default_factory=dict)
     total_pending: int = 0
 
 
 def _normalize_hash_hex(hash_hex: str) -> str:
     if not hash_hex:
         return hash_hex
-    return hash_hex if hash_hex.startswith("0x") else f"0x{hash_hex}"
+    normalized = hash_hex if hash_hex.startswith("0x") else f"0x{hash_hex}"
+    return normalized.lower()
 
 
 def _tx_chain_id(tx: Any) -> Optional[int]:
@@ -124,10 +128,64 @@ def _tx_size_bytes(raw: bytes, tx: Any) -> int:
     return 0
 
 
-def _bump_reject(result: BlockSelection, hash_hex: str, reason: str) -> None:
+def _bump_reject(
+    result: BlockSelection,
+    hash_hex: str,
+    reason: str,
+    *,
+    details: dict[str, Any] | None = None,
+) -> None:
     result.rejected[reason] = result.rejected.get(reason, 0) + 1
     if hash_hex:
         result.rejected_by_hash[hash_hex] = reason
+        if details is not None:
+            result.rejected_details_by_hash[hash_hex] = {
+                "reason": reason,
+                "details": details,
+            }
+
+
+def _tx_gas_price(tx: Any) -> int:
+    if hasattr(tx, "unsigned"):
+        unsigned = getattr(tx, "unsigned", None)
+        if unsigned is not None:
+            value = getattr(unsigned, "gas_price", None)
+            if value is not None:
+                return int(value)
+    for attr in ("gas_price", "gasPrice", "tip", "maxFee", "max_fee"):
+        value = getattr(tx, attr, None)
+        if value is not None:
+            return int(value)
+    if isinstance(tx, dict):
+        body = tx.get("body", tx.get("tx", tx))
+        if isinstance(body, dict):
+            gas = body.get("gas")
+            if isinstance(gas, dict) and gas.get("price") is not None:
+                return int(gas["price"])
+            for key in ("gasPrice", "gas_price", "tip", "maxFee", "max_fee"):
+                if body.get(key) is not None:
+                    return int(body[key])
+    return 0
+
+
+def _tx_value(tx: Any) -> int:
+    if hasattr(tx, "unsigned"):
+        unsigned = getattr(tx, "unsigned", None)
+        if unsigned is not None:
+            payload = getattr(unsigned, "payload", None)
+            if payload is not None and hasattr(payload, "amount"):
+                return int(getattr(payload, "amount", 0))
+    for attr in ("value", "amount"):
+        value = getattr(tx, attr, None)
+        if value is not None:
+            return int(value)
+    if isinstance(tx, dict):
+        body = tx.get("body", tx.get("tx", tx))
+        if isinstance(body, dict):
+            for key in ("value", "amount"):
+                if body.get(key) is not None:
+                    return int(body[key])
+    return 0
 
 
 def select_for_block(
@@ -137,6 +195,10 @@ def select_for_block(
     pending: Iterable[PendingTxEntry],
     decode: Callable[[bytes], Any] | None = None,
     state_db: Any | None = None,
+    policy: dict[str, Any] | None = None,
+    tx_index: Any | None = None,
+    signature_validator: Callable[[Any, dict[str, Any] | None], None] | None = None,
+    now: float | None = None,
 ) -> BlockSelection:
     """
     Select eligible transactions for block assembly.
@@ -145,27 +207,54 @@ def select_for_block(
     """
     result = BlockSelection()
     chain_id = head_state.get("chain_id", head_state.get("chainId"))
-    max_gas = int(limits.get("max_gas", limits.get("gas_limit", limits.get("gas", 0))) or 0)
+    max_gas = int(
+        limits.get("max_gas", limits.get("gas_limit", limits.get("gas", 0))) or 0
+    )
     max_bytes = int(limits.get("max_bytes", limits.get("byte_limit", limits.get("bytes", 0))) or 0)
     max_txs = limits.get("max_txs", limits.get("limit"))
     max_txs = int(max_txs) if max_txs is not None else None
+    min_gas_price = 0
+    if policy:
+        min_gas_price = int(
+            policy.get("min_gas_price", policy.get("minGasPrice", 0)) or 0
+        )
 
     total_gas = 0
     total_bytes = 0
     sender_nonces: dict[bytes, int] = {}
+    seen_sender_nonce: dict[tuple[bytes, int], str] = {}
+    now_ts = now if now is not None else None
 
     for entry in pending:
         result.total_pending += 1
         hash_hex = _normalize_hash_hex(entry.hash_hex)
         tx = entry.tx
+        decoded_obj: dict[str, Any] | None = None
+        if entry.expires_at is not None:
+            now_value = now_ts
+            if now_value is None:
+                import time
+
+                now_value = time.time()
+                now_ts = now_value
+            if entry.expires_at <= now_value:
+                _bump_reject(
+                    result,
+                    hash_hex,
+                    "expired",
+                    details={"expires_at": entry.expires_at, "now": now_value},
+                )
+                continue
         if tx is None and decode is not None:
             decoded = decode(entry.raw)
             if isinstance(decoded, tuple):
                 tx = decoded[0]
+                decoded_obj = decoded[1] if isinstance(decoded[1], dict) else None
             else:
                 tx = decoded
+                decoded_obj = decoded if isinstance(decoded, dict) else None
         if tx is None:
-            _bump_reject(result, hash_hex, "decode_failed")
+            _bump_reject(result, hash_hex, "invalid_format")
             continue
 
         sender, nonce = _tx_sender_nonce(tx)
@@ -174,8 +263,12 @@ def select_for_block(
                 decoded = decode(entry.raw)
                 if isinstance(decoded, tuple):
                     tx = decoded[0]
+                    if decoded_obj is None and isinstance(decoded[1], dict):
+                        decoded_obj = decoded[1]
                 else:
                     tx = decoded
+                    if decoded_obj is None and isinstance(decoded, dict):
+                        decoded_obj = decoded
             except Exception:
                 tx = tx
             sender, nonce = _tx_sender_nonce(tx)
@@ -183,7 +276,28 @@ def select_for_block(
         if chain_id is not None:
             tx_chain_id = _tx_chain_id(tx)
             if tx_chain_id is not None and int(tx_chain_id) != int(chain_id):
-                _bump_reject(result, hash_hex, "chain_id_mismatch")
+                _bump_reject(
+                    result,
+                    hash_hex,
+                    "chain_id_mismatch",
+                    details={"expected": int(chain_id), "got": int(tx_chain_id)},
+                )
+                continue
+
+        if tx_index is not None and hasattr(tx_index, "exists") and hash_hex:
+            try:
+                tx_hash_bytes = bytes.fromhex(hash_hex[2:])
+                if tx_index.exists(tx_hash_bytes):
+                    _bump_reject(result, hash_hex, "already_in_chain")
+                    continue
+            except Exception:
+                pass
+
+        if signature_validator is not None:
+            try:
+                signature_validator(tx, decoded_obj)
+            except Exception:
+                _bump_reject(result, hash_hex, "invalid_sig")
                 continue
 
         if sender is None:
@@ -192,6 +306,17 @@ def select_for_block(
         if nonce is None:
             _bump_reject(result, hash_hex, "missing_nonce")
             continue
+
+        seen_key = (sender, int(nonce))
+        if seen_key in seen_sender_nonce:
+            _bump_reject(
+                result,
+                hash_hex,
+                "conflict_same_sender_nonce",
+                details={"replaced_by_hash": seen_sender_nonce[seen_key]},
+            )
+            continue
+        seen_sender_nonce[seen_key] = hash_hex
 
         expected = sender_nonces.get(sender)
         if expected is None:
@@ -203,11 +328,47 @@ def select_for_block(
                     expected = 0
             sender_nonces[sender] = expected
         if nonce < expected:
-            _bump_reject(result, hash_hex, "nonce_too_low")
+            _bump_reject(
+                result,
+                hash_hex,
+                "nonce_too_low",
+                details={"expected": expected, "got": nonce},
+            )
             continue
         if nonce > expected:
-            _bump_reject(result, hash_hex, "nonce_gap")
+            _bump_reject(
+                result,
+                hash_hex,
+                "nonce_gap",
+                details={"expected": expected, "got": nonce},
+            )
             continue
+
+        gas_price = _tx_gas_price(tx)
+        if min_gas_price and gas_price < min_gas_price:
+            _bump_reject(
+                result,
+                hash_hex,
+                "fee_too_low",
+                details={"min": min_gas_price, "got": gas_price},
+            )
+            continue
+
+        if state_db is not None and hasattr(state_db, "get_balance"):
+            try:
+                balance = int(state_db.get_balance(sender))  # type: ignore[call-arg]
+            except Exception:
+                balance = None
+            if balance is not None:
+                required = _tx_value(tx) + (_tx_gas_limit(tx) * gas_price)
+                if balance < required:
+                    _bump_reject(
+                        result,
+                        hash_hex,
+                        "insufficient_funds",
+                        details={"need": required, "have": balance},
+                    )
+                    continue
 
         gas = _tx_gas_limit(tx)
         if max_gas and total_gas + gas > max_gas:
