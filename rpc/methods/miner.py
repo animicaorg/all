@@ -143,6 +143,13 @@ def _canonical_txid_hex(tx: Any) -> str:
         return "0x" + (b"\x00" * 32).hex()
 
 
+def _normalize_hash_hex(hash_hex: str) -> str:
+    if not hash_hex:
+        return hash_hex
+    normalized = hash_hex if hash_hex.startswith("0x") else f"0x{hash_hex}"
+    return normalized.lower()
+
+
 def _decode_cbor_loose(raw: bytes) -> dict | None:
     """
     Safely decode CBOR bytes to a dict.
@@ -1842,6 +1849,7 @@ def _mine_once(
     ctx = _ctx()
     adapter = _adapter()
     pending_entries: list[PendingTxEntry] = []
+    pending_raw_by_hash: dict[str, bytes] = {}
     selection_summary: dict[str, Any] = {
         "pending": 0,
         "selected": 0,
@@ -1877,9 +1885,16 @@ def _mine_once(
                     else:
                         tx_hash_hex = _canonical_txid_hex(tx)
                     if raw:
-                        _TX_HASH_MAP[id(tx)] = (tx_hash_hex, raw)
+                        _TX_HASH_MAP[id(tx)] = (_normalize_hash_hex(tx_hash_hex), raw)
+                tx_hash_hex = _normalize_hash_hex(tx_hash_hex)
+                if raw:
+                    pending_raw_by_hash[tx_hash_hex] = raw
                 pending_entries.append(
-                    PendingTxEntry(hash_hex=tx_hash_hex, raw=raw or b"", tx=tx)
+                    PendingTxEntry(
+                        hash_hex=tx_hash_hex,
+                        raw=raw or b"",
+                        tx=None if raw else tx,
+                    )
                 )
         except Exception as e:
             log.warning(
@@ -1933,9 +1948,10 @@ def _mine_once(
                             extra={"hash": tx_hash_hex},
                         )
                         continue
-                    _TX_HASH_MAP[id(tx_obj)] = (tx_hash_hex, raw)
+                    tx_hash_hex = _normalize_hash_hex(tx_hash_hex)
+                    pending_raw_by_hash[tx_hash_hex] = raw
                     pending_entries.append(
-                        PendingTxEntry(hash_hex=tx_hash_hex, raw=raw, tx=tx_obj)
+                        PendingTxEntry(hash_hex=tx_hash_hex, raw=raw, tx=None)
                     )
                 except Exception as e:
                     log.warning(
@@ -2004,7 +2020,10 @@ def _mine_once(
             signature_validator=_signature_validator,
         )
         txs: list[Tx] = list(selection.selected)
-        included_hashes: list[str] = list(selection.selected_hashes)
+        included_hashes = [_normalize_hash_hex(h) for h in selection.selected_hashes]
+        for tx, hash_hex in zip(txs, included_hashes):
+            raw = pending_raw_by_hash.get(hash_hex, b"")
+            _TX_HASH_MAP[id(tx)] = (hash_hex, raw)
         selection_summary = {
             "pending": selection.total_pending,
             "selected": len(txs),
@@ -2026,6 +2045,16 @@ def _mine_once(
                 ),
             },
         )
+        if selection.rejected:
+            log.info(
+                "Mining mempool selection rejected candidates",
+                extra={
+                    "rejected": dict(selection.rejected),
+                    "rejected_by_hash_sample": dict(
+                        list(selection.rejected_by_hash.items())[:10]
+                    ),
+                },
+            )
     else:
         txs = []
         included_hashes = []
@@ -3147,6 +3176,7 @@ def miner_get_block_template(*args: Any, **kwargs: Any) -> Dict[str, Any]:
     ctx = _ctx()
     adapter = _adapter()
     pending_entries: list[PendingTxEntry] = []
+    pending_raw_by_hash: dict[str, bytes] = {}
     selection_summary: dict[str, Any] = {
         "pending": 0,
         "selected": 0,
@@ -3178,9 +3208,16 @@ def miner_get_block_template(*args: Any, **kwargs: Any) -> Dict[str, Any]:
                     else:
                         tx_hash_hex = _canonical_txid_hex(tx)
                     if raw:
-                        _TX_HASH_MAP[id(tx)] = (tx_hash_hex, raw)
+                        _TX_HASH_MAP[id(tx)] = (_normalize_hash_hex(tx_hash_hex), raw)
+                tx_hash_hex = _normalize_hash_hex(tx_hash_hex)
+                if raw:
+                    pending_raw_by_hash[tx_hash_hex] = raw
                 pending_entries.append(
-                    PendingTxEntry(hash_hex=tx_hash_hex, raw=raw or b"", tx=tx)
+                    PendingTxEntry(
+                        hash_hex=tx_hash_hex,
+                        raw=raw or b"",
+                        tx=None if raw else tx,
+                    )
                 )
         except Exception as e:
             log.warning(
@@ -3215,9 +3252,10 @@ def miner_get_block_template(*args: Any, **kwargs: Any) -> Dict[str, Any]:
                         tx_obj = _construct_tx_from_dict(normalized)
                     if tx_obj is None:
                         continue
-                    _TX_HASH_MAP[id(tx_obj)] = (tx_hash_hex, raw)
+                    tx_hash_hex = _normalize_hash_hex(tx_hash_hex)
+                    pending_raw_by_hash[tx_hash_hex] = raw
                     pending_entries.append(
-                        PendingTxEntry(hash_hex=tx_hash_hex, raw=raw, tx=tx_obj)
+                        PendingTxEntry(hash_hex=tx_hash_hex, raw=raw, tx=None)
                     )
                 except Exception:
                     continue
@@ -3285,7 +3323,10 @@ def miner_get_block_template(*args: Any, **kwargs: Any) -> Dict[str, Any]:
             signature_validator=_signature_validator,
         )
         txs: list[Tx] = list(selection.selected)
-        included_hashes: list[str] = list(selection.selected_hashes)
+        included_hashes = [_normalize_hash_hex(h) for h in selection.selected_hashes]
+        for tx, hash_hex in zip(txs, included_hashes):
+            raw = pending_raw_by_hash.get(hash_hex, b"")
+            _TX_HASH_MAP[id(tx)] = (hash_hex, raw)
         selection_summary = {
             "pending": selection.total_pending,
             "selected": len(txs),
@@ -3296,6 +3337,16 @@ def miner_get_block_template(*args: Any, **kwargs: Any) -> Dict[str, Any]:
             ),
             "mempoolEnabled": True,
         }
+        if selection.rejected:
+            log.info(
+                "Block template mempool selection rejected candidates",
+                extra={
+                    "rejected": dict(selection.rejected),
+                    "rejected_by_hash_sample": dict(
+                        list(selection.rejected_by_hash.items())[:10]
+                    ),
+                },
+            )
     else:
         txs = []
         included_hashes = []
