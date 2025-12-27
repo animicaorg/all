@@ -107,11 +107,25 @@ def mempool_explain(tx_hash: str) -> dict:
     ctx = deps.get_ctx()
     chain_id = getattr(ctx.cfg, "chain_id", None) if ctx is not None else None
     state_db = getattr(ctx, "state_db", None) if ctx is not None else None
+    tx_index = getattr(ctx, "tx_index", None) if ctx is not None else None
+    min_gas_price = 0
+    if ctx is not None:
+        try:
+            min_gas_price = int(ctx.params.get("min_gas_price", 0))
+        except Exception:
+            min_gas_price = 0
 
     def _decode(raw_tx: bytes):
         if tx_methods is None:
             return None
         return tx_methods._decode_tx(raw_tx)  # type: ignore[attr-defined]
+
+    def _signature_validator(tx_obj, decoded_obj):
+        if tx_methods is None or decoded_obj is None:
+            return
+        tx_methods._verify_pq_signature(  # type: ignore[attr-defined]
+            tx_obj, decoded_obj, chain_id=int(chain_id or 0)
+        )
 
     selection = select_for_block(
         head_state={"chain_id": chain_id},
@@ -119,6 +133,9 @@ def mempool_explain(tx_hash: str) -> dict:
         pending=[PendingTxEntry(hash_hex=target, raw=raw, tx=None)],
         decode=_decode,
         state_db=state_db,
+        policy={"min_gas_price": min_gas_price},
+        tx_index=tx_index,
+        signature_validator=_signature_validator,
     )
     if selection.selected:
         return {
@@ -127,10 +144,12 @@ def mempool_explain(tx_hash: str) -> dict:
             "reason": None,
         }
     reason = selection.rejected_by_hash.get(target, "unknown")
+    details = selection.rejected_details_by_hash.get(target)
     return {
         "hash": target,
         "status": "rejected",
         "reason": reason,
+        "details": details,
         "rejected": dict(selection.rejected),
     }
 
