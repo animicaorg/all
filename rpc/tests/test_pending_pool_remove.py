@@ -17,6 +17,7 @@ def test_in_memory_pending_pool_remove() -> None:
 def test_mempool_getPending_reflects_pending_pool_removal(monkeypatch) -> None:
     from rpc.methods import mempool as mempool_methods
     from rpc.methods import tx as tx_methods
+    from rpc import deps
 
     pool = InMemoryPendingPool()
     tx_hash = "0xdeadbeef"
@@ -25,7 +26,13 @@ def test_mempool_getPending_reflects_pending_pool_removal(monkeypatch) -> None:
     pool.add_raw(tx_hash, raw)
     monkeypatch.setattr(tx_methods, "_PEND", pool)
 
-    assert mempool_methods.mempool_get_pending() == [tx_hash]
+    ctx = deps.get_ctx()
+    original_mempool = getattr(ctx, "mempool", None)
+    ctx.mempool = None
+    try:
+        assert mempool_methods.mempool_get_pending() == [tx_hash]
 
-    pool.remove(tx_hash)
-    assert mempool_methods.mempool_get_pending() == []
+        pool.remove(tx_hash)
+        assert mempool_methods.mempool_get_pending() == []
+    finally:
+        ctx.mempool = original_mempool

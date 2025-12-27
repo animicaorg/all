@@ -1070,6 +1070,14 @@ def _pending_put(tx_hash_hex: str, raw: bytes) -> None:
     _FALLBACK_PENDING_TS[tx_hash_hex] = time.time()
 
 
+def _get_mempool_service():
+    try:
+        ctx = deps.get_ctx()
+    except Exception:
+        return None
+    return getattr(ctx, "mempool", None)
+
+
 def _gossip_tx_to_peers(raw_tx: bytes) -> None:
     """
     Gossip a transaction to connected P2P peers via TxRelayHandler.
@@ -1427,6 +1435,13 @@ def _tx_send_raw_transaction(rawTx: str) -> str:
 
         # Duplicate suppression: if already in pending/persisted, return hash (idempotent)
         # Note: Duplicates are not validation failures - they're expected and idempotent
+        mempool_service = _get_mempool_service()
+        if mempool_service is not None and mempool_service.has_hash(tx_hash_hex):
+            log.info(
+                "tx.sendRawTransaction: duplicate tx (already in mempool), hash=%s",
+                tx_hash_hex,
+            )
+            return tx_hash_hex
         if _pending_get(tx_hash_hex) is not None:
             log.info(
                 "tx.sendRawTransaction: duplicate tx (already pending), hash=%s",
@@ -1441,11 +1456,29 @@ def _tx_send_raw_transaction(rawTx: str) -> str:
             )
             return tx_hash_hex
 
-        # Admit to pending pool (stateless checks already done here)
-        _pending_put(tx_hash_hex, raw)
-        log.info(
-            "tx.sendRawTransaction: tx admitted to pending pool, hash=%s", tx_hash_hex
-        )
+        tx_obj = tx_like
+        if _Tx is not None and not isinstance(tx_like, _Tx) and isinstance(obj, dict):
+            try:
+                tx_obj = _Tx.from_obj(obj)  # type: ignore[attr-defined]
+            except Exception:
+                tx_obj = None
+
+        # Admit to mempool (preferred) or pending pool fallback
+        if mempool_service is not None and tx_obj is not None:
+            try:
+                mempool_service.submit(tx=tx_obj, raw=raw, tx_hash_hex=tx_hash_hex)
+                log.info(
+                    "tx.sendRawTransaction: tx admitted to mempool, hash=%s",
+                    tx_hash_hex,
+                )
+            except Exception as exc:
+                raise rpc_errors.to_error(exc) from exc
+        else:
+            _pending_put(tx_hash_hex, raw)
+            log.info(
+                "tx.sendRawTransaction: tx admitted to pending pool, hash=%s",
+                tx_hash_hex,
+            )
 
         # Notify WS hub (best-effort)
         try:

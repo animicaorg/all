@@ -661,6 +661,7 @@ class RpcContext:
     block_db: t.Any
     tx_index: t.Any
     head: _HeadAccessor
+    mempool: t.Any | None = None
     init_error: str | None = None
     init_error_code: str | None = None
     p2p_service: t.Any = None  # Optional P2P service for peer management
@@ -824,6 +825,25 @@ def build_context(cfg: t.Any | None = None) -> RpcContext:
         log.info(
             "RPC context ready: no head set yet (genesis will be initialized on first use)"
         )
+
+    mempool_service = None
+    try:
+        from rpc.mempool_service import MempoolService
+
+        min_gas_price = 0
+        try:
+            min_gas_price = int(params.get("min_gas_price", 0))
+        except Exception:
+            min_gas_price = 0
+        mempool_service = MempoolService.create(
+            chain_id=cfg_view.chain_id,
+            min_gas_price_wei=min_gas_price,
+            state_db=bundle.state_db,
+            tx_index=bundle.tx_index,
+        )
+        log.info("Mempool service initialized", extra={"min_gas_price": min_gas_price})
+    except Exception as exc:
+        log.warning("Failed to initialize mempool service", exc_info=exc)
 
     # Initialize P2P services if enabled
     p2p_service = None
@@ -1013,6 +1033,7 @@ def build_context(cfg: t.Any | None = None) -> RpcContext:
         block_db=bundle.block_db,
         tx_index=bundle.tx_index,
         head=head,
+        mempool=mempool_service,
         init_error=init_error,
         init_error_code=init_error_code,
         p2p_service=p2p_service,

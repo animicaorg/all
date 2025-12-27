@@ -37,7 +37,18 @@ class PendingStats:
 
 
 def _iter_pending() -> Iterable[tuple[str, bytes, float | None]]:
-    """Yield (hash_hex, raw_bytes, ts) from the fallback pending cache."""
+    """Yield (hash_hex, raw_bytes, ts) from the canonical mempool or fallback cache."""
+    try:
+        ctx = deps.get_ctx()
+    except Exception:
+        ctx = None
+    mempool_service = getattr(ctx, "mempool", None) if ctx is not None else None
+    if mempool_service is not None:
+        snapshot = mempool_service.snapshot(limit=1000)
+        return (
+            (entry.hash_hex, entry.raw, entry.received_at)
+            for entry in snapshot.entries
+        )
     if tx_methods is None:
         return []
     # Prefer real pool if exposed
@@ -60,10 +71,22 @@ def _iter_pending() -> Iterable[tuple[str, bytes, float | None]]:
     desc="List pending transaction hashes currently held by the node.",
     aliases=("mempool_pending",),
 )
-def mempool_get_pending() -> list[str]:
+def mempool_get_pending(verbose: bool | None = None) -> list[str] | list[dict]:
     pending_hashes = [h for h, _raw, _ts in _iter_pending()]
     pending_hashes.sort()
-    return pending_hashes
+    if not verbose:
+        return pending_hashes
+    ctx = deps.get_ctx()
+    mempool_service = getattr(ctx, "mempool", None)
+    diagnostics = mempool_service.diagnose(limit=len(pending_hashes) + 1) if mempool_service else {}
+    return [
+        {
+            "hash": h,
+            "status": diagnostics.get(h, {}).get("status", "unknown"),
+            "reason": diagnostics.get(h, {}).get("reason"),
+        }
+        for h in pending_hashes
+    ]
 
 
 @method(
@@ -72,6 +95,19 @@ def mempool_get_pending() -> list[str]:
     aliases=("mempool_stats",),
 )
 def mempool_get_stats() -> dict:
+    try:
+        ctx = deps.get_ctx()
+    except Exception:
+        ctx = None
+    mempool_service = getattr(ctx, "mempool", None) if ctx is not None else None
+    if mempool_service is not None:
+        stats = mempool_service.stats()
+        return PendingStats(
+            count=stats.get("count", 0),
+            total_bytes=stats.get("totalBytes", 0),
+            oldest_age_sec=None,
+        ).as_dict()
+
     total_bytes = 0
     oldest_ts: float | None = None
     count = 0
@@ -97,10 +133,22 @@ __all__ = ["mempool_get_pending", "mempool_get_stats"]
 def mempool_explain(tx_hash: str) -> dict:
     target = tx_hash if tx_hash.startswith("0x") else f"0x{tx_hash}"
     raw = None
-    for h, raw_bytes, _ts in _iter_pending():
-        if h == target:
-            raw = raw_bytes
-            break
+    try:
+        ctx = deps.get_ctx()
+    except Exception:
+        ctx = None
+    mempool_service = getattr(ctx, "mempool", None) if ctx is not None else None
+    if mempool_service is not None:
+        snapshot = mempool_service.snapshot(limit=1000)
+        for entry in snapshot.entries:
+            if entry.hash_hex == target:
+                raw = entry.raw
+                break
+    else:
+        for h, raw_bytes, _ts in _iter_pending():
+            if h == target:
+                raw = raw_bytes
+                break
     if raw is None:
         return {"hash": target, "status": "not_found"}
 

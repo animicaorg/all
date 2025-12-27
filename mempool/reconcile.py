@@ -49,6 +49,14 @@ def on_block_accepted(
     Removes included tx hashes and conflicting sender+nonce entries.
     """
     try:
+        from rpc import deps
+
+        ctx = deps.get_ctx()
+        mempool_service = getattr(ctx, "mempool", None)
+    except Exception:
+        mempool_service = None
+
+    try:
         from rpc.methods import tx as tx_methods
     except Exception:
         return {"evicted": 0, "conflicts": 0}
@@ -64,6 +72,13 @@ def on_block_accepted(
 
     evicted = 0
     for h in included_hashes:
+        if mempool_service is not None:
+            try:
+                mempool_service.remove_included([h])
+                evicted += 1
+                continue
+            except Exception:
+                pass
         try:
             removed_flag = tx_methods._pending_remove(h)  # type: ignore[attr-defined]
             if removed_flag:
@@ -134,6 +149,12 @@ def on_block_accepted(
                     conflicts += 1
             except Exception:
                 continue
+
+    if mempool_service is not None:
+        try:
+            mempool_service.revalidate()
+        except Exception:
+            pass
 
     return {"evicted": evicted, "conflicts": conflicts}
 
