@@ -207,6 +207,39 @@ def _as_bytes32_addr(val: Any) -> bytes:
     return addr_bytes
 
 
+def _validate_payout_address(addr: Any) -> str:
+    """
+    Validate payout address input for miner.getBlockTemplate.
+
+    Accepts bech32 anim1... addresses or 0x-prefixed 32-byte hex strings.
+    Returns a normalized string (hex is 0x-prefixed) or raises InvalidParams.
+    """
+    if not isinstance(addr, str) or not addr.strip():
+        raise rpc_errors.InvalidParams("address must be a non-empty string")
+    value = addr.strip()
+    if value.lower().startswith("anim"):
+        try:
+            _decode_bech32_address(value)
+        except Exception as exc:
+            raise rpc_errors.InvalidParams(
+                "address must be a valid anim bech32 address"
+            ) from exc
+        return value
+
+    hex_str = value[2:] if value.startswith("0x") else value
+    if len(hex_str) != 64:
+        raise rpc_errors.InvalidParams(
+            "address must be a 32-byte 0x-prefixed hex or anim bech32 address"
+        )
+    try:
+        bytes.fromhex(hex_str)
+    except Exception as exc:
+        raise rpc_errors.InvalidParams(
+            "address must be a 32-byte 0x-prefixed hex or anim bech32 address"
+        ) from exc
+    return "0x" + hex_str
+
+
 def _derive_sender_from_envelope_raw(raw: bytes) -> bytes | None:
     """
     Derive sender address from raw CBOR envelope by extracting pubkey and alg_id.
@@ -3105,6 +3138,7 @@ def miner_get_block_template(*args: Any, **kwargs: Any) -> Dict[str, Any]:
 
     if not payout_address:
         raise rpc_errors.InvalidParams("address is required")
+    payout_address = _validate_payout_address(payout_address)
 
     allowed, reason = _mining_gate()
     if not allowed:
@@ -3305,6 +3339,7 @@ def miner_get_block_template(*args: Any, **kwargs: Any) -> Dict[str, Any]:
             extra=b"",
         )
 
+    timestamp_min, timestamp_max, _ = _timestamp_bounds(parent_header)
     header_template = _build_child_header(parent_height, parent_hash_bytes, parent_header)
 
     network_dt_seconds = None
