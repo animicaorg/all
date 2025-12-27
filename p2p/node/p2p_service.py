@@ -5746,6 +5746,10 @@ class P2PService:
             if not (self._has_header(h) or h in self._sync_headers):
                 if h in parent_requests:
                     height_hint = height_hint or expected_height
+                elif height_hint is not None and height_hint <= expected_height:
+                    # Allow fetching the next expected block from announcements even
+                    # when we do not yet have the header (block payload carries it).
+                    pass
                 else:
                     deferred.append((h, height_hint))
                     continue
