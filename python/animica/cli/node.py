@@ -1679,6 +1679,43 @@ def status(
             else:
                 typer.echo(f"Sync status: {sync_status}")
             if isinstance(sync_status, dict):
+                sync_head_height = sync_status.get("sync_head_height")
+                sync_head_hash = sync_status.get("sync_head_hash")
+                if sync_head_height is not None or sync_head_hash:
+                    typer.echo("Sync locator head:")
+                    if sync_head_height is not None:
+                        typer.echo(f"  Height: {sync_head_height}")
+                    if sync_head_hash:
+                        typer.echo(f"  Hash: {sync_head_hash}")
+                ancestor_height = sync_status.get("last_matched_ancestor_height")
+                ancestor_hash = sync_status.get("last_matched_ancestor_hash")
+                if ancestor_height is not None or ancestor_hash:
+                    typer.echo("Last matched ancestor:")
+                    if ancestor_height is not None:
+                        typer.echo(f"  Height: {ancestor_height}")
+                    if ancestor_hash:
+                        typer.echo(f"  Hash: {ancestor_hash}")
+                anchor_check = sync_status.get("last_anchor_check")
+                last_discarded = int(sync_status.get("last_headers_discarded_count") or 0)
+                if isinstance(anchor_check, dict) and (
+                    last_discarded > 0 or anchor_check.get("prev_hash")
+                ):
+                    typer.echo("Last header anchor check:")
+                    prev_hash = anchor_check.get("prev_hash")
+                    anchor_hash = anchor_check.get("anchor_hash")
+                    anchor_height = anchor_check.get("anchor_height")
+                    anchor_source = anchor_check.get("anchor_source")
+                    prev_known = anchor_check.get("prev_hash_known")
+                    if prev_hash:
+                        typer.echo(f"  headers[0].prev_hash: {prev_hash}")
+                    if anchor_hash:
+                        typer.echo(f"  anchor_hash: {anchor_hash}")
+                    if anchor_height is not None:
+                        typer.echo(f"  anchor_height: {anchor_height}")
+                    if anchor_source:
+                        typer.echo(f"  anchor_source: {anchor_source}")
+                    if prev_known is not None:
+                        typer.echo(f"  prev_hash_known: {prev_known}")
                 checkpoint_height = sync_status.get("checkpoint_height")
                 checkpoint_hash = sync_status.get("checkpoint_hash")
                 checkpoint_enabled = sync_status.get("checkpoint_mode_enabled")
