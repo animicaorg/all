@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from rpc.tests import new_test_client, rpc_call
+from rpc import deps
 
 
 @pytest.fixture(autouse=True)
@@ -29,7 +30,18 @@ def cleanup_mempool_state():
         pass  # If modules not imported, nothing to clean
 
 
-def test_mempool_eviction_after_mining_via_fallback():
+@pytest.fixture()
+def disable_mempool_service():
+    ctx = deps.get_ctx()
+    original = getattr(ctx, "mempool", None)
+    ctx.mempool = None
+    try:
+        yield
+    finally:
+        ctx.mempool = original
+
+
+def test_mempool_eviction_after_mining_via_fallback(disable_mempool_service):
     """
     Test that txs added to _FALLBACK_PENDING are evicted after mining.
     
@@ -83,7 +95,7 @@ def test_mempool_eviction_after_mining_via_fallback():
     # (Cleanup handled by fixture)
 
 
-def test_mempool_getPending_lists_submitted_txs():
+def test_mempool_getPending_lists_submitted_txs(disable_mempool_service):
     """Test that mempool.getPending returns transactions in fallback cache."""
     client, cfg, _ = new_test_client()
     
@@ -105,7 +117,7 @@ def test_mempool_getPending_lists_submitted_txs():
     # (Cleanup handled by fixture)
 
 
-def test_mempool_getStats_counts_pending_txs():
+def test_mempool_getStats_counts_pending_txs(disable_mempool_service):
     """Test that mempool.getStats returns correct count."""
     client, cfg, _ = new_test_client()
     

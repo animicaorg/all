@@ -238,6 +238,24 @@ def _svc_pending_nonce(addr: str) -> int:
     Returns the highest nonce found in pending transactions + 1, or committed nonce if no pending txs.
     """
     committed_nonce = _svc_nonce(addr, tag="latest")
+
+    try:
+        ctx = deps.get_ctx()
+    except Exception:
+        ctx = None
+
+    mempool_service = getattr(ctx, "mempool", None) if ctx is not None else None
+    if mempool_service is not None:
+        try:
+            addr_bytes = _to_account_key_bytes(addr)
+        except Exception:
+            addr_bytes = None
+        if addr_bytes is None:
+            return committed_nonce
+        pending_nonce = mempool_service.pending_nonce(addr_bytes)
+        if pending_nonce is None:
+            return committed_nonce
+        return max(committed_nonce, int(pending_nonce))
     
     # Try to access pending pool to find highest pending nonce
     # Import is inside function to avoid circular dependencies
