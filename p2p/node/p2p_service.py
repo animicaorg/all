@@ -3620,6 +3620,10 @@ class P2PService:
         head_hash = (
             bytes.fromhex(head_hash_hex[2:]) if head_hash_hex else (b"\x00" * 32)
         )
+        best_header = self._sync_best_header
+        if best_header is not None and best_header.height > int(height or 0):
+            height = int(best_header.height)
+            head_hash = bytes(best_header.hash)
         genesis_header_hash = self._genesis_header_hash()
         genesis_block_hash = self._genesis_block_hash()
         listen_port = self._local_listen_port()
@@ -3651,7 +3655,10 @@ class P2PService:
         self, peer: _PeerState, *, remote_height: int, remote_head_hash: Optional[bytes]
     ) -> None:
         local_height, _ = self._local_head()
-        if int(local_height or 0) <= int(remote_height or 0):
+        best_header_height = (
+            self._sync_best_header.height if self._sync_best_header else int(local_height or 0)
+        )
+        if int(best_header_height or 0) <= int(remote_height or 0):
             return
         locator: list[bytes] = []
         if (
@@ -3681,6 +3688,7 @@ class P2PService:
                 "remote": peer.remote,
                 "remote_head_height": int(remote_height or 0),
                 "local_head_height": int(local_height or 0),
+                "best_header_height": int(best_header_height or 0),
                 **info,
             },
         )
@@ -6837,12 +6845,31 @@ class P2PService:
         head = bdb.get_head()
         if not head:
             return []
-        head_height = int(head[0])
+        db_head_height = int(head[0])
+        chain_headers: dict[int, _SyncHeader] = {}
+        best_header = self._sync_best_header
+        if best_header is not None and best_header.height > db_head_height:
+            cursor = best_header
+            seen: set[bytes] = set()
+            while cursor is not None and cursor.hash not in seen:
+                seen.add(cursor.hash)
+                chain_headers[int(cursor.height)] = cursor
+                if cursor.height <= 0:
+                    break
+                parent = self._sync_header_by_hash(cursor.parent_hash)
+                if parent is None:
+                    break
+                cursor = parent
+        head_height = max(db_head_height, max(chain_headers.keys(), default=db_head_height))
         locset = {bytes(h) for h in locator if isinstance(h, (bytes, bytearray))}
 
         start = 0
         for h in range(head_height, -1, -1):
-            hh = bdb.get_canonical_hash(h)
+            hh = None
+            if h <= db_head_height:
+                hh = bdb.get_canonical_hash(h)
+            if hh is None and h in chain_headers:
+                hh = chain_headers[h].hash
             if hh and bytes(hh) in locset:
                 start = h
                 break
@@ -6850,6 +6877,20 @@ class P2PService:
         out: list[Any] = []
         lim = max(1, min(int(limit), 512))
         for n in range(start + 1, min(head_height + 1, start + 1 + lim)):
+            if n in chain_headers:
+                hdr = chain_headers[n]
+                out.append(
+                    HeaderCompact(
+                        hash=bytes(hdr.hash),
+                        height=int(hdr.height),
+                        parent=bytes(hdr.parent_hash),
+                        theta_micro=int(hdr.theta_micro),
+                        timestamp=int(hdr.timestamp),
+                    )
+                )
+                continue
+            if n > db_head_height:
+                break
             hdr = bdb.get_header_by_height(n)
             if hdr is None:
                 break
@@ -7631,6 +7672,8 @@ class P2PService:
             return False
 
     def _has_header(self, block_hash: bytes) -> bool:
+        if block_hash in self._sync_headers:
+            return True
         try:
             return self._block_db().get_header_by_hash(block_hash) is not None
         except Exception:
