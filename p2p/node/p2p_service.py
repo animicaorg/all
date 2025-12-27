@@ -610,6 +610,12 @@ class P2PService:
         self._dial_attempt_total: int = 0
         self._dial_success_total: int = 0
         self._dial_last_error: Optional[dict[str, Any]] = None
+        self._bootstrap_seed_rate_limit = int(
+            os.environ.get("ANIMICA_P2P_SEED_RATE_LIMIT", "6") or 6
+        )
+        self._bootstrap_seed_rate_window = float(
+            os.environ.get("ANIMICA_P2P_SEED_RATE_WINDOW", "300") or 300
+        )
         self._seed_hosts = self._seed_hostnames(self.seeds)
 
         self._peer_lock = asyncio.Lock()
@@ -654,6 +660,8 @@ class P2PService:
         self._sync_peer_backoff_reason: dict[str, str] = {}
         self._sync_block_peer_backoff: dict[str, float] = {}
         self._sync_block_peer_backoff_reason: dict[str, str] = {}
+        self._sync_peer_eligibility_cache: dict[str, str] = {}
+        self._sync_last_phase_reported: Optional[str] = None
         self._sync_header_events: Deque[dict[str, Any]] = deque(
             maxlen=int(os.environ.get("ANIMICA_P2P_SYNC_DEBUG_EVENTS", "50") or 50)
         )
@@ -2158,11 +2166,28 @@ class P2PService:
         elif record_error:
             self._last_bootstrap_error = entry
 
+    def _seed_attempts_recent(self, addr_key: str) -> int:
+        window = float(self._bootstrap_seed_rate_window)
+        now = time.time()
+        return sum(
+            1
+            for entry in self._bootstrap_attempts
+            if now - float(entry.get("at", 0)) <= window
+            and self._addr_key(str(entry.get("addr", ""))) == addr_key
+        )
+
     def _dial_delay(self, addr_key: str) -> float:
         attempts = self._dial_attempts.get(addr_key, 0)
         base = 2.0 * (2 ** min(attempts, 5))
         jitter = random.uniform(0.6, 1.4)
         return min(60.0, base * jitter)
+
+    def _dial_delay_for_error(self, addr_key: str, error: str) -> float:
+        delay = self._dial_delay(addr_key)
+        lowered = error.lower()
+        if "connectionrefusederror" in lowered or "econnrefused" in lowered:
+            delay = min(300.0, delay * 4.0)
+        return delay
 
     def _is_invalid_seed_error(self, error: str) -> bool:
         lowered = error.lower()
@@ -2178,7 +2203,7 @@ class P2PService:
             "attempts": attempts,
             "at": time.time(),
         }
-        delay = self._dial_delay(addr_key)
+        delay = self._dial_delay_for_error(addr_key, error)
         next_retry = time.time() + delay
         self._dial_backoff[addr_key] = next_retry
         normalized = self._sanitize_peer_addr(addr, fallback_port=self._local_listen_port())
@@ -2345,15 +2370,43 @@ class P2PService:
         best_block_height = int(height or 0)
         best_block_hash = head_hex
         network_best_height = self._network_best_height()
-        if network_best_height is None:
-            synchronized = False
-        else:
-            remote_target = max(0, int(network_best_height) - self._sync_tip_tolerance)
+        target_candidates = [
+            int(height)
+            for height in (
+                self._sync_target_height,
+                self._sync_checkpoint_height,
+                network_best_height,
+            )
+            if height is not None
+        ]
+        target_height = max(target_candidates) if target_candidates else None
+        anchored_tip = False
+        if self._peers:
+            for peer in self._peers.values():
+                if not peer.hello_done.is_set() or not peer.anchored:
+                    continue
+                try:
+                    peer_tip = int((peer.hello or {}).get("head_height") or 0)
+                except Exception:
+                    peer_tip = 0
+                if peer_tip <= 0:
+                    continue
+                if best_header_height >= max(0, peer_tip - self._sync_tip_tolerance):
+                    anchored_tip = True
+                    break
+        if target_height is not None:
+            remote_target = int(target_height)
+            if network_best_height is not None and target_height == int(network_best_height):
+                remote_target = max(0, int(network_best_height) - self._sync_tip_tolerance)
             synchronized = (
                 best_block_height > 0
                 and best_header_height >= remote_target
-                and best_block_height >= min(best_header_height, network_best_height)
+                and best_block_height >= min(best_header_height, remote_target)
             )
+        elif anchored_tip and self._sync_headers_accepted_total > 0:
+            synchronized = best_block_height > 0
+        else:
+            synchronized = False
         queued_blocks_count = self._queued_blocks_count(best_block_height)
         synchronized = synchronized and self._sync_status_invariants(
             head_height=best_block_height,
@@ -2377,6 +2430,23 @@ class P2PService:
             synchronized=synchronized,
             peers_total=len(self._peers),
         )
+        if phase != self._sync_last_phase_reported:
+            log.info(
+                "Sync phase transition",
+                extra={
+                    "from": self._sync_last_phase_reported,
+                    "to": phase,
+                    "head_height": best_block_height,
+                    "best_header_height": best_header_height,
+                    "synchronized": synchronized,
+                    "target_height": target_height,
+                    "headers_accepted_total": self._sync_headers_accepted_total,
+                    "anchored_tip": anchored_tip,
+                    "eligible_peers": len(eligible_peers),
+                    "peers_total": len(self._peers),
+                },
+            )
+            self._sync_last_phase_reported = phase
         active_peers_for_headers = (
             [self._sync_active_header_peer] if self._sync_active_header_peer else []
         )
@@ -2623,6 +2693,15 @@ class P2PService:
         if result.addr:
             return f"{result.addr.host}:{result.addr.port}"
         return address
+
+    def _peer_backoff_key(self, peer: _PeerState | str) -> str:
+        remote = peer.remote if isinstance(peer, _PeerState) else peer
+        return self._addr_key(remote)
+
+    def _peer_eligibility_key(self, peer: _PeerState) -> str:
+        if peer.peer_id:
+            return f"peer_id:{peer.peer_id}"
+        return f"addr:{self._addr_key(peer.remote)}"
 
     def _extract_host(self, remote: str) -> str:
         if "://" in remote:
@@ -3232,6 +3311,19 @@ class P2PService:
                         continue
                     self._dial_inflight.add(addr_key)
                     is_seed = addr_key in self._seed_keys
+                    if is_seed and self._bootstrap_seed_rate_limit > 0:
+                        recent = self._seed_attempts_recent(addr_key)
+                        if recent >= self._bootstrap_seed_rate_limit:
+                            log.info(
+                                "Seed dial rate limited",
+                                extra={
+                                    "addr": addr,
+                                    "attempts": recent,
+                                    "window_s": self._bootstrap_seed_rate_window,
+                                },
+                            )
+                            self._dial_inflight.discard(addr_key)
+                            continue
                     if is_seed:
                         log.info("Attempting dial to seed %s", addr)
                     self._create_child_task(
@@ -6074,6 +6166,29 @@ class P2PService:
             "capabilities": list(hello.get("capabilities") or []),
         }
 
+    def _log_peer_eligibility(self, peer: _PeerState, ok: bool, reason: str) -> None:
+        key = self._peer_eligibility_key(peer)
+        prev = self._sync_peer_eligibility_cache.get(key)
+        current = f"{'eligible' if ok else 'ineligible'}:{reason}"
+        if prev == current:
+            return
+        self._sync_peer_eligibility_cache[key] = current
+        log.info(
+            "Sync peer eligibility update",
+            extra={
+                "peer_key": key,
+                "remote": peer.remote,
+                "peer_id": peer.peer_id,
+                "eligible": ok,
+                "reason": reason,
+                "anchored": bool(peer.anchored),
+                "anchor_reason": peer.anchor_reason,
+                "backoff_reason": self._sync_peer_backoff_reason.get(
+                    self._peer_backoff_key(peer)
+                ),
+            },
+        )
+
     def _sync_peer_eligibility(
         self,
         peer: _PeerState,
@@ -6102,10 +6217,14 @@ class P2PService:
                 return False, "banned_peer_id"
             if self._is_banned(peer.remote, now=now):
                 return False, "banned"
-        backoff_until = self._sync_peer_backoff.get(peer.remote, 0.0)
+        backoff_key = self._peer_backoff_key(peer)
+        backoff_until = self._sync_peer_backoff.get(backoff_key, 0.0)
         if backoff_until and backoff_until > now:
-            reason = self._sync_peer_backoff_reason.get(peer.remote, "backoff")
-            if ignore_backoff_reason != reason:
+            reason = self._sync_peer_backoff_reason.get(backoff_key, "backoff")
+            if reason == "not_anchored" and peer.anchored:
+                self._sync_peer_backoff.pop(backoff_key, None)
+                self._sync_peer_backoff_reason.pop(backoff_key, None)
+            elif ignore_backoff_reason != reason:
                 return False, reason
         version = str(peer.hello.get("version") or "")
         if version and version not in {"1", "2"}:
@@ -6174,9 +6293,12 @@ class P2PService:
         ok, reason = self._sync_peer_eligibility(peer, now=now)
         if not ok:
             return False, reason
-        backoff_until = self._sync_block_peer_backoff.get(peer.remote, 0.0)
+        backoff_key = self._peer_backoff_key(peer)
+        backoff_until = self._sync_block_peer_backoff.get(backoff_key, 0.0)
         if backoff_until and backoff_until > now:
-            reason = self._sync_block_peer_backoff_reason.get(peer.remote, "block_backoff")
+            reason = self._sync_block_peer_backoff_reason.get(
+                backoff_key, "block_backoff"
+            )
             return False, reason
         return True, "eligible"
 
@@ -6194,8 +6316,9 @@ class P2PService:
 
     def _set_block_backoff(self, peer: _PeerState, *, reason: str, delay: float) -> None:
         until = time.time() + max(0.0, delay)
-        self._sync_block_peer_backoff[peer.remote] = until
-        self._sync_block_peer_backoff_reason[peer.remote] = reason
+        key = self._peer_backoff_key(peer)
+        self._sync_block_peer_backoff[key] = until
+        self._sync_block_peer_backoff_reason[key] = reason
 
     def _should_enforce_checkpoint_anchor(self) -> bool:
         if not self._sync_checkpoint_mode_enabled:
@@ -6215,6 +6338,10 @@ class P2PService:
         peer.anchored = True
         peer.anchor_reason = reason
         peer.last_anchor_at = time.time()
+        backoff_key = self._peer_backoff_key(peer)
+        if self._sync_peer_backoff_reason.get(backoff_key) == "not_anchored":
+            self._sync_peer_backoff.pop(backoff_key, None)
+            self._sync_peer_backoff_reason.pop(backoff_key, None)
         if self._sync_peer_backoff_reason.get(peer.remote) == "not_anchored":
             self._sync_peer_backoff.pop(peer.remote, None)
             self._sync_peer_backoff_reason.pop(peer.remote, None)
@@ -6256,14 +6383,16 @@ class P2PService:
                 eligible.append(peer)
             else:
                 ineligible[peer.remote] = reason
+            self._log_peer_eligibility(peer, ok, reason)
         return eligible, ineligible
 
     def _set_sync_backoff(
         self, peer: _PeerState, *, reason: str, delay: float
     ) -> None:
         until = time.time() + max(0.0, delay)
-        self._sync_peer_backoff[peer.remote] = until
-        self._sync_peer_backoff_reason[peer.remote] = reason
+        key = self._peer_backoff_key(peer)
+        self._sync_peer_backoff[key] = until
+        self._sync_peer_backoff_reason[key] = reason
 
     def _select_sync_peer(
         self,

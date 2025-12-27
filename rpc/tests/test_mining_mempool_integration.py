@@ -173,6 +173,9 @@ def test_mining_includes_tx_and_updates_balances():
     assert mine_result["mined"] == 1, "Should mine exactly 1 block"
     block_height = mine_result["height"]
     print(f"Mined block at height: {block_height}")
+    assert (
+        mine_result.get("mempool", {}).get("included", 0) >= 1
+    ), "Mining should include at least one mempool tx"
     
     # Get the mined block
     block = rpc_call(client, "chain.getBlockByNumber", [block_height, True])["result"]

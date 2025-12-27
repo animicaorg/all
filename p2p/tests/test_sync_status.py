@@ -380,7 +380,10 @@ def test_header_batch_must_anchor(tmp_path: Path) -> None:
 
     assert accepted_hashes == []
     assert reason == "not_anchored"
-    assert node._sync_peer_backoff_reason.get(peer.remote) == "not_anchored"
+    assert (
+        node._sync_peer_backoff_reason.get(node._peer_backoff_key(peer))
+        == "not_anchored"
+    )
     assert node._sync_peer_penalties == {}
     assert peer.not_anchored_count == 1
     assert node._queued_blocks_count() == 0
@@ -925,14 +928,20 @@ def test_do_not_mark_wrong_chain_on_single_invalid_headers(tmp_path: Path) -> No
 
     assert accepted_hashes == []
     assert reason == "not_anchored"
-    assert node._sync_peer_backoff_reason.get(peer.remote) == "not_anchored"
+    assert (
+        node._sync_peer_backoff_reason.get(node._peer_backoff_key(peer))
+        == "not_anchored"
+    )
     assert node._sync_peer_penalties == {}
 
     accepted_hashes, reason = node._process_headers(peer, [bad_header])
 
     assert accepted_hashes == []
     assert reason == "not_anchored"
-    assert node._sync_peer_backoff_reason.get(peer.remote) == "not_anchored"
+    assert (
+        node._sync_peer_backoff_reason.get(node._peer_backoff_key(peer))
+        == "not_anchored"
+    )
     assert node._sync_peer_penalties == {}
 
 
@@ -1000,6 +1009,27 @@ def test_sync_status_phase_not_synced_when_unsynchronized(tmp_path: Path) -> Non
     block = _make_child_block(deps_sync)
     accepted, _reason = deps_sync.import_block(block)
     assert accepted
+
+    snap = node.sync_status_snapshot()
+
+    assert snap.synchronized is False
+    assert snap.phase != "SYNCED"
+
+
+def test_sync_status_not_synced_without_target_or_headers(tmp_path: Path) -> None:
+    node, deps_sync = _make_service(tmp_path, "phase-genesis")
+    block = _make_child_block(deps_sync)
+    accepted, _reason = deps_sync.import_block(block)
+    assert accepted
+
+    node._sync_best_header = _SyncHeader(
+        hash=block.header.hash(),
+        parent_hash=bytes(block.header.parentHash),
+        height=int(block.header.height),
+        theta_micro=int(getattr(block.header, "thetaMicro", 0)),
+        timestamp=int(getattr(block.header, "timestamp", 0)),
+    )
+    node._sync_headers_accepted_total = 0
 
     snap = node.sync_status_snapshot()
 
@@ -1085,6 +1115,25 @@ def test_sync_status_not_synced_with_inflight_headers(tmp_path: Path) -> None:
 
     assert snap.synchronized is False
     assert snap.phase != "SYNCED"
+
+
+def test_anchored_peer_becomes_eligible_after_anchor(tmp_path: Path) -> None:
+    node, _deps_sync = _make_service(tmp_path, "anchor-eligibility")
+    node._sync_checkpoint_mode_enabled = True
+    node._sync_checkpoint_height = 0
+    node._sync_checkpoint_hash = node._genesis_hash()
+    peer = _register_peer(node, "peer-anchored:0")
+    _setup_peer_hello(node, peer, head_height=5, head_hash=b"\x11" * 32)
+
+    backoff_key = node._peer_backoff_key(peer)
+    node._sync_peer_backoff[backoff_key] = time.time() + 60
+    node._sync_peer_backoff_reason[backoff_key] = "not_anchored"
+
+    node._mark_peer_anchored(peer, reason="test_anchor")
+    eligible, ineligible = node._eligible_sync_peers()
+
+    assert peer in eligible
+    assert ineligible.get(peer.remote) is None
 
 
 def test_wrong_chain_peer_is_ineligible(tmp_path: Path) -> None:
@@ -1452,7 +1501,7 @@ async def test_empty_headers_at_tip_not_fatal(tmp_path: Path, monkeypatch: pytes
     assert node._sync_fatal_error is None
     assert node._sync_last_header_error == "at_tip"
     assert node._sync_peer_penalties == {}
-    assert node._sync_peer_backoff_reason.get(peer.remote) is None
+    assert node._sync_peer_backoff_reason.get(node._peer_backoff_key(peer)) is None
     snap = node.sync_status_snapshot()
     assert snap.phase != "STALLED"
 
