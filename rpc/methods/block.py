@@ -526,3 +526,52 @@ def chain_get_block_by_hash(
         include_receipts=bool(includeReceipts),
         chain_id_fallback=int(deps.get_chain_id()),
     )
+
+
+@method(
+    "debug.getRawBlock",
+    desc="Return raw CBOR for a block/header. Params: (hash|height)",
+    aliases=("debug_getRawBlock",),
+)
+def debug_get_raw_block(
+    blockHash: str | None = None,
+    height: int | str | None = None,
+    hash: str | None = None,
+) -> dict[str, t.Any]:
+    bh = blockHash or hash
+    blk = None
+    h = None
+    if bh is not None:
+        h, blk = _resolve_block_by_hash(bh)
+    elif height is not None:
+        num = _normalize_block_number(height)
+        h, blk = _resolve_block_by_number(num)
+    else:
+        raise ValueError("blockHash or height is required")
+    if blk is None:
+        raise ValueError("block not found")
+
+    header = getattr(blk, "header", None)
+    if header is None:
+        raise ValueError("block missing header")
+
+    if hasattr(blk, "to_cbor"):
+        block_cbor = blk.to_cbor()
+    elif _cbor_dumps is not None:
+        block_cbor = _cbor_dumps(_dcd(blk))
+    else:  # pragma: no cover
+        raise ValueError("CBOR encoder unavailable")
+
+    if hasattr(header, "to_cbor"):
+        header_cbor = header.to_cbor()
+    elif _cbor_dumps is not None:
+        header_cbor = _cbor_dumps(_dcd(header))
+    else:  # pragma: no cover
+        raise ValueError("CBOR encoder unavailable")
+
+    return {
+        "height": int(h) if h is not None else None,
+        "hash": _compute_header_hash(header),
+        "blockCbor": _hex(block_cbor),
+        "headerCbor": _hex(header_cbor),
+    }

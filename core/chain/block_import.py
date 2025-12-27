@@ -84,6 +84,8 @@ except Exception:  # pragma: no cover - consensus optional
     WeightForkChoice = None  # type: ignore[assignment]
 
 log = logging.getLogger("animica.chain.block_import")
+_POW_LOG_MIN_S = float(os.getenv("ANIMICA_POW_LOG_MIN_S", "5.0") or 5.0)
+_POW_LOG_AT: dict[str, float] = {}
 
 
 class ImportErrorCode(str):
@@ -714,25 +716,35 @@ class BlockImporter:
                     if key in payload:
                         claimed_bits = payload.get(key)
                         break
-                log.warning(
-                    "PoW target mismatch",
-                    extra={
-                        "block_hash": header_hash.hex(),
-                        "header_hash": header_hash.hex(),
-                        "height": height,
-                        "prev_hash": parent_hash,
-                        "claimed_bits": claimed_bits,
-                        "claimed_theta_micro": int(theta_micro),
-                        "computed_target": target,
-                        "computed_target_hex": hex(int(target)),
-                        "computed_work_hash": header_hash.hex(),
-                        "pow_hash_int": pow_hash_int,
-                        "hash_endianness": "big",
-                        "chain_id": int(self.params.chain_id),
-                        "chain_name": self.params.chain_name,
-                        "genesis_hash": self.params.genesis_hash.hex(),
-                    },
-                )
+                adaptive_pow = None
+                if height is not None:
+                    adaptive_pow = int(self.params.chain_id) == 1 and int(height) >= 1
+                log_key = header_hash.hex()
+                now = time.time()
+                last = _POW_LOG_AT.get(log_key, 0.0)
+                if now - last >= _POW_LOG_MIN_S:
+                    _POW_LOG_AT[log_key] = now
+                    log.warning(
+                        "PoW target mismatch",
+                        extra={
+                            "block_hash": header_hash.hex(),
+                            "header_hash": header_hash.hex(),
+                            "height": height,
+                            "prev_hash": parent_hash,
+                            "claimed_bits": claimed_bits,
+                            "claimed_theta_micro": int(theta_micro),
+                            "computed_target": target,
+                            "computed_target_hex": hex(int(target)),
+                            "computed_work_hash": header_hash.hex(),
+                            "pow_hash_int": pow_hash_int,
+                            "pow_rule": "header_hash<=target",
+                            "hash_endianness": "big",
+                            "adaptive_pow": adaptive_pow,
+                            "chain_id": int(self.params.chain_id),
+                            "chain_name": self.params.chain_name,
+                            "genesis_hash": self.params.genesis_hash.hex(),
+                        },
+                    )
                 return "pow target not met"
         except Exception as e:
             if os.getenv("ANIMICA_SYNC_DEBUG") == "1":
