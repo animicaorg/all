@@ -62,7 +62,7 @@ from core.errors import AnimicaError
 from core.genesis.genesis_loader import get_genesis
 from core.genesis.loader import load_chain_params_from_genesis
 from core.types.block import Block
-from core.types.header import Header
+from core.types.header import Header, serialize_header
 from core.types.params import ChainParams
 from core.types.receipt import \
     Receipt  # imported for type completeness; not used here
@@ -180,10 +180,13 @@ def compute_header_hash(header: Header) -> bytes:
     """
     Canonical header hash. Prefer header.hash() to match BlockDB storage.
     """
-    if hasattr(header, "hash") and callable(getattr(header, "hash")):
-        return bytes(header.hash())  # type: ignore[no-any-return]
-    sb = header_signing_bytes(header)
-    return sha3_256(sb)
+    try:
+        return sha3_256(serialize_header(header))
+    except Exception:
+        if hasattr(header, "hash") and callable(getattr(header, "hash")):
+            return bytes(header.hash())  # type: ignore[no-any-return]
+        sb = header_signing_bytes(header)
+        return sha3_256(sb)
 
 
 def _weight_micro_of(

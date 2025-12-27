@@ -94,6 +94,15 @@ class AnimicaCode(IntEnum):
     RAND_WINDOW_ERROR = -32050
     VDF_INVALID = -32051
 
+    # Block submission / mining
+    INVALID_POW = -32060
+    INVALID_TIMESTAMP = -32061
+    INVALID_PARENT = -32062
+    STALE_TEMPLATE = -32063
+    INVALID_COINBASE = -32064
+    INVALID_MERKLE_ROOT = -32065
+    INVALID_STATE_TRANSITION = -32066
+
 
 # Back-compat: fix typo for DUPLICATE_TX (ensure distinct code)
 if not hasattr(AnimicaCode, "DUPLICATE_TX"):
