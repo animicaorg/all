@@ -13,7 +13,7 @@ import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, replace
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Callable, Dict, Optional, Tuple
 
 from core.types.block import Block
 from core.types.header import Header
@@ -107,6 +107,12 @@ _TX_HASH_MAP: dict[int, tuple[str, bytes]] = {}
 # Block template cache for submit binding (template_id -> metadata)
 _TEMPLATE_CACHE: dict[str, dict[str, Any]] = {}
 _TEMPLATE_TTL_S = float(os.getenv("ANIMICA_TEMPLATE_TTL_S", "30"))
+_MEMPOOL_DEBUG = os.getenv("ANIMICA_MEMPOOL_DEBUG", "").lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 
 
 def _tracked(tx: Any) -> tuple[str, bytes] | None:
@@ -117,6 +123,16 @@ def _tracked(tx: Any) -> tuple[str, bytes] | None:
         (tx_hash_hex, raw_bytes) if tracked, None otherwise
     """
     return _TX_HASH_MAP.get(id(tx))
+
+
+def _resolve_chain_id_for_sig(ctx: Any) -> int:
+    chain_id = getattr(getattr(ctx, "cfg", None), "chain_id", None)
+    if chain_id is None:
+        try:
+            chain_id = int(deps.get_chain_id())
+        except Exception:
+            chain_id = 1
+    return int(chain_id)
 
 
 def _canonical_txid_hex(tx: Any) -> str:
@@ -141,6 +157,114 @@ def _canonical_txid_hex(tx: Any) -> str:
     except Exception as e:
         log.warning(f"Failed to compute canonical txid: {e}")
         return "0x" + (b"\x00" * 32).hex()
+
+
+def _normalize_excluded_reasons(rejected: dict[str, int]) -> dict[str, int]:
+    mapped: dict[str, int] = {}
+    reason_map = {
+        "insufficient_funds": "insufficient_balance",
+        "invalid_format": "decode_error",
+        "missing_sender": "decode_error",
+        "missing_nonce": "decode_error",
+    }
+    for reason, count in rejected.items():
+        mapped_reason = reason_map.get(reason, reason)
+        mapped[mapped_reason] = mapped.get(mapped_reason, 0) + int(count)
+    return mapped
+
+
+def _maybe_log_mempool_debug(
+    *,
+    phase: str,
+    pending_total: int,
+    candidate_count: int,
+    included_count: int,
+    rejected: dict[str, int],
+    rejected_details_by_hash: dict[str, dict[str, Any]],
+) -> None:
+    if not _MEMPOOL_DEBUG:
+        return
+    excluded_by_reason = _normalize_excluded_reasons(rejected)
+    excluded_samples = list(rejected_details_by_hash.items())[:10]
+    log.info(
+        "mempool selection debug",
+        extra={
+            "phase": phase,
+            "mempool_size": pending_total,
+            "candidate_count": candidate_count,
+            "included_count": included_count,
+            "excluded_by_reason": excluded_by_reason,
+            "excluded_samples": [
+                {"hash": tx_hash, **(detail or {})} for tx_hash, detail in excluded_samples
+            ],
+        },
+    )
+
+
+def _coerce_selected_txs(
+    *,
+    selected: list[Any],
+    selected_hashes: list[str],
+    pending_raw_by_hash: dict[str, bytes],
+    decode_fn: Callable[[bytes], Any] | None,
+) -> tuple[list[Tx], list[str], dict[str, int], dict[str, str], dict[str, dict[str, Any]]]:
+    coerced: list[Tx] = []
+    included_hashes: list[str] = []
+    dropped_counts: dict[str, int] = {}
+    dropped_by_hash: dict[str, str] = {}
+    dropped_details: dict[str, dict[str, Any]] = {}
+
+    for tx_obj, hash_hex in zip(selected, selected_hashes):
+        hash_hex = _normalize_hash_hex(hash_hex)
+        raw = pending_raw_by_hash.get(hash_hex, b"")
+        tx: Tx | None = None
+        decoded_obj: dict[str, Any] | None = None
+
+        if isinstance(tx_obj, Tx):
+            tx = tx_obj
+        elif isinstance(tx_obj, dict):
+            decoded_obj = tx_obj
+        elif raw and decode_fn is not None:
+            decoded = decode_fn(raw)
+            if isinstance(decoded, tuple):
+                tx_candidate = decoded[0]
+                decoded_obj = decoded[1] if isinstance(decoded[1], dict) else None
+            else:
+                tx_candidate = decoded
+                decoded_obj = decoded if isinstance(decoded, dict) else None
+            if isinstance(tx_candidate, Tx):
+                tx = tx_candidate
+            elif isinstance(tx_candidate, dict):
+                decoded_obj = tx_candidate
+
+        if tx is None and decoded_obj is not None:
+            normalized = _normalize_tx_envelope(decoded_obj)
+            tx = _construct_tx_from_dict(normalized)
+
+        if tx is None:
+            reason = "decode_error"
+            dropped_counts[reason] = dropped_counts.get(reason, 0) + 1
+            dropped_by_hash[hash_hex] = reason
+            dropped_details[hash_hex] = {
+                "reason": reason,
+                "details": {"type": type(tx_obj).__name__},
+            }
+            continue
+
+        if not raw:
+            raw = getattr(tx, "raw_cbor", None) or b""
+            if not raw and hasattr(tx, "to_cbor"):
+                try:
+                    raw = tx.to_cbor()
+                except Exception:
+                    raw = b""
+        if raw:
+            pending_raw_by_hash[hash_hex] = raw
+        _TX_HASH_MAP[id(tx)] = (hash_hex, raw)
+        coerced.append(tx)
+        included_hashes.append(hash_hex)
+
+    return coerced, included_hashes, dropped_counts, dropped_by_hash, dropped_details
 
 
 def _normalize_hash_hex(hash_hex: str) -> str:
@@ -2002,7 +2126,7 @@ def _mine_once(
             if decoded_obj is None:
                 return
             tx_methods._verify_pq_signature(  # type: ignore[attr-defined]
-                tx_obj, decoded_obj, chain_id=int(ctx.cfg.chain_id)
+                tx_obj, decoded_obj, chain_id=_resolve_chain_id_for_sig(ctx)
             )
 
         selection = select_for_block(
@@ -2019,39 +2143,57 @@ def _mine_once(
             tx_index=getattr(ctx, "tx_index", None),
             signature_validator=_signature_validator,
         )
-        txs: list[Tx] = list(selection.selected)
-        included_hashes = [_normalize_hash_hex(h) for h in selection.selected_hashes]
-        for tx, hash_hex in zip(txs, included_hashes):
-            raw = pending_raw_by_hash.get(hash_hex, b"")
-            _TX_HASH_MAP[id(tx)] = (hash_hex, raw)
+        txs, included_hashes, dropped_counts, dropped_by_hash, dropped_details = (
+            _coerce_selected_txs(
+                selected=list(selection.selected),
+                selected_hashes=list(selection.selected_hashes),
+                pending_raw_by_hash=pending_raw_by_hash,
+                decode_fn=decode_fn,
+            )
+        )
+        merged_rejected = dict(selection.rejected)
+        for reason, count in dropped_counts.items():
+            merged_rejected[reason] = merged_rejected.get(reason, 0) + int(count)
+        merged_rejected_by_hash = dict(selection.rejected_by_hash)
+        merged_rejected_by_hash.update(dropped_by_hash)
+        merged_rejected_details_by_hash = dict(selection.rejected_details_by_hash)
+        merged_rejected_details_by_hash.update(dropped_details)
         selection_summary = {
             "pending": selection.total_pending,
             "selected": len(txs),
-            "rejected": dict(selection.rejected),
-            "rejectedByHash": dict(list(selection.rejected_by_hash.items())[:10]),
+            "rejected": dict(merged_rejected),
+            "rejectedByHash": dict(list(merged_rejected_by_hash.items())[:10]),
             "rejectedDetailsByHash": dict(
-                list(selection.rejected_details_by_hash.items())[:10]
+                list(merged_rejected_details_by_hash.items())[:10]
             ),
             "mempoolEnabled": True,
         }
+        _maybe_log_mempool_debug(
+            phase="mine_once",
+            pending_total=selection.total_pending,
+            candidate_count=len(pending_entries),
+            included_count=len(txs),
+            rejected=merged_rejected,
+            rejected_details_by_hash=merged_rejected_details_by_hash,
+        )
         log.debug(
             "mempool selection summary",
             extra={
                 "pending": selection.total_pending,
                 "selected": len(txs),
-                "rejected": dict(selection.rejected),
+                "rejected": dict(merged_rejected),
                 "rejected_by_hash_sample": dict(
-                    list(selection.rejected_by_hash.items())[:10]
+                    list(merged_rejected_by_hash.items())[:10]
                 ),
             },
         )
-        if selection.rejected:
+        if merged_rejected:
             log.info(
                 "Mining mempool selection rejected candidates",
                 extra={
-                    "rejected": dict(selection.rejected),
+                    "rejected": dict(merged_rejected),
                     "rejected_by_hash_sample": dict(
-                        list(selection.rejected_by_hash.items())[:10]
+                        list(merged_rejected_by_hash.items())[:10]
                     ),
                 },
             )
@@ -3305,7 +3447,7 @@ def miner_get_block_template(*args: Any, **kwargs: Any) -> Dict[str, Any]:
             if decoded_obj is None:
                 return
             tx_methods._verify_pq_signature(  # type: ignore[attr-defined]
-                tx_obj, decoded_obj, chain_id=int(ctx.cfg.chain_id)
+                tx_obj, decoded_obj, chain_id=_resolve_chain_id_for_sig(ctx)
             )
 
         selection = select_for_block(
@@ -3322,28 +3464,46 @@ def miner_get_block_template(*args: Any, **kwargs: Any) -> Dict[str, Any]:
             tx_index=getattr(ctx, "tx_index", None),
             signature_validator=_signature_validator,
         )
-        txs: list[Tx] = list(selection.selected)
-        included_hashes = [_normalize_hash_hex(h) for h in selection.selected_hashes]
-        for tx, hash_hex in zip(txs, included_hashes):
-            raw = pending_raw_by_hash.get(hash_hex, b"")
-            _TX_HASH_MAP[id(tx)] = (hash_hex, raw)
+        txs, included_hashes, dropped_counts, dropped_by_hash, dropped_details = (
+            _coerce_selected_txs(
+                selected=list(selection.selected),
+                selected_hashes=list(selection.selected_hashes),
+                pending_raw_by_hash=pending_raw_by_hash,
+                decode_fn=decode_fn,
+            )
+        )
+        merged_rejected = dict(selection.rejected)
+        for reason, count in dropped_counts.items():
+            merged_rejected[reason] = merged_rejected.get(reason, 0) + int(count)
+        merged_rejected_by_hash = dict(selection.rejected_by_hash)
+        merged_rejected_by_hash.update(dropped_by_hash)
+        merged_rejected_details_by_hash = dict(selection.rejected_details_by_hash)
+        merged_rejected_details_by_hash.update(dropped_details)
         selection_summary = {
             "pending": selection.total_pending,
             "selected": len(txs),
-            "rejected": dict(selection.rejected),
-            "rejectedByHash": dict(list(selection.rejected_by_hash.items())[:10]),
+            "rejected": dict(merged_rejected),
+            "rejectedByHash": dict(list(merged_rejected_by_hash.items())[:10]),
             "rejectedDetailsByHash": dict(
-                list(selection.rejected_details_by_hash.items())[:10]
+                list(merged_rejected_details_by_hash.items())[:10]
             ),
             "mempoolEnabled": True,
         }
-        if selection.rejected:
+        _maybe_log_mempool_debug(
+            phase="block_template",
+            pending_total=selection.total_pending,
+            candidate_count=len(pending_entries),
+            included_count=len(txs),
+            rejected=merged_rejected,
+            rejected_details_by_hash=merged_rejected_details_by_hash,
+        )
+        if merged_rejected:
             log.info(
                 "Block template mempool selection rejected candidates",
                 extra={
-                    "rejected": dict(selection.rejected),
+                    "rejected": dict(merged_rejected),
                     "rejected_by_hash_sample": dict(
-                        list(selection.rejected_by_hash.items())[:10]
+                        list(merged_rejected_by_hash.items())[:10]
                     ),
                 },
             )
