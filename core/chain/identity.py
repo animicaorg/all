@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import zlib
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Optional
+
+from core.utils.hash import sha3_256
 
 
 @dataclass(frozen=True)
@@ -36,11 +39,48 @@ def derive_fork_id(genesis_hash: bytes, *, explicit: Any = None) -> int:
     return int(fork_id)
 
 
-def consensus_id_from_genesis(genesis: dict[str, Any]) -> str:
+def _consensus_id_fingerprint(*, chain_id: int, genesis_hash: bytes) -> str:
+    payload = bytearray(b"animica-consensus-id-v1|")
+    payload.extend(f"chain_id:{int(chain_id)}|".encode())
+    payload.extend(b"genesis:")
+    payload.extend(bytes(genesis_hash))
+    try:
+        from core.network_params import compute_network_params_hash
+
+        payload.extend(b"|params:")
+        payload.extend(compute_network_params_hash(chain_id))
+    except Exception:
+        pass
+    repo_root = Path(__file__).resolve().parents[2]
+    extra_files = [
+        repo_root / "spec" / "params.yaml",
+        repo_root / "consensus" / "difficulty.py",
+    ]
+    for path in extra_files:
+        if path.exists():
+            payload.extend(b"|")
+            payload.extend(path.read_bytes())
+    return "consensus/" + sha3_256(bytes(payload)).hex()
+
+
+def consensus_id_from_runtime(*, chain_id: int, genesis_hash: bytes) -> str:
+    return _consensus_id_fingerprint(chain_id=chain_id, genesis_hash=genesis_hash)
+
+
+def consensus_id_from_genesis(
+    genesis: dict[str, Any],
+    *,
+    genesis_hash: Optional[bytes] = None,
+    chain_id: Optional[int] = None,
+) -> str:
     cons = genesis.get("consensus") or {}
     candidate = cons.get("consensusId") or cons.get("consensus_id") or cons.get("id")
     if candidate:
         return str(candidate)
+    if genesis_hash is not None and chain_id is not None:
+        return _consensus_id_fingerprint(
+            chain_id=int(chain_id), genesis_hash=bytes(genesis_hash)
+        )
     try:
         from consensus import version as consensus_version
 
@@ -64,4 +104,3 @@ def tx_signing_context(fork_id: int) -> bytes:
     if fid < 0 or fid > 0xFFFFFFFF:
         raise ValueError(f"fork_id out of range: {fid}")
     return b"fork_id:" + fid.to_bytes(4, "big", signed=False)
-

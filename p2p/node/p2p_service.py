@@ -897,6 +897,11 @@ class P2PService:
         self._sync_last_block_error_at: Optional[float] = None
         self._sync_last_block_error_peer: Optional[str] = None
         self._sync_block_error_summary: Dict[str, dict[str, Any]] = {}
+        self._sync_header_reject_log_at: dict[str, float] = {}
+        self._sync_header_reject_log_min_s = float(
+            os.environ.get("ANIMICA_P2P_HEADER_REJECT_LOG_MIN_S", "5.0") or 5.0
+        )
+        self._sync_pow_mismatch_votes: "OrderedDict[bytes, dict[str, Any]]" = OrderedDict()
         self._sync_fatal_error: Optional[str] = None
         self._sync_block_stalled_reason: Optional[str] = None
         self._sync_last_validated_height = 0
@@ -4526,7 +4531,6 @@ class P2PService:
                     summary["count"] = int(summary.get("count", 0)) + 1
                     summary["last_error"] = reject_reason
                     summary["last_at"] = time.time()
-                    self._set_block_backoff(peer, reason="bad_block", delay=60.0)
                     if self._is_db_write_error(reject_reason):
                         self._sync_block_stalled_reason = "db not writable"
                         self._sync_last_block_error = f"db not writable: {reject_reason}"
@@ -4542,14 +4546,24 @@ class P2PService:
                         },
                     )
                     if "pow target not met" in reject_reason.lower():
-                        self._penalize_peer(
-                            peer,
-                            "consensus_mismatch_pow",
-                            severity=1,
-                            points=0,
-                            nonfatal=True,
+                        corroborated = self._record_pow_mismatch(
+                            sync_block.hash, peer=peer
                         )
+                        self._set_block_backoff(
+                            peer, reason="consensus_mismatch_pow", delay=60.0
+                        )
+                        if sync_block.hash not in self._sync_block_queue_set:
+                            self._sync_block_queue.append(sync_block.hash)
+                            self._sync_block_queue_set.add(sync_block.hash)
+                        if corroborated:
+                            self._penalize_peer(
+                                peer,
+                                "consensus_mismatch_pow",
+                                severity=2,
+                                quarantine_s=300.0,
+                            )
                     else:
+                        self._set_block_backoff(peer, reason="bad_block", delay=60.0)
                         self._penalize_peer(
                             peer,
                             f"block_rejected:{reject_reason}",
@@ -5194,9 +5208,9 @@ class P2PService:
 
     def _process_headers(
         self, peer: _PeerState, headers: List[HeaderCompact]
-    ) -> tuple[List[bytes], Optional[str]]:
+    ) -> tuple[List[bytes], Optional[str], Dict[str, int]]:
         if not headers:
-            return [], None
+            return [], None, {}
         peer.empty_header_responses = 0
         local_height, local_hash_hex = self._local_head()
         local_hash: Optional[bytes] = None
@@ -5213,13 +5227,14 @@ class P2PService:
         anchor_hash = local_hash
         if self._should_enforce_checkpoint_anchor() and not self._peer_is_anchored(peer):
             first = self._header_from_compact(headers[0])
-            return self._note_not_anchored(
+            order, reason = self._note_not_anchored(
                 peer,
                 header=first,
                 anchor_height=anchor_height,
                 anchor_hash=anchor_hash,
                 reason="checkpoint_unverified",
             )
+            return order, reason, {"checkpoint_unverified": len(headers)}
         if headers and anchor_hash is not None:
             first = self._header_from_compact(headers[0])
             if first.height == anchor_height and first.hash == anchor_hash:
@@ -5233,40 +5248,52 @@ class P2PService:
                 )
                 headers = headers[1:]
                 if not headers:
-                    return [], None
+                    return [], None, {}
 
         contiguous: List[_SyncHeader] = []
         prev: Optional[_SyncHeader] = None
         seen_hashes: set[bytes] = set()
         expected_genesis = self._genesis_header_hash()
         expected_genesis_block = self._genesis_block_hash()
+        discard_reason_counts: Dict[str, int] = {}
+        abort_reason: Optional[str] = None
+        abort_index: Optional[int] = None
+        parent_ts: Optional[int] = None
 
         for idx, hc in enumerate(headers):
             header = self._header_from_compact(hc)
             if header.hash in seen_hashes:
+                discard_reason_counts["duplicate_headers"] = (
+                    discard_reason_counts.get("duplicate_headers", 0) + 1
+                )
                 continue
             seen_hashes.add(header.hash)
             if header.theta_micro < 0 or header.theta_micro > 10**12:
+                abort_reason = "header_theta_out_of_range"
+                abort_index = idx
                 self._penalize_peer(peer, "header_theta_out_of_range")
+                self._log_header_reject(peer, header, reason=abort_reason, parent_ts=parent_ts)
                 break
             if idx == 0:
                 if header.height == 0:
                     if header.hash != expected_genesis:
                         self._stats["p2p_peers_rejected_genesis_mismatch"] += 1
                         self._penalize_peer(peer, "genesis_mismatch", severity=2)
-                        return [], "genesis_mismatch"
+                        self._log_header_reject(peer, header, reason="genesis_mismatch")
+                        return [], "genesis_mismatch", {"genesis_mismatch": len(headers)}
                 else:
                     if anchor_hash is not None and header.height <= anchor_height:
                         if not (
                             header.height == anchor_height and header.hash == anchor_hash
                         ):
-                            return self._note_not_anchored(
+                            order, reason = self._note_not_anchored(
                                 peer,
                                 header=header,
                                 anchor_height=anchor_height,
                                 anchor_hash=anchor_hash,
                                 reason="anchor_mismatch",
                             )
+                            return order, reason, {"anchor_mismatch": len(headers)}
                     if (
                         anchor_hash is not None
                         and header.height == anchor_height + 1
@@ -5278,20 +5305,22 @@ class P2PService:
                         }:
                             pass
                         else:
-                            return self._note_not_anchored(
+                            order, reason = self._note_not_anchored(
                                 peer,
                                 header=header,
                                 anchor_height=anchor_height,
                                 anchor_hash=anchor_hash,
                                 reason="anchor_parent_mismatch",
                             )
+                            return order, reason, {"anchor_parent_mismatch": len(headers)}
                     if header.height == 1 and header.parent_hash not in {
                         expected_genesis,
                         expected_genesis_block,
                     }:
                         self._stats["p2p_peers_rejected_genesis_mismatch"] += 1
                         self._penalize_peer(peer, "genesis_mismatch", severity=2)
-                        return [], "genesis_mismatch"
+                        self._log_header_reject(peer, header, reason="genesis_mismatch")
+                        return [], "genesis_mismatch", {"genesis_mismatch": len(headers)}
                     if (
                         header.height == 1
                         and header.parent_hash
@@ -5307,13 +5336,14 @@ class P2PService:
                         and not self._has_header(header.parent_hash)
                         and header.parent_hash not in self._sync_headers
                     ):
-                        return self._note_not_anchored(
+                        order, reason = self._note_not_anchored(
                             peer,
                             header=header,
                             anchor_height=anchor_height,
                             anchor_hash=anchor_hash,
                             reason="parent_unknown",
                         )
+                        return order, reason, {"parent_unknown": len(headers)}
                     if header.height == 1 and header.parent_hash in {
                         expected_genesis,
                         expected_genesis_block,
@@ -5327,31 +5357,50 @@ class P2PService:
                         else:
                             parent_info = self._header_meta(header.parent_hash)
                             if parent_info is None:
-                                return self._note_not_anchored(
+                                order, reason = self._note_not_anchored(
                                     peer,
                                     header=header,
                                     anchor_height=anchor_height,
                                     anchor_hash=anchor_hash,
                                     reason="parent_meta_missing",
                                 )
+                                return order, reason, {"parent_meta_missing": len(headers)}
                             parent_height, parent_ts = parent_info
                     if header.height != parent_height + 1:
+                        abort_reason = "header_height_mismatch"
+                        abort_index = idx
                         self._penalize_peer(peer, "header_height_mismatch")
+                        self._log_header_reject(peer, header, reason=abort_reason, parent_ts=parent_ts)
                         break
                     if parent_ts and header.timestamp < parent_ts:
+                        abort_reason = "header_timestamp_regress"
+                        abort_index = idx
                         self._penalize_peer(peer, "header_timestamp_regress")
+                        self._log_header_reject(peer, header, reason=abort_reason, parent_ts=parent_ts)
                         break
             else:
                 if prev is None:
+                    abort_reason = "header_prev_missing"
+                    abort_index = idx
+                    self._log_header_reject(peer, header, reason=abort_reason)
                     break
                 if header.parent_hash != prev.hash:
+                    abort_reason = "header_parent_mismatch"
+                    abort_index = idx
                     self._penalize_peer(peer, "header_parent_mismatch")
+                    self._log_header_reject(peer, header, reason=abort_reason, parent_ts=prev.timestamp)
                     break
                 if header.height != prev.height + 1:
+                    abort_reason = "header_height_gap"
+                    abort_index = idx
                     self._penalize_peer(peer, "header_height_gap")
+                    self._log_header_reject(peer, header, reason=abort_reason, parent_ts=prev.timestamp)
                     break
                 if header.timestamp < prev.timestamp:
+                    abort_reason = "header_timestamp_regress"
+                    abort_index = idx
                     self._penalize_peer(peer, "header_timestamp_regress")
+                    self._log_header_reject(peer, header, reason=abort_reason, parent_ts=prev.timestamp)
                     break
 
             if header.hash not in self._sync_headers and not self._has_header(header.hash):
@@ -5360,22 +5409,29 @@ class P2PService:
                 contiguous.append(header)
             prev = header
 
+        if abort_reason is not None:
+            discard_reason_counts[abort_reason] = (
+                discard_reason_counts.get(abort_reason, 0) + 1
+            )
+            if abort_index is not None:
+                remaining = len(headers) - (abort_index + 1)
+                if remaining > 0:
+                    discard_reason_counts["skipped_after_reject"] = (
+                        discard_reason_counts.get("skipped_after_reject", 0) + remaining
+                    )
+
         if not contiguous:
             all_known = all(
                 self._has_header(bytes(h.hash))
                 or bytes(h.hash) in self._sync_headers
                 for h in headers
             )
-            self._sync_last_headers_accepted_count = 0
-            self._sync_last_headers_discarded_count = len(headers)
-            self._sync_last_headers_discard_reason_counts = {
+            if discard_reason_counts:
+                return [], "invalid_headers", discard_reason_counts
+            return [], "invalid_headers", {
                 ("duplicate_headers" if all_known else "invalid_headers"): len(headers)
             }
-            return [], "invalid_headers"
 
-        self._sync_last_headers_accepted_count = len(contiguous)
-        self._sync_last_headers_discarded_count = max(0, len(headers) - len(contiguous))
-        self._sync_last_headers_discard_reason_counts = {}
         self._sync_headers_accepted_total += len(contiguous)
         anchor_height = int((peer.hello or {}).get("head_height") or 0)
         anchor_hash = bytes((peer.hello or {}).get("head_hash") or b"")
@@ -5386,14 +5442,14 @@ class P2PService:
                     found_anchor = True
                     if h.hash != anchor_hash:
                         self._penalize_peer(peer, "header_anchor_mismatch", severity=2)
-                        return [], "invalid_headers"
+                        return [], "invalid_headers", {"header_anchor_mismatch": len(headers)}
                     break
             if (
                 not found_anchor
                 and contiguous[0].height <= anchor_height <= contiguous[-1].height
             ):
                 self._penalize_peer(peer, "header_anchor_missing", severity=2)
-                return [], "invalid_headers"
+                return [], "invalid_headers", {"header_anchor_missing": len(headers)}
 
         self._sync_last_header_at = time.time()
         self._sync_last_header_response_at = self._sync_last_header_at
@@ -5427,7 +5483,7 @@ class P2PService:
                 "Blocks queued from headers",
                 extra={"remote": peer.remote, "count": queued},
             )
-        return [h.hash for h in contiguous], None
+        return [h.hash for h in contiguous], None, discard_reason_counts
 
     async def _queue_block_requests(
         self, peer: _PeerState, hashes: List[bytes]
@@ -5686,9 +5742,10 @@ class P2PService:
                     if headers is None:
                         headers = await self._fetch_headers(peer)
                     if not headers:
-                        self._sync_last_headers_accepted_count = 0
-                        self._sync_last_headers_discarded_count = 0
-                        self._sync_last_headers_discard_reason_counts = {}
+                        if not saw_headers:
+                            self._sync_last_headers_accepted_count = 0
+                            self._sync_last_headers_discarded_count = 0
+                            self._sync_last_headers_discard_reason_counts = {}
                         if not saw_headers:
                             network_best_height = self._network_best_height()
                             empty_reason = self._empty_headers_reason(
@@ -5741,9 +5798,14 @@ class P2PService:
 
                     saw_headers = True
                     peer.empty_header_responses = 0
-                    order, header_error = self._process_headers(peer, headers)
+                    order, header_error, discard_reason_counts = self._process_headers(
+                        peer, headers
+                    )
                     accepted_count = len(order)
-                    discarded_count = max(0, len(headers) - accepted_count)
+                    if discard_reason_counts:
+                        discarded_count = sum(discard_reason_counts.values())
+                    else:
+                        discarded_count = max(0, len(headers) - accepted_count)
                     all_known = False
                     if not order and len(headers) > 0:
                         all_known = all(
@@ -5774,15 +5836,16 @@ class P2PService:
                         self._sync_last_header_error_at = None
                         self._sync_last_header_error_peer = None
 
-                    discard_reason_counts: dict[str, int] = {}
-                    if accepted_count == 0 and headers:
-                        discard_reason = (
-                            "duplicate_headers" if all_known else header_error
-                        )
-                        if discard_reason:
-                            discard_reason_counts[discard_reason] = len(headers)
-                    elif discarded_count > 0:
-                        discard_reason_counts["duplicate_headers"] = discarded_count
+                    if not discard_reason_counts:
+                        discard_reason_counts = {}
+                        if accepted_count == 0 and headers:
+                            discard_reason = (
+                                "duplicate_headers" if all_known else header_error
+                            )
+                            if discard_reason:
+                                discard_reason_counts[discard_reason] = len(headers)
+                        elif discarded_count > 0:
+                            discard_reason_counts["duplicate_headers"] = discarded_count
                     self._sync_last_headers_accepted_count = accepted_count
                     self._sync_last_headers_discarded_count = discarded_count
                     self._sync_last_headers_discard_reason_counts = discard_reason_counts
@@ -6454,6 +6517,7 @@ class P2PService:
         self._sync_block_queue.clear()
         self._sync_block_queue_set.clear()
         self._sync_block_queue_heights.clear()
+        self._sync_pow_mismatch_votes.clear()
         self._sync_block_peer_cursor = 0
         for peer in self._peers.values():
             peer.pending_headers = None
@@ -6533,7 +6597,14 @@ class P2PService:
                 consensus_id = getattr(self.deps._sync, "consensus_id", None)
             if consensus_id:
                 return str(consensus_id)
-        return "poies/unknown"
+        try:
+            from core.chain.identity import consensus_id_from_runtime
+
+            return consensus_id_from_runtime(
+                chain_id=int(self.chain_id), genesis_hash=self._genesis_hash()
+            )
+        except Exception:
+            return "poies/unknown"
 
     def _protocol_version(self) -> str:
         if self.deps is not None:
@@ -6676,6 +6747,51 @@ class P2PService:
             "last_height": int(last.height),
             "last_hash": bytes(last.hash).hex(),
         }
+
+    def _log_header_reject(
+        self,
+        peer: _PeerState,
+        header: _SyncHeader,
+        *,
+        reason: str,
+        parent_ts: Optional[int] = None,
+    ) -> None:
+        now = time.time()
+        key = f"{peer.remote}:{reason}"
+        last = self._sync_header_reject_log_at.get(key, 0.0)
+        if now - last < self._sync_header_reject_log_min_s:
+            return
+        self._sync_header_reject_log_at[key] = now
+        target = None
+        pow_hash_int = None
+        try:
+            from core.chain.block_import import _theta_to_target
+
+            target = _theta_to_target(int(header.theta_micro))
+        except Exception:
+            target = None
+        try:
+            pow_hash_int = int.from_bytes(header.hash, "big")
+        except Exception:
+            pow_hash_int = None
+        adaptive_pow = int(self.chain_id) == 1 and int(header.height) >= 1
+        log.warning(
+            "Header rejected",
+            extra={
+                "remote": peer.remote,
+                "reason": reason,
+                "height": header.height,
+                "hash": header.hash.hex(),
+                "parent": header.parent_hash.hex(),
+                "theta_micro": header.theta_micro,
+                "target": target,
+                "target_hex": hex(int(target)) if target is not None else None,
+                "pow_hash_int": pow_hash_int,
+                "timestamp": header.timestamp,
+                "parent_timestamp": parent_ts,
+                "adaptive_pow": adaptive_pow,
+            },
+        )
 
     def _track_duplicate_header_range(
         self, peer: _PeerState, headers: list[HeaderCompact]
@@ -7089,6 +7205,7 @@ class P2PService:
         self._sync_last_block_error_at = None
         self._sync_last_block_error_peer = None
         self._sync_block_error_summary.clear()
+        self._sync_pow_mismatch_votes.clear()
         log.info("Reset sync state", extra={"reason": reason})
 
     def _reset_chain_to_genesis(self, *, reason: str) -> bool:
@@ -7629,6 +7746,8 @@ class P2PService:
                 header_hash_hex = None
                 theta_micro = None
                 target_hex = None
+                pow_hash_int = None
+                claimed_bits = None
                 peer_id = None
                 if origin_remote:
                     origin_peer = self._peers.get(origin_remote)
@@ -7642,6 +7761,14 @@ class P2PService:
                         theta_micro = int(getattr(blk.header, "thetaMicro", 0))
                     except Exception:
                         theta_micro = None
+                    try:
+                        pow_hash_int = int.from_bytes(blk.header.hash(), "big")
+                    except Exception:
+                        pow_hash_int = None
+                    try:
+                        claimed_bits = getattr(blk.header, "bits", None)
+                    except Exception:
+                        claimed_bits = None
                     if theta_micro is not None:
                         try:
                             from core.chain.block_import import _theta_to_target
@@ -7657,6 +7784,9 @@ class P2PService:
                         "header_hash": header_hash_hex,
                         "theta_micro": theta_micro,
                         "computed_target": target_hex,
+                        "claimed_bits": claimed_bits,
+                        "pow_hash_int": pow_hash_int,
+                        "pow_rule": "header_hash<=target",
                         "reason": reason_str,
                     },
                 )
@@ -7859,3 +7989,22 @@ class P2PService:
                 self._sync_fatal_error = str(reason)
             return ok, reason
         return bool(res), None
+
+    def _record_pow_mismatch(
+        self, header_hash: Optional[bytes], *, peer: Optional[_PeerState]
+    ) -> bool:
+        if header_hash is None:
+            return False
+        now = time.time()
+        entry = self._sync_pow_mismatch_votes.get(header_hash)
+        if entry is None:
+            entry = {"peers": set(), "last_at": 0.0}
+            self._sync_pow_mismatch_votes[header_hash] = entry
+        peers = entry["peers"]
+        if peer is not None:
+            peers.add(peer.remote)
+        entry["last_at"] = now
+        self._sync_pow_mismatch_votes.move_to_end(header_hash, last=True)
+        while len(self._sync_pow_mismatch_votes) > 1024:
+            self._sync_pow_mismatch_votes.popitem(last=False)
+        return len(peers) >= 2

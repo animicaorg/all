@@ -476,7 +476,9 @@ def compute_genesis_identity(
     fork_id = derive_fork_id(
         bytes(header.hash()), explicit=genesis.get("forkId") or genesis.get("fork_id")
     )
-    consensus_id = consensus_id_from_genesis(genesis)
+    consensus_id = consensus_id_from_genesis(
+        genesis, genesis_hash=bytes(header.hash()), chain_id=int(genesis.get("chainId", 0))
+    )
     protocol_version = protocol_version_from_runtime()
     return GenesisIdentity(
         genesis_block_hash=bytes(header.hash()),

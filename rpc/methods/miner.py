@@ -942,10 +942,9 @@ def _compute_state_root(state_db: Any) -> bytes:
 
 
 def _bits_to_target(bits_hex: str) -> int:
-    bits = int(bits_hex, 16)
-    exponent = bits >> 24
-    mantissa = bits & 0xFFFFFF
-    return mantissa * (1 << (8 * (exponent - 3)))
+    from core.utils.pow import compact_bits_to_target
+
+    return compact_bits_to_target(int(bits_hex, 16))
 
 
 def _theta_to_target(theta_micro: int) -> int:
@@ -2019,18 +2018,24 @@ def _mine_once(payout_address: bytes | None = None, threads: int = 1) -> tuple[b
     # Cap iterations to avoid infinite loops in tests or misconfigured environments
     DEFAULT_MAX_NONCE = 100_000
     max_nonce = int(os.getenv("ANIMICA_MINER_MAX_NONCE", str(DEFAULT_MAX_NONCE)))
-    
+
     reward_amount = 0
-    
+
     # Helper function to search a range of nonces in a worker thread
     # Pass header_template, target, and stop_event as parameters for thread safety
-    def _search_nonce_range(start: int, end: int, template: Header, target_val: int, stop_event: threading.Event) -> tuple[int, bytes, int] | None:
+    def _search_nonce_range(
+        start: int,
+        end: int,
+        template: Header,
+        target_val: int,
+        stop_event: threading.Event,
+    ) -> tuple[int, bytes, int] | None:
         """Search for valid nonce in the given range. Returns (nonce, hash_bytes, hash_int) if found, None otherwise."""
         for nonce_val in range(start, end):
             # Check if another thread found a valid nonce
             if stop_event.is_set():
                 return None
-            
+
             # Update header with new nonce
             try:
                 header = replace(template, nonce=nonce_val)
@@ -2054,63 +2059,69 @@ def _mine_once(payout_address: bytes | None = None, threads: int = 1) -> tuple[b
                     nonce=nonce_val,
                     extra=template.extra,
                 )
-            
+
             # Compute block hash
             block_hash_bytes = header.hash()
             block_hash_int = int.from_bytes(block_hash_bytes, "big")
-            
+
             # Check if hash meets target
             if block_hash_int <= target_val:
                 # Signal other threads to stop
                 stop_event.set()
                 return (nonce_val, block_hash_bytes, block_hash_int)
-        
+
         return None
-    
+
+    def _mine_for_header(
+        template: Header,
+        target_val: int,
+        *,
+        start_nonce: int = 0,
+    ) -> tuple[int, bytes, int] | None:
+        stop_event = threading.Event()
+        if threads <= 1:
+            return _search_nonce_range(
+                start_nonce, start_nonce + max_nonce, template, target_val, stop_event
+            )
+
+        effective_threads = min(threads, max(1, max_nonce))
+        chunk_size = max(1, max_nonce // effective_threads)
+        ranges = []
+        for i in range(effective_threads):
+            start = start_nonce + (i * chunk_size)
+            end = start_nonce + max_nonce if i == effective_threads - 1 else min(
+                start + chunk_size, start_nonce + max_nonce
+            )
+            if start < start_nonce + max_nonce:
+                ranges.append((start, end))
+
+        log.info(
+            f"Mining with {effective_threads} threads (requested {threads}) across "
+            f"{len(ranges)} nonce ranges (chunk_size={chunk_size})"
+        )
+
+        with ThreadPoolExecutor(max_workers=effective_threads) as executor:
+            futures = {
+                executor.submit(
+                    _search_nonce_range, start, end, template, target_val, stop_event
+                ): (start, end)
+                for start, end in ranges
+            }
+            for future in as_completed(futures):
+                result = future.result()
+                if result is not None:
+                    return result
+        return None
+
     # Perform nonce search (single-threaded or multi-threaded based on threads parameter)
     valid_nonce = None
     block_hash_bytes = None
     block_hash_int = None
-    
-    # Create stop event for early termination across threads
-    stop_event = threading.Event()
-    
-    if threads <= 1:
-        # Single-threaded search
-        result = _search_nonce_range(0, max_nonce, header_template, target, stop_event)
-        if result:
-            valid_nonce, block_hash_bytes, block_hash_int = result
-    else:
-        # Multi-threaded search: divide nonce space among threads
-        # Limit effective threads to avoid creating empty ranges
-        effective_threads = min(threads, max_nonce)
-        
-        # Divide nonce space into chunks for each thread
-        # Ensure last thread handles any remainder nonces
-        chunk_size = max(1, max_nonce // effective_threads)
-        ranges = []
-        for i in range(effective_threads):
-            start = i * chunk_size
-            # Last thread gets all remaining nonces to handle remainder
-            end = max_nonce if i == effective_threads - 1 else min((i + 1) * chunk_size, max_nonce)
-            if start < max_nonce:
-                ranges.append((start, end))
-        
-        log.info(f"Mining with {effective_threads} threads (requested {threads}) across {len(ranges)} nonce ranges (chunk_size={chunk_size})")
-        
-        # Submit work to thread pool and wait for first valid nonce
-        with ThreadPoolExecutor(max_workers=effective_threads) as executor:
-            futures = {executor.submit(_search_nonce_range, start, end, header_template, target, stop_event): (start, end) for start, end in ranges}
-            
-            # Wait for first successful result
-            for future in as_completed(futures):
-                result = future.result()
-                if result is not None:
-                    valid_nonce, block_hash_bytes, block_hash_int = result
-                    # stop_event is already set by the worker that found the nonce
-                    # This signals other workers to stop early
-                    break
-    
+
+    result = _mine_for_header(header_template, target, start_nonce=0)
+    if result:
+        valid_nonce, block_hash_bytes, block_hash_int = result
+
     # Check if we found a valid nonce
     if valid_nonce is not None and block_hash_bytes is not None and block_hash_int is not None:
         try:
@@ -2232,6 +2243,68 @@ def _mine_once(payout_address: bytes | None = None, threads: int = 1) -> tuple[b
                 nonce=header.nonce,
                 extra=header.extra,
             )
+
+        # Re-check PoW after header roots are finalized (state/receipts updates change hash).
+        final_hash_bytes = header.hash()
+        final_hash_int = int.from_bytes(final_hash_bytes, "big")
+        if final_hash_int > target:
+            log.warning(
+                "Mined nonce invalid after header root update; reminting",
+                extra={
+                    "height": header.height,
+                    "old_hash": block_hash_bytes.hex() if block_hash_bytes else None,
+                    "new_hash": final_hash_bytes.hex(),
+                    "target": hex(target),
+                },
+            )
+            retry_windows = int(
+                os.getenv("ANIMICA_MINER_POW_RETRY_WINDOWS", "4") or 4
+            )
+            start_nonce = 0
+            remine_result = None
+            for _ in range(max(1, retry_windows)):
+                remine_result = _mine_for_header(
+                    header, target, start_nonce=start_nonce
+                )
+                if remine_result is not None:
+                    break
+                start_nonce += max_nonce
+            if remine_result is None:
+                log.error(
+                    "Failed to remine block after header root update",
+                    extra={"height": header.height, "target": hex(target)},
+                )
+                _cleanup_tracked_txs(txs)
+                return (False, 0)
+            valid_nonce, block_hash_bytes, block_hash_int = remine_result
+            try:
+                header = replace(header, nonce=valid_nonce)
+            except Exception:
+                header = Header(
+                    v=header.v,
+                    chainId=header.chainId,
+                    height=header.height,
+                    parentHash=header.parentHash,
+                    timestamp=header.timestamp,
+                    stateRoot=header.stateRoot,
+                    txsRoot=header.txsRoot,
+                    receiptsRoot=header.receiptsRoot,
+                    proofsRoot=header.proofsRoot,
+                    daRoot=header.daRoot,
+                    mixSeed=header.mixSeed,
+                    poiesPolicyRoot=header.poiesPolicyRoot,
+                    pqAlgPolicyRoot=header.pqAlgPolicyRoot,
+                    thetaMicro=header.thetaMicro,
+                    nonce=valid_nonce,
+                    extra=header.extra,
+                )
+            final_hash_bytes = header.hash()
+            final_hash_int = int.from_bytes(final_hash_bytes, "big")
+            block_hash_bytes = final_hash_bytes
+            block_hash_int = final_hash_int
+        else:
+            block_hash_bytes = final_hash_bytes
+            block_hash_int = final_hash_int
 
         # Build block with updated header and receipts
         # NOTE: Skip verification (verify=False) because txsRoot was computed from canonical
