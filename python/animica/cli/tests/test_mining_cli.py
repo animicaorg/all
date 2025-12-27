@@ -158,12 +158,35 @@ def test_mine_blocks_success(monkeypatch: Any) -> None:
         
         def request(self, method: str, params: Any):
             assert isinstance(params, dict)
-            assert params.get("include_mempool") is True
-            return {
-                "mined": 1,
-                "height": 103,
-                "mempool": {"pending": 0, "included": 0, "rejected": {}, "rejectedByHash": {}},
-            }
+            if method == "miner.getBlockTemplate":
+                assert params.get("include_mempool") is True
+                return {
+                    "enabled": True,
+                    "header": {
+                        "v": 1,
+                        "chainId": 1337,
+                        "height": 103,
+                        "parentHash": "0x" + "00" * 32,
+                        "timestamp": 0,
+                        "stateRoot": "0x" + "00" * 32,
+                        "txsRoot": "0x" + "00" * 32,
+                        "receiptsRoot": "0x" + "00" * 32,
+                        "proofsRoot": "0x" + "00" * 32,
+                        "daRoot": "0x" + "00" * 32,
+                        "mixSeed": "0x" + "00" * 32,
+                        "poiesPolicyRoot": "0x" + "00" * 32,
+                        "pqAlgPolicyRoot": "0x" + "00" * 32,
+                        "thetaMicro": 1,
+                        "nonce": 0,
+                    },
+                    "target": hex((1 << 256) - 1),
+                    "coinbase": {"amount": 0},
+                    "txs": [],
+                    "mempool": {"pending": 0, "selected": 0, "rejected": {}, "rejectedByHash": {}},
+                }
+            if method == "miner.submitBlock":
+                return {"accepted": True}
+            raise AssertionError(f"Unexpected method {method}")
     
     mock_module = Mock()
     mock_module.RpcClient = MockRpcClient
@@ -284,15 +307,36 @@ def test_mine_blocks_with_wallet_label(monkeypatch: Any, tmp_path: Path) -> None
             pass
         
         def request(self, method: str, params: Any):
-            # Verify the resolved address is used
-            if isinstance(params, dict):
-                assert params.get("address") == test_address
+            if method == "miner.getBlockTemplate":
+                assert params.get("payout_address") == test_address
                 assert params.get("include_mempool") is True
-            return {
-                "mined": 1,
-                "height": 1,
-                "mempool": {"pending": 0, "included": 0, "rejected": {}, "rejectedByHash": {}},
-            }
+                return {
+                    "enabled": True,
+                    "header": {
+                        "v": 1,
+                        "chainId": 1337,
+                        "height": 1,
+                        "parentHash": "0x" + "00" * 32,
+                        "timestamp": 0,
+                        "stateRoot": "0x" + "00" * 32,
+                        "txsRoot": "0x" + "00" * 32,
+                        "receiptsRoot": "0x" + "00" * 32,
+                        "proofsRoot": "0x" + "00" * 32,
+                        "daRoot": "0x" + "00" * 32,
+                        "mixSeed": "0x" + "00" * 32,
+                        "poiesPolicyRoot": "0x" + "00" * 32,
+                        "pqAlgPolicyRoot": "0x" + "00" * 32,
+                        "thetaMicro": 1,
+                        "nonce": 0,
+                    },
+                    "target": hex((1 << 256) - 1),
+                    "coinbase": {"amount": 0},
+                    "txs": [],
+                    "mempool": {"pending": 0, "selected": 0, "rejected": {}, "rejectedByHash": {}},
+                }
+            if method == "miner.submitBlock":
+                return {"accepted": True}
+            raise AssertionError(f"Unexpected method {method}")
     
     mock_module = Mock()
     mock_module.RpcClient = MockRpcClient
@@ -336,7 +380,34 @@ def test_mine_blocks_enforces_2s_delay(monkeypatch: Any) -> None:
             pass
         
         def request(self, method: str, params: Any):
-            return {"mined": 1, "height": 1}
+            if method == "miner.getBlockTemplate":
+                return {
+                    "enabled": True,
+                    "header": {
+                        "v": 1,
+                        "chainId": 1337,
+                        "height": 1,
+                        "parentHash": "0x" + "00" * 32,
+                        "timestamp": 0,
+                        "stateRoot": "0x" + "00" * 32,
+                        "txsRoot": "0x" + "00" * 32,
+                        "receiptsRoot": "0x" + "00" * 32,
+                        "proofsRoot": "0x" + "00" * 32,
+                        "daRoot": "0x" + "00" * 32,
+                        "mixSeed": "0x" + "00" * 32,
+                        "poiesPolicyRoot": "0x" + "00" * 32,
+                        "pqAlgPolicyRoot": "0x" + "00" * 32,
+                        "thetaMicro": 1,
+                        "nonce": 0,
+                    },
+                    "target": hex((1 << 256) - 1),
+                    "coinbase": {"amount": 0},
+                    "txs": [],
+                    "mempool": {"pending": 0, "selected": 0, "rejected": {}, "rejectedByHash": {}},
+                }
+            if method == "miner.submitBlock":
+                return {"accepted": True}
+            return {}
     
     mock_module = Mock()
     mock_module.RpcClient = MockRpcClient
@@ -385,16 +456,37 @@ def _create_mock_rpc_client_with_device_tracking() -> tuple[type, dict[str, Any]
             pass
         
         def request(self, method: str, params: Any):
-            # Track whether device parameter was sent (it shouldn't be)
             if isinstance(params, dict):
                 params_tracker["params"] = params
                 params_tracker["has_device"] = "device" in params
-            return {
-                "mined": 1,
-                "height": 1,
-                "totalReward": 5000000000,
-                "mempool": {"pending": 0, "included": 0, "rejected": {}, "rejectedByHash": {}},
-            }
+            if method == "miner.getBlockTemplate":
+                return {
+                    "enabled": True,
+                    "header": {
+                        "v": 1,
+                        "chainId": 1337,
+                        "height": 1,
+                        "parentHash": "0x" + "00" * 32,
+                        "timestamp": 0,
+                        "stateRoot": "0x" + "00" * 32,
+                        "txsRoot": "0x" + "00" * 32,
+                        "receiptsRoot": "0x" + "00" * 32,
+                        "proofsRoot": "0x" + "00" * 32,
+                        "daRoot": "0x" + "00" * 32,
+                        "mixSeed": "0x" + "00" * 32,
+                        "poiesPolicyRoot": "0x" + "00" * 32,
+                        "pqAlgPolicyRoot": "0x" + "00" * 32,
+                        "thetaMicro": 1,
+                        "nonce": 0,
+                    },
+                    "target": hex((1 << 256) - 1),
+                    "coinbase": {"amount": 0},
+                    "txs": [],
+                    "mempool": {"pending": 0, "selected": 0, "rejected": {}, "rejectedByHash": {}},
+                }
+            if method == "miner.submitBlock":
+                return {"accepted": True}
+            return {}
     
     return MockRpcClient, params_tracker
 
@@ -734,7 +826,34 @@ def test_mine_blocks_with_no_timeout(monkeypatch: Any) -> None:
             pass
         
         def request(self, method: str, params: Any):
-            return {"mined": 1, "height": 1, "totalReward": 5000000000}
+            if method == "miner.getBlockTemplate":
+                return {
+                    "enabled": True,
+                    "header": {
+                        "v": 1,
+                        "chainId": 1337,
+                        "height": 1,
+                        "parentHash": "0x" + "00" * 32,
+                        "timestamp": 0,
+                        "stateRoot": "0x" + "00" * 32,
+                        "txsRoot": "0x" + "00" * 32,
+                        "receiptsRoot": "0x" + "00" * 32,
+                        "proofsRoot": "0x" + "00" * 32,
+                        "daRoot": "0x" + "00" * 32,
+                        "mixSeed": "0x" + "00" * 32,
+                        "poiesPolicyRoot": "0x" + "00" * 32,
+                        "pqAlgPolicyRoot": "0x" + "00" * 32,
+                        "thetaMicro": 1,
+                        "nonce": 0,
+                    },
+                    "target": hex((1 << 256) - 1),
+                    "coinbase": {"amount": 0},
+                    "txs": [],
+                    "mempool": {"pending": 0, "selected": 0, "rejected": {}, "rejectedByHash": {}},
+                }
+            if method == "miner.submitBlock":
+                return {"accepted": True}
+            return {}
     
     monkeypatch.setattr(mining, "_validate_bech32_address", lambda x: True if x == test_address else False)
     
@@ -780,7 +899,34 @@ def test_mine_blocks_without_no_timeout_uses_default(monkeypatch: Any) -> None:
             pass
         
         def request(self, method: str, params: Any):
-            return {"mined": 1, "height": 1, "totalReward": 5000000000}
+            if method == "miner.getBlockTemplate":
+                return {
+                    "enabled": True,
+                    "header": {
+                        "v": 1,
+                        "chainId": 1337,
+                        "height": 1,
+                        "parentHash": "0x" + "00" * 32,
+                        "timestamp": 0,
+                        "stateRoot": "0x" + "00" * 32,
+                        "txsRoot": "0x" + "00" * 32,
+                        "receiptsRoot": "0x" + "00" * 32,
+                        "proofsRoot": "0x" + "00" * 32,
+                        "daRoot": "0x" + "00" * 32,
+                        "mixSeed": "0x" + "00" * 32,
+                        "poiesPolicyRoot": "0x" + "00" * 32,
+                        "pqAlgPolicyRoot": "0x" + "00" * 32,
+                        "thetaMicro": 1,
+                        "nonce": 0,
+                    },
+                    "target": hex((1 << 256) - 1),
+                    "coinbase": {"amount": 0},
+                    "txs": [],
+                    "mempool": {"pending": 0, "selected": 0, "rejected": {}, "rejectedByHash": {}},
+                }
+            if method == "miner.submitBlock":
+                return {"accepted": True}
+            return {}
     
     monkeypatch.setattr(mining, "_validate_bech32_address", lambda x: True if x == test_address else False)
     
