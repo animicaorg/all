@@ -1038,7 +1038,10 @@ def mine_blocks(
                         break
 
                     mempool_info = template.get("mempool", {}) if isinstance(template, dict) else {}
-                    pending_before = pending_before or int(mempool_info.get("pending", 0) or 0)
+                    pending_current = int(
+                        mempool_info.get("pending", mempool_info.get("mempoolTotal", 0) or 0)
+                    )
+                    pending_before = pending_before or pending_current
                     selected = int(mempool_info.get("selected", 0) or 0)
                     total_included += selected
                     rejected = mempool_info.get("rejected", {})
@@ -1052,6 +1055,25 @@ def mine_blocks(
                                 rejected_by_hash_sample[tx_hash] = str(reason)
                             if len(rejected_by_hash_sample) >= 10:
                                 break
+                    if include_mempool:
+                        rejected_total = (
+                            sum(int(value) for value in rejected.values())
+                            if isinstance(rejected, dict)
+                            else 0
+                        )
+                        top_reasons = ""
+                        if isinstance(rejected, dict) and rejected:
+                            top_reasons = ", ".join(
+                                f"{reason}={count}"
+                                for reason, count in sorted(rejected.items())
+                            )
+                        else:
+                            top_reasons = "none"
+                        typer.echo(
+                            "  Template: mempool_total="
+                            f"{pending_current} included={selected} rejected={rejected_total} "
+                            f"(top reasons: {top_reasons})"
+                        )
 
                     header_view = template.get("header", {})
                     header = _header_from_template(header_view)
