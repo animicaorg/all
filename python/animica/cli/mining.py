@@ -979,7 +979,7 @@ def mine_blocks(
                     return client.request(
                         "miner.getBlockTemplate",
                         {
-                            "payout_address": resolved_address,
+                            "address": resolved_address,
                             "include_mempool": include_mempool,
                         },
                     )
@@ -990,7 +990,7 @@ def mine_blocks(
                     template = proxy.sync_forward_request(
                         "miner.getBlockTemplate",
                         {
-                            "payout_address": resolved_address,
+                            "address": resolved_address,
                             "include_mempool": include_mempool,
                         },
                         fallback_handler=get_template_via_local,
