@@ -597,6 +597,11 @@ def mine_blocks(
         "--no-timeout",
         help="Disable RPC timeout (wait indefinitely). Useful for high-load or slow network conditions.",
     ),
+    include_mempool: bool = typer.Option(
+        True,
+        "--include-mempool/--no-include-mempool",
+        help="Include pending mempool transactions when mining (default: include).",
+    ),
 ) -> None:
     """
     Mine blocks with proof-of-work to a specified payout address.
@@ -681,6 +686,9 @@ def mine_blocks(
         
         # Mine without timeout (useful for high-load scenarios)
         animica miner mine-blocks --address premine --count 10 --no-timeout
+
+        # Mine payout-only blocks (skip mempool)
+        animica miner mine-blocks --address premine --count 3 --no-include-mempool
     
     Environment variables:
         ANIMICA_RPC_URL             - Node RPC endpoint (default: http://127.0.0.1:8545/rpc)
@@ -891,6 +899,10 @@ def mine_blocks(
             total_mined = 0
             final_height = 0
             total_reward = 0
+            total_included = 0
+            pending_before = 0
+            aggregated_rejected: dict[str, int] = {}
+            rejected_by_hash_sample: dict[str, str] = {}
             
             # Mine blocks one at a time with delay between them
             for i in range(count):
@@ -903,7 +915,14 @@ def mine_blocks(
                     if verbose:
                         typer.echo(f"  [Fallback] Mining via local RPC at {url}")
                     # Note: device is CLI-only parameter, not sent to RPC
-                    return client.request("miner.mine", {"count": 1, "address": resolved_address})
+                    return client.request(
+                        "miner.mine",
+                        {
+                            "count": 1,
+                            "address": resolved_address,
+                            "include_mempool": include_mempool,
+                        },
+                    )
                 
                 try:
                     if proxy:
@@ -913,13 +932,24 @@ def mine_blocks(
                         # Note: device is CLI-only parameter for local device selection, not sent to RPC
                         result = proxy.sync_forward_request(
                             "miner.mine",
-                            {"count": 1, "address": resolved_address},
+                            {
+                                "count": 1,
+                                "address": resolved_address,
+                                "include_mempool": include_mempool,
+                            },
                             fallback_handler=mine_via_local,
                         )
                     else:
                         # Direct mining to specified RPC
                         # Note: device is CLI-only parameter, not sent to RPC
-                        result = client.request("miner.mine", {"count": 1, "address": resolved_address})
+                        result = client.request(
+                            "miner.mine",
+                            {
+                                "count": 1,
+                                "address": resolved_address,
+                                "include_mempool": include_mempool,
+                            },
+                        )
                         
                 except Exception as e:
                     # If the RPC rejects the address parameter (older node), try without it
@@ -933,25 +963,55 @@ def mine_blocks(
                         is_param_error = True
                     
                     if is_param_error:
-                        typer.secho(
-                            "Warning: Node does not support payout address selection (older version). "
-                            "Mining to node's default miner address.",
-                            fg=typer.colors.YELLOW,
-                        )
-                        if proxy:
-                            result = proxy.sync_forward_request(
-                                "miner.mine",
-                                [1],
-                                fallback_handler=lambda: client.request("miner.mine", [1]),
+                        # First retry without include_mempool (older nodes may not accept it)
+                        try:
+                            retry_params = {"count": 1, "address": resolved_address}
+                            if proxy:
+                                result = proxy.sync_forward_request(
+                                    "miner.mine",
+                                    retry_params,
+                                    fallback_handler=lambda: client.request(
+                                        "miner.mine", retry_params
+                                    ),
+                                )
+                            else:
+                                result = client.request("miner.mine", retry_params)
+                        except Exception:
+                            typer.secho(
+                                "Warning: Node does not support payout address selection (older version). "
+                                "Mining to node's default miner address.",
+                                fg=typer.colors.YELLOW,
                             )
-                        else:
-                            result = client.request("miner.mine", [1])
+                            if proxy:
+                                result = proxy.sync_forward_request(
+                                    "miner.mine",
+                                    [1],
+                                    fallback_handler=lambda: client.request("miner.mine", [1]),
+                                )
+                            else:
+                                result = client.request("miner.mine", [1])
                     else:
                         raise
                 
                 mined = result.get("mined", 0)
                 final_height = result.get("height", 0)
                 block_reward = result.get("totalReward", 0)
+                mempool_info = result.get("mempool", {}) if isinstance(result, dict) else {}
+                if mempool_info:
+                    if not pending_before:
+                        pending_before = int(mempool_info.get("pending", 0) or 0)
+                    total_included += int(mempool_info.get("included", 0) or 0)
+                    rejected = mempool_info.get("rejected", {})
+                    if isinstance(rejected, dict):
+                        for reason, count in rejected.items():
+                            aggregated_rejected[reason] = aggregated_rejected.get(reason, 0) + int(count)
+                    rejected_by_hash = mempool_info.get("rejectedByHash", {})
+                    if isinstance(rejected_by_hash, dict):
+                        for tx_hash, reason in rejected_by_hash.items():
+                            if tx_hash not in rejected_by_hash_sample:
+                                rejected_by_hash_sample[tx_hash] = str(reason)
+                            if len(rejected_by_hash_sample) >= 10:
+                                break
                 
                 if mined > 0:
                     total_mined += mined
@@ -1018,6 +1078,22 @@ def mine_blocks(
                 fg=typer.colors.GREEN,
                 bold=True,
             )
+
+            typer.echo(f"Included mempool txs: {total_included}")
+            if include_mempool and total_included == 0 and pending_before > 0:
+                typer.secho(
+                    f"Note: {pending_before} pending txs were excluded from block assembly.",
+                    fg=typer.colors.YELLOW,
+                )
+                if aggregated_rejected:
+                    summary_parts = [
+                        f"{reason}={count}" for reason, count in sorted(aggregated_rejected.items())
+                    ]
+                    typer.echo(f"Exclusion summary: {', '.join(summary_parts)}")
+                if rejected_by_hash_sample:
+                    typer.echo("Sample exclusions:")
+                    for tx_hash, reason in list(rejected_by_hash_sample.items())[:5]:
+                        typer.echo(f"  {tx_hash}: {reason}")
     
     except typer.Exit:
         raise
