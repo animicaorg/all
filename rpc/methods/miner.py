@@ -22,6 +22,7 @@ from core.utils.merkle import merkle_root
 from mining.adapters.core_chain import CoreChainAdapter
 import p2p
 from rpc import deps
+from rpc import errors as rpc_errors
 from rpc.methods import method
 from mempool.select import PendingTxEntry, select_for_block
 
@@ -3028,29 +3029,51 @@ def miner_mine(
 
 
 @method("miner.getBlockTemplate", desc="Return a block template with mempool selection")
-def miner_get_block_template(params: Any | None = None) -> Dict[str, Any]:
-    if params is None:
-        payload: dict[str, Any] | None = None
-    elif isinstance(params, dict):
-        payload = params.get("payload") if len(params) == 1 and "payload" in params else params
-    elif isinstance(params, (list, tuple)):
-        params_list = list(params)
-        if len(params_list) == 0:
-            payload = None
-        elif len(params_list) == 1 and isinstance(params_list[0], dict):
-            payload = params_list[0]
-        else:
-            raise ValueError("expected a single params object")
-    else:
-        raise ValueError("params must be an object")
+def miner_get_block_template(*args: Any, **kwargs: Any) -> Dict[str, Any]:
+    if args and kwargs:
+        raise rpc_errors.InvalidParams("expected either positional or named params")
 
+    payload: dict[str, Any] | None = None
     include_mempool_flag = True
     payout_address = None
-    if payload:
+
+    if args:
+        if len(args) == 1 and isinstance(args[0], dict):
+            payload = args[0]
+        else:
+            if len(args) > 2:
+                raise rpc_errors.InvalidParams("expected at most 2 positional arguments")
+            payout_address = args[0]
+            if len(args) > 1:
+                include_mempool_flag = bool(args[1])
+    elif kwargs:
+        if "payload" in kwargs:
+            if len(kwargs) != 1:
+                raise rpc_errors.InvalidParams("payload must be the only named argument")
+            payload = kwargs["payload"]
+        else:
+            payload = kwargs
+
+    if payload is not None:
+        if not isinstance(payload, dict):
+            raise rpc_errors.InvalidParams("params must be an object")
         include_mempool_flag = bool(
-            payload.get("include_mempool", payload.get("includeMempool", True))
+            payload.get("include_mempool", payload.get("includeMempool", include_mempool_flag))
         )
-        payout_address = payload.get("payout_address") or payload.get("address")
+        payout_address = payload.get("address") or payload.get("payout_address") or payout_address
+        unknown = set(payload.keys()) - {
+            "address",
+            "payout_address",
+            "include_mempool",
+            "includeMempool",
+        }
+        if unknown:
+            raise rpc_errors.InvalidParams(
+                f"unexpected params: {', '.join(sorted(unknown))}"
+            )
+
+    if not payout_address:
+        raise rpc_errors.InvalidParams("address is required")
 
     allowed, reason = _mining_gate()
     if not allowed:

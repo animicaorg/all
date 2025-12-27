@@ -308,7 +308,7 @@ def test_mine_blocks_with_wallet_label(monkeypatch: Any, tmp_path: Path) -> None
         
         def request(self, method: str, params: Any):
             if method == "miner.getBlockTemplate":
-                assert params.get("payout_address") == test_address
+                assert params.get("address") == test_address
                 assert params.get("include_mempool") is True
                 return {
                     "enabled": True,

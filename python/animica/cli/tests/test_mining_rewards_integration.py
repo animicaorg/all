@@ -216,8 +216,8 @@ def test_mine_blocks_with_label_uses_resolved_address(monkeypatch: Any, wallet_w
     rpc_call = rpc_calls[0]
     assert rpc_call["method"] == "miner.getBlockTemplate"
     assert isinstance(rpc_call["params"], dict)
-    assert rpc_call["params"]["payout_address"] == test_address, \
-        f"RPC should use resolved address {test_address}, got {rpc_call['params']['payout_address']}"
+    assert rpc_call["params"]["address"] == test_address, \
+        f"RPC should use resolved address {test_address}, got {rpc_call['params']['address']}"
 
 
 def test_mine_blocks_with_raw_bech32_address(monkeypatch: Any):
@@ -270,8 +270,8 @@ def test_mine_blocks_with_raw_bech32_address(monkeypatch: Any):
     rpc_call = rpc_calls[0]
     assert rpc_call["method"] == "miner.getBlockTemplate"
     assert isinstance(rpc_call["params"], dict)
-    assert rpc_call["params"]["payout_address"] == test_address, \
-        f"RPC should use raw address {test_address}, got {rpc_call['params']['payout_address']}"
+    assert rpc_call["params"]["address"] == test_address, \
+        f"RPC should use raw address {test_address}, got {rpc_call['params']['address']}"
 
 
 def test_mine_blocks_help_text_mentions_label_and_address():
