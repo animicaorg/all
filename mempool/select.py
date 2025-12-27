@@ -168,13 +168,24 @@ def select_for_block(
             _bump_reject(result, hash_hex, "decode_failed")
             continue
 
+        sender, nonce = _tx_sender_nonce(tx)
+        if (sender is None or nonce is None) and decode is not None and entry.raw:
+            try:
+                decoded = decode(entry.raw)
+                if isinstance(decoded, tuple):
+                    tx = decoded[0]
+                else:
+                    tx = decoded
+            except Exception:
+                tx = tx
+            sender, nonce = _tx_sender_nonce(tx)
+
         if chain_id is not None:
             tx_chain_id = _tx_chain_id(tx)
             if tx_chain_id is not None and int(tx_chain_id) != int(chain_id):
                 _bump_reject(result, hash_hex, "chain_id_mismatch")
                 continue
 
-        sender, nonce = _tx_sender_nonce(tx)
         if sender is None:
             _bump_reject(result, hash_hex, "missing_sender")
             continue

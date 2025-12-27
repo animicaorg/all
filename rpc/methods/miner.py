@@ -1811,6 +1811,13 @@ def _mine_once(payout_address: bytes | None = None, threads: int = 1) -> tuple[b
                     hash_hex=entry.hash_hex, raw=entry.raw, tx=tx_normalized
                 )
             )
+        decode_fn = None
+        try:
+            from rpc.methods import tx as tx_methods
+
+            decode_fn = tx_methods._decode_tx  # type: ignore[attr-defined]
+        except Exception:
+            decode_fn = None
         selection = select_for_block(
             head_state={"chain_id": ctx.cfg.chain_id},
             limits={
@@ -1819,6 +1826,7 @@ def _mine_once(payout_address: bytes | None = None, threads: int = 1) -> tuple[b
                 "max_txs": 1000,
             },
             pending=normalized_entries,
+            decode=decode_fn,
             state_db=getattr(ctx, "state_db", None),
         )
         txs: list[Tx] = list(selection.selected)
@@ -2174,10 +2182,13 @@ def _mine_once(payout_address: bytes | None = None, threads: int = 1) -> tuple[b
             )
         
         # Build block environment for transaction execution
+        coinbase_addr = (
+            payout_address if payout_address is not None else _get_miner_address()
+        )
         block_env = BlockEnv(
             height=header.height,
             timestamp=header.timestamp,
-            coinbase=payout_address if payout_address is not None else ZERO32,
+            coinbase=coinbase_addr,
             chain_id=header.chainId,
         )
         
