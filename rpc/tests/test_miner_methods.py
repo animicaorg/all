@@ -42,6 +42,42 @@ def test_get_work_accepts_explicit_empty_params():
     assert job["jobId"] in miner_methods._JOB_CACHE
 
 
+def test_get_block_template_accepts_address_param(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("ANIMICA_MINING_FORCE", "1")
+    client, _, _ = new_test_client()
+
+    res = rpc_call(client, "miner.getBlockTemplate", {"address": "anim1test"})
+
+    assert res["result"]["coinbase"]["address"] == "anim1test"
+
+
+def test_get_block_template_accepts_payout_address_alias(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("ANIMICA_MINING_FORCE", "1")
+    client, _, _ = new_test_client()
+
+    res = rpc_call(client, "miner.getBlockTemplate", {"payout_address": "anim1alias"})
+
+    assert res["result"]["coinbase"]["address"] == "anim1alias"
+
+
+def test_get_block_template_accepts_positional_address(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("ANIMICA_MINING_FORCE", "1")
+    client, _, _ = new_test_client()
+
+    res = rpc_call(client, "miner.getBlockTemplate", ["anim1positional"])
+
+    assert res["result"]["coinbase"]["address"] == "anim1positional"
+
+
+def test_get_block_template_requires_address():
+    client, _, _ = new_test_client()
+
+    res = rpc_call(client, "miner.getBlockTemplate", {}, expect_error=True)
+
+    assert res["error"]["code"] == -32602
+    assert res["error"]["data"]["detail"] == "address is required"
+
+
 def test_jsonrpc_endpoint_accepts_empty_params_via_post_body():
     """Mimic the curl call with params: [] hitting the /rpc endpoint directly."""
 
