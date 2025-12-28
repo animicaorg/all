@@ -1466,14 +1466,40 @@ def _tx_send_raw_transaction(rawTx: str) -> str:
         # Admit to mempool (preferred) or pending pool fallback
         if mempool_service is not None and tx_obj is not None:
             try:
-                mempool_service.submit(tx=tx_obj, raw=raw, tx_hash_hex=tx_hash_hex)
                 log.info(
-                    "tx.sendRawTransaction: tx admitted to mempool, hash=%s",
+                    "tx.sendRawTransaction: mempool_service available, path=service.submit, hash=%s",
+                    tx_hash_hex,
+                )
+                mempool_service.submit(tx=tx_obj, raw=raw, tx_hash_hex=tx_hash_hex)
+                
+                # CRITICAL: Verify tx is actually in mempool before returning success
+                if not mempool_service.has_hash(tx_hash_hex):
+                    log.error(
+                        "tx.sendRawTransaction: VERIFICATION FAILED - tx not in mempool after submit(), hash=%s",
+                        tx_hash_hex,
+                    )
+                    raise rpc_errors.InternalError(
+                        "Transaction submitted but not in mempool",
+                        data={
+                            "tx_hash": tx_hash_hex,
+                            "reason": "verification_failed",
+                            "hint": "pool.add() may have silently failed",
+                        },
+                    )
+                
+                log.info(
+                    "tx.sendRawTransaction: VERIFIED tx in mempool, hash=%s",
                     tx_hash_hex,
                 )
             except Exception as exc:
                 raise rpc_errors.to_error(exc) from exc
         else:
+            log.info(
+                "tx.sendRawTransaction: mempool_service unavailable (service=%s, tx_obj=%s), path=pending_put, hash=%s",
+                "None" if mempool_service is None else "available",
+                "None" if tx_obj is None else "available",
+                tx_hash_hex,
+            )
             _pending_put(tx_hash_hex, raw)
             log.info(
                 "tx.sendRawTransaction: tx admitted to pending pool, hash=%s",

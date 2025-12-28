@@ -156,7 +156,18 @@ class MempoolService:
         tx_hash_hex = _normalize_hash_hex(tx_hash_hex)
         tx_hash_bytes = _normalize_hash_bytes(tx_hash_hex)
 
+        log.info(
+            "MempoolService.submit: entry, tx_hash=%s, local=%s, pool_size=%d",
+            tx_hash_hex,
+            local,
+            len(self.pool),
+        )
+
         if self.has_hash(tx_hash_hex):
+            log.info(
+                "MempoolService.submit: duplicate (already in pool), tx_hash=%s",
+                tx_hash_hex,
+            )
             return tx_hash_hex
 
         chain_id = _tx_chain_id(tx)
@@ -231,7 +242,31 @@ class MempoolService:
             meta=meta,
             fee=fee,
         )
+        
+        log.info(
+            "MempoolService.submit: calling pool.add(), tx_hash=%s, sender=%s, nonce=%d",
+            tx_hash_hex,
+            meta.sender,
+            meta.nonce,
+        )
         self.pool.add(pool_tx, meta, is_local=local)
+        
+        # Verify tx was actually added to pool
+        if not self.has_hash(tx_hash_hex):
+            log.error(
+                "MempoolService.submit: CRITICAL - pool.add() succeeded but tx not in pool, tx_hash=%s",
+                tx_hash_hex,
+            )
+            raise AdmissionError(
+                "pool.add succeeded but tx not in pool",
+                context={"tx_hash": tx_hash_hex},
+            )
+        
+        log.info(
+            "MempoolService.submit: SUCCESS - tx added and verified in pool, tx_hash=%s, pool_size=%d",
+            tx_hash_hex,
+            len(self.pool),
+        )
         return tx_hash_hex
 
     def snapshot(self, *, limit: int = 1000) -> MempoolSnapshot:
