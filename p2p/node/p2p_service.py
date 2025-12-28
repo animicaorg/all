@@ -5662,23 +5662,6 @@ class P2PService:
             }
 
         self._sync_headers_accepted_total += len(contiguous)
-        anchor_height = int((peer.hello or {}).get("head_height") or 0)
-        anchor_hash = bytes((peer.hello or {}).get("head_hash") or b"")
-        if anchor_height and anchor_hash:
-            found_anchor = False
-            for h in contiguous:
-                if h.height == anchor_height:
-                    found_anchor = True
-                    if h.hash != anchor_hash:
-                        self._penalize_peer(peer, "header_anchor_mismatch", severity=2)
-                        return [], "invalid_headers", {"header_anchor_mismatch": len(headers)}
-                    break
-            if (
-                not found_anchor
-                and contiguous[0].height <= anchor_height <= contiguous[-1].height
-            ):
-                self._penalize_peer(peer, "header_anchor_missing", severity=2)
-                return [], "invalid_headers", {"header_anchor_missing": len(headers)}
 
         self._sync_last_header_at = time.time()
         self._sync_last_header_response_at = self._sync_last_header_at
