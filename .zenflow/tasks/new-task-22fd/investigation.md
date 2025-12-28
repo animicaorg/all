@@ -132,3 +132,53 @@ This mirrors the pattern used in `_collect_mempool_entries` and other functions 
 
 - No new dependencies required
 - Fix is self-contained within `rpc/methods/miner.py`
+
+---
+
+## Implementation Notes
+
+### Changes Made
+
+**1. Fixed the NameError in `rpc/methods/miner.py`** (line 3382)
+
+Added the missing variable definition:
+```python
+ctx = _ctx()
+adapter = _adapter()
+mempool_service = getattr(ctx, "mempool", None)  # ✅ Added this line
+```
+
+This fix resolves the NameError at:
+- Line 3404: `"source": "service" if mempool_service is not None else "adapter"`
+- Line 3410: `if include_mempool_flag and not pending_entries and mempool_service is None:`
+
+**2. Added regression tests in `rpc/tests/test_miner_methods.py`**
+
+- `test_get_block_template_with_mempool_enabled()`: Tests that `miner.getBlockTemplate` with `include_mempool=True` (default) does not raise NameError and returns valid template fields
+- `test_get_block_template_with_mempool_disabled()`: Tests that `miner.getBlockTemplate` with `include_mempool=False` works correctly
+
+### Root Cause Summary
+
+The variable `mempool_service` was used on lines 3404 and 3410 but was never defined in the `miner_get_block_template` function. It was defined inside the helper function `_collect_mempool_entries` but as a local variable that was not returned or made accessible to the caller.
+
+### Fix Validation
+
+The fix follows the same pattern used in the `_collect_mempool_entries` helper function and is consistent with other functions in the codebase that need access to the mempool service.
+
+**Expected behavior after fix**:
+- `animica miner mine-blocks --count 1 ...` will succeed when node is synced
+- No NameError will occur
+- Proper logging of mempool source (service vs adapter)
+- Fallback logic for pending transactions will work correctly
+
+### Testing Notes
+
+Tests were added to `rpc/tests/test_miner_methods.py`:
+- Tests verify no NameError is raised
+- Tests verify correct response structure with expected fields
+- Tests cover both `include_mempool=True` and `include_mempool=False` cases
+
+The tests require a properly configured Python environment with pytest installed. To run tests:
+```bash
+pytest -c tests/pytest.ini rpc/tests/test_miner_methods.py::test_get_block_template_with_mempool_enabled -v
+```
