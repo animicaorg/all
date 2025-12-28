@@ -174,8 +174,8 @@ def test_genesis_anchor_allows_sync_from_height_zero(tmp_path: Path) -> None:
         headers = node_a._headers_after_locator(locator, limit=64)
         if not headers:
             break
-        hashes, reason = node_b._process_headers(peer, headers)
-        assert reason is None
+        hashes, reason, discard = node_b._process_headers(peer, headers)
+        assert reason is None, f"Expected None, got {reason} with discard={discard}"
         assert hashes
 
     assert node_b._sync_best_header is not None
