@@ -432,6 +432,45 @@ def send(
         else:
             raise
 
+    # Verify tx is actually in mempool
+    tx_in_mempool = False
+    try:
+        pending = _rpc(rpc, "mempool.getPending", [])
+        if isinstance(pending, list) and tx_hash in pending:
+            tx_in_mempool = True
+    except RpcError as e:
+        # mempool.getPending may not be available, try mempool.explain
+        if verbose:
+            console.print(f"[dim]mempool.getPending not available (code={e.code}), trying mempool.explain...[/dim]")
+        try:
+            explain = _rpc(rpc, "mempool.explain", [tx_hash])
+            if isinstance(explain, dict):
+                status = explain.get("status")
+                if status != "not_found":
+                    tx_in_mempool = True
+                elif verbose:
+                    console.print(f"[yellow]mempool.explain status: {status}[/yellow]")
+        except RpcError as e2:
+            if verbose:
+                console.print(f"[dim]mempool.explain also failed (code={e2.code})[/dim]")
+
+    if not tx_in_mempool:
+        console.print("\n[bold red]=== ERROR: Transaction Not in Mempool ===[/bold red]")
+        console.print(f"TX hash: {tx_hash}")
+        console.print("")
+        console.print("The RPC accepted the transaction but it is NOT in the mempool.")
+        console.print("Possible reasons:")
+        console.print("  • Nonce gap (tx nonce is too high)")
+        console.print("  • Fee too low (below minimum gas price)")
+        console.print("  • Gas limit too high (exceeds block limit)")
+        console.print("  • Mempool full (tx evicted)")
+        console.print("")
+        console.print("The transaction will NOT be mined. Please check:")
+        console.print(f"  animica tx get {tx_hash}")
+        console.print(f"  animica state get-nonce {from_addr}")
+        console.print(f"  animica mempool list")
+        raise typer.Exit(code=1)
+
     console.print("\n[bold green]=== Transaction Sent ===[/bold green]")
     console.print({"tx_hash": tx_hash})
     if verbose:
