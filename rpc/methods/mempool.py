@@ -8,6 +8,7 @@ found" errors for operators who need basic visibility during bring-up.
 
 from __future__ import annotations
 
+import logging
 import time
 from dataclasses import dataclass
 from typing import Iterable
@@ -15,6 +16,8 @@ from typing import Iterable
 from rpc.methods import method
 from rpc import deps
 from mempool.select import PendingTxEntry, select_for_block
+
+log = logging.getLogger(__name__)
 
 try:  # pragma: no cover - optional dependency used for shared pending cache
     from rpc.methods import tx as tx_methods
@@ -45,24 +48,48 @@ def _iter_pending() -> Iterable[tuple[str, bytes, float | None]]:
     mempool_service = getattr(ctx, "mempool", None) if ctx is not None else None
     if mempool_service is not None:
         snapshot = mempool_service.snapshot(limit=1000)
+        log.info(
+            "mempool._iter_pending: using ctx.mempool, count=%d",
+            len(snapshot.entries),
+        )
         return (
             (entry.hash_hex, entry.raw, entry.received_at)
             for entry in snapshot.entries
         )
     if tx_methods is None:
+        log.info("mempool._iter_pending: tx_methods is None, returning empty")
         return []
     # Prefer real pool if exposed
     pend = getattr(tx_methods, "_PEND", None)
     if pend is not None:
         if hasattr(pend, "list_raw_with_ts"):
-            return ((h, raw, ts) for h, raw, ts in pend.list_raw_with_ts())  # type: ignore[attr-defined]
+            result = list(pend.list_raw_with_ts())  # type: ignore[attr-defined]
+            log.info(
+                "mempool._iter_pending: using _PEND.list_raw_with_ts(), count=%d",
+                len(result),
+            )
+            return ((h, raw, ts) for h, raw, ts in result)
         if hasattr(pend, "items"):
-            return ((h, raw, None) for h, raw in pend.items())  # type: ignore[attr-defined]
+            result = list(pend.items())  # type: ignore[attr-defined]
+            log.info(
+                "mempool._iter_pending: using _PEND.items(), count=%d",
+                len(result),
+            )
+            return ((h, raw, None) for h, raw in result)
         if hasattr(pend, "list_raw"):
-            return ((h, raw, None) for h, raw in pend.list_raw())  # type: ignore[attr-defined]
+            result = list(pend.list_raw())  # type: ignore[attr-defined]
+            log.info(
+                "mempool._iter_pending: using _PEND.list_raw(), count=%d",
+                len(result),
+            )
+            return ((h, raw, None) for h, raw in result)
     # Fallback to in-process dicts
     cache = getattr(tx_methods, "_FALLBACK_PENDING", {}) or {}
     ts_cache = getattr(tx_methods, "_FALLBACK_PENDING_TS", {}) or {}
+    log.info(
+        "mempool._iter_pending: using _FALLBACK_PENDING dict, count=%d",
+        len(cache),
+    )
     return ((h, raw, ts_cache.get(h)) for h, raw in cache.items())
 
 
