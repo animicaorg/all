@@ -3379,6 +3379,7 @@ def miner_get_block_template(*args: Any, **kwargs: Any) -> Dict[str, Any]:
 
     ctx = _ctx()
     adapter = _adapter()
+    mempool_service = getattr(ctx, "mempool", None)
     pending_entries: list[PendingTxEntry] = []
     pending_raw_by_hash: dict[str, bytes] = {}
     selection_summary: dict[str, Any] = {
