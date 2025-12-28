@@ -1,5 +1,3 @@
-"""Mining-related JSON-RPC methods used by the Stratum pool."""
-
 from __future__ import annotations
 
 import asyncio
@@ -2028,11 +2026,10 @@ def _mine_once(
     allowed, reason = _mining_gate()
     if not allowed:
         log.warning("Mining disabled", extra={"reason": reason})
-        return (False, 0)
+        return (False, 0, _mining_disabled_payload(reason))
 
     ctx = _ctx()
     adapter = _adapter()
-    mempool_service = getattr(ctx, "mempool", None)
     mempool_service = getattr(ctx, "mempool", None)
     pending_entries: list[PendingTxEntry] = []
     pending_raw_by_hash: dict[str, bytes] = {}
@@ -2298,7 +2295,6 @@ def _mine_once(
                 parent_header = None
 
     parent_hash_bytes = _bytes32(parent_hash_val or ZERO32)
-    start_head_hash_bytes = parent_hash_bytes
     start_head_hash_bytes = parent_hash_bytes
     if parent_header is None:
         # Build a minimal synthetic parent header so hashes/roots have sane defaults
@@ -2586,7 +2582,7 @@ def _mine_once(
                 },
             )
             _cleanup_tracked_txs(txs)
-            return (False, 0)
+            return (False, 0, selection_summary)
         # Found a valid block! Now execute txs and generate receipts before persisting.
         # Import Receipt, ReceiptStatus, Log, and BlockEnv at block level (once per mined block)
         from core.types.receipt import Receipt, ReceiptStatus, Log
@@ -2720,7 +2716,7 @@ def _mine_once(
                     extra={"height": header.height, "target": hex(target)},
                 )
                 _cleanup_tracked_txs(txs)
-                return (False, 0)
+                return (False, 0, selection_summary)
             valid_nonce, block_hash_bytes, block_hash_int = remine_result
             try:
                 header = replace(header, nonce=valid_nonce)
@@ -3150,7 +3146,7 @@ def miner_submit_work(*args: Any, **payload: Any) -> Dict[str, Any]:
 
     # Record the new head locally for lightweight test chains.
     try:
-        header_obj = job["template"].header  # type: ignore[index]
+        header_obj = job["job"].header  # type: ignore[index]
         header_view = asdict(header_obj)
     except Exception:
         header_obj = None
