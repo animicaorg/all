@@ -327,3 +327,46 @@ def test_miner_mine_with_zero_transactions():
     assert "totalReward" in result
     assert "rewards" in result
     assert len(result["rewards"]) == 1
+
+
+def test_get_block_template_with_mempool_enabled(monkeypatch: pytest.MonkeyPatch):
+    """
+    Regression test for NameError when mempool_service is referenced.
+    
+    Verifies that miner.getBlockTemplate with include_mempool=True does not
+    raise NameError when accessing mempool_service variable.
+    """
+    monkeypatch.setenv("ANIMICA_MINING_FORCE", "1")
+    client, _, _ = new_test_client()
+    payout_address = MAINNET_PREMINE_DISTRIBUTION[0][0]
+
+    res = rpc_call(
+        client,
+        "miner.getBlockTemplate",
+        {"address": payout_address, "include_mempool": True},
+    )
+
+    assert res["result"] is not None
+    assert "templateId" in res["result"]
+    assert "header" in res["result"]
+    assert "txs" in res["result"]
+    assert res["result"]["coinbase"]["address"] == payout_address
+
+
+def test_get_block_template_with_mempool_disabled(monkeypatch: pytest.MonkeyPatch):
+    """
+    Test that miner.getBlockTemplate works with include_mempool=False.
+    """
+    monkeypatch.setenv("ANIMICA_MINING_FORCE", "1")
+    client, _, _ = new_test_client()
+    payout_address = MAINNET_PREMINE_DISTRIBUTION[0][0]
+
+    res = rpc_call(
+        client,
+        "miner.getBlockTemplate",
+        {"address": payout_address, "include_mempool": False},
+    )
+
+    assert res["result"] is not None
+    assert "templateId" in res["result"]
+    assert "header" in res["result"]
