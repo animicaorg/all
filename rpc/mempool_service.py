@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import logging
+import os
 import time
 from dataclasses import dataclass
 from typing import Any, Iterable, Optional
 
 from core.utils.hash import sha3_256
+from core.utils.tx import normalize_tx_bytes
 from mempool.config import MempoolConfig, load_config as load_mempool_config
 from mempool.errors import AdmissionError, FeeTooLow, NonceGap
 from mempool.pool import Pool, PoolConfig
@@ -157,6 +159,34 @@ class MempoolService:
         self.min_gas_price_wei = int(min_gas_price_wei)
         self.state_db = state_db
         self.tx_index = tx_index
+        self._rejection_ttl_s = int(
+            os.getenv("ANIMICA_MEMPOOL_REJECTION_TTL_S", "300") or 300
+        )
+        self._last_rejections: dict[str, dict[str, Any]] = {}
+
+    def _record_rejection(
+        self, tx_hash_hex: str, reason: str, details: dict[str, Any] | None = None
+    ) -> None:
+        tx_hash_hex = _normalize_hash_hex(tx_hash_hex)
+        self._last_rejections[tx_hash_hex] = {
+            "reason": reason,
+            "details": details or {},
+            "ts": time.time(),
+        }
+        self._prune_rejections()
+
+    def _prune_rejections(self) -> None:
+        if not self._last_rejections:
+            return
+        cutoff = time.time() - float(self._rejection_ttl_s)
+        expired = [k for k, v in self._last_rejections.items() if v.get("ts", 0) < cutoff]
+        for k in expired:
+            self._last_rejections.pop(k, None)
+
+    def get_rejection(self, tx_hash_hex: str) -> dict[str, Any] | None:
+        tx_hash_hex = _normalize_hash_hex(tx_hash_hex)
+        self._prune_rejections()
+        return self._last_rejections.get(tx_hash_hex)
 
     @classmethod
     def create(
@@ -198,10 +228,65 @@ class MempoolService:
         tx_hash_hex: str | None = None,
         local: bool = True,
     ) -> str:
+        try:
+            raw_bytes = normalize_tx_bytes(raw)
+        except Exception as exc:
+            tx_hash_hex = tx_hash_hex or "0x" + sha3_256(bytes(raw)).hex()
+            self._record_rejection(
+                tx_hash_hex,
+                "decode_error",
+                {"step": "normalize_raw", "error": str(exc)},
+            )
+            raise AdmissionError(
+                "invalid raw tx bytes",
+                context={"tx_hash": tx_hash_hex, "error": str(exc)},
+            ) from exc
+
         if tx_hash_hex is None:
-            tx_hash_hex = "0x" + sha3_256(raw).hex()
+            tx_hash_hex = "0x" + sha3_256(raw_bytes).hex()
         tx_hash_hex = _normalize_hash_hex(tx_hash_hex)
         tx_hash_bytes = _normalize_hash_bytes(tx_hash_hex)
+        expected_hash = "0x" + sha3_256(raw_bytes).hex()
+        if tx_hash_hex != expected_hash:
+            self._record_rejection(
+                tx_hash_hex,
+                "hash_mismatch",
+                {"expected": expected_hash, "got": tx_hash_hex},
+            )
+            raise AdmissionError(
+                "tx hash mismatch for raw bytes",
+                context={
+                    "tx_hash": tx_hash_hex,
+                    "expected": expected_hash,
+                },
+            )
+
+        if isinstance(tx, dict):
+            try:
+                raw_from_dict = normalize_tx_bytes(tx)
+            except Exception as exc:
+                self._record_rejection(
+                    tx_hash_hex,
+                    "decode_error",
+                    {"step": "normalize_envelope", "error": str(exc)},
+                )
+                raise AdmissionError(
+                    "tx envelope missing canonical raw bytes",
+                    context={"tx_hash": tx_hash_hex, "error": str(exc)},
+                ) from exc
+            if raw_from_dict != raw_bytes:
+                self._record_rejection(
+                    tx_hash_hex,
+                    "raw_mismatch",
+                    {
+                        "expected_hash": expected_hash,
+                        "dict_hash": tx_hash_hex,
+                    },
+                )
+                raise AdmissionError(
+                    "raw bytes mismatch between envelope and admission",
+                    context={"tx_hash": tx_hash_hex},
+                )
 
         log.info(
             "MempoolService.submit: entry, tx_hash=%s, local=%s, pool_size=%d",
@@ -219,6 +304,11 @@ class MempoolService:
 
         chain_id = _tx_chain_id(tx)
         if chain_id is not None and chain_id != self.chain_id:
+            self._record_rejection(
+                tx_hash_hex,
+                "chain_id_mismatch",
+                {"expected": self.chain_id, "got": chain_id},
+            )
             raise AdmissionError(
                 f"chain_id mismatch: tx={chain_id}, node={self.chain_id}",
                 context={"tx_hash": tx_hash_hex, "chain_id": chain_id},
@@ -227,6 +317,11 @@ class MempoolService:
         sender = _sender_bytes(tx)
         nonce = _tx_nonce(tx)
         if sender is None or nonce is None:
+            self._record_rejection(
+                tx_hash_hex,
+                "missing_sender_or_nonce",
+                {"sender": _sender_hex(sender), "nonce": nonce},
+            )
             raise AdmissionError(
                 "missing sender or nonce",
                 context={"tx_hash": tx_hash_hex},
@@ -239,6 +334,11 @@ class MempoolService:
                 log.debug("mempool nonce check failed; skipping", exc_info=exc)
             else:
                 if nonce < expected:
+                    self._record_rejection(
+                        tx_hash_hex,
+                        "nonce_too_low",
+                        {"expected": expected, "got": nonce},
+                    )
                     raise AdmissionError(
                         f"nonce too low: expected {expected}, got {nonce}",
                         context={
@@ -249,6 +349,11 @@ class MempoolService:
                         },
                     )
                 if nonce > expected:
+                    self._record_rejection(
+                        tx_hash_hex,
+                        "nonce_gap",
+                        {"expected": expected, "got": nonce},
+                    )
                     raise NonceGap(
                         expected_nonce=expected,
                         got_nonce=nonce,
@@ -258,6 +363,11 @@ class MempoolService:
 
         gas_limit = _tx_gas_limit(tx)
         if gas_limit <= 0:
+            self._record_rejection(
+                tx_hash_hex,
+                "invalid_gas_limit",
+                {"gas_limit": gas_limit},
+            )
             raise AdmissionError(
                 "gas_limit must be > 0",
                 context={"tx_hash": tx_hash_hex},
@@ -266,6 +376,11 @@ class MempoolService:
         fee = EffectiveFee.from_tx(tx)
         offered = int(fee.effective_gas_price(None))
         if self.min_gas_price_wei and offered < self.min_gas_price_wei:
+            self._record_rejection(
+                tx_hash_hex,
+                "fee_too_low",
+                {"offered": offered, "min_required": self.min_gas_price_wei},
+            )
             raise FeeTooLow(
                 offered_gas_price_wei=offered,
                 min_required_wei=self.min_gas_price_wei,
@@ -277,7 +392,7 @@ class MempoolService:
             sender=_sender_hex(sender),
             nonce=nonce,
             gas_limit=gas_limit,
-            size_bytes=len(raw),
+            size_bytes=len(raw_bytes),
             first_seen=time.time(),
             local=local,
             effective_fee_wei=offered,
@@ -285,7 +400,7 @@ class MempoolService:
         pool_tx = PoolTx(
             tx=tx,
             tx_hash=tx_hash_bytes,
-            raw=raw,
+            raw=raw_bytes,
             meta=meta,
             fee=fee,
         )
@@ -296,13 +411,26 @@ class MempoolService:
             meta.sender,
             meta.nonce,
         )
-        self.pool.add(pool_tx, meta, is_local=local)
+        try:
+            self.pool.add(pool_tx, meta, is_local=local)
+        except Exception as exc:
+            self._record_rejection(
+                tx_hash_hex,
+                "pool_reject",
+                {"error": str(exc)},
+            )
+            raise
         
         # Verify tx was actually added to pool
         if not self.has_hash(tx_hash_hex):
             log.error(
                 "MempoolService.submit: CRITICAL - pool.add() succeeded but tx not in pool, tx_hash=%s",
                 tx_hash_hex,
+            )
+            self._record_rejection(
+                tx_hash_hex,
+                "pool_missing",
+                {"tx_hash": tx_hash_hex},
             )
             raise AdmissionError(
                 "pool.add succeeded but tx not in pool",
@@ -384,6 +512,20 @@ class MempoolService:
                 break
 
         return MempoolSnapshot(entries=entries, raw_by_hash=raw_by_hash, total=total)
+
+    def get_raw(self, tx_hash_hex: str) -> bytes | None:
+        try:
+            tx_hash_bytes = _normalize_hash_bytes(tx_hash_hex)
+        except Exception:
+            return None
+        entry = self.pool.index.get(tx_hash_bytes)
+        if entry is None:
+            return None
+        tx_obj = entry.tx
+        raw = getattr(tx_obj, "raw", None)
+        if isinstance(raw, (bytes, bytearray)):
+            return bytes(raw)
+        return None
 
     def list_pending(self, *, limit: int = 1000) -> list[str]:
         snapshot = self.snapshot(limit=limit)

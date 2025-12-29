@@ -256,6 +256,12 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         default=False,
         help="disable RPC timeout (wait indefinitely). Useful for high-load or slow network conditions.",
     )
+    mine_blocks.add_argument(
+        "--allow-offline-mining",
+        action="store_true",
+        default=False,
+        help="allow mining on mainnet without outbound peers or full sync",
+    )
 
     return p
 
@@ -389,13 +395,14 @@ async def _run_mine_blocks(args: argparse.Namespace, log: logging.Logger) -> int
     timeout_msg = "no timeout" if args.no_timeout else "30.0s timeout"
     
     log.info(
-        "Mining %d block(s) with payout to address %s via RPC %s (threads=%d, retry_delay=%.1fs, %s)",
+        "Mining %d block(s) with payout to address %s via RPC %s (threads=%d, retry_delay=%.1fs, %s, allow_offline=%s)",
         args.count,
         args.address,
         args.rpc_url,
         args.threads,
         args.retry_delay,
         timeout_msg,
+        args.allow_offline_mining,
     )
 
     # JSON-RPC error code constant for invalid params (JSON-RPC 2.0 spec)
@@ -421,7 +428,8 @@ async def _run_mine_blocks(args: argparse.Namespace, log: logging.Logger) -> int
                     result = client.request("miner.mine", {
                         "count": args.count,
                         "address": args.address,
-                        "threads": args.threads
+                        "threads": args.threads,
+                        "allow_offline_mining": bool(args.allow_offline_mining),
                     })
                 except Exception as e:
                     # If the RPC rejects params (older node), try with just count and address
@@ -440,7 +448,14 @@ async def _run_mine_blocks(args: argparse.Namespace, log: logging.Logger) -> int
                     if is_param_error:
                         # Try without threads parameter (node doesn't support it yet)
                         try:
-                            result = client.request("miner.mine", {"count": args.count, "address": args.address})
+                            result = client.request(
+                                "miner.mine",
+                                {
+                                    "count": args.count,
+                                    "address": args.address,
+                                    "allow_offline_mining": bool(args.allow_offline_mining),
+                                },
+                            )
                         except Exception as e2:
                             # Still failing, try legacy format without address
                             is_param_error2 = False
