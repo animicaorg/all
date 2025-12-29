@@ -233,6 +233,49 @@ curl -X POST http://localhost:8545/rpc \
   -d '{"jsonrpc":"2.0","method":"sync.getStatus","id":1}'
 ```
 
+### Sync Phase Machine + Stall Criteria
+
+The sync worker moves through these phases based on local head, best headers, block queue, and
+in-flight requests:
+
+```
+IDLE -> HEADERS -> BLOCKS -> VERIFYING -> SYNCED
+                  ^              |
+                  |              v
+                STALLED <---------
+```
+
+**Stall criteria (blocks stalled)** only applies when all three conditions are true:
+1. We have requested blocks recently (`last_block_request_at` set),
+2. We still need a specific block (`next_block_needed_height/hash` known),
+3. No valid block responses have been imported within `stall_timeout_s`.
+
+Duplicate headers and `at_tip` responses are treated as progress signals. They keep the sync loop
+alive, increment `headers_seen_total`, and reset stall timers without penalizing peers.
+
+**Before/after example** (expected `animica sync status` output):
+
+```
+# Before (stuck)
+phase: HEADERS
+headers_accepted_total: 0
+headers_seen_total: 0
+best_header_height: 0
+best_block_height: 0
+active_peer_for_blocks: None
+synchronized: False
+
+# After (healthy progression)
+phase: HEADERS -> BLOCKS -> SYNCED
+headers_accepted_total: 256
+headers_seen_total: 512
+best_header_height: 10500
+best_block_height: 10496
+active_peer_for_blocks: 144.126.133.21:30333
+blocks_requested: 64
+synchronized: True
+```
+
 ### Sync Control (CLI)
 
 ```bash
