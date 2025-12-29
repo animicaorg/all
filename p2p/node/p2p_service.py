@@ -6400,6 +6400,8 @@ class P2PService:
             return False, "network_params_missing"
         if params_hash != self._network_params_hash():
             return False, "network_params_mismatch"
+        if not self._peer_head_matches_known_chain(peer):
+            return False, "head_hash_mismatch"
         caps = peer.hello.get("capabilities")
         head_height = int(peer.hello.get("head_height") or 0)
         if isinstance(caps, list) and caps:
@@ -6491,6 +6493,42 @@ class P2PService:
             return genesis_block_hash == self._genesis_block_hash()
         return False
 
+    def _peer_head_matches_known_chain(self, peer: _PeerState) -> bool:
+        if peer.hello is None or not isinstance(peer.hello, dict):
+            return True
+        try:
+            head_height = int(peer.hello.get("head_height") or 0)
+        except Exception:
+            head_height = 0
+        if head_height <= 0:
+            return True
+        head_hash = bytes(peer.hello.get("head_hash") or b"")
+        if not head_hash:
+            return True
+        try:
+            bdb = self._block_db()
+        except Exception:
+            return True
+        canonical_hash = None
+        if hasattr(bdb, "get_canonical_hash"):
+            with contextlib.suppress(Exception):
+                canonical_hash = bdb.get_canonical_hash(head_height)
+        if canonical_hash:
+            return bytes(canonical_hash) == head_hash
+        header = None
+        if hasattr(bdb, "get_header_by_height"):
+            with contextlib.suppress(Exception):
+                header = bdb.get_header_by_height(head_height)
+        if header is None:
+            return True
+        local_hash = self._header_hash_for_status(header)
+        if not local_hash:
+            return True
+        try:
+            return bytes.fromhex(local_hash[2:]) == head_hash
+        except Exception:
+            return True
+
     def _eligible_sync_peers(
         self,
         *,
@@ -6566,10 +6604,24 @@ class P2PService:
                 eligible = anchored
         if not eligible:
             return None
-        eligible.sort(key=lambda peer: peer.remote)
-        idx = self._sync_block_peer_cursor % len(eligible)
-        self._sync_block_peer_cursor = (idx + 1) % max(1, len(eligible))
-        return eligible[idx]
+        best: Optional[_PeerState] = None
+        best_score = None
+        for peer in eligible:
+            if require_anchored and not self._peer_is_anchored(peer):
+                continue
+            try:
+                head_height = int((peer.hello or {}).get("head_height") or 0)
+            except Exception:
+                head_height = 0
+            latency = peer.latency_ewma if peer.latency_ewma is not None else 9999.0
+            outbound_bonus = 1 if peer.direction == "outbound" else 0
+            score = (head_height, outbound_bonus, -peer.misbehavior_score, -latency)
+            if best_score is None or score > best_score:
+                best = peer
+                best_score = score
+        if best is None:
+            return None
+        return best
 
     # ---------------------------------------------------------------------
     # Storage helpers
