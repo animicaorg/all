@@ -478,7 +478,7 @@ def _normalize_tx_envelope(obj: dict) -> dict:
     if "tx" in obj:
         return obj
     if "body" in obj:
-        normalized = {"tx": obj["body"]}
+        normalized = {"tx": obj["body"], "body": obj["body"]}
         if "sigs" in obj:
             normalized["sigs"] = obj["sigs"]
         elif "sig" in obj:
