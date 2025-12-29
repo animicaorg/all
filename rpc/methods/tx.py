@@ -46,22 +46,21 @@ except Exception as _e:  # pragma: no cover
 
 # Canonical SignBytes encoders (preferred)
 try:
-    from core.encoding.canonical import \
-        tx_sign_bytes as _tx_sign_bytes  # type: ignore
+    from core.encoding.canonical import tx_sign_bytes as _tx_sign_bytes  # type: ignore
 except Exception:  # pragma: no cover
     _tx_sign_bytes = None  # type: ignore
 
 # Shared Animica helper for deterministic tx sign-bytes
 try:
-    from animica.tx.signing import \
-        build_signable_tx_bytes as _build_signable_tx_bytes
+    from animica.tx.signing import (
+        build_signable_tx_bytes as _build_signable_tx_bytes,
+    )
 except Exception:  # pragma: no cover
     _build_signable_tx_bytes = None  # type: ignore
 
 # SDK SignBytes helper (fallback for defensive verification)
 try:
-    from omni_sdk.tx.encode import \
-        sign_bytes as _sdk_sign_bytes  # type: ignore
+    from omni_sdk.tx.encode import sign_bytes as _sdk_sign_bytes  # type: ignore
 except Exception:  # pragma: no cover
     _sdk_sign_bytes = None  # type: ignore
 
@@ -96,15 +95,13 @@ except Exception:  # pragma: no cover
 
 # State service for balance queries (needed for pre-mempool balance validation)
 try:
-    from rpc.state_service import \
-        parse_address as _parse_address  # type: ignore
+    from rpc.state_service import parse_address as _parse_address  # type: ignore
 except Exception:  # pragma: no cover
     _parse_address = None  # type: ignore
 
 # Bech32m address encoding
 try:
-    from pq.py.address import \
-        address_from_pubkey as _address_from_pubkey  # type: ignore
+    from pq.py.address import address_from_pubkey as _address_from_pubkey  # type: ignore
 except Exception:  # pragma: no cover
     _address_from_pubkey = None  # type: ignore
 
@@ -181,50 +178,42 @@ def _extract_sender_address(obj: dict) -> str | None:
 
     Uses the signature envelope to reconstruct the address from pubkey + alg_id.
 
-    Args:
-        obj: Transaction object, expected to have structure:
-             {"tx": {...unsigned tx...}, "sigs": [{"alg": int, "pubkey": bytes, "sig": bytes}]}
-             Field names may vary: alg/alg_id/algId, pubkey/pub/pk
-
     Returns:
-        Bech32m address string (e.g., "anim1...") or None if signatures are missing
-        or address encoding is unavailable.
+        Bech32m address string (e.g., "anim1...") or None.
     """
     if _address_from_pubkey is None:
         return None
 
-    # Try to extract signature from obj["sigs"][0]
     sigs = obj.get("sigs")
     if not sigs or not isinstance(sigs, list) or len(sigs) == 0:
-        return None
+        sig = obj.get("sig") or obj.get("signature")
+        if isinstance(sig, dict):
+            sigs = [sig]
+        else:
+            return None
 
     sig = sigs[0]
     if not isinstance(sig, dict):
         return None
 
-    # Extract alg_id and pubkey from signature (support multiple field name variations)
-    alg_id = sig.get("alg") or sig.get("alg_id") or sig.get("algId")
+    alg_id = sig.get("alg") or sig.get("alg_id") or sig.get("algId") or sig.get("algId")
     pubkey = sig.get("pubkey") or sig.get("pub") or sig.get("pk")
 
     if alg_id is None or pubkey is None:
         return None
 
-    # Handle alg_id as string (e.g., "dilithium3")
     if isinstance(alg_id, str) and _ALG_ID is not None:
         try:
             if alg_id in _ALG_ID:
                 alg_id = _ALG_ID[alg_id]
             else:
-                # Try parsing as int
                 alg_id = int(alg_id, 0)
         except Exception:
             return None
 
-    # Ensure pubkey is bytes
     if isinstance(pubkey, str):
         pubkey = _b(pubkey)
 
-    # Convert to bech32m address
     try:
         return _address_from_pubkey(pubkey, alg_id)
     except Exception:
@@ -237,23 +226,19 @@ def _compute_tx_hash(tx_like: t.Any) -> str:
     Per spec: TxID = sha3_256(CBOR(SignedTxMap)), i.e., includes signatures.
     """
     try:
-        # If tx_like is a Tx dataclass with txid() method, use it
         if hasattr(tx_like, "txid") and callable(getattr(tx_like, "txid")):
             return _hex(tx_like.txid()) or ""  # type: ignore[return-value]
 
-        # If tx_like is a Tx dataclass with to_cbor() method, use it
         if hasattr(tx_like, "to_cbor") and callable(getattr(tx_like, "to_cbor")):
             cbor_bytes = tx_like.to_cbor()
             return _hex(_sha3_256(cbor_bytes)) or ""  # type: ignore[return-value]
 
-        # Fallback: tx_like is a dict (full signed tx structure)
         if _cbor_dumps is None:
             raise RuntimeError("No CBOR encoder available")
         if _dc.is_dataclass(tx_like):
             obj = _dcd(tx_like)
         else:
             obj = dict(tx_like)
-        # Hash the full object including signatures
         cbor_bytes = _cbor_dumps(obj)
         return _hex(_sha3_256(cbor_bytes)) or ""  # type: ignore[return-value]
     except Exception as e:  # pragma: no cover
@@ -261,14 +246,7 @@ def _compute_tx_hash(tx_like: t.Any) -> str:
 
 
 def _collect_sign_bytes(tx_like: t.Any) -> list[tuple[str, bytes]]:
-    """Return a list of candidate SignBytes encodings for defensive verify.
-
-    The order of candidates is intentional: we try the most canonical helpers
-    first (shared tx signing helpers), then fall back to SDK helpers, and
-    finally to a minimal CBOR encoding. Duplicates are removed while preserving
-    order so verification can short-circuit on the first success.
-    """
-
+    """Return a list of candidate SignBytes encodings for defensive verify."""
     candidates: list[tuple[str, bytes]] = []
     errors: list[str] = []
 
@@ -280,26 +258,21 @@ def _collect_sign_bytes(tx_like: t.Any) -> list[tuple[str, bytes]]:
             b = bytes(data)
             if all(existing != b for _, existing in candidates):
                 candidates.append((label, b))
-        except Exception as exc:  # pragma: no cover - defensive path
+        except Exception as exc:  # pragma: no cover
             errors.append(f"{label}: {exc}")
 
-    # Primary: shared Animica helper (aligns CLI/SDK/node)
     if _build_signable_tx_bytes is not None:
         _add("animica.tx.signing", lambda: _build_signable_tx_bytes(tx_like))
 
-    # Core canonical helper (legacy compatibility)
     if _tx_sign_bytes is not None:
         _add("core.encoding.canonical", lambda: _tx_sign_bytes(tx_like))
 
-    # SDK helper (used by CLI/SDK signing)
     if _sdk_sign_bytes is not None:
         _add("omni_sdk.tx.encode", lambda: _sdk_sign_bytes(tx_like))
 
-    # Minimal fallback using local CBOR encoder
     if _cbor_dumps is not None:
 
         def _fallback_body() -> bytes:
-            # Extract body from signed envelope or use the object directly
             if _dc.is_dataclass(tx_like):
                 obj = _dcd(tx_like)
             else:
@@ -363,7 +336,7 @@ def _verify_pq_candidates(
             attempt_ok = _pq_verify.verify_detached(  # type: ignore[attr-defined]
                 candidate, sig_env, pub, chain_id=chain_id, fork_id=fork_id
             )
-        except Exception as verify_exc:  # pragma: no cover - defensive
+        except Exception as verify_exc:  # pragma: no cover
             verify_errors.append(f"{label}: {verify_exc}")
             continue
 
@@ -377,19 +350,12 @@ def _verify_pq_candidates(
 
 def _chain_id_required() -> int:
     """Return the configured chain ID for this node."""
-
-    # First, rely on the public deps helper which is backed by the live RPC
-    # context. This reflects ANIMICA_CHAIN_ID/ANIMICA_NETWORK and keeps testnet
-    # nodes from silently defaulting to mainnet (chain_id=1).
     if hasattr(deps, "get_chain_id"):
         try:
             return int(deps.get_chain_id())  # type: ignore[arg-type]
         except Exception:
-            # Fall through to legacy paths if deps.get_chain_id is unavailable
-            # or misconfigured during early boot.
             pass
 
-    # Legacy fallbacks for older contexts/tests
     if hasattr(deps, "get_chain_params"):
         cp = deps.get_chain_params()  # type: ignore[attr-defined]
         cid = getattr(cp, "chain_id", getattr(cp, "chainId", None))
@@ -399,8 +365,6 @@ def _chain_id_required() -> int:
         return int(getattr(deps, "chain_id"))  # type: ignore[attr-defined]
     if hasattr(deps, "config") and hasattr(deps.config, "chain_id"):
         return int(deps.config.chain_id)  # type: ignore[attr-defined]
-
-    # Fallback mainnet id
     return 1
 
 
@@ -421,22 +385,8 @@ def _extract_sig(obj: dict) -> tuple[int, bytes, bytes, str, str]:
     """
     Extract (alg_id, pubkey, signature) from obj["sig"], obj["signature"], or obj["sigs"][0].
     Supports hex strings or raw bytes.
-    Handles both flat and nested tx structures.
-
-    Expected envelope structures:
-    1. Flat with sig dict:
-       { "body": {...}, "sig": {"algId": int, "pubkey": bytes, "sig": bytes} }
-    2. Flat with signature dict:
-       { "body": {...}, "signature": {"algId": int, "pubkey": bytes, "sig": bytes} }
-    3. Array with sigs:
-       { "body": {...}, "sigs": [{"algId": int, "pubkey": bytes, "sig": bytes}] }
-
-    The sig/signature/sigs[0] value MUST be a dict, not raw bytes.
     """
-    # Try flat structure first (obj.sig or obj.signature)
     sig = obj.get("sig") or obj.get("signature")
-
-    # If not found, try nested structure (obj.sigs[0])
     if sig is None:
         sigs = obj.get("sigs")
         if isinstance(sigs, list) and len(sigs) > 0:
@@ -449,17 +399,13 @@ def _extract_sig(obj: dict) -> tuple[int, bytes, bytes, str, str]:
     if alg_id is None:
         raise rpc_errors.InvalidParams("Missing 'sig.algId'")
 
-    # Allow str or int for alg_id
     if isinstance(alg_id, str) and _ALG_ID is not None:
-        # Try to map alg_name to alg_id if it's a string
         try:
             if alg_id in _ALG_ID:
                 alg_id = _ALG_ID[alg_id]
             else:
-                # Try parsing as int
                 alg_id = int(alg_id, 0)
         except Exception:
-            # leave as str; will be handled by verification
             pass
 
     pub = sig.get("pubkey") or sig.get("pub") or sig.get("pk")
@@ -504,62 +450,36 @@ def _extract_sig(obj: dict) -> tuple[int, bytes, bytes, str, str]:
 
 def _extract_chain_id(tx_like: t.Any, obj: dict) -> int:
     """
-    Extract chain_id from transaction object.
-
-    Handles various structure formats:
-    - Flat: obj.chainId or obj.chain_id
-    - Nested: obj.tx.chainId or obj.body.chainId
-    - Dataclass: tx_like.chain_id or tx_like.chainId
-
-    Returns
-    -------
-    int
-        The extracted chain_id
-
-    Raises
-    ------
-    rpc_errors.InvalidParams
-        If chain_id cannot be found
+    Extract chain_id from transaction object (dataclass or dict envelope).
     """
-    # Try dataclass attributes first
     if hasattr(tx_like, "chain_id"):
         return int(tx_like.chain_id)
     if hasattr(tx_like, "chainId"):
         return int(tx_like.chainId)
 
-    # Prefer the signed body if present (authoritative)
     if "body" in obj and isinstance(obj["body"], dict):
-        body_obj = obj["body"]
-        cid = body_obj.get("chainId") or body_obj.get("chain_id")
+        cid = obj["body"].get("chainId") or obj["body"].get("chain_id")
         if cid is not None:
             return int(cid)
 
-    # Try flat structure
     cid = obj.get("chainId") or obj.get("chain_id")
-
-    # If not found, try nested structures
     if cid is None and "tx" in obj and isinstance(obj["tx"], dict):
-        tx_obj = obj["tx"]
-        cid = tx_obj.get("chainId") or tx_obj.get("chain_id")
+        cid = obj["tx"].get("chainId") or obj["tx"].get("chain_id")
 
     if cid is None:
         raise rpc_errors.InvalidParams("Transaction missing chain_id")
-
     return int(cid)
 
 
-def _validate_chain_id(obj: dict) -> int:
+def _validate_chain_id(tx_like: t.Any, obj: dict) -> int:
     """Validate chainId against node expectation and return the value used."""
-
     want = _chain_id_required()
 
-    # Use shared extraction logic
     try:
-        cid = _extract_chain_id(obj, obj)
+        cid = _extract_chain_id(tx_like, obj)
     except rpc_errors.InvalidParams:
         cid = None
 
-    # Debug logging to diagnose chainId extraction
     log.debug(
         "ChainId validation: extracted=%s, expected=%s, envelope_keys=%s",
         cid,
@@ -568,21 +488,15 @@ def _validate_chain_id(obj: dict) -> int:
     )
 
     if cid is None:
-        # ChainId is required in all transactions
         log.warning(
             "ChainId missing in transaction envelope: keys=%s, nested_keys=%s",
             list(obj.keys()),
             list(obj.get("tx", {}).keys()) if isinstance(obj.get("tx"), dict) else None,
         )
-        raise rpc_errors.ChainIdMismatch(
-            got=0, expected=want  # Use 0 to indicate missing chain ID
-        )
+        raise rpc_errors.ChainIdMismatch(got=0, expected=want)
+
     if int(cid) != int(want):
-        log.warning(
-            "ChainId mismatch: got=%s, expected=%s",
-            int(cid),
-            int(want),
-        )
+        log.warning("ChainId mismatch: got=%s, expected=%s", int(cid), int(want))
         raise rpc_errors.ChainIdMismatch(got=int(cid), expected=int(want))
 
     return int(cid)
@@ -590,8 +504,6 @@ def _validate_chain_id(obj: dict) -> int:
 
 def _verify_pq_signature(tx_like: t.Any, obj: dict, *, chain_id: int) -> None:
     if _pq_verify is None:
-        # Allow developers to bypass PQ verification when liboqs/omni PQ backend
-        # is unavailable (e.g., during local bring-up or in minimal CI images).
         if _PQ_VERIFY_OPTIONAL:
             log.warning(
                 "PQ verification unavailable; skipping due to ANIMICA_PQ_VERIFY_OPTIONAL/ANIMICA_SKIP_PQ_VERIFY",
@@ -602,22 +514,14 @@ def _verify_pq_signature(tx_like: t.Any, obj: dict, *, chain_id: int) -> None:
             "PQ verification unavailable",
             **_error_data(
                 "pq_verify",
-                RuntimeError(
-                    "Missing pq.py.verify backend (animica-pq not installed?)"
-                ),
+                RuntimeError("Missing pq.py.verify backend (animica-pq not installed?)"),
                 "_verify_pq_signature",
                 "Ensure animica-pq is installed in the node container or set ANIMICA_PQ_VERIFY_OPTIONAL=1 to bypass in dev",
             ),
         )
+
     alg_id, pub, sig, domain, prehash = _extract_sig(obj)
 
-    # Get the raw message (CBOR body) to verify
-    # Always derive the sign-bytes from the decoded envelope object rather than
-    # any dataclass representation. Some dataclass constructors add default
-    # fields (e.g., gasPrice/accessList) that were not present in the signed
-    # body, which would change the CBOR encoding and cause verification to
-    # fail even with a valid signature. The decoded `obj` retains the exact
-    # body that was signed by the CLI/SDK, so we canonicalize that here.
     candidates = _collect_sign_bytes(obj)
     if not candidates:
         raise rpc_errors.InvalidTx("No sign-bytes candidates found for PQ verification")
@@ -642,15 +546,13 @@ def _verify_pq_signature(tx_like: t.Any, obj: dict, *, chain_id: int) -> None:
             "chainId": tx_view.get("chainId"),
         }
         log.debug("PQ tx fields for verification: %s", debug_fields)
-    except Exception:  # pragma: no cover - best effort logging
+    except Exception:  # pragma: no cover
         pass
 
-    # Map alg_id to alg_name for logging
     alg_name_for_log = f"alg_0x{alg_id:02x}" if isinstance(alg_id, int) else str(alg_id)
     if _ALG_NAME is not None and isinstance(alg_id, int):
         alg_name_for_log = _ALG_NAME.get(alg_id, alg_name_for_log)
 
-    # Debug logging (matches CLI format)
     log.debug(
         "PQ signature verification: alg_id=%s, pubkey_len=%d, sig_len=%d, msg_len=%d, chain_id=%d (msg_source=%s, prehash=%s)",
         alg_id,
@@ -661,19 +563,7 @@ def _verify_pq_signature(tx_like: t.Any, obj: dict, *, chain_id: int) -> None:
         msg_label,
         prehash,
     )
-    log.debug(
-        "PQ SIGNATURE VERIFY DEBUG: algorithm=%s (id=%s), pubkey_len=%d, sig_len=%d, message_len=%d, message_prefix=%s, chain_id=%d",
-        alg_name_for_log,
-        alg_id,
-        len(pub),
-        len(sig),
-        len(msg),
-        msg[:16].hex() if len(msg) >= 16 else msg.hex(),
-        chain_id,
-    )
 
-    # Construct a Signature envelope for verify_detached
-    # The pq.py.verify API expects a Signature dataclass with alg_id, alg_name, domain, prehash, sig
     try:
         sig_env, alg_name = _build_sig_env(alg_id, sig, domain=domain, prehash=prehash)
 
@@ -689,8 +579,6 @@ def _verify_pq_signature(tx_like: t.Any, obj: dict, *, chain_id: int) -> None:
                 chain_id,
             )
 
-        # Call verify_detached with the signature envelope and chain_id
-        # verify_detached signature: (msg: bytes, sig: Signature, pk: bytes, chain_id: int, **kwargs) -> bool
         ok, used_label, verify_errors = _verify_pq_candidates(
             candidates, sig_env, pub, chain_id=chain_id, fork_id=_fork_id_required()
         )
@@ -714,12 +602,10 @@ def _verify_pq_signature(tx_like: t.Any, obj: dict, *, chain_id: int) -> None:
         if verify_errors:
             log.debug("PQ verify helper errors: %s", "; ".join(verify_errors))
     except Exception as e:
-        # Fallback error for unexpected issues
         log.error("PQ signature verification setup failed: %s", e, exc_info=True)
         raise rpc_errors.InternalError(f"PQ signature verification setup failed: {e}")
 
     if not ok:
-        # Enhanced error logging for debugging
         log.error(
             "PQ signature verification FAILED: algorithm=%s (id=%s), pubkey_len=%d bytes, sig_len=%d bytes, message_len=%d bytes, message_prefix=%s, chain_id=%d, domain=%s, prehash=%s",
             alg_name_for_log,
@@ -748,20 +634,18 @@ def _decode_tx(raw: bytes) -> tuple[t.Any, dict]:
     Decode a raw CBOR transaction envelope.
 
     Returns:
-        tuple[tx, obj]: (Tx instance or dict, dict envelope with hash/raw added)
+        (tx_like, enriched_obj)
 
-    The returned dict always includes:
-    - "hash": hex string of tx hash (sha3_256 of raw CBOR)
-    - "raw": raw CBOR bytes (for recomputing hash or re-serialization)
+    enriched_obj includes:
+    - "hash": sha3_256(raw)
+    - "raw": raw bytes
     """
     if _cbor_loads is None:
         raise rpc_errors.InternalError("CBOR decoder unavailable")
     obj = _cbor_loads(raw)
 
-    # Compute tx hash (canonical: sha3_256(raw_cbor_bytes))
     tx_hash_hex = _hex(_sha3_256(raw)) or ""
 
-    # Ensure obj is a dict so we can add hash/raw fields
     if not isinstance(obj, dict):
         raise rpc_errors.InvalidTx(
             "CBOR did not decode to a Tx object",
@@ -773,15 +657,12 @@ def _decode_tx(raw: bytes) -> tuple[t.Any, dict]:
             ),
         )
 
-    # Add hash and raw to the envelope (non-destructive - doesn't modify obj in-place)
     enriched_obj = dict(obj)
     enriched_obj["hash"] = tx_hash_hex
     enriched_obj["raw"] = raw
 
-    # Try to construct Tx instance if possible
     if _Tx is not None:
         try:
-            # Try friendly constructors if present
             if hasattr(_Tx, "from_obj"):
                 tx = _Tx.from_obj(obj)  # type: ignore[attr-defined]
             elif hasattr(_Tx, "from_dict"):
@@ -790,7 +671,6 @@ def _decode_tx(raw: bytes) -> tuple[t.Any, dict]:
                 tx = _Tx(**obj)  # type: ignore[call-arg]
             return tx, enriched_obj
         except Exception:
-            # Fall back to dict shape
             pass
 
     return enriched_obj, enriched_obj
@@ -798,39 +678,18 @@ def _decode_tx(raw: bytes) -> tuple[t.Any, dict]:
 
 def _validate_sufficient_balance(obj: dict) -> None:
     """
-    Validate that the sender has sufficient balance to cover the transaction value + gas fees.
-
-    This validation is performed before adding the transaction to the mempool. It is skipped
-    in the following scenarios:
-    - Sender address cannot be determined from the transaction signature
-    - State DB is not available in the RPC context
-    - Address parsing fails
-    - Balance query methods are not available on state_db
-
-    If balance check fails due to unexpected errors (not InsufficientFunds), the validation
-    is skipped and the transaction proceeds. This ensures that transient issues don't block
-    valid transactions.
-
-    Raises:
-        rpc_errors.InsufficientFunds: If sender balance is insufficient
+    Validate sender has sufficient balance to cover value + max gas.
+    Best-effort; skips on missing state.
     """
-    # Extract transaction fields
     tx_obj = obj.get("body", obj.get("tx", obj))
 
-    # Extract sender address (32-byte digest)
     sender_addr = _extract_sender_address(obj)
     if sender_addr is None:
-        # If we can't determine sender, skip balance check (signature validation will catch this)
-        log.debug(
-            "_validate_sufficient_balance: cannot determine sender address, skipping"
-        )
+        log.debug("_validate_sufficient_balance: cannot determine sender address, skipping")
         return
 
-    # Extract value and gas parameters
     value = tx_obj.get("value", 0)
-    gas_limit = (
-        tx_obj.get("gasLimit") or tx_obj.get("gas_limit") or tx_obj.get("gas", 0)
-    )
+    gas_limit = tx_obj.get("gasLimit") or tx_obj.get("gas_limit") or tx_obj.get("gas", 0)
     max_fee = (
         tx_obj.get("maxFee")
         or tx_obj.get("max_fee")
@@ -838,30 +697,21 @@ def _validate_sufficient_balance(obj: dict) -> None:
         or tx_obj.get("gas_price", 0)
     )
 
-    # Convert to int
     value = int(value) if value is not None else 0
     gas_limit = int(gas_limit) if gas_limit is not None else 0
     max_fee = int(max_fee) if max_fee is not None else 0
 
-    # Calculate total required
-    max_gas_cost = gas_limit * max_fee
-    required = value + max_gas_cost
+    required = value + (gas_limit * max_fee)
 
-    # Query sender balance from state
     try:
         ctx = deps.get_ctx()
         if not hasattr(ctx, "state_db") or ctx.state_db is None:
             log.debug("_validate_sufficient_balance: state_db not available, skipping")
             return
-
         state_db = ctx.state_db
 
-        # Convert bech32 address to 32-byte digest for state lookup
-        # sender_addr is already a bech32 address string from _extract_sender_address
         if _parse_address is None:
-            log.debug(
-                "_validate_sufficient_balance: parse_address not available, skipping"
-            )
+            log.debug("_validate_sufficient_balance: parse_address not available, skipping")
             return
 
         try:
@@ -874,7 +724,6 @@ def _validate_sufficient_balance(obj: dict) -> None:
             )
             return
 
-        # Get balance using state_db methods
         balance = None
         for method_name in ("get_balance", "read_balance", "balance_of"):
             if hasattr(state_db, method_name):
@@ -882,28 +731,18 @@ def _validate_sufficient_balance(obj: dict) -> None:
                     balance = int(getattr(state_db, method_name)(sender_bytes))
                     break
                 except Exception as e:
-                    log.debug(
-                        "_validate_sufficient_balance: %s failed: %s", method_name, e
-                    )
+                    log.debug("_validate_sufficient_balance: %s failed: %s", method_name, e)
                     continue
 
         if balance is None:
-            log.debug(
-                "_validate_sufficient_balance: could not retrieve balance, skipping"
-            )
+            log.debug("_validate_sufficient_balance: could not retrieve balance, skipping")
             return
 
-        # Check if balance is sufficient
         if balance < required:
-            shortfall = required - balance
-            raise rpc_errors.InsufficientFunds(
-                required=required,
-                available=balance,
-            )
+            raise rpc_errors.InsufficientFunds(required=required, available=balance)
     except rpc_errors.InsufficientFunds:
         raise
     except Exception as e:
-        # Don't fail tx submission if balance check fails for unexpected reasons
         log.debug("_validate_sufficient_balance: unexpected error, skipping: %s", e)
         return
 
@@ -917,32 +756,21 @@ def _tx_view(
     block_number: int | None = None,
     tx_index: int | None = None,
 ) -> dict:
-    # Handle both flat and nested tx structures
-    # RPC envelope: {body: {...}, sig/sigs: ...}
-    # Core envelope: {tx: {...}, sigs: [...]}
-    # Flat: {...fields directly...}
     if isinstance(obj, dict):
         if "body" in obj:
-            # RPC envelope format
             tx_obj = obj["body"]
         elif "tx" in obj:
-            # Core envelope format
             tx_obj = obj["tx"]
         else:
-            # Flat format
             tx_obj = obj
     else:
         tx_obj = obj
 
-    # Extract sender address
-    # First, try to get bech32m address from signature (for pending txs with sigs)
     _from = _extract_sender_address(obj)
 
-    # Fallback to raw bytes from transaction structure
     if _from is None:
         _from = tx_obj.get("from") or tx_obj.get("sender")
         if _from is None and hasattr(tx, "unsigned"):
-            # tx is a Tx dataclass, get sender from unsigned
             _from = getattr(tx.unsigned, "sender", None)
         if _from is None:
             _from = getattr(tx, "sender", None)
@@ -960,7 +788,6 @@ def _tx_view(
     if nonce is None:
         nonce = getattr(tx, "nonce", None)
 
-    # Handle gas - can be a dict {'limit': ..., 'price': ...} or direct values
     gas_obj = tx_obj.get("gas")
     if isinstance(gas_obj, dict):
         gas = gas_obj.get("limit")
@@ -979,21 +806,16 @@ def _tx_view(
     if tip is None:
         tip = getattr(tx, "tip", None)
 
-    # Extract maxFee (distinct from tip/gasPrice)
     max_fee = tx_obj.get("maxFee") or tx_obj.get("max_fee")
     if max_fee is None and tip is not None:
-        # Fallback: use tip as maxFee if maxFee not present
         max_fee = tip
 
-    # Extract chainId
     chain_id = tx_obj.get("chainId") or tx_obj.get("chain_id")
     if chain_id is None and hasattr(tx, "unsigned"):
-        chain_id = getattr(tx.unsigned, "chain_id", None) or getattr(
-            tx.unsigned, "chainId", None
-        )
+        chain_id = getattr(tx.unsigned, "chain_id", None) or getattr(tx.unsigned, "chainId", None)
     if chain_id is None:
         chain_id = getattr(tx, "chain_id", None) or getattr(tx, "chainId", None)
-    # Handle payload - can be a dict {'t': type, 'v': {actual payload}} or direct values
+
     payload_obj = tx_obj.get("payload")
     if isinstance(payload_obj, dict):
         payload_v = payload_obj.get("v", {})
@@ -1017,55 +839,40 @@ def _tx_view(
     if data is None:
         data = getattr(tx, "data", None)
 
-    # Compute hash - use the txid() method if available (for Tx dataclass)
     if hasattr(tx, "txid") and callable(getattr(tx, "txid")):
         hash_hex = _hex(tx.txid()) or ""
     else:
-        # Fallback: hash the full obj
         hash_hex = _hex(_sha3_256(_cbor_dumps(obj))) or "" if _cbor_dumps else ""
+
     v = {
         "hash": hash_hex,
         "from": _hex(_from) if isinstance(_from, (bytes, bytearray)) else _from,
         "to": _hex(to) if isinstance(to, (bytes, bytearray)) else to,
         "nonce": int(nonce) if nonce is not None else None,
         "gas": int(gas) if gas is not None else None,
-        "gasLimit": int(gas) if gas is not None else None,  # Alias for compatibility
+        "gasLimit": int(gas) if gas is not None else None,
         "tip": int(tip) if tip is not None else None,
-        "gasPrice": int(tip) if tip is not None else None,  # Alias for compatibility
+        "gasPrice": int(tip) if tip is not None else None,
         "maxFee": int(max_fee) if max_fee is not None else None,
         "value": int(value) if value is not None else None,
         "chainId": int(chain_id) if chain_id is not None else None,
         "data": _hex(data) if isinstance(data, (bytes, bytearray)) else data,
-        "blockHash": (
-            None
-            if pending
-            else (
-                _hex(block_hash)
-                if isinstance(block_hash, (bytes, bytearray))
-                else block_hash
-            )
-        ),
-        "blockNumber": (
-            None
-            if pending
-            else (int(block_number) if block_number is not None else None)
-        ),
-        "transactionIndex": (
-            None if pending else (int(tx_index) if tx_index is not None else None)
-        ),
+        "blockHash": None
+        if pending
+        else (_hex(block_hash) if isinstance(block_hash, (bytes, bytearray)) else block_hash),
+        "blockNumber": None if pending else (int(block_number) if block_number is not None else None),
+        "transactionIndex": None if pending else (int(tx_index) if tx_index is not None else None),
     }
     return {k: v for k, v in v.items() if v is not None}
 
 
 def _pending_put(tx_hash_hex: str, raw: bytes) -> None:
-    # Prefer the real pool
     if _PEND is not None and hasattr(_PEND, "add_raw"):
         _PEND.add_raw(tx_hash_hex, raw)  # type: ignore[attr-defined]
         return
     if _PEND is not None and hasattr(_PEND, "add"):
         _PEND.add(tx_hash_hex, raw)  # type: ignore[attr-defined]
         return
-    # Fallback (dev)
     _FALLBACK_PENDING[tx_hash_hex] = raw
     _FALLBACK_PENDING_TS[tx_hash_hex] = time.time()
 
@@ -1097,9 +904,6 @@ def _get_mempool_service():
 
 
 def _normalize_hash_variants(tx_hash_hex: str) -> list[t.Any]:
-    """
-    Produce the common hash representations used across pool implementations.
-    """
     h = (tx_hash_hex or "").strip().lower()
     if h.startswith("0x"):
         h0 = h
@@ -1117,19 +921,11 @@ def _normalize_hash_variants(tx_hash_hex: str) -> list[t.Any]:
 
 
 def _mempool_has_hash(pool: t.Any, tx_hash_hex: str) -> bool:
-    """
-    Verify presence in mempool, tolerant of different hash formats.
-
-    If the pool doesn't expose has_hash(), we can't verify; treat as "unknown",
-    and let admission succeed only if the submit call itself doesn't reject.
-    """
     if pool is None:
         return False
-
     fn = getattr(pool, "has_hash", None)
     if not callable(fn):
         return False
-
     for v in _normalize_hash_variants(tx_hash_hex):
         try:
             if fn(v):
@@ -1139,18 +935,131 @@ def _mempool_has_hash(pool: t.Any, tx_hash_hex: str) -> bool:
     return False
 
 
+def _coerce_sender_bytes(x: t.Any) -> bytes | None:
+    """
+    Coerce sender/"from" representations into the 32-byte digest expected by most
+    state/mempool code paths.
+    """
+    if x is None:
+        return None
+    if isinstance(x, (bytes, bytearray)):
+        return bytes(x)
+    if isinstance(x, str):
+        s = x.strip()
+        if s.startswith("0x") and len(s) >= 4:
+            try:
+                return _b(s)
+            except Exception:
+                pass
+        if s.startswith("anim1") and _parse_address is not None:
+            try:
+                return _parse_address(s)
+            except Exception:
+                return None
+    return None
+
+
+def _prepare_tx_for_pool(tx_like: t.Any, obj: dict, raw: bytes) -> t.Any:
+    """
+    Prepare a tx object suitable for mempool admission.
+
+    This fixes "missing sender or nonce" by ensuring sender/nonce are present
+    in the exact shape expected by older/newer pool implementations.
+
+    Returns either a core Tx dataclass (preferred) or a dict envelope.
+    """
+    if isinstance(tx_like, object) and _Tx is not None and isinstance(tx_like, _Tx):
+        return tx_like
+
+    env = dict(obj) if isinstance(obj, dict) else {}
+    env.pop("hash", None)
+    env.pop("raw", None)
+
+    if "body" in env and isinstance(env["body"], dict):
+        body = dict(env["body"])
+    elif "tx" in env and isinstance(env["tx"], dict):
+        body = dict(env["tx"])
+        env.setdefault("body", body)
+    else:
+        body = {}
+
+    # Normalize sender + nonce at body level
+    sender_val = body.get("sender")
+    if sender_val is None:
+        sender_val = body.get("from")
+    sender_bytes = _coerce_sender_bytes(sender_val)
+
+    if sender_bytes is not None:
+        body["from"] = sender_bytes
+        body["sender"] = sender_bytes
+
+    # Nonce must exist (int) for pool admission.
+    nonce = body.get("nonce")
+    if nonce is not None and not isinstance(nonce, int):
+        try:
+            body["nonce"] = int(nonce)
+        except Exception:
+            pass
+
+    # Keep both aliases for broader compatibility
+    env["body"] = body
+    env.setdefault("tx", body)
+
+    # Normalize signatures: ensure both "sig" and "sigs" exist when possible
+    if "sigs" not in env:
+        sig0 = env.get("sig") or env.get("signature")
+        if isinstance(sig0, dict):
+            env["sigs"] = [sig0]
+    if "sig" not in env:
+        sigs = env.get("sigs")
+        if isinstance(sigs, list) and sigs and isinstance(sigs[0], dict):
+            env["sig"] = sigs[0]
+
+    # Also expose top-level sender/nonce for older pool implementations
+    if "sender" not in env and sender_bytes is not None:
+        env["sender"] = sender_bytes
+    if "nonce" not in env and "nonce" in body:
+        env["nonce"] = body.get("nonce")
+
+    # Try to construct core Tx from multiple envelope shapes.
+    if _Tx is not None:
+        # 1) Direct from raw if supported
+        for ctor in ("from_cbor", "from_cbor_bytes", "from_bytes", "from_raw"):
+            fn = getattr(_Tx, ctor, None)
+            if callable(fn):
+                try:
+                    return fn(raw)  # type: ignore[misc]
+                except Exception:
+                    pass
+
+        # 2) from_obj/from_dict with env
+        for ctor in ("from_obj", "from_dict"):
+            fn = getattr(_Tx, ctor, None)
+            if callable(fn):
+                try:
+                    return fn(env)  # type: ignore[misc]
+                except Exception:
+                    pass
+
+        # 3) Some code expects {"tx": body, "sigs": [...]}
+        alt = {
+            "tx": body,
+            "sigs": env.get("sigs", []),
+        }
+        for ctor in ("from_obj", "from_dict"):
+            fn = getattr(_Tx, ctor, None)
+            if callable(fn):
+                try:
+                    return fn(alt)  # type: ignore[misc]
+                except Exception:
+                    pass
+
+    return env
+
+
 def _admit_to_mempool(pool: t.Any, *, tx_obj: t.Any, raw: bytes, tx_hash_hex: str) -> None:
     """
     Admit a tx into the pool and *only* return if the pool actually accepted it.
-
-    This fixes the bug pattern: RPC returns a tx hash, but the tx isn't persisted
-    in mempool (so mempool list is empty and tx never gets mined).
-
-    Strategy:
-      1) Try pool.submit(...) using several common kwarg names.
-      2) If needed, try add_raw/add with multiple hash representations.
-      3) Poll briefly to confirm presence (some pools enqueue admission).
-      4) If still not present, raise an RPC error (do not "accept" silently).
     """
     if pool is None:
         raise rpc_errors.InternalError(
@@ -1172,12 +1081,12 @@ def _admit_to_mempool(pool: t.Any, *, tx_obj: t.Any, raw: bytes, tx_hash_hex: st
             ("submit(tx, raw, tx_hash_hex)", {"tx": tx_obj, "raw": raw, "tx_hash_hex": tx_hash_hex}),
             ("submit(tx, raw, tx_hash)", {"tx": tx_obj, "raw": raw, "tx_hash": tx_hash_hex}),
             ("submit(tx, raw, hash)", {"tx": tx_obj, "raw": raw, "hash": tx_hash_hex}),
+            ("submit(tx)", {"tx": tx_obj}),
         ):
             attempted.append(label)
             try:
                 res = submit(**kwargs)
 
-                # If the pool signals rejection without throwing, treat as failure.
                 if res is False:
                     raise rpc_errors.InvalidTx(
                         "Mempool rejected transaction",
@@ -1185,22 +1094,22 @@ def _admit_to_mempool(pool: t.Any, *, tx_obj: t.Any, raw: bytes, tx_hash_hex: st
                             "mempool_reject",
                             RuntimeError("submit() returned False"),
                             "_admit_to_mempool",
-                            "Likely nonce gap / fee too low / gas too high; pool must not silently drop",
+                            "Likely nonce gap / fee too low / gas too high",
                         ),
                     )
-                if isinstance(res, dict) and res.get("accepted") is False:
-                    reason = res.get("reason") or "unknown"
-                    raise rpc_errors.InvalidTx(
-                        "Mempool rejected transaction",
-                        **_error_data(
-                            "mempool_reject",
-                            RuntimeError(f"submit() rejected: {reason}"),
-                            "_admit_to_mempool",
-                            "Likely nonce gap / fee too low / gas too high; pool must not silently drop",
-                        ),
-                    )
+                if isinstance(res, dict):
+                    if res.get("accepted") is False or res.get("ok") is False:
+                        reason = res.get("reason") or res.get("message") or "unknown"
+                        raise rpc_errors.InvalidTx(
+                            "Mempool rejected transaction",
+                            **_error_data(
+                                "mempool_reject",
+                                RuntimeError(f"submit() rejected: {reason}"),
+                                "_admit_to_mempool",
+                                "Likely nonce gap / fee too low / gas too high",
+                            ),
+                        )
 
-                # submit didn't error; we'll verify presence below
                 break
             except TypeError as e:
                 last_type_error = e
@@ -1239,8 +1148,7 @@ def _admit_to_mempool(pool: t.Any, *, tx_obj: t.Any, raw: bytes, tx_hash_hex: st
             return
         time.sleep(0.05)
 
-    # Still not admitted: fail loudly so client doesn't think it's accepted.
-    hint = "Pool did not persist tx; check pool.submit implementation and hash normalization (0x vs no0x vs bytes)."
+    hint = "Pool did not persist tx; check pool.submit/add* implementations and hash normalization (0x vs no0x vs bytes)."
     if last_type_error is not None:
         hint += f" Last TypeError: {last_type_error}"
 
@@ -1254,20 +1162,11 @@ def _admit_to_mempool(pool: t.Any, *, tx_obj: t.Any, raw: bytes, tx_hash_hex: st
     )
 
 
-
 def _gossip_tx_to_peers(raw_tx: bytes) -> None:
     """
     Gossip a transaction to connected P2P peers via TxRelayHandler.
-
-    This function attempts to publish the transaction to the 'txs' gossip topic
-    on the P2P network. It's called after a transaction is successfully
-    admitted to the local pending pool via RPC.
-
-    Args:
-        raw_tx: Raw CBOR-encoded transaction bytes
     """
     try:
-        # Get P2P service from RPC context
         ctx = deps.get_ctx()
         if not hasattr(ctx, "p2p_service") or ctx.p2p_service is None:
             log.debug("P2P service not available; tx not gossiped")
@@ -1275,10 +1174,7 @@ def _gossip_tx_to_peers(raw_tx: bytes) -> None:
 
         p2p_service = ctx.p2p_service
 
-        # Preferred: production P2PService exposes relay_tx() which performs INV/GETDATA gossip.
-        if hasattr(p2p_service, "relay_tx") and callable(
-            getattr(p2p_service, "relay_tx")
-        ):
+        if hasattr(p2p_service, "relay_tx") and callable(getattr(p2p_service, "relay_tx")):
             try:
                 loop = asyncio.get_running_loop()
                 asyncio.ensure_future(p2p_service.relay_tx(raw_tx), loop=loop)  # type: ignore[call-arg]
@@ -1288,38 +1184,29 @@ def _gossip_tx_to_peers(raw_tx: bytes) -> None:
                 log.debug("No running event loop; tx not relayed to peers")
                 return
 
-        # Use TxRelayHandler if available (preferred path)
         if hasattr(p2p_service, "tx_relay_handler"):
             tx_relay_handler = p2p_service.tx_relay_handler
             try:
                 loop = asyncio.get_running_loop()
-                asyncio.ensure_future(
-                    tx_relay_handler.publish_local_tx(raw_tx), loop=loop
-                )
+                asyncio.ensure_future(tx_relay_handler.publish_local_tx(raw_tx), loop=loop)
                 log.debug("Scheduled tx gossip via TxRelayHandler")
                 return
             except RuntimeError:
                 log.debug("No running event loop; tx not gossiped to peers")
                 return
             except AttributeError:
-                # Handler exists but publish_local_tx method missing; fall through to legacy path
-                log.debug(
-                    "TxRelayHandler missing publish_local_tx; falling back to direct gossip"
-                )
+                log.debug("TxRelayHandler missing publish_local_tx; falling back to direct gossip")
                 pass
 
-        # Fallback: direct gossip engine access (legacy path)
         if not hasattr(p2p_service, "gossip"):
             log.debug("P2P gossip engine not available; tx not gossiped")
             return
 
         gossip_engine = p2p_service.gossip
-
         if not hasattr(gossip_engine, "publish") or not callable(gossip_engine.publish):
             log.debug("P2P gossip publish method not available; tx not gossiped")
             return
 
-        # Build the proper topic path using Topics helper
         try:
             from p2p.gossip import topics as gossip_topics
 
@@ -1327,18 +1214,15 @@ def _gossip_tx_to_peers(raw_tx: bytes) -> None:
             tx_topic = gossip_topics.txs(chain_id)
             topic_path = tx_topic.path
         except Exception:
-            # Fallback to bare topic string
             topic_path = "txs"
             log.debug("Using fallback topic path 'txs'")
 
-        # Publish to gossip mesh
         try:
             loop = asyncio.get_running_loop()
             asyncio.ensure_future(gossip_engine.publish(topic_path, raw_tx), loop=loop)
             log.debug("Scheduled tx gossip to topic %s", topic_path)
         except RuntimeError:
             log.debug("No running event loop; tx not gossiped to peers")
-
     except Exception as e:
         log.debug("Failed to gossip tx to P2P peers: %s", e)
 
@@ -1375,18 +1259,15 @@ def _lookup_persisted_tx(
     """
     Return (obj_view, block_number, tx_index, block_hash) if found in DB; otherwise (None, None, None, None).
     """
-    # Try block_db.get_transaction_by_hash first (preferred path)
     ctx = deps.get_ctx()
     if hasattr(ctx, "block_db") and ctx.block_db is not None:
         block_db = ctx.block_db
         if hasattr(block_db, "get_transaction_by_hash"):
             try:
-                # Convert hex hash to bytes
                 tx_hash_bytes = _b(tx_hash_hex)
                 result = block_db.get_transaction_by_hash(tx_hash_bytes)
                 if result is not None:
                     height, idx, block_hash, tx_obj = result
-                    # Convert Tx dataclass to dict for _tx_view
                     obj = (
                         _dcd(tx_obj)
                         if _dc.is_dataclass(tx_obj)
@@ -1402,23 +1283,19 @@ def _lookup_persisted_tx(
                     )
                     return view, height, idx, block_hash
             except Exception as e:
-                log.debug(f"block_db.get_transaction_by_hash failed: {e}")
+                log.debug("block_db.get_transaction_by_hash failed: %s", e)
 
-    # Use state_service if exposed (fallback)
     svc = getattr(deps, "state_service", None)
     if svc is not None:
-        # Expect methods like: get_transaction_by_hash, get_receipt_by_hash, etc.
         if hasattr(svc, "get_transaction_by_hash"):
             tx_rec = svc.get_transaction_by_hash(tx_hash_hex)  # type: ignore
             if tx_rec:
-                # tx_rec is expected to have (tx, block_number, index, block_hash)
                 tx_obj = tx_rec.get("tx") or tx_rec
                 block_number = tx_rec.get("blockNumber")
                 index = tx_rec.get("transactionIndex")
                 b_hash = tx_rec.get("blockHash")
                 if isinstance(b_hash, str):
                     b_hash = _b(b_hash)
-                # tx_obj might be raw CBOR or dict or dataclass
                 if isinstance(tx_obj, (bytes, bytearray)) and _cbor_loads:
                     obj = _cbor_loads(bytes(tx_obj))
                     tx_like = obj
@@ -1440,11 +1317,9 @@ def _lookup_persisted_tx(
                     b_hash if isinstance(b_hash, (bytes, bytearray)) else None,
                 )
 
-    # Try lower-level deps if present (last resort)
     if hasattr(deps, "get_tx_by_hash"):
         rec = deps.get_tx_by_hash(tx_hash_hex)  # type: ignore
         if rec:
-            # Best effort projection
             obj = rec.get("obj", {})
             blk = rec.get("block", {})
             h = blk.get("number") or blk.get("height")
@@ -1493,7 +1368,7 @@ def tx_send_raw_transaction(rawTx: str) -> str:
         return _tx_send_raw_transaction(rawTx)
     except rpc_errors.RpcError:
         raise
-    except Exception as e:  # pragma: no cover - top-level guard
+    except Exception as e:  # pragma: no cover
         raise rpc_errors.InvalidTx(
             "tx.sendRawTransaction failed",
             **_error_data(
@@ -1506,7 +1381,6 @@ def tx_send_raw_transaction(rawTx: str) -> str:
 
 
 def _tx_send_raw_transaction(rawTx: str) -> str:
-    # Accept hex only for now
     if not isinstance(rawTx, str):
         raise rpc_errors.InvalidParams("rawTx must be a hex string")
     if rawTx.startswith("0b:"):
@@ -1515,19 +1389,11 @@ def _tx_send_raw_transaction(rawTx: str) -> str:
     try:
         raw = _b(rawTx)
     except Exception as e:
-        log.error(
-            "tx.sendRawTransaction: hex decode failed, len=%d",
-            len(rawTx) if rawTx else 0,
-        )
+        log.error("tx.sendRawTransaction: hex decode failed, len=%d", len(rawTx) if rawTx else 0)
         TX_VALIDATION_FAILURES.labels(reason="hex_decode_failed").inc()
         raise rpc_errors.InvalidTx(
             "rawTx decode failed",
-            **_error_data(
-                "decode",
-                e,
-                "tx.sendRawTransaction._b",
-                "Ensure rawTx is 0x-prefixed hex",
-            ),
+            **_error_data("decode", e, "tx.sendRawTransaction._b", "Ensure rawTx is 0x-prefixed hex"),
         ) from e
 
     log.debug("tx.sendRawTransaction: decoding %d CBOR bytes", len(raw))
@@ -1537,38 +1403,23 @@ def _tx_send_raw_transaction(rawTx: str) -> str:
     except rpc_errors.RpcError:
         raise
     except Exception as e:
-        log.error(
-            "tx.sendRawTransaction: CBOR decode failed, raw_len=%d",
-            len(raw),
-            exc_info=True,
-        )
+        log.error("tx.sendRawTransaction: CBOR decode failed, raw_len=%d", len(raw), exc_info=True)
         TX_VALIDATION_FAILURES.labels(reason="cbor_decode_failed").inc()
         raise rpc_errors.InvalidTx(
             "Transaction decode failed",
-            **_error_data(
-                "decode",
-                e,
-                "_decode_tx",
-                "Ensure rawTx is CBOR {body, sig}",
-            ),
+            **_error_data("decode", e, "_decode_tx", "Ensure rawTx is CBOR {body, sig}"),
         ) from e
 
-    # Log the decoded structure for debugging
     log.info(
         "tx.sendRawTransaction: decoded envelope type=%s, keys=%s, body_keys=%s",
         type(tx_like).__name__ if hasattr(type(tx_like), "__name__") else type(tx_like),
         list(obj.keys()) if isinstance(obj, dict) else "not-dict",
-        (
-            list(obj.get("body", {}).keys())
-            if isinstance(obj, dict) and "body" in obj
-            else "no-body"
-        ),
+        (list(obj.get("body", {}).keys()) if isinstance(obj, dict) and "body" in obj else "no-body"),
     )
 
     try:
-        # Basic chainId check and reuse the validated value for signature verification
         try:
-            chain_id = _validate_chain_id(obj)
+            chain_id = _validate_chain_id(tx_like, obj)
         except rpc_errors.ChainIdMismatch as e:
             log.warning(
                 "tx.sendRawTransaction: chainId mismatch, got=%s, expected=%s",
@@ -1578,18 +1429,13 @@ def _tx_send_raw_transaction(rawTx: str) -> str:
             TX_VALIDATION_FAILURES.labels(reason="chain_id_mismatch").inc()
             raise
 
-        # PQ signature verify
         try:
             _verify_pq_signature(tx_like, obj, chain_id=chain_id)
         except rpc_errors.BadSignature as e:
-            log.warning(
-                "tx.sendRawTransaction: PQ signature invalid, chain_id=%d", chain_id
-            )
+            log.warning("tx.sendRawTransaction: PQ signature invalid, chain_id=%d", chain_id)
             TX_VALIDATION_FAILURES.labels(reason="signature_invalid").inc()
             raise
 
-        # Compute hash from the original CBOR bytes to ensure consistency
-        # Per spec: TxID = sha3_256(CBOR(SignedTxMap))
         tx_hash_hex = _hex(_sha3_256(raw)) or ""
 
         log.info(
@@ -1598,7 +1444,6 @@ def _tx_send_raw_transaction(rawTx: str) -> str:
             chain_id,
         )
 
-        # Balance validation: check if sender has sufficient funds
         try:
             _validate_sufficient_balance(obj)
         except rpc_errors.InsufficientFunds as e:
@@ -1610,43 +1455,22 @@ def _tx_send_raw_transaction(rawTx: str) -> str:
             TX_VALIDATION_FAILURES.labels(reason="insufficient_balance").inc()
             raise
 
-        # Duplicate suppression: if already in pending/persisted, return hash (idempotent)
-        # Note: Duplicates are not validation failures - they're expected and idempotent
         mempool_service = _get_mempool_service()
-        if mempool_service is not None and mempool_service.has_hash(tx_hash_hex):
-            log.info(
-                "tx.sendRawTransaction: duplicate tx (already in mempool), hash=%s",
-                tx_hash_hex,
-            )
+        if mempool_service is not None and _mempool_has_hash(mempool_service, tx_hash_hex):
+            log.info("tx.sendRawTransaction: duplicate tx (already in mempool), hash=%s", tx_hash_hex)
             return tx_hash_hex
         if _pending_get(tx_hash_hex) is not None:
-            log.info(
-                "tx.sendRawTransaction: duplicate tx (already pending), hash=%s",
-                tx_hash_hex,
-            )
+            log.info("tx.sendRawTransaction: duplicate tx (already pending), hash=%s", tx_hash_hex)
             return tx_hash_hex
         persisted, *_ = _lookup_persisted_tx(tx_hash_hex)
         if persisted is not None:
-            log.info(
-                "tx.sendRawTransaction: duplicate tx (already persisted), hash=%s",
-                tx_hash_hex,
-            )
+            log.info("tx.sendRawTransaction: duplicate tx (already persisted), hash=%s", tx_hash_hex)
             return tx_hash_hex
 
-        tx_obj = tx_like
-        if _Tx is not None and not isinstance(tx_like, _Tx) and isinstance(obj, dict):
-            try:
-                tx_obj = _Tx.from_obj(obj)  # type: ignore[attr-defined]
-            except Exception:
-                tx_obj = None
-
         # Admit to mempool (preferred) or pending pool fallback
-                # Admit to mempool (preferred) or pending pool fallback
         if mempool_service is not None:
             try:
-                mempool_size_before = (
-                    mempool_service.count() if hasattr(mempool_service, "count") else "?"
-                )
+                mempool_size_before = mempool_service.count() if hasattr(mempool_service, "count") else "?"
                 log.info(
                     "tx.sendRawTransaction: mempool_service available, path=admit, hash=%s, mempool_id=%s, size_before=%s",
                     tx_hash_hex,
@@ -1654,62 +1478,38 @@ def _tx_send_raw_transaction(rawTx: str) -> str:
                     mempool_size_before,
                 )
 
-                # Build a Tx object for pools that require it.
-                # IMPORTANT: never feed the enriched obj (with 'hash'/'raw') into core Tx constructors.
-                tx_obj = tx_like
-                if _Tx is not None and not isinstance(tx_like, _Tx) and isinstance(obj, dict):
-                    try:
-                        obj_for_tx = dict(obj)
-                        obj_for_tx.pop("hash", None)
-                        obj_for_tx.pop("raw", None)
-                        if hasattr(_Tx, "from_obj"):
-                            tx_obj = _Tx.from_obj(obj_for_tx)  # type: ignore[attr-defined]
-                        elif hasattr(_Tx, "from_dict"):
-                            tx_obj = _Tx.from_dict(obj_for_tx)  # type: ignore[attr-defined]
-                    except Exception:
-                        tx_obj = tx_like
+                tx_obj = _prepare_tx_for_pool(tx_like, obj, raw)
 
-                # **Fix:** Only return success if the pool actually admits the tx.
                 _admit_to_mempool(mempool_service, tx_obj=tx_obj, raw=raw, tx_hash_hex=tx_hash_hex)
 
-                mempool_size_after = (
-                    mempool_service.count() if hasattr(mempool_service, "count") else "?"
-                )
+                mempool_size_after = mempool_service.count() if hasattr(mempool_service, "count") else "?"
                 log.info(
                     "tx.sendRawTransaction: admitted to mempool, hash=%s, size_after=%s",
                     tx_hash_hex,
                     mempool_size_after,
                 )
 
-                # Also add to pending cache so tx.getTransactionByHash works immediately.
                 _pending_put(tx_hash_hex, raw)
-
             except Exception as exc:
                 raise rpc_errors.to_error(exc) from exc
         else:
-            log.info(
-                "tx.sendRawTransaction: mempool_service unavailable, path=pending_put, hash=%s",
-                tx_hash_hex,
-            )
+            log.info("tx.sendRawTransaction: mempool_service unavailable, path=pending_put, hash=%s", tx_hash_hex)
             _pending_put(tx_hash_hex, raw)
 
-
-        # Notify WS hub (best-effort)
         try:
             if hasattr(deps, "ws_broadcast_pending"):
                 deps.ws_broadcast_pending(tx_hash_hex, obj)  # type: ignore
         except Exception:
             pass
 
-        # Gossip to P2P peers (best-effort)
         try:
             _gossip_tx_to_peers(raw)
         except Exception as e:
             log.debug("Failed to gossip tx to peers: %s", e)
 
         return tx_hash_hex
+
     except rpc_errors.BadSignature as e:
-        # Normalize PQ failures to a consistent error code/message
         data = dict(e.data or {})
         data.setdefault("kind", "pq_verify")
         data.setdefault("where", "tx.sendRawTransaction")
@@ -1723,12 +1523,7 @@ def _tx_send_raw_transaction(rawTx: str) -> str:
         log.exception("tx.sendRawTransaction: unexpected failure")
         raise rpc_errors.InvalidTx(
             "tx.sendRawTransaction failed",
-            **_error_data(
-                "unknown",
-                e,
-                "tx.sendRawTransaction",
-                "Enable ANIMICA_RPC_DEBUG=1 for stack trace",
-            ),
+            **_error_data("unknown", e, "tx.sendRawTransaction", "Enable ANIMICA_RPC_DEBUG=1 for stack trace"),
         ) from e
 
 
@@ -1748,12 +1543,7 @@ def tx_decode_raw_transaction(rawTx: str) -> dict:
     except Exception as e:
         raise rpc_errors.InvalidTx(
             "rawTx decode failed",
-            **_error_data(
-                "decode",
-                e,
-                "tx.decodeRawTransaction._b",
-                "Ensure rawTx is 0x-prefixed hex",
-            ),
+            **_error_data("decode", e, "tx.decodeRawTransaction._b", "Ensure rawTx is 0x-prefixed hex"),
         ) from e
 
     log.debug("tx.decodeRawTransaction: decoding %d CBOR bytes", len(raw))
@@ -1765,22 +1555,13 @@ def tx_decode_raw_transaction(rawTx: str) -> dict:
     except Exception as e:
         raise rpc_errors.InvalidTx(
             "Transaction decode failed",
-            **_error_data(
-                "decode",
-                e,
-                "_decode_tx",
-                "Ensure rawTx is CBOR {body, sig}",
-            ),
+            **_error_data("decode", e, "_decode_tx", "Ensure rawTx is CBOR {body, sig}"),
         ) from e
 
     decoded_obj = obj if isinstance(obj, dict) else _dcd(obj)
     return {
         "len": len(raw),
-        "type": (
-            type(tx_like).__name__
-            if hasattr(type(tx_like), "__name__")
-            else str(type(tx_like))
-        ),
+        "type": type(tx_like).__name__ if hasattr(type(tx_like), "__name__") else str(type(tx_like)),
         "tx": _jsonify(decoded_obj),
     }
 
@@ -1804,7 +1585,7 @@ def tx_debug_verify_raw_transaction(rawTx: str) -> dict:
 
     raw = _b(rawTx)
     tx_like, obj = _decode_tx(raw)
-    chain_id = _validate_chain_id(obj)
+    chain_id = _validate_chain_id(tx_like, obj)
 
     alg_id, pub, sig, domain, prehash = _extract_sig(obj)
     candidates = _collect_sign_bytes(obj)
@@ -1816,12 +1597,7 @@ def tx_debug_verify_raw_transaction(rawTx: str) -> dict:
     )
 
     candidate_views = [
-        {
-            "label": lbl,
-            "len": len(data),
-            "prefix": data[:32].hex(),
-            "sha3_256": _hex(_sha3_256(data)),
-        }
+        {"label": lbl, "len": len(data), "prefix": data[:32].hex(), "sha3_256": _hex(_sha3_256(data))}
         for lbl, data in candidates
     ]
 
@@ -1850,18 +1626,13 @@ def tx_get_transaction_by_hash(txHash: str) -> t.Optional[dict]:
 
     log.debug("tx.getTransactionByHash: looking up tx_hash=%s", tx_hash_hex)
 
-    # 1) Check pending pool
     raw = _pending_get(tx_hash_hex)
     if raw is not None and _cbor_loads is not None:
-        log.debug(
-            "tx.getTransactionByHash: found in pending pool, raw_len=%d", len(raw)
-        )
+        log.debug("tx.getTransactionByHash: found in pending pool, raw_len=%d", len(raw))
         try:
             obj = _cbor_loads(raw)
             tx_like = obj
-            view = _tx_view(
-                tx_like, obj if isinstance(obj, dict) else _dcd(obj), pending=True
-            )
+            view = _tx_view(tx_like, obj if isinstance(obj, dict) else _dcd(obj), pending=True)
             log.debug(
                 "tx.getTransactionByHash: returning pending tx view, fields=%s",
                 list(view.keys()) if view else "none",
@@ -1874,15 +1645,12 @@ def tx_get_transaction_by_hash(txHash: str) -> t.Optional[dict]:
                 e,
                 exc_info=True,
             )
-            # Fall through to check persisted
 
-    # 2) Check persisted DB via deps/state_service
     view, *_etc = _lookup_persisted_tx(tx_hash_hex)
     if view is not None:
         log.debug("tx.getTransactionByHash: found in persisted DB")
         return view
 
-    # 3) Not found
     log.debug("tx.getTransactionByHash: tx not found, hash=%s", tx_hash_hex)
     return None
 
