@@ -243,9 +243,16 @@ def _coerce_selected_txs(
             reason = "decode_error"
             dropped_counts[reason] = dropped_counts.get(reason, 0) + 1
             dropped_by_hash[hash_hex] = reason
+            error_details = {"type": type(tx_obj).__name__}
+            if decoded_obj:
+                error_details.update({
+                    "has_tx_field": "tx" in decoded_obj,
+                    "has_sigs_field": "sigs" in decoded_obj,
+                    "decoded_keys": list(decoded_obj.keys())[:10],
+                })
             dropped_details[hash_hex] = {
                 "reason": reason,
-                "details": {"type": type(tx_obj).__name__},
+                "details": error_details,
             }
             continue
 
@@ -2120,7 +2127,7 @@ def _mine_once(
                     tx_hash_hex = _normalize_hash_hex(tx_hash_hex)
                     pending_raw_by_hash[tx_hash_hex] = raw
                     pending_entries.append(
-                        PendingTxEntry(hash_hex=tx_hash_hex, raw=raw, tx=None)
+                        PendingTxEntry(hash_hex=tx_hash_hex, raw=raw, tx=tx_obj)
                     )
                 except Exception as e:
                     log.warning(

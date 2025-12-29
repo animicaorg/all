@@ -16,6 +16,7 @@ from typing import Iterable
 from rpc.methods import method
 from rpc import deps
 from mempool.select import PendingTxEntry, select_for_block
+from core.types.tx import Tx
 
 log = logging.getLogger(__name__)
 
@@ -202,10 +203,23 @@ def mempool_explain(tx_hash: str) -> dict:
             tx_obj, decoded_obj, chain_id=int(chain_id or 0)
         )
 
+    tx_obj = None
+    if tx_methods is not None:
+        try:
+            decoded, _obj = tx_methods._decode_tx(raw)  # type: ignore[attr-defined]
+            if isinstance(decoded, Tx):
+                tx_obj = decoded
+            elif isinstance(decoded, dict):
+                from rpc.methods.miner import _normalize_tx_envelope, _construct_tx_from_dict
+                normalized = _normalize_tx_envelope(decoded)
+                tx_obj = _construct_tx_from_dict(normalized)
+        except Exception:
+            pass
+
     selection = select_for_block(
         head_state={"chain_id": chain_id},
         limits={"max_gas": 0, "max_bytes": 0, "max_txs": 1},
-        pending=[PendingTxEntry(hash_hex=target, raw=raw, tx=None)],
+        pending=[PendingTxEntry(hash_hex=target, raw=raw, tx=tx_obj)],
         decode=_decode,
         state_db=state_db,
         policy={"min_gas_price": min_gas_price},
