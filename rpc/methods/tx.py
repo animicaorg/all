@@ -1466,17 +1466,39 @@ def _tx_send_raw_transaction(rawTx: str) -> str:
         # Admit to mempool (preferred) or pending pool fallback
         if mempool_service is not None and tx_obj is not None:
             try:
+                mempool_size_before = (
+                    mempool_service.count() if hasattr(mempool_service, "count") else "?"
+                )
                 log.info(
-                    "tx.sendRawTransaction: mempool_service available, path=service.submit, hash=%s",
+                    "tx.sendRawTransaction: mempool_service available, path=service.submit, hash=%s, mempool_id=%s, size_before=%s",
                     tx_hash_hex,
+                    id(mempool_service),
+                    mempool_size_before,
                 )
                 mempool_service.submit(tx=tx_obj, raw=raw, tx_hash_hex=tx_hash_hex)
                 
+                mempool_size_after = (
+                    mempool_service.count() if hasattr(mempool_service, "count") else "?"
+                )
+                log.info(
+                    "tx.sendRawTransaction: submit() completed, hash=%s, size_after=%s",
+                    tx_hash_hex,
+                    mempool_size_after,
+                )
+                
                 # CRITICAL: Verify tx is actually in mempool before returning success
-                if not mempool_service.has_hash(tx_hash_hex):
+                has_tx = mempool_service.has_hash(tx_hash_hex)
+                log.info(
+                    "tx.sendRawTransaction: post-submit verification, hash=%s, in_mempool=%s",
+                    tx_hash_hex,
+                    has_tx,
+                )
+                
+                if not has_tx:
                     log.error(
-                        "tx.sendRawTransaction: VERIFICATION FAILED - tx not in mempool after submit(), hash=%s",
+                        "tx.sendRawTransaction: VERIFICATION FAILED - tx not in mempool after submit(), hash=%s, mempool_id=%s",
                         tx_hash_hex,
+                        id(mempool_service),
                     )
                     raise rpc_errors.InternalError(
                         "Transaction submitted but not in mempool",
