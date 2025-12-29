@@ -3495,8 +3495,10 @@ def miner_get_block_template(*args: Any, **kwargs: Any) -> Dict[str, Any]:
     include_mempool_flag = True
     payout_address = None
     allow_offline_mining = False
+    raw_params: dict[str, Any] | list[Any] | None = None
 
     if args:
+        raw_params = list(args)
         if len(args) == 1 and isinstance(args[0], dict):
             payload = args[0]
         else:
@@ -3506,6 +3508,7 @@ def miner_get_block_template(*args: Any, **kwargs: Any) -> Dict[str, Any]:
             if len(args) > 1:
                 include_mempool_flag = bool(args[1])
     elif kwargs:
+        raw_params = dict(kwargs)
         if "payload" in kwargs:
             if len(kwargs) != 1:
                 raise rpc_errors.InvalidParams("payload must be the only named argument")
@@ -3540,369 +3543,408 @@ def miner_get_block_template(*args: Any, **kwargs: Any) -> Dict[str, Any]:
         raise rpc_errors.InvalidParams("address is required")
     payout_address = _validate_payout_address(payout_address)
 
+    log.info(
+        "miner.getBlockTemplate request",
+        extra={
+            "params": raw_params or payload,
+            "include_mempool": include_mempool_flag,
+            "allow_offline_mining": allow_offline_mining,
+            "payout_address": payout_address,
+        },
+    )
+
     allowed, reason = _mining_gate(allow_offline_mining=allow_offline_mining)
     if not allowed:
         return {"enabled": False, "reason": reason}
 
-    ctx = _ctx()
-    adapter = _adapter()
-    mempool_service = getattr(ctx, "mempool", None)
-    pending_entries: list[PendingTxEntry] = []
-    pending_raw_by_hash: dict[str, bytes] = {}
-    selection_summary: dict[str, Any] = {
-        "pending": 0,
-        "selected": 0,
-        "rejected": {},
-        "rejectedByHash": {},
-        "rejectedDetailsByHash": {},
-        "mempoolEnabled": include_mempool_flag,
-    }
+    try:
+        ctx = _ctx()
+        adapter = _adapter()
+        mempool_service = getattr(ctx, "mempool", None)
+        pending_entries: list[PendingTxEntry] = []
+        pending_raw_by_hash: dict[str, bytes] = {}
+        selection_summary: dict[str, Any] = {
+            "pending": 0,
+            "selected": 0,
+            "rejected": {},
+            "rejectedByHash": {},
+            "rejectedDetailsByHash": {},
+            "mempoolEnabled": include_mempool_flag,
+        }
 
-    if include_mempool_flag:
-        pending_entries, pending_raw_by_hash, pending_total = _collect_mempool_entries(
-            ctx=ctx,
-            adapter=adapter,
-            limit=1000,
-        )
-        log.info(
-            "block template mempool collection",
-            extra={
-                "entries": len(pending_entries),
-                "total": pending_total,
-                "source": "service" if mempool_service is not None else "adapter",
-                "mempool_id": id(mempool_service) if mempool_service is not None else "None",
-            },
-        )
-    else:
-        pending_total = 0
-
-    if include_mempool_flag and not pending_entries and mempool_service is None:
-        try:
-            from rpc.methods import tx as tx_methods
-
-            pend = getattr(tx_methods, "_PEND", None)
-            pending_map = {}
-
-            if pend is not None:
-                if hasattr(pend, "items") and callable(pend.items):
-                    pending_map = dict(pend.items())
-                elif hasattr(pend, "list_raw") and callable(pend.list_raw):
-                    pending_map = dict(pend.list_raw())
-
-            if not pending_map:
-                pending_map = getattr(tx_methods, "_FALLBACK_PENDING", {}) or {}
-
-            log.warning(
-                "miner.getBlockTemplate: FALLBACK - using _PEND/_FALLBACK_PENDING, entries=%d (mempool_service was None)",
-                len(pending_map),
+        if include_mempool_flag:
+            pending_entries, pending_raw_by_hash, pending_total = _collect_mempool_entries(
+                ctx=ctx,
+                adapter=adapter,
+                limit=1000,
             )
+            log.info(
+                "block template mempool collection",
+                extra={
+                    "entries": len(pending_entries),
+                    "total": pending_total,
+                    "source": "service" if mempool_service is not None else "adapter",
+                    "mempool_id": id(mempool_service) if mempool_service is not None else "None",
+                },
+            )
+        else:
+            pending_total = 0
 
-            for tx_hash_hex, raw in pending_map.items():
-                try:
-                    decoded, _obj = tx_methods._decode_tx(raw)  # type: ignore[attr-defined]
-                    tx_obj = None
-                    if isinstance(decoded, Tx):
-                        tx_obj = decoded
-                    elif isinstance(decoded, dict):
-                        normalized = _normalize_tx_envelope(decoded)
-                        tx_obj = _construct_tx_from_dict(normalized)
-                    if tx_obj is None:
+        if include_mempool_flag and not pending_entries and mempool_service is None:
+            try:
+                from rpc.methods import tx as tx_methods
+
+                pend = getattr(tx_methods, "_PEND", None)
+                pending_map = {}
+
+                if pend is not None:
+                    if hasattr(pend, "items") and callable(pend.items):
+                        pending_map = dict(pend.items())
+                    elif hasattr(pend, "list_raw") and callable(pend.list_raw):
+                        pending_map = dict(pend.list_raw())
+
+                if not pending_map:
+                    pending_map = getattr(tx_methods, "_FALLBACK_PENDING", {}) or {}
+
+                log.warning(
+                    "miner.getBlockTemplate: FALLBACK - using _PEND/_FALLBACK_PENDING, entries=%d (mempool_service was None)",
+                    len(pending_map),
+                )
+
+                for tx_hash_hex, raw in pending_map.items():
+                    try:
+                        decoded, _obj = tx_methods._decode_tx(raw)  # type: ignore[attr-defined]
+                        tx_obj = None
+                        if isinstance(decoded, Tx):
+                            tx_obj = decoded
+                        elif isinstance(decoded, dict):
+                            normalized = _normalize_tx_envelope(decoded)
+                            tx_obj = _construct_tx_from_dict(normalized)
+                        if tx_obj is None:
+                            continue
+                        tx_hash_hex = _normalize_hash_hex(tx_hash_hex)
+                        pending_raw_by_hash[tx_hash_hex] = raw
+                        pending_entries.append(
+                            PendingTxEntry(hash_hex=tx_hash_hex, raw=raw, tx=None)
+                        )
+                    except Exception:
                         continue
-                    tx_hash_hex = _normalize_hash_hex(tx_hash_hex)
-                    pending_raw_by_hash[tx_hash_hex] = raw
-                    pending_entries.append(
-                        PendingTxEntry(hash_hex=tx_hash_hex, raw=raw, tx=None)
-                    )
-                except Exception:
-                    continue
-        except Exception as e:
-            log.error("Fallback pending pool unavailable", extra={"err": str(e)}, exc_info=True)
+            except Exception as e:
+                log.error("Fallback pending pool unavailable", extra={"err": str(e)}, exc_info=True)
 
-    if include_mempool_flag and pending_entries:
-        normalized_entries: list[PendingTxEntry] = []
-        for entry in pending_entries:
-            tx = entry.tx
-            if tx is None:
-                normalized_entries.append(entry)
-                continue
-            tx_normalized = _attach_sender_if_possible(tx)
-            if tx_normalized is not tx:
-                tracked = _tracked(tx)
-                if tracked:
-                    _TX_HASH_MAP[id(tx_normalized)] = tracked
-            normalized_entries.append(
-                PendingTxEntry(
-                    hash_hex=entry.hash_hex, raw=entry.raw, tx=tx_normalized
+        if include_mempool_flag and pending_entries:
+            normalized_entries: list[PendingTxEntry] = []
+            for entry in pending_entries:
+                tx = entry.tx
+                if tx is None:
+                    normalized_entries.append(entry)
+                    continue
+                tx_normalized = _attach_sender_if_possible(tx)
+                if tx_normalized is not tx:
+                    tracked = _tracked(tx)
+                    if tracked:
+                        _TX_HASH_MAP[id(tx_normalized)] = tracked
+                normalized_entries.append(
+                    PendingTxEntry(
+                        hash_hex=entry.hash_hex, raw=entry.raw, tx=tx_normalized
+                    )
+                )
+
+            decode_fn = None
+            try:
+                from rpc.methods import tx as tx_methods
+
+                decode_fn = tx_methods._decode_tx  # type: ignore[attr-defined]
+            except Exception:
+                decode_fn = None
+
+            min_gas_price = 0
+            try:
+                min_gas_price = int(ctx.params.get("min_gas_price", 0))
+            except Exception:
+                min_gas_price = 0
+
+            try:
+                from rpc.methods import tx as tx_methods
+            except Exception:
+                tx_methods = None  # type: ignore[assignment]
+
+            def _signature_validator(tx_obj: Any, decoded_obj: dict[str, Any] | None) -> None:
+                if tx_methods is None:
+                    return
+                if decoded_obj is None:
+                    return
+                tx_methods._verify_pq_signature(  # type: ignore[attr-defined]
+                    tx_obj, decoded_obj, chain_id=_resolve_chain_id_for_sig(ctx)
+                )
+
+            selection = select_for_block(
+                head_state={"chain_id": ctx.cfg.chain_id},
+                limits={
+                    "max_gas": DEFAULT_BLOCK_GAS_LIMIT,
+                    "max_bytes": DEFAULT_BLOCK_BYTE_LIMIT,
+                    "max_txs": 1000,
+                },
+                pending=normalized_entries,
+                decode=decode_fn,
+                state_db=getattr(ctx, "state_db", None),
+                policy={"min_gas_price": min_gas_price},
+                tx_index=getattr(ctx, "tx_index", None),
+                signature_validator=_signature_validator,
+            )
+            txs, included_hashes, dropped_counts, dropped_by_hash, dropped_details = (
+                _coerce_selected_txs(
+                    selected=list(selection.selected),
+                    selected_hashes=list(selection.selected_hashes),
+                    pending_raw_by_hash=pending_raw_by_hash,
+                    decode_fn=decode_fn,
                 )
             )
-
-        decode_fn = None
-        try:
-            from rpc.methods import tx as tx_methods
-
-            decode_fn = tx_methods._decode_tx  # type: ignore[attr-defined]
-        except Exception:
-            decode_fn = None
-
-        min_gas_price = 0
-        try:
-            min_gas_price = int(ctx.params.get("min_gas_price", 0))
-        except Exception:
-            min_gas_price = 0
-
-        try:
-            from rpc.methods import tx as tx_methods
-        except Exception:
-            tx_methods = None  # type: ignore[assignment]
-
-        def _signature_validator(tx_obj: Any, decoded_obj: dict[str, Any] | None) -> None:
-            if tx_methods is None:
-                return
-            if decoded_obj is None:
-                return
-            tx_methods._verify_pq_signature(  # type: ignore[attr-defined]
-                tx_obj, decoded_obj, chain_id=_resolve_chain_id_for_sig(ctx)
+            merged_rejected = dict(selection.rejected)
+            for reason, count in dropped_counts.items():
+                merged_rejected[reason] = merged_rejected.get(reason, 0) + int(count)
+            merged_rejected_by_hash = dict(selection.rejected_by_hash)
+            merged_rejected_by_hash.update(dropped_by_hash)
+            merged_rejected_details_by_hash = dict(selection.rejected_details_by_hash)
+            merged_rejected_details_by_hash.update(dropped_details)
+            selection_summary = {
+                "pending": selection.total_pending,
+                "candidates": len(pending_entries),
+                "mempoolTotal": pending_total,
+                "selected": len(txs),
+                "rejected": dict(merged_rejected),
+                "rejectedCount": sum(int(v) for v in merged_rejected.values()),
+                "rejectedByHash": dict(list(merged_rejected_by_hash.items())[:10]),
+                "rejectedDetailsByHash": dict(
+                    list(merged_rejected_details_by_hash.items())[:10]
+                ),
+                "mempoolEnabled": True,
+            }
+            _maybe_log_mempool_debug(
+                phase="block_template",
+                pending_total=selection.total_pending,
+                candidate_count=len(pending_entries),
+                included_count=len(txs),
+                rejected=merged_rejected,
+                rejected_details_by_hash=merged_rejected_details_by_hash,
             )
-
-        selection = select_for_block(
-            head_state={"chain_id": ctx.cfg.chain_id},
-            limits={
-                "max_gas": DEFAULT_BLOCK_GAS_LIMIT,
-                "max_bytes": DEFAULT_BLOCK_BYTE_LIMIT,
-                "max_txs": 1000,
-            },
-            pending=normalized_entries,
-            decode=decode_fn,
-            state_db=getattr(ctx, "state_db", None),
-            policy={"min_gas_price": min_gas_price},
-            tx_index=getattr(ctx, "tx_index", None),
-            signature_validator=_signature_validator,
-        )
-        txs, included_hashes, dropped_counts, dropped_by_hash, dropped_details = (
-            _coerce_selected_txs(
-                selected=list(selection.selected),
-                selected_hashes=list(selection.selected_hashes),
-                pending_raw_by_hash=pending_raw_by_hash,
-                decode_fn=decode_fn,
-            )
-        )
-        merged_rejected = dict(selection.rejected)
-        for reason, count in dropped_counts.items():
-            merged_rejected[reason] = merged_rejected.get(reason, 0) + int(count)
-        merged_rejected_by_hash = dict(selection.rejected_by_hash)
-        merged_rejected_by_hash.update(dropped_by_hash)
-        merged_rejected_details_by_hash = dict(selection.rejected_details_by_hash)
-        merged_rejected_details_by_hash.update(dropped_details)
-        selection_summary = {
-            "pending": selection.total_pending,
-            "candidates": len(pending_entries),
-            "mempoolTotal": pending_total,
-            "selected": len(txs),
-            "rejected": dict(merged_rejected),
-            "rejectedCount": sum(int(v) for v in merged_rejected.values()),
-            "rejectedByHash": dict(list(merged_rejected_by_hash.items())[:10]),
-            "rejectedDetailsByHash": dict(
-                list(merged_rejected_details_by_hash.items())[:10]
-            ),
-            "mempoolEnabled": True,
-        }
-        _maybe_log_mempool_debug(
-            phase="block_template",
-            pending_total=selection.total_pending,
-            candidate_count=len(pending_entries),
-            included_count=len(txs),
-            rejected=merged_rejected,
-            rejected_details_by_hash=merged_rejected_details_by_hash,
-        )
-        if merged_rejected:
-            log.info(
-                "Block template mempool selection rejected candidates",
-                extra={
-                    "rejected": dict(merged_rejected),
-                    "rejected_by_hash_sample": dict(
-                        list(merged_rejected_by_hash.items())[:10]
-                    ),
-                },
-            )
-        if selection.total_pending and len(txs) == 0:
-            log.warning(
-                "Block template has pending mempool txs but no eligible inclusions",
-                extra={
-                    "pending": selection.total_pending,
-                    "rejected": dict(merged_rejected),
-                },
-            )
-    else:
-        txs = []
-        included_hashes = []
-
-    head = adapter.get_head()
-    parent_height = int(head.get("height") or 0)
-    parent_hash_val = head.get("hash") or head.get("hash_hex")
-    parent_header = head.get("obj") or head.get("header")
-
-    if parent_header is None:
-        _maybe_bootstrap = getattr(deps, "startup", None)
-        if callable(_maybe_bootstrap):
-            try:
-                deps.ensure_started(ctx.cfg)
-                head = adapter.get_head()
-                parent_height = int(head.get("height") or 0)
-                parent_hash_val = head.get("hash") or head.get("hash_hex")
-                parent_header = head.get("obj") or head.get("header")
-            except Exception:
-                parent_header = None
-
-    parent_hash_bytes = _bytes32(parent_hash_val or ZERO32)
-    if parent_header is None:
-        pq_root, poies_root = _policy_roots()
-        parent_header = Header(
-            v=1,
-            chainId=_ctx().cfg.chain_id,
-            height=parent_height,
-            parentHash=parent_hash_bytes,
-            timestamp=int(time.time()),
-            stateRoot=ZERO32,
-            txsRoot=ZERO32,
-            receiptsRoot=ZERO32,
-            proofsRoot=ZERO32,
-            daRoot=ZERO32,
-            mixSeed=ZERO32,
-            poiesPolicyRoot=poies_root,
-            pqAlgPolicyRoot=pq_root,
-            thetaMicro=_resolve_theta(),
-            nonce=0,
-            extra=b"",
-        )
-
-    timestamp_min, timestamp_max, _ = _timestamp_bounds(parent_header)
-    header_template = _build_child_header(parent_height, parent_hash_bytes, parent_header)
-
-    network_dt_seconds = None
-    try:
-        head_timestamp = int(getattr(parent_header, "timestamp", 0) or 0)
-        network_dt_seconds = _network_block_interval(parent_height, head_timestamp)
-    except Exception:
-        network_dt_seconds = None
-    if network_dt_seconds is not None:
-        adjusted_theta = _adjust_theta_for_mining(network_dt_seconds)
-        try:
-            header_template = replace(header_template, thetaMicro=adjusted_theta)
-        except Exception:
-            pass
-
-    if txs:
-        leaves = []
-        valid_txs = []
-        valid_hashes = []
-        for i, tx in enumerate(txs):
-            try:
-                tracked = _tracked(tx)
-                if tracked:
-                    tx_hash_hex, raw = tracked
-                    tx_hash = bytes.fromhex(tx_hash_hex[2:])
-                else:
-                    tx_hash = tx.hash()
-                    tx_hash_hex = "0x" + tx_hash.hex()
-                leaves.append(tx_hash)
-                valid_txs.append(tx)
-                if i < len(included_hashes):
-                    valid_hashes.append(included_hashes[i])
-                else:
-                    valid_hashes.append(tx_hash_hex)
-            except Exception:
-                continue
-        txs = valid_txs
-        included_hashes = valid_hashes
-        if leaves:
-            try:
-                from core.utils.merkle import compute_txs_root
-
-                txs_root = compute_txs_root(leaves)
-                header_template = replace(header_template, txsRoot=txs_root)
-                tx_tuples = list(zip(leaves, txs, included_hashes))
-                tx_tuples_sorted = sorted(tx_tuples, key=lambda t: t[0])
-                leaves, txs, included_hashes = map(list, zip(*tx_tuples_sorted))
-            except Exception:
-                txs = []
-                included_hashes = []
-
-    header_dict = asdict(header_template)
-    header_view = {
-        k: (_to_hex(v) if isinstance(v, (bytes, bytearray)) else v)
-        for k, v in header_dict.items()
-    }
-    target = _theta_to_target(header_template.thetaMicro)
-
-    tx_payloads: list[dict[str, str]] = []
-    raw_by_hash: dict[str, bytes] = {}
-    for tx in txs:
-        tracked = _tracked(tx)
-        if tracked:
-            tx_hash_hex, raw = tracked
+            if merged_rejected:
+                log.info(
+                    "Block template mempool selection rejected candidates",
+                    extra={
+                        "rejected": dict(merged_rejected),
+                        "rejected_by_hash_sample": dict(
+                            list(merged_rejected_by_hash.items())[:10]
+                        ),
+                    },
+                )
+            if selection.total_pending and len(txs) == 0:
+                log.warning(
+                    "Block template has pending mempool txs but no eligible inclusions",
+                    extra={
+                        "pending": selection.total_pending,
+                        "rejected": dict(merged_rejected),
+                    },
+                )
         else:
-            tx_hash_hex = _canonical_txid_hex(tx)
-            raw = getattr(tx, "raw_cbor", None) or b""
-            if not raw and hasattr(tx, "to_cbor"):
+            txs = []
+            included_hashes = []
+
+        head = adapter.get_head()
+        parent_height = int(head.get("height") or 0)
+        parent_hash_val = head.get("hash") or head.get("hash_hex")
+        parent_header = head.get("obj") or head.get("header")
+
+        if parent_header is None:
+            _maybe_bootstrap = getattr(deps, "startup", None)
+            if callable(_maybe_bootstrap):
                 try:
-                    raw = tx.to_cbor()
+                    deps.ensure_started(ctx.cfg)
+                    head = adapter.get_head()
+                    parent_height = int(head.get("height") or 0)
+                    parent_hash_val = head.get("hash") or head.get("hash_hex")
+                    parent_header = head.get("obj") or head.get("header")
                 except Exception:
-                    raw = b""
-        raw_by_hash[tx_hash_hex] = raw
-        tx_payloads.append({"hash": tx_hash_hex, "raw": "0x" + raw.hex()})
+                    parent_header = None
 
-    excluded: list[dict[str, Any]] = []
-    rejected_details = selection_summary.get("rejectedDetailsByHash", {})
-    if rejected_details:
-        for tx_hash, detail in list(rejected_details.items())[:10]:
-            payload = {"hash": tx_hash}
-            if isinstance(detail, dict):
-                payload.update(detail)
+        parent_hash_bytes = _bytes32(parent_hash_val or ZERO32)
+        if parent_header is None:
+            pq_root, poies_root = _policy_roots()
+            parent_header = Header(
+                v=1,
+                chainId=_ctx().cfg.chain_id,
+                height=parent_height,
+                parentHash=parent_hash_bytes,
+                timestamp=int(time.time()),
+                stateRoot=ZERO32,
+                txsRoot=ZERO32,
+                receiptsRoot=ZERO32,
+                proofsRoot=ZERO32,
+                daRoot=ZERO32,
+                mixSeed=ZERO32,
+                poiesPolicyRoot=poies_root,
+                pqAlgPolicyRoot=pq_root,
+                thetaMicro=_resolve_theta(),
+                nonce=0,
+                extra=b"",
+            )
+
+        timestamp_min, timestamp_max, _ = _timestamp_bounds(parent_header)
+        header_template = _build_child_header(parent_height, parent_hash_bytes, parent_header)
+
+        network_dt_seconds = None
+        try:
+            head_timestamp = int(getattr(parent_header, "timestamp", 0) or 0)
+            network_dt_seconds = _network_block_interval(parent_height, head_timestamp)
+        except Exception:
+            network_dt_seconds = None
+        if network_dt_seconds is not None:
+            adjusted_theta = _adjust_theta_for_mining(network_dt_seconds)
+            try:
+                header_template = replace(header_template, thetaMicro=adjusted_theta)
+            except Exception:
+                pass
+
+        if txs:
+            leaves = []
+            valid_txs = []
+            valid_hashes = []
+            for i, tx in enumerate(txs):
+                try:
+                    tracked = _tracked(tx)
+                    if tracked:
+                        tx_hash_hex, raw = tracked
+                        tx_hash = bytes.fromhex(tx_hash_hex[2:])
+                    else:
+                        tx_hash = tx.hash()
+                        tx_hash_hex = "0x" + tx_hash.hex()
+                    leaves.append(tx_hash)
+                    valid_txs.append(tx)
+                    if i < len(included_hashes):
+                        valid_hashes.append(included_hashes[i])
+                    else:
+                        valid_hashes.append(tx_hash_hex)
+                except Exception:
+                    continue
+            txs = valid_txs
+            included_hashes = valid_hashes
+            if leaves:
+                try:
+                    from core.utils.merkle import compute_txs_root
+
+                    txs_root = compute_txs_root(leaves)
+                    header_template = replace(header_template, txsRoot=txs_root)
+                    tx_tuples = list(zip(leaves, txs, included_hashes))
+                    tx_tuples_sorted = sorted(tx_tuples, key=lambda t: t[0])
+                    leaves, txs, included_hashes = map(list, zip(*tx_tuples_sorted))
+                except Exception:
+                    txs = []
+                    included_hashes = []
+
+        header_dict = asdict(header_template)
+        header_view = {
+            k: (_to_hex(v) if isinstance(v, (bytes, bytearray)) else v)
+            for k, v in header_dict.items()
+        }
+        target = _theta_to_target(header_template.thetaMicro)
+
+        tx_payloads: list[dict[str, str]] = []
+        raw_by_hash: dict[str, bytes] = {}
+        for tx in txs:
+            tracked = _tracked(tx)
+            if tracked:
+                tx_hash_hex, raw = tracked
             else:
-                payload["reason"] = str(detail)
-            excluded.append(payload)
+                tx_hash_hex = _canonical_txid_hex(tx)
+                raw = getattr(tx, "raw_cbor", None) or b""
+                if not raw and hasattr(tx, "to_cbor"):
+                    try:
+                        raw = tx.to_cbor()
+                    except Exception:
+                        raw = b""
+            raw_by_hash[tx_hash_hex] = raw
+            tx_payloads.append({"hash": tx_hash_hex, "raw": "0x" + raw.hex()})
 
-    coinbase = {"address": payout_address, "amount": None}
-    try:
-        from consensus.rewards import compute_block_reward  # type: ignore[import-not-found]
+        excluded: list[dict[str, Any]] = []
+        rejected_details = selection_summary.get("rejectedDetailsByHash", {})
+        if rejected_details:
+            for tx_hash, detail in list(rejected_details.items())[:10]:
+                payload = {"hash": tx_hash}
+                if isinstance(detail, dict):
+                    payload.update(detail)
+                else:
+                    payload["reason"] = str(detail)
+                excluded.append(payload)
 
-        rewards = compute_block_reward(
-            chain_id=int(ctx.cfg.chain_id),
-            height=int(header_template.height),
-            params=ctx.params,
+        coinbase = {"address": payout_address, "amount": None}
+        try:
+            from consensus.rewards import compute_block_reward  # type: ignore[import-not-found]
+
+            rewards = compute_block_reward(
+                chain_id=int(ctx.cfg.chain_id),
+                height=int(header_template.height),
+                params=ctx.params,
+            )
+            if rewards:
+                coinbase["amount"] = int(rewards[0][1])
+        except Exception:
+            coinbase["amount"] = None
+
+        log.info(
+            "miner.getBlockTemplate assembled",
+            extra={
+                "parent_height": parent_height,
+                "parent_hash": _to_hex(parent_hash_bytes),
+                "header_height": int(header_template.height),
+                "header_timestamp": int(header_template.timestamp),
+                "target": hex(int(target)),
+                "coinbase": coinbase,
+            },
         )
-        if rewards:
-            coinbase["amount"] = int(rewards[0][1])
-    except Exception:
-        coinbase["amount"] = None
 
-    _prune_template_cache()
-    template_id = uuid.uuid4().hex
-    _TEMPLATE_CACHE[template_id] = {
-        "created_at": time.time(),
-        "parent_hash": _to_hex(parent_hash_bytes),
-        "parent_height": parent_height,
-        "target": hex(int(target)),
-        "theta_micro": int(header_template.thetaMicro),
-        "timestamp_min": int(timestamp_min),
-        "timestamp_max": int(timestamp_max) if timestamp_max is not None else None,
-        "payout_address": payout_address,
-    }
+        _prune_template_cache()
+        template_id = uuid.uuid4().hex
+        _TEMPLATE_CACHE[template_id] = {
+            "created_at": time.time(),
+            "parent_hash": _to_hex(parent_hash_bytes),
+            "parent_height": parent_height,
+            "target": hex(int(target)),
+            "theta_micro": int(header_template.thetaMicro),
+            "timestamp_min": int(timestamp_min),
+            "timestamp_max": int(timestamp_max) if timestamp_max is not None else None,
+            "payout_address": payout_address,
+        }
 
-    return {
-        "enabled": True,
-        "templateId": template_id,
-        "parent": {"height": parent_height, "hash": _to_hex(parent_hash_bytes)},
-        "header": header_view,
-        "target": hex(int(target)),
-        "thetaMicro": int(header_template.thetaMicro),
-        "timestampMin": int(timestamp_min),
-        "timestampMax": int(timestamp_max) if timestamp_max is not None else None,
-        "coinbase": coinbase,
-        "txs": tx_payloads,
-        "excluded": excluded,
-        "mempool": selection_summary,
-    }
+        return {
+            "enabled": True,
+            "templateId": template_id,
+            "parent": {"height": parent_height, "hash": _to_hex(parent_hash_bytes)},
+            "header": header_view,
+            "target": hex(int(target)),
+            "thetaMicro": int(header_template.thetaMicro),
+            "timestampMin": int(timestamp_min),
+            "timestampMax": int(timestamp_max) if timestamp_max is not None else None,
+            "coinbase": coinbase,
+            "txs": tx_payloads,
+            "excluded": excluded,
+            "mempool": selection_summary,
+            "address": payout_address,
+            "payout_address": payout_address,
+        }
+    except NameError as exc:
+        log.exception(
+            "miner.getBlockTemplate NameError",
+            extra={
+                "params": raw_params or payload,
+                "payout_address": payout_address,
+                "include_mempool": include_mempool_flag,
+                "allow_offline_mining": allow_offline_mining,
+            },
+        )
+        raise rpc_errors.InternalError(
+            f"{exc.__class__.__name__}: {exc}",
+            reason="NameError",
+        ) from exc
 
 
 @method(
