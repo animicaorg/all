@@ -7557,6 +7557,13 @@ class P2PService:
         self._sync_last_headers_discarded_count = 0
         self._sync_last_headers_discard_reason_counts = {}
         self._sync_headers_accepted_total = 0
+        self._sync_last_locator_head_height = None
+        self._sync_last_locator_head_hash = None
+        self._sync_last_matched_ancestor_height = None
+        self._sync_last_matched_ancestor_hash = None
+        self._sync_last_header_error = None
+        self._sync_last_header_error_at = None
+        self._sync_last_header_error_peer = None
         self._sync_block_queue.clear()
         self._sync_block_queue_set.clear()
         self._sync_block_queue_heights.clear()
@@ -7593,6 +7600,9 @@ class P2PService:
             bdb.set_canonical_head(0, bytes(genesis))
             self._prune_canonical_heights(bdb, above_height=0, batch=None)
         self._reset_sync_state(reason=reason)
+        self._clear_sync_cache()
+        self._sync_target_height = None
+        self._sync_paused = False
         hdr = self._sync_header_by_hash(bytes(genesis))
         if hdr is not None:
             self._sync_best_header = hdr
