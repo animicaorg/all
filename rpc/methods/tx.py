@@ -474,11 +474,91 @@ def _verify_pq_signature(tx_like: t.Any, obj: dict, *, chain_id: int) -> None:
         )
 
 
+def _addr_to_bytes(addr: t.Any) -> bytes | None:
+    if addr is None:
+        return None
+    if isinstance(addr, (bytes, bytearray)):
+        return bytes(addr)
+    if isinstance(addr, str):
+        if _parse_address is not None:
+            try:
+                return _parse_address(addr)
+            except Exception:
+                pass
+        raw = addr[2:] if addr.startswith("0x") else addr
+        try:
+            return bytes.fromhex(raw)
+        except ValueError:
+            return _sha3_256(addr.encode("utf-8"))
+    return None
+
+
+def _normalize_tx_body(body: dict) -> dict:
+    if "v" in body and "gas" in body and "payload" in body:
+        return body
+
+    chain_id = body.get("chainId", body.get("chain_id", 1))
+    from_addr = body.get("from", body.get("sender"))
+    to_addr = body.get("to")
+    nonce = body.get("nonce", 0)
+    value = body.get("value", body.get("amount", 0))
+    gas_limit = body.get("gasLimit", body.get("gas_limit", body.get("gas", 21000)))
+    gas_price = body.get(
+        "maxFee",
+        body.get(
+            "max_fee", body.get("gasPrice", body.get("gas_price", body.get("tip", 1)))
+        ),
+    )
+    data = body.get("data", b"")
+    if isinstance(data, str):
+        if data.startswith("0x"):
+            data = bytes.fromhex(data[2:])
+        else:
+            data = data.encode("utf-8")
+    elif isinstance(data, (list, tuple)):
+        data = bytes(data)
+    elif not isinstance(data, (bytes, bytearray)):
+        data = b""
+
+    def _pad_addr(addr: t.Any) -> bytes:
+        addr_bytes = _addr_to_bytes(addr) or b""
+        if len(addr_bytes) < 32:
+            return addr_bytes.ljust(32, b"\x00")
+        if len(addr_bytes) > 32:
+            return addr_bytes[:32]
+        return addr_bytes
+
+    return {
+        "v": 1,
+        "chainId": int(chain_id),
+        "from": _pad_addr(from_addr),
+        "nonce": int(nonce),
+        "gas": {"price": int(gas_price), "limit": int(gas_limit)},
+        "payload": {
+            "t": 0,
+            "v": {
+                "to": _pad_addr(to_addr),
+                "amount": int(value),
+                "data": bytes(data),
+            },
+        },
+        "accessList": [],
+    }
+
+
 def _normalize_tx_envelope(obj: dict) -> dict:
-    if "tx" in obj:
-        return obj
-    if "body" in obj:
-        normalized = {"tx": obj["body"], "body": obj["body"]}
+    if "tx" in obj and isinstance(obj.get("tx"), dict):
+        tx_body = obj.get("tx")
+        if "v" in tx_body and "gas" in tx_body and "payload" in tx_body:
+            return obj
+        normalized = {"tx": _normalize_tx_body(tx_body)}
+        if "sigs" in obj:
+            normalized["sigs"] = obj["sigs"]
+        elif "sig" in obj:
+            normalized["sigs"] = [obj["sig"]]
+        return normalized
+    if "body" in obj and isinstance(obj.get("body"), dict):
+        normalized = {"tx": _normalize_tx_body(obj["body"]), "body": obj["body"]}
         if "sigs" in obj:
             normalized["sigs"] = obj["sigs"]
         elif "sig" in obj:
