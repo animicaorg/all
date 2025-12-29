@@ -51,6 +51,8 @@ def test_get_block_template_accepts_address_param(monkeypatch: pytest.MonkeyPatc
     res = rpc_call(client, "miner.getBlockTemplate", {"address": payout_address})
 
     assert res["result"]["coinbase"]["address"] == payout_address
+    assert res["result"]["address"] == payout_address
+    assert res["result"]["payout_address"] == payout_address
 
 
 def test_get_block_template_accepts_payout_address_alias(monkeypatch: pytest.MonkeyPatch):
@@ -61,6 +63,8 @@ def test_get_block_template_accepts_payout_address_alias(monkeypatch: pytest.Mon
     res = rpc_call(client, "miner.getBlockTemplate", {"payout_address": payout_address})
 
     assert res["result"]["coinbase"]["address"] == payout_address
+    assert res["result"]["address"] == payout_address
+    assert res["result"]["payout_address"] == payout_address
 
 
 def test_get_block_template_accepts_positional_address(monkeypatch: pytest.MonkeyPatch):
@@ -71,6 +75,8 @@ def test_get_block_template_accepts_positional_address(monkeypatch: pytest.Monke
     res = rpc_call(client, "miner.getBlockTemplate", [payout_address])
 
     assert res["result"]["coinbase"]["address"] == payout_address
+    assert res["result"]["address"] == payout_address
+    assert res["result"]["payout_address"] == payout_address
 
 
 def test_get_block_template_requires_address():
