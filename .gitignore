@@ -16,3 +16,4 @@ native/target/
 .liboqs/
 .deps/
 test_peer_connectivity.py
+*.bak.*
