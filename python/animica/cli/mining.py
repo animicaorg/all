@@ -1009,18 +1009,100 @@ def mine_blocks(
                 stale_attempts = 0
                 submit_result = None
                 while True:
+                    def _rpc_error_details(error: Exception) -> tuple[int | None, str, object | None]:
+                        code = getattr(error, "code", None)
+                        message = getattr(error, "message", None) or str(error)
+                        data = getattr(error, "data", None)
+                        return code, message, data
+
+                    def _rpc_error_detail_text(message: str, data: object | None) -> str:
+                        detail = ""
+                        if isinstance(data, dict):
+                            detail = str(
+                                data.get("detail")
+                                or data.get("reason")
+                                or data.get("message")
+                                or ""
+                            )
+                        return f"{message} {detail}".strip().lower()
+
+                    def _handle_template_rpc_error(error: Exception) -> None:
+                        code, message, data = _rpc_error_details(error)
+                        detail_text = _rpc_error_detail_text(message, data)
+                        if code == -32601:
+                            typer.secho(
+                                "Error: Your node is missing mining RPC methods; update the node image or enable miner RPC.",
+                                fg=typer.colors.RED,
+                                err=True,
+                            )
+                            raise typer.Exit(5)
+                        if code == -32603:
+                            detail = message
+                            if isinstance(data, dict):
+                                detail = str(
+                                    data.get("detail")
+                                    or data.get("reason")
+                                    or data.get("message")
+                                    or message
+                                )
+                            typer.secho(
+                                f"Error: miner.getBlockTemplate failed with internal error: {detail}",
+                                fg=typer.colors.RED,
+                                err=True,
+                            )
+                            typer.secho(
+                                "Check node logs for the full stack trace (rpc/jsonrpc).",
+                                fg=typer.colors.YELLOW,
+                                err=True,
+                            )
+
                     def get_template_via_local(*, allow_offline_override: bool = False):
                         if verbose:
                             typer.echo(f"  [Fallback] Fetching block template via local RPC at {url}")
-                        return client.request(
-                            "miner.getBlockTemplate",
-                            {
-                                "address": resolved_address,
-                                "include_mempool": include_mempool,
-                                "allow_offline_mining": allow_offline_mining
-                                or allow_offline_override,
-                            },
-                        )
+                        payload = {
+                            "address": resolved_address,
+                            "include_mempool": include_mempool,
+                            "allow_offline_mining": allow_offline_mining
+                            or allow_offline_override,
+                        }
+                        try:
+                            return client.request("miner.getBlockTemplate", payload)
+                        except Exception as exc:
+                            code, message, data = _rpc_error_details(exc)
+                            detail_text = _rpc_error_detail_text(message, data)
+                            if code == -32602 and any(
+                                token in detail_text
+                                for token in (
+                                    "unexpected",
+                                    "unknown",
+                                    "keyword",
+                                    "address",
+                                    "payout_address",
+                                )
+                            ):
+                                legacy_payload = {
+                                    "payout_address": resolved_address,
+                                    "include_mempool": include_mempool,
+                                    "allow_offline_mining": allow_offline_mining
+                                    or allow_offline_override,
+                                }
+                                try:
+                                    return client.request("miner.getBlockTemplate", legacy_payload)
+                                except Exception as legacy_exc:
+                                    legacy_code, legacy_message, legacy_data = _rpc_error_details(legacy_exc)
+                                    legacy_detail = _rpc_error_detail_text(legacy_message, legacy_data)
+                                    if legacy_code == -32602 and any(
+                                        token in legacy_detail
+                                        for token in ("unexpected", "unknown", "keyword")
+                                    ):
+                                        return client.request(
+                                            "miner.getBlockTemplate",
+                                            [resolved_address, include_mempool],
+                                        )
+                                    _handle_template_rpc_error(legacy_exc)
+                                    raise
+                            _handle_template_rpc_error(exc)
+                            raise
 
                     if proxy:
                         if verbose:
