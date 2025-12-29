@@ -1525,11 +1525,23 @@ def _collect_mempool_entries(
         total = int(snapshot.total)
         pending_entries.extend(snapshot.entries)
         pending_raw_by_hash.update(snapshot.raw_by_hash)
+        log.debug(
+            "_collect_mempool_entries: using ctx.mempool service",
+            extra={
+                "mempool_id": id(mempool_service),
+                "total": total,
+                "entries": len(snapshot.entries),
+            },
+        )
         return pending_entries, pending_raw_by_hash, total
 
     try:
         snapshot = list(adapter.get_mempool_snapshot(limit=limit))
         total = len(snapshot)
+        log.debug(
+            "_collect_mempool_entries: using adapter.get_mempool_snapshot()",
+            extra={"total": total, "entries": len(snapshot)},
+        )
         for tx in snapshot:
             tracked = _tracked(tx)
             raw = b""
@@ -3397,12 +3409,13 @@ def miner_get_block_template(*args: Any, **kwargs: Any) -> Dict[str, Any]:
             adapter=adapter,
             limit=1000,
         )
-        log.debug(
+        log.info(
             "block template mempool collection",
             extra={
                 "entries": len(pending_entries),
                 "total": pending_total,
                 "source": "service" if mempool_service is not None else "adapter",
+                "mempool_id": id(mempool_service) if mempool_service is not None else "None",
             },
         )
     else:
@@ -3423,6 +3436,11 @@ def miner_get_block_template(*args: Any, **kwargs: Any) -> Dict[str, Any]:
 
             if not pending_map:
                 pending_map = getattr(tx_methods, "_FALLBACK_PENDING", {}) or {}
+
+            log.warning(
+                "miner.getBlockTemplate: FALLBACK - using _PEND/_FALLBACK_PENDING, entries=%d (mempool_service was None)",
+                len(pending_map),
+            )
 
             for tx_hash_hex, raw in pending_map.items():
                 try:
