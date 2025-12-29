@@ -2939,10 +2939,18 @@ class P2PService:
             return
         best_block_height, _ = self._local_head()
         if self._sync_best_header.height <= int(best_block_height or 0):
+            if self._sync_block_stalled_reason == "blocks stalled":
+                self._sync_block_stalled_reason = None
+                self._sync_last_block_error = None
+                self._sync_last_block_error_at = None
             return
         if self._sync_last_block_at <= 0:
             return
         if self._sync_last_header_at <= self._sync_last_block_at:
+            if self._sync_block_stalled_reason == "blocks stalled":
+                self._sync_block_stalled_reason = None
+                self._sync_last_block_error = None
+                self._sync_last_block_error_at = None
             return
         if now - self._sync_last_block_at <= self._sync_stall_timeout:
             return
