@@ -38,12 +38,24 @@ def _normalize_hash_bytes(hash_value: Any) -> bytes:
 
 
 def _sender_bytes(tx: Any) -> Optional[bytes]:
-    unsigned = getattr(tx, "unsigned", None)
     sender = None
-    if unsigned is not None:
-        sender = getattr(unsigned, "sender", None)
+    
+    # Handle dict envelope with "body" key (CLI/SDK format)
+    if isinstance(tx, dict):
+        body = tx.get("body")
+        if isinstance(body, dict):
+            # Try "from" first (CLI uses this), then "sender"
+            sender = body.get("from") or body.get("sender")
+    
+    # Handle Tx dataclass format
+    if sender is None:
+        unsigned = getattr(tx, "unsigned", None)
+        if unsigned is not None:
+            sender = getattr(unsigned, "sender", None)
     if sender is None:
         sender = getattr(tx, "sender", None)
+    
+    # Convert sender to bytes
     if isinstance(sender, str):
         if sender.startswith("0x"):
             try:
@@ -63,11 +75,22 @@ def _sender_hex(sender: Optional[bytes]) -> str:
 
 
 def _tx_nonce(tx: Any) -> Optional[int]:
-    unsigned = getattr(tx, "unsigned", None)
-    if unsigned is not None:
-        nonce = getattr(unsigned, "nonce", None)
-    else:
+    nonce = None
+    
+    # Handle dict envelope with "body" key (CLI/SDK format)
+    if isinstance(tx, dict):
+        body = tx.get("body")
+        if isinstance(body, dict):
+            nonce = body.get("nonce")
+    
+    # Handle Tx dataclass format
+    if nonce is None:
+        unsigned = getattr(tx, "unsigned", None)
+        if unsigned is not None:
+            nonce = getattr(unsigned, "nonce", None)
+    if nonce is None:
         nonce = getattr(tx, "nonce", None)
+    
     try:
         return int(nonce) if nonce is not None else None
     except Exception:
@@ -75,20 +98,44 @@ def _tx_nonce(tx: Any) -> Optional[int]:
 
 
 def _tx_gas_limit(tx: Any) -> int:
-    unsigned = getattr(tx, "unsigned", None)
-    if unsigned is not None:
-        gas = getattr(unsigned, "gas_limit", None)
-    else:
+    gas = None
+    
+    # Handle dict envelope with "body" key (CLI/SDK format)
+    if isinstance(tx, dict):
+        body = tx.get("body")
+        if isinstance(body, dict):
+            # Try "gasLimit" first (CLI uses this), then "gas_limit"
+            gas = body.get("gasLimit") or body.get("gas_limit")
+    
+    # Handle Tx dataclass format
+    if gas is None:
+        unsigned = getattr(tx, "unsigned", None)
+        if unsigned is not None:
+            gas = getattr(unsigned, "gas_limit", None)
+    if gas is None:
         gas = getattr(tx, "gas_limit", None)
+    
     return int(gas or 0)
 
 
 def _tx_chain_id(tx: Any) -> Optional[int]:
-    unsigned = getattr(tx, "unsigned", None)
-    if unsigned is not None:
-        chain_id = getattr(unsigned, "chain_id", None)
-    else:
+    chain_id = None
+    
+    # Handle dict envelope with "body" key (CLI/SDK format)
+    if isinstance(tx, dict):
+        body = tx.get("body")
+        if isinstance(body, dict):
+            # Try "chainId" first (CLI uses this), then "chain_id"
+            chain_id = body.get("chainId") or body.get("chain_id")
+    
+    # Handle Tx dataclass format
+    if chain_id is None:
+        unsigned = getattr(tx, "unsigned", None)
+        if unsigned is not None:
+            chain_id = getattr(unsigned, "chain_id", None)
+    if chain_id is None:
         chain_id = getattr(tx, "chain_id", None)
+    
     try:
         return int(chain_id) if chain_id is not None else None
     except Exception:
