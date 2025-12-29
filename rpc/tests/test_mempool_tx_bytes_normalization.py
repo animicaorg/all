@@ -5,6 +5,7 @@ import pytest
 from core.encoding.canonical import tx_sign_bytes
 from core.genesis.loader import compute_chain_identity
 from core.types.tx import PqSignature, Tx, TxKind, TxTransfer, UnsignedTx
+from core.utils.tx import normalize_tx
 from pq.py import sign
 from pq.py.address import decode_address
 from pq.py.keygen import keygen_sig
@@ -100,6 +101,75 @@ def test_mempool_mine_includes_raw_tx(monkeypatch: pytest.MonkeyPatch) -> None:
 
     receiver_balance = _parse_balance(rpc_call(client, "state.getBalance", [receiver_hex]))
     assert receiver_balance >= 17
+
+
+def test_tx_dict_normalization_roundtrip() -> None:
+    client, cfg, _ = new_test_client()
+    sender_kp = keygen_sig("dilithium3")
+    receiver_kp = keygen_sig("dilithium3")
+
+    receiver_hex = "0x" + _address_bytes(receiver_kp.address).hex()
+    raw_hex, tx_hash = _build_signed_transfer(
+        cfg, sender_kp, receiver_hex, nonce=0, value=17
+    )
+    raw = bytes.fromhex(raw_hex[2:])
+    _decoded, obj = tx_methods._decode_tx(raw)
+
+    envelope = {
+        "body": obj.get("body"),
+        "hash": obj.get("hash"),
+        "raw": "0x" + obj.get("raw", raw).hex(),
+    }
+    if "sig" in obj:
+        envelope["sig"] = obj.get("sig")
+    if "sigs" in obj:
+        envelope["sigs"] = obj.get("sigs")
+
+    normalized = normalize_tx(envelope)
+    _decoded2, obj2 = tx_methods._decode_tx(normalized)
+
+    assert obj2.get("hash") == tx_hash
+
+
+def test_mine_includes_mempool_tx(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ANIMICA_MINING_FORCE", "1")
+    monkeypatch.setenv("ANIMICA_DEFAULT_THETA_MICRO", "1000")
+    monkeypatch.setenv("ANIMICA_MINER_MAX_NONCE", "50000")
+
+    client, cfg, _ = new_test_client()
+    sender_kp = keygen_sig("dilithium3")
+    receiver_kp = keygen_sig("dilithium3")
+
+    receiver_hex = "0x" + _address_bytes(receiver_kp.address).hex()
+
+    mine_fund = rpc_call(
+        client,
+        "miner.mine",
+        {"count": 1, "address": sender_kp.address, "allow_offline_mining": True},
+    )["result"]
+    assert mine_fund["mined"] == 1
+
+    raw_hex, tx_hash = _build_signed_transfer(
+        cfg, sender_kp, receiver_hex, nonce=0, value=17
+    )
+    send_resp = rpc_call(client, "tx.sendRawTransaction", {"rawTx": raw_hex})
+    assert send_resp["result"] == tx_hash
+
+    mine_res = rpc_call(
+        client,
+        "miner.mine",
+        {"count": 1, "address": sender_kp.address, "allow_offline_mining": True},
+    )["result"]
+    assert mine_res["mined"] == 1
+
+    block_height = mine_res["height"]
+    block = rpc_call(client, "chain.getBlockByNumber", [block_height, True])["result"]
+    txs = block.get("transactions", []) if isinstance(block, dict) else []
+    tx_hashes = [tx.get("hash") if isinstance(tx, dict) else tx for tx in txs]
+    assert tx_hash in tx_hashes
+
+    pending_after = rpc_call(client, "mempool.getPending")["result"]
+    assert tx_hash not in pending_after
 
 
 def test_mempool_rejects_raw_hash_mismatch_with_explain() -> None:

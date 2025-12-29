@@ -6,6 +6,19 @@ from core.encoding.cbor import dumps as cbor_dumps
 from core.utils.hash import sha3_256
 
 
+class TxNormalizationError(ValueError):
+    def __init__(
+        self,
+        reason: str,
+        message: str,
+        *,
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.reason = reason
+        self.details = details or {}
+
+
 def _decode_hex_str(value: str) -> bytes:
     s = value.strip()
     if s.startswith("0x"):
@@ -116,4 +129,21 @@ def normalize_tx_bytes(tx_like: Any) -> bytes:
     raise ValueError(f"unsupported tx type: {type(tx_like).__name__}")
 
 
-__all__ = ["normalize_tx_bytes"]
+def normalize_tx(tx_like: Any) -> bytes:
+    """
+    Normalize a transaction-like object to canonical raw CBOR bytes.
+
+    Raises TxNormalizationError with a reason suitable for mempool/miner
+    rejection when normalization fails.
+    """
+    try:
+        return normalize_tx_bytes(tx_like)
+    except ValueError as exc:
+        message = str(exc)
+        reason = "decode_error"
+        if "hash mismatch" in message:
+            reason = "hash_mismatch"
+        raise TxNormalizationError(reason, message, details={"error": message}) from exc
+
+
+__all__ = ["normalize_tx_bytes", "normalize_tx", "TxNormalizationError"]
