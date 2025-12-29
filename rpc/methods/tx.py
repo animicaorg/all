@@ -1071,11 +1071,188 @@ def _pending_put(tx_hash_hex: str, raw: bytes) -> None:
 
 
 def _get_mempool_service():
+    """
+    Return the tx pool/mempool object from the RPC context.
+
+    The node has used multiple attribute names over time; this makes tx admission
+    resilient during bring-up/refactors so txs don't get "accepted" but dropped.
+    """
     try:
         ctx = deps.get_ctx()
     except Exception:
         return None
-    return getattr(ctx, "mempool", None)
+
+    for attr in (
+        "mempool",
+        "mempool_service",
+        "txpool",
+        "tx_pool",
+        "pending_pool",
+        "pool",
+    ):
+        svc = getattr(ctx, attr, None)
+        if svc is not None:
+            return svc
+    return None
+
+
+def _normalize_hash_variants(tx_hash_hex: str) -> list[t.Any]:
+    """
+    Produce the common hash representations used across pool implementations.
+    """
+    h = (tx_hash_hex or "").strip().lower()
+    if h.startswith("0x"):
+        h0 = h
+        h1 = h[2:]
+    else:
+        h1 = h
+        h0 = "0x" + h1
+
+    variants: list[t.Any] = [h0, h1]
+    try:
+        variants.append(_b(h0))  # bytes
+    except Exception:
+        pass
+    return variants
+
+
+def _mempool_has_hash(pool: t.Any, tx_hash_hex: str) -> bool:
+    """
+    Verify presence in mempool, tolerant of different hash formats.
+
+    If the pool doesn't expose has_hash(), we can't verify; treat as "unknown",
+    and let admission succeed only if the submit call itself doesn't reject.
+    """
+    if pool is None:
+        return False
+
+    fn = getattr(pool, "has_hash", None)
+    if not callable(fn):
+        return False
+
+    for v in _normalize_hash_variants(tx_hash_hex):
+        try:
+            if fn(v):
+                return True
+        except Exception:
+            continue
+    return False
+
+
+def _admit_to_mempool(pool: t.Any, *, tx_obj: t.Any, raw: bytes, tx_hash_hex: str) -> None:
+    """
+    Admit a tx into the pool and *only* return if the pool actually accepted it.
+
+    This fixes the bug pattern: RPC returns a tx hash, but the tx isn't persisted
+    in mempool (so mempool list is empty and tx never gets mined).
+
+    Strategy:
+      1) Try pool.submit(...) using several common kwarg names.
+      2) If needed, try add_raw/add with multiple hash representations.
+      3) Poll briefly to confirm presence (some pools enqueue admission).
+      4) If still not present, raise an RPC error (do not "accept" silently).
+    """
+    if pool is None:
+        raise rpc_errors.InternalError(
+            "Mempool service unavailable",
+            **_error_data(
+                "mempool",
+                RuntimeError("ctx mempool is None"),
+                "_admit_to_mempool",
+                "Ensure node ctx wires a mempool/txpool into RPC context",
+            ),
+        )
+
+    attempted: list[str] = []
+    last_type_error: Exception | None = None
+
+    submit = getattr(pool, "submit", None)
+    if callable(submit):
+        for label, kwargs in (
+            ("submit(tx, raw, tx_hash_hex)", {"tx": tx_obj, "raw": raw, "tx_hash_hex": tx_hash_hex}),
+            ("submit(tx, raw, tx_hash)", {"tx": tx_obj, "raw": raw, "tx_hash": tx_hash_hex}),
+            ("submit(tx, raw, hash)", {"tx": tx_obj, "raw": raw, "hash": tx_hash_hex}),
+        ):
+            attempted.append(label)
+            try:
+                res = submit(**kwargs)
+
+                # If the pool signals rejection without throwing, treat as failure.
+                if res is False:
+                    raise rpc_errors.InvalidTx(
+                        "Mempool rejected transaction",
+                        **_error_data(
+                            "mempool_reject",
+                            RuntimeError("submit() returned False"),
+                            "_admit_to_mempool",
+                            "Likely nonce gap / fee too low / gas too high; pool must not silently drop",
+                        ),
+                    )
+                if isinstance(res, dict) and res.get("accepted") is False:
+                    reason = res.get("reason") or "unknown"
+                    raise rpc_errors.InvalidTx(
+                        "Mempool rejected transaction",
+                        **_error_data(
+                            "mempool_reject",
+                            RuntimeError(f"submit() rejected: {reason}"),
+                            "_admit_to_mempool",
+                            "Likely nonce gap / fee too low / gas too high; pool must not silently drop",
+                        ),
+                    )
+
+                # submit didn't error; we'll verify presence below
+                break
+            except TypeError as e:
+                last_type_error = e
+                continue
+
+    # Try raw add APIs if still not present
+    add_raw = getattr(pool, "add_raw", None)
+    add = getattr(pool, "add", None)
+
+    if not _mempool_has_hash(pool, tx_hash_hex):
+        for hv in _normalize_hash_variants(tx_hash_hex):
+            if callable(add_raw):
+                attempted.append("add_raw(hash, raw)")
+                try:
+                    add_raw(hv, raw)
+                    break
+                except TypeError as e:
+                    last_type_error = e
+                except Exception as e:
+                    raise rpc_errors.to_error(e) from e
+
+            if callable(add):
+                attempted.append("add(hash, raw)")
+                try:
+                    add(hv, raw)
+                    break
+                except TypeError as e:
+                    last_type_error = e
+                except Exception as e:
+                    raise rpc_errors.to_error(e) from e
+
+    # Poll briefly for admission (covers async-queued pools)
+    deadline = time.time() + 0.75
+    while time.time() < deadline:
+        if _mempool_has_hash(pool, tx_hash_hex):
+            return
+        time.sleep(0.05)
+
+    # Still not admitted: fail loudly so client doesn't think it's accepted.
+    hint = "Pool did not persist tx; check pool.submit implementation and hash normalization (0x vs no0x vs bytes)."
+    if last_type_error is not None:
+        hint += f" Last TypeError: {last_type_error}"
+
+    raise rpc_errors.InternalError(
+        "Transaction was not admitted to mempool",
+        data={
+            "tx_hash": tx_hash_hex,
+            "attempted": attempted,
+            "hint": hint,
+        },
+    )
+
 
 
 def _gossip_tx_to_peers(raw_tx: bytes) -> None:
@@ -1464,72 +1641,58 @@ def _tx_send_raw_transaction(rawTx: str) -> str:
                 tx_obj = None
 
         # Admit to mempool (preferred) or pending pool fallback
-        if mempool_service is not None and tx_obj is not None:
+                # Admit to mempool (preferred) or pending pool fallback
+        if mempool_service is not None:
             try:
                 mempool_size_before = (
                     mempool_service.count() if hasattr(mempool_service, "count") else "?"
                 )
                 log.info(
-                    "tx.sendRawTransaction: mempool_service available, path=service.submit, hash=%s, mempool_id=%s, size_before=%s",
+                    "tx.sendRawTransaction: mempool_service available, path=admit, hash=%s, mempool_id=%s, size_before=%s",
                     tx_hash_hex,
                     id(mempool_service),
                     mempool_size_before,
                 )
-                mempool_service.submit(tx=tx_obj, raw=raw, tx_hash_hex=tx_hash_hex)
-                
+
+                # Build a Tx object for pools that require it.
+                # IMPORTANT: never feed the enriched obj (with 'hash'/'raw') into core Tx constructors.
+                tx_obj = tx_like
+                if _Tx is not None and not isinstance(tx_like, _Tx) and isinstance(obj, dict):
+                    try:
+                        obj_for_tx = dict(obj)
+                        obj_for_tx.pop("hash", None)
+                        obj_for_tx.pop("raw", None)
+                        if hasattr(_Tx, "from_obj"):
+                            tx_obj = _Tx.from_obj(obj_for_tx)  # type: ignore[attr-defined]
+                        elif hasattr(_Tx, "from_dict"):
+                            tx_obj = _Tx.from_dict(obj_for_tx)  # type: ignore[attr-defined]
+                    except Exception:
+                        tx_obj = tx_like
+
+                # **Fix:** Only return success if the pool actually admits the tx.
+                _admit_to_mempool(mempool_service, tx_obj=tx_obj, raw=raw, tx_hash_hex=tx_hash_hex)
+
                 mempool_size_after = (
                     mempool_service.count() if hasattr(mempool_service, "count") else "?"
                 )
                 log.info(
-                    "tx.sendRawTransaction: submit() completed, hash=%s, size_after=%s",
+                    "tx.sendRawTransaction: admitted to mempool, hash=%s, size_after=%s",
                     tx_hash_hex,
                     mempool_size_after,
                 )
-                
-                # CRITICAL: Verify tx is actually in mempool before returning success
-                has_tx = mempool_service.has_hash(tx_hash_hex)
-                log.info(
-                    "tx.sendRawTransaction: post-submit verification, hash=%s, in_mempool=%s",
-                    tx_hash_hex,
-                    has_tx,
-                )
-                
-                if not has_tx:
-                    log.error(
-                        "tx.sendRawTransaction: VERIFICATION FAILED - tx not in mempool after submit(), hash=%s, mempool_id=%s",
-                        tx_hash_hex,
-                        id(mempool_service),
-                    )
-                    raise rpc_errors.InternalError(
-                        "Transaction submitted but not in mempool",
-                        data={
-                            "tx_hash": tx_hash_hex,
-                            "reason": "verification_failed",
-                            "hint": "pool.add() may have silently failed",
-                        },
-                    )
-                
-                log.info(
-                    "tx.sendRawTransaction: VERIFIED tx in mempool, hash=%s",
-                    tx_hash_hex,
-                )
-                
-                # Also add to pending pool cache for mempool.getPending RPC
+
+                # Also add to pending cache so tx.getTransactionByHash works immediately.
                 _pending_put(tx_hash_hex, raw)
+
             except Exception as exc:
                 raise rpc_errors.to_error(exc) from exc
         else:
             log.info(
-                "tx.sendRawTransaction: mempool_service unavailable (service=%s, tx_obj=%s), path=pending_put, hash=%s",
-                "None" if mempool_service is None else "available",
-                "None" if tx_obj is None else "available",
+                "tx.sendRawTransaction: mempool_service unavailable, path=pending_put, hash=%s",
                 tx_hash_hex,
             )
             _pending_put(tx_hash_hex, raw)
-            log.info(
-                "tx.sendRawTransaction: tx admitted to pending pool, hash=%s",
-                tx_hash_hex,
-            )
+
 
         # Notify WS hub (best-effort)
         try:
