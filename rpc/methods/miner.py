@@ -17,6 +17,7 @@ from core.types.block import Block
 from core.types.header import Header
 from core.types.tx import Tx
 from core.utils.merkle import merkle_root
+from core.utils.tx import normalize_tx_bytes
 from mining.adapters.core_chain import CoreChainAdapter
 import p2p
 from rpc import deps
@@ -217,11 +218,17 @@ def _coerce_selected_txs(
         raw = pending_raw_by_hash.get(hash_hex, b"")
         tx: Tx | None = None
         decoded_obj: dict[str, Any] | None = None
+        normalize_error: str | None = None
 
         if isinstance(tx_obj, Tx):
             tx = tx_obj
         elif isinstance(tx_obj, dict):
             decoded_obj = tx_obj
+            if not raw:
+                try:
+                    raw = normalize_tx_bytes(tx_obj)
+                except Exception as exc:
+                    normalize_error = str(exc)
         elif raw and decode_fn is not None:
             decoded = decode_fn(raw)
             if isinstance(decoded, tuple):
@@ -235,6 +242,24 @@ def _coerce_selected_txs(
             elif isinstance(tx_candidate, dict):
                 decoded_obj = tx_candidate
 
+        if tx is None and raw and decode_fn is not None:
+            try:
+                decoded = decode_fn(raw)
+                if isinstance(decoded, tuple):
+                    tx_candidate = decoded[0]
+                    if decoded_obj is None and isinstance(decoded[1], dict):
+                        decoded_obj = decoded[1]
+                else:
+                    tx_candidate = decoded
+                    if decoded_obj is None and isinstance(decoded, dict):
+                        decoded_obj = decoded
+                if isinstance(tx_candidate, Tx):
+                    tx = tx_candidate
+                elif isinstance(tx_candidate, dict):
+                    decoded_obj = tx_candidate
+            except Exception as exc:
+                normalize_error = normalize_error or str(exc)
+
         if tx is None and decoded_obj is not None:
             normalized = _normalize_tx_envelope(decoded_obj)
             tx = _construct_tx_from_dict(normalized)
@@ -244,12 +269,16 @@ def _coerce_selected_txs(
             dropped_counts[reason] = dropped_counts.get(reason, 0) + 1
             dropped_by_hash[hash_hex] = reason
             error_details = {"type": type(tx_obj).__name__}
+            if normalize_error:
+                error_details["normalize_error"] = normalize_error
             if decoded_obj:
-                error_details.update({
-                    "has_tx_field": "tx" in decoded_obj,
-                    "has_sigs_field": "sigs" in decoded_obj,
-                    "decoded_keys": list(decoded_obj.keys())[:10],
-                })
+                error_details.update(
+                    {
+                        "has_tx_field": "tx" in decoded_obj,
+                        "has_sigs_field": "sigs" in decoded_obj,
+                        "decoded_keys": list(decoded_obj.keys())[:10],
+                    }
+                )
             dropped_details[hash_hex] = {
                 "reason": reason,
                 "details": error_details,
@@ -797,9 +826,21 @@ def _ctx():
         return deps.build_context()
 
 
-def _mining_gate() -> tuple[bool, str | None]:
+def _mining_gate(*, allow_offline_mining: bool = False) -> tuple[bool, str | None]:
     if os.getenv("ANIMICA_MINING_FORCE", "").lower() in ("1", "true", "yes", "on"):
         return True, None
+    if allow_offline_mining or os.getenv("ANIMICA_ALLOW_OFFLINE_MINING", "").lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    ):
+        return True, None
+    chain_id = None
+    try:
+        chain_id = int(_ctx().cfg.chain_id)
+    except Exception:
+        chain_id = None
     try:
         import p2p
 
@@ -813,6 +854,14 @@ def _mining_gate() -> tuple[bool, str | None]:
         sync_status = svc.sync_status_snapshot().to_dict()
     except Exception:
         return True, None
+
+    if chain_id == 1:
+        outbound = int(p2p_status.get("peers_outbound", 0))
+        if outbound <= 0:
+            return False, "offline_no_outbound_peers"
+        phase = str(sync_status.get("phase") or "").lower()
+        if phase and phase != "synced":
+            return False, f"sync_phase:{phase}"
 
     min_peers = int(os.getenv("ANIMICA_MINING_MIN_PEERS", "1"))
     if min_peers > 0 and int(p2p_status.get("peers_total", 0)) < min_peers:
@@ -2012,6 +2061,7 @@ def _mine_once(
     threads: int = 1,
     *,
     include_mempool: bool = True,
+    allow_offline_mining: bool = False,
 ) -> tuple[bool, int, dict[str, Any]]:
     """
     Mine a single block with proof-of-work.
@@ -2042,7 +2092,7 @@ def _mine_once(
             - success: True if block was mined and accepted, False otherwise
             - reward_amount: Miner reward in nANM (0 if mining failed or no reward)
     """
-    allowed, reason = _mining_gate()
+    allowed, reason = _mining_gate(allow_offline_mining=allow_offline_mining)
     if not allowed:
         log.warning("Mining disabled", extra={"reason": reason})
         return (False, 0, _mining_disabled_payload(reason))
@@ -3191,6 +3241,7 @@ def miner_mine(
     address: str | None = None,
     threads: int | None = None,
     include_mempool: bool | None = None,
+    allow_offline_mining: bool | None = None,
 ) -> dict[str, int | list[dict[str, int]] | dict[str, Any]]:
     """
     Mine N blocks locally with dynamic theta micro adjustment.
@@ -3219,7 +3270,7 @@ def miner_mine(
     except Exception:
         head_before = {"height": None, "hash": None}
 
-    allowed, reason = _mining_gate()
+    allowed, reason = _mining_gate(allow_offline_mining=bool(allow_offline_mining))
     if not allowed:
         return {
             "mined": 0,
@@ -3290,6 +3341,7 @@ def miner_mine(
             payout_address=payout_address_bytes,
             threads=threads,
             include_mempool=include_mempool_flag,
+            allow_offline_mining=bool(allow_offline_mining),
         )
         if success:
             mined += 1
@@ -3352,6 +3404,7 @@ def miner_get_block_template(*args: Any, **kwargs: Any) -> Dict[str, Any]:
     payload: dict[str, Any] | None = None
     include_mempool_flag = True
     payout_address = None
+    allow_offline_mining = False
 
     if args:
         if len(args) == 1 and isinstance(args[0], dict):
@@ -3377,11 +3430,16 @@ def miner_get_block_template(*args: Any, **kwargs: Any) -> Dict[str, Any]:
             payload.get("include_mempool", payload.get("includeMempool", include_mempool_flag))
         )
         payout_address = payload.get("address") or payload.get("payout_address") or payout_address
+        allow_offline_mining = bool(
+            payload.get("allow_offline_mining", payload.get("allowOfflineMining", False))
+        )
         unknown = set(payload.keys()) - {
             "address",
             "payout_address",
             "include_mempool",
             "includeMempool",
+            "allow_offline_mining",
+            "allowOfflineMining",
         }
         if unknown:
             raise rpc_errors.InvalidParams(
@@ -3392,7 +3450,7 @@ def miner_get_block_template(*args: Any, **kwargs: Any) -> Dict[str, Any]:
         raise rpc_errors.InvalidParams("address is required")
     payout_address = _validate_payout_address(payout_address)
 
-    allowed, reason = _mining_gate()
+    allowed, reason = _mining_gate(allow_offline_mining=allow_offline_mining)
     if not allowed:
         return {"enabled": False, "reason": reason}
 

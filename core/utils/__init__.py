@@ -40,6 +40,7 @@ __all__: List[str] = [
     "hash",
     "merkle",
     "serialization",
+    "tx",
     # convenient aliases that don't shadow builtins
     "bytes_utils",
     "hash_utils",
@@ -51,6 +52,7 @@ _SUBMODS: Dict[str, str] = {
     "hash": "core.utils.hash",
     "merkle": "core.utils.merkle",
     "serialization": "core.utils.serialization",
+    "tx": "core.utils.tx",
 }
 
 # Aliases → underlying submodule
@@ -65,6 +67,7 @@ if TYPE_CHECKING:  # pragma: no cover - type-checking only
     from . import hash as hash  # type: ignore
     from . import merkle as merkle
     from . import serialization as serialization
+    from . import tx as tx
 
     bytes_utils: ModuleType
     hash_utils: ModuleType

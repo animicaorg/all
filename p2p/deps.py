@@ -39,6 +39,9 @@ from pathlib import Path
 from typing import (TYPE_CHECKING, Any, Callable, Iterable, List, Optional,
                     Sequence, Tuple)
 
+from core.utils.hash import sha3_256
+from core.utils.tx import normalize_tx_bytes
+
 from .constants import \
     DEFAULT_TCP_PORT  # only to ensure constants import works
 from .errors import P2PError
@@ -572,54 +575,98 @@ class P2PDeps:
               canonical hash and skip heavy decoding while syncing.
         """
         try:
-            # Import RPC tx methods to access pending pool admission
+            try:
+                raw_cbor = normalize_tx_bytes(tx)
+            except Exception as e:
+                return False, f"normalize_failed:{e}"
+
             from rpc.methods import tx as tx_methods
 
-            # Verify required methods are available
-            if not (
-                hasattr(tx_methods, "_pending_get")
-                and hasattr(tx_methods, "_pending_put")
-            ):
-                return False, "no_pending_pool_available"
-
-            # Encode the tx to CBOR (canonical format) or accept raw bytes
             try:
-                if isinstance(tx, (bytes, bytearray)):
-                    raw_cbor = bytes(tx)
-                elif hasattr(tx, "to_cbor") and callable(tx.to_cbor):
-                    raw_cbor = tx.to_cbor()
-                elif hasattr(tx, "to_obj") and callable(tx.to_obj):
-                    from core.encoding.cbor import dumps as cbor_encode
-
-                    raw_cbor = cbor_encode(tx.to_obj())
-                elif isinstance(tx, dict):
-                    from core.encoding.cbor import dumps as cbor_encode
-
-                    raw_cbor = cbor_encode(tx)
-                else:
-                    return False, "unsupported_tx_type"
+                tx_like, obj = tx_methods._decode_tx(raw_cbor)  # type: ignore[attr-defined]
             except Exception as e:
-                return False, f"cbor_encode_failed:{e}"
+                return False, f"decode_failed:{e}"
 
-            # Compute tx hash for deduplication
             try:
-                from core.utils.hash import sha3_256
-
-                tx_hash_hex = "0x" + sha3_256(raw_cbor).hex()
+                chain_id = tx_methods._validate_chain_id(obj)  # type: ignore[attr-defined]
+                tx_methods._verify_pq_signature(  # type: ignore[attr-defined]
+                    tx_like, obj, chain_id=chain_id
+                )
             except Exception as e:
-                return False, f"hash_failed:{e}"
+                return False, f"verify_failed:{e}"
 
-            # Check if already in pending pool (dedupe)
-            existing = tx_methods._pending_get(tx_hash_hex)
-            if existing is not None:
-                return True, "duplicate"  # Already have it; treat as success
+            tx_hash_hex = "0x" + sha3_256(raw_cbor).hex()
+            svc = tx_methods._get_mempool_service()  # type: ignore[attr-defined]
+            if svc is None:
+                tx_methods._pending_put(tx_hash_hex, raw_cbor)  # type: ignore[attr-defined]
+                return True, "queued_pending"
 
-            # Add to pending pool using the same path as RPC submissions
-            tx_methods._pending_put(tx_hash_hex, raw_cbor)
+            tx_obj = tx_like
+            if tx_methods._Tx is not None and not isinstance(tx_like, tx_methods._Tx):
+                if isinstance(obj, dict):
+                    try:
+                        if hasattr(tx_methods._Tx, "from_obj"):
+                            tx_obj = tx_methods._Tx.from_obj(obj)  # type: ignore[attr-defined]
+                    except Exception:
+                        tx_obj = tx_like
+
+            try:
+                tx_methods._mempool_submit(  # type: ignore[attr-defined]
+                    svc, tx_obj=tx_obj, raw=raw_cbor, tx_hash_hex=tx_hash_hex
+                )
+            except Exception as e:
+                return False, f"mempool_reject:{e}"
+
             return True, None
 
         except Exception as e:
             return False, f"admit_error:{e}"
+
+    def get_tx_raw(self, tx_hash: bytes) -> Optional[bytes]:
+        try:
+            from rpc.methods import tx as tx_methods
+        except Exception:
+            return None
+
+        svc = tx_methods._get_mempool_service()  # type: ignore[attr-defined]
+        if svc is not None:
+            getter = getattr(svc, "get_raw", None)
+            if callable(getter):
+                raw = getter("0x" + tx_hash.hex())
+                if isinstance(raw, (bytes, bytearray)):
+                    return bytes(raw)
+
+        try:
+            return tx_methods._pending_get("0x" + tx_hash.hex())  # type: ignore[attr-defined]
+        except Exception:
+            return None
+
+    def list_pending_hashes(self, limit: int = 512) -> list[bytes]:
+        try:
+            from rpc.methods import tx as tx_methods
+        except Exception:
+            return []
+
+        svc = tx_methods._get_mempool_service()  # type: ignore[attr-defined]
+        hashes: list[bytes] = []
+        if svc is not None:
+            snapshot = svc.snapshot(limit=limit)
+            for entry in snapshot.entries:
+                try:
+                    hashes.append(bytes.fromhex(entry.hash_hex[2:]))
+                except Exception:
+                    continue
+                if len(hashes) >= limit:
+                    break
+            return hashes
+
+        cache = getattr(tx_methods, "_FALLBACK_PENDING", {}) or {}
+        for h in list(cache.keys())[:limit]:
+            try:
+                hashes.append(bytes.fromhex(h[2:] if h.startswith("0x") else h))
+            except Exception:
+                continue
+        return hashes
 
     # ---- Cheap validation surfaces -----------------------------------------
 
@@ -733,6 +780,12 @@ class AsyncP2PDeps:
         return await self._loop.run_in_executor(
             None, self._sync.cheap_header_sanity, header
         )
+
+    async def get_tx_raw(self, tx_hash: bytes) -> Optional[bytes]:
+        return await self._loop.run_in_executor(None, self._sync.get_tx_raw, tx_hash)
+
+    async def list_pending_hashes(self, limit: int = 512) -> list[bytes]:
+        return await self._loop.run_in_executor(None, self._sync.list_pending_hashes, limit)
 
 
 # --------------------------------------------------------------------------- #
