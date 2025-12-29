@@ -1009,7 +1009,7 @@ def mine_blocks(
                 stale_attempts = 0
                 submit_result = None
                 while True:
-                    def get_template_via_local():
+                    def get_template_via_local(*, allow_offline_override: bool = False):
                         if verbose:
                             typer.echo(f"  [Fallback] Fetching block template via local RPC at {url}")
                         return client.request(
@@ -1017,7 +1017,8 @@ def mine_blocks(
                             {
                                 "address": resolved_address,
                                 "include_mempool": include_mempool,
-                                "allow_offline_mining": allow_offline_mining,
+                                "allow_offline_mining": allow_offline_mining
+                                or allow_offline_override,
                             },
                         )
 
@@ -1036,13 +1037,43 @@ def mine_blocks(
                     else:
                         template = get_template_via_local()
 
-                    if not isinstance(template, dict) or not template.get("enabled", True):
-                        typer.secho(
-                            f"Warning: Block template unavailable ({template.get('reason') if isinstance(template, dict) else 'unknown'})",
-                            fg=typer.colors.YELLOW,
+                    if (
+                        not isinstance(template, dict)
+                        or not template.get("enabled", True)
+                    ):
+                        reason = (
+                            template.get("reason")
+                            if isinstance(template, dict)
+                            else "unknown"
                         )
-                        stale_attempts = 0
-                        break
+                        if (
+                            not proxy
+                            and isinstance(reason, str)
+                            and reason.startswith("sync_phase:")
+                            and not allow_offline_mining
+                        ):
+                            typer.secho(
+                                f"Info: Node is {reason}; retrying with local/offline template",
+                                fg=typer.colors.YELLOW,
+                            )
+                            template = get_template_via_local(
+                                allow_offline_override=True
+                            )
+                        if (
+                            not isinstance(template, dict)
+                            or not template.get("enabled", True)
+                        ):
+                            reason = (
+                                template.get("reason")
+                                if isinstance(template, dict)
+                                else reason
+                            )
+                            typer.secho(
+                                f"Warning: Block template unavailable ({reason})",
+                                fg=typer.colors.YELLOW,
+                            )
+                            stale_attempts = 0
+                            break
 
                     mempool_info = template.get("mempool", {}) if isinstance(template, dict) else {}
                     pending_current = int(

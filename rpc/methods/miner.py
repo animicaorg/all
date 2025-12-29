@@ -17,7 +17,7 @@ from core.types.block import Block
 from core.types.header import Header
 from core.types.tx import Tx
 from core.utils.merkle import merkle_root
-from core.utils.tx import normalize_tx_bytes
+from core.utils.tx import TxNormalizationError, normalize_tx, normalize_tx_bytes
 from mining.adapters.core_chain import CoreChainAdapter
 import p2p
 from rpc import deps
@@ -219,6 +219,19 @@ def _coerce_selected_txs(
         tx: Tx | None = None
         decoded_obj: dict[str, Any] | None = None
         normalize_error: str | None = None
+        normalize_reason: str | None = None
+
+        if raw and not isinstance(raw, (bytes, bytearray)):
+            try:
+                raw = normalize_tx(raw)
+            except TxNormalizationError as exc:
+                normalize_error = str(exc)
+                normalize_reason = exc.reason
+                raw = b""
+            except Exception as exc:
+                normalize_error = str(exc)
+                normalize_reason = "decode_error"
+                raw = b""
 
         if isinstance(tx_obj, Tx):
             tx = tx_obj
@@ -241,7 +254,7 @@ def _coerce_selected_txs(
                     normalize_error = str(exc)
             if not raw:
                 try:
-                    raw = normalize_tx_bytes(tx_obj)
+                    raw = normalize_tx(tx_obj)
                 except Exception as exc:
                     normalize_error = str(exc)
         elif raw and decode_fn is not None:
@@ -280,7 +293,7 @@ def _coerce_selected_txs(
             tx = _construct_tx_from_dict(normalized)
 
         if tx is None:
-            reason = "decode_error"
+            reason = normalize_reason or "decode_error"
             dropped_counts[reason] = dropped_counts.get(reason, 0) + 1
             dropped_by_hash[hash_hex] = reason
             error_details = {"type": type(tx_obj).__name__}
@@ -1594,8 +1607,47 @@ def _collect_mempool_entries(
     if mempool_service is not None:
         snapshot = mempool_service.snapshot(limit=limit)
         total = int(snapshot.total)
-        pending_entries.extend(snapshot.entries)
-        pending_raw_by_hash.update(snapshot.raw_by_hash)
+        for entry in snapshot.entries:
+            raw_candidate = snapshot.raw_by_hash.get(entry.hash_hex, entry.raw)
+            if not raw_candidate and isinstance(entry.tx, dict):
+                raw_candidate = entry.tx
+            if not raw_candidate and hasattr(entry.tx, "to_cbor"):
+                try:
+                    raw_candidate = entry.tx.to_cbor()
+                except Exception:
+                    raw_candidate = None
+            try:
+                raw_bytes = normalize_tx(raw_candidate)
+            except TxNormalizationError as exc:
+                remover = getattr(mempool_service, "remove_included", None)
+                if callable(remover):
+                    remover([entry.hash_hex])
+                recorder = getattr(mempool_service, "_record_rejection", None)
+                if callable(recorder):
+                    recorder(entry.hash_hex, exc.reason, exc.details)
+                continue
+            except Exception as exc:
+                remover = getattr(mempool_service, "remove_included", None)
+                if callable(remover):
+                    remover([entry.hash_hex])
+                recorder = getattr(mempool_service, "_record_rejection", None)
+                if callable(recorder):
+                    recorder(
+                        entry.hash_hex,
+                        "decode_error",
+                        {"error": str(exc), "step": "normalize_tx"},
+                    )
+                continue
+            pending_raw_by_hash[entry.hash_hex] = raw_bytes
+            pending_entries.append(
+                PendingTxEntry(
+                    hash_hex=entry.hash_hex,
+                    raw=raw_bytes,
+                    tx=entry.tx,
+                    received_at=entry.received_at,
+                    expires_at=entry.expires_at,
+                )
+            )
         log.debug(
             "_collect_mempool_entries: using ctx.mempool service",
             extra={
@@ -1613,6 +1665,11 @@ def _collect_mempool_entries(
             "_collect_mempool_entries: using adapter.get_mempool_snapshot()",
             extra={"total": total, "entries": len(snapshot)},
         )
+        try:
+            from rpc.methods import tx as tx_methods
+        except Exception:
+            tx_methods = None  # type: ignore[assignment]
+
         for tx in snapshot:
             tracked = _tracked(tx)
             raw = b""
@@ -1634,6 +1691,18 @@ def _collect_mempool_entries(
                 if raw:
                     _TX_HASH_MAP[id(tx)] = (_normalize_hash_hex(tx_hash_hex), raw)
             tx_hash_hex = _normalize_hash_hex(tx_hash_hex)
+            raw_candidate = raw if raw else (tx if isinstance(tx, dict) else None)
+            if raw_candidate:
+                try:
+                    raw = normalize_tx(raw_candidate)
+                except TxNormalizationError as exc:
+                    if tx_methods is not None and hasattr(tx_methods, "_pending_remove"):
+                        tx_methods._pending_remove(tx_hash_hex)  # type: ignore[attr-defined]
+                    continue
+                except Exception:
+                    if tx_methods is not None and hasattr(tx_methods, "_pending_remove"):
+                        tx_methods._pending_remove(tx_hash_hex)  # type: ignore[attr-defined]
+                    continue
             if raw:
                 pending_raw_by_hash[tx_hash_hex] = raw
             pending_entries.append(

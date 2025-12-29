@@ -17,7 +17,7 @@ from rpc.methods import method
 from rpc import deps
 from mempool.select import PendingTxEntry, select_for_block
 from core.types.tx import Tx
-from core.utils.tx import normalize_tx_bytes
+from core.utils.tx import TxNormalizationError, normalize_tx
 
 log = logging.getLogger(__name__)
 
@@ -193,13 +193,27 @@ def mempool_explain(tx_hash: str) -> dict:
         return {"hash": target, "status": "not_found", "reason": "not_found"}
 
     try:
-        raw = normalize_tx_bytes(raw)
+        raw = normalize_tx(raw)
+    except TxNormalizationError as exc:
+        if mempool_service is not None:
+            remover = getattr(mempool_service, "remove_included", None)
+            if callable(remover):
+                remover([target])
+            recorder = getattr(mempool_service, "_record_rejection", None)
+            if callable(recorder):
+                recorder(target, exc.reason, exc.details)
+        return {
+            "hash": target,
+            "status": "rejected",
+            "reason": exc.reason,
+            "details": exc.details,
+        }
     except Exception as exc:
         return {
             "hash": target,
             "status": "rejected",
             "reason": "decode_error",
-            "details": {"step": "normalize_tx_bytes", "error": str(exc)},
+            "details": {"step": "normalize_tx", "error": str(exc)},
         }
 
     ctx = deps.get_ctx()
@@ -287,7 +301,7 @@ def mempool_get_raw_tx(tx_hash: str) -> dict:
             raw = snapshot.raw_by_hash.get(target)
     if raw is None:
         return {"hash": target, "raw": None}
-    raw_bytes = normalize_tx_bytes(raw)
+    raw_bytes = normalize_tx(raw)
     return {"hash": target, "raw": "0x" + raw_bytes.hex()}
 
 
@@ -307,7 +321,7 @@ def mempool_list_raw_txs(limit: int | None = None) -> list[dict]:
     for entry in snapshot.entries:
         raw = snapshot.raw_by_hash.get(entry.hash_hex, entry.raw)
         try:
-            raw_bytes = normalize_tx_bytes(raw)
+            raw_bytes = normalize_tx(raw)
         except Exception:
             continue
         entries.append({"hash": entry.hash_hex, "raw": "0x" + raw_bytes.hex()})
