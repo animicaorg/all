@@ -474,12 +474,23 @@ def _verify_pq_signature(tx_like: t.Any, obj: dict, *, chain_id: int) -> None:
         )
 
 
+def _normalize_tx_envelope(obj: dict) -> dict:
+    if "tx" in obj:
+        return obj
+    if "body" in obj:
+        normalized = {"tx": obj["body"]}
+        if "sigs" in obj:
+            normalized["sigs"] = obj["sigs"]
+        elif "sig" in obj:
+            normalized["sigs"] = [obj["sig"]]
+        return normalized
+    return obj
+
+
 def _decode_tx(raw: bytes) -> tuple[t.Any, dict]:
     if _cbor_loads is None:
         raise rpc_errors.InternalError("CBOR decoder unavailable")
     obj = _cbor_loads(raw)
-
-    tx_hash_hex = _hex(_sha3_256(raw)) or ""
 
     if not isinstance(obj, dict):
         raise rpc_errors.InvalidTx(
@@ -492,22 +503,33 @@ def _decode_tx(raw: bytes) -> tuple[t.Any, dict]:
             ),
         )
 
-    enriched_obj = dict(obj)
-    enriched_obj["hash"] = tx_hash_hex
-    enriched_obj["raw"] = raw
+    normalized_obj = _normalize_tx_envelope(obj)
+    raw_canonical = raw
+    tx_hash_hex = _hex(_sha3_256(raw)) or ""
 
-    if _Tx is not None:
+    if _Tx is not None and isinstance(normalized_obj, dict):
         try:
             if hasattr(_Tx, "from_obj"):
-                tx = _Tx.from_obj(obj)  # type: ignore[attr-defined]
+                tx = _Tx.from_obj(normalized_obj)  # type: ignore[attr-defined]
             elif hasattr(_Tx, "from_dict"):
-                tx = _Tx.from_dict(obj)  # type: ignore[attr-defined]
+                tx = _Tx.from_dict(normalized_obj)  # type: ignore[attr-defined]
             else:
-                tx = _Tx(**obj)  # type: ignore[call-arg]
+                tx = _Tx(**normalized_obj)  # type: ignore[call-arg]
+
+            if hasattr(tx, "to_cbor"):
+                raw_canonical = tx.to_cbor()
+                tx_hash_hex = _hex(_sha3_256(raw_canonical)) or ""
+
+            enriched_obj = dict(normalized_obj)
+            enriched_obj["hash"] = tx_hash_hex
+            enriched_obj["raw"] = raw_canonical
             return tx, enriched_obj
         except Exception:
             pass
 
+    enriched_obj = dict(normalized_obj)
+    enriched_obj["hash"] = tx_hash_hex
+    enriched_obj["raw"] = raw_canonical
     return enriched_obj, enriched_obj
 
 
