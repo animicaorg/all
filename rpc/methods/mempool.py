@@ -17,6 +17,7 @@ from rpc.methods import method
 from rpc import deps
 from mempool.select import PendingTxEntry, select_for_block
 from core.types.tx import Tx
+from core.utils.tx import normalize_tx_bytes
 
 log = logging.getLogger(__name__)
 
@@ -172,13 +173,34 @@ def mempool_explain(tx_hash: str) -> dict:
             if entry.hash_hex == target:
                 raw = entry.raw
                 break
+        if raw is None:
+            rejection = getattr(mempool_service, "get_rejection", None)
+            if callable(rejection):
+                rejected = rejection(target)
+                if rejected:
+                    return {
+                        "hash": target,
+                        "status": "rejected",
+                        "reason": rejected.get("reason", "unknown"),
+                        "details": rejected.get("details"),
+                    }
     else:
         for h, raw_bytes, _ts in _iter_pending():
             if h == target:
                 raw = raw_bytes
                 break
     if raw is None:
-        return {"hash": target, "status": "not_found"}
+        return {"hash": target, "status": "not_found", "reason": "not_found"}
+
+    try:
+        raw = normalize_tx_bytes(raw)
+    except Exception as exc:
+        return {
+            "hash": target,
+            "status": "rejected",
+            "reason": "decode_error",
+            "details": {"step": "normalize_tx_bytes", "error": str(exc)},
+        }
 
     ctx = deps.get_ctx()
     chain_id = getattr(ctx.cfg, "chain_id", None) if ctx is not None else None
@@ -244,3 +266,54 @@ def mempool_explain(tx_hash: str) -> dict:
 
 
 __all__.append("mempool_explain")
+
+
+@method(
+    "mempool.getRawTx",
+    desc="Return raw CBOR bytes for a pending transaction hash (hex string).",
+    aliases=("mempool_getRawTx",),
+)
+def mempool_get_raw_tx(tx_hash: str) -> dict:
+    target = tx_hash if tx_hash.startswith("0x") else f"0x{tx_hash}"
+    ctx = deps.get_ctx()
+    mempool_service = getattr(ctx, "mempool", None)
+    raw = None
+    if mempool_service is not None:
+        getter = getattr(mempool_service, "get_raw", None)
+        if callable(getter):
+            raw = getter(target)
+        if raw is None:
+            snapshot = mempool_service.snapshot(limit=1000)
+            raw = snapshot.raw_by_hash.get(target)
+    if raw is None:
+        return {"hash": target, "raw": None}
+    raw_bytes = normalize_tx_bytes(raw)
+    return {"hash": target, "raw": "0x" + raw_bytes.hex()}
+
+
+@method(
+    "mempool.listRawTxs",
+    desc="List pending transactions with raw CBOR hex payloads.",
+    aliases=("mempool_listRawTxs",),
+)
+def mempool_list_raw_txs(limit: int | None = None) -> list[dict]:
+    ctx = deps.get_ctx()
+    mempool_service = getattr(ctx, "mempool", None)
+    if mempool_service is None:
+        return []
+    lim = int(limit or 1000)
+    snapshot = mempool_service.snapshot(limit=lim)
+    entries = []
+    for entry in snapshot.entries:
+        raw = snapshot.raw_by_hash.get(entry.hash_hex, entry.raw)
+        try:
+            raw_bytes = normalize_tx_bytes(raw)
+        except Exception:
+            continue
+        entries.append({"hash": entry.hash_hex, "raw": "0x" + raw_bytes.hex()})
+        if len(entries) >= lim:
+            break
+    return entries
+
+
+__all__.extend(["mempool_get_raw_tx", "mempool_list_raw_txs"])
