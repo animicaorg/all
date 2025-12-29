@@ -503,10 +503,24 @@ async def get_status() -> dict[str, t.Any]:
             snap = p2p_svc.status_snapshot()
             if hasattr(snap, "to_dict"):
                 result = snap.to_dict()
+                peer_id = None
+                if hasattr(p2p_svc, "peer_id"):
+                    peer_id = getattr(p2p_svc, "peer_id", None)
+                if peer_id is None and hasattr(p2p_svc, "_peer_id_bytes"):
+                    peer_bytes = getattr(p2p_svc, "_peer_id_bytes", None)
+                    if isinstance(peer_bytes, (bytes, bytearray)):
+                        peer_id = bytes(peer_bytes).hex()
+                if peer_id:
+                    result.setdefault("peer_id", str(peer_id))
                 if startup_error:
                     result.setdefault("startup_error", startup_error)
                 return result
             if isinstance(snap, dict):
+                peer_id = snap.get("peer_id")
+                if peer_id is None and hasattr(p2p_svc, "_peer_id_bytes"):
+                    peer_bytes = getattr(p2p_svc, "_peer_id_bytes", None)
+                    if isinstance(peer_bytes, (bytes, bytearray)):
+                        snap["peer_id"] = bytes(peer_bytes).hex()
                 if startup_error:
                     snap.setdefault("startup_error", startup_error)
                 return snap

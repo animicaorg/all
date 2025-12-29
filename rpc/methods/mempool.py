@@ -252,7 +252,7 @@ def mempool_explain(tx_hash: str) -> dict:
         return {
             "hash": target,
             "status": "eligible",
-            "reason": None,
+            "reason": "eligible",
         }
     reason = selection.rejected_by_hash.get(target, "unknown")
     details = selection.rejected_details_by_hash.get(target)
