@@ -218,7 +218,7 @@ async def test_sync_headers_surpasses_4096(tmp_path: Path) -> None:
         height += count
         remaining -= count
     for batch in batches:
-        accepted, err = node._process_headers(peer, batch)
+        accepted, err, _discarded = node._process_headers(peer, batch)
         assert err is None
         assert len(accepted) == len(batch)
 
@@ -267,15 +267,14 @@ async def test_sync_records_duplicate_headers(tmp_path: Path) -> None:
     node._peers[peer.remote] = peer
 
     batch, _, _ = _make_header_batch(genesis.hash(), genesis_timestamp, 1, 2)
-    accepted, err = node._process_headers(peer, batch)
+    accepted, err, _discarded = node._process_headers(peer, batch)
     assert err is None
     assert len(accepted) == len(batch)
 
-    accepted, err = node._process_headers(peer, batch)
+    accepted, err, _discarded = node._process_headers(peer, batch)
     assert accepted == []
-    assert err == "invalid_headers"
+    assert err is None
 
     snap = node.sync_status_snapshot()
     assert snap.headers_accepted_total == len(batch)
-    assert snap.last_headers_accepted_count == 0
-    assert snap.last_headers_discard_reason_counts.get("duplicate_headers") == len(batch)
+    assert snap.headers_seen_total == len(batch) * 2
