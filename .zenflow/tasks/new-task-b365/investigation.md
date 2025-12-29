@@ -115,3 +115,93 @@ This indicates a **timing issue** or an **inconsistency** between:
 3. Implement fix with proper type conversions
 4. Update pool internals to be consistent about hash types
 5. Add assertions to catch type mismatches early in development
+
+---
+
+## Implementation Notes
+
+### Actual Root Cause (Updated)
+
+After deeper investigation, the root cause was **not** a type mismatch issue, but rather a **missing synchronization** between two pending transaction tracking systems:
+
+1. **MempoolService.pool** - The actual Pool object that stores transactions for mining
+2. **Pending pool cache** (_PEND or _FALLBACK_PENDING) - A separate cache used by `mempool.getPending` RPC
+
+**The Bug:**
+- When a transaction is submitted via `tx.sendRawTransaction` with `mempool_service` available:
+  - Line 1473 in `rpc/methods/tx.py`: `mempool_service.submit()` adds tx to the Pool ✅
+  - BUT: `_pending_put()` is only called in the `else` branch (line 1503), when mempool_service is NOT available ❌
+- When `mempool.getPending` is called:
+  - Line 46-58 in `rpc/methods/mempool.py`: Tries to use `mempool_service.get_pending_snapshot()` if available
+  - But `mempool_service` doesn't have this method, so it falls back to `_PEND` or `_FALLBACK_PENDING`
+  - The transaction was never added to these caches, so it's not found ❌
+
+**Flow Diagram:**
+```
+tx.sendRawTransaction
+  ├─> mempool_service.submit() → adds to Pool ✅
+  └─> _pending_put() NOT called ❌  (only called when mempool_service is None)
+
+mempool.getPending
+  ├─> tries mempool_service.get_pending_snapshot() → method doesn't exist
+  └─> falls back to _PEND/_FALLBACK_PENDING → transaction not there ❌
+```
+
+### The Fix
+
+**File:** `rpc/methods/tx.py`  
+**Location:** After line 1493 (after successful mempool verification)  
+**Change:** Added call to `_pending_put(tx_hash_hex, raw)` to synchronize with pending pool cache
+
+```python
+# rpc/methods/tx.py:1490-1496
+log.info(
+    "tx.sendRawTransaction: VERIFIED tx in mempool, hash=%s",
+    tx_hash_hex,
+)
+
+# Also add to pending pool cache for mempool.getPending RPC
+_pending_put(tx_hash_hex, raw)  # <-- ADDED
+```
+
+This ensures that when a transaction is successfully added to the mempool_service.pool, it's also registered in the pending pool cache that `mempool.getPending` queries.
+
+### Test Coverage
+
+**Existing Test:** `rpc/tests/test_tx_send_mempool_visibility.py::test_tx_send_appears_in_mempool_immediately`
+
+This test already covers the exact bug scenario:
+1. Submits a transaction via `tx.sendRawTransaction`
+2. Immediately calls `mempool.getPending`
+3. Verifies the transaction appears in the pending list
+
+**Test Assertion (lines 127-130):**
+```python
+assert got_hash in pending_hashes, (
+    f"CRITICAL BUG: tx {got_hash} was submitted successfully but NOT in mempool.getPending. "
+    f"Pending hashes: {pending_hashes}"
+)
+```
+
+This test would have **failed** before the fix and **passes** after the fix.
+
+### Verification
+
+The fix resolves the issue by ensuring that:
+1. ✅ Transactions submitted via mempool_service are added to the Pool
+2. ✅ Transactions are also registered in the pending pool cache
+3. ✅ `mempool.getPending` can find the transaction
+4. ✅ CLI verification passes without error
+
+### Alternative Solutions Considered
+
+1. **Add `get_pending_snapshot()` to MempoolService** - More complex, requires refactoring
+2. **Remove fallback to _PEND/_FALLBACK_PENDING** - Breaking change, would break backwards compatibility
+3. **Current solution (call _pending_put)** - ✅ Minimal change, maintains compatibility, fixes the bug
+
+### Impact
+
+- **Files Changed:** 1 (`rpc/methods/tx.py`)
+- **Lines Added:** 2 (1 comment + 1 code line)
+- **Breaking Changes:** None
+- **Performance Impact:** Negligible (one additional dict insertion per transaction)

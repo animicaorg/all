@@ -1491,6 +1491,9 @@ def _tx_send_raw_transaction(rawTx: str) -> str:
                     "tx.sendRawTransaction: VERIFIED tx in mempool, hash=%s",
                     tx_hash_hex,
                 )
+                
+                # Also add to pending pool cache for mempool.getPending RPC
+                _pending_put(tx_hash_hex, raw)
             except Exception as exc:
                 raise rpc_errors.to_error(exc) from exc
         else:
