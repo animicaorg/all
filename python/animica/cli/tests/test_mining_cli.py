@@ -210,6 +210,129 @@ def test_mine_blocks_success(monkeypatch: Any) -> None:
     assert "3 block(s)" in result.output
 
 
+def test_mine_blocks_template_param_fallback(monkeypatch: Any) -> None:
+    """Test that mine-blocks retries template request with legacy params."""
+    test_address = "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz"
+    monkeypatch.setattr(mining, "_validate_bech32_address", lambda x: True if x == test_address else False)
+
+    class FakeRpcError(Exception):
+        def __init__(self, code: int, message: str, data: dict | None = None) -> None:
+            super().__init__(message)
+            self.code = code
+            self.message = message
+            self.data = data
+
+    class MockRpcClient:
+        def __init__(self, *args, **kwargs):
+            self.calls = []
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def request(self, method: str, params: Any):
+            self.calls.append((method, params))
+            if method == "miner.getBlockTemplate":
+                if isinstance(params, dict) and "address" in params:
+                    raise FakeRpcError(-32602, "got an unexpected keyword argument 'address'", {"detail": "unexpected"})
+                assert isinstance(params, dict)
+                assert params.get("payout_address") == test_address
+                return {
+                    "enabled": True,
+                    "header": {
+                        "v": 1,
+                        "chainId": 1337,
+                        "height": 103,
+                        "parentHash": "0x" + "00" * 32,
+                        "timestamp": 0,
+                        "stateRoot": "0x" + "00" * 32,
+                        "txsRoot": "0x" + "00" * 32,
+                        "receiptsRoot": "0x" + "00" * 32,
+                        "proofsRoot": "0x" + "00" * 32,
+                        "daRoot": "0x" + "00" * 32,
+                        "mixSeed": "0x" + "00" * 32,
+                        "poiesPolicyRoot": "0x" + "00" * 32,
+                        "pqAlgPolicyRoot": "0x" + "00" * 32,
+                        "thetaMicro": 1,
+                        "nonce": 0,
+                    },
+                    "target": hex((1 << 256) - 1),
+                    "coinbase": {"amount": 0},
+                    "txs": [],
+                    "mempool": {"pending": 0, "selected": 0, "rejected": {}, "rejectedByHash": {}},
+                }
+            if method == "miner.submitBlock":
+                return {"accepted": True}
+            raise AssertionError(f"Unexpected method {method}")
+
+    mock_module = Mock()
+    mock_module.RpcClient = MockRpcClient
+
+    monkeypatch.setitem(__import__("sys").modules, "omni_sdk.rpc.http", mock_module)
+    monkeypatch.setitem(__import__("sys").modules, "sdk.python.omni_sdk.rpc.http", mock_module)
+
+    result = runner.invoke(
+        mining.app,
+        [
+            "mine-blocks",
+            "--address", test_address,
+            "--count", "1",
+            "--rpc-url", "http://127.0.0.1:8545",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Successfully mined" in result.output
+
+
+def test_mine_blocks_missing_method(monkeypatch: Any) -> None:
+    """Test that mine-blocks surfaces method not found errors."""
+    test_address = "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz"
+    monkeypatch.setattr(mining, "_validate_bech32_address", lambda x: True if x == test_address else False)
+
+    class FakeRpcError(Exception):
+        def __init__(self, code: int, message: str, data: dict | None = None) -> None:
+            super().__init__(message)
+            self.code = code
+            self.message = message
+            self.data = data
+
+    class MockRpcClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def request(self, method: str, params: Any):
+            raise FakeRpcError(-32601, "Method not found", {"method": method})
+
+    mock_module = Mock()
+    mock_module.RpcClient = MockRpcClient
+
+    monkeypatch.setitem(__import__("sys").modules, "omni_sdk.rpc.http", mock_module)
+    monkeypatch.setitem(__import__("sys").modules, "sdk.python.omni_sdk.rpc.http", mock_module)
+
+    result = runner.invoke(
+        mining.app,
+        [
+            "mine-blocks",
+            "--address", test_address,
+            "--count", "1",
+            "--rpc-url", "http://127.0.0.1:8545",
+            "--no-proxy",
+        ],
+    )
+
+    assert result.exit_code == 5
+    assert "missing mining RPC methods" in result.output
+
+
 def test_mine_blocks_rpc_error(monkeypatch: Any) -> None:
     """Test that mine-blocks handles RPC errors gracefully."""
     # Mock address validation to accept test address
