@@ -14,6 +14,12 @@ from mempool.pool import Pool, PoolConfig
 from mempool.select import PendingTxEntry, select_for_block
 from mempool.types import EffectiveFee, PoolTx, TxMeta
 
+try:
+    from core.types.tx import Tx  # type: ignore
+except Exception:  # pragma: no cover - runtime fallback when core not available
+    class Tx:  # type: ignore
+        pass
+
 log = logging.getLogger("animica.rpc.mempool")
 
 
