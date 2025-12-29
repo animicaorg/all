@@ -13,7 +13,18 @@ from typing import Optional
 
 import typer
 
-from .rpc import call_rpc
+from .rpc import _resolve_rpc_url, call_rpc
+
+
+def _short_id(value: Optional[str], length: int = 10) -> Optional[str]:
+    if not value:
+        return None
+    text = value
+    if text.startswith("0x"):
+        text = text[2:]
+    if len(text) <= length:
+        return "0x" + text
+    return "0x" + text[:length]
 
 app = typer.Typer(
     name="mempool",
@@ -47,13 +58,67 @@ def list_pending(
         animica mempool list --rpc-url http://127.0.0.1:18546/rpc
     """
     # Call RPC method
-    result = call_rpc("mempool.getPending", [], rpc_url=rpc_url)
-    
+    resolved_rpc_url = _resolve_rpc_url(rpc_url)
+    result = call_rpc("mempool.getPending", [], rpc_url=resolved_rpc_url)
+    chain_identity = None
+    head = None
+    p2p_status = None
+    try:
+        chain_identity = call_rpc("chain.getChainIdentity", [], rpc_url=resolved_rpc_url)
+    except Exception:
+        chain_identity = None
+    try:
+        head = call_rpc("chain.getHead", [], rpc_url=resolved_rpc_url)
+    except Exception:
+        head = None
+    try:
+        p2p_status = call_rpc("p2p.getStatus", [], rpc_url=resolved_rpc_url)
+    except Exception:
+        p2p_status = None
+
+    chain_id = None
+    genesis_hash = None
+    if isinstance(chain_identity, dict):
+        chain_id = chain_identity.get("chainId") or chain_identity.get("chain_id")
+        genesis_hash = chain_identity.get("genesisHash") or chain_identity.get("genesis_hash")
+    if chain_id is None and isinstance(head, dict):
+        chain_id = head.get("chainId") or head.get("chain_id")
+    head_height = head.get("height") if isinstance(head, dict) else None
+    peer_id = None
+    if isinstance(p2p_status, dict):
+        peer_id = p2p_status.get("peer_id") or p2p_status.get("peerId") or p2p_status.get("id")
+
     if json:
-        typer.echo(json_lib.dumps(result, indent=2))
+        payload = {
+            "rpcUrl": resolved_rpc_url,
+            "chain": {
+                "chainId": chain_id,
+                "genesisHash": genesis_hash,
+            },
+            "peer": {"id": peer_id},
+            "head": {
+                "height": head_height,
+                "hash": head.get("hash") if isinstance(head, dict) else None,
+            },
+            "pending": result,
+        }
+        typer.echo(json_lib.dumps(payload, indent=2))
         return
     
     # Pretty print
+    typer.echo(f"RPC: {resolved_rpc_url}")
+    typer.echo(
+        "Chain: id={chain_id} genesis={genesis}".format(
+            chain_id=chain_id if chain_id is not None else "n/a",
+            genesis=_short_id(genesis_hash) or "n/a",
+        )
+    )
+    typer.echo(
+        "Peer: {peer_id}  Head: {height}".format(
+            peer_id=_short_id(peer_id) or "n/a",
+            height=head_height if head_height is not None else "n/a",
+        )
+    )
     if isinstance(result, list):
         if not result:
             typer.echo("Mempool is empty (no pending transactions)")
