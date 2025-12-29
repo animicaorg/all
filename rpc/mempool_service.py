@@ -388,6 +388,14 @@ class MempoolService:
                 sender=_sender_hex(sender),
             )
 
+        tx_to_store: Any = tx
+        if not isinstance(tx, Tx):
+            try:
+                if hasattr(Tx, "from_cbor"):
+                    tx_to_store = Tx.from_cbor(raw_bytes)  # type: ignore[attr-defined]
+            except Exception:
+                tx_to_store = tx
+
         meta = TxMeta(
             sender=_sender_hex(sender),
             nonce=nonce,
@@ -398,7 +406,7 @@ class MempoolService:
             effective_fee_wei=offered,
         )
         pool_tx = PoolTx(
-            tx=tx,
+            tx=tx_to_store,
             tx_hash=tx_hash_bytes,
             raw=raw_bytes,
             meta=meta,

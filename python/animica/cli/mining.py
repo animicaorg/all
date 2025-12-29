@@ -697,6 +697,11 @@ def mine_blocks(
         "--include-mempool/--no-include-mempool",
         help="Include pending mempool transactions when mining (default: include).",
     ),
+    allow_offline_mining: bool = typer.Option(
+        False,
+        "--allow-offline-mining",
+        help="Allow mining when offline or unsynced (overrides mainnet safety checks).",
+    ),
 ) -> None:
     """
     Mine blocks with proof-of-work to a specified payout address.
@@ -1012,6 +1017,7 @@ def mine_blocks(
                             {
                                 "address": resolved_address,
                                 "include_mempool": include_mempool,
+                                "allow_offline_mining": allow_offline_mining,
                             },
                         )
 
@@ -1023,6 +1029,7 @@ def mine_blocks(
                             {
                                 "address": resolved_address,
                                 "include_mempool": include_mempool,
+                                "allow_offline_mining": allow_offline_mining,
                             },
                             fallback_handler=get_template_via_local,
                         )

@@ -224,6 +224,21 @@ def _coerce_selected_txs(
             tx = tx_obj
         elif isinstance(tx_obj, dict):
             decoded_obj = tx_obj
+            if raw and decode_fn is not None:
+                try:
+                    decoded = decode_fn(raw)
+                    if isinstance(decoded, tuple):
+                        tx_candidate = decoded[0]
+                        decoded_obj = decoded[1] if isinstance(decoded[1], dict) else decoded_obj
+                    else:
+                        tx_candidate = decoded
+                        decoded_obj = decoded if isinstance(decoded, dict) else decoded_obj
+                    if isinstance(tx_candidate, Tx):
+                        tx = tx_candidate
+                    elif isinstance(tx_candidate, dict):
+                        decoded_obj = tx_candidate
+                except Exception as exc:
+                    normalize_error = str(exc)
             if not raw:
                 try:
                     raw = normalize_tx_bytes(tx_obj)
@@ -1896,6 +1911,12 @@ def _normalize_tx_envelope(decoded: dict) -> dict:
     
     Returns dict in core canonical format expected by Tx.from_obj().
     """
+    decoded = {
+        k: v
+        for k, v in decoded.items()
+        if k not in ("hash", "raw", "rawTx", "tx_hash", "txid")
+    }
+
     if "body" in decoded:
         # RPC/CLI simplified envelope: convert to canonical core format
         body = decoded["body"]
