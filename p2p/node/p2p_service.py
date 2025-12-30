@@ -3027,6 +3027,7 @@ class P2PService:
         self._last_rotation_at = now
         local_height, _ = self._local_head()
         best_header_height = self._sync_best_header.height
+        eligible_block_peers, _ineligible_block_peers = self._eligible_block_peers()
         log.warning(
             "Block sync stall handled",
             extra={
@@ -3038,6 +3039,7 @@ class P2PService:
                 "local_height": local_height,
                 "best_header_height": best_header_height,
                 "queued_blocks": len(self._sync_block_queue),
+                "eligible_block_peers": [p.remote for p in eligible_block_peers],
             },
         )
 
@@ -5868,8 +5870,26 @@ class P2PService:
         self, peer: Optional[_PeerState] = None
     ) -> int:
         if not self._sync_block_queue:
-            log.debug("Skipped block requests: block queue empty")
-            return 0
+            seeded = 0
+            if self._sync_best_header is not None:
+                local_height, _ = self._local_head()
+                if self._sync_best_header.height > int(local_height or 0):
+                    seeded = self._ensure_block_queue()
+                    if seeded:
+                        log.info(
+                            "Seeded block queue from headers",
+                            extra={
+                                "count": seeded,
+                                "best_header_height": self._sync_best_header.height,
+                                "local_height": int(local_height or 0),
+                            },
+                        )
+            if not self._sync_block_queue:
+                log.debug(
+                    "Skipped block requests: block queue empty",
+                    extra={"seeded": seeded},
+                )
+                return 0
         if peer is None:
             peer = self._select_block_peer(
                 require_anchored=self._should_enforce_checkpoint_anchor()

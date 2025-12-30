@@ -1042,6 +1042,13 @@ def _tx_send_raw_transaction(rawTx: str) -> str:
     try:
         _mempool_submit(svc, tx_obj=tx_obj, raw=raw, tx_hash_hex=tx_hash_hex)
     except Exception as exc:
+        log.warning(
+            "Mempool admission rejected",
+            extra={
+                "tx_hash": tx_hash_hex,
+                "error": str(exc),
+            },
+        )
         # Surface as a mempool admission failure (so CLI sees a real error)
         raise rpc_errors.InvalidTx(
             "mempool admission failed",
@@ -1054,6 +1061,10 @@ def _tx_send_raw_transaction(rawTx: str) -> str:
                 }
             },
         ) from exc
+    log.info(
+        "Mempool admission accepted",
+        extra={"tx_hash": tx_hash_hex},
+    )
 
     # Post-submit verification MUST pass
     has1 = _mempool_has(svc, tx_hash_hex)
