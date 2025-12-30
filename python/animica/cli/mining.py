@@ -934,8 +934,9 @@ def mine_blocks(
     # Resolve RPC URL
     url = rpc_url or os.environ.get("ANIMICA_RPC_URL") or load_network_config().rpc_url
     guard_bootstrap_rpc(url, allow_remote=allow_remote_rpc, method="miner.getBlockTemplate")
+    effective_allow_offline = allow_offline_mining or unsafe_mine_while_syncing
     behind = _warn_if_unsynced(url)
-    if behind and not (allow_offline_mining or unsafe_mine_while_syncing):
+    if behind and not effective_allow_offline:
         typer.secho(
             "Error: refusing to mine while behind the network. "
             "Use --unsafe-mine-while-syncing to override.",
@@ -1122,7 +1123,7 @@ def mine_blocks(
                         payload = {
                             "address": resolved_address,
                             "include_mempool": include_mempool,
-                            "allow_offline_mining": allow_offline_mining
+                            "allow_offline_mining": effective_allow_offline
                             or allow_offline_override,
                         }
                         try:
@@ -1143,7 +1144,7 @@ def mine_blocks(
                                 legacy_payload = {
                                     "payout_address": resolved_address,
                                     "include_mempool": include_mempool,
-                                    "allow_offline_mining": allow_offline_mining
+                                    "allow_offline_mining": effective_allow_offline
                                     or allow_offline_override,
                                 }
                                 try:
@@ -1172,7 +1173,7 @@ def mine_blocks(
                             {
                                 "address": resolved_address,
                                 "include_mempool": include_mempool,
-                                "allow_offline_mining": allow_offline_mining,
+                                "allow_offline_mining": effective_allow_offline,
                             },
                             fallback_handler=get_template_via_local,
                         )
@@ -1192,7 +1193,7 @@ def mine_blocks(
                             not proxy
                             and isinstance(reason, str)
                             and reason.startswith("sync_phase:")
-                            and not allow_offline_mining
+                            and not effective_allow_offline
                         ):
                             typer.secho(
                                 f"Info: Node is {reason}; retrying with local/offline template",
