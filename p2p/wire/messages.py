@@ -56,6 +56,7 @@ class Hello:
     msg_id: MsgID = MsgID.HELLO
     version: str = "1"
     agent: str = "animica-node/unknown"
+    repo_state: str = ""
     chain_id: ChainId = 0
     listen_port: int = 0
     listen_addrs: List[Address] = dc.field(default_factory=list)
