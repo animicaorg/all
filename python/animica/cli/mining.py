@@ -83,39 +83,50 @@ def _header_from_template(header_view: dict) -> "Header":
 
 def _mine_header(header: "Header", target_int: int) -> tuple[int | None, bytes | None]:
     max_nonce = int(os.getenv("ANIMICA_MINER_MAX_NONCE", "100000"))
-    for nonce in range(max_nonce):
-        try:
-            candidate = header.__class__(
-                v=header.v,
-                chainId=header.chainId,
-                height=header.height,
-                parentHash=header.parentHash,
-                timestamp=header.timestamp,
-                stateRoot=header.stateRoot,
-                txsRoot=header.txsRoot,
-                receiptsRoot=header.receiptsRoot,
-                proofsRoot=header.proofsRoot,
-                daRoot=header.daRoot,
-                mixSeed=header.mixSeed,
-                poiesPolicyRoot=header.poiesPolicyRoot,
-                pqAlgPolicyRoot=header.pqAlgPolicyRoot,
-                thetaMicro=header.thetaMicro,
-                workType=header.workType,
-                nonce=nonce,
-                extra=header.extra,
-            )
-        except Exception:
-            candidate = header
-        try:
-            from core.types.header import serialize_header
-            from core.utils.hash import sha3_256
+    retry_windows = int(os.getenv("ANIMICA_MINER_POW_RETRY_WINDOWS", "4"))
 
-            digest = sha3_256(serialize_header(candidate))
-        except Exception:
-            digest = candidate.hash()
-        digest_int = int.from_bytes(digest, "big")
-        if digest_int <= target_int:
+    def _scan_window(start_nonce: int, end_nonce: int) -> tuple[int | None, bytes | None]:
+        for nonce in range(start_nonce, end_nonce):
+            try:
+                candidate = header.__class__(
+                    v=header.v,
+                    chainId=header.chainId,
+                    height=header.height,
+                    parentHash=header.parentHash,
+                    timestamp=header.timestamp,
+                    stateRoot=header.stateRoot,
+                    txsRoot=header.txsRoot,
+                    receiptsRoot=header.receiptsRoot,
+                    proofsRoot=header.proofsRoot,
+                    daRoot=header.daRoot,
+                    mixSeed=header.mixSeed,
+                    poiesPolicyRoot=header.poiesPolicyRoot,
+                    pqAlgPolicyRoot=header.pqAlgPolicyRoot,
+                    thetaMicro=header.thetaMicro,
+                    workType=header.workType,
+                    nonce=nonce,
+                    extra=header.extra,
+                )
+            except Exception:
+                candidate = header
+            try:
+                from core.types.header import serialize_header
+                from core.utils.hash import sha3_256
+
+                digest = sha3_256(serialize_header(candidate))
+            except Exception:
+                digest = candidate.hash()
+            digest_int = int.from_bytes(digest, "big")
+            if digest_int <= target_int:
+                return nonce, digest
+        return None, None
+
+    start_nonce = 0
+    for _ in range(max(1, retry_windows)):
+        nonce, digest = _scan_window(start_nonce, start_nonce + max_nonce)
+        if nonce is not None and digest is not None:
             return nonce, digest
+        start_nonce += max_nonce
     return None, None
 
 
