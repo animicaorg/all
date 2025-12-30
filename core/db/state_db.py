@@ -328,6 +328,45 @@ class StateDB:
 
         return StateSnapshot(acc_entries, sto_entries, code_entries)
 
+    def commit(self) -> None:
+        """
+        Optional commit hook for transactional adapters.
+
+        StateDB writes are immediate; this is a no-op to satisfy adapters that
+        expect a commit() API.
+        """
+        return None
+
+    def revert(self, snap: "StateSnapshot") -> None:
+        """
+        Restore state from a previously captured StateSnapshot.
+
+        This is a full replacement: existing account, storage, and code keys
+        are wiped before applying snapshot contents.
+        """
+        if not isinstance(snap, StateSnapshot):
+            raise TypeError("StateDB.revert expects a StateSnapshot")
+
+        # Collect existing keys to delete (avoid mutating during iteration).
+        acc_keys = [k for k, _ in self.kv.iter_prefix(PFX_ACC)]
+        sto_keys = [k for k, _ in self.kv.iter_prefix(PFX_STO)]
+        code_keys = [k for k, _ in self.kv.iter_prefix(PFX_CODE)]
+
+        with self.kv.batch() as batch:
+            for k in acc_keys:
+                batch.delete(k)
+            for k in sto_keys:
+                batch.delete(k)
+            for k in code_keys:
+                batch.delete(k)
+
+            for addr, acc in snap.iter_accounts():
+                batch.put(_k_acc(addr), acc.to_cbor())
+            for addr, skey, val in snap.iter_storage():
+                batch.put(_k_sto(addr, skey), bytes(val))
+            for addr, code in snap.iter_code():
+                batch.put(_k_code(addr), bytes(code))
+
 
 class StateSnapshot:
     """
@@ -365,6 +404,9 @@ class StateSnapshot:
             if a == addr:
                 return code
         return None
+
+    def iter_code(self) -> Iterator[Tuple[bytes, bytes]]:
+        yield from self._code
 
     # Convenience: compute a deterministic "state digest" over snapshot
     def digest(self) -> bytes:

@@ -323,6 +323,7 @@ class SyncStatusSnapshot:
     best_header_hash: Optional[str]
     best_block_height: int
     best_block_hash: Optional[str]
+    network_best_height: Optional[int]
     in_flight: int
     in_flight_headers: int
     in_flight_blocks: int
@@ -391,6 +392,7 @@ class SyncStatusSnapshot:
     cache_interval_ms: int
     cache_age_ms: int
     cache_hits: int
+    cache_misses: int
     cache_refreshes: int
     cache_last_refresh_at: float
     cache_source: str
@@ -404,6 +406,7 @@ class SyncStatusSnapshot:
             "best_header_hash": self.best_header_hash,
             "best_block_height": self.best_block_height,
             "best_block_hash": self.best_block_hash,
+            "network_best_height": self.network_best_height,
             "in_flight": self.in_flight,
             "in_flight_headers": self.in_flight_headers,
             "in_flight_blocks": self.in_flight_blocks,
@@ -478,6 +481,7 @@ class SyncStatusSnapshot:
             "cache_interval_ms": self.cache_interval_ms,
             "cache_age_ms": self.cache_age_ms,
             "cache_hits": self.cache_hits,
+            "cache_misses": self.cache_misses,
             "cache_refreshes": self.cache_refreshes,
             "cache_last_refresh_at": self.cache_last_refresh_at,
             "cache_source": self.cache_source,
@@ -750,11 +754,15 @@ class P2PService:
             "blocks_recv": 0,
             "blocks_requested": 0,
             "blocks_received": 0,
+            "blocks_applied": 0,
             "blocks_validated_ok": 0,
             "blocks_imported": 0,
             "blocks_rejected": 0,
             "sync_rounds": 0,
             "p2p_peers_rejected_genesis_mismatch": 0,
+            "cache_hits": 0,
+            "cache_misses": 0,
+            "stall_recoveries": 0,
         }
 
         # Address discovery / relay state
@@ -2536,6 +2544,7 @@ class P2PService:
             best_header_hash=best_header_hash,
             best_block_height=best_block_height,
             best_block_hash=best_block_hash,
+            network_best_height=network_best_height,
             in_flight=len(self._sync_inflight_blocks),
             in_flight_headers=int(self._sync_inflight_headers),
             in_flight_blocks=len(self._sync_inflight_blocks),
@@ -2609,7 +2618,8 @@ class P2PService:
             peer_anchor_states=peer_anchor_states,
             cache_interval_ms=0,
             cache_age_ms=0,
-            cache_hits=0,
+            cache_hits=int(self._stats.get("cache_hits", 0)),
+            cache_misses=int(self._stats.get("cache_misses", 0)),
             cache_refreshes=0,
             cache_last_refresh_at=0.0,
             cache_source="refresh",
@@ -3021,6 +3031,7 @@ class P2PService:
             self._sync_active_block_peer = new_peer.remote
             self._sync_last_recovery_action = "retry_blocks_new_peer"
             self._sync_block_stalled_reason = None
+            self._stats["stall_recoveries"] += 1
             self._sync_wakeup.set()
         else:
             self._sync_last_recovery_action = "stall_no_peer"
@@ -5018,7 +5029,13 @@ class P2PService:
             return False
         raw_bytes = self._sync_cache.get_block(block_hash)
         if raw_bytes is None:
+            self._stats["cache_misses"] += 1
+            log.debug(
+                "Sync cache miss",
+                extra={"hash": block_hash.hex()},
+            )
             return False
+        self._stats["cache_hits"] += 1
         ok, reason = await self._import_block_payload(
             raw_bytes, origin_remote="sync-cache"
         )
@@ -6101,20 +6118,35 @@ class P2PService:
                     and not self._sync_header_queue
                     and not probe_headers
                 ):
+                    network_best_height = self._network_best_height()
                     if (
-                        self._sync_best_header is None
-                        or self._sync_best_header.height <= local_height
+                        network_best_height is not None
+                        and int(network_best_height) > int(local_height or 0)
                     ):
-                        self._sync_phase = "SYNCED" if local_height > 0 else "IDLE"
                         log.debug(
-                            "Skipped header request: already at tip",
+                            "Local head behind network; continuing header sync",
                             extra={
                                 "remote": peer.remote,
                                 "local_height": local_height,
                                 "remote_height": remote_height,
+                                "network_best_height": network_best_height,
                             },
                         )
-                        return result
+                    else:
+                        if (
+                            self._sync_best_header is None
+                            or self._sync_best_header.height <= local_height
+                        ):
+                            self._sync_phase = "SYNCED" if local_height > 0 else "IDLE"
+                            log.debug(
+                                "Skipped header request: already at tip",
+                                extra={
+                                    "remote": peer.remote,
+                                    "local_height": local_height,
+                                    "remote_height": remote_height,
+                                },
+                            )
+                            return result
 
                 saw_headers = False
                 while True:
@@ -6377,6 +6409,23 @@ class P2PService:
                 )
                 self._expire_inflight_headers()
                 self._maybe_mark_block_stalled(now)
+                network_best_height = self._network_best_height()
+                if (
+                    network_best_height is not None
+                    and best_block_height < int(network_best_height)
+                    and not self._sync_inflight_blocks
+                    and not self._sync_block_queue
+                    and now - self._sync_last_progress_at > self._sync_stall_timeout
+                ):
+                    log.debug(
+                        "Sync invariant violated: behind network without block requests",
+                        extra={
+                            "head_height": best_block_height,
+                            "network_best_height": network_best_height,
+                            "stall_elapsed_s": max(0.0, now - self._sync_last_progress_at),
+                        },
+                    )
+                    self._sync_block_stalled_reason = "blocks stalled"
                 stalled = self._sync_block_stalled_reason is not None
                 if stalled:
                     self._handle_sync_stall(
@@ -6395,6 +6444,12 @@ class P2PService:
                 self._log_sync_cycle()
                 if self._sync_block_stalled_reason is None:
                     await self._schedule_block_requests()
+                    if (
+                        network_best_height is not None
+                        and best_block_height < int(network_best_height)
+                        and not self._sync_inflight_blocks
+                    ):
+                        await self._schedule_block_requests()
         except asyncio.CancelledError:
             return
 
@@ -8383,6 +8438,7 @@ class P2PService:
             self._sync_block_stalled_reason = None
             self._stats["blocks_validated_ok"] += 1
             self._stats["blocks_imported"] += 1
+            self._stats["blocks_applied"] += 1
             self._drop_from_block_queue(bh)
             self._sync_last_block_at = time.time()
             self._sync_last_progress_at = self._sync_last_block_at
