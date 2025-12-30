@@ -4314,13 +4314,24 @@ class P2PService:
         )
         self._update_peer_meta(peer)
 
-        # Track duplicate peer_id sessions without dropping active connections.
+        # Track duplicate peer_id sessions; drop older duplicates.
         to_drop = self._peer_registry.mark_identified(peer.session_id, peer.peer_id)
         if to_drop:
             log.info(
-                "Duplicate peer_id detected; retaining concurrent sessions",
+                "Duplicate peer_id detected; dropping older sessions",
                 extra={"peer_id": peer.peer_id, "sessions": list(to_drop)},
             )
+            for session_id in to_drop:
+                dup_peer = self._peers_by_session.get(session_id)
+                if dup_peer is None:
+                    continue
+                if dup_peer.session_id == peer.session_id:
+                    await self._drop_peer(peer, reason="duplicate_peer_id")
+                    return
+                self._create_child_task(
+                    self._drop_peer(dup_peer, reason="duplicate_peer_id"),
+                    name=f"p2p.drop_peer@{dup_peer.remote}",
+                )
         self._stats["peers"] = self._peer_registry.peer_count()
 
         with contextlib.suppress(Exception):
@@ -6580,7 +6591,14 @@ class P2PService:
         if params_hash != self._network_params_hash():
             return False, "network_params_mismatch"
         if not self._peer_head_matches_known_chain(peer):
-            return False, "head_hash_mismatch"
+            log.debug(
+                "Peer head hash mismatch (non-fatal)",
+                extra={
+                    "remote": peer.remote,
+                    "peer_id": peer.peer_id,
+                    "head_height": peer.hello.get("head_height"),
+                },
+            )
         caps = peer.hello.get("capabilities")
         head_height = int(peer.hello.get("head_height") or 0)
         if isinstance(caps, list) and caps:

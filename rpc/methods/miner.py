@@ -885,7 +885,8 @@ def _mining_gate(*, allow_offline_mining: bool = False) -> tuple[bool, str | Non
 
     if chain_id == 1:
         outbound = int(p2p_status.get("peers_outbound", 0))
-        if outbound <= 0:
+        peers_total = int(p2p_status.get("peers_total", 0))
+        if outbound <= 0 and peers_total <= 0:
             return False, "offline_no_outbound_peers"
         phase = str(sync_status.get("phase") or "").lower()
         if phase and phase != "synced":
