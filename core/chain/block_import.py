@@ -439,37 +439,33 @@ class BlockImporter:
 
     # --- Difficulty adjustment ----------------------------------------------
 
-    def _init_difficulty_state(self) -> None:
-        """
-        Initialize difficulty state from params. Called once at startup.
-        Maps ChainParams retarget config to consensus.difficulty RetargetParams.
-        """
+    def _build_retarget_params(self) -> Optional["diff.RetargetParams"]:
         if not DIFFICULTY_AVAILABLE or diff is None:
-            return
-        
+            return None
         try:
             # Map from ChainParams to consensus.difficulty.RetargetParams
             # ChainParams uses: retarget.window, retarget.ema_alpha, retarget.bounds.{min,max}
-            # consensus.difficulty uses: target_block_time_s, half_life_blocks, gain_beta, 
+            # consensus.difficulty uses: target_block_time_s, half_life_blocks, gain_beta,
             #                            step_clamp_micro, theta_min_micro, theta_max_micro
-            
+
             # Convert window to half_life_blocks (approximation: use window as half-life)
             half_life_blocks = float(self.params.retarget.window)
-            
+
             # Use ema_alpha as gain_beta (proportional gain)
             gain_beta = float(self.params.retarget.ema_alpha)
-            
+
             # Compute step clamp from bounds: convert multiplicative ratio to additive µ-nats
             # For a typical initial theta, compute a reasonable step clamp
             # bounds.max = 2.0 means we can double; that's ln(2) ≈ 0.693 nats
             # Convert to µ-nats: ~693,000 µ-nats per retarget window
             # Per-block step: divide by window size
             import math
-            max_change_nats = math.log(self.params.retarget.bounds.max)  # ln(2) ≈ 0.693 for 2x
+
+            max_change_nats = math.log(self.params.retarget.bounds.max)
             step_clamp_micro = int(max_change_nats * 1_000_000 / max(1, half_life_blocks))
-            step_clamp_micro = max(100_000, min(1_000_000, step_clamp_micro))  # reasonable bounds
-            
-            retarget_params = diff.RetargetParams(
+            step_clamp_micro = max(100_000, min(1_000_000, step_clamp_micro))
+
+            return diff.RetargetParams(
                 target_block_time_s=float(self.params.block.target_seconds),
                 half_life_blocks=half_life_blocks,
                 gain_beta=gain_beta,
@@ -477,11 +473,30 @@ class BlockImporter:
                 theta_min_micro=500_000,  # 0.5 nats - very easy
                 theta_max_micro=30_000_000,  # 30 nats - very hard
             )
-            
+        except Exception as e:  # pragma: no cover
+            import logging
+
+            logging.warning(f"Failed to build retarget params: {e}")
+            return None
+
+    def _init_difficulty_state(self) -> None:
+        """
+        Initialize difficulty state from params. Called once at startup.
+        Maps ChainParams retarget config to consensus.difficulty RetargetParams.
+        """
+        if not DIFFICULTY_AVAILABLE or diff is None:
+            return
+
+        try:
+            retarget_params = self._build_retarget_params()
+            if retarget_params is None:
+                self.difficulty_state = None
+                return
+
             # Initialize state with genesis theta
             theta_init = int(self.params.theta_initial)
             self.difficulty_state = diff.init_state(retarget_params, theta_init_micro=theta_init)
-            
+
         except Exception as e:  # pragma: no cover
             # If difficulty module is unavailable or initialization fails, log and continue
             # The node can still import blocks without difficulty adjustment
@@ -519,6 +534,39 @@ class BlockImporter:
         except Exception as e:  # pragma: no cover
             import logging
             logging.warning(f"Failed to update difficulty: {e}")
+
+    def _reanchor_difficulty_state(self, parent_header: Header) -> None:
+        if not DIFFICULTY_AVAILABLE or diff is None:
+            return
+        parent_ts = _timestamp_of(parent_header)
+        if parent_ts is None:
+            return
+        parent_theta = _weight_micro_of(parent_header, None, self.params)
+        needs_reset = (
+            self._last_block_time is None
+            or int(self._last_block_time) != int(parent_ts)
+            or self.difficulty_state is None
+            or int(self.difficulty_state.theta_micro) != int(parent_theta)
+        )
+        if not needs_reset:
+            return
+        retarget_params = (
+            self.difficulty_state.params
+            if self.difficulty_state is not None
+            else self._build_retarget_params()
+        )
+        if retarget_params is None:
+            self._last_block_time = int(parent_ts)
+            return
+        try:
+            self.difficulty_state = diff.init_state(
+                retarget_params, theta_init_micro=int(parent_theta)
+            )
+            self._last_block_time = int(parent_ts)
+        except Exception as e:  # pragma: no cover
+            import logging
+
+            logging.warning(f"Failed to reanchor difficulty state: {e}")
 
     def get_current_difficulty(self) -> int:
         """
@@ -1383,6 +1431,9 @@ class BlockImporter:
         head = self.block_db.get_canonical_head()
         if head is None or head[1] != parent_hash:
             return None
+        parent_header = self.block_db.get_header_by_hash(parent_hash)
+        if parent_header is not None:
+            self._reanchor_difficulty_state(parent_header)
         ts = _timestamp_of(header, payload)
         if ts is None:
             return None
