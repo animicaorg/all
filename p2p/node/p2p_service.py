@@ -125,6 +125,7 @@ class _PeerState:
     netgroup: Optional[str] = None
     last_header_request_at: Optional[float] = None
     last_block_request_at: Optional[float] = None
+    repo_state_ok: bool = True
 
 
 class PeerMisbehavior(Exception):
@@ -603,6 +604,7 @@ class P2PService:
                 "protocol_version": self._protocol_version(),
             },
         )
+        self._repo_state = p2p_version.git_describe(default="").strip()
 
         # Persistent peerstore
         self._ensure_peerstore_dir(peerstore_dir)
@@ -3742,6 +3744,7 @@ class P2PService:
         hello = Hello(
             version="2",
             agent=f"animica-p2p/{p2p_version.__version__}",
+            repo_state=self._repo_state,
             chain_id=self.chain_id,
             listen_port=listen_port,
             listen_addrs=listen_addrs,
@@ -3867,6 +3870,8 @@ class P2PService:
         peer_fork_id: Optional[int] = None,
         peer_consensus_id: Optional[str] = None,
         peer_protocol_version: Optional[str] = None,
+        peer_repo_state: Optional[str] = None,
+        local_repo_state: Optional[str] = None,
     ) -> None:
         local_genesis = self._genesis_hash()
         local_genesis_header = self._genesis_header_hash()
@@ -3887,6 +3892,7 @@ class P2PService:
                 "local_fork_id": self._fork_id(),
                 "local_consensus_id": self._consensus_id(),
                 "local_protocol_version": self._protocol_version(),
+                "local_repo_state": local_repo_state,
                 "peer_chain_id": peer_chain_id,
                 "peer_genesis_hash": peer_genesis_hash.hex()
                 if peer_genesis_hash
@@ -3906,6 +3912,7 @@ class P2PService:
                 "peer_fork_id": peer_fork_id,
                 "peer_consensus_id": peer_consensus_id,
                 "peer_protocol_version": peer_protocol_version,
+                "peer_repo_state": peer_repo_state,
             },
         )
 
@@ -4111,6 +4118,36 @@ class P2PService:
                 points=self._score_points["wrong_chain"],
             )
 
+        local_repo_state = self._repo_state
+        peer_repo_state = str(
+            getattr(hello, "repo_state", "")
+            or data.get("repo_state")
+            or data.get("repoState")
+            or ""
+        ).strip()
+        if local_repo_state:
+            if not peer_repo_state or peer_repo_state != local_repo_state:
+                peer.repo_state_ok = False
+                self._log_handshake_mismatch(
+                    peer,
+                    reason="repo_state_mismatch",
+                    peer_chain_id=int(hello.chain_id or 0),
+                    peer_genesis_hash=peer_genesis_header or peer_genesis_block or b"",
+                    peer_repo_state=peer_repo_state or None,
+                    local_repo_state=local_repo_state,
+                )
+                await self._send(
+                    peer,
+                    MsgID.HELLO_ACK,
+                    HelloAck(accepted=False, reason="repo_state_mismatch"),
+                )
+                raise PeerMisbehavior(
+                    "repo_state_mismatch",
+                    points=self._score_points["wrong_chain"],
+                    ban_ttl=self._ban_thresholds[-1][1],
+                )
+        peer.repo_state_ok = True
+
         if not hello.genesis_identity:
             self._log_handshake_mismatch(
                 peer,
@@ -4278,6 +4315,7 @@ class P2PService:
             or data.get("protocolVersion")
             or ""
         )
+        normalized["repo_state"] = peer_repo_state
         normalized["genesis_identity"] = bytes(
             getattr(hello, "genesis_identity", b"")
         ) or data.get("genesis_identity") or data.get("genesisIdentity")
@@ -7026,6 +7064,8 @@ class P2PService:
         heights: list[int] = []
         for peer in self._peers.values():
             if not peer.hello_done.is_set():
+                continue
+            if not peer.repo_state_ok:
                 continue
             try:
                 heights.append(int((peer.hello or {}).get("head_height") or 0))
