@@ -69,6 +69,8 @@ from core.types.receipt import \
 from core.types.tx import Tx, TxKind, UnsignedTx
 from core.utils.hash import sha3_256
 from core.utils.pow import micro_threshold_to_target256
+from execution.runtime.env import make_block_env
+from execution.runtime.executor import apply_block
 
 # Import difficulty adjustment functions
 try:
@@ -386,6 +388,7 @@ class BlockImporter:
         "params",
         "block_db",
         "tx_index",
+        "state_db",
         "fork_choice",
         "difficulty_state",
         "_last_block_time",
@@ -394,6 +397,8 @@ class BlockImporter:
         "_max_orphans",
         "_max_future_seconds",
         "_min_block_spacing_ms",
+        "_state_snapshots",
+        "_state_snapshot_limit",
     )
 
     def __init__(
@@ -401,12 +406,14 @@ class BlockImporter:
         *,
         params: ChainParams,
         block_db,
+        state_db=None,
         tx_index=None,
         fork_choice: Optional[Any] = None,
     ):
         self.params = params
         self.block_db = block_db
         self.tx_index = tx_index
+        self.state_db = state_db
         self.fork_choice = fork_choice
         
         # Initialize difficulty adjustment state
@@ -419,6 +426,10 @@ class BlockImporter:
         self._max_orphans = int(os.getenv("ANIMICA_ORPHAN_POOL_MAX", "1000"))
         self._max_future_seconds = int(os.getenv("ANIMICA_MAX_FUTURE_SECONDS", "5"))
         self._min_block_spacing_ms = int(os.getenv("ANIMICA_MIN_BLOCK_SPACING_MS", "0"))
+        self._state_snapshots: Dict[int, Any] = {}
+        self._state_snapshot_limit = int(
+            os.getenv("ANIMICA_STATE_SNAPSHOT_CACHE", "2048") or 2048
+        )
         self._init_fork_choice_from_db()
 
     # --- Basics -------------------------------------------------------------
@@ -593,6 +604,7 @@ class BlockImporter:
                 
                 # Index canonical txs if any
                 self._index_block_if_canonical(height=0, block_hash=h, block=block)
+                self._capture_state_snapshot(0)
 
                 return ImportResult(ImportErrorCode.ACCEPTED, 0, h, True, None)
 
@@ -1053,6 +1065,158 @@ class BlockImporter:
         else:
             self.block_db.set_canonical_head(best.height, best.h)
 
+        if self.state_db is not None:
+            if old_height is not None and old_height not in self._state_snapshots:
+                self._capture_state_snapshot(old_height)
+            self._apply_state_reorg(detached_list, attached_list, best)
+
+    def _apply_state_reorg(
+        self,
+        detached: list[bytes],
+        attached: list[bytes],
+        best,
+    ) -> None:
+        if self.state_db is None:
+            return
+        if not detached and not attached:
+            return
+
+        lca_height = self._reorg_lca_height(detached, attached, best)
+        snap = self._state_snapshots.get(lca_height)
+        if snap is None:
+            log.warning(
+                "state: missing snapshot for reorg; rebuilding from canonical chain",
+                extra={"lca_height": lca_height, "best_height": best.height},
+            )
+            self._rebuild_state_from_canonical(best.height)
+            return
+
+        try:
+            self.state_db.revert(snap)
+        except Exception as exc:
+            log.error(
+                "state: failed to revert snapshot; rebuilding",
+                extra={"error": str(exc), "lca_height": lca_height},
+            )
+            self._rebuild_state_from_canonical(best.height)
+            return
+
+        applied = 0
+        for h in sorted(attached, key=self._block_height_for_hash):
+            block = self.block_db.get_block_by_hash(h)
+            if block is None:
+                continue
+            if not self._apply_block_state(block):
+                log.warning(
+                    "state: block execution failed during reorg",
+                    extra={"height": getattr(block.header, "height", None), "hash": h.hex()},
+                )
+                continue
+            height = _height_of(block.header)
+            self._capture_state_snapshot(height)
+            applied += 1
+
+        if applied:
+            log.info(
+                "state: reorg applied",
+                extra={
+                    "lca_height": lca_height,
+                    "applied_blocks": applied,
+                    "best_height": best.height,
+                },
+            )
+
+    def _reorg_lca_height(
+        self,
+        detached: list[bytes],
+        attached: list[bytes],
+        best,
+    ) -> int:
+        if attached:
+            heights = [self._block_height_for_hash(h) for h in attached]
+            heights = [h for h in heights if h is not None]
+            if heights:
+                return max(0, min(heights) - 1)
+        try:
+            return int(best.height) if best is not None else 0
+        except Exception:
+            return 0
+
+    def _block_height_for_hash(self, h: bytes) -> Optional[int]:
+        header = self.block_db.get_header_by_hash(h)
+        if header is None:
+            return None
+        try:
+            return _height_of(header)
+        except Exception:
+            return None
+
+    def _apply_block_state(self, block: Block) -> bool:
+        if self.state_db is None:
+            return False
+
+        try:
+            block_env = make_block_env(block.header, self.params)
+            apply_block(block.txs, self.state_db, block_env, params=self.params)
+            return True
+        except Exception as exc:
+            log.error(
+                "state: block execution failed",
+                extra={"error": str(exc), "height": getattr(block.header, "height", None)},
+            )
+            return False
+
+    def _capture_state_snapshot(self, height: int) -> None:
+        if self.state_db is None:
+            return
+        snap = getattr(self.state_db, "snapshot", None)
+        if not callable(snap):
+            return
+        try:
+            self._state_snapshots[int(height)] = snap()
+            self._prune_state_snapshots()
+        except Exception:
+            return
+
+    def _prune_state_snapshots(self) -> None:
+        if self._state_snapshot_limit <= 0:
+            return
+        if len(self._state_snapshots) <= self._state_snapshot_limit:
+            return
+        for height in sorted(self._state_snapshots.keys())[
+            : max(0, len(self._state_snapshots) - self._state_snapshot_limit)
+        ]:
+            self._state_snapshots.pop(height, None)
+
+    def _rebuild_state_from_canonical(self, target_height: int) -> None:
+        if self.state_db is None:
+            return
+        genesis_snap = self._state_snapshots.get(0)
+        if genesis_snap is not None:
+            try:
+                self.state_db.revert(genesis_snap)
+            except Exception:
+                return
+        applied = 0
+        for height in range(1, max(0, int(target_height)) + 1):
+            try:
+                h = self.block_db.get_canonical_hash(height)
+            except Exception:
+                h = None
+            if not h:
+                break
+            block = self.block_db.get_block_by_hash(h)
+            if block is None:
+                break
+            if not self._apply_block_state(block):
+                break
+            self._capture_state_snapshot(height)
+            applied += 1
+        log.info(
+            "state: rebuilt from canonical chain",
+            extra={"target_height": target_height, "applied": applied},
+        )
+
     def fork_tips(self, limit: int = 5) -> List[Dict[str, Any]]:
         if self.fork_choice is None:
             return []
@@ -1206,13 +1370,18 @@ def _load_chain_params_for_import(genesis_path: Optional[str]) -> ChainParams:
 
 def _get_importer(
     block_db,
+    state_db,
     tx_index,
     params: ChainParams,
 ) -> BlockImporter:
     cached = _IMPORTER_CACHE.get(id(block_db))
     if cached is not None and cached.params.chain_id == params.chain_id:
+        if cached.state_db is None and state_db is not None:
+            cached.state_db = state_db
         return cached
-    importer = BlockImporter(params=params, block_db=block_db, tx_index=tx_index)
+    importer = BlockImporter(
+        params=params, block_db=block_db, state_db=state_db, tx_index=tx_index
+    )
     _IMPORTER_CACHE[id(block_db)] = importer
     return importer
 
@@ -1232,7 +1401,7 @@ def import_block(
     """
     try:
         params = _load_chain_params_for_import(genesis_path)
-        importer = _get_importer(block_db, tx_index, params)
+        importer = _get_importer(block_db, state_db, tx_index, params)
         result = importer.import_block(raw_block)
         accepted = result.code in (
             ImportErrorCode.ACCEPTED,
@@ -1252,7 +1421,7 @@ def fork_choice_snapshot(
 ) -> Dict[str, Any]:
     try:
         params = _load_chain_params_for_import(genesis_path)
-        importer = _get_importer(block_db, tx_index, params)
+        importer = _get_importer(block_db, None, tx_index, params)
         return {
             "tips": importer.fork_tips(limit=limit),
         }

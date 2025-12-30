@@ -114,6 +114,10 @@ except Exception:  # pragma: no cover
 _FALLBACK_PENDING: dict[str, bytes] = {}
 _FALLBACK_PENDING_TS: dict[str, float] = {}
 
+# Track txs seen in blocks that were later reorged out.
+_REORGED_TXS: dict[str, float] = {}
+_REORGED_TXS_TTL_S = float(os.environ.get("ANIMICA_REORG_TX_TTL_S", "86400") or 86400)
+
 
 # ——— Helpers ———
 
@@ -150,6 +154,32 @@ def _jsonify(obj: t.Any) -> t.Any:
     if isinstance(obj, (list, tuple)):
         return [_jsonify(x) for x in obj]
     return obj
+
+
+def _prune_reorged_txs(now: float | None = None) -> None:
+    if not _REORGED_TXS:
+        return
+    ttl = _REORGED_TXS_TTL_S
+    if ttl <= 0:
+        _REORGED_TXS.clear()
+        return
+    now = time.time() if now is None else now
+    for h, ts in list(_REORGED_TXS.items()):
+        if now - ts > ttl:
+            _REORGED_TXS.pop(h, None)
+
+
+def _record_reorged_txs(tx_hashes: t.Iterable[bytes | str]) -> None:
+    now = time.time()
+    _prune_reorged_txs(now=now)
+    for h in tx_hashes:
+        if isinstance(h, (bytes, bytearray)):
+            hex_str = "0x" + bytes(h).hex()
+        else:
+            hex_str = str(h)
+            if not hex_str.startswith("0x"):
+                hex_str = "0x" + hex_str
+        _REORGED_TXS[hex_str.lower()] = now
 
 
 def _error_data(kind: str, exc: BaseException, where: str, hint: str) -> dict:
@@ -1260,5 +1290,81 @@ def tx_get_transaction_status(txHash: str) -> dict:
                 }
 
     return {"hash": tx_hash_hex, "status": "not_found"}
+
+
+@method(
+    "tx.getStatus",
+    desc=(
+        "Return detailed transaction status (mempool presence, inclusion, confirmations, reorg state)."
+    ),
+    aliases=("tx_getStatus", "tx.status", "tx_getStatusDetail"),
+)
+def tx_get_status(txHash: str) -> dict:
+    if not isinstance(txHash, str):
+        raise rpc_errors.InvalidParams("txHash must be hex string")
+    tx_hash_hex = txHash.lower()
+    if not tx_hash_hex.startswith("0x"):
+        tx_hash_hex = "0x" + tx_hash_hex
+
+    _prune_reorged_txs()
+
+    seen_in_mempool = False
+    svc = _get_mempool_service()
+    if svc is not None:
+        try:
+            seen_in_mempool = bool(_mempool_has(svc, tx_hash_hex))
+        except Exception:
+            seen_in_mempool = False
+    if not seen_in_mempool and _pending_get(tx_hash_hex) is not None:
+        seen_in_mempool = True
+
+    included_height = None
+    included_hash = None
+    view, height, _idx, block_hash = _lookup_persisted_tx(tx_hash_hex)
+    if view is not None:
+        included_height = int(height) if height is not None else None
+        included_hash = _hex(block_hash) if block_hash is not None else None
+
+    head_height = None
+    try:
+        head = deps.ensure_started().get_head()
+        if isinstance(head, dict):
+            head_height = int(head.get("height") or 0)
+    except Exception:
+        head_height = None
+
+    confirmations = None
+    if included_height is not None and head_height is not None:
+        if head_height >= included_height:
+            confirmations = int(head_height - included_height + 1)
+        else:
+            confirmations = 0
+
+    finality = int(os.environ.get("ANIMICA_TX_FINALITY_CONFIRMATIONS", "12") or 12)
+    finalized = bool(confirmations is not None and confirmations >= finality)
+
+    reorged_out = False
+    if included_hash is None and tx_hash_hex in _REORGED_TXS:
+        reorged_out = True
+
+    if included_hash is not None:
+        status = "confirmed"
+    elif reorged_out:
+        status = "reorged_out"
+    elif seen_in_mempool:
+        status = "pending"
+    else:
+        status = "not_found"
+
+    return {
+        "hash": tx_hash_hex,
+        "status": status,
+        "seen_in_mempool": seen_in_mempool,
+        "included_in_block_hash": included_hash,
+        "included_height": included_height,
+        "confirmations": confirmations,
+        "finalized": finalized,
+        "reorged_out": reorged_out,
+    }
 
 # NOTE: tx.getTransactionReceipt is in rpc/methods/receipt.py

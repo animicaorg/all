@@ -420,9 +420,31 @@ def apply_transfer(
         base_price, gas_price, intrinsic
     )
 
-    # Ensure sender has enough to cover amount + fee
+    # Nonce check (must match current chain nonce)
+    tx_nonce = _get(tx, "nonce")
+    if tx_env is not None and hasattr(tx_env, "nonce"):
+        try:
+            tx_nonce = int(getattr(tx_env, "nonce"))
+        except Exception:
+            pass
+    if tx_nonce is None:
+        unsigned = _get(tx, "unsigned")
+        if unsigned is not None:
+            tx_nonce = _get(unsigned, "nonce")
+
     _ensure_account(state, sender)
     _ensure_account(state, to)
+    sender_nonce_before = _get_nonce(state, sender)
+    if tx_nonce is not None and int(tx_nonce) != sender_nonce_before:
+        return ApplyResult(
+            status=TxStatus.REVERT,
+            gas_used=0,
+            logs=[],
+            state_root=_maybe_state_root(state),
+            receipt=None,
+        )
+
+    # Ensure sender has enough to cover amount + fee
     sender_balance = _get_balance(state, sender)
     required = amount + total_fee
     if sender_balance < required:
@@ -464,8 +486,6 @@ def apply_transfer(
     # Value transfer
     sender_balance_before = _get_balance(state, sender)
     recipient_balance_before = _get_balance(state, to)
-    sender_nonce_before = _get_nonce(state, sender)
-    
     _set_balance(state, sender, sender_balance_before - amount)
     _set_balance(state, to, recipient_balance_before + amount)
 

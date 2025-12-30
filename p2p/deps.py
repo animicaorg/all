@@ -108,6 +108,108 @@ def _db_uri_hint(db_uri: str) -> str:
     return db_uri
 
 
+def _header_parent_hash(header: Any) -> Optional[bytes]:
+    if header is None:
+        return None
+    for name in ("parentHash", "parent_hash", "prevHash", "prev_hash"):
+        if hasattr(header, name):
+            try:
+                return bytes(getattr(header, name))
+            except Exception:
+                return None
+    return None
+
+
+def _collect_reorg_delta(
+    block_db: Any,
+    old_head: Tuple[int, bytes],
+    new_head: Tuple[int, bytes],
+) -> Tuple[List[Any], List[Any]]:
+    old_height, old_hash = int(old_head[0]), bytes(old_head[1])
+    new_height, new_hash = int(new_head[0]), bytes(new_head[1])
+    removed: List[Any] = []
+    added: List[Any] = []
+
+    while old_height > new_height:
+        blk = block_db.get_block_by_hash(old_hash)
+        if blk is not None:
+            removed.append(blk)
+        hdr = block_db.get_header_by_hash(old_hash)
+        parent = _header_parent_hash(hdr)
+        if parent is None:
+            break
+        old_hash = parent
+        old_height -= 1
+
+    while new_height > old_height:
+        blk = block_db.get_block_by_hash(new_hash)
+        if blk is not None:
+            added.append(blk)
+        hdr = block_db.get_header_by_hash(new_hash)
+        parent = _header_parent_hash(hdr)
+        if parent is None:
+            break
+        new_hash = parent
+        new_height -= 1
+
+    while old_hash != new_hash:
+        old_blk = block_db.get_block_by_hash(old_hash)
+        new_blk = block_db.get_block_by_hash(new_hash)
+        if old_blk is not None:
+            removed.append(old_blk)
+        if new_blk is not None:
+            added.append(new_blk)
+        old_hdr = block_db.get_header_by_hash(old_hash)
+        new_hdr = block_db.get_header_by_hash(new_hash)
+        old_parent = _header_parent_hash(old_hdr)
+        new_parent = _header_parent_hash(new_hdr)
+        if old_parent is None or new_parent is None:
+            break
+        old_hash = old_parent
+        new_hash = new_parent
+
+    added.reverse()
+    return removed, added
+
+
+def _tx_hash_bytes(tx: Any) -> Optional[bytes]:
+    if tx is None:
+        return None
+    for name in ("hash", "txid"):
+        if hasattr(tx, name) and callable(getattr(tx, name)):
+            try:
+                return bytes(getattr(tx, name)())
+            except Exception:
+                continue
+    if isinstance(tx, dict):
+        h = tx.get("hash") or tx.get("txHash")
+        if isinstance(h, str):
+            s = h[2:] if h.startswith("0x") else h
+            with contextlib.suppress(ValueError):
+                return bytes.fromhex(s)
+        if isinstance(h, (bytes, bytearray)):
+            return bytes(h)
+    return None
+
+
+def _txs_from_block(block: Any) -> Iterable[Any]:
+    if block is None:
+        return ()
+    if isinstance(block, dict):
+        return block.get("txs") or block.get("transactions") or ()
+    return getattr(block, "txs", getattr(block, "transactions", ())) or ()
+
+
+def _tx_hashes_from_blocks(blocks: Sequence[Any]) -> List[bytes]:
+    out: List[bytes] = []
+    for blk in blocks:
+        for tx in _txs_from_block(blk):
+            h = _tx_hash_bytes(tx)
+            if h is not None:
+                out.append(h)
+    return out
+
+
 def _volume_name_for_chain(
     network: Optional[str],
     chain_id: Optional[int],
@@ -504,6 +606,12 @@ class P2PDeps:
         Returns (accepted, reason). On acceptance, canonical head may advance.
         """
         try:
+            old_head = None
+            if hasattr(self._block_db, "get_canonical_head"):
+                old_head = self._block_db.get_canonical_head()
+            if old_head is None and hasattr(self._block_db, "get_head"):
+                old_head = self._block_db.get_head()
+
             res = self._core_import_block(
                 self._block_db,
                 self._state_db,
@@ -521,6 +629,7 @@ class P2PDeps:
                         on_block_accepted(block, self._state_db)
                     except Exception:
                         pass
+                    self._handle_reorg_if_needed(old_head)
                 return accepted, reason
             if isinstance(res, bool):
                 if res:
@@ -530,6 +639,7 @@ class P2PDeps:
                         on_block_accepted(block, self._state_db)
                     except Exception:
                         pass
+                    self._handle_reorg_if_needed(old_head)
                 return res, None
             if hasattr(res, "accepted"):
                 accepted = bool(getattr(res, "accepted"))
@@ -540,10 +650,90 @@ class P2PDeps:
                         on_block_accepted(block, self._state_db)
                     except Exception:
                         pass
+                    self._handle_reorg_if_needed(old_head)
                 return accepted, getattr(res, "reason", None)
             return True, None
         except Exception as e:
             return (False, f"import_error: {e}")
+
+    def _handle_reorg_if_needed(self, old_head: Any) -> None:
+        if old_head is None:
+            return
+        if hasattr(self._block_db, "get_canonical_head"):
+            new_head = self._block_db.get_canonical_head()
+        else:
+            new_head = self._block_db.get_head()
+        if not new_head or new_head == old_head:
+            return
+
+        removed, added = _collect_reorg_delta(self._block_db, old_head, new_head)
+        if not removed and not added:
+            return
+
+        import importlib.util
+
+        if importlib.util.find_spec("mempool.reorg") is None:
+            return
+        if importlib.util.find_spec("rpc.methods.tx") is None:
+            return
+
+        from mempool.reorg import ReorgDelta, handle_reorg
+        from rpc.methods import tx as tx_methods
+
+        svc = tx_methods._get_mempool_service()  # type: ignore[attr-defined]
+        pool = getattr(svc, "pool", None) if svc is not None else None
+        if pool is None:
+            return
+
+        delta = ReorgDelta(
+            old_tip=bytes(old_head[1]) if old_head else None,
+            new_tip=bytes(new_head[1]) if new_head else None,
+            removed=removed,
+            added=added,
+        )
+        stats = handle_reorg(pool, self._state_db, delta)
+
+        removed_hashes = _tx_hashes_from_blocks(removed)
+        added_hashes = _tx_hashes_from_blocks(added)
+        reorged_hashes = [h for h in removed_hashes if h not in added_hashes]
+        if reorged_hashes:
+            tx_methods._record_reorged_txs(reorged_hashes)  # type: ignore[attr-defined]
+            self._rebroadcast_reorged_txs(reorged_hashes, tx_methods, svc)
+
+        if stats.reinjected:
+            try:
+                tx_methods.log.info(
+                    "mempool reorg reinject",
+                    extra={
+                        "reinjected": stats.reinjected,
+                        "dropped": stats.dropped_confirmed,
+                        "replaced": stats.skipped_replaced,
+                    },
+                )
+            except Exception:
+                pass
+
+    def _rebroadcast_reorged_txs(
+        self,
+        tx_hashes: list[bytes],
+        tx_methods: Any,
+        mempool_svc: Any,
+    ) -> None:
+        try:
+            for h in tx_hashes:
+                hex_hash = "0x" + h.hex()
+                raw = None
+                if mempool_svc is not None and hasattr(mempool_svc, "get_raw"):
+                    raw = mempool_svc.get_raw(hex_hash)
+                if raw is None:
+                    tx_obj = self.tx_by_hash(h)
+                    if tx_obj is not None and hasattr(tx_obj, "to_cbor"):
+                        raw = tx_obj.to_cbor()
+                if raw is None:
+                    continue
+                tx_methods._gossip_tx_to_peers(raw)  # type: ignore[attr-defined]
+        except Exception:
+            return
 
     # ---- Transactions -------------------------------------------------------
 
