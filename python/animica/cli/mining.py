@@ -300,23 +300,38 @@ def _warn_if_unsynced(rpc_url: str, *, threshold: int = 5) -> bool:
         return False
 
     phase = status.get("phase") or status.get("state")
+    synchronized = status.get("synchronized")
     head_height = status.get("head_height")
+    best_header_height = status.get("best_header_height")
     network_best = status.get("network_best_height")
     try:
         head_height = int(head_height) if head_height is not None else None
     except Exception:
         head_height = None
     try:
+        best_header_height = int(best_header_height) if best_header_height is not None else None
+    except Exception:
+        best_header_height = None
+    try:
         network_best = int(network_best) if network_best is not None else None
     except Exception:
         network_best = None
 
+    if synchronized is True:
+        return False
+
     behind = False
-    if phase and phase not in {"SYNCED", "IDLE"}:
-        behind = True
+    lag_known = False
     if network_best is not None and head_height is not None:
+        lag_known = True
         if network_best - head_height > threshold:
             behind = True
+    if best_header_height is not None and head_height is not None:
+        lag_known = True
+        if best_header_height - head_height > threshold:
+            behind = True
+    if not lag_known and phase and phase not in {"SYNCED", "IDLE", "TARGET_REACHED"}:
+        behind = True
 
     if behind:
         typer.echo(
