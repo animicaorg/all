@@ -1969,6 +1969,14 @@ def _execute_transactions(
     return receipts
 
 
+def _normalize_sig_entry(sig: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "alg": sig.get("alg", sig.get("algId", sig.get("alg_id", 0))),
+        "pubkey": sig.get("pubkey", sig.get("pk", sig.get("pub", b""))),
+        "sig": sig.get("sig", sig.get("signature", b"")),
+    }
+
+
 def _normalize_tx_envelope(decoded: dict) -> dict:
     """
     Normalize transaction envelope format to core format.
@@ -2087,24 +2095,36 @@ def _normalize_tx_envelope(decoded: dict) -> dict:
             normalized = {"tx": canonical_tx}
         
         # Handle signatures
-        if "sigs" in decoded:
-            normalized["sigs"] = decoded["sigs"]
+        if "sigs" in decoded and isinstance(decoded["sigs"], list):
+            normalized["sigs"] = [
+                _normalize_sig_entry(sig) if isinstance(sig, dict) else sig
+                for sig in decoded["sigs"]
+            ]
         elif "sig" in decoded:
             # Single sig: wrap in array and normalize field names
             sig = decoded["sig"]
-            # Normalize signature field names (algId/alg_id → alg, pk → pubkey)
-            normalized_sig = {
-                "alg": sig.get("algId", sig.get("alg_id", sig.get("alg", 0))),
-                "pubkey": sig.get("pk", sig.get("pubkey", sig.get("pub", b""))),
-                "sig": sig.get("sig", sig.get("signature", b"")),
-            }
-            normalized["sigs"] = [normalized_sig]
+            normalized["sigs"] = [
+                _normalize_sig_entry(sig) if isinstance(sig, dict) else sig
+            ]
         else:
             normalized["sigs"] = []
-        
+
         return normalized
     else:
-        # Already in core format or flat format
+        # Already in core format or flat format; normalize signatures if present.
+        if "sigs" in decoded and isinstance(decoded["sigs"], list):
+            decoded = dict(decoded)
+            decoded["sigs"] = [
+                _normalize_sig_entry(sig) if isinstance(sig, dict) else sig
+                for sig in decoded["sigs"]
+            ]
+        elif "sig" in decoded:
+            sig = decoded["sig"]
+            decoded = dict(decoded)
+            decoded["sigs"] = [
+                _normalize_sig_entry(sig) if isinstance(sig, dict) else sig
+            ]
+            decoded.pop("sig", None)
         return decoded
 
 
