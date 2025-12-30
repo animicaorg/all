@@ -69,6 +69,10 @@ def parse_address(addr: str) -> bytes:
     if _is_hex(s):
         h = s[2:] if s.startswith("0x") else s
         b = binascii.unhexlify(h)
+        if len(b) < 32:
+            return b.rjust(32, b"\x00")
+        if len(b) > 32:
+            return b[-32:]
         return b
 
     # bech32m path
