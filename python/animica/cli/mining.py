@@ -1212,7 +1212,7 @@ def mine_blocks(
                             else "unknown"
                         )
                         if (
-                            and isinstance(reason, str)
+                            isinstance(reason, str)
                             and reason.startswith("sync_phase:")
                             and not effective_allow_offline
                         ):
