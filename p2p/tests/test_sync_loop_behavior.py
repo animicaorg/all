@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import time
 from pathlib import Path
 
 import pytest
@@ -79,6 +80,17 @@ def _make_child_block(parent) -> Block:
     if child is None:
         raise AssertionError("Failed to find nonce meeting pow target for test block")
     return Block(header=child, txs=(), proofs=(), receipts=None)
+
+
+class _NullCache:
+    def get_block(self, _block_hash: bytes) -> None:
+        return None
+
+    def put_block(self, _block_hash: bytes, _raw: bytes, **_kwargs) -> None:
+        return None
+
+    def invalidate_block(self, _block_hash: bytes) -> None:
+        return None
 
 
 @pytest.mark.asyncio
@@ -222,3 +234,133 @@ async def test_block_request_scheduling(tmp_path: Path, monkeypatch: pytest.Monk
     assert requested > 0
     assert node._sync_active_block_peer == peer.remote
     assert node._sync_inflight_blocks
+
+
+@pytest.mark.asyncio
+async def test_block_requests_skip_zero_height_peer(tmp_path: Path) -> None:
+    deps_sync, deps = _make_deps(tmp_path, "block-skip-zero-height")
+    node = P2PService(
+        listen_addrs=[tcp_multiaddr(free_port())],
+        seeds=[],
+        chain_id=deps_sync.chain_id,
+        deps=deps,
+        peerstore_path=str(tmp_path / "block-skip-zero-height" / "p2p"),
+    )
+    peer = _register_peer(node, "peer:1100")
+    peer.hello["head_height"] = 0
+
+    genesis = deps_sync.header_by_number(0)
+    assert genesis is not None
+    child_block = _make_child_block(genesis)
+    child_hash = compute_header_hash(child_block.header)
+    node._sync_headers[child_hash] = node._sync_header_from_db(child_block.header)
+    node._sync_best_header = node._sync_headers[child_hash]
+    node._enqueue_missing_blocks([node._sync_headers[child_hash]])
+
+    requested = await node._schedule_block_requests()
+    assert requested == 0
+    assert node._sync_inflight_blocks == {}
+
+
+@pytest.mark.asyncio
+async def test_block_requests_prefer_height_peer(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    deps_sync, deps = _make_deps(tmp_path, "block-prefer-height")
+    node = P2PService(
+        listen_addrs=[tcp_multiaddr(free_port())],
+        seeds=[],
+        chain_id=deps_sync.chain_id,
+        deps=deps,
+        peerstore_path=str(tmp_path / "block-prefer-height" / "p2p"),
+    )
+    low_peer = _register_peer(node, "peer:1200")
+    high_peer = _register_peer(node, "peer:1201")
+    low_peer.hello["head_height"] = 0
+    high_peer.hello["head_height"] = 500
+
+    genesis = deps_sync.header_by_number(0)
+    assert genesis is not None
+    child_block = _make_child_block(genesis)
+    child_hash = compute_header_hash(child_block.header)
+    node._sync_headers[child_hash] = node._sync_header_from_db(child_block.header)
+    node._sync_best_header = node._sync_headers[child_hash]
+    node._enqueue_missing_blocks([node._sync_headers[child_hash]])
+
+    sent_to: list[str] = []
+
+    async def _fake_send(peer: _PeerState, _msg_id, _payload) -> None:
+        sent_to.append(peer.remote)
+
+    monkeypatch.setattr(node, "_send", _fake_send)
+    requested = await node._schedule_block_requests()
+    assert requested > 0
+    assert node._sync_active_block_peer == high_peer.remote
+    assert sent_to and all(remote == high_peer.remote for remote in sent_to)
+
+
+@pytest.mark.asyncio
+async def test_cache_miss_requests_block(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    deps_sync, deps = _make_deps(tmp_path, "cache-miss-requests")
+    node = P2PService(
+        listen_addrs=[tcp_multiaddr(free_port())],
+        seeds=[],
+        chain_id=deps_sync.chain_id,
+        deps=deps,
+        peerstore_path=str(tmp_path / "cache-miss-requests" / "p2p"),
+    )
+    peer = _register_peer(node, "peer:1300")
+    peer.hello["head_height"] = 10
+
+    genesis = deps_sync.header_by_number(0)
+    assert genesis is not None
+    child_block = _make_child_block(genesis)
+    child_hash = compute_header_hash(child_block.header)
+
+    node._sync_cache = _NullCache()
+    node._sync_block_queue.append(child_hash)
+    node._sync_block_queue_set.add(child_hash)
+
+    sent = []
+
+    async def _fake_send(_peer: _PeerState, _msg_id, _payload) -> None:
+        sent.append(_msg_id)
+
+    monkeypatch.setattr(node, "_send", _fake_send)
+    requested = await node._schedule_block_requests()
+    assert requested > 0
+    assert node._sync_inflight_blocks
+
+
+@pytest.mark.asyncio
+async def test_block_stall_recovery_rotates_peer(tmp_path: Path) -> None:
+    deps_sync, deps = _make_deps(tmp_path, "block-stall-recovery")
+    node = P2PService(
+        listen_addrs=[tcp_multiaddr(free_port())],
+        seeds=[],
+        chain_id=deps_sync.chain_id,
+        deps=deps,
+        peerstore_path=str(tmp_path / "block-stall-recovery" / "p2p"),
+    )
+    peer_a = _register_peer(node, "peer:1400")
+    peer_b = _register_peer(node, "peer:1401")
+    peer_a.hello["head_height"] = 5
+    peer_b.hello["head_height"] = 10
+
+    genesis = deps_sync.header_by_number(0)
+    assert genesis is not None
+    child_block = _make_child_block(genesis)
+    child_hash = compute_header_hash(child_block.header)
+    node._sync_headers[child_hash] = node._sync_header_from_db(child_block.header)
+    node._sync_best_header = node._sync_headers[child_hash]
+    node._sync_block_queue.append(child_hash)
+    node._sync_block_queue_set.add(child_hash)
+
+    node._sync_active_block_peer = peer_a.remote
+    node._sync_stall_timeout = 0.01
+    node._sync_last_progress_at = node._sync_last_progress_at - 1.0
+
+    node._maybe_mark_block_stalled(time.time())
+    assert node._sync_block_stalled_reason == "blocks stalled"
+
+    node._handle_sync_stall(reason="blocks stalled")
+    assert node._sync_last_recovery_action == "retry_blocks_new_peer"
+    assert node._sync_active_block_peer == peer_b.remote

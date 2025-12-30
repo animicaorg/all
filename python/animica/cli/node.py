@@ -2264,12 +2264,14 @@ def _up_impl(
         compose_env.setdefault("ANIMICA_AUTO_RESET_GENESIS_MISMATCH", "1")
 
     try:
+        typer.echo("Compose up started.")
         result = subprocess.run(
             cmd,
             cwd=compose_file.parent,
             check=False,
             env=compose_env,
         )
+        typer.echo("Compose up finished.")
         
         if result.returncode == 0:
             if detach:
