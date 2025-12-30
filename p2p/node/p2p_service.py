@@ -972,7 +972,7 @@ class P2PService:
         self._sync_enabled = _env_flag("SYNC_ENABLED", "ANIMICA_SYNC_ENABLED", default=True)
         self._sync_requested = False
         self._sync_requested_at: Optional[float] = None
-        tick_ms = float(_env_value("SYNC_TICK_MS", "ANIMICA_SYNC_TICK_MS", default="1000") or 1000)
+        tick_ms = float(_env_value("SYNC_TICK_MS", "ANIMICA_SYNC_TICK_MS", default="250") or 250)
         self._sync_tick_sec = max(0.05, tick_ms / 1000.0)
         self._sync_boost_until: Optional[float] = None
         self._sync_boost_tick_sec: Optional[float] = None
@@ -981,7 +981,7 @@ class P2PService:
             _env_value(
                 "SYNC_MAX_INFLIGHT_HEADERS",
                 "ANIMICA_SYNC_MAX_INFLIGHT_HEADERS",
-                default="4",
+                default="12",
             )
             or 4
         )
@@ -990,15 +990,15 @@ class P2PService:
                 "SYNC_MAX_INFLIGHT_BLOCKS",
                 "ANIMICA_SYNC_MAX_INFLIGHT_BLOCKS",
                 "ANIMICA_P2P_SYNC_INFLIGHT",
-                default="32",
+                default="64",
             )
             or 32
         )
         self._sync_max_inflight_per_peer = int(
-            os.environ.get("ANIMICA_P2P_SYNC_INFLIGHT_PER_PEER", "16") or 16
+            os.environ.get("ANIMICA_P2P_SYNC_INFLIGHT_PER_PEER", "24") or 24
         )
         self._sync_headers_batch = int(
-            os.environ.get("ANIMICA_P2P_SYNC_HEADERS_BATCH", "128") or 128
+            os.environ.get("ANIMICA_P2P_SYNC_HEADERS_BATCH", "256") or 256
         )
         self._sync_request_timeout = float(
             os.environ.get("ANIMICA_P2P_SYNC_TIMEOUT", "8.0") or 8.0
