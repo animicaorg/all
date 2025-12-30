@@ -2584,33 +2584,19 @@ def _mine_once(
             log.info("Initialized theta adjustment for first mined block")
 
     if txs:
-        # Build merkle root from CANONICAL tx hashes (from original raw CBOR)
-        # CRITICAL: Must use canonical hash from raw CBOR, NOT tx.hash() which re-encodes
-        # The canonical hash is sha3_256(original_raw_cbor_bytes) as admitted by RPC
-        # Drop individual malformed txs instead of failing the whole batch
+        # Build merkle root from canonical tx.hash() values to match Block.txs_root().
+        # Drop individual malformed txs instead of failing the whole batch.
         leaves = []
         valid_txs = []
         valid_hashes = []
-        
+
         for i, tx in enumerate(txs):
             try:
-                # CRITICAL FIX: Use canonical hash from _TX_HASH_MAP (tracks original raw CBOR)
-                # This is the hash that was returned by tx.sendRawTransaction and stored in mempool
-                # Using tx.hash() would re-encode and potentially produce different bytes
-                tracked = _tracked(tx)
-                if tracked:
-                    tx_hash_hex, raw = tracked
-                    tx_hash = bytes.fromhex(tx_hash_hex[2:])  # strip "0x" prefix
-                    log.debug(f"Using canonical hash for txsRoot: {tx_hash_hex[:18]}...")
-                else:
-                    # Fallback: use tx.hash() if not tracked (shouldn't happen but be defensive)
-                    tx_hash = tx.hash()
-                    tx_hash_hex = "0x" + tx_hash.hex()
-                    log.warning(f"Tx not tracked in _TX_HASH_MAP, using tx.hash() fallback: {tx_hash_hex[:18]}...")
-                
+                tx_hash = tx.hash()
+                tx_hash_hex = "0x" + tx_hash.hex()
+
                 leaves.append(tx_hash)
                 valid_txs.append(tx)
-                # Store canonical hash for eviction
                 if i < len(included_hashes):
                     valid_hashes.append(included_hashes[i])
                 else:
@@ -2619,44 +2605,41 @@ def _mine_once(
                 log.warning(
                     f"Skipping malformed tx {i+1}/{len(txs)} during hash computation: {e}",
                     extra={"tx_type": type(tx).__name__, "err": str(e)},
-                    exc_info=True
+                    exc_info=True,
                 )
-        
-        # Calculate counts before reassigning
+
         original_count = len(txs)
         valid_count = len(valid_txs)
         skipped_total = original_count - valid_count
-        
-        # Update txs list and included_hashes to only include valid transactions
+
         txs = valid_txs
         included_hashes = valid_hashes
-        
-        # Log summary of tx selection
+
         if valid_count > 0 or skipped_total > 0:
             log.info(
                 f"Selected {valid_count} valid transactions for block (skipped {skipped_total} malformed)",
-                extra={"pending_total": original_count, "valid": valid_count, "skipped": skipped_total}
+                extra={"pending_total": original_count, "valid": valid_count, "skipped": skipped_total},
             )
-        
-        # Compute txsRoot using canonical helper (sorts hashes internally)
-        # compute_txs_root will sort tx hashes in ascending lexicographic order
-        # to ensure deterministic txsRoot regardless of input order
+
         if leaves:
             try:
-                from core.utils.merkle import compute_txs_root
-                txs_root = compute_txs_root(leaves)
+                from core.utils.merkle import compute_txs_root_from_txs
+
+                txs_root = compute_txs_root_from_txs(txs)
                 header_template = replace(header_template, txsRoot=txs_root)
-                log.debug(f"Computed txsRoot from {len(leaves)} tx hashes: {txs_root.hex()[:16]}...")
-                
-                # Sort txs and included_hashes to match the sorted order used in txsRoot
-                # This ensures block.txs array order matches the merkle tree leaf order
+                log.debug(
+                    f"Computed txsRoot from {len(leaves)} tx hashes: {txs_root.hex()[:16]}..."
+                )
+
                 tx_tuples = list(zip(leaves, txs, included_hashes))
                 tx_tuples_sorted = sorted(tx_tuples, key=lambda t: t[0])
                 leaves, txs, included_hashes = map(list, zip(*tx_tuples_sorted))
                 log.debug(f"Sorted {len(txs)} transactions to match txsRoot leaf order")
             except Exception as e:
-                log.error(f"Failed to compute txsRoot from {len(leaves)} leaves: {e}", exc_info=True)
-                # Fall back to empty block if merkle root computation fails
+                log.error(
+                    f"Failed to compute txsRoot from {len(leaves)} leaves: {e}",
+                    exc_info=True,
+                )
                 txs = []
                 included_hashes = []
     
@@ -2969,13 +2952,11 @@ def _mine_once(
             block_hash_bytes = final_hash_bytes
             block_hash_int = final_hash_int
 
-        # Build block with updated header and receipts
-        # NOTE: Skip verification (verify=False) because txsRoot was computed from canonical
-        # hashes (sha3_256 of original raw CBOR), but Block.txs_root() would recompute from
-        # tx.hash() which re-encodes and might not match if transaction was normalized.
-        # The miner has already ensured txsRoot is correct by using canonical hashes.
+        # Build block with updated header and receipts.
+        # Verification should succeed because txsRoot is derived from tx.hash() using
+        # the same canonical helper as Block.txs_root().
         block = Block.from_components(
-            header=header, txs=txs, proofs=(), receipts=receipts, verify=False
+            header=header, txs=txs, proofs=(), receipts=receipts, verify=True
         )
         
         # Persist block directly using block_db's atomic method
@@ -3874,13 +3855,8 @@ def miner_get_block_template(*args: Any, **kwargs: Any) -> Dict[str, Any]:
             valid_hashes = []
             for i, tx in enumerate(txs):
                 try:
-                    tracked = _tracked(tx)
-                    if tracked:
-                        tx_hash_hex, raw = tracked
-                        tx_hash = bytes.fromhex(tx_hash_hex[2:])
-                    else:
-                        tx_hash = tx.hash()
-                        tx_hash_hex = "0x" + tx_hash.hex()
+                    tx_hash = tx.hash()
+                    tx_hash_hex = "0x" + tx_hash.hex()
                     leaves.append(tx_hash)
                     valid_txs.append(tx)
                     if i < len(included_hashes):
@@ -3893,9 +3869,9 @@ def miner_get_block_template(*args: Any, **kwargs: Any) -> Dict[str, Any]:
             included_hashes = valid_hashes
             if leaves:
                 try:
-                    from core.utils.merkle import compute_txs_root
+                    from core.utils.merkle import compute_txs_root_from_txs
 
-                    txs_root = compute_txs_root(leaves)
+                    txs_root = compute_txs_root_from_txs(txs)
                     header_template = replace(header_template, txsRoot=txs_root)
                     tx_tuples = list(zip(leaves, txs, included_hashes))
                     tx_tuples_sorted = sorted(tx_tuples, key=lambda t: t[0])

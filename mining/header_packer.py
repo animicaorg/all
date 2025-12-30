@@ -36,7 +36,7 @@ Outputs
 -------
 A dictionary shaped like core/types/block.Block (header + txs + proofs).
 Header roots are computed as follows:
-- txsRoot    = merkle_root(hash(tx_bytes) for tx in txs)
+- txsRoot    = merkle_root(sorted(hash(tx_bytes) for tx in txs))
 - proofsRoot = merkle_root(hash(proof_receipt(proof)) for proof in proofs)
 - receiptsRoot is omitted here (filled by execution after apply), or set to zero32 if required by spec.
 
@@ -75,15 +75,21 @@ except Exception:
 
 try:
     from core.utils.merkle import \
-        merkle_root as merkle_root_bytes  # type: ignore
+        merkle_root as merkle_root_bytes, compute_txs_root as _compute_txs_root  # type: ignore
 except Exception:
     merkle_root_bytes = None  # type: ignore
+    _compute_txs_root = None  # type: ignore
 
 try:
     # Canonical CBOR encoder/decoder (deterministic map order)
     from core.encoding.cbor import encode as cbor_encode  # type: ignore
 except Exception:
     cbor_encode = None  # type: ignore
+
+try:
+    from core.types.tx import Tx as _Tx  # type: ignore
+except Exception:
+    _Tx = None  # type: ignore
 
 try:
     # If available, build compact receipts from proof envelopes
@@ -157,8 +163,19 @@ def _merkle_root(hashes: List[bytes]) -> bytes:
 
 
 def txs_root_from_bytes(txs: Iterable[bytes]) -> bytes:
-    leaves = [_hash_bytes(tx) for tx in txs]
-    return _merkle_root(leaves)
+    tx_list = list(txs)
+    if _Tx is not None:
+        try:
+            from core.utils.merkle import compute_txs_root_from_txs  # type: ignore
+
+            tx_objs = [_Tx.from_cbor(tx) for tx in tx_list]
+            return compute_txs_root_from_txs(tx_objs)
+        except Exception:
+            pass
+    leaves = [_hash_bytes(tx) for tx in tx_list]
+    if _compute_txs_root is not None:
+        return _compute_txs_root(leaves)
+    return _merkle_root(sorted(leaves))
 
 
 def proofs_root_from_envelopes(proofs: Iterable[Dict[str, Any]]) -> bytes:
