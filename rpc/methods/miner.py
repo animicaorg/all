@@ -4222,7 +4222,7 @@ def miner_submit_block(**payload: Any) -> Dict[str, Any]:
             getattr(ctx.cfg, "genesis_path", None)
         )
         importer = block_import_mod._get_importer(  # type: ignore[attr-defined]
-            ctx.block_db, ctx.tx_index, params
+            ctx.block_db, ctx.state_db, ctx.tx_index, params
         )
         result = importer.import_block(block)
 
