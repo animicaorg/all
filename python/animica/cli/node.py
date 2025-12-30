@@ -822,6 +822,49 @@ def _remove_path_with_retry(path: Path, *, retries: int = 3, delay: float = 0.5)
         raise last_exc
 
 
+def _wallet_preserve_candidates() -> list[Path]:
+    env_path = os.environ.get("ANIMICA_WALLETS_FILE")
+    candidates = []
+    if env_path:
+        candidates.append(Path(env_path).expanduser())
+    base = Path.home() / ".animica"
+    candidates.append(base / "wallets.json")
+    candidates.append(base / "wallet.dat")
+    return candidates
+
+
+def _remove_path_preserving(path: Path, preserve: list[Path]) -> None:
+    if not path.exists():
+        return
+
+    preserve_set = {p.resolve() for p in preserve if p.exists()}
+    if not preserve_set:
+        _remove_path_with_retry(path)
+        return
+
+    def should_preserve(candidate: Path) -> bool:
+        resolved = candidate.resolve()
+        if resolved in preserve_set:
+            return True
+        return any(resolved in preserved.parents for preserved in preserve_set)
+
+    if path.is_file():
+        if path.resolve() not in preserve_set:
+            _remove_path_with_retry(path)
+        return
+
+    for child in path.iterdir():
+        if should_preserve(child):
+            _remove_path_preserving(child, list(preserve_set))
+        else:
+            _remove_path_with_retry(child)
+    try:
+        if not any(path.iterdir()):
+            _remove_path_with_retry(path)
+    except FileNotFoundError:
+        return
+
+
 def _sync_state_path(cfg: Any) -> Path:
     data_dir = Path(os.path.expanduser(cfg.data_dir))
     data_dir.mkdir(parents=True, exist_ok=True)
@@ -2953,8 +2996,15 @@ def reset(
 
     if host:
         try:
-            _remove_path_with_retry(data_dir)
-            typer.echo(f"Removed host data directory: {data_dir}")
+            preserve = _wallet_preserve_candidates()
+            _remove_path_preserving(data_dir, preserve)
+            if data_dir.exists():
+                typer.echo(
+                    "Host data directory cleaned; preserved wallet files to avoid "
+                    "losing access to mined balances."
+                )
+            else:
+                typer.echo(f"Removed host data directory: {data_dir}")
         except OSError as exc:
             typer.secho(
                 f"Warning: failed to remove {data_dir} ({exc}). "
