@@ -1601,6 +1601,37 @@ async def test_missing_parent_enqueues_parent_first(tmp_path: Path, monkeypatch:
     await node._schedule_block_requests(peer)
 
     assert requested[0] == parent
+
+
+@pytest.mark.asyncio
+async def test_schedule_block_requests_seeds_queue_when_empty(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    node, deps_sync = _make_service(tmp_path, "seed-queue")
+    peer = _register_peer(node, "203.0.113.24:30333")
+    _setup_peer_hello(node, peer, head_height=1)
+
+    block = _make_child_block(deps_sync)
+    header = _SyncHeader(
+        hash=block.header.hash(),
+        parent_hash=bytes(block.header.parentHash),
+        height=int(block.header.height),
+        theta_micro=int(getattr(block.header, "thetaMicro", 0)),
+        timestamp=int(getattr(block.header, "timestamp", 0)),
+    )
+    node._sync_headers[header.hash] = header
+    node._sync_best_header = header
+
+    requested: list[bytes] = []
+
+    async def _capture_send(_peer: _PeerState, _msg_id, payload):
+        requested.extend(list(payload.by_hash))
+
+    monkeypatch.setattr(node, "_send", _capture_send)
+
+    await node._schedule_block_requests(peer)
+
+    assert header.hash in requested
 @pytest.mark.asyncio
 async def test_mocked_peer_headers_and_blocks_advance_head(tmp_path: Path) -> None:
     node, deps_sync = _make_service(tmp_path, "mocked")
