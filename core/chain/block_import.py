@@ -392,6 +392,7 @@ class BlockImporter:
         "fork_choice",
         "difficulty_state",
         "_last_block_time",
+        "_difficulty_samples",
         "_orphan_pool",
         "_orphan_parents",
         "_max_orphans",
@@ -419,6 +420,7 @@ class BlockImporter:
         # Initialize difficulty adjustment state
         self.difficulty_state = None
         self._last_block_time: Optional[int] = None
+        self._difficulty_samples = 0
         if DIFFICULTY_AVAILABLE:
             self._init_difficulty_state()
         self._orphan_pool: "OrderedDict[bytes, _OrphanBlock]" = OrderedDict()
@@ -491,11 +493,13 @@ class BlockImporter:
             retarget_params = self._build_retarget_params()
             if retarget_params is None:
                 self.difficulty_state = None
+                self._difficulty_samples = 0
                 return
 
             # Initialize state with genesis theta
             theta_init = int(self.params.theta_initial)
             self.difficulty_state = diff.init_state(retarget_params, theta_init_micro=theta_init)
+            self._difficulty_samples = 0
 
         except Exception as e:  # pragma: no cover
             # If difficulty module is unavailable or initialization fails, log and continue
@@ -503,6 +507,7 @@ class BlockImporter:
             import logging
             logging.warning(f"Failed to initialize difficulty state: {e}")
             self.difficulty_state = None
+            self._difficulty_samples = 0
 
     def _update_difficulty(self, block_timestamp: int) -> None:
         """
@@ -527,6 +532,7 @@ class BlockImporter:
                         dt_seconds=dt_seconds,
                         blocks_skipped=1,
                     )
+                    self._difficulty_samples += 1
             
             # Update last block time for next iteration
             self._last_block_time = block_timestamp
@@ -563,10 +569,12 @@ class BlockImporter:
                 retarget_params, theta_init_micro=int(parent_theta)
             )
             self._last_block_time = int(parent_ts)
+            self._difficulty_samples = 0
         except Exception as e:  # pragma: no cover
             import logging
 
             logging.warning(f"Failed to reanchor difficulty state: {e}")
+            self._difficulty_samples = 0
 
     def get_current_difficulty(self) -> int:
         """
@@ -1442,6 +1450,18 @@ class BlockImporter:
             return None
         claimed_theta = _weight_micro_of(header, payload, self.params)
         if int(claimed_theta) != int(expected_theta):
+            warmup_blocks = max(1, int(self.params.retarget.window))
+            if self._difficulty_samples < warmup_blocks:
+                log.warning(
+                    "theta mismatch during difficulty warmup",
+                    extra={
+                        "claimed_theta_micro": int(claimed_theta),
+                        "expected_theta_micro": int(expected_theta),
+                        "samples": self._difficulty_samples,
+                        "warmup_blocks": warmup_blocks,
+                    },
+                )
+                return None
             return (
                 "theta mismatch"
                 f": got {int(claimed_theta)}, expected {int(expected_theta)}"
