@@ -273,6 +273,41 @@ def _check_sync(rpc_url: str, *, force: bool) -> None:
         typer.echo("Warning: mining forced; sync gating bypassed.")
 
 
+def _warn_if_unsynced(rpc_url: str, *, threshold: int = 5) -> bool:
+    try:
+        status = call_rpc("sync.getStatus", [], rpc_url)
+    except Exception:
+        return False
+
+    if not isinstance(status, dict):
+        return False
+
+    phase = status.get("phase") or status.get("state")
+    head_height = status.get("head_height")
+    network_best = status.get("network_best_height")
+    try:
+        head_height = int(head_height) if head_height is not None else None
+    except Exception:
+        head_height = None
+    try:
+        network_best = int(network_best) if network_best is not None else None
+    except Exception:
+        network_best = None
+
+    behind = False
+    if phase and phase not in {"SYNCED", "IDLE"}:
+        behind = True
+    if network_best is not None and head_height is not None:
+        if network_best - head_height > threshold:
+            behind = True
+
+    if behind:
+        typer.echo(
+            "Warning: You are behind the network; mined blocks/tx confirmations may be reorged."
+        )
+    return behind
+
+
 async def _run_solo(
     *,
     rpc_url: str,
@@ -702,6 +737,11 @@ def mine_blocks(
         "--allow-offline-mining",
         help="Allow mining when offline or unsynced (overrides mainnet safety checks).",
     ),
+    unsafe_mine_while_syncing: bool = typer.Option(
+        False,
+        "--unsafe-mine-while-syncing",
+        help="Allow mining while the node is behind the network (unsafe on mainnet).",
+    ),
 ) -> None:
     """
     Mine blocks with proof-of-work to a specified payout address.
@@ -883,6 +923,15 @@ def mine_blocks(
     # Resolve RPC URL
     url = rpc_url or os.environ.get("ANIMICA_RPC_URL") or load_network_config().rpc_url
     guard_bootstrap_rpc(url, allow_remote=allow_remote_rpc, method="miner.getBlockTemplate")
+    behind = _warn_if_unsynced(url)
+    if behind and not (allow_offline_mining or unsafe_mine_while_syncing):
+        typer.secho(
+            "Error: refusing to mine while behind the network. "
+            "Use --unsafe-mine-while-syncing to override.",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(1)
     
     # Initialize proxy if enabled (DEPRECATED - proxy is disabled by default)
     proxy = None

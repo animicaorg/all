@@ -150,6 +150,24 @@ def test_hash_normalization_handles_mixed_case(tmp_path: Path) -> None:
     assert node._sync_last_matched_ancestor_hash == parent_hash
 
 
+def test_network_best_height_snapshot(tmp_path: Path) -> None:
+    deps_sync, deps = _make_deps(tmp_path, "network-best-height")
+    node = P2PService(
+        listen_addrs=[tcp_multiaddr(free_port())],
+        seeds=[],
+        chain_id=deps_sync.chain_id,
+        deps=deps,
+        peerstore_path=str(tmp_path / "network-best-height" / "p2p"),
+    )
+    peer_a = _register_peer(node, "peer:2001")
+    peer_b = _register_peer(node, "peer:2002")
+    peer_a.hello["head_height"] = 12
+    peer_b.hello["head_height"] = 25
+
+    snapshot = node.sync_status_snapshot()
+    assert snapshot.network_best_height == 25
+
+
 @pytest.mark.asyncio
 async def test_no_false_stalled_on_at_tip(tmp_path: Path) -> None:
     deps_sync, deps = _make_deps(tmp_path, "no-false-stalled")
