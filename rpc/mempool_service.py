@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import json
 import logging
 import os
+import threading
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Iterable, Optional
 
 from core.utils.hash import sha3_256
@@ -159,16 +162,28 @@ class MempoolService:
         min_gas_price_wei: int,
         state_db: Any | None,
         tx_index: Any | None,
+        data_dir: str | Path | None = None,
+        persist_enabled: bool = True,
+        persist_ttl_s: int = 0,
     ) -> None:
         self.pool = pool
         self.chain_id = int(chain_id)
         self.min_gas_price_wei = int(min_gas_price_wei)
         self.state_db = state_db
         self.tx_index = tx_index
+        self._persist_enabled = bool(persist_enabled)
+        self._persist_ttl_s = int(persist_ttl_s) if int(persist_ttl_s) > 0 else 0
+        self._persist_lock = threading.RLock()
+        self._persist_path: Path | None = None
+        if data_dir:
+            self._persist_path = Path(data_dir).expanduser() / "mempool" / "pending.jsonl"
+        self._restoring = False
         self._rejection_ttl_s = int(
             os.getenv("ANIMICA_MEMPOOL_REJECTION_TTL_S", "300") or 300
         )
         self._last_rejections: dict[str, dict[str, Any]] = {}
+        if self._persist_enabled:
+            self._load_persisted()
 
     def _record_rejection(
         self, tx_hash_hex: str, reason: str, details: dict[str, Any] | None = None
@@ -202,6 +217,7 @@ class MempoolService:
         min_gas_price_wei: int,
         state_db: Any | None,
         tx_index: Any | None,
+        data_dir: str | Path | None = None,
         config: MempoolConfig | None = None,
     ) -> "MempoolService":
         mp_cfg = config or load_mempool_config()
@@ -212,13 +228,123 @@ class MempoolService:
             accept_below_floor_for_local=True,
         )
         pool = Pool(cfg=pool_cfg)
+        persist_env = os.getenv("ANIMICA_MEMPOOL_PERSIST")
+        persist_enabled = True
+        if persist_env is not None:
+            persist_enabled = persist_env.strip().lower() in {"1", "true", "yes", "on"}
+        persist_ttl_s = int(
+            os.getenv("ANIMICA_MEMPOOL_PERSIST_TTL_S", str(mp_cfg.ttls.pending_seconds))
+            or mp_cfg.ttls.pending_seconds
+        )
         return cls(
             pool=pool,
             chain_id=chain_id,
             min_gas_price_wei=min_gas_price_wei,
             state_db=state_db,
             tx_index=tx_index,
+            data_dir=data_dir,
+            persist_enabled=persist_enabled,
+            persist_ttl_s=persist_ttl_s,
         )
+
+    def _persist_snapshot(self) -> None:
+        if not self._persist_enabled or self._persist_path is None:
+            return
+        snapshot = self.snapshot(limit=len(self.pool) + 1)
+        now = time.time()
+        ttl_s = self._persist_ttl_s or 0
+        entries: list[dict[str, Any]] = []
+        for entry in snapshot.entries:
+            raw = entry.raw
+            if not raw:
+                continue
+            first_seen = (
+                float(entry.received_at) if entry.received_at is not None else now
+            )
+            expires_at = (
+                float(entry.expires_at)
+                if entry.expires_at is not None
+                else (first_seen + ttl_s if ttl_s else None)
+            )
+            if expires_at is not None and expires_at <= now:
+                continue
+            sender = _sender_hex(_sender_bytes(entry.tx))
+            nonce = _tx_nonce(entry.tx)
+            gas_limit = _tx_gas_limit(entry.tx)
+            fee = EffectiveFee.from_tx(entry.tx)
+            entries.append(
+                {
+                    "hash": entry.hash_hex,
+                    "raw": raw.hex(),
+                    "first_seen": first_seen,
+                    "expires_at": expires_at,
+                    "sender": sender,
+                    "nonce": int(nonce) if nonce is not None else None,
+                    "gas_limit": int(gas_limit) if gas_limit is not None else None,
+                    "fee_wei": int(fee.effective_gas_price(None)),
+                    "chain_id": int(self.chain_id),
+                }
+            )
+        if self._persist_path.parent:
+            self._persist_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = self._persist_path.with_suffix(".tmp")
+        with self._persist_lock:
+            with tmp_path.open("wt", encoding="utf-8") as fh:
+                for entry in entries:
+                    fh.write(json.dumps(entry) + "\n")
+            tmp_path.replace(self._persist_path)
+
+    def _load_persisted(self) -> None:
+        if self._persist_path is None or not self._persist_path.exists():
+            return
+        try:
+            lines = self._persist_path.read_text(encoding="utf-8").splitlines()
+        except Exception as exc:
+            log.warning("Failed to read mempool persistence file", exc_info=exc)
+            return
+        restored = 0
+        self._restoring = True
+        now = time.time()
+        for line in lines:
+            if not line.strip():
+                continue
+            try:
+                entry = json.loads(line)
+            except Exception:
+                continue
+            if entry.get("chain_id") not in (None, self.chain_id, int(self.chain_id)):
+                continue
+            expires_at = entry.get("expires_at")
+            if expires_at is not None and float(expires_at) <= now:
+                continue
+            raw_hex = entry.get("raw") or ""
+            if not isinstance(raw_hex, str) or not raw_hex:
+                continue
+            try:
+                raw = bytes.fromhex(raw_hex)
+            except ValueError:
+                continue
+            if not raw:
+                continue
+            try:
+                tx_obj = (
+                    Tx.from_cbor(raw)  # type: ignore[attr-defined]
+                    if hasattr(Tx, "from_cbor")
+                    else None
+                )
+            except Exception:
+                tx_obj = None
+            if tx_obj is None:
+                continue
+            try:
+                self.submit(tx=tx_obj, raw=raw, local=True)
+            except Exception:
+                continue
+            restored += 1
+        self._restoring = False
+        if restored:
+            log.info("Restored mempool entries", extra={"count": restored})
+            self._persist_snapshot()
 
     def has_hash(self, tx_hash_hex: str) -> bool:
         try:
@@ -456,6 +582,8 @@ class MempoolService:
             tx_hash_hex,
             len(self.pool),
         )
+        if not self._restoring:
+            self._persist_snapshot()
         return tx_hash_hex
 
     def snapshot(self, *, limit: int = 1000) -> MempoolSnapshot:
@@ -562,6 +690,8 @@ class MempoolService:
                     removed += 1
             except Exception:
                 continue
+        if removed and not self._restoring:
+            self._persist_snapshot()
         return removed
 
     def revalidate(self) -> dict[str, int]:
@@ -589,6 +719,8 @@ class MempoolService:
                 evicted += 1
             except Exception:
                 continue
+        if evicted and not self._restoring:
+            self._persist_snapshot()
         return {"evicted": evicted}
 
     def pending_nonce(self, sender_bytes: bytes) -> Optional[int]:
