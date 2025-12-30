@@ -2972,16 +2972,22 @@ class P2PService:
                 self._sync_last_block_error = None
                 self._sync_last_block_error_at = None
             return
-        if self._sync_last_block_request_at <= 0:
+        if now - self._sync_last_progress_at <= self._sync_stall_timeout:
             return
-        if self._sync_last_block_at >= self._sync_last_block_request_at:
-            if self._sync_block_stalled_reason == "blocks stalled":
-                self._sync_block_stalled_reason = None
-                self._sync_last_block_error = None
-                self._sync_last_block_error_at = None
+        if self._sync_inflight_blocks:
             return
-        if now - self._sync_last_block_request_at <= self._sync_stall_timeout:
+        local_height, _ = self._local_head()
+        if self._sync_best_header.height <= int(local_height or 0):
             return
+        if self._sync_last_block_request_at > 0:
+            if self._sync_last_block_at >= self._sync_last_block_request_at:
+                if self._sync_block_stalled_reason == "blocks stalled":
+                    self._sync_block_stalled_reason = None
+                    self._sync_last_block_error = None
+                    self._sync_last_block_error_at = None
+                return
+            if now - self._sync_last_block_request_at <= self._sync_stall_timeout:
+                return
         if not self._sync_block_stalled_reason:
             self._sync_block_stalled_reason = "blocks stalled"
             self._sync_last_block_error = "blocks stalled"
@@ -2999,8 +3005,6 @@ class P2PService:
     def _handle_sync_stall(self, *, reason: str) -> None:
         now = time.time()
         if self._sync_best_header is None:
-            return
-        if self._sync_last_block_request_at <= 0:
             return
         if self._last_rotation_at and now - self._last_rotation_at < 5.0:
             return
@@ -3024,9 +3028,16 @@ class P2PService:
                 self._sync_block_queue_set.add(h)
         self._sync_inflight_blocks.clear()
         self._sync_inflight_peers.clear()
-        new_peer = self._select_block_peer(require_anchored=self._should_enforce_checkpoint_anchor())
+        needed_height, _ = self._next_block_needed()
+        new_peer = self._select_block_peer(
+            needed_height=needed_height,
+            require_anchored=self._should_enforce_checkpoint_anchor(),
+        )
         if new_peer is None and self._should_enforce_checkpoint_anchor():
-            new_peer = self._select_block_peer(require_anchored=False)
+            new_peer = self._select_block_peer(
+                needed_height=needed_height,
+                require_anchored=False,
+            )
         if new_peer:
             self._sync_active_block_peer = new_peer.remote
             self._sync_last_recovery_action = "retry_blocks_new_peer"
@@ -5907,12 +5918,17 @@ class P2PService:
                     extra={"seeded": seeded},
                 )
                 return 0
+        next_block_height, next_block_hash = self._next_block_needed()
         if peer is None:
             peer = self._select_block_peer(
-                require_anchored=self._should_enforce_checkpoint_anchor()
+                needed_height=next_block_height,
+                require_anchored=self._should_enforce_checkpoint_anchor(),
             )
         if peer is None and self._should_enforce_checkpoint_anchor():
-            peer = self._select_block_peer(require_anchored=False)
+            peer = self._select_block_peer(
+                needed_height=next_block_height,
+                require_anchored=False,
+            )
         if peer is None or not peer.hello_done.is_set():
             log.debug(
                 "Skipped block requests: no eligible block peer",
@@ -5962,6 +5978,12 @@ class P2PService:
                 self._sync_block_queue_set.discard(h)
                 self._sync_block_queue_heights.pop(h, None)
                 continue
+            if (
+                height_hint is None
+                and next_block_hash is not None
+                and h == next_block_hash
+            ):
+                height_hint = expected_height
             if height_hint is None:
                 if h in self._sync_headers:
                     height_hint = self._sync_headers[h].height
@@ -6868,7 +6890,12 @@ class P2PService:
                 best_score = score
         return best
 
-    def _select_block_peer(self, *, require_anchored: bool = False) -> Optional[_PeerState]:
+    def _select_block_peer(
+        self,
+        *,
+        needed_height: Optional[int] = None,
+        require_anchored: bool = False,
+    ) -> Optional[_PeerState]:
         eligible, _ = self._eligible_block_peers()
         if require_anchored:
             anchored = [peer for peer in eligible if self._peer_is_anchored(peer)]
@@ -6885,9 +6912,21 @@ class P2PService:
                 head_height = int((peer.hello or {}).get("head_height") or 0)
             except Exception:
                 head_height = 0
+            if head_height <= 0:
+                continue
+            if needed_height is not None and head_height < needed_height:
+                continue
             latency = peer.latency_ewma if peer.latency_ewma is not None else 9999.0
             outbound_bonus = 1 if peer.direction == "outbound" else 0
-            score = (head_height, outbound_bonus, -peer.misbehavior_score, -latency)
+            anchored_bonus = 1 if self._peer_is_anchored(peer) else 0
+            score = (
+                anchored_bonus,
+                head_height,
+                outbound_bonus,
+                -peer.misbehavior_score,
+                -latency,
+                peer.last_progress_at,
+            )
             if best_score is None or score > best_score:
                 best = peer
                 best_score = score
