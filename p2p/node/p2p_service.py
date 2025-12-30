@@ -4726,6 +4726,20 @@ class P2PService:
         # Treat as announcements; queue for sync loop to validate & download.
         if msg.headers:
             last = msg.headers[-1]
+            local_height, _ = self._local_head()
+            if int(local_height or 0) >= int(last.height):
+                all_known = all(
+                    self._has_header(bytes(h.hash))
+                    or bytes(h.hash) in self._sync_headers
+                    for h in msg.headers
+                )
+                if all_known:
+                    self._update_peer_head(
+                        peer,
+                        height=int(last.height),
+                        head_hash=bytes(last.hash),
+                    )
+                    return
             self._update_peer_head(
                 peer,
                 height=int(last.height),
