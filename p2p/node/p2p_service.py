@@ -3075,13 +3075,27 @@ class P2PService:
         if active is None:
             self._sync_active_block_peer = candidate.remote
             return
+        try:
+            active_height = int((active.hello or {}).get("head_height") or 0)
+        except Exception:
+            active_height = 0
+        try:
+            candidate_height = int((candidate.hello or {}).get("head_height") or 0)
+        except Exception:
+            candidate_height = 0
         active_latency = active.latency_ewma if active.latency_ewma is not None else 9999.0
         candidate_latency = (
             candidate.latency_ewma if candidate.latency_ewma is not None else 9999.0
         )
         if (
-            candidate.misbehavior_score < active.misbehavior_score
-            or candidate_latency < active_latency
+            candidate_height > active_height
+            or (
+                candidate_height == active_height
+                and (
+                    candidate.misbehavior_score < active.misbehavior_score
+                    or candidate_latency < active_latency
+                )
+            )
         ):
             self._sync_active_block_peer = candidate.remote
             log.info(
@@ -6910,8 +6924,6 @@ class P2PService:
         allow_pow_backoff: bool = False,
         require_anchored: bool = False,
     ) -> Optional[_PeerState]:
-        best: Optional[_PeerState] = None
-        best_score = None
         avoid_netgroup = avoid_peer.netgroup if avoid_peer else None
         eligible, _ = self._eligible_sync_peers(
             ignore_backoff_reason="consensus_mismatch_pow" if allow_pow_backoff else None
@@ -6923,6 +6935,7 @@ class P2PService:
             if anchored:
                 eligible = anchored
         avoid_remotes = avoid_remotes or set()
+        candidates: list[tuple[int, _PeerState]] = []
         for p in eligible:
             if p.remote in avoid_remotes:
                 continue
@@ -6933,10 +6946,18 @@ class P2PService:
                 h = int(hello.get("head_height") or 0)
             except Exception:
                 h = 0
+            candidates.append((h, p))
+        if not candidates:
+            return None
+        max_height = max(h for h, _ in candidates)
+        height_filtered = [p for h, p in candidates if h == max_height]
+        best: Optional[_PeerState] = None
+        best_score = None
+        for p in height_filtered:
             latency = p.latency_ewma if p.latency_ewma is not None else 9999.0
             outbound_bonus = 1 if p.direction == "outbound" else 0
             netgroup_penalty = 1 if avoid_netgroup and p.netgroup == avoid_netgroup else 0
-            score = (h, outbound_bonus, -p.misbehavior_score, -latency, -netgroup_penalty)
+            score = (outbound_bonus, -p.misbehavior_score, -latency, -netgroup_penalty)
             if best_score is None or score > best_score:
                 best = p
                 best_score = score
@@ -6955,8 +6976,7 @@ class P2PService:
                 eligible = anchored
         if not eligible:
             return None
-        best: Optional[_PeerState] = None
-        best_score = None
+        candidates: list[tuple[int, _PeerState]] = []
         for peer in eligible:
             if require_anchored and not self._peer_is_anchored(peer):
                 continue
@@ -6968,12 +6988,19 @@ class P2PService:
                 continue
             if needed_height is not None and head_height < needed_height:
                 continue
+            candidates.append((head_height, peer))
+        if not candidates:
+            return None
+        max_height = max(h for h, _ in candidates)
+        height_filtered = [p for h, p in candidates if h == max_height]
+        best: Optional[_PeerState] = None
+        best_score = None
+        for peer in height_filtered:
             latency = peer.latency_ewma if peer.latency_ewma is not None else 9999.0
             outbound_bonus = 1 if peer.direction == "outbound" else 0
             anchored_bonus = 1 if self._peer_is_anchored(peer) else 0
             score = (
                 anchored_bonus,
-                head_height,
                 outbound_bonus,
                 -peer.misbehavior_score,
                 -latency,
@@ -6982,8 +7009,6 @@ class P2PService:
             if best_score is None or score > best_score:
                 best = peer
                 best_score = score
-        if best is None:
-            return None
         return best
 
     # ---------------------------------------------------------------------
