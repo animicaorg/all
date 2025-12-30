@@ -766,6 +766,42 @@ def test_reset_with_volumes_removes_named_volume(monkeypatch: Any) -> None:
         )
 
 
+def test_reset_preserves_wallet_files_in_data_dir(monkeypatch: Any) -> None:
+    """Test 'node reset' keeps wallet files when they live under the data dir."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        mock_compose_file = Path(tmpdir) / "docker-compose.yml"
+        mock_compose_file.write_text("version: '3'\nservices:\n  node:\n    image: test\n")
+        data_dir = Path(tmpdir) / ".animica"
+        data_dir.mkdir(parents=True, exist_ok=True)
+        wallet_path = data_dir / "wallets.json"
+        wallet_path.write_text("{\"wallets\": []}")
+        extra_file = data_dir / "animica.db"
+        extra_file.write_text("stub")
+
+        monkeypatch.setenv("ANIMICA_WALLETS_FILE", str(wallet_path))
+        monkeypatch.setattr("animica.cli.node._get_compose_file", lambda network: mock_compose_file)
+        monkeypatch.setattr(
+            "animica.cli.node.load_network_config",
+            lambda network: SimpleNamespace(data_dir=str(data_dir), chain_id=1, name=network),
+        )
+        monkeypatch.setattr("animica.cli.node._wait_for_compose_stop", lambda *args, **kwargs: True)
+
+        def fake_run(cmd: list[str], **kwargs: Any) -> MagicMock:
+            result = MagicMock()
+            result.returncode = 0
+            result.stderr = ""
+            return result
+
+        with patch("animica.cli.node.subprocess.run", side_effect=fake_run):
+            result = runner.invoke(
+                node.app, ["reset", "--network", "mainnet", "--yes", "--no-volumes"]
+            )
+
+        assert result.exit_code == 0
+        assert wallet_path.exists()
+        assert not extra_file.exists()
+
+
 def test_ensure_db_initialized_existing_db_message(
     monkeypatch: Any, capsys: pytest.CaptureFixture[str]
 ) -> None:
