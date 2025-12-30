@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import time
+from decimal import Decimal, InvalidOperation
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
@@ -160,6 +161,37 @@ def _format_insufficient_funds_error(e: RpcError) -> None:
     console.print("\n[yellow]Tip:[/yellow] You need to obtain more ANM before sending this transaction.")
 
 
+def _format_rpc_error(e: RpcError) -> None:
+    console.print(f"\n[bold red]RPC Error {e.code}[/bold red]: {e.message}")
+    if e.data is not None:
+        console.print(Pretty(e.data))
+
+
+def _parse_value_to_base_units(
+    value: Optional[str],
+    value_nanm: Optional[int],
+) -> tuple[int, str]:
+    if value is not None and value_nanm is not None:
+        raise ValueError("Provide either --value (ANM) or --value-nanm, not both.")
+    if value is None and value_nanm is None:
+        raise ValueError("Missing amount: provide --value (ANM) or --value-nanm.")
+    if value_nanm is not None:
+        if value_nanm < 0:
+            raise ValueError("--value-nanm must be non-negative.")
+        return int(value_nanm), "nanm"
+    value_str = str(value).strip().replace("_", "")
+    try:
+        dec = Decimal(value_str)
+    except InvalidOperation as exc:
+        raise ValueError(f"Invalid ANM value: {value}") from exc
+    if dec.is_signed():
+        raise ValueError("--value must be non-negative.")
+    base = dec * Decimal(ANM_BASE_UNITS)
+    if base != base.to_integral_value():
+        raise ValueError("ANM value has more than 9 decimal places (cannot convert to nANM).")
+    return int(base), "anm"
+
+
 def _get_chain_id(rpc_url: str) -> int:
     for m in ("chain.getChainId", "chain_id", "net_version"):
         try:
@@ -275,7 +307,10 @@ def _build_raw_tx(
 def send(
     from_addr: str = typer.Option(..., "--from", help="Sender address (anim1...)"),
     to_addr: str = typer.Option(..., "--to", help="Recipient address (anim1... )"),
-    value: float = typer.Option(..., "--value", help="Amount in ANM (whole/decimal)"),
+    value: Optional[str] = typer.Option(None, "--value", help="Amount in ANM (whole/decimal)"),
+    value_nanm: Optional[int] = typer.Option(
+        None, "--value-nanm", help="Amount in base units (nANM). Overrides --value."
+    ),
     rpc_url: Optional[str] = typer.Option(None, "--rpc-url", help="RPC URL (default: node)"),
     allow_remote_rpc: bool = typer.Option(
         False,
@@ -307,7 +342,10 @@ def send(
     fee = int(max_fee) if max_fee is not None else _get_default_max_fee(rpc)
 
     # Value conversion
-    value_base = int(round(value * ANM_BASE_UNITS))
+    try:
+        value_base, value_source = _parse_value_to_base_units(value, value_nanm)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
 
     # Load wallet keys
     w = _load_wallet_entry(from_addr)
@@ -349,6 +387,8 @@ def send(
         console.print("")
         console.print(f"nonce: using state.getNonce => {nonce}")
         console.print(f"maxFee: using {'override' if max_fee is not None else 'default'} => {fee}")
+        console.print(f"value_input: {value if value is not None else value_nanm} ({value_source})")
+        console.print(f"value_base_units: {value_base}")
         console.print("")
         console.print("[bold]PQ SIGNATURE DEBUG[/bold]")
         console.print(
@@ -430,7 +470,8 @@ def send(
         if e.code in (-32601,):
             tx_hash = _rpc(rpc, "tx_sendRawTransaction", [raw_hex])
         else:
-            raise
+            _format_rpc_error(e)
+            raise typer.Exit(code=1) from e
 
     # Verify tx is actually in mempool
     tx_in_mempool = False
