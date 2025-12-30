@@ -336,6 +336,50 @@ def test_txsroot_matches_across_mining_and_validation(sender_keypair):
             raise
 
 
+def test_mined_block_with_mempool_tx_is_accepted_and_root_matches(sender_keypair):
+    """
+    Integration test: mine a block with a mempool transaction and verify txsRoot.
+    """
+    client, cfg, _ = new_test_client()
+    sender_kp = sender_keypair
+
+    # Fund sender
+    rpc_call(client, "miner.mine", {"count": 2, "address": sender_kp.address})
+
+    # Submit transaction
+    recipient_hex = _get_premine_address_hex()
+    raw_hex, tx_hash = _build_signed_transfer(client, cfg, sender_kp, recipient_hex, nonce=0)
+    rpc_call(client, "tx.sendRawTransaction", {"rawTx": raw_hex})
+
+    pending_before = rpc_call(client, "mempool.getPending")["result"]
+    assert tx_hash in pending_before, "Transaction should be in mempool before mining"
+
+    # Mine block
+    mine_result = rpc_call(client, "miner.mine", {"count": 1, "address": sender_kp.address})["result"]
+    assert mine_result["mined"] == 1, "Expected to mine one block"
+
+    block_height = mine_result["height"]
+    block = rpc_call(client, "chain.getBlockByNumber", [block_height, True])["result"]
+    assert block is not None, f"Block at height {block_height} should exist"
+
+    tx_objects = block.get("transactions", [])
+    assert len(tx_objects) >= 1, "Block should include at least one transaction"
+    assert any(tx.get("hash") == tx_hash for tx in tx_objects), "Mined block should include the mempool tx"
+
+    from core.utils.merkle import compute_txs_root
+
+    tx_hashes = [bytes.fromhex(tx["hash"][2:]) for tx in tx_objects if tx.get("hash")]
+    computed_root = compute_txs_root(tx_hashes)
+
+    block_roots = block.get("roots") or {}
+    header_root_hex = block_roots.get("txsRoot") or block.get("txsRoot")
+    assert header_root_hex is not None, "Block response should include txsRoot"
+    assert computed_root.hex() == header_root_hex[2:], "txsRoot should match computed root"
+
+    pending_after = rpc_call(client, "mempool.getPending")["result"]
+    assert tx_hash not in pending_after, "Mempool should be drained of mined transaction"
+
+
 def test_mempool_drained_after_mining(sender_keypair):
     """Test that transactions are removed from mempool after being mined."""
     client, cfg, _ = new_test_client()
