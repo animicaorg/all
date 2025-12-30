@@ -303,6 +303,41 @@ def _build_raw_tx(
     return _cbor({"sig": sig_env, "body": body})
 
 
+def _warn_if_unsynced(rpc: str, *, threshold: int = 5) -> bool:
+    try:
+        status = _rpc(rpc, "sync.getStatus", [])
+    except Exception:
+        return False
+
+    if not isinstance(status, dict):
+        return False
+
+    phase = status.get("phase") or status.get("state")
+    head_height = status.get("head_height")
+    network_best = status.get("network_best_height")
+    try:
+        head_height = int(head_height) if head_height is not None else None
+    except Exception:
+        head_height = None
+    try:
+        network_best = int(network_best) if network_best is not None else None
+    except Exception:
+        network_best = None
+
+    behind = False
+    if phase and phase not in {"SYNCED", "IDLE"}:
+        behind = True
+    if network_best is not None and head_height is not None:
+        if network_best - head_height > threshold:
+            behind = True
+
+    if behind:
+        console.print(
+            "[yellow]Warning:[/yellow] You are behind the network; mined blocks/tx confirmations may be reorged."
+        )
+    return behind
+
+
 @app.command("send")
 def send(
     from_addr: str = typer.Option(..., "--from", help="Sender address (anim1...)"),
@@ -331,6 +366,7 @@ def send(
     # Resolve RPC
     rpc = _resolve_rpc_url(rpc_url)
     guard_bootstrap_rpc(rpc, allow_remote=allow_remote_rpc, method="tx.sendRawTransaction")
+    _warn_if_unsynced(rpc)
 
     # Resolve chain identity
     chain_identity = _get_chain_identity(rpc)
@@ -517,3 +553,33 @@ def send(
     if verbose:
         console.print("\n[bold]TX BODY[/bold]")
         console.print(Pretty(body))
+
+
+@app.command("status")
+def status(
+    tx_hash: str = typer.Argument(..., help="Transaction hash (0x...)"),
+    rpc_url: Optional[str] = typer.Option(None, "--rpc-url", help="RPC URL (default: node)"),
+    allow_remote_rpc: bool = typer.Option(
+        False,
+        "--allow-remote-rpc",
+        help="Allow using remote bootstrap RPC (requires ANIMICA_I_UNDERSTAND_REMOTE_RISK=1)",
+    ),
+):
+    """
+    Show transaction status (mempool, inclusion, confirmations, reorg).
+    """
+    rpc = _resolve_rpc_url(rpc_url)
+    guard_bootstrap_rpc(rpc, allow_remote=allow_remote_rpc, method="tx.getStatus")
+    _warn_if_unsynced(rpc)
+
+    try:
+        result = _rpc(rpc, "tx.getStatus", [tx_hash])
+    except RpcError as e:
+        if e.code in (-32601,):
+            result = _rpc(rpc, "tx.getTransactionStatus", [tx_hash])
+        else:
+            _format_rpc_error(e)
+            raise typer.Exit(code=1) from e
+
+    console.print("\n[bold]Transaction Status[/bold]")
+    console.print(Pretty(result))
