@@ -83,11 +83,12 @@ def _header_from_template(header_view: dict) -> "Header":
 
 
 def _mine_header(header: "Header", target_int: int) -> tuple[int | None, bytes | None]:
-    max_nonce = int(os.getenv("ANIMICA_MINER_MAX_NONCE", "100000"))
-    retry_windows = int(os.getenv("ANIMICA_MINER_POW_RETRY_WINDOWS", "4"))
-    default_total = max(max_nonce * retry_windows, 1_000_000)
-    max_total_nonce = int(
-        os.getenv("ANIMICA_MINER_MAX_TOTAL_NONCE", str(default_total))
+    max_nonce = max(1, int(os.getenv("ANIMICA_MINER_MAX_NONCE", "1000000")))
+    retry_windows = max(1, int(os.getenv("ANIMICA_MINER_POW_RETRY_WINDOWS", "4")))
+    default_total = max(max_nonce * retry_windows, 5_000_000)
+    max_total_nonce = max(
+        1,
+        int(os.getenv("ANIMICA_MINER_MAX_TOTAL_NONCE", str(default_total))),
     )
     total_windows = max(retry_windows, math.ceil(max_total_nonce / max_nonce))
 
