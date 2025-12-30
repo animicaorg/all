@@ -34,7 +34,7 @@ from core.types.proof import (AIProofRef, HashShare, QuantumProofRef,
 from core.types.receipt import Receipt
 from core.types.tx import Tx
 from core.utils.hash import ZERO32, sha3_256
-from core.utils.merkle import merkle_root
+from core.utils.merkle import merkle_root, compute_txs_root_from_txs
 
 # Union of all proof envelope types included in a block
 ProofLike = Union[HashShare, AIProofRef, QuantumProofRef, StorageHeartbeat, VDFProofRef]
@@ -54,11 +54,7 @@ class Block:
         return self.header.hash()
 
     def txs_root(self) -> bytes:
-        if not self.txs:
-            return ZERO32
-        # Compute leaves from transactions in sorted order (by tx_hash bytes ascending)
-        # This ensures deterministic txsRoot regardless of input transaction order
-        return merkle_root(sorted([tx.hash() for tx in self.txs]))
+        return compute_txs_root_from_txs(self.txs)
 
     def receipts_root(self) -> bytes:
         if not self.receipts:
@@ -91,8 +87,15 @@ class Block:
         pfr = self.proofs_root()
 
         if txr != self.header.txsRoot:
+            tx_hashes = [tx.hash() for tx in self.txs]
+            tx_hashes_sorted = sorted(tx_hashes)
+            txids_hex = ["0x" + h.hex() for h in tx_hashes_sorted]
             raise ValueError(
-                f"txsRoot mismatch: computed {txr.hex()} header {self.header.txsRoot.hex()}"
+                "txsRoot mismatch: computed "
+                f"{txr.hex()} header {self.header.txsRoot.hex()} "
+                f"height={self.header.height} parent={self.header.parentHash.hex()} "
+                f"txids={txids_hex} "
+                "algorithm=sha3_256/merkle_root(sorted tx.hash bytes, duplicate_odd)"
             )
         if rcr != self.header.receiptsRoot:
             raise ValueError(

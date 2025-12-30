@@ -23,7 +23,7 @@ Design notes
 from __future__ import annotations
 
 from typing import (Dict, Iterable, List, Mapping, MutableMapping, Sequence,
-                    Tuple)
+                    Tuple, TYPE_CHECKING)
 
 from .bytes import BytesLike
 from .bytes import b as _b
@@ -31,6 +31,9 @@ from .hash import merkle_proof as _merkle_proof
 from .hash import merkle_root as _merkle_root
 from .hash import merkle_verify as _merkle_verify
 from .hash import sha3_256
+
+if TYPE_CHECKING:
+    from core.types.tx import Tx
 
 # -----------------
 # Leaf encodings
@@ -104,6 +107,20 @@ def compute_txs_root(tx_hashes: Sequence[bytes]) -> bytes:
     # Sort hashes in ascending lexicographic order (canonical rule)
     sorted_hashes = sorted(tx_hashes)
     return list_merkle_root(sorted_hashes)
+
+
+def compute_txs_root_from_txs(txs: Sequence["Tx"]) -> bytes:
+    """
+    Compute txsRoot directly from Tx objects using canonical tx.hash().
+
+    This is the canonical helper used by block validation and miner template
+    construction to ensure the same txsRoot is derived from the same tx list.
+    """
+    if not txs:
+        from .hash import ZERO32
+        return ZERO32
+    tx_hashes = [tx.hash() for tx in txs]
+    return compute_txs_root(tx_hashes)
 
 
 def kv_merkle_root(
@@ -203,6 +220,7 @@ __all__ = [
     "merkle_root",
     "list_merkle_root",
     "compute_txs_root",
+    "compute_txs_root_from_txs",
     "kv_merkle_root",
     "kv_merkle_proof",
     "kv_merkle_verify",
