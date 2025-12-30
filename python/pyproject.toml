@@ -30,3 +30,6 @@ dev = [
   "omni-sdk>=0.1.0",
   "respx>=0.22",
 ]
+
+[tool.hatch.build.targets.wheel]
+packages = ["animica"]
