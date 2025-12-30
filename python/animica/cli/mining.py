@@ -10,6 +10,7 @@ Provides commands for:
 from __future__ import annotations
 
 import json
+import math
 import os
 from pathlib import Path
 from typing import Optional
@@ -84,6 +85,11 @@ def _header_from_template(header_view: dict) -> "Header":
 def _mine_header(header: "Header", target_int: int) -> tuple[int | None, bytes | None]:
     max_nonce = int(os.getenv("ANIMICA_MINER_MAX_NONCE", "100000"))
     retry_windows = int(os.getenv("ANIMICA_MINER_POW_RETRY_WINDOWS", "4"))
+    default_total = max(max_nonce * retry_windows, 1_000_000)
+    max_total_nonce = int(
+        os.getenv("ANIMICA_MINER_MAX_TOTAL_NONCE", str(default_total))
+    )
+    total_windows = max(retry_windows, math.ceil(max_total_nonce / max_nonce))
 
     def _scan_window(start_nonce: int, end_nonce: int) -> tuple[int | None, bytes | None]:
         for nonce in range(start_nonce, end_nonce):
@@ -122,7 +128,7 @@ def _mine_header(header: "Header", target_int: int) -> tuple[int | None, bytes |
         return None, None
 
     start_nonce = 0
-    for _ in range(max(1, retry_windows)):
+    for _ in range(max(1, total_windows)):
         nonce, digest = _scan_window(start_nonce, start_nonce + max_nonce)
         if nonce is not None and digest is not None:
             return nonce, digest
@@ -934,8 +940,9 @@ def mine_blocks(
     # Resolve RPC URL
     url = rpc_url or os.environ.get("ANIMICA_RPC_URL") or load_network_config().rpc_url
     guard_bootstrap_rpc(url, allow_remote=allow_remote_rpc, method="miner.getBlockTemplate")
+    effective_allow_offline = allow_offline_mining or unsafe_mine_while_syncing
     behind = _warn_if_unsynced(url)
-    if behind and not (allow_offline_mining or unsafe_mine_while_syncing):
+    if behind and not effective_allow_offline:
         typer.secho(
             "Error: refusing to mine while behind the network. "
             "Use --unsafe-mine-while-syncing to override.",
@@ -1122,7 +1129,7 @@ def mine_blocks(
                         payload = {
                             "address": resolved_address,
                             "include_mempool": include_mempool,
-                            "allow_offline_mining": allow_offline_mining
+                            "allow_offline_mining": effective_allow_offline
                             or allow_offline_override,
                         }
                         try:
@@ -1143,7 +1150,7 @@ def mine_blocks(
                                 legacy_payload = {
                                     "payout_address": resolved_address,
                                     "include_mempool": include_mempool,
-                                    "allow_offline_mining": allow_offline_mining
+                                    "allow_offline_mining": effective_allow_offline
                                     or allow_offline_override,
                                 }
                                 try:
@@ -1172,7 +1179,7 @@ def mine_blocks(
                             {
                                 "address": resolved_address,
                                 "include_mempool": include_mempool,
-                                "allow_offline_mining": allow_offline_mining,
+                                "allow_offline_mining": effective_allow_offline,
                             },
                             fallback_handler=get_template_via_local,
                         )
@@ -1192,7 +1199,7 @@ def mine_blocks(
                             not proxy
                             and isinstance(reason, str)
                             and reason.startswith("sync_phase:")
-                            and not allow_offline_mining
+                            and not effective_allow_offline
                         ):
                             typer.secho(
                                 f"Info: Node is {reason}; retrying with local/offline template",
@@ -1263,6 +1270,11 @@ def mine_blocks(
                     if nonce is None or digest is None:
                         typer.secho(
                             f"Warning: Block {i + 1}/{count} failed to mine",
+                            fg=typer.colors.YELLOW,
+                        )
+                        typer.secho(
+                            "Hint: Increase ANIMICA_MINER_MAX_NONCE or "
+                            "ANIMICA_MINER_MAX_TOTAL_NONCE for more PoW attempts.",
                             fg=typer.colors.YELLOW,
                         )
                         stale_attempts = 0
