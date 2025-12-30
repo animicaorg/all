@@ -661,6 +661,7 @@ class RpcContext:
     block_db: t.Any
     tx_index: t.Any
     head: _HeadAccessor
+    data_root: Path
     mempool: t.Any | None = None
     init_error: str | None = None
     init_error_code: str | None = None
@@ -840,6 +841,7 @@ def build_context(cfg: t.Any | None = None) -> RpcContext:
             min_gas_price_wei=min_gas_price,
             state_db=bundle.state_db,
             tx_index=bundle.tx_index,
+            data_dir=str(data_root),
         )
         log.info("Mempool service initialized", extra={"min_gas_price": min_gas_price})
     except Exception as exc:
@@ -1033,6 +1035,7 @@ def build_context(cfg: t.Any | None = None) -> RpcContext:
         block_db=bundle.block_db,
         tx_index=bundle.tx_index,
         head=head,
+        data_root=data_root,
         mempool=mempool_service,
         init_error=init_error,
         init_error_code=init_error_code,
