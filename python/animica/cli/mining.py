@@ -1212,18 +1212,16 @@ def mine_blocks(
                             else "unknown"
                         )
                         if (
-                            not proxy
                             and isinstance(reason, str)
                             and reason.startswith("sync_phase:")
                             and not effective_allow_offline
                         ):
                             typer.secho(
-                                f"Info: Node is {reason}; retrying with local/offline template",
+                                f"Info: Node is {reason}; waiting for a synced block template",
                                 fg=typer.colors.YELLOW,
                             )
-                            template = get_template_via_local(
-                                allow_offline_override=True
-                            )
+                            time.sleep(MIN_BLOCK_INTERVAL_SECONDS)
+                            continue
                         if (
                             not isinstance(template, dict)
                             or not template.get("enabled", True)
