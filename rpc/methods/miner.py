@@ -551,6 +551,37 @@ def _attach_sender_if_possible(tx: Tx) -> Tx:
         return tx
 
 
+def _attach_sender_from_raw_if_missing(tx: Tx, raw: bytes) -> Tx:
+    """
+    Attach sender to a Tx object using raw envelope bytes when sender is missing.
+
+    This is used during mempool snapshot collection to ensure selection sees a
+    non-zero sender even when the tx body omits it (signature-derived sender).
+    """
+    if _has_valid_sender(tx):
+        return tx
+    if not raw:
+        return tx
+    derived_sender = _derive_sender_from_envelope_raw(raw)
+    if derived_sender is None or derived_sender == ZERO32:
+        return tx
+    try:
+        if hasattr(tx, "unsigned"):
+            unsigned_updated = replace(tx.unsigned, sender=derived_sender)
+            tx_updated = replace(tx, unsigned=unsigned_updated)
+            log.debug(
+                "Attached sender from raw envelope",
+                extra={
+                    "hash": _canonical_txid_hex(tx)[:16],
+                    "sender": derived_sender.hex()[:16],
+                },
+            )
+            return tx_updated
+    except Exception as e:
+        log.warning(f"Failed to attach sender from raw envelope: {e}")
+    return tx
+
+
 def _to_hex(b: bytes | None) -> str | None:
     return None if b is None else "0x" + b.hex()
 
@@ -1639,8 +1670,10 @@ def _collect_mempool_entries(
                         {"error": str(exc), "step": "normalize_tx"},
                     )
                 continue
-            if isinstance(entry.tx, Tx) and raw_bytes:
-                _TX_HASH_MAP[id(entry.tx)] = (
+            tx_obj = entry.tx
+            if isinstance(tx_obj, Tx) and raw_bytes:
+                tx_obj = _attach_sender_from_raw_if_missing(tx_obj, raw_bytes)
+                _TX_HASH_MAP[id(tx_obj)] = (
                     _normalize_hash_hex(entry.hash_hex),
                     raw_bytes,
                 )
@@ -1649,7 +1682,7 @@ def _collect_mempool_entries(
                 PendingTxEntry(
                     hash_hex=entry.hash_hex,
                     raw=raw_bytes,
-                    tx=entry.tx,
+                    tx=tx_obj,
                     received_at=entry.received_at,
                     expires_at=entry.expires_at,
                 )
@@ -1711,11 +1744,15 @@ def _collect_mempool_entries(
                     continue
             if raw:
                 pending_raw_by_hash[tx_hash_hex] = raw
+            tx_obj = tx
+            if isinstance(tx_obj, Tx) and raw:
+                tx_obj = _attach_sender_from_raw_if_missing(tx_obj, raw)
+                _TX_HASH_MAP[id(tx_obj)] = (_normalize_hash_hex(tx_hash_hex), raw)
             pending_entries.append(
                 PendingTxEntry(
                     hash_hex=tx_hash_hex,
                     raw=raw or b"",
-                    tx=None if raw else tx,
+                    tx=tx_obj,
                 )
             )
     except Exception as e:
