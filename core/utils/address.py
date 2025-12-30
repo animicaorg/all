@@ -8,7 +8,7 @@ Address Formats
 ---------------
 1. Bech32m addresses (e.g., 'anim1…'): Decoded to payload bytes (alg_id || digest)
 2. System addresses (e.g., 'system:treasury'): UTF-8 encoded
-3. Hex addresses (e.g., '0x…'): Raw hex bytes
+3. Hex addresses (e.g., '0x…'): Raw hex bytes normalized to 32 bytes
 
 The canonical encoding ensures that:
 - Genesis loader and RPC queries use the same key representation
@@ -46,8 +46,8 @@ def address_to_bytes(addr: str, *, allow_system: bool = True) -> bytes:
         >>> # System address → UTF-8 encoded
         >>> address_to_bytes("system:treasury")  # b'system:treasury'
         
-        >>> # Hex address → raw bytes
-        >>> address_to_bytes("0x1234...")  # bytes.fromhex("1234...")
+        >>> # Hex address → 32-byte normalized bytes
+        >>> address_to_bytes("0x1234...")  # 32 bytes (left-padded)
     """
     if not isinstance(addr, str) or not addr:
         raise AddressError("address must be a non-empty string")
@@ -82,13 +82,19 @@ def address_to_bytes(addr: str, *, allow_system: bool = True) -> bytes:
         except Exception as e:
             raise AddressError(f"failed to decode bech32m address: {e}") from e
 
-    # 3. Hex addresses: raw bytes
+    # 3. Hex addresses: raw bytes (normalized to 32-byte address length)
     if addr.startswith("0x") or _is_hex(addr):
         hex_str = addr[2:] if addr.startswith("0x") else addr
         try:
-            return bytes.fromhex(hex_str)
+            raw = bytes.fromhex(hex_str)
         except Exception as e:
             raise AddressError(f"invalid hex address: {e}") from e
+        # Animica addresses are 32-byte digests; normalize hex to 32 bytes.
+        if len(raw) < 32:
+            raw = raw.rjust(32, b"\x00")
+        elif len(raw) > 32:
+            raw = raw[-32:]
+        return raw
 
     # Unknown format
     raise AddressError(

@@ -393,9 +393,9 @@ def _as_bytes32_addr(val: Any) -> bytes:
     
     # Pad or truncate to 32 bytes
     if len(addr_bytes) < ADDRESS_LEN:
-        addr_bytes = addr_bytes.ljust(ADDRESS_LEN, b"\x00")
+        addr_bytes = addr_bytes.rjust(ADDRESS_LEN, b"\x00")
     elif len(addr_bytes) > ADDRESS_LEN:
-        addr_bytes = addr_bytes[:ADDRESS_LEN]
+        addr_bytes = addr_bytes[-ADDRESS_LEN:]
     
     return addr_bytes
 

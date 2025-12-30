@@ -113,9 +113,24 @@ def _address_to_32_bytes(address: str) -> bytes:
     Returns:
         32-byte digest (for bech32) or padded hex bytes
     """
+    try:
+        from core.utils.address import address_to_bytes
+    except Exception:
+        address_to_bytes = None  # type: ignore[assignment]
     from pq.py.address import decode_address
     
     address = address.strip()
+
+    if address_to_bytes is not None:
+        try:
+            addr_bytes = address_to_bytes(address)
+            if len(addr_bytes) != 32:
+                if len(addr_bytes) < 32:
+                    return addr_bytes.rjust(32, b"\x00")
+                return addr_bytes[-32:]
+            return addr_bytes
+        except Exception:
+            pass
     
     # Bech32 address → extract 32-byte digest
     if address.lower().startswith("anim"):
@@ -130,9 +145,9 @@ def _address_to_32_bytes(address: str) -> bytes:
     
     addr_bytes = bytes.fromhex(address)
     if len(addr_bytes) < 32:
-        addr_bytes = addr_bytes.ljust(32, b"\x00")
+        addr_bytes = addr_bytes.rjust(32, b"\x00")
     elif len(addr_bytes) > 32:
-        addr_bytes = addr_bytes[:32]
+        addr_bytes = addr_bytes[-32:]
     
     return addr_bytes
 
