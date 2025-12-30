@@ -684,6 +684,21 @@ def _pending_get(tx_hash_hex: str) -> bytes | None:
     return _FALLBACK_PENDING.get(tx_hash_hex)
 
 
+def _mempool_get_raw(tx_hash_hex: str) -> bytes | None:
+    svc = _get_mempool_service()
+    if svc is None:
+        return None
+    getter = getattr(svc, "get_raw", None)
+    if callable(getter):
+        try:
+            raw = getter(tx_hash_hex)
+        except Exception:
+            return None
+        if isinstance(raw, (bytes, bytearray)):
+            return bytes(raw)
+    return None
+
+
 def _pending_remove(tx_hash_hex: str) -> bool:
     if _PEND is not None and hasattr(_PEND, "remove"):
         try:
@@ -1150,6 +1165,15 @@ def tx_get_transaction_by_hash(txHash: str) -> t.Optional[dict]:
     if not tx_hash_hex.startswith("0x"):
         tx_hash_hex = "0x" + tx_hash_hex
 
+    raw = _mempool_get_raw(tx_hash_hex)
+    if raw is not None:
+        try:
+            tx_like, obj = _decode_tx(raw)
+            decoded_obj = obj if isinstance(obj, dict) else _dcd(obj)
+            return _tx_view(tx_like, decoded_obj, pending=True)
+        except Exception:
+            pass
+
     raw = _pending_get(tx_hash_hex)
     if raw is not None and _cbor_loads is not None:
         try:
@@ -1164,5 +1188,66 @@ def tx_get_transaction_by_hash(txHash: str) -> t.Optional[dict]:
         return view
 
     return None
+
+
+@method(
+    "tx.getTransaction",
+    desc="Get a transaction by hash (alias of tx.getTransactionByHash).",
+    aliases=("tx_getTransaction",),
+)
+def tx_get_transaction(txHash: str) -> t.Optional[dict]:
+    return tx_get_transaction_by_hash(txHash)
+
+
+@method(
+    "tx.getTransactionStatus",
+    desc="Return transaction status (pending, confirmed, rejected, not_found).",
+    aliases=("tx_getTransactionStatus",),
+)
+def tx_get_transaction_status(txHash: str) -> dict:
+    if not isinstance(txHash, str):
+        raise rpc_errors.InvalidParams("txHash must be hex string")
+    tx_hash_hex = txHash.lower()
+    if not tx_hash_hex.startswith("0x"):
+        tx_hash_hex = "0x" + tx_hash_hex
+
+    svc = _get_mempool_service()
+    if svc is not None:
+        try:
+            has = _mempool_has(svc, tx_hash_hex)
+        except Exception:
+            has = None
+        if has:
+            return {"hash": tx_hash_hex, "status": "pending"}
+
+    if _pending_get(tx_hash_hex) is not None:
+        return {"hash": tx_hash_hex, "status": "pending"}
+
+    view, height, idx, block_hash = _lookup_persisted_tx(tx_hash_hex)
+    if view is not None:
+        return {
+            "hash": tx_hash_hex,
+            "status": "confirmed",
+            "blockNumber": int(height) if height is not None else None,
+            "blockHash": _hex(block_hash) if block_hash is not None else None,
+            "transactionIndex": int(idx) if idx is not None else None,
+        }
+
+    if svc is not None:
+        rejection = getattr(svc, "get_rejection", None)
+        if callable(rejection):
+            try:
+                rejected = rejection(tx_hash_hex)
+            except Exception:
+                rejected = None
+            if rejected:
+                return {
+                    "hash": tx_hash_hex,
+                    "status": "rejected",
+                    "reason": rejected.get("reason"),
+                    "details": rejected.get("details"),
+                }
+
+    return {"hash": tx_hash_hex, "status": "not_found"}
 
 # NOTE: tx.getTransactionReceipt is in rpc/methods/receipt.py
