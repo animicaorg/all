@@ -531,6 +531,28 @@ class BlockImporter:
             return int(self.difficulty_state.theta_micro)
         return int(self.params.theta_initial)
 
+    def _expected_theta_for_timestamp(self, block_timestamp: int) -> Optional[int]:
+        """
+        Compute the expected Θ for the next block timestamp based on current state.
+        Returns None if difficulty state is unavailable or timestamps are invalid.
+        """
+        if not DIFFICULTY_AVAILABLE or diff is None or self.difficulty_state is None:
+            return None
+        if self._last_block_time is None:
+            return None
+        dt_seconds = int(block_timestamp) - int(self._last_block_time)
+        if dt_seconds <= 0:
+            return None
+        try:
+            next_state = diff.update_theta(
+                self.difficulty_state,
+                dt_seconds=float(dt_seconds),
+                blocks_skipped=1,
+            )
+        except Exception:
+            return None
+        return int(next_state.theta_micro)
+
     # --- Import -------------------------------------------------------------
 
     def import_block(self, raw: Union[Block, bytes, Dict[str, Any]]) -> ImportResult:
@@ -630,6 +652,10 @@ class BlockImporter:
             timestamp_error = self._timestamp_sanity(header, parent_header, hdr_map)
             if timestamp_error is not None:
                 return ImportResult(ImportErrorCode.INVALID, height, h, False, timestamp_error)
+
+            theta_error = self._theta_sanity(header, parent_hash, hdr_map)
+            if theta_error is not None:
+                return ImportResult(ImportErrorCode.INVALID, height, h, False, theta_error)
 
             # Basic header sanity
             self._sanity_header(header)
@@ -1346,6 +1372,29 @@ class BlockImporter:
             delta_ms = (ts - parent_ts) * 1000
             if delta_ms < self._min_block_spacing_ms:
                 return "timestamp spacing too short"
+        return None
+
+    def _theta_sanity(
+        self,
+        header: Header,
+        parent_hash: bytes,
+        payload: Dict[str, Any],
+    ) -> Optional[str]:
+        head = self.block_db.get_canonical_head()
+        if head is None or head[1] != parent_hash:
+            return None
+        ts = _timestamp_of(header, payload)
+        if ts is None:
+            return None
+        expected_theta = self._expected_theta_for_timestamp(ts)
+        if expected_theta is None:
+            return None
+        claimed_theta = _weight_micro_of(header, payload, self.params)
+        if int(claimed_theta) != int(expected_theta):
+            return (
+                "theta mismatch"
+                f": got {int(claimed_theta)}, expected {int(expected_theta)}"
+            )
         return None
 
 
