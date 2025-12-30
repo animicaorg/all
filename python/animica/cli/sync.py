@@ -172,6 +172,13 @@ def _coerce_int(value: Any) -> Optional[int]:
     return None
 
 
+def _compute_sync_percent(current: Optional[int], target: Optional[int]) -> Optional[float]:
+    if current is None or target is None or target <= 0:
+        return None
+    pct = (current / target) * 100
+    return max(0.0, min(100.0, pct))
+
+
 def _extract_sync_metrics(sync_status: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     """Normalize sync status payload into consistent metrics."""
     metrics: Dict[str, Any] = {
@@ -1060,6 +1067,9 @@ def sync_status(
         raise typer.Exit(code=1)
 
     if json_output:
+        progress_current = height if height is not None else best_block_height
+        progress_target = target_height or network_height
+        progress_pct = _compute_sync_percent(progress_current, progress_target)
         output = {
             "rpc_url": url,
             "rpc_reachable": True,
@@ -1072,6 +1082,12 @@ def sync_status(
             "sync_state": sync_state,
             "peer_count": peer_count,
         }
+        if progress_pct is not None:
+            output["sync_percent"] = round(progress_pct, 1)
+            if progress_current is not None:
+                output["sync_current_height"] = progress_current
+            if progress_target is not None:
+                output["sync_target_height"] = progress_target
         if network_height is not None:
             output["network_height"] = network_height
             output["network_head_hash"] = network_hash
@@ -1148,21 +1164,29 @@ def sync_status(
     
     # Sync status
     typer.secho("Sync Status:", fg=typer.colors.BRIGHT_BLUE, bold=True)
+    progress_current = height if height is not None else best_block_height
+    progress_target = target_height or network_height
+    progress_pct = _compute_sync_percent(progress_current, progress_target)
     if sync_state in {"SYNCING_HEADERS", "SYNCING_BLOCKS", "SYNCING"}:
         typer.secho(f"  Status:    {sync_state}", fg=typer.colors.YELLOW, bold=True)
         if best_header_height is not None or best_block_height is not None:
             typer.echo(
                 f"  Headers:   {best_header_height or 0} | Blocks: {best_block_height or 0}"
             )
-        if target_height is not None and height is not None:
-            progress_pct = (height / target_height * 100) if target_height > 0 else 0
-            typer.echo(f"  Progress:  {height} / {target_height} ({progress_pct:.1f}%)")
-            remaining = target_height - height
-            typer.echo(f"  Remaining: {remaining} blocks")
+        if progress_pct is not None:
+            typer.secho(f"  Sync %:    {progress_pct:.1f}%", fg=typer.colors.MAGENTA, bold=True)
+            if progress_current is not None and progress_target is not None:
+                typer.echo(f"  Progress:  {progress_current} / {progress_target}")
+                remaining = max(0, progress_target - progress_current)
+                typer.echo(f"  Remaining: {remaining} blocks")
     elif sync_state == "SYNCHRONIZED":
         typer.secho("  Status:    SYNCHRONIZED", fg=typer.colors.GREEN, bold=True)
+        if progress_pct is not None:
+            typer.secho(f"  Sync %:    {progress_pct:.1f}%", fg=typer.colors.MAGENTA, bold=True)
     elif sync_state == "NEAR_TIP":
         typer.secho("  Status:    NEAR_TIP", fg=typer.colors.YELLOW, bold=True)
+        if progress_pct is not None:
+            typer.secho(f"  Sync %:    {progress_pct:.1f}%", fg=typer.colors.MAGENTA, bold=True)
     elif sync_state == "UNKNOWN":
         typer.secho("  Status:    UNKNOWN", fg=typer.colors.YELLOW)
     elif height == 0:

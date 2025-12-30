@@ -535,6 +535,57 @@ def _extract_field(data: dict[str, Any], *keys: str) -> Any:
     return None
 
 
+def _coerce_int(value: Any) -> Optional[int]:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.isdigit():
+        return int(value)
+    return None
+
+
+def _extract_sync_progress(
+    sync_status: Optional[Dict[str, Any]],
+    head_height: Optional[int],
+    fallback_target: Optional[int],
+) -> tuple[Optional[int], Optional[int], Optional[float]]:
+    current_height: Optional[int] = None
+    target_height: Optional[int] = None
+
+    if isinstance(sync_status, dict):
+        current_height = _coerce_int(
+            sync_status.get("currentBlock")
+            or sync_status.get("current_block")
+            or sync_status.get("height")
+            or sync_status.get("best_block_height")
+            or sync_status.get("bestBlockHeight")
+            or sync_status.get("best_block")
+        )
+        target_height = _coerce_int(
+            sync_status.get("highestBlock")
+            or sync_status.get("targetHeight")
+            or sync_status.get("target_height")
+            or sync_status.get("best_header_height")
+            or sync_status.get("bestHeaderHeight")
+            or sync_status.get("best_header")
+        )
+
+    if current_height is None:
+        current_height = head_height
+    if target_height is None:
+        target_height = fallback_target
+
+    if current_height is None or target_height is None or target_height <= 0:
+        return current_height, target_height, None
+
+    pct = (current_height / target_height) * 100
+    pct = max(0.0, min(100.0, pct))
+    return current_height, target_height, pct
+
+
 def _parse_timestamp(raw: Any) -> Optional[float]:
     if raw is None:
         return None
@@ -1678,6 +1729,15 @@ def status(
                 )
             else:
                 typer.echo(f"Sync status: {sync_status}")
+            cached_target_height = cached_bootstrap.get("height") if cached_bootstrap else None
+            sync_current, sync_target, sync_pct = _extract_sync_progress(
+                sync_status, height, cached_target_height
+            )
+            if sync_pct is not None:
+                progress_label = f"Sync progress: {sync_pct:.1f}%"
+                if sync_current is not None and sync_target is not None:
+                    progress_label += f" ({sync_current}/{sync_target})"
+                typer.secho(progress_label, fg=typer.colors.MAGENTA, bold=True)
             if isinstance(sync_status, dict):
                 sync_head_height = sync_status.get("sync_head_height")
                 sync_head_hash = sync_status.get("sync_head_hash")
