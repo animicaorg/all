@@ -1639,6 +1639,11 @@ def _collect_mempool_entries(
                         {"error": str(exc), "step": "normalize_tx"},
                     )
                 continue
+            if isinstance(entry.tx, Tx) and raw_bytes:
+                _TX_HASH_MAP[id(entry.tx)] = (
+                    _normalize_hash_hex(entry.hash_hex),
+                    raw_bytes,
+                )
             pending_raw_by_hash[entry.hash_hex] = raw_bytes
             pending_entries.append(
                 PendingTxEntry(
