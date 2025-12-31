@@ -288,6 +288,12 @@ def _coerce_selected_txs(
             except Exception as exc:
                 normalize_error = normalize_error or str(exc)
 
+        if tx is None and raw and hasattr(Tx, "from_cbor"):
+            try:
+                tx = Tx.from_cbor(raw)  # type: ignore[attr-defined]
+            except Exception as exc:
+                normalize_error = normalize_error or str(exc)
+
         if tx is None and decoded_obj is not None:
             normalized = _normalize_tx_envelope(decoded_obj)
             tx = _construct_tx_from_dict(normalized)
