@@ -419,6 +419,18 @@ def normalize_alg_name(name_or_id: AlgNameOrId) -> str:
     
     # Normalize string: lowercase, replace hyphens/underscores
     normalized = str(name_or_id).lower().replace("-", "_")
+
+    alias_map = {
+        "sphincs128s": "sphincs_shake_128s",
+        "sphincs_128s": "sphincs_shake_128s",
+        "sphincs_shake128s": "sphincs_shake_128s",
+        "sphincs_shake_128s": "sphincs_shake_128s",
+        "sphincs+shake128s": "sphincs_shake_128s",
+        "sphincs+shake_128s": "sphincs_shake_128s",
+        "sphincs+_shake_128s": "sphincs_shake_128s",
+    }
+    if normalized in alias_map:
+        return alias_map[normalized]
     
     # Check if it exists in our registry
     if normalized in BY_NAME:
