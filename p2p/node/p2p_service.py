@@ -4681,6 +4681,12 @@ class P2PService:
             if isinstance(it, dict):
                 inv_items.append(InvItem(**it))
         inv = Inv(items=inv_items)
+        tx_inv_count = sum(1 for it in inv.items if int(it.typ) == int(InvType.TX))
+        if tx_inv_count:
+            log.info(
+                "tx.inv_recv",
+                extra={"peer": peer.remote, "count": tx_inv_count},
+            )
 
         want: list[InvItem] = []
         for it in inv.items:
@@ -4725,7 +4731,7 @@ class P2PService:
                         self._remember_requested(bytes(it.h), peer.remote)
                     self._stats["tx_getdata_sent"] += len(tx_items)
                     log.info(
-                        "getdata requested for tx inv",
+                        "tx.getdata_sent",
                         extra={"peer": peer.remote, "count": len(tx_items)},
                     )
             if want:
@@ -4859,19 +4865,23 @@ class P2PService:
         self._remember(self._seen_tx, txh, self._seen_tx_cap)
         self._stats["tx_recv"] += 1
         self._tx_requested.pop(txh, None)
+        log.info(
+            "tx.tx_recv",
+            extra={"tx_hash": txh.hex(), "peer": peer.remote},
+        )
 
         ok, reason = await self._admit_tx_result(raw)
         if ok:
             log.info(
-                "tx relay accepted from peer",
+                "tx.mempool_added",
                 extra={"tx_hash": txh.hex(), "peer": peer.remote},
             )
             await self._broadcast_inv(
                 [InvItem(typ=InvType.TX, h=txh)], exclude_remote=peer.remote, is_tx=True
             )
         else:
-            log.debug(
-                "tx relay rejected from peer",
+            log.info(
+                "tx.mempool_rejected",
                 extra={"tx_hash": txh.hex(), "peer": peer.remote, "reason": reason},
             )
 
@@ -9008,6 +9018,10 @@ class P2PService:
             await self._send(peer, MsgID.INV, inv)
             if is_tx:
                 self._stats["inv_tx_sent"] += len(items)
+                log.info(
+                    "tx.inv_sent",
+                    extra={"peer": peer.remote, "count": len(items)},
+                )
             else:
                 self._stats["inv_block_sent"] += len(items)
 

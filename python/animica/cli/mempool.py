@@ -41,6 +41,11 @@ def list_pending(
         help="RPC endpoint URL",
         envvar="ANIMICA_RPC_URL",
     ),
+    no_cache: bool = typer.Option(
+        True,
+        "--no-cache/--cache",
+        help="Disable HTTP caching for mempool reads (default: no-cache).",
+    ),
     json: bool = typer.Option(
         False,
         "--json",
@@ -59,20 +64,30 @@ def list_pending(
     """
     # Call RPC method
     resolved_rpc_url = _resolve_rpc_url(rpc_url)
-    result = call_rpc("mempool.getPending", [], rpc_url=resolved_rpc_url)
+    result = call_rpc(
+        "mempool.getPending",
+        [True],
+        rpc_url=resolved_rpc_url,
+        no_cache=no_cache,
+    )
     chain_identity = None
     head = None
     p2p_status = None
     try:
-        chain_identity = call_rpc("chain.getChainIdentity", [], rpc_url=resolved_rpc_url)
+        chain_identity = call_rpc(
+            "chain.getChainIdentity",
+            [],
+            rpc_url=resolved_rpc_url,
+            no_cache=no_cache,
+        )
     except Exception:
         chain_identity = None
     try:
-        head = call_rpc("chain.getHead", [], rpc_url=resolved_rpc_url)
+        head = call_rpc("chain.getHead", [], rpc_url=resolved_rpc_url, no_cache=no_cache)
     except Exception:
         head = None
     try:
-        p2p_status = call_rpc("p2p.getStatus", [], rpc_url=resolved_rpc_url)
+        p2p_status = call_rpc("p2p.getStatus", [], rpc_url=resolved_rpc_url, no_cache=no_cache)
     except Exception:
         p2p_status = None
 
@@ -88,9 +103,12 @@ def list_pending(
     if isinstance(p2p_status, dict):
         peer_id = p2p_status.get("peer_id") or p2p_status.get("peerId") or p2p_status.get("id")
 
+    rpc_source = "explicit" if rpc_url else "default"
     if json:
         payload = {
-            "rpcUrl": resolved_rpc_url,
+            "rpcTarget": resolved_rpc_url,
+            "rpcSource": rpc_source,
+            "nodeId": peer_id,
             "chain": {
                 "chainId": chain_id,
                 "genesisHash": genesis_hash,
@@ -106,7 +124,9 @@ def list_pending(
         return
     
     # Pretty print
-    typer.echo(f"RPC: {resolved_rpc_url}")
+    typer.echo(
+        f"RPC_TARGET={resolved_rpc_url} NODE_ID={_short_id(peer_id) or 'n/a'} SOURCE={rpc_source}"
+    )
     typer.echo(
         "Chain: id={chain_id} genesis={genesis}".format(
             chain_id=chain_id if chain_id is not None else "n/a",
@@ -124,8 +144,19 @@ def list_pending(
             typer.echo("Mempool is empty (no pending transactions)")
         else:
             typer.echo(f"Pending transactions ({len(result)}):")
-            for i, tx_hash in enumerate(result, 1):
-                typer.echo(f"  {i:3d}. {tx_hash}")
+            for i, entry in enumerate(result, 1):
+                if isinstance(entry, dict):
+                    tx_hash = entry.get("hash")
+                    sender = entry.get("from") or "n/a"
+                    nonce = entry.get("nonce")
+                    fee = entry.get("fee")
+                    size = entry.get("size")
+                    status = entry.get("status", "unknown")
+                    typer.echo(
+                        f"  {i:3d}. {tx_hash} from={sender} nonce={nonce} fee={fee} size={size} status={status}"
+                    )
+                else:
+                    typer.echo(f"  {i:3d}. {entry}")
     else:
         typer.echo(json_lib.dumps(result, indent=2))
 

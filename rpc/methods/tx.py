@@ -1240,6 +1240,10 @@ def _tx_send_raw_transaction(rawTx: str) -> str:
         "Mempool admission accepted",
         extra={"tx_hash": tx_hash_hex},
     )
+    log.info(
+        "tx.accepted_local",
+        extra={"tx_hash": tx_hash_hex},
+    )
 
     # Post-submit verification MUST pass
     has1 = _mempool_has(svc, tx_hash_hex)
