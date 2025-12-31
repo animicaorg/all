@@ -25,7 +25,7 @@ class SyncManager:
     inflight_blocks: Dict[bytes, float] = field(default_factory=dict)
     pending_blocks: Deque[bytes] = field(default_factory=deque)
     pending_set: Set[bytes] = field(default_factory=set)
-    max_inflight: int = 16
+    max_inflight: int = 64
 
     def build_getheaders(self) -> GetHeadersMessage:
         return GetHeadersMessage(locator_hashes=self.chain.locator(), stop_hash=b"\x00" * 32)
