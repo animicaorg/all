@@ -272,6 +272,10 @@ def make_tx_env(
     -------
     TxEnv (alias of TxContext)
     """
+    unsigned = _get(tx, "unsigned", default=None)
+    if unsigned is None and isinstance(tx, Mapping):
+        unsigned = tx.get("tx") or tx.get("unsigned")
+
     # Resolve prices
     bp = _as_int(
         base_price if base_price is not None else getattr(block_env, "base_price", 0),
@@ -286,8 +290,18 @@ def make_tx_env(
 
     # If an explicit gas_price override was given, it wins.
     gp_tx = _as_int(
-        _first_present(tx, ("gas_price", "gasPrice", "maxFeePerGas")), default=bp + tp
+        _first_present(tx, ("gas_price", "gasPrice", "maxFeePerGas", "maxFee")),
+        default=bp + tp,
     )
+    if gp_tx == 0 and unsigned is not None:
+        gp_tx = _as_int(
+            _get(unsigned, "gas_price", "gasPrice", "maxFeePerGas", "maxFee"),
+            default=gp_tx,
+        )
+        if gp_tx == 0 and isinstance(unsigned, Mapping):
+            gas_obj = unsigned.get("gas")
+            if isinstance(gas_obj, Mapping):
+                gp_tx = _as_int(gas_obj.get("price"), default=gp_tx)
     gp = _as_int(
         gas_price
         if gas_price is not None
@@ -303,20 +317,24 @@ def make_tx_env(
     )
 
     # Animica uses 32-byte addresses (not 20-byte EVM addresses)
-    snd = _as_bytes(
-        (
-            sender
-            if sender is not None
-            else _first_present(tx, ("from", "sender", "from_address"))
-        ),
-        expect_len=ADDRESS_LEN,
+    sender_src = (
+        sender if sender is not None else _first_present(tx, ("from", "sender", "from_address"))
     )
-    nn = _as_int(
-        nonce if nonce is not None else _first_present(tx, ("nonce",)), default=0
-    )
+    if (sender_src is None or not _as_bytes(sender_src)) and unsigned is not None:
+        sender_src = _get(unsigned, "sender", "from", "from_address")
+    snd = _as_bytes(sender_src, expect_len=ADDRESS_LEN)
+    nn = _as_int(nonce if nonce is not None else _first_present(tx, ("nonce",)), default=0)
+    if nn == 0 and unsigned is not None:
+        nn = _as_int(_get(unsigned, "nonce"), default=nn)
+
+    chain_id = _as_int(getattr(block_env, "chain_id", 0), default=0)
+    if chain_id <= 0:
+        chain_id = _as_int(_first_present(tx, ("chainId", "chain_id")), default=0)
+    if chain_id <= 0 and unsigned is not None:
+        chain_id = _as_int(_get(unsigned, "chain_id", "chainId"), default=0)
 
     values = {
-        "chain_id": getattr(block_env, "chain_id", 0),
+        "chain_id": chain_id,
         "gas_price": gp,
         "base_price": bp,
         "tip_price": max(0, gp - bp),
