@@ -389,6 +389,7 @@ def _compute_sync_state(
     phase = metrics.get("phase")
     syncing = bool(metrics.get("syncing"))
     synchronized = bool(metrics.get("synchronized"))
+    target_height = metrics.get("target_height")
 
     if best_header_height is not None and best_block_height is not None and best_header_height > best_block_height:
         if phase and str(phase).lower() in {"headers", "header", "syncing_headers"}:
