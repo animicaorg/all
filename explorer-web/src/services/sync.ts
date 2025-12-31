@@ -262,7 +262,10 @@ export class SyncManager {
 
     // If already synced, just check if there are new blocks
     if (lastSyncHeight >= currentHeight) {
-      this.updateStatus({ isSynced: true, progress: 1 });
+      this.updateStatus({
+        isSynced: true,
+        progress: this.getProgress(currentHeight, lastSyncHeight, true),
+      });
       return;
     }
 
@@ -272,7 +275,11 @@ export class SyncManager {
     const count = Math.min(this.options.batchSize, fromHeight - toHeight + 1);
 
     if (count <= 0) {
-      this.updateStatus({ isSynced: true, progress: 1 });
+      const isSynced = lastSyncHeight >= currentHeight;
+      this.updateStatus({
+        isSynced,
+        progress: this.getProgress(currentHeight, lastSyncHeight, isSynced),
+      });
       return;
     }
 
@@ -302,10 +309,11 @@ export class SyncManager {
 
         console.debug(`[sync] Cached ${blocks.length} blocks, last height: ${newLastHeight}`);
 
+        const isSynced = newLastHeight >= currentHeight;
         this.updateStatus({
           lastSyncHeight: newLastHeight,
-          progress: newLastHeight / currentHeight,
-          isSynced: newLastHeight >= currentHeight,
+          progress: this.getProgress(currentHeight, newLastHeight, isSynced),
+          isSynced,
         });
       }
     } catch (err) {
@@ -324,7 +332,10 @@ export class SyncManager {
     const lastSyncHeight = this.status.lastSyncHeight ?? 0;
 
     if (lastSyncHeight >= currentHeight) {
-      this.updateStatus({ isSynced: true, progress: 1 });
+      this.updateStatus({
+        isSynced: true,
+        progress: this.getProgress(currentHeight, lastSyncHeight, true),
+      });
       return;
     }
 
@@ -364,7 +375,7 @@ export class SyncManager {
 
           this.updateStatus({
             lastSyncHeight: newLastHeight,
-            progress: newLastHeight / currentHeight,
+            progress: this.getProgress(currentHeight, newLastHeight, false),
             blocksToSync: totalToSync - synced,
           });
 
@@ -381,7 +392,11 @@ export class SyncManager {
       }
     }
 
-    this.updateStatus({ isSynced: synced >= totalToSync });
+    const isSynced = synced >= totalToSync;
+    this.updateStatus({
+      isSynced,
+      progress: this.getProgress(currentHeight, this.status.lastSyncHeight ?? 0, isSynced),
+    });
   }
 
   /**
@@ -461,6 +476,18 @@ export class SyncManager {
       console.warn('[sync] Failed to fetch head:', err);
       return null;
     }
+  }
+
+  private getProgress(currentHeight: number, lastSyncHeight: number, isSynced: boolean): number {
+    if (!Number.isFinite(currentHeight) || currentHeight <= 0) {
+      return 0;
+    }
+    const ratio = lastSyncHeight / currentHeight;
+    const clamped = Math.max(0, Math.min(ratio, 1));
+    if (!isSynced && clamped >= 1) {
+      return 0.999;
+    }
+    return clamped;
   }
 }
 
