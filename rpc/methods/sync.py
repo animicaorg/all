@@ -149,7 +149,7 @@ async def sync_start() -> dict[str, t.Any]:
 
 
 @method("sync.getStatus", desc="Return current sync status")
-async def sync_get_status() -> dict[str, t.Any]:
+async def sync_get_status(opts: dict[str, t.Any] | str | None = None) -> dict[str, t.Any]:
     svc = _get_p2p_service()
     fatal_error = None
     try:
@@ -157,8 +157,17 @@ async def sync_get_status() -> dict[str, t.Any]:
         fatal_error = getattr(ctx, "p2p_start_error", None)
     except Exception:
         fatal_error = None
+    refresh = False
+    if isinstance(opts, dict):
+        source = opts.get("source") or opts.get("cache_source")
+        refresh = bool(opts.get("refresh")) or str(source).lower() == "refresh"
+    elif isinstance(opts, str):
+        refresh = opts.lower() == "refresh"
     if svc is not None and hasattr(svc, "sync_status_snapshot"):
-        snap = svc.sync_status_snapshot()
+        try:
+            snap = svc.sync_status_snapshot(refresh=refresh)
+        except TypeError:
+            snap = svc.sync_status_snapshot()
         if hasattr(snap, "to_dict"):
             payload = snap.to_dict()
             if fatal_error and not payload.get("fatal_error"):
@@ -270,13 +279,13 @@ async def sync_set_target(height: int | None = None) -> dict[str, t.Any]:
 
 
 @method("sync.status", desc="Return current sync status (alias)")
-async def sync_status() -> dict[str, t.Any]:
-    return await sync_get_status()
+async def sync_status(opts: dict[str, t.Any] | str | None = None) -> dict[str, t.Any]:
+    return await sync_get_status(opts)
 
 
 @method("node.syncStatus", desc="Return current sync status (compat alias)")
-async def node_sync_status() -> dict[str, t.Any]:
-    return await sync_get_status()
+async def node_sync_status(opts: dict[str, t.Any] | str | None = None) -> dict[str, t.Any]:
+    return await sync_get_status(opts)
 
 
 __all__ = [
