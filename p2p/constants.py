@@ -31,6 +31,8 @@ __all__ = [
     "MAX_TX_BYTES",
     "MAX_BLOCK_BYTES",
     "MAX_SHARE_BYTES",
+    "HASH_LEN",
+    "MAX_INV_PER_MSG",
     # Peer & gossip limits
     "MAX_PEERS",
     "MAX_INBOUND_PEERS",
@@ -143,6 +145,13 @@ MAX_BLOCK_BYTES: Final[int] = _env_int("ANIMICA_P2P_MAX_BLOCK_BYTES", 8 << 20)  
 MAX_SHARE_BYTES: Final[int] = _env_int(
     "ANIMICA_P2P_MAX_SHARE_BYTES", 256 * 1024
 )  # 256 KiB
+
+# ---- inventory limits ---------------------------------------------------------
+
+HASH_LEN: Final[int] = 32
+MAX_INV_PER_MSG: Final[int] = _env_int(
+    "ANIMICA_P2P_MAX_INV_PER_MSG", 2048
+)
 
 
 # ---- peer & gossip limits -----------------------------------------------------

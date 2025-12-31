@@ -29,7 +29,7 @@ from p2p.peer.p2p_store import (
     read_peers_json,
 )
 from p2p.transport.base import ListenConfig
-from p2p.constants import DEFAULT_TCP_PORT
+from p2p.constants import DEFAULT_TCP_PORT, MAX_INV_PER_MSG, MAX_TX_BYTES
 from p2p.transport.multiaddr import parse_multiaddr
 from p2p.transport.tcp import TcpTransport
 from p2p.wire.encoding import decode_payload, encode_payload
@@ -666,6 +666,34 @@ class P2PService:
         self._seen_blocks: "OrderedDict[bytes, float]" = OrderedDict()
         self._seen_tx_cap = 50_000
         self._seen_block_cap = 10_000
+        self._tx_inv_seen: "OrderedDict[bytes, float]" = OrderedDict()
+        self._tx_inv_seen_cap = 50_000
+        self._tx_requested: "OrderedDict[bytes, tuple[float, str]]" = OrderedDict()
+        self._tx_requested_cap = 50_000
+        self._tx_sent_by_peer: dict[str, "OrderedDict[bytes, float]"] = {}
+        self._tx_relay_ttl_s = float(
+            os.environ.get("ANIMICA_P2P_TX_RELAY_TTL_SECONDS", "120") or 120
+        )
+        self._max_tx_bytes = int(
+            os.environ.get("ANIMICA_P2P_MAX_TX_BYTES", str(MAX_TX_BYTES))
+            or MAX_TX_BYTES
+        )
+        self._max_inv_per_msg = int(
+            os.environ.get("ANIMICA_P2P_MAX_INV_PER_MSG", str(MAX_INV_PER_MSG))
+            or MAX_INV_PER_MSG
+        )
+        self._max_getdata_per_min_per_peer = int(
+            os.environ.get("ANIMICA_P2P_MAX_GETDATA_PER_MIN_PER_PEER", "120") or 120
+        )
+        self._max_tx_per_min_per_peer = int(
+            os.environ.get("ANIMICA_P2P_MAX_TX_PER_MIN_PER_PEER", "120") or 120
+        )
+        self._tx_rate_window_s = float(
+            os.environ.get("ANIMICA_P2P_TX_RATE_WINDOW_S", "60") or 60
+        )
+        self._getdata_inflight_by_peer: dict[str, Deque[float]] = {}
+        self._tx_inflight_by_peer: dict[str, Deque[float]] = {}
+        self._getdata_out_by_peer: dict[str, Deque[float]] = {}
         self._tx_inv_seed_limit = int(
             os.environ.get("ANIMICA_P2P_TX_INV_SEED_LIMIT", "256") or 256
         )
@@ -754,8 +782,15 @@ class P2PService:
             "peers": 0,
             "inv_tx_sent": 0,
             "inv_tx_recv": 0,
+            "tx_inv_dedup": 0,
+            "tx_getdata_sent": 0,
+            "tx_getdata_recv": 0,
+            "tx_getdata_rate_limited": 0,
+            "tx_getdata_skipped": 0,
             "tx_recv": 0,
             "tx_sent": 0,
+            "tx_sent_dedup": 0,
+            "tx_recv_rate_limited": 0,
             "inv_block_sent": 0,
             "inv_block_recv": 0,
             "blocks_sent": 0,
@@ -4624,6 +4659,13 @@ class P2PService:
     async def _handle_inv(self, peer: _PeerState, payload: bytes) -> None:
         data = self._decode_map(payload)
         items = data.get("items") or []
+        self._prune_ttl(self._tx_inv_seen, cap=self._tx_inv_seen_cap)
+        self._prune_requested()
+        if len(items) > self._max_inv_per_msg:
+            raise PeerMisbehavior(
+                "inv_oversized",
+                points=self._score_points["malformed_message"],
+            )
         inv_items: list[InvItem] = []
         for it in items:
             if isinstance(it, dict):
@@ -4634,23 +4676,61 @@ class P2PService:
         for it in inv.items:
             if int(it.typ) == int(InvType.TX):
                 self._stats["inv_tx_recv"] += 1
-                if await self._pending_get(bytes(it.h)) is None and not self._seen(
-                    self._seen_tx, bytes(it.h)
+                tx_hash = bytes(it.h)
+                if self._seen(self._tx_inv_seen, tx_hash):
+                    self._stats["tx_inv_dedup"] += 1
+                    continue
+                self._remember_ttl(
+                    self._tx_inv_seen, tx_hash, self._tx_inv_seen_cap, self._tx_relay_ttl_s
+                )
+                if self._requested_recently(tx_hash):
+                    self._stats["tx_getdata_skipped"] += 1
+                    continue
+                if await self._pending_get(tx_hash) is None and not self._seen(
+                    self._seen_tx, tx_hash
                 ):
-                    want.append(InvItem(typ=InvType.TX, h=bytes(it.h)))
+                    want.append(InvItem(typ=InvType.TX, h=tx_hash))
             elif int(it.typ) == int(InvType.BLOCK):
                 self._stats["inv_block_recv"] += 1
                 if not self._has_block(bytes(it.h)):
                     want.append(InvItem(typ=InvType.BLOCK, h=bytes(it.h)))
 
         if want:
-            await self._send(peer, MsgID.GETDATA, GetData(items=want))
-            if any(int(it.typ) == int(InvType.BLOCK) for it in want):
-                self._sync_wakeup.set()
+            tx_items = [it for it in want if int(it.typ) == int(InvType.TX)]
+            if tx_items:
+                if self._rate_limit(
+                    self._getdata_out_by_peer,
+                    peer.remote,
+                    self._max_getdata_per_min_per_peer,
+                    self._tx_rate_window_s,
+                ):
+                    self._stats["tx_getdata_rate_limited"] += 1
+                    log.warning(
+                        "getdata rate limited (outgoing)",
+                        extra={"peer": peer.remote, "count": len(tx_items)},
+                    )
+                    want = [it for it in want if int(it.typ) != int(InvType.TX)]
+                else:
+                    for it in tx_items:
+                        self._remember_requested(bytes(it.h), peer.remote)
+                    self._stats["tx_getdata_sent"] += len(tx_items)
+                    log.info(
+                        "getdata requested for tx inv",
+                        extra={"peer": peer.remote, "count": len(tx_items)},
+                    )
+            if want:
+                await self._send(peer, MsgID.GETDATA, GetData(items=want))
+                if any(int(it.typ) == int(InvType.BLOCK) for it in want):
+                    self._sync_wakeup.set()
 
     async def _handle_getdata(self, peer: _PeerState, payload: bytes) -> None:
         data = self._decode_map(payload)
         items = data.get("items") or []
+        if len(items) > self._max_inv_per_msg:
+            raise PeerMisbehavior(
+                "getdata_oversized",
+                points=self._score_points["malformed_message"],
+            )
         req_items: list[InvItem] = []
         for it in items:
             if isinstance(it, dict):
@@ -4661,8 +4741,38 @@ class P2PService:
         blocks: list[bytes] = []
         for it in req.items:
             if int(it.typ) == int(InvType.TX):
+                self._stats["tx_getdata_recv"] += 1
+                if self._rate_limit(
+                    self._getdata_inflight_by_peer,
+                    peer.remote,
+                    self._max_getdata_per_min_per_peer,
+                    self._tx_rate_window_s,
+                ):
+                    self._stats["tx_getdata_rate_limited"] += 1
+                    self._penalize_peer(
+                        peer,
+                        "getdata_rate_limited",
+                        points=self._score_points["malformed_message"],
+                        nonfatal=True,
+                    )
+                    log.warning(
+                        "getdata rate limited (incoming)",
+                        extra={"peer": peer.remote},
+                    )
+                    return
                 raw = await self._pending_get(bytes(it.h))
                 if raw:
+                    if len(raw) > self._max_tx_bytes:
+                        self._penalize_peer(
+                            peer,
+                            "getdata_tx_oversize",
+                            points=self._score_points["malformed_message"],
+                            nonfatal=True,
+                        )
+                        continue
+                    if self._sent_recently(peer.remote, bytes(it.h)):
+                        self._stats["tx_sent_dedup"] += 1
+                        continue
                     txs.append(raw)
             elif int(it.typ) == int(InvType.BLOCK):
                 rawb = self._get_block_raw(bytes(it.h))
@@ -4672,6 +4782,12 @@ class P2PService:
         for raw in txs:
             await self._send(peer, MsgID.TX, Tx(raw_cbor=raw))
             self._stats["tx_sent"] += 1
+            txh = hashlib.sha3_256(raw).digest()
+            self._remember_sent(peer.remote, txh)
+            log.info(
+                "tx delivered to peer",
+                extra={"peer": peer.remote, "tx_hash": txh.hex()},
+            )
 
         if blocks:
             # Chunk to avoid oversized frames.
@@ -4694,8 +4810,36 @@ class P2PService:
         raw = bytes(txm.raw_cbor)
         if not raw:
             return
-        if len(raw) > 512 * 1024:
-            raise ValueError("oversize tx")
+        if len(raw) > self._max_tx_bytes:
+            self._penalize_peer(
+                peer,
+                "tx_oversize",
+                points=self._score_points["malformed_message"],
+                nonfatal=True,
+            )
+            log.warning(
+                "oversized tx from peer",
+                extra={"peer": peer.remote, "size": len(raw)},
+            )
+            return
+        if self._rate_limit(
+            self._tx_inflight_by_peer,
+            peer.remote,
+            self._max_tx_per_min_per_peer,
+            self._tx_rate_window_s,
+        ):
+            self._stats["tx_recv_rate_limited"] += 1
+            self._penalize_peer(
+                peer,
+                "tx_rate_limited",
+                points=self._score_points["malformed_message"],
+                nonfatal=True,
+            )
+            log.warning(
+                "tx rate limited from peer",
+                extra={"peer": peer.remote},
+            )
+            return
 
         from core.utils.hash import sha3_256
 
@@ -4704,6 +4848,7 @@ class P2PService:
             return
         self._remember(self._seen_tx, txh, self._seen_tx_cap)
         self._stats["tx_recv"] += 1
+        self._tx_requested.pop(txh, None)
 
         ok, reason = await self._admit_tx_result(raw)
         if ok:
@@ -8895,6 +9040,87 @@ class P2PService:
     def _seen(self, table: "OrderedDict[bytes, float]", key: bytes) -> bool:
         return key in table
 
+    def _remember_ttl(
+        self, table: "OrderedDict[bytes, float]", key: bytes, cap: int, ttl_s: float
+    ) -> None:
+        expire_at = time.time() + ttl_s
+        table[key] = expire_at
+        table.move_to_end(key, last=True)
+        self._prune_ttl(table, cap=cap)
+
+    def _remember_requested(self, key: bytes, peer: str) -> None:
+        expire_at = time.time() + self._tx_relay_ttl_s
+        self._tx_requested[key] = (expire_at, peer)
+        self._tx_requested.move_to_end(key, last=True)
+        self._prune_requested()
+
+    def _requested_recently(self, key: bytes) -> bool:
+        now = time.time()
+        entry = self._tx_requested.get(key)
+        if entry is None:
+            return False
+        expire_at, _peer = entry
+        if expire_at <= now:
+            self._tx_requested.pop(key, None)
+            return False
+        return True
+
+    def _remember_sent(self, peer: str, key: bytes) -> None:
+        table = self._tx_sent_by_peer.setdefault(peer, OrderedDict())
+        expire_at = time.time() + self._tx_relay_ttl_s
+        table[key] = expire_at
+        table.move_to_end(key, last=True)
+        self._prune_ttl(table, cap=self._seen_tx_cap)
+
+    def _sent_recently(self, peer: str, key: bytes) -> bool:
+        table = self._tx_sent_by_peer.get(peer)
+        if table is None:
+            return False
+        now = time.time()
+        expire_at = table.get(key)
+        if expire_at is None:
+            return False
+        if expire_at <= now:
+            table.pop(key, None)
+            return False
+        return True
+
+    def _prune_ttl(
+        self, table: "OrderedDict[bytes, float]", *, cap: int
+    ) -> None:
+        now = time.time()
+        for k, exp in list(table.items()):
+            if exp <= now:
+                table.pop(k, None)
+            else:
+                break
+        while len(table) > cap:
+            table.popitem(last=False)
+
+    def _prune_requested(self) -> None:
+        now = time.time()
+        for k, (exp, _peer) in list(self._tx_requested.items()):
+            if exp <= now:
+                self._tx_requested.pop(k, None)
+            else:
+                break
+        while len(self._tx_requested) > self._tx_requested_cap:
+            self._tx_requested.popitem(last=False)
+
+    def _rate_limit(
+        self, table: dict[str, Deque[float]], peer_key: str, limit: int, window_s: float
+    ) -> bool:
+        if limit <= 0:
+            return False
+        now = time.time()
+        bucket = table.setdefault(peer_key, deque())
+        while bucket and now - bucket[0] > window_s:
+            bucket.popleft()
+        if len(bucket) >= limit:
+            return True
+        bucket.append(now)
+        return False
+
     # ---------------------------------------------------------------------
     # deps invocation helpers
     # ---------------------------------------------------------------------
@@ -8955,8 +9181,13 @@ class P2PService:
             peers = list(self._peers.values())[:max_peers]
         for peer in peers:
             with contextlib.suppress(Exception):
+                txh = hashlib.sha3_256(raw).digest()
+                if self._sent_recently(peer.remote, txh):
+                    self._stats["tx_sent_dedup"] += 1
+                    continue
                 await self._send(peer, MsgID.TX, Tx(raw_cbor=raw))
                 self._stats["tx_sent"] += 1
+                self._remember_sent(peer.remote, txh)
 
     async def _deps_call_import(self, payload: Any) -> Tuple[bool, Optional[str]]:
         if self.deps is None:
