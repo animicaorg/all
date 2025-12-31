@@ -604,9 +604,11 @@ def _normalize_tx_body(body: dict) -> dict:
     def _pad_addr(addr: t.Any) -> bytes:
         addr_bytes = _addr_to_bytes(addr) or b""
         if len(addr_bytes) < 32:
-            return addr_bytes.ljust(32, b"\x00")
+            return addr_bytes.rjust(32, b"\x00")
+        if len(addr_bytes) == 34:
+            return addr_bytes[2:34]
         if len(addr_bytes) > 32:
-            return addr_bytes[:32]
+            return addr_bytes[-32:]
         return addr_bytes
 
     return {
