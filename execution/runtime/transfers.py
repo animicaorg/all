@@ -33,6 +33,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, List, Mapping, Optional, Tuple
 
 from ..errors import OOG, ExecError, Revert
+from core.utils.address import AddressError, address_to_bytes
 from ..state.apply_balance import InsufficientBalance
 from ..types.events import LogEvent
 from ..types.result import ApplyResult
@@ -117,6 +118,22 @@ def _as_bytes(x: Any, *, expect_len: Optional[int] = None) -> bytes:
         elif len(out) < expect_len:
             out = out.rjust(expect_len, b"\x00")
     return out
+
+
+def _as_address_bytes(x: Any) -> bytes:
+    if x is None:
+        return b""
+    if isinstance(x, (bytes, bytearray)):
+        return bytes(x)
+    if isinstance(x, str):
+        s = x.strip()
+        if not s:
+            return b""
+        try:
+            return address_to_bytes(s)
+        except AddressError:
+            return b""
+    return _as_bytes(x, expect_len=None)
 
 
 # ------------------------------------------------------------------------------
@@ -345,7 +362,7 @@ def apply_transfer(
     """
     # Animica uses 32-byte addresses (not 20-byte EVM addresses)
     # Accept both 20-byte (for backwards compatibility) and 32-byte addresses
-    sender = _as_bytes(getattr(tx_env, "sender", None), expect_len=None)
+    sender = _as_address_bytes(getattr(tx_env, "sender", None))
     if len(sender) not in (20, 32):
         raise ExecError(f"TxEnv.sender must be 20 or 32 bytes, got {len(sender)}")
     # Pad 20-byte addresses to 32 bytes for Animica state DB
@@ -362,7 +379,7 @@ def apply_transfer(
             if payload is not None:
                 to = _get(payload, "to", "recipient")
     
-    to = _as_bytes(to, expect_len=None)
+    to = _as_address_bytes(to)
     
     # Check for empty or zero address before padding
     if len(to) == 0 or to == b"\x00" * len(to):
@@ -460,7 +477,7 @@ def apply_transfer(
     _set_balance(state, sender, new_sender_balance)
 
     # Tip → coinbase
-    coinbase = _as_bytes(getattr(block_env, "coinbase", b"\x00" * ADDRESS_LEN), expect_len=None)
+    coinbase = _as_address_bytes(getattr(block_env, "coinbase", b"\x00" * ADDRESS_LEN))
     # Pad 20-byte addresses to 32 bytes for Animica state DB
     if len(coinbase) == 20:
         coinbase = coinbase.rjust(ADDRESS_LEN, b"\x00")
@@ -473,7 +490,7 @@ def apply_transfer(
     if base_fee_part > 0:
         treasury = getattr(block_env, "treasury", None)
         if isinstance(treasury, (bytes, bytearray, str)):
-            t_addr = _as_bytes(treasury, expect_len=None)
+            t_addr = _as_address_bytes(treasury)
             # Pad 20-byte addresses to 32 bytes for Animica state DB
             if len(t_addr) == 20:
                 t_addr = t_addr.rjust(ADDRESS_LEN, b"\x00")
