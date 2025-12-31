@@ -209,11 +209,26 @@ def _sync_gate_tx_submit() -> None:
     synchronized = status.get("synchronized")
     head_height = int(status.get("head_height") or 0)
     best_header_height = int(status.get("best_header_height") or 0)
+    best_block_height = int(status.get("best_block_height") or 0)
+    pending_header_batches = int(status.get("pending_header_batches") or 0)
+    in_flight_headers = int(status.get("in_flight_headers") or 0)
+    in_flight_blocks = int(status.get("in_flight_blocks") or 0)
+    queued_blocks_count = int(status.get("queued_blocks_count") or 0)
 
     if synchronized is True:
         return
 
     if synchronized is None and phase in {"SYNCED", "IDLE"} and best_header_height <= head_height:
+        return
+
+    if (
+        best_header_height <= head_height
+        and best_block_height >= best_header_height
+        and pending_header_batches == 0
+        and in_flight_headers == 0
+        and in_flight_blocks == 0
+        and queued_blocks_count == 0
+    ):
         return
 
     raise rpc_errors.TemporarilyUnavailable(
