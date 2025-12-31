@@ -390,6 +390,16 @@ def _compute_sync_state(
     syncing = bool(metrics.get("syncing"))
     synchronized = bool(metrics.get("synchronized"))
     target_height = metrics.get("target_height")
+    phase_label = str(phase).lower() if phase is not None else ""
+
+    if phase_label in {"headers", "header", "syncing_headers"}:
+        return "SYNCING_HEADERS"
+    if phase_label in {"blocks", "syncing_blocks", "verifying"}:
+        return "SYNCING_BLOCKS"
+    if phase_label in {"syncing", "stalled"}:
+        return "SYNCING"
+    if phase_label in {"synced", "synchronized"}:
+        return "SYNCHRONIZED"
 
     if best_header_height is not None and best_block_height is not None and best_header_height > best_block_height:
         if phase and str(phase).lower() in {"headers", "header", "syncing_headers"}:
