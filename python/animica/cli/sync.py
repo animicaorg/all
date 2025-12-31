@@ -411,6 +411,17 @@ def _compute_sync_state(
             return "NEAR_TIP"
         return "SYNCING"
 
+    if target_height is not None:
+        delta = target_height - head_height
+        if delta <= 0:
+            return "SYNCHRONIZED"
+
+    for candidate_height in (best_header_height, best_block_height):
+        if candidate_height is not None:
+            delta = candidate_height - head_height
+            if delta <= 0:
+                return "SYNCHRONIZED"
+
     if synchronized:
         return "SYNCHRONIZED"
 
