@@ -915,20 +915,21 @@ def _gossip_tx_to_peers(raw_tx: bytes) -> None:
     try:
         ctx = deps.get_ctx()
         p2p_service = getattr(ctx, "p2p_service", None)
-        if p2p_service is None:
-            return
+        core_p2p_service = getattr(ctx, "core_p2p_service", None)
         loop = None
         running_loop = None
         try:
             running_loop = asyncio.get_running_loop()
             loop = running_loop
         except RuntimeError:
-            loop = getattr(p2p_service, "loop", None)
+            loop = getattr(p2p_service, "loop", None) if p2p_service is not None else None
 
-        if hasattr(p2p_service, "relay_tx") and callable(getattr(p2p_service, "relay_tx")):
-            if loop is None:
-                return
-            if loop.is_running():
+        did_relay = False
+
+        if p2p_service is not None and hasattr(p2p_service, "relay_tx") and callable(
+            getattr(p2p_service, "relay_tx")
+        ):
+            if loop is not None and loop.is_running():
                 try:
                     if running_loop is not None and loop is running_loop:
                         asyncio.ensure_future(p2p_service.relay_tx(raw_tx), loop=loop)  # type: ignore[call-arg]
@@ -937,47 +938,66 @@ def _gossip_tx_to_peers(raw_tx: bytes) -> None:
                             p2p_service.relay_tx(raw_tx), loop
                         )
                 except RuntimeError:
-                    return
-                return
-            return
+                    pass
+                else:
+                    did_relay = True
 
-        handler = getattr(p2p_service, "tx_relay_handler", None)
-        if handler is not None and hasattr(handler, "publish_local_tx"):
-            if loop is None or not loop.is_running():
+        handler = (
+            getattr(p2p_service, "tx_relay_handler", None) if p2p_service is not None else None
+        )
+        if not did_relay and handler is not None and hasattr(handler, "publish_local_tx"):
+            if loop is not None and loop.is_running():
+                try:
+                    if running_loop is not None and loop is running_loop:
+                        asyncio.ensure_future(handler.publish_local_tx(raw_tx), loop=loop)
+                    else:
+                        asyncio.run_coroutine_threadsafe(
+                            handler.publish_local_tx(raw_tx), loop
+                        )
+                except RuntimeError:
+                    pass
+                else:
+                    did_relay = True
+
+        gossip = getattr(p2p_service, "gossip", None) if p2p_service is not None else None
+        if not did_relay and gossip is not None and hasattr(gossip, "publish"):
+            try:
+                from p2p.gossip import topics as gossip_topics
+                chain_id = _chain_id_required()
+                topic_path = gossip_topics.txs(chain_id).path
+            except Exception:
+                topic_path = "txs"
+
+            if loop is not None and loop.is_running():
+                try:
+                    if running_loop is not None and loop is running_loop:
+                        asyncio.ensure_future(gossip.publish(topic_path, raw_tx), loop=loop)
+                    else:
+                        asyncio.run_coroutine_threadsafe(
+                            gossip.publish(topic_path, raw_tx), loop
+                        )
+                except RuntimeError:
+                    pass
+                else:
+                    did_relay = True
+
+        if not did_relay and core_p2p_service is not None:
+            core_loop = loop or getattr(core_p2p_service.connman, "loop", None)
+            if core_loop is None or not core_loop.is_running():
                 return
             try:
-                if running_loop is not None and loop is running_loop:
-                    asyncio.ensure_future(handler.publish_local_tx(raw_tx), loop=loop)
+                tx_hash = _sha3_256(raw_tx)
+                coro = core_p2p_service.net_processing.announce_tx(
+                    core_p2p_service.connman.peers().values(),
+                    tx_hash,
+                    core_p2p_service.connman._send,
+                )
+                if running_loop is not None and core_loop is running_loop:
+                    asyncio.ensure_future(coro, loop=core_loop)
                 else:
-                    asyncio.run_coroutine_threadsafe(
-                        handler.publish_local_tx(raw_tx), loop
-                    )
+                    asyncio.run_coroutine_threadsafe(coro, core_loop)
             except RuntimeError:
                 return
-            return
-
-        gossip = getattr(p2p_service, "gossip", None)
-        if gossip is None or not hasattr(gossip, "publish"):
-            return
-
-        try:
-            from p2p.gossip import topics as gossip_topics
-            chain_id = _chain_id_required()
-            topic_path = gossip_topics.txs(chain_id).path
-        except Exception:
-            topic_path = "txs"
-
-        if loop is None or not loop.is_running():
-            return
-        try:
-            if running_loop is not None and loop is running_loop:
-                asyncio.ensure_future(gossip.publish(topic_path, raw_tx), loop=loop)
-            else:
-                asyncio.run_coroutine_threadsafe(
-                    gossip.publish(topic_path, raw_tx), loop
-                )
-        except RuntimeError:
-            return
     except Exception:
         return
 

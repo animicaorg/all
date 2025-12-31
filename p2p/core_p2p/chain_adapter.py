@@ -77,6 +77,9 @@ class CoreChainAdapter:
         return bytes(block.to_cbor())
 
     def get_tx(self, tx_hash: bytes) -> Optional[bytes]:
+        raw = self.deps.get_tx_raw(tx_hash)
+        if raw is not None:
+            return raw
         tx = self.deps.tx_by_hash(tx_hash)
         if tx is None:
             return None
