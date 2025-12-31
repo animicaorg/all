@@ -671,8 +671,12 @@ class P2PService:
         self._tx_requested: "OrderedDict[bytes, tuple[float, str]]" = OrderedDict()
         self._tx_requested_cap = 50_000
         self._tx_sent_by_peer: dict[str, "OrderedDict[bytes, float]"] = {}
+        self._tx_inv_sent_by_peer: dict[str, "OrderedDict[bytes, float]"] = {}
         self._tx_relay_ttl_s = float(
             os.environ.get("ANIMICA_P2P_TX_RELAY_TTL_SECONDS", "120") or 120
+        )
+        self._tx_inv_reannounce_interval_s = float(
+            os.environ.get("ANIMICA_P2P_TX_REANNOUNCE_SEC", "15") or 15
         )
         self._max_tx_bytes = int(
             os.environ.get("ANIMICA_P2P_MAX_TX_BYTES", str(MAX_TX_BYTES))
@@ -1159,6 +1163,12 @@ class P2PService:
             self._load_banlist()
         else:
             self._banlist.clear()
+
+        if self._tx_inv_reannounce_interval_s > 0:
+            self._create_child_task(
+                self._pending_tx_rebroadcast_loop(),
+                name="p2p.pending_tx_rebroadcast",
+            )
 
         # Persist configured seeds so a restarted node reuses them immediately
         if self.seeds:
@@ -9025,6 +9035,49 @@ class P2PService:
         for i in range(0, len(items), batch_size):
             await self._send_inv(peer, items[i : i + batch_size], is_tx=True)
 
+    async def _pending_tx_rebroadcast_loop(self) -> None:
+        try:
+            while self._running:
+                try:
+                    await asyncio.sleep(self._tx_inv_reannounce_interval_s)
+                except asyncio.CancelledError:
+                    return
+                await self._rebroadcast_pending_txs()
+        except asyncio.CancelledError:
+            return
+
+    async def _rebroadcast_pending_txs(self) -> None:
+        if self.deps is None:
+            return
+        fn = getattr(self.deps, "list_pending_hashes", None)
+        if not callable(fn):
+            return
+        try:
+            hashes = fn(limit=self._tx_inv_seed_limit)
+            if asyncio.iscoroutine(hashes):
+                hashes = await hashes
+        except Exception:
+            return
+        if not hashes:
+            return
+        items: list[InvItem] = []
+        for h in hashes:
+            if isinstance(h, (bytes, bytearray)) and len(h) == 32:
+                items.append(InvItem(typ=InvType.TX, h=bytes(h)))
+        if not items:
+            return
+        batch_size = max(1, self._tx_inv_seed_batch)
+        async with self._peer_lock:
+            peers = list(self._peers.values())
+        for peer in peers:
+            unsent = [it for it in items if not self._inv_sent_recently(peer.remote, bytes(it.h))]
+            if not unsent:
+                continue
+            for i in range(0, len(unsent), batch_size):
+                await self._send_inv(peer, unsent[i : i + batch_size], is_tx=True)
+            for it in unsent:
+                self._remember_inv_sent(peer.remote, bytes(it.h))
+
     # ---------------------------------------------------------------------
     # Dedupe helpers
     # ---------------------------------------------------------------------
@@ -9074,6 +9127,26 @@ class P2PService:
 
     def _sent_recently(self, peer: str, key: bytes) -> bool:
         table = self._tx_sent_by_peer.get(peer)
+        if table is None:
+            return False
+        now = time.time()
+        expire_at = table.get(key)
+        if expire_at is None:
+            return False
+        if expire_at <= now:
+            table.pop(key, None)
+            return False
+        return True
+
+    def _remember_inv_sent(self, peer: str, key: bytes) -> None:
+        table = self._tx_inv_sent_by_peer.setdefault(peer, OrderedDict())
+        expire_at = time.time() + self._tx_relay_ttl_s
+        table[key] = expire_at
+        table.move_to_end(key, last=True)
+        self._prune_ttl(table, cap=self._tx_inv_seen_cap)
+
+    def _inv_sent_recently(self, peer: str, key: bytes) -> bool:
+        table = self._tx_inv_sent_by_peer.get(peer)
         if table is None:
             return False
         now = time.time()
