@@ -941,6 +941,10 @@ def _gossip_tx_to_peers(raw_tx: bytes) -> None:
                     pass
                 else:
                     did_relay = True
+                    log.info(
+                        "tx relay scheduled via p2p service",
+                        extra={"tx_hash": _sha3_256(raw_tx).hex()},
+                    )
 
         handler = (
             getattr(p2p_service, "tx_relay_handler", None) if p2p_service is not None else None
@@ -958,6 +962,10 @@ def _gossip_tx_to_peers(raw_tx: bytes) -> None:
                     pass
                 else:
                     did_relay = True
+                    log.info(
+                        "tx relay scheduled via tx handler",
+                        extra={"tx_hash": _sha3_256(raw_tx).hex()},
+                    )
 
         gossip = getattr(p2p_service, "gossip", None) if p2p_service is not None else None
         if not did_relay and gossip is not None and hasattr(gossip, "publish"):
@@ -980,6 +988,10 @@ def _gossip_tx_to_peers(raw_tx: bytes) -> None:
                     pass
                 else:
                     did_relay = True
+                    log.info(
+                        "tx relay scheduled via gossip publish",
+                        extra={"tx_hash": _sha3_256(raw_tx).hex()},
+                    )
 
         if not did_relay and core_p2p_service is not None:
             core_loop = loop or getattr(core_p2p_service.connman, "loop", None)
