@@ -894,20 +894,41 @@ def _gossip_tx_to_peers(raw_tx: bytes) -> None:
         p2p_service = getattr(ctx, "p2p_service", None)
         if p2p_service is None:
             return
+        loop = None
+        running_loop = None
+        try:
+            running_loop = asyncio.get_running_loop()
+            loop = running_loop
+        except RuntimeError:
+            loop = getattr(p2p_service, "loop", None)
 
         if hasattr(p2p_service, "relay_tx") and callable(getattr(p2p_service, "relay_tx")):
-            try:
-                loop = asyncio.get_running_loop()
-                asyncio.ensure_future(p2p_service.relay_tx(raw_tx), loop=loop)  # type: ignore[call-arg]
-            except RuntimeError:
+            if loop is None:
+                return
+            if loop.is_running():
+                try:
+                    if running_loop is not None and loop is running_loop:
+                        asyncio.ensure_future(p2p_service.relay_tx(raw_tx), loop=loop)  # type: ignore[call-arg]
+                    else:
+                        asyncio.run_coroutine_threadsafe(
+                            p2p_service.relay_tx(raw_tx), loop
+                        )
+                except RuntimeError:
+                    return
                 return
             return
 
         handler = getattr(p2p_service, "tx_relay_handler", None)
         if handler is not None and hasattr(handler, "publish_local_tx"):
+            if loop is None or not loop.is_running():
+                return
             try:
-                loop = asyncio.get_running_loop()
-                asyncio.ensure_future(handler.publish_local_tx(raw_tx), loop=loop)
+                if running_loop is not None and loop is running_loop:
+                    asyncio.ensure_future(handler.publish_local_tx(raw_tx), loop=loop)
+                else:
+                    asyncio.run_coroutine_threadsafe(
+                        handler.publish_local_tx(raw_tx), loop
+                    )
             except RuntimeError:
                 return
             return
@@ -923,9 +944,15 @@ def _gossip_tx_to_peers(raw_tx: bytes) -> None:
         except Exception:
             topic_path = "txs"
 
+        if loop is None or not loop.is_running():
+            return
         try:
-            loop = asyncio.get_running_loop()
-            asyncio.ensure_future(gossip.publish(topic_path, raw_tx), loop=loop)
+            if running_loop is not None and loop is running_loop:
+                asyncio.ensure_future(gossip.publish(topic_path, raw_tx), loop=loop)
+            else:
+                asyncio.run_coroutine_threadsafe(
+                    gossip.publish(topic_path, raw_tx), loop
+                )
         except RuntimeError:
             return
     except Exception:
