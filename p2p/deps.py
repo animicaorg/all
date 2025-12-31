@@ -930,55 +930,75 @@ class AsyncP2PDeps:
         self, sync: P2PDeps, executor: Optional[asyncio.AbstractEventLoop] = None
     ):
         self._sync = sync
-        self._loop = asyncio.get_event_loop()
+        self._loop = executor
+
+    def _executor_loop(self) -> asyncio.AbstractEventLoop:
+        try:
+            return asyncio.get_running_loop()
+        except RuntimeError:
+            if self._loop is not None:
+                return self._loop
+        raise RuntimeError("AsyncP2PDeps requires a running event loop")
 
     @property
     def chain_id(self) -> int:
         return self._sync.chain_id
 
     async def head(self) -> Tuple[int, "Header"]:
-        return await self._loop.run_in_executor(None, self._sync.head)
+        loop = self._executor_loop()
+        return await loop.run_in_executor(None, self._sync.head)
 
     async def header_locator(self, max_entries: int = 32) -> list[bytes]:
-        return await self._loop.run_in_executor(
+        loop = self._executor_loop()
+        return await loop.run_in_executor(
             None, self._sync.header_locator, max_entries
         )
 
     async def header_by_hash(self, h: bytes) -> Optional["Header"]:
-        return await self._loop.run_in_executor(None, self._sync.header_by_hash, h)
+        loop = self._executor_loop()
+        return await loop.run_in_executor(None, self._sync.header_by_hash, h)
 
     async def header_by_number(self, height: int) -> Optional["Header"]:
-        return await self._loop.run_in_executor(
+        loop = self._executor_loop()
+        return await loop.run_in_executor(
             None, self._sync.header_by_number, height
         )
 
     async def block_by_hash(self, h: bytes) -> Optional["Block"]:
-        return await self._loop.run_in_executor(None, self._sync.block_by_hash, h)
+        loop = self._executor_loop()
+        return await loop.run_in_executor(None, self._sync.block_by_hash, h)
 
     async def block_by_number(self, height: int) -> Optional["Block"]:
-        return await self._loop.run_in_executor(
+        loop = self._executor_loop()
+        return await loop.run_in_executor(
             None, self._sync.block_by_number, height
         )
 
     async def import_block(self, block: "Block") -> Tuple[bool, Optional[str]]:
-        return await self._loop.run_in_executor(None, self._sync.import_block, block)
+        loop = self._executor_loop()
+        return await loop.run_in_executor(None, self._sync.import_block, block)
 
     async def tx_by_hash(self, tx_hash: bytes) -> Optional["Tx"]:
-        return await self._loop.run_in_executor(None, self._sync.tx_by_hash, tx_hash)
+        loop = self._executor_loop()
+        return await loop.run_in_executor(None, self._sync.tx_by_hash, tx_hash)
 
     async def admit_tx(self, tx: "Tx") -> Tuple[bool, Optional[str]]:
-        return await self._loop.run_in_executor(None, self._sync.admit_tx, tx)
+        loop = self._executor_loop()
+        return await loop.run_in_executor(None, self._sync.admit_tx, tx)
 
     async def cheap_header_sanity(self, header: "Header") -> Tuple[bool, Optional[str]]:
-        return await self._loop.run_in_executor(
+        loop = self._executor_loop()
+        return await loop.run_in_executor(
             None, self._sync.cheap_header_sanity, header
         )
 
     async def get_tx_raw(self, tx_hash: bytes) -> Optional[bytes]:
-        return await self._loop.run_in_executor(None, self._sync.get_tx_raw, tx_hash)
+        loop = self._executor_loop()
+        return await loop.run_in_executor(None, self._sync.get_tx_raw, tx_hash)
 
     async def list_pending_hashes(self, limit: int = 512) -> list[bytes]:
-        return await self._loop.run_in_executor(None, self._sync.list_pending_hashes, limit)
+        loop = self._executor_loop()
+        return await loop.run_in_executor(None, self._sync.list_pending_hashes, limit)
 
 
 # --------------------------------------------------------------------------- #

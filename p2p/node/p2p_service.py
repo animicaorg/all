@@ -3391,10 +3391,28 @@ class P2PService:
         self._remember(self._seen_tx, txh, self._seen_tx_cap)
 
         # best-effort local admission
-        await self._deps_call("admit_tx", raw_cbor)
+        admitted, reason = await self._admit_tx_result(raw_cbor)
+        if admitted:
+            log.info("tx accepted for relay", extra={"tx_hash": txh.hex()})
+        else:
+            log.debug(
+                "tx relay admission failed",
+                extra={"tx_hash": txh.hex(), "reason": reason},
+            )
 
         await self._broadcast_inv(
             [InvItem(typ=InvType.TX, h=txh)], exclude_remote=None, is_tx=True
+        )
+
+        eager_limit = int(os.environ.get("ANIMICA_P2P_TX_EAGER_PUSH", "2") or 2)
+        if eager_limit > 0:
+            await self._eager_push_tx(raw_cbor, max_peers=eager_limit)
+
+        async with self._peer_lock:
+            peer_count = len(self._peers)
+        log.info(
+            "tx relay announced",
+            extra={"tx_hash": txh.hex(), "peers": peer_count},
         )
         return "0x" + txh.hex()
 
@@ -4684,10 +4702,19 @@ class P2PService:
         self._remember(self._seen_tx, txh, self._seen_tx_cap)
         self._stats["tx_recv"] += 1
 
-        ok = await self._deps_call_ok("admit_tx", raw)
+        ok, reason = await self._admit_tx_result(raw)
         if ok:
+            log.info(
+                "tx relay accepted from peer",
+                extra={"tx_hash": txh.hex(), "peer": peer.remote},
+            )
             await self._broadcast_inv(
                 [InvItem(typ=InvType.TX, h=txh)], exclude_remote=peer.remote, is_tx=True
+            )
+        else:
+            log.debug(
+                "tx relay rejected from peer",
+                extra={"tx_hash": txh.hex(), "peer": peer.remote, "reason": reason},
             )
 
     async def _handle_get_headers(self, peer: _PeerState, payload: bytes) -> None:
@@ -8898,6 +8925,35 @@ class P2PService:
         if isinstance(res, tuple) and res:
             return bool(res[0])
         return bool(res)
+
+    async def _admit_tx_result(self, raw: bytes) -> Tuple[bool, Optional[str]]:
+        if self.deps is None:
+            return False, "deps_missing"
+        fn = getattr(self.deps, "admit_tx", None)
+        if fn is None:
+            return False, "admit_unavailable"
+        try:
+            if asyncio.iscoroutinefunction(fn):
+                res = await fn(raw)
+            else:
+                res = fn(raw)
+        except Exception as exc:
+            return False, f"admit_error:{exc}"
+        if isinstance(res, tuple):
+            ok = bool(res[0]) if res else False
+            reason = res[1] if len(res) > 1 else None
+            return ok, reason
+        return bool(res), None
+
+    async def _eager_push_tx(self, raw: bytes, *, max_peers: int) -> None:
+        if max_peers <= 0:
+            return
+        async with self._peer_lock:
+            peers = list(self._peers.values())[:max_peers]
+        for peer in peers:
+            with contextlib.suppress(Exception):
+                await self._send(peer, MsgID.TX, Tx(raw_cbor=raw))
+                self._stats["tx_sent"] += 1
 
     async def _deps_call_import(self, payload: Any) -> Tuple[bool, Optional[str]]:
         if self.deps is None:
