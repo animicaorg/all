@@ -663,10 +663,26 @@ class MempoolService:
         entry = self.pool.index.get(tx_hash_bytes)
         if entry is None:
             return None
-        tx_obj = entry.tx
+
+        # Index entries can be either IndexEntry(tx=PoolTx, meta=TxMeta) or PoolTx.
+        raw = getattr(entry, "raw", None)
+        if isinstance(raw, (bytes, bytearray)):
+            return bytes(raw)
+
+        tx_obj = getattr(entry, "tx", entry)
         raw = getattr(tx_obj, "raw", None)
         if isinstance(raw, (bytes, bytearray)):
             return bytes(raw)
+        raw = getattr(tx_obj, "raw_cbor", None)
+        if isinstance(raw, (bytes, bytearray)):
+            return bytes(raw)
+        if hasattr(tx_obj, "to_cbor"):
+            try:
+                raw_bytes = tx_obj.to_cbor()
+            except Exception:
+                raw_bytes = None
+            if isinstance(raw_bytes, (bytes, bytearray)):
+                return bytes(raw_bytes)
         return None
 
     def list_pending(self, *, limit: int = 1000) -> list[str]:
