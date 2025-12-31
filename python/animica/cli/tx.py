@@ -368,6 +368,29 @@ def _warn_if_unsynced(rpc: str, *, threshold: int = 5) -> bool:
     return behind
 
 
+def _ensure_node_ready_for_tx(rpc: str) -> None:
+    try:
+        status = _rpc(rpc, "sync.getStatus", [])
+    except Exception:
+        return
+
+    if not isinstance(status, dict):
+        return
+
+    synchronized = status.get("synchronized")
+    phase = status.get("phase") or status.get("state")
+    phase_name = str(phase).upper() if phase is not None else ""
+
+    if synchronized is True or phase_name in {"SYNCED", "IDLE", "TARGET_REACHED"}:
+        return
+
+    if synchronized is False or phase_name:
+        console.print("\n[bold red]Node is still syncing; transaction submission is unavailable.[/bold red]")
+        console.print(Pretty(status))
+        console.print("\n[yellow]Tip:[/yellow] Wait for sync to complete or run `animica sync status`.")
+        raise typer.Exit(code=1)
+
+
 @app.command("send")
 def send(
     from_addr: str = typer.Option(..., "--from", help="Sender address (anim1...)"),
@@ -396,6 +419,7 @@ def send(
     # Resolve RPC
     rpc = _resolve_rpc_url(rpc_url)
     guard_bootstrap_rpc(rpc, allow_remote=allow_remote_rpc, method="tx.sendRawTransaction")
+    _ensure_node_ready_for_tx(rpc)
     _warn_if_unsynced(rpc)
 
     # Resolve chain identity
@@ -531,6 +555,12 @@ def send(
         # Handle insufficient funds error with user-friendly formatting
         if e.code == -32013:  # AnimicaCode.INSUFFICIENT_FUNDS
             _format_insufficient_funds_error(e)
+            raise typer.Exit(code=1)
+        if e.code == -32002:
+            console.print("\n[bold red]Node is still syncing; transaction submission is unavailable.[/bold red]")
+            if e.data is not None:
+                console.print(Pretty(e.data))
+            console.print("\n[yellow]Tip:[/yellow] Wait for sync to complete or run `animica sync status`.")
             raise typer.Exit(code=1)
         # Some nodes use alternate method naming
         if e.code in (-32601,):
