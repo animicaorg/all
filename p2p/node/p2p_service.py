@@ -2364,10 +2364,11 @@ class P2PService:
             bootstrap_last_error=self._last_bootstrap_error,
         )
 
-    def sync_status_snapshot(self) -> SyncStatusSnapshot:
+    def sync_status_snapshot(self, *, refresh: bool = False) -> SyncStatusSnapshot:
         now = time.time()
         if (
-            self._sync_status_cache is not None
+            not refresh
+            and self._sync_status_cache is not None
             and self._sync_status_cache_interval > 0
             and (now - self._sync_status_cache_at) < self._sync_status_cache_interval
         ):
@@ -2486,6 +2487,8 @@ class P2PService:
             sync_enabled=self._sync_enabled,
             sync_requested=self._sync_requested,
         )
+        if synchronized and phase != "SYNCED":
+            phase = "SYNCED"
         if phase != self._sync_last_phase_reported:
             log.info(
                 "Sync phase transition",
