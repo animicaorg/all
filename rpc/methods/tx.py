@@ -179,7 +179,7 @@ def _record_reorged_txs(tx_hashes: t.Iterable[bytes | str]) -> None:
             hex_str = str(h)
             if not hex_str.startswith("0x"):
                 hex_str = "0x" + hex_str
-        _REORGED_TXS[hex_str.lower()] = now
+    _REORGED_TXS[hex_str.lower()] = now
 
 
 def _error_data(kind: str, exc: BaseException, where: str, hint: str) -> dict:
@@ -187,6 +187,42 @@ def _error_data(kind: str, exc: BaseException, where: str, hint: str) -> dict:
     if _RPC_DEBUG:
         data["stack"] = "".join(traceback.format_exception(exc)).strip()
     return data
+
+
+def _sync_gate_tx_submit() -> None:
+    try:
+        ctx = deps.get_ctx()
+    except Exception:
+        return
+
+    svc = getattr(ctx, "p2p_service", None) or getattr(ctx, "core_p2p_service", None)
+    if svc is None or not hasattr(svc, "sync_status_snapshot"):
+        return
+
+    try:
+        snap = svc.sync_status_snapshot()
+        status = snap.to_dict() if hasattr(snap, "to_dict") else t.cast(dict[str, t.Any], snap)
+    except Exception:
+        return
+
+    phase = str(status.get("phase") or "").upper()
+    synchronized = status.get("synchronized")
+    head_height = int(status.get("head_height") or 0)
+    best_header_height = int(status.get("best_header_height") or 0)
+
+    if synchronized is True:
+        return
+
+    if synchronized is None and phase in {"SYNCED", "IDLE"} and best_header_height <= head_height:
+        return
+
+    raise rpc_errors.TemporarilyUnavailable(
+        "Node is still syncing; transaction submission is unavailable",
+        phase=phase.lower() if phase else None,
+        head_height=head_height,
+        best_header_height=best_header_height,
+        hint="Wait for sync to reach synced state before resubmitting.",
+    )
 
 
 def _extract_sender_address(obj: dict) -> str | None:
@@ -1032,6 +1068,8 @@ def _tx_send_raw_transaction(rawTx: str) -> str:
     tx_hash_hex = _hex(_sha3_256(raw)) or ""
     if not tx_hash_hex:
         raise rpc_errors.InternalError("Failed to compute tx hash")
+
+    _sync_gate_tx_submit()
 
     # optional balance check
     _validate_sufficient_balance(obj)
