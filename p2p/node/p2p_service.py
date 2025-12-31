@@ -695,12 +695,12 @@ class P2PService:
         self._addr_peer_known_ttl = float(
             os.environ.get("ANIMICA_P2P_ADDR_KNOWN_TTL", "600") or 600
         )
-        self._allow_self_peers = os.environ.get("ANIMICA_P2P_ALLOW_SELF_PEER", "").strip().lower() in {
-            "1",
-            "true",
-            "yes",
-            "on",
-        }
+        self._allow_self_peers = (
+            os.environ.get("ANIMICA_P2P_ALLOW_SELF_PEER", "").strip().lower()
+            in {"1", "true", "yes", "on"}
+            or os.environ.get("ANIMICA_P2P_PRIVATE_NETWORK", "").strip().lower()
+            in {"1", "true", "yes", "on"}
+        )
         self._peer_addr_rate_limit = int(
             os.environ.get("ANIMICA_P2P_ADDR_RATE_LIMIT", "256") or 256
         )
