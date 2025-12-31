@@ -526,30 +526,7 @@ def _maybe_bootstrap_genesis(
                 need_boot = True
 
         if not need_boot:
-            if genesis_path is None:
-                genesis_loader = _import("core.genesis.genesis_loader")
-                genesis_path = genesis_loader.resolve_genesis_path(None)
-            loader = _import("core.genesis.loader")
-            head_mod = _import("core.chain.head")
-            if hasattr(loader, "load_genesis") and hasattr(head_mod, "finalize_genesis"):
-                params, header = loader.load_genesis(
-                    genesis_path, kv=bundle.kv, block_db=bundle.block_db, log=False
-                )
-                try:
-                    loader = _import("core.genesis.loader")
-                    identity = loader.compute_genesis_identity(genesis_path)
-                    genesis_sha256 = identity.genesis_file_hash
-                except Exception:
-                    genesis_sha256 = None
-                head_mod.finalize_genesis(  # type: ignore[arg-type]
-                    bundle.block_db,
-                    params,
-                    header,
-                    genesis_sha256=genesis_sha256,
-                    genesis_path=str(genesis_path),
-                    created_at=int(time.time()),
-                )
-            # DB already has a head; do not reinitialize
+            # DB already has a head; do not reinitialize or reseed state.
             return
 
         if genesis_path is None:
