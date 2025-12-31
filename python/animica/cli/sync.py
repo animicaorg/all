@@ -10,6 +10,8 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -326,6 +328,48 @@ def _sync_diagnostics_lines(sync_status: Optional[Dict[str, Any]]) -> list[str]:
     if last_error:
         lines.append(f"  last_header_error: {last_error}")
     return lines
+
+
+def _should_force_sync_in_background(sync_status: Optional[Dict[str, Any]]) -> bool:
+    if not isinstance(sync_status, dict):
+        return False
+    stall_timeout = sync_status.get("stall_timeout_s")
+    stall_elapsed = sync_status.get("stall_elapsed_s")
+    if not isinstance(stall_timeout, (int, float)) or stall_timeout <= 0:
+        return False
+    if not isinstance(stall_elapsed, (int, float)):
+        return False
+    return stall_elapsed >= stall_timeout
+
+
+def _run_force_sync_background(
+    *,
+    rpc_url: str,
+    bootstrap_url: Optional[str],
+    allow_bootstrap_rpc: bool,
+    quiet: bool = False,
+) -> None:
+    cmd = [sys.executable, "-m", "animica.cli", "sync", "force", "--rpc-url", rpc_url, "--no-follow"]
+    if allow_bootstrap_rpc and bootstrap_url:
+        cmd += ["--bootstrap-rpc", bootstrap_url, "--allow-bootstrap-rpc"]
+    try:
+        subprocess.Popen(
+            cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        if not quiet:
+            typer.secho(
+                "⏳ Sync appears stalled; launched background 'animica sync force'.",
+                fg=typer.colors.YELLOW,
+            )
+    except Exception as exc:
+        if not quiet:
+            typer.secho(
+                f"⚠ Unable to start background sync force: {exc}",
+                fg=typer.colors.YELLOW,
+            )
 
 
 def _compute_sync_state(
@@ -1052,6 +1096,14 @@ def sync_status(
         peer_count = len(peers)
     elif p2p_status:
         peer_count = p2p_status.get("peers_total")
+
+    if _should_force_sync_in_background(sync_status):
+        _run_force_sync_background(
+            rpc_url=url,
+            bootstrap_url=bootstrap_url,
+            allow_bootstrap_rpc=allow_bootstrap_rpc,
+            quiet=json_output,
+        )
     
     # JSON output
     peer_error_msg = None
