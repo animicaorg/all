@@ -666,6 +666,12 @@ class P2PService:
         self._seen_blocks: "OrderedDict[bytes, float]" = OrderedDict()
         self._seen_tx_cap = 50_000
         self._seen_block_cap = 10_000
+        self._tx_inv_seed_limit = int(
+            os.environ.get("ANIMICA_P2P_TX_INV_SEED_LIMIT", "256") or 256
+        )
+        self._tx_inv_seed_batch = int(
+            os.environ.get("ANIMICA_P2P_TX_INV_SEED_BATCH", "128") or 128
+        )
         self._addr_peer_known_ttl = float(
             os.environ.get("ANIMICA_P2P_ADDR_KNOWN_TTL", "600") or 600
         )
@@ -4478,6 +4484,10 @@ class P2PService:
 
         await self._send(peer, MsgID.HELLO_ACK, HelloAck(accepted=True, reason=None))
         self._sync_wakeup.set()
+        self._create_child_task(
+            self._announce_pending_txs(peer),
+            name=f"p2p.announce_pending_txs@{peer.remote}",
+        )
         self._create_child_task(
             self._maybe_announce_headers_on_hello(
                 peer,
@@ -8794,7 +8804,6 @@ class P2PService:
     ) -> None:
         if not items:
             return
-        inv = Inv(items=items)
 
         async with self._peer_lock:
             peers = list(self._peers.values())
@@ -8802,12 +8811,44 @@ class P2PService:
         for p in peers:
             if exclude_remote and p.remote == exclude_remote:
                 continue
-            with contextlib.suppress(Exception):
-                await self._send(p, MsgID.INV, inv)
-                if is_tx:
-                    self._stats["inv_tx_sent"] += len(items)
-                else:
-                    self._stats["inv_block_sent"] += len(items)
+            await self._send_inv(p, items, is_tx=is_tx)
+
+    async def _send_inv(
+        self, peer: _PeerState, items: list[InvItem], *, is_tx: bool
+    ) -> None:
+        if not items:
+            return
+        inv = Inv(items=items)
+        with contextlib.suppress(Exception):
+            await self._send(peer, MsgID.INV, inv)
+            if is_tx:
+                self._stats["inv_tx_sent"] += len(items)
+            else:
+                self._stats["inv_block_sent"] += len(items)
+
+    async def _announce_pending_txs(self, peer: _PeerState) -> None:
+        if self.deps is None:
+            return
+        fn = getattr(self.deps, "list_pending_hashes", None)
+        if not callable(fn):
+            return
+        try:
+            hashes = fn(limit=self._tx_inv_seed_limit)
+            if asyncio.iscoroutine(hashes):
+                hashes = await hashes
+        except Exception:
+            return
+        if not hashes:
+            return
+        items: list[InvItem] = []
+        for h in hashes:
+            if isinstance(h, (bytes, bytearray)) and len(h) == 32:
+                items.append(InvItem(typ=InvType.TX, h=bytes(h)))
+        if not items:
+            return
+        batch_size = max(1, self._tx_inv_seed_batch)
+        for i in range(0, len(items), batch_size):
+            await self._send_inv(peer, items[i : i + batch_size], is_tx=True)
 
     # ---------------------------------------------------------------------
     # Dedupe helpers
