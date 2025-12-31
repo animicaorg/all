@@ -554,24 +554,46 @@ def _extract_sync_progress(
 ) -> tuple[Optional[int], Optional[int], Optional[float]]:
     current_height: Optional[int] = None
     target_height: Optional[int] = None
+    is_syncing: Optional[bool] = None
+    synchronized: Optional[bool] = None
 
     if isinstance(sync_status, dict):
-        current_height = _coerce_int(
-            sync_status.get("currentBlock")
-            or sync_status.get("current_block")
-            or sync_status.get("height")
-            or sync_status.get("best_block_height")
-            or sync_status.get("bestBlockHeight")
-            or sync_status.get("best_block")
-        )
-        target_height = _coerce_int(
-            sync_status.get("highestBlock")
-            or sync_status.get("targetHeight")
-            or sync_status.get("target_height")
-            or sync_status.get("best_header_height")
-            or sync_status.get("bestHeaderHeight")
-            or sync_status.get("best_header")
-        )
+        sync_flag = sync_status.get("syncing")
+        if isinstance(sync_flag, dict):
+            is_syncing = True
+        elif isinstance(sync_flag, bool):
+            is_syncing = sync_flag
+
+        synchronized = sync_status.get("synchronized")
+        phase = str(sync_status.get("phase") or "").upper()
+        if synchronized is None and phase:
+            if phase in {"SYNCED", "IDLE", "TARGET_REACHED"}:
+                synchronized = True
+            elif phase in {"HEADERS", "BLOCKS", "SYNCING"}:
+                synchronized = False
+
+        current_candidates = [
+            _coerce_int(sync_status.get("best_block_height")),
+            _coerce_int(sync_status.get("bestBlockHeight")),
+            _coerce_int(sync_status.get("best_block")),
+            _coerce_int(sync_status.get("currentBlock")),
+            _coerce_int(sync_status.get("current_block")),
+            _coerce_int(sync_status.get("height")),
+            _coerce_int(sync_status.get("head_height")),
+            _coerce_int(sync_status.get("headHeight")),
+        ]
+        current_height = max((v for v in current_candidates if v is not None), default=None)
+
+        target_candidates = [
+            _coerce_int(sync_status.get("target_height")),
+            _coerce_int(sync_status.get("targetHeight")),
+            _coerce_int(sync_status.get("highestBlock")),
+            _coerce_int(sync_status.get("best_header_height")),
+            _coerce_int(sync_status.get("bestHeaderHeight")),
+            _coerce_int(sync_status.get("best_header")),
+            _coerce_int(sync_status.get("network_best_height")),
+        ]
+        target_height = max((v for v in target_candidates if v is not None), default=None)
 
     if current_height is None:
         current_height = head_height
@@ -583,6 +605,9 @@ def _extract_sync_progress(
 
     pct = (current_height / target_height) * 100
     pct = max(0.0, min(100.0, pct))
+    if pct >= 100.0 and synchronized is not True:
+        if is_syncing is True or synchronized is False:
+            pct = 99.9
     return current_height, target_height, pct
 
 

@@ -475,6 +475,17 @@ def test_status_rpc_url_flag_overrides_env(monkeypatch: Any, tmp_path: Path) -> 
     assert f"RPC URL: {cli_url}" in result.output
 
 
+def test_sync_progress_does_not_report_full_when_syncing() -> None:
+    current, target, pct = node._extract_sync_progress(
+        {"best_block_height": 100, "best_header_height": 100, "syncing": True},
+        head_height=100,
+        fallback_target=None,
+    )
+    assert current == 100
+    assert target == 100
+    assert pct is not None and pct < 100
+
+
 def test_status_cached_requires_flag(monkeypatch: Any, tmp_path: Path) -> None:
     cfg = _dummy_net_cfg(tmp_path)
     monkeypatch.setattr(node, "load_network_config", lambda *args, **kwargs: cfg)
