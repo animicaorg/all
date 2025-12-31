@@ -806,6 +806,7 @@ class P2PService:
         self._allow_private_addrs = os.environ.get(
             "ANIMICA_P2P_PRIVATE_NETWORK", "false"
         ).lower() in ("1", "true", "yes", "on")
+        self._maybe_enable_private_from_config()
         self._external_ip = os.environ.get("ANIMICA_P2P_EXTERNAL_IP")
         self._external_ip_endpoint = (
             os.environ.get("ANIMICA_P2P_EXTERNAL_IP_ENDPOINT")
@@ -2793,6 +2794,54 @@ class P2PService:
                 return int(remote.rsplit(":", 1)[1])
         return None
 
+    def _host_is_private(self, host: str) -> bool:
+        if not host:
+            return False
+        if host.lower() == "localhost":
+            return True
+        try:
+            ip_obj = ipaddress.ip_address(host)
+        except ValueError:
+            return False
+        return bool(
+            ip_obj.is_private
+            or ip_obj.is_loopback
+            or ip_obj.is_link_local
+            or ip_obj.is_reserved
+        )
+
+    def _maybe_enable_private_network(self, host: str, *, reason: str) -> None:
+        if self._allow_private_addrs:
+            return
+        if not self._host_is_private(host):
+            return
+        self._allow_private_addrs = True
+        log.info(
+            "Enabling private network address sharing (%s)",
+            reason,
+            extra={"host": host},
+        )
+
+    def _maybe_enable_private_from_config(self) -> None:
+        if self._allow_private_addrs:
+            return
+        for addr in self.listen_addrs:
+            try:
+                parsed = parse_multiaddr(addr)
+            except Exception:
+                continue
+            if parsed.host:
+                self._maybe_enable_private_network(
+                    parsed.host, reason="listen_addr"
+                )
+                if self._allow_private_addrs:
+                    return
+        for addr in self.seeds:
+            host = self._extract_host(addr)
+            self._maybe_enable_private_network(host, reason="seed_addr")
+            if self._allow_private_addrs:
+                return
+
     def _netgroup_key(self, remote: str) -> str:
         host = self._extract_host(remote)
         try:
@@ -4276,6 +4325,7 @@ class P2PService:
             raise PeerMisbehavior("banned", points=0)
         remote_host = self._extract_host(peer.remote)
         remote_port = self._extract_port(peer.remote) or 0
+        self._maybe_enable_private_network(remote_host, reason="connected_peer")
         if self._is_self_address(remote_host, remote_port):
             await self._send(
                 peer,
