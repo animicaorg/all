@@ -11,11 +11,12 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass
-from typing import Iterable
+from typing import Any, Iterable
 
 from rpc.methods import method
 from rpc import deps
 from mempool.select import PendingTxEntry, select_for_block
+from mempool.types import EffectiveFee
 from core.types.tx import Tx
 from core.utils.tx import TxNormalizationError, normalize_tx
 
@@ -95,27 +96,119 @@ def _iter_pending() -> Iterable[tuple[str, bytes, float | None]]:
     return ((h, raw, ts_cache.get(h)) for h, raw in cache.items())
 
 
+def _format_sender(sender: Any) -> str | None:
+    if sender is None:
+        return None
+    if isinstance(sender, (bytes, bytearray)):
+        return "0x" + bytes(sender).hex()
+    if isinstance(sender, str):
+        if sender.startswith("0x"):
+            return sender
+        if all(c in "0123456789abcdefABCDEF" for c in sender):
+            return "0x" + sender
+        return sender
+    return str(sender)
+
+
+def _hash_hex_to_bytes(hash_hex: str) -> bytes | None:
+    text = hash_hex[2:] if hash_hex.startswith("0x") else hash_hex
+    try:
+        return bytes.fromhex(text)
+    except Exception:
+        return None
+
+
+def _entry_details(
+    *,
+    entry: PendingTxEntry,
+    raw: bytes,
+    meta: Any | None,
+    diagnostics: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    sender = getattr(meta, "sender", None) or getattr(entry.tx, "sender", None)
+    nonce = getattr(meta, "nonce", None) or getattr(entry.tx, "nonce", None)
+    fee = getattr(meta, "effective_fee_wei", None)
+    if fee is None:
+        try:
+            if entry.tx is not None:
+                fee = int(EffectiveFee.from_tx(entry.tx).effective_gas_price(None))
+        except Exception:
+            fee = None
+    size = getattr(meta, "size_bytes", None)
+    if size is None:
+        try:
+            size = len(raw)
+        except Exception:
+            size = None
+    received_at = entry.received_at or getattr(meta, "first_seen", None)
+    origin_peer = None
+    if meta is not None and hasattr(meta, "local"):
+        origin_peer = "local" if bool(getattr(meta, "local")) else "p2p"
+
+    diag = diagnostics.get(entry.hash_hex, {})
+    return {
+        "hash": entry.hash_hex,
+        "from": _format_sender(sender),
+        "nonce": int(nonce) if nonce is not None else None,
+        "fee": fee,
+        "received_at": received_at,
+        "origin_peer": origin_peer,
+        "size": size,
+        "status": diag.get("status", "unknown"),
+        "reason": diag.get("reason"),
+    }
+
+
 @method(
     "mempool.getPending",
     desc="List pending transaction hashes currently held by the node.",
     aliases=("mempool_pending",),
 )
 def mempool_get_pending(verbose: bool | None = None) -> list[str] | list[dict]:
-    pending_hashes = [h for h, _raw, _ts in _iter_pending()]
+    try:
+        ctx = deps.get_ctx()
+    except Exception:
+        ctx = None
+    mempool_service = getattr(ctx, "mempool", None) if ctx is not None else None
+    if mempool_service is not None:
+        snapshot = mempool_service.snapshot(limit=1000)
+        pending_hashes = [entry.hash_hex for entry in snapshot.entries]
+        pending_hashes.sort()
+        if not verbose:
+            return pending_hashes
+        diagnostics = mempool_service.diagnose(limit=len(pending_hashes) + 1)
+        details: list[dict] = []
+        pool = getattr(mempool_service, "pool", None)
+        for entry in snapshot.entries:
+            meta = None
+            if pool is not None:
+                hash_bytes = _hash_hex_to_bytes(entry.hash_hex)
+                if hash_bytes is not None:
+                    pool_entry = pool.index.get(hash_bytes)
+                    meta = getattr(pool_entry, "meta", None) if pool_entry else None
+            details.append(
+                _entry_details(
+                    entry=entry,
+                    raw=entry.raw,
+                    meta=meta,
+                    diagnostics=diagnostics,
+                )
+            )
+        return details
+
+    pending_items = list(_iter_pending())
+    pending_hashes = [h for h, _raw, _ts in pending_items]
     pending_hashes.sort()
     if not verbose:
         return pending_hashes
-    ctx = deps.get_ctx()
-    mempool_service = getattr(ctx, "mempool", None)
-    diagnostics = mempool_service.diagnose(limit=len(pending_hashes) + 1) if mempool_service else {}
-    return [
-        {
-            "hash": h,
-            "status": diagnostics.get(h, {}).get("status", "unknown"),
-            "reason": diagnostics.get(h, {}).get("reason"),
-        }
-        for h in pending_hashes
-    ]
+    diagnostics: dict[str, dict[str, Any]] = {}
+    details = []
+    for h, raw, ts in pending_items:
+        entry = PendingTxEntry(hash_hex=h, raw=raw, tx=None, received_at=ts, expires_at=None)
+        details.append(
+            _entry_details(entry=entry, raw=raw, meta=None, diagnostics=diagnostics)
+        )
+    return details
 
 
 @method(
