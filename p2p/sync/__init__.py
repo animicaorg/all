@@ -28,8 +28,8 @@ from typing import Optional, Tuple
 Hash = bytes
 Height = int
 
-DEFAULT_MAX_IN_FLIGHT: int = 64
-DEFAULT_REQUEST_TIMEOUT_SEC: float = 10.0
+DEFAULT_MAX_IN_FLIGHT: int = 256
+DEFAULT_REQUEST_TIMEOUT_SEC: float = 6.0
 DEFAULT_MAX_REORG_DEPTH: int = 96
 
 
