@@ -766,7 +766,10 @@ class P2PDeps:
         """
         try:
             try:
-                raw_cbor = normalize_tx_bytes(tx)
+                if not isinstance(tx, (bytes, bytearray)) and hasattr(tx, "to_cbor"):
+                    raw_cbor = tx.to_cbor()
+                else:
+                    raw_cbor = normalize_tx_bytes(tx)
             except Exception as e:
                 return False, f"normalize_failed:{e}"
 
