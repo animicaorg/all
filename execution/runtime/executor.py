@@ -134,6 +134,14 @@ def apply_tx(
     Returns:
         ApplyResult for the transaction.
     """
+    if tx_env is None:
+        try:
+            from .env import make_tx_env  # lazy import to avoid cycles
+
+            tx_env = make_tx_env(tx, block_env)
+        except Exception:
+            tx_env = None
+
     # Preferred path: delegate to dispatcher (module-local import above)
     if _dispatch_apply_tx is not None:
         return _dispatch_apply_tx(tx, state, block_env, params=params, tx_env=tx_env)  # type: ignore[misc]
