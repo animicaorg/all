@@ -368,6 +368,49 @@ def _warn_if_unsynced(rpc: str, *, threshold: int = 5) -> bool:
     return behind
 
 
+def _should_force_sync(status: dict) -> bool:
+    phase = status.get("phase") or status.get("state")
+    phase_name = str(phase).upper() if phase is not None else ""
+
+    if status.get("synchronized") is True:
+        return False
+
+    if status.get("syncing") is True:
+        return True
+
+    if phase_name in {"HEADERS", "SYNCING_HEADERS", "BLOCKS", "SYNCING_BLOCKS", "BOOTSTRAP", "SYNCING"}:
+        return True
+
+    return False
+
+
+def _maybe_force_sync(rpc: str, *, verbose: bool = False) -> None:
+    try:
+        status = _rpc(rpc, "sync.getStatus", [])
+    except Exception:
+        return
+
+    if not isinstance(status, dict):
+        return
+
+    if not _should_force_sync(status):
+        return
+
+    try:
+        _rpc(rpc, "sync.force", [])
+        console.print("[yellow]Info:[/yellow] Triggered sync.force after transaction submission.")
+    except RpcError as e:
+        if e.code in (-32601,):
+            if verbose:
+                console.print("[dim]sync.force not supported by this node.[/dim]")
+            return
+        if verbose:
+            console.print(f"[dim]sync.force failed (code={e.code}): {e.message}[/dim]")
+    except Exception as exc:
+        if verbose:
+            console.print(f"[dim]sync.force failed: {exc}[/dim]")
+
+
 def _ensure_node_ready_for_tx(rpc: str) -> None:
     try:
         status = _rpc(rpc, "sync.getStatus", [])
@@ -607,6 +650,8 @@ def send(
         else:
             _format_rpc_error(e)
             raise typer.Exit(code=1) from e
+
+    _maybe_force_sync(rpc, verbose=verbose)
 
     # Verify tx is actually in mempool
     tx_in_mempool = False
