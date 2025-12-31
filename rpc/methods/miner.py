@@ -1904,7 +1904,7 @@ def _execute_transactions(
     # Import execution runtime modules once at function level
     try:
         from execution.runtime.transfers import apply_transfer
-        from execution.runtime.env import TxEnv
+        from execution.runtime.env import make_tx_env
     except ImportError:
         # If execution runtime is not available, return empty receipts
         logger.warning("execution.runtime not available; cannot execute transactions")
@@ -1975,12 +1975,10 @@ def _execute_transactions(
             if gas_price == 1:
                 gas_price = getattr(tx, "gas_price", getattr(tx, "gasPrice", getattr(tx, "tip", 1)))
             
-            # Extract chain_id from block_env (handles both camelCase and snake_case)
-            chain_id = getattr(block_env, "chain_id", getattr(block_env, "chainId", 0))
-            
-            tx_env = TxEnv(
+            tx_env = make_tx_env(
+                tx,
+                block_env,
                 sender=sender_bytes,
-                chain_id=chain_id,
                 nonce=int(nonce),
                 gas_price=int(gas_price),
             )
