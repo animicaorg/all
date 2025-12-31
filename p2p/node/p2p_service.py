@@ -1077,6 +1077,7 @@ class P2PService:
                 return int(self._svc._stats.get("peers", 0))
 
         self.metrics = _Metrics(self)
+        self.loop: Optional[asyncio.AbstractEventLoop] = None
 
     # ---------------------------------------------------------------------
     # Lifecycle
@@ -1101,6 +1102,8 @@ class P2PService:
     async def start(self) -> None:
         if self._running:
             return
+        if self.loop is None:
+            self.loop = asyncio.get_running_loop()
         self._running = True
         self._sync_paused = False
         await self._maybe_detect_external_ip()
