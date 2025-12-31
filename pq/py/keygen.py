@@ -15,9 +15,13 @@ except Exception:  # pragma: no cover - handled by runtime fallback
     _HAS_OQS = False
 
 from pq.py.address import address_from_pubkey  # type: ignore
-
-
-DILITHIUM3_ID = 0x1001  # 4097
+from pq.py.registry import (  # type: ignore
+    normalize_alg_name,
+    name_of,
+    id_of,
+    DILITHIUM3_ID,
+    SPHINCS_SHAKE_128S_ID,
+)
 
 
 @dataclass(frozen=True)
@@ -60,14 +64,14 @@ def _pick_sig_mech(alg_name: str) -> str:
 
 def _normalize_alg(alg: Union[int, str, Any]) -> Tuple[int, str]:
     if isinstance(alg, int):
-        if alg == DILITHIUM3_ID:
-            return DILITHIUM3_ID, "dilithium3"
+        if alg in (DILITHIUM3_ID, SPHINCS_SHAKE_128S_ID):
+            return alg, name_of(alg)
         raise NotImplementedError(f"Unknown alg id: 0x{alg:04x}")
 
     if isinstance(alg, str):
-        name = alg.lower().strip()
-        if name in ("dilithium3", "ml-dsa-65", "mldsa65"):
-            return DILITHIUM3_ID, "dilithium3"
+        name = normalize_alg_name(alg)
+        if name in ("dilithium3", "sphincs_shake_128s"):
+            return id_of(name), name
         raise NotImplementedError(f"Unknown alg name: {alg}")
 
     # object with alg_id / name
@@ -89,32 +93,41 @@ def keygen_sig(alg: Union[int, str, Any]) -> KeyPair:
     """
     alg_id, alg_name = _normalize_alg(alg)
 
-    # Fast path: liboqs
-    if _HAS_OQS and oqs is not None:
-        mech = _pick_sig_mech(alg_name)
+    if alg_name == "dilithium3":
+        # Fast path: liboqs
+        if _HAS_OQS and oqs is not None:
+            mech = _pick_sig_mech(alg_name)
 
-        s = oqs.Signature(mech)
-        pk = s.generate_keypair()
-        sk = s.export_secret_key()
+            s = oqs.Signature(mech)
+            pk = s.generate_keypair()
+            sk = s.export_secret_key()
 
-        # Refuse broken "fake" keys that can happen in fallback paths.
-        if not isinstance(pk, (bytes, bytearray)) or not isinstance(sk, (bytes, bytearray)):
-            raise RuntimeError("oqs returned non-bytes key material")
-        pk_b = bytes(pk)
-        sk_b = bytes(sk)
+            # Refuse broken "fake" keys that can happen in fallback paths.
+            if not isinstance(pk, (bytes, bytearray)) or not isinstance(sk, (bytes, bytearray)):
+                raise RuntimeError("oqs returned non-bytes key material")
+            pk_b = bytes(pk)
+            sk_b = bytes(sk)
 
-        # Strong sanity checks:
+            # Strong sanity checks:
+            if pk_b == sk_b:
+                raise RuntimeError("PQ keygen produced sk==pk (this is invalid / fake)")
+            if len(sk_b) <= len(pk_b):
+                raise RuntimeError(
+                    f"PQ keygen produced suspicious sizes pk={len(pk_b)} sk={len(sk_b)}"
+                )
+        else:
+            # Pure-Python fallback (vendored Dilithium3)
+            from animica import pq as animica_pq
+
+            pk_b, sk_b = animica_pq.sig_keygen()
+    elif alg_name == "sphincs_shake_128s":
+        from pq.py.algs import sphincs_shake_128s as sphincs_backend
+
+        sk_b, pk_b = sphincs_backend.keypair()
         if pk_b == sk_b:
             raise RuntimeError("PQ keygen produced sk==pk (this is invalid / fake)")
-        if len(sk_b) <= len(pk_b):
-            raise RuntimeError(
-                f"PQ keygen produced suspicious sizes pk={len(pk_b)} sk={len(sk_b)}"
-            )
     else:
-        # Pure-Python fallback (vendored Dilithium3)
-        from animica import pq as animica_pq
-
-        pk_b, sk_b = animica_pq.sig_keygen()
+        raise NotImplementedError(f"Unsupported signature alg: {alg_name}")
 
     addr = address_from_pubkey(pk_b, alg_id)
 

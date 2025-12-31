@@ -79,6 +79,29 @@ def test_wallet_create_and_list(tmp_path: Path) -> None:
     assert address in list_output
 
 
+def test_wallet_create_with_alg_flag(tmp_path: Path) -> None:
+    from pq.py.registry import SPHINCS_SHAKE_128S_ID
+
+    wallet_file = tmp_path / "wallets.json"
+    output = run_cli(
+        [
+            "create",
+            "--label",
+            "sphincs",
+            "--alg",
+            "sphincs128s",
+            "--allow-insecure-fallback",
+        ],
+        wallet_file,
+    )
+    assert "Wallet created" in output
+
+    store = json.loads(wallet_file.read_text())
+    entry = store["wallets"][0]
+    assert entry["alg_id"] == SPHINCS_SHAKE_128S_ID
+    assert entry["alg_name"] == "sphincs_shake_128s"
+
+
 @respx.mock
 def test_wallet_show_with_balance(tmp_path: Path) -> None:
     wallet_file = tmp_path / "wallets.json"

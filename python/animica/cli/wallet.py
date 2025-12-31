@@ -20,7 +20,7 @@ from .timeouts import DEFAULT_RPC_TIMEOUT, RPC_TIMEOUT_ENV, resolve_timeout
 try:
     from pq.py.address import address_from_pubkey, validate_address
     from pq.py.keygen import keygen_sig, DILITHIUM3_ID
-    from pq.py.registry import default_signature_alg, name_of  # type: ignore
+    from pq.py.registry import default_signature_alg, name_of, normalize_alg_name, require_sig  # type: ignore
     HAVE_PQ = True
 except Exception:
     HAVE_PQ = False
@@ -264,16 +264,33 @@ def _normalize_dilithium3_secret_key(secret: bytes, alg_name: str) -> bytes:
     return secret
 
 
-def _generate_entry(label: str, *, allow_fallback: bool) -> WalletEntry:
+def _resolve_signature_alg(requested: Optional[str]) -> Any:
+    if not requested:
+        return default_signature_alg()
+    normalized = normalize_alg_name(requested)
+    try:
+        return require_sig(normalized)
+    except Exception as exc:
+        raise typer.BadParameter(f"Unknown signature algorithm: {requested}") from exc
+
+
+def _generate_entry(
+    label: str,
+    *,
+    allow_fallback: bool,
+    alg_info: Any,
+    allow_default_fallback: bool,
+) -> WalletEntry:
     if allow_fallback:
         os.environ.setdefault("ANIMICA_ALLOW_PQ_PURE_FALLBACK", "1")
         os.environ.setdefault("ANIMICA_UNSAFE_PQ_FAKE", "1")
 
-    alg_info = default_signature_alg()
+    resolved_alg_id = alg_info.alg_id
+    resolved_alg_name = alg_info.name
 
     if HAVE_PQ:
         try:
-            kp = keygen_sig(alg_info.alg_id)
+            kp = keygen_sig(resolved_alg_id)
 
             # HARD SAFETY CHECKS: refuse fake PQ wallets.
             public = kp.public_key
@@ -287,15 +304,16 @@ def _generate_entry(label: str, *, allow_fallback: bool) -> WalletEntry:
                 )
 
             address = kp.address
-            alg_name = kp.alg_name
+            resolved_alg_id = kp.alg_id
+            resolved_alg_name = kp.alg_name
             
             # Normalize Dilithium3 keys to canonical format for storage
-            secret = _normalize_dilithium3_secret_key(secret, alg_name)
+            secret = _normalize_dilithium3_secret_key(secret, resolved_alg_name)
 
         except NotImplementedError as e:
             # If default algorithm is not available (e.g., SPHINCS without liboqs),
             # try Dilithium3 which has pure-Python fallback support
-            if alg_info.alg_id != DILITHIUM3_ID:
+            if allow_default_fallback and resolved_alg_id != DILITHIUM3_ID:
                 try:
                     kp = keygen_sig(DILITHIUM3_ID)
                     
@@ -310,8 +328,9 @@ def _generate_entry(label: str, *, allow_fallback: bool) -> WalletEntry:
                         )
                     
                     address = kp.address
-                    alg_name = kp.alg_name
-                    secret = _normalize_dilithium3_secret_key(secret, alg_name)
+                    resolved_alg_id = kp.alg_id
+                    resolved_alg_name = kp.alg_name
+                    secret = _normalize_dilithium3_secret_key(secret, resolved_alg_name)
                 except Exception:
                     # Dilithium3 also failed, decide based on allow_fallback
                     if not allow_fallback:
@@ -324,9 +343,8 @@ def _generate_entry(label: str, *, allow_fallback: bool) -> WalletEntry:
             os.environ.setdefault("ANIMICA_UNSAFE_PQ_FAKE", "1")
             from pq.py.algs import pure_python_fallbacks as pq_fallbacks  # type: ignore
 
-            secret, public = pq_fallbacks.fallback_sig_keypair(alg_info.name)
-            address = address_from_pubkey(public, alg_info.alg_id)
-            alg_name = alg_info.name
+            secret, public = pq_fallbacks.fallback_sig_keypair(resolved_alg_name)
+            address = address_from_pubkey(public, resolved_alg_id)
 
     else:
         if Ed25519PrivateKey is None:
@@ -346,13 +364,13 @@ def _generate_entry(label: str, *, allow_fallback: bool) -> WalletEntry:
             encryption_algorithm=serialization.NoEncryption(),
         )
         address = "anim1" + public.hex()
-        alg_name = alg_info.name
+        resolved_alg_name = alg_info.name
 
     return WalletEntry(
         label=label,
         address=address,
-        alg_id=alg_info.alg_id,
-        alg_name=alg_name,
+        alg_id=resolved_alg_id,
+        alg_name=resolved_alg_name,
         public_key_hex=public.hex(),
         secret_key_hex=secret.hex(),
         created_at=datetime.now(timezone.utc).isoformat(),
@@ -437,6 +455,11 @@ def wallet_path(json_output: bool = typer.Option(False, "--json", help="Return p
 @app.command("create")
 def create(
     label: str = typer.Option(..., "--label", help="Label for the new wallet"),
+    alg: Optional[str] = typer.Option(
+        None,
+        "--alg",
+        help="Signature algorithm (e.g., dilithium3, sphincs_shake_128s)",
+    ),
     allow_insecure_fallback: bool = typer.Option(
         False,
         "--allow-insecure-fallback",
@@ -458,7 +481,13 @@ def create(
     path = _wallet_file_path(ctx_wallet_file)
     store = _load_store(path)
 
-    entry = _generate_entry(label, allow_fallback=allow_insecure_fallback)
+    alg_info = _resolve_signature_alg(alg)
+    entry = _generate_entry(
+        label,
+        allow_fallback=allow_insecure_fallback,
+        alg_info=alg_info,
+        allow_default_fallback=alg is None,
+    )
 
     if HAVE_PQ:
         validate_address(entry.address, expect_hrp="anim")
