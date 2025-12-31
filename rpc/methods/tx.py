@@ -764,7 +764,30 @@ def _pending_get(tx_hash_hex: str) -> bytes | None:
         return _PEND.get_raw(tx_hash_hex)  # type: ignore[attr-defined]
     if _PEND is not None and hasattr(_PEND, "get"):
         return _PEND.get(tx_hash_hex)  # type: ignore[attr-defined]
-    return _FALLBACK_PENDING.get(tx_hash_hex)
+    raw = _FALLBACK_PENDING.get(tx_hash_hex)
+    if raw is not None:
+        return raw
+    return _mempool_get_raw(tx_hash_hex)
+
+
+def _force_sync_before_tx_submit() -> None:
+    try:
+        from rpc.methods import sync as sync_methods
+    except Exception:
+        return
+
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    try:
+        if loop is not None and loop.is_running():
+            asyncio.ensure_future(sync_methods.sync_force(), loop=loop)
+        else:
+            asyncio.run(sync_methods.sync_force())
+    except Exception:
+        return
 
 
 def _mempool_get_raw(tx_hash_hex: str) -> bytes | None:
@@ -1113,6 +1136,7 @@ def _tx_send_raw_transaction(rawTx: str) -> str:
     if not tx_hash_hex:
         raise rpc_errors.InternalError("Failed to compute tx hash")
 
+    _force_sync_before_tx_submit()
     _sync_gate_tx_submit()
 
     # optional balance check
