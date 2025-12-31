@@ -58,6 +58,8 @@ def call_rpc(
     *,
     allow_remote: bool = False,
     allow_bootstrap_methods: bool = False,
+    no_cache: bool = False,
+    headers: Optional[dict[str, str]] = None,
 ) -> Any:
     """
     Helper function to make RPC calls from other CLI modules.
@@ -80,17 +82,26 @@ def call_rpc(
         allow_bootstrap_methods=allow_bootstrap_methods,
         method=method,
     )
-    resolved_timeout = resolve_timeout("RPC timeout", timeout, env_var=RPC_TIMEOUT_ENV, default=DEFAULT_RPC_TIMEOUT)
+    resolved_timeout = resolve_timeout(
+        "RPC timeout", timeout, env_var=RPC_TIMEOUT_ENV, default=DEFAULT_RPC_TIMEOUT
+    )
+    request_headers: dict[str, str] = dict(headers or {})
+    if no_cache:
+        request_headers.setdefault("Cache-Control", "no-cache")
+        request_headers.setdefault("Pragma", "no-cache")
     
     try:
         if HAVE_RPC:
-            client = RpcClient(url, timeout=resolved_timeout)
+            client = RpcClient(url, timeout=resolved_timeout, headers=request_headers or None)
             return client.request(method, params)
         else:
             import httpx
 
             payload = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params}
-            resp = httpx.post(url, json=payload, timeout=resolved_timeout)
+            if request_headers:
+                request_headers.setdefault("Content-Type", "application/json")
+                request_headers.setdefault("Accept", "application/json")
+            resp = httpx.post(url, json=payload, timeout=resolved_timeout, headers=request_headers or None)
             resp.raise_for_status()
             parsed = resp.json()
             if "error" in parsed:
