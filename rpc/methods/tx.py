@@ -11,6 +11,7 @@ import typing as t
 from rpc import deps
 from rpc import errors as rpc_errors
 from rpc.methods import method
+from animica.sync.readiness import assess_tx_submission_readiness
 
 log = logging.getLogger(__name__)
 _PQ_VERIFY_DEBUG = os.environ.get("ANIMICA_PQ_VERIFY_DEBUG") == "1"
@@ -200,37 +201,21 @@ def _sync_gate_tx_submit() -> None:
         return
 
     try:
-        snap = svc.sync_status_snapshot()
+        try:
+            snap = svc.sync_status_snapshot(refresh=True)
+        except TypeError:
+            snap = svc.sync_status_snapshot()
         status = snap.to_dict() if hasattr(snap, "to_dict") else t.cast(dict[str, t.Any], snap)
     except Exception:
         return
 
-    phase = str(status.get("phase") or "").upper()
-    synchronized = status.get("synchronized")
-    head_height = int(status.get("head_height") or 0)
-    best_header_height = int(status.get("best_header_height") or 0)
-    best_block_height = int(status.get("best_block_height") or 0)
-    pending_header_batches = int(status.get("pending_header_batches") or 0)
-    in_flight_headers = int(status.get("in_flight_headers") or 0)
-    in_flight_blocks = int(status.get("in_flight_blocks") or 0)
-    queued_blocks_count = int(status.get("queued_blocks_count") or 0)
-
-    if synchronized is True:
+    allowed, info = assess_tx_submission_readiness(status)
+    if allowed:
         return
 
-    if synchronized is None and phase in {"SYNCED", "IDLE"} and best_header_height <= head_height:
-        return
-
-    if (
-        best_header_height <= head_height
-        and pending_header_batches == 0
-        and in_flight_headers == 0
-        and in_flight_blocks == 0
-        and queued_blocks_count == 0
-        and (best_block_height == 0 or best_block_height >= best_header_height)
-    ):
-        return
-
+    phase = info.get("phase") or ""
+    head_height = int(info.get("head_height") or 0)
+    best_header_height = int(info.get("best_header_height") or 0)
     raise rpc_errors.TemporarilyUnavailable(
         "Node is still syncing; transaction submission is unavailable",
         phase=phase.lower() if phase else None,
@@ -771,6 +756,28 @@ def _pending_get(tx_hash_hex: str) -> bytes | None:
 
 
 def _force_sync_before_tx_submit() -> None:
+    try:
+        ctx = deps.get_ctx()
+    except Exception:
+        ctx = None
+
+    svc = None
+    if ctx is not None:
+        svc = getattr(ctx, "p2p_service", None) or getattr(ctx, "core_p2p_service", None)
+
+    if svc is not None and hasattr(svc, "sync_status_snapshot"):
+        try:
+            try:
+                snap = svc.sync_status_snapshot(refresh=True)
+            except TypeError:
+                snap = svc.sync_status_snapshot()
+            status = snap.to_dict() if hasattr(snap, "to_dict") else t.cast(dict[str, t.Any], snap)
+            allowed, _info = assess_tx_submission_readiness(status)
+            if allowed:
+                return
+        except Exception:
+            pass
+
     try:
         from rpc.methods import sync as sync_methods
     except Exception:
