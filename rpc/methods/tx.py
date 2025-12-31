@@ -809,6 +809,17 @@ def _mempool_get_raw(tx_hash_hex: str) -> bytes | None:
             return None
         if isinstance(raw, (bytes, bytearray)):
             return bytes(raw)
+    snapshot = getattr(svc, "snapshot", None)
+    if callable(snapshot):
+        try:
+            snap = snapshot(limit=1000)
+        except Exception:
+            return None
+        raw_map = getattr(snap, "raw_by_hash", None)
+        if isinstance(raw_map, dict):
+            raw = raw_map.get(tx_hash_hex)
+            if isinstance(raw, (bytes, bytearray)):
+                return bytes(raw)
     return None
 
 
