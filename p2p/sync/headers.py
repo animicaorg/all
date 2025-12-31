@@ -96,11 +96,11 @@ class HeaderFetcher(Protocol):
 
 @dataclass(slots=True)
 class HeaderSyncConfig:
-    batch_size: int = 128
+    batch_size: int = 1024
     max_in_flight: int = DEFAULT_MAX_IN_FLIGHT
     request_timeout_sec: float = DEFAULT_REQUEST_TIMEOUT_SEC
     max_reorg_depth: int = DEFAULT_MAX_REORG_DEPTH
-    idle_backoff_sec: float = 1.0  # when no headers received
+    idle_backoff_sec: float = 0.1  # when no headers received
     locator_max_steps: int = 32  # number of entries in the locator (exp backoff)
     sanity_parent_required: bool = True  # require first header's parent to be known
     enable_checkpoints: bool = True  # enable checkpoint verification during sync
