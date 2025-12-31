@@ -666,9 +666,41 @@ class P2PService:
         self._seen_blocks: "OrderedDict[bytes, float]" = OrderedDict()
         self._seen_tx_cap = 50_000
         self._seen_block_cap = 10_000
+        self._tx_fetch_inflight: "OrderedDict[bytes, float]" = OrderedDict()
+        self._tx_fetch_inflight_cap = int(
+            os.environ.get("ANIMICA_P2P_TX_FETCH_INFLIGHT", "2048") or 2048
+        )
+        self._tx_fetch_ttl_s = float(
+            os.environ.get("ANIMICA_P2P_TX_FETCH_TTL", "15.0") or 15.0
+        )
+        self._tx_inv_limit = int(
+            os.environ.get("ANIMICA_P2P_TX_INV_LIMIT", "1024") or 1024
+        )
+        self._tx_inv_on_connect = os.environ.get(
+            "ANIMICA_P2P_TX_INV_ON_CONNECT", "1"
+        ).strip().lower() in {"1", "true", "yes", "on"}
+        self._tx_eager_push = int(
+            os.environ.get("ANIMICA_P2P_TX_EAGER_PUSH", "2") or 2
+        )
+        self._tx_max_bytes = int(
+            os.environ.get("ANIMICA_P2P_MAX_TX_BYTES", str(512 * 1024)) or 512 * 1024
+        )
+        self._tx_rate_per_peer = float(
+            os.environ.get("ANIMICA_P2P_TXS_PER_SEC", "50") or 50
+        )
+        self._tx_rate_window_s = float(
+            os.environ.get("ANIMICA_P2P_TX_RATE_WINDOW", "1.0") or 1.0
+        )
+        self._tx_rate_state: dict[str, deque[float]] = {}
         self._addr_peer_known_ttl = float(
             os.environ.get("ANIMICA_P2P_ADDR_KNOWN_TTL", "600") or 600
         )
+        self._allow_self_peers = os.environ.get("ANIMICA_P2P_ALLOW_SELF_PEER", "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
         self._peer_addr_rate_limit = int(
             os.environ.get("ANIMICA_P2P_ADDR_RATE_LIMIT", "256") or 256
         )
@@ -1488,6 +1520,8 @@ class P2PService:
 
     def _is_self_address(self, host: str, port: int) -> bool:
         if not host or not port:
+            return False
+        if self._allow_self_peers:
             return False
         listen_ports = self._listen_ports()
         lowered = host.lower()
@@ -3385,10 +3419,26 @@ class P2PService:
         self._remember(self._seen_tx, txh, self._seen_tx_cap)
 
         # best-effort local admission
-        await self._deps_call("admit_tx", raw_cbor)
+        admitted = await self._deps_call_admit("admit_tx", raw_cbor)
+        log.info(
+            "tx-relay: local admit",
+            extra={
+                "tx_hash": txh.hex(),
+                "accepted": admitted[0],
+                "reason": admitted[1],
+            },
+        )
 
+        await self._eager_push_tx(raw_cbor, txh)
         await self._broadcast_inv(
             [InvItem(typ=InvType.TX, h=txh)], exclude_remote=None, is_tx=True
+        )
+        log.info(
+            "tx-relay: announced",
+            extra={
+                "tx_hash": txh.hex(),
+                "peers": int(self._stats.get("peers", 0)),
+            },
         )
         return "0x" + txh.hex()
 
@@ -4392,6 +4442,11 @@ class P2PService:
         peer.hello = normalized
         peer.hello_done.set()
         peer.ready_for_sync = True
+        if self._tx_inv_on_connect:
+            self._create_child_task(
+                self._announce_mempool(peer),
+                name=f"p2p.mempool.inv@{peer.remote}",
+            )
 
         listen_port = int(getattr(hello, "listen_port", 0) or 0)
         reported_addr = self._reported_peer_addr(peer.remote, listen_port)
@@ -4603,10 +4658,15 @@ class P2PService:
         for it in inv.items:
             if int(it.typ) == int(InvType.TX):
                 self._stats["inv_tx_recv"] += 1
-                if await self._pending_get(bytes(it.h)) is None and not self._seen(
-                    self._seen_tx, bytes(it.h)
+                tx_hash = bytes(it.h)
+                if await self._pending_get(tx_hash) is None and not self._seen(
+                    self._seen_tx, tx_hash
                 ):
-                    want.append(InvItem(typ=InvType.TX, h=bytes(it.h)))
+                    if not self._tx_fetch_admit(tx_hash):
+                        continue
+                    if len(want) >= self._tx_inv_limit:
+                        break
+                    want.append(InvItem(typ=InvType.TX, h=tx_hash))
             elif int(it.typ) == int(InvType.BLOCK):
                 self._stats["inv_block_recv"] += 1
                 if not self._has_block(bytes(it.h)):
@@ -4658,12 +4718,23 @@ class P2PService:
                 self._stats["blocks_sent"] += len(chunk)
 
     async def _handle_tx(self, peer: _PeerState, payload: bytes) -> None:
+        if not self._tx_rate_allow(peer):
+            self._apply_misbehavior(
+                peer,
+                "tx_rate_limited",
+                points=self._score_points["malformed_message"],
+            )
+            log.warning(
+                "tx-relay: rate limited",
+                extra={"peer": peer.remote, "peer_id": peer.peer_id},
+            )
+            return
         data = self._decode_map(payload)
         txm = Tx(**data)
         raw = bytes(txm.raw_cbor)
         if not raw:
             return
-        if len(raw) > 512 * 1024:
+        if len(raw) > self._tx_max_bytes:
             raise ValueError("oversize tx")
 
         from core.utils.hash import sha3_256
@@ -4672,12 +4743,26 @@ class P2PService:
         if self._seen(self._seen_tx, txh):
             return
         self._remember(self._seen_tx, txh, self._seen_tx_cap)
+        self._tx_fetch_drop(txh)
         self._stats["tx_recv"] += 1
 
-        ok = await self._deps_call_ok("admit_tx", raw)
+        ok, reason = await self._deps_call_admit("admit_tx", raw)
         if ok:
+            log.info(
+                "tx-relay: received",
+                extra={"tx_hash": txh.hex(), "peer": peer.remote},
+            )
             await self._broadcast_inv(
                 [InvItem(typ=InvType.TX, h=txh)], exclude_remote=peer.remote, is_tx=True
+            )
+        else:
+            log.debug(
+                "tx-relay: rejected",
+                extra={
+                    "tx_hash": txh.hex(),
+                    "peer": peer.remote,
+                    "reason": reason,
+                },
             )
 
     async def _handle_get_headers(self, peer: _PeerState, payload: bytes) -> None:
@@ -8824,6 +8909,25 @@ class P2PService:
     def _seen(self, table: "OrderedDict[bytes, float]", key: bytes) -> bool:
         return key in table
 
+    def _tx_fetch_admit(self, tx_hash: bytes) -> bool:
+        now = time.time()
+        self._tx_fetch_inflight = OrderedDict(
+            (h, ts)
+            for h, ts in self._tx_fetch_inflight.items()
+            if now - ts <= self._tx_fetch_ttl_s
+        )
+        if tx_hash in self._tx_fetch_inflight:
+            return False
+        self._tx_fetch_inflight[tx_hash] = now
+        self._tx_fetch_inflight.move_to_end(tx_hash, last=True)
+        while len(self._tx_fetch_inflight) > self._tx_fetch_inflight_cap:
+            self._tx_fetch_inflight.popitem(last=False)
+        return True
+
+    def _tx_fetch_drop(self, tx_hash: bytes) -> None:
+        with contextlib.suppress(Exception):
+            self._tx_fetch_inflight.pop(tx_hash, None)
+
     # ---------------------------------------------------------------------
     # deps invocation helpers
     # ---------------------------------------------------------------------
@@ -8857,6 +8961,98 @@ class P2PService:
         if isinstance(res, tuple) and res:
             return bool(res[0])
         return bool(res)
+
+    async def _deps_call_admit(self, name: str, *args: Any) -> Tuple[bool, Optional[str]]:
+        if self.deps is None:
+            return False, "deps_missing"
+        fn = getattr(self.deps, name, None)
+        if fn is None:
+            return False, "admit_unavailable"
+        try:
+            if asyncio.iscoroutinefunction(fn):
+                res = await fn(*args)
+            else:
+                res = fn(*args)
+        except Exception as exc:
+            return False, f"admit_error:{exc}"
+        if isinstance(res, tuple):
+            if res:
+                return bool(res[0]), res[1] if len(res) > 1 else None
+            return False, None
+        return bool(res), None
+
+    async def _deps_call_value(self, name: str, *args: Any) -> Any:
+        if self.deps is None:
+            return None
+        fn = getattr(self.deps, name, None)
+        if fn is None:
+            return None
+        if asyncio.iscoroutinefunction(fn):
+            return await fn(*args)
+        return fn(*args)
+
+    def _tx_rate_allow(self, peer: _PeerState) -> bool:
+        if self._tx_rate_per_peer <= 0:
+            return True
+        now = time.time()
+        bucket = self._tx_rate_state.setdefault(peer.session_id, deque())
+        window = self._tx_rate_window_s
+        while bucket and now - bucket[0] > window:
+            bucket.popleft()
+        if len(bucket) >= int(self._tx_rate_per_peer * window):
+            return False
+        bucket.append(now)
+        return True
+
+    async def _eager_push_tx(self, raw_cbor: bytes, tx_hash: bytes) -> None:
+        if self._tx_eager_push <= 0:
+            return
+        async with self._peer_lock:
+            peers = list(self._peers.values())
+        if not peers:
+            return
+        if len(raw_cbor) > self._tx_max_bytes:
+            return
+        if len(peers) > self._tx_eager_push:
+            peers = random.sample(peers, k=self._tx_eager_push)
+        for p in peers:
+            with contextlib.suppress(Exception):
+                await self._send(p, MsgID.TX, Tx(raw_cbor=raw_cbor))
+                self._stats["tx_sent"] += 1
+        log.debug(
+            "tx-relay: eager push",
+            extra={"tx_hash": tx_hash.hex(), "peers": len(peers)},
+        )
+
+    async def _announce_mempool(self, peer: _PeerState) -> None:
+        if self._tx_inv_limit <= 0:
+            return
+        hashes: list[bytes] = []
+        try:
+            pending = await self._deps_call_value(
+                "list_pending_hashes", self._tx_inv_limit
+            )
+        except Exception:
+            pending = None
+        if pending:
+            for h in pending:
+                if isinstance(h, (bytes, bytearray)) and len(h) == 32:
+                    hashes.append(bytes(h))
+                if len(hashes) >= self._tx_inv_limit:
+                    break
+        if not hashes:
+            return
+        inv_items = [InvItem(typ=InvType.TX, h=h) for h in hashes]
+        with contextlib.suppress(Exception):
+            await self._send(peer, MsgID.INV, Inv(items=inv_items))
+        self._stats["inv_tx_sent"] += len(inv_items)
+        log.info(
+            "tx-relay: mempool inv",
+            extra={
+                "peer": peer.remote,
+                "count": len(inv_items),
+            },
+        )
 
     async def _deps_call_import(self, payload: Any) -> Tuple[bool, Optional[str]]:
         if self.deps is None:
