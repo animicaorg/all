@@ -333,13 +333,14 @@ def _sync_diagnostics_lines(sync_status: Optional[Dict[str, Any]]) -> list[str]:
 def _should_force_sync_in_background(sync_status: Optional[Dict[str, Any]]) -> bool:
     if not isinstance(sync_status, dict):
         return False
-    stall_timeout = sync_status.get("stall_timeout_s")
     stall_elapsed = sync_status.get("stall_elapsed_s")
-    if not isinstance(stall_timeout, (int, float)) or stall_timeout <= 0:
-        return False
     if not isinstance(stall_elapsed, (int, float)):
         return False
-    return stall_elapsed >= stall_timeout
+    stall_timeout = sync_status.get("stall_timeout_s")
+    trigger_after = 5.0
+    if isinstance(stall_timeout, (int, float)) and stall_timeout > 0:
+        trigger_after = min(trigger_after, float(stall_timeout))
+    return stall_elapsed >= trigger_after
 
 
 def _run_force_sync_background(
