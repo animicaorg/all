@@ -4603,7 +4603,7 @@ class P2PService:
         for it in inv.items:
             if int(it.typ) == int(InvType.TX):
                 self._stats["inv_tx_recv"] += 1
-                if self._pending_get(bytes(it.h)) is None and not self._seen(
+                if await self._pending_get(bytes(it.h)) is None and not self._seen(
                     self._seen_tx, bytes(it.h)
                 ):
                     want.append(InvItem(typ=InvType.TX, h=bytes(it.h)))
@@ -4630,7 +4630,7 @@ class P2PService:
         blocks: list[bytes] = []
         for it in req.items:
             if int(it.typ) == int(InvType.TX):
-                raw = self._pending_get(bytes(it.h))
+                raw = await self._pending_get(bytes(it.h))
                 if raw:
                     txs.append(raw)
             elif int(it.typ) == int(InvType.BLOCK):
@@ -8319,13 +8319,15 @@ class P2PService:
         )
         return [], "not_anchored"
 
-    def _pending_get(self, tx_hash: bytes) -> bytes | None:
+    async def _pending_get(self, tx_hash: bytes) -> bytes | None:
         # Prefer deps hook (used in tests and alternative mempool implementations).
         if self.deps is not None:
             fn = getattr(self.deps, "get_tx_raw", None)
             if callable(fn):
                 with contextlib.suppress(Exception):
                     raw = fn(tx_hash)
+                    if asyncio.iscoroutine(raw):
+                        raw = await raw
                     if isinstance(raw, (bytes, bytearray)):
                         return bytes(raw)
         try:
