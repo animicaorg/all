@@ -223,11 +223,11 @@ def _sync_gate_tx_submit() -> None:
 
     if (
         best_header_height <= head_height
-        and best_block_height >= best_header_height
         and pending_header_batches == 0
         and in_flight_headers == 0
         and in_flight_blocks == 0
         and queued_blocks_count == 0
+        and (best_block_height == 0 or best_block_height >= best_header_height)
     ):
         return
 
