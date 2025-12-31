@@ -952,6 +952,17 @@ def _gossip_tx_to_peers(raw_tx: bytes) -> None:
                         "tx relay scheduled via p2p service",
                         extra={"tx_hash": _sha3_256(raw_tx).hex()},
                     )
+            elif loop is None or not loop.is_running():
+                try:
+                    asyncio.run(p2p_service.relay_tx(raw_tx))
+                except RuntimeError:
+                    pass
+                else:
+                    did_relay = True
+                    log.info(
+                        "tx relay executed via p2p service (sync fallback)",
+                        extra={"tx_hash": _sha3_256(raw_tx).hex()},
+                    )
 
         handler = (
             getattr(p2p_service, "tx_relay_handler", None) if p2p_service is not None else None
