@@ -109,7 +109,9 @@ export function CacheStatus({
     }
 
     if (syncStatus.isRunning) {
-      const progress = Math.round(syncStatus.progress * 100);
+      const progress = syncStatus.isSynced
+        ? 100
+        : Math.min(99, Math.floor(syncStatus.progress * 100));
       return (
         <span className="cache-sync-status syncing">
           Syncing... {progress}%
@@ -191,12 +193,12 @@ export function CacheStatus({
           {syncStatus && !syncStatus.isSynced && syncStatus.blocksToSync > 0 && (
             <div className="cache-sync-progress">
               <div className="cache-sync-progress-label">
-                Sync Progress: {Math.round(syncStatus.progress * 100)}%
+                Sync Progress: {Math.min(99, Math.floor(syncStatus.progress * 100))}%
               </div>
               <div className="cache-sync-progress-bar">
                 <div
                   className="cache-sync-progress-fill"
-                  style={{ width: `${syncStatus.progress * 100}%` }}
+                  style={{ width: `${Math.min(syncStatus.progress * 100, 99.5)}%` }}
                 />
               </div>
             </div>
