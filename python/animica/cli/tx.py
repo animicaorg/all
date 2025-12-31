@@ -381,7 +381,46 @@ def _ensure_node_ready_for_tx(rpc: str) -> None:
     phase = status.get("phase") or status.get("state")
     phase_name = str(phase).upper() if phase is not None else ""
 
-    if synchronized is True or phase_name in {"SYNCED", "IDLE", "TARGET_REACHED"}:
+    def _coerce_int(value: Any) -> Optional[int]:
+        if value is None or isinstance(value, bool):
+            return None
+        if isinstance(value, int):
+            return value
+        if isinstance(value, str) and value.isdigit():
+            return int(value)
+        return None
+
+    def _sync_status_is_ready() -> bool:
+        if synchronized is True or phase_name in {"SYNCED", "IDLE", "TARGET_REACHED"}:
+            return True
+
+        if phase_name in {"HEADERS", "SYNCING_HEADERS", "BLOCKS", "SYNCING_BLOCKS"}:
+            head_height = _coerce_int(
+                status.get("head_height")
+                or status.get("headHeight")
+                or status.get("height")
+                or status.get("blockHeight")
+            )
+            best_header_height = _coerce_int(
+                status.get("best_header_height")
+                or status.get("bestHeaderHeight")
+                or status.get("best_header")
+            )
+            best_block_height = _coerce_int(
+                status.get("best_block_height")
+                or status.get("bestBlockHeight")
+                or status.get("best_block")
+            )
+            heights = [value for value in (head_height, best_header_height, best_block_height) if value is not None]
+            if heights and all(value == heights[0] for value in heights):
+                return True
+
+        if status.get("syncing") is False:
+            return True
+
+        return False
+
+    if _sync_status_is_ready():
         return
 
     if synchronized is False or phase_name:
