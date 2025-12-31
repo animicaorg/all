@@ -45,7 +45,7 @@ class MockAsyncClient:
     async def __aexit__(self, *args):
         pass
     
-    async def post(self, url: str, json: Dict[str, Any]):
+    async def post(self, url: str, json: Dict[str, Any], **_kwargs: Any):
         self.call_count += 1
         method = json.get("method", "")
         
@@ -216,6 +216,39 @@ def test_sync_status_node_get_status():
         assert output["height"] == 25
         assert output["peer_count"] == 3
         assert output["p2p_running"] is True
+
+
+def test_sync_status_headers_phase_matches_syncing_state():
+    """Ensure headers phase reports syncing even when heights match."""
+    responses = {
+        "chain.getHead": {
+            "height": 4735,
+            "hash": "0x" + "e" * 64,
+            "chainId": 1,
+        },
+        "node.syncStatus": {
+            "phase": "HEADERS",
+            "best_header_height": 4735,
+            "best_block_height": 4735,
+            "syncing": False,
+            "synchronized": False,
+        },
+        "p2p.listPeers": [
+            {
+                "id": "peer_789",
+                "addr": "127.0.0.3:30303",
+                "status": "connected",
+            }
+        ],
+    }
+
+    with patch("httpx.AsyncClient") as mock_client:
+        mock_client.return_value = MockAsyncClient(responses)
+
+        result = runner.invoke(app, ["sync", "status"])
+
+        assert result.exit_code == 0
+        assert "SYNCING_HEADERS" in result.stdout
 
 
 def test_sync_status_no_peers(mock_rpc_no_peers):
