@@ -62,17 +62,19 @@ def tx_debug(
             continue
         remote = entry.get("remote")
         peer_id = entry.get("peer_id") or entry.get("peerId")
+        direction = entry.get("direction")
         known = entry.get("txrelay_known_txids")
-        inflight = entry.get("inflight_requests")
+        inv_queue = entry.get("txrelay_inv_queue")
         last_sync_sent = entry.get("txrelay_last_sync_sent_at")
         last_sync_recv = entry.get("txrelay_last_sync_recv_at")
         typer.echo(
-            "  peer={peer} remote={remote} known_txids={known} inflight={inflight} "
-            "last_sync_sent={sent} last_sync_recv={recv}".format(
+            "  peer={peer} remote={remote} direction={direction} known_txids={known} "
+            "inv_queue={inv_queue} last_sync_sent={sent} last_sync_recv={recv}".format(
                 peer=peer_id or "n/a",
                 remote=remote or "n/a",
+                direction=direction or "n/a",
                 known=known,
-                inflight=inflight,
+                inv_queue=inv_queue,
                 sent=last_sync_sent,
                 recv=last_sync_recv,
             )
