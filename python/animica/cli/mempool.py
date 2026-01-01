@@ -152,8 +152,20 @@ def list_pending(
                     fee = entry.get("fee")
                     size = entry.get("size")
                     status = entry.get("status", "unknown")
+                    received_at = entry.get("received_at")
+                    origin = entry.get("origin_peer") or entry.get("origin") or "unknown"
                     typer.echo(
-                        f"  {i:3d}. {tx_hash} from={sender} nonce={nonce} fee={fee} size={size} status={status}"
+                        "  {idx:3d}. {hash} nonce={nonce} received_at={received} origin={origin} status={status} from={sender} fee={fee} size={size}".format(
+                            idx=i,
+                            hash=tx_hash,
+                            nonce=nonce,
+                            received=received_at,
+                            origin=origin,
+                            status=status,
+                            sender=sender,
+                            fee=fee,
+                            size=size,
+                        )
                     )
                 else:
                     typer.echo(f"  {i:3d}. {entry}")

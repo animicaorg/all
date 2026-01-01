@@ -119,6 +119,10 @@ def assess_tx_submission_readiness(
         return True, info
     if phase in {"SYNCED", "IDLE", "TARGET_REACHED"}:
         return True, info
+    if phase in {"HEADERS", "SYNCING_HEADERS"}:
+        if head_height is not None and best_header_height is not None:
+            if head_height >= best_header_height:
+                return True, info
 
     empty_inflight = (
         pending_header_batches == 0

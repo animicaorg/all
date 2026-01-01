@@ -232,11 +232,9 @@ def _get_chain_identity(rpc_url: str) -> dict:
 
 
 def _get_nonce(rpc_url: str, addr: str) -> int:
-    # Try pending nonce first (includes mempool transactions)
-    # This ensures back-to-back sends use incrementing nonces
+    confirmed_nonce = None
     methods = [
-        ("state.getPendingNonce", [addr]),
-        ("state.getNonce", [addr, "pending"]),
+        ("state.getNonce", [addr, "latest"]),
         ("state.getNonce", [addr]),
         ("state.getNonce", [{"address": addr}]),
         ("state.getTransactionCount", [addr]),
@@ -246,12 +244,47 @@ def _get_nonce(rpc_url: str, addr: str) -> int:
         try:
             v = _rpc(rpc_url, m, p)
             if isinstance(v, int):
-                return v
+                confirmed_nonce = v
+                break
             if isinstance(v, str) and v.isdigit():
-                return int(v)
+                confirmed_nonce = int(v)
+                break
         except Exception:
             continue
-    raise RuntimeError("Could not determine nonce from node (tried state.getPendingNonce, state.getNonce and fallbacks)")
+    if confirmed_nonce is None:
+        raise RuntimeError("Could not determine confirmed nonce from node (tried state.getNonce and fallbacks)")
+
+    highest_pending_nonce: Optional[int] = None
+    try:
+        pending = _rpc(rpc_url, "mempool.getPending", [True])
+    except Exception:
+        pending = None
+
+    if isinstance(pending, list):
+        target_bytes = _address_to_32_bytes(addr)
+        for entry in pending:
+            if not isinstance(entry, dict):
+                continue
+            sender = entry.get("from") or entry.get("sender")
+            if sender is None:
+                continue
+            try:
+                if isinstance(sender, (bytes, bytearray)):
+                    sender_bytes = bytes(sender)
+                else:
+                    sender_bytes = _address_to_32_bytes(str(sender))
+            except Exception:
+                continue
+            if sender_bytes != target_bytes:
+                continue
+            tx_nonce = entry.get("nonce")
+            if isinstance(tx_nonce, int):
+                if highest_pending_nonce is None or tx_nonce > highest_pending_nonce:
+                    highest_pending_nonce = tx_nonce
+
+    if highest_pending_nonce is None:
+        return confirmed_nonce
+    return max(confirmed_nonce, highest_pending_nonce + 1)
 
 
 def _get_default_max_fee(rpc_url: str) -> int:
@@ -444,6 +477,7 @@ def send(
     value_nanm: Optional[int] = typer.Option(
         None, "--value-nanm", help="Amount in base units (nANM). Overrides --value."
     ),
+    nonce: Optional[int] = typer.Option(None, "--nonce", help="Nonce override (default: auto)"),
     rpc_url: Optional[str] = typer.Option(None, "--rpc-url", help="RPC URL (default: node)"),
     allow_remote_rpc: bool = typer.Option(
         False,
@@ -473,7 +507,8 @@ def send(
     fork_id = chain_identity.get("forkId")
 
     # Nonce + fee defaults
-    nonce = _get_nonce(rpc, from_addr)
+    nonce_source = "override" if nonce is not None else "auto"
+    nonce = int(nonce) if nonce is not None else _get_nonce(rpc, from_addr)
     fee = int(max_fee) if max_fee is not None else _get_default_max_fee(rpc)
 
     # Value conversion
@@ -520,7 +555,7 @@ def send(
         console.print("\n[bold]CHAIN CONTEXT DEBUG[/bold]")
         console.print({"rpc_url": rpc, "chain_id": cid, "chain_id_source": "cli override" if chain_id is not None else "node:chain.getChainId"})
         console.print("")
-        console.print(f"nonce: using state.getNonce => {nonce}")
+        console.print(f"nonce: using {nonce_source} => {nonce}")
         console.print(f"maxFee: using {'override' if max_fee is not None else 'default'} => {fee}")
         console.print(f"value_input: {value if value is not None else value_nanm} ({value_source})")
         console.print(f"value_base_units: {value_base}")
@@ -656,7 +691,20 @@ def send(
         raise typer.Exit(code=1)
 
     console.print("\n[bold green]=== Transaction Sent ===[/bold green]")
-    console.print({"tx_hash": tx_hash})
+    console.print("Transaction Submitted")
+    console.print(f"Tx Hash: {tx_hash}")
+    console.print("Transaction broadcast successfully")
+    console.print(
+        {
+            "tx_hash": tx_hash,
+            "from": from_addr,
+            "to": to_addr,
+            "value": value_base,
+            "nonce": nonce,
+            "chain_id": cid,
+            "rpc_url": rpc,
+        }
+    )
     if verbose:
         console.print("\n[bold]TX BODY[/bold]")
         console.print(Pretty(body))
