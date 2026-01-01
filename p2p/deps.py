@@ -752,7 +752,12 @@ class P2PDeps:
 
     # Admission to mempool is handled by mempool module; P2P attaches to it via adapters.
     # Here we only provide a placeholder hook that higher-level wiring can replace.
-    def admit_tx(self, tx: "Tx") -> Tuple[bool, Optional[str]]:
+    def admit_tx(
+        self,
+        tx: "Tx",
+        local: bool | None = False,
+        origin_peer: Optional[str] = None,
+    ) -> Tuple[bool, Optional[str]]:
         """
         Admit a transaction received from P2P gossip to the pending pool.
 
@@ -817,7 +822,12 @@ class P2PDeps:
 
             try:
                 tx_methods._mempool_submit(  # type: ignore[attr-defined]
-                    svc, tx_obj=tx_obj, raw=raw_cbor, tx_hash_hex=tx_hash_hex
+                    svc,
+                    tx_obj=tx_obj,
+                    raw=raw_cbor,
+                    tx_hash_hex=tx_hash_hex,
+                    local=local,
+                    origin_peer=origin_peer,
                 )
             except Exception as e:
                 return False, f"mempool_reject:{e}"
@@ -994,9 +1004,17 @@ class AsyncP2PDeps:
         loop = self._executor_loop()
         return await loop.run_in_executor(None, self._sync.tx_by_hash, tx_hash)
 
-    async def admit_tx(self, tx: "Tx") -> Tuple[bool, Optional[str]]:
+    async def admit_tx(
+        self,
+        tx: "Tx",
+        *,
+        local: bool | None = False,
+        origin_peer: Optional[str] = None,
+    ) -> Tuple[bool, Optional[str]]:
         loop = self._executor_loop()
-        return await loop.run_in_executor(None, self._sync.admit_tx, tx)
+        return await loop.run_in_executor(
+            None, self._sync.admit_tx, tx, local, origin_peer
+        )
 
     async def cheap_header_sanity(self, header: "Header") -> Tuple[bool, Optional[str]]:
         loop = self._executor_loop()

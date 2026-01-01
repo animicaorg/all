@@ -675,6 +675,15 @@ class P2PService:
         self._tx_relay_ttl_s = float(
             os.environ.get("ANIMICA_P2P_TX_RELAY_TTL_SECONDS", "120") or 120
         )
+        self._tx_relay_enabled = _env_flag("ANIMICA_P2P_TX_RELAY", default=True)
+        self._tx_gossip_enabled = _env_flag("ANIMICA_P2P_TX_GOSSIP", default=True)
+        self._mempool_gossip_enabled = _env_flag(
+            "ANIMICA_P2P_MEMPOOL_GOSSIP", default=True
+        )
+        self._p2p_tx_enabled = _env_flag("ANIMICA_P2P_TX_ENABLED", default=True)
+        self._bootstrap_mode = _env_flag(
+            "ANIMICA_BOOTSTRAP_NODE", "ANIMICA_RPC_BOOTSTRAP_NODE", default=False
+        )
         self._tx_inv_reannounce_interval_s = float(
             os.environ.get("ANIMICA_P2P_TX_REANNOUNCE_SEC", "15") or 15
         )
@@ -786,6 +795,8 @@ class P2PService:
             "peers": 0,
             "inv_tx_sent": 0,
             "inv_tx_recv": 0,
+            "tx_inv_sent_total": 0,
+            "tx_inv_recv_total": 0,
             "tx_inv_dedup": 0,
             "tx_getdata_sent": 0,
             "tx_getdata_recv": 0,
@@ -793,6 +804,8 @@ class P2PService:
             "tx_getdata_skipped": 0,
             "tx_recv": 0,
             "tx_sent": 0,
+            "tx_data_sent_total": 0,
+            "tx_data_recv_total": 0,
             "tx_sent_dedup": 0,
             "tx_recv_rate_limited": 0,
             "inv_block_sent": 0,
@@ -3437,9 +3450,17 @@ class P2PService:
 
         txh = sha3_256(raw_cbor)
         self._remember(self._seen_tx, txh, self._seen_tx_cap)
+        if not self._tx_relay_allowed():
+            log.info(
+                "tx relay disabled; skipping announce",
+                extra={"tx_hash": txh.hex(), "bootstrap": self._bootstrap_mode},
+            )
+            return "0x" + txh.hex()
 
         # best-effort local admission
-        admitted, reason = await self._admit_tx_result(raw_cbor)
+        admitted, reason = await self._admit_tx_result(
+            raw_cbor, local=True, origin_peer="local"
+        )
         if admitted:
             log.info("tx accepted for relay", extra={"tx_hash": txh.hex()})
         else:
@@ -4693,6 +4714,13 @@ class P2PService:
                         "tx.inv_recv",
                         extra={"peer": peer.remote, "hash": bytes(it.h).hex()},
                     )
+                    log.info(
+                        "p2p.tx.inv_recv",
+                        extra={"peer": peer.remote, "hash": bytes(it.h).hex()},
+                    )
+            self._stats["tx_inv_recv_total"] += tx_inv_count
+            if not self._tx_relay_allowed():
+                inv.items = [it for it in inv.items if int(it.typ) != int(InvType.TX)]
 
         want: list[InvItem] = []
         for it in inv.items:
@@ -4735,6 +4763,10 @@ class P2PService:
                 else:
                     for it in tx_items:
                         self._remember_requested(bytes(it.h), peer.remote)
+                        log.info(
+                            "p2p.tx.request_sent",
+                            extra={"peer": peer.remote, "hash": bytes(it.h).hex()},
+                        )
                     self._stats["tx_getdata_sent"] += len(tx_items)
                     log.info(
                         "tx.getdata_sent",
@@ -4763,6 +4795,8 @@ class P2PService:
         blocks: list[bytes] = []
         for it in req.items:
             if int(it.typ) == int(InvType.TX):
+                if not self._tx_relay_allowed():
+                    continue
                 self._stats["tx_getdata_recv"] += 1
                 if self._rate_limit(
                     self._getdata_inflight_by_peer,
@@ -4804,11 +4838,16 @@ class P2PService:
         for raw in txs:
             await self._send(peer, MsgID.TX, Tx(raw_cbor=raw))
             self._stats["tx_sent"] += 1
+            self._stats["tx_data_sent_total"] += 1
             txh = hashlib.sha3_256(raw).digest()
             self._remember_sent(peer.remote, txh)
             log.info(
                 "tx delivered to peer",
                 extra={"peer": peer.remote, "tx_hash": txh.hex()},
+            )
+            log.info(
+                "p2p.tx.data_sent",
+                extra={"peer": peer.remote, "hash": txh.hex(), "bytes": len(raw)},
             )
 
         if blocks:
@@ -4831,6 +4870,8 @@ class P2PService:
         txm = Tx(**data)
         raw = bytes(txm.raw_cbor)
         if not raw:
+            return
+        if not self._tx_relay_allowed():
             return
         if len(raw) > self._max_tx_bytes:
             self._penalize_peer(
@@ -4876,13 +4917,20 @@ class P2PService:
             return
         self._remember(self._seen_tx, txh, self._seen_tx_cap)
         self._stats["tx_recv"] += 1
+        self._stats["tx_data_recv_total"] += 1
         self._tx_requested.pop(txh, None)
         log.info(
             "tx.tx_recv",
             extra={"tx_hash": txh.hex(), "peer": peer.remote},
         )
+        log.info(
+            "p2p.tx.data_recv",
+            extra={"peer": peer.remote, "hash": txh.hex(), "bytes": len(raw)},
+        )
 
-        ok, reason = await self._admit_tx_result(raw)
+        ok, reason = await self._admit_tx_result(
+            raw, local=False, origin_peer=peer.peer_id or peer.remote
+        )
         if ok:
             log.info(
                 "tx.mempool_added",
@@ -9015,6 +9063,8 @@ class P2PService:
     ) -> None:
         if not items:
             return
+        if is_tx and not self._tx_relay_allowed():
+            return
 
         async with self._peer_lock:
             peers = list(self._peers.values())
@@ -9024,24 +9074,56 @@ class P2PService:
                 continue
             await self._send_inv(p, items, is_tx=is_tx)
 
+    def _tx_relay_allowed(self) -> bool:
+        if self._bootstrap_mode:
+            return False
+        return bool(
+            self._tx_relay_enabled
+            and self._tx_gossip_enabled
+            and self._mempool_gossip_enabled
+            and self._p2p_tx_enabled
+        )
+
     async def _send_inv(
         self, peer: _PeerState, items: list[InvItem], *, is_tx: bool
     ) -> None:
         if not items:
             return
+        if is_tx and not self._tx_relay_allowed():
+            return
+        if is_tx:
+            filtered: list[InvItem] = []
+            for it in items:
+                if int(it.typ) != int(InvType.TX):
+                    filtered.append(it)
+                    continue
+                tx_hash = bytes(it.h)
+                if self._inv_sent_recently(peer.remote, tx_hash):
+                    self._stats["tx_inv_dedup"] += 1
+                    continue
+                filtered.append(it)
+            items = filtered
+            if not items:
+                return
         inv = Inv(items=items)
         with contextlib.suppress(Exception):
             await self._send(peer, MsgID.INV, inv)
             if is_tx:
                 self._stats["inv_tx_sent"] += len(items)
+                self._stats["tx_inv_sent_total"] += len(items)
                 log.info(
                     "tx.inv_sent",
                     extra={"peer": peer.remote, "count": len(items)},
                 )
                 for it in items:
                     if int(it.typ) == int(InvType.TX):
+                        self._remember_inv_sent(peer.remote, bytes(it.h))
                         log.info(
                             "tx.inv_sent",
+                            extra={"peer": peer.remote, "hash": bytes(it.h).hex()},
+                        )
+                        log.info(
+                            "p2p.tx.inv_sent",
                             extra={"peer": peer.remote, "hash": bytes(it.h).hex()},
                         )
             else:
@@ -9106,13 +9188,8 @@ class P2PService:
         async with self._peer_lock:
             peers = list(self._peers.values())
         for peer in peers:
-            unsent = [it for it in items if not self._inv_sent_recently(peer.remote, bytes(it.h))]
-            if not unsent:
-                continue
-            for i in range(0, len(unsent), batch_size):
-                await self._send_inv(peer, unsent[i : i + batch_size], is_tx=True)
-            for it in unsent:
-                self._remember_inv_sent(peer.remote, bytes(it.h))
+            for i in range(0, len(items), batch_size):
+                await self._send_inv(peer, items[i : i + batch_size], is_tx=True)
 
     # ---------------------------------------------------------------------
     # Dedupe helpers
@@ -9264,7 +9341,13 @@ class P2PService:
             return bool(res[0])
         return bool(res)
 
-    async def _admit_tx_result(self, raw: bytes) -> Tuple[bool, Optional[str]]:
+    async def _admit_tx_result(
+        self,
+        raw: bytes,
+        *,
+        local: bool | None = False,
+        origin_peer: Optional[str] = None,
+    ) -> Tuple[bool, Optional[str]]:
         if self.deps is None:
             return False, "deps_missing"
         fn = getattr(self.deps, "admit_tx", None)
@@ -9272,9 +9355,15 @@ class P2PService:
             return False, "admit_unavailable"
         try:
             if asyncio.iscoroutinefunction(fn):
-                res = await fn(raw)
+                try:
+                    res = await fn(raw, local, origin_peer)
+                except TypeError:
+                    res = await fn(raw)
             else:
-                res = fn(raw)
+                try:
+                    res = fn(raw, local, origin_peer)
+                except TypeError:
+                    res = fn(raw)
         except Exception as exc:
             return False, f"admit_error:{exc}"
         if isinstance(res, tuple):

@@ -909,16 +909,36 @@ def _mempool_has(svc: t.Any, tx_hash_hex: str) -> bool | None:
     return None
 
 
-def _mempool_submit(svc: t.Any, *, tx_obj: t.Any, raw: bytes, tx_hash_hex: str) -> None:
+def _mempool_submit(
+    svc: t.Any,
+    *,
+    tx_obj: t.Any,
+    raw: bytes,
+    tx_hash_hex: str,
+    local: bool | None = None,
+    origin_peer: str | None = None,
+) -> None:
     """
     Admit tx into the mempool using whatever method this mempool exposes.
     """
     # Preferred explicit API
     if hasattr(svc, "submit"):
-        svc.submit(tx=tx_obj, raw=raw, tx_hash_hex=tx_hash_hex)
-        return
+        kwargs: dict[str, t.Any] = {"tx": tx_obj, "raw": raw, "tx_hash_hex": tx_hash_hex}
+        if local is not None:
+            kwargs["local"] = local
+        if origin_peer is not None:
+            kwargs["origin_peer"] = origin_peer
+        try:
+            svc.submit(**kwargs)
+            return
+        except TypeError:
+            svc.submit(tx=tx_obj, raw=raw, tx_hash_hex=tx_hash_hex)
+            return
     if hasattr(svc, "admit"):
-        svc.admit(tx_obj, raw=raw, tx_hash_hex=tx_hash_hex)
+        try:
+            svc.admit(tx_obj, raw=raw, tx_hash_hex=tx_hash_hex, local=local, origin_peer=origin_peer)
+        except TypeError:
+            svc.admit(tx_obj, raw=raw, tx_hash_hex=tx_hash_hex)
         return
     if hasattr(svc, "add_raw"):
         svc.add_raw(tx_hash_hex, raw)
