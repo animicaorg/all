@@ -32,6 +32,12 @@ class TxIdSetLRU:
     def __len__(self) -> int:
         return len(self._items)
 
+    def sample(self, limit: int = 20) -> List[bytes]:
+        if limit <= 0:
+            return []
+        items = list(self._items.keys())
+        return items[-limit:]
+
 
 @dataclass(slots=True)
 class PeerTxState:
@@ -598,6 +604,9 @@ class TxRelayService:
                     "direction": state.direction,
                     "remote": state.remote,
                     "known_txids": len(state.known_txids),
+                    "known_txids_sample": [
+                        f"0x{txid.hex()}" for txid in state.known_txids.sample()
+                    ],
                     "inv_queue": len(state.inv_queue),
                     "last_sync_sent_at": state.last_sync_sent_at or None,
                     "last_sync_recv_at": state.last_sync_recv_at or None,
