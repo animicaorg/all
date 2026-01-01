@@ -3532,8 +3532,19 @@ class P2PService:
 
     async def relay_tx(self, raw_cbor: bytes) -> str:
         from core.utils.hash import sha3_256
+        try:
+            from core.utils.tx import normalize_tx_bytes
+        except Exception:
+            normalize_tx_bytes = None
 
-        txh = sha3_256(raw_cbor)
+        canonical_raw = raw_cbor
+        if normalize_tx_bytes is not None:
+            try:
+                canonical_raw = normalize_tx_bytes(raw_cbor)
+            except Exception:
+                canonical_raw = raw_cbor
+
+        txh = sha3_256(canonical_raw)
         self._remember(self._seen_tx, txh, self._seen_tx_cap)
         if not self._tx_relay_allowed():
             log.info(
@@ -3544,7 +3555,7 @@ class P2PService:
 
         # best-effort local admission
         admitted, reason = await self._admit_tx_result(
-            raw_cbor, local=True, origin_peer="local"
+            canonical_raw, local=True, origin_peer="local"
         )
         if admitted:
             mempool_size = await self._mempool_size()
@@ -3595,7 +3606,7 @@ class P2PService:
 
         eager_limit = int(os.environ.get("ANIMICA_P2P_TX_EAGER_PUSH", "2") or 2)
         if eager_limit > 0:
-            await self._eager_push_tx(raw_cbor, max_peers=eager_limit)
+            await self._eager_push_tx(canonical_raw, max_peers=eager_limit)
 
         log.info(
             "tx relay announced",
