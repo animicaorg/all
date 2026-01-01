@@ -265,7 +265,14 @@ def _normalize_signature(sig: Dict[str, Any]) -> Dict[str, Any]:
 
 def _normalize_tx_envelope(decoded: Dict[str, Any]) -> Dict[str, Any]:
     if "tx" in decoded and "sigs" in decoded:
-        return decoded
+        normalized = dict(decoded)
+        sigs = normalized.get("sigs")
+        if isinstance(sigs, list):
+            normalized["sigs"] = [
+                s.to_obj() if isinstance(s, PqSignature) else _normalize_signature(s) if isinstance(s, dict) else s
+                for s in sigs
+            ]
+        return normalized
 
     normalized: Dict[str, Any] = {}
     if "body" in decoded:
@@ -307,7 +314,10 @@ def _normalize_tx_envelope(decoded: Dict[str, Any]) -> Dict[str, Any]:
         normalized["tx"] = decoded["tx"]
 
     if "sigs" in decoded and isinstance(decoded["sigs"], list):
-        normalized["sigs"] = decoded["sigs"]
+        normalized["sigs"] = [
+            s.to_obj() if isinstance(s, PqSignature) else _normalize_signature(s) if isinstance(s, dict) else s
+            for s in decoded["sigs"]
+        ]
     elif "sig" in decoded and isinstance(decoded["sig"], dict):
         normalized["sigs"] = [_normalize_signature(decoded["sig"])]
     else:
@@ -340,7 +350,10 @@ def block_from_mapping(m: Dict[str, Any]) -> Block:
             try:
                 txs.append(Tx.from_obj(normalized))
             except Exception:
-                txs.append(_dataclass_from_dict(Tx, t))
+                if "unsigned" in t:
+                    txs.append(_dataclass_from_dict(Tx, t))
+                else:
+                    raise BlockImportError("invalid tx format: missing unsigned tx payload")
         else:
             raise BlockImportError("each tx must decode to a map")
 
