@@ -31,7 +31,7 @@ from typing import Dict, Optional
 
 # Bump when changing payload schemas in incompatible ways.
 # (e.g., adding mandatory fields, renaming fields, or changing semantics)
-WIRE_SCHEMA_VERSION: int = 2
+WIRE_SCHEMA_VERSION: int = 3
 
 
 class MsgID(IntEnum):
@@ -73,9 +73,15 @@ class MsgID(IntEnum):
     # ---------------------------
     # 0x04xx — Transactions
     # ---------------------------
-    TX = 0x0400  # full tx (CBOR) relay
-    GET_TX = 0x0401
-    TX_NOTFOUND = 0x0402
+    TX = 0x0400  # full tx (CBOR) relay (legacy)
+    GET_TX = 0x0401  # legacy
+    TX_NOTFOUND = 0x0402  # legacy
+    TX_INV = 0x0403
+    TX_GET = 0x0404
+    TX_DATA = 0x0405
+    TX_NOTFOUND_V2 = 0x0406
+    TX_MEMPOOL_REQ = 0x0407
+    TX_MEMPOOL_RESP = 0x0408
 
     # ---------------------------
     # 0x05xx — Useful-work Shares
@@ -123,6 +129,8 @@ _REQUEST_RESPONSE: Dict[MsgID, MsgID] = {
     MsgID.GET_TX: MsgID.TX,
     MsgID.GET_SHARE: MsgID.SHARE,
     MsgID.DA_GET: MsgID.DA_PROOF,
+    MsgID.TX_GET: MsgID.TX_DATA,
+    MsgID.TX_MEMPOOL_REQ: MsgID.TX_MEMPOOL_RESP,
 }
 
 
