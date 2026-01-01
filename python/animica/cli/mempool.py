@@ -51,6 +51,11 @@ def list_pending(
         "--json",
         help="Output raw JSON",
     ),
+    verbose: bool = typer.Option(
+        False,
+        "--verbose",
+        help="Show origin and received timestamps for each tx.",
+    ),
 ) -> None:
     """
     List pending transaction hashes in the mempool.
@@ -154,13 +159,17 @@ def list_pending(
                     status = entry.get("status", "unknown")
                     received_at = entry.get("received_at")
                     origin = entry.get("origin_peer") or entry.get("origin") or "unknown"
+                    peer = entry.get("peer") or entry.get("origin_peer")
+                    if verbose:
+                        extra = f" received_at={received_at} origin={origin} peer={peer}"
+                    else:
+                        extra = ""
                     typer.echo(
-                        "  {idx:3d}. {hash} nonce={nonce} received_at={received} origin={origin} status={status} from={sender} fee={fee} size={size}".format(
+                        "  {idx:3d}. {hash} nonce={nonce}{extra} status={status} from={sender} fee={fee} size={size}".format(
                             idx=i,
                             hash=tx_hash,
                             nonce=nonce,
-                            received=received_at,
-                            origin=origin,
+                            extra=extra,
                             status=status,
                             sender=sender,
                             fee=fee,
