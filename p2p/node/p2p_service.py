@@ -639,7 +639,7 @@ class P2PService:
         self._seed_hosts = self._seed_hostnames(self.seeds)
 
         self._peer_lock = asyncio.Lock()
-        self._peers: dict[str, _PeerState] = {}  # remote -> state
+        self._peers: dict[tuple[str, str], _PeerState] = {}  # (remote, direction) -> state
         self._peers_by_session: dict[str, _PeerState] = {}
         self._peer_registry = PeerRegistry(
             max_inbound_per_ip=int(os.environ.get("ANIMICA_P2P_MAX_INBOUND_PER_IP", "10") or 10),
@@ -1424,6 +1424,24 @@ class P2PService:
             path.chmod(0o775)
         except Exception:
             return
+
+    @staticmethod
+    def _peer_key(remote: str, direction: str) -> tuple[str, str]:
+        return (remote, direction)
+
+    def _peer_by_remote(self, remote: Optional[str]) -> Optional[_PeerState]:
+        if not remote:
+            return None
+        outbound = self._peers.get(self._peer_key(remote, "outbound"))
+        if outbound is not None:
+            return outbound
+        inbound = self._peers.get(self._peer_key(remote, "inbound"))
+        if inbound is not None:
+            return inbound
+        for (peer_remote, _direction), peer in self._peers.items():
+            if peer_remote == remote:
+                return peer
+        return None
 
     async def _maybe_detect_external_ip(self) -> None:
         if self._external_ip or not self._external_ip_endpoint:
@@ -3131,7 +3149,7 @@ class P2PService:
             return
         old_peer = None
         if self._sync_active_block_peer:
-            old_peer = self._peers.get(self._sync_active_block_peer)
+            old_peer = self._peer_by_remote(self._sync_active_block_peer)
         if old_peer and old_peer.last_block_request_at:
             self._penalize_peer(
                 old_peer,
@@ -3187,7 +3205,11 @@ class P2PService:
         )
 
     def _rotate_sync_peer(self) -> None:
-        active = self._peers.get(self._sync_active_block_peer) if self._sync_active_block_peer else None
+        active = (
+            self._peer_by_remote(self._sync_active_block_peer)
+            if self._sync_active_block_peer
+            else None
+        )
         candidate = self._select_sync_peer(avoid_peer=active)
         if not candidate or (active and candidate.remote == active.remote):
             return
@@ -3737,7 +3759,7 @@ class P2PService:
         )
 
         async with self._peer_lock:
-            self._peers[remote] = peer
+            self._peers[self._peer_key(remote, direction)] = peer
             self._peers_by_session[peer.session_id] = peer
             self._stats["peers"] = self._peer_registry.peer_count()
             self._last_peer_connect_at = time.time()
@@ -3817,7 +3839,7 @@ class P2PService:
         self._peer_registry.remove(peer.session_id)
 
         async with self._peer_lock:
-            self._peers.pop(peer.remote, None)
+            self._peers.pop(self._peer_key(peer.remote, peer.direction), None)
             self._peers_by_session.pop(peer.session_id, None)
             self._stats["peers"] = self._peer_registry.peer_count()
             self._last_peer_disconnect_at = time.time()
@@ -5581,7 +5603,7 @@ class P2PService:
                     if blk.origin_peer:
                         reject_reason = reason or "block_rejected"
                         self._penalize_peer(
-                            self._peers.get(blk.origin_peer),
+                            self._peer_by_remote(blk.origin_peer),
                             f"block_rejected:{reject_reason}",
                             severity=2,
                             quarantine_s=300.0,
@@ -5607,7 +5629,7 @@ class P2PService:
                     if h not in self._sync_block_queue_heights:
                         self._sync_block_queue_heights[h] = -1
             if peer_remote:
-                peer = self._peers.get(peer_remote)
+                peer = self._peer_by_remote(peer_remote)
                 if peer is not None:
                     self._set_block_backoff(peer, reason="block_timeout", delay=60.0)
                 self._penalize_peer(peer, "block_timeout", nonfatal=True)
@@ -6430,7 +6452,7 @@ class P2PService:
         for h in to_request:
             preferred_remote = self._sync_header_sources.get(h)
             preferred_peer = (
-                self._peers.get(preferred_remote) if preferred_remote else None
+                self._peer_by_remote(preferred_remote) if preferred_remote else None
             )
             target_peer = (
                 preferred_peer
@@ -6440,7 +6462,7 @@ class P2PService:
             groups.setdefault(target_peer.remote, []).append(h)
         requested = 0
         for remote, hashes in groups.items():
-            target_peer = self._peers.get(remote) or peer
+            target_peer = self._peer_by_remote(remote) or peer
             requested += await self._queue_block_requests(target_peer, hashes)
         return requested
 
@@ -6564,7 +6586,7 @@ class P2PService:
                     if self._sync_header_queue:
                         queued_peer, headers = self._sync_header_queue.popleft()
                         if queued_peer != peer.remote:
-                            peer = self._peers.get(queued_peer, peer)
+                            peer = self._peer_by_remote(queued_peer) or peer
                             remote_height = int((peer.hello or {}).get("head_height") or 0)
                             result.update(
                                 {
@@ -7468,7 +7490,7 @@ class P2PService:
         ]
         for remote, request_id in expired:
             self._sync_inflight_header_requests.pop((remote, request_id), None)
-            peer = self._peers.get(remote)
+            peer = self._peer_by_remote(remote)
             if peer and peer.pending_header_request_id == request_id:
                 peer.pending_header_request_id = None
                 fut = peer.pending_headers
@@ -8864,7 +8886,7 @@ class P2PService:
                 self._reconcile_pending_pool(blk)
             self._remember(self._seen_blocks, bh, self._seen_block_cap)
             if origin_remote:
-                origin_peer = self._peers.get(origin_remote)
+                origin_peer = self._peer_by_remote(origin_remote)
                 if origin_peer and not origin_peer.anchored:
                     self._mark_peer_anchored(origin_peer, reason="block_accepted")
             await self._broadcast_inv(
@@ -8911,7 +8933,7 @@ class P2PService:
                 claimed_bits = None
                 peer_id = None
                 if origin_remote:
-                    origin_peer = self._peers.get(origin_remote)
+                    origin_peer = self._peer_by_remote(origin_remote)
                     peer_id = origin_peer.peer_id if origin_peer else None
                 if blk is not None and hasattr(blk, "header"):
                     try:
