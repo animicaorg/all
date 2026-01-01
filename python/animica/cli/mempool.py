@@ -95,6 +95,11 @@ def list_pending(
         p2p_status = call_rpc("p2p.getStatus", [], rpc_url=resolved_rpc_url, no_cache=no_cache)
     except Exception:
         p2p_status = None
+    mempool_info = None
+    try:
+        mempool_info = call_rpc("mempool.getInfo", [], rpc_url=resolved_rpc_url, no_cache=no_cache)
+    except Exception:
+        mempool_info = None
 
     chain_id = None
     genesis_hash = None
@@ -119,6 +124,7 @@ def list_pending(
                 "genesisHash": genesis_hash,
             },
             "peer": {"id": peer_id},
+            "mempool": mempool_info,
             "head": {
                 "height": head_height,
                 "hash": head.get("hash") if isinstance(head, dict) else None,
@@ -144,6 +150,13 @@ def list_pending(
             height=head_height if head_height is not None else "n/a",
         )
     )
+    if isinstance(mempool_info, dict):
+        typer.echo(
+            "Mempool: id={mempool_id} path={mempool_path}".format(
+                mempool_id=mempool_info.get("mempool_id") or "n/a",
+                mempool_path=mempool_info.get("mempool_path") or "n/a",
+            )
+        )
     if isinstance(result, list):
         if not result:
             typer.echo("Mempool is empty (no pending transactions)")
