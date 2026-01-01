@@ -66,7 +66,7 @@ from core.types.header import Header, serialize_header
 from core.types.params import ChainParams
 from core.types.receipt import \
     Receipt  # imported for type completeness; not used here
-from core.types.tx import Tx, TxKind, UnsignedTx
+from core.types.tx import PqSignature, Tx, TxKind, UnsignedTx
 from core.utils.hash import sha3_256
 from core.utils.pow import micro_threshold_to_target256
 from execution.runtime.env import make_block_env
