@@ -233,6 +233,22 @@ def mempool_get_pending(verbose: bool | None = None) -> list[str] | list[dict]:
 
 
 @method(
+    "mempool.getInfo",
+    desc="Return mempool service identity and persistence path (if available).",
+)
+def mempool_get_info() -> dict[str, Any]:
+    mempool_service = _get_mempool_service()
+    if mempool_service is None:
+        return {"enabled": False, "mempool_id": None, "mempool_path": None}
+    persist_path = getattr(mempool_service, "_persist_path", None)
+    return {
+        "enabled": True,
+        "mempool_id": hex(id(mempool_service)),
+        "mempool_path": str(persist_path) if persist_path else None,
+    }
+
+
+@method(
     "mempool.getStats",
     desc="Return summary stats for the pending pool (count/bytes/age).",
     aliases=("mempool_stats",),

@@ -3559,7 +3559,7 @@ class P2PService:
         pending = await self._mempool_size()
         txrelay_snapshot = self._txrelay.snapshot()
         txrelay_peer_map = {
-            entry.get("peer"): entry for entry in txrelay_snapshot.get("peers", [])
+            entry.get("conn_id"): entry for entry in txrelay_snapshot.get("peers", [])
         }
         async with self._peer_lock:
             peers = list(self._peers.values())
@@ -3572,7 +3572,9 @@ class P2PService:
             peer_entries.append(
                 {
                     "remote": peer.remote,
+                    "conn_id": peer.session_id,
                     "peer_id": peer.peer_id,
+                    "peer_node_id": peer.peer_id,
                     "direction": peer.direction,
                     "handshake_complete": peer.hello_done.is_set(),
                     "chain_match": self._peer_chain_matches(peer),
@@ -3591,6 +3593,8 @@ class P2PService:
                     "txrelay_inv_queue": txrelay_peer.get("inv_queue"),
                     "txrelay_last_sync_sent_at": txrelay_peer.get("last_sync_sent_at"),
                     "txrelay_last_sync_recv_at": txrelay_peer.get("last_sync_recv_at"),
+                    "txrelay_conn_id": txrelay_peer.get("conn_id"),
+                    "txrelay_peer_node_id": txrelay_peer.get("peer_node_id"),
                     "relay_eligible": self._tx_peer_eligibility(peer)[0],
                 }
             )
@@ -4750,7 +4754,12 @@ class P2PService:
         peer.hello_done.set()
         peer.ready_for_sync = True
         peer_key = self._peer_tx_key(peer)
-        self._txrelay.register_peer(peer_key)
+        self._txrelay.register_peer(
+            peer_key,
+            peer_node_id=peer.peer_id,
+            direction=peer.direction,
+            remote=peer.remote,
+        )
         self._create_child_task(
             self._txrelay.request_mempool_sync(peer_key),
             name=f"p2p.txrelay.mempool_sync@{peer_key}",

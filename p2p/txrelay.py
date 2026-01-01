@@ -35,7 +35,10 @@ class TxIdSetLRU:
 
 @dataclass(slots=True)
 class PeerTxState:
-    peer_id: str
+    conn_id: str
+    peer_node_id: Optional[str]
+    direction: Optional[str]
+    remote: Optional[str]
     known_txids: TxIdSetLRU
     inv_queue: Deque[bytes] = field(default_factory=deque)
     last_sync_sent_at: float = 0.0
@@ -44,7 +47,8 @@ class PeerTxState:
 
 @dataclass(slots=True)
 class InflightEntry:
-    peer_id: str
+    conn_id: str
+    peer_node_id: Optional[str]
     deadline: float
     attempts: int = 1
 
@@ -152,54 +156,82 @@ class TxRelayService:
         self._running = False
         self._lock = asyncio.Lock()
 
-    def register_peer(self, peer_id: str) -> None:
-        if peer_id not in self._peer_state:
-            self._peer_state[peer_id] = PeerTxState(
-                peer_id=peer_id,
+    def register_peer(
+        self,
+        conn_id: str,
+        *,
+        peer_node_id: Optional[str] = None,
+        direction: Optional[str] = None,
+        remote: Optional[str] = None,
+    ) -> None:
+        if conn_id not in self._peer_state:
+            self._peer_state[conn_id] = PeerTxState(
+                conn_id=conn_id,
+                peer_node_id=peer_node_id,
+                direction=direction,
+                remote=remote,
                 known_txids=TxIdSetLRU(self.known_txids_cap),
             )
+        else:
+            state = self._peer_state[conn_id]
+            state.peer_node_id = peer_node_id or state.peer_node_id
+            state.direction = direction or state.direction
+            state.remote = remote or state.remote
 
-    def unregister_peer(self, peer_id: str) -> None:
-        self._peer_state.pop(peer_id, None)
+    def unregister_peer(self, conn_id: str) -> None:
+        self._peer_state.pop(conn_id, None)
         for txid, entry in list(self._inflight.items()):
-            if entry.peer_id == peer_id:
+            if entry.conn_id == conn_id:
                 self._inflight.pop(txid, None)
 
     def _eligible_peers(self) -> List[str]:
         return [p for p in self._peer_ids() if self._peer_eligible(p)]
 
-    def _ensure_peer(self, peer_id: str) -> PeerTxState:
-        state = self._peer_state.get(peer_id)
+    def _ensure_peer(self, conn_id: str) -> PeerTxState:
+        state = self._peer_state.get(conn_id)
         if state is None:
-            state = PeerTxState(peer_id=peer_id, known_txids=TxIdSetLRU(self.known_txids_cap))
-            self._peer_state[peer_id] = state
+            state = PeerTxState(
+                conn_id=conn_id,
+                peer_node_id=None,
+                direction=None,
+                remote=None,
+                known_txids=TxIdSetLRU(self.known_txids_cap),
+            )
+            self._peer_state[conn_id] = state
         return state
 
-    def _mark_known(self, peer_id: str, txid: bytes) -> None:
-        self._ensure_peer(peer_id).known_txids.add(txid)
+    def _mark_known(self, conn_id: str, txid: bytes) -> None:
+        self._ensure_peer(conn_id).known_txids.add(txid)
+
+    def _peer_log_extra(self, conn_id: str) -> dict[str, Optional[str]]:
+        state = self._peer_state.get(conn_id)
+        return {
+            "conn_id": conn_id,
+            "peer_node_id": state.peer_node_id if state else None,
+        }
 
     async def on_mempool_add(self, txid: bytes, raw: bytes) -> None:
         async with self._lock:
             peers = self._eligible_peers()
-            for peer_id in peers:
-                state = self._ensure_peer(peer_id)
+            for conn_id in peers:
+                state = self._ensure_peer(conn_id)
                 if txid in state.known_txids:
                     continue
                 state.inv_queue.append(txid)
         log.info("TX_ACCEPT_LOCAL", extra={"hash": txid.hex(), "bytes": len(raw)})
 
-    async def on_tx_inv(self, peer_id: str, txids: Iterable[bytes]) -> None:
+    async def on_tx_inv(self, conn_id: str, txids: Iterable[bytes]) -> None:
         tx_list = list(txids)
         log.info(
             "TX_INV_RECV",
-            extra={"peer": peer_id, "count": len(tx_list)},
+            extra={"peer": conn_id, "count": len(tx_list), **self._peer_log_extra(conn_id)},
         )
         needs_check: List[bytes] = []
         async with self._lock:
-            state = self._ensure_peer(peer_id)
+            state = self._ensure_peer(conn_id)
             for txid in tx_list:
                 state.known_txids.add(txid)
-                self._tx_sources.setdefault(txid, set()).add(peer_id)
+                self._tx_sources.setdefault(txid, set()).add(conn_id)
                 if txid in self._inflight:
                     continue
                 needs_check.append(txid)
@@ -214,25 +246,29 @@ class TxRelayService:
                 if txid in self._inflight:
                     continue
                 self._inflight[txid] = InflightEntry(
-                    peer_id=peer_id, deadline=now + self.inflight_timeout_s
+                    conn_id=conn_id,
+                    peer_node_id=self._peer_state.get(conn_id, None).peer_node_id
+                    if conn_id in self._peer_state
+                    else None,
+                    deadline=now + self.inflight_timeout_s,
                 )
             missing.append(txid)
         if missing:
             log.info(
                 "TX_INV_RECV",
-                extra={"peer": peer_id, "count": len(missing)},
+                extra={"peer": conn_id, "count": len(missing), **self._peer_log_extra(conn_id)},
             )
-            await self._send_tx_get(peer_id, missing)
+            await self._send_tx_get(conn_id, missing)
             log.info(
                 "TX_GET_SEND",
-                extra={"peer": peer_id, "count": len(missing)},
+                extra={"peer": conn_id, "count": len(missing), **self._peer_log_extra(conn_id)},
             )
 
-    async def on_tx_get(self, peer_id: str, txids: Iterable[bytes]) -> None:
+    async def on_tx_get(self, conn_id: str, txids: Iterable[bytes]) -> None:
         tx_list = list(txids)
         log.info(
             "TX_GET_RECV",
-            extra={"peer": peer_id, "count": len(tx_list)},
+            extra={"peer": conn_id, "count": len(tx_list), **self._peer_log_extra(conn_id)},
         )
         send_items: List[dict[str, Any]] = []
         notfound: List[bytes] = []
@@ -248,26 +284,36 @@ class TxRelayService:
 
         if send_items:
             total_bytes = sum(len(it["tx_bytes"]) for it in send_items)
-            if not self._tx_data_limiter.consume(peer_id, total_bytes):
+            if not self._tx_data_limiter.consume(conn_id, total_bytes):
                 log.info(
                     "TX_DATA_SEND",
-                    extra={"peer": peer_id, "status": "rate_limited", "bytes": total_bytes},
+                    extra={
+                        "peer": conn_id,
+                        "status": "rate_limited",
+                        "bytes": total_bytes,
+                        **self._peer_log_extra(conn_id),
+                    },
                 )
             else:
-                await self._send_tx_data(peer_id, send_items)
+                await self._send_tx_data(conn_id, send_items)
                 log.info(
                     "TX_DATA_SEND",
-                    extra={"peer": peer_id, "count": len(send_items), "bytes": total_bytes},
+                    extra={
+                        "peer": conn_id,
+                        "count": len(send_items),
+                        "bytes": total_bytes,
+                        **self._peer_log_extra(conn_id),
+                    },
                 )
 
         if notfound:
-            await self._send_tx_notfound(peer_id, notfound)
+            await self._send_tx_notfound(conn_id, notfound)
             log.info(
                 "TX_NOTFOUND",
-                extra={"peer": peer_id, "count": len(notfound)},
+                extra={"peer": conn_id, "count": len(notfound), **self._peer_log_extra(conn_id)},
             )
 
-    async def on_tx_data(self, peer_id: str, items: Iterable[dict[str, Any]]) -> None:
+    async def on_tx_data(self, conn_id: str, items: Iterable[dict[str, Any]]) -> None:
         broadcast: List[bytes] = []
         for item in items:
             txid = item.get("txid")
@@ -280,7 +326,12 @@ class TxRelayService:
             raw_bytes = bytes(raw)
             log.info(
                 "TX_DATA_RECV",
-                extra={"peer": peer_id, "hash": txid_bytes.hex(), "bytes": len(raw_bytes)},
+                extra={
+                    "peer": conn_id,
+                    "hash": txid_bytes.hex(),
+                    "bytes": len(raw_bytes),
+                    **self._peer_log_extra(conn_id),
+                },
             )
             if len(raw_bytes) > self.max_tx_bytes:
                 log.info(
@@ -297,14 +348,20 @@ class TxRelayService:
                 )
                 self._inflight.pop(txid_bytes, None)
                 continue
-            ok, reason = await self._admit_tx(raw_bytes, peer_id)
+            origin_peer = self._peer_state.get(conn_id, None)
+            origin_label = origin_peer.peer_node_id if origin_peer else None
+            ok, reason = await self._admit_tx(raw_bytes, origin_label or conn_id)
             self._inflight.pop(txid_bytes, None)
-            self._mark_known(peer_id, txid_bytes)
+            self._mark_known(conn_id, txid_bytes)
             if ok:
                 broadcast.append(txid_bytes)
                 log.info(
                     "TX_ADD_MEMPOOL",
-                    extra={"hash": txid_bytes.hex(), "origin": f"peer:{peer_id}"},
+                    extra={
+                        "hash": txid_bytes.hex(),
+                        "origin": f"peer:{origin_label or conn_id}",
+                        **self._peer_log_extra(conn_id),
+                    },
                 )
             else:
                 log.info(
@@ -312,42 +369,48 @@ class TxRelayService:
                     extra={
                         "hash": txid_bytes.hex(),
                         "reason": reason or "reject",
-                        "origin": f"peer:{peer_id}",
+                        "origin": f"peer:{origin_label or conn_id}",
+                        **self._peer_log_extra(conn_id),
                     },
                 )
 
         if broadcast:
-            await self._broadcast_inv(broadcast, exclude_peer=peer_id)
+            await self._broadcast_inv(broadcast, exclude_peer=conn_id)
 
-    async def on_tx_notfound(self, peer_id: str, txids: Iterable[bytes]) -> None:
+    async def on_tx_notfound(self, conn_id: str, txids: Iterable[bytes]) -> None:
         tx_list = list(txids)
         for txid in tx_list:
             self._inflight.pop(txid, None)
         log.info(
             "TX_NOTFOUND",
-            extra={"peer": peer_id, "count": len(tx_list)},
+            extra={"peer": conn_id, "count": len(tx_list), **self._peer_log_extra(conn_id)},
         )
 
-    async def on_mempool_req(self, peer_id: str, limit: Optional[int] = None) -> None:
+    async def on_mempool_req(self, conn_id: str, limit: Optional[int] = None) -> None:
         lim = int(limit) if limit is not None else self.mempool_sync_limit
         txids = await self._list_mempool_hashes(lim)
-        await self._send_mempool_resp(peer_id, txids)
+        await self._send_mempool_resp(conn_id, txids)
         log.info(
-            "TX_SYNC_RESP",
-            extra={"peer": peer_id, "count": len(txids)},
+            "TX_SYNC_RESP_SEND",
+            extra={"peer": conn_id, "count": len(txids), **self._peer_log_extra(conn_id)},
         )
 
-    async def on_mempool_resp(self, peer_id: str, txids: Iterable[bytes]) -> None:
+    async def on_mempool_resp(self, conn_id: str, txids: Iterable[bytes]) -> None:
+        tx_list = list(txids)
         needs_check: List[bytes] = []
         async with self._lock:
-            state = self._ensure_peer(peer_id)
-            for txid in txids:
+            state = self._ensure_peer(conn_id)
+            for txid in tx_list:
                 state.known_txids.add(txid)
                 if txid in self._inflight:
                     continue
                 needs_check.append(txid)
             state.last_sync_recv_at = time.time()
-        missing: List[bytes] = []
+        log.info(
+            "TX_SYNC_RESP_RECV",
+            extra={"peer": conn_id, "count": len(tx_list), **self._peer_log_extra(conn_id)},
+        )
+        want_txids: List[bytes] = []
         for txid in needs_check:
             if await self._has_tx(txid):
                 continue
@@ -357,22 +420,34 @@ class TxRelayService:
                 if txid in self._inflight:
                     continue
                 self._inflight[txid] = InflightEntry(
-                    peer_id=peer_id, deadline=time.time() + self.inflight_timeout_s
+                    conn_id=conn_id,
+                    peer_node_id=self._peer_state.get(conn_id, None).peer_node_id
+                    if conn_id in self._peer_state
+                    else None,
+                    deadline=time.time() + self.inflight_timeout_s,
                 )
-            missing.append(txid)
-        if missing:
-            await self._send_tx_get(peer_id, missing)
-            log.info(
-                "TX_GET_SEND",
-                extra={"peer": peer_id, "count": len(missing)},
-            )
+            want_txids.append(txid)
+        if want_txids:
+            for idx in range(0, len(want_txids), 256):
+                batch = want_txids[idx : idx + 256]
+                await self._send_tx_get(conn_id, batch)
+                log.info(
+                    "TX_GET_SEND",
+                    extra={
+                        "peer": conn_id,
+                        "count": len(batch),
+                        **self._peer_log_extra(conn_id),
+                    },
+                )
 
-    async def _broadcast_inv(self, txids: Iterable[bytes], *, exclude_peer: Optional[str]) -> None:
+    async def _broadcast_inv(
+        self, txids: Iterable[bytes], *, exclude_peer: Optional[str]
+    ) -> None:
         async with self._lock:
-            for peer_id in self._eligible_peers():
-                if exclude_peer and peer_id == exclude_peer:
+            for conn_id in self._eligible_peers():
+                if exclude_peer and conn_id == exclude_peer:
                     continue
-                state = self._ensure_peer(peer_id)
+                state = self._ensure_peer(conn_id)
                 for txid in txids:
                     if txid in state.known_txids:
                         continue
@@ -400,15 +475,19 @@ class TxRelayService:
                         batch.append(state.inv_queue.popleft())
                     if not batch:
                         continue
-                    if not self._inv_limiter.consume(state.peer_id, len(batch)):
+                    if not self._inv_limiter.consume(state.conn_id, len(batch)):
                         state.inv_queue.extendleft(reversed(batch))
                         continue
-                    await self._send_tx_inv(state.peer_id, batch)
+                    await self._send_tx_inv(state.conn_id, batch)
                     for txid in batch:
                         state.known_txids.add(txid)
                     log.info(
                         "TX_INV_SEND",
-                        extra={"peer": state.peer_id, "count": len(batch)},
+                        extra={
+                            "peer": state.conn_id,
+                            "count": len(batch),
+                            **self._peer_log_extra(state.conn_id),
+                        },
                     )
                 if now - last_heartbeat >= 10.0:
                     last_heartbeat = now
@@ -438,25 +517,34 @@ class TxRelayService:
                         "TX_INFLIGHT_TIMEOUT",
                         extra={
                             "hash": txid.hex(),
-                            "peer": entry.peer_id,
+                            "peer": entry.conn_id,
                             "attempts": entry.attempts,
+                            **self._peer_log_extra(entry.conn_id),
                         },
                     )
                     sources = list(self._tx_sources.get(txid, set()))
                     candidates = [
-                        p for p in sources if p != entry.peer_id and self._peer_eligible(p)
+                        p for p in sources if p != entry.conn_id and self._peer_eligible(p)
                     ]
                     if candidates and entry.attempts < self.inflight_max_retries:
                         next_peer = candidates[0]
                         self._inflight[txid] = InflightEntry(
-                            peer_id=next_peer,
+                            conn_id=next_peer,
+                            peer_node_id=self._peer_state.get(next_peer, None).peer_node_id
+                            if next_peer in self._peer_state
+                            else None,
                             deadline=now + self.inflight_timeout_s,
                             attempts=entry.attempts + 1,
                         )
                         await self._send_tx_get(next_peer, [txid])
                         log.info(
                             "TX_GET_SEND",
-                            extra={"peer": next_peer, "count": 1, "retry": True},
+                            extra={
+                                "peer": next_peer,
+                                "count": 1,
+                                "retry": True,
+                                **self._peer_log_extra(next_peer),
+                            },
                         )
                 if now - last_heartbeat >= 10.0:
                     last_heartbeat = now
@@ -477,15 +565,19 @@ class TxRelayService:
                 async with self._lock:
                     peer_states = list(self._peer_state.values())
                 for state in peer_states:
-                    if not self._peer_eligible(state.peer_id):
+                    if not self._peer_eligible(state.conn_id):
                         continue
                     if now - state.last_sync_sent_at < self.mempool_sync_interval_s:
                         continue
                     state.last_sync_sent_at = now
-                    await self._send_mempool_req(state.peer_id, self.mempool_sync_limit)
+                    await self._send_mempool_req(state.conn_id, self.mempool_sync_limit)
                     log.info(
                         "TX_SYNC_REQ",
-                        extra={"peer": state.peer_id, "limit": self.mempool_sync_limit},
+                        extra={
+                            "peer": state.conn_id,
+                            "limit": self.mempool_sync_limit,
+                            **self._peer_log_extra(state.conn_id),
+                        },
                     )
                 if now - last_heartbeat >= 10.0:
                     last_heartbeat = now
@@ -501,7 +593,10 @@ class TxRelayService:
         for state in self._peer_state.values():
             peers.append(
                 {
-                    "peer": state.peer_id,
+                    "conn_id": state.conn_id,
+                    "peer_node_id": state.peer_node_id,
+                    "direction": state.direction,
+                    "remote": state.remote,
                     "known_txids": len(state.known_txids),
                     "inv_queue": len(state.inv_queue),
                     "last_sync_sent_at": state.last_sync_sent_at or None,
@@ -513,11 +608,16 @@ class TxRelayService:
             "peers": peers,
         }
 
-    async def request_mempool_sync(self, peer_id: str) -> None:
-        state = self._ensure_peer(peer_id)
+    async def request_mempool_sync(self, conn_id: str) -> None:
+        state = self._ensure_peer(conn_id)
         state.last_sync_sent_at = time.time()
-        await self._send_mempool_req(peer_id, self.mempool_sync_limit)
+        await self._send_mempool_req(conn_id, self.mempool_sync_limit)
         log.info(
             "TX_SYNC_REQ",
-            extra={"peer": peer_id, "limit": self.mempool_sync_limit, "trigger": "connect"},
+            extra={
+                "peer": conn_id,
+                "limit": self.mempool_sync_limit,
+                "trigger": "connect",
+                **self._peer_log_extra(conn_id),
+            },
         )
