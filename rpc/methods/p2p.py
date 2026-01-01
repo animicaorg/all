@@ -593,6 +593,17 @@ async def sync_debug() -> dict[str, t.Any]:
     return {"error": P2P_UNAVAILABLE_ERROR}
 
 
+@method("p2p.debugStatus", desc="Return P2P tx relay debug status")
+async def debug_status() -> dict[str, t.Any]:
+    p2p_svc = _get_p2p_service()
+    if p2p_svc is not None and hasattr(p2p_svc, "debug_status"):
+        try:
+            return t.cast(dict[str, t.Any], await p2p_svc.debug_status())
+        except Exception as exc:  # pragma: no cover - defensive
+            return {"error": str(exc)}
+    return {"error": P2P_UNAVAILABLE_ERROR}
+
+
 @method("p2p.getPeerStats", desc="Return detailed peer stats for the P2P service")
 async def get_peer_stats() -> list[dict[str, t.Any]]:
     p2p_svc = _get_p2p_service()
@@ -967,6 +978,7 @@ __all__ = [
     "list_peers",
     "get_status",
     "sync_debug",
+    "debug_status",
     "add_peer",
     "remove_peer",
     "get_peer_info",
