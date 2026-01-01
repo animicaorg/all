@@ -832,6 +832,11 @@ class P2PDeps:
             except Exception as e:
                 return False, f"mempool_reject:{e}"
 
+            try:
+                tx_methods._pending_put(tx_hash_hex, raw_cbor)  # type: ignore[attr-defined]
+            except Exception:
+                pass
+
             return True, None
 
         except Exception as e:
