@@ -3709,6 +3709,11 @@ class P2PService:
         )
         return "0x" + txh.hex()
 
+    async def request_missing_txids(self, limit: int = 128) -> int:
+        if not self._tx_relay_enabled or not self._p2p_tx_enabled:
+            return 0
+        return await self._txrelay.request_missing_known(limit=limit)
+
     async def relay_block(self, block_hash: bytes) -> None:
         self._remember(self._seen_blocks, block_hash, self._seen_block_cap)
         await self._broadcast_inv(

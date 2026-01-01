@@ -179,12 +179,14 @@ def list_pending(
             if not isinstance(entry, dict):
                 continue
             peer = entry.get("peer_id") or entry.get("peerId") or "n/a"
+            conn_id = entry.get("conn_id") or entry.get("txrelay_conn_id") or "n/a"
             known = entry.get("txrelay_known_txids")
             sample = entry.get("txrelay_known_txids_sample") or []
             sample_text = ", ".join(sample) if sample else "n/a"
             typer.echo(
-                "  peer={peer} known_txids={known} sample=[{sample}]".format(
+                "  peer={peer} conn_id={conn_id} known_txids={known} sample=[{sample}]".format(
                     peer=_short_id(peer) or "n/a",
+                    conn_id=_short_id(conn_id) or "n/a",
                     known=known,
                     sample=sample_text,
                 )
