@@ -78,6 +78,7 @@ def list_pending(
     chain_identity = None
     head = None
     p2p_status = None
+    p2p_debug = None
     try:
         chain_identity = call_rpc(
             "chain.getChainIdentity",
@@ -92,9 +93,17 @@ def list_pending(
     except Exception:
         head = None
     try:
-        p2p_status = call_rpc("p2p.getStatus", [], rpc_url=resolved_rpc_url, no_cache=no_cache)
+        p2p_status = call_rpc(
+            "p2p.getStatus", [], rpc_url=resolved_rpc_url, no_cache=no_cache
+        )
     except Exception:
         p2p_status = None
+    try:
+        p2p_debug = call_rpc(
+            "p2p.debugStatus", [], rpc_url=resolved_rpc_url, no_cache=no_cache
+        )
+    except Exception:
+        p2p_debug = None
     mempool_info = None
     try:
         mempool_info = call_rpc("mempool.getInfo", [], rpc_url=resolved_rpc_url, no_cache=no_cache)
@@ -125,6 +134,10 @@ def list_pending(
             },
             "peer": {"id": peer_id},
             "mempool": mempool_info,
+            "p2p": {
+                "status": p2p_status,
+                "debug": p2p_debug,
+            },
             "head": {
                 "height": head_height,
                 "hash": head.get("hash") if isinstance(head, dict) else None,
@@ -157,6 +170,25 @@ def list_pending(
                 mempool_path=mempool_info.get("mempool_path") or "n/a",
             )
         )
+    peer_known = None
+    if isinstance(p2p_debug, dict):
+        peer_known = p2p_debug.get("peers")
+    if peer_known:
+        typer.echo("Peer-known txids (sample):")
+        for entry in peer_known:
+            if not isinstance(entry, dict):
+                continue
+            peer = entry.get("peer_id") or entry.get("peerId") or "n/a"
+            known = entry.get("txrelay_known_txids")
+            sample = entry.get("txrelay_known_txids_sample") or []
+            sample_text = ", ".join(sample) if sample else "n/a"
+            typer.echo(
+                "  peer={peer} known_txids={known} sample=[{sample}]".format(
+                    peer=_short_id(peer) or "n/a",
+                    known=known,
+                    sample=sample_text,
+                )
+            )
     if isinstance(result, list):
         if not result:
             typer.echo("Mempool is empty (no pending transactions)")

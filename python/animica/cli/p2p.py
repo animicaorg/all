@@ -64,16 +64,23 @@ def tx_debug(
         peer_id = entry.get("peer_id") or entry.get("peerId")
         direction = entry.get("direction")
         known = entry.get("txrelay_known_txids")
+        known_sample = entry.get("txrelay_known_txids_sample") or []
         inv_queue = entry.get("txrelay_inv_queue")
         last_sync_sent = entry.get("txrelay_last_sync_sent_at")
         last_sync_recv = entry.get("txrelay_last_sync_recv_at")
+        known_sample_text = ""
+        if known_sample:
+            known_sample_text = " sample=[{sample}]".format(
+                sample=", ".join(known_sample)
+            )
         typer.echo(
-            "  peer={peer} remote={remote} direction={direction} known_txids={known} "
+            "  peer={peer} remote={remote} direction={direction} known_txids={known}{sample} "
             "inv_queue={inv_queue} last_sync_sent={sent} last_sync_recv={recv}".format(
                 peer=peer_id or "n/a",
                 remote=remote or "n/a",
                 direction=direction or "n/a",
                 known=known,
+                sample=known_sample_text,
                 inv_queue=inv_queue,
                 sent=last_sync_sent,
                 recv=last_sync_recv,
