@@ -42,17 +42,28 @@ class PendingStats:
         }
 
 
-def _iter_pending() -> Iterable[tuple[str, bytes, float | None]]:
-    """Yield (hash_hex, raw_bytes, ts) from the canonical mempool or fallback cache."""
+def _get_mempool_service() -> Any | None:
+    if tx_methods is not None:
+        getter = getattr(tx_methods, "_get_mempool_service", None)
+        if callable(getter):
+            try:
+                return getter()
+            except Exception:
+                return None
     try:
         ctx = deps.get_ctx()
     except Exception:
-        ctx = None
-    mempool_service = getattr(ctx, "mempool", None) if ctx is not None else None
+        return None
+    return getattr(ctx, "mempool", None) if ctx is not None else None
+
+
+def _iter_pending() -> Iterable[tuple[str, bytes, float | None]]:
+    """Yield (hash_hex, raw_bytes, ts) from the canonical mempool or fallback cache."""
+    mempool_service = _get_mempool_service()
     if mempool_service is not None:
         snapshot = mempool_service.snapshot(limit=1000)
         log.info(
-            "mempool._iter_pending: using ctx.mempool, count=%d",
+            "mempool._iter_pending: using mempool service, count=%d",
             len(snapshot.entries),
         )
         return (
@@ -179,11 +190,7 @@ def _entry_details(
     aliases=("mempool_pending",),
 )
 def mempool_get_pending(verbose: bool | None = None) -> list[str] | list[dict]:
-    try:
-        ctx = deps.get_ctx()
-    except Exception:
-        ctx = None
-    mempool_service = getattr(ctx, "mempool", None) if ctx is not None else None
+    mempool_service = _get_mempool_service()
     if mempool_service is not None:
         snapshot = mempool_service.snapshot(limit=1000)
         pending_hashes = [entry.hash_hex for entry in snapshot.entries]
@@ -231,11 +238,7 @@ def mempool_get_pending(verbose: bool | None = None) -> list[str] | list[dict]:
     aliases=("mempool_stats",),
 )
 def mempool_get_stats() -> dict:
-    try:
-        ctx = deps.get_ctx()
-    except Exception:
-        ctx = None
-    mempool_service = getattr(ctx, "mempool", None) if ctx is not None else None
+    mempool_service = _get_mempool_service()
     if mempool_service is not None:
         stats = mempool_service.stats()
         return PendingStats(
