@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import socket
 from dataclasses import dataclass, field
 from typing import Iterable, Optional
@@ -82,9 +83,17 @@ class CoreP2PService:
     _head_task: Optional[asyncio.Task] = field(default=None, init=False)
     _last_head_hash: Optional[bytes] = field(default=None, init=False)
     _seed_list: list[str] = field(default_factory=list, init=False)
+    _mempool_rebroadcast_interval: float = field(default=0.0, init=False)
+    _mempool_rebroadcast_limit: int = field(default=0, init=False)
 
     def __post_init__(self) -> None:
         self.addrman = AddressManager()
+        self._mempool_rebroadcast_interval = float(
+            os.environ.get("ANIMICA_P2P_CORE_MEMPOOL_REBROADCAST_SEC", "15") or 15
+        )
+        self._mempool_rebroadcast_limit = int(
+            os.environ.get("ANIMICA_P2P_CORE_MEMPOOL_LIMIT", "512") or 512
+        )
         self._seed_list = list(self.seeds)
         for seed in self._seed_list:
             parsed = _parse_seed(seed)
@@ -111,6 +120,12 @@ class CoreP2PService:
             asyncio.create_task(self._dial_loop(), name="core_p2p.dial"),
             asyncio.create_task(self._head_watch_loop(), name="core_p2p.head_watch"),
         ]
+        if self._mempool_rebroadcast_interval > 0:
+            self._tasks.append(
+                asyncio.create_task(
+                    self._mempool_rebroadcast_loop(), name="core_p2p.mempool_rebroadcast"
+                )
+            )
         log.info(
             "core p2p started",
             extra={
@@ -167,6 +182,37 @@ class CoreP2PService:
                     )
         except asyncio.CancelledError:
             return
+
+    async def _mempool_rebroadcast_loop(self) -> None:
+        try:
+            while self._running:
+                await asyncio.sleep(self._mempool_rebroadcast_interval)
+                await self._broadcast_pending_txs()
+        except asyncio.CancelledError:
+            return
+
+    async def _broadcast_pending_txs(self) -> None:
+        deps = getattr(self.chain, "deps", None)
+        if deps is None:
+            return
+        fn = getattr(deps, "list_pending_hashes", None)
+        if not callable(fn):
+            return
+        try:
+            hashes = fn(limit=self._mempool_rebroadcast_limit)
+            if asyncio.iscoroutine(hashes):
+                hashes = await hashes
+        except Exception:
+            return
+        if not hashes:
+            return
+        peers = list(self.connman.peers().values())
+        if not peers:
+            return
+        for h in hashes:
+            if not isinstance(h, (bytes, bytearray)) or len(h) != 32:
+                continue
+            await self.net_processing.announce_tx(peers, bytes(h), self.connman._send)
 
     def _best_head_hash(self) -> Optional[bytes]:
         getter = getattr(self.chain, "best_header_hash", None)
