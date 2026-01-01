@@ -3590,6 +3590,9 @@ class P2PService:
                     "known_tx_inv_lru": len(self._tx_inv_sent_by_peer.get(peer_key, {})),
                     "known_tx_sent_lru": len(self._tx_sent_by_peer.get(peer_key, {})),
                     "txrelay_known_txids": txrelay_peer.get("known_txids"),
+                    "txrelay_known_txids_sample": txrelay_peer.get(
+                        "known_txids_sample"
+                    ),
                     "txrelay_inv_queue": txrelay_peer.get("inv_queue"),
                     "txrelay_last_sync_sent_at": txrelay_peer.get("last_sync_sent_at"),
                     "txrelay_last_sync_recv_at": txrelay_peer.get("last_sync_recv_at"),
