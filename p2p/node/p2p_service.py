@@ -4687,6 +4687,12 @@ class P2PService:
                 "tx.inv_recv",
                 extra={"peer": peer.remote, "count": tx_inv_count},
             )
+            for it in inv.items:
+                if int(it.typ) == int(InvType.TX):
+                    log.info(
+                        "tx.inv_recv",
+                        extra={"peer": peer.remote, "hash": bytes(it.h).hex()},
+                    )
 
         want: list[InvItem] = []
         for it in inv.items:
@@ -4858,8 +4864,14 @@ class P2PService:
             return
 
         from core.utils.hash import sha3_256
+        from core.utils.tx import normalize_tx_bytes
 
-        txh = sha3_256(raw)
+        try:
+            canonical_raw = normalize_tx_bytes(raw)
+        except Exception:
+            canonical_raw = raw
+
+        txh = sha3_256(canonical_raw)
         if self._seen(self._seen_tx, txh):
             return
         self._remember(self._seen_tx, txh, self._seen_tx_cap)
@@ -4883,6 +4895,10 @@ class P2PService:
             log.info(
                 "tx.mempool_rejected",
                 extra={"tx_hash": txh.hex(), "peer": peer.remote, "reason": reason},
+            )
+            log.info(
+                "tx.rejected",
+                extra={"hash": txh.hex(), "peer": peer.remote, "reason": reason},
             )
 
     async def _handle_get_headers(self, peer: _PeerState, payload: bytes) -> None:
@@ -9022,6 +9038,12 @@ class P2PService:
                     "tx.inv_sent",
                     extra={"peer": peer.remote, "count": len(items)},
                 )
+                for it in items:
+                    if int(it.typ) == int(InvType.TX):
+                        log.info(
+                            "tx.inv_sent",
+                            extra={"peer": peer.remote, "hash": bytes(it.h).hex()},
+                        )
             else:
                 self._stats["inv_block_sent"] += len(items)
 

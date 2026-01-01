@@ -67,6 +67,12 @@ try:
 except Exception:  # pragma: no cover
     _Tx = None  # type: ignore
 
+# Tx normalization (canonical hashing)
+try:
+    from core.utils.tx import normalize_tx_bytes as _normalize_tx_bytes  # type: ignore
+except Exception:  # pragma: no cover
+    _normalize_tx_bytes = None  # type: ignore
+
 # Hashing
 try:
     from core.utils.hash import sha3_256 as _sha3_256  # type: ignore
@@ -653,7 +659,12 @@ def _decode_tx(raw: bytes) -> tuple[t.Any, dict]:
 
     normalized_obj = _normalize_tx_envelope(obj)
     raw_canonical = raw
-    tx_hash_hex = _hex(_sha3_256(raw)) or ""
+    if _normalize_tx_bytes is not None and isinstance(normalized_obj, dict):
+        try:
+            raw_canonical = _normalize_tx_bytes(normalized_obj)
+        except Exception:
+            raw_canonical = raw
+    tx_hash_hex = _hex(_sha3_256(raw_canonical)) or ""
 
     if _Tx is not None and isinstance(normalized_obj, dict):
         try:
@@ -1193,7 +1204,18 @@ def _tx_send_raw_transaction(rawTx: str) -> str:
     chain_id = _validate_chain_id(obj)
     _verify_pq_signature(tx_like, obj, chain_id=chain_id)
 
-    tx_hash_hex = _hex(_sha3_256(raw)) or ""
+    raw_canonical = raw
+    if isinstance(obj, dict):
+        raw_from_obj = obj.get("raw")
+        if isinstance(raw_from_obj, (bytes, bytearray)):
+            raw_canonical = bytes(raw_from_obj)
+    if _normalize_tx_bytes is not None:
+        try:
+            raw_canonical = _normalize_tx_bytes(raw_canonical)
+        except Exception:
+            raw_canonical = bytes(raw_canonical)
+
+    tx_hash_hex = _hex(_sha3_256(raw_canonical)) or ""
     if not tx_hash_hex:
         raise rpc_errors.InternalError("Failed to compute tx hash")
 
@@ -1237,7 +1259,7 @@ def _tx_send_raw_transaction(rawTx: str) -> str:
 
     # Admit to mempool using robust method probing
     try:
-        _mempool_submit(svc, tx_obj=tx_obj, raw=raw, tx_hash_hex=tx_hash_hex)
+        _mempool_submit(svc, tx_obj=tx_obj, raw=raw_canonical, tx_hash_hex=tx_hash_hex)
     except Exception as exc:
         log.warning(
             "Mempool admission rejected",
@@ -1245,6 +1267,10 @@ def _tx_send_raw_transaction(rawTx: str) -> str:
                 "tx_hash": tx_hash_hex,
                 "error": str(exc),
             },
+        )
+        log.info(
+            "tx.rejected",
+            extra={"hash": tx_hash_hex, "reason": str(exc)},
         )
         # Surface as a mempool admission failure (so CLI sees a real error)
         raise rpc_errors.InvalidTx(
@@ -1264,6 +1290,10 @@ def _tx_send_raw_transaction(rawTx: str) -> str:
     )
     log.info(
         "tx.accepted_local",
+        extra={"tx_hash": tx_hash_hex, "nonce": _tx_view(tx_obj, obj, pending=True).get("nonce")},
+    )
+    log.info(
+        "tx.mempool_added",
         extra={"tx_hash": tx_hash_hex},
     )
 
@@ -1281,7 +1311,7 @@ def _tx_send_raw_transaction(rawTx: str) -> str:
 
     # Add to pending cache for tx.getTransactionByHash pending view (best-effort)
     try:
-        _pending_put(tx_hash_hex, raw)
+        _pending_put(tx_hash_hex, raw_canonical)
     except Exception:
         pass
 
@@ -1294,7 +1324,7 @@ def _tx_send_raw_transaction(rawTx: str) -> str:
 
     # Gossip to P2P peers (best-effort)
     try:
-        _gossip_tx_to_peers(raw)
+        _gossip_tx_to_peers(raw_canonical)
     except Exception:
         pass
 

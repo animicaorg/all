@@ -133,10 +133,16 @@ else:  # pragma: no cover - fallback for minimal environments
 # ---- Hashing helper ----------------------------------------------------------
 def tx_hash(tx_cbor: bytes) -> bytes:
     """
-    Canonical tx hash used on the wire: sha3-256 over the CBOR-encoded tx bytes.
-    (Core may also expose a typed Tx->hash; this helper matches the raw-wire form.)
+    Canonical tx hash used on the wire: sha3-256 over canonical CBOR bytes.
     """
-    return hashlib.sha3_256(tx_cbor).digest()
+    try:
+        from core.utils.hash import sha3_256
+        from core.utils.tx import normalize_tx_bytes
+
+        raw = normalize_tx_bytes(tx_cbor)
+        return sha3_256(raw)
+    except Exception:
+        return hashlib.sha3_256(tx_cbor).digest()
 
 
 def _check_hash_list(ids: Iterable[bytes], limit: int, tag: str) -> List[bytes]:
@@ -504,6 +510,14 @@ class TxRelayHandler:
             payload: Raw CBOR-encoded transaction
         """
         self._metrics["rx_bodies"] += 1
+        try:
+            incoming_hash = tx_hash(payload)
+            log.info(
+                "tx.tx_recv",
+                extra={"peer": peer_id, "hash": incoming_hash.hex()},
+            )
+        except Exception:
+            pass
 
         # Rotate bloom filter periodically
         self._gate.maybe_rotate()
@@ -566,6 +580,16 @@ class TxRelayHandler:
                 f"Mempool rejected tx from {peer_id}: {reason}",
                 extra={
                     "tx_hash": (
+                        admit_result.tx_hash.hex() if admit_result.tx_hash else "N/A"
+                    ),
+                    "reason": reason,
+                },
+            )
+            log.info(
+                "tx.rejected",
+                extra={
+                    "peer": peer_id,
+                    "hash": (
                         admit_result.tx_hash.hex() if admit_result.tx_hash else "N/A"
                     ),
                     "reason": reason,
