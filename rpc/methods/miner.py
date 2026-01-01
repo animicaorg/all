@@ -1770,6 +1770,34 @@ def _collect_mempool_entries(
     return pending_entries, pending_raw_by_hash, total
 
 
+def _request_missing_mempool_txs(
+    *, limit: int = 128, wait_s: float = 0.25
+) -> int:
+    try:
+        ctx = _ctx()
+    except Exception:
+        return 0
+    p2p_service = getattr(ctx, "p2p_service", None)
+    if p2p_service is None:
+        return 0
+    fn = getattr(p2p_service, "request_missing_txids", None)
+    if not callable(fn):
+        return 0
+    try:
+        running_loop = None
+        try:
+            running_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            running_loop = None
+        loop = running_loop or getattr(p2p_service, "loop", None)
+        if loop is not None and loop.is_running():
+            future = asyncio.run_coroutine_threadsafe(fn(limit=limit), loop)
+            return int(future.result(timeout=wait_s))
+        return int(asyncio.run(fn(limit=limit)))
+    except Exception:
+        return 0
+
+
 def _build_child_header(
     parent_height: int, parent_hash: bytes, parent_header: Any
 ) -> Header:
@@ -3635,6 +3663,32 @@ def miner_get_block_template(*args: Any, **kwargs: Any) -> Dict[str, Any]:
                     "mempool_id": id(mempool_service) if mempool_service is not None else "None",
                 },
             )
+            if not pending_entries:
+                requested = _request_missing_mempool_txs(limit=128, wait_s=0.25)
+                if requested:
+                    log.info(
+                        "block template requested missing txids",
+                        extra={"requested": requested},
+                    )
+                    time.sleep(0.25)
+                    pending_entries, pending_raw_by_hash, pending_total = (
+                        _collect_mempool_entries(
+                            ctx=ctx,
+                            adapter=adapter,
+                            limit=1000,
+                        )
+                    )
+                    log.info(
+                        "block template mempool collection (after fetch)",
+                        extra={
+                            "entries": len(pending_entries),
+                            "total": pending_total,
+                            "source": "service" if mempool_service is not None else "adapter",
+                            "mempool_id": id(mempool_service)
+                            if mempool_service is not None
+                            else "None",
+                        },
+                    )
         else:
             pending_total = 0
 
