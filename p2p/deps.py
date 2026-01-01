@@ -781,9 +781,21 @@ class P2PDeps:
                 return False, f"decode_failed:{e}"
 
             try:
-                chain_id = tx_methods._validate_chain_id(obj)  # type: ignore[attr-defined]
+                if hasattr(tx_methods, "_extract_chain_id"):
+                    chain_id = tx_methods._extract_chain_id(  # type: ignore[attr-defined]
+                        tx_like, obj
+                    )
+                else:
+                    chain_id = tx_methods._validate_chain_id(obj)  # type: ignore[attr-defined]
+            except Exception as e:
+                return False, f"chain_id_missing:{e}"
+
+            if int(chain_id) != int(self.chain_id):
+                return False, f"chain_id_mismatch:{chain_id}!={self.chain_id}"
+
+            try:
                 tx_methods._verify_pq_signature(  # type: ignore[attr-defined]
-                    tx_like, obj, chain_id=chain_id
+                    tx_like, obj, chain_id=int(chain_id)
                 )
             except Exception as e:
                 return False, f"verify_failed:{e}"
