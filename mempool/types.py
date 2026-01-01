@@ -206,6 +206,8 @@ class TxMeta:
         pinned: bool = False,
         priority_score: float = 0.0,
         effective_fee_wei: Optional[int] = None,  # Support for pool.py usage
+        origin: Optional[str] = None,
+        peer_id: Optional[str] = None,
         **kwargs: Any  # Ignore extra kwargs for compatibility
     ) -> None:
         self.sender = sender
@@ -224,6 +226,8 @@ class TxMeta:
         self.local = bool(local)
         self.pinned = bool(pinned)
         self.priority_score = float(priority_score)
+        self.origin = origin
+        self.peer_id = peer_id
         # Store effective_fee_wei if provided (for compatibility)
         if effective_fee_wei is not None:
             self.effective_fee_wei = int(effective_fee_wei)
