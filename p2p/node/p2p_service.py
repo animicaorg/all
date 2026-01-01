@@ -4929,7 +4929,7 @@ class P2PService:
                 req_items.append(InvItem(**it))
         req = GetData(items=req_items)
 
-        txs: list[bytes] = []
+        txs: list[tuple[bytes, bytes, bytes]] = []
         blocks: list[bytes] = []
         for it in req.items:
             if int(it.typ) == int(InvType.TX):
@@ -4956,6 +4956,19 @@ class P2PService:
                     return
                 raw = await self._pending_get(bytes(it.h))
                 if raw:
+                    canonical_raw = raw
+                    try:
+                        from core.utils.tx import normalize_tx_bytes
+
+                        canonical_raw = normalize_tx_bytes(raw)
+                    except Exception:
+                        canonical_raw = raw
+                    try:
+                        from core.utils.hash import sha3_256
+
+                        canonical_hash = sha3_256(canonical_raw)
+                    except Exception:
+                        canonical_hash = hashlib.sha3_256(canonical_raw).digest()
                     if len(raw) > self._max_tx_bytes:
                         self._penalize_peer(
                             peer,
@@ -4964,21 +4977,25 @@ class P2PService:
                             nonfatal=True,
                         )
                         continue
-                    if self._sent_recently(self._peer_tx_key(peer), bytes(it.h)):
+                    request_hash = bytes(it.h)
+                    if self._sent_recently(
+                        self._peer_tx_key(peer), request_hash
+                    ) or self._sent_recently(self._peer_tx_key(peer), canonical_hash):
                         self._stats["tx_sent_dedup"] += 1
                         continue
-                    txs.append(raw)
+                    txs.append((canonical_raw, canonical_hash, request_hash))
             elif int(it.typ) == int(InvType.BLOCK):
                 rawb = self._get_block_raw(bytes(it.h))
                 if rawb:
                     blocks.append(rawb)
 
-        for raw in txs:
+        for raw, txh, request_hash in txs:
             await self._send(peer, MsgID.TX, Tx(raw_cbor=raw))
             self._stats["tx_sent"] += 1
             self._stats["tx_data_sent_total"] += 1
-            txh = hashlib.sha3_256(raw).digest()
             self._remember_sent(self._peer_tx_key(peer), txh)
+            if request_hash != txh:
+                self._remember_sent(self._peer_tx_key(peer), request_hash)
             peer.last_tx_data_sent_at = time.time()
             log.info(
                 "tx delivered to peer",
@@ -9724,13 +9741,25 @@ class P2PService:
             return
         async with self._peer_lock:
             peers = list(self._peers.values())[:max_peers]
+        canonical_raw = raw
+        try:
+            from core.utils.tx import normalize_tx_bytes
+
+            canonical_raw = normalize_tx_bytes(raw)
+        except Exception:
+            canonical_raw = raw
+        try:
+            from core.utils.hash import sha3_256
+
+            txh = sha3_256(canonical_raw)
+        except Exception:
+            txh = hashlib.sha3_256(canonical_raw).digest()
         for peer in peers:
             with contextlib.suppress(Exception):
-                txh = hashlib.sha3_256(raw).digest()
                 if self._sent_recently(self._peer_tx_key(peer), txh):
                     self._stats["tx_sent_dedup"] += 1
                     continue
-                await self._send(peer, MsgID.TX, Tx(raw_cbor=raw))
+                await self._send(peer, MsgID.TX, Tx(raw_cbor=canonical_raw))
                 self._stats["tx_sent"] += 1
                 self._remember_sent(self._peer_tx_key(peer), txh)
 
