@@ -4848,7 +4848,7 @@ class P2PService:
                             nonfatal=True,
                         )
                         continue
-                    if self._sent_recently(peer.remote, bytes(it.h)):
+                    if self._sent_recently(self._peer_tx_key(peer), bytes(it.h)):
                         self._stats["tx_sent_dedup"] += 1
                         continue
                     txs.append(raw)
@@ -4862,7 +4862,7 @@ class P2PService:
             self._stats["tx_sent"] += 1
             self._stats["tx_data_sent_total"] += 1
             txh = hashlib.sha3_256(raw).digest()
-            self._remember_sent(peer.remote, txh)
+            self._remember_sent(self._peer_tx_key(peer), txh)
             log.info(
                 "tx delivered to peer",
                 extra={"peer": peer.remote, "tx_hash": txh.hex()},
@@ -9114,13 +9114,14 @@ class P2PService:
         if is_tx and not self._tx_relay_allowed():
             return
         if is_tx:
+            peer_key = self._peer_tx_key(peer)
             filtered: list[InvItem] = []
             for it in items:
                 if int(it.typ) != int(InvType.TX):
                     filtered.append(it)
                     continue
                 tx_hash = bytes(it.h)
-                if self._inv_sent_recently(peer.remote, tx_hash):
+                if self._inv_sent_recently(peer_key, tx_hash):
                     self._stats["tx_inv_dedup"] += 1
                     continue
                 filtered.append(it)
@@ -9139,7 +9140,7 @@ class P2PService:
                 )
                 for it in items:
                     if int(it.typ) == int(InvType.TX):
-                        self._remember_inv_sent(peer.remote, bytes(it.h))
+                        self._remember_inv_sent(peer_key, bytes(it.h))
                         log.info(
                             "tx.inv_sent",
                             extra={"peer": peer.remote, "hash": bytes(it.h).hex()},
@@ -9253,15 +9254,22 @@ class P2PService:
             return False
         return True
 
-    def _remember_sent(self, peer: str, key: bytes) -> None:
-        table = self._tx_sent_by_peer.setdefault(peer, OrderedDict())
+    def _peer_tx_key(self, peer: _PeerState) -> str:
+        if peer.session_id:
+            return peer.session_id
+        if peer.peer_id:
+            return peer.peer_id
+        return peer.remote
+
+    def _remember_sent(self, peer_key: str, key: bytes) -> None:
+        table = self._tx_sent_by_peer.setdefault(peer_key, OrderedDict())
         expire_at = time.time() + self._tx_relay_ttl_s
         table[key] = expire_at
         table.move_to_end(key, last=True)
         self._prune_ttl(table, cap=self._seen_tx_cap)
 
-    def _sent_recently(self, peer: str, key: bytes) -> bool:
-        table = self._tx_sent_by_peer.get(peer)
+    def _sent_recently(self, peer_key: str, key: bytes) -> bool:
+        table = self._tx_sent_by_peer.get(peer_key)
         if table is None:
             return False
         now = time.time()
@@ -9273,15 +9281,15 @@ class P2PService:
             return False
         return True
 
-    def _remember_inv_sent(self, peer: str, key: bytes) -> None:
-        table = self._tx_inv_sent_by_peer.setdefault(peer, OrderedDict())
+    def _remember_inv_sent(self, peer_key: str, key: bytes) -> None:
+        table = self._tx_inv_sent_by_peer.setdefault(peer_key, OrderedDict())
         expire_at = time.time() + self._tx_relay_ttl_s
         table[key] = expire_at
         table.move_to_end(key, last=True)
         self._prune_ttl(table, cap=self._tx_inv_seen_cap)
 
-    def _inv_sent_recently(self, peer: str, key: bytes) -> bool:
-        table = self._tx_inv_sent_by_peer.get(peer)
+    def _inv_sent_recently(self, peer_key: str, key: bytes) -> bool:
+        table = self._tx_inv_sent_by_peer.get(peer_key)
         if table is None:
             return False
         now = time.time()
@@ -9402,12 +9410,12 @@ class P2PService:
         for peer in peers:
             with contextlib.suppress(Exception):
                 txh = hashlib.sha3_256(raw).digest()
-                if self._sent_recently(peer.remote, txh):
+                if self._sent_recently(self._peer_tx_key(peer), txh):
                     self._stats["tx_sent_dedup"] += 1
                     continue
                 await self._send(peer, MsgID.TX, Tx(raw_cbor=raw))
                 self._stats["tx_sent"] += 1
-                self._remember_sent(peer.remote, txh)
+                self._remember_sent(self._peer_tx_key(peer), txh)
 
     async def _deps_call_import(self, payload: Any) -> Tuple[bool, Optional[str]]:
         if self.deps is None:
