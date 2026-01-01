@@ -359,6 +359,7 @@ class MempoolService:
         raw: bytes,
         tx_hash_hex: str | None = None,
         local: bool = True,
+        origin_peer: str | None = None,
     ) -> str:
         try:
             raw_bytes = normalize_tx_bytes(raw)
@@ -420,6 +421,7 @@ class MempoolService:
                     context={"tx_hash": tx_hash_hex},
                 )
 
+        origin_label = "local" if local else f"peer:{origin_peer or 'unknown'}"
         log.info(
             "MempoolService.submit: entry, tx_hash=%s, local=%s, pool_size=%d",
             tx_hash_hex,
@@ -547,6 +549,8 @@ class MempoolService:
             first_seen=time.time(),
             local=local,
             effective_fee_wei=offered,
+            origin=origin_label,
+            peer_id=origin_peer,
         )
         pool_tx = PoolTx(
             tx=tx_to_store,
@@ -592,6 +596,16 @@ class MempoolService:
             "MempoolService.submit: SUCCESS - tx added and verified in pool, tx_hash=%s, pool_size=%d",
             tx_hash_hex,
             len(self.pool),
+        )
+        log.info(
+            "mempool.accepted",
+            extra={
+                "hash": tx_hash_hex,
+                "from": meta.sender,
+                "nonce": meta.nonce,
+                "origin": origin_label,
+                "peer": origin_peer,
+            },
         )
         if not self._restoring:
             self._persist_snapshot()
