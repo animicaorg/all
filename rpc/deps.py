@@ -820,7 +820,15 @@ def build_context(cfg: t.Any | None = None) -> RpcContext:
             tx_index=bundle.tx_index,
             data_dir=str(data_root),
         )
-        log.info("Mempool service initialized", extra={"min_gas_price": min_gas_price})
+        persist_path = getattr(mempool_service, "_persist_path", None)
+        log.info(
+            "Mempool service initialized",
+            extra={
+                "min_gas_price": min_gas_price,
+                "mempool_id": hex(id(mempool_service)),
+                "mempool_path": str(persist_path) if persist_path else None,
+            },
+        )
     except Exception as exc:
         log.warning("Failed to initialize mempool service", exc_info=exc)
 

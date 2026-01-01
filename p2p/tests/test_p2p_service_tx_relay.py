@@ -206,6 +206,77 @@ async def test_tx_mempool_sync_converges(monkeypatch, tmp_path) -> None:
         await svc_a.stop()
 
 
+@pytest.mark.asyncio
+async def test_tx_mempool_sync_with_dual_connections(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("ANIMICA_P2P_DISABLE_DEFAULT_SEEDS", "1")
+    monkeypatch.setenv("ANIMICA_P2P_TX_MEMPOOL_SYNC_SEC", "1")
+    monkeypatch.delenv("ANIMICA_P2P_IDENTITY_PATH", raising=False)
+    monkeypatch.setenv("ANIMICA_P2P_ALLOW_SELF_PEERS", "1")
+    port_a = free_port()
+    port_b = free_port()
+    while port_b == port_a:
+        port_b = free_port()
+
+    deps_a = InMemoryTxPool()
+    deps_b = InMemoryTxPool()
+
+    svc_a = P2PService(
+        listen_addrs=[tcp_multiaddr(port_a)],
+        seeds=[],
+        chain_id=1337,
+        deps=deps_a,
+        peerstore_path=str(tmp_path / "node-a" / "p2p"),
+    )
+    svc_b = P2PService(
+        listen_addrs=[tcp_multiaddr(port_b)],
+        seeds=[],
+        chain_id=1337,
+        deps=deps_b,
+        peerstore_path=str(tmp_path / "node-b" / "p2p"),
+    )
+
+    await svc_a.start()
+    await svc_b.start()
+    try:
+        await svc_b.dial(tcp_multiaddr(port_a))
+        await svc_a.dial(tcp_multiaddr(port_b))
+
+        peer_id_a = svc_a.status()["peer_id"]
+        peer_id_b = svc_b.status()["peer_id"]
+
+        async def has_dual_links() -> bool:
+            snapshot_b = svc_b.peer_registry.snapshot()
+            snapshot_a = svc_a.peer_registry.snapshot()
+            dirs_b = {s.get("direction") for s in snapshot_b if s.get("peer_id") == peer_id_a}
+            dirs_a = {s.get("direction") for s in snapshot_a if s.get("peer_id") == peer_id_b}
+            return "inbound" in dirs_b and "outbound" in dirs_b and "inbound" in dirs_a and "outbound" in dirs_a
+
+        connected = await wait_for(has_dual_links, timeout=10.0)
+        if not connected:
+            pytest.skip("Dual P2P connections not established in this environment")
+
+        async def drop_inv(_peer_key: str, _txids: list[bytes]) -> None:
+            return None
+
+        svc_a._txrelay._send_tx_inv = drop_inv  # type: ignore[attr-defined]
+
+        raw_tx = b"tx-relay-dual-conn-sync"
+        tx_hash = hashlib.sha3_256(raw_tx).digest()
+        await svc_a.relay_tx(raw_tx)
+
+        relayed = await wait_for(lambda: deps_b.has_tx(tx_hash), timeout=10.0)
+        assert relayed
+
+        debug = await svc_b.debug_status()
+        peers = [p for p in debug.get("peers", []) if p.get("peer_id") == peer_id_a]
+        assert len(peers) >= 2
+        conn_ids = {p.get("conn_id") for p in peers}
+        assert len(conn_ids) == len(peers)
+    finally:
+        await svc_b.stop()
+        await svc_a.stop()
+
+
 class _MockBlockDB:
     def __init__(self) -> None:
         self._genesis = b"\x11" * 32
