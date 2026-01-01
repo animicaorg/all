@@ -909,6 +909,58 @@ def _mempool_has(svc: t.Any, tx_hash_hex: str) -> bool | None:
     return None
 
 
+def _mempool_size(svc: t.Any) -> int | None:
+    if hasattr(svc, "stats"):
+        try:
+            stats = svc.stats()
+            if hasattr(stats, "total_txs"):
+                return int(stats.total_txs)
+            if isinstance(stats, dict):
+                total = stats.get("total_txs") or stats.get("totalTxs")
+                if total is not None:
+                    return int(total)
+        except Exception:
+            pass
+    if hasattr(svc, "snapshot"):
+        try:
+            snap = svc.snapshot()
+            if hasattr(snap, "entries"):
+                return len(snap.entries)
+            if isinstance(snap, dict):
+                total = snap.get("total_txs") or snap.get("totalTxs")
+                if total is not None:
+                    return int(total)
+        except Exception:
+            pass
+    try:
+        return len(svc)
+    except Exception:
+        return None
+
+
+def _tx_reject_category(reason: str | None) -> str:
+    if not reason:
+        return "UNKNOWN"
+    r = str(reason).lower()
+    if "chain_id" in r:
+        return "CHAIN_ID"
+    if "verify" in r or "sig" in r:
+        return "BAD_SIG"
+    if "nonce" in r:
+        if "too_low" in r or "low" in r:
+            return "NONCE_TOO_LOW"
+        return "NONCE_GAP"
+    if "balance" in r or "insufficient" in r:
+        return "INSUFFICIENT_BALANCE"
+    if "gas" in r:
+        return "BAD_GAS"
+    if "fee" in r:
+        return "POLICY"
+    if "duplicate" in r:
+        return "DUPLICATE"
+    return "POLICY"
+
+
 def _mempool_submit(
     svc: t.Any,
     *,
@@ -1221,8 +1273,37 @@ def _tx_send_raw_transaction(rawTx: str) -> str:
         ) from e
 
     # chainId and PQ verify
-    chain_id = _validate_chain_id(obj)
-    _verify_pq_signature(tx_like, obj, chain_id=chain_id)
+    tx_view = _tx_view(tx_like, obj, pending=True)
+    try:
+        chain_id = _validate_chain_id(obj)
+    except Exception as exc:
+        log.info(
+            "TX_VALIDATE_REJECT",
+            extra={
+                "hash": _hex(_sha3_256(raw)) or "",
+                "reason": _tx_reject_category(f"chain_id:{exc}"),
+                "detail": str(exc),
+                "sender": tx_view.get("from"),
+                "nonce": tx_view.get("nonce"),
+                "gas": tx_view.get("gas"),
+            },
+        )
+        raise
+    try:
+        _verify_pq_signature(tx_like, obj, chain_id=chain_id)
+    except Exception as exc:
+        log.info(
+            "TX_VALIDATE_REJECT",
+            extra={
+                "hash": _hex(_sha3_256(raw)) or "",
+                "reason": _tx_reject_category(f"verify:{exc}"),
+                "detail": str(exc),
+                "sender": tx_view.get("from"),
+                "nonce": tx_view.get("nonce"),
+                "gas": tx_view.get("gas"),
+            },
+        )
+        raise
 
     raw_canonical = raw
     if isinstance(obj, dict):
@@ -1281,6 +1362,17 @@ def _tx_send_raw_transaction(rawTx: str) -> str:
     try:
         _mempool_submit(svc, tx_obj=tx_obj, raw=raw_canonical, tx_hash_hex=tx_hash_hex)
     except Exception as exc:
+        log.info(
+            "TX_VALIDATE_REJECT",
+            extra={
+                "hash": tx_hash_hex,
+                "reason": _tx_reject_category(str(exc)),
+                "detail": str(exc),
+                "sender": tx_view.get("from"),
+                "nonce": tx_view.get("nonce"),
+                "gas": tx_view.get("gas"),
+            },
+        )
         log.warning(
             "Mempool admission rejected",
             extra={
@@ -1291,6 +1383,10 @@ def _tx_send_raw_transaction(rawTx: str) -> str:
         log.info(
             "tx.rejected",
             extra={"hash": tx_hash_hex, "reason": str(exc)},
+        )
+        log.info(
+            "TX_MEMPOOL_REJECTED",
+            extra={"hash": tx_hash_hex, "origin": "local", "reason": str(exc)},
         )
         # Surface as a mempool admission failure (so CLI sees a real error)
         raise rpc_errors.InvalidTx(
@@ -1308,13 +1404,33 @@ def _tx_send_raw_transaction(rawTx: str) -> str:
         "Mempool admission accepted",
         extra={"tx_hash": tx_hash_hex},
     )
+    tx_view = _tx_view(tx_obj, obj, pending=True)
+    mempool_size = _mempool_size(svc)
+    log.info(
+        "TX_ACCEPTED",
+        extra={
+            "hash": tx_hash_hex,
+            "origin": "local",
+            "sender": tx_view.get("from"),
+            "nonce": tx_view.get("nonce"),
+            "mempool_size": mempool_size,
+        },
+    )
     log.info(
         "tx.accepted_local",
-        extra={"tx_hash": tx_hash_hex, "nonce": _tx_view(tx_obj, obj, pending=True).get("nonce")},
+        extra={"tx_hash": tx_hash_hex, "nonce": tx_view.get("nonce")},
     )
     log.info(
         "tx.mempool_added",
         extra={"tx_hash": tx_hash_hex},
+    )
+    log.info(
+        "TX_MEMPOOL_ADDED",
+        extra={
+            "hash": tx_hash_hex,
+            "origin": "local",
+            "mempool_size": mempool_size,
+        },
     )
 
     # Post-submit verification MUST pass
