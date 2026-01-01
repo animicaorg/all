@@ -480,18 +480,29 @@ class MempoolService:
                             "got_nonce": nonce,
                         },
                     )
+
+                pending_next = None
                 if nonce > expected:
-                    self._record_rejection(
-                        tx_hash_hex,
-                        "nonce_gap",
-                        {"expected": expected, "got": nonce},
-                    )
-                    raise NonceGap(
-                        expected_nonce=expected,
-                        got_nonce=nonce,
-                        sender=_sender_hex(sender),
-                        tx_hash=tx_hash_hex,
-                    )
+                    try:
+                        pending_next = self.pending_nonce(sender)
+                    except Exception:
+                        pending_next = None
+                    if pending_next is None or nonce > pending_next:
+                        self._record_rejection(
+                            tx_hash_hex,
+                            "nonce_gap",
+                            {
+                                "expected": expected,
+                                "pending_next": pending_next,
+                                "got": nonce,
+                            },
+                        )
+                        raise NonceGap(
+                            expected_nonce=expected if pending_next is None else pending_next,
+                            got_nonce=nonce,
+                            sender=_sender_hex(sender),
+                            tx_hash=tx_hash_hex,
+                        )
 
         gas_limit = _tx_gas_limit(tx)
         if gas_limit <= 0:

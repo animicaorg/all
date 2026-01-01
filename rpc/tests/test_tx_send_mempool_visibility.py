@@ -101,6 +101,46 @@ def _build_signed_transfer_cbor(
     return cbor_tx, tx_hash_hex, sender
 
 
+def _build_signed_transfer_for(
+    *,
+    chain_id: int,
+    kp: t.Any,
+    to_addr: str,
+    nonce: int,
+    alg: str,
+    sign_fn: t.Callable[[t.Any, bytes, bytes], bytes],
+    value: int = 123456789,
+) -> tuple[bytes, str]:
+    from core.encoding.canonical import tx_sign_bytes
+    from core.types.tx import Sig, Tx
+    from pq.py.registry import ALG_ID
+
+    tx = Tx.transfer(
+        chain_id=chain_id,
+        nonce=nonce,
+        from_addr=kp.address,
+        to_addr=to_addr,
+        value=value,
+        gas_limit=21000,
+        gas_price=1,
+        data=b"",
+        access_list=[],
+    )
+
+    sb = tx_sign_bytes(tx)
+    sig_bytes = sign_fn(alg, kp.secret_key, sb)
+    sig_env = Sig(
+        alg=ALG_ID[alg] if isinstance(alg, str) else alg,
+        pub=kp.public_key,
+        sig=sig_bytes,
+    )
+    from dataclasses import replace
+    tx_signed = replace(tx, sigs=(sig_env,))
+    cbor_tx = tx_signed.to_cbor()
+    tx_hash_hex = "0x" + tx_signed.txid().hex()
+    return cbor_tx, tx_hash_hex
+
+
 @pytest.fixture(scope="function")
 def client_and_cfg():
     client, cfg, app = new_test_client()
@@ -200,3 +240,46 @@ async def test_tx_invalid_signature_returns_error_not_success(client_and_cfg):
         "Invalid tx should NOT be in mempool after rejection. "
         f"Pending: {pending_hashes}"
     )
+
+
+async def test_pending_nonce_advances_for_back_to_back_sends(client_and_cfg):
+    client, cfg = client_and_cfg
+    from pq.py import keygen as pq_keygen
+    from pq.py.registry import normalize_alg_name
+
+    alg, _kp_unused, sign_fn, _verify_fn, _address_from_pubkey = _choose_working_sig_alg()
+    alg = normalize_alg_name(alg)
+    sender_kp = pq_keygen.keygen(alg)
+    receiver_kp = pq_keygen.keygen(alg)
+
+    pending_nonce_0 = rpc_call(client, "state.getPendingNonce", params=[sender_kp.address])["result"]
+
+    cbor_tx1, tx_hash1 = _build_signed_transfer_for(
+        chain_id=cfg.chain_id,
+        kp=sender_kp,
+        to_addr=receiver_kp.address,
+        nonce=int(pending_nonce_0),
+        alg=alg,
+        sign_fn=sign_fn,
+        value=1,
+    )
+    raw_hex1 = "0x" + cbor_tx1.hex()
+    submit1 = rpc_call(client, "tx.sendRawTransaction", params={"rawTx": raw_hex1})
+    assert submit1["result"] == tx_hash1
+
+    pending_nonce_1 = rpc_call(client, "state.getPendingNonce", params=[sender_kp.address])["result"]
+    assert int(pending_nonce_1) == int(pending_nonce_0) + 1
+
+    cbor_tx2, tx_hash2 = _build_signed_transfer_for(
+        chain_id=cfg.chain_id,
+        kp=sender_kp,
+        to_addr=receiver_kp.address,
+        nonce=int(pending_nonce_1),
+        alg=alg,
+        sign_fn=sign_fn,
+        value=1,
+    )
+    raw_hex2 = "0x" + cbor_tx2.hex()
+    submit2 = rpc_call(client, "tx.sendRawTransaction", params={"rawTx": raw_hex2})
+    assert submit2["result"] == tx_hash2
+    assert tx_hash2 != tx_hash1

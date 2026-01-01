@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any, Mapping
 
 from core.encoding.cbor import dumps as cbor_dumps
+from core.encoding.cbor import loads as cbor_loads
 from core.utils.hash import sha3_256
 
 
@@ -76,7 +77,13 @@ def normalize_tx_bytes(tx_like: Any) -> bytes:
         raw = bytes(tx_like)
         if not raw:
             raise ValueError("raw bytes empty")
-        return raw
+        try:
+            obj = cbor_loads(raw)
+        except Exception as exc:
+            raise ValueError("invalid raw cbor bytes") from exc
+        if not isinstance(obj, dict):
+            raise ValueError("raw cbor did not decode to map")
+        return cbor_dumps(obj)
     if isinstance(tx_like, str):
         raw = _decode_hex_str(tx_like)
         if not raw:
@@ -91,6 +98,13 @@ def normalize_tx_bytes(tx_like: Any) -> bytes:
 
         if raw_val is not None:
             raw = _normalize_raw_value(raw_val)
+            try:
+                obj = cbor_loads(raw)
+            except Exception as exc:
+                raise ValueError("invalid raw cbor bytes") from exc
+            if not isinstance(obj, dict):
+                raise ValueError("raw cbor did not decode to map")
+            raw = cbor_dumps(obj)
         else:
             envelope = None
             if "body" in tx_like and ("sig" in tx_like or "sigs" in tx_like):
