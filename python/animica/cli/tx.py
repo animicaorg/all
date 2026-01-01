@@ -231,6 +231,9 @@ def _get_chain_identity(rpc_url: str) -> dict:
     return {"chainId": _get_chain_id(rpc_url), "forkId": None}
 
 
+_NONCE_CACHE: dict[tuple[str, str], int] = {}
+
+
 def _get_nonce(rpc_url: str, addr: str) -> int:
     confirmed_nonce = None
     methods = [
@@ -285,6 +288,16 @@ def _get_nonce(rpc_url: str, addr: str) -> int:
     if highest_pending_nonce is None:
         return confirmed_nonce
     return max(confirmed_nonce, highest_pending_nonce + 1)
+
+
+def _next_nonce(rpc_url: str, addr: str) -> int:
+    base = _get_nonce(rpc_url, addr)
+    key = (rpc_url, addr)
+    cached = _NONCE_CACHE.get(key)
+    if cached is not None and cached >= base:
+        base = cached + 1
+    _NONCE_CACHE[key] = base
+    return base
 
 
 def _get_default_max_fee(rpc_url: str) -> int:
@@ -508,7 +521,7 @@ def send(
 
     # Nonce + fee defaults
     nonce_source = "override" if nonce is not None else "auto"
-    nonce = int(nonce) if nonce is not None else _get_nonce(rpc, from_addr)
+    nonce = int(nonce) if nonce is not None else _next_nonce(rpc, from_addr)
     fee = int(max_fee) if max_fee is not None else _get_default_max_fee(rpc)
 
     # Value conversion
