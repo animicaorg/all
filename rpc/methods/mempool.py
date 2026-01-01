@@ -142,20 +142,34 @@ def _entry_details(
             size = None
     received_at = entry.received_at or getattr(meta, "first_seen", None)
     origin_peer = None
-    if meta is not None and hasattr(meta, "local"):
-        origin_peer = "local" if bool(getattr(meta, "local")) else "p2p"
+    if meta is not None:
+        origin_peer = getattr(meta, "origin", None)
+        if origin_peer is None and hasattr(meta, "local"):
+            origin_peer = "local" if bool(getattr(meta, "local")) else "p2p"
+    if origin_peer is None:
+        origin_peer = "local"
 
     diag = diagnostics.get(entry.hash_hex, {})
+    status = diag.get("status") or "eligible"
+    reason = diag.get("reason")
+    if status == "rejected":
+        if isinstance(reason, str) and "nonce" in reason:
+            status = "pending_nonce"
+        elif reason in {"replaced", "replaced_by_fee", "replaced_by_nonce"}:
+            status = "replaced"
+        else:
+            status = "rejected"
     return {
         "hash": entry.hash_hex,
         "from": _format_sender(sender),
         "nonce": int(nonce) if nonce is not None else None,
         "fee": fee,
         "received_at": received_at,
+        "origin": origin_peer,
         "origin_peer": origin_peer,
         "size": size,
-        "status": diag.get("status", "unknown"),
-        "reason": diag.get("reason"),
+        "status": status,
+        "reason": reason,
     }
 
 
