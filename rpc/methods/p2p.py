@@ -604,6 +604,22 @@ async def debug_status() -> dict[str, t.Any]:
     return {"error": P2P_UNAVAILABLE_ERROR}
 
 
+@method(
+    "p2p.importPeerKnownTxs",
+    desc="Fetch peer-known transaction IDs and admit missing transactions to the local mempool.",
+)
+async def import_peer_known_txs(limit: int | None = None) -> dict[str, t.Any]:
+    p2p_svc = _get_p2p_service()
+    if p2p_svc is None or not hasattr(p2p_svc, "request_missing_txids"):
+        return {"success": False, "error": P2P_UNAVAILABLE_ERROR}
+    lim = 128 if limit is None else int(limit)
+    try:
+        requested = await p2p_svc.request_missing_txids(limit=lim)
+        return {"success": True, "requested": requested, "limit": lim}
+    except Exception as exc:  # pragma: no cover - defensive
+        return {"success": False, "error": str(exc), "limit": lim}
+
+
 @method("p2p.getPeerStats", desc="Return detailed peer stats for the P2P service")
 async def get_peer_stats() -> list[dict[str, t.Any]]:
     p2p_svc = _get_p2p_service()
