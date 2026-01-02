@@ -479,11 +479,28 @@ class MempoolService:
             except Exception as exc:
                 log.debug("mempool nonce check failed; skipping", exc_info=exc)
             else:
+                log.debug(
+                    "mempool nonce check",
+                    extra={
+                        "sender": _sender_hex(sender),
+                        "nonce": nonce,
+                        "expected_nonce": expected,
+                    },
+                )
                 if nonce < expected:
                     self._record_rejection(
                         tx_hash_hex,
                         "nonce_too_low",
                         {"expected": expected, "got": nonce},
+                    )
+                    log.debug(
+                        "mempool nonce decision",
+                        extra={
+                            "sender": _sender_hex(sender),
+                            "nonce": nonce,
+                            "expected_nonce": expected,
+                            "decision": "reject_nonce_too_low",
+                        },
                     )
                     raise NonceTooLow(
                         expected_nonce=expected,
@@ -508,12 +525,31 @@ class MempoolService:
                                 "got": nonce,
                             },
                         )
+                        log.debug(
+                            "mempool nonce decision",
+                            extra={
+                                "sender": _sender_hex(sender),
+                                "nonce": nonce,
+                                "expected_nonce": expected,
+                                "pending_next": pending_next,
+                                "decision": "reject_nonce_gap",
+                            },
+                        )
                         raise NonceGap(
                             expected_nonce=expected if pending_next is None else pending_next,
                             got_nonce=nonce,
                             sender=_sender_hex(sender),
                             tx_hash=tx_hash_hex,
                         )
+                log.debug(
+                    "mempool nonce decision",
+                    extra={
+                        "sender": _sender_hex(sender),
+                        "nonce": nonce,
+                        "expected_nonce": expected,
+                        "decision": "accept_nonce",
+                    },
+                )
 
         gas_limit = _tx_gas_limit(tx)
         if gas_limit <= 0:

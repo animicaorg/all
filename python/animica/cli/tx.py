@@ -297,10 +297,10 @@ def _nonce_lock(address: str):
     if fcntl is None:
         yield
         return
-    lock_dir = Path(os.path.expanduser("~/.animica/nonce-locks"))
+    lock_dir = Path(os.path.expanduser("~/.animica/locks"))
     lock_dir.mkdir(parents=True, exist_ok=True)
-    lock_name = hashlib.sha256(address.encode("utf-8")).hexdigest()
-    lock_path = lock_dir / f"{lock_name}.lock"
+    safe_addr = "".join(ch if ch.isalnum() else "_" for ch in address)
+    lock_path = lock_dir / f"nonce-{safe_addr}.lock"
     with open(lock_path, "a+", encoding="utf-8") as handle:
         fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
         try:
@@ -440,7 +440,9 @@ def _format_nonce_mismatch(reason: str | None, expected: int | None, got: int | 
         console.print(f"  Expected: {expected if expected is not None else '?'}")
         console.print(f"  Got:      {got if got is not None else '?'}")
     console.print("\n[yellow]Tip:[/yellow] Refresh nonce with:")
+    console.print("  animica rpc call state.getNextNonce <address>")
     console.print("  animica rpc call state.getNextNonce '[\"<address>\"]'")
+    console.print("  animica rpc call state.getNextNonce '{\"address\":\"<address>\"}'")
 
 
 def _next_retry_nonce(
@@ -448,8 +450,6 @@ def _next_retry_nonce(
 ) -> int:
     if expected is not None:
         return int(expected)
-    if got is not None:
-        return int(got) + 1
     return _next_nonce(rpc_url, addr, refresh=True)
 
 
@@ -875,7 +875,7 @@ def send(
             console.print("")
             console.print("The transaction will NOT be mined. Please check:")
             console.print("  animica mempool list                    # Check pending transactions")
-            console.print(f"  animica rpc call state.getNextNonce '[\"{from_addr}\"]'  # Check account nonce")
+            console.print(f"  animica rpc call state.getNextNonce {from_addr}  # Check account nonce")
             raise typer.Exit(code=1)
 
     if tx_hash is None or last_body is None or last_nonce is None:
