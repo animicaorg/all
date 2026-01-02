@@ -1235,6 +1235,22 @@ class P2PService:
             self.loop = asyncio.get_running_loop()
         self._running = True
         self._sync_paused = False
+        try:
+            from rpc.methods import tx as tx_methods
+
+            mempool_service = tx_methods._get_mempool_service()  # type: ignore[attr-defined]
+            if mempool_service is not None:
+                pending_path = getattr(mempool_service, "_persist_path", None)
+                log.info(
+                    "Tx relay mempool binding",
+                    extra={
+                        "chain_id": self.chain_id,
+                        "mempool_id": hex(id(mempool_service)),
+                        "pending_path": str(pending_path) if pending_path else None,
+                    },
+                )
+        except Exception:
+            pass
         await self._maybe_detect_external_ip()
 
         if self._peerstore_fallback_path:

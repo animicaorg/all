@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import inspect
 import hashlib
 import logging
@@ -112,6 +113,7 @@ _MEMPOOL_DEBUG = os.getenv("ANIMICA_MEMPOOL_DEBUG", "").lower() in {
     "yes",
     "on",
 }
+_MEMPOOL_BINDINGS_LOGGED: set[str] = set()
 
 
 def _tracked(tx: Any) -> tuple[str, bytes] | None:
@@ -132,6 +134,65 @@ def _resolve_chain_id_for_sig(ctx: Any) -> int:
         except Exception:
             chain_id = 1
     return int(chain_id)
+
+
+def _log_mempool_binding(component: str, ctx: Any, mempool_service: Any) -> None:
+    try:
+        key = f"{component}:{id(mempool_service)}"
+        if key in _MEMPOOL_BINDINGS_LOGGED:
+            return
+        pending_path = getattr(mempool_service, "_persist_path", None)
+        chain_id = getattr(getattr(ctx, "cfg", None), "chain_id", None)
+        log.info(
+            "Mempool binding",
+            extra={
+                "component": component,
+                "chain_id": chain_id,
+                "mempool_id": hex(id(mempool_service)),
+                "pending_path": str(pending_path) if pending_path else None,
+            },
+        )
+        _MEMPOOL_BINDINGS_LOGGED.add(key)
+    except Exception:
+        return
+
+
+def _resolve_mempool_service(ctx: Any) -> Any | None:
+    mempool_service = _resolve_mempool_service(ctx)
+    try:
+        from rpc.methods import tx as tx_methods
+    except Exception:
+        tx_methods = None  # type: ignore[assignment]
+
+    canonical = None
+    if tx_methods is not None and hasattr(tx_methods, "_get_mempool_service"):
+        try:
+            canonical = tx_methods._get_mempool_service()  # type: ignore[attr-defined]
+        except Exception:
+            canonical = None
+
+    if mempool_service is None and canonical is not None:
+        mempool_service = canonical
+        with contextlib.suppress(Exception):
+            ctx.mempool = canonical
+
+    if (
+        canonical is not None
+        and mempool_service is not None
+        and canonical is not mempool_service
+    ):
+        log.error(
+            "Mempool service mismatch",
+            extra={
+                "ctx_mempool_id": hex(id(mempool_service)),
+                "canonical_mempool_id": hex(id(canonical)),
+            },
+        )
+        mempool_service = canonical
+        with contextlib.suppress(Exception):
+            ctx.mempool = canonical
+
+    return mempool_service
 
 
 def _canonical_txid_hex(tx: Any) -> str:
@@ -891,7 +952,9 @@ def _ctx():
         return deps.build_context()
 
 
-def _mining_gate(*, allow_offline_mining: bool = False) -> tuple[bool, str | None]:
+def _mining_gate(
+    *, allow_offline_mining: bool = False, allow_unsynced: bool = False
+) -> tuple[bool, str | None]:
     if os.getenv("ANIMICA_MINING_FORCE", "").lower() in ("1", "true", "yes", "on"):
         return True, None
     if allow_offline_mining or os.getenv("ANIMICA_ALLOW_OFFLINE_MINING", "").lower() in (
@@ -901,11 +964,13 @@ def _mining_gate(*, allow_offline_mining: bool = False) -> tuple[bool, str | Non
         "on",
     ):
         return True, None
-    chain_id = None
-    try:
-        chain_id = int(_ctx().cfg.chain_id)
-    except Exception:
-        chain_id = None
+    if allow_unsynced or os.getenv("ANIMICA_ALLOW_UNSYNCED_MINING", "").lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    ):
+        allow_unsynced = True
     try:
         import p2p
 
@@ -919,14 +984,16 @@ def _mining_gate(*, allow_offline_mining: bool = False) -> tuple[bool, str | Non
         sync_status = svc.sync_status_snapshot().to_dict()
     except Exception:
         return True, None
-
-    if chain_id == 1:
-        outbound = int(p2p_status.get("peers_outbound", 0))
-        peers_total = int(p2p_status.get("peers_total", 0))
-        if outbound <= 0 and peers_total <= 0:
-            return False, "offline_no_outbound_peers"
-        phase = str(sync_status.get("phase") or "").lower()
-        if phase and phase != "synced":
+    outbound = int(p2p_status.get("peers_outbound", 0))
+    peers_total = int(p2p_status.get("peers_total", 0))
+    if outbound <= 0 and peers_total <= 0:
+        return False, "offline_no_outbound_peers"
+    phase = str(sync_status.get("phase") or "").lower()
+    if phase and phase != "synced":
+        if allow_unsynced:
+            log.warning("MINER_ALLOW_UNSYNCED", extra={"sync_phase": phase})
+        else:
+            log.warning("MINER_REFUSE_UNSYNCED", extra={"sync_phase": phase})
             return False, f"sync_phase:{phase}"
 
     min_peers = int(os.getenv("ANIMICA_MINING_MIN_PEERS", "1"))
@@ -936,14 +1003,28 @@ def _mining_gate(*, allow_offline_mining: bool = False) -> tuple[bool, str | Non
     max_lag = int(os.getenv("ANIMICA_MINING_MAX_LAG", "2"))
     head_height = int(sync_status.get("head_height") or 0)
     best_header_height = int(sync_status.get("best_header_height") or 0)
-    phase = str(sync_status.get("phase") or "")
-    if phase in {"STALLED", "HEADERS", "BLOCKS", "VERIFYING"}:
-        if phase == "STALLED" and head_height == 0 and best_header_height == 0:
+    phase = str(sync_status.get("phase") or "").lower()
+    if phase in {"stalled", "headers", "blocks", "verifying"}:
+        if phase == "stalled" and head_height == 0 and best_header_height == 0:
             return True, None
-        return False, f"sync_phase:{phase.lower()}"
+        if allow_unsynced:
+            log.warning("MINER_ALLOW_UNSYNCED", extra={"sync_phase": phase})
+        else:
+            log.warning("MINER_REFUSE_UNSYNCED", extra={"sync_phase": phase})
+            return False, f"sync_phase:{phase}"
 
     if best_header_height - head_height > max_lag:
-        return False, "behind_headers"
+        if allow_unsynced:
+            log.warning(
+                "MINER_ALLOW_UNSYNCED",
+                extra={
+                    "sync_phase": "behind_headers",
+                    "head_height": head_height,
+                    "best_header_height": best_header_height,
+                },
+            )
+        else:
+            return False, "behind_headers"
 
     return True, None
 
@@ -1641,8 +1722,9 @@ def _collect_mempool_entries(
     pending_raw_by_hash: dict[str, bytes] = {}
     total = 0
 
-    mempool_service = getattr(ctx, "mempool", None)
+    mempool_service = _resolve_mempool_service(ctx)
     if mempool_service is not None:
+        _log_mempool_binding("miner", ctx, mempool_service)
         snapshot = mempool_service.snapshot(limit=limit)
         total = int(snapshot.total)
         for entry in snapshot.entries:
@@ -2247,6 +2329,7 @@ def _mine_once(
     *,
     include_mempool: bool = True,
     allow_offline_mining: bool = False,
+    allow_unsynced_mining: bool = False,
 ) -> tuple[bool, int, dict[str, Any]]:
     """
     Mine a single block with proof-of-work.
@@ -2277,7 +2360,10 @@ def _mine_once(
             - success: True if block was mined and accepted, False otherwise
             - reward_amount: Miner reward in nANM (0 if mining failed or no reward)
     """
-    allowed, reason = _mining_gate(allow_offline_mining=allow_offline_mining)
+    allowed, reason = _mining_gate(
+        allow_offline_mining=allow_offline_mining,
+        allow_unsynced=allow_unsynced_mining,
+    )
     if not allowed:
         log.warning("Mining disabled", extra={"reason": reason})
         return (False, 0, _mining_disabled_payload(reason))
@@ -2481,6 +2567,14 @@ def _mine_once(
             ),
             "mempoolEnabled": True,
         }
+        log.info(
+            "TEMPLATE_BUILD",
+            extra={
+                "mempool_total": pending_total,
+                "included": len(txs),
+                "rejected": dict(merged_rejected),
+            },
+        )
         if selection.total_pending and len(txs) == 0:
             selection_summary["warnings"] = [
                 "mempool_pending_but_not_included",
@@ -3431,6 +3525,8 @@ def miner_mine(
     threads: int | None = None,
     include_mempool: bool | None = None,
     allow_offline_mining: bool | None = None,
+    allow_unsynced_mining: bool | None = None,
+    force_empty_template: bool | None = None,
 ) -> dict[str, int | list[dict[str, int]] | dict[str, Any]]:
     """
     Mine N blocks locally with dynamic theta micro adjustment.
@@ -3441,6 +3537,8 @@ def miner_mine(
         threads: Optional number of CPU threads to use for mining (default: CPU count).
                  The nonce search space is divided among threads for parallel mining.
         include_mempool: Whether to include pending mempool transactions (default: True).
+        allow_unsynced_mining: Allow mining even when sync_phase is not synced.
+        force_empty_template: Force mining without mempool inclusion.
         
     Returns:
         dict: {
@@ -3459,7 +3557,20 @@ def miner_mine(
     except Exception:
         head_before = {"height": None, "hash": None}
 
-    allowed, reason = _mining_gate(allow_offline_mining=bool(allow_offline_mining))
+    allow_unsynced_flag = bool(allow_unsynced_mining)
+    force_empty_flag = bool(force_empty_template)
+    if force_empty_flag:
+        allow_unsynced_flag = True
+        include_mempool = False
+        log.warning(
+            "Force empty template enabled; mining without mempool",
+            extra={"force_empty_template": True},
+        )
+
+    allowed, reason = _mining_gate(
+        allow_offline_mining=bool(allow_offline_mining),
+        allow_unsynced=allow_unsynced_flag,
+    )
     if not allowed:
         return {
             "mined": 0,
@@ -3514,6 +3625,8 @@ def miner_mine(
             "address": address,
             "head_height": head_before.get("height"),
             "head_hash": head_before.get("hash"),
+            "allow_unsynced_mining": allow_unsynced_flag,
+            "force_empty_template": force_empty_flag,
         },
     )
     target = max(1, int(count or 1))
@@ -3531,6 +3644,7 @@ def miner_mine(
             threads=threads,
             include_mempool=include_mempool_flag,
             allow_offline_mining=bool(allow_offline_mining),
+            allow_unsynced_mining=allow_unsynced_flag,
         )
         if success:
             mined += 1
@@ -3594,6 +3708,8 @@ def miner_get_block_template(*args: Any, **kwargs: Any) -> Dict[str, Any]:
     include_mempool_flag = True
     payout_address = None
     allow_offline_mining = False
+    allow_unsynced_mining = False
+    force_empty_template = False
     raw_params: dict[str, Any] | list[Any] | None = None
 
     if args:
@@ -3625,6 +3741,12 @@ def miner_get_block_template(*args: Any, **kwargs: Any) -> Dict[str, Any]:
         allow_offline_mining = bool(
             payload.get("allow_offline_mining", payload.get("allowOfflineMining", False))
         )
+        allow_unsynced_mining = bool(
+            payload.get("allow_unsynced_mining", payload.get("allowUnsyncedMining", False))
+        )
+        force_empty_template = bool(
+            payload.get("force_empty_template", payload.get("forceEmptyTemplate", False))
+        )
         unknown = set(payload.keys()) - {
             "address",
             "payout_address",
@@ -3632,6 +3754,10 @@ def miner_get_block_template(*args: Any, **kwargs: Any) -> Dict[str, Any]:
             "includeMempool",
             "allow_offline_mining",
             "allowOfflineMining",
+            "allow_unsynced_mining",
+            "allowUnsyncedMining",
+            "force_empty_template",
+            "forceEmptyTemplate",
         }
         if unknown:
             raise rpc_errors.InvalidParams(
@@ -3648,18 +3774,36 @@ def miner_get_block_template(*args: Any, **kwargs: Any) -> Dict[str, Any]:
             "params": raw_params or payload,
             "include_mempool": include_mempool_flag,
             "allow_offline_mining": allow_offline_mining,
+            "allow_unsynced_mining": allow_unsynced_mining,
+            "force_empty_template": force_empty_template,
             "payout_address": payout_address,
         },
     )
 
-    allowed, reason = _mining_gate(allow_offline_mining=allow_offline_mining)
+    if force_empty_template:
+        allow_unsynced_mining = True
+        include_mempool_flag = False
+        log.warning(
+            "Force empty template enabled; building without mempool",
+            extra={"force_empty_template": True},
+        )
+
+    allowed, reason = _mining_gate(
+        allow_offline_mining=allow_offline_mining,
+        allow_unsynced=allow_unsynced_mining,
+    )
     if not allowed:
+        if reason and reason.startswith("sync_phase:"):
+            log.info(
+                "MINER_WAIT_TEMPLATE",
+                extra={"sync_phase": reason.split(":", 1)[1]},
+            )
         return {"enabled": False, "reason": reason}
 
     try:
         ctx = _ctx()
         adapter = _adapter()
-        mempool_service = getattr(ctx, "mempool", None)
+        mempool_service = _resolve_mempool_service(ctx)
         pending_entries: list[PendingTxEntry] = []
         pending_raw_by_hash: dict[str, bytes] = {}
         selection_summary: dict[str, Any] = {
@@ -3845,6 +3989,14 @@ def miner_get_block_template(*args: Any, **kwargs: Any) -> Dict[str, Any]:
                 ),
                 "mempoolEnabled": True,
             }
+            log.info(
+                "TEMPLATE_BUILD",
+                extra={
+                    "mempool_total": pending_total,
+                    "included": len(txs),
+                    "rejected": dict(merged_rejected),
+                },
+            )
             _maybe_log_mempool_debug(
                 phase="block_template",
                 pending_total=selection.total_pending,
