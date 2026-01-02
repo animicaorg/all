@@ -17,7 +17,7 @@ class RpcTemplateProvider:
 
     def _get_work(self) -> Optional[Dict[str, Any]]:
         client = JsonRpcClient(self.rpc_url)
-        res = client.call("miner.getWork", {"proofType": self.proof_type})
+        res = client.call("miner.getWork", [{"proofType": self.proof_type}])
         if isinstance(res, dict) and res.get("jobId"):
             return res
         return None
