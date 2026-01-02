@@ -37,6 +37,7 @@ __all__ = [
     "FeeTooLow",
     "NonceGap",
     "Oversize",
+    "NonceTooLow",
     "MempoolErrorCode",
 ]
 
@@ -51,6 +52,7 @@ class MempoolErrorCode:
     ADMISSION = 1000
     FEE_TOO_LOW = 1001
     NONCE_GAP = 1002
+    NONCE_TOO_LOW = 1005
     OVERSIZE = 1003
     REPLACEMENT = 1004
     DOS = 1099
@@ -372,6 +374,33 @@ class FeeTooLow(MempoolError):
 # ---------------------------------------------------------------------------
 # Override NonceGap with a simpler, explicit implementation
 # ---------------------------------------------------------------------------
+
+
+class NonceTooLow(MempoolError):
+    """
+    The transaction nonce is below the committed nonce for the sender.
+    """
+
+    def __init__(
+        self,
+        *,
+        expected_nonce: int,
+        got_nonce: int,
+        sender: Optional[str] = None,
+        tx_hash: Optional[str] = None,
+    ) -> None:
+        msg = f"nonce too low: expected {expected_nonce}, got {got_nonce}"
+        super().__init__(
+            code=MempoolErrorCode.NONCE_TOO_LOW,
+            reason="nonce_too_low",
+            message=msg,
+            context={
+                "sender": sender,
+                "tx_hash": tx_hash,
+                "expected_nonce": expected_nonce,
+                "got_nonce": got_nonce,
+            },
+        )
 
 
 class NonceGap(MempoolError):
