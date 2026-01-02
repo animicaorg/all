@@ -58,10 +58,13 @@ async def test_rpc_template_provider_retries_on_timeout() -> None:
 
 
 @pytest.mark.asyncio
-async def test_rpc_template_provider_derives_job_id() -> None:
+async def test_rpc_template_provider_requires_job_id() -> None:
+    calls = {"get": 0}
+
     async def handler(request: httpx.Request) -> httpx.Response:
         payload = json.loads(request.content)
         if payload["method"] == "miner.getWork":
+            calls["get"] += 1
             result = {
                 "header": {"number": 9},
                 "shareTarget": 0.25,
@@ -90,13 +93,10 @@ async def test_rpc_template_provider_derives_job_id() -> None:
             max_backoff_s=0.02,
             http_client=client,
         )
-        tpl1 = await provider.current_template()
-        tpl2 = await provider.current_template()
+        tpl = await provider.current_template()
 
-    assert tpl1 is not None
-    assert tpl1["jobId"].startswith("derived-")
-    assert tpl2 is not None
-    assert tpl1["jobId"] == tpl2["jobId"]
+    assert calls["get"] == 2
+    assert tpl is None
 
 
 def test_json_sanitize_bytes() -> None:

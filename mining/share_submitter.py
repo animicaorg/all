@@ -19,9 +19,6 @@ from typing import (
     Union,
 )
 
-from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
-
 import httpx
 
 
@@ -115,6 +112,15 @@ def json_sanitize(obj: Any) -> Json:
     if hasattr(obj, "__dict__"):
         return json_sanitize(vars(obj))
     return str(obj)
+
+
+def json_validate(obj: Any) -> Json:
+    sanitized = json_sanitize(obj)
+    try:
+        json.dumps(sanitized)
+    except TypeError as exc:
+        raise ValueError("payload must be JSON-serializable") from exc
+    return sanitized
 
 
 def _default_share_encoder(share: Any) -> Dict[str, Any]:
@@ -230,6 +236,7 @@ class JsonRpcClient:
         self._timeout_s = timeout_s
         self._id = 0
         self._log = logging.getLogger("mining.share_submitter.rpc")
+        self._client = httpx.Client(timeout=self._timeout_s, headers=self._headers)
 
     def _next_id(self) -> int:
         self._id += 1
@@ -242,22 +249,24 @@ class JsonRpcClient:
             "method": method,
             "params": params,
         }
-        body = json.dumps(json_sanitize(req)).encode("utf-8")
-        r = Request(self._url, data=body, headers=self._headers, method="POST")
         try:
-            with urlopen(r, timeout=self._timeout_s) as resp:
-                content = resp.read()
-        except HTTPError as e:
-            raise TransportError(f"HTTP {e.code}: {e.reason}") from e
-        except URLError as e:
+            resp = self._client.post(self._url, json=json_sanitize(req))
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            raise TransportError(
+                f"HTTP {e.response.status_code}: {e.response.text}"
+            ) from e
+        except httpx.TimeoutException as e:
+            raise TransportError(f"timeout: {e}") from e
+        except httpx.TransportError as e:
             raise TransportError(str(e)) from e
         except Exception as e:
             raise TransportError(repr(e)) from e
 
         try:
-            obj = json.loads(content)
+            obj = resp.json()
         except Exception as e:
-            raise TransportError(f"Invalid JSON from RPC: {e}")
+            raise TransportError(f"Invalid JSON from RPC: {e}") from e
 
         if "error" in obj and obj["error"]:
             err = obj["error"]
@@ -273,22 +282,24 @@ class JsonRpcClient:
             {"jsonrpc": "2.0", "id": self._next_id(), "method": m, "params": p}
             for (m, p) in calls
         ]
-        body = json.dumps(json_sanitize(batch_req)).encode("utf-8")
-        r = Request(self._url, data=body, headers=self._headers, method="POST")
         try:
-            with urlopen(r, timeout=self._timeout_s) as resp:
-                content = resp.read()
-        except HTTPError as e:
-            raise TransportError(f"HTTP {e.code}: {e.reason}") from e
-        except URLError as e:
+            resp = self._client.post(self._url, json=json_sanitize(batch_req))
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            raise TransportError(
+                f"HTTP {e.response.status_code}: {e.response.text}"
+            ) from e
+        except httpx.TimeoutException as e:
+            raise TransportError(f"timeout: {e}") from e
+        except httpx.TransportError as e:
             raise TransportError(str(e)) from e
         except Exception as e:
             raise TransportError(repr(e)) from e
 
         try:
-            arr = json.loads(content)
+            arr = resp.json()
         except Exception as e:
-            raise TransportError(f"Invalid JSON from RPC: {e}")
+            raise TransportError(f"Invalid JSON from RPC: {e}") from e
 
         # Map id -> result/error; then reorder to match input order
         by_id = {item["id"]: item for item in arr}
@@ -310,6 +321,9 @@ class JsonRpcClient:
             else:
                 out.append(item.get("result"))
         return out
+
+    def close(self) -> None:
+        self._client.close()
 
 
 class AsyncJsonRpcClient:
@@ -429,6 +443,8 @@ class ShareSubmitter:
     def close(self) -> None:
         self._closed = True
         self._stop_evt.set()
+        if hasattr(self.rpc, "close"):
+            self.rpc.close()
 
     async def aclose(self) -> None:
         self.close()
@@ -439,7 +455,9 @@ class ShareSubmitter:
     # ──────────────────────────────────────────────────────────────────────
 
     async def submit(self, params: Dict[str, Any]) -> ShareResult:
-        payload = self._share_encoder(params)
+        payload = json_validate(self._share_encoder(params))
+        if not isinstance(payload, dict):
+            raise ValueError("share payload must be an object")
         backoff = self.cfg.initial_backoff_s
         tries = 0
         while True:
@@ -461,10 +479,11 @@ class ShareSubmitter:
                         if res.get("isBlock"):
                             self._stats.blocks_rejected += 1
                     self._log.info(
-                        "submitShare result accepted=%s reason=%s latency=%.3fs",
+                        "submitShare result accepted=%s reason=%s latency=%.3fs jobId=%s",
                         accepted,
                         res.get("reason"),
                         dt,
+                        payload.get("jobId"),
                     )
                     return ShareResult(
                         accepted=accepted,
@@ -476,13 +495,16 @@ class ShareSubmitter:
                 if res is True:
                     self._stats.shares_accepted += 1
                     self._log.info(
-                        "submitShare result accepted=True latency=%.3fs", dt
+                        "submitShare result accepted=True latency=%.3fs jobId=%s",
+                        dt,
+                        payload.get("jobId"),
                     )
                     return ShareResult(accepted=True)
                 self._stats.shares_rejected += 1
                 self._log.info(
-                    "submitShare result accepted=False reason=unexpected-result latency=%.3fs",
+                    "submitShare result accepted=False reason=unexpected-result latency=%.3fs jobId=%s",
                     dt,
+                    payload.get("jobId"),
                 )
                 return ShareResult(accepted=False, reason="unexpected-result")
             except RpcError as e:
@@ -547,7 +569,9 @@ class ShareSubmitter:
             backoff = min(backoff * 2.0, self.cfg.max_backoff_s)
 
     def submit_share_once(self, share: Any) -> ShareResult:
-        payload = self._share_encoder(share)
+        payload = json_validate(self._share_encoder(share))
+        if not isinstance(payload, dict):
+            raise ValueError("share payload must be an object")
         backoff = self.cfg.initial_backoff_s
         tries = 0
         while True:
@@ -654,7 +678,9 @@ class ShareSubmitter:
             backoff = min(backoff * 2.0, self.cfg.max_backoff_s)
 
     def submit_block_once(self, candidate_block: Any) -> Dict[str, Any]:
-        payload = self._block_encoder(candidate_block)
+        payload = json_validate(self._block_encoder(candidate_block))
+        if not isinstance(payload, dict):
+            raise ValueError("block payload must be an object")
         backoff = self.cfg.initial_backoff_s
         tries = 0
         while True:
@@ -743,7 +769,7 @@ class ShareSubmitter:
                 encoded = []
                 try:
                     for s in shares:
-                        encoded.append(self._share_encoder(s))
+                        encoded.append(json_validate(self._share_encoder(s)))
                 except Exception as e:
                     # If any share can't be encoded, fall back to per-share processing
                     self._log.warning(
@@ -752,6 +778,11 @@ class ShareSubmitter:
                     encoded = []
 
                 if encoded:
+                    if not all(isinstance(item, dict) for item in encoded):
+                        self._log.warning(
+                            "share encoder produced non-object payload; falling back per-share"
+                        )
+                        encoded = []
                     try:
                         results = self._submit_batch(encoded)
                         # Update stats from results
