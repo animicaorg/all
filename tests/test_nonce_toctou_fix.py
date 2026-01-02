@@ -483,5 +483,138 @@ def test_mempool_submit_raises_on_rejection():
         pytest.skip("CBOR encoding not available")
 
 
+def test_stale_nonce_not_recorded_as_rejection():
+    """
+    Test that stale nonces (valid but beaten by another tx) are not recorded as rejections.
+    
+    This prevents pollution of the rejection cache with transactions that were
+    actually valid when submitted, just lost the race to another transaction.
+    """
+    from mempool.errors import NonceTooLow
+    
+    pool = Pool(cfg=PoolConfig(max_txs=1000, max_bytes=1024*1024))
+    
+    state_db = Mock()
+    state_db.get_nonce = Mock(return_value=10)
+    
+    service = MempoolService(
+        pool=pool,
+        chain_id=1337,
+        min_gas_price_wei=1,
+        state_db=state_db,
+        tx_index=None,
+        persist_enabled=False,
+    )
+    
+    sender = "0x" + "ff" * 32
+    sender_bytes = bytes.fromhex(sender[2:])
+    
+    # Add tx at nonce 10
+    pool_tx_10, meta_10 = make_pool_tx(sender, 10)
+    pool.add(pool_tx_10, meta_10, is_local=True)
+    
+    # Expected next nonce is 11
+    next_nonce = service.get_next_nonce(sender_bytes, confirmed_nonce=10)
+    assert next_nonce == 11
+    
+    # Now try to submit with nonce 10 (stale - it was valid earlier but got beaten)
+    # This should raise NonceTooLow but NOT record a rejection
+    try:
+        from core.encoding.cbor import dumps as cbor_dumps
+        from core.utils.hash import sha3_256
+        
+        # Create a proper tx envelope with raw bytes
+        body = {
+            "from": sender_bytes,
+            "nonce": 10,
+            "gasLimit": 21000,
+            "chainId": 1337,
+        }
+        tx_envelope = {"body": body}
+        raw_bytes = cbor_dumps(tx_envelope)
+        
+        # The tx dict needs to include the raw bytes
+        tx_dict = tx_envelope.copy()
+        tx_dict["raw"] = raw_bytes
+        
+        tx_hash_hex = "0x" + sha3_256(raw_bytes).hex()
+        
+        # This should raise but not record rejection (nonce >= confirmed)
+        with pytest.raises(NonceTooLow):
+            service.submit(tx=tx_dict, raw=raw_bytes, tx_hash_hex=tx_hash_hex, local=True)
+        
+        # Verify it was NOT recorded as a rejection
+        rejection = service.get_rejection(tx_hash_hex)
+        assert rejection is None, f"Stale nonce should not be recorded as rejection, got {rejection}"
+        
+    except ImportError:
+        pytest.skip("CBOR encoding not available")
+
+
+def test_genuinely_low_nonce_is_recorded_as_rejection():
+    """
+    Test that genuinely low nonces (below confirmed) ARE recorded as rejections.
+    
+    This ensures we still track genuinely bad transactions for DoS protection.
+    """
+    from mempool.errors import NonceTooLow
+    
+    pool = Pool(cfg=PoolConfig(max_txs=1000, max_bytes=1024*1024))
+    
+    state_db = Mock()
+    state_db.get_nonce = Mock(return_value=10)
+    
+    service = MempoolService(
+        pool=pool,
+        chain_id=1337,
+        min_gas_price_wei=1,
+        state_db=state_db,
+        tx_index=None,
+        persist_enabled=False,
+    )
+    
+    sender = "0x" + "aa" * 32  # Changed from "gg" which is invalid hex
+    sender_bytes = bytes.fromhex(sender[2:])
+    
+    # Expected next nonce is 10 (no pending txs)
+    next_nonce = service.get_next_nonce(sender_bytes, confirmed_nonce=10)
+    assert next_nonce == 10
+    
+    # Try to submit with nonce 5 (genuinely too low - below confirmed)
+    try:
+        from core.encoding.cbor import dumps as cbor_dumps
+        from core.utils.hash import sha3_256
+        
+        # Create a proper tx envelope with raw bytes
+        body = {
+            "from": sender_bytes,
+            "nonce": 5,
+            "gasLimit": 21000,
+            "chainId": 1337,
+        }
+        tx_envelope = {"body": body}
+        raw_bytes = cbor_dumps(tx_envelope)
+        
+        # The tx dict needs to include the raw bytes
+        tx_dict = tx_envelope.copy()
+        tx_dict["raw"] = raw_bytes
+        
+        tx_hash_hex = "0x" + sha3_256(raw_bytes).hex()
+        
+        # This should raise AND record rejection (nonce < confirmed)
+        with pytest.raises(NonceTooLow):
+            service.submit(tx=tx_dict, raw=raw_bytes, tx_hash_hex=tx_hash_hex, local=True)
+        
+        # Verify it WAS recorded as a rejection
+        rejection = service.get_rejection(tx_hash_hex)
+        assert rejection is not None, "Genuinely low nonce should be recorded as rejection"
+        assert rejection["reason"] == "nonce_too_low"
+        assert rejection["details"]["got"] == 5
+        assert rejection["details"]["expected"] == 10
+        
+    except ImportError:
+        pytest.skip("CBOR encoding not available")
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
