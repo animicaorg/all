@@ -37,9 +37,15 @@ import json
 import logging
 import os
 import shutil
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
+
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+_PYTHON_DIR = _REPO_ROOT / "python"
+if str(_PYTHON_DIR) not in sys.path:
+    sys.path.insert(0, str(_PYTHON_DIR))
 
 from animica.config import parse_env_bool
 
