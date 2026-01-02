@@ -699,8 +699,8 @@ def send(
         console.print("  • Internal mempool error (transaction submitted but not persisted)")
         console.print("")
         console.print("The transaction will NOT be mined. Please check:")
-        console.print(f"  animica mempool list                    # Check pending transactions")
-        console.print(f"  animica rpc call state.getNonce [{from_addr}]  # Check account nonce")
+        console.print("  animica mempool list                    # Check pending transactions")
+        console.print(f"  animica rpc call state.getNonce '[\"{from_addr}\"]'  # Check account nonce")
         raise typer.Exit(code=1)
 
     console.print("\n[bold green]=== Transaction Sent ===[/bold green]")
