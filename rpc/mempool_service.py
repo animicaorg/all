@@ -480,11 +480,12 @@ class MempoolService:
                 log.debug("mempool nonce check failed; skipping", exc_info=exc)
             else:
                 log.debug(
-                    "mempool nonce check",
+                    "mempool nonce validation: checking transaction nonce",
                     extra={
                         "sender": _sender_hex(sender),
-                        "nonce": nonce,
+                        "tx_nonce": nonce,
                         "expected_nonce": expected,
+                        "tx_hash": tx_hash_hex,
                     },
                 )
                 if nonce < expected:
@@ -493,13 +494,14 @@ class MempoolService:
                         "nonce_too_low",
                         {"expected": expected, "got": nonce},
                     )
-                    log.debug(
-                        "mempool nonce decision",
+                    log.warning(
+                        "mempool: rejecting transaction with nonce_too_low",
                         extra={
                             "sender": _sender_hex(sender),
-                            "nonce": nonce,
+                            "tx_nonce": nonce,
                             "expected_nonce": expected,
                             "decision": "reject_nonce_too_low",
+                            "tx_hash": tx_hash_hex,
                         },
                     )
                     raise NonceTooLow(
@@ -525,14 +527,15 @@ class MempoolService:
                                 "got": nonce,
                             },
                         )
-                        log.debug(
-                            "mempool nonce decision",
+                        log.warning(
+                            "mempool: rejecting transaction with nonce_gap",
                             extra={
                                 "sender": _sender_hex(sender),
-                                "nonce": nonce,
+                                "tx_nonce": nonce,
                                 "expected_nonce": expected,
                                 "pending_next": pending_next,
                                 "decision": "reject_nonce_gap",
+                                "tx_hash": tx_hash_hex,
                             },
                         )
                         raise NonceGap(
@@ -542,10 +545,10 @@ class MempoolService:
                             tx_hash=tx_hash_hex,
                         )
                 log.debug(
-                    "mempool nonce decision",
+                    "mempool: accepting transaction nonce",
                     extra={
                         "sender": _sender_hex(sender),
-                        "nonce": nonce,
+                        "tx_nonce": nonce,
                         "expected_nonce": expected,
                         "decision": "accept_nonce",
                     },
