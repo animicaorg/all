@@ -778,7 +778,12 @@ def _ensure_tx_persisted_to_chain(tx_hash_hex: str) -> None:
         return
 
     try:
-        miner_methods.miner_mine(count=1)
+        miner_methods.miner_mine(
+            count=1,
+            include_mempool=True,
+            allow_offline_mining=True,
+            allow_unsynced_mining=True,
+        )
     except Exception as exc:
         raise rpc_errors.InternalError(
             "Failed to mine transaction into chain",
