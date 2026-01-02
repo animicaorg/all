@@ -12,7 +12,7 @@ from typing import Any, Iterable, Optional
 from core.utils.hash import sha3_256
 from core.utils.tx import normalize_tx_bytes
 from mempool.config import MempoolConfig, load_config as load_mempool_config
-from mempool.errors import AdmissionError, FeeTooLow, NonceGap
+from mempool.errors import AdmissionError, FeeTooLow, NonceGap, NonceTooLow
 from mempool.pool import Pool, PoolConfig
 from mempool.select import PendingTxEntry, select_for_block
 from mempool.types import EffectiveFee, PoolTx, TxMeta
@@ -485,14 +485,11 @@ class MempoolService:
                         "nonce_too_low",
                         {"expected": expected, "got": nonce},
                     )
-                    raise AdmissionError(
-                        f"nonce too low: expected {expected}, got {nonce}",
-                        context={
-                            "tx_hash": tx_hash_hex,
-                            "sender": _sender_hex(sender),
-                            "expected_nonce": expected,
-                            "got_nonce": nonce,
-                        },
+                    raise NonceTooLow(
+                        expected_nonce=expected,
+                        got_nonce=nonce,
+                        sender=_sender_hex(sender),
+                        tx_hash=tx_hash_hex,
                     )
 
                 pending_next = None
