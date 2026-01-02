@@ -1050,6 +1050,99 @@ def test_send_verbose_shows_chain_id_source_cli_flag(wallet_store: Path) -> None
 
 
 # ============================================================================
+# Mempool Status Verification Tests
+# ============================================================================
+
+@respx.mock
+def test_send_requires_mempool_status_pending(wallet_store: Path) -> None:
+    """Ensure send reports success only when mempool.getStatus reports pending."""
+    rpc_url = "http://localhost:9999/rpc"
+
+    def responder(request):
+        req_data = json.loads(request.content.decode())
+        method = req_data.get("method")
+        if method == "chain.getChainId":
+            return httpx.Response(200, json={"jsonrpc": "2.0", "id": req_data["id"], "result": 1337})
+        if method == "state.getTransactionCount":
+            return httpx.Response(200, json={"jsonrpc": "2.0", "id": req_data["id"], "result": 0})
+        if method == "state.suggestGasPrice":
+            return httpx.Response(200, json={"jsonrpc": "2.0", "id": req_data["id"], "result": "1000000000"})
+        if method == "tx.sendRawTransaction":
+            return httpx.Response(200, json={"jsonrpc": "2.0", "id": req_data["id"], "result": "0xabc123"})
+        if method == "mempool.getStatus":
+            return httpx.Response(
+                200,
+                json={
+                    "jsonrpc": "2.0",
+                    "id": req_data["id"],
+                    "result": {"hash": "0xabc123", "known": True, "state": "pending"},
+                },
+            )
+        if method == "sync.getStatus":
+            return httpx.Response(
+                200,
+                json={"jsonrpc": "2.0", "id": req_data["id"], "result": {"synchronized": True}},
+            )
+        return httpx.Response(200, json={"jsonrpc": "2.0", "id": req_data["id"], "result": None})
+
+    respx.post(rpc_url).mock(side_effect=responder)
+
+    _, output = run_tx_cli([
+        "send",
+        "--from", "alice",
+        "--to", "anim1zqp2u7fz3msky532tz4d3076wm99datq9rdxqjxvznq7zqn7xj0869ctuj4km",
+        "--value", "1.0",
+        "--rpc-url", rpc_url,
+    ], wallet_store)
+
+    assert "Transaction Submitted" in output or "Transaction broadcast successfully" in output
+
+
+@respx.mock
+def test_send_fails_when_mempool_status_unknown(wallet_store: Path) -> None:
+    """Ensure send fails if mempool.getStatus says the tx is unknown."""
+    rpc_url = "http://localhost:9999/rpc"
+    captured_requests = []
+
+    def responder(request):
+        req_data = json.loads(request.content.decode())
+        captured_requests.append(req_data)
+        method = req_data.get("method")
+        if method == "chain.getChainId":
+            return httpx.Response(200, json={"jsonrpc": "2.0", "id": req_data["id"], "result": 1337})
+        if method == "state.getTransactionCount":
+            return httpx.Response(200, json={"jsonrpc": "2.0", "id": req_data["id"], "result": 0})
+        if method == "state.suggestGasPrice":
+            return httpx.Response(200, json={"jsonrpc": "2.0", "id": req_data["id"], "result": "1000000000"})
+        if method == "tx.sendRawTransaction":
+            return httpx.Response(200, json={"jsonrpc": "2.0", "id": req_data["id"], "result": "0xabc123"})
+        if method == "mempool.getStatus":
+            return httpx.Response(
+                200,
+                json={
+                    "jsonrpc": "2.0",
+                    "id": req_data["id"],
+                    "result": {"hash": "0xabc123", "known": False, "state": "unknown", "reason": "not_found"},
+                },
+            )
+        return httpx.Response(200, json={"jsonrpc": "2.0", "id": req_data["id"], "result": None})
+
+    respx.post(rpc_url).mock(side_effect=responder)
+
+    exit_code, output = run_tx_cli([
+        "send",
+        "--from", "alice",
+        "--to", "anim1zqp2u7fz3msky532tz4d3076wm99datq9rdxqjxvznq7zqn7xj0869ctuj4km",
+        "--value", "1.0",
+        "--rpc-url", rpc_url,
+    ], wallet_store, expect_success=False)
+
+    assert exit_code != 0
+    assert "Transaction Not in Mempool" in output
+    assert not any(req.get("method") == "sync.force" for req in captured_requests)
+
+
+# ============================================================================
 # Signature Structure Tests (PR requirement)
 # ============================================================================
 

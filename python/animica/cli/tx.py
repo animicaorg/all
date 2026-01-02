@@ -662,33 +662,46 @@ def send(
             _format_rpc_error(e)
             raise typer.Exit(code=1) from e
 
-    _maybe_force_sync(rpc, verbose=verbose)
-
     # Verify tx is actually in mempool
     tx_in_mempool = False
+    mempool_status: dict[str, Any] | None = None
     try:
-        pending = _rpc(rpc, "mempool.getPending", [])
-        if isinstance(pending, list) and tx_hash in pending:
-            tx_in_mempool = True
+        status = _rpc(rpc, "mempool.getStatus", [tx_hash])
+        if isinstance(status, dict):
+            mempool_status = status
+            state = status.get("state")
+            known = status.get("known")
+            if known is True and state in {"pending", "staged"}:
+                tx_in_mempool = True
     except RpcError as e:
-        # mempool.getPending may not be available, try mempool.explain
+        # mempool.getStatus may not be available, try mempool.getPending/explain
         if verbose:
-            console.print(f"[dim]mempool.getPending not available (code={e.code}), trying mempool.explain...[/dim]")
+            console.print(f"[dim]mempool.getStatus not available (code={e.code}), trying mempool.getPending...[/dim]")
         try:
-            explain = _rpc(rpc, "mempool.explain", [tx_hash])
-            if isinstance(explain, dict):
-                status = explain.get("status")
-                if status != "not_found":
-                    tx_in_mempool = True
-                elif verbose:
-                    console.print(f"[yellow]mempool.explain status: {status}[/yellow]")
+            pending = _rpc(rpc, "mempool.getPending", [])
+            if isinstance(pending, list) and tx_hash in pending:
+                tx_in_mempool = True
         except RpcError as e2:
             if verbose:
-                console.print(f"[dim]mempool.explain also failed (code={e2.code})[/dim]")
+                console.print(f"[dim]mempool.getPending failed (code={e2.code}), trying mempool.explain...[/dim]")
+            try:
+                explain = _rpc(rpc, "mempool.explain", [tx_hash])
+                if isinstance(explain, dict):
+                    status = explain.get("status")
+                    if status != "not_found":
+                        tx_in_mempool = True
+                    elif verbose:
+                        console.print(f"[yellow]mempool.explain status: {status}[/yellow]")
+            except RpcError as e3:
+                if verbose:
+                    console.print(f"[dim]mempool.explain also failed (code={e3.code})[/dim]")
 
     if not tx_in_mempool:
         console.print("\n[bold red]=== ERROR: Transaction Not in Mempool ===[/bold red]")
         console.print(f"TX hash: {tx_hash}")
+        if mempool_status:
+            console.print("Mempool status:")
+            console.print(Pretty(mempool_status))
         console.print("")
         console.print("The RPC accepted the transaction but it is NOT in the mempool.")
         console.print("Possible reasons:")
@@ -702,6 +715,8 @@ def send(
         console.print("  animica mempool list                    # Check pending transactions")
         console.print(f"  animica rpc call state.getNonce '[\"{from_addr}\"]'  # Check account nonce")
         raise typer.Exit(code=1)
+
+    _maybe_force_sync(rpc, verbose=verbose)
 
     console.print("\n[bold green]=== Transaction Sent ===[/bold green]")
     console.print("Transaction Submitted")

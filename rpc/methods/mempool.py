@@ -406,6 +406,50 @@ def mempool_explain(tx_hash: str) -> dict:
 
 
 __all__.append("mempool_explain")
+__all__.append("mempool_get_status")
+
+
+@method(
+    "mempool.getStatus",
+    desc="Return whether a transaction is known to the mempool and its current state.",
+    aliases=("mempool_getStatus",),
+)
+def mempool_get_status(tx_hash: str) -> dict:
+    target = tx_hash if tx_hash.startswith("0x") else f"0x{tx_hash}"
+    mempool_service = _get_mempool_service()
+    if mempool_service is not None:
+        snapshot = mempool_service.snapshot(limit=1000)
+        for entry in snapshot.entries:
+            if entry.hash_hex == target:
+                return {
+                    "hash": target,
+                    "known": True,
+                    "state": "pending",
+                    "reason": None,
+                }
+        rejection = getattr(mempool_service, "get_rejection", None)
+        if callable(rejection):
+            rejected = rejection(target)
+            if rejected:
+                return {
+                    "hash": target,
+                    "known": True,
+                    "state": "evicted",
+                    "reason": rejected.get("reason"),
+                    "details": rejected.get("details"),
+                }
+
+    for h, _raw, _ts in _iter_pending():
+        if h == target:
+            return {
+                "hash": target,
+                "known": True,
+                "state": "pending",
+                "reason": None,
+                "source": "fallback",
+            }
+
+    return {"hash": target, "known": False, "state": "unknown", "reason": "not_found"}
 
 
 @method(
