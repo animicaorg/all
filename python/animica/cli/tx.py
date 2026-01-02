@@ -4,6 +4,8 @@ import hashlib
 import json
 import os
 import time
+from contextlib import contextmanager, nullcontext
+from pathlib import Path
 from decimal import Decimal, InvalidOperation
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
@@ -183,6 +185,63 @@ def _format_rpc_error(e: RpcError) -> None:
         console.print(Pretty(e.data))
 
 
+def _get_mempool_status(rpc: str, tx_hash: str, *, verbose: bool = False) -> tuple[bool, dict[str, Any] | None]:
+    mempool_status: dict[str, Any] | None = None
+    try:
+        status = _rpc(rpc, "mempool.getStatus", [tx_hash])
+        if isinstance(status, dict):
+            mempool_status = status
+            state = status.get("state")
+            known = status.get("known")
+            if known is True and state in {"pending", "staged"}:
+                return True, mempool_status
+            return False, mempool_status
+    except RpcError as e:
+        if verbose:
+            console.print(f"[dim]mempool.getStatus not available (code={e.code}), trying mempool.getPending...[/dim]")
+    try:
+        pending = _rpc(rpc, "mempool.getPending", [])
+        if isinstance(pending, list) and tx_hash in pending:
+            return True, mempool_status
+    except RpcError as e2:
+        if verbose:
+            console.print(f"[dim]mempool.getPending failed (code={e2.code}), trying mempool.explain...[/dim]")
+        try:
+            explain = _rpc(rpc, "mempool.explain", [tx_hash])
+            if isinstance(explain, dict):
+                status = explain.get("status")
+                if status != "not_found":
+                    return True, mempool_status
+                if verbose:
+                    console.print(f"[yellow]mempool.explain status: {status}[/yellow]")
+        except RpcError as e3:
+            if verbose:
+                console.print(f"[dim]mempool.explain also failed (code={e3.code})[/dim]")
+    return False, mempool_status
+
+
+def _nonce_mismatch_from_status(status: dict[str, Any] | None) -> tuple[str | None, int | None, int | None]:
+    if not isinstance(status, dict):
+        return None, None, None
+    reason = status.get("reason")
+    details = status.get("details")
+    if isinstance(details, dict):
+        expected = details.get("expected") or details.get("expected_nonce")
+        got = details.get("got") or details.get("got_nonce")
+    else:
+        expected = None
+        got = None
+    try:
+        expected = int(expected) if expected is not None else None
+    except Exception:
+        expected = None
+    try:
+        got = int(got) if got is not None else None
+    except Exception:
+        got = None
+    return reason, expected, got
+
+
 def _parse_value_to_base_units(
     value: Optional[str],
     value_nanm: Optional[int],
@@ -232,6 +291,28 @@ def _get_chain_identity(rpc_url: str) -> dict:
 
 
 _NONCE_CACHE: dict[tuple[str, str], int] = {}
+
+try:
+    import fcntl  # type: ignore
+except Exception:  # pragma: no cover - windows/non-posix environments
+    fcntl = None  # type: ignore[assignment]
+
+
+@contextmanager
+def _nonce_lock(address: str):
+    if fcntl is None:
+        yield
+        return
+    lock_dir = Path(os.path.expanduser("~/.animica/nonce-locks"))
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    lock_name = hashlib.sha256(address.encode("utf-8")).hexdigest()
+    lock_path = lock_dir / f"{lock_name}.lock"
+    with open(lock_path, "a+", encoding="utf-8") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
 def _get_nonce(rpc_url: str, addr: str) -> int:
@@ -290,14 +371,74 @@ def _get_nonce(rpc_url: str, addr: str) -> int:
     return max(confirmed_nonce, highest_pending_nonce + 1)
 
 
-def _next_nonce(rpc_url: str, addr: str) -> int:
-    base = _get_nonce(rpc_url, addr)
+def _get_next_nonce(rpc_url: str, addr: str) -> int:
+    methods = [
+        ("state.getNextNonce", [addr]),
+        ("state_getNextNonce", [addr]),
+        ("state.getPendingNonce", [addr]),
+        ("state_getPendingNonce", [addr]),
+        ("state.getNonce", [addr, "pending"]),
+    ]
+    for method, params in methods:
+        try:
+            v = _rpc(rpc_url, method, params)
+            if isinstance(v, int):
+                return int(v)
+            if isinstance(v, str) and v.isdigit():
+                return int(v)
+        except Exception:
+            continue
+    return _get_nonce(rpc_url, addr)
+
+
+def _next_nonce(rpc_url: str, addr: str, *, refresh: bool = False) -> int:
+    base = _get_next_nonce(rpc_url, addr)
     key = (rpc_url, addr)
     cached = _NONCE_CACHE.get(key)
-    if cached is not None and cached >= base:
+    if not refresh and cached is not None and cached >= base:
         base = cached + 1
     _NONCE_CACHE[key] = base
     return base
+
+
+def _extract_nonce_mismatch(data: Any) -> tuple[str | None, int | None, int | None]:
+    if not isinstance(data, dict):
+        return None, None, None
+    reason = None
+    expected = None
+    got = None
+    mempool_error = data.get("mempoolError")
+    if isinstance(mempool_error, dict):
+        reason = mempool_error.get("reason")
+        context = mempool_error.get("context")
+        if isinstance(context, dict):
+            expected = context.get("expected_nonce") or context.get("expected")
+            got = context.get("got_nonce") or context.get("got")
+    else:
+        reason = data.get("reason")
+        expected = data.get("expected") or data.get("expected_nonce") or data.get("highest")
+        got = data.get("got") or data.get("got_nonce")
+    try:
+        expected = int(expected) if expected is not None else None
+    except Exception:
+        expected = None
+    try:
+        got = int(got) if got is not None else None
+    except Exception:
+        got = None
+    return reason, expected, got
+
+
+def _format_nonce_mismatch(reason: str | None, expected: int | None, got: int | None) -> None:
+    label = "nonce mismatch"
+    if reason in {"nonce_too_low", "nonce_gap"}:
+        label = reason.replace("_", " ")
+    console.print(f"\n[bold red]Nonce error:[/bold red] {label}")
+    if expected is not None or got is not None:
+        console.print(f"  Expected: {expected if expected is not None else '?'}")
+        console.print(f"  Got:      {got if got is not None else '?'}")
+    console.print("\n[yellow]Tip:[/yellow] Refresh nonce with:")
+    console.print("  animica rpc call state.getNextNonce '[\"<address>\"]'")
 
 
 def _get_default_max_fee(rpc_url: str) -> int:
@@ -521,7 +662,6 @@ def send(
 
     # Nonce + fee defaults
     nonce_source = "override" if nonce is not None else "auto"
-    nonce = int(nonce) if nonce is not None else _next_nonce(rpc, from_addr)
     fee = int(max_fee) if max_fee is not None else _get_default_max_fee(rpc)
 
     # Value conversion
@@ -543,177 +683,190 @@ def send(
     pk = _hex_to_bytes(pk_hex)
     sk = _hex_to_bytes(sk_hex)
 
-    body = _build_tx_body(
-        chain_id=cid,
-        from_addr=from_addr,
-        to_addr=to_addr,
-        nonce=nonce,
-        value_base_units=value_base,
-        gas_limit=gas_limit,
-        max_fee=fee,
-        data=b"",
-    )
-    body_bytes = _cbor(body)
+    max_attempts = 3 if nonce is None else 1
+    next_nonce_value: Optional[int] = None
+    tx_hash = None
+    last_body = None
+    last_nonce = None
+    nonce_lock = _nonce_lock(from_addr) if nonce is None else nullcontext()
 
-    sign_bytes = build_sign_bytes(
-        body_bytes,
-        domain=domain,
-        chain_id=cid,
-        fork_id=fork_id,
-        alg_id=alg_id,
-        prehash=prehash,  # type: ignore[arg-type]
-    )
+    with nonce_lock:
+        for attempt in range(max_attempts):
+            if nonce is not None:
+                attempt_nonce = int(nonce)
+            elif next_nonce_value is not None:
+                attempt_nonce = next_nonce_value
+                next_nonce_value = None
+            else:
+                attempt_nonce = _next_nonce(rpc, from_addr, refresh=(attempt > 0))
 
-    if verbose or debug_signing:
-        console.print("\n[bold]CHAIN CONTEXT DEBUG[/bold]")
-        console.print({"rpc_url": rpc, "chain_id": cid, "chain_id_source": "cli override" if chain_id is not None else "node:chain.getChainId"})
-        console.print("")
-        console.print(f"nonce: using {nonce_source} => {nonce}")
-        console.print(f"maxFee: using {'override' if max_fee is not None else 'default'} => {fee}")
-        console.print(f"value_input: {value if value is not None else value_nanm} ({value_source})")
-        console.print(f"value_base_units: {value_base}")
-        console.print("")
-        console.print("[bold]PQ SIGNATURE DEBUG[/bold]")
-        console.print(
-            {
-                "algorithm_id": alg_id,
-                "domain": domain,
-                "prehash": prehash,
-                "chain_id_in_pq": cid,
-                "fork_id_in_pq": fork_id,
-                "pubkey_len": len(pk),
-                "seckey_len": len(sk),
-                "message_len": len(body_bytes),
-                "message_prefix": body_bytes[:32].hex(),
-                "sign_bytes_hash": hashlib.sha3_256(sign_bytes).hexdigest(),
-                "sign_bytes_len": len(sign_bytes),
-            }
-        )
+            body = _build_tx_body(
+                chain_id=cid,
+                from_addr=from_addr,
+                to_addr=to_addr,
+                nonce=attempt_nonce,
+                value_base_units=value_base,
+                gas_limit=gas_limit,
+                max_fee=fee,
+                data=b"",
+            )
+            body_bytes = _cbor(body)
 
-    # Sign
-    pq = pq_sign_detached(
-        body_bytes,
-        alg=alg_id,
-        sk=sk,
-        pk=pk,
-        domain=domain,
-        chain_id=cid,
-        fork_id=fork_id,
-        prehash=prehash,  # type: ignore[arg-type]
-    )
+            sign_bytes = build_sign_bytes(
+                body_bytes,
+                domain=domain,
+                chain_id=cid,
+                fork_id=fork_id,
+                alg_id=alg_id,
+                prehash=prehash,  # type: ignore[arg-type]
+            )
 
-    try:
-        local_ok = verify_detached(
-            body_bytes,
-            pq,
-            pk,
-            domain=domain,
-            chain_id=cid,
-            fork_id=fork_id,
-            prehash=prehash,  # type: ignore[arg-type]
-        )
-    except Exception as e:
-        raise RuntimeError(f"Local PQ verify failed before broadcast: {e}") from e
+            if verbose or debug_signing:
+                console.print("\n[bold]CHAIN CONTEXT DEBUG[/bold]")
+                console.print(
+                    {
+                        "rpc_url": rpc,
+                        "chain_id": cid,
+                        "chain_id_source": "cli override" if chain_id is not None else "node:chain.getChainId",
+                    }
+                )
+                console.print("")
+                console.print(f"nonce: using {nonce_source} => {attempt_nonce}")
+                console.print(f"maxFee: using {'override' if max_fee is not None else 'default'} => {fee}")
+                console.print(f"value_input: {value if value is not None else value_nanm} ({value_source})")
+                console.print(f"value_base_units: {value_base}")
+                console.print("")
+                console.print("[bold]PQ SIGNATURE DEBUG[/bold]")
+                console.print(
+                    {
+                        "algorithm_id": alg_id,
+                        "domain": domain,
+                        "prehash": prehash,
+                        "chain_id_in_pq": cid,
+                        "fork_id_in_pq": fork_id,
+                        "pubkey_len": len(pk),
+                        "seckey_len": len(sk),
+                        "message_len": len(body_bytes),
+                        "message_prefix": body_bytes[:32].hex(),
+                        "sign_bytes_hash": hashlib.sha3_256(sign_bytes).hexdigest(),
+                        "sign_bytes_len": len(sign_bytes),
+                    }
+                )
 
-    if not local_ok:
-        raise RuntimeError(
-            "Local PQ verify failed before broadcast (sign-bytes mismatch)."
-        )
+            # Sign
+            pq = pq_sign_detached(
+                body_bytes,
+                alg=alg_id,
+                sk=sk,
+                pk=pk,
+                domain=domain,
+                chain_id=cid,
+                fork_id=fork_id,
+                prehash=prehash,  # type: ignore[arg-type]
+            )
 
-    raw = _build_raw_tx(
-        body=body,
-        alg_id=pq.alg_id,
-        pk=pk,
-        sig=pq.sig,
-        domain=domain,
-        prehash=prehash,
-        chain_id=cid,
-    )
-    raw_hex = "0x" + raw.hex()
-
-    if verbose:
-        console.print("\n[bold]RAW TX[/bold]")
-        console.print(
-            {
-                "raw_len": len(raw),
-                "raw_prefix": raw[:24].hex(),
-                "raw_hex": raw_hex,
-            }
-        )
-
-    # Submit (with one compatibility fallback)
-    try:
-        tx_hash = _rpc(rpc, "tx.sendRawTransaction", [raw_hex])
-    except RpcError as e:
-        # Handle insufficient funds error with user-friendly formatting
-        if e.code == -32013:  # AnimicaCode.INSUFFICIENT_FUNDS
-            _format_insufficient_funds_error(e)
-            raise typer.Exit(code=1)
-        if e.code == -32002:
-            console.print("\n[bold red]Node is still syncing; transaction submission is unavailable.[/bold red]")
-            if e.data is not None:
-                console.print(Pretty(e.data))
-            console.print("\n[yellow]Tip:[/yellow] Wait for sync to complete or run `animica sync status`.")
-            raise typer.Exit(code=1)
-        # Some nodes use alternate method naming
-        if e.code in (-32601,):
-            tx_hash = _rpc(rpc, "tx_sendRawTransaction", [raw_hex])
-        else:
-            _format_rpc_error(e)
-            raise typer.Exit(code=1) from e
-
-    # Verify tx is actually in mempool
-    tx_in_mempool = False
-    mempool_status: dict[str, Any] | None = None
-    try:
-        status = _rpc(rpc, "mempool.getStatus", [tx_hash])
-        if isinstance(status, dict):
-            mempool_status = status
-            state = status.get("state")
-            known = status.get("known")
-            if known is True and state in {"pending", "staged"}:
-                tx_in_mempool = True
-    except RpcError as e:
-        # mempool.getStatus may not be available, try mempool.getPending/explain
-        if verbose:
-            console.print(f"[dim]mempool.getStatus not available (code={e.code}), trying mempool.getPending...[/dim]")
-        try:
-            pending = _rpc(rpc, "mempool.getPending", [])
-            if isinstance(pending, list) and tx_hash in pending:
-                tx_in_mempool = True
-        except RpcError as e2:
-            if verbose:
-                console.print(f"[dim]mempool.getPending failed (code={e2.code}), trying mempool.explain...[/dim]")
             try:
-                explain = _rpc(rpc, "mempool.explain", [tx_hash])
-                if isinstance(explain, dict):
-                    status = explain.get("status")
-                    if status != "not_found":
-                        tx_in_mempool = True
-                    elif verbose:
-                        console.print(f"[yellow]mempool.explain status: {status}[/yellow]")
-            except RpcError as e3:
-                if verbose:
-                    console.print(f"[dim]mempool.explain also failed (code={e3.code})[/dim]")
+                local_ok = verify_detached(
+                    body_bytes,
+                    pq,
+                    pk,
+                    domain=domain,
+                    chain_id=cid,
+                    fork_id=fork_id,
+                    prehash=prehash,  # type: ignore[arg-type]
+                )
+            except Exception as e:
+                raise RuntimeError(f"Local PQ verify failed before broadcast: {e}") from e
 
-    if not tx_in_mempool:
-        console.print("\n[bold red]=== ERROR: Transaction Not in Mempool ===[/bold red]")
-        console.print(f"TX hash: {tx_hash}")
-        if mempool_status:
-            console.print("Mempool status:")
-            console.print(Pretty(mempool_status))
-        console.print("")
-        console.print("The RPC accepted the transaction but it is NOT in the mempool.")
-        console.print("Possible reasons:")
-        console.print("  • Nonce gap (tx nonce is too high)")
-        console.print("  • Fee too low (below minimum gas price)")
-        console.print("  • Gas limit too high (exceeds block limit)")
-        console.print("  • Mempool full (tx evicted)")
-        console.print("  • Internal mempool error (transaction submitted but not persisted)")
-        console.print("")
-        console.print("The transaction will NOT be mined. Please check:")
-        console.print("  animica mempool list                    # Check pending transactions")
-        console.print(f"  animica rpc call state.getNonce '[\"{from_addr}\"]'  # Check account nonce")
+            if not local_ok:
+                raise RuntimeError(
+                    "Local PQ verify failed before broadcast (sign-bytes mismatch)."
+                )
+
+            raw = _build_raw_tx(
+                body=body,
+                alg_id=pq.alg_id,
+                pk=pk,
+                sig=pq.sig,
+                domain=domain,
+                prehash=prehash,
+                chain_id=cid,
+            )
+            raw_hex = "0x" + raw.hex()
+
+            if verbose:
+                console.print("\n[bold]RAW TX[/bold]")
+                console.print(
+                    {
+                        "raw_len": len(raw),
+                        "raw_prefix": raw[:24].hex(),
+                        "raw_hex": raw_hex,
+                    }
+                )
+
+            # Submit (with one compatibility fallback)
+            try:
+                tx_hash = _rpc(rpc, "tx.sendRawTransaction", [raw_hex])
+            except RpcError as e:
+                # Handle insufficient funds error with user-friendly formatting
+                if e.code == -32013:  # AnimicaCode.INSUFFICIENT_FUNDS
+                    _format_insufficient_funds_error(e)
+                    raise typer.Exit(code=1)
+                if e.code == -32002:
+                    console.print("\n[bold red]Node is still syncing; transaction submission is unavailable.[/bold red]")
+                    if e.data is not None:
+                        console.print(Pretty(e.data))
+                    console.print("\n[yellow]Tip:[/yellow] Wait for sync to complete or run `animica sync status`.")
+                    raise typer.Exit(code=1)
+                reason, expected, got = _extract_nonce_mismatch(e.data)
+                if nonce is None and reason in {"nonce_too_low", "nonce_gap"} and attempt + 1 < max_attempts:
+                    next_nonce_value = _next_nonce(rpc, from_addr, refresh=True)
+                    console.print(f"[yellow]nonce mismatch, retrying with nonce={next_nonce_value}[/yellow]")
+                    continue
+                if reason in {"nonce_too_low", "nonce_gap"}:
+                    _format_nonce_mismatch(reason, expected, got)
+                    raise typer.Exit(code=1)
+                # Some nodes use alternate method naming
+                if e.code in (-32601,):
+                    tx_hash = _rpc(rpc, "tx_sendRawTransaction", [raw_hex])
+                else:
+                    _format_rpc_error(e)
+                    raise typer.Exit(code=1) from e
+
+            tx_in_mempool, mempool_status = _get_mempool_status(rpc, tx_hash, verbose=verbose)
+            if tx_in_mempool:
+                last_body = body
+                last_nonce = attempt_nonce
+                break
+
+            reason, expected, got = _nonce_mismatch_from_status(mempool_status)
+            if nonce is None and reason in {"nonce_too_low", "nonce_gap"} and attempt + 1 < max_attempts:
+                next_nonce_value = _next_nonce(rpc, from_addr, refresh=True)
+                console.print(f"[yellow]nonce mismatch, retrying with nonce={next_nonce_value}[/yellow]")
+                continue
+
+            console.print("\n[bold red]=== ERROR: Transaction Not in Mempool ===[/bold red]")
+            console.print(f"TX hash: {tx_hash}")
+            if mempool_status:
+                console.print("Mempool status:")
+                console.print(Pretty(mempool_status))
+            if reason in {"nonce_too_low", "nonce_gap"}:
+                _format_nonce_mismatch(reason, expected, got)
+            console.print("")
+            console.print("The RPC accepted the transaction but it is NOT in the mempool.")
+            console.print("Possible reasons:")
+            console.print("  • Nonce gap (tx nonce is too high)")
+            console.print("  • Fee too low (below minimum gas price)")
+            console.print("  • Gas limit too high (exceeds block limit)")
+            console.print("  • Mempool full (tx evicted)")
+            console.print("  • Internal mempool error (transaction submitted but not persisted)")
+            console.print("")
+            console.print("The transaction will NOT be mined. Please check:")
+            console.print("  animica mempool list                    # Check pending transactions")
+            console.print(f"  animica rpc call state.getNextNonce '[\"{from_addr}\"]'  # Check account nonce")
+            raise typer.Exit(code=1)
+
+    if tx_hash is None or last_body is None or last_nonce is None:
         raise typer.Exit(code=1)
 
     _maybe_force_sync(rpc, verbose=verbose)
@@ -728,14 +881,15 @@ def send(
             "from": from_addr,
             "to": to_addr,
             "value": value_base,
-            "nonce": nonce,
+            "nonce": last_nonce,
             "chain_id": cid,
             "rpc_url": rpc,
+            "mempool_state": "pending",
         }
     )
     if verbose:
         console.print("\n[bold]TX BODY[/bold]")
-        console.print(Pretty(body))
+        console.print(Pretty(last_body))
 
 
 @app.command("status")
