@@ -434,7 +434,7 @@ def mempool_get_status(tx_hash: str) -> dict:
                 return {
                     "hash": target,
                     "known": True,
-                    "state": "evicted",
+                    "state": "rejected",
                     "reason": rejected.get("reason"),
                     "details": rejected.get("details"),
                 }
