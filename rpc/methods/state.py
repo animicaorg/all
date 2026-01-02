@@ -359,6 +359,16 @@ def state_get_pending_nonce(address: str) -> int:
 
 
 @method(
+    "state.getNextNonce",
+    desc="Return the next usable nonce for an address (latest nonce plus pending mempool transactions).",
+    aliases=("state_getNextNonce",),
+)
+def state_get_next_nonce(address: str) -> int:
+    addr = _validate_address(address)
+    return int(_svc_pending_nonce(addr))
+
+
+@method(
     "state.getAccount",
     desc="Return the full account state (address, nonce, balance) for an address. Useful for debugging.",
     aliases=("state_getAccount",),
