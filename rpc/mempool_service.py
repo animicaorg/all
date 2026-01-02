@@ -194,6 +194,9 @@ class MempoolService:
             os.getenv("ANIMICA_MEMPOOL_REJECTION_TTL_S", "300") or 300
         )
         self._last_rejections: dict[str, dict[str, Any]] = {}
+        # Per-sender admission locks to prevent TOCTOU race between getNextNonce and admission
+        self._sender_locks: dict[str, threading.RLock] = {}
+        self._sender_locks_lock = threading.RLock()
         if self._persist_enabled:
             self._load_persisted()
 
@@ -473,156 +476,196 @@ class MempoolService:
                 context={"tx_hash": tx_hash_hex},
             )
 
-        if self.state_db is not None and hasattr(self.state_db, "get_nonce"):
-            try:
-                expected = int(self.state_db.get_nonce(sender))
-            except Exception as exc:
-                log.debug("mempool nonce check failed; skipping", exc_info=exc)
-            else:
-                log.debug(
-                    "mempool nonce validation: checking transaction nonce",
-                    extra={
-                        "sender": _sender_hex(sender),
-                        "tx_nonce": nonce,
-                        "expected_nonce": expected,
-                        "tx_hash": tx_hash_hex,
-                    },
-                )
-                if nonce < expected:
-                    self._record_rejection(
-                        tx_hash_hex,
-                        "nonce_too_low",
-                        {"expected": expected, "got": nonce},
-                    )
-                    log.warning(
-                        "mempool: rejecting transaction with nonce_too_low",
-                        extra={
-                            "sender": _sender_hex(sender),
-                            "tx_nonce": nonce,
-                            "expected_nonce": expected,
-                            "decision": "reject_nonce_too_low",
-                            "tx_hash": tx_hash_hex,
-                        },
-                    )
-                    raise NonceTooLow(
-                        expected_nonce=expected,
-                        got_nonce=nonce,
-                        sender=_sender_hex(sender),
-                        tx_hash=tx_hash_hex,
-                    )
+        sender_hex = _sender_hex(sender)
+        
+        # Acquire per-sender lock to prevent TOCTOU race between getNextNonce and admission
+        sender_lock = self._get_sender_lock(sender_hex)
+        
+        with sender_lock:
+            # Nonce validation inside lock to ensure atomic check with admission
+            if self.state_db is not None and hasattr(self.state_db, "get_nonce"):
+                try:
+                    confirmed_nonce = int(self.state_db.get_nonce(sender))
+                except Exception as exc:
+                    log.debug("mempool nonce check failed; skipping", exc_info=exc)
+                else:
+                    # Use authoritative nonce tracker - same calculation as getNextNonce
+                    expected_next = self.get_next_nonce(sender, confirmed_nonce)
+                    
+                    # Get debug info
+                    pending_next = self.pending_nonce(sender)
+                    highest_pending = (pending_next - 1) if pending_next is not None else None
+                    
+                    _DEBUG_NONCE = os.environ.get("ANIMICA_DEBUG_NONCE") == "1"
+                    
+                    if _DEBUG_NONCE:
+                        log.info(
+                            "mempool nonce validation: authoritative check",
+                            extra={
+                                "sender": sender_hex,
+                                "tx_nonce": nonce,
+                                "confirmed_nonce": confirmed_nonce,
+                                "highest_pending_nonce": highest_pending,
+                                "expected_next_nonce": expected_next,
+                                "tx_hash": tx_hash_hex,
+                            },
+                        )
+                    else:
+                        log.debug(
+                            "mempool nonce validation: checking transaction nonce",
+                            extra={
+                                "sender": sender_hex,
+                                "tx_nonce": nonce,
+                                "expected_nonce": expected_next,
+                                "tx_hash": tx_hash_hex,
+                            },
+                        )
+                    
+                    if nonce < expected_next:
+                        self._record_rejection(
+                            tx_hash_hex,
+                            "nonce_too_low",
+                            {"expected": expected_next, "got": nonce},
+                        )
+                        log.warning(
+                            "mempool: rejecting transaction with nonce_too_low",
+                            extra={
+                                "sender": sender_hex,
+                                "tx_nonce": nonce,
+                                "expected_nonce": expected_next,
+                                "confirmed_nonce": confirmed_nonce,
+                                "highest_pending": highest_pending,
+                                "decision": "reject_nonce_too_low",
+                                "tx_hash": tx_hash_hex,
+                            },
+                        )
+                        raise NonceTooLow(
+                            expected_nonce=expected_next,
+                            got_nonce=nonce,
+                            sender=sender_hex,
+                            tx_hash=tx_hash_hex,
+                        )
 
-                pending_next = None
-                if nonce > expected:
-                    try:
-                        pending_next = self.pending_nonce(sender)
-                    except Exception:
-                        pending_next = None
-                    if pending_next is None or nonce > pending_next:
+                    if nonce > expected_next:
                         self._record_rejection(
                             tx_hash_hex,
                             "nonce_gap",
                             {
-                                "expected": expected,
-                                "pending_next": pending_next,
+                                "confirmed": confirmed_nonce,
+                                "expected": expected_next,
                                 "got": nonce,
                             },
                         )
                         log.warning(
                             "mempool: rejecting transaction with nonce_gap",
                             extra={
-                                "sender": _sender_hex(sender),
+                                "sender": sender_hex,
                                 "tx_nonce": nonce,
-                                "expected_nonce": expected,
-                                "pending_next": pending_next,
+                                "confirmed_nonce": confirmed_nonce,
+                                "expected_next_nonce": expected_next,
+                                "highest_pending": highest_pending,
                                 "decision": "reject_nonce_gap",
                                 "tx_hash": tx_hash_hex,
                             },
                         )
                         raise NonceGap(
-                            expected_nonce=expected if pending_next is None else pending_next,
+                            expected_nonce=expected_next,
                             got_nonce=nonce,
-                            sender=_sender_hex(sender),
+                            sender=sender_hex,
                             tx_hash=tx_hash_hex,
                         )
-                log.debug(
-                    "mempool: accepting transaction nonce",
-                    extra={
-                        "sender": _sender_hex(sender),
-                        "tx_nonce": nonce,
-                        "expected_nonce": expected,
-                        "decision": "accept_nonce",
-                    },
+                    
+                    if _DEBUG_NONCE:
+                        log.info(
+                            "mempool: accepting transaction nonce",
+                            extra={
+                                "sender": sender_hex,
+                                "tx_nonce": nonce,
+                                "expected_nonce": expected_next,
+                                "confirmed_nonce": confirmed_nonce,
+                                "decision": "accept_nonce",
+                            },
+                        )
+                    else:
+                        log.debug(
+                            "mempool: accepting transaction nonce",
+                            extra={
+                                "sender": sender_hex,
+                                "tx_nonce": nonce,
+                                "expected_nonce": expected_next,
+                                "decision": "accept_nonce",
+                            },
+                        )
+
+            gas_limit = _tx_gas_limit(tx)
+            if gas_limit <= 0:
+                self._record_rejection(
+                    tx_hash_hex,
+                    "invalid_gas_limit",
+                    {"gas_limit": gas_limit},
+                )
+                raise AdmissionError(
+                    "gas_limit must be > 0",
+                    context={"tx_hash": tx_hash_hex},
                 )
 
-        gas_limit = _tx_gas_limit(tx)
-        if gas_limit <= 0:
-            self._record_rejection(
-                tx_hash_hex,
-                "invalid_gas_limit",
-                {"gas_limit": gas_limit},
-            )
-            raise AdmissionError(
-                "gas_limit must be > 0",
-                context={"tx_hash": tx_hash_hex},
-            )
+            fee = EffectiveFee.from_tx(tx)
+            offered = int(fee.effective_gas_price(None))
+            if self.min_gas_price_wei and offered < self.min_gas_price_wei:
+                self._record_rejection(
+                    tx_hash_hex,
+                    "fee_too_low",
+                    {"offered": offered, "min_required": self.min_gas_price_wei},
+                )
+                raise FeeTooLow(
+                    offered_gas_price_wei=offered,
+                    min_required_wei=self.min_gas_price_wei,
+                    tx_hash=tx_hash_hex,
+                    sender=sender_hex,
+                )
 
-        fee = EffectiveFee.from_tx(tx)
-        offered = int(fee.effective_gas_price(None))
-        if self.min_gas_price_wei and offered < self.min_gas_price_wei:
-            self._record_rejection(
-                tx_hash_hex,
-                "fee_too_low",
-                {"offered": offered, "min_required": self.min_gas_price_wei},
-            )
-            raise FeeTooLow(
-                offered_gas_price_wei=offered,
-                min_required_wei=self.min_gas_price_wei,
-                tx_hash=tx_hash_hex,
-                sender=_sender_hex(sender),
-            )
+            tx_to_store: Any = tx
+            if not isinstance(tx, Tx):
+                try:
+                    if hasattr(Tx, "from_cbor"):
+                        tx_to_store = Tx.from_cbor(raw_bytes)  # type: ignore[attr-defined]
+                except Exception:
+                    tx_to_store = tx
 
-        tx_to_store: Any = tx
-        if not isinstance(tx, Tx):
+            meta = TxMeta(
+                sender=sender_hex,
+                nonce=nonce,
+                gas_limit=gas_limit,
+                size_bytes=len(raw_bytes),
+                first_seen=time.time(),
+                local=local,
+                effective_fee_wei=offered,
+                origin=origin_label,
+                peer_id=origin_peer,
+            )
+            pool_tx = PoolTx(
+                tx=tx_to_store,
+                tx_hash=tx_hash_bytes,
+                raw=raw_bytes,
+                meta=meta,
+                fee=fee,
+            )
+            
+            log.info(
+                "MempoolService.submit: calling pool.add(), tx_hash=%s, sender=%s, nonce=%d",
+                tx_hash_hex,
+                meta.sender,
+                meta.nonce,
+            )
             try:
-                if hasattr(Tx, "from_cbor"):
-                    tx_to_store = Tx.from_cbor(raw_bytes)  # type: ignore[attr-defined]
-            except Exception:
-                tx_to_store = tx
-
-        meta = TxMeta(
-            sender=_sender_hex(sender),
-            nonce=nonce,
-            gas_limit=gas_limit,
-            size_bytes=len(raw_bytes),
-            first_seen=time.time(),
-            local=local,
-            effective_fee_wei=offered,
-            origin=origin_label,
-            peer_id=origin_peer,
-        )
-        pool_tx = PoolTx(
-            tx=tx_to_store,
-            tx_hash=tx_hash_bytes,
-            raw=raw_bytes,
-            meta=meta,
-            fee=fee,
-        )
-        
-        log.info(
-            "MempoolService.submit: calling pool.add(), tx_hash=%s, sender=%s, nonce=%d",
-            tx_hash_hex,
-            meta.sender,
-            meta.nonce,
-        )
-        try:
-            self.pool.add(pool_tx, meta, is_local=local)
-        except Exception as exc:
-            self._record_rejection(
-                tx_hash_hex,
-                "pool_reject",
-                {"error": str(exc)},
-            )
-            raise
+                self.pool.add(pool_tx, meta, is_local=local)
+            except Exception as exc:
+                self._record_rejection(
+                    tx_hash_hex,
+                    "pool_reject",
+                    {"error": str(exc)},
+                )
+                raise
         
         # Verify tx was actually added to pool
         if not self.has_hash(tx_hash_hex):
@@ -813,6 +856,15 @@ class MempoolService:
         return {"evicted": evicted}
 
     def pending_nonce(self, sender_bytes: bytes) -> Optional[int]:
+        """
+        Get the next usable nonce for a sender, accounting for pending transactions.
+        
+        This is the authoritative nonce tracker used by both state.getNextNonce
+        and tx admission validation to prevent TOCTOU race conditions.
+        
+        Returns:
+            The next nonce that should be used (highest_pending + 1), or None if no pending txs.
+        """
         sender_hex = _sender_hex(sender_bytes)
         max_nonce: Optional[int] = None
         for _hash_bytes, entry in self.pool.index.all_items():
@@ -825,6 +877,41 @@ class MempoolService:
         if max_nonce is None:
             return None
         return max_nonce + 1
+    
+    def get_next_nonce(self, sender_bytes: bytes, confirmed_nonce: int) -> int:
+        """
+        Get the next nonce for a sender, accounting for both confirmed state and pending txs.
+        
+        This method provides the authoritative nonce calculation used by both:
+        - RPC state.getNextNonce
+        - Mempool admission nonce validation
+        
+        Args:
+            sender_bytes: The sender address as bytes
+            confirmed_nonce: The confirmed nonce from chain state
+            
+        Returns:
+            The next nonce to use: max(confirmed_nonce, highest_pending_nonce + 1)
+        """
+        pending_next = self.pending_nonce(sender_bytes)
+        if pending_next is None:
+            return confirmed_nonce
+        return max(confirmed_nonce, pending_next)
+    
+    def _get_sender_lock(self, sender_hex: str) -> threading.RLock:
+        """
+        Get or create a lock for a specific sender to prevent TOCTOU races.
+        
+        Args:
+            sender_hex: The sender address as hex string
+            
+        Returns:
+            A reentrant lock for this sender
+        """
+        with self._sender_locks_lock:
+            if sender_hex not in self._sender_locks:
+                self._sender_locks[sender_hex] = threading.RLock()
+            return self._sender_locks[sender_hex]
 
     def diagnose(self, *, limit: int = 1000) -> dict[str, dict[str, Any]]:
         snapshot = self.snapshot(limit=limit)
