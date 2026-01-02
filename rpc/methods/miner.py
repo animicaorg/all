@@ -2311,6 +2311,29 @@ def _mine_once(
                 "source": "service" if mempool_service is not None else "adapter",
             },
         )
+        if not pending_entries:
+            requested = _request_missing_mempool_txs(limit=128, wait_s=0.25)
+            if requested:
+                log.info(
+                    "_mine_once: requested missing mempool txids",
+                    extra={"requested": requested},
+                )
+                time.sleep(0.25)
+                pending_entries, pending_raw_by_hash, pending_total = (
+                    _collect_mempool_entries(
+                        ctx=ctx,
+                        adapter=adapter,
+                        limit=1000,
+                    )
+                )
+                log.info(
+                    "_mine_once: mempool collection summary (after fetch)",
+                    extra={
+                        "entries": len(pending_entries),
+                        "total": pending_total,
+                        "source": "service" if mempool_service is not None else "adapter",
+                    },
+                )
     else:
         pending_total = 0
         log.info("_mine_once: Mempool inclusion disabled; mining payout-only block")
