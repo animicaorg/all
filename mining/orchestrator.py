@@ -161,6 +161,8 @@ class TemplateFeeder:
         self._last_job_id: Optional[str] = None
         self._last_ts: float = 0.0
         self._ws_hub = ws_hub
+        self._warned_at: Dict[str, float] = {}
+        self._failures: int = 0
 
     def stop(self) -> None:
         self._stop.set()
@@ -188,6 +190,14 @@ class TemplateFeeder:
                         or tpl.get("headerHash")
                         or ""
                     )
+                    if not job_id:
+                        self._warn_throttled(
+                            "missing-job-id",
+                            "TemplateFeeder received template without jobId; pausing refresh",
+                        )
+                        await self._sleep_with_backoff()
+                        continue
+                    self._failures = 0
                     # Detect changes
                     if job_id and job_id != self._last_job_id:
                         self._last_job_id = job_id
@@ -211,13 +221,31 @@ class TemplateFeeder:
                             self._last_ts = time.time()
                             if tpl:
                                 yield tpl
-                await asyncio.wait_for(self._stop.wait(), timeout=self._interval)
+                    await asyncio.wait_for(self._stop.wait(), timeout=self._interval)
+                else:
+                    self._warn_throttled(
+                        "invalid-template",
+                        "TemplateFeeder did not receive a usable template; pausing refresh",
+                    )
+                    await self._sleep_with_backoff()
             except asyncio.TimeoutError:
                 # keep looping
                 pass
             except Exception:
                 log.warning("TemplateFeeder refresh failed", exc_info=True)
-                await asyncio.sleep(self._interval)
+                await self._sleep_with_backoff()
+
+    def _warn_throttled(self, key: str, message: str) -> None:
+        now = time.monotonic()
+        last = self._warned_at.get(key, 0.0)
+        if now - last >= 10.0:
+            self._warned_at[key] = now
+            log.warning(message)
+
+    async def _sleep_with_backoff(self) -> None:
+        self._failures += 1
+        backoff = min(self._interval * (2 ** (self._failures - 1)), self._stale_after)
+        await asyncio.wait_for(self._stop.wait(), timeout=backoff)
 
 
 # --------------------------- Scanner Adapter ---------------------------
@@ -295,6 +323,7 @@ class SubmitPipe:
         self._sem = asyncio.Semaphore(max(1, max_concurrency))
         self._b0 = max(0.01, backoff_initial)
         self._bmax = max(self._b0, backoff_max)
+        self._warned_at: Dict[str, float] = {}
 
     async def run(
         self, in_queue: "asyncio.Queue[JSON]", stop_evt: asyncio.Event
@@ -305,7 +334,10 @@ class SubmitPipe:
                     share = await asyncio.wait_for(in_queue.get(), timeout=0.25)
                 except asyncio.TimeoutError:
                     continue
-                await self._handle_one(share)
+                try:
+                    await self._handle_one(share)
+                except Exception:
+                    log.warning("Submit worker failed", exc_info=True)
 
         # Spawn N workers
         tasks = [asyncio.create_task(_worker()) for _ in range(max(1, self._sem._value))]  # type: ignore
@@ -316,6 +348,33 @@ class SubmitPipe:
         await asyncio.gather(*tasks, return_exceptions=True)
 
     async def _handle_one(self, share: JSON) -> None:
+        if not isinstance(share, dict):
+            self._warn_throttled(
+                "invalid-share-shape", "Dropping share with unexpected shape"
+            )
+            return
+        job_id = share.get("jobId") or share.get("job_id") or share.get("job")
+        if not job_id:
+            self._warn_throttled("missing-job-id", "Dropping share without jobId")
+            return
+        header = share.get("header") or share.get("header_template") or share.get(
+            "candidate_header"
+        )
+        nonce = share.get("nonce") or share.get("nonce64") or share.get("n")
+        proof = (
+            share.get("proof")
+            or share.get("hashshare")
+            or share.get("hash_share")
+            or share.get("hashShare")
+            or share.get("proof_envelope")
+        )
+        if header is None or nonce is None or proof is None:
+            self._warn_throttled(
+                "missing-share-fields",
+                "Dropping share missing required fields (jobId=%s)",
+                job_id,
+            )
+            return
         backoff = self._b0
         while True:
             t0 = time.perf_counter()
@@ -337,6 +396,13 @@ class SubmitPipe:
                 log.warning("Submit failed (%s). Retrying in %.2fs", e, backoff)
                 await asyncio.sleep(backoff)
                 backoff = min(self._bmax, backoff * 2.0)
+
+    def _warn_throttled(self, key: str, message: str, *args: Any) -> None:
+        now = time.monotonic()
+        last = self._warned_at.get(key, 0.0)
+        if now - last >= 10.0:
+            self._warned_at[key] = now
+            log.warning(message, *args)
 
 
 # --------------------------- Workers (optional) ---------------------------
