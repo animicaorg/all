@@ -123,7 +123,8 @@ def call_rpc(
 def call(
     method: str = typer.Argument(..., help="JSON-RPC method name"),
     params_arg: Optional[str] = typer.Argument(
-        None, help='JSON params (e.g. \'["param1", 123]\' or \'{"key":"value"}\')'
+        None,
+        help='JSON params (e.g. \'["param1", 123]\' or \'{"key":"value"}\') or a single raw param (e.g. anim1...)',
     ),
     rpc_url: Optional[str] = typer.Option(
         None,
@@ -170,9 +171,16 @@ def call(
         if params_arg:
             try:
                 params = json.loads(params_arg)
-            except json.JSONDecodeError as e:
-                typer.echo(f"Error parsing params JSON: {e}", err=True)
-                raise typer.Exit(1)
+            except json.JSONDecodeError:
+                params = [params_arg]
+        elif method in {"state.getNonce", "state_getNonce", "state.getBalance", "state_getBalance"}:
+            typer.echo(
+                f"Missing params for {method}. Example:\n"
+                f"  animica rpc call {method} '[\"anim1...\"]'\n"
+                f"  animica rpc call {method} anim1...",
+                err=True,
+            )
+            raise typer.Exit(1)
 
         # Use RpcClient when available, otherwise fall back to httpx
         if HAVE_RPC:
