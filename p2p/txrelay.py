@@ -219,6 +219,7 @@ class TxRelayService:
         state = self._peer_state.get(conn_id)
         return {
             "conn_id": conn_id,
+            "peer_id": state.peer_node_id if state else None,
             "peer_node_id": state.peer_node_id if state else None,
         }
 
@@ -295,7 +296,7 @@ class TxRelayService:
                 batch = missing[idx : idx + 256]
                 await self._send_tx_get(conn_id, batch)
                 log.info(
-                    "TX_GET_SEND",
+                    "TX_GET_SENT",
                     extra={
                         "peer": conn_id,
                         "count": len(batch),
@@ -368,13 +369,14 @@ class TxRelayService:
                 extra={
                     "peer": conn_id,
                     "hash": txid_bytes.hex(),
+                    "txid": txid_bytes.hex(),
                     "bytes": len(raw_bytes),
                     **self._peer_log_extra(conn_id),
                 },
             )
             if len(raw_bytes) > self.max_tx_bytes:
                 log.info(
-                    "TX_REJECT_MEMPOOL",
+                    "TX_REJECTED",
                     extra={"hash": txid_bytes.hex(), "reason": "oversize"},
                 )
                 self._reject_remember(txid_bytes)
@@ -383,7 +385,7 @@ class TxRelayService:
             computed = sha3_256(raw_bytes)
             if computed != txid_bytes:
                 log.info(
-                    "TX_REJECT_MEMPOOL",
+                    "TX_REJECTED",
                     extra={"hash": txid_bytes.hex(), "reason": "hash_mismatch"},
                 )
                 self._reject_remember(txid_bytes)
@@ -398,7 +400,7 @@ class TxRelayService:
                 broadcast.append(txid_bytes)
                 self._reject_cache.pop(txid_bytes, None)
                 log.info(
-                    "TX_ACCEPT_MEMPOOL",
+                    "TX_ACCEPTED",
                     extra={
                         "hash": txid_bytes.hex(),
                         "origin": f"peer:{origin_label or conn_id}",
@@ -408,7 +410,7 @@ class TxRelayService:
             else:
                 self._reject_remember(txid_bytes)
                 log.info(
-                    "TX_REJECT_MEMPOOL",
+                    "TX_REJECTED",
                     extra={
                         "hash": txid_bytes.hex(),
                         "reason": reason or "reject",
@@ -489,7 +491,7 @@ class TxRelayService:
                 batch = want_txids[idx : idx + 256]
                 await self._send_tx_get(conn_id, batch)
                 log.info(
-                    "TX_GET_SEND",
+                    "TX_GET_SENT",
                     extra={
                         "peer": conn_id,
                         "count": len(batch),
@@ -575,6 +577,7 @@ class TxRelayService:
                         extra={
                             "hash": txid.hex(),
                             "peer": entry.conn_id,
+                            "last_peer": entry.conn_id,
                             "attempts": entry.attempts,
                             **self._peer_log_extra(entry.conn_id),
                         },
@@ -595,7 +598,7 @@ class TxRelayService:
                         )
                         await self._send_tx_get(next_peer, [txid])
                         log.info(
-                            "TX_GET_SEND",
+                            "TX_GET_SENT",
                             extra={
                                 "peer": next_peer,
                                 "count": 1,
@@ -684,7 +687,7 @@ class TxRelayService:
                 await self._send_tx_get(conn_id, batch)
                 total += len(batch)
                 log.info(
-                    "TX_GET_SEND",
+                    "TX_GET_SENT",
                     extra={
                         "peer": conn_id,
                         "count": len(batch),

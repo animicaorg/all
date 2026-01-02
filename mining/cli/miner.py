@@ -262,6 +262,18 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         default=False,
         help="allow mining on mainnet without outbound peers or full sync",
     )
+    mine_blocks.add_argument(
+        "--allow-unsynced",
+        action="store_true",
+        default=False,
+        help="allow mining even when sync phase is not synced",
+    )
+    mine_blocks.add_argument(
+        "--force-empty-template",
+        action="store_true",
+        default=False,
+        help="force mining without mempool inclusion (implies --allow-unsynced)",
+    )
 
     return p
 
@@ -395,7 +407,7 @@ async def _run_mine_blocks(args: argparse.Namespace, log: logging.Logger) -> int
     timeout_msg = "no timeout" if args.no_timeout else "30.0s timeout"
     
     log.info(
-        "Mining %d block(s) with payout to address %s via RPC %s (threads=%d, retry_delay=%.1fs, %s, allow_offline=%s)",
+        "Mining %d block(s) with payout to address %s via RPC %s (threads=%d, retry_delay=%.1fs, %s, allow_offline=%s, allow_unsynced=%s, force_empty_template=%s)",
         args.count,
         args.address,
         args.rpc_url,
@@ -403,6 +415,8 @@ async def _run_mine_blocks(args: argparse.Namespace, log: logging.Logger) -> int
         args.retry_delay,
         timeout_msg,
         args.allow_offline_mining,
+        args.allow_unsynced,
+        args.force_empty_template,
     )
 
     # JSON-RPC error code constant for invalid params (JSON-RPC 2.0 spec)
@@ -425,12 +439,17 @@ async def _run_mine_blocks(args: argparse.Namespace, log: logging.Logger) -> int
                 # Call miner.mine RPC method with address and threads parameters
                 # For backward compatibility, try with full params first, fall back if not supported
                 try:
-                    result = client.request("miner.mine", {
+                    payload = {
                         "count": args.count,
                         "address": args.address,
                         "threads": args.threads,
                         "allow_offline_mining": bool(args.allow_offline_mining),
-                    })
+                    }
+                    if args.allow_unsynced:
+                        payload["allow_unsynced_mining"] = True
+                    if args.force_empty_template:
+                        payload["force_empty_template"] = True
+                    result = client.request("miner.mine", payload)
                 except Exception as e:
                     # If the RPC rejects params (older node), try with just count and address
                     # Check for INVALID_PARAMS error code (preferred) or param names in error message (fallback)
@@ -448,14 +467,16 @@ async def _run_mine_blocks(args: argparse.Namespace, log: logging.Logger) -> int
                     if is_param_error:
                         # Try without threads parameter (node doesn't support it yet)
                         try:
-                            result = client.request(
-                                "miner.mine",
-                                {
-                                    "count": args.count,
-                                    "address": args.address,
-                                    "allow_offline_mining": bool(args.allow_offline_mining),
-                                },
-                            )
+                            fallback_payload = {
+                                "count": args.count,
+                                "address": args.address,
+                                "allow_offline_mining": bool(args.allow_offline_mining),
+                            }
+                            if args.allow_unsynced:
+                                fallback_payload["allow_unsynced_mining"] = True
+                            if args.force_empty_template:
+                                fallback_payload["force_empty_template"] = True
+                            result = client.request("miner.mine", fallback_payload)
                         except Exception as e2:
                             # Still failing, try legacy format without address
                             is_param_error2 = False

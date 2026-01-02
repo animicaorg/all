@@ -825,8 +825,10 @@ def build_context(cfg: t.Any | None = None) -> RpcContext:
             "Mempool service initialized",
             extra={
                 "min_gas_price": min_gas_price,
+                "chain_id": cfg_view.chain_id,
                 "mempool_id": hex(id(mempool_service)),
                 "mempool_path": str(persist_path) if persist_path else None,
+                "pending_path": str(persist_path) if persist_path else None,
             },
         )
     except Exception as exc:
