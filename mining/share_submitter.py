@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import random
@@ -9,13 +10,10 @@ from dataclasses import asdict, dataclass, field
 from typing import (Any, Callable, Dict, Iterable, List, Optional, Tuple,
                     TypedDict, Union)
 
-try:
-    # stdlib-only HTTP client (no external deps)
-    from urllib.error import HTTPError, URLError
-    from urllib.request import Request, urlopen
-except Exception:  # pragma: no cover
-    # This will basically never happen, but keeps type-checkers happy.
-    urlopen = None  # type: ignore
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
+
+import httpx
 
 
 Json = Union[dict, list, str, int, float, None]
@@ -40,6 +38,11 @@ class SubmitRejected(Exception):
 class SubmitterConfig:
     rpc_url: str = "http://127.0.0.1:8545/rpc"
     timeout_s: float = 5.0
+    connect_timeout_s: float = 2.0
+    read_timeout_s: float = 5.0
+    write_timeout_s: float = 5.0
+    pool_timeout_s: float = 5.0
+    submit_timeout_s: float = 5.0
     max_retries: int = 5
     initial_backoff_s: float = 0.25
     max_backoff_s: float = 5.0
@@ -276,6 +279,71 @@ class JsonRpcClient:
         return out
 
 
+class AsyncJsonRpcClient:
+    def __init__(
+        self,
+        url: str,
+        headers: Optional[Dict[str, str]] = None,
+        timeout: Optional[httpx.Timeout] = None,
+        client: Optional[httpx.AsyncClient] = None,
+    ) -> None:
+        self._url = url
+        self._headers = headers or {"Content-Type": "application/json"}
+        self._timeout = timeout or httpx.Timeout(5.0)
+        self._id = 0
+        self._log = logging.getLogger("mining.share_submitter.rpc")
+        self._owns_client = client is None
+        self._client = client or httpx.AsyncClient(
+            timeout=self._timeout, headers=self._headers
+        )
+
+    def _next_id(self) -> int:
+        self._id += 1
+        return self._id
+
+    async def call(
+        self, method: str, params: Any, *, timeout_s: Optional[float] = None
+    ) -> Any:
+        req = {
+            "jsonrpc": "2.0",
+            "id": self._next_id(),
+            "method": method,
+            "params": params,
+        }
+        timeout = self._timeout if timeout_s is None else httpx.Timeout(timeout_s)
+        try:
+            resp = await self._client.post(self._url, json=req, timeout=timeout)
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            raise TransportError(
+                f"HTTP {e.response.status_code}: {e.response.text}"
+            ) from e
+        except httpx.TimeoutException as e:
+            raise TransportError(f"timeout: {e}") from e
+        except httpx.TransportError as e:
+            raise TransportError(str(e)) from e
+        except Exception as e:
+            raise TransportError(repr(e)) from e
+
+        try:
+            obj = resp.json()
+        except Exception as e:
+            raise TransportError(f"Invalid JSON from RPC: {e}") from e
+
+        if "error" in obj and obj["error"]:
+            err = obj["error"]
+            raise RpcError(
+                err.get("code", -32000),
+                err.get("message", "Unknown error"),
+                err.get("data"),
+            )
+        return obj.get("result")
+
+    async def aclose(self) -> None:
+        if self._owns_client:
+            await self._client.aclose()
+
+
 class ShareSubmitter:
     """
     Consumes FoundShare objects, submits them to the local node via JSON-RPC with
@@ -292,9 +360,23 @@ class ShareSubmitter:
         share_encoder: Callable[[Any], Dict[str, Any]] = _default_share_encoder,
         block_encoder: Callable[[Any], Dict[str, Any]] = _default_block_encoder,
         logger: Optional[logging.Logger] = None,
+        http_client: Optional[httpx.AsyncClient] = None,
     ) -> None:
         self.cfg = cfg
         self.rpc = JsonRpcClient(cfg.rpc_url, cfg.http_headers, cfg.timeout_s)
+        async_timeout = httpx.Timeout(
+            timeout=cfg.submit_timeout_s,
+            connect=cfg.connect_timeout_s,
+            read=cfg.read_timeout_s,
+            write=cfg.write_timeout_s,
+            pool=cfg.pool_timeout_s,
+        )
+        self._async_rpc = AsyncJsonRpcClient(
+            cfg.rpc_url,
+            cfg.http_headers,
+            timeout=async_timeout,
+            client=http_client,
+        )
         self._share_encoder = share_encoder
         self._block_encoder = block_encoder
         self._log = logger or logging.getLogger("mining.share_submitter")
@@ -314,9 +396,121 @@ class ShareSubmitter:
         self._closed = True
         self._stop_evt.set()
 
+    async def aclose(self) -> None:
+        self.close()
+        await self._async_rpc.aclose()
+
     # ──────────────────────────────────────────────────────────────────────
     # Single-shot APIs (usable without the background consumer)
     # ──────────────────────────────────────────────────────────────────────
+
+    async def submit(self, params: Dict[str, Any]) -> ShareResult:
+        payload = self._share_encoder(params)
+        backoff = self.cfg.initial_backoff_s
+        tries = 0
+        while True:
+            tries += 1
+            t0 = time.perf_counter()
+            try:
+                res = await self._async_rpc.call(
+                    self.cfg.method_submit_share, [payload]
+                )
+                dt = time.perf_counter() - t0
+                if isinstance(res, dict):
+                    accepted = bool(res.get("accepted", False))
+                    if accepted:
+                        self._stats.shares_accepted += 1
+                        if res.get("isBlock"):
+                            self._stats.blocks_accepted += 1
+                    else:
+                        self._stats.shares_rejected += 1
+                        if res.get("isBlock"):
+                            self._stats.blocks_rejected += 1
+                    self._log.info(
+                        "submitShare result accepted=%s reason=%s latency=%.3fs",
+                        accepted,
+                        res.get("reason"),
+                        dt,
+                    )
+                    return ShareResult(
+                        accepted=accepted,
+                        reason=str(res.get("reason", "")),
+                        hash=str(res.get("hash", "")),
+                        d_ratio=float(res.get("d_ratio", payload.get("d_ratio") or 0.0)),
+                        height=int(res.get("height", payload.get("height") or 0)),
+                    )
+                if res is True:
+                    self._stats.shares_accepted += 1
+                    self._log.info(
+                        "submitShare result accepted=True latency=%.3fs", dt
+                    )
+                    return ShareResult(accepted=True)
+                self._stats.shares_rejected += 1
+                self._log.info(
+                    "submitShare result accepted=False reason=unexpected-result latency=%.3fs",
+                    dt,
+                )
+                return ShareResult(accepted=False, reason="unexpected-result")
+            except RpcError as e:
+                if e.code == -32601 and tries == 1:
+                    try:
+                        br = await self._async_rpc.call(
+                            self.cfg.method_submit_share_batch, [[payload]]
+                        )
+                        if isinstance(br, list) and br:
+                            out = br[0]
+                            if isinstance(out, dict):
+                                accepted = bool(out.get("accepted", False))
+                                if accepted:
+                                    self._stats.shares_accepted += 1
+                                else:
+                                    self._stats.shares_rejected += 1
+                                return ShareResult(
+                                    accepted=accepted,
+                                    reason=str(out.get("reason", "")),
+                                    hash=str(out.get("hash", "")),
+                                    d_ratio=float(
+                                        out.get("d_ratio", payload.get("d_ratio") or 0.0)
+                                    ),
+                                    height=int(
+                                        out.get("height", payload.get("height") or 0)
+                                    ),
+                                )
+                            if out is True:
+                                self._stats.shares_accepted += 1
+                                return ShareResult(accepted=True)
+                            self._stats.shares_rejected += 1
+                            return ShareResult(
+                                accepted=False, reason="unexpected-batch-result"
+                            )
+                    except RpcError as e2:
+                        self._stats.last_error = f"{e2.code}:{e2}"
+                if e.code in (-32010, -32011, -32012):
+                    self._stats.shares_rejected += 1
+                    return ShareResult(accepted=False, reason=f"rpc:{e.code}:{e}")
+                self._stats.shares_errors += 1
+                self._stats.last_error = f"{e.code}:{e}"
+            except TransportError as e:
+                self._stats.shares_errors += 1
+                self._stats.last_error = str(e)
+
+            if tries >= self.cfg.max_retries:
+                return ShareResult(
+                    accepted=False,
+                    reason=f"retries-exhausted:{self._stats.last_error or ''}",
+                )
+
+            sleep = backoff * (1.0 + (random.random() * 2 - 1) * self.cfg.jitter)
+            sleep = max(0.0, min(sleep, self.cfg.max_backoff_s))
+            self._log.warning(
+                "submitShare retry in %.2fs (try %s/%s): %s",
+                sleep,
+                tries,
+                self.cfg.max_retries,
+                self._stats.last_error,
+            )
+            await asyncio.sleep(sleep)
+            backoff = min(backoff * 2.0, self.cfg.max_backoff_s)
 
     def submit_share_once(self, share: Any) -> ShareResult:
         payload = self._share_encoder(share)
