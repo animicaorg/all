@@ -238,7 +238,13 @@ def _svc_pending_nonce(addr: str) -> int:
     """
     Calculate pending nonce by checking mempool for pending transactions.
     
-    Returns the highest nonce found in pending transactions + 1, or committed nonce if no pending txs.
+    Args:
+        addr: The account address (bech32, system:, or hex format)
+    
+    Returns:
+        The next usable nonce for the address, accounting for both committed 
+        state and pending mempool transactions. Returns the highest pending 
+        nonce + 1, or committed nonce if no pending transactions exist.
     """
     committed_nonce = _svc_nonce(addr, tag="latest")
     
