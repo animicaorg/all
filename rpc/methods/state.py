@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import typing as t
 
 from rpc import deps
@@ -12,6 +13,8 @@ try:
 except Exception:  # pragma: no cover
     _bech32 = None  # type: ignore
 
+
+log = logging.getLogger("animica.rpc.state")
 
 # ——— Utilities ———
 
@@ -254,8 +257,22 @@ def _svc_pending_nonce(addr: str) -> int:
             return committed_nonce
         pending_nonce = mempool_service.pending_nonce(addr_bytes)
         if pending_nonce is None:
+            log.debug(
+                "state.getNextNonce",
+                extra={"address": addr, "chain_nonce": committed_nonce, "pending_next": None},
+            )
             return committed_nonce
-        return max(committed_nonce, int(pending_nonce))
+        computed = max(committed_nonce, int(pending_nonce))
+        log.debug(
+            "state.getNextNonce",
+            extra={
+                "address": addr,
+                "chain_nonce": committed_nonce,
+                "pending_next": int(pending_nonce),
+                "computed_next": computed,
+            },
+        )
+        return computed
     
     # Try to access pending pool to find highest pending nonce
     # Import is inside function to avoid circular dependencies
@@ -339,6 +356,10 @@ def _svc_pending_nonce(addr: str) -> int:
         # If anything fails, return committed nonce
         pass
     
+    log.debug(
+        "state.getNextNonce",
+        extra={"address": addr, "chain_nonce": committed_nonce, "pending_next": None},
+    )
     return committed_nonce
 
 
