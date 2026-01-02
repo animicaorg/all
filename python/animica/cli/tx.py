@@ -441,6 +441,16 @@ def _format_nonce_mismatch(reason: str | None, expected: int | None, got: int | 
     console.print("  animica rpc call state.getNextNonce '[\"<address>\"]'")
 
 
+def _next_retry_nonce(
+    rpc_url: str, addr: str, *, expected: int | None, got: int | None
+) -> int:
+    if expected is not None:
+        return int(expected)
+    if got is not None:
+        return int(got) + 1
+    return _next_nonce(rpc_url, addr, refresh=True)
+
+
 def _get_default_max_fee(rpc_url: str) -> int:
     # Many Animica nodes don't expose eth_gasPrice-style APIs; default to 1.
     for m in ("tx.gasPrice", "gasPrice", "fee.getGasPrice"):
@@ -820,7 +830,7 @@ def send(
                     raise typer.Exit(code=1)
                 reason, expected, got = _extract_nonce_mismatch(e.data)
                 if nonce is None and reason in {"nonce_too_low", "nonce_gap"} and attempt + 1 < max_attempts:
-                    next_nonce_value = _next_nonce(rpc, from_addr, refresh=True)
+                    next_nonce_value = _next_retry_nonce(rpc, from_addr, expected=expected, got=got)
                     console.print(f"[yellow]nonce mismatch, retrying with nonce={next_nonce_value}[/yellow]")
                     continue
                 if reason in {"nonce_too_low", "nonce_gap"}:
@@ -841,7 +851,7 @@ def send(
 
             reason, expected, got = _nonce_mismatch_from_status(mempool_status)
             if nonce is None and reason in {"nonce_too_low", "nonce_gap"} and attempt + 1 < max_attempts:
-                next_nonce_value = _next_nonce(rpc, from_addr, refresh=True)
+                next_nonce_value = _next_retry_nonce(rpc, from_addr, expected=expected, got=got)
                 console.print(f"[yellow]nonce mismatch, retrying with nonce={next_nonce_value}[/yellow]")
                 continue
 
