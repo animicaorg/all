@@ -200,6 +200,8 @@ class StratumClient:
         self._pending[req["id"]] = fut
         await self._send_obj(req)
         res = await fut
+        if res.get("error"):
+            return res
         result = res.get("result") or {}
         ok = result.get("accepted", False)
         is_block = result.get("isBlock", False)
@@ -207,7 +209,9 @@ class StratumClient:
         log.info(
             f"[client] submit job={job_id} ok={ok} is_block={is_block} reason={reason}"
         )
-        return result
+        flattened = dict(result)
+        flattened["result"] = result
+        return flattened
 
     # ------------- RX loop -------------
 

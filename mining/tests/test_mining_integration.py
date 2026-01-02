@@ -3,6 +3,11 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
+
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_PYTHONPATH = os.pathsep.join([str(_REPO_ROOT), str(_REPO_ROOT / "python")])
 
 
 def test_cli_mine_blocks_help():
@@ -13,8 +18,8 @@ def test_cli_mine_blocks_help():
         ["python3", "-m", "mining.cli.miner", "mine-blocks", "--help"],
         capture_output=True,
         text=True,
-        cwd="/home/runner/work/all/all",
-        env={**os.environ, "PYTHONPATH": "/home/runner/work/all/all"}
+        cwd=str(_REPO_ROOT),
+        env={**os.environ, "PYTHONPATH": _PYTHONPATH},
     )
     
     assert result.returncode == 0
@@ -30,8 +35,8 @@ def test_cli_start_help():
         ["python3", "-m", "mining.cli.miner", "start", "--help"],
         capture_output=True,
         text=True,
-        cwd="/home/runner/work/all/all",
-        env={**os.environ, "PYTHONPATH": "/home/runner/work/all/all"}
+        cwd=str(_REPO_ROOT),
+        env={**os.environ, "PYTHONPATH": _PYTHONPATH},
     )
     
     assert result.returncode == 0
