@@ -147,7 +147,7 @@ class _SendPageState extends ConsumerState<SendPage> {
     });
 
     try {
-      final nonce = BigInt.from(balance.nonce);
+      final nonce = BigInt.from(balance.nonce + 1);
       final tx = TxBuilder.transfer(
         chainId: chainId,
         nonce: nonce,
