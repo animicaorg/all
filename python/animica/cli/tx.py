@@ -380,12 +380,20 @@ def _get_nonce(rpc_url: str, addr: str) -> int:
     return max(confirmed_nonce, highest_pending_nonce + 1)
 
 
-def _get_next_nonce(rpc_url: str, addr: str) -> int:
+def _get_next_nonce(rpc_url: str, addr: str, *, verbose: bool = False) -> int:
     """
     Fetch the next usable nonce from the RPC server.
     
     This queries state.getNextNonce and fallback methods to get the nonce
     that accounts for both committed state and pending mempool transactions.
+    
+    Args:
+        rpc_url: The RPC endpoint URL
+        addr: The sender address
+        verbose: If True, log query attempts
+        
+    Returns:
+        The next usable nonce
     """
     methods = [
         ("state.getNextNonce", [addr]),
@@ -399,28 +407,77 @@ def _get_next_nonce(rpc_url: str, addr: str) -> int:
             v = _rpc(rpc_url, method, params)
             parsed = _coerce_int(v)
             if parsed is not None:
+                if verbose:
+                    console.print(f"[dim]_get_next_nonce: {method} returned {parsed}[/dim]")
                 return parsed
-        except Exception:
+        except Exception as e:
+            if verbose:
+                console.print(f"[dim]_get_next_nonce: {method} failed: {e}[/dim]")
             continue
+    
+    # Fallback to manual calculation
+    if verbose:
+        console.print(f"[dim]_get_next_nonce: falling back to manual calculation[/dim]")
     return _get_nonce(rpc_url, addr)
 
 
-def _next_nonce(rpc_url: str, addr: str, *, refresh: bool = False) -> int:
-    base = _get_next_nonce(rpc_url, addr)
+def _next_nonce(rpc_url: str, addr: str, *, refresh: bool = False, verbose: bool = False) -> int:
+    """
+    Get the next nonce for an address, with caching.
+    
+    Args:
+        rpc_url: The RPC endpoint URL
+        addr: The sender address
+        refresh: If True, skip cache and query RPC
+        verbose: If True, log nonce resolution details
+        
+    Returns:
+        The next nonce to use
+    """
+    base = _get_next_nonce(rpc_url, addr, verbose=verbose)
     key = (rpc_url, addr)
     cached = _NONCE_CACHE.get(key)
+    
     if not refresh and cached is not None and cached >= base:
-        base = cached + 1
+        # Use cached + 1 if we have a higher cached value
+        result = cached + 1
+        if verbose:
+            console.print(f"[dim]_next_nonce: using cached+1: {result} (base={base}, cached={cached})[/dim]")
+        _NONCE_CACHE[key] = result
+        return result
+    
+    # Use base from RPC and cache it
+    if verbose:
+        console.print(f"[dim]_next_nonce: using RPC base: {base} (cached={cached}, refresh={refresh})[/dim]")
     _NONCE_CACHE[key] = base
     return base
 
 
-def _extract_nonce_mismatch(data: Any) -> tuple[str | None, int | None, int | None]:
+def _extract_nonce_mismatch(data: Any, *, verbose: bool = False) -> tuple[str | None, int | None, int | None]:
+    """
+    Extract nonce mismatch information from RPC error data.
+    
+    Handles two error structures:
+    1. Wrapped mempool errors: {"mempoolError": {"reason": ..., "context": {...}}}
+    2. Direct context: {"reason": ..., "expected_nonce": ..., "got_nonce": ...}
+    
+    Args:
+        data: The error data dictionary from RPC response
+        verbose: If True, log extraction details
+        
+    Returns:
+        Tuple of (reason, expected_nonce, got_nonce)
+    """
     if not isinstance(data, dict):
+        if verbose:
+            console.print(f"[dim]_extract_nonce_mismatch: data is not dict, got {type(data).__name__}[/dim]")
         return None, None, None
+    
     reason = None
     expected = None
     got = None
+    
+    # Try wrapped mempoolError first (RPC layer wraps mempool errors)
     mempool_error = data.get("mempoolError")
     if isinstance(mempool_error, dict):
         reason = mempool_error.get("reason")
@@ -428,12 +485,19 @@ def _extract_nonce_mismatch(data: Any) -> tuple[str | None, int | None, int | No
         if isinstance(context, dict):
             expected = context.get("expected_nonce") or context.get("expected")
             got = context.get("got_nonce") or context.get("got")
+        if verbose:
+            console.print(f"[dim]_extract_nonce_mismatch: from mempoolError: reason={reason}, expected={expected}, got={got}[/dim]")
     else:
+        # Try direct context (mempool.getStatus or older error formats)
         reason = data.get("reason")
         expected = data.get("expected") or data.get("expected_nonce") or data.get("highest")
         got = data.get("got") or data.get("got_nonce")
+        if verbose:
+            console.print(f"[dim]_extract_nonce_mismatch: from direct context: reason={reason}, expected={expected}, got={got}[/dim]")
+    
     expected = _coerce_int(expected)
     got = _coerce_int(got)
+    
     return reason, expected, got
 
 
@@ -453,7 +517,7 @@ def _format_nonce_mismatch(reason: str | None, expected: int | None, got: int | 
 
 
 def _next_retry_nonce(
-    rpc_url: str, addr: str, *, expected: int | None, got: int | None
+    rpc_url: str, addr: str, *, expected: int | None, got: int | None, verbose: bool = False
 ) -> int:
     """
     Determine the nonce to use for a retry after a nonce mismatch error.
@@ -466,17 +530,29 @@ def _next_retry_nonce(
         addr: The sender address
         expected: The expected nonce from the error (if available)
         got: The nonce that was rejected (for logging)
+        verbose: If True, log detailed nonce resolution steps
     
     Returns:
         The nonce to use for the retry attempt
     """
     if expected is not None:
         # Use the expected nonce from the error for deterministic retry
-        console.print(f"[dim]Using expected nonce from error: {expected} (got: {got})[/dim]")
+        if verbose:
+            console.print(f"[dim]Using expected nonce from error: {expected} (rejected nonce: {got})[/dim]")
+        else:
+            console.print(f"[dim]Using expected nonce from error: {expected}[/dim]")
         return int(expected)
+    
     # Fallback: refresh nonce from RPC server
-    console.print(f"[dim]Refreshing nonce from RPC server (no expected value in error)[/dim]")
-    return _next_nonce(rpc_url, addr, refresh=True)
+    if verbose:
+        console.print(f"[dim]No expected nonce in error, querying RPC for next nonce (rejected: {got})[/dim]")
+    else:
+        console.print(f"[dim]Refreshing nonce from RPC server[/dim]")
+    
+    refreshed = _next_nonce(rpc_url, addr, refresh=True)
+    if verbose:
+        console.print(f"[dim]RPC returned next nonce: {refreshed}[/dim]")
+    return refreshed
 
 
 def _get_default_max_fee(rpc_url: str) -> int:
@@ -736,7 +812,7 @@ def send(
                 attempt_nonce = next_nonce_value
                 next_nonce_value = None
             else:
-                attempt_nonce = _next_nonce(rpc, from_addr, refresh=(attempt > 0))
+                attempt_nonce = _next_nonce(rpc, from_addr, refresh=(attempt > 0), verbose=verbose)
 
             body = _build_tx_body(
                 chain_id=cid,
@@ -856,10 +932,10 @@ def send(
                         console.print(Pretty(e.data))
                     console.print("\n[yellow]Tip:[/yellow] Wait for sync to complete or run `animica sync status`.")
                     raise typer.Exit(code=1)
-                reason, expected, got = _extract_nonce_mismatch(e.data)
+                reason, expected, got = _extract_nonce_mismatch(e.data, verbose=verbose)
                 if nonce is None and reason in {"nonce_too_low", "nonce_gap"} and attempt + 1 < max_attempts:
-                    next_nonce_value = _next_retry_nonce(rpc, from_addr, expected=expected, got=got)
-                    console.print(f"[yellow]nonce mismatch, retrying with nonce={next_nonce_value}[/yellow]")
+                    next_nonce_value = _next_retry_nonce(rpc, from_addr, expected=expected, got=got, verbose=verbose)
+                    console.print(f"[yellow]nonce mismatch (reason={reason}), retrying with nonce={next_nonce_value}[/yellow]")
                     continue
                 if reason in {"nonce_too_low", "nonce_gap"}:
                     _format_nonce_mismatch(reason, expected, got)
@@ -879,8 +955,8 @@ def send(
 
             reason, expected, got = _nonce_mismatch_from_status(mempool_status)
             if nonce is None and reason in {"nonce_too_low", "nonce_gap"} and attempt + 1 < max_attempts:
-                next_nonce_value = _next_retry_nonce(rpc, from_addr, expected=expected, got=got)
-                console.print(f"[yellow]nonce mismatch, retrying with nonce={next_nonce_value}[/yellow]")
+                next_nonce_value = _next_retry_nonce(rpc, from_addr, expected=expected, got=got, verbose=verbose)
+                console.print(f"[yellow]nonce mismatch (reason={reason}), retrying with nonce={next_nonce_value}[/yellow]")
                 continue
 
             console.print("\n[bold red]=== ERROR: Transaction Not in Mempool ===[/bold red]")
