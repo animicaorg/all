@@ -537,7 +537,7 @@ class MempoolService:
                             )
                         
                         log.warning(
-                            "mempool: rejecting transaction with nonce_too_low" + (" (stale race)" if is_stale_race else ""),
+                            f"mempool: rejecting transaction with nonce_too_low{' (stale race)' if is_stale_race else ''}",
                             extra={
                                 "sender": sender_hex,
                                 "tx_nonce": nonce,
