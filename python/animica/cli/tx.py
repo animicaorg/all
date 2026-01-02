@@ -231,14 +231,8 @@ def _nonce_mismatch_from_status(status: dict[str, Any] | None) -> tuple[str | No
     else:
         expected = None
         got = None
-    try:
-        expected = int(expected) if expected is not None else None
-    except Exception:
-        expected = None
-    try:
-        got = int(got) if got is not None else None
-    except Exception:
-        got = None
+    expected = _coerce_int(expected)
+    got = _coerce_int(got)
     return reason, expected, got
 
 
@@ -315,6 +309,23 @@ def _nonce_lock(address: str):
             fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
+def _coerce_int(value: Any) -> int | None:
+    if isinstance(value, int):
+        return int(value)
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        if text.startswith(("0x", "0X")):
+            try:
+                return int(text, 16)
+            except ValueError:
+                return None
+        if text.isdigit():
+            return int(text)
+    return None
+
+
 def _get_nonce(rpc_url: str, addr: str) -> int:
     confirmed_nonce = None
     methods = [
@@ -327,11 +338,9 @@ def _get_nonce(rpc_url: str, addr: str) -> int:
     for m, p in methods:
         try:
             v = _rpc(rpc_url, m, p)
-            if isinstance(v, int):
-                confirmed_nonce = v
-                break
-            if isinstance(v, str) and v.isdigit():
-                confirmed_nonce = int(v)
+            parsed = _coerce_int(v)
+            if parsed is not None:
+                confirmed_nonce = parsed
                 break
         except Exception:
             continue
@@ -382,10 +391,9 @@ def _get_next_nonce(rpc_url: str, addr: str) -> int:
     for method, params in methods:
         try:
             v = _rpc(rpc_url, method, params)
-            if isinstance(v, int):
-                return int(v)
-            if isinstance(v, str) and v.isdigit():
-                return int(v)
+            parsed = _coerce_int(v)
+            if parsed is not None:
+                return parsed
         except Exception:
             continue
     return _get_nonce(rpc_url, addr)
@@ -418,14 +426,8 @@ def _extract_nonce_mismatch(data: Any) -> tuple[str | None, int | None, int | No
         reason = data.get("reason")
         expected = data.get("expected") or data.get("expected_nonce") or data.get("highest")
         got = data.get("got") or data.get("got_nonce")
-    try:
-        expected = int(expected) if expected is not None else None
-    except Exception:
-        expected = None
-    try:
-        got = int(got) if got is not None else None
-    except Exception:
-        got = None
+    expected = _coerce_int(expected)
+    got = _coerce_int(got)
     return reason, expected, got
 
 
