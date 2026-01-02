@@ -11,6 +11,7 @@ import typing as t
 from rpc import deps
 from rpc import errors as rpc_errors
 from rpc.methods import method
+from rpc.methods import miner as miner_methods
 from animica.sync.readiness import assess_tx_submission_readiness
 
 log = logging.getLogger(__name__)
@@ -19,6 +20,8 @@ _PQ_VERIFY_OPTIONAL = os.environ.get("ANIMICA_PQ_VERIFY_OPTIONAL") == "1" or (
     os.environ.get("ANIMICA_SKIP_PQ_VERIFY") == "1"
 )
 _RPC_DEBUG = os.environ.get("ANIMICA_RPC_DEBUG") == "1"
+_TX_SEND_FORCE_CHAIN = os.environ.get("ANIMICA_TX_SEND_FORCE_CHAIN", "1") == "1"
+_TX_SEND_FORCE_CHAIN_TIMEOUT_S = float(os.environ.get("ANIMICA_TX_SEND_FORCE_CHAIN_TIMEOUT_S", "5") or 5)
 
 # ——— Validation failure metrics ———
 try:
@@ -766,6 +769,42 @@ def _pending_get(tx_hash_hex: str) -> bytes | None:
     return _mempool_get_raw(tx_hash_hex)
 
 
+def _ensure_tx_persisted_to_chain(tx_hash_hex: str) -> None:
+    if not _TX_SEND_FORCE_CHAIN:
+        return
+
+    view, *_ = _lookup_persisted_tx(tx_hash_hex)
+    if view is not None:
+        return
+
+    try:
+        miner_methods.miner_mine(count=1)
+    except Exception as exc:
+        raise rpc_errors.InternalError(
+            "Failed to mine transaction into chain",
+            data={
+                "tx_hash": tx_hash_hex,
+                "hint": "Ensure mining is enabled and chain state is initialized",
+                "error": str(exc),
+            },
+        ) from exc
+
+    deadline = time.time() + max(0.0, _TX_SEND_FORCE_CHAIN_TIMEOUT_S)
+    while time.time() <= deadline:
+        view, *_ = _lookup_persisted_tx(tx_hash_hex)
+        if view is not None:
+            return
+        time.sleep(0.1)
+
+    raise rpc_errors.InternalError(
+        "Transaction accepted but not persisted to chain",
+        data={
+            "tx_hash": tx_hash_hex,
+            "hint": "Mine a block or disable ANIMICA_TX_SEND_FORCE_CHAIN if using remote miners",
+        },
+    )
+
+
 def _force_sync_before_tx_submit() -> None:
     try:
         ctx = deps.get_ctx()
@@ -1463,6 +1502,8 @@ def _tx_send_raw_transaction(rawTx: str) -> str:
         _gossip_tx_to_peers(raw_canonical)
     except Exception:
         pass
+
+    _ensure_tx_persisted_to_chain(tx_hash_hex)
 
     return tx_hash_hex
 
