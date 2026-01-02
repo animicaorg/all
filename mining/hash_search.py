@@ -313,93 +313,101 @@ async def scan_forever(
     nonce = 0
 
     tpl_iter = template_iter.__aiter__()
+    next_tpl_task: Optional[asyncio.Task] = None
     try:
         current_tpl = await tpl_iter.__anext__()
     except StopAsyncIteration:
         return
     next_tpl_task = asyncio.create_task(tpl_iter.__anext__())
 
-    while not stop_evt.is_set():
-        if next_tpl_task.done():
-            try:
-                current_tpl = next_tpl_task.result()
-            except StopAsyncIteration:
-                break
-            next_tpl_task = asyncio.create_task(tpl_iter.__anext__())
-            prepared = None
-            nonce = 0
+    try:
+        while not stop_evt.is_set():
+            if next_tpl_task and next_tpl_task.done():
+                try:
+                    current_tpl = next_tpl_task.result()
+                except StopAsyncIteration:
+                    break
+                next_tpl_task = asyncio.create_task(tpl_iter.__anext__())
+                prepared = None
+                nonce = 0
 
-        if not current_tpl:
-            await asyncio.sleep(0.05)
-            continue
+            if not current_tpl:
+                await asyncio.sleep(0.05)
+                continue
 
-        job_id = str(
-            current_tpl.get("jobId")
-            or current_tpl.get("job_id")
-            or current_tpl.get("templateId")
-            or ""
-        )
-        if job_id != current_job_id:
-            current_job_id = job_id
-            prepared = None
-            nonce = 0
+            job_id = str(
+                current_tpl.get("jobId")
+                or current_tpl.get("job_id")
+                or current_tpl.get("templateId")
+                or ""
+            )
+            if job_id != current_job_id:
+                current_job_id = job_id
+                prepared = None
+                nonce = 0
 
-        sign_hex = current_tpl.get("signBytes") or current_tpl.get("sign_bytes")
-        if not isinstance(sign_hex, str) or not sign_hex.startswith("0x"):
-            await asyncio.sleep(0.05)
-            continue
-        header_bytes = bytes.fromhex(sign_hex[2:])
-        mix_hex = (
-            current_tpl.get("hints", {}).get("mixSeed")
-            if isinstance(current_tpl.get("hints"), dict)
-            else current_tpl.get("mixSeed")
-        )
-        if isinstance(mix_hex, str) and mix_hex.startswith("0x"):
-            mix_seed = bytes.fromhex(mix_hex[2:])
-        else:
-            mix_seed = b"\x00" * 32
+            sign_hex = current_tpl.get("signBytes") or current_tpl.get("sign_bytes")
+            if not isinstance(sign_hex, str) or not sign_hex.startswith("0x"):
+                await asyncio.sleep(0.05)
+                continue
+            header_bytes = bytes.fromhex(sign_hex[2:])
+            mix_hex = (
+                current_tpl.get("hints", {}).get("mixSeed")
+                if isinstance(current_tpl.get("hints"), dict)
+                else current_tpl.get("mixSeed")
+            )
+            if isinstance(mix_hex, str) and mix_hex.startswith("0x"):
+                mix_seed = bytes.fromhex(mix_hex[2:])
+            else:
+                mix_seed = b"\x00" * 32
 
-        if prepared is None:
-            prepared = dev.prepare_header(header_bytes, mix_seed)
+            if prepared is None:
+                prepared = dev.prepare_header(header_bytes, mix_seed)
 
-        theta_micro = int(current_tpl.get("thetaMicro") or 0)
-        share_ratio = float(current_tpl.get("shareTarget") or 0.0)
-        t_share_micro = max(0, int(theta_micro * share_ratio))
+            theta_micro = int(current_tpl.get("thetaMicro") or 0)
+            share_ratio = float(current_tpl.get("shareTarget") or 0.0)
+            t_share_micro = max(0, int(theta_micro * share_ratio))
 
-        found = dev.scan(
-            prepared,
-            theta_micro=float(t_share_micro),
-            start_nonce=nonce,
-            iterations=batch_size,
-            max_found=4,
-            thread_id=0,
-        )
-        nonce += batch_size
+            found = dev.scan(
+                prepared,
+                theta_micro=float(t_share_micro),
+                start_nonce=nonce,
+                iterations=batch_size,
+                max_found=4,
+                thread_id=0,
+            )
+            nonce += batch_size
 
-        for share in found:
-            nonce_val = int(share.get("nonce"))
-            share_payload = {
-                "jobId": current_job_id,
-                "header": current_tpl.get("header"),
-                "nonce": nonce_val,
-                "mixSeed": "0x" + mix_seed.hex(),
-                "shareTarget": share_ratio,
-                "d_ratio": float(share.get("d_ratio") or 0.0),
-                "proof": {
-                    "type": "hashshare",
-                    "body": {
-                        "headerHash": header_bytes[:32],
-                        "nonce": nonce_val,
-                        "u": share.get("hash"),
-                        "mixSeed": mix_seed,
-                        "targetMu": int(t_share_micro),
-                        "algo": "sha3-256",
+            for share in found:
+                nonce_val = int(share.get("nonce"))
+                share_payload = {
+                    "jobId": current_job_id,
+                    "header": current_tpl.get("header"),
+                    "nonce": nonce_val,
+                    "mixSeed": "0x" + mix_seed.hex(),
+                    "shareTarget": share_ratio,
+                    "d_ratio": float(share.get("d_ratio") or 0.0),
+                    "proof": {
+                        "type": "hashshare",
+                        "body": {
+                            "headerHash": header_bytes[:32],
+                            "nonce": nonce_val,
+                            "u": share.get("hash"),
+                            "mixSeed": mix_seed,
+                            "targetMu": int(t_share_micro),
+                            "algo": "sha3-256",
+                        },
                     },
-                },
-            }
-            await out_queue.put(share_payload)
+                }
+                await out_queue.put(share_payload)
 
-        await asyncio.sleep(0)
+            await asyncio.sleep(0)
+    finally:
+        if next_tpl_task:
+            next_tpl_task.cancel()
+            await asyncio.gather(next_tpl_task, return_exceptions=True)
+        if hasattr(tpl_iter, "aclose"):
+            await tpl_iter.aclose()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
