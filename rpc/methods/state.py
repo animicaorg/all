@@ -238,9 +238,20 @@ def _svc_pending_nonce(addr: str) -> int:
     """
     Calculate pending nonce by checking mempool for pending transactions.
     
-    Returns the highest nonce found in pending transactions + 1, or committed nonce if no pending txs.
+    Args:
+        addr: The account address (bech32, system:, or hex format)
+    
+    Returns:
+        The next usable nonce for the address, accounting for both committed 
+        state and pending mempool transactions. Returns the highest pending 
+        nonce + 1, or committed nonce if no pending transactions exist.
     """
     committed_nonce = _svc_nonce(addr, tag="latest")
+    
+    log.debug(
+        "state.getNextNonce: computing for address",
+        extra={"address": addr, "committed_nonce": committed_nonce},
+    )
 
     try:
         ctx = deps.get_ctx()
@@ -254,17 +265,21 @@ def _svc_pending_nonce(addr: str) -> int:
         except Exception:
             addr_bytes = None
         if addr_bytes is None:
+            log.debug(
+                "state.getNextNonce: failed to parse address",
+                extra={"address": addr},
+            )
             return committed_nonce
         pending_nonce = mempool_service.pending_nonce(addr_bytes)
         if pending_nonce is None:
             log.debug(
-                "state.getNextNonce",
-                extra={"address": addr, "chain_nonce": committed_nonce, "pending_next": None},
+                "state.getNextNonce: no pending transactions",
+                extra={"address": addr, "chain_nonce": committed_nonce, "pending_next": None, "computed_next": committed_nonce},
             )
             return committed_nonce
         computed = max(committed_nonce, int(pending_nonce))
         log.debug(
-            "state.getNextNonce",
+            "state.getNextNonce: found pending transactions",
             extra={
                 "address": addr,
                 "chain_nonce": committed_nonce,
@@ -303,6 +318,10 @@ def _svc_pending_nonce(addr: str) -> int:
             pending_map = fallback
         
         if not pending_map:
+            log.debug(
+                "state.getNextNonce: no pending pool available",
+                extra={"address": addr, "chain_nonce": committed_nonce, "pending_next": None, "computed_next": committed_nonce},
+            )
             return committed_nonce
         
         # Normalize address to bytes for robust comparison
@@ -311,6 +330,10 @@ def _svc_pending_nonce(addr: str) -> int:
             addr_bytes = _to_account_key_bytes(addr)
             if addr_bytes is None:
                 # If we can't parse the address, just return committed nonce
+                log.debug(
+                    "state.getNextNonce: failed to parse address for pending check",
+                    extra={"address": addr},
+                )
                 return committed_nonce
         except Exception:
             return committed_nonce
@@ -350,15 +373,25 @@ def _svc_pending_nonce(addr: str) -> int:
         
         # Return highest pending nonce + 1, or committed nonce if no pending txs
         if highest_pending_nonce >= committed_nonce:
-            return highest_pending_nonce + 1
+            computed_next = highest_pending_nonce + 1
+            log.debug(
+                "state.getNextNonce: found pending transactions in fallback pool",
+                extra={
+                    "address": addr,
+                    "chain_nonce": committed_nonce,
+                    "highest_pending": highest_pending_nonce,
+                    "computed_next": computed_next,
+                },
+            )
+            return computed_next
         
     except Exception:
         # If anything fails, return committed nonce
         pass
     
     log.debug(
-        "state.getNextNonce",
-        extra={"address": addr, "chain_nonce": committed_nonce, "pending_next": None},
+        "state.getNextNonce: using committed nonce (no pending found)",
+        extra={"address": addr, "chain_nonce": committed_nonce, "pending_next": None, "computed_next": committed_nonce},
     )
     return committed_nonce
 
