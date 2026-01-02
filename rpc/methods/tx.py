@@ -93,6 +93,12 @@ try:
 except Exception:  # pragma: no cover
     _PEND = None  # type: ignore
 
+# Mempool errors (optional)
+try:  # pragma: no cover
+    from mempool.errors import MempoolError  # type: ignore
+except Exception:  # pragma: no cover
+    MempoolError = None  # type: ignore
+
 # PQ verify
 try:
     from pq.py import verify as _pq_verify  # type: ignore
@@ -1432,6 +1438,10 @@ def _tx_send_raw_transaction(rawTx: str) -> str:
             "TX_MEMPOOL_REJECTED",
             extra={"hash": tx_hash_hex, "origin": "local", "reason": str(exc)},
         )
+        if isinstance(exc, rpc_errors.RpcError):
+            raise
+        if MempoolError is not None and isinstance(exc, MempoolError):
+            raise rpc_errors.to_error(exc) from exc
         # Surface as a mempool admission failure (so CLI sees a real error)
         raise rpc_errors.InvalidTx(
             "mempool admission failed",
