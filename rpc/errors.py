@@ -441,6 +441,7 @@ def _mempool_to_rpc(exc: Exception) -> RpcError:
     code_map = {
         MempoolErrorCode.FEE_TOO_LOW: AnimicaCode.FEE_TOO_LOW,
         MempoolErrorCode.NONCE_GAP: AnimicaCode.NONCE_TOO_LOW,
+        MempoolErrorCode.NONCE_TOO_LOW: AnimicaCode.NONCE_TOO_LOW,
         MempoolErrorCode.OVERSIZE: AnimicaCode.TX_TOO_LARGE,
         MempoolErrorCode.ADMISSION: AnimicaCode.INVALID_TX,
         MempoolErrorCode.REPLACEMENT: AnimicaCode.DUPLICATE_TX,
