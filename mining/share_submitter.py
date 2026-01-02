@@ -6,9 +6,18 @@ import logging
 import random
 import threading
 import time
-from dataclasses import asdict, dataclass, field
-from typing import (Any, Callable, Dict, Iterable, List, Optional, Tuple,
-                    TypedDict, Union)
+from dataclasses import asdict, dataclass, field, is_dataclass
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Iterable,
+    List,
+    Optional,
+    Tuple,
+    TypedDict,
+    Union,
+)
 
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -82,6 +91,30 @@ class SubmitStats:
             blocks_rejected=self.blocks_rejected,
             last_error=self.last_error,
         )
+
+
+def json_sanitize(obj: Any) -> Json:
+    if obj is None or isinstance(obj, (str, int, float, bool)):
+        return obj
+    if isinstance(obj, bytes):
+        return f"0x{obj.hex()}"
+    if isinstance(obj, (bytearray, memoryview)):
+        return f"0x{bytes(obj).hex()}"
+    if is_dataclass(obj):
+        return json_sanitize(asdict(obj))
+    if hasattr(obj, "model_dump"):
+        return json_sanitize(obj.model_dump())  # type: ignore[call-arg]
+    if hasattr(obj, "dict") and callable(obj.dict):
+        return json_sanitize(obj.dict())  # type: ignore[call-arg]
+    if isinstance(obj, dict):
+        return {str(k): json_sanitize(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple, set)):
+        return [json_sanitize(v) for v in obj]
+    if hasattr(obj, "to_dict"):
+        return json_sanitize(obj.to_dict())  # type: ignore[attr-defined]
+    if hasattr(obj, "__dict__"):
+        return json_sanitize(vars(obj))
+    return str(obj)
 
 
 def _default_share_encoder(share: Any) -> Dict[str, Any]:
@@ -209,7 +242,7 @@ class JsonRpcClient:
             "method": method,
             "params": params,
         }
-        body = json.dumps(req).encode("utf-8")
+        body = json.dumps(json_sanitize(req)).encode("utf-8")
         r = Request(self._url, data=body, headers=self._headers, method="POST")
         try:
             with urlopen(r, timeout=self._timeout_s) as resp:
@@ -240,7 +273,7 @@ class JsonRpcClient:
             {"jsonrpc": "2.0", "id": self._next_id(), "method": m, "params": p}
             for (m, p) in calls
         ]
-        body = json.dumps(batch_req).encode("utf-8")
+        body = json.dumps(json_sanitize(batch_req)).encode("utf-8")
         r = Request(self._url, data=body, headers=self._headers, method="POST")
         try:
             with urlopen(r, timeout=self._timeout_s) as resp:
@@ -310,6 +343,7 @@ class AsyncJsonRpcClient:
             "method": method,
             "params": params,
         }
+        req = json_sanitize(req)
         timeout = self._timeout if timeout_s is None else httpx.Timeout(timeout_s)
         try:
             resp = await self._client.post(self._url, json=req, timeout=timeout)

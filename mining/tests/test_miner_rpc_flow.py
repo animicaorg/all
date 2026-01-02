@@ -7,7 +7,7 @@ import pytest
 
 from mining.orchestrator import MinerOrchestrator, OrchestratorConfig
 from mining.rpc_adapter import RpcTemplateProvider
-from mining.share_submitter import ShareSubmitter, SubmitterConfig
+from mining.share_submitter import ShareSubmitter, SubmitterConfig, json_sanitize
 
 
 @pytest.mark.asyncio
@@ -55,6 +55,109 @@ async def test_rpc_template_provider_retries_on_timeout() -> None:
     assert calls["get"] == 2
     assert tpl is not None
     assert tpl["jobId"] == "job-1"
+
+
+@pytest.mark.asyncio
+async def test_rpc_template_provider_derives_job_id() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        if payload["method"] == "miner.getWork":
+            result = {
+                "header": {"number": 9},
+                "shareTarget": 0.25,
+                "signBytes": "0x" + "aa" * 32,
+            }
+            return httpx.Response(
+                200,
+                json={"jsonrpc": "2.0", "id": payload["id"], "result": result},
+            )
+        return httpx.Response(
+            200, json={"jsonrpc": "2.0", "id": payload["id"], "result": {}}
+        )
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport) as client:
+        provider = RpcTemplateProvider(
+            rpc_url="http://test",
+            proof_type="aicf",
+            work_timeout_s=0.1,
+            connect_timeout_s=0.1,
+            read_timeout_s=0.1,
+            write_timeout_s=0.1,
+            pool_timeout_s=0.1,
+            max_retries=2,
+            initial_backoff_s=0.01,
+            max_backoff_s=0.02,
+            http_client=client,
+        )
+        tpl1 = await provider.current_template()
+        tpl2 = await provider.current_template()
+
+    assert tpl1 is not None
+    assert tpl1["jobId"].startswith("derived-")
+    assert tpl2 is not None
+    assert tpl1["jobId"] == tpl2["jobId"]
+
+
+def test_json_sanitize_bytes() -> None:
+    payload = {
+        "header": b"\x01\x02",
+        "proof": {"mixSeed": bytearray(b"\x03")},
+        "extra": [memoryview(b"\x04")],
+    }
+    sanitized = json_sanitize(payload)
+    assert sanitized["header"] == "0x0102"
+    assert sanitized["proof"]["mixSeed"] == "0x03"
+    assert sanitized["extra"][0] == "0x04"
+
+
+@pytest.mark.asyncio
+async def test_share_submitter_sanitizes_bytes_payload() -> None:
+    seen: Dict[str, Any] = {}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        seen.update(payload["params"][0])
+        return httpx.Response(
+            200,
+            json={
+                "jsonrpc": "2.0",
+                "id": payload["id"],
+                "result": {"accepted": True, "reason": None},
+            },
+        )
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport) as client:
+        submitter = ShareSubmitter(
+            SubmitterConfig(
+                rpc_url="http://test",
+                submit_timeout_s=0.1,
+                connect_timeout_s=0.1,
+                read_timeout_s=0.1,
+                write_timeout_s=0.1,
+                pool_timeout_s=0.1,
+                max_retries=1,
+            ),
+            http_client=client,
+        )
+        share = {
+            "jobId": "job-bytes",
+            "header": b"\x01\x02",
+            "nonce": 1,
+            "mixSeed": b"\x03\x04",
+            "proof": {
+                "type": "hashshare",
+                "body": {"headerHash": b"\x05", "mixSeed": memoryview(b"\x06")},
+            },
+        }
+        res = await submitter.submit(share)
+
+    assert res["accepted"] is True
+    assert seen["header"] == "0x0102"
+    assert seen["mixSeed"] == "0x0304"
+    assert seen["proof"]["body"]["headerHash"] == "0x05"
+    assert seen["proof"]["body"]["mixSeed"] == "0x06"
 
 
 @pytest.mark.asyncio
