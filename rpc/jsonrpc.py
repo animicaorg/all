@@ -384,11 +384,18 @@ def _bind_call_args(
         args_obj: Params = []
     else:
         args_obj = params
+        if not isinstance(args_obj, (list, dict)):
+            args_obj = [args_obj]
 
     try:
         if isinstance(args_obj, list):
             bound = sig.bind_partial(*args_obj)  # allow extra defaults
         elif isinstance(args_obj, dict):
+            if "address" in sig.parameters and "address" not in args_obj:
+                if "addr" in args_obj:
+                    addr_value = args_obj.get("addr")
+                    args_obj = {k: v for k, v in args_obj.items() if k != "addr"}
+                    args_obj["address"] = addr_value
             bound = sig.bind_partial(**args_obj)
         else:
             raise InvalidParams("params must be array or object")
@@ -402,6 +409,19 @@ def _bind_call_args(
             bound.arguments[want] = ctx
     if "request" in sig.parameters and "request" not in bound.arguments:
         bound.arguments["request"] = ctx.request
+
+    missing: list[str] = []
+    for name, param in sig.parameters.items():
+        if name in bound.arguments:
+            continue
+        if param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
+            continue
+        if name in {"ctx", "context", "request"}:
+            continue
+        if param.default is inspect.Parameter.empty:
+            missing.append(name)
+    if missing:
+        raise InvalidParams(f"missing required params: {', '.join(missing)}")
 
     # Preserve positional arguments when present (e.g., varargs handlers) while
     # still honoring keyword-only bindings.
@@ -446,7 +466,9 @@ def _validate_request_obj(obj: Json) -> Tuple[str, Optional[Params], Any]:
 
     params: Optional[Params] = obj.get("params")
     if params is not None and not isinstance(params, (list, dict)):
-        raise InvalidParams("params, if present, must be array or object")
+        # Allow raw single-value params (non-standard but supported by CLI callers).
+        # Normalization happens in the binder.
+        params = params
 
     # id is optional (notification when absent)
     id_present = "id" in obj

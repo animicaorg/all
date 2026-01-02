@@ -173,11 +173,19 @@ def call(
                 params = json.loads(params_arg)
             except json.JSONDecodeError:
                 params = [params_arg]
-        elif method in {"state.getNonce", "state_getNonce", "state.getBalance", "state_getBalance"}:
+        elif method in {
+            "state.getNonce",
+            "state_getNonce",
+            "state.getBalance",
+            "state_getBalance",
+            "state.getNextNonce",
+            "state_getNextNonce",
+        }:
             typer.echo(
                 f"Missing params for {method}. Example:\n"
                 f"  animica rpc call {method} '[\"anim1...\"]'\n"
-                f"  animica rpc call {method} anim1...",
+                f"  animica rpc call {method} anim1...\n"
+                f"  animica rpc call {method} '{{\"address\":\"anim1...\"}}'",
                 err=True,
             )
             raise typer.Exit(1)
