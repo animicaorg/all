@@ -355,7 +355,6 @@ def test_idempotent_duplicate_submit():
     assert next_nonce == 11, f"After first tx, expected 11, got {next_nonce}"
     
     # Verify that submitting a duplicate returns the same hash (idempotent)
-    # The duplicate check happens in submit() at line 447
     second_hash = service.has_hash("0x" + pool_tx.tx_hash.hex())
     assert second_hash, "Duplicate should still be found"
 
@@ -573,7 +572,7 @@ def test_genuinely_low_nonce_is_recorded_as_rejection():
         persist_enabled=False,
     )
     
-    sender = "0x" + "aa" * 32  # Changed from "gg" which is invalid hex
+    sender = "0x" + "aa" * 32
     sender_bytes = bytes.fromhex(sender[2:])
     
     # Expected next nonce is 10 (no pending txs)
