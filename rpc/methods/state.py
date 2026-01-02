@@ -246,12 +246,21 @@ def _svc_pending_nonce(addr: str) -> int:
         state and pending mempool transactions. Returns the highest pending 
         nonce + 1, or committed nonce if no pending transactions exist.
     """
+    import os
+    _DEBUG_NONCE = os.environ.get("ANIMICA_DEBUG_NONCE") == "1"
+    
     committed_nonce = _svc_nonce(addr, tag="latest")
     
-    log.debug(
-        "state.getNextNonce: computing for address",
-        extra={"address": addr, "committed_nonce": committed_nonce},
-    )
+    if _DEBUG_NONCE:
+        log.info(
+            "state.getNextNonce: computing for address",
+            extra={"address": addr, "confirmed_nonce": committed_nonce},
+        )
+    else:
+        log.debug(
+            "state.getNextNonce: computing for address",
+            extra={"address": addr, "confirmed_nonce": committed_nonce},
+        )
 
     try:
         ctx = deps.get_ctx()
@@ -265,29 +274,53 @@ def _svc_pending_nonce(addr: str) -> int:
         except Exception:
             addr_bytes = None
         if addr_bytes is None:
-            log.debug(
-                "state.getNextNonce: failed to parse address",
-                extra={"address": addr},
-            )
+            if _DEBUG_NONCE:
+                log.warning(
+                    "state.getNextNonce: failed to parse address",
+                    extra={"address": addr},
+                )
+            else:
+                log.debug(
+                    "state.getNextNonce: failed to parse address",
+                    extra={"address": addr},
+                )
             return committed_nonce
-        pending_nonce = mempool_service.pending_nonce(addr_bytes)
-        if pending_nonce is None:
-            log.debug(
-                "state.getNextNonce: no pending transactions",
-                extra={"address": addr, "chain_nonce": committed_nonce, "pending_next": None, "computed_next": committed_nonce},
-            )
-            return committed_nonce
-        computed = max(committed_nonce, int(pending_nonce))
-        log.debug(
-            "state.getNextNonce: found pending transactions",
-            extra={
-                "address": addr,
-                "chain_nonce": committed_nonce,
-                "pending_next": int(pending_nonce),
-                "computed_next": computed,
-            },
-        )
-        return computed
+        
+        # Acquire per-sender lock to prevent TOCTOU race with tx admission
+        from core.utils.tx import normalize_tx_bytes as _normalize_tx_bytes_local
+        sender_hex = "0x" + addr_bytes.hex() if isinstance(addr_bytes, bytes) else str(addr_bytes)
+        sender_lock = mempool_service._get_sender_lock(sender_hex)
+        
+        with sender_lock:
+            # Use the authoritative nonce tracker from mempool service
+            # This is the same calculation used during tx admission to prevent TOCTOU
+            computed_next = mempool_service.get_next_nonce(addr_bytes, committed_nonce)
+            
+            # Get pending info for logging
+            pending_next = mempool_service.pending_nonce(addr_bytes)
+            
+            if _DEBUG_NONCE:
+                log.info(
+                    "state.getNextNonce: authoritative calculation (locked)",
+                    extra={
+                        "address": addr,
+                        "confirmed_nonce": committed_nonce,
+                        "highest_pending_nonce": (pending_next - 1) if pending_next is not None else None,
+                        "pending_next_nonce": pending_next,
+                        "returned_next_nonce": computed_next,
+                    },
+                )
+            else:
+                log.debug(
+                    "state.getNextNonce: found pending transactions" if pending_next is not None else "state.getNextNonce: no pending transactions",
+                    extra={
+                        "address": addr,
+                        "confirmed_nonce": committed_nonce,
+                        "pending_next": pending_next,
+                        "computed_next": computed_next,
+                    },
+                )
+        return computed_next
     
     # Try to access pending pool to find highest pending nonce
     # Import is inside function to avoid circular dependencies
