@@ -418,6 +418,7 @@ _CANON_MAP = {
     PermissionError: lambda e: AccessDenied(str(e)),
     TimeoutError: lambda e: TemporarilyUnavailable("Timeout"),
     ValueError: lambda e: InvalidParams(str(e)),
+    TypeError: lambda e: InvalidParams(str(e)),
 }
 
 
