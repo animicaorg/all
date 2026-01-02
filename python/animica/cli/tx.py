@@ -381,6 +381,12 @@ def _get_nonce(rpc_url: str, addr: str) -> int:
 
 
 def _get_next_nonce(rpc_url: str, addr: str) -> int:
+    """
+    Fetch the next usable nonce from the RPC server.
+    
+    This queries state.getNextNonce and fallback methods to get the nonce
+    that accounts for both committed state and pending mempool transactions.
+    """
     methods = [
         ("state.getNextNonce", [addr]),
         ("state_getNextNonce", [addr]),
@@ -440,16 +446,36 @@ def _format_nonce_mismatch(reason: str | None, expected: int | None, got: int | 
         console.print(f"  Expected: {expected if expected is not None else '?'}")
         console.print(f"  Got:      {got if got is not None else '?'}")
     console.print("\n[yellow]Tip:[/yellow] Refresh nonce with:")
-    console.print("  animica rpc call state.getNextNonce <address>")
+    console.print("  animica rpc call state.getNextNonce '<address>'")
+    console.print("or")
     console.print("  animica rpc call state.getNextNonce '[\"<address>\"]'")
-    console.print("  animica rpc call state.getNextNonce '{\"address\":\"<address>\"}'")
+    console.print("\n[yellow]Note:[/yellow] The CLI will automatically retry with the correct nonce if --nonce is not specified.")
 
 
 def _next_retry_nonce(
     rpc_url: str, addr: str, *, expected: int | None, got: int | None
 ) -> int:
+    """
+    Determine the nonce to use for a retry after a nonce mismatch error.
+    
+    If the error provides an expected nonce, use it directly for deterministic retries.
+    Otherwise, refresh the nonce from the RPC server.
+    
+    Args:
+        rpc_url: The RPC endpoint URL
+        addr: The sender address
+        expected: The expected nonce from the error (if available)
+        got: The nonce that was rejected (for logging)
+    
+    Returns:
+        The nonce to use for the retry attempt
+    """
     if expected is not None:
+        # Use the expected nonce from the error for deterministic retry
+        console.print(f"[dim]Using expected nonce from error: {expected} (got: {got})[/dim]")
         return int(expected)
+    # Fallback: refresh nonce from RPC server
+    console.print(f"[dim]Refreshing nonce from RPC server (no expected value in error)[/dim]")
     return _next_nonce(rpc_url, addr, refresh=True)
 
 
