@@ -250,6 +250,14 @@ def update_theta(
     # Per-step clamp
     delta = theta_target_micro - theta_prev
     max_step = int(abs(p.step_clamp_micro))
+    effective_max = (
+        int(p.theta_max_micro)
+        if p.theta_max_micro is not None
+        else THETA_HARD_CAP_MICRO
+    )
+    if r_k < 0 and theta_prev >= int(effective_max * 0.9) and max_step > 0:
+        theta_target_micro = max(theta_target_micro, theta_prev + max_step)
+        delta = theta_target_micro - theta_prev
     if delta > max_step:
         theta_next = theta_prev + max_step
     elif delta < -max_step:

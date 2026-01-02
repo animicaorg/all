@@ -199,6 +199,23 @@ WS examples
 
 {"jsonrpc":"2.0","id":2,"method":"miner_submitShare","params":[{ /* HashShare envelope */ }]}
 
+---
+
+## Testing
+
+Run the mining test harness (fast, deterministic, no GPU/quantum backend required):
+
+```bash
+./tools/test_mining.sh
+```
+
+This runs the mining test suite plus consensus scoring verification:
+
+```bash
+pytest -q mining/tests -k mining
+pytest -q consensus/tests -k scorer_accept_reject
+```
+
 
 
 3.2 Stratum (JSON-RPC over TCP)
