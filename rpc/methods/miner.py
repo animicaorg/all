@@ -157,8 +157,41 @@ def _log_mempool_binding(component: str, ctx: Any, mempool_service: Any) -> None
         return
 
 
+def _is_mempool_service(candidate: Any) -> bool:
+    if candidate is None:
+        return False
+    return bool(
+        hasattr(candidate, "submit")
+        or hasattr(candidate, "admit")
+        or hasattr(candidate, "add_raw")
+        or hasattr(candidate, "has_hash")
+    )
+
+
 def _resolve_mempool_service(ctx: Any) -> Any | None:
-    mempool_service = _resolve_mempool_service(ctx)
+    mempool_service = None
+    if ctx is not None:
+        candidates = [
+            "mempool",
+            "mempool_service",
+            "mempoolSvc",
+            "mempool_manager",
+            "mempool_mgr",
+            "txpool",
+            "tx_pool",
+            "pool",
+        ]
+        for name in candidates:
+            svc = getattr(ctx, name, None)
+            if svc is None:
+                continue
+            if _is_mempool_service(svc):
+                mempool_service = svc
+                break
+            inner = getattr(svc, "mempool", None) or getattr(svc, "service", None)
+            if _is_mempool_service(inner):
+                mempool_service = inner
+                break
     try:
         from rpc.methods import tx as tx_methods
     except Exception:
