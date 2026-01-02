@@ -478,6 +478,8 @@ class MinerOrchestrator:
                 _ = self._share_queue.get_nowait()
         except Exception:
             pass
+        await _close_if_present(self.submitter)
+        await _close_if_present(self.template_provider)
         log.info("MinerOrchestrator stopped.")
 
 
@@ -508,6 +510,17 @@ async def _maybe_await(obj: Any, attr: str, *args, **kwargs):
     if asyncio.iscoroutine(res):
         return await res
     return res
+
+
+async def _close_if_present(obj: Any) -> None:
+    for attr in ("aclose", "close", "stop"):
+        fn = getattr(obj, attr, None)
+        if fn is None:
+            continue
+        res = fn()
+        if asyncio.iscoroutine(res):
+            await res
+        return
 
 
 # --------------------------- Naive CPU Scanner (fallback) ---------------------------
