@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
-import json
 import logging
 import os
 import random
@@ -12,7 +10,7 @@ from typing import Any, Dict, Optional
 
 import httpx
 
-from .share_submitter import AsyncJsonRpcClient, RpcError, TransportError, json_sanitize
+from .share_submitter import AsyncJsonRpcClient, RpcError, TransportError
 
 
 @dataclass
@@ -84,24 +82,6 @@ class RpcTemplateProvider:
                 return str(nested)
         return None
 
-    def _derive_job_id(self, tpl: Dict[str, Any]) -> str:
-        hints = tpl.get("hints") if isinstance(tpl.get("hints"), dict) else {}
-        base = {
-            "header": tpl.get("header"),
-            "signBytes": tpl.get("signBytes") or tpl.get("sign_bytes"),
-            "shareTarget": tpl.get("shareTarget"),
-            "target": tpl.get("target"),
-            "targetBits": tpl.get("targetBits"),
-            "height": tpl.get("height") or tpl.get("number"),
-            "mixSeed": tpl.get("mixSeed") or hints.get("mixSeed"),
-            "proofType": tpl.get("proofType") or tpl.get("proof_type") or self.proof_type,
-        }
-        payload = json.dumps(
-            json_sanitize(base), sort_keys=True, separators=(",", ":"), ensure_ascii=False
-        )
-        digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()
-        return f"derived-{digest}"
-
     def _template_is_valid(self, tpl: Dict[str, Any]) -> bool:
         has_header = tpl.get("header") is not None or tpl.get("signBytes") is not None
         has_target = (
@@ -137,16 +117,16 @@ class RpcTemplateProvider:
                 tpl = dict(res)
                 job_id = self._extract_job_id(tpl)
                 if not job_id:
-                    job_id = self._derive_job_id(tpl)
                     self._warn_throttled(
-                        "derived-job-id",
-                        "rpc %s missing jobId; derived=%s in %.3fs (attempt %s/%s)",
+                        "missing-job-id",
+                        "rpc %s returned no jobId in %.3fs (attempt %s/%s), response=%s",
                         method,
-                        job_id,
                         dt,
                         attempt,
                         self.max_retries,
+                        res,
                     )
+                    raise RpcError(-32000, "missing-jobId", res)
                 tpl["jobId"] = job_id
 
                 if not self._template_is_valid(tpl):

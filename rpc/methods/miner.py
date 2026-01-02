@@ -3244,6 +3244,7 @@ def _start_auto_task() -> bool:
 )
 def miner_get_work(params: Any | None = None) -> Dict[str, Any]:
     from mining.templates import TemplateBuilder
+    from mining.share_submitter import json_sanitize
 
     algo_hint: str | None = None
     if params is None:
@@ -3371,11 +3372,16 @@ def miner_get_work(params: Any | None = None) -> Dict[str, Any]:
         "parentHeight": int(job.parent_height),
         "chainId": int(job.chain_id),
         "createdAt": int(time.time()),
+        "expiresAt": int(job.expires_at) if job.expires_at else None,
         "headGeneration": head_snapshot.get("generation"),
         "hints": {"mixSeed": _to_hex(job.header.mix_seed)},
         "signBytes": _to_hex(sign_bytes),
         "algo": algo_hint,
         "proofType": proof_type,
+        "challenge": json_sanitize(job.challenge),
+        "scriptHash": job.script_hash,
+        "inputsCommit": job.inputs_commit,
+        "outputsCommit": job.outputs_commit,
         "templateVersion": int(job.template_version),
     }
 
