@@ -822,14 +822,14 @@ def _adjust_theta_for_mining(dt_seconds: float | None = None) -> int:
                     target_block_time_s=12.0,        # Target 12s blocks
                     half_life_blocks=8.0,            # Faster adaptation for mining (vs 24 for consensus)
                     gain_beta=0.9,                   # More aggressive response (vs 0.75 for consensus)
-                    step_clamp_micro=1_000_000,      # Allow larger steps (~1.0 nats per update)
+                    step_clamp_micro=2_000_000,      # Allow larger steps (~2.0 nats per update)
                     theta_min_micro=100_000,         # Lower minimum for easier mining (~0.1 nats)
                     theta_max_micro=None,            # None = use hard cap (3B µ-nats)
                 )
 
                 head_snapshot = _current_head_snapshot()
                 if int(head_snapshot.get("height") or 0) == 0:
-                    current_theta = min(current_theta, params.theta_min_micro)
+                    current_theta = max(current_theta, params.theta_min_micro)
                 
                 _MINING_STATE["theta_state"] = init_state(params, current_theta)
                 # Display effective maximum (hard cap when None)
@@ -3645,13 +3645,18 @@ def miner_mine(
     rejected_by_hash_sample: dict[str, str] = {}
     
     for _ in range(target):
-        success, reward_amount, selection_summary = _mine_once(
+        mine_result = _mine_once(
             payout_address=payout_address_bytes,
             threads=threads,
             include_mempool=include_mempool_flag,
             allow_offline_mining=bool(allow_offline_mining),
             allow_unsynced_mining=allow_unsynced_flag,
         )
+        if isinstance(mine_result, tuple) and len(mine_result) == 2:
+            success, reward_amount = mine_result
+            selection_summary = {}
+        else:
+            success, reward_amount, selection_summary = mine_result
         if success:
             mined += 1
             total_reward += reward_amount
