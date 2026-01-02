@@ -73,5 +73,6 @@ def test_send_retries_on_nonce_too_low(monkeypatch) -> None:
     )
 
     assert result.exit_code == 0, result.output
-    assert "nonce mismatch, retrying with nonce=19" in result.output
+    # Updated to match new output format that includes reason
+    assert "nonce mismatch" in result.output and "retrying with nonce=19" in result.output
     assert nonces == [18, 19]
