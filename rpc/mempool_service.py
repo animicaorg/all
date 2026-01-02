@@ -522,19 +522,29 @@ class MempoolService:
                         )
                     
                     if nonce < expected_next:
-                        self._record_rejection(
-                            tx_hash_hex,
-                            "nonce_too_low",
-                            {"expected": expected_next, "got": nonce},
-                        )
+                        # Check if this is a "stale but valid" nonce vs a genuinely bad nonce
+                        # A stale nonce is one that was valid when getNextNonce was called
+                        # but got beaten by another transaction
+                        is_stale_race = nonce >= confirmed_nonce
+                        
+                        # Only record rejection for genuinely bad nonces
+                        # Stale nonces due to races don't indicate a bad transaction
+                        if not is_stale_race:
+                            self._record_rejection(
+                                tx_hash_hex,
+                                "nonce_too_low",
+                                {"expected": expected_next, "got": nonce, "confirmed": confirmed_nonce},
+                            )
+                        
                         log.warning(
-                            "mempool: rejecting transaction with nonce_too_low",
+                            f"mempool: rejecting transaction with nonce_too_low{' (stale race)' if is_stale_race else ''}",
                             extra={
                                 "sender": sender_hex,
                                 "tx_nonce": nonce,
                                 "expected_nonce": expected_next,
                                 "confirmed_nonce": confirmed_nonce,
                                 "highest_pending": highest_pending,
+                                "is_stale_race": is_stale_race,
                                 "decision": "reject_nonce_too_low",
                                 "tx_hash": tx_hash_hex,
                             },
