@@ -113,6 +113,12 @@ _MEMPOOL_DEBUG = os.getenv("ANIMICA_MEMPOOL_DEBUG", "").lower() in {
     "yes",
     "on",
 }
+_MINER_DEBUG = os.getenv("ANIMICA_MINER_DEBUG", "").lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 _MEMPOOL_BINDINGS_LOGGED: set[str] = set()
 
 
@@ -1128,6 +1134,55 @@ def _current_head_snapshot() -> dict[str, Any]:
         "header": header,
         "generation": int(_HEAD_STATE.get("generation", 0)),
     }
+
+
+def _template_head_state(
+    *, ctx: Any, adapter: CoreChainAdapter, phase: str
+) -> dict[str, Any]:
+    snapshot = _current_head_snapshot()
+    snap_height = int(snapshot.get("height") or 0)
+    snap_hash = snapshot.get("hash")
+    adapter_height = 0
+    adapter_hash = None
+    try:
+        adapter_head = adapter.get_head()
+        if isinstance(adapter_head, dict):
+            adapter_height = int(adapter_head.get("height") or 0)
+            adapter_hash = adapter_head.get("hash") or adapter_head.get("hash_hex")
+    except Exception:
+        adapter_head = None
+    selected_height = snap_height
+    selected_hash = snap_hash
+    if selected_height == 0 and adapter_height > 0:
+        log.error(
+            "Template builder height desync: template_height=0 but chain_height=%d",
+            adapter_height,
+            extra={
+                "phase": phase,
+                "snapshot_height": snap_height,
+                "snapshot_hash": snap_hash,
+                "adapter_height": adapter_height,
+                "adapter_hash": adapter_hash,
+            },
+        )
+        selected_height = adapter_height
+        if selected_hash is None and adapter_hash is not None:
+            selected_hash = adapter_hash
+    if _MINER_DEBUG:
+        log.info(
+            "template head state",
+            extra={
+                "phase": phase,
+                "chain_id": ctx.cfg.chain_id,
+                "snapshot_height": snap_height,
+                "snapshot_hash": snap_hash,
+                "adapter_height": adapter_height,
+                "adapter_hash": adapter_hash,
+                "selected_height": selected_height,
+                "selected_hash": selected_hash,
+            },
+        )
+    return {"chain_id": ctx.cfg.chain_id, "height": selected_height, "hash": selected_hash}
 
 
 def _head_info() -> Tuple[bytes, int, bytes, int, bytes]:
@@ -2559,7 +2614,7 @@ def _mine_once(
             )
 
         selection = select_for_block(
-            head_state={"chain_id": ctx.cfg.chain_id},
+            head_state=_template_head_state(ctx=ctx, adapter=adapter, phase="mine_once"),
             limits={
                 "max_gas": DEFAULT_BLOCK_GAS_LIMIT,
                 "max_bytes": DEFAULT_BLOCK_BYTE_LIMIT,
@@ -3992,7 +4047,9 @@ def miner_get_block_template(*args: Any, **kwargs: Any) -> Dict[str, Any]:
                 )
 
             selection = select_for_block(
-                head_state={"chain_id": ctx.cfg.chain_id},
+                head_state=_template_head_state(
+                    ctx=ctx, adapter=adapter, phase="block_template"
+                ),
                 limits={
                     "max_gas": DEFAULT_BLOCK_GAS_LIMIT,
                     "max_bytes": DEFAULT_BLOCK_BYTE_LIMIT,

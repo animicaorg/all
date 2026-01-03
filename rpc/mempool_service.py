@@ -1002,7 +1002,7 @@ class MempoolService:
             return {}
 
         selection = select_for_block(
-            head_state={"chain_id": self.chain_id},
+            head_state={"chain_id": self.chain_id, "height": _current_height()},
             limits={"max_gas": 10**18, "max_bytes": 10**18, "max_txs": None},
             pending=snapshot.entries,
             decode=None,
