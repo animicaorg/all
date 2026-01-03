@@ -1232,21 +1232,34 @@ def bootstrap_peers(
                     fg=typer.colors.GREEN,
                 )
         if running:
-            try:
-                url = _resolve_rpc_url(target_rpc, allow_remote_rpc=allow_remote_rpc, method="p2p.importPeers")
-                import_result, error = asyncio.run(
-                    _rpc_call_with_error("p2p.importPeers", [seeds], rpc_url=url)
-                )
-                if error and _is_unauthorized_error(error):
-                    rpc_error = _rpc_error_message(error) or "UNAUTHORIZED"
-                elif error and _is_method_not_found_error(error):
-                    rpc_error = "RPC method not available on this node"
-                else:
+            for method_name in ("p2p.addPeers", "p2p.importPeers"):
+                try:
+                    url = _resolve_rpc_url(
+                        target_rpc,
+                        allow_remote_rpc=allow_remote_rpc,
+                        method=method_name,
+                    )
+                    import_result, error = asyncio.run(
+                        _rpc_call_with_error(method_name, [seeds], rpc_url=url)
+                    )
+                    if error and _is_unauthorized_error(error):
+                        rpc_error = _rpc_error_message(error) or "UNAUTHORIZED"
+                        break
+                    if error and _is_method_not_found_error(error):
+                        rpc_error = "RPC method not available on this node"
+                        continue
+
                     rpc_added, rpc_error = _rpc_operation_succeeded(import_result)
-                    if not rpc_added:
-                        rpc_error = rpc_error or _rpc_error_message(error) or "p2p.importPeers did not report success"
-            except Exception as exc:
-                rpc_error = str(exc)
+                    if rpc_added:
+                        break
+                    rpc_error = (
+                        rpc_error
+                        or _rpc_error_message(error)
+                        or f"{method_name} did not report success"
+                    )
+                except Exception as exc:
+                    rpc_error = str(exc)
+                    break
 
             if rpc_added:
                 typer.secho(
