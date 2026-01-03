@@ -3443,6 +3443,7 @@ class P2PService:
                 "success": False,
                 "added": 0,
                 "skipped": 0,
+                "invalid": 0,
                 "dial_attempted": 0,
                 "dial_success": 0,
                 "errors": ["no addresses provided"],
@@ -3452,10 +3453,12 @@ class P2PService:
         normalized: list[str] = []
         errors: list[str] = []
         skipped = 0
+        invalid = 0
         for raw in addresses:
             addr = self._sanitize_peer_addr(raw, fallback_port=fallback_port)
             if not addr:
                 skipped += 1
+                invalid += 1
                 errors.append(f"invalid address: {raw}")
                 continue
             normalized.append(addr)
@@ -3485,6 +3488,7 @@ class P2PService:
             "success": bool(added or dial_attempted),
             "added": added,
             "skipped": skipped,
+            "invalid": invalid,
             "dial_attempted": dial_attempted,
             "dial_success": dial_success,
             "errors": errors,
