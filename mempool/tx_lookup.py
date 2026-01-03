@@ -97,6 +97,22 @@ class TxLookupIndex:
         self._ctr_added = 0
         self._ctr_duplicate_hash = 0
 
+    def __len__(self) -> int:
+        """
+        Return the number of indexed transactions.
+        """
+        with self._lock:
+            return len(self._by_hash)
+
+    def __contains__(self, tx_hash: object) -> bool:
+        """
+        Return True if tx_hash exists in the index.
+        """
+        if not isinstance(tx_hash, (bytes, bytearray)):
+            return False
+        with self._lock:
+            return tx_hash in self._by_hash
+
     # -------------------------------
     # Core helpers
     # -------------------------------
