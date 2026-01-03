@@ -262,16 +262,18 @@ def _parse_value_to_base_units(
 
 
 def _get_chain_id(rpc_url: str) -> int:
-    for m in ("chain.getChainId", "chain_id", "net_version"):
+    for m in ("chain.getChainId", "chain_id", "net_version", "eth_chainId", "chainId"):
         try:
             v = _rpc(rpc_url, m, [])
-            if isinstance(v, str) and v.isdigit():
-                return int(v)
-            if isinstance(v, int):
-                return int(v)
+            cid = _coerce_int(v)
+            if cid is not None:
+                return cid
         except Exception:
             continue
-    raise RuntimeError("Could not determine chain id from node")
+    raise RuntimeError(
+        "Could not determine chain id from node. "
+        "Pass --chain-id or set ANIMICA_CHAIN_ID to override."
+    )
 
 
 def _get_chain_identity(rpc_url: str) -> dict:
