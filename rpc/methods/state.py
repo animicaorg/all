@@ -224,11 +224,19 @@ def state_get_balance(address: str, tag: str = "latest") -> str:
 
 @method(
     "state.getNonce",
-    desc="Nonce tracking is disabled for nonce-less transactions.",
+    desc="Return the account nonce for an address at a given block tag (latest|pending).",
 )
 def state_get_nonce(address: str, tag: str = "latest") -> int:
-    _nonce_disabled("state.getNonce")
-    return 0
+    addr = _validate_address(address)
+    tag = (tag or "latest").lower()
+    if tag in ("pending", "latest", "safe", "finalized"):
+        pass
+    else:
+        tag = "latest"
+
+    if tag == "pending":
+        return int(_svc_pending_nonce(addr))
+    return int(_svc_nonce(addr, tag=tag))
 
 
 def _svc_pending_nonce(addr: str) -> int:
@@ -431,22 +439,22 @@ def _svc_pending_nonce(addr: str) -> int:
 
 @method(
     "state.getPendingNonce",
-    desc="Nonce tracking is disabled for nonce-less transactions.",
+    desc="Return the next usable nonce for an address, accounting for pending mempool transactions.",
     aliases=("state_getPendingNonce",),
 )
 def state_get_pending_nonce(address: str) -> int:
-    _nonce_disabled("state.getPendingNonce")
-    return 0
+    addr = _validate_address(address)
+    return int(_svc_pending_nonce(addr))
 
 
 @method(
     "state.getNextNonce",
-    desc="Nonce tracking is disabled for nonce-less transactions.",
+    desc="Return the next usable nonce for an address, accounting for pending mempool transactions.",
     aliases=("state_getNextNonce",),
 )
 def state_get_next_nonce(address: str) -> int:
-    _nonce_disabled("state.getNextNonce")
-    return 0
+    addr = _validate_address(address)
+    return int(_svc_pending_nonce(addr))
 
 
 @method(
