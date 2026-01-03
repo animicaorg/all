@@ -2307,11 +2307,14 @@ def _normalize_tx_envelope(decoded: dict) -> dict:
                 else:
                     raise TypeError(f"Unsupported address type: {type(addr).__name__} (expected str or bytes)")
                 
-                # Pad or truncate to 32 bytes
-                if len(addr_bytes) < ADDRESS_LEN:
-                    addr_bytes = addr_bytes.ljust(ADDRESS_LEN, b"\x00")
+                # Normalize to canonical 32-byte digest
+                if len(addr_bytes) == 34:
+                    # Bech32 payload: alg_id (2 bytes) || digest (32 bytes)
+                    addr_bytes = addr_bytes[2:34]
+                elif len(addr_bytes) < ADDRESS_LEN:
+                    addr_bytes = addr_bytes.rjust(ADDRESS_LEN, b"\x00")
                 elif len(addr_bytes) > ADDRESS_LEN:
-                    addr_bytes = addr_bytes[:ADDRESS_LEN]
+                    addr_bytes = addr_bytes[-ADDRESS_LEN:]
                 
                 return addr_bytes
             
