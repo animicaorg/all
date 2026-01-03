@@ -172,8 +172,6 @@ class TxMeta:
     ------
     sender : Address
         The canonical sender address (post verification).
-    nonce : int
-        Sender nonce.
     gas_limit : int
         Declared gas limit.
     size_bytes : int
@@ -195,7 +193,6 @@ class TxMeta:
     def __init__(
         self,
         sender: Address,
-        nonce: int,
         gas_limit: int,
         size_bytes: int,
         first_seen: Optional[UnixTime] = None,
@@ -208,10 +205,12 @@ class TxMeta:
         effective_fee_wei: Optional[int] = None,  # Support for pool.py usage
         origin: Optional[str] = None,
         peer_id: Optional[str] = None,
+        valid_after: Optional[int] = None,
+        valid_until: Optional[int] = None,
+        salt: Optional[bytes] = None,
         **kwargs: Any  # Ignore extra kwargs for compatibility
     ) -> None:
         self.sender = sender
-        self.nonce = int(nonce)
         self.gas_limit = int(gas_limit)
         self.size_bytes = int(size_bytes)
         # Handle first_seen_s alias
@@ -228,6 +227,9 @@ class TxMeta:
         self.priority_score = float(priority_score)
         self.origin = origin
         self.peer_id = peer_id
+        self.valid_after = int(valid_after) if valid_after is not None else None
+        self.valid_until = int(valid_until) if valid_until is not None else None
+        self.salt = bytes(salt) if isinstance(salt, (bytes, bytearray)) else None
         # Store effective_fee_wei if provided (for compatibility)
         if effective_fee_wei is not None:
             self.effective_fee_wei = int(effective_fee_wei)
@@ -250,7 +252,6 @@ class TxMeta:
     def to_dict(self) -> Dict[str, Any]:
         return {
             "sender": self.sender,
-            "nonce": int(self.nonce),
             "gas_limit": int(self.gas_limit),
             "size_bytes": int(self.size_bytes),
             "first_seen": float(self.first_seen),
@@ -258,6 +259,9 @@ class TxMeta:
             "expires_at": (
                 float(self.expires_at) if self.expires_at is not None else None
             ),
+            "valid_after": self.valid_after,
+            "valid_until": self.valid_until,
+            "salt": self.salt,
             "local": bool(self.local),
             "pinned": bool(self.pinned),
             "priority_score": float(self.priority_score),
@@ -304,10 +308,6 @@ class PoolTx:
     @property
     def sender(self) -> Address:
         return self.meta.sender
-
-    @property
-    def nonce(self) -> int:
-        return self.meta.nonce
 
     @property
     def size_bytes(self) -> int:

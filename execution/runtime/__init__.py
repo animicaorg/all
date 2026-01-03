@@ -8,7 +8,7 @@ Submodules (thin overview)
 --------------------------
 - env          : helpers to construct BlockEnv / TxEnv from chain head + tx
 - dispatcher   : routes by tx kind (transfer/deploy/call)
-- transfers    : pure transfer execution (balance/nonce/events)
+- transfers    : pure transfer execution (balance/events)
 - contracts    : adapter hook to vm_py (feature-flagged)
 - executor     : top-level apply_tx / apply_block orchestration
 - fees         : base/tip split, burns, gas accounting finalization

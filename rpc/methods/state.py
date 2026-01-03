@@ -140,6 +140,13 @@ def _svc_balance(addr: str, *, tag: str = "latest") -> int:
     return 0
 
 
+def _nonce_disabled(method: str) -> None:
+    raise rpc_errors.RpcMethodRestricted(
+        detail="Nonce tracking is disabled for nonce-less transactions.",
+        method=method,
+    )
+
+
 def _svc_nonce(addr: str, *, tag: str = "latest") -> int:
     """
     Query account nonce using the best available dependency.
@@ -217,21 +224,11 @@ def state_get_balance(address: str, tag: str = "latest") -> str:
 
 @method(
     "state.getNonce",
-    desc="Return the transaction nonce (account sequence) for an address at a given block tag. Returns a JSON number.",
+    desc="Nonce tracking is disabled for nonce-less transactions.",
 )
 def state_get_nonce(address: str, tag: str = "latest") -> int:
-    addr = _validate_address(address)
-    tag = (tag or "latest").lower()
-    if tag not in ("latest", "pending", "safe", "finalized"):
-        tag = "latest"
-    nonce = int(_svc_nonce(addr, tag=tag))
-    
-    # For "pending" tag, check mempool for higher nonce
-    if tag == "pending":
-        pending_nonce = _svc_pending_nonce(addr)
-        return max(nonce, pending_nonce)
-    
-    return nonce
+    _nonce_disabled("state.getNonce")
+    return 0
 
 
 def _svc_pending_nonce(addr: str) -> int:
@@ -434,33 +431,27 @@ def _svc_pending_nonce(addr: str) -> int:
 
 @method(
     "state.getPendingNonce",
-    desc="Return the pending nonce for an address (includes pending transactions in mempool).",
+    desc="Nonce tracking is disabled for nonce-less transactions.",
     aliases=("state_getPendingNonce",),
 )
 def state_get_pending_nonce(address: str) -> int:
-    """
-    Get pending nonce for an address (committed nonce + count of pending transactions).
-    
-    This is the nonce that should be used for the next transaction submission
-    to avoid nonce reuse.
-    """
-    addr = _validate_address(address)
-    return int(_svc_pending_nonce(addr))
+    _nonce_disabled("state.getPendingNonce")
+    return 0
 
 
 @method(
     "state.getNextNonce",
-    desc="Return the next usable nonce for an address (latest nonce plus pending mempool transactions).",
+    desc="Nonce tracking is disabled for nonce-less transactions.",
     aliases=("state_getNextNonce",),
 )
 def state_get_next_nonce(address: str) -> int:
-    addr = _validate_address(address)
-    return int(_svc_pending_nonce(addr))
+    _nonce_disabled("state.getNextNonce")
+    return 0
 
 
 @method(
     "state.getAccount",
-    desc="Return the full account state (address, nonce, balance) for an address. Useful for debugging.",
+    desc="Return the full account state (address, balance) for an address. Useful for debugging.",
     aliases=("state_getAccount",),
 )
 def state_get_account(address: str, tag: str = "latest") -> dict:
@@ -474,7 +465,6 @@ def state_get_account(address: str, tag: str = "latest") -> dict:
     Returns:
         dict: {
             "address": str,     # Original address format
-            "nonce": int,       # Transaction count/sequence number
             "balance": str,     # Balance in hex (e.g., "0x0" for 0 nANM)
         }
     """
@@ -484,10 +474,8 @@ def state_get_account(address: str, tag: str = "latest") -> dict:
         tag = "latest"
     
     balance = _svc_balance(addr, tag=tag)
-    nonce = _svc_nonce(addr, tag=tag)
     
     return {
         "address": addr,
-        "nonce": int(nonce),
         "balance": _to_hex_quantity(balance),
     }

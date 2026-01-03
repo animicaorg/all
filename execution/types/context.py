@@ -134,7 +134,6 @@ class TxContext:
     Attributes:
         sender:     bytes     — origin/account address
         chain_id:   int >= 1  — must match BlockContext.chain_id
-        nonce:      int >= 0  — sender nonce *at admission time*
         gas_price:  int >= 0  — effective price charged per gas unit
         to:         Optional[bytes] — call/deploy target (None for contract creation)
         tx_hash:    Optional[bytes] — canonical tx hash (if known prior to execution)
@@ -142,7 +141,6 @@ class TxContext:
 
     sender: bytes
     chain_id: int
-    nonce: int
     gas_price: int
     to: Optional[bytes] = None
     tx_hash: Optional[bytes] = None
@@ -152,15 +150,12 @@ class TxContext:
         *,
         sender: HexLike,
         chain_id: int,
-        nonce: int,
         gas_price: int,
         to: Optional[HexLike] = None,
         tx_hash: Optional[HexLike] = None,
     ):
         if chain_id <= 0:
             raise ValueError("chain_id must be >= 1")
-        if nonce < 0:
-            raise ValueError("nonce must be >= 0")
         if gas_price < 0:
             raise ValueError("gas_price must be >= 0")
 
@@ -184,7 +179,6 @@ class TxContext:
 
         object.__setattr__(self, "sender", sender_b)
         object.__setattr__(self, "chain_id", chain_id)
-        object.__setattr__(self, "nonce", int(nonce))
         object.__setattr__(self, "gas_price", int(gas_price))
         object.__setattr__(self, "to", to_b)
         object.__setattr__(self, "tx_hash", txh_b)
@@ -195,7 +189,6 @@ class TxContext:
         return {
             "sender": _bytes_to_hex(self.sender),
             "chainId": self.chain_id,
-            "nonce": self.nonce,
             "gasPrice": self.gas_price,
             "to": _bytes_to_hex(self.to),
             "txHash": _bytes_to_hex(self.tx_hash),
@@ -206,7 +199,6 @@ class TxContext:
         return cls(
             sender=d["sender"],
             chain_id=int(d.get("chainId") or d.get("chain_id")),
-            nonce=int(d["nonce"]),
             gas_price=int(d.get("gasPrice") or d.get("gas_price")),
             to=d.get("to"),
             tx_hash=d.get("txHash") or d.get("tx_hash"),

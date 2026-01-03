@@ -20,7 +20,7 @@ Intended usage
     j = Journal(base_accounts, base_storage)
     j.begin()                       # start a checkpoint
     acc = j.get_account_for_write(addr) or j.create_account(addr, initial_balance=123)
-    acc.increment_nonce()
+    # No per-account nonce increment in nonce-less model.
     j.storage_set(addr, key, b"value")
     j.commit()                      # apply to parent/base
 
@@ -80,9 +80,7 @@ class _Overlay:
 
     def put_account_copy(self, addr: bytes, acc: Account) -> Account:
         # Store a *copy* to avoid aliasing with lower layers.
-        acc_copy = Account(
-            nonce=acc.nonce, balance=acc.balance, code_hash=acc.code_hash
-        )
+        acc_copy = Account(balance=acc.balance, code_hash=acc.code_hash)
         self.accounts[addr] = acc_copy
         self.destroyed.discard(addr)
         return acc_copy
@@ -94,7 +92,6 @@ class _Overlay:
             raise StateConflict("account already exists in current overlay")
         self.destroyed.discard(addr)
         acc = Account(
-            nonce=0,
             balance=int(initial_balance),
             code_hash=(EMPTY_CODE_HASH if code_hash is None else bytes(code_hash)),
         )
@@ -436,7 +433,7 @@ class Journal:
         # 2) Apply account upserts (these override `destroyed`)
         for addr, acc in src.accounts.items():
             dst.accounts[addr] = Account(
-                nonce=acc.nonce, balance=acc.balance, code_hash=acc.code_hash
+                balance=acc.balance, code_hash=acc.code_hash
             )
             dst.destroyed.discard(addr)
 
@@ -464,7 +461,7 @@ class Journal:
         # Account upserts (overrides previous base).
         for addr, acc in layer.accounts.items():
             self._base_accounts[addr] = Account(
-                nonce=acc.nonce, balance=acc.balance, code_hash=acc.code_hash
+                balance=acc.balance, code_hash=acc.code_hash
             )
 
         # Storage writes (skip addresses that were destroyed in this layer).

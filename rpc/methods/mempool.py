@@ -137,7 +137,9 @@ def _entry_details(
     diagnostics: dict[str, dict[str, Any]],
 ) -> dict[str, Any]:
     sender = getattr(meta, "sender", None) or getattr(entry.tx, "sender", None)
-    nonce = getattr(meta, "nonce", None) or getattr(entry.tx, "nonce", None)
+    valid_after = getattr(meta, "valid_after", None) or getattr(entry.tx, "valid_after", None)
+    valid_until = getattr(meta, "valid_until", None) or getattr(entry.tx, "valid_until", None)
+    salt = getattr(meta, "salt", None) or getattr(entry.tx, "salt", None)
     fee = getattr(meta, "effective_fee_wei", None)
     if fee is None:
         try:
@@ -164,16 +166,20 @@ def _entry_details(
     status = diag.get("status") or "eligible"
     reason = diag.get("reason")
     if status == "rejected":
-        if isinstance(reason, str) and "nonce" in reason:
-            status = "pending_nonce"
-        elif reason in {"replaced", "replaced_by_fee", "replaced_by_nonce"}:
+        if isinstance(reason, str) and "not_yet_valid" in reason:
+            status = "not_yet_valid"
+        elif isinstance(reason, str) and "expired" in reason:
+            status = "expired"
+        elif reason in {"replaced", "replaced_by_fee"}:
             status = "replaced"
         else:
             status = "rejected"
     return {
         "hash": entry.hash_hex,
         "from": _format_sender(sender),
-        "nonce": int(nonce) if nonce is not None else None,
+        "validAfter": int(valid_after) if valid_after is not None else None,
+        "validUntil": int(valid_until) if valid_until is not None else None,
+        "salt": "0x" + bytes(salt).hex() if isinstance(salt, (bytes, bytearray)) else salt,
         "fee": fee,
         "received_at": received_at,
         "origin": origin_peer,

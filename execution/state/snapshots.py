@@ -160,7 +160,7 @@ def diff_since(journal: Journal, marker: SnapshotId) -> StateDiff:
         # 2) Upserts override deletions
         for addr, acct in layer.accounts.items():
             acc_upsert[addr] = Account(
-                nonce=acct.nonce, balance=acct.balance, code_hash=acct.code_hash
+                balance=acct.balance, code_hash=acct.code_hash
             )
             acc_delete.discard(addr)
 
@@ -212,7 +212,7 @@ def apply_diff(
     # 2) Upserts
     for addr, acct in diff.accounts_upsert.items():
         accounts[addr] = Account(
-            nonce=acct.nonce, balance=acct.balance, code_hash=acct.code_hash
+            balance=acct.balance, code_hash=acct.code_hash
         )
 
     # 3) Storage writes (skip addrs that were deleted in this diff)
@@ -245,7 +245,7 @@ def compose(a: StateDiff, b: StateDiff) -> StateDiff:
     # Start with A
     out.accounts_delete = set(a.accounts_delete)
     out.accounts_upsert = {
-        addr: Account(nonce=acc.nonce, balance=acc.balance, code_hash=acc.code_hash)
+        addr: Account(balance=acc.balance, code_hash=acc.code_hash)
         for addr, acc in a.accounts_upsert.items()
     }
     for addr, writes in a.storage_writes.items():
@@ -261,7 +261,7 @@ def compose(a: StateDiff, b: StateDiff) -> StateDiff:
     # 2) upserts
     for addr, acc in b.accounts_upsert.items():
         out.accounts_upsert[addr] = Account(
-            nonce=acc.nonce, balance=acc.balance, code_hash=acc.code_hash
+            balance=acc.balance, code_hash=acc.code_hash
         )
         out.accounts_delete.discard(addr)
 

@@ -4,7 +4,6 @@ mempool.pool
 
 Main mempool object with:
 - admission / replacement (RBF) / eviction
-- per-sender nonce sequencing
 - ready-transaction priority queue
 - watermark-driven fee floors & eviction thresholds
 
@@ -13,7 +12,7 @@ depends on lightweight, pure helpers from sibling modules:
 
 - mempool.types       : PoolTx, TxMeta, EffectiveFee, PoolStats
 - mempool.priority    : effective_priority(...) and rbf_min_bump(...)
-- mempool.sequence    : NonceQueues (per-sender ready/held queues)
+- mempool.tx_lookup   : TxIndex (hash↔tx, sender indexes)
 - mempool.tx_lookup   : TxIndex (hash↔tx, sender indexes)
 - mempool.validate    : fast stateless validation (optional hook here)
 - mempool.accounting  : balance/allowance checks (optional hook here)
@@ -22,10 +21,7 @@ depends on lightweight, pure helpers from sibling modules:
 
 Design notes
 ------------
-* The "ready heap" contains only transactions that are currently
-  executable (i.e., nonce-contiguous for their sender).
-* If a sender publishes the next nonce, the corresponding txn becomes
-  ready and is (re)inserted into the heap lazily.
+* The "ready heap" contains all admitted transactions (nonce-less).
 * Priorities are time-sensitive (age bonus). We implement **lazy
   re-scoring**: when popping, we recompute the current score; if it
   drifted, we push an updated record and skip the stale one.
@@ -44,7 +40,7 @@ import time
 from dataclasses import dataclass
 from typing import Callable, Dict, Iterable, List, Optional, Tuple
 
-from . import priority, sequence, tx_lookup
+from . import priority, tx_lookup
 from .types import PoolStats, PoolTx, TxMeta
 from .watermark import FeeWatermark, Thresholds
 
@@ -148,7 +144,6 @@ class Pool:
         "clock",
         "wm",
         "index",
-        "seqs",
         "_n_bytes",
         "_ready_heap",
         "_heap_tag",
@@ -192,7 +187,6 @@ class Pool:
             watermark = FeeWatermark(wm_cfg)
         self.wm = watermark
         self.index = tx_lookup.TxIndex()
-        self.seqs = sequence.NonceQueues()
         self._n_bytes: int = 0
 
         # Ready PQ: items are (-score, tag, tx_hash)
@@ -307,15 +301,9 @@ class Pool:
                 i += 1
 
     def _enqueue_ready_if_contiguous(self, ptx: Any, meta: TxMeta) -> None:
-        """If the tx has the sender's next nonce, mark ready and enqueue."""
-        # Get sender and nonce from tx or meta (duck-typed)
-        sender = getattr(ptx, 'sender', meta.sender)
-        if isinstance(sender, (bytes, bytearray)):
-            sender = sender.hex()
-        nonce = getattr(ptx, 'nonce', meta.nonce)
-        h = getattr(ptx, 'hash', getattr(ptx, 'tx_hash', None))
-        
-        if self.seqs.is_ready(sender, nonce):
+        """All admitted txs are ready in nonce-less mode; enqueue immediately."""
+        h = getattr(ptx, "hash", getattr(ptx, "tx_hash", None))
+        if h is not None:
             self._heap_push(h, self._score(ptx, meta))
 
     def _remove(self, h: bytes) -> None:
@@ -325,45 +313,30 @@ class Pool:
         ptx = ent.tx
         meta = ent.meta
         
-        # Get sender and nonce (duck-typed)
-        sender = getattr(ptx, 'sender', meta.sender)
-        if isinstance(sender, (bytes, bytearray)):
-            sender = sender.hex()
-        nonce = getattr(ptx, 'nonce', meta.nonce)
-        
         # Remove from indexes
         self.index.remove(h)
-        self.seqs.remove(sender, nonce, h)
         # Mark heap entry stale (leave lazy deletion)
         self._in_heap.pop(h, None)
         # Accounting
         self._n_bytes = max(0, self._n_bytes - int(getattr(meta, "size_bytes", 0)))
-        # Promote any newly contiguous txs for this sender
-        nxt = self.seqs.promote_next_ready(sender)
-        if nxt:
-            # We may have many; enqueue all that became ready
-            for hh in nxt:
-                ent2 = self.index.get(hh)
-                if ent2:
-                    self._heap_push(hh, self._score(ent2.tx, ent2.meta))
 
     # ------------- Public API -------------
 
     def add(
         self,
         sender_or_tx: any,  # Can be sender (str) or tx (PoolTx)
-        nonce_or_meta: any = None,  # Can be nonce (int) or meta (TxMeta)
+        nonce_or_meta: any = None,  # Can be legacy nonce (int) or meta (TxMeta)
         tx_or_none: any = None,  # Can be tx (PoolTx) or None
         *,
         is_local: bool = False
     ) -> AddResult:
         """
         Admit a new transaction. Performs duplicate check, floor check,
-        nonce sequencing and queues the tx as ready if contiguous.
+        admission and queues the tx as ready.
 
         Supports two calling conventions:
         1. add(tx, meta=None, is_local=False)  # Standard usage
-        2. add(sender, nonce, tx, is_local=False)  # Legacy usage from tests
+        2. add(sender, nonce, tx, is_local=False)  # Legacy usage from tests (nonce ignored)
 
         Raises:
             DuplicateTx, FeeTooLow, NonceGap, Oversize, AdmissionError
@@ -406,37 +379,21 @@ class Pool:
                 first_seen_s=self.clock(),
                 effective_fee_wei=effective_fee,
                 sender=sender_str,
-                nonce=getattr(tx, "nonce", nonce if 'nonce' in locals() else 0),
                 gas_limit=getattr(tx, "gas_limit", 0),
+                valid_after=getattr(tx, "valid_after", None),
+                valid_until=getattr(tx, "valid_until", None),
+                salt=getattr(tx, "salt", None),
             )
 
         h = getattr(tx, "hash", None) or getattr(tx, "tx_hash", None)
         
-        # Check for existing transaction with same sender+nonce (RBF case)
-        existing_hash = self.seqs.get_hash(meta.sender, meta.nonce)
-        if existing_hash is not None:
-            if existing_hash == h:
-                # Same hash -> duplicate
-                raise DuplicateTx("transaction already in pool")
-            else:
-                # Different hash, same sender+nonce -> attempt RBF replacement
-                replaced = self.replace(tx, meta)
-                return AddResult(new=False, replaced_hash=replaced)
-        
-        # Check if hash is already in pool (shouldn't happen after sequence check, but be safe)
+        # Check if hash is already in pool
         if self.index.get(h) is not None:
             raise DuplicateTx("transaction already in pool")
 
         # Floor (unless local exemption)
         if not self._admit_floor_ok(meta, is_local=is_local):
             raise FeeTooLow("effective fee below current admit floor")
-
-        # Insert into per-sender sequence (may be held if gap)
-        gap = self.seqs.add(meta.sender, meta.nonce, h)
-        if gap:
-            # We allowed adding, but it's not ready yet; still keep it.
-            # Check oversize now that it is tracked.
-            pass
 
         # Index & accounting
         self.index.add(h, tx, meta)
@@ -452,13 +409,13 @@ class Pool:
 
     def replace(self, tx: PoolTx, meta: Optional[TxMeta] = None) -> bytes:
         """
-        Replace-by-fee: same sender & nonce, higher effective fee.
+        Replace-by-fee: same sender, higher effective fee.
         Returns the hash of the replaced transaction.
 
         Raises:
             ReplacementError if no replaceable tx found or fee bump too small.
         """
-        # Compute metadata for the new tx if needed (need sender/nonce for lookup)
+        # Compute metadata for the new tx if needed (need sender for lookup)
         if meta is None:
             # Normalize sender to string (handle bytes from tests)
             raw_sender = getattr(tx, "sender", "")
@@ -476,33 +433,44 @@ class Pool:
                     tx, "effective_fee_wei", getattr(tx, "fee", getattr(tx, "max_fee_per_gas", 0))
                 ),
                 sender=sender_str,
-                nonce=getattr(tx, "nonce", 0),
                 gas_limit=getattr(tx, "gas_limit", 0),
+                valid_after=getattr(tx, "valid_after", None),
+                valid_until=getattr(tx, "valid_until", None),
+                salt=getattr(tx, "salt", None),
             )
-        
-        # Find if a tx exists for (sender, nonce)
-        existing_hash = self.seqs.get_hash(meta.sender, meta.nonce)
+
+        # Find lowest-fee tx for sender
+        sender_entries = self.index.get_by_sender(meta.sender)
+        if not sender_entries:
+            raise ReplacementError("no replaceable tx for sender")
+
+        def _fee_key(entry: Any) -> tuple[int, str]:
+            fee = int(getattr(entry.meta, "effective_fee_wei", 0))
+            h = entry.tx_hash if hasattr(entry, "tx_hash") else getattr(entry.tx, "tx_hash", b"")
+            if isinstance(h, (bytes, bytearray)):
+                h_key = h.hex()
+            else:
+                h_key = str(h)
+            return (fee, h_key)
+
+        sender_entries.sort(key=_fee_key)
+        existing_entry = sender_entries[0]
+        existing_hash = existing_entry.tx_hash if hasattr(existing_entry, "tx_hash") else None
         if existing_hash is None:
-            # Simple error for missing tx case (structured error not useful here)
-            raise ReplacementError("no replaceable tx for sender/nonce")
+            raise ReplacementError("no replaceable tx hash found")
 
-        existing = self.index.get(existing_hash)
-        if existing is None:
-            # Simple error for inconsistency case
-            raise ReplacementError("inconsistent indices")
-
-        old_fee = int(getattr(existing.meta, "effective_fee_wei", 0))
+        old_fee = int(getattr(existing_entry.meta, "effective_fee_wei", 0))
         new_fee = int(getattr(meta, "effective_fee_wei", 0))
         # Allow policy override from mempool.priority if present
         try:
-            min_ratio = priority.rbf_min_bump(existing.meta, meta)
+            min_ratio = priority.rbf_min_bump(existing_entry.meta, meta)
         except Exception:
             min_ratio = self._rbf_bump_ratio
 
         if new_fee < int(old_fee * float(min_ratio)):
             # Try to use structured error if available, fallback to simple message
             try:
-                h_old = existing_hash.hex() if isinstance(existing_hash, bytes) else str(existing_hash)
+                h_old = existing_hash.hex() if isinstance(existing_hash, (bytes, bytearray)) else str(existing_hash)
                 h_new = (getattr(tx, "hash", None) or getattr(tx, "tx_hash", None))
                 h_new = h_new.hex() if isinstance(h_new, bytes) else str(h_new)
                 raise ReplacementError(
@@ -517,11 +485,10 @@ class Pool:
                 # Fallback if ReplacementError doesn't accept keyword args
                 raise ReplacementError(f"fee bump too small: need ≥ {min_ratio:.2f}x")
 
-        # Remove old and add new (preserve nonce sequencing position)
-        self._remove(existing_hash)
+        # Remove old and add new
+        self._remove(existing_hash if isinstance(existing_hash, (bytes, bytearray)) else bytes(existing_hash))
         h = getattr(tx, "hash", None) or getattr(tx, "tx_hash", None)
         self.index.add(h, tx, meta)
-        self.seqs.add(meta.sender, meta.nonce, h)
 
         self._n_bytes += int(getattr(meta, "size_bytes", 0))
         # If contiguous, (re)enqueue
@@ -571,10 +538,6 @@ class Pool:
             ent = self.index.get(h)
             if ent is None:
                 continue  # race with removal
-            # Re-validate readiness (sender nonce still contiguous)
-            if not self.seqs.is_ready(ent.tx.sender, ent.tx.nonce):
-                # Not ready anymore (reorg in local accounting?); skip
-                continue
             size = int(getattr(ent.meta, "size_bytes", 0))
             if out and (n_bytes + size) > max_bytes:
                 # Put it back into heap for later
@@ -651,9 +614,7 @@ class Pool:
         """
         Non-destructive iteration over ready transactions in priority order.
         
-        Yields (tx, meta) tuples for transactions that are currently ready
-        (nonce-contiguous for their sender). This is used by drain/selection
-        logic to build blocks without mutating the pool.
+        Yields (tx, meta) tuples for transactions in priority order.
         
         The iteration is ordered by descending priority (highest priority first).
         """
@@ -680,14 +641,6 @@ class Pool:
             if ent is None:
                 continue  # Not in index
             
-            # Verify still ready (nonce-contiguous)
-            # Use meta.sender (which is already normalized to string) and meta.nonce
-            sender = getattr(ent.meta, 'sender', '')
-            nonce = getattr(ent.meta, 'nonce', 0)
-            
-            if not self.seqs.is_ready(sender, nonce):
-                continue
-            
             # Recompute current score (may have drifted)
             current_score = self._score(ent.tx, ent.meta)
             
@@ -707,13 +660,6 @@ class Pool:
 # - all_items() -> Iterable[Tuple[bytes, Entry]]
 #
 # And Entry has fields: tx, meta.
-#
-# NonceQueues must provide:
-# - add(sender, nonce, hash) -> bool gap   (True if held due to gap)
-# - remove(sender, nonce, hash)
-# - is_ready(sender, nonce) -> bool
-# - promote_next_ready(sender) -> Optional[List[bytes]]
-# - get_hash(sender, nonce) -> Optional[bytes]
 #
 # priority.effective_priority(ptx, meta, now) -> float (higher is better)
 # priority.rbf_min_bump(old_meta, new_meta) -> float (ratio)

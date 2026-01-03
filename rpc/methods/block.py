@@ -171,7 +171,10 @@ def _tx_view(tx: t.Any) -> dict[str, t.Any]:
     # Read common fields defensively
     _from = getattr(tx, "sender", getattr(tx, "frm", getattr(tx, "from_", None)))
     to = getattr(tx, "to", None)
-    nonce = getattr(tx, "nonce", None)
+    valid_after = getattr(tx, "valid_after", getattr(tx, "validAfter", None))
+    valid_until = getattr(tx, "valid_until", getattr(tx, "validUntil", None))
+    salt = getattr(tx, "salt", None)
+    fork_id = getattr(tx, "fork_id", getattr(tx, "forkId", None))
     gas = getattr(tx, "gas_limit", getattr(tx, "gas", None))
     tip = getattr(tx, "tip", getattr(tx, "gas_price", None))
     value = getattr(tx, "value", 0)
@@ -183,9 +186,12 @@ def _tx_view(tx: t.Any) -> dict[str, t.Any]:
         "hash": _compute_tx_hash(tx),
         "from": _from,
         "to": to,
-        "nonce": int(nonce) if nonce is not None else None,
         "gas": int(gas) if gas is not None else None,
         "tip": int(tip) if tip is not None else None,
+        "validAfter": int(valid_after) if valid_after is not None else None,
+        "validUntil": int(valid_until) if valid_until is not None else None,
+        "salt": _hex(salt) if isinstance(salt, (bytes, bytearray)) else salt,
+        "forkId": int(fork_id) if fork_id is not None else None,
         "value": int(value) if value is not None else None,
         "kind": kind,
         "data": _hex(data) if isinstance(data, (bytes, bytearray)) else data,

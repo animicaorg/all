@@ -150,7 +150,6 @@ def _set_balance(state: Any, addr: bytes, value: int) -> None:
         if acc is None:
 
             class _Acc:
-                nonce: int = 0
                 balance: int = 0
                 code_hash: bytes = b""
 
@@ -161,45 +160,6 @@ def _set_balance(state: Any, addr: bytes, value: int) -> None:
         return
     raise ExecError("state does not expose a writable balance API")
 
-
-def _get_nonce(state: Any, addr: bytes) -> int:
-    if hasattr(state, "get_nonce"):
-        return int(state.get_nonce(addr))  # type: ignore[attr-defined]
-    view = getattr(state, "view", None)
-    if view is not None and hasattr(view, "get_nonce"):
-        return int(view.get_nonce(addr))  # type: ignore[attr-defined]
-    accounts = getattr(state, "accounts", None)
-    if isinstance(accounts, dict) and addr in accounts:
-        return int(getattr(accounts[addr], "nonce", 0))
-    m = getattr(state, "nonces", None)
-    if isinstance(m, dict):
-        return int(m.get(addr, 0))
-    return 0
-
-
-def _set_nonce(state: Any, addr: bytes, value: int) -> None:
-    if hasattr(state, "set_nonce"):
-        state.set_nonce(addr, int(value))  # type: ignore[attr-defined]
-        return
-    accounts = getattr(state, "accounts", None)
-    if isinstance(accounts, dict):
-        acc = accounts.get(addr)
-        if acc is None:
-            _ensure_account(state, addr)
-            acc = accounts.get(addr)
-        if acc is not None:
-            setattr(acc, "nonce", int(value))
-            return
-    m = getattr(state, "nonces", None)
-    if isinstance(m, dict):
-        m[addr] = int(value)
-        return
-    if hasattr(state, "bump_nonce"):
-        current = _get_nonce(state, addr)
-        for _ in range(max(0, int(value) - current)):
-            state.bump_nonce(addr)  # type: ignore[attr-defined]
-        return
-    raise ExecError("state does not expose a writable nonce API")
 
 
 def _maybe_state_root(state: Any) -> bytes:
@@ -317,7 +277,7 @@ def apply_deploy(
             receipt=None,
         )
 
-    # Fees: debit sender, pay tip/treasury, bump nonce
+    # Fees: debit sender, pay tip/treasury
     sender = _as_bytes(getattr(tx_env, "sender", None), expect_len=20)
     if len(sender) != 20:
         raise ExecError("TxEnv.sender must be 20 bytes")
@@ -340,7 +300,6 @@ def apply_deploy(
             receipt=None,
         )
     _set_balance(state, sender, bal - total_fee)
-    _set_nonce(state, sender, _get_nonce(state, sender) + 1)
 
     # Feature-gated path (future)
     if (enable_vm_py is True) or (
@@ -400,7 +359,7 @@ def apply_call(
             receipt=None,
         )
 
-    # Fees: debit sender, pay tip/treasury, bump nonce
+    # Fees: debit sender, pay tip/treasury
     sender = _as_bytes(getattr(tx_env, "sender", None), expect_len=20)
     if len(sender) != 20:
         raise ExecError("TxEnv.sender must be 20 bytes")
@@ -422,7 +381,6 @@ def apply_call(
             receipt=None,
         )
     _set_balance(state, sender, bal - total_fee)
-    _set_nonce(state, sender, _get_nonce(state, sender) + 1)
 
     # Future: route to vm_py if enabled & available
     if (enable_vm_py is True) or (

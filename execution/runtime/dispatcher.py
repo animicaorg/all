@@ -168,7 +168,7 @@ def dispatch(
     block_env : BlockEnv
         Block-level context (height, timestamp, base_price, chain_id, coinbase).
     tx_env : TxEnv
-        Tx-level context (sender, nonce, gas/base/tip price, chain id).
+        Tx-level context (sender, gas/base/tip price, chain id).
     vm : Optional[Any]
         VM adapter/handle for contract deploy/call (passed through).
     params : Optional[Any]

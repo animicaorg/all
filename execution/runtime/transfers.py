@@ -2,11 +2,11 @@
 execution.runtime.transfers — deterministic transfer execution
 
 Implements the simplest on-chain action: move funds from sender → recipient,
-charge intrinsic gas, split base/tip fees, bump sender nonce, and (optionally)
+charge intrinsic gas, split base/tip fees, and (optionally)
 emit a standard Transfer log.
 
 The function is intentionally duck-typed and works with a variety of "state"
-backends as long as they expose intuitive balance/nonce accessors. See helpers
+backends as long as they expose intuitive balance accessors. See helpers
 below for the order of method/attribute probing.
 
 Semantics (high level)
@@ -19,7 +19,7 @@ Semantics (high level)
   otherwise it is simply burned (not credited to anyone).
 - Ensure sender has ≥ (amount + total_fee); otherwise REVERT (insufficient).
 - Debit sender by amount+fee, credit recipient by amount, credit coinbase by
-  tip component, bump sender nonce by +1.
+  tip component.
 - Optionally emit a Transfer log (address=recipient; topics=[b"transfer", sender, recipient];
   data = amount (big-endian bytes)).
 
@@ -198,7 +198,6 @@ def _set_balance(state: Any, addr: bytes, value: int) -> None:
             # create minimal record
             @dataclass
             class _Acc:
-                nonce: int = 0
                 balance: int = 0
                 code_hash: bytes = b""
 
@@ -207,47 +206,6 @@ def _set_balance(state: Any, addr: bytes, value: int) -> None:
             setattr(acc, "balance", int(value))
         return
     raise ExecError("state does not expose a writable balance API")
-
-
-def _get_nonce(state: Any, addr: bytes) -> int:
-    if hasattr(state, "get_nonce"):
-        return int(state.get_nonce(addr))  # type: ignore[attr-defined]
-    view = getattr(state, "view", None)
-    if view is not None and hasattr(view, "get_nonce"):
-        return int(view.get_nonce(addr))  # type: ignore[attr-defined]
-    accounts = getattr(state, "accounts", None)
-    if isinstance(accounts, dict) and addr in accounts:
-        return int(getattr(accounts[addr], "nonce", 0))
-    m = getattr(state, "nonces", None)
-    if isinstance(m, dict):
-        return int(m.get(addr, 0))
-    return 0
-
-
-def _set_nonce(state: Any, addr: bytes, value: int) -> None:
-    if hasattr(state, "set_nonce"):
-        state.set_nonce(addr, int(value))  # type: ignore[attr-defined]
-        return
-    accounts = getattr(state, "accounts", None)
-    if isinstance(accounts, dict):
-        acc = accounts.get(addr)
-        if acc is None:
-            _ensure_account(state, addr)
-            acc = accounts.get(addr)
-        if acc is not None:
-            setattr(acc, "nonce", int(value))
-            return
-    m = getattr(state, "nonces", None)
-    if isinstance(m, dict):
-        m[addr] = int(value)
-        return
-    if hasattr(state, "bump_nonce"):
-        # fallback: repeatedly bump (inefficient but deterministic)
-        current = _get_nonce(state, addr)
-        for _ in range(max(0, int(value) - current)):
-            state.bump_nonce(addr)  # type: ignore[attr-defined]
-        return
-    raise ExecError("state does not expose a writable nonce API")
 
 
 def _maybe_state_root(state: Any) -> bytes:
@@ -437,29 +395,8 @@ def apply_transfer(
         base_price, gas_price, intrinsic
     )
 
-    # Nonce check (must match current chain nonce)
-    tx_nonce = _get(tx, "nonce")
-    if tx_env is not None and hasattr(tx_env, "nonce"):
-        try:
-            tx_nonce = int(getattr(tx_env, "nonce"))
-        except Exception:
-            pass
-    if tx_nonce is None:
-        unsigned = _get(tx, "unsigned")
-        if unsigned is not None:
-            tx_nonce = _get(unsigned, "nonce")
-
     _ensure_account(state, sender)
     _ensure_account(state, to)
-    sender_nonce_before = _get_nonce(state, sender)
-    if tx_nonce is not None and int(tx_nonce) != sender_nonce_before:
-        return ApplyResult(
-            status=TxStatus.REVERT,
-            gas_used=0,
-            logs=[],
-            state_root=_maybe_state_root(state),
-            receipt=None,
-        )
 
     # Ensure sender has enough to cover amount + fee
     sender_balance = _get_balance(state, sender)
@@ -505,9 +442,6 @@ def apply_transfer(
     recipient_balance_before = _get_balance(state, to)
     _set_balance(state, sender, sender_balance_before - amount)
     _set_balance(state, to, recipient_balance_before + amount)
-
-    # Nonce bump
-    _set_nonce(state, sender, sender_nonce_before + 1)
 
     # Logs
     logs: List[LogEvent] = []
