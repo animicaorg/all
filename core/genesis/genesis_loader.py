@@ -52,6 +52,12 @@ def _candidates_for_relative(path: Path, chain_id: Optional[int]) -> Iterable[Pa
         yield _resolve_relative(path, base)
 
     if chain_id is not None:
+        from core.network_params import get_network_genesis_path
+
+        canonical_path = get_network_genesis_path(chain_id=int(chain_id))
+        if canonical_path is not None:
+            yield canonical_path
+
         sample_map = {
             1: repo_root / "genesis" / "genesis.sample.mainnet.json",
             2: repo_root / "genesis" / "genesis.sample.testnet.json",
@@ -94,12 +100,33 @@ def resolve_genesis_path(
         pass
 
     fallback_paths = [
+        _repo_root() / "core" / "genesis" / "mainnet.json",
+        _repo_root() / "core" / "genesis" / "testnet.json",
+        _repo_root() / "core" / "genesis" / "devnet.json",
         _repo_root() / "core" / "genesis" / "genesis.json",
         Path("/app/core/genesis/genesis.json"),
         Path("/etc/animica/genesis/genesis.json"),
         Path("/config/genesis.json"),
     ]
+    env_network = (os.getenv("ANIMICA_NETWORK") or "").strip().lower()
+    if env_network:
+        try:
+            from core.network_params import get_network_genesis_path
+
+            canonical = get_network_genesis_path(network_name=env_network)
+            if canonical is not None:
+                fallback_paths.insert(0, canonical)
+        except Exception:
+            pass
     if chain_id is not None:
+        try:
+            from core.network_params import get_network_genesis_path
+
+            canonical = get_network_genesis_path(chain_id=int(chain_id))
+            if canonical is not None:
+                fallback_paths.insert(0, canonical)
+        except Exception:
+            pass
         chain_samples = {
             1: _repo_root() / "genesis" / "genesis.sample.mainnet.json",
             2: _repo_root() / "genesis" / "genesis.sample.testnet.json",

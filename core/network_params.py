@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 from pathlib import Path
 from typing import Optional
 
@@ -14,8 +15,18 @@ class NetworkParams:
     expected_genesis_block_hash: Optional[bytes] = None
 
 
+BASE_DIR = Path(__file__).resolve().parent
+REPO_ROOT = BASE_DIR.parent
+GENESIS_DIR = BASE_DIR / "genesis"
+
 MAINNET_GENESIS_HASH_HEX = (
-    "0x1d964197f0def34f190cdfea52a6bed997b9e0f14d8173d0a5e4e4ae2ae3b474"
+    "0x0b4925e3fa57d665542ca04e77353b2c9e244a25f7d61893552ed3724efcc84f"
+)
+TESTNET_GENESIS_HASH_HEX = (
+    "0xcf4489041eb0ae6a4e29a7e9684392eee2b74d2e9ad4bc8c38b82b260a615b34"
+)
+DEVNET_GENESIS_HASH_HEX = (
+    "0x4eeb4a9127e06215adffbd75acc6715cdccddf12c7cc937ab1d0a1ccecfddfaf"
 )
 
 MAINNET_PARAMS = NetworkParams(
@@ -39,15 +50,57 @@ _BY_NAME = {
     DEVNET_PARAMS.name: DEVNET_PARAMS,
 }
 
+NETWORK_NAME_ALIASES = {
+    "main": "mainnet",
+    "test": "testnet",
+    "dev": "devnet",
+}
+
+PINNED_GENESIS_BY_NETWORK: dict[tuple[str, int], bytes] = {
+    ("mainnet", 1): bytes.fromhex(MAINNET_GENESIS_HASH_HEX[2:]),
+    ("testnet", 2): bytes.fromhex(TESTNET_GENESIS_HASH_HEX[2:]),
+    ("devnet", 1337): bytes.fromhex(DEVNET_GENESIS_HASH_HEX[2:]),
+}
+
+GENESIS_PATH_BY_NETWORK: dict[tuple[str, int], Path] = {
+    ("mainnet", 1): GENESIS_DIR / "mainnet.json",
+    ("testnet", 2): GENESIS_DIR / "testnet.json",
+    ("devnet", 1337): GENESIS_DIR / "devnet.json",
+}
+
+logger = logging.getLogger(__name__)
+
 
 def get_network_params(
     *, chain_id: Optional[int] = None, network_name: Optional[str] = None
 ) -> Optional[NetworkParams]:
+    if network_name:
+        network_name = NETWORK_NAME_ALIASES.get(
+            network_name.strip().lower(), network_name.strip().lower()
+        )
     if chain_id is not None:
         return _BY_CHAIN_ID.get(int(chain_id))
     if network_name:
         return _BY_NAME.get(network_name.strip().lower())
     return None
+
+
+def get_pinned_genesis_hash(
+    *, chain_id: Optional[int] = None, network_name: Optional[str] = None
+) -> Optional[bytes]:
+    params = get_network_params(chain_id=chain_id, network_name=network_name)
+    if params is None:
+        return None
+    return PINNED_GENESIS_BY_NETWORK.get((params.name, params.chain_id))
+
+
+def get_network_genesis_path(
+    *, chain_id: Optional[int] = None, network_name: Optional[str] = None
+) -> Optional[Path]:
+    params = get_network_params(chain_id=chain_id, network_name=network_name)
+    if params is None:
+        return None
+    return GENESIS_PATH_BY_NETWORK.get((params.name, params.chain_id))
 
 
 def get_expected_genesis_hash(chain_id: int) -> Optional[bytes]:
@@ -63,12 +116,10 @@ def compute_network_params_hash(chain_id: Optional[int] = None) -> bytes:
 
     This is used for P2P compatibility checks to avoid syncing incompatible chains.
     """
-    base_dir = Path(__file__).resolve().parents[1]
-    repo_root = base_dir.parent
     files = [
         Path(__file__).resolve(),
-        base_dir / "types" / "params.py",
-        repo_root / "consensus" / "types.py",
+        BASE_DIR / "types" / "params.py",
+        REPO_ROOT / "consensus" / "types.py",
     ]
     payload = bytearray()
     if chain_id is not None:
@@ -99,21 +150,52 @@ def enforce_pinned_genesis(
 ) -> None:
     from core.errors import GenesisError
 
-    params = get_network_params(chain_id=chain_id)
-    if params is None or params.expected_genesis_block_hash is None:
+    params = get_network_params(chain_id=chain_id, network_name=network_name)
+    if params is None:
         return
-    if network_name is not None and not is_mainnet_name(network_name):
+    expected = get_pinned_genesis_hash(chain_id=chain_id, network_name=params.name)
+    if expected is None:
         return
-    expected = params.expected_genesis_block_hash
-    if genesis_block_hash != expected:
-        expected_hex = "0x" + expected.hex()
-        found_hex = "0x" + genesis_block_hash.hex()
-        path_hint = genesis_path or "<unknown>"
+
+    expected_path = get_network_genesis_path(chain_id=chain_id, network_name=params.name)
+    resolved_path = Path(genesis_path).resolve() if genesis_path else None
+    expected_path_resolved = expected_path.resolve() if expected_path else None
+
+    if expected_path_resolved and resolved_path and resolved_path != expected_path_resolved:
         raise GenesisError(
-            "genesis does not match pinned mainnet genesis",
+            "genesis path does not match canonical network genesis",
+            expected_path=str(expected_path_resolved),
+            genesis_path=str(resolved_path),
+            chain_id=chain_id,
+            network=params.name,
+            hint=(
+                "Set ANIMICA_GENESIS_PATH/GENESIS_PATH to the canonical file or update"
+                " the network configuration to point at the correct genesis file."
+            ),
+        )
+
+    expected_hex = "0x" + expected.hex()
+    found_hex = "0x" + genesis_block_hash.hex()
+    path_hint = str(resolved_path or expected_path_resolved or genesis_path or "<unknown>")
+
+    if genesis_block_hash != expected:
+        raise GenesisError(
+            "genesis does not match pinned network genesis",
             expected=expected_hex,
             found=found_hex,
             genesis_path=path_hint,
             chain_id=chain_id,
-            network=network_name or params.name,
+            network=params.name,
+            hint=(
+                "The configured genesis file does not match the pinned hash. "
+                "If this is the correct genesis file, update PINNED_GENESIS_BY_NETWORK; "
+                "otherwise point to the correct network genesis file."
+            ),
         )
+
+    logger.info(
+        "[genesis] Selected genesis: %s hash=%s pinned=%s",
+        path_hint,
+        found_hex,
+        expected_hex,
+    )

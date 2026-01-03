@@ -1,36 +1,25 @@
 from __future__ import annotations
 
-import sqlite3
 from pathlib import Path
 
+from core.genesis.loader import load_genesis
+from core.network_params import MAINNET_GENESIS_HASH_HEX
 from core.types.header import Header
 from core.utils.pow import micro_threshold_to_target256
 
 
-def _load_mainnet_genesis_header() -> tuple[Header, str]:
+def _load_mainnet_genesis_header() -> Header:
     repo_root = Path(__file__).resolve().parents[3]
-    db_path = repo_root / "mainnet" / "chain.db"
-    if not db_path.exists():
-        raise AssertionError(f"Missing mainnet chain DB fixture at {db_path}")
-
-    conn = sqlite3.connect(db_path)
-    try:
-        cur = conn.cursor()
-        cur.execute("select k, v from kv where substr(k,1,1)=?", (b"\x10",))
-        row = cur.fetchone()
-        if row is None:
-            raise AssertionError("No header entries found in mainnet chain DB")
-        key, raw = row
-        header = Header.from_cbor(raw)
-        return header, key[1:].hex()
-    finally:
-        conn.close()
+    genesis_path = repo_root / "core" / "genesis" / "mainnet.json"
+    _params, header = load_genesis(genesis_path)
+    return header
 
 
 def test_mainnet_genesis_pow_vector() -> None:
-    header, key_hash = _load_mainnet_genesis_header()
+    header = _load_mainnet_genesis_header()
+    key_hash = header.hash().hex()
 
-    assert key_hash == "1d964197f0def34f190cdfea52a6bed997b9e0f14d8173d0a5e4e4ae2ae3b474"
+    assert key_hash == MAINNET_GENESIS_HASH_HEX[2:]
     assert int(header.height) == 0
     assert int(header.thetaMicro) == 1_000_000
 

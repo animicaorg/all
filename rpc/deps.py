@@ -772,7 +772,9 @@ def build_context(cfg: t.Any | None = None) -> RpcContext:
                 data_dir = _db_uri_hint(cfg_view.db_uri)
                 guidance = _format_genesis_reset_guidance(data_dir, cfg_view.chain_id)
                 init_error = (
-                    f"NODE_INIT_FAILED: GENESIS_MISMATCH. {exc}. "
+                    "NODE_INIT_FAILED: GENESIS_MISMATCH. "
+                    f"Data directory genesis mismatch: {exc}. "
+                    f"Your DB at {data_dir} was created for a different genesis. "
                     "Refusing to start with mismatched genesis. "
                     "Reset the data dir or set ANIMICA_AUTO_RESET_GENESIS_MISMATCH=1 "
                     "to wipe and reinitialize.\n"
