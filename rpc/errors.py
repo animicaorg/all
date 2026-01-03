@@ -439,14 +439,15 @@ def _mempool_to_rpc(exc: Exception) -> RpcError:
 
     assert isinstance(exc, MempoolError)
     code_map = {
-        MempoolErrorCode.FEE_TOO_LOW: AnimicaCode.FEE_TOO_LOW,
-        MempoolErrorCode.NONCE_GAP: AnimicaCode.NONCE_TOO_LOW,
-        MempoolErrorCode.NONCE_TOO_LOW: AnimicaCode.NONCE_TOO_LOW,
-        MempoolErrorCode.OVERSIZE: AnimicaCode.TX_TOO_LARGE,
-        MempoolErrorCode.ADMISSION: AnimicaCode.INVALID_TX,
-        MempoolErrorCode.REPLACEMENT: AnimicaCode.DUPLICATE_TX,
-        MempoolErrorCode.DOS: AnimicaCode.MEMPOOL_FULL,
+        getattr(MempoolErrorCode, "FEE_TOO_LOW", None): AnimicaCode.FEE_TOO_LOW,
+        getattr(MempoolErrorCode, "NONCE_GAP", None): AnimicaCode.NONCE_TOO_LOW,
+        getattr(MempoolErrorCode, "NONCE_TOO_LOW", None): AnimicaCode.NONCE_TOO_LOW,
+        getattr(MempoolErrorCode, "OVERSIZE", None): AnimicaCode.TX_TOO_LARGE,
+        getattr(MempoolErrorCode, "ADMISSION", None): AnimicaCode.INVALID_TX,
+        getattr(MempoolErrorCode, "REPLACEMENT", None): AnimicaCode.DUPLICATE_TX,
+        getattr(MempoolErrorCode, "DOS", None): AnimicaCode.MEMPOOL_FULL,
     }
+    code_map = {key: value for key, value in code_map.items() if key is not None}
     rpc_code = code_map.get(getattr(exc, "code", None), AnimicaCode.INVALID_TX)
     data = {
         "mempoolError": (
