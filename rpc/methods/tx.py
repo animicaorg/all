@@ -1467,6 +1467,18 @@ def _tx_send_raw_transaction(rawTx: str) -> str:
             raise
         if MempoolError is not None and isinstance(exc, MempoolError):
             raise rpc_errors.to_error(exc) from exc
+        short_trace = "".join(
+            traceback.format_exception(type(exc), exc, exc.__traceback__, limit=5)
+        ).strip()
+        log.error(
+            "Mempool admission unexpected error",
+            extra={
+                "tx_hash": tx_hash_hex,
+                "error_type": type(exc).__name__,
+                "error": str(exc),
+                "traceback": short_trace,
+            },
+        )
         # Surface as a mempool admission failure (so CLI sees a real error)
         raise rpc_errors.InvalidTx(
             "mempool admission failed",
@@ -1474,7 +1486,7 @@ def _tx_send_raw_transaction(rawTx: str) -> str:
                 "mempoolError": {
                     "code": 1000,
                     "reason": "admission_failed",
-                    "message": str(exc),
+                    "message": "mempool admission failed",
                     "context": {"tx_hash": tx_hash_hex},
                 }
             },
