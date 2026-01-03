@@ -52,6 +52,27 @@ class RpcError(Exception):
         return f"{self.code} {self.message} {self.data!r}"
 
 
+@dataclass
+class ChainIdentityResolution:
+    identity: dict[str, Any]
+    source: str
+    rpc_reachable: bool
+    attempts: list[str]
+
+
+class ChainIdentityResolutionError(RuntimeError):
+    def __init__(
+        self,
+        message: str,
+        *,
+        rpc_reachable: bool,
+        attempts: list[str],
+    ) -> None:
+        super().__init__(message)
+        self.rpc_reachable = rpc_reachable
+        self.attempts = attempts
+
+
 def _rpc(
     url: str,
     method: str,
@@ -261,29 +282,112 @@ def _parse_value_to_base_units(
     return int(base), "anm"
 
 
-def _get_chain_id(rpc_url: str) -> int:
+def _is_rpc_unreachable(exc: Exception) -> bool:
+    request_exc = getattr(requests, "RequestException", Exception)
+    return isinstance(exc, request_exc)
+
+
+def _get_chain_id_from_rpc(rpc_url: str) -> tuple[int | None, list[str], bool]:
+    attempts: list[str] = []
+    rpc_reachable = True
     for m in ("chain.getChainId", "chain_id", "net_version", "eth_chainId", "chainId"):
         try:
             v = _rpc(rpc_url, m, [])
             cid = _coerce_int(v)
             if cid is not None:
-                return cid
+                attempts.append(f"{m} -> {cid}")
+                return cid, attempts, rpc_reachable
+            attempts.append(f"{m} returned {v!r} (unusable)")
+        except Exception as exc:
+            if _is_rpc_unreachable(exc):
+                rpc_reachable = False
+            attempts.append(f"{m} failed: {exc}")
+    return None, attempts, rpc_reachable
+
+
+def _resolve_local_chain_identity(
+    chain_id_override: Optional[int],
+) -> tuple[dict[str, Any] | None, str | None]:
+    if chain_id_override is not None:
+        return {"chainId": int(chain_id_override), "forkId": None}, "CLI --chain-id"
+
+    env_chain_id = os.environ.get("ANIMICA_CHAIN_ID")
+    if env_chain_id:
+        parsed = _coerce_int(env_chain_id)
+        if parsed is not None:
+            return {"chainId": parsed, "forkId": None}, "ANIMICA_CHAIN_ID"
+
+    network_hint = os.environ.get("ANIMICA_NETWORK")
+    if not network_hint:
+        try:
+            from animica.config import _get_cli_state_network
+
+            network_hint = _get_cli_state_network()
         except Exception:
-            continue
-    raise RuntimeError(
-        "Could not determine chain id from node. "
-        "Pass --chain-id or set ANIMICA_CHAIN_ID to override."
-    )
+            network_hint = None
+    if network_hint:
+        try:
+            cfg = load_network_config(network_hint)
+            return (
+                {"chainId": int(cfg.chain_id), "forkId": None},
+                f"network config ({cfg.name})",
+            )
+        except Exception:
+            return None, None
+
+    return None, None
 
 
-def _get_chain_identity(rpc_url: str) -> dict:
+def _get_chain_identity(
+    rpc_url: str,
+    *,
+    chain_id_override: Optional[int] = None,
+) -> ChainIdentityResolution:
+    attempts: list[str] = []
+    rpc_reachable = True
+
     try:
         ident = _rpc(rpc_url, "chain.getChainIdentity", [])
-        if isinstance(ident, dict):
-            return ident
-    except Exception:
-        pass
-    return {"chainId": _get_chain_id(rpc_url), "forkId": None}
+        if isinstance(ident, dict) and _coerce_int(ident.get("chainId")) is not None:
+            attempts.append("chain.getChainIdentity -> success")
+            return ChainIdentityResolution(
+                identity=ident,
+                source="rpc:chain.getChainIdentity",
+                rpc_reachable=True,
+                attempts=attempts,
+            )
+        attempts.append("chain.getChainIdentity returned invalid payload")
+    except Exception as exc:
+        if _is_rpc_unreachable(exc):
+            rpc_reachable = False
+        attempts.append(f"chain.getChainIdentity failed: {exc}")
+
+    cid, rpc_attempts, rpc_ok = _get_chain_id_from_rpc(rpc_url)
+    attempts.extend(rpc_attempts)
+    rpc_reachable = rpc_reachable and rpc_ok
+    if cid is not None:
+        return ChainIdentityResolution(
+            identity={"chainId": cid, "forkId": None},
+            source="rpc:chainId",
+            rpc_reachable=rpc_reachable,
+            attempts=attempts,
+        )
+
+    local_identity, source = _resolve_local_chain_identity(chain_id_override)
+    if local_identity is not None and source is not None:
+        return ChainIdentityResolution(
+            identity=local_identity,
+            source=source,
+            rpc_reachable=rpc_reachable,
+            attempts=attempts,
+        )
+
+    raise ChainIdentityResolutionError(
+        "RPC unreachable and no local chain identity found. "
+        "Pass --chain-id/--network or set ANIMICA_CHAIN_ID/ANIMICA_NETWORK.",
+        rpc_reachable=rpc_reachable,
+        attempts=attempts,
+    )
 
 
 _NONCE_CACHE: dict[tuple[str, str], int] = {}
@@ -779,9 +883,28 @@ def send(
     _warn_if_unsynced(rpc)
 
     # Resolve chain identity
-    chain_identity = _get_chain_identity(rpc)
+    try:
+        chain_resolution = _get_chain_identity(rpc, chain_id_override=chain_id)
+    except ChainIdentityResolutionError as exc:
+        console.print(f"\n[bold red]Error:[/bold red] {exc}")
+        if exc.attempts:
+            console.print(
+                f"[dim]RPC reachable: {exc.rpc_reachable}. Tried: {', '.join(exc.attempts)}[/dim]"
+            )
+        raise typer.Exit(code=1) from exc
+    chain_identity = chain_resolution.identity
     cid = int(chain_id) if chain_id is not None else int(chain_identity.get("chainId"))
     fork_id = chain_identity.get("forkId")
+    if chain_resolution.source != "rpc:chain.getChainIdentity":
+        console.print(
+            f"[yellow]RPC chain identity unavailable; using chainId={cid} "
+            f"from {chain_resolution.source}.[/yellow]"
+        )
+        if chain_resolution.attempts:
+            console.print(
+                f"[dim]RPC reachable: {chain_resolution.rpc_reachable}. "
+                f"Tried: {', '.join(chain_resolution.attempts)}[/dim]"
+            )
 
     # Nonce + fee defaults
     nonce_source = "override" if nonce is not None else "auto"

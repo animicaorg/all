@@ -15,7 +15,7 @@
 # Notes:
 # - Uses testnet chain ID (2)
 # - Isolated volumes: testnet_node_data, testnet_services_data
-# - Genesis: /app/genesis/genesis.sample.testnet.json (bundled in image)
+# - Genesis: /app/core/genesis/testnet.json (bundled in image)
 # - Data directory isolated to prevent cross-network contamination
 # - Faucet enabled by default for testnet (requires FAUCET_KEY)
 # -------------------------------------------------------------------
@@ -53,7 +53,7 @@ services:
       ANIMICA_NETWORK: "testnet"
       ANIMICA_COMPOSE_FILE: "${ANIMICA_COMPOSE_FILE:-/app/ops/docker/docker-compose.testnet.yml}"
       ANIMICA_CHAIN_ID: "${ANIMICA_CHAIN_ID:-2}"
-      GENESIS_PATH: "${GENESIS_PATH:-/app/genesis/genesis.sample.testnet.json}"
+      GENESIS_PATH: "${GENESIS_PATH:-/app/core/genesis/testnet.json}"
       ANIMICA_DATA_DIR: "/data"
       # RPC server config
       ANIMICA_RPC_HOST: "${ANIMICA_RPC_HOST:-0.0.0.0}"
