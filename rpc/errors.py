@@ -445,6 +445,7 @@ def _mempool_to_rpc(exc: Exception) -> RpcError:
         getattr(MempoolErrorCode, "OVERSIZE", None): AnimicaCode.TX_TOO_LARGE,
         getattr(MempoolErrorCode, "ADMISSION", None): AnimicaCode.INVALID_TX,
         getattr(MempoolErrorCode, "REPLACEMENT", None): AnimicaCode.DUPLICATE_TX,
+        getattr(MempoolErrorCode, "PERSISTENCE_FAILED", None): AnimicaCode.INVALID_TX,
         getattr(MempoolErrorCode, "DOS", None): AnimicaCode.MEMPOOL_FULL,
     }
     code_map = {key: value for key, value in code_map.items() if key is not None}
