@@ -38,6 +38,8 @@ __all__ = [
     "ReplacementError",
     "DoSError",
     "FeeTooLow",
+    "NonceTooLow",
+    "NonceGap",
     "Oversize",
     "NotYetValid",
     "Expired",
@@ -62,6 +64,8 @@ class MempoolErrorCode:
     INSUFFICIENT_FUNDS_PENDING = 1005
     OVERSIZE = 1006
     REPLACEMENT = 1007
+    NONCE_TOO_LOW = 1008
+    NONCE_GAP = 1009
     DOS = 1099
 
 
