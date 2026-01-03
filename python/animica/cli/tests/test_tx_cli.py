@@ -1081,7 +1081,11 @@ def test_send_requires_mempool_status_pending(wallet_store: Path) -> None:
         if method == "sync.getStatus":
             return httpx.Response(
                 200,
-                json={"jsonrpc": "2.0", "id": req_data["id"], "result": {"synchronized": True}},
+                json={
+                    "jsonrpc": "2.0",
+                    "id": req_data["id"],
+                    "result": {"synchronized": True, "head_height": 100},
+                },
             )
         return httpx.Response(200, json={"jsonrpc": "2.0", "id": req_data["id"], "result": None})
 
@@ -1123,6 +1127,15 @@ def test_send_fails_when_mempool_status_unknown(wallet_store: Path) -> None:
                     "jsonrpc": "2.0",
                     "id": req_data["id"],
                     "result": {"hash": "0xabc123", "known": False, "state": "unknown", "reason": "not_found"},
+                },
+            )
+        if method == "sync.getStatus":
+            return httpx.Response(
+                200,
+                json={
+                    "jsonrpc": "2.0",
+                    "id": req_data["id"],
+                    "result": {"synchronized": True, "head_height": 100},
                 },
             )
         return httpx.Response(200, json={"jsonrpc": "2.0", "id": req_data["id"], "result": None})
@@ -1173,6 +1186,11 @@ def test_send_includes_sig_object_in_cbor(wallet_store: Path) -> None:
             return httpx.Response(200, json={"jsonrpc": "2.0", "id": 2, "result": 0})
         elif method == "state.suggestGasPrice":
             return httpx.Response(200, json={"jsonrpc": "2.0", "id": 3, "result": "1000000000"})
+        elif method == "sync.getStatus":
+            return httpx.Response(
+                200,
+                json={"jsonrpc": "2.0", "id": 0, "result": {"synchronized": True, "head_height": 100}},
+            )
         elif method == "tx.sendRawTransaction":
             return httpx.Response(200, json={
                 "jsonrpc": "2.0",
@@ -1298,6 +1316,11 @@ def test_send_sphincs_signature_structure(wallet_store: Path) -> None:
             return httpx.Response(200, json={"jsonrpc": "2.0", "id": 2, "result": 0})
         elif method == "state.suggestGasPrice":
             return httpx.Response(200, json={"jsonrpc": "2.0", "id": 3, "result": "1000000000"})
+        elif method == "sync.getStatus":
+            return httpx.Response(
+                200,
+                json={"jsonrpc": "2.0", "id": 0, "result": {"synchronized": True, "head_height": 100}},
+            )
         elif method == "tx.sendRawTransaction":
             return httpx.Response(200, json={
                 "jsonrpc": "2.0",
