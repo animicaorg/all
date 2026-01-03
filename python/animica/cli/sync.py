@@ -27,6 +27,7 @@ from animica.cli.peer import (
     _is_method_not_found_error,
     _is_unauthorized_error,
     _probe_rpc_for_peer_injection,
+    _rpc_import_summary,
     _rpc_operation_succeeded,
     _rpc_headers,
     _fetch_peer_status,
@@ -703,6 +704,7 @@ def _seed_local_peerstores(
 
     rpc_added = False
     rpc_error: Optional[str] = None
+    last_import_result: Optional[Any] = None
     node_running, probe_error = _probe_rpc_for_peer_injection(target_rpc_url)
     if not node_running:
         rpc_error = probe_error
@@ -724,6 +726,7 @@ def _seed_local_peerstores(
                 continue
 
             rpc_added, rpc_error = _rpc_operation_succeeded(import_resp)
+            last_import_result = import_resp
             if rpc_added:
                 break
             rpc_error = rpc_error or _rpc_error_message(error) or f"{method_name} did not report success"
@@ -732,7 +735,9 @@ def _seed_local_peerstores(
         if stored:
             typer.secho(f"✓ Added {stored} seed(s) to local peer store", fg=typer.colors.GREEN)
         if rpc_added:
-            typer.secho("✓ Seeds imported into running node", fg=typer.colors.GREEN)
+            summary = _rpc_import_summary(last_import_result)
+            suffix = f" ({summary})" if summary else ""
+            typer.secho(f"✓ Seeds imported into running node{suffix}", fg=typer.colors.GREEN)
             status, status_error = _fetch_peer_status(target_rpc_url)
             if status:
                 _print_peer_status(status)
