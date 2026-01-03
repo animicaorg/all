@@ -251,22 +251,50 @@ TxPayload = TxTransfer | TxDeploy | TxCall
 
 @dataclass(frozen=True)
 class UnsignedTx:
+    version: int
     chain_id: int
-    nonce: int
+    fork_id: Optional[int]
+    valid_after: Optional[int]
+    valid_until: Optional[int]
+    salt: Optional[bytes]
     gas_price: int
     gas_limit: int
     sender: bytes
     kind: TxKind
     payload: TxPayload
     access_list: Tuple[AccessEntry, ...] = field(default_factory=tuple)
+    nonce: Optional[int] = None  # legacy v1 only
 
     def __post_init__(self) -> None:
+        if self.version not in (1, 2):
+            raise ValueError("UnsignedTx.version must be 1 or 2")
         if self.chain_id <= 0:
             raise ValueError("UnsignedTx.chain_id must be positive")
-        if self.nonce < 0:
-            raise ValueError("UnsignedTx.nonce must be ≥ 0")
         if self.gas_price < 0 or self.gas_limit <= 0:
             raise ValueError("UnsignedTx.gas_price must be ≥ 0 and gas_limit > 0")
+        if self.version == 1:
+            if self.nonce is None or self.nonce < 0:
+                raise ValueError("UnsignedTx.nonce must be ≥ 0 for v1")
+        else:
+            if self.nonce is not None:
+                raise ValueError("UnsignedTx.nonce must be omitted for v2")
+            if self.valid_after is None or self.valid_until is None:
+                raise ValueError("UnsignedTx.valid_after/valid_until are required for v2")
+            if self.valid_after < 0 or self.valid_until < 0:
+                raise ValueError("UnsignedTx.valid_after/valid_until must be ≥ 0")
+            if self.valid_until < self.valid_after:
+                raise ValueError("UnsignedTx.valid_until must be ≥ valid_after")
+            if self.salt is None:
+                raise ValueError("UnsignedTx.salt is required for v2")
+            if not isinstance(self.salt, (bytes, bytearray)):
+                raise TypeError("UnsignedTx.salt must be bytes")
+            salt_len = len(self.salt)
+            if salt_len not in (16, 32):
+                raise ValueError("UnsignedTx.salt must be 16 or 32 bytes")
+            if self.fork_id is not None:
+                fid = int(self.fork_id)
+                if fid < 0 or fid > 0xFFFFFFFF:
+                    raise ValueError("UnsignedTx.fork_id out of range")
         object.__setattr__(
             self,
             "sender",
@@ -291,15 +319,23 @@ class UnsignedTx:
         else:  # pragma: no cover
             raise ValueError("unknown tx kind")
 
-        return {
-            "v": 1,  # tx version
+        base: Dict[str, Any] = {
+            "v": int(self.version),
             "chainId": self.chain_id,
             "from": self.sender,
-            "nonce": self.nonce,
             "gas": {"price": self.gas_price, "limit": self.gas_limit},
             "payload": payload_obj,
             "accessList": [ae.to_obj() for ae in self.access_list],
         }
+        if self.version == 1:
+            base["nonce"] = int(self.nonce or 0)
+        else:
+            base["validAfter"] = int(self.valid_after or 0)
+            base["validUntil"] = int(self.valid_until or 0)
+            base["salt"] = bytes(self.salt or b"")
+            if self.fork_id is not None:
+                base["forkId"] = int(self.fork_id)
+        return base
 
     def to_cbor(self) -> bytes:
         return cbor_dumps(self.to_obj())
@@ -312,14 +348,27 @@ class UnsignedTx:
 
     @staticmethod
     def from_obj(o: Mapping[str, Any]) -> "UnsignedTx":
-        if int(o.get("v", 1)) != 1:
+        version = int(o.get("v", 1))
+        if version not in (1, 2):
             raise ValueError("Unsupported tx version")
         chain_id = int(o["chainId"])
         sender = bytes(o["from"])
-        nonce = int(o["nonce"])
+        nonce = int(o["nonce"]) if "nonce" in o else None
         gas = o["gas"]
         gas_price = int(gas["price"])
         gas_limit = int(gas["limit"])
+        fork_id = None
+        valid_after = None
+        valid_until = None
+        salt = None
+        if version == 2:
+            valid_after = int(o.get("validAfter", o.get("valid_after", 0)))
+            valid_until = int(o.get("validUntil", o.get("valid_until", 0)))
+            salt_val = o.get("salt")
+            if salt_val is not None:
+                salt = bytes(salt_val)
+            fork_id_val = o.get("forkId", o.get("fork_id"))
+            fork_id = int(fork_id_val) if fork_id_val is not None else None
 
         payload_tag = int(o["payload"]["t"])
         payload_val = o["payload"]["v"]
@@ -338,14 +387,19 @@ class UnsignedTx:
         al = tuple(AccessEntry.from_obj(x) for x in o.get("accessList", []))
 
         return UnsignedTx(
+            version=version,
             chain_id=chain_id,
-            nonce=nonce,
+            fork_id=fork_id,
+            valid_after=valid_after,
+            valid_until=valid_until,
+            salt=salt,
             gas_price=gas_price,
             gas_limit=gas_limit,
             sender=sender,
             kind=kind,
             payload=payload,
             access_list=al,
+            nonce=nonce,
         )
 
     @staticmethod
@@ -358,16 +412,26 @@ class UnsignedTx:
         *,
         chain_id: int,
         sender: bytes,
-        nonce: int,
+        nonce: Optional[int] = None,
         gas_price: int,
         gas_limit: int,
         to: bytes,
         amount: int,
         data: bytes = b"",
+        valid_after: Optional[int] = None,
+        valid_until: Optional[int] = None,
+        salt: Optional[bytes] = None,
+        fork_id: Optional[int] = None,
+        version: int = 2,
         access_list: Optional[List[AccessEntry]] = None,
     ) -> "UnsignedTx":
         return UnsignedTx(
+            version=version,
             chain_id=chain_id,
+            fork_id=fork_id,
+            valid_after=valid_after,
+            valid_until=valid_until,
+            salt=salt,
             sender=sender,
             nonce=nonce,
             gas_price=gas_price,
@@ -382,15 +446,25 @@ class UnsignedTx:
         *,
         chain_id: int,
         sender: bytes,
-        nonce: int,
+        nonce: Optional[int] = None,
         gas_price: int,
         gas_limit: int,
         code: bytes,
         manifest: bytes,
+        valid_after: Optional[int] = None,
+        valid_until: Optional[int] = None,
+        salt: Optional[bytes] = None,
+        fork_id: Optional[int] = None,
+        version: int = 2,
         access_list: Optional[List[AccessEntry]] = None,
     ) -> "UnsignedTx":
         return UnsignedTx(
+            version=version,
             chain_id=chain_id,
+            fork_id=fork_id,
+            valid_after=valid_after,
+            valid_until=valid_until,
+            salt=salt,
             sender=sender,
             nonce=nonce,
             gas_price=gas_price,
@@ -405,15 +479,25 @@ class UnsignedTx:
         *,
         chain_id: int,
         sender: bytes,
-        nonce: int,
+        nonce: Optional[int] = None,
         gas_price: int,
         gas_limit: int,
         to: bytes,
         data: bytes,
+        valid_after: Optional[int] = None,
+        valid_until: Optional[int] = None,
+        salt: Optional[bytes] = None,
+        fork_id: Optional[int] = None,
+        version: int = 2,
         access_list: Optional[List[AccessEntry]] = None,
     ) -> "UnsignedTx":
         return UnsignedTx(
+            version=version,
             chain_id=chain_id,
+            fork_id=fork_id,
+            valid_after=valid_after,
+            valid_until=valid_until,
+            salt=salt,
             sender=sender,
             nonce=nonce,
             gas_price=gas_price,
@@ -489,7 +573,14 @@ class Tx:
     def __str__(self) -> str:
         kind = self.unsigned.kind.name
         txid_hex = to_hex(self.txid())
-        return f"Tx<{kind} {txid_hex[:10]}… nonce={self.unsigned.nonce} gas={self.unsigned.gas_limit}@{self.unsigned.gas_price}>"
+        if self.unsigned.version == 1:
+            nonce_text = f" nonce={self.unsigned.nonce}"
+        else:
+            nonce_text = ""
+        return (
+            f"Tx<{kind} {txid_hex[:10]}…"
+            f"{nonce_text} gas={self.unsigned.gas_limit}@{self.unsigned.gas_price}>"
+        )
 
     def summary(self) -> Mapping[str, Any]:
         u = self.unsigned
@@ -498,11 +589,17 @@ class Tx:
             "kind": u.kind.name,
             "chainId": u.chain_id,
             "from": to_hex(u.sender),
-            "nonce": u.nonce,
             "gasLimit": u.gas_limit,
             "gasPrice": u.gas_price,
             "sigs": [{"alg": s.alg_id, "pubkey": to_hex(s.pubkey)} for s in self.sigs],
         }
+        if u.version == 1:
+            base["nonce"] = u.nonce
+        else:
+            base["validAfter"] = u.valid_after
+            base["validUntil"] = u.valid_until
+            base["salt"] = to_hex(u.salt or b"")
+            base["forkId"] = u.fork_id
         # enrich payload
         if u.kind is TxKind.TRANSFER:
             p: TxTransfer = u.payload  # type: ignore[assignment]
@@ -526,7 +623,7 @@ Sig = PqSignature  # Short alias for tests
 @staticmethod
 def _tx_transfer(
     chain_id: int,
-    nonce: int,
+    nonce: Optional[int],
     gas_price: int,
     gas_limit: int,
     sender: Optional[bytes] = None,
@@ -536,6 +633,11 @@ def _tx_transfer(
     to_addr: Optional[str] = None,
     value: Optional[int] = None,
     data: Optional[bytes] = None,
+    valid_after: Optional[int] = None,
+    valid_until: Optional[int] = None,
+    salt: Optional[bytes] = None,
+    fork_id: Optional[int] = None,
+    version: int = 2,
     access_list: Optional[List[AccessEntry]] = None,
     **kwargs: Any
 ) -> "Tx":
@@ -589,6 +691,11 @@ def _tx_transfer(
         gas_limit=gas_limit,
         to=to,
         amount=amount,
+        valid_after=valid_after,
+        valid_until=valid_until,
+        salt=salt,
+        fork_id=fork_id,
+        version=version,
     )
     return Tx(unsigned=unsigned)
 
@@ -609,11 +716,13 @@ if __name__ == "__main__":  # pragma: no cover
     u = UnsignedTx.build_transfer(
         chain_id=1,
         sender=rand_addr(),
-        nonce=0,
         gas_price=1_000,
         gas_limit=50_000,
         to=rand_addr(),
         amount=123456789,
+        valid_after=0,
+        valid_until=0,
+        salt=b"\x00" * 16,
     )
     tx = Tx(unsigned=u)
     print("Unsigned SignBytes(hex):", to_hex(u.sign_bytes()))

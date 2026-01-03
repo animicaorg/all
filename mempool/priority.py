@@ -6,7 +6,7 @@ Effective priority and replace-by-fee (RBF) policy helpers.
 
 This module computes a dimensionless **priority score** used to order mempool
 entries and provides deterministic checks for **RBF eligibility** for
-same-sender/nonce replacements.
+same-sender replacements.
 
 Inputs
 ------
@@ -60,7 +60,6 @@ except Exception:  # pragma: no cover - allow isolated imports
     @_dataclass
     class TxMeta:  # type: ignore
         sender: str
-        nonce: int
         gas_limit: int
         size_bytes: int
         first_seen: float = time.time()
@@ -257,7 +256,7 @@ def should_replace(
     rbf: Optional[RBFPolicy] = None,
 ) -> Tuple[bool, str]:
     """
-    Decide if a candidate tx (same sender+nonce) is eligible to replace `existing`.
+    Decide if a candidate tx (same sender) is eligible to replace `existing`.
 
     Conditions:
       - Effective gas price bump must satisfy BOTH:

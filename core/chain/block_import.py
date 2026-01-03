@@ -283,20 +283,30 @@ def _normalize_tx_envelope(decoded: Dict[str, Any]) -> Dict[str, Any]:
             chain_id = body.get("chainId", body.get("chain_id"))
             sender = _decode_address_bytes(body.get("from", body.get("sender")))
             recipient = _decode_address_bytes(body.get("to"))
-            nonce = int(body.get("nonce", 0))
+            nonce = body.get("nonce")
             value = int(body.get("value", body.get("amount", 0)))
             gas_limit = int(body.get("gasLimit", body.get("gas_limit", body.get("gas", 21000))))
             gas_price = int(body.get("maxFee", body.get("max_fee", body.get("gasPrice", body.get("gas_price", body.get("tip", 0))))))
+            valid_after = body.get("validAfter", body.get("valid_after"))
+            valid_until = body.get("validUntil", body.get("valid_until"))
+            salt = body.get("salt")
+            fork_id = body.get("forkId", body.get("fork_id"))
             data = body.get("data", b"")
             if isinstance(data, str):
                 data = bytes.fromhex(data[2:]) if data.startswith("0x") else data.encode("utf-8")
             elif isinstance(data, (list, tuple)):
                 data = bytes(data)
+            if isinstance(salt, str):
+                salt = bytes.fromhex(salt[2:]) if salt.startswith("0x") else salt.encode("utf-8")
+            elif isinstance(salt, (list, tuple)):
+                salt = bytes(salt)
+            version = int(body.get("v", 2))
+            if version == 2 and (valid_after is None or valid_until is None or salt is None):
+                version = 1
             normalized["tx"] = {
-                "v": 1,
+                "v": version,
                 "chainId": int(chain_id) if chain_id is not None else 0,
                 "from": sender,
-                "nonce": nonce,
                 "gas": {"price": gas_price, "limit": gas_limit},
                 "payload": {
                     "t": int(TxKind.TRANSFER),
@@ -304,6 +314,14 @@ def _normalize_tx_envelope(decoded: Dict[str, Any]) -> Dict[str, Any]:
                 },
                 "accessList": [],
             }
+            if version == 1:
+                normalized["tx"]["nonce"] = int(nonce or 0)
+            else:
+                normalized["tx"]["validAfter"] = int(valid_after or 0)
+                normalized["tx"]["validUntil"] = int(valid_until or 0)
+                normalized["tx"]["salt"] = bytes(salt or b"")
+                if fork_id is not None:
+                    normalized["tx"]["forkId"] = int(fork_id)
     elif "unsigned" in decoded:
         unsigned = decoded["unsigned"]
         if isinstance(unsigned, UnsignedTx):

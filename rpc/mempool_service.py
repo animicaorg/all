@@ -11,11 +11,20 @@ from typing import Any, Iterable, Optional
 
 from core.utils.hash import sha3_256
 from core.utils.tx import normalize_tx_bytes
+from rpc import deps
 from mempool.config import MempoolConfig, load_config as load_mempool_config
-from mempool.errors import AdmissionError, FeeTooLow, NonceGap, NonceTooLow
+from mempool.errors import (
+    AdmissionError,
+    Expired,
+    FeeTooLow,
+    InsufficientFundsPending,
+    NotYetValid,
+    Replay,
+)
 from mempool.pool import Pool, PoolConfig
 from mempool.select import PendingTxEntry, select_for_block
 from mempool.types import EffectiveFee, PoolTx, TxMeta
+from mempool.accounting import estimate_max_spend
 
 try:
     from core.types.tx import Tx  # type: ignore
@@ -96,26 +105,54 @@ def _sender_hex(sender: Optional[bytes]) -> str:
     return "0x" + bytes(sender).hex()
 
 
-def _tx_nonce(tx: Any) -> Optional[int]:
-    nonce = None
-
-    # Handle dict envelope with "body"/"tx" key (CLI/SDK format)
+def _tx_valid_after(tx: Any) -> Optional[int]:
     body = _tx_body(tx)
+    valid_after = None
     if isinstance(body, dict):
-        nonce = body.get("nonce")
-
-    # Handle Tx dataclass format
-    if nonce is None:
+        valid_after = body.get("validAfter") or body.get("valid_after")
+    if valid_after is None:
         unsigned = getattr(tx, "unsigned", None)
         if unsigned is not None:
-            nonce = getattr(unsigned, "nonce", None)
-    if nonce is None:
-        nonce = getattr(tx, "nonce", None)
-
+            valid_after = getattr(unsigned, "valid_after", None)
+    if valid_after is None:
+        valid_after = getattr(tx, "valid_after", None)
     try:
-        return int(nonce) if nonce is not None else None
+        return int(valid_after) if valid_after is not None else None
     except Exception:
         return None
+
+
+def _tx_valid_until(tx: Any) -> Optional[int]:
+    body = _tx_body(tx)
+    valid_until = None
+    if isinstance(body, dict):
+        valid_until = body.get("validUntil") or body.get("valid_until")
+    if valid_until is None:
+        unsigned = getattr(tx, "unsigned", None)
+        if unsigned is not None:
+            valid_until = getattr(unsigned, "valid_until", None)
+    if valid_until is None:
+        valid_until = getattr(tx, "valid_until", None)
+    try:
+        return int(valid_until) if valid_until is not None else None
+    except Exception:
+        return None
+
+
+def _tx_salt(tx: Any) -> Optional[bytes]:
+    body = _tx_body(tx)
+    salt = None
+    if isinstance(body, dict):
+        salt = body.get("salt")
+    if salt is None:
+        unsigned = getattr(tx, "unsigned", None)
+        if unsigned is not None:
+            salt = getattr(unsigned, "salt", None)
+    if salt is None:
+        salt = getattr(tx, "salt", None)
+    if isinstance(salt, (bytes, bytearray)):
+        return bytes(salt)
+    return None
 
 
 def _tx_gas_limit(tx: Any) -> int:
@@ -165,6 +202,28 @@ def _tx_chain_id(tx: Any) -> Optional[int]:
         return None
 
 
+def _current_height() -> int:
+    try:
+        ctx = deps.get_ctx()
+    except Exception:
+        return 0
+    head = None
+    try:
+        getter = getattr(ctx, "get_head", None)
+        if callable(getter):
+            head = getter()
+    except Exception:
+        head = None
+    if isinstance(head, dict):
+        height = head.get("height")
+        if height is not None:
+            try:
+                return int(height)
+            except Exception:
+                return 0
+    return 0
+
+
 class MempoolService:
     def __init__(
         self,
@@ -194,7 +253,11 @@ class MempoolService:
             os.getenv("ANIMICA_MEMPOOL_REJECTION_TTL_S", "300") or 300
         )
         self._last_rejections: dict[str, dict[str, Any]] = {}
-        # Per-sender admission locks to prevent TOCTOU race between getNextNonce and admission
+        self._replay_window_blocks = int(
+            os.getenv("ANIMICA_REPLAY_WINDOW_BLOCKS", "200") or 200
+        )
+        self._recent_txids: dict[str, int] = {}
+        # Per-sender admission locks to serialize balance/pending accounting
         self._sender_locks: dict[str, threading.RLock] = {}
         self._sender_locks_lock = threading.RLock()
         if self._persist_enabled:
@@ -218,6 +281,13 @@ class MempoolService:
         expired = [k for k, v in self._last_rejections.items() if v.get("ts", 0) < cutoff]
         for k in expired:
             self._last_rejections.pop(k, None)
+
+    def _prune_recent_txids(self, current_height: int) -> None:
+        if not self._recent_txids:
+            return
+        expired = [h for h, until in self._recent_txids.items() if until < current_height]
+        for h in expired:
+            self._recent_txids.pop(h, None)
 
     def get_rejection(self, tx_hash_hex: str) -> dict[str, Any] | None:
         tx_hash_hex = _normalize_hash_hex(tx_hash_hex)
@@ -284,7 +354,9 @@ class MempoolService:
             if expires_at is not None and expires_at <= now:
                 continue
             sender = _sender_hex(_sender_bytes(entry.tx))
-            nonce = _tx_nonce(entry.tx)
+            valid_after = _tx_valid_after(entry.tx)
+            valid_until = _tx_valid_until(entry.tx)
+            salt = _tx_salt(entry.tx)
             gas_limit = _tx_gas_limit(entry.tx)
             fee = EffectiveFee.from_tx(entry.tx)
             entries.append(
@@ -294,7 +366,9 @@ class MempoolService:
                     "first_seen": first_seen,
                     "expires_at": expires_at,
                     "sender": sender,
-                    "nonce": int(nonce) if nonce is not None else None,
+                    "valid_after": int(valid_after) if valid_after is not None else None,
+                    "valid_until": int(valid_until) if valid_until is not None else None,
+                    "salt": "0x" + bytes(salt).hex() if salt is not None else None,
                     "gas_limit": int(gas_limit) if gas_limit is not None else None,
                     "fee_wei": int(fee.effective_gas_price(None)),
                     "chain_id": int(self.chain_id),
@@ -409,6 +483,16 @@ class MempoolService:
                 },
             )
 
+        current_height = _current_height()
+        self._prune_recent_txids(current_height)
+        if tx_hash_hex in self._recent_txids:
+            self._record_rejection(
+                tx_hash_hex,
+                "replay",
+                {"tx_hash": tx_hash_hex},
+            )
+            raise Replay(tx_hash=tx_hash_hex)
+
         if isinstance(tx, dict):
             try:
                 raw_from_dict = normalize_tx_bytes(tx)
@@ -464,15 +548,14 @@ class MempoolService:
             )
 
         sender = _sender_bytes(tx)
-        nonce = _tx_nonce(tx)
-        if sender is None or nonce is None:
+        if sender is None:
             self._record_rejection(
                 tx_hash_hex,
-                "missing_sender_or_nonce",
-                {"sender": _sender_hex(sender), "nonce": nonce},
+                "missing_sender",
+                {"sender": _sender_hex(sender)},
             )
             raise AdmissionError(
-                "missing sender or nonce",
+                "missing sender",
                 context={"tx_hash": tx_hash_hex},
             )
 
@@ -482,199 +565,71 @@ class MempoolService:
         sender_lock = self._get_sender_lock(sender_hex)
 
         with sender_lock:
-            # Nonce validation inside lock to ensure atomic check with admission
-            if self.state_db is not None and hasattr(self.state_db, "get_nonce"):
+            valid_after = _tx_valid_after(tx)
+            valid_until = _tx_valid_until(tx)
+            salt = _tx_salt(tx)
+            if valid_after is None or valid_until is None or salt is None:
+                self._record_rejection(
+                    tx_hash_hex,
+                    "missing_validity_window",
+                    {"valid_after": valid_after, "valid_until": valid_until},
+                )
+                raise AdmissionError(
+                    "missing validity window fields",
+                    context={"tx_hash": tx_hash_hex},
+                )
+
+            max_ttl_blocks = int(os.getenv("ANIMICA_MAX_TX_TTL_BLOCKS", "200") or 200)
+            if valid_until - valid_after > max_ttl_blocks:
+                self._record_rejection(
+                    tx_hash_hex,
+                    "ttl_too_long",
+                    {"valid_after": valid_after, "valid_until": valid_until},
+                )
+                raise AdmissionError(
+                    "validity window exceeds maximum TTL",
+                    context={"tx_hash": tx_hash_hex, "max_ttl_blocks": max_ttl_blocks},
+                )
+
+            current_height = _current_height()
+            if current_height < valid_after:
+                self._record_rejection(
+                    tx_hash_hex,
+                    "not_yet_valid",
+                    {"valid_after": valid_after, "current_height": current_height},
+                )
+                raise NotYetValid(
+                    valid_after=valid_after,
+                    current_height=current_height,
+                    sender=sender_hex,
+                    tx_hash=tx_hash_hex,
+                )
+            if current_height > valid_until:
+                self._record_rejection(
+                    tx_hash_hex,
+                    "expired",
+                    {"valid_until": valid_until, "current_height": current_height},
+                )
+                raise Expired(
+                    valid_until=valid_until,
+                    current_height=current_height,
+                    sender=sender_hex,
+                    tx_hash=tx_hash_hex,
+                )
+
+            if self.tx_index is not None and hasattr(self.tx_index, "exists"):
                 try:
-                    confirmed_nonce = int(self.state_db.get_nonce(sender))
-                except Exception as exc:
-                    log.warning("mempool nonce check failed; rejecting", exc_info=exc)
-                    self._record_rejection(
-                        tx_hash_hex,
-                        "nonce_state_unavailable",
-                        {
-                            "sender": sender_hex,
-                            "error": str(exc),
-                        },
-                    )
-                    raise AdmissionError(
-                        "nonce state unavailable",
-                        context={
-                            "tx_hash": tx_hash_hex,
-                            "sender": sender_hex,
-                            "error": str(exc),
-                        },
-                    ) from exc
-                else:
-                    pending_map = self._pending_nonce_map(sender_hex)
-                    pending_nonces = set(pending_map.keys())
-                    expected_next = self._compute_next_expected(
-                        confirmed_nonce, pending_nonces
-                    )
-
-                    _DEBUG_NONCE = os.environ.get("ANIMICA_DEBUG_NONCE") == "1"
-                    highest_pending = max(pending_nonces) if pending_nonces else None
-
-                    if nonce in pending_map:
-                        existing_hash = pending_map.get(nonce)
+                    if self.tx_index.exists(tx_hash_bytes):
                         self._record_rejection(
                             tx_hash_hex,
-                            "already_pending",
-                            {
-                                "sender": sender_hex,
-                                "nonce": nonce,
-                                "existing_hash": existing_hash,
-                                "tx_hash": tx_hash_hex,
-                            },
+                            "replay",
+                            {"tx_hash": tx_hash_hex},
                         )
-                        log.warning(
-                            "mempool: rejecting transaction with duplicate nonce",
-                            extra={
-                                "sender": sender_hex,
-                                "tx_nonce": nonce,
-                                "existing_hash": existing_hash,
-                                "decision": "reject_already_pending",
-                                "tx_hash": tx_hash_hex,
-                            },
-                        )
-                        raise AdmissionError(
-                            "transaction with same sender/nonce already pending",
-                            context={
-                                "sender": sender_hex,
-                                "nonce": nonce,
-                                "existing_hash": existing_hash,
-                                "tx_hash": tx_hash_hex,
-                            },
-                        )
-
-                    if _DEBUG_NONCE:
-                        log.info(
-                            "mempool nonce validation: authoritative check",
-                            extra={
-                                "sender": sender_hex,
-                                "tx_nonce": nonce,
-                                "confirmed_nonce": confirmed_nonce,
-                                "highest_pending_nonce": highest_pending,
-                                "expected_next_nonce": expected_next,
-                                "tx_hash": tx_hash_hex,
-                            },
-                        )
-                    else:
-                        log.debug(
-                            "mempool nonce validation: checking transaction nonce",
-                            extra={
-                                "sender": sender_hex,
-                                "tx_nonce": nonce,
-                                "expected_nonce": expected_next,
-                                "tx_hash": tx_hash_hex,
-                            },
-                        )
-
-                    if nonce < confirmed_nonce:
-                        self._record_rejection(
-                            tx_hash_hex,
-                            "nonce_too_low",
-                            {
-                                "confirmed": confirmed_nonce,
-                                "expected": expected_next,
-                                "got": nonce,
-                            },
-                        )
-                        log.warning(
-                            "mempool: rejecting transaction with nonce_too_low",
-                            extra={
-                                "sender": sender_hex,
-                                "tx_nonce": nonce,
-                                "expected_nonce": expected_next,
-                                "confirmed_nonce": confirmed_nonce,
-                                "decision": "reject_nonce_too_low",
-                                "tx_hash": tx_hash_hex,
-                            },
-                        )
-                        raise NonceTooLow(
-                            expected_nonce=expected_next,
-                            got_nonce=nonce,
-                            sender=sender_hex,
-                            tx_hash=tx_hash_hex,
-                        )
-
-                    if nonce > expected_next:
-                        self._record_rejection(
-                            tx_hash_hex,
-                            "nonce_gap",
-                            {
-                                "confirmed": confirmed_nonce,
-                                "expected": expected_next,
-                                "got": nonce,
-                            },
-                        )
-                        log.warning(
-                            "mempool: rejecting transaction with nonce_gap",
-                            extra={
-                                "sender": sender_hex,
-                                "tx_nonce": nonce,
-                                "confirmed_nonce": confirmed_nonce,
-                                "expected_next_nonce": expected_next,
-                                "highest_pending": highest_pending,
-                                "decision": "reject_nonce_gap",
-                                "tx_hash": tx_hash_hex,
-                            },
-                        )
-                        raise NonceGap(
-                            expected_nonce=expected_next,
-                            got_nonce=nonce,
-                            sender=sender_hex,
-                            tx_hash=tx_hash_hex,
-                        )
-
-                    if nonce < expected_next:
-                        self._record_rejection(
-                            tx_hash_hex,
-                            "nonce_too_low",
-                            {
-                                "confirmed": confirmed_nonce,
-                                "expected": expected_next,
-                                "got": nonce,
-                            },
-                        )
-                        log.warning(
-                            "mempool: rejecting transaction with nonce_too_low",
-                            extra={
-                                "sender": sender_hex,
-                                "tx_nonce": nonce,
-                                "expected_nonce": expected_next,
-                                "confirmed_nonce": confirmed_nonce,
-                                "decision": "reject_nonce_too_low",
-                                "tx_hash": tx_hash_hex,
-                            },
-                        )
-                        raise NonceTooLow(
-                            expected_nonce=expected_next,
-                            got_nonce=nonce,
-                            sender=sender_hex,
-                            tx_hash=tx_hash_hex,
-                        )
-
-                    if _DEBUG_NONCE:
-                        log.info(
-                            "mempool: accepting transaction nonce",
-                            extra={
-                                "sender": sender_hex,
-                                "tx_nonce": nonce,
-                                "expected_nonce": expected_next,
-                                "confirmed_nonce": confirmed_nonce,
-                                "decision": "accept_nonce",
-                            },
-                        )
-                    else:
-                        log.debug(
-                            "mempool: accepting transaction nonce",
-                            extra={
-                                "sender": sender_hex,
-                                "tx_nonce": nonce,
-                                "expected_nonce": expected_next,
-                                "decision": "accept_nonce",
-                            },
-                        )
+                        raise Replay(tx_hash=tx_hash_hex, sender=sender_hex)
+                except Replay:
+                    raise
+                except Exception:
+                    pass
 
             gas_limit = _tx_gas_limit(tx)
             if gas_limit <= 0:
@@ -703,6 +658,60 @@ class MempoolService:
                     sender=sender_hex,
                 )
 
+            # Pending debit accounting (per-sender)
+            if self.state_db is not None and hasattr(self.state_db, "get_balance"):
+                try:
+                    balance = int(self.state_db.get_balance(sender))
+                except Exception:
+                    balance = None
+                if balance is not None:
+                    try:
+                        new_spend = int(estimate_max_spend(tx).total_max_spend)
+                    except Exception:
+                        new_spend = 0
+
+                    pending_entries = []
+                    try:
+                        pending_entries = list(self.pool.index.get_by_sender(sender_hex))
+                    except Exception:
+                        pending_entries = []
+
+                    pending_spend = 0
+                    pending_by_fee: list[tuple[int, bytes, int]] = []
+                    for entry in pending_entries:
+                        try:
+                            spend = int(estimate_max_spend(entry.tx).total_max_spend)
+                        except Exception:
+                            spend = 0
+                        pending_spend += spend
+                        fee_val = int(getattr(entry.meta, "effective_fee_wei", 0))
+                        pending_by_fee.append((fee_val, entry.tx_hash, spend))
+
+                    available = balance - pending_spend
+                    if available < new_spend:
+                        pending_by_fee.sort(key=lambda item: (item[0], item[1].hex()))
+                        for fee_val, tx_hash_bytes, spend in pending_by_fee:
+                            if available >= new_spend:
+                                break
+                            if offered <= fee_val:
+                                break
+                            self.pool.remove_included([tx_hash_bytes])
+                            pending_spend -= spend
+                            available = balance - pending_spend
+
+                        if available < new_spend:
+                            self._record_rejection(
+                                tx_hash_hex,
+                                "insufficient_funds_pending",
+                                {"required": new_spend, "available": max(0, available)},
+                            )
+                            raise InsufficientFundsPending(
+                                sender=sender_hex,
+                                tx_hash=tx_hash_hex,
+                                required=new_spend,
+                                available=max(0, available),
+                            )
+
             tx_to_store: Any = tx
             if not isinstance(tx, Tx):
                 try:
@@ -713,7 +722,6 @@ class MempoolService:
 
             meta = TxMeta(
                 sender=sender_hex,
-                nonce=nonce,
                 gas_limit=gas_limit,
                 size_bytes=len(raw_bytes),
                 first_seen=time.time(),
@@ -721,6 +729,9 @@ class MempoolService:
                 effective_fee_wei=offered,
                 origin=origin_label,
                 peer_id=origin_peer,
+                valid_after=valid_after,
+                valid_until=valid_until,
+                salt=salt,
             )
             pool_tx = PoolTx(
                 tx=tx_to_store,
@@ -731,10 +742,9 @@ class MempoolService:
             )
             
             log.info(
-                "MempoolService.submit: calling pool.add(), tx_hash=%s, sender=%s, nonce=%d",
+                "MempoolService.submit: calling pool.add(), tx_hash=%s, sender=%s",
                 tx_hash_hex,
                 meta.sender,
-                meta.nonce,
             )
             try:
                 self.pool.add(pool_tx, meta, is_local=local)
@@ -745,6 +755,7 @@ class MempoolService:
                     {"error": str(exc)},
                 )
                 raise
+            self._recent_txids[tx_hash_hex] = current_height + self._replay_window_blocks
         
         # Verify tx was actually added to pool
         if not self.has_hash(tx_hash_hex):
@@ -772,7 +783,6 @@ class MempoolService:
             extra={
                 "hash": tx_hash_hex,
                 "from": meta.sender,
-                "nonce": meta.nonce,
                 "origin": origin_label,
                 "peer": origin_peer,
             },
@@ -911,7 +921,7 @@ class MempoolService:
             return {"evicted": 0}
 
         selection = select_for_block(
-            head_state={"chain_id": self.chain_id},
+            head_state={"chain_id": self.chain_id, "height": _current_height()},
             limits={"max_gas": 10**18, "max_bytes": 10**18, "max_txs": None},
             pending=snapshot.entries,
             decode=None,
@@ -934,51 +944,6 @@ class MempoolService:
             self._persist_snapshot()
         return {"evicted": evicted}
 
-    def pending_nonces(self, sender_bytes: bytes) -> set[int]:
-        """
-        Return the set of pending nonces for a sender currently in the pool.
-        """
-        sender_hex = _sender_hex(sender_bytes)
-        return set(self._pending_nonce_map(sender_hex).keys())
-
-    def pending_nonce(
-        self, sender_bytes: bytes, confirmed_nonce: Optional[int] = None
-    ) -> Optional[int]:
-        """
-        Return the next expected nonce using confirmed nonce + contiguous pending nonces.
-
-        If no confirmed nonce is available and there are pending txs, returns None.
-        """
-        if confirmed_nonce is None:
-            confirmed_nonce = self._get_confirmed_nonce(sender_bytes)
-
-        pending_nonces = self.pending_nonces(sender_bytes)
-        if not pending_nonces:
-            return None
-        if confirmed_nonce is None:
-            return None
-        return self._compute_next_expected(confirmed_nonce, pending_nonces)
-
-    def get_next_nonce(self, sender_bytes: bytes, confirmed_nonce: int) -> int:
-        """
-        Get the next nonce for a sender, accounting for both confirmed state and pending txs.
-
-        This method provides the authoritative nonce calculation used by both:
-        - RPC state.getNextNonce
-        - Mempool admission nonce validation
-
-        Args:
-            sender_bytes: The sender address as bytes
-            confirmed_nonce: The confirmed nonce from chain state
-
-        Returns:
-            The next nonce to use: confirmed_nonce + contiguous pending nonces.
-        """
-        sender_hex = _sender_hex(sender_bytes)
-        sender_lock = self._get_sender_lock(sender_hex)
-        with sender_lock:
-            pending_nonces = self.pending_nonces(sender_bytes)
-            return self._compute_next_expected(confirmed_nonce, pending_nonces)
     
     def _get_sender_lock(self, sender_hex: str) -> threading.RLock:
         """
@@ -994,42 +959,6 @@ class MempoolService:
             if sender_hex not in self._sender_locks:
                 self._sender_locks[sender_hex] = threading.RLock()
             return self._sender_locks[sender_hex]
-
-    def _pending_nonce_map(self, sender_hex: str) -> dict[int, str]:
-        """
-        Return a map of nonce -> tx_hash_hex for pending transactions from sender.
-        """
-        pending: dict[int, str] = {}
-        for hash_bytes, entry in self.pool.index.all_items():
-            meta = entry.meta
-            if getattr(meta, "sender", None) != sender_hex:
-                continue
-            nonce = getattr(meta, "nonce", None)
-            if nonce is None:
-                continue
-            try:
-                nonce_int = int(nonce)
-            except Exception:
-                continue
-            hash_hex = _normalize_hash_hex("0x" + _normalize_hash_bytes(hash_bytes).hex())
-            pending.setdefault(nonce_int, hash_hex)
-        return pending
-
-    def _compute_next_expected(
-        self, confirmed_nonce: int, pending_nonces: set[int]
-    ) -> int:
-        next_expected = int(confirmed_nonce)
-        while next_expected in pending_nonces:
-            next_expected += 1
-        return next_expected
-
-    def _get_confirmed_nonce(self, sender_bytes: bytes) -> Optional[int]:
-        if self.state_db is None or not hasattr(self.state_db, "get_nonce"):
-            return None
-        try:
-            return int(self.state_db.get_nonce(sender_bytes))
-        except Exception:
-            return None
 
     def diagnose(self, *, limit: int = 1000) -> dict[str, dict[str, Any]]:
         snapshot = self.snapshot(limit=limit)

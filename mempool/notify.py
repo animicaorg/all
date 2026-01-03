@@ -35,7 +35,8 @@ pendingTx
     {
       "hash": "0x..",
       "sender": "0x..",          # optional
-      "nonce":  7,               # optional
+      "validAfter": 100,         # optional
+      "validUntil": 200,         # optional
       "effectiveFee": 1234,      # optional (tip or 1559-style effective)
       "size":  192,              # optional bytes
       "meta": {...}
@@ -210,7 +211,8 @@ def notify_pending_tx(
     tx_hash: Any,
     *,
     sender: Any = None,
-    nonce: Optional[int] = None,
+    valid_after: Optional[int] = None,
+    valid_until: Optional[int] = None,
     effective_fee: Optional[int] = None,
     size: Optional[int] = None,
     meta: Optional[JSONDict] = None,
@@ -221,8 +223,10 @@ def notify_pending_tx(
     }
     if sender is not None:
         payload["sender"] = _to_hex(sender) or sender
-    if nonce is not None:
-        payload["nonce"] = int(nonce)
+    if valid_after is not None:
+        payload["validAfter"] = int(valid_after)
+    if valid_until is not None:
+        payload["validUntil"] = int(valid_until)
     if effective_fee is not None:
         payload["effectiveFee"] = int(effective_fee)
     if size is not None:

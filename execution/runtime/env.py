@@ -25,7 +25,7 @@ Example
     params = ChainParams(chain_id=1)   # from core.types.params
     block_env = make_block_env(head, params, coinbase="0x00"*20)
 
-    tx = {"gasPrice": 5, "from": "0x12..", "nonce": 7}
+    tx = {"gasPrice": 5, "from": "0x12.."}
     tx_env = make_tx_env(tx, block_env, tip_price=2)  # optional override
 
 Notes
@@ -241,7 +241,6 @@ def make_tx_env(
     base_price: Optional[int] = None,
     tip_price: Optional[int] = None,
     sender: Optional[Any] = None,
-    nonce: Optional[int] = None,
 ) -> TxEnv:
     """
     Build a TxEnv using a transaction-like object and an existing BlockEnv.
@@ -253,7 +252,7 @@ def make_tx_env(
         - gas_price, gasPrice, maxFeePerGas (treated as total price if present)
         - maxPriorityFeePerGas (tip component)
         - from, sender (address)
-        - nonce
+        - valid_after / valid_until (if present)
     block_env : BlockEnv
         The block context produced by make_block_env.
     gas_price : Optional[int]
@@ -265,9 +264,6 @@ def make_tx_env(
         Override tip component (defaults from tx.maxPriorityFeePerGas or 0).
     sender : Optional[Any]
         Override sender (bytes or hex string).
-    nonce : Optional[int]
-        Override tx nonce.
-
     Returns
     -------
     TxEnv (alias of TxContext)
@@ -323,10 +319,6 @@ def make_tx_env(
     if (sender_src is None or not _as_bytes(sender_src)) and unsigned is not None:
         sender_src = _get(unsigned, "sender", "from", "from_address")
     snd = _as_bytes(sender_src, expect_len=ADDRESS_LEN)
-    nn = _as_int(nonce if nonce is not None else _first_present(tx, ("nonce",)), default=0)
-    if nn == 0 and unsigned is not None:
-        nn = _as_int(_get(unsigned, "nonce"), default=nn)
-
     chain_id = _as_int(getattr(block_env, "chain_id", 0), default=0)
     if chain_id <= 0:
         chain_id = _as_int(_first_present(tx, ("chainId", "chain_id")), default=0)
@@ -339,7 +331,6 @@ def make_tx_env(
         "base_price": bp,
         "tip_price": max(0, gp - bp),
         "sender": snd if snd else b"\x00" * ADDRESS_LEN,
-        "nonce": nn,
         # Optional/bonus info if supported by TxContext:
         "block_height": getattr(block_env, "height", 0),
         "block_timestamp": getattr(block_env, "timestamp", 0),

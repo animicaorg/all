@@ -55,12 +55,6 @@ class StateView:
         acc = self.accounts.get(addr)
         return acc.balance if acc is not None else 0
 
-    def nonce_of(self, address: bytes | bytearray | memoryview) -> int:
-        """Return current nonce for `address` (0 if absent)."""
-        addr = _as_bytes(address, name="address")
-        acc = self.accounts.get(addr)
-        return acc.nonce if acc is not None else 0
-
     def code_hash_of(self, address: bytes | bytearray | memoryview) -> bytes:
         """Return 32-byte code hash for `address` (all-zero if absent/EOA)."""
         addr = _as_bytes(address, name="address")
