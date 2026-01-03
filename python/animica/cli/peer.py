@@ -114,6 +114,40 @@ async def _rpc_call_with_error(
     return data.get("result"), None
 
 
+async def _rpc_call_with_response(
+    method: str,
+    params: Optional[List[Any]] = None,
+    *,
+    rpc_url: str,
+    timeout: Optional[float] = None,
+) -> tuple[Optional[Any], Optional[Dict[str, Any]], Dict[str, Any]]:
+    """Make a JSON-RPC call and return (result, error, full_response)."""
+    resolved_timeout = resolve_timeout("RPC timeout", timeout, env_var=RPC_TIMEOUT_ENV, default=DEFAULT_RPC_TIMEOUT)
+    payload: Dict[str, Any] = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": method,
+        "params": params or [],
+    }
+    async with httpx.AsyncClient(timeout=resolved_timeout) as client:
+        response = await client.post(rpc_url, json=payload, headers=_rpc_headers())
+        try:
+            data = response.json()
+        except json.JSONDecodeError as exc:
+            body = response.text.strip()
+            snippet = body[:200] + ("..." if len(body) > 200 else "")
+            detail = snippet if snippet else "<empty response>"
+            raise RuntimeError(
+                f"RPC returned non-JSON response (status {response.status_code}): {detail}"
+            ) from exc
+    error = data.get("error")
+    if error:
+        if isinstance(error, dict):
+            return None, error, data
+        return None, {"message": str(error)}, data
+    return data.get("result"), None, data
+
+
 def _rpc_error_message(error: Optional[Dict[str, Any]]) -> Optional[str]:
     if not error:
         return None
@@ -280,10 +314,30 @@ def _rpc_operation_succeeded(result: Any) -> tuple[bool, Optional[str]]:
         Tuple of (success flag, error message if available).
     """
     if isinstance(result, dict):
+        if "ok" in result:
+            ok = bool(result.get("ok"))
+            error_info = result.get("error")
+            error_msg = None
+            if isinstance(error_info, dict):
+                error_msg = error_info.get("message") or error_info.get("error")
+            elif error_info:
+                error_msg = str(error_info)
+            if not ok:
+                return ok, error_msg or result.get("message") or "RPC reported failure"
+            return ok, result.get("message")
         if "success" in result:
             return bool(result.get("success")), result.get("error") or result.get("message")
         if "result" in result and isinstance(result.get("result"), bool):
             return bool(result.get("result")), result.get("error") or result.get("message")
+        if any(key in result for key in ("imported", "skipped", "invalid")):
+            if result.get("error"):
+                error_info = result.get("error")
+                if isinstance(error_info, dict):
+                    error_msg = error_info.get("message") or error_info.get("error")
+                else:
+                    error_msg = str(error_info)
+                return False, error_msg or result.get("message")
+            return True, result.get("message")
         if (
             "dial_attempted" in result
             or "dial_success" in result
@@ -312,6 +366,26 @@ def _rpc_operation_succeeded(result: Any) -> tuple[bool, Optional[str]]:
 
     # Primitive responses (bool/int/str) - treat truthy as success
     return bool(result), None
+
+
+def _rpc_import_summary(result: Any) -> Optional[str]:
+    if not isinstance(result, dict):
+        return None
+    imported = result.get("imported")
+    if imported is None:
+        imported = result.get("added")
+    skipped = result.get("skipped")
+    invalid = result.get("invalid")
+    parts = []
+    if isinstance(imported, (int, float)):
+        parts.append(f"imported {int(imported)}")
+    if isinstance(skipped, (int, float)):
+        parts.append(f"skipped {int(skipped)}")
+    if isinstance(invalid, (int, float)):
+        parts.append(f"invalid {int(invalid)}")
+    if parts:
+        return ", ".join(parts)
+    return None
 
 
 def _fetch_peer_status(rpc_url: str) -> tuple[Optional[Dict[str, Any]], Optional[str]]:
@@ -1114,6 +1188,9 @@ def bootstrap_peers(
     probe: bool = typer.Option(
         False, "--probe", help="Probe connectivity before adding"
     ),
+    verbose: bool = typer.Option(
+        False, "--verbose", "-v", help="Show detailed RPC responses"
+    ),
     push: Optional[bool] = typer.Option(
         None,
         "--push/--no-push",
@@ -1215,6 +1292,7 @@ def bootstrap_peers(
 
     rpc_added = False
     rpc_error: Optional[str] = None
+    last_import_result: Optional[Any] = None
     if should_push and target_rpc:
         running, probe_error = _probe_rpc_for_peer_injection(target_rpc)
         if not running:
@@ -1239,9 +1317,15 @@ def bootstrap_peers(
                         allow_remote_rpc=allow_remote_rpc,
                         method=method_name,
                     )
-                    import_result, error = asyncio.run(
-                        _rpc_call_with_error(method_name, [seeds], rpc_url=url)
+                    import_result, error, raw_response = asyncio.run(
+                        _rpc_call_with_response(method_name, [seeds], rpc_url=url)
                     )
+                    if verbose:
+                        typer.secho(
+                            f"RPC response ({method_name}):",
+                            fg=typer.colors.CYAN,
+                        )
+                        typer.echo(json.dumps(raw_response, indent=2, default=str))
                     if error and _is_unauthorized_error(error):
                         rpc_error = _rpc_error_message(error) or "UNAUTHORIZED"
                         break
@@ -1250,6 +1334,7 @@ def bootstrap_peers(
                         continue
 
                     rpc_added, rpc_error = _rpc_operation_succeeded(import_result)
+                    last_import_result = import_result
                     if rpc_added:
                         break
                     rpc_error = (
@@ -1262,8 +1347,10 @@ def bootstrap_peers(
                     break
 
             if rpc_added:
+                summary = _rpc_import_summary(last_import_result)
+                suffix = f" ({summary})" if summary else ""
                 typer.secho(
-                    f"✓ Pushed {stored} seed(s) into running node",
+                    f"✓ Pushed {stored} seed(s) into running node{suffix}",
                     fg=typer.colors.GREEN,
                 )
                 status, status_error = _fetch_peer_status(target_rpc)
