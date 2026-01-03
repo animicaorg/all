@@ -139,6 +139,23 @@ def _tx_valid_until(tx: Any) -> Optional[int]:
         return None
 
 
+def _tx_nonce(tx: Any) -> Optional[int]:
+    body = _tx_body(tx)
+    nonce = None
+    if isinstance(body, dict):
+        nonce = body.get("nonce")
+    if nonce is None:
+        unsigned = getattr(tx, "unsigned", None)
+        if unsigned is not None:
+            nonce = getattr(unsigned, "nonce", None)
+    if nonce is None:
+        nonce = getattr(tx, "nonce", None)
+    try:
+        return int(nonce) if nonce is not None else None
+    except Exception:
+        return None
+
+
 def _tx_salt(tx: Any) -> Optional[bytes]:
     body = _tx_body(tx)
     salt = None
@@ -569,14 +586,33 @@ class MempoolService:
             valid_until = _tx_valid_until(tx)
             salt = _tx_salt(tx)
             if valid_after is None or valid_until is None or salt is None:
+                missing = []
+                if valid_after is None:
+                    missing.append("validAfter")
+                if valid_until is None:
+                    missing.append("validUntil")
+                if salt is None:
+                    missing.append("salt")
+                nonce = _tx_nonce(tx)
                 self._record_rejection(
                     tx_hash_hex,
                     "missing_validity_window",
-                    {"valid_after": valid_after, "valid_until": valid_until},
+                    {
+                        "valid_after": valid_after,
+                        "valid_until": valid_until,
+                        "missing": missing,
+                        "expected_location": "tx.body",
+                    },
                 )
                 raise AdmissionError(
                     "missing validity window fields",
-                    context={"tx_hash": tx_hash_hex},
+                    context={
+                        "tx_hash": tx_hash_hex,
+                        "sender": sender_hex,
+                        "nonce": nonce,
+                        "missing": missing,
+                        "expected_location": "tx.body",
+                    },
                 )
 
             max_ttl_blocks = int(os.getenv("ANIMICA_MAX_TX_TTL_BLOCKS", "200") or 200)

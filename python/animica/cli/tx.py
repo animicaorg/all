@@ -26,6 +26,7 @@ app = typer.Typer(help="Transaction commands")
 ANM_BASE_UNITS = 1_000_000_000  # 1 ANM = 1e9 base units (matches your debug math)
 DEFAULT_DOMAIN = "tx"
 DEFAULT_PREHASH = "sha3-512"
+DEFAULT_TX_TTL_BLOCKS = 120
 
 try:
     import cbor2  # type: ignore
@@ -86,6 +87,11 @@ class NonceResolutionError(RuntimeError):
         self.rpc_reachable = rpc_reachable
         self.attempts = attempts
         self.nonce_source = nonce_source
+
+
+class ValidityWindowResolutionError(RuntimeError):
+    pass
+
 
 def _rpc(
     url: str,
@@ -852,6 +858,77 @@ def _get_default_max_fee(rpc_url: str) -> int:
     return 1
 
 
+def _extract_head_height(status: Any) -> int | None:
+    if isinstance(status, dict):
+        for key in (
+            "head_height",
+            "headHeight",
+            "height",
+            "blockHeight",
+            "currentBlock",
+            "best_block_height",
+            "bestBlockHeight",
+        ):
+            value = _coerce_int(status.get(key))
+            if value is not None:
+                return value
+        return None
+    return _coerce_int(status)
+
+
+def _get_head_height(rpc_url: str) -> int | None:
+    try:
+        head = _rpc(rpc_url, "chain.getHead", [])
+    except Exception:
+        return None
+    if isinstance(head, dict):
+        return _coerce_int(head.get("height") or head.get("number") or head.get("head_height"))
+    return _coerce_int(head)
+
+
+def _resolve_validity_window(
+    rpc_url: str,
+    *,
+    valid_from: Optional[int],
+    valid_until: Optional[int],
+    ttl_blocks: Optional[int],
+    head_height_hint: Optional[int],
+    verbose: bool = False,
+) -> tuple[int, int]:
+    ttl_value = int(ttl_blocks) if ttl_blocks is not None else DEFAULT_TX_TTL_BLOCKS
+    if ttl_value <= 0:
+        raise ValueError("TTL must be a positive block count.")
+
+    resolved_from = int(valid_from) if valid_from is not None else None
+    resolved_until = int(valid_until) if valid_until is not None else None
+    if resolved_from is not None and resolved_from < 0:
+        raise ValueError("--valid-from must be ≥ 0.")
+    if resolved_until is not None and resolved_until < 0:
+        raise ValueError("--valid-until must be ≥ 0.")
+
+    if resolved_from is None or resolved_until is None:
+        head_height = head_height_hint
+        if head_height is None:
+            head_height = _get_head_height(rpc_url)
+        if head_height is None:
+            raise ValidityWindowResolutionError(
+                "Cannot infer validity window without RPC; pass --valid-from/--valid-until (or --ttl)."
+            )
+        if resolved_from is None:
+            resolved_from = head_height
+        if resolved_until is None:
+            resolved_until = resolved_from + max(1, ttl_value)
+
+    if resolved_until <= resolved_from:
+        resolved_until = resolved_from + 1
+        if verbose:
+            console.print(
+                f"[yellow]Adjusted valid-until to {resolved_until} to be > valid-from ({resolved_from}).[/yellow]"
+            )
+
+    return resolved_from, resolved_until
+
+
 def _build_tx_body(
     *,
     chain_id: int,
@@ -862,6 +939,9 @@ def _build_tx_body(
     gas_limit: int,
     max_fee: int,
     data: bytes,
+    valid_after: int,
+    valid_until: int,
+    salt: bytes,
 ) -> Dict[str, Any]:
     # Keep keys stable + canonical CBOR in _cbor().
     # IMPORTANT: do not omit fields; node-side canonicalization often assumes presence.
@@ -878,6 +958,9 @@ def _build_tx_body(
         "maxFee": int(max_fee),
         "data": data,        # CBOR bstr
         "chainId": int(chain_id),
+        "validAfter": int(valid_after),
+        "validUntil": int(valid_until),
+        "salt": bytes(salt),
     }
 
 
@@ -996,20 +1079,22 @@ def _maybe_force_sync(rpc: str, *, verbose: bool = False) -> None:
             console.print(f"[dim]sync.force failed: {exc}[/dim]")
 
 
-def _ensure_node_ready_for_tx(rpc: str) -> None:
+def _ensure_node_ready_for_tx(rpc: str) -> int | None:
     try:
         status = _rpc(rpc, "sync.getStatus", [{"source": "refresh"}])
     except Exception:
         try:
             status = _rpc(rpc, "sync.getStatus", [])
         except Exception:
-            return
+            return None
+
+    head_height = _extract_head_height(status)
 
     if not isinstance(status, dict):
-        return
+        return head_height
     allowed, _info = assess_tx_submission_readiness(status)
     if allowed:
-        return
+        return head_height
 
     phase = status.get("phase") or status.get("state")
     phase_name = str(phase).upper() if phase is not None else ""
@@ -1018,6 +1103,8 @@ def _ensure_node_ready_for_tx(rpc: str) -> None:
         console.print(Pretty(status))
         console.print("\n[yellow]Tip:[/yellow] Wait for sync to complete or run `animica sync status`.")
         raise typer.Exit(code=1)
+
+    return head_height
 
 
 @app.command("send")
@@ -1031,6 +1118,15 @@ def send(
     nonce: str = typer.Option("auto", "--nonce", help="Nonce override (default: auto)"),
     nonce_source: str = typer.Option(
         "confirmed", "--nonce-source", help="Nonce source: confirmed|pending (default: confirmed)"
+    ),
+    valid_from: Optional[int] = typer.Option(
+        None, "--valid-from", help="First valid block height (default: current head height)"
+    ),
+    valid_until: Optional[int] = typer.Option(
+        None, "--valid-until", help="Last valid block height (default: head height + TTL)"
+    ),
+    ttl_blocks: Optional[int] = typer.Option(
+        None, "--ttl", help=f"Validity window TTL in blocks (default: {DEFAULT_TX_TTL_BLOCKS})"
     ),
     rpc_url: Optional[str] = typer.Option(None, "--rpc-url", help="RPC URL (default: node)"),
     allow_remote_rpc: bool = typer.Option(
@@ -1052,7 +1148,7 @@ def send(
     # Resolve RPC
     rpc = _resolve_rpc_url(rpc_url)
     guard_bootstrap_rpc(rpc, allow_remote=allow_remote_rpc, method="tx.sendRawTransaction")
-    _ensure_node_ready_for_tx(rpc)
+    head_height_hint = _ensure_node_ready_for_tx(rpc)
     _warn_if_unsynced(rpc)
 
     # Resolve chain identity
@@ -1091,6 +1187,23 @@ def send(
         raise typer.BadParameter("Nonce source must be 'confirmed' or 'pending'.")
     nonce_source_label = "override" if nonce_value is not None else nonce_source
     fee = int(max_fee) if max_fee is not None else _get_default_max_fee(rpc)
+
+    try:
+        valid_after, valid_until = _resolve_validity_window(
+            rpc,
+            valid_from=valid_from,
+            valid_until=valid_until,
+            ttl_blocks=ttl_blocks,
+            head_height_hint=head_height_hint,
+            verbose=verbose,
+        )
+    except ValidityWindowResolutionError as exc:
+        console.print(f"\n[bold red]Error:[/bold red] {exc}")
+        raise typer.Exit(code=1) from exc
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+    salt = os.urandom(16)
 
     # Value conversion
     try:
@@ -1147,6 +1260,9 @@ def send(
                 gas_limit=gas_limit,
                 max_fee=fee,
                 data=b"",
+                valid_after=valid_after,
+                valid_until=valid_until,
+                salt=salt,
             )
             body_bytes = _cbor(body)
 
@@ -1171,6 +1287,10 @@ def send(
                 console.print("")
                 console.print(f"nonce: using {nonce_source_label} => {attempt_nonce}")
                 console.print(f"maxFee: using {'override' if max_fee is not None else 'default'} => {fee}")
+                console.print(f"valid_from: {valid_after}")
+                console.print(f"valid_until: {valid_until}")
+                console.print(f"ttl_blocks: {valid_until - valid_after}")
+                console.print(f"salt_len: {len(salt)}")
                 console.print(f"value_input: {value if value is not None else value_nanm} ({value_source})")
                 console.print(f"value_base_units: {value_base}")
                 console.print("")
