@@ -274,6 +274,29 @@ def _extract_sender_address(obj: dict) -> str | None:
         return None
 
 
+def _extract_nonce(obj: dict) -> int | None:
+    if not isinstance(obj, dict):
+        return None
+    body = obj.get("body")
+    if isinstance(body, dict) and "nonce" in body:
+        try:
+            return int(body.get("nonce"))
+        except Exception:
+            return None
+    nested = obj.get("tx")
+    if isinstance(nested, dict) and "nonce" in nested:
+        try:
+            return int(nested.get("nonce"))
+        except Exception:
+            return None
+    if "nonce" in obj:
+        try:
+            return int(obj.get("nonce"))
+        except Exception:
+            return None
+    return None
+
+
 def _collect_sign_bytes(tx_like: t.Any) -> list[tuple[str, bytes]]:
     candidates: list[tuple[str, bytes]] = []
     errors: list[str] = []
@@ -1020,6 +1043,10 @@ def _tx_reject_category(reason: str | None) -> str:
         return "NOT_YET_VALID"
     if "expired" in r or "valid_until" in r:
         return "EXPIRED"
+    if "nonce" in r:
+        return "NONCE"
+    if "replacement" in r:
+        return "REPLACEMENT"
     if "replay" in r or "already_seen" in r:
         return "REPLAY"
     if "insufficient_funds_pending" in r or "pending" in r:
@@ -1327,124 +1354,181 @@ def tx_send_raw_transaction(rawTx: str) -> str:
 
 
 def _tx_send_raw_transaction(rawTx: str) -> str:
+    start_s = time.time()
+    tx_hash_hex = ""
+    tx_view: dict[str, t.Any] = {}
+    sender = None
+    nonce = None
+    fee = None
+    gas_limit = None
+    reason = None
+    raw = b""
+
+    def _log_decision(decision: str, reason_value: str | None) -> None:
+        latency_ms = int((time.time() - start_s) * 1000)
+        log.info(
+            "tx.sendRawTransaction",
+            extra={
+                "tx_hash": tx_hash_hex,
+                "sender": sender,
+                "nonce": nonce,
+                "fee": fee,
+                "gas_limit": gas_limit,
+                "decision": decision,
+                "reason": reason_value,
+                "latency_ms": latency_ms,
+            },
+        )
     if not isinstance(rawTx, str):
         raise rpc_errors.InvalidParams("rawTx must be a hex string")
     if rawTx.startswith("0b:"):
         raise rpc_errors.InvalidParams("base64 not supported yet; send hex (0x…)")
 
     try:
-        raw = _b(rawTx)
-    except Exception as e:
-        TX_VALIDATION_FAILURES.labels(reason="hex_decode_failed").inc()
-        raise rpc_errors.InvalidTx(
-            "rawTx decode failed",
-            **_error_data("decode", e, "tx.sendRawTransaction._b", "Ensure rawTx is 0x-prefixed hex"),
-        ) from e
-
-    try:
-        tx_like, obj = _decode_tx(raw)
-    except rpc_errors.RpcError:
-        raise
-    except Exception as e:
-        TX_VALIDATION_FAILURES.labels(reason="cbor_decode_failed").inc()
-        raise rpc_errors.InvalidTx(
-            "Transaction decode failed",
-            **_error_data("decode", e, "_decode_tx", "Ensure rawTx is CBOR {body, sig}"),
-        ) from e
-
-    # chainId and PQ verify
-    tx_view = _tx_view(tx_like, obj, pending=True)
-    try:
-        chain_id = _validate_chain_id(obj)
-    except Exception as exc:
-        log.info(
-            "TX_VALIDATE_REJECT",
-            extra={
-                "hash": _hex(_sha3_256(raw)) or "",
-                "reason": _tx_reject_category(f"chain_id:{exc}"),
-                "detail": str(exc),
-                "sender": tx_view.get("from"),
-                "gas": tx_view.get("gas"),
-            },
-        )
-        raise
-    try:
-        _verify_pq_signature(tx_like, obj, chain_id=chain_id)
-    except Exception as exc:
-        log.info(
-            "TX_VALIDATE_REJECT",
-            extra={
-                "hash": _hex(_sha3_256(raw)) or "",
-                "reason": _tx_reject_category(f"verify:{exc}"),
-                "detail": str(exc),
-                "sender": tx_view.get("from"),
-                "gas": tx_view.get("gas"),
-            },
-        )
-        raise
-
-    raw_canonical = raw
-    if isinstance(obj, dict):
-        raw_from_obj = obj.get("raw")
-        if isinstance(raw_from_obj, (bytes, bytearray)):
-            raw_canonical = bytes(raw_from_obj)
-    if _normalize_tx_bytes is not None:
         try:
-            raw_canonical = _normalize_tx_bytes(raw_canonical)
-        except Exception:
-            raw_canonical = bytes(raw_canonical)
+            raw = _b(rawTx)
+        except Exception as e:
+            TX_VALIDATION_FAILURES.labels(reason="hex_decode_failed").inc()
+            raise rpc_errors.InvalidTx(
+                "rawTx decode failed",
+                **_error_data("decode", e, "tx.sendRawTransaction._b", "Ensure rawTx is 0x-prefixed hex"),
+            ) from e
 
-    tx_hash_hex = _hex(_sha3_256(raw_canonical)) or ""
-    if not tx_hash_hex:
-        raise rpc_errors.InternalError("Failed to compute tx hash")
+        try:
+            tx_like, obj = _decode_tx(raw)
+        except rpc_errors.RpcError:
+            raise
+        except Exception as e:
+            TX_VALIDATION_FAILURES.labels(reason="cbor_decode_failed").inc()
+            raise rpc_errors.InvalidTx(
+                "Transaction decode failed",
+                **_error_data("decode", e, "_decode_tx", "Ensure rawTx is CBOR {body, sig}"),
+            ) from e
 
-    _force_sync_before_tx_submit()
-    _sync_gate_tx_submit()
+        # chainId and PQ verify
+        tx_view = _tx_view(tx_like, obj, pending=True)
+        sender = tx_view.get("from")
+        nonce = _extract_nonce(obj) if isinstance(obj, dict) else None
+        gas_limit = tx_view.get("gasLimit") or tx_view.get("gas")
+        fee = tx_view.get("maxFee") or tx_view.get("gasPrice") or tx_view.get("tip")
 
-    # optional balance check
-    _validate_sufficient_balance(obj)
+        try:
+            chain_id = _validate_chain_id(obj)
+        except Exception as exc:
+            log.info(
+                "TX_VALIDATE_REJECT",
+                extra={
+                    "hash": _hex(_sha3_256(raw)) or "",
+                    "reason": _tx_reject_category(f"chain_id:{exc}"),
+                    "detail": str(exc),
+                    "sender": tx_view.get("from"),
+                    "gas": tx_view.get("gas"),
+                },
+            )
+            raise
+        try:
+            _verify_pq_signature(tx_like, obj, chain_id=chain_id)
+        except Exception as exc:
+            log.info(
+                "TX_VALIDATE_REJECT",
+                extra={
+                    "hash": _hex(_sha3_256(raw)) or "",
+                    "reason": _tx_reject_category(f"verify:{exc}"),
+                    "detail": str(exc),
+                    "sender": tx_view.get("from"),
+                    "gas": tx_view.get("gas"),
+                },
+            )
+            raise
 
-    # duplicates: if already pending or persisted, return (idempotent)
-    svc = _get_mempool_service()
-    if svc is not None:
-        has0 = _mempool_has(svc, tx_hash_hex)
-        if has0 is True:
+        raw_canonical = raw
+        if isinstance(obj, dict):
+            raw_from_obj = obj.get("raw")
+            if isinstance(raw_from_obj, (bytes, bytearray)):
+                raw_canonical = bytes(raw_from_obj)
+        if _normalize_tx_bytes is not None:
+            try:
+                raw_canonical = _normalize_tx_bytes(raw_canonical)
+            except Exception:
+                raw_canonical = bytes(raw_canonical)
+
+        tx_hash_hex = _hex(_sha3_256(raw_canonical)) or ""
+        if not tx_hash_hex:
+            raise rpc_errors.InternalError("Failed to compute tx hash")
+
+        _force_sync_before_tx_submit()
+        _sync_gate_tx_submit()
+
+        # optional balance check
+        _validate_sufficient_balance(obj)
+
+        # duplicates: if already pending or persisted, return (idempotent)
+        svc = _get_mempool_service()
+        if svc is not None:
+            has0 = _mempool_has(svc, tx_hash_hex)
+            if has0 is True:
+                _log_decision("accepted", None)
+                return tx_hash_hex
+        persisted, *_ = _lookup_persisted_tx(tx_hash_hex)
+        if persisted is not None:
+            _log_decision("accepted", None)
             return tx_hash_hex
-    persisted, *_ = _lookup_persisted_tx(tx_hash_hex)
-    if persisted is not None:
-        return tx_hash_hex
 
-    # Build tx object if possible
-    tx_obj = tx_like
-    if _Tx is not None and not isinstance(tx_like, _Tx) and isinstance(obj, dict):
-        try:
-            if hasattr(_Tx, "from_obj"):
-                tx_obj = _Tx.from_obj(obj)  # type: ignore[attr-defined]
-        except Exception:
-            tx_obj = tx_like
+        if svc is not None:
+            tx_index = getattr(svc, "tx_index", None)
+            if tx_index is not None and hasattr(tx_index, "exists"):
+                try:
+                    if tx_index.exists(_b(tx_hash_hex)):
+                        _log_decision("accepted", None)
+                        return tx_hash_hex
+                except Exception:
+                    pass
 
-    # ===== CRITICAL FIX =====
-    # We will NOT "accept but not mine". If mempool is missing, error.
-    if svc is None:
-        raise rpc_errors.InternalError(
-            "Mempool service unavailable; tx cannot be admitted",
-            data={
-                "tx_hash": tx_hash_hex,
-                "hint": "Node context is missing mempool service; fix ctx wiring or mempool init",
-            },
-        )
+        # Build tx object if possible
+        tx_obj = tx_like
+        if _Tx is not None and not isinstance(tx_like, _Tx) and isinstance(obj, dict):
+            try:
+                if hasattr(_Tx, "from_obj"):
+                    tx_obj = _Tx.from_obj(obj)  # type: ignore[attr-defined]
+            except Exception:
+                tx_obj = tx_like
 
-    # Admit to mempool using robust method probing
-    try:
+        # ===== CRITICAL FIX =====
+        # We will NOT "accept but not mine". If mempool is missing, error.
+        if svc is None:
+            raise rpc_errors.InternalError(
+                "Mempool service unavailable; tx cannot be admitted",
+                data={
+                    "tx_hash": tx_hash_hex,
+                    "hint": "Node context is missing mempool service; fix ctx wiring or mempool init",
+                },
+            )
+
+        # Admit to mempool using robust method probing
         _mempool_submit(svc, tx_obj=tx_obj, raw=raw_canonical, tx_hash_hex=tx_hash_hex)
-    except Exception as exc:
+    except rpc_errors.RpcError as exc:
+        reason = getattr(exc, "message", str(exc))
         log.info(
             "TX_VALIDATE_REJECT",
             extra={
-                "hash": tx_hash_hex,
-                "reason": _tx_reject_category(str(exc)),
+                "hash": tx_hash_hex or _hex(_sha3_256(raw)) or "",
+                "reason": _tx_reject_category(reason),
                 "detail": str(exc),
-                "sender": tx_view.get("from"),
+                "sender": sender or tx_view.get("from"),
+                "gas": tx_view.get("gas"),
+            },
+        )
+        _log_decision("rejected", reason)
+        raise
+    except Exception as exc:
+        reason = str(exc)
+        log.info(
+            "TX_VALIDATE_REJECT",
+            extra={
+                "hash": tx_hash_hex or _hex(_sha3_256(raw)) or "",
+                "reason": _tx_reject_category(reason),
+                "detail": str(exc),
+                "sender": sender or tx_view.get("from"),
                 "gas": tx_view.get("gas"),
             },
         )
@@ -1463,6 +1547,7 @@ def _tx_send_raw_transaction(rawTx: str) -> str:
             "TX_MEMPOOL_REJECTED",
             extra={"hash": tx_hash_hex, "origin": "local", "reason": str(exc)},
         )
+        _log_decision("rejected", reason)
         if isinstance(exc, rpc_errors.RpcError):
             raise
         if MempoolError is not None and isinstance(exc, MempoolError):
@@ -1523,38 +1608,45 @@ def _tx_send_raw_transaction(rawTx: str) -> str:
         },
     )
 
-    # Post-submit verification MUST pass
-    has1 = _mempool_has(svc, tx_hash_hex)
-    if has1 is not True:
-        # Do not lie: return error instead of “accepted”
-        raise rpc_errors.InternalError(
-            "Transaction submitted but not present in mempool",
-            data={
-                "tx_hash": tx_hash_hex,
-                "hint": "Mempool submit returned without persisting; check admission path and has_hash implementation",
-            },
-        )
-
-    # Add to pending cache for tx.getTransactionByHash pending view (best-effort)
     try:
-        _pending_put(tx_hash_hex, raw_canonical)
-    except Exception:
-        pass
+        # Post-submit verification MUST pass
+        has1 = _mempool_has(svc, tx_hash_hex)
+        if has1 is not True:
+            # Do not lie: return error instead of “accepted”
+            raise rpc_errors.InternalError(
+                "Transaction submitted but not present in mempool",
+                data={
+                    "tx_hash": tx_hash_hex,
+                    "hint": "Mempool submit returned without persisting; check admission path and has_hash implementation",
+                },
+            )
 
-    # Notify WS hub (best-effort)
-    try:
-        if hasattr(deps, "ws_broadcast_pending"):
-            deps.ws_broadcast_pending(tx_hash_hex, obj)  # type: ignore
-    except Exception:
-        pass
+        # Add to pending cache for tx.getTransactionByHash pending view (best-effort)
+        try:
+            _pending_put(tx_hash_hex, raw_canonical)
+        except Exception:
+            pass
 
-    # Gossip to P2P peers (best-effort)
-    try:
-        _gossip_tx_to_peers(raw_canonical)
-    except Exception:
-        pass
+        # Notify WS hub (best-effort)
+        try:
+            if hasattr(deps, "ws_broadcast_pending"):
+                deps.ws_broadcast_pending(tx_hash_hex, obj)  # type: ignore
+        except Exception:
+            pass
 
-    _ensure_tx_persisted_to_chain(tx_hash_hex)
+        # Gossip to P2P peers (best-effort)
+        try:
+            _gossip_tx_to_peers(raw_canonical)
+        except Exception:
+            pass
+
+        _ensure_tx_persisted_to_chain(tx_hash_hex)
+    except Exception as exc:
+        reason = str(exc)
+        _log_decision("rejected", reason)
+        raise
+
+    _log_decision("accepted", None)
 
     return tx_hash_hex
 

@@ -4,7 +4,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from mempool.errors import NonceGap, NonceTooLow
+from mempool.errors import NonceGap, NonceTooLow, ReplacementUnsupported
 from mempool.pool import Pool, PoolConfig
 from rpc.mempool_service import MempoolService
 
@@ -37,6 +37,9 @@ def _build_tx(sender_bytes: bytes, *, nonce: int, chain_id: int = 1337) -> tuple
         "chainId": chain_id,
         "gasPrice": 1,
         "maxFee": 1,
+        "validAfter": 0,
+        "validUntil": 50,
+        "salt": b"nonce-tests",
     }
     tx_envelope = {"body": body}
     raw_bytes = cbor_dumps(tx_envelope)
@@ -92,6 +95,32 @@ def test_gap_rejection_expected_nonce_stable() -> None:
     assert exc_info.value.context["got_nonce"] == 72
     assert service.get_next_nonce(sender_bytes, confirmed_nonce=70) == 70
 
+
+def test_duplicate_hash_is_idempotent() -> None:
+    service, sender_bytes = _make_service(confirmed_nonce=70)
+
+    tx_dict, raw_bytes, tx_hash = _build_tx(sender_bytes, nonce=70)
+    assert service.submit(tx=tx_dict, raw=raw_bytes, tx_hash_hex=tx_hash, local=True) == tx_hash
+    assert service.submit(tx=tx_dict, raw=raw_bytes, tx_hash_hex=tx_hash, local=True) == tx_hash
+
+
+def test_same_nonce_different_hash_rejected() -> None:
+    service, sender_bytes = _make_service(confirmed_nonce=70)
+
+    tx_dict_a, raw_a, hash_a = _build_tx(sender_bytes, nonce=70)
+    assert service.submit(tx=tx_dict_a, raw=raw_a, tx_hash_hex=hash_a, local=True) == hash_a
+
+    tx_dict_b = {"body": dict(tx_dict_a["body"])}
+    tx_dict_b["body"]["gasPrice"] = 2
+    from core.encoding.cbor import dumps as cbor_dumps
+    from core.utils.hash import sha3_256
+
+    raw_b = cbor_dumps(tx_dict_b)
+    tx_dict_b["raw"] = raw_b
+    hash_b = "0x" + sha3_256(raw_b).hex()
+
+    with pytest.raises(ReplacementUnsupported):
+        service.submit(tx=tx_dict_b, raw=raw_b, tx_hash_hex=hash_b, local=True)
     tx_gap_retry, raw_gap_retry, hash_gap_retry = _build_tx(sender_bytes, nonce=72)
     with pytest.raises(NonceGap) as exc_info_retry:
         service.submit(
@@ -101,5 +130,5 @@ def test_gap_rejection_expected_nonce_stable() -> None:
             local=True,
         )
 
-    assert exc_info_retry.value.context["expected_nonce"] == 70
-    assert service.get_next_nonce(sender_bytes, confirmed_nonce=70) == 70
+    assert exc_info_retry.value.context["expected_nonce"] == 71
+    assert service.get_next_nonce(sender_bytes, confirmed_nonce=70) == 71
