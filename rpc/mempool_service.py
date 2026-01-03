@@ -487,7 +487,23 @@ class MempoolService:
                 try:
                     confirmed_nonce = int(self.state_db.get_nonce(sender))
                 except Exception as exc:
-                    log.debug("mempool nonce check failed; skipping", exc_info=exc)
+                    log.warning("mempool nonce check failed; rejecting", exc_info=exc)
+                    self._record_rejection(
+                        tx_hash_hex,
+                        "nonce_state_unavailable",
+                        {
+                            "sender": sender_hex,
+                            "error": str(exc),
+                        },
+                    )
+                    raise AdmissionError(
+                        "nonce state unavailable",
+                        context={
+                            "tx_hash": tx_hash_hex,
+                            "sender": sender_hex,
+                            "error": str(exc),
+                        },
+                    ) from exc
                 else:
                     pending_map = self._pending_nonce_map(sender_hex)
                     pending_nonces = set(pending_map.keys())
