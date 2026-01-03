@@ -12,12 +12,10 @@ Expected underlying DB capabilities
 The wrapped object (``core_state``) should provide (duck-typed):
 
     get_balance(addr: bytes) -> int
-    get_nonce(addr: bytes) -> int
     get_code(addr: bytes) -> bytes
     get_storage(addr: bytes, key: bytes) -> bytes
 
     set_balance(addr: bytes, value: int) -> None
-    set_nonce(addr: bytes, value: int) -> None
     set_code(addr: bytes, code: bytes) -> None
     set_storage(addr: bytes, key: bytes, value: bytes) -> None
 
@@ -31,7 +29,7 @@ If those are not available, WriteBatch will still apply operations in-order.
 
 Design notes
 ------------
-• All addresses and storage keys are bytes; balances and nonces are non-negative ints.
+• All addresses and storage keys are bytes; balances are non-negative ints.
 • This module performs only shallow validation (types and non-negativity).
 • Arithmetic checks for balance underflow are handled by higher layers, but
   the adapter provides a safe `add_balance` helper used by those layers.
@@ -54,7 +52,7 @@ class StateAdapterError(Exception):
 
 
 class NegativeValue(StateAdapterError):
-    """Raised when a negative balance/nonce is set or computed."""
+    """Raised when a negative balance is set or computed."""
 
 
 class InsufficientBalance(StateAdapterError):
@@ -68,13 +66,11 @@ class InsufficientBalance(StateAdapterError):
 class _CoreStateDB(Protocol):
     # reads
     def get_balance(self, address: bytes) -> int: ...
-    def get_nonce(self, address: bytes) -> int: ...
     def get_code(self, address: bytes) -> bytes: ...
     def get_storage(self, address: bytes, key: bytes) -> bytes: ...
 
     # writes
     def set_balance(self, address: bytes, value: int) -> None: ...
-    def set_nonce(self, address: bytes, value: int) -> None: ...
     def set_code(self, address: bytes, code: bytes) -> None: ...
     def set_storage(self, address: bytes, key: bytes, value: bytes) -> None: ...
 
@@ -104,12 +100,6 @@ class StateReader:
             raise NegativeValue("balance must be non-negative")
         return v
 
-    def nonce(self, address: bytes) -> int:
-        v = self._db.get_nonce(address)
-        if v < 0:
-            raise NegativeValue("nonce must be non-negative")
-        return v
-
     def code(self, address: bytes) -> bytes:
         return self._db.get_code(address)
 
@@ -120,9 +110,6 @@ class StateReader:
 
     def balances(self, addresses: Iterable[bytes]) -> Dict[bytes, int]:
         return {addr: self.balance(addr) for addr in addresses}
-
-    def nonces(self, addresses: Iterable[bytes]) -> Dict[bytes, int]:
-        return {addr: self.nonce(addr) for addr in addresses}
 
     def storages(self, address: bytes, keys: Iterable[bytes]) -> Dict[bytes, bytes]:
         return {k: self.storage(address, k) for k in keys}
@@ -136,8 +123,6 @@ class _Op:
     kind: Literal[
         "set_balance",
         "add_balance",
-        "set_nonce",
-        "inc_nonce",
         "set_code",
         "set_storage",
     ]
@@ -178,16 +163,6 @@ class WriteBatch:
         # delta may be negative, but final balance must be >= 0
         self._ops.append(_Op("add_balance", address, value_int=delta))
 
-    def set_nonce(self, address: bytes, value: int) -> None:
-        if value < 0:
-            raise NegativeValue("nonce cannot be negative")
-        self._ops.append(_Op("set_nonce", address, value_int=value))
-
-    def inc_nonce(self, address: bytes, by: int = 1) -> None:
-        if by < 0:
-            raise NegativeValue("nonce increment cannot be negative")
-        self._ops.append(_Op("inc_nonce", address, value_int=by))
-
     def set_code(self, address: bytes, code: bytes) -> None:
         self._ops.append(_Op("set_code", address, value_bytes=code))
 
@@ -217,13 +192,6 @@ class WriteBatch:
                     if new_bal < 0:
                         raise InsufficientBalance("balance underflow in add_balance")
                     self._db.set_balance(op.address, new_bal)
-                elif op.kind == "set_nonce":
-                    self._db.set_nonce(op.address, int(op.value_int))  # type: ignore[arg-type]
-                elif op.kind == "inc_nonce":
-                    new_nonce = self._db.get_nonce(op.address) + int(op.value_int)  # type: ignore[arg-type]
-                    if new_nonce < 0:
-                        raise NegativeValue("nonce became negative")
-                    self._db.set_nonce(op.address, new_nonce)
                 elif op.kind == "set_code":
                     self._db.set_code(op.address, op.value_bytes or b"")
                 elif op.kind == "set_storage":
@@ -280,16 +248,6 @@ class StateWriter(StateReader):
         if new_bal < 0:
             raise InsufficientBalance("balance underflow")
         self._db.set_balance(address, new_bal)
-
-    def set_nonce(self, address: bytes, value: int) -> None:
-        if value < 0:
-            raise NegativeValue("nonce cannot be negative")
-        self._db.set_nonce(address, value)
-
-    def inc_nonce(self, address: bytes, by: int = 1) -> None:
-        if by < 0:
-            raise NegativeValue("nonce increment cannot be negative")
-        self._db.set_nonce(address, self.nonce(address) + by)
 
     def set_code(self, address: bytes, code: bytes) -> None:
         self._db.set_code(address, code)

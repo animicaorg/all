@@ -334,8 +334,8 @@ class PendingPool:
 
         Assumes Tx exposes fields named per spec:
           - hash_hex() or hash property (we recompute when needed)
-          - chain_id, from_addr, to_addr, nonce, gas_limit, gas_price, value,
-            type, data, access_list, sig.{alg_id,sig}
+          - chain_id, from_addr, to_addr, gas_limit, gas_price, value,
+          type, data, access_list, sig.{alg_id,sig}
           - inclusion pointers are None for pending
         """
         # Compute hash from canonical CBOR (stable & matches add_raw path)
@@ -362,9 +362,12 @@ class PendingPool:
                 "chainId": tx.chain_id,
                 "from": tx.from_addr,
                 "to": getattr(tx, "to_addr", None),
-                "nonce": tx.nonce,
                 "gasLimit": tx.gas_limit,
                 "gasPrice": tx.gas_price,
+                "validAfter": getattr(tx, "valid_after", None),
+                "validUntil": getattr(tx, "valid_until", None),
+                "salt": getattr(tx, "salt", None),
+                "forkId": getattr(tx, "fork_id", None),
                 "value": (
                     getattr(tx, "value_hex", "0x00")
                     if hasattr(tx, "value_hex")

@@ -13,7 +13,10 @@ Hierarchy:
     MempoolError (base)
     ├── AdmissionError
     │   ├── FeeTooLow
-    │   ├── NonceGap
+    │   ├── NotYetValid
+    │   ├── Expired
+    │   ├── Replay
+    │   ├── InsufficientFundsPending
     │   └── Oversize
     ├── ReplacementError
     └── DoSError
@@ -35,9 +38,11 @@ __all__ = [
     "ReplacementError",
     "DoSError",
     "FeeTooLow",
-    "NonceGap",
     "Oversize",
-    "NonceTooLow",
+    "NotYetValid",
+    "Expired",
+    "Replay",
+    "InsufficientFundsPending",
     "MempoolErrorCode",
 ]
 
@@ -51,10 +56,12 @@ class MempoolErrorCode:
 
     ADMISSION = 1000
     FEE_TOO_LOW = 1001
-    NONCE_GAP = 1002
-    NONCE_TOO_LOW = 1005
-    OVERSIZE = 1003
-    REPLACEMENT = 1004
+    NOT_YET_VALID = 1002
+    EXPIRED = 1003
+    REPLAY = 1004
+    INSUFFICIENT_FUNDS_PENDING = 1005
+    OVERSIZE = 1006
+    REPLACEMENT = 1007
     DOS = 1099
 
 
@@ -156,31 +163,106 @@ class FeeTooLow(AdmissionError):
 
 
 @dataclass(eq=False)
-class NonceGap(AdmissionError):
+class NotYetValid(AdmissionError):
     """
-    The transaction nonce is not the next expected nonce for the sender.
-
-    Typical handling is to classify as an orphan (short TTL) until the gap is filled.
+    The transaction's valid_after is in the future.
     """
 
     def __init__(
         self,
         *,
-        expected_nonce: int,
-        got_nonce: int,
+        valid_after: int,
+        current_height: int,
         sender: Optional[str] = None,
         tx_hash: Optional[str] = None,
     ) -> None:
-        msg = f"nonce gap: expected {expected_nonce}, got {got_nonce}"
+        msg = f"not yet valid: valid_after {valid_after} > current {current_height}"
         super(MempoolError, self).__init__(  # type: ignore[misc]
-            code=MempoolErrorCode.NONCE_GAP,
-            reason="nonce_gap",
+            code=MempoolErrorCode.NOT_YET_VALID,
+            reason="not_yet_valid",
             message=msg,
             context={
                 "sender": sender,
                 "tx_hash": tx_hash,
-                "expected_nonce": expected_nonce,
-                "got_nonce": got_nonce,
+                "valid_after": valid_after,
+                "current_height": current_height,
+            },
+        )
+
+
+class Expired(AdmissionError):
+    """
+    The transaction's valid_until is already in the past.
+    """
+
+    def __init__(
+        self,
+        *,
+        valid_until: int,
+        current_height: int,
+        sender: Optional[str] = None,
+        tx_hash: Optional[str] = None,
+    ) -> None:
+        msg = f"expired: valid_until {valid_until} < current {current_height}"
+        super(MempoolError, self).__init__(  # type: ignore[misc]
+            code=MempoolErrorCode.EXPIRED,
+            reason="expired",
+            message=msg,
+            context={
+                "sender": sender,
+                "tx_hash": tx_hash,
+                "valid_until": valid_until,
+                "current_height": current_height,
+            },
+        )
+
+
+class Replay(AdmissionError):
+    """
+    The transaction hash was already seen in the replay window.
+    """
+
+    def __init__(
+        self,
+        *,
+        tx_hash: Optional[str] = None,
+        sender: Optional[str] = None,
+    ) -> None:
+        msg = "replay detected"
+        super(MempoolError, self).__init__(  # type: ignore[misc]
+            code=MempoolErrorCode.REPLAY,
+            reason="replay",
+            message=msg,
+            context={
+                "sender": sender,
+                "tx_hash": tx_hash,
+            },
+        )
+
+
+class InsufficientFundsPending(AdmissionError):
+    """
+    Sender has insufficient balance once pending debits are accounted for.
+    """
+
+    def __init__(
+        self,
+        *,
+        sender: Optional[str] = None,
+        tx_hash: Optional[str] = None,
+        required: Optional[int] = None,
+        available: Optional[int] = None,
+    ) -> None:
+        msg = "insufficient funds accounting for pending transactions"
+        super(MempoolError, self).__init__(  # type: ignore[misc]
+            code=MempoolErrorCode.INSUFFICIENT_FUNDS_PENDING,
+            reason="insufficient_funds_pending",
+            message=msg,
+            context={
+                "sender": sender,
+                "tx_hash": tx_hash,
+                "required": required,
+                "available": available,
             },
         )
 

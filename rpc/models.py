@@ -216,9 +216,11 @@ class TxView(BaseModel):
                     "chainId": 1,
                     "from": "anim1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqz3y9k8",
                     "to": "anim1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqm2k8sy",
-                    "nonce": 7,
                     "gasLimit": 120000,
                     "gasPrice": 1,
+                    "validAfter": 100,
+                    "validUntil": 150,
+                    "salt": "0x" + "11" * 16,
                     "value": "0x00",
                     "type": "transfer",
                     "data": "0x",
@@ -238,11 +240,14 @@ class TxView(BaseModel):
     to_addr: Optional[Address] = Field(default=None, alias="to")  # None for deploy
 
     # economics & execution
-    nonce: int = Field(alias="nonce")
     gas_limit: int = Field(alias="gasLimit")
     gas_price: int = Field(
         alias="gasPrice"
     )  # simple model; base/tip split lives server-side
+    valid_after: Optional[int] = Field(default=None, alias="validAfter")
+    valid_until: Optional[int] = Field(default=None, alias="validUntil")
+    salt: Optional[HexStr] = Field(default=None, alias="salt")
+    fork_id: Optional[int] = Field(default=None, alias="forkId")
     value: HexStr = Field(default="0x00", alias="value")
 
     # kind & payload
@@ -277,7 +282,7 @@ class TxView(BaseModel):
             raise ValueError("invalid bech32m address")
         return Address(v)
 
-    @field_validator("data", "sig", "value")
+    @field_validator("data", "sig", "value", "salt")
     @classmethod
     def _hex_ok(cls, v: str) -> HexStr:
         return ensure_hex(v)

@@ -6,7 +6,7 @@ State DB (accounts, storage, code) on top of the KV interface
 
 This module provides a typed view over the generic KV backends (SQLite/RocksDB).
 It implements a compact binary key layout that supports efficient prefix scans,
-plus helpers for account balances/nonces, contract code, and per-account storage.
+plus helpers for account balances, contract code, and per-account storage.
 
 Key layout (all little-endian length prefixes are single-byte for simplicity)
 -----------------------------------------------------------------------------
@@ -21,7 +21,7 @@ Notes
 - Storage keys/values are arbitrary bytes. For contracts, use deterministic encoding
   (e.g., vm_py stdlib ABI helpers) above this layer.
 - Values:
-    * Account is encoded as canonical CBOR: {nonce:int, balance:int, code_hash:bytes?}
+    * Account is encoded as canonical CBOR: {balance:int, code_hash:bytes?}
     * Code is stored raw; code_hash is the SHA3-256(code) cached in Account.
 - This module is concurrency-safe at the KV layer granularity. For snapshot iteration,
   use `snapshot()` which materializes a consistent view (point-in-time copy).
@@ -108,12 +108,11 @@ def _parse_sto_key(key: bytes) -> Tuple[bytes, bytes]:
 
 @dataclass
 class Account:
-    nonce: int
     balance: int
     code_hash: Optional[bytes] = None  # 32 bytes if present
 
     def to_cbor(self) -> bytes:
-        m: Dict[str, Any] = {"nonce": int(self.nonce), "balance": int(self.balance)}
+        m: Dict[str, Any] = {"balance": int(self.balance)}
         if self.code_hash is not None:
             m["code_hash"] = bytes(self.code_hash)
         return cbor_dumps(m)
@@ -121,11 +120,10 @@ class Account:
     @staticmethod
     def from_cbor(data: bytes) -> "Account":
         m = cbor_loads(data)
-        nonce = int(m.get("nonce", 0))
         balance = int(m.get("balance", 0))
         ch = m.get("code_hash", None)
         ch_b: Optional[bytes] = None if ch is None else bytes(ch)
-        return Account(nonce=nonce, balance=balance, code_hash=ch_b)
+        return Account(balance=balance, code_hash=ch_b)
 
 
 # ---------------------------------------------------------------------------
@@ -163,7 +161,7 @@ class StateDB:
     def ensure_account(self, addr: bytes, batch: Optional[Batch] = None) -> Account:
         acc = self.get_account(addr)
         if acc is None:
-            acc = Account(nonce=0, balance=0, code_hash=None)
+            acc = Account(balance=0, code_hash=None)
             self.put_account(addr, acc, batch=batch)
         return acc
 
@@ -188,23 +186,6 @@ class StateDB:
     def get_balance(self, addr: bytes) -> int:
         acc = self.get_account(addr)
         return 0 if acc is None else acc.balance
-
-    def get_nonce(self, addr: bytes) -> int:
-        acc = self.get_account(addr)
-        return 0 if acc is None else acc.nonce
-
-    def set_nonce(self, addr: bytes, nonce: int, batch: Optional[Batch] = None) -> None:
-        if nonce < 0:
-            raise ValueError("negative nonce")
-        acc = self.ensure_account(addr, batch=batch)
-        acc.nonce = int(nonce)
-        self.put_account(addr, acc, batch=batch)
-
-    def inc_nonce(self, addr: bytes, batch: Optional[Batch] = None) -> int:
-        acc = self.ensure_account(addr, batch=batch)
-        acc.nonce += 1
-        self.put_account(addr, acc, batch=batch)
-        return acc.nonce
 
     # --- Code (contract bytecode) ---
 

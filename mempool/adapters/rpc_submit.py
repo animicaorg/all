@@ -30,8 +30,17 @@ from typing import Any, Mapping, MutableMapping, Optional, Protocol, Union
 
 # Best-effort imports of rich mempool types/errors. If unavailable, we fallback.
 try:
-    from mempool.errors import (AdmissionError, DoSError, FeeTooLow, NonceGap,
-                                Oversize, ReplacementError)
+    from mempool.errors import (
+        AdmissionError,
+        DoSError,
+        Expired,
+        FeeTooLow,
+        InsufficientFundsPending,
+        NotYetValid,
+        Oversize,
+        Replay,
+        ReplacementError,
+    )
 except Exception:  # pragma: no cover - optional dependency
 
     class _BaseErr(Exception): ...
@@ -44,7 +53,13 @@ except Exception:  # pragma: no cover - optional dependency
 
     class FeeTooLow(_BaseErr): ...
 
-    class NonceGap(_BaseErr): ...
+    class NotYetValid(_BaseErr): ...
+
+    class Expired(_BaseErr): ...
+
+    class Replay(_BaseErr): ...
+
+    class InsufficientFundsPending(_BaseErr): ...
 
     class Oversize(_BaseErr): ...
 
@@ -65,7 +80,6 @@ class TxLike(Protocol):
     def hash(self) -> bytes: ...
 
     sender: bytes
-    nonce: int
     maxFeePerGas: int  # or tip fields, used only for optional views
 
 
@@ -99,7 +113,8 @@ class TxView:
 
     hash: str
     sender: Optional[str] = None
-    nonce: Optional[int] = None
+    valid_after: Optional[int] = None
+    valid_until: Optional[int] = None
     max_fee_per_gas: Optional[int] = None
     raw_cbor_hex: Optional[str] = None  # present only from pending fallback
     origin: str = "pool"  # "pool" | "pending" | "unknown"
@@ -155,11 +170,29 @@ class RpcSubmitAdapter:
                     tx_hash=tx_hash,
                     reason=f"fee_too_low: {e}",
                 )
-            except NonceGap as e:
+            except NotYetValid as e:
                 return SubmitResult(
                     status=SubmitStatus.REJECTED,
                     tx_hash=tx_hash,
-                    reason=f"nonce_gap: {e}",
+                    reason=f"not_yet_valid: {e}",
+                )
+            except Expired as e:
+                return SubmitResult(
+                    status=SubmitStatus.REJECTED,
+                    tx_hash=tx_hash,
+                    reason=f"expired: {e}",
+                )
+            except Replay as e:
+                return SubmitResult(
+                    status=SubmitStatus.REJECTED,
+                    tx_hash=tx_hash,
+                    reason=f"replay: {e}",
+                )
+            except InsufficientFundsPending as e:
+                return SubmitResult(
+                    status=SubmitStatus.REJECTED,
+                    tx_hash=tx_hash,
+                    reason=f"insufficient_funds_pending: {e}",
                 )
             except Oversize as e:
                 return SubmitResult(
@@ -290,20 +323,23 @@ class RpcSubmitAdapter:
         concrete types here; instead, pluck a few well-known attributes if present.
         """
         sender = getattr(item, "sender", None)
-        nonce = getattr(item, "nonce", None)
+        valid_after = getattr(item, "valid_after", None)
+        valid_until = getattr(item, "valid_until", None)
         max_fee = getattr(item, "maxFeePerGas", None)
         # Some pools wrap the Tx inside `.tx`
         inner = getattr(item, "tx", None)
         if inner is not None:
             sender = getattr(inner, "sender", sender)
-            nonce = getattr(inner, "nonce", nonce)
+            valid_after = getattr(inner, "valid_after", valid_after)
+            valid_until = getattr(inner, "valid_until", valid_until)
             max_fee = getattr(inner, "maxFeePerGas", max_fee)
 
         sender_hex = _hex(sender) if isinstance(sender, (bytes, bytearray)) else None
         return TxView(
             hash=_hex(tx_hash) or "0x",
             sender=sender_hex,
-            nonce=int(nonce) if isinstance(nonce, int) else None,
+            valid_after=int(valid_after) if isinstance(valid_after, int) else None,
+            valid_until=int(valid_until) if isinstance(valid_until, int) else None,
             max_fee_per_gas=int(max_fee) if isinstance(max_fee, int) else None,
             origin="pool",
         )

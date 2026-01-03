@@ -142,7 +142,7 @@ def _validate_genesis(g: Dict[str, Any], override_chain_id: int | None = None) -
         )
 
     if not isinstance(g["alloc"], list):
-        raise GenesisError("alloc must be a list of {address, nonce, balance}")
+        raise GenesisError("alloc must be a list of {address, balance}")
 
     premine_total_units = int(g["economics"].get("premineTotal", 0))
     # Optional soft-check: sum alloc balances should be <= premineTotal (if present)
@@ -151,10 +151,6 @@ def _validate_genesis(g: Dict[str, Any], override_chain_id: int | None = None) -
         for i, a in enumerate(g["alloc"]):
             if "address" not in a:
                 raise GenesisError(f"alloc[{i}] missing address")
-            # nonce is optional; default 0
-            n = int(a.get("nonce", 0))
-            if n < 0:
-                raise GenesisError(f"alloc[{i}] nonce negative")
             bal = int(a.get("balance", 0))
             if bal < 0:
                 raise GenesisError(f"alloc[{i}] balance negative")
@@ -172,15 +168,14 @@ def _validate_genesis(g: Dict[str, Any], override_chain_id: int | None = None) -
 # -------------------------
 
 
-def _account_leaf_hash(address: str, nonce: int, balance: int) -> bytes:
+def _account_leaf_hash(address: str, balance: int) -> bytes:
     """
     Canonical leaf hash for state root:
-      H( "acct" || 0x00 || CBOR({ "addr": <utf8>, "nonce": uint, "balance": uint }) )
+      H( "acct" || 0x00 || CBOR({ "addr": <utf8>, "balance": uint }) )
     Keys are not included to keep encoding portable across KV backends.
     """
     body = {
         "addr": address,
-        "nonce": int(nonce),
         "balance": int(balance),
     }
     return _sha3_256(b"acct\x00" + cbor.encode(body))
@@ -191,9 +186,8 @@ def compute_state_root_from_alloc(alloc: Iterable[Dict[str, Any]]) -> bytes:
     leaves: List[bytes] = []
     for a in alloc:
         addr = _normalize_address(a["address"])
-        nonce = int(a.get("nonce", 0))
         bal = int(a.get("balance", 0))
-        leaves.append(_account_leaf_hash(addr, nonce, bal))
+        leaves.append(_account_leaf_hash(addr, bal))
     if not leaves:
         return empty_root()
     # Sort leaves lexicographically (stable & canonical) before building a simple Merkle
@@ -238,9 +232,9 @@ def _open_kv(db_uri: str, log: bool = False) -> KV:
 
 def _init_state_from_alloc(state: StateDB, alloc: Iterable[Dict[str, Any]]) -> None:
     """
-    Write accounts (nonce, balance) to the state DB using StateDB public API.
+    Write accounts (balance) to the state DB using StateDB public API.
     Uses batch writes for efficiency when available.
-    
+
     Uses address_to_bytes() to ensure canonical key encoding: bech32 addresses
     are decoded to payload bytes, system addresses are UTF-8 encoded.
     """
@@ -250,20 +244,16 @@ def _init_state_from_alloc(state: StateDB, alloc: Iterable[Dict[str, Any]]) -> N
             for a in alloc:
                 addr_str = _normalize_address(a["address"])
                 addr_bytes = address_to_bytes(addr_str)
-                nonce = int(a.get("nonce", 0))
                 bal = int(a.get("balance", 0))
-                # Set both balance and nonce using StateDB public API with batch
+                # Set balance using StateDB public API with batch
                 state.set_balance(addr_bytes, bal, batch=b)
-                state.set_nonce(addr_bytes, nonce, batch=b)
     else:  # pragma: no cover
         for a in alloc:
             addr_str = _normalize_address(a["address"])
             addr_bytes = address_to_bytes(addr_str)
-            nonce = int(a.get("nonce", 0))
             bal = int(a.get("balance", 0))
-            # Set both balance and nonce using StateDB public API without batch
+            # Set balance using StateDB public API without batch
             state.set_balance(addr_bytes, bal)
-            state.set_nonce(addr_bytes, nonce)
 
 
 # -------------------------

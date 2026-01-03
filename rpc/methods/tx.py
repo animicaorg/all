@@ -581,7 +581,7 @@ def _normalize_tx_body(body: dict) -> dict:
     chain_id = body.get("chainId", body.get("chain_id", 1))
     from_addr = body.get("from", body.get("sender"))
     to_addr = body.get("to")
-    nonce = body.get("nonce", 0)
+    nonce = body.get("nonce")
     value = body.get("value", body.get("amount", 0))
     gas_limit = body.get("gasLimit", body.get("gas_limit", body.get("gas", 21000)))
     gas_price = body.get(
@@ -611,11 +611,22 @@ def _normalize_tx_body(body: dict) -> dict:
             return addr_bytes[-32:]
         return addr_bytes
 
-    return {
-        "v": 1,
+    valid_after = body.get("validAfter", body.get("valid_after"))
+    valid_until = body.get("validUntil", body.get("valid_until"))
+    salt = body.get("salt")
+    fork_id = body.get("forkId", body.get("fork_id"))
+    if isinstance(salt, str):
+        salt = bytes.fromhex(salt[2:]) if salt.startswith("0x") else salt.encode("utf-8")
+    elif isinstance(salt, (list, tuple)):
+        salt = bytes(salt)
+    version = int(body.get("v", 2))
+    if version == 2 and (valid_after is None or valid_until is None or salt is None):
+        version = 1
+
+    normalized = {
+        "v": version,
         "chainId": int(chain_id),
         "from": _pad_addr(from_addr),
-        "nonce": int(nonce),
         "gas": {"price": int(gas_price), "limit": int(gas_limit)},
         "payload": {
             "t": 0,
@@ -627,6 +638,15 @@ def _normalize_tx_body(body: dict) -> dict:
         },
         "accessList": [],
     }
+    if version == 1:
+        normalized["nonce"] = int(nonce or 0)
+    else:
+        normalized["validAfter"] = int(valid_after or 0)
+        normalized["validUntil"] = int(valid_until or 0)
+        normalized["salt"] = bytes(salt or b"")
+        if fork_id is not None:
+            normalized["forkId"] = int(fork_id)
+    return normalized
 
 
 def _normalize_tx_envelope(obj: dict) -> dict:
@@ -996,10 +1016,14 @@ def _tx_reject_category(reason: str | None) -> str:
         return "CHAIN_ID"
     if "verify" in r or "sig" in r:
         return "BAD_SIG"
-    if "nonce" in r:
-        if "too_low" in r or "low" in r:
-            return "NONCE_TOO_LOW"
-        return "NONCE_GAP"
+    if "not_yet_valid" in r or "valid_after" in r:
+        return "NOT_YET_VALID"
+    if "expired" in r or "valid_until" in r:
+        return "EXPIRED"
+    if "replay" in r or "already_seen" in r:
+        return "REPLAY"
+    if "insufficient_funds_pending" in r or "pending" in r:
+        return "INSUFFICIENT_FUNDS_PENDING"
     if "balance" in r or "insufficient" in r:
         return "INSUFFICIENT_BALANCE"
     if "gas" in r:
@@ -1218,7 +1242,10 @@ def _tx_view(
         _from = tx_obj.get("from") or tx_obj.get("sender") or getattr(tx, "sender", None)
 
     to = tx_obj.get("to") or getattr(tx, "to", None)
-    nonce = tx_obj.get("nonce") or getattr(tx, "nonce", None)
+    valid_after = tx_obj.get("validAfter") or tx_obj.get("valid_after") or getattr(tx, "valid_after", None)
+    valid_until = tx_obj.get("validUntil") or tx_obj.get("valid_until") or getattr(tx, "valid_until", None)
+    salt = tx_obj.get("salt") or getattr(tx, "salt", None)
+    fork_id = tx_obj.get("forkId") or tx_obj.get("fork_id") or getattr(tx, "fork_id", None)
 
     gas_obj = tx_obj.get("gas")
     if isinstance(gas_obj, dict):
@@ -1256,12 +1283,15 @@ def _tx_view(
         "hash": hash_hex,
         "from": _hex(_from) if isinstance(_from, (bytes, bytearray)) else _from,
         "to": _hex(to) if isinstance(to, (bytes, bytearray)) else to,
-        "nonce": int(nonce) if nonce is not None else None,
         "gas": int(gas) if gas is not None else None,
         "gasLimit": int(gas) if gas is not None else None,
         "tip": int(tip) if tip is not None else None,
         "gasPrice": int(tip) if tip is not None else None,
         "maxFee": int(max_fee) if max_fee is not None else None,
+        "validAfter": int(valid_after) if valid_after is not None else None,
+        "validUntil": int(valid_until) if valid_until is not None else None,
+        "salt": _hex(salt) if isinstance(salt, (bytes, bytearray)) else salt,
+        "forkId": int(fork_id) if fork_id is not None else None,
         "value": int(value) if value is not None else None,
         "chainId": int(chain_id) if chain_id is not None else None,
         "data": _hex(data) if isinstance(data, (bytes, bytearray)) else data,
@@ -1334,7 +1364,6 @@ def _tx_send_raw_transaction(rawTx: str) -> str:
                 "reason": _tx_reject_category(f"chain_id:{exc}"),
                 "detail": str(exc),
                 "sender": tx_view.get("from"),
-                "nonce": tx_view.get("nonce"),
                 "gas": tx_view.get("gas"),
             },
         )
@@ -1349,7 +1378,6 @@ def _tx_send_raw_transaction(rawTx: str) -> str:
                 "reason": _tx_reject_category(f"verify:{exc}"),
                 "detail": str(exc),
                 "sender": tx_view.get("from"),
-                "nonce": tx_view.get("nonce"),
                 "gas": tx_view.get("gas"),
             },
         )
@@ -1417,7 +1445,6 @@ def _tx_send_raw_transaction(rawTx: str) -> str:
                 "reason": _tx_reject_category(str(exc)),
                 "detail": str(exc),
                 "sender": tx_view.get("from"),
-                "nonce": tx_view.get("nonce"),
                 "gas": tx_view.get("gas"),
             },
         )
@@ -1464,13 +1491,12 @@ def _tx_send_raw_transaction(rawTx: str) -> str:
             "hash": tx_hash_hex,
             "origin": "local",
             "sender": tx_view.get("from"),
-            "nonce": tx_view.get("nonce"),
             "mempool_size": mempool_size,
         },
     )
     log.info(
         "tx.accepted_local",
-        extra={"tx_hash": tx_hash_hex, "nonce": tx_view.get("nonce")},
+        extra={"tx_hash": tx_hash_hex},
     )
     log.info(
         "tx.mempool_added",
