@@ -287,25 +287,29 @@ def _svc_pending_nonce(addr: str) -> int:
             return committed_nonce
         
         # Acquire per-sender lock to prevent TOCTOU race with tx admission
-        from core.utils.tx import normalize_tx_bytes as _normalize_tx_bytes_local
         sender_hex = "0x" + addr_bytes.hex() if isinstance(addr_bytes, bytes) else str(addr_bytes)
         sender_lock = mempool_service._get_sender_lock(sender_hex)
-        
+
         with sender_lock:
             # Use the authoritative nonce tracker from mempool service
             # This is the same calculation used during tx admission to prevent TOCTOU
             computed_next = mempool_service.get_next_nonce(addr_bytes, committed_nonce)
-            
+
             # Get pending info for logging
-            pending_next = mempool_service.pending_nonce(addr_bytes)
-            
+            pending_nonces = mempool_service.pending_nonces(addr_bytes)
+            pending_next = (
+                mempool_service.pending_nonce(addr_bytes, committed_nonce)
+                if pending_nonces
+                else None
+            )
+
             if _DEBUG_NONCE:
                 log.info(
                     "state.getNextNonce: authoritative calculation (locked)",
                     extra={
                         "address": addr,
                         "confirmed_nonce": committed_nonce,
-                        "highest_pending_nonce": (pending_next - 1) if pending_next is not None else None,
+                        "highest_pending_nonce": max(pending_nonces) if pending_nonces else None,
                         "pending_next_nonce": pending_next,
                         "returned_next_nonce": computed_next,
                     },
@@ -371,10 +375,8 @@ def _svc_pending_nonce(addr: str) -> int:
         except Exception:
             return committed_nonce
         
-        # Start at committed_nonce - 1 so any pending nonce >= committed_nonce will be detected
-        # This ensures we return the highest pending nonce + 1
-        highest_pending_nonce = committed_nonce - 1
-        
+        pending_nonces: set[int] = set()
+
         for tx_hash_hex, raw in pending_map.items():
             try:
                 # Decode transaction to check sender and nonce
@@ -398,21 +400,22 @@ def _svc_pending_nonce(addr: str) -> int:
                 # Check if this tx is from our address (compare bytes)
                 if tx_from_bytes == addr_bytes:
                     tx_nonce = body.get("nonce", 0)
-                    if isinstance(tx_nonce, int) and tx_nonce > highest_pending_nonce:
-                        highest_pending_nonce = tx_nonce
+                    if isinstance(tx_nonce, int):
+                        pending_nonces.add(tx_nonce)
             except Exception:
                 # Skip transactions we can't decode
                 continue
         
-        # Return highest pending nonce + 1, or committed nonce if no pending txs
-        if highest_pending_nonce >= committed_nonce:
-            computed_next = highest_pending_nonce + 1
+        if pending_nonces:
+            computed_next = committed_nonce
+            while computed_next in pending_nonces:
+                computed_next += 1
             log.debug(
                 "state.getNextNonce: found pending transactions in fallback pool",
                 extra={
                     "address": addr,
                     "chain_nonce": committed_nonce,
-                    "highest_pending": highest_pending_nonce,
+                    "highest_pending": max(pending_nonces),
                     "computed_next": computed_next,
                 },
             )

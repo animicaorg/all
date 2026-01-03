@@ -1382,8 +1382,6 @@ def _tx_send_raw_transaction(rawTx: str) -> str:
         has0 = _mempool_has(svc, tx_hash_hex)
         if has0 is True:
             return tx_hash_hex
-    if _pending_get(tx_hash_hex) is not None:
-        return tx_hash_hex
     persisted, *_ = _lookup_persisted_tx(tx_hash_hex)
     if persisted is not None:
         return tx_hash_hex
