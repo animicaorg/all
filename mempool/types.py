@@ -195,6 +195,7 @@ class TxMeta:
         sender: Address,
         gas_limit: int,
         size_bytes: int,
+        nonce: Optional[int] = None,
         first_seen: Optional[UnixTime] = None,
         first_seen_s: Optional[UnixTime] = None,  # Alias for first_seen
         last_seen: Optional[UnixTime] = None,
@@ -211,6 +212,7 @@ class TxMeta:
         **kwargs: Any  # Ignore extra kwargs for compatibility
     ) -> None:
         self.sender = sender
+        self.nonce = int(nonce) if nonce is not None else 0
         self.gas_limit = int(gas_limit)
         self.size_bytes = int(size_bytes)
         # Handle first_seen_s alias
@@ -252,6 +254,7 @@ class TxMeta:
     def to_dict(self) -> Dict[str, Any]:
         return {
             "sender": self.sender,
+            "nonce": int(self.nonce),
             "gas_limit": int(self.gas_limit),
             "size_bytes": int(self.size_bytes),
             "first_seen": float(self.first_seen),
