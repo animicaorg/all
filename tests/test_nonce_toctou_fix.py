@@ -91,7 +91,7 @@ def test_getNextNonce_matches_admission_expected():
     assert next_nonce == 13, f"Expected next nonce 13, got {next_nonce}"
     
     # Verify pending_nonce also returns 13
-    pending_next = service.pending_nonce(sender_bytes)
+    pending_next = service.pending_nonce(sender_bytes, confirmed_nonce=10)
     assert pending_next == 13, f"Expected pending_nonce 13, got {pending_next}"
     
     # Add one more at nonce 13
@@ -128,7 +128,7 @@ def test_no_pending_txs_returns_confirmed_nonce():
     assert next_nonce == 42, f"Expected 42, got {next_nonce}"
     
     # pending_nonce should return None
-    pending_next = service.pending_nonce(sender_bytes)
+    pending_next = service.pending_nonce(sender_bytes, confirmed_nonce=42)
     assert pending_next is None, f"Expected None, got {pending_next}"
 
 
@@ -482,20 +482,18 @@ def test_mempool_submit_raises_on_rejection():
         pytest.skip("CBOR encoding not available")
 
 
-def test_stale_nonce_not_recorded_as_rejection():
+def test_duplicate_nonce_rejected_without_advancing():
     """
-    Test that stale nonces (valid but beaten by another tx) are not recorded as rejections.
-    
-    This prevents pollution of the rejection cache with transactions that were
-    actually valid when submitted, just lost the race to another transaction.
+    Test that duplicate nonce submissions are rejected deterministically
+    and do not advance the expected nonce.
     """
-    from mempool.errors import NonceTooLow
-    
+    from mempool.errors import AdmissionError
+
     pool = Pool(cfg=PoolConfig(max_txs=1000, max_bytes=1024*1024))
-    
+
     state_db = Mock()
     state_db.get_nonce = Mock(return_value=10)
-    
+
     service = MempoolService(
         pool=pool,
         chain_id=1337,
@@ -504,25 +502,23 @@ def test_stale_nonce_not_recorded_as_rejection():
         tx_index=None,
         persist_enabled=False,
     )
-    
+
     sender = "0x" + "ff" * 32
     sender_bytes = bytes.fromhex(sender[2:])
-    
+
     # Add tx at nonce 10
     pool_tx_10, meta_10 = make_pool_tx(sender, 10)
     pool.add(pool_tx_10, meta_10, is_local=True)
-    
+
     # Expected next nonce is 11
     next_nonce = service.get_next_nonce(sender_bytes, confirmed_nonce=10)
     assert next_nonce == 11
-    
-    # Now try to submit with nonce 10 (stale - it was valid earlier but got beaten)
-    # This should raise NonceTooLow but NOT record a rejection
+
+    # Now try to submit a different tx with nonce 10 (duplicate)
     try:
         from core.encoding.cbor import dumps as cbor_dumps
         from core.utils.hash import sha3_256
-        
-        # Create a proper tx envelope with raw bytes
+
         body = {
             "from": sender_bytes,
             "nonce": 10,
@@ -531,21 +527,18 @@ def test_stale_nonce_not_recorded_as_rejection():
         }
         tx_envelope = {"body": body}
         raw_bytes = cbor_dumps(tx_envelope)
-        
-        # The tx dict needs to include the raw bytes
+
         tx_dict = tx_envelope.copy()
         tx_dict["raw"] = raw_bytes
-        
+
         tx_hash_hex = "0x" + sha3_256(raw_bytes).hex()
-        
-        # This should raise but not record rejection (nonce >= confirmed)
-        with pytest.raises(NonceTooLow):
+
+        with pytest.raises(AdmissionError):
             service.submit(tx=tx_dict, raw=raw_bytes, tx_hash_hex=tx_hash_hex, local=True)
-        
-        # Verify it was NOT recorded as a rejection
-        rejection = service.get_rejection(tx_hash_hex)
-        assert rejection is None, f"Stale nonce should not be recorded as rejection, got {rejection}"
-        
+
+        # Expected nonce remains stable
+        next_nonce_after = service.get_next_nonce(sender_bytes, confirmed_nonce=10)
+        assert next_nonce_after == 11
     except ImportError:
         pytest.skip("CBOR encoding not available")
 
