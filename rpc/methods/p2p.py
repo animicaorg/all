@@ -14,10 +14,14 @@ is not running, methods return empty results or appropriate errors.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import inspect
+import ipaddress
 import logging
+import os
 import socket
 import typing as t
+from pathlib import Path
 from urllib.parse import urlparse
 
 from rpc.methods import method
@@ -117,6 +121,152 @@ def _resolve_core_host(host: str) -> str | None:
         if family in (socket.AF_INET, socket.AF_INET6):
             return addr[0]
     return None
+
+
+def _normalize_peer_address(address: str) -> str | None:
+    if not address:
+        return None
+    if address.startswith("/"):
+        return address
+    if "://" in address:
+        address = address.split("://", 1)[1]
+    if ":" not in address:
+        return None
+    host, port_str = address.rsplit(":", 1)
+    try:
+        port = int(port_str)
+    except ValueError:
+        return None
+    if not host or port <= 0:
+        return None
+    try:
+        ip_obj = ipaddress.ip_address(host)
+        ip_tag = "ip6" if ip_obj.version == 6 else "ip4"
+    except ValueError:
+        ip_tag = "dns4"
+    return f"/{ip_tag}/{host}/tcp/{port}"
+
+
+def _generate_peer_id(address: str) -> str:
+    if "/p2p/" in address:
+        parts = address.split("/p2p/")
+        if len(parts) > 1:
+            return parts[1].split("/")[0]
+    if "/ipfs/" in address:
+        parts = address.split("/ipfs/")
+        if len(parts) > 1:
+            return parts[1].split("/")[0]
+    hash_obj = hashlib.sha256(address.encode())
+    return f"peer_{hash_obj.hexdigest()[:32]}"
+
+
+def _resolve_peer_store_paths(p2p_svc: t.Any | None, core_svc: t.Any | None) -> dict[str, str]:
+    json_path: Path | None = None
+    db_path: Path | None = None
+
+    if p2p_svc is not None:
+        json_path = getattr(p2p_svc, "_peers_json_path", None) or getattr(
+            p2p_svc, "peers_json_path", None
+        )
+        peerstore = getattr(p2p_svc, "peerstore", None)
+        if peerstore is not None:
+            db_path = getattr(peerstore, "path", None)
+            if isinstance(db_path, str):
+                db_path = Path(db_path)
+    if core_svc is not None:
+        peerstore = getattr(core_svc, "peerstore", None)
+        if peerstore is not None and db_path is None:
+            db_path = getattr(peerstore, "path", None)
+            if isinstance(db_path, str):
+                db_path = Path(db_path)
+        if db_path is not None and json_path is None:
+            json_path = db_path.parent / "peers.json"
+
+    env_path = os.environ.get("ANIMICA_P2P_DATA_DIR") or os.environ.get("ANIMICA_PEER_STORE_PATH")
+    if env_path:
+        base = Path(env_path).expanduser()
+        if base.suffix == ".json":
+            json_path = json_path or base
+            db_path = db_path or base.parent / "peers.db"
+        elif base.suffix == ".db":
+            db_path = db_path or base
+            json_path = json_path or base.parent / "peers.json"
+        else:
+            json_path = json_path or base / "peers.json"
+            db_path = db_path or base / "peers.db"
+
+    return {
+        "json": str(json_path) if json_path else "",
+        "db": str(db_path) if db_path else "",
+    }
+
+
+def _build_import_response(
+    *,
+    ok: bool,
+    imported: int,
+    skipped: int,
+    invalid: int,
+    store: dict[str, str],
+    message: str,
+    errors: list[str] | None = None,
+    extra: dict[str, t.Any] | None = None,
+) -> dict[str, t.Any]:
+    payload: dict[str, t.Any] = {
+        "ok": ok,
+        "success": ok,
+        "imported": imported,
+        "skipped": skipped,
+        "invalid": invalid,
+        "source": "rpc",
+        "store": store,
+        "message": message,
+    }
+    if errors:
+        payload["errors"] = errors
+    if not ok:
+        payload["error"] = {
+            "message": message or "import failed",
+            "details": errors or [],
+        }
+    if extra:
+        for key, value in extra.items():
+            payload.setdefault(key, value)
+    return payload
+
+
+def _persist_peers_to_store(addresses: list[str]) -> tuple[int, int, int, list[str]]:
+    try:
+        from p2p.peer.peerstore import PeerStore
+    except Exception as exc:
+        return 0, 0, 0, [str(exc)]
+
+    store_path = os.environ.get("ANIMICA_P2P_DATA_DIR") or os.environ.get("ANIMICA_PEER_STORE_PATH")
+    if not store_path:
+        return 0, 0, 0, ["peerstore path not configured"]
+
+    imported = 0
+    skipped = 0
+    invalid = 0
+    errors: list[str] = []
+    store = PeerStore(store_path)
+
+    for raw in addresses:
+        normalized = _normalize_peer_address(raw)
+        if not normalized:
+            invalid += 1
+            errors.append(f"invalid address: {raw}")
+            continue
+        peer_id = _generate_peer_id(normalized)
+        try:
+            store.add(peer_id=peer_id, addrs=[normalized], score=0.0, direction="outbound")
+            store.record_seen(peer_id, normalized)
+            imported += 1
+        except Exception as exc:  # pragma: no cover - defensive
+            skipped += 1
+            errors.append(str(exc))
+
+    return imported, skipped, invalid, errors
 
 
 def _peer_counts_snapshot() -> dict[str, int]:
@@ -748,30 +898,63 @@ async def import_peers(addresses: list[str]) -> dict[str, t.Any]:
     if svc is None:
         core_svc = _get_core_p2p_service()
         if core_svc is None or not hasattr(core_svc, "addrman"):
+            imported, skipped, invalid, errors = _persist_peers_to_store(addresses)
+            store = _resolve_peer_store_paths(svc, core_svc)
             peer_counts = _peer_counts_snapshot()
-            return {
-                "success": False,
-                "added": 0,
-                "skipped": 0,
-                "dial_attempted": 0,
-                "dial_success": 0,
-                "seeds_added": 0,
-                "seeds_skipped": 0,
-                "dial_attempts_started": 0,
-                **peer_counts,
-                "errors": [P2P_UNAVAILABLE_ERROR],
-            }
+            if imported or skipped or invalid:
+                return _build_import_response(
+                    ok=True,
+                    imported=imported,
+                    skipped=skipped,
+                    invalid=invalid,
+                    store=store,
+                    message="stored; will be used on next P2P start",
+                    errors=errors or None,
+                    extra={
+                        "dial_attempted": 0,
+                        "dial_success": 0,
+                        "seeds_added": imported,
+                        "seeds_skipped": skipped,
+                        "dial_attempts_started": 0,
+                        **peer_counts,
+                    },
+                )
+            return _build_import_response(
+                ok=False,
+                imported=0,
+                skipped=0,
+                invalid=0,
+                store=store,
+                message=P2P_UNAVAILABLE_ERROR,
+                errors=errors or [P2P_UNAVAILABLE_ERROR],
+                extra={
+                    "dial_attempted": 0,
+                    "dial_success": 0,
+                    "seeds_added": 0,
+                    "seeds_skipped": 0,
+                    "dial_attempts_started": 0,
+                    **peer_counts,
+                },
+            )
         added = 0
         skipped = 0
+        invalid = 0
         dial_attempted = 0
         dial_success = 0
         errors: list[str] = []
+        seen: set[tuple[str, int]] = set()
         for addr in addresses:
             net_addr, err = _parse_core_address(addr)
             if net_addr is None:
                 skipped += 1
+                invalid += 1
                 errors.append(err or f"invalid address {addr}")
                 continue
+            key = (str(net_addr.ip), int(net_addr.port))
+            if key in seen:
+                skipped += 1
+                continue
+            seen.add(key)
             try:
                 core_svc.addrman.add([net_addr])
                 added += 1
@@ -785,18 +968,24 @@ async def import_peers(addresses: list[str]) -> dict[str, t.Any]:
             except Exception as exc:  # pragma: no cover - defensive
                 errors.append(str(exc))
         peer_counts = _peer_counts_snapshot()
-        return {
-            "success": bool(added or dial_attempted),
-            "added": added,
-            "skipped": skipped,
-            "dial_attempted": dial_attempted,
-            "dial_success": dial_success,
-            "seeds_added": added,
-            "seeds_skipped": skipped,
-            "dial_attempts_started": dial_attempted,
-            **peer_counts,
-            "errors": errors,
-        }
+        store = _resolve_peer_store_paths(svc, core_svc)
+        return _build_import_response(
+            ok=bool(added or dial_attempted),
+            imported=added,
+            skipped=skipped,
+            invalid=invalid,
+            store=store,
+            message="import complete" if (added or dial_attempted) else "import failed",
+            errors=errors or None,
+            extra={
+                "dial_attempted": dial_attempted,
+                "dial_success": dial_success,
+                "seeds_added": added,
+                "seeds_skipped": skipped,
+                "dial_attempts_started": dial_attempted,
+                **peer_counts,
+            },
+        )
 
     if hasattr(svc, "import_peers"):
         try:
@@ -806,44 +995,80 @@ async def import_peers(addresses: list[str]) -> dict[str, t.Any]:
             result.setdefault("seeds_skipped", result.get("skipped", 0))
             result.setdefault("dial_attempts_started", result.get("dial_attempted", 0))
             result.update(_peer_counts_snapshot())
-            return result
+            imported = int(result.get("imported") or result.get("added") or 0)
+            skipped = int(result.get("skipped") or 0)
+            invalid = int(result.get("invalid") or 0)
+            errors = result.get("errors") or []
+            message = result.get("message") or ("import complete" if result.get("success") else "import failed")
+            store = _resolve_peer_store_paths(svc, None)
+            extra = {
+                "dial_attempted": result.get("dial_attempted", 0),
+                "dial_success": result.get("dial_success", 0),
+                "seeds_added": result.get("seeds_added", imported),
+                "seeds_skipped": result.get("seeds_skipped", skipped),
+                "dial_attempts_started": result.get("dial_attempts_started", result.get("dial_attempted", 0)),
+            }
+            extra.update(_peer_counts_snapshot())
+            return _build_import_response(
+                ok=bool(result.get("success")),
+                imported=imported,
+                skipped=skipped,
+                invalid=invalid,
+                store=store,
+                message=message,
+                errors=errors or None,
+                extra=extra,
+            )
         except Exception as e:  # pragma: no cover - defensive
             log.error("import_peers failed", exc_info=True)
             peer_counts = _peer_counts_snapshot()
-            return {
-                "success": False,
-                "added": 0,
-                "skipped": 0,
-                "dial_attempted": 0,
-                "dial_success": 0,
-                "seeds_added": 0,
-                "seeds_skipped": 0,
-                "dial_attempts_started": 0,
-                **peer_counts,
-                "errors": [str(e)],
-            }
+            store = _resolve_peer_store_paths(svc, None)
+            return _build_import_response(
+                ok=False,
+                imported=0,
+                skipped=0,
+                invalid=0,
+                store=store,
+                message=str(e),
+                errors=[str(e)],
+                extra={
+                    "dial_attempted": 0,
+                    "dial_success": 0,
+                    "seeds_added": 0,
+                    "seeds_skipped": 0,
+                    "dial_attempts_started": 0,
+                    **peer_counts,
+                },
+            )
 
     # Fallback: seed peerstore directly if available
     added = 0
     skipped = 0
+    invalid = 0
     dial_attempted = 0
     dial_success = 0
     try:
         peerstore = getattr(svc, "peerstore", None)
         if peerstore is None:
             peer_counts = _peer_counts_snapshot()
-            return {
-                "success": False,
-                "added": 0,
-                "skipped": 0,
-                "dial_attempted": 0,
-                "dial_success": 0,
-                "seeds_added": 0,
-                "seeds_skipped": 0,
-                "dial_attempts_started": 0,
-                **peer_counts,
-                "errors": ["Peerstore unavailable"],
-            }
+            store = _resolve_peer_store_paths(svc, None)
+            return _build_import_response(
+                ok=False,
+                imported=0,
+                skipped=0,
+                invalid=0,
+                store=store,
+                message="Peerstore unavailable",
+                errors=["Peerstore unavailable"],
+                extra={
+                    "dial_attempted": 0,
+                    "dial_success": 0,
+                    "seeds_added": 0,
+                    "seeds_skipped": 0,
+                    "dial_attempts_started": 0,
+                    **peer_counts,
+                },
+            )
         for addr in addresses:
             peer_id = addr
             try:
@@ -853,32 +1078,44 @@ async def import_peers(addresses: list[str]) -> dict[str, t.Any]:
                 skipped += 1
                 continue
         peer_counts = _peer_counts_snapshot()
-        return {
-            "success": bool(added),
-            "added": added,
-            "skipped": skipped,
-            "dial_attempted": dial_attempted,
-            "dial_success": dial_success,
-            "seeds_added": added,
-            "seeds_skipped": skipped,
-            "dial_attempts_started": dial_attempted,
-            **peer_counts,
-            "errors": [],
-        }
+        store = _resolve_peer_store_paths(svc, None)
+        return _build_import_response(
+            ok=bool(added),
+            imported=added,
+            skipped=skipped,
+            invalid=invalid,
+            store=store,
+            message="import complete" if added else "import failed",
+            errors=None,
+            extra={
+                "dial_attempted": dial_attempted,
+                "dial_success": dial_success,
+                "seeds_added": added,
+                "seeds_skipped": skipped,
+                "dial_attempts_started": dial_attempted,
+                **peer_counts,
+            },
+        )
     except Exception as e:  # pragma: no cover - defensive
         peer_counts = _peer_counts_snapshot()
-        return {
-            "success": False,
-            "added": 0,
-            "skipped": 0,
-            "dial_attempted": 0,
-            "dial_success": 0,
-            "seeds_added": 0,
-            "seeds_skipped": 0,
-            "dial_attempts_started": 0,
-            **peer_counts,
-            "errors": [str(e)],
-        }
+        store = _resolve_peer_store_paths(svc, None)
+        return _build_import_response(
+            ok=False,
+            imported=0,
+            skipped=0,
+            invalid=0,
+            store=store,
+            message=str(e),
+            errors=[str(e)],
+            extra={
+                "dial_attempted": 0,
+                "dial_success": 0,
+                "seeds_added": 0,
+                "seeds_skipped": 0,
+                "dial_attempts_started": 0,
+                **peer_counts,
+            },
+        )
 
 
 @method("p2p.addPeers", desc="Add multiple peers by address")
