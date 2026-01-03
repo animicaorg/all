@@ -19,6 +19,7 @@ from mempool.errors import (
     FeeTooLow,
     InsufficientFundsPending,
     NotYetValid,
+    PersistenceFailed,
     Replay,
 )
 from mempool.pool import Pool, PoolConfig
@@ -502,13 +503,6 @@ class MempoolService:
 
         current_height = _current_height()
         self._prune_recent_txids(current_height)
-        if tx_hash_hex in self._recent_txids:
-            self._record_rejection(
-                tx_hash_hex,
-                "replay",
-                {"tx_hash": tx_hash_hex},
-            )
-            raise Replay(tx_hash=tx_hash_hex)
 
         if isinstance(tx, dict):
             try:
@@ -577,6 +571,28 @@ class MempoolService:
             )
 
         sender_hex = _sender_hex(sender)
+
+        if self.tx_index is not None and hasattr(self.tx_index, "exists"):
+            try:
+                if self.tx_index.exists(tx_hash_bytes):
+                    self._record_rejection(
+                        tx_hash_hex,
+                        "replay",
+                        {"tx_hash": tx_hash_hex},
+                    )
+                    raise Replay(tx_hash=tx_hash_hex, sender=sender_hex)
+            except Replay:
+                raise
+            except Exception:
+                pass
+
+        if tx_hash_hex in self._recent_txids:
+            self._record_rejection(
+                tx_hash_hex,
+                "replay",
+                {"tx_hash": tx_hash_hex},
+            )
+            raise Replay(tx_hash=tx_hash_hex, sender=sender_hex)
 
         # Acquire per-sender lock to prevent TOCTOU race between getNextNonce and admission
         sender_lock = self._get_sender_lock(sender_hex)
@@ -652,20 +668,6 @@ class MempoolService:
                     sender=sender_hex,
                     tx_hash=tx_hash_hex,
                 )
-
-            if self.tx_index is not None and hasattr(self.tx_index, "exists"):
-                try:
-                    if self.tx_index.exists(tx_hash_bytes):
-                        self._record_rejection(
-                            tx_hash_hex,
-                            "replay",
-                            {"tx_hash": tx_hash_hex},
-                        )
-                        raise Replay(tx_hash=tx_hash_hex, sender=sender_hex)
-                except Replay:
-                    raise
-                except Exception:
-                    pass
 
             gas_limit = _tx_gas_limit(tx)
             if gas_limit <= 0:
@@ -791,8 +793,7 @@ class MempoolService:
                     {"error": str(exc)},
                 )
                 raise
-            self._recent_txids[tx_hash_hex] = current_height + self._replay_window_blocks
-        
+
         # Verify tx was actually added to pool
         if not self.has_hash(tx_hash_hex):
             log.error(
@@ -808,9 +809,26 @@ class MempoolService:
                 "pool.add succeeded but tx not in pool",
                 context={"tx_hash": tx_hash_hex},
             )
-        
+
+        if not self._restoring:
+            try:
+                self._persist_snapshot()
+            except Exception as exc:
+                try:
+                    self.pool.remove_included([tx_hash_bytes])
+                except Exception:
+                    pass
+                self._record_rejection(
+                    tx_hash_hex,
+                    "persistence_failed",
+                    {"tx_hash": tx_hash_hex, "error": str(exc)},
+                )
+                raise PersistenceFailed(tx_hash=tx_hash_hex, error=str(exc)) from exc
+
+        self._recent_txids[tx_hash_hex] = current_height + self._replay_window_blocks
+
         log.info(
-            "MempoolService.submit: SUCCESS - tx added and verified in pool, tx_hash=%s, pool_size=%d",
+            "MempoolService.submit: SUCCESS - tx added and persisted, tx_hash=%s, pool_size=%d",
             tx_hash_hex,
             len(self.pool),
         )
@@ -823,8 +841,6 @@ class MempoolService:
                 "peer": origin_peer,
             },
         )
-        if not self._restoring:
-            self._persist_snapshot()
         return tx_hash_hex
 
     def snapshot(self, *, limit: int = 1000) -> MempoolSnapshot:

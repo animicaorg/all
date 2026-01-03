@@ -44,6 +44,7 @@ __all__ = [
     "NotYetValid",
     "Expired",
     "Replay",
+    "PersistenceFailed",
     "InsufficientFundsPending",
     "MempoolErrorCode",
 ]
@@ -66,6 +67,7 @@ class MempoolErrorCode:
     REPLACEMENT = 1007
     NONCE_TOO_LOW = 1008
     NONCE_GAP = 1009
+    PERSISTENCE_FAILED = 1010
     DOS = 1099
 
 
@@ -241,6 +243,26 @@ class Replay(AdmissionError):
                 "sender": sender,
                 "tx_hash": tx_hash,
             },
+        )
+
+
+class PersistenceFailed(MempoolError):
+    """
+    The transaction was admitted but failed to persist to durable storage.
+    """
+
+    def __init__(
+        self,
+        *,
+        tx_hash: Optional[str] = None,
+        error: Optional[str] = None,
+    ) -> None:
+        msg = "mempool persistence failed"
+        super().__init__(
+            code=MempoolErrorCode.PERSISTENCE_FAILED,
+            reason="persistence_failed",
+            message=msg,
+            context={"tx_hash": tx_hash, "error": error},
         )
 
 
