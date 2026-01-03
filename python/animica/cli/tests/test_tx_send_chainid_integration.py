@@ -81,6 +81,15 @@ def test_send_includes_chainid_in_body(wallet_store: Path) -> None:
         
         # Handle other RPC calls
         method = req_data.get("method")
+        if method == "sync.getStatus":
+            return httpx.Response(
+                200,
+                json={
+                    "jsonrpc": "2.0",
+                    "id": req_data["id"],
+                    "result": {"synchronized": True, "head_height": 100},
+                },
+            )
         if method == "chain.getChainId":
             return httpx.Response(
                 200,
@@ -132,6 +141,13 @@ def test_send_includes_chainid_in_body(wallet_store: Path) -> None:
     body = decoded["body"]
     assert "chainId" in body, f"Missing 'chainId' in body: {list(body.keys())}"
     assert body["chainId"] == 1, f"Expected chainId=1, got {body['chainId']}"
+    assert "validAfter" in body, f"Missing 'validAfter' in body: {list(body.keys())}"
+    assert "validUntil" in body, f"Missing 'validUntil' in body: {list(body.keys())}"
+    assert "salt" in body, f"Missing 'salt' in body: {list(body.keys())}"
+    assert body["validAfter"] == 100
+    assert body["validUntil"] == 100 + tx.DEFAULT_TX_TTL_BLOCKS
+    assert isinstance(body["salt"], (bytes, bytearray))
+    assert len(body["salt"]) == 16
     
     # Verify sig has required fields
     sig = decoded["sig"]
@@ -147,12 +163,17 @@ def test_dry_run_shows_chainid(wallet_store: Path) -> None:
     
     # Mock RPC calls for dry-run
     respx.post(rpc_url).mock(side_effect=[
+        # sync.getStatus
+        httpx.Response(
+            200,
+            json={"jsonrpc": "2.0", "id": 1, "result": {"synchronized": True, "head_height": 100}},
+        ),
         # chain.getChainId
-        httpx.Response(200, json={"jsonrpc": "2.0", "id": 1, "result": 1}),
+        httpx.Response(200, json={"jsonrpc": "2.0", "id": 2, "result": 1}),
         # state.getTransactionCount
-        httpx.Response(200, json={"jsonrpc": "2.0", "id": 2, "result": 5}),
+        httpx.Response(200, json={"jsonrpc": "2.0", "id": 3, "result": 5}),
         # state.suggestGasPrice
-        httpx.Response(200, json={"jsonrpc": "2.0", "id": 3, "result": "1000000000"}),
+        httpx.Response(200, json={"jsonrpc": "2.0", "id": 4, "result": "1000000000"}),
     ])
     
     # Run CLI send with dry-run
