@@ -18,9 +18,12 @@ from mempool.errors import (
     Expired,
     FeeTooLow,
     InsufficientFundsPending,
+    NonceGap,
+    NonceTooLow,
     NotYetValid,
     PersistenceFailed,
     Replay,
+    ReplacementUnsupported,
 )
 from mempool.pool import Pool, PoolConfig
 from mempool.select import PendingTxEntry, select_for_block
@@ -110,7 +113,10 @@ def _tx_valid_after(tx: Any) -> Optional[int]:
     body = _tx_body(tx)
     valid_after = None
     if isinstance(body, dict):
-        valid_after = body.get("validAfter") or body.get("valid_after")
+        if "validAfter" in body:
+            valid_after = body.get("validAfter")
+        elif "valid_after" in body:
+            valid_after = body.get("valid_after")
     if valid_after is None:
         unsigned = getattr(tx, "unsigned", None)
         if unsigned is not None:
@@ -127,7 +133,10 @@ def _tx_valid_until(tx: Any) -> Optional[int]:
     body = _tx_body(tx)
     valid_until = None
     if isinstance(body, dict):
-        valid_until = body.get("validUntil") or body.get("valid_until")
+        if "validUntil" in body:
+            valid_until = body.get("validUntil")
+        elif "valid_until" in body:
+            valid_until = body.get("valid_until")
     if valid_until is None:
         unsigned = getattr(tx, "unsigned", None)
         if unsigned is not None:
@@ -311,6 +320,83 @@ class MempoolService:
         tx_hash_hex = _normalize_hash_hex(tx_hash_hex)
         self._prune_rejections()
         return self._last_rejections.get(tx_hash_hex)
+
+    def _confirmed_nonce(self, sender_bytes: bytes) -> int | None:
+        if self.state_db is None:
+            return None
+        if hasattr(self.state_db, "get_nonce"):
+            try:
+                return int(self.state_db.get_nonce(sender_bytes))
+            except Exception:
+                pass
+        if hasattr(self.state_db, "get_account"):
+            try:
+                acct = self.state_db.get_account(sender_bytes)
+            except Exception:
+                acct = None
+            if acct is not None:
+                if hasattr(acct, "nonce"):
+                    return int(acct.nonce)
+                if isinstance(acct, dict) and "nonce" in acct:
+                    return int(acct["nonce"])
+        if hasattr(self.state_db, "get"):
+            try:
+                acct = self.state_db.get(sender_bytes)
+            except Exception:
+                acct = None
+            if acct is not None:
+                if hasattr(acct, "nonce"):
+                    return int(acct.nonce)
+                if isinstance(acct, dict) and "nonce" in acct:
+                    return int(acct["nonce"])
+        return None
+
+    def _pending_entries_by_sender(self, sender_hex: str) -> list[Any]:
+        try:
+            return list(self.pool.index.get_by_sender(sender_hex))
+        except Exception:
+            return []
+
+    def pending_nonces(self, sender_bytes: bytes) -> set[int]:
+        sender_hex = _sender_hex(sender_bytes)
+        pending = set()
+        for entry in self._pending_entries_by_sender(sender_hex):
+            nonce = getattr(entry.meta, "nonce", None)
+            if nonce is None:
+                tx_obj = getattr(entry.tx, "tx", entry.tx)
+                nonce = _tx_nonce(tx_obj)
+            if nonce is None:
+                continue
+            pending.add(int(nonce))
+        return pending
+
+    def pending_nonce(self, sender_bytes: bytes, confirmed_nonce: int | None = None) -> int | None:
+        pending = self.pending_nonces(sender_bytes)
+        if not pending:
+            return None
+        highest_pending = max(pending)
+        if confirmed_nonce is None:
+            return highest_pending + 1
+        return max(int(confirmed_nonce), highest_pending + 1)
+
+    def get_next_nonce(self, sender_bytes: bytes, confirmed_nonce: int) -> int:
+        pending_next = self.pending_nonce(sender_bytes, confirmed_nonce)
+        return int(pending_next) if pending_next is not None else int(confirmed_nonce)
+
+    def _pending_by_nonce(self, sender_hex: str) -> dict[int, str]:
+        by_nonce: dict[int, str] = {}
+        for entry in self._pending_entries_by_sender(sender_hex):
+            tx_obj = getattr(entry.tx, "tx", entry.tx)
+            nonce = getattr(entry.meta, "nonce", None)
+            if nonce is None:
+                nonce = _tx_nonce(tx_obj)
+            if nonce is None:
+                continue
+            tx_hash = getattr(entry, "tx_hash", None) or getattr(entry.tx, "tx_hash", None)
+            if tx_hash is None:
+                continue
+            by_nonce[int(nonce)] = "0x" + _normalize_hash_bytes(tx_hash).hex()
+        return by_nonce
 
     @classmethod
     def create(
@@ -631,6 +717,76 @@ class MempoolService:
                     },
                 )
 
+            nonce = _tx_nonce(tx)
+            if nonce is None:
+                self._record_rejection(
+                    tx_hash_hex,
+                    "missing_nonce",
+                    {"sender": sender_hex},
+                )
+                raise AdmissionError(
+                    "missing nonce",
+                    context={"tx_hash": tx_hash_hex, "sender": sender_hex},
+                )
+
+            confirmed_nonce = self._confirmed_nonce(sender)
+            expected_nonce = self.get_next_nonce(sender, confirmed_nonce or 0)
+            pending_by_nonce = self._pending_by_nonce(sender_hex)
+            if nonce in pending_by_nonce:
+                existing_hash = pending_by_nonce[nonce]
+                if existing_hash == tx_hash_hex:
+                    return tx_hash_hex
+                self._record_rejection(
+                    tx_hash_hex,
+                    "replacement_unsupported",
+                    {
+                        "sender": sender_hex,
+                        "nonce": int(nonce),
+                        "existing_tx_hash": existing_hash,
+                        "expected_nonce": expected_nonce,
+                    },
+                )
+                raise ReplacementUnsupported(
+                    sender=sender_hex,
+                    nonce=int(nonce),
+                    tx_hash_new=tx_hash_hex,
+                    tx_hash_old=existing_hash,
+                )
+
+            if nonce < expected_nonce:
+                self._record_rejection(
+                    tx_hash_hex,
+                    "nonce_too_low",
+                    {
+                        "expected": expected_nonce,
+                        "got": int(nonce),
+                        "confirmed": confirmed_nonce,
+                    },
+                )
+                raise NonceTooLow(
+                    expected_nonce=int(expected_nonce),
+                    got_nonce=int(nonce),
+                    sender=sender_hex,
+                    tx_hash=tx_hash_hex,
+                )
+
+            if nonce > expected_nonce:
+                self._record_rejection(
+                    tx_hash_hex,
+                    "nonce_gap",
+                    {
+                        "expected": expected_nonce,
+                        "got": int(nonce),
+                        "confirmed": confirmed_nonce,
+                    },
+                )
+                raise NonceGap(
+                    expected_nonce=int(expected_nonce),
+                    got_nonce=int(nonce),
+                    sender=sender_hex,
+                    tx_hash=tx_hash_hex,
+                )
+
             max_ttl_blocks = int(os.getenv("ANIMICA_MAX_TX_TTL_BLOCKS", "200") or 200)
             if valid_until - valid_after > max_ttl_blocks:
                 self._record_rejection(
@@ -760,6 +916,7 @@ class MempoolService:
 
             meta = TxMeta(
                 sender=sender_hex,
+                nonce=int(nonce),
                 gas_limit=gas_limit,
                 size_bytes=len(raw_bytes),
                 first_seen=time.time(),

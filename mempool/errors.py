@@ -44,6 +44,7 @@ __all__ = [
     "NotYetValid",
     "Expired",
     "Replay",
+    "ReplacementUnsupported",
     "PersistenceFailed",
     "InsufficientFundsPending",
     "MempoolErrorCode",
@@ -363,6 +364,34 @@ class ReplacementError(MempoolError):
                 "required_bump": required_bump,
                 "current_effective_gas_price_wei": current_effective_gas_price_wei,
                 "offered_effective_gas_price_wei": offered_effective_gas_price_wei,
+            },
+        )
+
+
+class ReplacementUnsupported(MempoolError):
+    """
+    A transaction with the same sender+nonce already exists and replacement
+    is not supported.
+    """
+
+    def __init__(
+        self,
+        *,
+        sender: Optional[str] = None,
+        nonce: Optional[int] = None,
+        tx_hash_new: Optional[str] = None,
+        tx_hash_old: Optional[str] = None,
+    ) -> None:
+        msg = "replacement unsupported for sender+nonce"
+        super().__init__(
+            code=MempoolErrorCode.REPLACEMENT,
+            reason="replacement_unsupported",
+            message=msg,
+            context={
+                "sender": sender,
+                "nonce": nonce,
+                "tx_hash": tx_hash_new,
+                "existing_tx_hash": tx_hash_old,
             },
         )
 

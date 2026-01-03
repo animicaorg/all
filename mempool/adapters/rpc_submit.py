@@ -40,6 +40,7 @@ try:
         Oversize,
         Replay,
         ReplacementError,
+        ReplacementUnsupported,
     )
 except Exception:  # pragma: no cover - optional dependency
 
@@ -48,6 +49,8 @@ except Exception:  # pragma: no cover - optional dependency
     class AdmissionError(_BaseErr): ...
 
     class ReplacementError(_BaseErr): ...
+
+    class ReplacementUnsupported(_BaseErr): ...
 
     class DoSError(_BaseErr): ...
 
@@ -163,6 +166,12 @@ class RpcSubmitAdapter:
             except ReplacementError as e:
                 return SubmitResult(
                     status=SubmitStatus.REPLACED, tx_hash=tx_hash, reason=str(e)
+                )
+            except ReplacementUnsupported as e:
+                return SubmitResult(
+                    status=SubmitStatus.REJECTED,
+                    tx_hash=tx_hash,
+                    reason=f"replacement_unsupported: {e}",
                 )
             except FeeTooLow as e:
                 return SubmitResult(
