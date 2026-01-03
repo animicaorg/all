@@ -522,8 +522,8 @@ def _next_retry_nonce(
     """
     Determine the nonce to use for a retry after a nonce mismatch error.
     
-    If the error provides an expected nonce, use it directly for deterministic retries.
-    Otherwise, refresh the nonce from the RPC server.
+    Fetches a fresh pending nonce from RPC and uses the max of (expected, fresh_pending)
+    to avoid sending a stale nonce if the mempool advanced between attempts.
     
     Args:
         rpc_url: The RPC endpoint URL
@@ -535,24 +535,31 @@ def _next_retry_nonce(
     Returns:
         The nonce to use for the retry attempt
     """
+    # Always fetch a fresh pending nonce to avoid stale values
+    if verbose:
+        console.print(f"[dim]Fetching fresh pending nonce from RPC (rejected: {got}, expected from error: {expected})[/dim]")
+    
+    fresh_pending = _get_next_nonce(rpc_url, addr, verbose=verbose)
+    
     if expected is not None:
-        # Use the expected nonce from the error for deterministic retry
+        # Use the max of (expected, fresh_pending) to handle cases where
+        # the mempool advanced between the error and the retry
+        retry_nonce = max(int(expected), fresh_pending)
         if verbose:
-            console.print(f"[dim]Using expected nonce from error: {expected} (rejected nonce: {got})[/dim]")
+            console.print(f"[dim]Retry nonce: max(expected={expected}, fresh_pending={fresh_pending}) = {retry_nonce}[/dim]")
+        elif retry_nonce != expected:
+            console.print(f"[dim]Using fresh pending nonce {retry_nonce} (error expected: {expected})[/dim]")
         else:
             console.print(f"[dim]Using expected nonce from error: {expected}[/dim]")
-        return int(expected)
+        return retry_nonce
     
-    # Fallback: refresh nonce from RPC server
+    # No expected nonce in error, use fresh pending
     if verbose:
-        console.print(f"[dim]No expected nonce in error, querying RPC for next nonce (rejected: {got})[/dim]")
+        console.print(f"[dim]No expected nonce in error, using fresh pending: {fresh_pending}[/dim]")
     else:
-        console.print(f"[dim]Refreshing nonce from RPC server[/dim]")
+        console.print(f"[dim]Using fresh pending nonce: {fresh_pending}[/dim]")
     
-    refreshed = _next_nonce(rpc_url, addr, refresh=True)
-    if verbose:
-        console.print(f"[dim]RPC returned next nonce: {refreshed}[/dim]")
-    return refreshed
+    return fresh_pending
 
 
 def _get_default_max_fee(rpc_url: str) -> int:
@@ -934,6 +941,12 @@ def send(
                     raise typer.Exit(code=1)
                 reason, expected, got = _extract_nonce_mismatch(e.data, verbose=verbose)
                 if nonce is None and reason in {"nonce_too_low", "nonce_gap"} and attempt + 1 < max_attempts:
+                    # Invalidate cache on nonce mismatch to prevent stale cached+1 reuse
+                    cache_key = (rpc, from_addr)
+                    if cache_key in _NONCE_CACHE:
+                        if verbose:
+                            console.print(f"[dim]Invalidating nonce cache (was {_NONCE_CACHE[cache_key]})[/dim]")
+                        del _NONCE_CACHE[cache_key]
                     next_nonce_value = _next_retry_nonce(rpc, from_addr, expected=expected, got=got, verbose=verbose)
                     console.print(f"[yellow]nonce mismatch (reason={reason}), retrying with nonce={next_nonce_value}[/yellow]")
                     continue
@@ -951,10 +964,21 @@ def send(
             if tx_in_mempool:
                 last_body = body
                 last_nonce = attempt_nonce
+                # Update cache with the successful nonce for future transactions
+                cache_key = (rpc, from_addr)
+                _NONCE_CACHE[cache_key] = attempt_nonce
+                if verbose:
+                    console.print(f"[dim]Updated nonce cache to {attempt_nonce} after successful submission[/dim]")
                 break
 
             reason, expected, got = _nonce_mismatch_from_status(mempool_status)
             if nonce is None and reason in {"nonce_too_low", "nonce_gap"} and attempt + 1 < max_attempts:
+                # Invalidate cache on nonce mismatch to prevent stale cached+1 reuse
+                cache_key = (rpc, from_addr)
+                if cache_key in _NONCE_CACHE:
+                    if verbose:
+                        console.print(f"[dim]Invalidating nonce cache (was {_NONCE_CACHE[cache_key]})[/dim]")
+                    del _NONCE_CACHE[cache_key]
                 next_nonce_value = _next_retry_nonce(rpc, from_addr, expected=expected, got=got, verbose=verbose)
                 console.print(f"[yellow]nonce mismatch (reason={reason}), retrying with nonce={next_nonce_value}[/yellow]")
                 continue
