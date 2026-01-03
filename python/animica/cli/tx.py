@@ -738,14 +738,53 @@ def _extract_nonce_mismatch(data: Any, *, verbose: bool = False) -> tuple[str | 
     return reason, expected, got
 
 
-def _format_nonce_mismatch(reason: str | None, expected: int | None, got: int | None) -> None:
+def _format_nonce_mismatch(
+    reason: str | None,
+    expected: int | None,
+    got: int | None,
+    *,
+    rpc_url: str | None = None,
+    addr: str | None = None,
+    verbose: bool = False,
+) -> None:
     label = "nonce mismatch"
-    if reason in {"nonce_too_low", "nonce_gap"}:
+    if reason in {"nonce_too_low", "nonce_gap", "nonce_too_high", "bad_nonce"}:
         label = reason.replace("_", " ")
     console.print(f"\n[bold red]Nonce error:[/bold red] {label}")
     if expected is not None or got is not None:
         console.print(f"  Expected: {expected if expected is not None else '?'}")
         console.print(f"  Got:      {got if got is not None else '?'}")
+
+    confirmed_nonce: int | None = None
+    pending_nonce: int | None = None
+    if rpc_url and addr:
+        try:
+            confirmed_nonce, _, _ = _get_confirmed_nonce(rpc_url, addr, verbose=verbose)
+        except Exception as exc:
+            if verbose:
+                console.print(f"[dim]Failed to fetch confirmed nonce: {exc}[/dim]")
+        try:
+            pending_nonce, _, _ = _get_pending_nonce(rpc_url, addr, verbose=verbose)
+        except Exception as exc:
+            if verbose:
+                console.print(f"[dim]Failed to fetch pending nonce: {exc}[/dim]")
+        if confirmed_nonce is not None:
+            console.print(f"  Chain nonce (confirmed): {confirmed_nonce}")
+        if pending_nonce is not None:
+            console.print(f"  Pending nonce:          {pending_nonce}")
+
+    suggested = expected
+    if suggested is None:
+        suggested = pending_nonce if pending_nonce is not None else confirmed_nonce
+    if suggested is not None:
+        console.print(f"\n[yellow]Suggestion:[/yellow] retry with [bold]--nonce {suggested}[/bold].")
+
+    if reason in {"nonce_gap", "nonce_too_high"}:
+        console.print(
+            "[yellow]Note:[/yellow] Your account has missing intermediate nonces. "
+            "Wait for earlier transactions to land or clear pending transactions before retrying."
+        )
+
     console.print("\n[yellow]Tip:[/yellow] Refresh nonce with:")
     console.print("  animica rpc call state.getNextNonce '<address>'")
     console.print("or")
@@ -1237,7 +1276,14 @@ def send(
                     )
                     continue
                 if reason in {"nonce_too_low", "nonce_gap"}:
-                    _format_nonce_mismatch(reason, expected, got)
+                    _format_nonce_mismatch(
+                        reason,
+                        expected,
+                        got,
+                        rpc_url=rpc,
+                        addr=from_addr,
+                        verbose=verbose,
+                    )
                     raise typer.Exit(code=1)
                 # Some nodes use alternate method naming
                 if e.code in (-32601,):
@@ -1283,7 +1329,14 @@ def send(
                 console.print("Mempool status:")
                 console.print(Pretty(mempool_status))
             if reason in {"nonce_too_low", "nonce_gap"}:
-                _format_nonce_mismatch(reason, expected, got)
+                _format_nonce_mismatch(
+                    reason,
+                    expected,
+                    got,
+                    rpc_url=rpc,
+                    addr=from_addr,
+                    verbose=verbose,
+                )
             console.print("")
             console.print("The RPC accepted the transaction but it is NOT in the mempool.")
             console.print("Possible reasons:")

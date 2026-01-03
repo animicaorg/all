@@ -57,6 +57,9 @@ def test_send_raw_transaction_rejects_nonce_gap_and_not_pending() -> None:
     err = error_resp["error"]
     assert isinstance(err.get("code"), int)
     assert "nonce" in (err.get("message") or "").lower()
+    mempool_error = (err.get("data") or {}).get("mempoolError")
+    assert isinstance(mempool_error, dict)
+    assert mempool_error.get("reason") == "nonce_gap"
 
     pending = rpc_call(client, "mempool.getPending")["result"]
     assert tx_hash not in pending
