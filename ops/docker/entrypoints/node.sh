@@ -39,8 +39,16 @@ set -eu
 
 # --- defaults -----------------------------------------------------------------
 : "${DATA_DIR:=/data}"
-: "${GENESIS_PATH:=/app/core/genesis/genesis.json}"
 : "${CHAIN_ID:=1}"
+
+if [ -z "${GENESIS_PATH:-}" ]; then
+  case "${CHAIN_ID}" in
+    1) GENESIS_PATH="/app/core/genesis/mainnet.json" ;;
+    2) GENESIS_PATH="/app/core/genesis/testnet.json" ;;
+    1337) GENESIS_PATH="/app/core/genesis/devnet.json" ;;
+    *) GENESIS_PATH="/app/core/genesis/genesis.json" ;;
+  esac
+fi
 
 : "${DB_BACKEND:=sqlite}"        # sqlite | rocksdb
 : "${SQLITE_FILE:=animica.db}"

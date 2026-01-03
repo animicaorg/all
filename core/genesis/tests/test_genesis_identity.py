@@ -4,7 +4,7 @@ from core.genesis.loader import compute_genesis_identity
 
 
 def test_compute_genesis_identity_mainnet_is_stable() -> None:
-    genesis_path = Path("core/genesis/genesis.json")
+    genesis_path = Path("core/genesis/mainnet.json")
     identity_first = compute_genesis_identity(genesis_path)
     identity_second = compute_genesis_identity(genesis_path)
 

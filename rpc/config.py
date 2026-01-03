@@ -400,13 +400,21 @@ def load() -> RpcConfig:
     genesis_path: Path | None = Path(genesis_env).expanduser() if genesis_env else None
     if genesis_path is None:
         repo_root = Path(__file__).resolve().parents[1]
-        if network in {"dev", "devnet"}:
-            genesis_path = repo_root / "genesis" / "genesis.sample.devnet.json"
+        try:
+            from core.network_params import get_network_genesis_path
+
+            canonical = get_network_genesis_path(network_name=network)
+        except Exception:
+            canonical = None
+        if canonical is not None:
+            genesis_path = canonical
+        elif network in {"dev", "devnet"}:
+            genesis_path = repo_root / "core" / "genesis" / "devnet.json"
         elif network in {"test", "testnet"}:
-            genesis_path = repo_root / "genesis" / "genesis.sample.testnet.json"
+            genesis_path = repo_root / "core" / "genesis" / "testnet.json"
         else:
             # Default to mainnet: use the canonical genesis.json in core/genesis/
-            genesis_path = repo_root / "core" / "genesis" / "genesis.json"
+            genesis_path = repo_root / "core" / "genesis" / "mainnet.json"
 
     if not explicit_chain_id:
         genesis_chain_id = _chain_id_from_genesis(genesis_path)
