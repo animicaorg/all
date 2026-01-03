@@ -51,23 +51,18 @@ def _tx_chain_id(tx: Any) -> Optional[int]:
     return None
 
 
-def _tx_sender_nonce(tx: Any) -> tuple[bytes | None, int | None]:
+def _tx_sender(tx: Any) -> bytes | None:
     sender = None
-    nonce = None
     if hasattr(tx, "unsigned"):
         unsigned = getattr(tx, "unsigned", None)
         if unsigned is not None:
             sender = getattr(unsigned, "sender", None)
-            nonce = getattr(unsigned, "nonce", None)
     if sender is None:
         sender = getattr(tx, "sender", getattr(tx, "from", getattr(tx, "frm", None)))
-    if nonce is None:
-        nonce = getattr(tx, "nonce", None)
     if isinstance(tx, dict):
         body = tx.get("body", tx.get("tx", {}))
         if isinstance(body, dict):
             sender = sender or body.get("sender", body.get("from"))
-            nonce = nonce or body.get("nonce")
     if isinstance(sender, str):
         if sender.startswith("0x"):
             try:
@@ -87,12 +82,61 @@ def _tx_sender_nonce(tx: Any) -> tuple[bytes | None, int | None]:
                 sender = None
     if sender is not None and not isinstance(sender, (bytes, bytearray)):
         sender = None
-    try:
-        nonce = int(nonce) if nonce is not None else None
-    except Exception:
-        nonce = None
-    return (bytes(sender) if sender else None, nonce)
+    return bytes(sender) if sender else None
 
+
+def _tx_valid_after(tx: Any) -> int | None:
+    if hasattr(tx, "unsigned"):
+        unsigned = getattr(tx, "unsigned", None)
+        if unsigned is not None:
+            val = getattr(unsigned, "valid_after", None)
+            if val is not None:
+                return int(val)
+    for attr in ("valid_after", "validAfter"):
+        value = getattr(tx, attr, None)
+        if value is not None:
+            return int(value)
+    if isinstance(tx, dict):
+        body = tx.get("body", tx.get("tx", tx))
+        if isinstance(body, dict):
+            value = body.get("validAfter", body.get("valid_after"))
+            if value is not None:
+                return int(value)
+    return None
+
+
+def _tx_valid_until(tx: Any) -> int | None:
+    if hasattr(tx, "unsigned"):
+        unsigned = getattr(tx, "unsigned", None)
+        if unsigned is not None:
+            val = getattr(unsigned, "valid_until", None)
+            if val is not None:
+                return int(val)
+    for attr in ("valid_until", "validUntil"):
+        value = getattr(tx, attr, None)
+        if value is not None:
+            return int(value)
+    if isinstance(tx, dict):
+        body = tx.get("body", tx.get("tx", tx))
+        if isinstance(body, dict):
+            value = body.get("validUntil", body.get("valid_until"))
+            if value is not None:
+                return int(value)
+    return None
+
+
+def _tx_hash_bytes(entry: PendingTxEntry, tx: Any) -> bytes | None:
+    if entry.hash_hex:
+        try:
+            return bytes.fromhex(entry.hash_hex[2:] if entry.hash_hex.startswith("0x") else entry.hash_hex)
+        except Exception:
+            return None
+    if hasattr(tx, "txid") and callable(getattr(tx, "txid")):
+        try:
+            return bytes(tx.txid())
+        except Exception:
+            return None
+    return None
 
 def _tx_gas_limit(tx: Any) -> int:
     for attr in ("gas_limit", "gas", "intrinsic_gas"):
@@ -188,6 +232,33 @@ def _tx_value(tx: Any) -> int:
     return 0
 
 
+def _tx_recipient(tx: Any) -> bytes | None:
+    if hasattr(tx, "unsigned"):
+        unsigned = getattr(tx, "unsigned", None)
+        if unsigned is not None:
+            payload = getattr(unsigned, "payload", None)
+            if payload is not None and hasattr(payload, "to"):
+                return bytes(getattr(payload, "to"))
+    for attr in ("to", "recipient"):
+        value = getattr(tx, attr, None)
+        if isinstance(value, (bytes, bytearray)):
+            return bytes(value)
+    if isinstance(tx, dict):
+        body = tx.get("body", tx.get("tx", tx))
+        if isinstance(body, dict):
+            payload = body.get("payload")
+            if isinstance(payload, dict):
+                payload_v = payload.get("v", {})
+                if isinstance(payload_v, dict) and payload_v.get("to") is not None:
+                    val = payload_v.get("to")
+                    if isinstance(val, (bytes, bytearray)):
+                        return bytes(val)
+            val = body.get("to")
+            if isinstance(val, (bytes, bytearray)):
+                return bytes(val)
+    return None
+
+
 def select_for_block(
     *,
     head_state: dict[str, Any],
@@ -221,9 +292,10 @@ def select_for_block(
 
     total_gas = 0
     total_bytes = 0
-    sender_nonces: dict[bytes, int] = {}
-    seen_sender_nonce: dict[tuple[bytes, int], str] = {}
     now_ts = now if now is not None else None
+    current_height = int(head_state.get("height", head_state.get("block_height", 0)) or 0)
+
+    candidates: list[tuple[int, bytes, PendingTxEntry, Any]] = []
 
     for entry in pending:
         result.total_pending += 1
@@ -257,8 +329,8 @@ def select_for_block(
             _bump_reject(result, hash_hex, "invalid_format")
             continue
 
-        sender, nonce = _tx_sender_nonce(tx)
-        if (sender is None or nonce is None) and decode is not None and entry.raw:
+        sender = _tx_sender(tx)
+        if sender is None and decode is not None and entry.raw:
             try:
                 decoded = decode(entry.raw)
                 if isinstance(decoded, tuple):
@@ -271,7 +343,7 @@ def select_for_block(
                         decoded_obj = decoded
             except Exception:
                 tx = tx
-            sender, nonce = _tx_sender_nonce(tx)
+            sender = _tx_sender(tx)
 
         if chain_id is not None:
             tx_chain_id = _tx_chain_id(tx)
@@ -284,11 +356,11 @@ def select_for_block(
                 )
                 continue
 
-        if tx_index is not None and hasattr(tx_index, "exists") and hash_hex:
+        tx_hash_bytes = _tx_hash_bytes(entry, tx)
+        if tx_index is not None and hasattr(tx_index, "exists") and tx_hash_bytes is not None:
             try:
-                tx_hash_bytes = bytes.fromhex(hash_hex[2:])
                 if tx_index.exists(tx_hash_bytes):
-                    _bump_reject(result, hash_hex, "already_in_chain")
+                    _bump_reject(result, hash_hex, "replay")
                     continue
             except Exception:
                 pass
@@ -303,44 +375,26 @@ def select_for_block(
         if sender is None:
             _bump_reject(result, hash_hex, "missing_sender")
             continue
-        if nonce is None:
-            _bump_reject(result, hash_hex, "missing_nonce")
-            continue
 
-        seen_key = (sender, int(nonce))
-        if seen_key in seen_sender_nonce:
+        valid_after = _tx_valid_after(tx)
+        valid_until = _tx_valid_until(tx)
+        if valid_after is None or valid_until is None:
+            _bump_reject(result, hash_hex, "missing_validity")
+            continue
+        if current_height < valid_after:
             _bump_reject(
                 result,
                 hash_hex,
-                "conflict_same_sender_nonce",
-                details={"replaced_by_hash": seen_sender_nonce[seen_key]},
+                "not_yet_valid",
+                details={"valid_after": valid_after, "current_height": current_height},
             )
             continue
-        seen_sender_nonce[seen_key] = hash_hex
-
-        expected = sender_nonces.get(sender)
-        if expected is None:
-            expected = 0
-            if state_db is not None and hasattr(state_db, "get_nonce"):
-                try:
-                    expected = int(state_db.get_nonce(sender))  # type: ignore[call-arg]
-                except Exception:
-                    expected = 0
-            sender_nonces[sender] = expected
-        if nonce < expected:
+        if current_height > valid_until:
             _bump_reject(
                 result,
                 hash_hex,
-                "nonce_too_low",
-                details={"expected": expected, "got": nonce},
-            )
-            continue
-        if nonce > expected:
-            _bump_reject(
-                result,
-                hash_hex,
-                "nonce_gap",
-                details={"expected": expected, "got": nonce},
+                "expired",
+                details={"valid_until": valid_until, "current_height": current_height},
             )
             continue
 
@@ -354,21 +408,21 @@ def select_for_block(
             )
             continue
 
-        if state_db is not None and hasattr(state_db, "get_balance"):
-            try:
-                balance = int(state_db.get_balance(sender))  # type: ignore[call-arg]
-            except Exception:
-                balance = None
-            if balance is not None:
-                required = _tx_value(tx) + (_tx_gas_limit(tx) * gas_price)
-                if balance < required:
-                    _bump_reject(
-                        result,
-                        hash_hex,
-                        "insufficient_funds",
-                        details={"need": required, "have": balance},
-                    )
-                    continue
+        if tx_hash_bytes is None:
+            tx_hash_bytes = bytes.fromhex(hash_hex[2:]) if hash_hex.startswith("0x") else bytes.fromhex(hash_hex)
+
+        candidates.append((gas_price, tx_hash_bytes, entry, tx))
+
+    # Deterministic ordering by fee desc, txid asc
+    candidates.sort(key=lambda item: (-item[0], item[1]))
+
+    balances: dict[bytes, int] = {}
+
+    for gas_price, tx_hash_bytes, entry, tx in candidates:
+        hash_hex = _normalize_hash_hex(entry.hash_hex)
+        sender = _tx_sender(tx)
+        if sender is None:
+            continue
 
         gas = _tx_gas_limit(tx)
         if max_gas and total_gas + gas > max_gas:
@@ -384,11 +438,32 @@ def select_for_block(
             _bump_reject(result, hash_hex, "max_txs")
             continue
 
+        required = _tx_value(tx) + (gas * gas_price)
+        if state_db is not None and hasattr(state_db, "get_balance"):
+            if sender not in balances:
+                try:
+                    balances[sender] = int(state_db.get_balance(sender))  # type: ignore[call-arg]
+                except Exception:
+                    balances[sender] = 0
+            if balances[sender] < required:
+                _bump_reject(
+                    result,
+                    hash_hex,
+                    "insufficient_funds",
+                    details={"need": required, "have": balances[sender]},
+                )
+                continue
+
         total_gas += gas
         total_bytes += size_bytes
-        sender_nonces[sender] = expected + 1
         result.selected.append(tx)
         result.selected_hashes.append(hash_hex)
+
+        if sender in balances:
+            balances[sender] -= required
+        recipient = _tx_recipient(tx)
+        if recipient is not None and recipient in balances:
+            balances[recipient] += _tx_value(tx)
 
     return result
 

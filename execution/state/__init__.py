@@ -6,7 +6,7 @@ engine. To keep import-time overhead low and avoid circulars, the common
 symbols are lazily re-exported from their submodules on first access.
 
 Submodules (planned):
-- accounts:       Account records (nonce, balance, code hash)
+- accounts:       Account records (balance, code hash)
 - storage:        Per-account storage view (key/value)
 - view:           Read-only typed getters over the current state
 - journal:        Journaling writes, checkpoints, revert/commit

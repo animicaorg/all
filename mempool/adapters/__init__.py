@@ -7,7 +7,7 @@ taking hard dependencies. These lightweight Protocols are intentionally small
 to keep tests fast and adapters easy to mock.
 
 Typical implementers:
-- core.db.state_db.StateDB (for balances/nonces)
+- core.db.state_db.StateDB (for balances)
 - rpc/state_service.py (for read-only state from a node)
 - core/chain/head.py (for current head info)
 - mempool/deps.py (default wiring for a node process)
@@ -27,7 +27,6 @@ class StateView(Protocol):
     """Read-only account state access used by mempool accounting/validation."""
 
     def get_balance(self, address: bytes) -> int: ...
-    def get_nonce(self, address: bytes) -> int: ...
 
 
 class HeadView(Protocol):
@@ -70,21 +69,9 @@ class FeeStatsView(Protocol):
 # --------------------------------------------------------------------------------------
 
 
-class NonceCache(Protocol):
-    """
-    Optional local nonce cache that the mempool can consult/update on admission
-    to reduce DB round-trips. Implementations should be best-effort only.
-    """
-
-    def get(self, address: bytes) -> Optional[int]: ...
-    def put(self, address: bytes, nonce: int) -> None: ...
-    def invalidate(self, address: bytes) -> None: ...
-
-
 __all__ = [
     "StateView",
     "HeadView",
     "FeeWindow",
     "FeeStatsView",
-    "NonceCache",
 ]

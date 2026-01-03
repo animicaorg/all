@@ -5,7 +5,7 @@ rpc.state_service
 =================
 
 A thin, defensive service layer the RPC methods call into. It wraps:
-- Balances & nonces (read-only state)
+- Balances (read-only state)
 - Block/tx lookup by number/hash
 - Tx decode (CBOR) and PQ signature verification
 - Helpers for address parsing and tx hashing
@@ -326,7 +326,7 @@ def decode_tx(cbor_bytes: bytes) -> DecodedTx:
     else:
         # Best-effort attribute projection
         view = {"hash": tx_hash}
-        for k in ("kind", "from", "to", "nonce", "gas", "value"):
+        for k in ("kind", "from", "to", "gas", "value"):
             if hasattr(tx_obj, k):
                 view[k] = getattr(tx_obj, k)
 
@@ -383,7 +383,7 @@ def verify_tx_signature(dt: DecodedTx) -> VerifyResult:
         return VerifyResult(ok=False, reason=f"VerifyError: {e}", alg_id=dt.alg_id)
 
 
-# -------- State DB (balance/nonce) ------------------------------------------
+# -------- State DB (balance) -----------------------------------------------
 
 
 def get_balance(addr_str: str) -> int:
@@ -411,30 +411,6 @@ def get_balance(addr_str: str) -> int:
         return int(acct["balance"])
 
     # Fallback: zero if unknown
-    return 0
-
-
-def get_nonce(addr_str: str) -> int:
-    """
-    Returns the current transaction nonce for the address (0 if none).
-    """
-    ctx = get_ctx()
-    addr = parse_address(addr_str)
-    sdb = ctx.state_db
-
-    for name in ("get_nonce", "read_nonce", "nonce_of"):
-        fn = getattr(sdb, name, None)
-        if callable(fn):
-            return int(fn(addr))  # type: ignore
-
-    acct = None
-    for name in ("get_account", "read_account", "account_of"):
-        fn = getattr(sdb, name, None)
-        if callable(fn):
-            acct = fn(addr)  # type: ignore
-            break
-    if isinstance(acct, dict) and "nonce" in acct:
-        return int(acct["nonce"])
     return 0
 
 
@@ -583,12 +559,9 @@ def get_tx_by_hash(tx_hash: str) -> dict | None:
 class StateService:
     """Stateless facade — methods read from the global context opened by rpc.deps."""
 
-    # Balances / nonces
+    # Balances
     def get_balance(self, address: str) -> int:
         return get_balance(address)
-
-    def get_nonce(self, address: str) -> int:
-        return get_nonce(address)
 
     # Blocks
     def get_block_by_number(self, height: int, include_txs: bool = True) -> dict | None:
@@ -617,7 +590,6 @@ __all__ = [
     "decode_tx",
     "verify_tx_signature",
     "get_balance",
-    "get_nonce",
     "get_block_by_number",
     "get_block_by_hash",
     "get_tx_by_hash",
