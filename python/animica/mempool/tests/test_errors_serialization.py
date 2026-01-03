@@ -57,6 +57,13 @@ def test_fee_too_low_serialization() -> None:
     assert ctx["sender"] == "0xsender"
 
 
+def test_mempool_error_codes_include_nonce_mismatch() -> None:
+    assert hasattr(MempoolErrorCode, "NONCE_GAP")
+    assert hasattr(MempoolErrorCode, "NONCE_TOO_LOW")
+    assert isinstance(MempoolErrorCode.NONCE_GAP, int)
+    assert isinstance(MempoolErrorCode.NONCE_TOO_LOW, int)
+
+
 def test_nonce_gap_serialization() -> None:
     err = NonceGap(
         expected_nonce=10,
