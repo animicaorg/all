@@ -50,6 +50,25 @@ def _ensure_rpc_available() -> None:
         raise typer.Exit(1)
 
 
+def _parse_params(params_args: list[str]) -> Any:
+    if not params_args:
+        return []
+
+    def _parse_value(value: str) -> Any:
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError:
+            return value
+
+    if len(params_args) == 1:
+        parsed = _parse_value(params_args[0])
+        if isinstance(parsed, (list, dict)):
+            return parsed
+        return [parsed]
+
+    return [_parse_value(arg) for arg in params_args]
+
+
 def call_rpc(
     method: str,
     params: Any,
@@ -122,9 +141,12 @@ def call_rpc(
 @app.command()
 def call(
     method: str = typer.Argument(..., help="JSON-RPC method name"),
-    params_arg: Optional[str] = typer.Argument(
-        None,
-        help='JSON params (e.g. \'["param1", 123]\' or \'{"key":"value"}\') or a single raw param (e.g. anim1...)',
+    params_arg: list[str] = typer.Argument(
+        [],
+        help=(
+            "JSON params (e.g. '[\"param1\", 123]' or '{\"key\":\"value\"}') "
+            "or raw params (e.g. anim1...)."
+        ),
     ),
     rpc_url: Optional[str] = typer.Option(
         None,
@@ -167,13 +189,8 @@ def call(
         resolved_timeout = resolve_timeout("RPC timeout", timeout, env_var=RPC_TIMEOUT_ENV, default=DEFAULT_RPC_TIMEOUT)
 
         # Parse params
-        params: Any = []
-        if params_arg:
-            try:
-                params = json.loads(params_arg)
-            except json.JSONDecodeError:
-                params = [params_arg]
-        elif method in {
+        params: Any = _parse_params(params_arg)
+        if not params and method in {
             "state.getNonce",
             "state_getNonce",
             "state.getBalance",
