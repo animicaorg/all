@@ -38,7 +38,7 @@ from core.utils.hash import sha3_256
 
 ADDRESS_LEN = 32  # raw address length
 PUBKEY_MAX = 2048  # enough for Dilithium3/Sphincs variants
-SIG_MAX = 4096  # safety cap for PQ signatures
+SIG_MAX = 8192  # safety cap for PQ signatures (covers SPHINCS+ 7856B)
 
 
 # ---- enums & small types ----
