@@ -12,6 +12,7 @@ from typing import Any, Iterable, Optional
 
 from rpc import deps
 from mempool.tx_hash import normalized_tx_bytes, tx_hash_hex as _tx_hash_hex
+from core.utils.tx import normalize_tx_envelope, TxNormalizationError
 from core.utils.address_codec import account_key_from_pubkey, account_key_from_raw, AccountKeyError
 from mempool.config import MempoolConfig, load_config as load_mempool_config
 from mempool.errors import (
@@ -547,6 +548,7 @@ class MempoolService:
             log.warning("Failed to read mempool persistence file", exc_info=exc)
             return
         restored = 0
+        bad_entries: list[str] = []
         self._restoring = True
         now = time.time()
         for line in lines:
@@ -555,6 +557,7 @@ class MempoolService:
             try:
                 entry = json.loads(line)
             except Exception:
+                bad_entries.append(line)
                 continue
             if entry.get("chain_id") not in (None, self.chain_id, int(self.chain_id)):
                 continue
@@ -563,12 +566,21 @@ class MempoolService:
                 continue
             raw_hex = entry.get("raw") or ""
             if not isinstance(raw_hex, str) or not raw_hex:
+                bad_entries.append(line)
                 continue
             try:
                 raw = bytes.fromhex(raw_hex)
             except ValueError:
+                bad_entries.append(line)
                 continue
             if not raw:
+                bad_entries.append(line)
+                continue
+            try:
+                normalized_env = normalize_tx_envelope(raw)
+                raw = normalized_env.get("raw") or raw
+            except TxNormalizationError:
+                bad_entries.append(line)
                 continue
             try:
                 tx_obj = (
@@ -577,6 +589,7 @@ class MempoolService:
                     else None
                 )
             except Exception:
+                bad_entries.append(line)
                 tx_obj = None
             if tx_obj is None:
                 continue
@@ -588,6 +601,17 @@ class MempoolService:
         self._restoring = False
         if restored:
             log.info("Restored mempool entries", extra={"count": restored})
+        if bad_entries and self._persist_path is not None:
+            quarantine = self._persist_path.with_suffix(".bad.jsonl")
+            try:
+                quarantine.write_text("\n".join(bad_entries) + "\n", encoding="utf-8")
+            except Exception:
+                pass
+            log.warning(
+                "Dropped invalid persisted mempool entries",
+                extra={"count": len(bad_entries), "quarantine": str(quarantine)},
+            )
+        if restored or bad_entries:
             self._persist_snapshot()
 
     def has_hash(self, tx_hash_hex: str) -> bool:
@@ -640,6 +664,31 @@ class MempoolService:
                     "tx_hash": tx_hash_hex,
                     "expected": expected_hash,
                 },
+            )
+
+        try:
+            normalized_env = normalize_tx_envelope(raw_bytes)
+        except TxNormalizationError as exc:
+            self._record_rejection(
+                tx_hash_hex,
+                exc.reason or "decode_error",
+                {"step": "normalize_envelope", "error": str(exc)},
+            )
+            raise AdmissionError(
+                "tx envelope normalization failed",
+                context={"tx_hash": tx_hash_hex, "error": str(exc)},
+            ) from exc
+
+        env_hash = normalized_env.get("hash")
+        if isinstance(env_hash, str) and env_hash.lower() != tx_hash_hex:
+            self._record_rejection(
+                tx_hash_hex,
+                "hash_mismatch",
+                {"expected": tx_hash_hex, "got": env_hash},
+            )
+            raise AdmissionError(
+                "tx hash mismatch after normalization",
+                context={"tx_hash": tx_hash_hex, "expected": tx_hash_hex, "got": env_hash},
             )
 
         current_height = _current_height()
@@ -702,11 +751,21 @@ class MempoolService:
         sender_sig = _sender_from_signature(tx)
         sender_payload = _sender_from_payload(tx)
         sender = sender_sig or sender_payload
-        if sender_sig is not None and sender_payload is not None and sender_sig != sender_payload:
+        env_sender = None
+        if isinstance(normalized_env.get("tx"), dict):
+            env_sender = normalized_env["tx"].get("from")
+        if isinstance(env_sender, str) and env_sender.startswith("0x"):
+            try:
+                env_sender = bytes.fromhex(env_sender[2:])
+            except ValueError:
+                env_sender = None
+        if isinstance(env_sender, (bytes, bytearray)):
+            sender = bytes(env_sender)
+        if sender_sig is not None and sender is not None and sender_sig != sender:
             self._record_rejection(
                 tx_hash_hex,
                 "sender_mismatch",
-                {"sig_sender": _sender_hex(sender_sig), "payload_sender": _sender_hex(sender_payload)},
+                {"sig_sender": _sender_hex(sender_sig), "payload_sender": _sender_hex(sender)},
             )
             raise AdmissionError(
                 "sender mismatch between signature and payload",
@@ -724,6 +783,24 @@ class MempoolService:
             )
 
         sender_hex = _sender_hex(sender)
+
+        try:
+            if hasattr(Tx, "from_obj"):
+                Tx.from_obj(  # type: ignore[attr-defined]
+                    {"tx": normalized_env.get("tx"), "sigs": normalized_env.get("sigs", [])}
+                )
+            elif hasattr(Tx, "from_cbor"):
+                Tx.from_cbor(raw_bytes)  # type: ignore[attr-defined]
+        except Exception as exc:
+            self._record_rejection(
+                tx_hash_hex,
+                "decode_error",
+                {"step": "decode_envelope", "error": str(exc)},
+            )
+            raise AdmissionError(
+                "tx envelope could not be decoded",
+                context={"tx_hash": tx_hash_hex, "error": str(exc)},
+            ) from exc
 
         if self.tx_index is not None and hasattr(self.tx_index, "exists"):
             try:
@@ -751,10 +828,18 @@ class MempoolService:
         sender_lock = self._get_sender_lock(sender_hex)
 
         with sender_lock:
-            valid_after = _tx_valid_after(tx)
-            valid_until = _tx_valid_until(tx)
-            salt = _tx_salt(tx)
-            if valid_after is None or valid_until is None or salt is None:
+            tx_for_meta = normalized_env if isinstance(tx, dict) else tx
+            valid_after = _tx_valid_after(tx_for_meta)
+            valid_until = _tx_valid_until(tx_for_meta)
+            salt = _tx_salt(tx_for_meta)
+            tx_version = 1
+            if isinstance(normalized_env.get("tx"), dict):
+                try:
+                    tx_version = int(normalized_env["tx"].get("v", 1))
+                except Exception:
+                    tx_version = 1
+
+            if tx_version == 2 and (valid_after is None or valid_until is None or salt is None):
                 missing = []
                 if valid_after is None:
                     missing.append("validAfter")
@@ -762,7 +847,6 @@ class MempoolService:
                     missing.append("validUntil")
                 if salt is None:
                     missing.append("salt")
-                nonce = _tx_nonce(tx)
                 self._record_rejection(
                     tx_hash_hex,
                     "missing_validity_window",
@@ -778,13 +862,13 @@ class MempoolService:
                     context={
                         "tx_hash": tx_hash_hex,
                         "sender": sender_hex,
-                        "nonce": nonce,
+                        "nonce": normalized_env.get("nonce"),
                         "missing": missing,
                         "expected_location": "tx.body",
                     },
                 )
 
-            nonce = _tx_nonce(tx)
+            nonce = normalized_env.get("nonce")
             if nonce is None:
                 self._record_rejection(
                     tx_hash_hex,
@@ -854,43 +938,44 @@ class MempoolService:
                     tx_hash=tx_hash_hex,
                 )
 
-            max_ttl_blocks = int(os.getenv("ANIMICA_MAX_TX_TTL_BLOCKS", "200") or 200)
-            if valid_until - valid_after > max_ttl_blocks:
-                self._record_rejection(
-                    tx_hash_hex,
-                    "ttl_too_long",
-                    {"valid_after": valid_after, "valid_until": valid_until},
-                )
-                raise AdmissionError(
-                    "validity window exceeds maximum TTL",
-                    context={"tx_hash": tx_hash_hex, "max_ttl_blocks": max_ttl_blocks},
-                )
+            if tx_version == 2 and valid_after is not None and valid_until is not None:
+                max_ttl_blocks = int(os.getenv("ANIMICA_MAX_TX_TTL_BLOCKS", "200") or 200)
+                if valid_until - valid_after > max_ttl_blocks:
+                    self._record_rejection(
+                        tx_hash_hex,
+                        "ttl_too_long",
+                        {"valid_after": valid_after, "valid_until": valid_until},
+                    )
+                    raise AdmissionError(
+                        "validity window exceeds maximum TTL",
+                        context={"tx_hash": tx_hash_hex, "max_ttl_blocks": max_ttl_blocks},
+                    )
 
-            current_height = _current_height()
-            if current_height < valid_after:
-                self._record_rejection(
-                    tx_hash_hex,
-                    "not_yet_valid",
-                    {"valid_after": valid_after, "current_height": current_height},
-                )
-                raise NotYetValid(
-                    valid_after=valid_after,
-                    current_height=current_height,
-                    sender=sender_hex,
-                    tx_hash=tx_hash_hex,
-                )
-            if current_height > valid_until:
-                self._record_rejection(
-                    tx_hash_hex,
-                    "expired",
-                    {"valid_until": valid_until, "current_height": current_height},
-                )
-                raise Expired(
-                    valid_until=valid_until,
-                    current_height=current_height,
-                    sender=sender_hex,
-                    tx_hash=tx_hash_hex,
-                )
+                current_height = _current_height()
+                if current_height < valid_after:
+                    self._record_rejection(
+                        tx_hash_hex,
+                        "not_yet_valid",
+                        {"valid_after": valid_after, "current_height": current_height},
+                    )
+                    raise NotYetValid(
+                        valid_after=valid_after,
+                        current_height=current_height,
+                        sender=sender_hex,
+                        tx_hash=tx_hash_hex,
+                    )
+                if current_height > valid_until:
+                    self._record_rejection(
+                        tx_hash_hex,
+                        "expired",
+                        {"valid_until": valid_until, "current_height": current_height},
+                    )
+                    raise Expired(
+                        valid_until=valid_until,
+                        current_height=current_height,
+                        sender=sender_hex,
+                        tx_hash=tx_hash_hex,
+                    )
 
             gas_limit = _tx_gas_limit(tx)
             if gas_limit <= 0:

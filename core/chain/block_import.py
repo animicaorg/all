@@ -67,6 +67,7 @@ from core.types.params import ChainParams
 from core.types.receipt import \
     Receipt  # imported for type completeness; not used here
 from core.types.tx import PqSignature, Tx, TxKind, UnsignedTx
+from core.utils.tx import normalize_tx_envelope
 from core.utils.hash import sha3_256
 from core.utils.pow import micro_threshold_to_target256
 from execution.runtime.env import make_block_env
@@ -248,100 +249,21 @@ def _decode_address_bytes(addr: Any) -> bytes:
     raise BlockImportError("unsupported address type in tx")
 
 
-def _normalize_signature(sig: Dict[str, Any]) -> Dict[str, Any]:
-    alg_id = sig.get("alg") or sig.get("alg_id") or sig.get("algId")
-    pubkey = sig.get("pubkey") or sig.get("pub") or sig.get("pk")
-    signature = sig.get("sig") or sig.get("signature")
-    if isinstance(pubkey, str):
-        pubkey = bytes.fromhex(pubkey[2:]) if pubkey.startswith("0x") else pubkey.encode("utf-8")
-    if isinstance(signature, str):
-        signature = bytes.fromhex(signature[2:]) if signature.startswith("0x") else signature.encode("utf-8")
-    return {
-        "alg": int(alg_id) if alg_id is not None else 0,
-        "pubkey": bytes(pubkey) if pubkey is not None else b"",
-        "sig": bytes(signature) if signature is not None else b"",
-    }
-
-
 def _normalize_tx_envelope(decoded: Dict[str, Any]) -> Dict[str, Any]:
-    if "tx" in decoded and "sigs" in decoded:
-        normalized = dict(decoded)
-        sigs = normalized.get("sigs")
-        if isinstance(sigs, list):
-            normalized["sigs"] = [
-                s.to_obj() if isinstance(s, PqSignature) else _normalize_signature(s) if isinstance(s, dict) else s
-                for s in sigs
-            ]
-        return normalized
-
-    normalized: Dict[str, Any] = {}
-    if "body" in decoded:
-        body = decoded["body"] if isinstance(decoded["body"], dict) else {}
-        if "v" in body and "gas" in body and "payload" in body:
-            normalized["tx"] = body
-        else:
-            chain_id = body.get("chainId", body.get("chain_id"))
-            sender = _decode_address_bytes(body.get("from", body.get("sender")))
-            recipient = _decode_address_bytes(body.get("to"))
-            nonce = body.get("nonce")
-            value = int(body.get("value", body.get("amount", 0)))
-            gas_limit = int(body.get("gasLimit", body.get("gas_limit", body.get("gas", 21000))))
-            gas_price = int(body.get("maxFee", body.get("max_fee", body.get("gasPrice", body.get("gas_price", body.get("tip", 0))))))
-            valid_after = body.get("validAfter", body.get("valid_after"))
-            valid_until = body.get("validUntil", body.get("valid_until"))
-            salt = body.get("salt")
-            fork_id = body.get("forkId", body.get("fork_id"))
-            data = body.get("data", b"")
-            if isinstance(data, str):
-                data = bytes.fromhex(data[2:]) if data.startswith("0x") else data.encode("utf-8")
-            elif isinstance(data, (list, tuple)):
-                data = bytes(data)
-            if isinstance(salt, str):
-                salt = bytes.fromhex(salt[2:]) if salt.startswith("0x") else salt.encode("utf-8")
-            elif isinstance(salt, (list, tuple)):
-                salt = bytes(salt)
-            version = int(body.get("v", 2))
-            if version == 2 and (valid_after is None or valid_until is None or salt is None):
-                version = 1
-            normalized["tx"] = {
-                "v": version,
-                "chainId": int(chain_id) if chain_id is not None else 0,
-                "from": sender,
-                "gas": {"price": gas_price, "limit": gas_limit},
-                "payload": {
-                    "t": int(TxKind.TRANSFER),
-                    "v": {"to": recipient, "amount": value, "data": bytes(data)},
-                },
-                "accessList": [],
-            }
-            if version == 1:
-                normalized["tx"]["nonce"] = int(nonce or 0)
-            else:
-                normalized["tx"]["validAfter"] = int(valid_after or 0)
-                normalized["tx"]["validUntil"] = int(valid_until or 0)
-                normalized["tx"]["salt"] = bytes(salt or b"")
-                if fork_id is not None:
-                    normalized["tx"]["forkId"] = int(fork_id)
-    elif "unsigned" in decoded:
+    if "unsigned" in decoded:
         unsigned = decoded["unsigned"]
         if isinstance(unsigned, UnsignedTx):
-            normalized["tx"] = unsigned.to_obj()
+            tx_body = unsigned.to_obj()
         elif isinstance(unsigned, dict):
-            normalized["tx"] = unsigned
-    elif "tx" in decoded:
-        normalized["tx"] = decoded["tx"]
+            tx_body = unsigned
+        else:
+            raise BlockImportError("invalid tx format: unsupported unsigned tx payload")
+        sigs = decoded.get("sigs")
+        if sigs is None and "sig" in decoded:
+            sigs = [decoded.get("sig")]
+        return normalize_tx_envelope({"tx": tx_body, "sigs": sigs or []})
 
-    if "sigs" in decoded and isinstance(decoded["sigs"], list):
-        normalized["sigs"] = [
-            s.to_obj() if isinstance(s, PqSignature) else _normalize_signature(s) if isinstance(s, dict) else s
-            for s in decoded["sigs"]
-        ]
-    elif "sig" in decoded and isinstance(decoded["sig"], dict):
-        normalized["sigs"] = [_normalize_signature(decoded["sig"])]
-    else:
-        normalized["sigs"] = []
-
-    return normalized or decoded
+    return normalize_tx_envelope(decoded)
 
 
 def block_from_mapping(m: Dict[str, Any]) -> Block:

@@ -12,18 +12,15 @@ from rpc.mempool_service import MempoolService
 def _build_tx(chain_id: int = 1):
     from core.types.tx import Tx
 
-    salt = b"\x00" * 16
     tx = Tx.transfer(
         chain_id=chain_id,
-        nonce=None,
+        nonce=0,
         gas_price=1,
         gas_limit=21000,
         sender=b"\x11" * 32,
         to=b"\x22" * 32,
         amount=1,
-        valid_after=0,
-        valid_until=10,
-        salt=salt,
+        version=1,
     )
     raw = tx.to_cbor()
     tx_hash = "0x" + tx.txid().hex()

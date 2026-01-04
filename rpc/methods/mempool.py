@@ -378,8 +378,9 @@ def mempool_explain(tx_hash: str) -> dict:
             if isinstance(decoded, Tx):
                 tx_obj = decoded
             elif isinstance(decoded, dict):
-                from rpc.methods.miner import _normalize_tx_envelope, _construct_tx_from_dict
-                normalized = _normalize_tx_envelope(decoded)
+                from rpc.methods.miner import _construct_tx_from_dict
+                from core.utils.tx import normalize_tx_envelope
+                normalized = normalize_tx_envelope(decoded)
                 tx_obj = _construct_tx_from_dict(normalized)
         except Exception:
             pass
@@ -506,4 +507,38 @@ def mempool_list_raw_txs(limit: int | None = None) -> list[dict]:
     return entries
 
 
-__all__.extend(["mempool_get_raw_tx", "mempool_list_raw_txs"])
+@method(
+    "mempool.dropTransaction",
+    desc="Drop a pending transaction by hash.",
+    aliases=("mempool_dropTransaction",),
+)
+def mempool_drop_transaction(tx_hash: str) -> dict:
+    mempool_service = _get_mempool_service()
+    dropped = 0
+    if mempool_service is not None:
+        remover = getattr(mempool_service, "remove_included", None)
+        if callable(remover):
+            try:
+                dropped = int(remover([tx_hash]))
+            except Exception:
+                dropped = 0
+
+    if dropped <= 0:
+        try:
+            from rpc.methods import tx as tx_methods
+        except Exception:
+            tx_methods = None  # type: ignore[assignment]
+        if tx_methods is not None and hasattr(tx_methods, "_pending_remove"):
+            try:
+                dropped = 1 if tx_methods._pending_remove(tx_hash) else 0  # type: ignore[attr-defined]
+            except Exception:
+                dropped = 0
+
+    return {
+        "hash": tx_hash,
+        "dropped": bool(dropped),
+        "reason": None if dropped else "not_found",
+    }
+
+
+__all__.extend(["mempool_get_raw_tx", "mempool_list_raw_txs", "mempool_drop_transaction"])

@@ -14,6 +14,7 @@ def _build_transfer_tx() -> tuple[Tx, bytes]:
         sender=sender,
         to=to,
         amount=1,
+        version=1,
     )
     return tx, tx.to_cbor()
 
