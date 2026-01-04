@@ -148,6 +148,12 @@ def _sender_from_payload(tx: Any) -> Optional[bytes]:
     return None
 
 
+def _sender_bytes(tx: Any) -> Optional[bytes]:
+    sender_sig = _sender_from_signature(tx)
+    sender_payload = _sender_from_payload(tx)
+    return sender_sig or sender_payload
+
+
 def _sender_hex(sender: Optional[bytes]) -> str:
     if not sender:
         return "0x"
