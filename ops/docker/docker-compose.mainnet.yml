@@ -60,6 +60,8 @@ services:
       ANIMICA_RPC_CORS_ORIGINS: "${ANIMICA_RPC_CORS_ORIGINS:-[\"http://localhost:*\",\"http://127.0.0.1:*\"]}"
       ANIMICA_LOG_LEVEL: "${ANIMICA_LOG_LEVEL:-INFO}"
       SYNC_ENABLED: "${SYNC_ENABLED:-1}"
+      # Instant blocks enabled by default for immediate transaction inclusion
+      ANIMICA_INSTANT_BLOCKS_ENABLED: "${ANIMICA_INSTANT_BLOCKS_ENABLED:-true}"
       # P2P config - mainnet seeds auto-selected by chain_id
       # Primary config (ANIMICA_P2P_* vars are canonical):
       ANIMICA_P2P_ENABLE: "${ANIMICA_P2P_ENABLE:-true}"

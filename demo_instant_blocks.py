@@ -11,7 +11,7 @@ import sys
 
 def check_instant_blocks_enabled():
     """Check if instant blocks are enabled."""
-    enabled = os.environ.get("ANIMICA_INSTANT_BLOCKS_ENABLED", "").lower() in {
+    enabled = os.environ.get("ANIMICA_INSTANT_BLOCKS_ENABLED", "true").lower() in {
         "1", "true", "yes", "on"
     }
     return enabled
@@ -28,8 +28,9 @@ def main():
     print()
     
     if not enabled:
-        print("To enable instant blocks, set environment variable:")
-        print("  export ANIMICA_INSTANT_BLOCKS_ENABLED=1")
+        print("Instant blocks have been DISABLED.")
+        print("To re-enable instant blocks (default behavior), set:")
+        print("  export ANIMICA_INSTANT_BLOCKS_ENABLED=true")
         print()
         print("With instant blocks enabled:")
         print("  - Transactions create instant blocks immediately (< 1 second)")
@@ -39,7 +40,7 @@ def main():
         print()
         return 0
     
-    print("Instant blocks are ENABLED!")
+    print("Instant blocks are ENABLED (default)!")
     print()
     print("What happens when you submit a transaction:")
     print()

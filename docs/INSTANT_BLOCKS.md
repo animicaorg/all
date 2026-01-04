@@ -68,18 +68,29 @@ def compute_canonical_height(
 
 ## Usage
 
-### Enabling Instant Blocks
+### Instant Blocks Are Enabled by Default
 
-Set the environment variable:
+**Instant blocks are automatically enabled** in Animica mainnet, testnet, and devnet configurations. Transactions submitted via any method will create instant blocks immediately:
 
 ```bash
-export ANIMICA_INSTANT_BLOCKS_ENABLED=1
+# No configuration needed - instant blocks work by default!
+animica tx send --from <addr> --to <addr> --value 1.0
+# → Instant block created automatically with the transaction
 ```
 
-Or in configuration:
+### Disabling Instant Blocks (Optional)
 
-```python
-os.environ["ANIMICA_INSTANT_BLOCKS_ENABLED"] = "1"
+To disable instant blocks if needed:
+
+```bash
+export ANIMICA_INSTANT_BLOCKS_ENABLED=false
+```
+
+Or in Docker Compose:
+
+```yaml
+environment:
+  ANIMICA_INSTANT_BLOCKS_ENABLED: "false"
 ```
 
 ### Automatic Trigger (Recommended)
@@ -128,6 +139,55 @@ from rpc.methods.miner import trigger_instant_block_on_tx_arrival
 
 # Call this to queue an instant block (best-effort)
 trigger_instant_block_on_tx_arrival()
+```
+
+### Observability RPC Methods
+
+Query instant blocks via RPC for monitoring and verification:
+
+```bash
+# List recent instant blocks
+curl -X POST http://localhost:8545 \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"miner.listInstantBlocks","params":{"limit":10},"id":1}'
+
+# Get instant block statistics
+curl -X POST http://localhost:8545 \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"miner.getInstantBlockStats","params":{},"id":1}'
+```
+
+**Response examples:**
+
+`miner.listInstantBlocks`:
+```json
+{
+  "instantBlocks": [
+    {
+      "height": 105,
+      "hash": "0x...",
+      "timestamp": 1700000000,
+      "txCount": 1,
+      "reward": 0,
+      "instantBlock": true,
+      "canonicalHeight": 100
+    }
+  ],
+  "total": 5,
+  "limit": 10,
+  "offset": 0
+}
+```
+
+`miner.getInstantBlockStats`:
+```json
+{
+  "enabled": true,
+  "totalBlocks": 105,
+  "canonicalHeight": 100,
+  "instantBlockCount": 5,
+  "instantBlockRatio": 0.0476
+}
 ```
 
 ## Block Import Flow
@@ -260,13 +320,15 @@ Comprehensive tests in multiple locations:
 
 1. **Mempool Integration**: ✅ Automatic trigger on transaction arrival (tx send & P2P)
 2. **Testing**: ✅ Comprehensive unit and integration tests
+3. **RPC Observability**: ✅ Dedicated RPC methods for querying instant blocks
+   - `miner.listInstantBlocks` - List recent instant blocks with details
+   - `miner.getInstantBlockStats` - Get statistics about instant block usage
 
 ### Potential Improvements
 
 1. **P2P Propagation**: Optimize instant block propagation in gossip protocol
-2. **RPC Methods**: Add dedicated instant block query methods
-3. **Metrics**: Track instant block production rate and latency
-4. **Batch Instant Blocks**: Group multiple transactions into single instant block
+2. **Metrics**: Track instant block production rate and latency
+3. **Batch Instant Blocks**: Group multiple transactions into single instant block
 5. **Rate Limiting**: Add configurable limits on instant block production rate
 
 ### Considerations
