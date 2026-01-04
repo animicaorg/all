@@ -2144,25 +2144,30 @@ def _execute_transactions(
                     or getattr(unsigned, "frm", None)
                 )
 
+        sender_bytes = None
         if sender is None:
-            logger.warning(f"Transaction {idx} missing sender; skipping")
-            receipts.append({"status": 0, "gasUsed": 0, "logs": []})
-            continue
+            logger.info(
+                "Transaction %s missing sender; attempting signature-based execution",
+                idx,
+            )
+        else:
+            # Normalize sender to bytes (handles bech32, hex, and raw bytes)
+            # Use _as_bytes32_addr for comprehensive address normalization
+            try:
+                sender_bytes = _as_bytes32_addr(sender)
+            except Exception as e:
+                logger.warning(f"Transaction {idx} sender normalization failed: {e}")
+                receipts.append({"status": 0, "gasUsed": 0, "logs": []})
+                continue
 
-        # Normalize sender to bytes (handles bech32, hex, and raw bytes)
-        # Use _as_bytes32_addr for comprehensive address normalization
-        try:
-            sender_bytes = _as_bytes32_addr(sender)
-        except Exception as e:
-            logger.warning(f"Transaction {idx} sender normalization failed: {e}")
-            receipts.append({"status": 0, "gasUsed": 0, "logs": []})
-            continue
-
-        # Validate sender is not zero address
-        if sender_bytes == ZERO32 or not any(sender_bytes):
-            logger.warning(f"Transaction {idx} has zero/invalid sender address; skipping")
-            receipts.append({"status": 0, "gasUsed": 0, "logs": []})
-            continue
+            # Validate sender is not zero address
+            if sender_bytes == ZERO32 or not any(sender_bytes):
+                logger.warning(
+                    "Transaction %s has zero/invalid sender address; "
+                    "attempting signature-based execution",
+                    idx,
+                )
+                sender_bytes = None
 
         try:
             # Get recipient address for logging
@@ -2174,21 +2179,20 @@ def _execute_transactions(
             
             # Log transaction execution attempt
             to_hex = to_addr.hex()[:16] if isinstance(to_addr, bytes) else str(to_addr)
+            from_hex = (
+                f"{sender_bytes.hex()[:16]}..." if sender_bytes is not None else "unknown"
+            )
             logger.info(
                 f"Executing transaction {idx}/{len(txs)}: "
-                f"from={sender_bytes.hex()[:16]}... to={to_hex}"
+                f"from={from_hex} to={to_hex}"
             )
             
-            # Extract nonce and gas_price from tx
-            # Try canonical Tx dataclass structure first (tx.unsigned.nonce, tx.unsigned.gas_price)
-            nonce = 0
+            # Extract gas_price from tx
+            # Try canonical Tx dataclass structure first (tx.unsigned.gas_price)
             gas_price = 1
             if hasattr(tx, "unsigned"):
-                nonce = getattr(tx.unsigned, "nonce", 0)
                 gas_price = getattr(tx.unsigned, "gas_price", 1)
             # Fall back to flat attributes (for non-canonical formats)
-            if nonce == 0:
-                nonce = getattr(tx, "nonce", 0)
             if gas_price == 1:
                 gas_price = getattr(tx, "gas_price", getattr(tx, "gasPrice", getattr(tx, "tip", 1)))
             
@@ -2196,7 +2200,6 @@ def _execute_transactions(
                 tx,
                 block_env,
                 sender=sender_bytes,
-                nonce=int(nonce),
                 gas_price=int(gas_price),
             )
 
