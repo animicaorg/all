@@ -339,8 +339,14 @@ class MempoolService:
         # Per-sender admission locks to serialize balance/pending accounting
         self._sender_locks: dict[str, threading.RLock] = {}
         self._sender_locks_lock = threading.RLock()
+        # Optional P2P broadcast callback - set by P2P service to trigger tx propagation
+        self._p2p_broadcast_callback: Optional[Any] = None
         if self._persist_enabled:
             self._load_persisted()
+    
+    def set_p2p_broadcast_callback(self, callback: Any) -> None:
+        """Set callback to trigger P2P broadcast when tx is accepted to mempool."""
+        self._p2p_broadcast_callback = callback
 
     def _record_rejection(
         self, tx_hash_hex: str, reason: str, details: dict[str, Any] | None = None
@@ -1153,6 +1159,33 @@ class MempoolService:
                 "peer": origin_peer,
             },
         )
+        
+        # Trigger P2P broadcast for local txs (best-effort, non-blocking)
+        if local and self._p2p_broadcast_callback is not None:
+            try:
+                import asyncio
+                callback = self._p2p_broadcast_callback
+                # Try to schedule in the event loop without blocking
+                try:
+                    loop = asyncio.get_running_loop()
+                    # We're in a sync context but want to trigger async broadcast
+                    asyncio.ensure_future(callback(tx_hash_bytes, raw_bytes), loop=loop)
+                    log.debug(
+                        "P2P broadcast scheduled for tx",
+                        extra={"tx_hash": tx_hash_hex, "trigger": "mempool_submit"}
+                    )
+                except RuntimeError:
+                    # No running loop; callback will need to handle this
+                    log.debug(
+                        "No running event loop for P2P broadcast",
+                        extra={"tx_hash": tx_hash_hex}
+                    )
+            except Exception as e:
+                log.debug(
+                    "P2P broadcast callback failed (non-fatal)",
+                    extra={"tx_hash": tx_hash_hex, "error": str(e)}
+                )
+        
         return tx_hash_hex
 
     def submit_atomic(
