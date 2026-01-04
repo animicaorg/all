@@ -18,7 +18,7 @@ from core.types.block import Block
 from core.types.header import Header
 from core.types.tx import Tx
 from core.utils.merkle import merkle_root
-from core.utils.tx import TxNormalizationError, normalize_tx, normalize_tx_bytes
+from core.utils.tx import TxNormalizationError, normalize_tx, normalize_tx_bytes, normalize_tx_envelope
 from mining.adapters.core_chain import CoreChainAdapter
 import p2p
 from rpc import deps
@@ -396,8 +396,11 @@ def _coerce_selected_txs(
                 normalize_error = normalize_error or str(exc)
 
         if tx is None and decoded_obj is not None:
-            normalized = _normalize_tx_envelope(decoded_obj)
-            tx = _construct_tx_from_dict(normalized)
+            try:
+                normalized = _normalize_tx_envelope(decoded_obj)
+                tx = _construct_tx_from_dict(normalized)
+            except Exception as exc:
+                normalize_error = normalize_error or str(exc)
 
         if tx is None:
             reason = normalize_reason or "decode_error"
@@ -2223,166 +2226,8 @@ def _execute_transactions(
     return receipts
 
 
-def _normalize_sig_entry(sig: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "alg": sig.get("alg", sig.get("algId", sig.get("alg_id", 0))),
-        "pubkey": sig.get("pubkey", sig.get("pk", sig.get("pub", b""))),
-        "sig": sig.get("sig", sig.get("signature", b"")),
-    }
-
-
 def _normalize_tx_envelope(decoded: dict) -> dict:
-    """
-    Normalize transaction envelope format to core format.
-    
-    Handles three formats:
-    1. Core canonical: {"tx": {...canonical unsigned tx...}, "sigs": [...]}  (no change needed)
-    2. RPC/CLI simplified: {"body": {...flat fields...}, "sig": {...}} 
-       where body has: {chainId, from, to, nonce, value, gasLimit, maxFee, data}
-    3. Flat format (pass through)
-    
-    Returns dict in core canonical format expected by Tx.from_obj().
-    """
-    decoded = {
-        k: v
-        for k, v in decoded.items()
-        if k not in ("hash", "raw", "rawTx", "tx_hash", "txid")
-    }
-
-    if "body" in decoded:
-        # RPC/CLI simplified envelope: convert to canonical core format
-        body = decoded["body"]
-        
-        # Check if body is already in canonical format (has "v", "gas", "payload" keys)
-        if "v" in body and "gas" in body and "payload" in body:
-            # Body is already canonical, just wrap it
-            normalized = {"tx": body}
-        else:
-            # Body is in simplified format, need to convert to canonical
-            # Simplified format: {chainId, from, to, nonce, value, gasLimit, maxFee, data}
-            # Canonical format: {v, chainId, from, nonce, gas: {price, limit}, payload: {t, v}, accessList}
-            
-            # Extract fields with defaults
-            chain_id = body.get("chainId", body.get("chain_id", 1))
-            from_addr = body.get("from", body.get("sender"))
-            to_addr = body.get("to")
-            nonce = body.get("nonce", 0)
-            value = body.get("value", body.get("amount", 0))
-            gas_limit = body.get("gasLimit", body.get("gas_limit", body.get("gas", 21000)))
-            gas_price = body.get("maxFee", body.get("max_fee", body.get("gasPrice", body.get("gas_price", body.get("tip", 1)))))
-            data = body.get("data", b"")
-            
-            # Ensure data is bytes
-            if isinstance(data, str):
-                # Handle hex strings
-                if data.startswith("0x"):
-                    data = bytes.fromhex(data[2:])
-                else:
-                    data = data.encode("utf-8")
-            elif isinstance(data, (list, tuple)):
-                data = bytes(data)
-            elif not isinstance(data, (bytes, bytearray)):
-                data = b""
-            
-            # Convert addresses (bech32 strings → raw bytes if needed)
-            # Core expects 32-byte raw addresses
-            def _addr_to_bytes(addr) -> bytes:
-                """Convert address to 32-byte raw format."""
-                if addr is None:
-                    raise ValueError("Address cannot be None")
-                
-                if isinstance(addr, (bytes, bytearray)):
-                    addr_bytes = bytes(addr)
-                elif isinstance(addr, str):
-                    # Try to decode bech32 first
-                    if addr.startswith("anim1"):
-                        try:
-                            addr_bytes = _decode_bech32_address(addr)
-                        except Exception as e:
-                            # Bech32 decode failed - fall back to UTF-8 hash
-                            # We can't assume hex format since bech32 addresses use base32 encoding
-                            import hashlib
-                            addr_bytes = hashlib.sha3_256(addr.encode("utf-8")).digest()
-                            log.warning(f"Could not decode address '{addr}' as bech32 ({e}), using hash fallback")
-                    elif addr.startswith("0x"):
-                        addr_bytes = bytes.fromhex(addr[2:])
-                    else:
-                        # Try bare hex, fall back to UTF-8 hash
-                        try:
-                            addr_bytes = bytes.fromhex(addr)
-                        except ValueError:
-                            import hashlib
-                            addr_bytes = hashlib.sha3_256(addr.encode("utf-8")).digest()
-                            log.warning(f"Could not decode address '{addr}' as hex, using hash")
-                else:
-                    raise TypeError(f"Unsupported address type: {type(addr).__name__} (expected str or bytes)")
-                
-                # Normalize to canonical 32-byte digest
-                if len(addr_bytes) == 34:
-                    # Bech32 payload: alg_id (2 bytes) || digest (32 bytes)
-                    addr_bytes = addr_bytes[2:34]
-                elif len(addr_bytes) < ADDRESS_LEN:
-                    addr_bytes = addr_bytes.rjust(ADDRESS_LEN, b"\x00")
-                elif len(addr_bytes) > ADDRESS_LEN:
-                    addr_bytes = addr_bytes[-ADDRESS_LEN:]
-                
-                return addr_bytes
-            
-            # Build canonical unsigned tx structure
-            canonical_tx = {
-                "v": 1,
-                "chainId": int(chain_id),
-                "from": _addr_to_bytes(from_addr) if from_addr else b"\x00" * ADDRESS_LEN,
-                "nonce": int(nonce),
-                "gas": {
-                    "price": int(gas_price),
-                    "limit": int(gas_limit),
-                },
-                "payload": {
-                    "t": 0,  # TxKind.TRANSFER
-                    "v": {
-                        "to": _addr_to_bytes(to_addr) if to_addr else b"\x00" * ADDRESS_LEN,
-                        "amount": int(value),
-                        "data": bytes(data),
-                    },
-                },
-                "accessList": [],
-            }
-            
-            normalized = {"tx": canonical_tx}
-        
-        # Handle signatures
-        if "sigs" in decoded and isinstance(decoded["sigs"], list):
-            normalized["sigs"] = [
-                _normalize_sig_entry(sig) if isinstance(sig, dict) else sig
-                for sig in decoded["sigs"]
-            ]
-        elif "sig" in decoded:
-            # Single sig: wrap in array and normalize field names
-            sig = decoded["sig"]
-            normalized["sigs"] = [
-                _normalize_sig_entry(sig) if isinstance(sig, dict) else sig
-            ]
-        else:
-            normalized["sigs"] = []
-
-        return normalized
-    else:
-        # Already in core format or flat format; normalize signatures if present.
-        if "sigs" in decoded and isinstance(decoded["sigs"], list):
-            decoded = dict(decoded)
-            decoded["sigs"] = [
-                _normalize_sig_entry(sig) if isinstance(sig, dict) else sig
-                for sig in decoded["sigs"]
-            ]
-        elif "sig" in decoded:
-            sig = decoded["sig"]
-            decoded = dict(decoded)
-            decoded["sigs"] = [
-                _normalize_sig_entry(sig) if isinstance(sig, dict) else sig
-            ]
-            decoded.pop("sig", None)
-        return decoded
+    return normalize_tx_envelope(decoded)
 
 
 def _construct_tx_from_dict(normalized: dict) -> Tx | None:

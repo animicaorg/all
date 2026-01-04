@@ -1363,8 +1363,25 @@ def send(
                 )
 
             # Submit (with one compatibility fallback)
+            def _extract_send_hash(result: Any) -> str:
+                if isinstance(result, str):
+                    return result
+                if isinstance(result, dict):
+                    for key in ("tx_hash", "hash", "txHash", "transactionHash"):
+                        value = result.get(key)
+                        if isinstance(value, str):
+                            return value
+                raise ValueError(f"Unexpected tx.sendRawTransaction result: {result!r}")
+
             try:
-                tx_hash = _rpc(rpc, "tx.sendRawTransaction", [raw_hex])
+                send_result = _rpc(rpc, "tx.sendRawTransaction", [raw_hex])
+                tx_hash = _extract_send_hash(send_result)
+                if isinstance(send_result, dict):
+                    accepted = send_result.get("accepted_to_mempool")
+                    persisted = send_result.get("persisted_to_chain")
+                    hint = send_result.get("hint")
+                    if accepted and not persisted and hint:
+                        console.print(f"[yellow]{hint}[/yellow]")
             except RpcError as e:
                 # Handle insufficient funds error with user-friendly formatting
                 if e.code == -32013:  # AnimicaCode.INSUFFICIENT_FUNDS
@@ -1407,7 +1424,8 @@ def send(
                     raise typer.Exit(code=1)
                 # Some nodes use alternate method naming
                 if e.code in (-32601,):
-                    tx_hash = _rpc(rpc, "tx_sendRawTransaction", [raw_hex])
+                    send_result = _rpc(rpc, "tx_sendRawTransaction", [raw_hex])
+                    tx_hash = _extract_send_hash(send_result)
                 else:
                     _format_rpc_error(e)
                     raise typer.Exit(code=1) from e
