@@ -182,6 +182,7 @@ def normalize_tx_body(body: Mapping[str, Any]) -> dict:
     if version == 1:
         normalized["nonce"] = int(nonce or 0)
     else:
+        normalized["nonce"] = int(nonce or 0)
         normalized["validAfter"] = int(valid_after or 0)
         normalized["validUntil"] = int(valid_until or 0)
         normalized["salt"] = bytes(salt or b"")
