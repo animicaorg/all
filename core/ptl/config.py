@@ -34,8 +34,11 @@ class PtlConfig:
     @classmethod
     def from_env(cls) -> PtlConfig:
         """Load configuration from environment variables."""
+        # Get tx_system and fallback to "ptl" if unset or empty
+        tx_system = os.getenv("ANIMICA_TX_SYSTEM", "ptl") or "ptl"
+        
         return cls(
-            tx_system=os.getenv("ANIMICA_TX_SYSTEM", "ptl"),
+            tx_system=tx_system,
             min_peer_acks=int(os.getenv("ANIMICA_PTL_MIN_PEER_ACKS", "2")),
             ttl_seconds=int(os.getenv("ANIMICA_PTL_TTL_SECONDS", "3600")),
             db_path=os.getenv("ANIMICA_PTL_DB_PATH"),
