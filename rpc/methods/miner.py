@@ -4895,8 +4895,18 @@ def miner_list_instant_blocks(
             "offset": int,
         }
     """
-    limit_val = min(int(limit or 10), 100)
-    offset_val = max(int(offset or 0), 0)
+    # Input validation with error handling
+    try:
+        limit_val = min(int(limit or 10), 100)
+        offset_val = max(int(offset or 0), 0)
+    except (ValueError, TypeError) as e:
+        return {
+            "instantBlocks": [],
+            "total": 0,
+            "limit": 10,
+            "offset": 0,
+            "error": f"Invalid parameter: {e}",
+        }
     
     try:
         ctx = _ctx()
@@ -4909,13 +4919,20 @@ def miner_list_instant_blocks(
         except Exception:
             current_height = 0
         
+        # Get canonical height once before scanning (it's the same for all blocks)
+        try:
+            canonical_height = block_db.get_canonical_height()
+        except Exception:
+            canonical_height = current_height
+        
         instant_blocks = []
         checked = 0
         found = 0
         
-        # Scan backwards from current height to find instant blocks
-        # We scan more blocks than needed to account for filtering
-        max_scan = min(current_height + 1, 1000)  # Don't scan more than 1000 blocks
+        # Maximum number of blocks to scan backwards
+        # This is a safety limit to prevent excessive database queries
+        MAX_SCAN_BLOCKS = 1000
+        max_scan = min(current_height + 1, MAX_SCAN_BLOCKS)
         
         for height in range(current_height, max(0, current_height - max_scan), -1):
             if found >= limit_val + offset_val:
@@ -4935,6 +4952,7 @@ def miner_list_instant_blocks(
                     continue
                 
                 # Check if this is an instant block
+                # Note: instantBlock attribute is optional; defaults to False for regular blocks
                 is_instant = getattr(header, "instantBlock", False)
                 if not is_instant:
                     continue
@@ -4944,9 +4962,6 @@ def miner_list_instant_blocks(
                 # Skip blocks before our offset
                 if found <= offset_val:
                     continue
-                
-                # Get canonical height at this block height
-                canonical_height = block_db.get_canonical_height()
                 
                 # Get transaction count
                 try:
