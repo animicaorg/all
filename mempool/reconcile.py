@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Iterable
 
-from core.utils.hash import sha3_256
+from mempool.tx_hash import tx_hash_hex as _tx_hash_hex
 
 
 def _normalize_hash_hex(hash_hex: str) -> str:
@@ -28,7 +28,7 @@ def _canonical_hash_from_tx(tx: Any) -> str | None:
         except Exception:
             raw = None
     if raw:
-        return "0x" + sha3_256(raw).hex()
+        return _tx_hash_hex(raw)
     if hasattr(tx, "hash") and callable(getattr(tx, "hash")):
         try:
             return "0x" + tx.hash().hex()
