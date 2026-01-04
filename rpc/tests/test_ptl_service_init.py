@@ -22,6 +22,7 @@ def test_ptl_service_initialized_on_startup():
         # Enable PTL explicitly
         original_ptl_enable = os.environ.get("ANIMICA_PTL_ENABLE")
         original_tx_system = os.environ.get("ANIMICA_TX_SYSTEM")
+        ctx = None
         
         try:
             os.environ["ANIMICA_PTL_ENABLE"] = "1"
@@ -77,6 +78,7 @@ def test_ptl_disabled_when_not_enabled():
         # Disable PTL explicitly
         original_ptl_enable = os.environ.get("ANIMICA_PTL_ENABLE")
         original_tx_system = os.environ.get("ANIMICA_TX_SYSTEM")
+        ctx = None
         
         try:
             os.environ["ANIMICA_PTL_ENABLE"] = "0"
