@@ -67,6 +67,7 @@ class Header:
     nonce: int = 0
 
     extra: bytes = b""
+    instantBlock: bool = False  # True for zero-reward, non-advancing blocks
 
     # ---- construction helpers ----
 
@@ -86,6 +87,7 @@ class Header:
         theta_micro: int,
         work_type: int = 0,
         extra: bytes = b"",
+        instant_block: bool = False,
     ) -> "Header":
         """Build a deterministic genesis header (height=0, parentHash=0x00..00, nonce=0)."""
         zero = b"\x00" * HASH32_LEN
@@ -107,6 +109,7 @@ class Header:
             workType=work_type,
             nonce=0,
             extra=extra,
+            instantBlock=instant_block,
         )
         h._validate_sizes()
         return h
@@ -127,10 +130,12 @@ class Header:
         work_type: Optional[int] = None,
         nonce: int = 0,
         extra: bytes = b"",
+        instant_block: bool = False,
     ) -> "Header":
         """
         Build a *template* for the next block referencing this header as parent.
         Policy roots / Θ / mixSeed default to inheriting current values unless provided.
+        If instant_block=True, the child will be a zero-reward, non-advancing block.
         """
         child = Header(
             v=self.v,
@@ -158,6 +163,7 @@ class Header:
             workType=work_type if work_type is not None else self.workType,
             nonce=nonce,
             extra=extra,
+            instantBlock=instant_block,
         )
         child._validate_sizes()
         return child
@@ -205,6 +211,8 @@ class Header:
         }
         if int(self.workType):
             obj["workType"] = int(self.workType)
+        if self.instantBlock:
+            obj["instantBlock"] = bool(self.instantBlock)
         return obj
 
     @staticmethod
@@ -227,6 +235,7 @@ class Header:
             workType=int(o.get("workType", 0)),
             nonce=int(o["nonce"]),
             extra=bytes(o.get("extra", b"")),
+            instantBlock=bool(o.get("instantBlock", False)),
         )
         h._validate_sizes()
         if h.v != HEADER_VERSION:
@@ -256,6 +265,7 @@ class Header:
                stateRoot, txsRoot, receiptsRoot, proofsRoot, daRoot,
                mixSeed, poiesPolicyRoot, pqAlgPolicyRoot, thetaMicro,
                extra,                                     # included
+               instantBlock,                              # included if True
                domainTag: bstr                            # additional tag
             })
 
@@ -282,6 +292,8 @@ class Header:
         }
         if int(self.workType):
             obj["workType"] = int(self.workType)
+        if self.instantBlock:
+            obj["instantBlock"] = bool(self.instantBlock)
         return cbor_dumps(obj)
 
 
