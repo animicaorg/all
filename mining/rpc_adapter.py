@@ -10,13 +10,19 @@ from typing import Any, Dict, Optional
 
 import httpx
 
+from .orchestrator import WorkSource
 from .share_submitter import AsyncJsonRpcClient, RpcError, TransportError
+from .templates import HeaderTemplate
 
 
 @dataclass
 class RpcTemplateProvider:
     rpc_url: str
     proof_type: str = "sha256d"
+    solo_address: Optional[str] = None
+    allow_unsynced_mining: bool = True
+    allow_offline_mining: bool = False
+    include_mempool: bool = True
     work_timeout_s: float = 12.0
     connect_timeout_s: float = 2.0
     read_timeout_s: float = 12.0
@@ -91,6 +97,104 @@ class RpcTemplateProvider:
         )
         return bool(has_header and has_target)
 
+    def _block_template_is_valid(self, tpl: Dict[str, Any]) -> bool:
+        return bool(tpl.get("header")) and bool(tpl.get("target"))
+
+    def _parse_hex_bytes(self, value: Any, *, default: bytes) -> bytes:
+        if isinstance(value, (bytes, bytearray)):
+            return bytes(value)
+        if isinstance(value, str) and value.startswith("0x"):
+            try:
+                return bytes.fromhex(value[2:])
+            except Exception:
+                return default
+        return default
+
+    def _build_sign_bytes(self, header: Dict[str, Any]) -> str:
+        header_tpl = HeaderTemplate(
+            parent_hash=self._parse_hex_bytes(
+                header.get("parentHash"), default=b"\x00" * 32
+            ),
+            number=int(header.get("height") or header.get("number") or 0),
+            chain_id=int(header.get("chainId") or header.get("chain_id") or 0),
+            state_root=self._parse_hex_bytes(
+                header.get("stateRoot"), default=b"\x00" * 32
+            ),
+            txs_root=self._parse_hex_bytes(
+                header.get("txsRoot"), default=b"\x00" * 32
+            ),
+            receipts_root=self._parse_hex_bytes(
+                header.get("receiptsRoot"), default=b"\x00" * 32
+            ),
+            proofs_root=self._parse_hex_bytes(
+                header.get("proofsRoot"), default=b"\x00" * 32
+            ),
+            da_root=self._parse_hex_bytes(header.get("daRoot"), default=b"\x00" * 32),
+            theta_target_micro=int(
+                header.get("thetaMicro")
+                or header.get("thetaTargetMicro")
+                or header.get("theta_micro")
+                or 0
+            ),
+            mix_seed=self._parse_hex_bytes(
+                header.get("mixSeed"), default=b"\x00" * 32
+            ),
+            pq_alg_policy_root=self._parse_hex_bytes(
+                header.get("pqAlgPolicyRoot"), default=b"\x00" * 32
+            ),
+            poies_policy_root=self._parse_hex_bytes(
+                header.get("poiesPolicyRoot"), default=b"\x00" * 32
+            ),
+            timestamp=int(header.get("timestamp") or 0),
+            work_type=(
+                int(header.get("workType"))
+                if header.get("workType") is not None
+                else None
+            ),
+        )
+        sign_bytes = header_tpl.to_sign_bytes()
+        return "0x" + sign_bytes.hex()
+
+    async def _fetch_solo_template(self, reason: str | None = None) -> Optional[Dict[str, Any]]:
+        if not self.solo_address:
+            return None
+        payload = {
+            "address": self.solo_address,
+            "include_mempool": bool(self.include_mempool),
+            "allow_unsynced_mining": bool(self.allow_unsynced_mining),
+            "allow_offline_mining": bool(self.allow_offline_mining),
+        }
+        try:
+            res = await self._rpc.call("miner.getBlockTemplate", payload)
+        except (RpcError, TransportError) as exc:
+            self._warn_throttled(
+                "solo-template-error",
+                "rpc miner.getBlockTemplate failed while in solo fallback: %s",
+                exc,
+            )
+            return None
+        if not isinstance(res, dict):
+            return None
+        if res.get("enabled") is False:
+            return None
+        tpl = dict(res)
+        if not self._block_template_is_valid(tpl):
+            return None
+        header = tpl.get("header")
+        if not isinstance(header, dict):
+            return None
+        try:
+            tpl["signBytes"] = self._build_sign_bytes(header)
+        except Exception:
+            return None
+        tpl["shareTarget"] = 1.0
+        tpl.setdefault("workSource", WorkSource.SOLO_TEMPLATE.value)
+        if reason:
+            tpl["workSourceReason"] = reason
+        if "hints" not in tpl and header.get("mixSeed"):
+            tpl["hints"] = {"mixSeed": header.get("mixSeed")}
+        return tpl
+
     async def current_template(self) -> Optional[Dict[str, Any]]:
         method = "miner.getWork"
         backoff = self.initial_backoff_s
@@ -115,8 +219,25 @@ class RpcTemplateProvider:
                     raise RpcError(-32000, "invalid-template-shape", res)
 
                 tpl = dict(res)
+                if tpl.get("disabled") or tpl.get("miningEnabled") is False:
+                    reason = str(tpl.get("reason") or "disabled")
+                    solo = await self._fetch_solo_template(reason)
+                    if solo:
+                        self._log.info(
+                            "SOLO mining: using local template (reason=%s)", reason
+                        )
+                        return solo
+                    return None
+
                 job_id = self._extract_job_id(tpl)
                 if not job_id:
+                    reason = str(tpl.get("reason") or "missing-jobId")
+                    solo = await self._fetch_solo_template(reason)
+                    if solo:
+                        self._log.info(
+                            "SOLO mining: using local template (reason=%s)", reason
+                        )
+                        return solo
                     self._warn_throttled(
                         "missing-job-id",
                         "rpc %s returned no jobId in %.3fs (attempt %s/%s), response=%s",
@@ -128,6 +249,7 @@ class RpcTemplateProvider:
                     )
                     raise RpcError(-32000, "missing-jobId", res)
                 tpl["jobId"] = job_id
+                tpl["workSource"] = WorkSource.POOL_GETWORK.value
 
                 if not self._template_is_valid(tpl):
                     self._warn_throttled(
