@@ -215,12 +215,29 @@ def check_mining_config(client: RPCClient) -> bool:
 
 
 def check_tx_relay_metrics(client: RPCClient) -> bool:
-    """Check TX relay activity metrics."""
-    print_header("5. TX Relay Activity")
+    """Check PTL and TX relay activity metrics."""
+    print_header("5. PTL & TX Relay Activity")
     
+    # Try PTL stats first (canonical method)
+    ptl_result = client.call("debug.ptlStats", [{}])
+    if ptl_result:
+        print_success("PTL service is available")
+        min_acks = ptl_result.get("min_peer_acks", 0)
+        ttl = ptl_result.get("ttl_seconds", 0)
+        print_info(f"  Min peer acks: {min_acks}")
+        print_info(f"  TTL: {ttl}s")
+        
+        stats = ptl_result.get("stats", {})
+        if stats:
+            print_info("  Transactions by status:")
+            for status, count in stats.items():
+                print_info(f"    {status}: {count}")
+        return True
+    
+    # Fallback to old debug_p2p_status
     result = client.call("debug_p2p_status")
     if result is None:
-        print_warning("Cannot get relay metrics")
+        print_warning("Cannot get relay metrics (PTL or legacy)")
         return False
     
     tx_relay = result.get("tx_relay", {})
@@ -247,48 +264,114 @@ def check_tx_relay_metrics(client: RPCClient) -> bool:
         return False
 
 
+def check_ptl_replication(client: RPCClient, tx_hash: Optional[str] = None) -> bool:
+    """Check PTL replication status for a specific transaction."""
+    if not tx_hash:
+        return True
+    
+    print_header("6. PTL Replication Status")
+    
+    result = client.call("ptl.replicationStatus", [{"txid": tx_hash}])
+    if result is None:
+        print_warning("PTL replication status not available")
+        print_info("  PTL may not be enabled on this node")
+        print_info("  Set ANIMICA_PTL_ENABLE=1 to enable PTL")
+        return False
+    
+    local_status = result.get("local_status", "unknown")
+    quorum = result.get("quorum", {})
+    acks = quorum.get("observed_acks", 0)
+    required = quorum.get("required_acks", 0)
+    quorum_met = quorum.get("quorum_met", False)
+    
+    print_info(f"  Transaction: {result.get('tx_hash')}")
+    print_info(f"  Local Status: {local_status}")
+    print_info(f"  Acks: {acks}/{required}")
+    
+    if quorum_met:
+        print_success("Quorum met - transaction attested")
+    else:
+        print_warning(f"Quorum not met ({acks}/{required} acks)")
+    
+    peers = result.get("peers", [])
+    if peers:
+        print_info(f"  Peer receipts: {len(peers)}")
+        for p in peers:
+            status = p.get("status")
+            peer_id = p.get("peer_id", "unknown")[:16]
+            if status == "ack":
+                print_success(f"    {peer_id}: {status}")
+            else:
+                print_warning(f"    {peer_id}: {status}")
+    else:
+        print_warning("  No peer receipts yet")
+    
+    return quorum_met
+
+
 def suggest_fixes():
     """Suggest common fixes."""
     print_header("Troubleshooting Steps")
     
-    print_info("If TX propagation is not working:")
+    print_info("If PTL/TX propagation is not working:")
     print_info("")
-    print_info("1. Enable TX relay flags:")
+    print_info("1. Enable PTL service:")
+    print_info("   export ANIMICA_PTL_ENABLE=1")
+    print_info("")
+    print_info("2. Enable P2P and TX relay:")
+    print_info("   export ANIMICA_P2P_ENABLE=1")
     print_info("   export ANIMICA_P2P_TX_RELAY=true")
-    print_info("   export ANIMICA_P2P_TX_ENABLED=true")
     print_info("")
-    print_info("2. Connect to peers:")
+    print_info("3. Connect to peers:")
     print_info("   export ANIMICA_P2P_SEEDS='/ip4/127.0.0.1/tcp/30333'")
     print_info("")
-    print_info("3. Restart the node after changing configuration")
+    print_info("4. Restart the node after changing configuration")
     print_info("")
-    print_info("4. Submit a test transaction:")
+    print_info("5. Submit a test transaction:")
+    print_info("   animica tx send --from <addr> --to <addr> --value 0.01 --min-peers 2")
+    print_info("")
+    print_info("6. Check replication status:")
+    print_info("   animica tx replicate <tx_hash> --json")
+    print_info("")
+    print_info("7. Monitor PTL stats:")
     print_info("   curl -X POST http://localhost:8545/rpc \\")
     print_info("     -H 'Content-Type: application/json' \\")
-    print_info("     -d '{\"jsonrpc\":\"2.0\",\"method\":\"eth_sendRawTransaction\",\"params\":[\"0x...\"],\"id\":1}'")
-    print_info("")
-    print_info("5. Monitor logs for relay activity:")
-    print_info("   tail -f /path/to/logs/animica.log | grep -E 'TX_INV|TX_ACCEPTED'")
+    print_info("     -d '{\"jsonrpc\":\"2.0\",\"method\":\"debug.ptlStats\",\"params\":[{}],\"id\":1}'")
 
 
 def main():
-    if len(sys.argv) > 1:
+    if len(sys.argv) > 2:
         rpc_url = sys.argv[1]
+        tx_hash = sys.argv[2]
+    elif len(sys.argv) > 1:
+        arg = sys.argv[1]
+        if arg.startswith("0x"):
+            rpc_url = "http://localhost:8545/rpc"
+            tx_hash = arg
+        else:
+            rpc_url = arg
+            tx_hash = None
     else:
         rpc_url = "http://localhost:8545/rpc"
+        tx_hash = None
     
     print_header("Transaction Propagation Diagnostic Tool")
     print_info(f"Testing node: {rpc_url}")
+    if tx_hash:
+        print_info(f"Transaction: {tx_hash}")
     
     client = RPCClient(rpc_url)
     
     checks = [
-        ("Node reachable", check_node_reachable),
-        ("P2P configured", check_p2p_status),
-        ("Mempool service", check_mempool_service),
-        ("Mining config", check_mining_config),
-        ("TX relay activity", check_tx_relay_metrics),
+        ("Node reachable", lambda c: check_node_reachable(c)),
+        ("P2P configured", lambda c: check_p2p_status(c)),
+        ("Mempool service", lambda c: check_mempool_service(c)),
+        ("Mining config", lambda c: check_mining_config(c)),
+        ("PTL/TX relay activity", lambda c: check_tx_relay_metrics(c)),
     ]
+    
+    if tx_hash:
+        checks.append(("PTL replication", lambda c: check_ptl_replication(c, tx_hash)))
     
     results = []
     for name, check_fn in checks:
@@ -317,7 +400,7 @@ def main():
     if passed < total:
         suggest_fixes()
     else:
-        print_success("\nAll checks passed! TX propagation should be working.")
+        print_success("\nAll checks passed! PTL/TX propagation should be working.")
     
     sys.exit(0 if passed == total else 1)
 

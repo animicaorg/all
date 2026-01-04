@@ -273,5 +273,93 @@ async def test_ptl_invalid_transaction_rejection(mock_network, node_a, node_b):
     assert reject_receipt["reason"] == "invalid signature"
 
 
+@pytest.mark.asyncio
+async def test_ptl_receipt_persistence_after_restart():
+    """Test that receipts persist after node restart."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = Path(tmpdir) / "ptl_persist_test.db"
+        
+        # Create first service instance
+        store = PtlStore(db_path)
+        service = PtlService(store, ttl_seconds=3600, min_peer_acks=2)
+        
+        # Submit transaction
+        tx_bytes = b"transaction with receipts"
+        txid, _ = await service.submit(tx_bytes, origin="test")
+        
+        # Add multiple receipts
+        await service.add_receipt(txid, "peer_1", "ack")
+        await service.add_receipt(txid, "peer_2", "ack")
+        await service.add_receipt(txid, "peer_3", "seen")
+        
+        # Verify receipts exist
+        status = await service.get_replication_status(txid)
+        assert status is not None
+        assert len(status["receipts"]) == 3
+        assert status["ack_count"] == 2
+        
+        # Close service and store
+        service.stop()
+        store.close()
+        
+        # Simulate restart - create new instances with same DB
+        store2 = PtlStore(db_path)
+        service2 = PtlService(store2, ttl_seconds=3600, min_peer_acks=2)
+        
+        # Verify transaction and receipts survived restart
+        entry = await service2.get(txid)
+        assert entry is not None
+        assert entry.txid == txid
+        assert entry.tx_bytes == tx_bytes
+        assert len(entry.receipts) == 3
+        
+        # Verify replication status still works
+        status2 = await service2.get_replication_status(txid)
+        assert status2 is not None
+        assert len(status2["receipts"]) == 3
+        assert status2["ack_count"] == 2
+        
+        # Cleanup
+        service2.stop()
+        store2.close()
+
+
+@pytest.mark.asyncio
+async def test_ptl_receipt_deduplication():
+    """Test that duplicate receipts from same peer are deduplicated."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = Path(tmpdir) / "ptl_dedup_test.db"
+        store = PtlStore(db_path)
+        service = PtlService(store, ttl_seconds=3600, min_peer_acks=2)
+        
+        # Submit transaction
+        tx_bytes = b"transaction with duplicate receipts"
+        txid, _ = await service.submit(tx_bytes, origin="test")
+        
+        # Add same receipt multiple times
+        await service.add_receipt(txid, "peer_1", "ack")
+        await service.add_receipt(txid, "peer_1", "ack")
+        await service.add_receipt(txid, "peer_1", "ack")
+        
+        # Verify only one receipt is stored
+        entry = await service.get(txid)
+        assert entry is not None
+        assert len(entry.receipts) == 1
+        assert entry.receipts[0].peer_id == "peer_1"
+        
+        # Add different status from same peer - should update
+        await service.add_receipt(txid, "peer_1", "reject", reason="validation failed")
+        
+        # Verify receipt was updated, not duplicated
+        entry2 = await service.get(txid)
+        assert len(entry2.receipts) == 1
+        assert entry2.receipts[0].status == "reject"
+        assert entry2.receipts[0].reason == "validation failed"
+        
+        # Cleanup
+        service.stop()
+        store.close()
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

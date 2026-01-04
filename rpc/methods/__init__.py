@@ -125,6 +125,7 @@ def _iter_builtin_modules() -> Iterable[str]:
         "rpc.methods.sync",
         "rpc.methods.miner",
         "rpc.methods.mempool",
+        "rpc.methods.ptl",  # PTL replication and transaction lifecycle
         "rpc.methods.da",
         "rpc.methods.faucet",
         "rpc.methods.p2p",

@@ -179,6 +179,12 @@ class PtlService:
                 pruned_count = self.store.prune_terminal(prune_before)
                 if pruned_count > 0:
                     log.info("PTL pruned transactions", extra={"count": pruned_count})
+                
+                # Compact old receipts for finalized transactions (older than 24h)
+                compact_before = now - 86400
+                compacted_count = self.store.compact_receipts(compact_before)
+                if compacted_count > 0:
+                    log.info("PTL compacted receipts", extra={"count": compacted_count})
 
             except Exception:
                 log.warning("PTL maintenance loop error", exc_info=True)

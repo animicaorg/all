@@ -1322,6 +1322,41 @@ def cbor_loads(data: bytes) -> t.Any:
     raise RuntimeError("core.encoding.cbor.loads not available")
 
 
+def get_state_db_adapter() -> t.Any:
+    """
+    Get state DB adapter for mining/execution operations.
+    
+    Returns the state_db from the RPC context, which provides methods like
+    get_account, get_nonce, etc. for transaction validation and selection.
+    """
+    ctx = ensure_started()
+    return ctx.state_db
+
+
+def get_block_db() -> t.Any:
+    """
+    Get block DB for block retrieval and storage operations.
+    
+    Returns the block_db from the RPC context.
+    """
+    ctx = ensure_started()
+    return ctx.block_db
+
+
+# Global registry for PTL service and other components
+_REGISTRY: dict[str, t.Any] = {}
+
+
+def register(key: str, obj: t.Any) -> None:
+    """Register a component in the global registry."""
+    _REGISTRY[key] = obj
+
+
+def get(key: str, default: t.Any = None) -> t.Any:
+    """Get a component from the global registry."""
+    return _REGISTRY.get(key, default)
+
+
 __all__ = [
     "attach_lifecycle",
     "build_context",
@@ -1332,6 +1367,10 @@ __all__ = [
     "get_params",
     "get_block_by_height",
     "get_block_by_hash",
+    "get_state_db_adapter",
+    "get_block_db",
+    "register",
+    "get",
     "ready",
     "shutdown",
     "startup",
