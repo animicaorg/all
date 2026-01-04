@@ -359,9 +359,87 @@ def _block_view(
     return {k: val for k, val in v.items() if val is not None}
 
 
-def _normalize_block_number(n: t.Any) -> int:
+def _construct_pending_block(include_txs: bool = False, include_receipts: bool = False) -> dict:
     """
-    Accepts: int, decimal string, hex string (0x…), or special keywords: 'latest'/'head'/'earliest'
+    Construct a synthetic 'pending' block with pending mempool transactions.
+    
+    This is used for eth_getBlockByNumber("pending", ...) queries to show
+    what transactions are waiting to be mined.
+    """
+    try:
+        # Get current head for parent info
+        head = deps.get_head()
+        head_height = int(head.get("height", 0)) if isinstance(head, dict) else 0
+        head_hash = head.get("hash") if isinstance(head, dict) else None
+        
+        # Get pending transactions from mempool
+        pending_txs: list[str] = []
+        try:
+            # Try to import mempool method
+            from rpc.methods.mempool import mempool_get_pending
+            pending_result = mempool_get_pending(verbose=False)
+            if isinstance(pending_result, list):
+                pending_txs = pending_result
+        except Exception:
+            # Mempool service not available, return empty pending block
+            pass
+        
+        # Parse parent hash
+        parent_hash_hex = "0x" + ("0" * 64)  # Default zero hash
+        if head_hash:
+            if isinstance(head_hash, str):
+                parent_hash_hex = head_hash if head_hash.startswith("0x") else "0x" + head_hash
+            elif isinstance(head_hash, bytes):
+                parent_hash_hex = "0x" + head_hash.hex()
+        
+        # Get current timestamp
+        try:
+            ctx = deps.get_ctx()
+            timestamp = int(ctx.get_time() if hasattr(ctx, "get_time") else 0)
+        except Exception:
+            import time
+            timestamp = int(time.time())
+        
+        # Build pending block structure
+        pending_block = {
+            "number": "0x" + format(head_height + 1, 'x'),  # Next block height
+            "hash": None,  # Pending block has no hash yet
+            "parentHash": parent_hash_hex,
+            "timestamp": "0x" + format(timestamp, 'x'),
+            "transactions": pending_txs if not include_txs else pending_txs,  # Full tx objects not yet supported
+            "transactionsRoot": None,  # TBD when block is mined
+            "stateRoot": None,  # TBD when block is mined
+            "receiptsRoot": None,  # TBD when block is mined
+            "miner": None,  # TBD when block is mined
+            "difficulty": None,  # TBD when block is mined
+            "totalDifficulty": None,
+            "size": None,
+            "gasLimit": "0x" + format(100_000_000_000, 'x'),  # Default gas limit
+            "gasUsed": "0x0",  # No gas used yet
+            "extraData": "0x",
+            "nonce": None,
+        }
+        
+        # Add receipts if requested (empty for pending)
+        if include_receipts:
+            pending_block["receipts"] = []
+        
+        return pending_block
+        
+    except Exception as e:
+        log.warning(f"Failed to construct pending block: {e}")
+        # Return minimal pending block on error
+        return {
+            "number": None,
+            "hash": None,
+            "transactions": [],
+        }
+
+
+def _normalize_block_number(n: t.Any) -> int | str:
+    """
+    Accepts: int, decimal string, hex string (0x…), or special keywords: 'latest'/'head'/'earliest'/'pending'
+    Returns int for resolved block heights, or str 'pending' for pending block queries.
     """
     if isinstance(n, int):
         return n
@@ -373,8 +451,12 @@ def _normalize_block_number(n: t.Any) -> int:
             "safe",
             "finalized",
         ):  # all map to current best for now
-            h, _hdr = deps.get_head()[0], deps.get_head()[1]  # type: ignore
-            return int(h)
+            head = deps.get_head()
+            h = head.get("height") if isinstance(head, dict) else 0
+            return int(h or 0)
+        if s == "pending":
+            # Return 'pending' as special marker for pending block construction
+            return "pending"
         if s in ("earliest", "genesis"):
             return 0
         # hex?
@@ -464,10 +546,20 @@ def chain_get_block_by_number(
     includeTx: bool | None = None,
 ) -> t.Optional[dict]:
     """
-    number can be an int, hex string (0x…), decimal string, or 'latest'/'earliest'.
+    number can be an int, hex string (0x…), decimal string, or 'latest'/'earliest'/'pending'.
     Returns a JSON object or null if not found.
+    
+    For 'pending', returns a synthetic block with pending transactions from mempool.
     """
     height = _normalize_block_number(number)
+    
+    # Handle pending block construction
+    if height == "pending":
+        return _construct_pending_block(
+            include_txs=includeTx if includeTx is not None else includeTxObjects,
+            include_receipts=includeReceipts,
+        )
+    
     h, blk = _resolve_block_by_number(height)
     if blk is None and height == 0:
         blk = _fallback_block(int(deps.get_chain_id()))
