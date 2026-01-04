@@ -3308,12 +3308,32 @@ def miner_get_work(params: Any | None = None) -> Dict[str, Any]:
         "head_generation": head_snapshot.get("generation"),
     }
 
+    # Check mempool status for diagnostic compatibility
+    # The include_mempool param in payload is for compatibility with miner.getBlockTemplate
+    include_mempool_requested = True  # Default to True
+    if payload:
+        include_mempool_requested = bool(
+            payload.get("include_mempool", payload.get("includeMempool", True))
+        )
+    
+    # Get mempool transaction count if service is available
+    tx_count = 0
+    mempool_service = _resolve_mempool_service(_ctx())
+    if mempool_service is not None and include_mempool_requested:
+        try:
+            stats = mempool_service.stats() if hasattr(mempool_service, "stats") else {}
+            tx_count = stats.get("count", 0)
+        except Exception:
+            tx_count = 0
+
     return {
         "jobId": job_id,
         "templateId": job_id,
         "header": header_view,
         "thetaMicro": int(theta),
         "miningEnabled": True,
+        "mempoolEnabled": include_mempool_requested,
+        "txCount": tx_count,
         "shareTarget": float(share_target),
         "target": hex(block_target),
         "height": int(job.header.number),
