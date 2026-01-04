@@ -52,6 +52,7 @@ PFX_META = b"\x1f"
 
 META_HEAD_HASH = PFX_META + b"head_hash"
 META_HEAD_HEIGHT = PFX_META + b"head_height"
+META_CANONICAL_HEIGHT = PFX_META + b"canonical_height"  # Height excluding instant blocks
 META_GENESIS = PFX_META + b"genesis_hash"
 META_CHAIN_ID = PFX_META + b"chain_id"
 META_GENESIS_SHA256 = PFX_META + b"genesis_sha256"
@@ -295,6 +296,24 @@ class BlockDB:
 
     def get_chain_id(self) -> Optional[int]:
         v = self.kv.get(META_CHAIN_ID)
+        return None if v is None else _from_u64be(v)
+
+    def set_canonical_height(self, height: int, batch: Optional[Batch] = None) -> None:
+        """
+        Set the canonical height (excluding instant blocks).
+        This is used for halving schedule calculations.
+        """
+        if batch is None:
+            self.kv.put(META_CANONICAL_HEIGHT, _u64be(height))
+        else:
+            batch.put(META_CANONICAL_HEIGHT, _u64be(height))
+
+    def get_canonical_height(self) -> Optional[int]:
+        """
+        Get the canonical height (excluding instant blocks).
+        Returns None if not set (e.g., at genesis).
+        """
+        v = self.kv.get(META_CANONICAL_HEIGHT)
         return None if v is None else _from_u64be(v)
 
     # --- Lookups by hash/height ---
