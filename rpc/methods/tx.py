@@ -617,6 +617,11 @@ def _decode_tx(raw: bytes) -> tuple[t.Any, dict]:
             ) from exc
         raise
 
+    if isinstance(obj, dict):
+        raw_body = obj.get("body")
+        if isinstance(raw_body, dict):
+            normalized_env.setdefault("body", raw_body)
+
     raw_canonical = normalized_env.get("raw") or raw
     tx_hash_hex = normalized_env.get("hash") or (_hex(_sha3_256(raw_canonical)) or "")
 
