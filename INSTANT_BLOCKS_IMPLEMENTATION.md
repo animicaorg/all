@@ -1,5 +1,19 @@
 # Instant Blocks Implementation Summary
 
+## Quick Start
+
+**Enable instant blocks** (optional feature):
+```bash
+export ANIMICA_INSTANT_BLOCKS_ENABLED=1
+```
+
+**Usage**: Instant blocks are automatically created when transactions are submitted via:
+- `animica tx send ...` (CLI)
+- `tx.sendRawTransaction` (RPC)
+- P2P transaction propagation
+
+No additional action needed - transactions appear in instant blocks immediately (< 1 second) with zero block rewards.
+
 ## Overview
 
 This implementation adds **instant blocks** to the Animica blockchain - a special block type that enables immediate transaction inclusion without affecting the chain's emission schedule or halving mechanics.
@@ -256,16 +270,76 @@ All tests cover:
 - Hash computation with instant block flag
 - Build child with instant_block parameter
 
+## Integration with Transaction Submission
+
+### Automatic Triggering
+
+Instant blocks are automatically triggered when transactions are submitted, if enabled:
+
+**Environment Variable:**
+```bash
+export ANIMICA_INSTANT_BLOCKS_ENABLED=1
+```
+
+**Transaction Sources:**
+1. **CLI `tx send`** → Triggers instant block after mempool admission
+2. **RPC `tx.sendRawTransaction`** → Triggers instant block after mempool admission  
+3. **P2P inbound transactions** → Triggers instant block after successful admission
+
+**Implementation Details:**
+
+```python
+# In rpc/methods/tx.py::_tx_send_raw_transaction()
+# After successful mempool admission:
+if instant_blocks_enabled:
+    try:
+        miner_methods.trigger_instant_block_on_tx_arrival()
+    except Exception as e:
+        log.debug(f"Failed to trigger instant block: {e}")
+```
+
+```python
+# In p2p/node/p2p_service.py::_admit_tx_result()
+# After successful P2P tx admission:
+if ok and not local and instant_blocks_enabled:
+    try:
+        from rpc.methods.miner import trigger_instant_block_on_tx_arrival
+        trigger_instant_block_on_tx_arrival()
+    except Exception:
+        pass  # Best-effort
+```
+
+The trigger is **best-effort** and will not fail transaction admission if instant block creation fails.
+
+### Force Chain Behavior
+
+When `ANIMICA_TX_SEND_FORCE_CHAIN=1` is set (devnet/testing), the system ensures transactions are persisted to chain:
+
+1. **First attempt**: Try instant block (if enabled)
+2. **Fallback**: Use normal mining if instant blocks disabled or failed
+3. **Polling**: Wait up to timeout for transaction inclusion
+
+```python
+# In rpc/methods/tx.py::_ensure_tx_persisted_to_chain()
+if instant_blocks_enabled:
+    success, reward, summary = miner_methods._mine_instant_block()
+    if success:
+        return True, None
+
+# Fallback to normal mining
+miner_methods.miner_mine(count=1, include_mempool=True, ...)
+```
+
 ## Next Steps
 
 To fully integrate instant blocks:
 
 1. ✅ Core implementation (complete)
-2. ⏳ P2P propagation optimization
-3. ⏳ RPC endpoint additions
-4. ⏳ Mempool integration (auto-trigger)
-5. ⏳ Metrics and monitoring
-6. ⏳ Integration tests
+2. ✅ **Mempool integration (auto-trigger)** - Complete!
+3. ✅ **Integration tests** - Added test_instant_block_tx_send.py
+4. ⏳ P2P propagation optimization
+5. ⏳ RPC endpoint additions
+6. ⏳ Metrics and monitoring
 7. ⏳ Network deployment
 
 ## Summary
@@ -277,5 +351,6 @@ This implementation provides a solid foundation for instant transaction inclusio
 - ✅ **Documented**: Full specification and usage guide
 - ✅ **Safe**: No impact on emission schedule or security
 - ✅ **Optional**: Can be enabled/disabled via configuration
+- ✅ **Integrated**: Automatically triggers on tx send and P2P receipt
 
 The instant blocks feature enables sub-second transaction finality without compromising the integrity of the blockchain's emission schedule or security model.
