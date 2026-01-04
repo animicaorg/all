@@ -325,6 +325,99 @@ python -m python.animica.cli.tx send \
 python -m python.animica.cli.chain get-tx --hash <tx-hash> --rpc-url http://localhost:8545
 ```
 
+### Transaction Replication (PTL)
+
+**PTL (Pending Transaction Ledger)** provides reliable peer-to-peer transaction propagation with acknowledgment tracking. Enable PTL for production deployments.
+
+#### Enable PTL
+```bash
+# Enable PTL service
+export ANIMICA_PTL_ENABLE=1
+
+# Enable P2P connectivity (required for PTL)
+export ANIMICA_P2P_ENABLE=1
+export ANIMICA_P2P_TX_RELAY=true
+
+# Set P2P seeds (connect to network)
+export ANIMICA_P2P_SEEDS='/ip4/seed1.animica.network/tcp/30333,/ip4/seed2.animica.network/tcp/30333'
+
+# Restart node for changes to take effect
+systemctl restart animica-node
+```
+
+#### Send with Peer Acknowledgments
+```bash
+# Send transaction and wait for 2 peer acknowledgments
+animica tx send \
+  --from anim1alice... \
+  --to anim1bob... \
+  --value 10.0 \
+  --min-peers 2 \
+  --wait-timeout 30
+
+# Output:
+# Transaction Sent
+# Tx Hash: 0xabc123...
+# Waiting for 2 peer acknowledgments...
+# Acks: 1/2 (waiting...)
+# Acks: 2/2 (waiting...)
+# ✓ Received 2 acknowledgments
+```
+
+#### Check Replication Status
+```bash
+# Human-readable output
+animica tx replicate 0xabc123...
+
+# Output:
+# Replication Status
+# TxID: 0xabc123...
+# Local Status: eligible
+# Quorum: ✓ 3/2 acknowledgments
+# 
+# Peer Receipts (3)
+#   ack from peer_alpha at Tue Jan 14 10:30:45 2025
+#   ack from peer_beta at Tue Jan 14 10:30:46 2025
+#   ack from peer_gamma at Tue Jan 14 10:30:47 2025
+
+# Machine-readable JSON (for scripts/monitoring)
+animica tx replicate 0xabc123... --json
+```
+
+#### Troubleshoot Replication Issues
+```bash
+# Comprehensive diagnostic
+animica tx troubleshoot 0xabc123...
+
+# Output:
+# Troubleshooting Transaction 0xabc123...
+# Status: STORED
+# Acknowledgments: 1/2
+# 
+# Insufficient peer acknowledgments
+# Recommendations:
+#   1. Check network connectivity: animica p2p peers
+#   2. Verify peer count is sufficient
+#   3. Wait for anti-entropy reconciliation (10s interval)
+#   4. Check debug.ptlPeers for peer state
+```
+
+#### Diagnostic Tool
+```bash
+# Check overall PTL/TX propagation health
+python3 diagnose_tx_propagation.py http://localhost:8545/rpc
+
+# Check specific transaction
+python3 diagnose_tx_propagation.py http://localhost:8545/rpc 0xabc123...
+```
+
+**PTL Benefits:**
+- ✅ Guaranteed peer delivery (with configurable quorum)
+- ✅ Receipt persistence across restarts
+- ✅ Anti-spam and deduplication
+- ✅ Corruption handling with quarantine
+- ✅ Automatic receipt compaction
+
 ### Deploy Contract
 ```bash
 source .venv/bin/activate
