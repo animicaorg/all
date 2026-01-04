@@ -47,6 +47,11 @@ Header = {
   ; Optional treasury deltas (for audits/receipts aggregation)
   ? "treasury":  TreasuryDelta,
 
+  ; Optional instant block flag (zero-reward, non-advancing blocks)
+  ; Instant blocks carry no block reward and do not increment canonical height
+  ; for halving schedule calculations. Used for immediate tx inclusion.
+  ? "instantBlock": bool .default false,
+
   ; Optional extension space for feature-gated data (must be deterministic)
   ? "ext":       { * tstr => bstr .size (0..64) }
 }
@@ -123,6 +128,8 @@ TreasuryDelta = {
 ; 5) time drift bounded per params.yaml; parent.height + 1 == height; parent==0x00..00 for genesis.
 ; 6) roots.* MUST be recomputable from the included body when validating a block.
 ; 7) ext map keys MUST be namespaced (e.g., "zk:vkRoot") and ≤64B values, or omitted.
+; 8) instantBlock blocks carry reward=0 and do not increment canonical height for halving schedule.
+;    These blocks are used for instant transaction inclusion without affecting emission schedule.
 
 ; ---------- Light-client header view ----------
 ; Used in OpenRPC schemas and SDKs for compact sync (no logsBloom/treasury/ext).
