@@ -25,6 +25,8 @@ import '../services/state_service.dart';
 import '../services/tx_service.dart';
 import 'providers.dart' show
   rpcClientProvider, stateServiceProvider, txServiceProvider;
+import 'account_state.dart' show accountsStateProvider;
+import 'subscriptions.dart' show ChainHead, newHeadsStreamProvider;
 
 /// Public status values for UI.
 enum TxStatus {
@@ -204,6 +206,8 @@ class TxQueueNotifier extends StateNotifier<TxQueueState> {
   final Ref _ref;
   Timer? _monitor;
   final _rand = Random();
+  ProviderSubscription<AsyncValue<ChainHead>>? _headSub;
+  int? _lastHeadNumber;
 
   // Resend policy knobs
   static const int _maxResends = 3;
@@ -216,6 +220,13 @@ class TxQueueNotifier extends StateNotifier<TxQueueState> {
   TxQueueNotifier(this._ref) : super(const TxQueueState()) {
     // Background monitor to check receipts & resends.
     _monitor = Timer.periodic(const Duration(seconds: 7), (_) => _tick());
+    _headSub = _ref.listen<AsyncValue<ChainHead>>(newHeadsStreamProvider, (prev, next) {
+      final head = next.valueOrNull;
+      if (head == null) return;
+      if (_lastHeadNumber == head.number) return;
+      _lastHeadNumber = head.number;
+      _refreshPendingSenderBalances();
+    });
   }
 
   // ------------ Public API ------------
@@ -449,6 +460,22 @@ class TxQueueNotifier extends StateNotifier<TxQueueState> {
     }
   }
 
+  void _refreshPendingSenderBalances() {
+    final senders = state.all
+        .where((t) => {
+              TxStatus.pending,
+              TxStatus.broadcasting,
+              TxStatus.queued,
+            }.contains(t.status))
+        .map((t) => t.from)
+        .toSet();
+    if (senders.isEmpty) return;
+    final accounts = _ref.read(accountsStateProvider.notifier);
+    for (final sender in senders) {
+      unawaited(accounts.refreshBalance(sender));
+    }
+  }
+
   Future<bool> _shouldResend(TrackedTx t, RpcClient rpc, DateTime now) async {
     // Need a schedule and a time gate.
     final gate = t.nextResendAt ?? _nextResendAt(t.resendCount, t.createdAt);
@@ -536,6 +563,7 @@ class TxQueueNotifier extends StateNotifier<TxQueueState> {
   @override
   void dispose() {
     _monitor?.cancel();
+    _headSub?.close();
     super.dispose();
   }
 }
