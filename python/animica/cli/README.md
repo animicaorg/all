@@ -274,8 +274,54 @@ Transactions
   animica tx send --from anim1... --to anim1... --value 1 \
     --gas 200000 --key-file ~/.animica/keys/mykey.json
 
+  # Send and wait for peer acknowledgments (PTL replication)
+  animica tx send --from anim1... --to anim1... --value 0.1 \
+    --min-peers 2 --wait-timeout 30
+
+  # Check transaction replication status
+  animica tx replicate 0x<tx_hash>
+
+  # Check replication status with JSON output for scripting
+  animica tx replicate 0x<tx_hash> --json
+
+  # List pending transactions
+  animica tx pending --limit 50
+
+  # Troubleshoot transaction replication issues
+  animica tx troubleshoot 0x<tx_hash>
+
   # Dry-run simulation
   animica tx simulate --file tx.json
+
+PTL (Pending Transaction Ledger) Replication
+---------------------------------------------
+PTL provides reliable transaction replication with acknowledgment tracking
+across the peer-to-peer network. It replaces mempool-based propagation with
+a durable, pull-based protocol.
+
+Enable PTL (enabled by default):
+  export ANIMICA_PTL_ENABLE=1
+  export ANIMICA_TX_SYSTEM=ptl
+
+Or use legacy mempool:
+  export ANIMICA_TX_SYSTEM=mempool
+
+Key commands:
+  - `tx send --min-peers N`: Wait for N peer acknowledgments before returning
+  - `tx replicate <hash>`: Show detailed replication status with per-peer receipts
+  - `tx pending`: List transactions in PTL with their status
+  - `tx troubleshoot <hash>`: Diagnose replication issues
+
+Replication status values:
+  - seen: Transaction stored locally, not yet replicated
+  - eligible: Transaction announced and being replicated
+  - mined: Transaction included in a block
+  - dropped: Transaction rejected or expired
+
+Receipt status values:
+  - ack: Peer acknowledged receipt
+  - reject: Peer rejected (invalid)
+  - timeout: Peer did not respond
 
 JSON-RPC Calls
 --------------
