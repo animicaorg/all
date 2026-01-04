@@ -217,7 +217,7 @@ async def ptl_replication_status(params: Dict[str, Any]) -> Optional[Dict[str, A
     for r in entry.receipts:
         peer_info = {
             "peer_id": r.peer_id,
-            "status": r.status,  # "seen" | "acked" | "missing" | "failed"
+            "status": r.status,  # "ack" | "reject" | "timeout"
             "first_seen_ts": r.timestamp,
             "last_update_ts": r.timestamp,
         }
