@@ -74,8 +74,12 @@ except Exception:  # pragma: no cover
 # Tx normalization (canonical hashing)
 try:
     from core.utils.tx import normalize_tx_bytes as _normalize_tx_bytes  # type: ignore
+    from core.utils.tx import normalize_tx_envelope as _normalize_tx_envelope  # type: ignore
+    from core.utils.tx import TxNormalizationError as _TxNormalizationError  # type: ignore
 except Exception:  # pragma: no cover
     _normalize_tx_bytes = None  # type: ignore
+    _normalize_tx_envelope = None  # type: ignore
+    _TxNormalizationError = None  # type: ignore
 
 # Hashing
 try:
@@ -96,9 +100,10 @@ except Exception:  # pragma: no cover
 
 # Mempool errors (optional)
 try:  # pragma: no cover
-    from mempool.errors import MempoolError  # type: ignore
+    from mempool.errors import MempoolError, ReplacementUnsupported  # type: ignore
 except Exception:  # pragma: no cover
     MempoolError = None  # type: ignore
+    ReplacementUnsupported = None  # type: ignore
 
 # PQ verify
 try:
@@ -579,121 +584,6 @@ def _verify_pq_signature(tx_like: t.Any, obj: dict, *, chain_id: int) -> None:
         )
 
 
-def _addr_to_bytes(addr: t.Any) -> bytes | None:
-    if addr is None:
-        return None
-    if isinstance(addr, (bytes, bytearray)):
-        return bytes(addr)
-    if isinstance(addr, str):
-        if _parse_address is not None:
-            try:
-                return _parse_address(addr)
-            except Exception:
-                pass
-        raw = addr[2:] if addr.startswith("0x") else addr
-        try:
-            return bytes.fromhex(raw)
-        except ValueError:
-            return _sha3_256(addr.encode("utf-8"))
-    return None
-
-
-def _normalize_tx_body(body: dict) -> dict:
-    if "v" in body and "gas" in body and "payload" in body:
-        return body
-
-    chain_id = body.get("chainId", body.get("chain_id", 1))
-    from_addr = body.get("from", body.get("sender"))
-    to_addr = body.get("to")
-    nonce = body.get("nonce")
-    value = body.get("value", body.get("amount", 0))
-    gas_limit = body.get("gasLimit", body.get("gas_limit", body.get("gas", 21000)))
-    gas_price = body.get(
-        "maxFee",
-        body.get(
-            "max_fee", body.get("gasPrice", body.get("gas_price", body.get("tip", 1)))
-        ),
-    )
-    data = body.get("data", b"")
-    if isinstance(data, str):
-        if data.startswith("0x"):
-            data = bytes.fromhex(data[2:])
-        else:
-            data = data.encode("utf-8")
-    elif isinstance(data, (list, tuple)):
-        data = bytes(data)
-    elif not isinstance(data, (bytes, bytearray)):
-        data = b""
-
-    def _pad_addr(addr: t.Any) -> bytes:
-        addr_bytes = _addr_to_bytes(addr) or b""
-        if len(addr_bytes) < 32:
-            return addr_bytes.rjust(32, b"\x00")
-        if len(addr_bytes) == 34:
-            return addr_bytes[2:34]
-        if len(addr_bytes) > 32:
-            return addr_bytes[-32:]
-        return addr_bytes
-
-    valid_after = body.get("validAfter", body.get("valid_after"))
-    valid_until = body.get("validUntil", body.get("valid_until"))
-    salt = body.get("salt")
-    fork_id = body.get("forkId", body.get("fork_id"))
-    if isinstance(salt, str):
-        salt = bytes.fromhex(salt[2:]) if salt.startswith("0x") else salt.encode("utf-8")
-    elif isinstance(salt, (list, tuple)):
-        salt = bytes(salt)
-    version = int(body.get("v", 2))
-    if version == 2 and (valid_after is None or valid_until is None or salt is None):
-        version = 1
-
-    normalized = {
-        "v": version,
-        "chainId": int(chain_id),
-        "from": _pad_addr(from_addr),
-        "gas": {"price": int(gas_price), "limit": int(gas_limit)},
-        "payload": {
-            "t": 0,
-            "v": {
-                "to": _pad_addr(to_addr),
-                "amount": int(value),
-                "data": bytes(data),
-            },
-        },
-        "accessList": [],
-    }
-    if version == 1:
-        normalized["nonce"] = int(nonce or 0)
-    else:
-        normalized["validAfter"] = int(valid_after or 0)
-        normalized["validUntil"] = int(valid_until or 0)
-        normalized["salt"] = bytes(salt or b"")
-        if fork_id is not None:
-            normalized["forkId"] = int(fork_id)
-    return normalized
-
-
-def _normalize_tx_envelope(obj: dict) -> dict:
-    if "tx" in obj and isinstance(obj.get("tx"), dict):
-        tx_body = obj.get("tx")
-        if "v" in tx_body and "gas" in tx_body and "payload" in tx_body:
-            return obj
-        normalized = {"tx": _normalize_tx_body(tx_body)}
-        if "sigs" in obj:
-            normalized["sigs"] = obj["sigs"]
-        elif "sig" in obj:
-            normalized["sigs"] = [obj["sig"]]
-        return normalized
-    if "body" in obj and isinstance(obj.get("body"), dict):
-        normalized = {"tx": _normalize_tx_body(obj["body"]), "body": obj["body"]}
-        if "sigs" in obj:
-            normalized["sigs"] = obj["sigs"]
-        elif "sig" in obj:
-            normalized["sigs"] = [obj["sig"]]
-        return normalized
-    return obj
-
-
 def _decode_tx(raw: bytes) -> tuple[t.Any, dict]:
     if _cbor_loads is None:
         raise rpc_errors.InternalError("CBOR decoder unavailable")
@@ -710,36 +600,48 @@ def _decode_tx(raw: bytes) -> tuple[t.Any, dict]:
             ),
         )
 
-    normalized_obj = _normalize_tx_envelope(obj)
-    raw_canonical = raw
-    if _normalize_tx_bytes is not None and isinstance(normalized_obj, dict):
-        try:
-            raw_canonical = _normalize_tx_bytes(normalized_obj)
-        except Exception:
-            raw_canonical = raw
-    tx_hash_hex = _hex(_sha3_256(raw_canonical)) or ""
+    if _normalize_tx_envelope is None:
+        raise rpc_errors.InternalError("tx envelope normalization unavailable")
+    try:
+        normalized_env = _normalize_tx_envelope(obj)
+    except Exception as exc:
+        if _TxNormalizationError is not None and isinstance(exc, _TxNormalizationError):
+            raise rpc_errors.InvalidTx(
+                "Transaction envelope normalization failed",
+                **_error_data(
+                    exc.reason,
+                    exc,
+                    "_decode_tx.normalize",
+                    "Ensure tx envelope has tx/body and sigs fields",
+                ),
+            ) from exc
+        raise
 
-    if _Tx is not None and isinstance(normalized_obj, dict):
+    raw_canonical = normalized_env.get("raw") or raw
+    tx_hash_hex = normalized_env.get("hash") or (_hex(_sha3_256(raw_canonical)) or "")
+
+    if _Tx is not None:
         try:
+            tx_payload = {"tx": normalized_env.get("tx"), "sigs": normalized_env.get("sigs", [])}
             if hasattr(_Tx, "from_obj"):
-                tx = _Tx.from_obj(normalized_obj)  # type: ignore[attr-defined]
+                tx = _Tx.from_obj(tx_payload)  # type: ignore[attr-defined]
             elif hasattr(_Tx, "from_dict"):
-                tx = _Tx.from_dict(normalized_obj)  # type: ignore[attr-defined]
+                tx = _Tx.from_dict(tx_payload)  # type: ignore[attr-defined]
             else:
-                tx = _Tx(**normalized_obj)  # type: ignore[call-arg]
+                tx = _Tx(**tx_payload)  # type: ignore[call-arg]
 
             if hasattr(tx, "to_cbor"):
                 raw_canonical = tx.to_cbor()
                 tx_hash_hex = _hex(_sha3_256(raw_canonical)) or ""
 
-            enriched_obj = dict(normalized_obj)
+            enriched_obj = dict(normalized_env)
             enriched_obj["hash"] = tx_hash_hex
             enriched_obj["raw"] = raw_canonical
             return tx, enriched_obj
         except Exception:
             pass
 
-    enriched_obj = dict(normalized_obj)
+    enriched_obj = dict(normalized_env)
     enriched_obj["hash"] = tx_hash_hex
     enriched_obj["raw"] = raw_canonical
     return enriched_obj, enriched_obj
@@ -819,13 +721,13 @@ def _pending_get(tx_hash_hex: str) -> bytes | None:
     return _mempool_get_raw(tx_hash_hex)
 
 
-def _ensure_tx_persisted_to_chain(tx_hash_hex: str) -> None:
+def _ensure_tx_persisted_to_chain(tx_hash_hex: str) -> tuple[bool, str | None]:
     if not _TX_SEND_FORCE_CHAIN:
-        return
+        return False, None
 
     view, *_ = _lookup_persisted_tx(tx_hash_hex)
     if view is not None:
-        return
+        return True, None
 
     try:
         miner_methods.miner_mine(
@@ -835,29 +737,16 @@ def _ensure_tx_persisted_to_chain(tx_hash_hex: str) -> None:
             allow_unsynced_mining=True,
         )
     except Exception as exc:
-        raise rpc_errors.InternalError(
-            "Failed to mine transaction into chain",
-            data={
-                "tx_hash": tx_hash_hex,
-                "hint": "Ensure mining is enabled and chain state is initialized",
-                "error": str(exc),
-            },
-        ) from exc
+        return False, str(exc)
 
     deadline = time.time() + max(0.0, _TX_SEND_FORCE_CHAIN_TIMEOUT_S)
     while time.time() <= deadline:
         view, *_ = _lookup_persisted_tx(tx_hash_hex)
         if view is not None:
-            return
+            return True, None
         time.sleep(0.1)
 
-    raise rpc_errors.InternalError(
-        "Transaction accepted but not persisted to chain",
-        data={
-            "tx_hash": tx_hash_hex,
-            "hint": "Mine a block or disable ANIMICA_TX_SEND_FORCE_CHAIN if using remote miners",
-        },
-    )
+    return False, None
 
 
 def _force_sync_before_tx_submit() -> None:
@@ -1075,6 +964,18 @@ def _mempool_submit(
     """
     Admit tx into the mempool using whatever method this mempool exposes.
     """
+    if hasattr(svc, "submit"):
+        kwargs: dict[str, t.Any] = {"tx": tx_obj, "raw": raw, "tx_hash_hex": tx_hash_hex}
+        if local is not None:
+            kwargs["local"] = local
+        if origin_peer is not None:
+            kwargs["origin_peer"] = origin_peer
+        try:
+            svc.submit(**kwargs)
+            return
+        except TypeError:
+            svc.submit(tx=tx_obj, raw=raw, tx_hash_hex=tx_hash_hex)
+            return
     if hasattr(svc, "submit_atomic"):
         accepted, reason, _hash_hex = svc.submit_atomic(
             tx=tx_obj,
@@ -1096,19 +997,6 @@ def _mempool_submit(
                 },
             )
         return
-    # Preferred explicit API
-    if hasattr(svc, "submit"):
-        kwargs: dict[str, t.Any] = {"tx": tx_obj, "raw": raw, "tx_hash_hex": tx_hash_hex}
-        if local is not None:
-            kwargs["local"] = local
-        if origin_peer is not None:
-            kwargs["origin_peer"] = origin_peer
-        try:
-            svc.submit(**kwargs)
-            return
-        except TypeError:
-            svc.submit(tx=tx_obj, raw=raw, tx_hash_hex=tx_hash_hex)
-            return
     if hasattr(svc, "admit"):
         try:
             svc.admit(tx_obj, raw=raw, tx_hash_hex=tx_hash_hex, local=local, origin_peer=origin_peer)
@@ -1363,7 +1251,7 @@ def _tx_view(
     ),
     aliases=("tx_sendRawTransaction",),
 )
-def tx_send_raw_transaction(rawTx: str) -> str:
+def tx_send_raw_transaction(rawTx: str) -> t.Any:
     try:
         return _tx_send_raw_transaction(rawTx)
     except rpc_errors.RpcError:
@@ -1375,7 +1263,7 @@ def tx_send_raw_transaction(rawTx: str) -> str:
         ) from e
 
 
-def _tx_send_raw_transaction(rawTx: str) -> str:
+def _tx_send_raw_transaction(rawTx: str) -> t.Any:
     start_s = time.time()
     tx_hash_hex = ""
     tx_view: dict[str, t.Any] = {}
@@ -1401,6 +1289,40 @@ def _tx_send_raw_transaction(rawTx: str) -> str:
                 "latency_ms": latency_ms,
             },
         )
+    def _format_send_result(
+        *,
+        tx_hash: str,
+        accepted_to_mempool: bool,
+        persisted_to_chain: bool,
+        status: str | None = None,
+        reason_value: str | None = None,
+        existing_tx_hash: str | None = None,
+        hint: str | None = None,
+    ) -> t.Any:
+        if (
+            not _TX_SEND_FORCE_CHAIN
+            and not status
+            and not reason_value
+            and persisted_to_chain
+        ):
+            return tx_hash
+        if _TX_SEND_FORCE_CHAIN and persisted_to_chain and not status and not reason_value:
+            return tx_hash
+        payload = {
+            "tx_hash": tx_hash,
+            "hash": tx_hash,
+            "accepted_to_mempool": accepted_to_mempool,
+            "persisted_to_chain": persisted_to_chain,
+        }
+        if status:
+            payload["status"] = status
+        if reason_value:
+            payload["reason"] = reason_value
+        if existing_tx_hash:
+            payload["existing_tx_hash"] = existing_tx_hash
+        if hint:
+            payload["hint"] = hint
+        return payload
     def _safe_hash_hex(raw_bytes: bytes) -> str:
         try:
             return _tx_hash_hex(raw_bytes)
@@ -1495,8 +1417,19 @@ def _tx_send_raw_transaction(rawTx: str) -> str:
         if svc is not None:
             has0 = _mempool_has(svc, tx_hash_hex)
             if has0 is True:
-                _log_decision("accepted", None)
-                return tx_hash_hex
+                persisted, *_ = _lookup_persisted_tx(tx_hash_hex)
+                _log_decision("accepted", "already_known")
+                return _format_send_result(
+                    tx_hash=tx_hash_hex,
+                    accepted_to_mempool=True,
+                    persisted_to_chain=bool(persisted),
+                    status="already_known",
+                    hint=(
+                        "Mine a block or wait for miners"
+                        if _TX_SEND_FORCE_CHAIN and not persisted
+                        else None
+                    ),
+                )
         persisted, *_ = _lookup_persisted_tx(tx_hash_hex)
         if persisted is not None:
             _log_decision("accepted", None)
@@ -1533,7 +1466,26 @@ def _tx_send_raw_transaction(rawTx: str) -> str:
             )
 
         # Admit to mempool using robust method probing
-        _mempool_submit(svc, tx_obj=tx_obj, raw=raw_canonical, tx_hash_hex=tx_hash_hex)
+        try:
+            _mempool_submit(svc, tx_obj=tx_obj, raw=raw_canonical, tx_hash_hex=tx_hash_hex)
+        except Exception as exc:
+            if ReplacementUnsupported is not None and isinstance(exc, ReplacementUnsupported):
+                existing = exc.context.get("existing_tx_hash") if hasattr(exc, "context") else None
+                hint = (
+                    "Use animica mempool drop <tx_hash> to clear the existing transaction "
+                    "before resubmitting, or wait for it to be mined."
+                )
+                _log_decision("accepted", "replacement_unsupported")
+                return _format_send_result(
+                    tx_hash=existing or tx_hash_hex,
+                    accepted_to_mempool=True,
+                    persisted_to_chain=False,
+                    status="replacement_unsupported",
+                    reason_value="replacement_unsupported",
+                    existing_tx_hash=existing,
+                    hint=hint,
+                )
+            raise
     except rpc_errors.RpcError as exc:
         reason = getattr(exc, "message", str(exc))
         log.info(
@@ -1668,7 +1620,19 @@ def _tx_send_raw_transaction(rawTx: str) -> str:
         except Exception:
             pass
 
-        _ensure_tx_persisted_to_chain(tx_hash_hex)
+        persisted, mine_error = _ensure_tx_persisted_to_chain(tx_hash_hex)
+        if _TX_SEND_FORCE_CHAIN and not persisted:
+            hint = "Mine a block or wait for miners"
+            if mine_error:
+                hint = f"{hint} (mining error: {mine_error})"
+            return _format_send_result(
+                tx_hash=tx_hash_hex,
+                accepted_to_mempool=True,
+                persisted_to_chain=False,
+                status="accepted_to_mempool",
+                reason_value="accepted_to_mempool",
+                hint=hint,
+            )
     except Exception as exc:
         reason = str(exc)
         _log_decision("rejected", reason)

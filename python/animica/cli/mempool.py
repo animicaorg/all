@@ -4,6 +4,7 @@ Mempool management CLI commands.
 Commands:
   animica mempool list      List pending transaction hashes
   animica mempool stats     Show mempool statistics (count, size, age)
+  animica mempool drop      Drop a transaction by hash
 """
 
 from __future__ import annotations
@@ -226,7 +227,40 @@ def list_pending(
                 else:
                     typer.echo(f"  {i:3d}. {entry}")
     else:
+    typer.echo(json_lib.dumps(result, indent=2))
+
+
+@app.command("drop")
+def drop_tx(
+    tx_hash: str = typer.Argument(..., help="Transaction hash to drop (0x...)"),
+    rpc_url: Optional[str] = typer.Option(
+        None,
+        "--rpc-url",
+        help="RPC endpoint URL",
+        envvar="ANIMICA_RPC_URL",
+    ),
+    json: bool = typer.Option(
+        False,
+        "--json",
+        help="Output raw JSON",
+    ),
+) -> None:
+    """
+    Drop a pending transaction from the mempool.
+    """
+    result = call_rpc("mempool.dropTransaction", [tx_hash], rpc_url=rpc_url)
+    if json:
         typer.echo(json_lib.dumps(result, indent=2))
+        return
+    if isinstance(result, dict):
+        dropped = result.get("dropped")
+        reason = result.get("reason")
+        if dropped:
+            typer.echo(f"Dropped {result.get('hash') or tx_hash}")
+        else:
+            typer.echo(f"Failed to drop {tx_hash}: {reason or 'not_found'}")
+        return
+    typer.echo(str(result))
 
 
 @app.command("stats")
