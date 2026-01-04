@@ -1152,6 +1152,8 @@ def send(
     max_fee: Optional[int] = typer.Option(None, "--max-fee", help="Max fee (base units)"),
     domain: str = typer.Option(DEFAULT_DOMAIN, "--domain", help="PQ signing domain"),
     prehash: str = typer.Option(DEFAULT_PREHASH, "--prehash", help="Prehash: sha3-512 | sha3-256"),
+    min_peers: Optional[int] = typer.Option(None, "--min-peers", help="Wait for min peer acks (PTL)"),
+    wait_timeout: int = typer.Option(30, "--wait-timeout", help="Max wait time for peer acks (seconds)"),
     verbose: bool = typer.Option(False, "-v", "--verbose", help="Verbose debug output"),
     debug_signing: bool = typer.Option(False, "--debug-signing", help="Dump canonical sign-bytes debug info"),
 ):
@@ -1516,6 +1518,54 @@ def send(
             "mempool_state": "pending",
         }
     )
+    
+    # Wait for PTL peer acknowledgments if requested
+    if min_peers is not None and min_peers > 0:
+        console.print(f"\n[bold]Waiting for {min_peers} peer acknowledgments...[/bold]")
+        start_wait = time.time()
+        ack_count = 0
+        
+        while time.time() - start_wait < wait_timeout:
+            try:
+                repl_result = _rpc(rpc, "tx.replicationStatus", [{"txid": tx_hash}])
+                if repl_result:
+                    ack_count = repl_result.get('ack_count', 0)
+                    status = repl_result.get('status', 'UNKNOWN')
+                    
+                    if ack_count >= min_peers:
+                        console.print(f"[green]✓ Received {ack_count} acknowledgments[/green]")
+                        console.print(f"Status: {status}")
+                        
+                        receipts = repl_result.get('receipts', [])
+                        if receipts and verbose:
+                            console.print("\nReceipts:")
+                            for r in receipts:
+                                if r['status'] == 'ack':
+                                    console.print(f"  [green]✓[/green] {r['peer_id']}")
+                        break
+                    
+                    if verbose:
+                        console.print(f"[dim]Acks: {ack_count}/{min_peers} (waiting...)[/dim]")
+                    
+                    time.sleep(1)
+                else:
+                    if verbose:
+                        console.print("[dim]PTL status not yet available[/dim]")
+                    time.sleep(1)
+                    
+            except RpcError as e:
+                if e.code == -32601:  # Method not found - PTL not enabled
+                    console.print("[yellow]Warning: PTL replication status not available on this node[/yellow]")
+                    break
+                if verbose:
+                    console.print(f"[dim]Error checking replication: {e.message}[/dim]")
+                time.sleep(1)
+        
+        if ack_count < min_peers:
+            elapsed = time.time() - start_wait
+            console.print(f"[yellow]Warning: Only {ack_count}/{min_peers} acks after {elapsed:.1f}s[/yellow]")
+            console.print("[yellow]Transaction may still replicate. Use 'animica tx replicate' to check status.[/yellow]")
+    
     if verbose:
         console.print("\n[bold]TX BODY[/bold]")
         console.print(Pretty(last_body))
@@ -1549,3 +1599,195 @@ def status(
 
     console.print("\n[bold]Transaction Status[/bold]")
     console.print(Pretty(result))
+
+
+@app.command("pending")
+def pending(
+    limit: int = typer.Option(100, "--limit", help="Max number of transactions to show"),
+    status_filter: Optional[str] = typer.Option(None, "--status", help="Filter by status (e.g., STORED, ATTESTED)"),
+    rpc_url: Optional[str] = typer.Option(None, "--rpc-url", help="RPC URL (default: node)"),
+    allow_remote_rpc: bool = typer.Option(
+        False,
+        "--allow-remote-rpc",
+        help="Allow using remote bootstrap RPC",
+    ),
+):
+    """
+    List pending transactions from PTL.
+    """
+    rpc = _resolve_rpc_url(rpc_url)
+    guard_bootstrap_rpc(rpc, allow_remote=allow_remote_rpc, method="tx.pending")
+    
+    params = {"limit": limit}
+    if status_filter:
+        params["status"] = status_filter
+    
+    try:
+        result = _rpc(rpc, "tx.pending", [params])
+    except RpcError as e:
+        _format_rpc_error(e)
+        raise typer.Exit(code=1) from e
+    
+    console.print("\n[bold]Pending Transactions[/bold]")
+    txs = result.get("transactions", [])
+    total = result.get("total", 0)
+    
+    if not txs:
+        console.print("[yellow]No pending transactions[/yellow]")
+        return
+    
+    console.print(f"Total: {total}\n")
+    for tx in txs:
+        console.print(f"  TxID: {tx.get('txid')}")
+        console.print(f"  Status: {tx.get('status')}")
+        console.print(f"  Acks: {tx.get('ack_count', 0)}")
+        console.print(f"  Size: {tx.get('size')} bytes")
+        console.print(f"  Fee: {tx.get('fee')}")
+        console.print(f"  Received: {time.ctime(tx.get('received_at', 0))}")
+        console.print()
+
+
+@app.command("replicate")
+def replicate(
+    tx_hash: str = typer.Argument(..., help="Transaction hash (0x...)"),
+    rpc_url: Optional[str] = typer.Option(None, "--rpc-url", help="RPC URL (default: node)"),
+    allow_remote_rpc: bool = typer.Option(
+        False,
+        "--allow-remote-rpc",
+        help="Allow using remote bootstrap RPC",
+    ),
+):
+    """
+    Show replication status with per-peer receipts.
+    """
+    rpc = _resolve_rpc_url(rpc_url)
+    guard_bootstrap_rpc(rpc, allow_remote=allow_remote_rpc, method="tx.replicationStatus")
+    
+    try:
+        result = _rpc(rpc, "tx.replicationStatus", [{"txid": tx_hash}])
+    except RpcError as e:
+        _format_rpc_error(e)
+        raise typer.Exit(code=1) from e
+    
+    if not result:
+        console.print(f"[yellow]Transaction {tx_hash} not found in PTL[/yellow]")
+        raise typer.Exit(code=1)
+    
+    console.print("\n[bold]Replication Status[/bold]")
+    console.print(f"TxID: {result.get('txid')}")
+    console.print(f"Status: {result.get('status')}")
+    console.print(f"Acks: {result.get('ack_count')}/{result.get('min_peer_acks')}")
+    console.print(f"Received: {time.ctime(result.get('received_at', 0))}")
+    console.print(f"Updated: {time.ctime(result.get('updated_at', 0))}")
+    if result.get('expire_at'):
+        console.print(f"Expires: {time.ctime(result.get('expire_at', 0))}")
+    
+    receipts = result.get('receipts', [])
+    if receipts:
+        console.print(f"\n[bold]Receipts ({len(receipts)})[/bold]")
+        for r in receipts:
+            status_color = "green" if r['status'] == 'ack' else "red"
+            console.print(f"  [{status_color}]{r['status']}[/{status_color}] from {r['peer_id']} at {time.ctime(r['timestamp'])}")
+            if r.get('reason'):
+                console.print(f"    Reason: {r['reason']}")
+    else:
+        console.print("\n[yellow]No receipts yet[/yellow]")
+
+
+@app.command("troubleshoot")
+def troubleshoot(
+    tx_hash: str = typer.Argument(..., help="Transaction hash (0x...)"),
+    rpc_url: Optional[str] = typer.Option(None, "--rpc-url", help="RPC URL (default: node)"),
+    allow_remote_rpc: bool = typer.Option(
+        False,
+        "--allow-remote-rpc",
+        help="Allow using remote bootstrap RPC",
+    ),
+):
+    """
+    Troubleshoot transaction replication issues.
+    """
+    rpc = _resolve_rpc_url(rpc_url)
+    guard_bootstrap_rpc(rpc, allow_remote=allow_remote_rpc, method="tx.replicationStatus")
+    
+    console.print(f"\n[bold]Troubleshooting Transaction {tx_hash}[/bold]\n")
+    
+    # Get transaction details
+    try:
+        tx_result = _rpc(rpc, "tx.get", [{"txid": tx_hash}])
+    except RpcError as e:
+        console.print(f"[red]Failed to get transaction: {e.message}[/red]")
+        tx_result = None
+    
+    if not tx_result:
+        console.print("[yellow]Transaction not found in PTL[/yellow]")
+        console.print("Possible causes:")
+        console.print("  - Transaction was never submitted")
+        console.print("  - Transaction expired (TTL exceeded)")
+        console.print("  - Transaction was pruned after finalization")
+        raise typer.Exit(code=1)
+    
+    status = tx_result.get('status')
+    console.print(f"Status: [bold]{status}[/bold]")
+    
+    # Check replication
+    try:
+        repl_result = _rpc(rpc, "tx.replicationStatus", [{"txid": tx_hash}])
+    except RpcError as e:
+        console.print(f"[red]Failed to get replication status: {e.message}[/red]")
+        repl_result = None
+    
+    if repl_result:
+        ack_count = repl_result.get('ack_count', 0)
+        min_acks = repl_result.get('min_peer_acks', 2)
+        
+        console.print(f"Acknowledgments: {ack_count}/{min_acks}")
+        
+        if ack_count < min_acks:
+            console.print("\n[yellow]Insufficient peer acknowledgments[/yellow]")
+            console.print("Recommendations:")
+            console.print("  1. Check network connectivity: animica p2p peers")
+            console.print("  2. Verify peer count is sufficient")
+            console.print("  3. Wait for anti-entropy reconciliation (10s interval)")
+            console.print("  4. Check debug.ptlPeers for peer state")
+        
+        receipts = repl_result.get('receipts', [])
+        rejections = [r for r in receipts if r['status'] == 'reject']
+        
+        if rejections:
+            console.print(f"\n[red]Rejections ({len(rejections)})[/red]")
+            for r in rejections:
+                console.print(f"  Peer {r['peer_id']}: {r.get('reason', 'unknown')}")
+            console.print("\nTransaction may be invalid. Check:")
+            console.print("  - Nonce (should match next expected nonce)")
+            console.print("  - Balance (should cover value + fee)")
+            console.print("  - Validity window (should be within current height range)")
+    
+    # Check PTL stats
+    try:
+        stats_result = _rpc(rpc, "debug.ptlStats", [{}])
+        console.print(f"\n[bold]PTL Stats[/bold]")
+        console.print(f"Min peer acks required: {stats_result.get('min_peer_acks', 'N/A')}")
+        console.print(f"TTL: {stats_result.get('ttl_seconds', 'N/A')}s")
+        
+        stats = stats_result.get('stats', {})
+        if stats:
+            console.print("\nTransactions by status:")
+            for status_key, count in stats.items():
+                console.print(f"  {status_key}: {count}")
+    except RpcError:
+        pass
+    
+    # Check peer state
+    try:
+        peers_result = _rpc(rpc, "debug.ptlPeers", [{}])
+        peers = peers_result.get('peers', [])
+        console.print(f"\n[bold]Connected Peers: {len(peers)}[/bold]")
+        for p in peers[:5]:  # Show first 5 peers
+            console.print(f"  {p.get('peer_node_id', 'unknown')}: "
+                         f"{p.get('announced_count', 0)} announced, "
+                         f"{p.get('wanted_count', 0)} wanted")
+        if len(peers) > 5:
+            console.print(f"  ... and {len(peers) - 5} more")
+    except RpcError:
+        pass
