@@ -21,7 +21,7 @@ _PQ_VERIFY_OPTIONAL = os.environ.get("ANIMICA_PQ_VERIFY_OPTIONAL") == "1" or (
     os.environ.get("ANIMICA_SKIP_PQ_VERIFY") == "1"
 )
 _RPC_DEBUG = os.environ.get("ANIMICA_RPC_DEBUG") == "1"
-_TX_SEND_FORCE_CHAIN = os.environ.get("ANIMICA_TX_SEND_FORCE_CHAIN", "1") == "1"
+_TX_SEND_FORCE_CHAIN = os.environ.get("ANIMICA_TX_SEND_FORCE_CHAIN", "0") == "1"
 _TX_SEND_FORCE_CHAIN_TIMEOUT_S = float(os.environ.get("ANIMICA_TX_SEND_FORCE_CHAIN_TIMEOUT_S", "5") or 5)
 
 # ——— Validation failure metrics ———
