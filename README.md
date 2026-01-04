@@ -22,6 +22,7 @@ This monorepo contains:
   - **Consensus** (`consensus/`): PoIES algorithm for decentralized block validation
 - **Cryptography & Proofs**: `proofs/`, `zk/`, `pq/`, `randomness/`
 - **Wallets & Explorer**: `wallet/` (Flutter), `wallet-extension/` (browser extension), `explorer-web/`
+- **Mining**: `mining/` (core), `apps/miner-gui/` (Qt desktop GUI miner)
 - **Studio & Tooling**: `studio-web/`, `studio-wasm/`, `studio-services/`, `templates/`
 - **SDKs & APIs**: `sdk/` (Python/TypeScript/Rust), `docs/` (specifications), `spec/` (canonical schemas)
 - **Operations**: `ops/`, `tests/devnet/`, `installers/`, `chains/` (network metadata)
@@ -494,6 +495,34 @@ animica wallet --wallet-file /custom/path/wallets.json list
 ## ⛏️ Mining
 
 Mining requires a running node. Mine blocks to earn block rewards.
+
+### GUI Miner (Recommended)
+
+**NEW**: Production-quality Qt desktop GUI miner with first-run wizard, real-time dashboard, device auto-detection, and live stats.
+
+```bash
+# Install GUI miner dependencies
+cd apps/miner-gui
+pip install -e .
+
+# Launch GUI miner
+animica gui miner
+
+# Or use the alias
+animica-miner-gui
+```
+
+**Features**:
+- First-run wizard for easy setup (network, RPC, wallet, devices)
+- Real-time dashboard with hashrate, shares, and blocks
+- Auto-detect CPU/GPU devices with recommendations
+- Configuration editor with JSON schema validation
+- Live logs with filtering and search
+- Hashrate and shares graphs (matplotlib)
+- Dark theme and system tray support
+- Auto-start mining and crash recovery
+
+See [apps/miner-gui/README.md](apps/miner-gui/README.md) for detailed documentation.
 
 ### Mine Blocks via CLI
 
