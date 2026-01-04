@@ -17,13 +17,18 @@ import asyncio
 import json
 import sys
 import time
-from typing import Any, Optional
+from typing import Any, Dict, Optional
 
 try:
     import aiohttp
 except ImportError:
     print("Error: aiohttp not installed. Run: pip install aiohttp")
     sys.exit(1)
+
+
+def extract_tx_hash(tx: Dict[str, Any]) -> Optional[str]:
+    """Extract transaction hash from various response formats."""
+    return tx.get("hash") or tx.get("txHash")
 
 
 class RPCClient:
@@ -35,12 +40,14 @@ class RPCClient:
         """Make an RPC call."""
         if params is None:
             params = []
+        elif not isinstance(params, list):
+            params = [params]
         
         payload = {
             "jsonrpc": "2.0",
             "id": self._req_id,
             "method": method,
-            "params": params if isinstance(params, list) else [params]
+            "params": params
         }
         self._req_id += 1
         
@@ -100,7 +107,7 @@ async def check_tx_in_mempool(client: RPCClient, tx_hash: str, node_name: str) -
         result = await client.call("mempool.list", [])
         txs = result.get("transactions", [])
         for tx in txs:
-            if tx.get("hash") == tx_hash or tx.get("txHash") == tx_hash:
+            if extract_tx_hash(tx) == tx_hash:
                 print(f"✓ {node_name} has tx in mempool: {tx_hash}")
                 return True
         print(f"✗ {node_name} does NOT have tx in mempool: {tx_hash}")
@@ -175,7 +182,7 @@ async def main():
         
         # Get baseline mempool
         initial = await check_mempool(client_a, "Node A")
-        initial_hashes = {tx.get("hash") or tx.get("txHash") for tx in initial.get("transactions", [])}
+        initial_hashes = {extract_tx_hash(tx) for tx in initial.get("transactions", [])}
         
         # Wait for a new tx
         timeout = 60.0  # 1 minute to submit
@@ -183,7 +190,7 @@ async def main():
         tx_hash = None
         while time.time() - start < timeout:
             current = await check_mempool(client_a, "Node A")
-            current_hashes = {tx.get("hash") or tx.get("txHash") for tx in current.get("transactions", [])}
+            current_hashes = {extract_tx_hash(tx) for tx in current.get("transactions", [])}
             new_hashes = current_hashes - initial_hashes
             if new_hashes:
                 tx_hash = list(new_hashes)[0]

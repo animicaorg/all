@@ -8,7 +8,7 @@ Use the manual verification script:
 
 ```bash
 # Install dependencies
-pip install aiohttp cbor2
+pip install aiohttp
 
 # Run verification against two nodes
 python tests/manual/verify_tx_propagation.py \
