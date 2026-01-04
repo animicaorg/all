@@ -134,6 +134,11 @@ _INSTANT_BLOCKS_ENABLED = _instant_blocks_env in {
 }
 _INSTANT_BLOCK_PENDING: bool = False  # Flag to track if instant block creation is pending
 
+# Instant block observability constants
+# Maximum number of blocks to scan backwards when listing instant blocks
+# This is a safety limit to prevent excessive database queries
+_MAX_INSTANT_BLOCK_SCAN = 1000
+
 
 def _tracked(tx: Any) -> tuple[str, bytes] | None:
     """
@@ -4929,12 +4934,12 @@ def miner_list_instant_blocks(
         checked = 0
         found = 0
         
-        # Maximum number of blocks to scan backwards
-        # This is a safety limit to prevent excessive database queries
-        MAX_SCAN_BLOCKS = 1000
-        max_scan = min(current_height + 1, MAX_SCAN_BLOCKS)
+        # Scan backwards from current height to find instant blocks
+        max_scan = min(current_height + 1, _MAX_INSTANT_BLOCK_SCAN)
+        start_height = current_height
+        stop_height = max(current_height - max_scan + 1, 0)
         
-        for height in range(current_height, max(0, current_height - max_scan), -1):
+        for height in range(start_height, stop_height - 1, -1):
             if found >= limit_val + offset_val:
                 break
             
@@ -5025,6 +5030,8 @@ def miner_get_instant_block_stats() -> Dict[str, Any]:
         block_db = ctx.block_db
         
         # Get current heights
+        # total_height: includes all blocks (normal + instant)
+        # canonical_height: includes only normal blocks (excludes instant blocks)
         try:
             head = ctx.get_head()
             total_height = int(head.get("height") or 0)
@@ -5036,6 +5043,7 @@ def miner_get_instant_block_stats() -> Dict[str, Any]:
         except Exception:
             canonical_height = total_height
         
+        # Instant block count = total blocks - canonical blocks
         instant_block_count = max(0, total_height - canonical_height)
         instant_block_ratio = instant_block_count / total_height if total_height > 0 else 0.0
         
