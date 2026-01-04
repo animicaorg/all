@@ -17,3 +17,4 @@ native/target/
 .deps/
 test_peer_connectivity.py
 *.bak.*
+test_pending_block_query.py
