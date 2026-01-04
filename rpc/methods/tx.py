@@ -736,8 +736,8 @@ def _ensure_tx_persisted_to_chain(tx_hash_hex: str) -> tuple[bool, str | None]:
     if view is not None:
         return True, None
 
-    # Try instant block first if enabled
-    instant_blocks_enabled = os.environ.get("ANIMICA_INSTANT_BLOCKS_ENABLED", "").lower() in {
+    # Try instant block first if enabled (defaults to true)
+    instant_blocks_enabled = os.environ.get("ANIMICA_INSTANT_BLOCKS_ENABLED", "true").lower() in {
         "1", "true", "yes", "on"
     }
     
@@ -1642,8 +1642,8 @@ def _tx_send_raw_transaction(rawTx: str) -> t.Any:
         except Exception:
             pass
 
-        # Trigger instant block creation if enabled (best-effort)
-        instant_blocks_enabled = os.environ.get("ANIMICA_INSTANT_BLOCKS_ENABLED", "").lower() in {
+        # Trigger instant block creation if enabled (best-effort, defaults to true)
+        instant_blocks_enabled = os.environ.get("ANIMICA_INSTANT_BLOCKS_ENABLED", "true").lower() in {
             "1", "true", "yes", "on"
         }
         if instant_blocks_enabled:

@@ -2,10 +2,7 @@
 
 ## Quick Start
 
-**Enable instant blocks** (optional feature):
-```bash
-export ANIMICA_INSTANT_BLOCKS_ENABLED=1
-```
+**Instant blocks are enabled by default** - no configuration needed!
 
 **Usage**: Instant blocks are automatically created when transactions are submitted via:
 - `animica tx send ...` (CLI)
@@ -13,6 +10,11 @@ export ANIMICA_INSTANT_BLOCKS_ENABLED=1
 - P2P transaction propagation
 
 No additional action needed - transactions appear in instant blocks immediately (< 1 second) with zero block rewards.
+
+**To disable** (if needed):
+```bash
+export ANIMICA_INSTANT_BLOCKS_ENABLED=false
+```
 
 ## Overview
 
@@ -98,10 +100,10 @@ Instant blocks are special blocks that:
 
 ## Configuration
 
-Enable instant blocks by setting environment variable:
+Instant blocks are **enabled by default**. To disable them if needed:
 
 ```bash
-export ANIMICA_INSTANT_BLOCKS_ENABLED=1
+export ANIMICA_INSTANT_BLOCKS_ENABLED=false
 ```
 
 ## Usage Example

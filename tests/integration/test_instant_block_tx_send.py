@@ -1,7 +1,7 @@
 """
 Integration test for instant block creation on tx send.
 
-This test verifies that when ANIMICA_INSTANT_BLOCKS_ENABLED=1:
+This test verifies that instant blocks work by default:
 1. tx send triggers instant block creation
 2. instant block has zero reward
 3. instant block does not advance canonical height
@@ -11,26 +11,23 @@ This test verifies that when ANIMICA_INSTANT_BLOCKS_ENABLED=1:
 import os
 import pytest
 
-# Skip if instant blocks not enabled in test environment
-pytestmark = pytest.mark.skipif(
-    os.environ.get("ANIMICA_INSTANT_BLOCKS_ENABLED", "").lower() not in {"1", "true", "yes", "on"},
-    reason="Instant blocks not enabled (set ANIMICA_INSTANT_BLOCKS_ENABLED=1)"
-)
-
 
 def test_instant_block_on_tx_send_enabled():
     """
-    Test that tx send creates an instant block when feature is enabled.
+    Test that tx send creates an instant block with instant blocks enabled by default.
     
-    This test requires:
-    - ANIMICA_INSTANT_BLOCKS_ENABLED=1
-    - ANIMICA_TX_SEND_FORCE_CHAIN=1 (to ensure block is mined)
-    - Running node with RPC available
+    This test verifies that instant blocks work without requiring explicit env var setting.
     """
     from rpc.methods.tx import _tx_send_raw_transaction
     from rpc.methods.miner import _mine_instant_block
     from rpc import deps
     import time
+    
+    # Verify instant blocks are enabled by default
+    instant_blocks_enabled = os.environ.get("ANIMICA_INSTANT_BLOCKS_ENABLED", "true").lower() in {
+        "1", "true", "yes", "on"
+    }
+    assert instant_blocks_enabled, "Instant blocks should be enabled by default"
     
     # Get initial state
     try:

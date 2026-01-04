@@ -48,6 +48,8 @@ x-node-env: &node_env
   P2P_ENABLE: true
   P2P_LISTEN: 0.0.0.0:${ANIMICA_P2P_PORT:-30333}
   P2P_SEEDS: ${P2P_SEEDS:-}
+  # Instant blocks enabled by default for immediate transaction inclusion
+  ANIMICA_INSTANT_BLOCKS_ENABLED: ${ANIMICA_INSTANT_BLOCKS_ENABLED:-true}
   # Metrics
   METRICS_ENABLE: true
 

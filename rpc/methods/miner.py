@@ -124,7 +124,9 @@ _MEMPOOL_BINDINGS_LOGGED: set[str] = set()
 
 # Instant block configuration
 # When enabled, transactions trigger immediate instant block creation (zero reward, no PoW)
-_INSTANT_BLOCKS_ENABLED = os.getenv("ANIMICA_INSTANT_BLOCKS_ENABLED", "").lower() in {
+# Defaults to true (enabled) for instant transaction inclusion
+_instant_blocks_env = os.getenv("ANIMICA_INSTANT_BLOCKS_ENABLED", "true").lower()
+_INSTANT_BLOCKS_ENABLED = _instant_blocks_env in {
     "1",
     "true",
     "yes",
