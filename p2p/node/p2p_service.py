@@ -1249,6 +1249,21 @@ class P2PService:
                         "pending_path": str(pending_path) if pending_path else None,
                     },
                 )
+                # Set up P2P broadcast callback for reliable propagation
+                if hasattr(mempool_service, "set_p2p_broadcast_callback"):
+                    try:
+                        mempool_service.set_p2p_broadcast_callback(
+                            self._txrelay.on_mempool_add
+                        )
+                        log.info(
+                            "P2P broadcast callback registered",
+                            extra={"mempool_id": hex(id(mempool_service))}
+                        )
+                    except Exception as e:
+                        log.warning(
+                            "Failed to set P2P broadcast callback",
+                            extra={"error": str(e)}
+                        )
         except Exception:
             pass
         await self._maybe_detect_external_ip()
