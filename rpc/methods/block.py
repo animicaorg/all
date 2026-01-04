@@ -369,8 +369,8 @@ def _construct_pending_block(include_txs: bool = False, include_receipts: bool =
     try:
         # Get current head for parent info
         head = deps.get_head()
-        head_height = int(head[0]) if head else 0
-        head_obj = head[1] if len(head) > 1 else None
+        head_height = int(head.get("height", 0)) if isinstance(head, dict) else 0
+        head_hash = head.get("hash") if isinstance(head, dict) else None
         
         # Get pending transactions from mempool
         pending_txs: list[str] = []
@@ -384,12 +384,28 @@ def _construct_pending_block(include_txs: bool = False, include_receipts: bool =
             # Mempool service not available, return empty pending block
             pass
         
+        # Parse parent hash
+        parent_hash_hex = "0x" + ("0" * 64)  # Default zero hash
+        if head_hash:
+            if isinstance(head_hash, str):
+                parent_hash_hex = head_hash if head_hash.startswith("0x") else "0x" + head_hash
+            elif isinstance(head_hash, bytes):
+                parent_hash_hex = "0x" + head_hash.hex()
+        
+        # Get current timestamp
+        try:
+            ctx = deps.get_ctx()
+            timestamp = int(ctx.get_time() if hasattr(ctx, "get_time") else 0)
+        except Exception:
+            import time
+            timestamp = int(time.time())
+        
         # Build pending block structure
         pending_block = {
-            "number": "0x" + hex(head_height + 1)[2:],  # Next block height
+            "number": "0x" + format(head_height + 1, 'x'),  # Next block height
             "hash": None,  # Pending block has no hash yet
-            "parentHash": "0x" + (head_obj.hash() if hasattr(head_obj, "hash") and callable(head_obj.hash) else b"\x00" * 32).hex(),
-            "timestamp": "0x" + hex(int(deps.get_ctx().get_time() if hasattr(deps.get_ctx(), "get_time") else 0))[2:],
+            "parentHash": parent_hash_hex,
+            "timestamp": "0x" + format(timestamp, 'x'),
             "transactions": pending_txs if not include_txs else pending_txs,  # Full tx objects not yet supported
             "transactionsRoot": None,  # TBD when block is mined
             "stateRoot": None,  # TBD when block is mined
@@ -398,7 +414,7 @@ def _construct_pending_block(include_txs: bool = False, include_receipts: bool =
             "difficulty": None,  # TBD when block is mined
             "totalDifficulty": None,
             "size": None,
-            "gasLimit": "0x" + hex(100_000_000_000)[2:],  # Default gas limit
+            "gasLimit": "0x" + format(100_000_000_000, 'x'),  # Default gas limit
             "gasUsed": "0x0",  # No gas used yet
             "extraData": "0x",
             "nonce": None,
@@ -435,8 +451,9 @@ def _normalize_block_number(n: t.Any) -> int | str:
             "safe",
             "finalized",
         ):  # all map to current best for now
-            h, _hdr = deps.get_head()[0], deps.get_head()[1]  # type: ignore
-            return int(h)
+            head = deps.get_head()
+            h = head.get("height") if isinstance(head, dict) else 0
+            return int(h or 0)
         if s == "pending":
             # Return 'pending' as special marker for pending block construction
             return "pending"
