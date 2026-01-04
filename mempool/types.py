@@ -212,7 +212,7 @@ class TxMeta:
         **kwargs: Any  # Ignore extra kwargs for compatibility
     ) -> None:
         self.sender = sender
-        self.nonce = int(nonce) if nonce is not None else 0
+        self.nonce = int(nonce) if nonce is not None else None
         self.gas_limit = int(gas_limit)
         self.size_bytes = int(size_bytes)
         # Handle first_seen_s alias
