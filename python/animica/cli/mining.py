@@ -349,12 +349,15 @@ async def _run_solo(
     threads: int,
     count: Optional[int],
     stats_interval: int,
+    address: str,
 ) -> None:
     from mining.orchestrator import MinerOrchestrator, OrchestratorConfig
     from mining.rpc_adapter import RpcTemplateProvider
     from mining.share_submitter import ShareSubmitter, SubmitterConfig
 
-    provider = RpcTemplateProvider(rpc_url=rpc_url, proof_type=proof_type)
+    provider = RpcTemplateProvider(
+        rpc_url=rpc_url, proof_type=proof_type, solo_address=address
+    )
     submitter = ShareSubmitter(SubmitterConfig(rpc_url=rpc_url))
     cfg = OrchestratorConfig(device_kind=device, threads=threads)
     orchestrator = MinerOrchestrator(template_provider=provider, submitter=submitter, config=cfg)
@@ -494,6 +497,7 @@ def solo(
             threads=threads,
             count=count,
             stats_interval=stats_interval,
+            address=address,
         )
     )
 

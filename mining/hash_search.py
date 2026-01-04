@@ -399,6 +399,16 @@ async def scan_forever(
                         },
                     },
                 }
+                if "workSource" in current_tpl:
+                    share_payload["workSource"] = current_tpl.get("workSource")
+                if "templateId" in current_tpl:
+                    share_payload["templateId"] = current_tpl.get("templateId")
+                if "parent" in current_tpl:
+                    parent = current_tpl.get("parent")
+                    if isinstance(parent, dict) and parent.get("hash"):
+                        share_payload["parentHash"] = parent.get("hash")
+                if "txs" in current_tpl:
+                    share_payload["txs"] = current_tpl.get("txs")
                 await out_queue.put(share_payload)
 
             await asyncio.sleep(0)
