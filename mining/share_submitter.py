@@ -458,6 +458,8 @@ class ShareSubmitter:
         payload = json_validate(self._share_encoder(params))
         if not isinstance(payload, dict):
             raise ValueError("share payload must be an object")
+        if not payload.get("jobId"):
+            raise ValueError("share payload missing jobId")
         backoff = self.cfg.initial_backoff_s
         tries = 0
         while True:
@@ -572,6 +574,8 @@ class ShareSubmitter:
         payload = json_validate(self._share_encoder(share))
         if not isinstance(payload, dict):
             raise ValueError("share payload must be an object")
+        if not payload.get("jobId"):
+            raise ValueError("share payload missing jobId")
         backoff = self.cfg.initial_backoff_s
         tries = 0
         while True:
@@ -728,6 +732,75 @@ class ShareSubmitter:
                 last_error=self._stats.last_error,
             )
             time.sleep(sleep)
+            backoff = min(backoff * 2.0, self.cfg.max_backoff_s)
+
+    async def submit_block(self, candidate_block: Any) -> Dict[str, Any]:
+        payload = json_validate(self._block_encoder(candidate_block))
+        if not isinstance(payload, dict):
+            raise ValueError("block payload must be an object")
+        backoff = self.cfg.initial_backoff_s
+        tries = 0
+        while True:
+            tries += 1
+            t0 = time.perf_counter()
+            try:
+                res = await self._async_rpc.call(
+                    self.cfg.method_submit_block, [payload]
+                )
+                dt = time.perf_counter() - t0
+                if isinstance(res, dict):
+                    accepted = bool(res.get("accepted", False))
+                    if accepted:
+                        self._stats.blocks_accepted += 1
+                    else:
+                        self._stats.blocks_rejected += 1
+                    self._log.info(
+                        "submitBlock result accepted=%s reason=%s latency=%.3fs",
+                        accepted,
+                        res.get("reason"),
+                        dt,
+                    )
+                    return res
+                if res is True:
+                    self._stats.blocks_accepted += 1
+                    self._log.info(
+                        "submitBlock result accepted=True latency=%.3fs", dt
+                    )
+                    return {"accepted": True}
+                self._stats.blocks_rejected += 1
+                self._log.info(
+                    "submitBlock result accepted=False reason=unexpected-result latency=%.3fs",
+                    dt,
+                )
+                return {"accepted": False, "reason": "unexpected-result"}
+            except RpcError as e:
+                if e.code in (
+                    -32020,
+                    -32021,
+                    -32022,
+                ):  # InvalidBlock, BadProofs, Stale
+                    self._stats.blocks_rejected += 1
+                    return {"accepted": False, "reason": f"rpc:{e.code}:{e}"}
+                self._stats.last_error = f"{e.code}:{e}"
+            except TransportError as e:
+                self._stats.last_error = str(e)
+
+            if tries >= self.cfg.max_retries:
+                return {
+                    "accepted": False,
+                    "reason": f"retries-exhausted:{self._stats.last_error or ''}",
+                }
+
+            sleep = backoff * (1.0 + (random.random() * 2 - 1) * self.cfg.jitter)
+            sleep = max(0.0, min(sleep, self.cfg.max_backoff_s))
+            self._log.warning(
+                "submitBlock retry in %.2fs (try %s/%s): %s",
+                sleep,
+                tries,
+                self.cfg.max_retries,
+                self._stats.last_error,
+            )
+            await asyncio.sleep(sleep)
             backoff = min(backoff * 2.0, self.cfg.max_backoff_s)
 
     # ──────────────────────────────────────────────────────────────────────
