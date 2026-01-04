@@ -122,6 +122,16 @@ _MINER_DEBUG = os.getenv("ANIMICA_MINER_DEBUG", "").lower() in {
 }
 _MEMPOOL_BINDINGS_LOGGED: set[str] = set()
 
+# Instant block configuration
+# When enabled, transactions trigger immediate instant block creation (zero reward, no PoW)
+_INSTANT_BLOCKS_ENABLED = os.getenv("ANIMICA_INSTANT_BLOCKS_ENABLED", "").lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+_INSTANT_BLOCK_PENDING: bool = False  # Flag to track if instant block creation is pending
+
 
 def _tracked(tx: Any) -> tuple[str, bytes] | None:
     """
@@ -1982,7 +1992,7 @@ def _request_missing_mempool_txs(
 
 
 def _build_child_header(
-    parent_height: int, parent_hash: bytes, parent_header: Any
+    parent_height: int, parent_hash: bytes, parent_header: Any, instant_block: bool = False
 ) -> Header:
     timestamp_min, timestamp_max, timestamp = _timestamp_bounds(parent_header)
     theta = getattr(
@@ -2012,6 +2022,7 @@ def _build_child_header(
         thetaMicro=int(theta or _resolve_theta()),
         nonce=0,
         extra=b"",
+        instantBlock=instant_block,
     )
 
 
@@ -3163,6 +3174,225 @@ def _mine_once(
         log.warning(f"Failed to clean up hash mapping after mining failure: {e}")
     
     return (False, 0, selection_summary)
+
+
+def _mine_instant_block(
+    payout_address: bytes | None = None,
+) -> tuple[bool, int, dict[str, Any]]:
+    """
+    Produce an instant block (zero-reward, non-advancing, no PoW required).
+    
+    Instant blocks are special blocks that:
+    - Carry zero block rewards (instantBlock flag set to True)
+    - Do not advance canonical height for halving schedule calculations
+    - Skip PoW/PoIES validation (nonce=0)
+    - Are produced immediately upon transaction arrival
+    - Include pending transactions for instant confirmation
+    
+    This provides instant transaction inclusion without affecting the emission
+    schedule or chain height used for halving calculations.
+    
+    Args:
+        payout_address: Unused for instant blocks (reward is always 0)
+        
+    Returns:
+        tuple[bool, int, dict]: (success, reward_amount=0, selection_summary)
+    """
+    global _INSTANT_BLOCK_PENDING
+    
+    # Check if instant blocks are enabled
+    if not _INSTANT_BLOCKS_ENABLED:
+        return (False, 0, {"error": "instant_blocks_disabled"})
+    
+    ctx = _ctx()
+    adapter = _adapter()
+    
+    # Collect pending transactions
+    pending_entries, pending_raw_by_hash, pending_total = _collect_mempool_entries(
+        ctx=ctx,
+        adapter=adapter,
+        limit=1000,
+    )
+    
+    if not pending_entries:
+        log.debug("No pending transactions for instant block")
+        _INSTANT_BLOCK_PENDING = False
+        return (False, 0, {"error": "no_pending_transactions"})
+    
+    # Get current head
+    head = adapter.get_head()
+    parent_height = int(head.get("height") or 0)
+    parent_hash_val = head.get("hash") or head.get("hash_hex")
+    parent_header = head.get("obj") or head.get("header")
+    parent_hash_bytes = _bytes32(parent_hash_val or ZERO32)
+    
+    if parent_header is None:
+        log.warning("Cannot create instant block: no parent header")
+        _INSTANT_BLOCK_PENDING = False
+        return (False, 0, {"error": "no_parent_header"})
+    
+    # Build instant block header (instantBlock=True, nonce=0, no PoW)
+    header_template = _build_child_header(
+        parent_height, parent_hash_bytes, parent_header, instant_block=True
+    )
+    
+    # Select transactions
+    state_adapter = deps.get_state_db_adapter()
+    block_gas_limit = DEFAULT_BLOCK_GAS_LIMIT
+    block_byte_limit = DEFAULT_BLOCK_BYTE_LIMIT
+    
+    try:
+        selection = select_for_block(
+            entries=pending_entries,
+            available_gas=block_gas_limit,
+            available_bytes=block_byte_limit,
+            state_adapter=state_adapter,
+        )
+        txs = selection.txs
+        included_hashes = [txid_bytes(tx) for tx in txs]
+    except Exception as e:
+        log.warning(f"Failed to select transactions for instant block: {e}")
+        _INSTANT_BLOCK_PENDING = False
+        return (False, 0, {"error": f"tx_selection_failed: {e}"})
+    
+    if not txs:
+        log.debug("No valid transactions for instant block after selection")
+        _INSTANT_BLOCK_PENDING = False
+        return (False, 0, {"error": "no_valid_transactions"})
+    
+    # Build the header with transaction root
+    from core.utils.merkle import compute_txs_root_from_txs
+    txs_root = compute_txs_root_from_txs(tuple(txs))
+    header = header_template.build_child(
+        timestamp=header_template.timestamp,
+        state_root=header_template.stateRoot,
+        txs_root=txs_root,
+        receipts_root=ZERO32,  # Will be updated after execution
+        proofs_root=ZERO32,
+        da_root=ZERO32,
+        instant_block=True,  # Ensure instant block flag is preserved
+    )
+    
+    # Execute transactions and update state
+    try:
+        from execution.runtime.executor import apply_block
+        from execution.runtime.env import make_block_env
+        
+        block_env = make_block_env(header)
+        receipts_dict = []
+        new_state_root = header.stateRoot
+        
+        # Apply transactions (with zero block reward for instant blocks)
+        result = apply_block(
+            block_env=block_env,
+            txs=txs,
+            state_adapter=state_adapter,
+            payout_address=payout_address or _get_miner_address(),
+            block_reward=0,  # Zero reward for instant blocks
+        )
+        receipts_dict = result.get("receipts", [])
+        new_state_root = result.get("state_root", header.stateRoot)
+    except Exception as e:
+        log.error(f"Failed to execute transactions for instant block: {e}")
+        _INSTANT_BLOCK_PENDING = False
+        return (False, 0, {"error": f"execution_failed: {e}"})
+    
+    # Convert receipts and compute receipt root
+    receipts = _convert_receipts_dict_to_objects(receipts_dict)
+    from core.utils.merkle import merkle_root
+    receipts_root = merkle_root([r.hash() for r in receipts]) if receipts else ZERO32
+    
+    # Rebuild header with final roots
+    header = header_template.build_child(
+        timestamp=header_template.timestamp,
+        state_root=new_state_root,
+        txs_root=txs_root,
+        receipts_root=receipts_root,
+        proofs_root=ZERO32,
+        da_root=ZERO32,
+        instant_block=True,
+    )
+    
+    # Create block
+    block = Block(
+        header=header,
+        txs=tuple(txs),
+        proofs=tuple(),
+        receipts=tuple(receipts),
+    )
+    
+    # Import block
+    try:
+        from core.chain.block_import import BlockImporter
+        block_db = deps.get_block_db()
+        importer = BlockImporter(block_db=block_db, state_adapter=state_adapter)
+        result = importer.import_block(block)
+        
+        if result.code != "accepted":
+            log.warning(f"Instant block rejected: {result.reason}")
+            _INSTANT_BLOCK_PENDING = False
+            return (False, 0, {"error": f"block_rejected: {result.reason}"})
+    except Exception as e:
+        log.error(f"Failed to import instant block: {e}")
+        _INSTANT_BLOCK_PENDING = False
+        return (False, 0, {"error": f"import_failed: {e}"})
+    
+    # Success - instant block created
+    _INSTANT_BLOCK_PENDING = False
+    block_hash_hex = "0x" + header.hash().hex()
+    
+    log.info(
+        f"Created instant block at height {header.height} with {len(txs)} transactions "
+        f"(hash: {block_hash_hex[:16]}..., reward: 0, instant: True)"
+    )
+    
+    # Remove transactions from mempool
+    mempool_service = getattr(ctx, "mempool", None)
+    if mempool_service:
+        for tx_hash in included_hashes:
+            try:
+                if hasattr(mempool_service, "mark_confirmed"):
+                    mempool_service.mark_confirmed(tx_hash)
+                elif hasattr(mempool_service, "remove"):
+                    mempool_service.remove(tx_hash)
+            except Exception:
+                pass
+    
+    selection_summary = {
+        "pending": pending_total,
+        "selected": len(txs),
+        "rejected": dict(selection.rejected),
+        "instant_block": True,
+    }
+    
+    return (True, 0, selection_summary)
+
+
+def trigger_instant_block_on_tx_arrival() -> None:
+    """
+    Trigger instant block creation when a transaction arrives.
+    
+    This is called by the mempool when a new transaction is added and
+    instant blocks are enabled. It sets a flag to produce an instant block
+    asynchronously.
+    """
+    global _INSTANT_BLOCK_PENDING
+    
+    if not _INSTANT_BLOCKS_ENABLED:
+        return
+    
+    if _INSTANT_BLOCK_PENDING:
+        # Already pending, don't trigger again
+        return
+    
+    _INSTANT_BLOCK_PENDING = True
+    
+    # Try to produce instant block immediately
+    try:
+        _mine_instant_block()
+    except Exception as e:
+        log.debug(f"Failed to produce instant block on tx arrival: {e}")
+        _INSTANT_BLOCK_PENDING = False
 
 
 async def _auto_mine_loop(interval: float = 1.0) -> None:
