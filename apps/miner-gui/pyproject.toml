@@ -1,0 +1,44 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "animica-miner-gui"
+version = "0.1.0"
+description = "Production-quality Qt desktop GUI miner for Animica blockchain"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "PySide6>=6.6.0",
+    "pydantic>=2.7.0",
+    "matplotlib>=3.8.0",
+    "httpx>=0.27.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-qt>=4.2.0",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.4",
+    "mypy>=1.9",
+]
+gpu = [
+    "pyopencl>=2024.1",
+]
+
+[project.scripts]
+animica-miner-gui = "animica_miner_gui.main:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["animica_miner_gui"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
