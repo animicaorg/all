@@ -253,14 +253,69 @@ def _intrinsic_for_transfer(tx: Any, params: Optional[Any]) -> int:
     return DEFAULT_INTRINSIC_TRANSFER
 
 
-def _split_fee(base_price: int, gas_price: int, gas_used: int) -> Tuple[int, int, int]:
+def _compute_fee_parts(
+    base_price: int, gas_price: int, gas_used: int
+) -> Tuple[int, int, int]:
     """
-    Return (total, base_component, tip_component).
+    Return (total_fee, base_component, tip_component).
+
+    Ensures total_fee == base_component + tip_component and rejects
+    underpriced transactions (gas_price < base_price) to prevent
+    crediting more fees than were debited.
     """
-    base_component = max(0, int(base_price)) * int(gas_used)
-    total = max(0, int(gas_price)) * int(gas_used)
-    tip_component = max(0, total - base_component)
-    return total, base_component, tip_component
+    base_per_gas = max(0, int(base_price))
+    gas_per_gas = max(0, int(gas_price))
+    used = max(0, int(gas_used))
+    if gas_per_gas < base_per_gas:
+        raise ExecError(
+            "gas_price below base_fee",
+            code="FEE_TOO_LOW",
+            data={
+                "gas_price": str(gas_per_gas),
+                "base_fee": str(base_per_gas),
+            },
+        )
+    base_component = base_per_gas * used
+    tip_component = (gas_per_gas - base_per_gas) * used
+    total_fee = base_component + tip_component
+    return total_fee, base_component, tip_component
+
+
+def _credit_balance(state: Any, addr: bytes, amount: int) -> None:
+    if amount < 0:
+        raise ExecError("negative credit amount", code="NEGATIVE_AMOUNT")
+    if amount == 0:
+        return
+    cur = _get_balance(state, addr)
+    _set_balance(state, addr, cur + amount)
+
+
+def _debit_balance(state: Any, addr: bytes, amount: int) -> None:
+    if amount < 0:
+        raise ExecError("negative debit amount", code="NEGATIVE_AMOUNT")
+    if amount == 0:
+        return
+    cur = _get_balance(state, addr)
+    if cur < amount:
+        raise InsufficientBalance(
+            "Insufficient balance for transfer",
+            required=amount,
+            available=cur,
+            shortfall=amount - cur,
+        )
+    _set_balance(state, addr, cur - amount)
+
+
+def _increment_nonce(state: Any, addr: bytes) -> None:
+    get_nonce = getattr(state, "get_nonce", None)
+    set_nonce = getattr(state, "set_nonce", None)
+    if callable(get_nonce) and callable(set_nonce):
+        current = int(get_nonce(addr))
+        set_nonce(addr, current + 1)
+        return
+    inc_nonce = getattr(state, "increment_nonce", None)
+    if callable(inc_nonce):
+        inc_nonce(addr)
 
 
 # ------------------------------------------------------------------------------
@@ -391,7 +446,10 @@ def apply_transfer(
             receipt=None,
         )
 
-    total_fee, base_fee_part, tip_fee_part = _split_fee(
+    if amount < 0:
+        raise ExecError("negative transfer amount", code="NEGATIVE_AMOUNT")
+
+    total_fee, base_fee_part, tip_fee_part = _compute_fee_parts(
         base_price, gas_price, intrinsic
     )
 
@@ -410,8 +468,7 @@ def apply_transfer(
         )
 
     # Debit fees first (burn base, tip to coinbase)
-    new_sender_balance = sender_balance - total_fee
-    _set_balance(state, sender, new_sender_balance)
+    _debit_balance(state, sender, total_fee)
 
     # Tip → coinbase
     coinbase = _as_address_bytes(getattr(block_env, "coinbase", b"\x00" * ADDRESS_LEN))
@@ -420,8 +477,7 @@ def apply_transfer(
         coinbase = coinbase.rjust(ADDRESS_LEN, b"\x00")
     if tip_fee_part > 0 and any(coinbase) and coinbase != b"\x00" * ADDRESS_LEN:
         _ensure_account(state, coinbase)
-        cb_bal = _get_balance(state, coinbase)
-        _set_balance(state, coinbase, cb_bal + tip_fee_part)
+        _credit_balance(state, coinbase, tip_fee_part)
 
     # Optional: send base fee to a treasury if exposed
     if base_fee_part > 0:
@@ -433,21 +489,20 @@ def apply_transfer(
                 t_addr = t_addr.rjust(ADDRESS_LEN, b"\x00")
             if any(t_addr):
                 _ensure_account(state, t_addr)
-                t_bal = _get_balance(state, t_addr)
-                _set_balance(state, t_addr, t_bal + base_fee_part)
+                _credit_balance(state, t_addr, base_fee_part)
         # Else burned (no credit)
 
     # Value transfer (skip if sending to self; fees already debited)
     if sender != to and amount > 0:
-        sender_balance_before = _get_balance(state, sender)
-        recipient_balance_before = _get_balance(state, to)
-        _set_balance(state, sender, sender_balance_before - amount)
-        _set_balance(state, to, recipient_balance_before + amount)
+        _debit_balance(state, sender, amount)
+        _credit_balance(state, to, amount)
 
     # Logs
     logs: List[LogEvent] = []
     if emit_event and amount > 0:
         logs.append(_make_transfer_log(sender, to, amount))
+
+    _increment_nonce(state, sender)
 
     return ApplyResult(
         status=TxStatus.SUCCESS,

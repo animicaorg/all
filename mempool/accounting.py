@@ -197,13 +197,24 @@ def effective_gas_price(tx: "Tx", *, base_fee: int = 0) -> int:
     """
     gp = getattr(tx, "gas_price", None)
     if gp is not None:
-        return int(gp)
+        gas_price = int(gp)
+        if base_fee > 0 and gas_price < int(base_fee):
+            raise AccountingError(
+                "FeeTooLow",
+                f"gas_price {gas_price} < base_fee {int(base_fee)}",
+            )
+        return gas_price
 
     max_fee = getattr(tx, "max_fee_per_gas", None)
     max_tip = getattr(tx, "max_priority_fee_per_gas", None)
     if max_fee is not None and max_tip is not None:
         mf = int(max_fee)
         tip = int(max_tip)
+        if base_fee > 0 and mf < int(base_fee):
+            raise AccountingError(
+                "FeeTooLow",
+                f"max_fee_per_gas {mf} < base_fee {int(base_fee)}",
+            )
         return min(mf, base_fee + tip)
 
     return 0
