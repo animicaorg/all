@@ -283,7 +283,48 @@ def mempool_get_stats() -> dict:
     return PendingStats(count=count, total_bytes=total_bytes, oldest_age_sec=oldest_age).as_dict()
 
 
-__all__ = ["mempool_get_pending", "mempool_get_stats"]
+@method(
+    "debug_mempool_status",
+    desc="Return mempool service debug status for diagnostics",
+    aliases=("debug.mempoolStatus",),
+)
+def debug_mempool_status() -> dict:
+    """
+    Return mempool service status for diagnostics.
+    
+    Used by diagnose_tx_propagation.py to check mempool service configuration.
+    
+    Returns:
+        dict with fields:
+            - queue_depth: int (number of pending transactions)
+            - enabled: bool
+            - service_id: str | None
+            - path: str | None
+    """
+    mempool_service = _get_mempool_service()
+    
+    if mempool_service is None:
+        return {
+            "enabled": False,
+            "queue_depth": 0,
+            "service_id": None,
+            "path": None,
+        }
+    
+    stats = mempool_service.stats() if hasattr(mempool_service, "stats") else {}
+    queue_depth = stats.get("count", 0)
+    
+    persist_path = getattr(mempool_service, "_persist_path", None)
+    
+    return {
+        "enabled": True,
+        "queue_depth": queue_depth,
+        "service_id": hex(id(mempool_service)),
+        "path": str(persist_path) if persist_path else None,
+    }
+
+
+__all__ = ["mempool_get_pending", "mempool_get_stats", "debug_mempool_status"]
 
 
 @method(
