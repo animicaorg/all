@@ -30,10 +30,18 @@ Receipt construction is performed by higher layers.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 from typing import TYPE_CHECKING, Any, List, Mapping, Optional, Tuple
 
 from ..errors import OOG, ExecError, Revert
-from core.utils.address import AddressError, address_to_bytes
+from core.utils.address import AddressError
+from core.utils.address_codec import (
+    AccountKeyError,
+    account_key_from_any,
+    account_key_from_bech32,
+    account_key_from_pubkey,
+    account_key_from_raw,
+)
 from ..state.apply_balance import InsufficientBalance
 from ..types.events import LogEvent
 from ..types.result import ApplyResult
@@ -48,6 +56,8 @@ if TYPE_CHECKING:
 
 DEFAULT_INTRINSIC_TRANSFER = 21_000  # sane default; may be overridden by gas.table
 ADDRESS_LEN = 32  # Animica uses 32-byte addresses (matches core/types/tx.py)
+
+log = logging.getLogger(__name__)
 
 
 # ------------------------------------------------------------------------------
@@ -120,20 +130,78 @@ def _as_bytes(x: Any, *, expect_len: Optional[int] = None) -> bytes:
     return out
 
 
-def _as_address_bytes(x: Any) -> bytes:
+def _account_key_from_value(x: Any) -> bytes:
     if x is None:
         return b""
-    if isinstance(x, (bytes, bytearray)):
-        return bytes(x)
+    if isinstance(x, (bytes, bytearray, memoryview)):
+        try:
+            return account_key_from_raw(x)
+        except AccountKeyError:
+            return b""
     if isinstance(x, str):
         s = x.strip()
         if not s:
             return b""
         try:
-            return address_to_bytes(s)
-        except AddressError:
+            return account_key_from_bech32(s)
+        except (AccountKeyError, AddressError):
             return b""
-    return _as_bytes(x, expect_len=None)
+    try:
+        return account_key_from_any(x)
+    except (AccountKeyError, AddressError, TypeError):
+        return b""
+
+
+def _extract_signature_pubkey(tx: Any) -> tuple[bytes | None, int | None]:
+    sig = None
+    if hasattr(tx, "sigs"):
+        sigs = getattr(tx, "sigs", None)
+        if isinstance(sigs, (list, tuple)) and sigs:
+            sig = sigs[0]
+    if sig is None and isinstance(tx, Mapping):
+        sigs = tx.get("sigs")
+        if isinstance(sigs, list) and sigs:
+            sig = sigs[0]
+        elif "sig" in tx:
+            sig = tx.get("sig")
+        elif "signature" in tx:
+            sig = tx.get("signature")
+
+    if sig is None:
+        return None, None
+
+    if isinstance(sig, Mapping):
+        alg_id = sig.get("alg") or sig.get("alg_id") or sig.get("algId")
+        pubkey = sig.get("pubkey") or sig.get("pub") or sig.get("pk")
+    else:
+        alg_id = getattr(sig, "alg_id", getattr(sig, "alg", None))
+        pubkey = getattr(sig, "pubkey", getattr(sig, "pub", None))
+
+    if pubkey is None:
+        return None, None
+    if isinstance(pubkey, str):
+        if pubkey.startswith(("0x", "0X")):
+            try:
+                pubkey = bytes.fromhex(pubkey[2:])
+            except ValueError:
+                return None, None
+        else:
+            return None, None
+    return bytes(pubkey), int(alg_id) if alg_id is not None else None
+
+
+def _payload_sender_value(tx: Any, tx_env: Any) -> Any:
+    unsigned = _get(tx, "unsigned")
+    if unsigned is not None:
+        sender = _get(unsigned, "sender", "from", "from_address")
+        if sender is not None:
+            return sender
+    sender = _get(tx, "sender", "from", "from_address")
+    if sender is not None:
+        return sender
+    if tx_env is not None:
+        return getattr(tx_env, "sender", None)
+    return None
 
 
 # ------------------------------------------------------------------------------
@@ -373,14 +441,25 @@ def apply_transfer(
     -------
     ApplyResult
     """
-    # Animica uses 32-byte addresses (not 20-byte EVM addresses)
-    # Accept both 20-byte (for backwards compatibility) and 32-byte addresses
-    sender = _as_address_bytes(getattr(tx_env, "sender", None))
-    if len(sender) not in (20, 32):
-        raise ExecError(f"TxEnv.sender must be 20 or 32 bytes, got {len(sender)}")
-    # Pad 20-byte addresses to 32 bytes for Animica state DB
-    if len(sender) == 20:
-        sender = sender.rjust(ADDRESS_LEN, b"\x00")
+    sig_pubkey, sig_alg_id = _extract_signature_pubkey(tx)
+    payload_sender = _payload_sender_value(tx, tx_env)
+    sender = b""
+    if sig_pubkey is not None:
+        sender = account_key_from_pubkey(sig_pubkey, sig_alg_id)
+        if payload_sender is not None:
+            payload_key = _account_key_from_value(payload_sender)
+            if payload_key and payload_key != sender:
+                raise ExecError(
+                    "sender mismatch between signature and payload",
+                    code="SENDER_MISMATCH",
+                )
+    else:
+        sender = _account_key_from_value(payload_sender)
+
+    if not sender:
+        raise ExecError("missing sender", code="MISSING_SENDER")
+    if len(sender) != ADDRESS_LEN:
+        raise ExecError(f"TxEnv.sender must be {ADDRESS_LEN} bytes, got {len(sender)}")
 
     # Extract recipient address from tx (check multiple locations for compatibility)
     to = _get(tx, "to", "recipient", "to_address")
@@ -392,7 +471,7 @@ def apply_transfer(
             if payload is not None:
                 to = _get(payload, "to", "recipient")
     
-    to = _as_address_bytes(to)
+    to = _account_key_from_value(to)
     
     # Check for empty or zero address before padding
     if len(to) == 0 or to == b"\x00" * len(to):
@@ -405,11 +484,8 @@ def apply_transfer(
             receipt=None,
         )
     
-    # Pad 20-byte addresses to 32 bytes for Animica state DB
-    if len(to) not in (20, ADDRESS_LEN):
-        raise ExecError(f"Recipient address must be 20 or {ADDRESS_LEN} bytes, got {len(to)}")
-    if len(to) == 20:
-        to = to.rjust(ADDRESS_LEN, b"\x00")
+    if len(to) != ADDRESS_LEN:
+        raise ExecError(f"Recipient address must be {ADDRESS_LEN} bytes, got {len(to)}")
 
     # Extract transfer amount from tx (check multiple locations for compatibility)
     amount = _get(tx, "value", "amount")
@@ -453,6 +529,14 @@ def apply_transfer(
         base_price, gas_price, intrinsic
     )
 
+    coinbase = _account_key_from_value(
+        getattr(block_env, "coinbase", b"\x00" * ADDRESS_LEN)
+    )
+    treasury = getattr(block_env, "treasury", None)
+    t_addr = b""
+    if base_fee_part > 0 and isinstance(treasury, (bytes, bytearray, str)):
+        t_addr = _account_key_from_value(treasury)
+
     _ensure_account(state, sender)
     _ensure_account(state, to)
 
@@ -467,29 +551,35 @@ def apply_transfer(
             shortfall=required - sender_balance,
         )
 
+    if log.isEnabledFor(logging.DEBUG):
+        log.debug(
+            "apply_transfer account keys",
+            extra={
+                "sender_key": sender.hex(),
+                "recipient_key": to.hex(),
+                "sender_len": len(sender),
+                "recipient_len": len(to),
+            },
+        )
+
+    pre_sender_balance = sender_balance
+    pre_recipient_balance = _get_balance(state, to)
+    pre_coinbase_balance = _get_balance(state, coinbase) if coinbase else 0
+    pre_treasury_balance = _get_balance(state, t_addr) if t_addr else 0
+
     # Debit fees first (burn base, tip to coinbase)
     _debit_balance(state, sender, total_fee)
 
     # Tip → coinbase
-    coinbase = _as_address_bytes(getattr(block_env, "coinbase", b"\x00" * ADDRESS_LEN))
-    # Pad 20-byte addresses to 32 bytes for Animica state DB
-    if len(coinbase) == 20:
-        coinbase = coinbase.rjust(ADDRESS_LEN, b"\x00")
     if tip_fee_part > 0 and any(coinbase) and coinbase != b"\x00" * ADDRESS_LEN:
         _ensure_account(state, coinbase)
         _credit_balance(state, coinbase, tip_fee_part)
 
     # Optional: send base fee to a treasury if exposed
     if base_fee_part > 0:
-        treasury = getattr(block_env, "treasury", None)
-        if isinstance(treasury, (bytes, bytearray, str)):
-            t_addr = _as_address_bytes(treasury)
-            # Pad 20-byte addresses to 32 bytes for Animica state DB
-            if len(t_addr) == 20:
-                t_addr = t_addr.rjust(ADDRESS_LEN, b"\x00")
-            if any(t_addr):
-                _ensure_account(state, t_addr)
-                _credit_balance(state, t_addr, base_fee_part)
+        if any(t_addr):
+            _ensure_account(state, t_addr)
+            _credit_balance(state, t_addr, base_fee_part)
         # Else burned (no credit)
 
     # Value transfer (skip if sending to self; fees already debited)
@@ -503,6 +593,53 @@ def apply_transfer(
         logs.append(_make_transfer_log(sender, to, amount))
 
     _increment_nonce(state, sender)
+
+    if log.isEnabledFor(logging.DEBUG):
+        post_sender_balance = _get_balance(state, sender)
+        post_recipient_balance = _get_balance(state, to)
+        post_coinbase_balance = _get_balance(state, coinbase) if coinbase else 0
+        post_treasury_balance = _get_balance(state, t_addr) if t_addr else 0
+
+        sender_delta = post_sender_balance - pre_sender_balance
+        recipient_delta = post_recipient_balance - pre_recipient_balance
+        coinbase_delta = post_coinbase_balance - pre_coinbase_balance
+        treasury_delta = post_treasury_balance - pre_treasury_balance
+
+        expected_sender_delta = -(amount + total_fee)
+        expected_recipient_delta = amount if sender != to else 0
+        expected_coinbase_delta = tip_fee_part if tip_fee_part > 0 and any(coinbase) else 0
+        expected_treasury_delta = base_fee_part if base_fee_part > 0 and any(t_addr) else 0
+        burned = 0
+        if tip_fee_part > 0 and not any(coinbase):
+            burned += tip_fee_part
+        if base_fee_part > 0 and not any(t_addr):
+            burned += base_fee_part
+        expected_sum = -burned
+        actual_sum = sender_delta + recipient_delta + coinbase_delta + treasury_delta
+
+        if (
+            sender_delta != expected_sender_delta
+            or recipient_delta != expected_recipient_delta
+            or coinbase_delta != expected_coinbase_delta
+            or treasury_delta != expected_treasury_delta
+            or actual_sum != expected_sum
+        ):
+            raise ExecError(
+                "transfer balance invariant failed",
+                code="TRANSFER_INVARIANT",
+                data={
+                    "sender_delta": sender_delta,
+                    "recipient_delta": recipient_delta,
+                    "coinbase_delta": coinbase_delta,
+                    "treasury_delta": treasury_delta,
+                    "expected_sender_delta": expected_sender_delta,
+                    "expected_recipient_delta": expected_recipient_delta,
+                    "expected_coinbase_delta": expected_coinbase_delta,
+                    "expected_treasury_delta": expected_treasury_delta,
+                    "expected_sum": expected_sum,
+                    "actual_sum": actual_sum,
+                },
+            )
 
     return ApplyResult(
         status=TxStatus.SUCCESS,

@@ -24,6 +24,7 @@ import p2p
 from rpc import deps
 from rpc import errors as rpc_errors
 from rpc.methods import method
+from mempool.tx_hash import tx_hash_bytes as _tx_hash_bytes
 from mempool.select import PendingTxEntry, select_for_block
 
 try:  # Optional helper to compute share target from Θ
@@ -781,17 +782,26 @@ def txid_bytes(tx: Tx | dict | bytes, raw: bytes | None = None) -> bytes:
     
     # Try 5: Compute from raw bytes if available
     if raw is not None and isinstance(raw, (bytes, bytearray)):
-        return hashlib.sha3_256(bytes(raw)).digest()
+        try:
+            return _tx_hash_bytes(raw)
+        except Exception:
+            return hashlib.sha3_256(bytes(raw)).digest()
     
     # Try 6: If tx is raw bytes, compute directly
     if isinstance(tx, (bytes, bytearray)):
-        return hashlib.sha3_256(bytes(tx)).digest()
+        try:
+            return _tx_hash_bytes(tx)
+        except Exception:
+            return hashlib.sha3_256(bytes(tx)).digest()
     
     # Try 7: If tx is a Tx dataclass, serialize to CBOR and hash
     if hasattr(tx, "to_cbor") and callable(getattr(tx, "to_cbor")):
         try:
             cbor_bytes = tx.to_cbor()
-            return hashlib.sha3_256(cbor_bytes).digest()
+            try:
+                return _tx_hash_bytes(cbor_bytes)
+            except Exception:
+                return hashlib.sha3_256(cbor_bytes).digest()
         except Exception as e:
             log.debug(f"txid_bytes: tx.to_cbor() failed: {e}")
     
@@ -1898,9 +1908,9 @@ def _collect_mempool_entries(
                     except Exception:
                         raw = b""
                 if raw:
-                    from core.utils.hash import sha3_256
+                    from mempool.tx_hash import tx_hash_hex as _tx_hash_hex
 
-                    tx_hash_hex = "0x" + sha3_256(raw).hex()
+                    tx_hash_hex = _tx_hash_hex(raw)
                 else:
                     tx_hash_hex = _canonical_txid_hex(tx)
                 if raw:
@@ -4646,11 +4656,11 @@ def miner_submit_block(**payload: Any) -> Dict[str, Any]:
                 try:
                     tx_hashes = []
                     if raw_txs_hex:
-                        from core.utils.hash import sha3_256
+                        from mempool.tx_hash import tx_hash_hex as _tx_hash_hex
 
                         for raw_hex in raw_txs_hex:
                             raw_bytes = bytes.fromhex(raw_hex[2:])
-                            tx_hashes.append("0x" + sha3_256(raw_bytes).hex())
+                            tx_hashes.append(_tx_hash_hex(raw_bytes))
                     else:
                         tx_hashes = [_canonical_txid_hex(tx) for tx in block_obj.txs]
                     mempool_service = getattr(ctx, "mempool", None)

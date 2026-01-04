@@ -4,8 +4,7 @@ import time
 from dataclasses import dataclass
 from typing import Dict, List, Optional
 
-from core.utils.hash import sha3_256
-from core.utils.tx import normalize_tx_bytes
+from mempool.tx_hash import normalized_tx_bytes, tx_hash_bytes
 
 
 @dataclass(frozen=True)
@@ -22,10 +21,10 @@ class Mempool:
         self._txs: Dict[bytes, MempoolEntry] = {}
 
     def add_tx(self, tx: bytes, origin: str) -> bytes:
-        raw = normalize_tx_bytes(tx)
+        raw = normalized_tx_bytes(tx)
         if len(raw) > self.max_tx_bytes:
             raise ValueError("tx too large")
-        txid = sha3_256(raw)
+        txid = tx_hash_bytes(raw)
         if txid not in self._txs:
             self._txs[txid] = MempoolEntry(
                 txid=txid, tx_bytes=raw, origin=str(origin), received_at=time.time()
