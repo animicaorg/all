@@ -21,6 +21,7 @@ import os
 from typing import TYPE_CHECKING, Any, List, Mapping, Optional, Tuple
 
 from ..errors import ExecError
+from ..state.apply_balance import InsufficientBalance
 from ..types.events import LogEvent
 from ..types.result import ApplyResult
 from ..types.status import TxStatus
@@ -177,11 +178,62 @@ def _maybe_state_root(state: Any) -> bytes:
     return b"\x00" * 32
 
 
-def _split_fee(base_price: int, gas_price: int, gas_used: int) -> Tuple[int, int, int]:
-    base_component = max(0, int(base_price)) * int(gas_used)
-    total = max(0, int(gas_price)) * int(gas_used)
-    tip_component = max(0, total - base_component)
+def _compute_fee_parts(
+    base_price: int, gas_price: int, gas_used: int
+) -> Tuple[int, int, int]:
+    base_per_gas = max(0, int(base_price))
+    gas_per_gas = max(0, int(gas_price))
+    used = max(0, int(gas_used))
+    if gas_per_gas < base_per_gas:
+        raise ExecError(
+            "gas_price below base_fee",
+            code="FEE_TOO_LOW",
+            data={
+                "gas_price": str(gas_per_gas),
+                "base_fee": str(base_per_gas),
+            },
+        )
+    base_component = base_per_gas * used
+    tip_component = (gas_per_gas - base_per_gas) * used
+    total = base_component + tip_component
     return total, base_component, tip_component
+
+
+def _credit_balance(state: Any, addr: bytes, amount: int) -> None:
+    if amount < 0:
+        raise ExecError("negative credit amount", code="NEGATIVE_AMOUNT")
+    if amount == 0:
+        return
+    cur = _get_balance(state, addr)
+    _set_balance(state, addr, cur + amount)
+
+
+def _debit_balance(state: Any, addr: bytes, amount: int) -> None:
+    if amount < 0:
+        raise ExecError("negative debit amount", code="NEGATIVE_AMOUNT")
+    if amount == 0:
+        return
+    cur = _get_balance(state, addr)
+    if cur < amount:
+        raise InsufficientBalance(
+            "insufficient balance",
+            required=amount,
+            available=cur,
+            shortfall=amount - cur,
+        )
+    _set_balance(state, addr, cur - amount)
+
+
+def _increment_nonce(state: Any, addr: bytes) -> None:
+    get_nonce = getattr(state, "get_nonce", None)
+    set_nonce = getattr(state, "set_nonce", None)
+    if callable(get_nonce) and callable(set_nonce):
+        current = int(get_nonce(addr))
+        set_nonce(addr, current + 1)
+        return
+    inc_nonce = getattr(state, "increment_nonce", None)
+    if callable(inc_nonce):
+        inc_nonce(addr)
 
 
 def _resolve_intrinsic_call(tx: Any, params: Optional[Any]) -> int:
@@ -224,24 +276,32 @@ def _resolve_intrinsic_deploy(tx: Any, params: Optional[Any]) -> int:
     return DEFAULT_INTRINSIC_DEPLOY
 
 
-def _burn_and_tip(
-    state: Any, block_env: "BlockEnv", gas_used: int, gas_price: int, base_price: int
+def _settle_fees(
+    state: Any,
+    block_env: "BlockEnv",
+    *,
+    sender: bytes,
+    gas_used: int,
+    gas_price: int,
+    base_price: int,
 ) -> Tuple[int, int, int]:
-    total_fee, base_fee_part, tip_fee_part = _split_fee(base_price, gas_price, gas_used)
+    total_fee, base_fee_part, tip_fee_part = _compute_fee_parts(
+        base_price, gas_price, gas_used
+    )
+
+    _debit_balance(state, sender, total_fee)
 
     coinbase = _as_bytes(getattr(block_env, "coinbase", b"\x00" * 20), expect_len=20)
     if tip_fee_part > 0 and any(coinbase):
         _ensure_account(state, coinbase)
-        cb_bal = _get_balance(state, coinbase)
-        _set_balance(state, coinbase, cb_bal + tip_fee_part)
+        _credit_balance(state, coinbase, tip_fee_part)
 
     treasury = getattr(block_env, "treasury", None)
     if base_fee_part > 0 and isinstance(treasury, (bytes, bytearray, str)):
         t_addr = _as_bytes(treasury, expect_len=20)
         if any(t_addr):
             _ensure_account(state, t_addr)
-            t_bal = _get_balance(state, t_addr)
-            _set_balance(state, t_addr, t_bal + base_fee_part)
+            _credit_balance(state, t_addr, base_fee_part)
 
     return total_fee, base_fee_part, tip_fee_part
 
@@ -285,21 +345,15 @@ def apply_deploy(
     gas_price = _as_int(getattr(tx_env, "gas_price", 0))
     base_price = _as_int(getattr(tx_env, "base_price", 0))
 
-    total_fee, _, _ = _burn_and_tip(state, block_env, intrinsic, gas_price, base_price)
-
     _ensure_account(state, sender)
-    bal = _get_balance(state, sender)
-    if bal < total_fee:
-        # Not enough to pay fees — REVERT with intrinsic charged up to limit
-        gas_used = intrinsic if gas_limit == 0 else min(intrinsic, gas_limit)
-        return ApplyResult(
-            status=TxStatus.REVERT,
-            gas_used=gas_used,
-            logs=[],
-            state_root=_maybe_state_root(state),
-            receipt=None,
-        )
-    _set_balance(state, sender, bal - total_fee)
+    _settle_fees(
+        state,
+        block_env,
+        sender=sender,
+        gas_used=intrinsic,
+        gas_price=gas_price,
+        base_price=base_price,
+    )
 
     # Feature-gated path (future)
     if (enable_vm_py is True) or (
@@ -323,6 +377,8 @@ def apply_deploy(
             data=b"",
         )
     ]
+    _increment_nonce(state, sender)
+
     return ApplyResult(
         status=TxStatus.REVERT,
         gas_used=intrinsic,
@@ -367,20 +423,15 @@ def apply_call(
     gas_price = _as_int(getattr(tx_env, "gas_price", 0))
     base_price = _as_int(getattr(tx_env, "base_price", 0))
 
-    total_fee, _, _ = _burn_and_tip(state, block_env, intrinsic, gas_price, base_price)
-
     _ensure_account(state, sender)
-    bal = _get_balance(state, sender)
-    if bal < total_fee:
-        gas_used = intrinsic if gas_limit == 0 else min(intrinsic, gas_limit)
-        return ApplyResult(
-            status=TxStatus.REVERT,
-            gas_used=gas_used,
-            logs=[],
-            state_root=_maybe_state_root(state),
-            receipt=None,
-        )
-    _set_balance(state, sender, bal - total_fee)
+    _settle_fees(
+        state,
+        block_env,
+        sender=sender,
+        gas_used=intrinsic,
+        gas_price=gas_price,
+        base_price=base_price,
+    )
 
     # Future: route to vm_py if enabled & available
     if (enable_vm_py is True) or (
@@ -407,6 +458,8 @@ def apply_call(
             data=b"",
         )
     ]
+    _increment_nonce(state, sender)
+
     return ApplyResult(
         status=TxStatus.REVERT,
         gas_used=intrinsic,
