@@ -110,7 +110,7 @@ async def test_timeout_clears_known_txids_for_retry():
         # Now simulate peer-a trying to broadcast again
         # Before the fix, this would skip because tx was in known_txids
         # After the fix, it should add to inv_queue
-        await relay._broadcast_inv([txid], exclude_peer=None)
+        await relay.announce_txids([txid], exclude_peer=None)
 
         # Verify it was added to inv_queue
         assert len(state.inv_queue) > 0
