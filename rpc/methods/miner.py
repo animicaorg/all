@@ -4859,3 +4859,186 @@ def miner_submit_sha256_block(**payload: Any) -> Dict[str, Any]:
         else payload
     )
     return {"accepted": True, "payload": block}
+
+
+@method(
+    "miner.listInstantBlocks",
+    desc="List recent instant blocks with zero reward and non-advancing canonical height",
+)
+def miner_list_instant_blocks(
+    limit: int | None = None,
+    offset: int | None = None,
+) -> Dict[str, Any]:
+    """
+    List recent instant blocks.
+    
+    Args:
+        limit: Maximum number of instant blocks to return (default: 10, max: 100)
+        offset: Number of blocks to skip from the most recent (default: 0)
+        
+    Returns:
+        dict: {
+            "instantBlocks": [
+                {
+                    "height": int,
+                    "hash": str,
+                    "timestamp": int,
+                    "txCount": int,
+                    "reward": 0,
+                    "instantBlock": true,
+                    "canonicalHeight": int,
+                },
+                ...
+            ],
+            "total": int,  # Total number of instant blocks found
+            "limit": int,
+            "offset": int,
+        }
+    """
+    limit_val = min(int(limit or 10), 100)
+    offset_val = max(int(offset or 0), 0)
+    
+    try:
+        ctx = _ctx()
+        block_db = ctx.block_db
+        
+        # Get current chain height
+        try:
+            head = ctx.get_head()
+            current_height = int(head.get("height") or 0)
+        except Exception:
+            current_height = 0
+        
+        instant_blocks = []
+        checked = 0
+        found = 0
+        
+        # Scan backwards from current height to find instant blocks
+        # We scan more blocks than needed to account for filtering
+        max_scan = min(current_height + 1, 1000)  # Don't scan more than 1000 blocks
+        
+        for height in range(current_height, max(0, current_height - max_scan), -1):
+            if found >= limit_val + offset_val:
+                break
+            
+            checked += 1
+            
+            try:
+                # Get block hash for this height
+                hash_bytes = block_db.get_canonical_hash(height)
+                if hash_bytes is None:
+                    continue
+                
+                # Get header for this block
+                header = block_db.get_header(hash_bytes)
+                if header is None:
+                    continue
+                
+                # Check if this is an instant block
+                is_instant = getattr(header, "instantBlock", False)
+                if not is_instant:
+                    continue
+                
+                found += 1
+                
+                # Skip blocks before our offset
+                if found <= offset_val:
+                    continue
+                
+                # Get canonical height at this block height
+                canonical_height = block_db.get_canonical_height()
+                
+                # Get transaction count
+                try:
+                    block = block_db.get_block(hash_bytes)
+                    tx_count = len(block.txs) if block and hasattr(block, "txs") else 0
+                except Exception:
+                    tx_count = 0
+                
+                instant_blocks.append({
+                    "height": int(height),
+                    "hash": "0x" + hash_bytes.hex(),
+                    "timestamp": int(getattr(header, "timestamp", 0)),
+                    "txCount": tx_count,
+                    "reward": 0,  # Instant blocks always have zero reward
+                    "instantBlock": True,
+                    "canonicalHeight": int(canonical_height),
+                })
+                
+            except Exception as e:
+                log.debug(f"Error processing block at height {height}: {e}")
+                continue
+        
+        return {
+            "instantBlocks": instant_blocks,
+            "total": found,
+            "limit": limit_val,
+            "offset": offset_val,
+            "scanned": checked,
+        }
+        
+    except Exception as e:
+        log.error(f"Failed to list instant blocks: {e}", exc_info=True)
+        return {
+            "instantBlocks": [],
+            "total": 0,
+            "limit": limit_val,
+            "offset": offset_val,
+            "error": str(e),
+        }
+
+
+@method(
+    "miner.getInstantBlockStats",
+    desc="Get statistics about instant blocks in the chain",
+)
+def miner_get_instant_block_stats() -> Dict[str, Any]:
+    """
+    Get statistics about instant blocks.
+    
+    Returns:
+        dict: {
+            "enabled": bool,  # Whether instant blocks are enabled
+            "totalBlocks": int,  # Total number of blocks in chain
+            "canonicalHeight": int,  # Canonical height (excluding instant blocks)
+            "instantBlockCount": int,  # Number of instant blocks (totalBlocks - canonicalHeight)
+            "instantBlockRatio": float,  # Ratio of instant blocks to total blocks
+        }
+    """
+    try:
+        ctx = _ctx()
+        block_db = ctx.block_db
+        
+        # Get current heights
+        try:
+            head = ctx.get_head()
+            total_height = int(head.get("height") or 0)
+        except Exception:
+            total_height = 0
+        
+        try:
+            canonical_height = block_db.get_canonical_height()
+        except Exception:
+            canonical_height = total_height
+        
+        instant_block_count = max(0, total_height - canonical_height)
+        instant_block_ratio = instant_block_count / total_height if total_height > 0 else 0.0
+        
+        return {
+            "enabled": _INSTANT_BLOCKS_ENABLED,
+            "totalBlocks": total_height,
+            "canonicalHeight": canonical_height,
+            "instantBlockCount": instant_block_count,
+            "instantBlockRatio": round(instant_block_ratio, 4),
+        }
+        
+    except Exception as e:
+        log.error(f"Failed to get instant block stats: {e}", exc_info=True)
+        return {
+            "enabled": _INSTANT_BLOCKS_ENABLED,
+            "totalBlocks": 0,
+            "canonicalHeight": 0,
+            "instantBlockCount": 0,
+            "instantBlockRatio": 0.0,
+            "error": str(e),
+        }
