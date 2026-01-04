@@ -366,12 +366,26 @@ def _get_chain_identity(
     attempts: list[str] = []
     rpc_reachable = True
 
+    def _normalize_identity(raw: dict[str, Any]) -> dict[str, Any] | None:
+        if not isinstance(raw, dict):
+            return None
+        chain_id = _coerce_int(raw.get("chainId") or raw.get("chain_id"))
+        if chain_id is None:
+            return None
+        fork_id = _coerce_int(raw.get("forkId") or raw.get("fork_id"))
+        normalized = dict(raw)
+        normalized["chainId"] = chain_id
+        if fork_id is not None:
+            normalized["forkId"] = fork_id
+        return normalized
+
     try:
         ident = _rpc(rpc_url, "chain.getChainIdentity", [])
-        if isinstance(ident, dict) and _coerce_int(ident.get("chainId")) is not None:
+        normalized = _normalize_identity(ident) if isinstance(ident, dict) else None
+        if normalized is not None:
             attempts.append("chain.getChainIdentity -> success")
             return ChainIdentityResolution(
-                identity=ident,
+                identity=normalized,
                 source="rpc:chain.getChainIdentity",
                 rpc_reachable=True,
                 attempts=attempts,
@@ -1162,7 +1176,7 @@ def send(
         raise typer.Exit(code=1) from exc
     chain_identity = chain_resolution.identity
     cid = int(chain_id) if chain_id is not None else int(chain_identity.get("chainId"))
-    fork_id = chain_identity.get("forkId")
+    fork_id = _coerce_int(chain_identity.get("forkId") or chain_identity.get("fork_id"))
     if chain_resolution.source != "rpc:chain.getChainIdentity":
         console.print(
             f"[yellow]RPC chain identity unavailable; using chainId={cid} "
