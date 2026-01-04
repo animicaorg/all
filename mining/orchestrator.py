@@ -34,6 +34,7 @@ import os
 import signal
 import time
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Optional
 
 JSON = Dict[str, Any]
@@ -62,6 +63,14 @@ except Exception:
     MINER_SUBMIT_LATENCY_SEC = _Counter()
     MINER_ACTIVE_TEMPLATE_AGE_SEC = _Counter()
     MINER_SCANNER_HASHRATE_ABS = _Counter()
+
+
+# --------------------------- Work Sources ---------------------------
+
+
+class WorkSource(str, Enum):
+    POOL_GETWORK = "pool_getwork"
+    SOLO_TEMPLATE = "solo_template"
 
 
 # --------------------------- Adapters (duck-typed) ---------------------------
@@ -176,6 +185,30 @@ class TemplateFeeder:
             return await _maybe_await(self._provider, "refresh")
         return await self._get_current()
 
+    def _template_identity(self, tpl: JSON) -> tuple[str, str] | None:
+        work_source = str(
+            tpl.get("workSource") or tpl.get("work_source") or WorkSource.POOL_GETWORK.value
+        )
+        if work_source == WorkSource.SOLO_TEMPLATE.value:
+            template_id = (
+                tpl.get("templateId")
+                or tpl.get("template_id")
+                or tpl.get("parentHash")
+                or tpl.get("parent")
+            )
+            if isinstance(template_id, dict):
+                template_id = template_id.get("hash") or template_id.get("height")
+            if template_id:
+                return work_source, str(template_id)
+            return None
+
+        job_id = str(
+            tpl.get("jobId") or tpl.get("job_id") or tpl.get("headerHash") or ""
+        )
+        if job_id:
+            return work_source, job_id
+        return None
+
     def __aiter__(self) -> AsyncIterator[JSON]:
         return self._iter()
 
@@ -184,19 +217,15 @@ class TemplateFeeder:
             try:
                 tpl = await self._refresh()
                 if tpl and isinstance(tpl, dict):
-                    job_id = str(
-                        tpl.get("jobId")
-                        or tpl.get("job_id")
-                        or tpl.get("headerHash")
-                        or ""
-                    )
-                    if not job_id:
+                    ident = self._template_identity(tpl)
+                    if ident is None:
                         self._warn_throttled(
-                            "missing-job-id",
-                            "TemplateFeeder received template without jobId; pausing refresh",
+                            "missing-template-id",
+                            "TemplateFeeder received template without jobId/templateId; pausing refresh",
                         )
                         await self._sleep_with_backoff()
                         continue
+                    work_source, job_id = ident
                     self._failures = 0
                     # Detect changes
                     if job_id and job_id != self._last_job_id:
@@ -353,6 +382,14 @@ class SubmitPipe:
                 "invalid-share-shape", "Dropping share with unexpected shape"
             )
             return
+        work_source = str(
+            share.get("workSource")
+            or share.get("work_source")
+            or WorkSource.POOL_GETWORK.value
+        )
+        if work_source == WorkSource.SOLO_TEMPLATE.value:
+            await self._submit_block(share)
+            return
         job_id = share.get("jobId") or share.get("job_id") or share.get("job")
         if not job_id:
             self._warn_throttled("missing-job-id", "Dropping share without jobId")
@@ -403,6 +440,83 @@ class SubmitPipe:
         if now - last >= 10.0:
             self._warned_at[key] = now
             log.warning(message, *args)
+
+    async def _submit_block(self, share: JSON) -> None:
+        header = share.get("header")
+        nonce = share.get("nonce")
+        if not isinstance(header, dict) or nonce is None:
+            self._warn_throttled(
+                "missing-block-fields",
+                "Dropping solo block without header/nonce",
+            )
+            return
+        block = self._build_block_payload(share, header, nonce)
+        if not block:
+            return
+        backoff = self._b0
+        while True:
+            t0 = time.perf_counter()
+            try:
+                async with self._sem:
+                    res = await _maybe_await(self._submitter, "submit_block", block)
+                dt = time.perf_counter() - t0
+                MINER_SUBMIT_LATENCY_SEC.observe(dt)  # type: ignore
+                if res.get("accepted"):
+                    MINER_SUBMIT_OK.inc()  # type: ignore
+                else:
+                    MINER_SUBMIT_REJECT.inc()  # type: ignore
+                    reason = res.get("reason", "unknown")
+                    log.info("Block rejected: %s", reason)
+                return
+            except Exception as e:
+                dt = time.perf_counter() - t0
+                MINER_SUBMIT_LATENCY_SEC.observe(dt)  # type: ignore
+                log.warning("Block submit failed (%s). Retrying in %.2fs", e, backoff)
+                await asyncio.sleep(backoff)
+                backoff = min(self._bmax, backoff * 2.0)
+
+    def _build_block_payload(
+        self, share: JSON, header: JSON, nonce: Any
+    ) -> Optional[JSON]:
+        try:
+            header_payload = dict(header)
+        except Exception:
+            self._warn_throttled(
+                "invalid-header", "Dropping solo block with invalid header"
+            )
+            return None
+        try:
+            header_payload["nonce"] = int(nonce)
+        except Exception:
+            self._warn_throttled(
+                "invalid-nonce", "Dropping solo block with invalid nonce"
+            )
+            return None
+        txs_raw: list[Any] = []
+        txs = share.get("txs")
+        if isinstance(txs, list):
+            for entry in txs:
+                if isinstance(entry, dict):
+                    raw = entry.get("raw")
+                    if raw is not None:
+                        txs_raw.append(raw)
+                else:
+                    txs_raw.append(entry)
+        proofs = share.get("proofs")
+        if not isinstance(proofs, list):
+            proofs = []
+        block: JSON = {
+            "header": header_payload,
+            "txs": txs_raw,
+            "proofs": proofs,
+        }
+        template_id = share.get("templateId") or share.get("template_id")
+        if template_id:
+            block["templateId"] = template_id
+        parent_hash = share.get("parentHash") or header_payload.get("parentHash")
+        if parent_hash:
+            block["parentHash"] = parent_hash
+        return block
 
 
 # --------------------------- Workers (optional) ---------------------------
