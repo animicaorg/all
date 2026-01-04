@@ -754,6 +754,24 @@ async def debug_status() -> dict[str, t.Any]:
     return {"error": P2P_UNAVAILABLE_ERROR}
 
 
+def _get_tx_relay_service(p2p_svc: t.Any) -> t.Any | None:
+    """Helper to get TX relay service from P2P service."""
+    if p2p_svc is None:
+        return None
+    relay_svc = getattr(p2p_svc, "tx_relay_service", None)
+    if relay_svc is None:
+        relay_svc = getattr(p2p_svc, "_tx_relay", None)
+    return relay_svc
+
+
+def _get_seeds_from_env() -> list[str]:
+    """Helper to extract seeds from ANIMICA_P2P_SEEDS environment variable."""
+    seeds_env = os.getenv("ANIMICA_P2P_SEEDS", "")
+    if seeds_env:
+        return [s.strip() for s in seeds_env.split(",") if s.strip()]
+    return []
+
+
 @method(
     "debug_p2p_status",
     desc="Return comprehensive P2P status with TX relay information for diagnostics",
@@ -837,7 +855,6 @@ async def debug_p2p_status() -> dict[str, t.Any]:
                         pass
         
         # Check relay flags from config/env
-        import os
         tx_relay_env_enabled = os.getenv("ANIMICA_P2P_TX_RELAY", "").lower() in ("1", "true", "yes", "on")
         tx_relay_info["relay_flags"] = {
             "inv": tx_relay_env_enabled,
@@ -863,11 +880,8 @@ async def debug_p2p_status() -> dict[str, t.Any]:
         }
         peers_with_caps.append(peer_entry)
     
-    # Extract seeds from env if available
-    seeds_list = []
-    seeds_env = os.getenv("ANIMICA_P2P_SEEDS", "")
-    if seeds_env:
-        seeds_list = [s.strip() for s in seeds_env.split(",") if s.strip()]
+    # Extract seeds from env
+    seeds_list = _get_seeds_from_env()
     
     # Merge results
     result = {
@@ -926,10 +940,8 @@ async def debug_tx_relay_metrics() -> dict[str, t.Any]:
     }
     
     if p2p_svc is not None:
-        # Try to get metrics from TX relay service
-        relay_svc = getattr(p2p_svc, "tx_relay_service", None)
-        if relay_svc is None:
-            relay_svc = getattr(p2p_svc, "_tx_relay", None)
+        # Try to get metrics from TX relay service using helper
+        relay_svc = _get_tx_relay_service(p2p_svc)
         
         if relay_svc is not None:
             # Try to get metrics via metrics() method first
@@ -942,16 +954,21 @@ async def debug_tx_relay_metrics() -> dict[str, t.Any]:
                     pass
             
             # Try direct attribute access for counters (these override method results if present)
-            metrics["inv_sent"] = getattr(relay_svc, "_inv_sent", metrics["inv_sent"])
-            metrics["inv_recv"] = getattr(relay_svc, "_inv_recv", metrics["inv_recv"])
-            metrics["get_sent"] = getattr(relay_svc, "_get_sent", metrics["get_sent"])
-            metrics["get_recv"] = getattr(relay_svc, "_get_recv", metrics["get_recv"])
-            metrics["push_sent"] = getattr(relay_svc, "_push_sent", metrics["push_sent"])
-            metrics["push_recv"] = getattr(relay_svc, "_push_recv", metrics["push_recv"])
-            metrics["accepted_total"] = getattr(relay_svc, "_accepted_total", metrics["accepted_total"])
-            metrics["rejected_total"] = getattr(relay_svc, "_rejected_total", metrics["rejected_total"])
-            metrics["last_inv_at"] = getattr(relay_svc, "_last_inv_at", metrics["last_inv_at"])
-            metrics["last_push_at"] = getattr(relay_svc, "_last_push_at", metrics["last_push_at"])
+            # Map of metric name to attribute name
+            metric_attrs = {
+                "inv_sent": "_inv_sent",
+                "inv_recv": "_inv_recv",
+                "get_sent": "_get_sent",
+                "get_recv": "_get_recv",
+                "push_sent": "_push_sent",
+                "push_recv": "_push_recv",
+                "accepted_total": "_accepted_total",
+                "rejected_total": "_rejected_total",
+                "last_inv_at": "_last_inv_at",
+                "last_push_at": "_last_push_at",
+            }
+            for metric_key, attr_name in metric_attrs.items():
+                metrics[metric_key] = getattr(relay_svc, attr_name, metrics[metric_key])
     
     return metrics
 

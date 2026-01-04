@@ -3308,8 +3308,8 @@ def miner_get_work(params: Any | None = None) -> Dict[str, Any]:
         "head_generation": head_snapshot.get("generation"),
     }
 
-    # Check mempool status for diagnostic compatibility
-    # The include_mempool param in payload is for compatibility with miner.getBlockTemplate
+    # Check mempool status for diagnostic compatibility with diagnose_tx_propagation.py
+    # The diagnostic script passes include_mempool param to verify mining includes mempool txs
     include_mempool_requested = True  # Default to True
     if payload:
         include_mempool_requested = bool(
@@ -3317,6 +3317,8 @@ def miner_get_work(params: Any | None = None) -> Dict[str, Any]:
         )
     
     # Get mempool transaction count if service is available
+    # Note: miner.getWork returns a header template without actual tx inclusion,
+    # but we report mempool status for diagnostic purposes
     tx_count = 0
     mempool_service = _resolve_mempool_service(_ctx())
     if mempool_service is not None and include_mempool_requested:
