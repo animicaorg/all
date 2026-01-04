@@ -755,6 +755,202 @@ async def debug_status() -> dict[str, t.Any]:
 
 
 @method(
+    "debug_p2p_status",
+    desc="Return comprehensive P2P status with TX relay information for diagnostics",
+    aliases=("debug.p2pStatus",),
+)
+async def debug_p2p_status() -> dict[str, t.Any]:
+    """
+    Return comprehensive P2P status including TX relay capabilities.
+    
+    Used by diagnose_tx_propagation.py to check P2P and TX relay configuration.
+    
+    Returns:
+        dict with fields:
+            - p2p_running: bool
+            - listen_addrs: list[str]
+            - seeds: list[str]
+            - peers_total: int
+            - inbound: int (alias for peers_inbound)
+            - outbound: int (alias for peers_outbound)
+            - peer_list: list[dict] with id, addr, last_seen, height fields
+            - tx_relay: dict with enabled, relay_flags, queue_depth, inflight_requests, seen_inv
+            - tx_relay_v2: dict with inflight (TxRelayService metrics)
+            - peers: list[dict] with handshake_complete, chain_match, relay_caps fields
+    """
+    # Get base P2P status
+    base_status = await get_status()
+    
+    # Get peer list with extended info
+    peers_list = await list_peers()
+    
+    # Build peer_list for diagnostic with extended fields
+    peer_list_for_diag = []
+    for peer in peers_list:
+        peer_entry = {
+            "id": peer.get("id", "unknown"),
+            "addr": peer.get("addr", ""),
+            "last_seen": peer.get("lastSeen"),
+            "height": peer.get("height"),
+        }
+        peer_list_for_diag.append(peer_entry)
+    
+    # Get TX relay status from P2P service
+    p2p_svc = _get_p2p_service()
+    tx_relay_info: dict[str, t.Any] = {
+        "enabled": False,
+        "relay_flags": {},
+        "queue_depth": 0,
+        "inflight_requests": 0,
+        "seen_inv": 0,
+    }
+    tx_relay_v2_info: dict[str, t.Any] = {
+        "inflight": 0,
+    }
+    
+    if p2p_svc is not None:
+        # Try to get TX relay status
+        if hasattr(p2p_svc, "tx_relay_enabled") and callable(p2p_svc.tx_relay_enabled):
+            try:
+                tx_relay_info["enabled"] = p2p_svc.tx_relay_enabled()
+            except Exception:
+                pass
+        elif hasattr(p2p_svc, "tx_relay_enabled"):
+            tx_relay_info["enabled"] = bool(getattr(p2p_svc, "tx_relay_enabled", False))
+        
+        # Try to get relay service stats
+        if hasattr(p2p_svc, "tx_relay_service") or hasattr(p2p_svc, "_tx_relay"):
+            relay_svc = getattr(p2p_svc, "tx_relay_service", None) or getattr(p2p_svc, "_tx_relay", None)
+            if relay_svc is not None:
+                tx_relay_info["enabled"] = True
+                
+                # Get stats from TxRelayService
+                if hasattr(relay_svc, "stats"):
+                    try:
+                        stats = relay_svc.stats()
+                        if isinstance(stats, dict):
+                            tx_relay_info["queue_depth"] = stats.get("queue_depth", 0)
+                            tx_relay_info["inflight_requests"] = stats.get("inflight_requests", 0)
+                            tx_relay_info["seen_inv"] = stats.get("seen_inv", 0)
+                            tx_relay_v2_info["inflight"] = stats.get("inflight", 0)
+                    except Exception:
+                        pass
+        
+        # Check relay flags from config/env
+        import os
+        tx_relay_info["relay_flags"] = {
+            "inv": os.getenv("ANIMICA_P2P_TX_RELAY", "").lower() in ("1", "true", "yes", "on"),
+            "get": os.getenv("ANIMICA_P2P_TX_RELAY", "").lower() in ("1", "true", "yes", "on"),
+            "push": os.getenv("ANIMICA_P2P_TX_RELAY", "").lower() in ("1", "true", "yes", "on"),
+        }
+    
+    # Build peers list with extended relay capability info
+    peers_with_caps = []
+    for peer in peers_list:
+        peer_entry = {
+            "remote": peer.get("addr", ""),
+            "handshake_complete": peer.get("status") == "connected",
+            "chain_match": True,  # Assume true if connected
+            "relay_caps": {
+                "txs": tx_relay_info["enabled"],  # Assume same as local config
+            },
+        }
+        peers_with_caps.append(peer_entry)
+    
+    # Merge results
+    result = {
+        "p2p_running": base_status.get("p2p_running", False),
+        "listen_addrs": base_status.get("listen_addrs", []),
+        "seeds": [],  # TODO: extract from config if needed
+        "peers_total": base_status.get("peers_total", 0),
+        "inbound": base_status.get("peers_inbound", 0),
+        "outbound": base_status.get("peers_outbound", 0),
+        "peer_list": peer_list_for_diag,
+        "tx_relay": tx_relay_info,
+        "tx_relay_v2": tx_relay_v2_info,
+        "peers": peers_with_caps,
+    }
+    
+    return result
+
+
+@method(
+    "debug_tx_relay_metrics",
+    desc="Return TX relay activity metrics for diagnostics",
+    aliases=("debug.txRelayMetrics",),
+)
+async def debug_tx_relay_metrics() -> dict[str, t.Any]:
+    """
+    Return TX relay activity metrics.
+    
+    Used by diagnose_tx_propagation.py to check TX relay activity.
+    
+    Returns:
+        dict with fields:
+            - inv_sent: int
+            - inv_recv: int
+            - get_sent: int
+            - get_recv: int
+            - push_sent: int
+            - push_recv: int
+            - accepted_total: int
+            - rejected_total: int
+            - last_inv_at: float | None
+            - last_push_at: float | None
+    """
+    p2p_svc = _get_p2p_service()
+    
+    metrics = {
+        "inv_sent": 0,
+        "inv_recv": 0,
+        "get_sent": 0,
+        "get_recv": 0,
+        "push_sent": 0,
+        "push_recv": 0,
+        "accepted_total": 0,
+        "rejected_total": 0,
+        "last_inv_at": None,
+        "last_push_at": None,
+    }
+    
+    if p2p_svc is not None:
+        # Try to get metrics from TX relay service
+        if hasattr(p2p_svc, "tx_relay_service") or hasattr(p2p_svc, "_tx_relay"):
+            relay_svc = getattr(p2p_svc, "tx_relay_service", None) or getattr(p2p_svc, "_tx_relay", None)
+            if relay_svc is not None and hasattr(relay_svc, "metrics"):
+                try:
+                    svc_metrics = relay_svc.metrics()
+                    if isinstance(svc_metrics, dict):
+                        metrics.update(svc_metrics)
+                except Exception:
+                    pass
+            
+            # Try direct attribute access for counters
+            if hasattr(relay_svc, "_inv_sent"):
+                metrics["inv_sent"] = getattr(relay_svc, "_inv_sent", 0)
+            if hasattr(relay_svc, "_inv_recv"):
+                metrics["inv_recv"] = getattr(relay_svc, "_inv_recv", 0)
+            if hasattr(relay_svc, "_get_sent"):
+                metrics["get_sent"] = getattr(relay_svc, "_get_sent", 0)
+            if hasattr(relay_svc, "_get_recv"):
+                metrics["get_recv"] = getattr(relay_svc, "_get_recv", 0)
+            if hasattr(relay_svc, "_push_sent"):
+                metrics["push_sent"] = getattr(relay_svc, "_push_sent", 0)
+            if hasattr(relay_svc, "_push_recv"):
+                metrics["push_recv"] = getattr(relay_svc, "_push_recv", 0)
+            if hasattr(relay_svc, "_accepted_total"):
+                metrics["accepted_total"] = getattr(relay_svc, "_accepted_total", 0)
+            if hasattr(relay_svc, "_rejected_total"):
+                metrics["rejected_total"] = getattr(relay_svc, "_rejected_total", 0)
+            if hasattr(relay_svc, "_last_inv_at"):
+                metrics["last_inv_at"] = getattr(relay_svc, "_last_inv_at", None)
+            if hasattr(relay_svc, "_last_push_at"):
+                metrics["last_push_at"] = getattr(relay_svc, "_last_push_at", None)
+    
+    return metrics
+
+
+@method(
     "p2p.importPeerKnownTxs",
     desc="Fetch peer-known transaction IDs and admit missing transactions to the local mempool.",
 )
@@ -1232,6 +1428,8 @@ __all__ = [
     "get_status",
     "sync_debug",
     "debug_status",
+    "debug_p2p_status",
+    "debug_tx_relay_metrics",
     "add_peer",
     "remove_peer",
     "get_peer_info",
