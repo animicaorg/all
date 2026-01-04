@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -9,9 +10,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
-from core.utils.hash import sha3_256
-from core.utils.tx import normalize_tx_bytes
 from rpc import deps
+from mempool.tx_hash import normalized_tx_bytes, tx_hash_hex as _tx_hash_hex
+from core.utils.address_codec import account_key_from_pubkey, account_key_from_raw, AccountKeyError
 from mempool.config import MempoolConfig, load_config as load_mempool_config
 from mempool.errors import (
     AdmissionError,
@@ -73,7 +74,48 @@ def _tx_body(tx: Any) -> Optional[dict]:
     return tx
 
 
-def _sender_bytes(tx: Any) -> Optional[bytes]:
+def _sender_from_signature(tx: Any) -> Optional[bytes]:
+    sig = None
+    if hasattr(tx, "sigs"):
+        sigs = getattr(tx, "sigs", None)
+        if isinstance(sigs, (list, tuple)) and sigs:
+            sig = sigs[0]
+    if sig is None and isinstance(tx, dict):
+        sigs = tx.get("sigs")
+        if isinstance(sigs, list) and sigs:
+            sig = sigs[0]
+        elif "sig" in tx:
+            sig = tx.get("sig")
+        elif "signature" in tx:
+            sig = tx.get("signature")
+
+    if sig is None:
+        return None
+
+    if isinstance(sig, dict):
+        alg_id = sig.get("alg") or sig.get("alg_id") or sig.get("algId")
+        pubkey = sig.get("pubkey") or sig.get("pub") or sig.get("pk")
+    else:
+        alg_id = getattr(sig, "alg_id", getattr(sig, "alg", None))
+        pubkey = getattr(sig, "pubkey", getattr(sig, "pub", None))
+
+    if pubkey is None:
+        return None
+    if isinstance(pubkey, str):
+        if pubkey.startswith("0x"):
+            try:
+                pubkey = bytes.fromhex(pubkey[2:])
+            except ValueError:
+                return None
+        else:
+            return None
+    try:
+        return account_key_from_pubkey(bytes(pubkey), int(alg_id) if alg_id is not None else None)
+    except (AccountKeyError, ValueError, TypeError):
+        return None
+
+
+def _sender_from_payload(tx: Any) -> Optional[bytes]:
     sender = None
 
     # Handle dict envelope with "body"/"tx" key (CLI/SDK format)
@@ -99,7 +141,10 @@ def _sender_bytes(tx: Any) -> Optional[bytes]:
                 return None
         return None
     if isinstance(sender, (bytes, bytearray)):
-        return bytes(sender)
+        try:
+            return account_key_from_raw(bytes(sender))
+        except AccountKeyError:
+            return None
     return None
 
 
@@ -555,9 +600,13 @@ class MempoolService:
         origin_peer: str | None = None,
     ) -> str:
         try:
-            raw_bytes = normalize_tx_bytes(raw)
+            raw_bytes = normalized_tx_bytes(raw)
         except Exception as exc:
-            tx_hash_hex = tx_hash_hex or "0x" + sha3_256(bytes(raw)).hex()
+            if tx_hash_hex is None:
+                try:
+                    tx_hash_hex = _tx_hash_hex(bytes(raw))
+                except Exception:
+                    tx_hash_hex = "0x" + hashlib.sha3_256(bytes(raw)).hexdigest()
             self._record_rejection(
                 tx_hash_hex,
                 "decode_error",
@@ -569,10 +618,10 @@ class MempoolService:
             ) from exc
 
         if tx_hash_hex is None:
-            tx_hash_hex = "0x" + sha3_256(raw_bytes).hex()
+            tx_hash_hex = _tx_hash_hex(raw_bytes)
         tx_hash_hex = _normalize_hash_hex(tx_hash_hex)
         tx_hash_bytes = _normalize_hash_bytes(tx_hash_hex)
-        expected_hash = "0x" + sha3_256(raw_bytes).hex()
+        expected_hash = _tx_hash_hex(raw_bytes)
         if tx_hash_hex != expected_hash:
             self._record_rejection(
                 tx_hash_hex,
@@ -592,7 +641,7 @@ class MempoolService:
 
         if isinstance(tx, dict):
             try:
-                raw_from_dict = normalize_tx_bytes(tx)
+                raw_from_dict = normalized_tx_bytes(tx)
             except Exception as exc:
                 self._record_rejection(
                     tx_hash_hex,
@@ -644,7 +693,19 @@ class MempoolService:
                 context={"tx_hash": tx_hash_hex, "chain_id": chain_id},
             )
 
-        sender = _sender_bytes(tx)
+        sender_sig = _sender_from_signature(tx)
+        sender_payload = _sender_from_payload(tx)
+        sender = sender_sig or sender_payload
+        if sender_sig is not None and sender_payload is not None and sender_sig != sender_payload:
+            self._record_rejection(
+                tx_hash_hex,
+                "sender_mismatch",
+                {"sig_sender": _sender_hex(sender_sig), "payload_sender": _sender_hex(sender_payload)},
+            )
+            raise AdmissionError(
+                "sender mismatch between signature and payload",
+                context={"tx_hash": tx_hash_hex},
+            )
         if sender is None:
             self._record_rejection(
                 tx_hash_hex,
@@ -999,6 +1060,44 @@ class MempoolService:
             },
         )
         return tx_hash_hex
+
+    def submit_atomic(
+        self,
+        *,
+        tx: Any,
+        raw: bytes,
+        tx_hash_hex: str | None = None,
+        local: bool = True,
+        origin_peer: str | None = None,
+    ) -> tuple[bool, str | None, str]:
+        """
+        Atomically submit a transaction and report admission status.
+
+        Returns (accepted, reason, tx_hash_hex). On rejection, reason is a
+        short string suitable for RPC error surfaces.
+        """
+        computed_hash = tx_hash_hex
+        if computed_hash is None:
+            try:
+                computed_hash = _tx_hash_hex(raw)
+            except Exception:
+                computed_hash = "0x" + bytes(raw).hex()
+
+        try:
+            admitted_hash = self.submit(
+                tx=tx,
+                raw=raw,
+                tx_hash_hex=computed_hash,
+                local=local,
+                origin_peer=origin_peer,
+            )
+        except Exception as exc:
+            return False, str(exc), computed_hash
+
+        if not self.has_hash(admitted_hash):
+            return False, "pool_missing", admitted_hash
+
+        return True, None, admitted_hash
 
     def snapshot(self, *, limit: int = 1000) -> MempoolSnapshot:
         raw_by_hash: dict[str, bytes] = {}
