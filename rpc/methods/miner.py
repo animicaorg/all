@@ -4924,7 +4924,8 @@ def miner_list_instant_blocks(
         except Exception:
             current_height = 0
         
-        # Get canonical height once before scanning (it's the same for all blocks)
+        # Get the current canonical height (chain height excluding instant blocks)
+        # This value is constant across all blocks being scanned, so retrieve it once
         try:
             canonical_height = block_db.get_canonical_height()
         except Exception:
@@ -5043,7 +5044,10 @@ def miner_get_instant_block_stats() -> Dict[str, Any]:
         except Exception:
             canonical_height = total_height
         
-        # Instant block count = total blocks - canonical blocks
+        # Calculate instant block count
+        # By design: total_height increments for every block (normal + instant)
+        #            canonical_height increments only for normal blocks
+        # Therefore: instant_block_count = total_height - canonical_height
         instant_block_count = max(0, total_height - canonical_height)
         instant_block_ratio = instant_block_count / total_height if total_height > 0 else 0.0
         
