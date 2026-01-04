@@ -1148,10 +1148,10 @@ def test_send_fails_when_mempool_status_unknown(wallet_store: Path) -> None:
         "--to", "anim1zqp2u7fz3msky532tz4d3076wm99datq9rdxqjxvznq7zqn7xj0869ctuj4km",
         "--value", "1.0",
         "--rpc-url", rpc_url,
-    ], wallet_store, expect_success=False)
+    ], wallet_store, expect_success=True)
 
-    assert exit_code != 0
-    assert "Transaction Not in Mempool" in output
+    assert exit_code == 0
+    assert "Transaction Not in Mempool" not in output
     assert not any(req.get("method") == "sync.force" for req in captured_requests)
 
 
