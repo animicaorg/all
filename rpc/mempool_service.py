@@ -869,74 +869,77 @@ class MempoolService:
                 )
 
             nonce = normalized_env.get("nonce")
-            if nonce is None:
-                self._record_rejection(
-                    tx_hash_hex,
-                    "missing_nonce",
-                    {"sender": sender_hex},
-                )
-                raise AdmissionError(
-                    "missing nonce",
-                    context={"tx_hash": tx_hash_hex, "sender": sender_hex},
-                )
+            if tx_version == 1:
+                if nonce is None:
+                    self._record_rejection(
+                        tx_hash_hex,
+                        "missing_nonce",
+                        {"sender": sender_hex},
+                    )
+                    raise AdmissionError(
+                        "missing nonce",
+                        context={"tx_hash": tx_hash_hex, "sender": sender_hex},
+                    )
 
-            confirmed_nonce = self._confirmed_nonce(sender)
-            expected_nonce = self.get_next_nonce(sender, confirmed_nonce or 0)
-            pending_by_nonce = self._pending_by_nonce(sender_hex)
-            if nonce in pending_by_nonce:
-                existing_hash = pending_by_nonce[nonce]
-                if existing_hash == tx_hash_hex:
-                    return tx_hash_hex
-                self._record_rejection(
-                    tx_hash_hex,
-                    "replacement_unsupported",
-                    {
-                        "sender": sender_hex,
-                        "nonce": int(nonce),
-                        "existing_tx_hash": existing_hash,
-                        "expected_nonce": expected_nonce,
-                    },
-                )
-                raise ReplacementUnsupported(
-                    sender=sender_hex,
-                    nonce=int(nonce),
-                    tx_hash_new=tx_hash_hex,
-                    tx_hash_old=existing_hash,
-                )
+                confirmed_nonce = self._confirmed_nonce(sender)
+                expected_nonce = self.get_next_nonce(sender, confirmed_nonce or 0)
+                pending_by_nonce = self._pending_by_nonce(sender_hex)
+                if nonce in pending_by_nonce:
+                    existing_hash = pending_by_nonce[nonce]
+                    if existing_hash == tx_hash_hex:
+                        return tx_hash_hex
+                    self._record_rejection(
+                        tx_hash_hex,
+                        "replacement_unsupported",
+                        {
+                            "sender": sender_hex,
+                            "nonce": int(nonce),
+                            "existing_tx_hash": existing_hash,
+                            "expected_nonce": expected_nonce,
+                        },
+                    )
+                    raise ReplacementUnsupported(
+                        sender=sender_hex,
+                        nonce=int(nonce),
+                        tx_hash_new=tx_hash_hex,
+                        tx_hash_old=existing_hash,
+                    )
 
-            if nonce < expected_nonce:
-                self._record_rejection(
-                    tx_hash_hex,
-                    "nonce_too_low",
-                    {
-                        "expected": expected_nonce,
-                        "got": int(nonce),
-                        "confirmed": confirmed_nonce,
-                    },
-                )
-                raise NonceTooLow(
-                    expected_nonce=int(expected_nonce),
-                    got_nonce=int(nonce),
-                    sender=sender_hex,
-                    tx_hash=tx_hash_hex,
-                )
+                if nonce < expected_nonce:
+                    self._record_rejection(
+                        tx_hash_hex,
+                        "nonce_too_low",
+                        {
+                            "expected": expected_nonce,
+                            "got": int(nonce),
+                            "confirmed": confirmed_nonce,
+                        },
+                    )
+                    raise NonceTooLow(
+                        expected_nonce=int(expected_nonce),
+                        got_nonce=int(nonce),
+                        sender=sender_hex,
+                        tx_hash=tx_hash_hex,
+                    )
 
-            if nonce > expected_nonce:
-                self._record_rejection(
-                    tx_hash_hex,
-                    "nonce_gap",
-                    {
-                        "expected": expected_nonce,
-                        "got": int(nonce),
-                        "confirmed": confirmed_nonce,
-                    },
-                )
-                raise NonceGap(
-                    expected_nonce=int(expected_nonce),
-                    got_nonce=int(nonce),
-                    sender=sender_hex,
-                    tx_hash=tx_hash_hex,
-                )
+                if nonce > expected_nonce:
+                    self._record_rejection(
+                        tx_hash_hex,
+                        "nonce_gap",
+                        {
+                            "expected": expected_nonce,
+                            "got": int(nonce),
+                            "confirmed": confirmed_nonce,
+                        },
+                    )
+                    raise NonceGap(
+                        expected_nonce=int(expected_nonce),
+                        got_nonce=int(nonce),
+                        sender=sender_hex,
+                        tx_hash=tx_hash_hex,
+                    )
+            else:
+                nonce = None
 
             if tx_version == 2 and valid_after is not None and valid_until is not None:
                 max_ttl_blocks = int(os.getenv("ANIMICA_MAX_TX_TTL_BLOCKS", "200") or 200)
@@ -1068,7 +1071,7 @@ class MempoolService:
 
             meta = TxMeta(
                 sender=sender_hex,
-                nonce=int(nonce),
+                nonce=int(nonce) if nonce is not None else None,
                 gas_limit=gas_limit,
                 size_bytes=len(raw_bytes),
                 first_seen=time.time(),

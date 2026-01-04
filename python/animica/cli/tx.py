@@ -944,7 +944,7 @@ def _build_tx_body(
     salt: bytes,
 ) -> Dict[str, Any]:
     # Keep keys stable + canonical CBOR in _cbor().
-    # IMPORTANT: do not omit fields; node-side canonicalization often assumes presence.
+    # NOTE: v2 tx bodies omit nonce; validity window + salt are required instead.
     # Convert addresses to canonical 32-byte format (digest bytes, not bech32 strings)
     from_bytes = _address_to_32_bytes(from_addr)
     to_bytes = _address_to_32_bytes(to_addr)
@@ -953,7 +953,6 @@ def _build_tx_body(
         "to": to_bytes,
         "from": from_bytes,
         "value": int(value_base_units),
-        "nonce": int(nonce),
         "gasLimit": int(gas_limit),
         "maxFee": int(max_fee),
         "data": data,        # CBOR bstr

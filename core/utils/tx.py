@@ -182,7 +182,6 @@ def normalize_tx_body(body: Mapping[str, Any]) -> dict:
     if version == 1:
         normalized["nonce"] = int(nonce or 0)
     else:
-        normalized["nonce"] = int(nonce or 0)
         normalized["validAfter"] = int(valid_after or 0)
         normalized["validUntil"] = int(valid_until or 0)
         normalized["salt"] = bytes(salt or b"")
@@ -305,24 +304,33 @@ def normalize_tx_envelope(tx_like: Any) -> dict:
             details={},
         )
 
-    nonce_val = canonical_tx.get("nonce") if isinstance(canonical_tx, Mapping) else None
-    try:
-        nonce_int = int(nonce_val) if nonce_val is not None else None
-    except Exception:
-        nonce_int = None
-    if nonce_int is None:
-        raise TxNormalizationError(
-            "missing_nonce",
-            "missing nonce",
-            details={},
-        )
+    tx_version = 1
+    if isinstance(canonical_tx, Mapping):
+        try:
+            tx_version = int(canonical_tx.get("v", 1))
+        except Exception:
+            tx_version = 1
+
+    nonce_int = None
+    if tx_version == 1:
+        nonce_val = canonical_tx.get("nonce") if isinstance(canonical_tx, Mapping) else None
+        try:
+            nonce_int = int(nonce_val) if nonce_val is not None else None
+        except Exception:
+            nonce_int = None
+        if nonce_int is None:
+            raise TxNormalizationError(
+                "missing_nonce",
+                "missing nonce",
+                details={},
+            )
 
     return {
         "tx": canonical_tx,
         "sigs": sigs,
         "hash": "0x" + computed_hash.hex(),
         "sender": "0x" + bytes(sender_bytes).hex(),
-        "nonce": nonce_int,
+        **({"nonce": nonce_int} if nonce_int is not None else {}),
         "raw": raw_canonical,
     }
 
