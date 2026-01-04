@@ -68,18 +68,29 @@ def compute_canonical_height(
 
 ## Usage
 
-### Enabling Instant Blocks
+### Instant Blocks Are Enabled by Default
 
-Set the environment variable:
+**Instant blocks are automatically enabled** in Animica mainnet, testnet, and devnet configurations. Transactions submitted via any method will create instant blocks immediately:
 
 ```bash
-export ANIMICA_INSTANT_BLOCKS_ENABLED=1
+# No configuration needed - instant blocks work by default!
+animica tx send --from <addr> --to <addr> --value 1.0
+# → Instant block created automatically with the transaction
 ```
 
-Or in configuration:
+### Disabling Instant Blocks (Optional)
 
-```python
-os.environ["ANIMICA_INSTANT_BLOCKS_ENABLED"] = "1"
+To disable instant blocks if needed:
+
+```bash
+export ANIMICA_INSTANT_BLOCKS_ENABLED=false
+```
+
+Or in Docker Compose:
+
+```yaml
+environment:
+  ANIMICA_INSTANT_BLOCKS_ENABLED: "false"
 ```
 
 ### Automatic Trigger (Recommended)

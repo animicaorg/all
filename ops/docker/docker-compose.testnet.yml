@@ -60,6 +60,8 @@ services:
       ANIMICA_RPC_PORT: "${ANIMICA_RPC_PORT:-8546}"
       ANIMICA_RPC_CORS_ORIGINS: "${ANIMICA_RPC_CORS_ORIGINS:-[*]}"
       ANIMICA_LOG_LEVEL: "${ANIMICA_LOG_LEVEL:-INFO}"
+      # Instant blocks enabled by default for immediate transaction inclusion
+      ANIMICA_INSTANT_BLOCKS_ENABLED: "${ANIMICA_INSTANT_BLOCKS_ENABLED:-true}"
       # P2P config - testnet seeds auto-selected by chain_id
       # Note: Testnet uses port 30334 (vs mainnet 30333) to allow running both networks simultaneously
       # Primary config (ANIMICA_P2P_* vars are canonical):

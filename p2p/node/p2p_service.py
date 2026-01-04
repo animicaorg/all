@@ -10090,9 +10090,9 @@ class P2PService:
             ok = bool(res[0]) if res else False
             reason = res[1] if len(res) > 1 else None
             
-            # Trigger instant block on successful tx admission from P2P
+            # Trigger instant block on successful tx admission from P2P (defaults to enabled)
             if ok and not local:
-                instant_blocks_enabled = os.environ.get("ANIMICA_INSTANT_BLOCKS_ENABLED", "").lower() in {
+                instant_blocks_enabled = os.environ.get("ANIMICA_INSTANT_BLOCKS_ENABLED", "true").lower() in {
                     "1", "true", "yes", "on"
                 }
                 if instant_blocks_enabled:
