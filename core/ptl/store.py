@@ -55,17 +55,35 @@ class PtlStore:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 txid BLOB NOT NULL,
                 peer_id TEXT NOT NULL,
+                conn_id TEXT,
                 timestamp REAL NOT NULL,
+                first_seen_ts REAL NOT NULL,
+                last_update_ts REAL NOT NULL,
                 status TEXT NOT NULL,
                 reason TEXT,
-                FOREIGN KEY (txid) REFERENCES ptl_transactions(txid) ON DELETE CASCADE
+                FOREIGN KEY (txid) REFERENCES ptl_transactions(txid) ON DELETE CASCADE,
+                UNIQUE(txid, peer_id, conn_id)
             );
 
             CREATE INDEX IF NOT EXISTS idx_receipts_txid ON ptl_receipts(txid);
+            CREATE INDEX IF NOT EXISTS idx_receipts_peer ON ptl_receipts(peer_id);
+            
+            CREATE TABLE IF NOT EXISTS ptl_quarantine (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                quarantine_ts REAL NOT NULL,
+                reason TEXT NOT NULL,
+                data TEXT
+            );
             """
         )
         conn.commit()
-        log.info("PTL store initialized", extra={"db_path": str(self.db_path)})
+        receipt_count = conn.execute("SELECT COUNT(*) FROM ptl_receipts").fetchone()[0]
+        tx_count = conn.execute("SELECT COUNT(*) FROM ptl_transactions").fetchone()[0]
+        log.info("PTL store initialized", extra={
+            "db_path": str(self.db_path),
+            "transactions": tx_count,
+            "receipts": receipt_count,
+        })
 
     def _get_conn(self) -> sqlite3.Connection:
         """Get database connection."""
@@ -146,29 +164,77 @@ class PtlStore:
         conn.commit()
         return cursor.rowcount > 0
 
-    def add_receipt(self, receipt: ReplicationReceipt) -> None:
-        """Add a replication receipt."""
+    def add_receipt(self, receipt: ReplicationReceipt, conn_id: Optional[str] = None) -> None:
+        """Add a replication receipt with deduplication.
+        
+        If a receipt from the same peer (and optional conn_id) already exists,
+        updates the existing receipt instead of creating a duplicate.
+        """
         conn = self._get_conn()
-        conn.execute(
-            """
-            INSERT INTO ptl_receipts (txid, peer_id, timestamp, status, reason)
-            VALUES (?, ?, ?, ?, ?)
-            """,
-            (
-                receipt.txid,
-                receipt.peer_id,
-                receipt.timestamp,
-                receipt.status,
-                receipt.reason,
-            ),
-        )
-        conn.commit()
+        now = time.time()
+        
+        try:
+            # Try to insert new receipt
+            conn.execute(
+                """
+                INSERT INTO ptl_receipts 
+                (txid, peer_id, conn_id, timestamp, first_seen_ts, last_update_ts, status, reason)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(txid, peer_id, conn_id) 
+                DO UPDATE SET 
+                    timestamp = excluded.timestamp,
+                    last_update_ts = excluded.last_update_ts,
+                    status = excluded.status,
+                    reason = excluded.reason
+                """,
+                (
+                    receipt.txid,
+                    receipt.peer_id,
+                    conn_id,
+                    receipt.timestamp,
+                    now,
+                    now,
+                    receipt.status,
+                    receipt.reason,
+                ),
+            )
+            conn.commit()
+            log.debug("PTL receipt added", extra={
+                "txid": receipt.txid.hex()[:16],
+                "peer": receipt.peer_id[:16],
+                "status": receipt.status,
+            })
+        except sqlite3.Error as e:
+            log.warning("Failed to add receipt, quarantining", extra={
+                "error": str(e),
+                "txid": receipt.txid.hex()[:16],
+            })
+            self._quarantine_receipt(receipt, str(e))
+    
+    def _quarantine_receipt(self, receipt: ReplicationReceipt, reason: str) -> None:
+        """Quarantine a corrupted receipt for later analysis."""
+        conn = self._get_conn()
+        try:
+            data = json.dumps({
+                "txid": receipt.txid.hex(),
+                "peer_id": receipt.peer_id,
+                "timestamp": receipt.timestamp,
+                "status": receipt.status,
+                "reason": receipt.reason,
+            })
+            conn.execute(
+                "INSERT INTO ptl_quarantine (quarantine_ts, reason, data) VALUES (?, ?, ?)",
+                (time.time(), reason, data),
+            )
+            conn.commit()
+        except Exception as e:
+            log.error("Failed to quarantine receipt", exc_info=e)
 
     def _get_receipts(self, txid: bytes) -> list[ReplicationReceipt]:
         """Get all receipts for a transaction."""
         conn = self._get_conn()
         rows = conn.execute(
-            "SELECT * FROM ptl_receipts WHERE txid = ? ORDER BY timestamp",
+            "SELECT * FROM ptl_receipts WHERE txid = ? ORDER BY first_seen_ts",
             (txid,),
         ).fetchall()
         return [
@@ -181,6 +247,37 @@ class PtlStore:
             )
             for row in rows
         ]
+    
+    def compact_receipts(self, older_than: float) -> int:
+        """Compact old receipts for finalized transactions.
+        
+        Removes old receipts for transactions that have been finalized
+        to keep the database size manageable. Only the most recent
+        receipt per peer is kept for finalized transactions.
+        """
+        conn = self._get_conn()
+        # Delete old receipts for finalized transactions (keep latest per peer)
+        cursor = conn.execute(
+            """
+            DELETE FROM ptl_receipts
+            WHERE txid IN (
+                SELECT txid FROM ptl_transactions 
+                WHERE status = ? AND finalized_height IS NOT NULL
+            )
+            AND last_update_ts < ?
+            AND id NOT IN (
+                SELECT MAX(id) FROM ptl_receipts
+                WHERE txid IN (
+                    SELECT txid FROM ptl_transactions 
+                    WHERE status = ? AND finalized_height IS NOT NULL
+                )
+                GROUP BY txid, peer_id
+            )
+            """,
+            (TxStatus.FINALIZED.value, older_than, TxStatus.FINALIZED.value),
+        )
+        conn.commit()
+        return cursor.rowcount
 
     def list_by_status(
         self, status: TxStatus, limit: int = 100, offset: int = 0
