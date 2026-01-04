@@ -8,9 +8,10 @@ This guide covers common issues when mining with Animica and how to resolve them
 
 1. [RPC Parameter Errors](#rpc-parameter-errors)
 2. [Device Selection Issues](#device-selection-issues)
-3. [Theta Adjustment and Difficulty](#theta-adjustment-and-difficulty)
-4. [Network Connectivity](#network-connectivity)
-5. [Performance Issues](#performance-issues)
+3. [Mining Rewards and Balance Accrual](#mining-rewards-and-balance-accrual)
+4. [Theta Adjustment and Difficulty](#theta-adjustment-and-difficulty)
+5. [Network Connectivity](#network-connectivity)
+6. [Performance Issues](#performance-issues)
 
 ---
 
@@ -79,6 +80,190 @@ animica miner mine-blocks --address anim1... --count 5 --device auto
 - For CPU mining: no action needed, CPU fallback works fine
 - For GPU mining: ensure GPU drivers are installed
 - Explicitly specify device: `--device cpu` to skip auto-detection
+
+---
+
+## Mining Rewards and Balance Accrual
+
+### Wallet Balance Not Increasing After Mining
+
+**Problem**: You successfully mine blocks, but your wallet balance shows 0 or doesn't increase after mining multiple blocks.
+
+**Status**: ✅ **FIXED** - Address parsing inconsistency resolved
+
+**What was the bug**:
+In earlier versions, there was an address format mismatch between mining reward application and balance queries:
+- Mining rewards were credited using **32-byte digest** keys
+- Balance queries looked up **34-byte (alg_id + digest)** keys
+- Result: Rewards were stored but couldn't be retrieved
+
+**Symptoms**:
+```bash
+# Mining appears successful
+$ animica miner mine-blocks --address anim1... --count 5
+✓ Mined 5 blocks
+✓ Total reward: 20.0 ANM
+
+# But balance shows 0 or doesn't increase
+$ animica wallet show anim1...
+Balance: 0 ANM  # ❌ Should show 20 ANM!
+```
+
+**Resolution**:
+The bug has been fixed. Both mining and balance queries now use consistent **32-byte digest** addresses.
+
+**Verification Steps**:
+
+1. **Check you're on the latest version**:
+   ```bash
+   git pull origin main
+   pip install -e . --force-reinstall
+   ```
+
+2. **Verify address format**:
+   ```bash
+   # Address must be valid Bech32 (starts with 'anim1')
+   animica wallet list
+   ```
+
+3. **Test mining and balance query**:
+   ```bash
+   # Get initial balance
+   animica wallet show anim1... --rpc-url http://127.0.0.1:8545
+   
+   # Mine blocks
+   animica miner mine-blocks --address anim1... --count 3 \
+     --rpc-url http://127.0.0.1:8545
+   
+   # Check balance again (should increase)
+   animica wallet show anim1... --rpc-url http://127.0.0.1:8545
+   ```
+
+4. **Verify via RPC directly**:
+   ```bash
+   # Query balance via RPC
+   curl -X POST http://127.0.0.1:8545/rpc \
+     -H "Content-Type: application/json" \
+     -d '{
+       "jsonrpc": "2.0",
+       "method": "state.getBalance",
+       "params": ["anim1..."],
+       "id": 1
+     }'
+   ```
+
+### Common Pitfalls
+
+**1. Wrong RPC Endpoint**
+- Mining and balance queries must use the **same node**
+- Different nodes may have different chain states
+
+**Solution**:
+```bash
+# Use explicit RPC URL for both operations
+export ANIMICA_RPC_URL="http://127.0.0.1:8545"
+animica miner mine-blocks --address anim1... --count 5
+animica wallet show anim1...
+```
+
+**2. Wallet Label vs Address Confusion**
+- Mining accepts both wallet labels and raw Bech32 addresses
+- Balance queries require the actual address
+
+**Solution**:
+```bash
+# If using a label, ensure it exists in your wallet
+animica wallet list
+
+# Or use the full Bech32 address explicitly
+animica miner mine-blocks --address anim1zqqjt... --count 5
+```
+
+**3. Chain Not Synced**
+- Mining to an unsynced node won't reflect rewards from other miners
+- Balance queries on stale state show outdated values
+
+**Solution**:
+```bash
+# Check sync status
+curl -X POST http://127.0.0.1:8545/rpc \
+  -d '{"jsonrpc":"2.0","method":"chain.getHead","params":[],"id":1}'
+
+# Wait for sync to complete before mining
+```
+
+**4. Block Not Canonical**
+- If your mined block is orphaned due to a reorg, rewards are reverted
+- This is normal blockchain behavior, not a bug
+
+**Solution**:
+- Wait for multiple confirmations before considering rewards "final"
+- Monitor chain head to detect reorgs:
+  ```bash
+  # Watch for head changes
+  watch -n 1 'curl -s http://127.0.0.1:8545/rpc \
+    -d "{\"jsonrpc\":\"2.0\",\"method\":\"chain.getHead\",\"params\":[],\"id\":1}" \
+    | jq -r ".result.height"'
+  ```
+
+### Reward Details
+
+**Block Rewards**:
+- Rewards are **immediately spendable** (no maturity lockup)
+- Account-based model (not UTXO) - balance is directly updated
+- Rewards calculated per emission schedule in `spec/params.yaml`
+
+**Typical Devnet Rewards** (as of recent updates):
+- Miner share: ~80% of total block reward
+- AICF treasury: ~10%
+- Chain treasury: ~10%
+- Example: 5 ANM total → ~4 ANM to miner
+
+**Checking Reward Details**:
+```python
+# Via Python API
+from rpc.tests import new_test_client, rpc_call
+
+client, cfg, _ = new_test_client()
+result = rpc_call(client, "miner.mine", {"count": 1, "address": "anim1..."})
+
+print(f"Mined: {result['result']['mined']} blocks")
+print(f"Height: {result['result']['height']}")
+print(f"Total reward: {result['result']['totalReward']} nANM")
+print(f"Per-block rewards: {result['result']['rewards']}")
+```
+
+### Balance vs Reward Reporting
+
+**Balance Query** (`state.getBalance`):
+- Returns **total balance** in account
+- Includes all sources: mining rewards, transfers, etc.
+- Denominated in base units (nANM): 1 ANM = 1,000,000,000 nANM
+
+**Mining Response** (`miner.mine`):
+- Returns **reward for this mining session only**
+- Does not include previous balance
+- Useful for tracking incremental rewards
+
+**Example**:
+```bash
+# Initial balance: 10 ANM
+# Mine 2 blocks with 4 ANM reward each
+
+# Mining response shows:
+{
+  "totalReward": 8000000000,  # 8 ANM from this session
+  "rewards": [
+    {"height": 101, "reward": 4000000000},
+    {"height": 102, "reward": 4000000000}
+  ]
+}
+
+# Balance query shows:
+{
+  "result": "18000000000"  # 18 ANM total (10 + 8)
+}
+```
 
 ---
 
@@ -331,6 +516,12 @@ If you encounter issues not covered here:
 ---
 
 ## Version History
+
+- **v0.2.0** (2025-01): Mining rewards and balance accrual guide
+  - Added comprehensive section on balance accrual troubleshooting
+  - Documented address parsing fix (32-byte vs 34-byte)
+  - Added common pitfalls and verification steps
+  - Clarified reward details and balance vs reward reporting
 
 - **v0.1.0** (2024-12): Initial troubleshooting guide
   - Fixed device parameter RPC error (-32602)
