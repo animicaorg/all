@@ -257,10 +257,11 @@ class TxRelayService:
     async def on_tx_inv(self, conn_id: str, txids: Iterable[bytes]) -> None:
         tx_list = list(txids)
         log.info(
-            "TXIDS_LEARNED",
+            "TX_INV_RECEIVED",
             extra={
                 "peer": conn_id,
                 "count": len(tx_list),
+                "first_3_txids": [t.hex()[:16] for t in tx_list[:3]],
                 "source": "tx_inv",
                 **self._peer_log_extra(conn_id),
             },
@@ -272,16 +273,58 @@ class TxRelayService:
                 state.known_txids.add(txid)
                 self._tx_sources.setdefault(txid, set()).add(conn_id)
                 if txid in self._inflight:
+                    log.debug(
+                        "TX_INV_SKIP_INFLIGHT",
+                        extra={
+                            "peer": conn_id,
+                            "txid": txid.hex()[:16],
+                            **self._peer_log_extra(conn_id),
+                        },
+                    )
                     continue
                 needs_check.append(txid)
+        
+        log.info(
+            "TX_INV_NEEDS_CHECK",
+            extra={
+                "peer": conn_id,
+                "needs_check_count": len(needs_check),
+                **self._peer_log_extra(conn_id),
+            },
+        )
+        
         missing: List[bytes] = []
         now = time.time()
         for txid in needs_check:
             if self._reject_recent(txid):
+                log.debug(
+                    "TX_INV_SKIP_REJECTED",
+                    extra={
+                        "peer": conn_id,
+                        "txid": txid.hex()[:16],
+                        **self._peer_log_extra(conn_id),
+                    },
+                )
                 continue
             if await self._has_tx(txid):
+                log.debug(
+                    "TX_INV_SKIP_HAVE_TX",
+                    extra={
+                        "peer": conn_id,
+                        "txid": txid.hex()[:16],
+                        **self._peer_log_extra(conn_id),
+                    },
+                )
                 continue
             if await self._has_chain_tx(txid):
+                log.debug(
+                    "TX_INV_SKIP_IN_CHAIN",
+                    extra={
+                        "peer": conn_id,
+                        "txid": txid.hex()[:16],
+                        **self._peer_log_extra(conn_id),
+                    },
+                )
                 continue
             async with self._lock:
                 if txid in self._inflight:
@@ -295,6 +338,17 @@ class TxRelayService:
                     requested_at=now,
                 )
             missing.append(txid)
+        
+        log.info(
+            "TX_INV_MISSING",
+            extra={
+                "peer": conn_id,
+                "missing_count": len(missing),
+                "first_3_missing": [t.hex()[:16] for t in missing[:3]],
+                **self._peer_log_extra(conn_id),
+            },
+        )
+        
         if missing:
             for idx in range(0, len(missing), 256):
                 batch = missing[idx : idx + 256]
@@ -304,9 +358,22 @@ class TxRelayService:
                     extra={
                         "peer": conn_id,
                         "count": len(batch),
+                        "first_3_txids": [t.hex()[:16] for t in batch[:3]],
+                        "batch_size": len(batch),
                         **self._peer_log_extra(conn_id),
                     },
                 )
+        else:
+            log.info(
+                "TX_INV_NO_MISSING",
+                extra={
+                    "peer": conn_id,
+                    "total_received": len(tx_list),
+                    "already_have": len(tx_list) - len(needs_check),
+                    "rejected": len(needs_check) - len(missing),
+                    **self._peer_log_extra(conn_id),
+                },
+            )
 
     async def on_tx_get(self, conn_id: str, txids: Iterable[bytes]) -> None:
         tx_list = list(txids)
@@ -358,13 +425,32 @@ class TxRelayService:
             )
 
     async def on_tx_data(self, conn_id: str, items: Iterable[dict[str, Any]]) -> None:
+        items_list = list(items)
+        log.info(
+            "TX_DATA_RECV_START",
+            extra={
+                "peer": conn_id,
+                "item_count": len(items_list),
+                **self._peer_log_extra(conn_id),
+            },
+        )
+        
         broadcast: List[bytes] = []
-        for item in items:
+        for item in items_list:
             txid = item.get("txid")
             raw = item.get("tx_bytes")
             if not isinstance(txid, (bytes, bytearray)) or not isinstance(
                 raw, (bytes, bytearray)
             ):
+                log.warning(
+                    "TX_DATA_INVALID_ITEM",
+                    extra={
+                        "peer": conn_id,
+                        "has_txid": isinstance(txid, (bytes, bytearray)),
+                        "has_raw": isinstance(raw, (bytes, bytearray)),
+                        **self._peer_log_extra(conn_id),
+                    },
+                )
                 continue
             txid_bytes = bytes(txid)
             raw_bytes = bytes(raw)
@@ -379,25 +465,76 @@ class TxRelayService:
                 },
             )
             if len(raw_bytes) > self.max_tx_bytes:
-                log.info(
+                log.warning(
                     "TX_REJECTED",
-                    extra={"hash": txid_bytes.hex(), "reason": "oversize"},
+                    extra={
+                        "hash": txid_bytes.hex(),
+                        "reason": "oversize",
+                        "size": len(raw_bytes),
+                        "max": self.max_tx_bytes,
+                        **self._peer_log_extra(conn_id),
+                    },
                 )
                 self._reject_remember(txid_bytes)
                 self._inflight.pop(txid_bytes, None)
                 continue
             computed = sha3_256(raw_bytes)
             if computed != txid_bytes:
-                log.info(
+                log.warning(
                     "TX_REJECTED",
-                    extra={"hash": txid_bytes.hex(), "reason": "hash_mismatch"},
+                    extra={
+                        "hash": txid_bytes.hex(),
+                        "reason": "hash_mismatch",
+                        "computed": computed.hex(),
+                        "expected": txid_bytes.hex(),
+                        **self._peer_log_extra(conn_id),
+                    },
                 )
                 self._reject_remember(txid_bytes)
                 self._inflight.pop(txid_bytes, None)
                 continue
+            
             origin_peer = self._peer_state.get(conn_id, None)
             origin_label = origin_peer.peer_node_id if origin_peer else None
-            ok, reason = await self._admit_tx(raw_bytes, origin_label or conn_id)
+            
+            log.info(
+                "TX_DATA_CALLING_ADMIT",
+                extra={
+                    "peer": conn_id,
+                    "hash": txid_bytes.hex(),
+                    "bytes": len(raw_bytes),
+                    "origin": origin_label or conn_id,
+                    **self._peer_log_extra(conn_id),
+                },
+            )
+            
+            try:
+                ok, reason = await self._admit_tx(raw_bytes, origin_label or conn_id)
+                log.info(
+                    "TX_DATA_ADMIT_RESULT",
+                    extra={
+                        "peer": conn_id,
+                        "hash": txid_bytes.hex(),
+                        "accepted": ok,
+                        "reason": reason or "none",
+                        **self._peer_log_extra(conn_id),
+                    },
+                )
+            except Exception as exc:
+                log.error(
+                    "TX_DATA_ADMIT_EXCEPTION",
+                    extra={
+                        "peer": conn_id,
+                        "hash": txid_bytes.hex(),
+                        "error": str(exc),
+                        "error_type": type(exc).__name__,
+                        **self._peer_log_extra(conn_id),
+                    },
+                    exc_info=True,
+                )
+                ok = False
+                reason = f"exception:{type(exc).__name__}"
+            
             self._inflight.pop(txid_bytes, None)
             self._mark_known(conn_id, txid_bytes)
             if ok:
@@ -413,7 +550,7 @@ class TxRelayService:
                 )
             else:
                 self._reject_remember(txid_bytes)
-                log.info(
+                log.warning(
                     "TX_REJECTED",
                     extra={
                         "hash": txid_bytes.hex(),
@@ -424,7 +561,25 @@ class TxRelayService:
                 )
 
         if broadcast:
+            log.info(
+                "TX_DATA_BROADCAST",
+                extra={
+                    "peer": conn_id,
+                    "broadcast_count": len(broadcast),
+                    "first_3": [t.hex()[:16] for t in broadcast[:3]],
+                    **self._peer_log_extra(conn_id),
+                },
+            )
             await self._broadcast_inv(broadcast, exclude_peer=conn_id)
+        else:
+            log.info(
+                "TX_DATA_NO_BROADCAST",
+                extra={
+                    "peer": conn_id,
+                    "items_received": len(items_list),
+                    **self._peer_log_extra(conn_id),
+                },
+            )
 
     async def on_tx_notfound(self, conn_id: str, txids: Iterable[bytes]) -> None:
         tx_list = list(txids)
