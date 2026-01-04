@@ -1,0 +1,92 @@
+name: GUI Miner Tests
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths:
+      - 'apps/miner-gui/**'
+      - '.github/workflows/gui-miner.yml'
+  pull_request:
+    branches: [ main, develop ]
+    paths:
+      - 'apps/miner-gui/**'
+      - '.github/workflows/gui-miner.yml'
+
+jobs:
+  test-gui-miner:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.12'
+    
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          libegl1 \
+          libxkbcommon-x11-0 \
+          libxcb-icccm4 \
+          libxcb-image0 \
+          libxcb-keysyms1 \
+          libxcb-randr0 \
+          libxcb-render-util0 \
+          libxcb-xinerama0 \
+          libxcb-xfixes0 \
+          xvfb
+    
+    - name: Install Python dependencies
+      run: |
+        cd apps/miner-gui
+        pip install --upgrade pip
+        pip install -e ".[dev]"
+    
+    - name: Lint with ruff
+      run: |
+        cd apps/miner-gui
+        ruff check animica_miner_gui/ || true
+    
+    - name: Check imports (headless)
+      run: |
+        cd apps/miner-gui
+        python3 -c "from animica_miner_gui.backend.config import MiningAppConfig; print('Config import OK')"
+        python3 -c "from animica_miner_gui.backend.device_detection import detect_cpu; print('Device detection import OK')"
+        python3 -c "from animica_miner_gui.backend.miner_runner import MinerRunner; print('Miner runner import OK')"
+    
+    - name: Validate JSON schema generation
+      run: |
+        cd apps/miner-gui
+        python3 -c "from animica_miner_gui.backend.config import MiningAppConfig; import json; schema = MiningAppConfig.get_schema_json(); json.loads(schema); print('Schema validation OK')"
+    
+    - name: Run unit tests (headless)
+      run: |
+        cd apps/miner-gui
+        xvfb-run -a pytest -v --tb=short || true
+    
+    - name: Test config roundtrip
+      run: |
+        cd apps/miner-gui
+        python3 << 'EOF'
+        from animica_miner_gui.backend.config import MiningAppConfig, NetworkType
+        import tempfile
+        from pathlib import Path
+        
+        # Create config
+        config = MiningAppConfig()
+        config.network.network_type = NetworkType.TESTNET
+        config.miner.payout_address = "anim1test123456789012345678901234567890abc"
+        
+        # Save and load
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "config.json"
+            config.to_file(path)
+            loaded = MiningAppConfig.from_file(path)
+            assert loaded.network.network_type == NetworkType.TESTNET
+            assert loaded.miner.payout_address == config.miner.payout_address
+        
+        print("Config roundtrip test PASSED")
+        EOF

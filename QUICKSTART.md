@@ -460,6 +460,28 @@ python -m python.animica.cli.chain get-state \
 
 ## Mining
 
+### GUI Miner (Recommended for Desktop)
+
+**NEW**: Use the Qt desktop GUI miner for the best experience:
+
+```bash
+# Install GUI miner
+cd apps/miner-gui
+pip install -e .
+
+# Launch GUI miner
+animica gui miner
+```
+
+The GUI miner provides:
+- First-run wizard for easy setup
+- Real-time dashboard with mining stats
+- Auto-detection of CPU/GPU devices
+- Live logs and hashrate graphs
+- Dark theme and system tray
+
+See [apps/miner-gui/README.md](apps/miner-gui/README.md) for full documentation.
+
 ### Start CPU Miner (Docker)
 ```bash
 # Miner is included in devnet stack
