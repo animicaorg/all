@@ -13,6 +13,7 @@ from rpc import errors as rpc_errors
 from rpc.methods import method
 from rpc.methods import miner as miner_methods
 from animica.sync.readiness import assess_tx_submission_readiness
+from mempool.tx_hash import tx_hash_hex as _tx_hash_hex
 
 log = logging.getLogger(__name__)
 _PQ_VERIFY_DEBUG = os.environ.get("ANIMICA_PQ_VERIFY_DEBUG") == "1"
@@ -1074,6 +1075,27 @@ def _mempool_submit(
     """
     Admit tx into the mempool using whatever method this mempool exposes.
     """
+    if hasattr(svc, "submit_atomic"):
+        accepted, reason, _hash_hex = svc.submit_atomic(
+            tx=tx_obj,
+            raw=raw,
+            tx_hash_hex=tx_hash_hex,
+            local=local if local is not None else True,
+            origin_peer=origin_peer,
+        )
+        if not accepted:
+            raise rpc_errors.InvalidTx(
+                "mempool admission rejected",
+                data={
+                    "mempoolError": {
+                        "code": 1000,
+                        "reason": reason or "admission_failed",
+                        "message": "mempool admission rejected",
+                        "context": {"tx_hash": _hash_hex},
+                    }
+                },
+            )
+        return
     # Preferred explicit API
     if hasattr(svc, "submit"):
         kwargs: dict[str, t.Any] = {"tx": tx_obj, "raw": raw, "tx_hash_hex": tx_hash_hex}
@@ -1379,6 +1401,12 @@ def _tx_send_raw_transaction(rawTx: str) -> str:
                 "latency_ms": latency_ms,
             },
         )
+    def _safe_hash_hex(raw_bytes: bytes) -> str:
+        try:
+            return _tx_hash_hex(raw_bytes)
+        except Exception:
+            return _hex(_sha3_256(raw_bytes)) or ""
+
     if not isinstance(rawTx, str):
         raise rpc_errors.InvalidParams("rawTx must be a hex string")
     if rawTx.startswith("0b:"):
@@ -1418,7 +1446,7 @@ def _tx_send_raw_transaction(rawTx: str) -> str:
             log.info(
                 "TX_VALIDATE_REJECT",
                 extra={
-                    "hash": _hex(_sha3_256(raw)) or "",
+                    "hash": _safe_hash_hex(raw),
                     "reason": _tx_reject_category(f"chain_id:{exc}"),
                     "detail": str(exc),
                     "sender": tx_view.get("from"),
@@ -1432,7 +1460,7 @@ def _tx_send_raw_transaction(rawTx: str) -> str:
             log.info(
                 "TX_VALIDATE_REJECT",
                 extra={
-                    "hash": _hex(_sha3_256(raw)) or "",
+                    "hash": _safe_hash_hex(raw),
                     "reason": _tx_reject_category(f"verify:{exc}"),
                     "detail": str(exc),
                     "sender": tx_view.get("from"),
@@ -1452,7 +1480,7 @@ def _tx_send_raw_transaction(rawTx: str) -> str:
             except Exception:
                 raw_canonical = bytes(raw_canonical)
 
-        tx_hash_hex = _hex(_sha3_256(raw_canonical)) or ""
+        tx_hash_hex = _tx_hash_hex(raw_canonical)
         if not tx_hash_hex:
             raise rpc_errors.InternalError("Failed to compute tx hash")
 
@@ -1511,7 +1539,7 @@ def _tx_send_raw_transaction(rawTx: str) -> str:
         log.info(
             "TX_VALIDATE_REJECT",
             extra={
-                "hash": tx_hash_hex or _hex(_sha3_256(raw)) or "",
+                "hash": tx_hash_hex or _safe_hash_hex(raw) or "",
                 "reason": _tx_reject_category(reason),
                 "detail": str(exc),
                 "sender": sender or tx_view.get("from"),
@@ -1525,7 +1553,7 @@ def _tx_send_raw_transaction(rawTx: str) -> str:
         log.info(
             "TX_VALIDATE_REJECT",
             extra={
-                "hash": tx_hash_hex or _hex(_sha3_256(raw)) or "",
+                "hash": tx_hash_hex or _safe_hash_hex(raw) or "",
                 "reason": _tx_reject_category(reason),
                 "detail": str(exc),
                 "sender": sender or tx_view.get("from"),

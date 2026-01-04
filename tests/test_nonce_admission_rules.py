@@ -28,7 +28,7 @@ def _make_service(confirmed_nonce: int) -> tuple[MempoolService, bytes]:
 
 def _build_tx(sender_bytes: bytes, *, nonce: int, chain_id: int = 1337) -> tuple[dict, bytes, str]:
     from core.encoding.cbor import dumps as cbor_dumps
-    from core.utils.hash import sha3_256
+    from mempool.tx_hash import tx_hash_hex
 
     body = {
         "from": sender_bytes,
@@ -44,7 +44,7 @@ def _build_tx(sender_bytes: bytes, *, nonce: int, chain_id: int = 1337) -> tuple
     tx_envelope = {"body": body}
     raw_bytes = cbor_dumps(tx_envelope)
     tx_dict = {"body": body, "raw": raw_bytes}
-    tx_hash = "0x" + sha3_256(raw_bytes).hex()
+    tx_hash = tx_hash_hex(raw_bytes)
     return tx_dict, raw_bytes, tx_hash
 
 
@@ -113,11 +113,11 @@ def test_same_nonce_different_hash_rejected() -> None:
     tx_dict_b = {"body": dict(tx_dict_a["body"])}
     tx_dict_b["body"]["gasPrice"] = 2
     from core.encoding.cbor import dumps as cbor_dumps
-    from core.utils.hash import sha3_256
+    from mempool.tx_hash import tx_hash_hex
 
     raw_b = cbor_dumps(tx_dict_b)
     tx_dict_b["raw"] = raw_b
-    hash_b = "0x" + sha3_256(raw_b).hex()
+    hash_b = tx_hash_hex(raw_b)
 
     with pytest.raises(ReplacementUnsupported):
         service.submit(tx=tx_dict_b, raw=raw_b, tx_hash_hex=hash_b, local=True)
@@ -132,3 +132,31 @@ def test_same_nonce_different_hash_rejected() -> None:
 
     assert exc_info_retry.value.context["expected_nonce"] == 71
     assert service.get_next_nonce(sender_bytes, confirmed_nonce=70) == 71
+
+
+def test_hash_changes_with_nonce_or_validity() -> None:
+    _service, sender_bytes = _make_service(confirmed_nonce=0)
+    _tx_a, raw_a, hash_a = _build_tx(sender_bytes, nonce=0)
+    _tx_b, raw_b, hash_b = _build_tx(sender_bytes, nonce=1)
+
+    assert hash_a != hash_b
+
+    tx_c = {
+        "body": {
+            "from": sender_bytes,
+            "nonce": 0,
+            "gasLimit": 21000,
+            "chainId": 1337,
+            "gasPrice": 1,
+            "maxFee": 1,
+            "validAfter": 0,
+            "validUntil": 51,
+            "salt": b"nonce-tests",
+        }
+    }
+    from core.encoding.cbor import dumps as cbor_dumps
+    from mempool.tx_hash import tx_hash_hex
+
+    raw_c = cbor_dumps(tx_c)
+    hash_c = tx_hash_hex(raw_c)
+    assert hash_a != hash_c

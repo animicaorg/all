@@ -54,10 +54,7 @@ except Exception:  # pragma: no cover
     cbor2 = None  # type: ignore
 
 # Optional shared hash helper (not required)
-try:
-    from core.utils.hash import sha3_256 as _sha3_256  # type: ignore
-except Exception:  # pragma: no cover
-    _sha3_256 = None  # type: ignore
+from mempool.tx_hash import tx_hash_bytes as _tx_hash_bytes
 
 
 # --------------------------------------------------------------------------------------
@@ -265,10 +262,10 @@ class P2PAdmission:
 
     @staticmethod
     def _hash_raw(raw: bytes) -> bytes:
-        if _sha3_256 is not None:  # prefer shared impl for consistency
-            return _sha3_256(raw)
-        # portable fallback
-        return hashlib.sha3_256(raw).digest()
+        try:
+            return _tx_hash_bytes(raw)
+        except Exception:
+            return hashlib.sha3_256(raw).digest()
 
     @staticmethod
     def _cheap_chain_id_check(raw_cbor: bytes, expected: int) -> Tuple[bool, str]:

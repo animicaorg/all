@@ -39,7 +39,6 @@ from pathlib import Path
 from typing import (TYPE_CHECKING, Any, Callable, Iterable, List, Optional,
                     Sequence, Tuple)
 
-from core.utils.hash import sha3_256
 from core.utils.tx import normalize_tx_bytes
 
 from .constants import \
@@ -805,7 +804,9 @@ class P2PDeps:
             except Exception as e:
                 return False, f"verify_failed:{e}"
 
-            tx_hash_hex = "0x" + sha3_256(raw_cbor).hex()
+            from mempool.tx_hash import tx_hash_hex as _tx_hash_hex
+
+            tx_hash_hex = _tx_hash_hex(raw_cbor)
             svc = tx_methods._get_mempool_service()  # type: ignore[attr-defined]
             if svc is None:
                 tx_methods._pending_put(tx_hash_hex, raw_cbor)  # type: ignore[attr-defined]
