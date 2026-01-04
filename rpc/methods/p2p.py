@@ -838,30 +838,42 @@ async def debug_p2p_status() -> dict[str, t.Any]:
         
         # Check relay flags from config/env
         import os
+        tx_relay_env_enabled = os.getenv("ANIMICA_P2P_TX_RELAY", "").lower() in ("1", "true", "yes", "on")
         tx_relay_info["relay_flags"] = {
-            "inv": os.getenv("ANIMICA_P2P_TX_RELAY", "").lower() in ("1", "true", "yes", "on"),
-            "get": os.getenv("ANIMICA_P2P_TX_RELAY", "").lower() in ("1", "true", "yes", "on"),
-            "push": os.getenv("ANIMICA_P2P_TX_RELAY", "").lower() in ("1", "true", "yes", "on"),
+            "inv": tx_relay_env_enabled,
+            "get": tx_relay_env_enabled,
+            "push": tx_relay_env_enabled,
         }
     
     # Build peers list with extended relay capability info
+    # Note: These are best-effort assumptions based on connection status.
+    # Actual handshake and capability negotiation details are internal to P2P service.
     peers_with_caps = []
     for peer in peers_list:
         peer_entry = {
             "remote": peer.get("addr", ""),
+            # Assume handshake is complete if peer status is "connected"
             "handshake_complete": peer.get("status") == "connected",
-            "chain_match": True,  # Assume true if connected
+            # Assume chain match if peer is connected (otherwise would be disconnected)
+            "chain_match": peer.get("status") == "connected",
             "relay_caps": {
-                "txs": tx_relay_info["enabled"],  # Assume same as local config
+                # Assume TX relay capability matches local config for connected peers
+                "txs": tx_relay_info["enabled"] if peer.get("status") == "connected" else False,
             },
         }
         peers_with_caps.append(peer_entry)
+    
+    # Extract seeds from env if available
+    seeds_list = []
+    seeds_env = os.getenv("ANIMICA_P2P_SEEDS", "")
+    if seeds_env:
+        seeds_list = [s.strip() for s in seeds_env.split(",") if s.strip()]
     
     # Merge results
     result = {
         "p2p_running": base_status.get("p2p_running", False),
         "listen_addrs": base_status.get("listen_addrs", []),
-        "seeds": [],  # TODO: extract from config if needed
+        "seeds": seeds_list,
         "peers_total": base_status.get("peers_total", 0),
         "inbound": base_status.get("peers_inbound", 0),
         "outbound": base_status.get("peers_outbound", 0),
@@ -915,9 +927,13 @@ async def debug_tx_relay_metrics() -> dict[str, t.Any]:
     
     if p2p_svc is not None:
         # Try to get metrics from TX relay service
-        if hasattr(p2p_svc, "tx_relay_service") or hasattr(p2p_svc, "_tx_relay"):
-            relay_svc = getattr(p2p_svc, "tx_relay_service", None) or getattr(p2p_svc, "_tx_relay", None)
-            if relay_svc is not None and hasattr(relay_svc, "metrics"):
+        relay_svc = getattr(p2p_svc, "tx_relay_service", None)
+        if relay_svc is None:
+            relay_svc = getattr(p2p_svc, "_tx_relay", None)
+        
+        if relay_svc is not None:
+            # Try to get metrics via metrics() method first
+            if hasattr(relay_svc, "metrics"):
                 try:
                     svc_metrics = relay_svc.metrics()
                     if isinstance(svc_metrics, dict):
@@ -925,27 +941,17 @@ async def debug_tx_relay_metrics() -> dict[str, t.Any]:
                 except Exception:
                     pass
             
-            # Try direct attribute access for counters
-            if hasattr(relay_svc, "_inv_sent"):
-                metrics["inv_sent"] = getattr(relay_svc, "_inv_sent", 0)
-            if hasattr(relay_svc, "_inv_recv"):
-                metrics["inv_recv"] = getattr(relay_svc, "_inv_recv", 0)
-            if hasattr(relay_svc, "_get_sent"):
-                metrics["get_sent"] = getattr(relay_svc, "_get_sent", 0)
-            if hasattr(relay_svc, "_get_recv"):
-                metrics["get_recv"] = getattr(relay_svc, "_get_recv", 0)
-            if hasattr(relay_svc, "_push_sent"):
-                metrics["push_sent"] = getattr(relay_svc, "_push_sent", 0)
-            if hasattr(relay_svc, "_push_recv"):
-                metrics["push_recv"] = getattr(relay_svc, "_push_recv", 0)
-            if hasattr(relay_svc, "_accepted_total"):
-                metrics["accepted_total"] = getattr(relay_svc, "_accepted_total", 0)
-            if hasattr(relay_svc, "_rejected_total"):
-                metrics["rejected_total"] = getattr(relay_svc, "_rejected_total", 0)
-            if hasattr(relay_svc, "_last_inv_at"):
-                metrics["last_inv_at"] = getattr(relay_svc, "_last_inv_at", None)
-            if hasattr(relay_svc, "_last_push_at"):
-                metrics["last_push_at"] = getattr(relay_svc, "_last_push_at", None)
+            # Try direct attribute access for counters (these override method results if present)
+            metrics["inv_sent"] = getattr(relay_svc, "_inv_sent", metrics["inv_sent"])
+            metrics["inv_recv"] = getattr(relay_svc, "_inv_recv", metrics["inv_recv"])
+            metrics["get_sent"] = getattr(relay_svc, "_get_sent", metrics["get_sent"])
+            metrics["get_recv"] = getattr(relay_svc, "_get_recv", metrics["get_recv"])
+            metrics["push_sent"] = getattr(relay_svc, "_push_sent", metrics["push_sent"])
+            metrics["push_recv"] = getattr(relay_svc, "_push_recv", metrics["push_recv"])
+            metrics["accepted_total"] = getattr(relay_svc, "_accepted_total", metrics["accepted_total"])
+            metrics["rejected_total"] = getattr(relay_svc, "_rejected_total", metrics["rejected_total"])
+            metrics["last_inv_at"] = getattr(relay_svc, "_last_inv_at", metrics["last_inv_at"])
+            metrics["last_push_at"] = getattr(relay_svc, "_last_push_at", metrics["last_push_at"])
     
     return metrics
 
