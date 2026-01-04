@@ -82,6 +82,10 @@ class MsgID(IntEnum):
     TX_NOTFOUND_V2 = 0x0406
     TX_MEMPOOL_REQ = 0x0407
     TX_MEMPOOL_RESP = 0x0408
+    PTL_ANNOUNCE = 0x0409  # Announce available transactions in PTL
+    PTL_WANT = 0x040A  # Request specific transactions from PTL
+    PTL_PUSH = 0x040B  # Push transactions to peer
+    PTL_ACK = 0x040C  # Acknowledge receipt of transactions
 
     # ---------------------------
     # 0x05xx — Useful-work Shares
@@ -131,6 +135,7 @@ _REQUEST_RESPONSE: Dict[MsgID, MsgID] = {
     MsgID.DA_GET: MsgID.DA_PROOF,
     MsgID.TX_GET: MsgID.TX_DATA,
     MsgID.TX_MEMPOOL_REQ: MsgID.TX_MEMPOOL_RESP,
+    MsgID.PTL_WANT: MsgID.PTL_PUSH,
 }
 
 
