@@ -154,15 +154,23 @@ async def tx_pending(params: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-@method(name="tx.replicationStatus")
-async def tx_replication_status(params: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+@method(name="ptl.replicationStatus")
+async def ptl_replication_status(params: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """Get detailed replication status for a transaction.
+    
+    This is the canonical PTL replication status method with full schema:
+    - tx_hash: transaction hash
+    - local_status: unknown|seen|eligible|mined|dropped
+    - peers[]: per-peer receipts with status, timestamps, connection info
+    - quorum: required_acks, observed_acks, quorum_met
+    - persistence: stored_receipts_count, backend info
+    - mined: block height, finalization status if available
     
     Args:
         params: {"txid": transaction ID (hex)}
     
     Returns:
-        Detailed replication status with receipts
+        Detailed replication status with enhanced schema
     """
     ptl = _get_ptl_service()
     if not ptl:
@@ -173,9 +181,98 @@ async def tx_replication_status(params: Dict[str, Any]) -> Optional[Dict[str, An
         txid_hex = txid_hex[2:]
     
     txid = bytes.fromhex(txid_hex)
-    status = await ptl.get_replication_status(txid)
+    entry = await ptl.get(txid)
     
-    return status
+    if not entry:
+        return {
+            "tx_hash": f"0x{txid_hex}",
+            "local_status": "unknown",
+            "peers": [],
+            "quorum": {
+                "required_acks": ptl.min_peer_acks,
+                "observed_acks": 0,
+                "quorum_met": False,
+            },
+            "persistence": {
+                "stored_receipts_count": 0,
+            },
+        }
+    
+    # Map TxStatus to local_status
+    status_map = {
+        "NEW": "seen",
+        "STORED": "seen",
+        "ANNOUNCED": "eligible",
+        "REPLICATING": "eligible",
+        "ATTESTED": "eligible",
+        "INCLUDED": "mined",
+        "FINALIZED": "mined",
+        "REJECTED": "dropped",
+        "EXPIRED": "dropped",
+    }
+    local_status = status_map.get(entry.status.value, "unknown")
+    
+    # Build peer receipts with enhanced info
+    peers = []
+    for r in entry.receipts:
+        peer_info = {
+            "peer_id": r.peer_id,
+            "status": r.status,  # "seen" | "acked" | "missing" | "failed"
+            "first_seen_ts": r.timestamp,
+            "last_update_ts": r.timestamp,
+        }
+        if r.reason:
+            peer_info["reason"] = r.reason
+        peers.append(peer_info)
+    
+    # Quorum information
+    ack_count = entry.ack_count()
+    quorum_met = ack_count >= ptl.min_peer_acks
+    
+    result = {
+        "tx_hash": f"0x{entry.txid.hex()}",
+        "local_status": local_status,
+        "peers": peers,
+        "quorum": {
+            "required_acks": ptl.min_peer_acks,
+            "observed_acks": ack_count,
+            "quorum_met": quorum_met,
+        },
+        "persistence": {
+            "stored_receipts_count": len(entry.receipts),
+            "store_backend": "sqlite",
+        },
+    }
+    
+    # Add mined info if available
+    if entry.included_height is not None:
+        result["mined"] = {
+            "block_height": entry.included_height,
+            "finalized": entry.finalized_height is not None,
+            "finalized_height": entry.finalized_height,
+        }
+    
+    # Add timing info
+    result["received_at"] = entry.received_at
+    result["updated_at"] = entry.updated_at
+    if entry.expire_at:
+        result["expire_at"] = entry.expire_at
+    
+    return result
+
+
+@method(name="tx.replicationStatus")
+async def tx_replication_status(params: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Backward-compatible alias for ptl.replicationStatus.
+    
+    Args:
+        params: {"txid": transaction ID (hex)}
+    
+    Returns:
+        Detailed replication status (delegates to ptl.replicationStatus)
+    """
+    log.debug("tx.replicationStatus called, forwarding to ptl.replicationStatus")
+    return await ptl_replication_status(params)
 
 
 @method(name="debug.ptlStats")
@@ -243,6 +340,7 @@ __all__ = [
     "tx_submit_raw",
     "tx_get",
     "tx_pending",
+    "ptl_replication_status",
     "tx_replication_status",
     "debug_ptl_stats",
     "debug_ptl_peers",

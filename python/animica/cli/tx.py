@@ -1527,21 +1527,23 @@ def send(
         
         while time.time() - start_wait < wait_timeout:
             try:
-                repl_result = _rpc(rpc, "tx.replicationStatus", [{"txid": tx_hash}])
+                # Use canonical ptl.replicationStatus method
+                repl_result = _rpc(rpc, "ptl.replicationStatus", [{"txid": tx_hash}])
                 if repl_result:
-                    ack_count = repl_result.get('ack_count', 0)
-                    status = repl_result.get('status', 'UNKNOWN')
+                    quorum = repl_result.get('quorum', {})
+                    ack_count = quorum.get('observed_acks', 0)
+                    local_status = repl_result.get('local_status', 'unknown')
                     
                     if ack_count >= min_peers:
                         console.print(f"[green]✓ Received {ack_count} acknowledgments[/green]")
-                        console.print(f"Status: {status}")
+                        console.print(f"Status: {local_status}")
                         
-                        receipts = repl_result.get('receipts', [])
-                        if receipts and verbose:
-                            console.print("\nReceipts:")
-                            for r in receipts:
-                                if r['status'] == 'ack':
-                                    console.print(f"  [green]✓[/green] {r['peer_id']}")
+                        peers = repl_result.get('peers', [])
+                        if peers and verbose:
+                            console.print("\nPeer receipts:")
+                            for p in peers:
+                                if p['status'] == 'ack':
+                                    console.print(f"  [green]✓[/green] {p['peer_id']}")
                         break
                     
                     if verbose:
@@ -1555,7 +1557,11 @@ def send(
                     
             except RpcError as e:
                 if e.code == -32601:  # Method not found - PTL not enabled
-                    console.print("[yellow]Warning: PTL replication status not available on this node[/yellow]")
+                    console.print("[yellow]Warning: PTL not enabled on this node[/yellow]")
+                    console.print("[yellow]To enable PTL replication:[/yellow]")
+                    console.print("  1. Ensure node is running with PTL service enabled")
+                    console.print("  2. Check ANIMICA_PTL_ENABLE environment variable")
+                    console.print("  3. Or use legacy mempool-based propagation")
                     break
                 if verbose:
                     console.print(f"[dim]Error checking replication: {e.message}[/dim]")
@@ -1565,6 +1571,7 @@ def send(
             elapsed = time.time() - start_wait
             console.print(f"[yellow]Warning: Only {ack_count}/{min_peers} acks after {elapsed:.1f}s[/yellow]")
             console.print("[yellow]Transaction may still replicate. Use 'animica tx replicate' to check status.[/yellow]")
+
     
     if verbose:
         console.print("\n[bold]TX BODY[/bold]")
@@ -1656,16 +1663,30 @@ def replicate(
         "--allow-remote-rpc",
         help="Allow using remote bootstrap RPC",
     ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Output as JSON for scripting",
+    ),
 ):
     """
     Show replication status with per-peer receipts.
     """
     rpc = _resolve_rpc_url(rpc_url)
-    guard_bootstrap_rpc(rpc, allow_remote=allow_remote_rpc, method="tx.replicationStatus")
+    guard_bootstrap_rpc(rpc, allow_remote=allow_remote_rpc, method="ptl.replicationStatus")
     
     try:
-        result = _rpc(rpc, "tx.replicationStatus", [{"txid": tx_hash}])
+        # Use canonical ptl.replicationStatus method
+        result = _rpc(rpc, "ptl.replicationStatus", [{"txid": tx_hash}])
     except RpcError as e:
+        if e.code == -32601:  # Method not found
+            console.print("[yellow]PTL not enabled on this node[/yellow]")
+            console.print("\n[yellow]To enable PTL replication:[/yellow]")
+            console.print("  1. Ensure node is running with PTL service enabled")
+            console.print("  2. Set ANIMICA_PTL_ENABLE=1 environment variable")
+            console.print("  3. Check that the node has P2P connectivity")
+            console.print("\n[dim]Legacy mempool-based propagation may still be active[/dim]")
+            raise typer.Exit(code=1)
         _format_rpc_error(e)
         raise typer.Exit(code=1) from e
     
@@ -1673,25 +1694,64 @@ def replicate(
         console.print(f"[yellow]Transaction {tx_hash} not found in PTL[/yellow]")
         raise typer.Exit(code=1)
     
+    if json_output:
+        # Stable JSON output for scripting
+        console.print(json.dumps(result, indent=2))
+        return
+    
+    # Human-readable output
     console.print("\n[bold]Replication Status[/bold]")
-    console.print(f"TxID: {result.get('txid')}")
-    console.print(f"Status: {result.get('status')}")
-    console.print(f"Acks: {result.get('ack_count')}/{result.get('min_peer_acks')}")
-    console.print(f"Received: {time.ctime(result.get('received_at', 0))}")
-    console.print(f"Updated: {time.ctime(result.get('updated_at', 0))}")
+    console.print(f"TxID: {result.get('tx_hash')}")
+    console.print(f"Local Status: {result.get('local_status')}")
+    
+    quorum = result.get('quorum', {})
+    acks = quorum.get('observed_acks', 0)
+    required = quorum.get('required_acks', 0)
+    quorum_met = quorum.get('quorum_met', False)
+    
+    quorum_status = "[green]✓[/green]" if quorum_met else "[red]✗[/red]"
+    console.print(f"Quorum: {quorum_status} {acks}/{required} acknowledgments")
+    
+    if result.get('received_at'):
+        console.print(f"Received: {time.ctime(result.get('received_at', 0))}")
+    if result.get('updated_at'):
+        console.print(f"Updated: {time.ctime(result.get('updated_at', 0))}")
     if result.get('expire_at'):
         console.print(f"Expires: {time.ctime(result.get('expire_at', 0))}")
     
-    receipts = result.get('receipts', [])
-    if receipts:
-        console.print(f"\n[bold]Receipts ({len(receipts)})[/bold]")
-        for r in receipts:
-            status_color = "green" if r['status'] == 'ack' else "red"
-            console.print(f"  [{status_color}]{r['status']}[/{status_color}] from {r['peer_id']} at {time.ctime(r['timestamp'])}")
-            if r.get('reason'):
-                console.print(f"    Reason: {r['reason']}")
+    # Show mined info if available
+    mined = result.get('mined')
+    if mined:
+        console.print(f"\n[bold green]Mined[/bold green]")
+        console.print(f"  Block Height: {mined.get('block_height')}")
+        if mined.get('finalized'):
+            console.print(f"  Finalized at: {mined.get('finalized_height')}")
+        else:
+            console.print("  Not yet finalized")
+    
+    peers = result.get('peers', [])
+    if peers:
+        console.print(f"\n[bold]Peer Receipts ({len(peers)})[/bold]")
+        for p in peers:
+            status_map = {
+                'ack': 'green',
+                'seen': 'yellow',
+                'missing': 'red',
+                'failed': 'red',
+            }
+            status_color = status_map.get(p['status'], 'white')
+            timestamp = p.get('first_seen_ts', 0)
+            console.print(f"  [{status_color}]{p['status']}[/{status_color}] from {p['peer_id']} at {time.ctime(timestamp)}")
+            if p.get('reason'):
+                console.print(f"    Reason: {p['reason']}")
     else:
-        console.print("\n[yellow]No receipts yet[/yellow]")
+        console.print("\n[yellow]No peer receipts yet[/yellow]")
+    
+    # Show persistence info
+    persistence = result.get('persistence', {})
+    receipts_count = persistence.get('stored_receipts_count', 0)
+    if receipts_count > 0:
+        console.print(f"\n[dim]Persistence: {receipts_count} receipts stored ({persistence.get('store_backend', 'unknown')})[/dim]")
 
 
 @app.command("troubleshoot")
@@ -1708,7 +1768,7 @@ def troubleshoot(
     Troubleshoot transaction replication issues.
     """
     rpc = _resolve_rpc_url(rpc_url)
-    guard_bootstrap_rpc(rpc, allow_remote=allow_remote_rpc, method="tx.replicationStatus")
+    guard_bootstrap_rpc(rpc, allow_remote=allow_remote_rpc, method="ptl.replicationStatus")
     
     console.print(f"\n[bold]Troubleshooting Transaction {tx_hash}[/bold]\n")
     
@@ -1716,7 +1776,10 @@ def troubleshoot(
     try:
         tx_result = _rpc(rpc, "tx.get", [{"txid": tx_hash}])
     except RpcError as e:
-        console.print(f"[red]Failed to get transaction: {e.message}[/red]")
+        if e.code == -32601:  # Method not found
+            console.print(f"[yellow]PTL not enabled on this node (tx.get not available)[/yellow]")
+        else:
+            console.print(f"[red]Failed to get transaction: {e.message}[/red]")
         tx_result = None
     
     if not tx_result:
@@ -1725,21 +1788,30 @@ def troubleshoot(
         console.print("  - Transaction was never submitted")
         console.print("  - Transaction expired (TTL exceeded)")
         console.print("  - Transaction was pruned after finalization")
+        console.print("  - PTL service is not enabled on this node")
         raise typer.Exit(code=1)
     
     status = tx_result.get('status')
     console.print(f"Status: [bold]{status}[/bold]")
     
-    # Check replication
+    # Check replication using canonical method
     try:
-        repl_result = _rpc(rpc, "tx.replicationStatus", [{"txid": tx_hash}])
+        repl_result = _rpc(rpc, "ptl.replicationStatus", [{"txid": tx_hash}])
     except RpcError as e:
-        console.print(f"[red]Failed to get replication status: {e.message}[/red]")
+        if e.code == -32601:
+            console.print(f"[yellow]PTL replication not available (ptl.replicationStatus not found)[/yellow]")
+            console.print("\n[yellow]To enable PTL replication:[/yellow]")
+            console.print("  1. Ensure node is running with PTL service enabled")
+            console.print("  2. Set ANIMICA_PTL_ENABLE=1 environment variable")
+            console.print("  3. Check that the node has P2P connectivity")
+        else:
+            console.print(f"[red]Failed to get replication status: {e.message}[/red]")
         repl_result = None
     
     if repl_result:
-        ack_count = repl_result.get('ack_count', 0)
-        min_acks = repl_result.get('min_peer_acks', 2)
+        quorum = repl_result.get('quorum', {})
+        ack_count = quorum.get('observed_acks', 0)
+        min_acks = quorum.get('required_acks', 2)
         
         console.print(f"Acknowledgments: {ack_count}/{min_acks}")
         
@@ -1751,8 +1823,8 @@ def troubleshoot(
             console.print("  3. Wait for anti-entropy reconciliation (10s interval)")
             console.print("  4. Check debug.ptlPeers for peer state")
         
-        receipts = repl_result.get('receipts', [])
-        rejections = [r for r in receipts if r['status'] == 'reject']
+        peers = repl_result.get('peers', [])
+        rejections = [p for p in peers if p['status'] in ('failed', 'reject')]
         
         if rejections:
             console.print(f"\n[red]Rejections ({len(rejections)})[/red]")
