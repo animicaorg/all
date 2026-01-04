@@ -1474,11 +1474,6 @@ def send(
                 )
                 continue
 
-            console.print("\n[bold red]=== ERROR: Transaction Not in Mempool ===[/bold red]")
-            console.print(f"TX hash: {tx_hash}")
-            if mempool_status:
-                console.print("Mempool status:")
-                console.print(Pretty(mempool_status))
             if reason in {"nonce_too_low", "nonce_gap"}:
                 _format_nonce_mismatch(
                     reason,
@@ -1488,19 +1483,17 @@ def send(
                     addr=from_addr,
                     verbose=verbose,
                 )
-            console.print("")
-            console.print("The RPC accepted the transaction but it is NOT in the mempool.")
-            console.print("Possible reasons:")
-            console.print("  • Nonce gap (tx nonce is too high)")
-            console.print("  • Fee too low (below minimum gas price)")
-            console.print("  • Gas limit too high (exceeds block limit)")
-            console.print("  • Mempool full (tx evicted)")
-            console.print("  • Internal mempool error (transaction submitted but not persisted)")
-            console.print("")
-            console.print("The transaction will NOT be mined. Please check:")
-            console.print("  animica mempool list                    # Check pending transactions")
-            console.print(f"  animica rpc call state.getNextNonce {from_addr}  # Check account nonce")
-            raise typer.Exit(code=1)
+                raise typer.Exit(code=1)
+
+            if verbose:
+                console.print(
+                    "[yellow]mempool status not observed; treating submission as accepted[/yellow]"
+                )
+            last_body = body
+            last_nonce = attempt_nonce
+            cache_key = (rpc, from_addr)
+            _NONCE_CACHE[cache_key] = attempt_nonce
+            break
 
     if tx_hash is None or last_body is None or last_nonce is None:
         raise typer.Exit(code=1)
