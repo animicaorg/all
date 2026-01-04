@@ -437,11 +437,12 @@ def apply_transfer(
                 _set_balance(state, t_addr, t_bal + base_fee_part)
         # Else burned (no credit)
 
-    # Value transfer
-    sender_balance_before = _get_balance(state, sender)
-    recipient_balance_before = _get_balance(state, to)
-    _set_balance(state, sender, sender_balance_before - amount)
-    _set_balance(state, to, recipient_balance_before + amount)
+    # Value transfer (skip if sending to self; fees already debited)
+    if sender != to and amount > 0:
+        sender_balance_before = _get_balance(state, sender)
+        recipient_balance_before = _get_balance(state, to)
+        _set_balance(state, sender, sender_balance_before - amount)
+        _set_balance(state, to, recipient_balance_before + amount)
 
     # Logs
     logs: List[LogEvent] = []
