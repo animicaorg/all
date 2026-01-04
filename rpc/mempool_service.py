@@ -1421,5 +1421,94 @@ class MempoolService:
                 diagnostics[entry.hash_hex] = {"status": "rejected", "reason": reason}
         return diagnostics
 
+    async def admit_tx(
+        self,
+        raw: bytes,
+        local: bool | None = False,
+        origin_peer: str | None = None,
+    ) -> tuple[bool, str | None]:
+        """
+        Async wrapper for submit() to be used by P2P TX relay.
+        
+        Args:
+            raw: Raw transaction bytes (canonical CBOR)
+            local: Whether this is a locally-submitted tx
+            origin_peer: Peer ID that provided the tx (if not local)
+        
+        Returns:
+            (accepted, reason) tuple
+            - accepted: True if tx was admitted to mempool
+            - reason: None if accepted, error code/message if rejected
+        """
+        try:
+            # Parse tx structure from raw bytes
+            from core.encoding.cbor import loads as cbor_loads
+            
+            try:
+                tx_obj = cbor_loads(raw)
+            except Exception as exc:
+                return False, f"cbor_decode_error:{type(exc).__name__}"
+            
+            # Submit to mempool (synchronous)
+            tx_hash = self.submit(
+                tx=tx_obj,
+                raw=raw,
+                tx_hash_hex=None,
+                local=bool(local),
+                origin_peer=origin_peer,
+            )
+            
+            # If submit succeeded, it returns the hash
+            if tx_hash:
+                return True, None
+            else:
+                return False, "submit_failed"
+        
+        except AdmissionError as exc:
+            # Structured admission errors
+            reason = str(exc)
+            if hasattr(exc, "context"):
+                ctx = getattr(exc, "context")
+                if isinstance(ctx, dict) and "tx_hash" in ctx:
+                    # Extract specific error reasons
+                    for key in ["reason", "error", "message"]:
+                        if key in ctx:
+                            return False, str(ctx[key])
+            return False, reason
+        
+        except Exception as exc:
+            # Unexpected errors
+            log.error(
+                "Unexpected error in admit_tx",
+                extra={"error": str(exc), "error_type": type(exc).__name__},
+                exc_info=True,
+            )
+            return False, f"unexpected_error:{type(exc).__name__}"
 
-__all__ = ["MempoolService", "MempoolSnapshot"]
+    def stats(self) -> dict[str, t.Any]:
+        """Get mempool statistics."""
+        return {
+            "pending_count": len(self.pool),
+            "pending_bytes": sum(
+                len(getattr(getattr(entry, "tx", entry), "raw", b""))
+                for entry in (self.pool.entries() if hasattr(self.pool, "entries") else [])
+            ),
+        }
+
+
+# Global singleton for easy access from RPC methods
+_mempool_service_singleton: MempoolService | None = None
+
+
+def set_mempool_service_singleton(svc: MempoolService) -> None:
+    """Set the global mempool service singleton."""
+    global _mempool_service_singleton
+    _mempool_service_singleton = svc
+
+
+def get_mempool_service_singleton() -> MempoolService | None:
+    """Get the global mempool service singleton."""
+    return _mempool_service_singleton
+
+
+__all__ = ["MempoolService", "MempoolSnapshot", "set_mempool_service_singleton", "get_mempool_service_singleton"]

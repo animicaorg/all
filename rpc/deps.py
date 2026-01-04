@@ -822,6 +822,11 @@ def build_context(cfg: t.Any | None = None) -> RpcContext:
             tx_index=bundle.tx_index,
             data_dir=str(data_root),
         )
+        
+        # Set global singleton for RPC access
+        from rpc.mempool_service import set_mempool_service_singleton
+        set_mempool_service_singleton(mempool_service)
+        
         persist_path = getattr(mempool_service, "_persist_path", None)
         log.info(
             "Mempool service initialized",
