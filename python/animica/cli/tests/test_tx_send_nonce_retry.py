@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 from contextlib import nullcontext
-
-import cbor2
 from typer.testing import CliRunner
 
 from animica.cli import tx
@@ -15,6 +13,11 @@ def test_send_retries_on_nonce_too_low(monkeypatch) -> None:
     nonces: list[int] = []
     send_calls = 0
     nonce_calls = 0
+    original_build_tx_body = tx._build_tx_body
+
+    def recording_build_tx_body(*args, **kwargs):  # noqa: ANN001
+        nonces.append(int(kwargs["nonce"]))
+        return original_build_tx_body(*args, **kwargs)
 
     def fake_rpc(_url: str, method: str, params):  # noqa: ANN001
         nonlocal send_calls, nonce_calls
@@ -29,10 +32,6 @@ def test_send_retries_on_nonce_too_low(monkeypatch) -> None:
             return 1
         if method == "tx.sendRawTransaction":
             send_calls += 1
-            raw_hex = params[0]
-            raw_bytes = bytes.fromhex(raw_hex[2:] if raw_hex.startswith("0x") else raw_hex)
-            decoded = cbor2.loads(raw_bytes)
-            nonces.append(int(decoded["body"]["nonce"]))
             return f"0xhash{send_calls}"
         if method == "mempool.getStatus":
             if send_calls == 1:
@@ -56,6 +55,7 @@ def test_send_retries_on_nonce_too_low(monkeypatch) -> None:
     monkeypatch.setattr(tx, "pq_sign_detached", lambda *_args, **_kwargs: DummySig())
     monkeypatch.setattr(tx, "verify_detached", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(tx, "_nonce_lock", lambda _addr: nullcontext())
+    monkeypatch.setattr(tx, "_build_tx_body", recording_build_tx_body)
 
     result = runner.invoke(
         tx.app,
@@ -92,6 +92,11 @@ def test_send_retries_with_advancing_pending_nonce(monkeypatch) -> None:
     nonces: list[int] = []
     send_calls = 0
     nonce_calls = 0
+    original_build_tx_body = tx._build_tx_body
+
+    def recording_build_tx_body(*args, **kwargs):  # noqa: ANN001
+        nonces.append(int(kwargs["nonce"]))
+        return original_build_tx_body(*args, **kwargs)
 
     def fake_rpc(_url: str, method: str, params):  # noqa: ANN001
         nonlocal send_calls, nonce_calls
@@ -111,12 +116,8 @@ def test_send_retries_with_advancing_pending_nonce(monkeypatch) -> None:
             return 1
         if method == "tx.sendRawTransaction":
             send_calls += 1
-            raw_hex = params[0]
-            raw_bytes = bytes.fromhex(raw_hex[2:] if raw_hex.startswith("0x") else raw_hex)
-            decoded = cbor2.loads(raw_bytes)
-            nonce_value = int(decoded["body"]["nonce"])
-            nonces.append(nonce_value)
-            
+            nonce_value = nonces[-1] if nonces else -1
+
             # First submission with nonce 63 fails with "expected 64"
             if send_calls == 1:
                 from animica.cli.tx import RpcError
@@ -153,6 +154,7 @@ def test_send_retries_with_advancing_pending_nonce(monkeypatch) -> None:
     monkeypatch.setattr(tx, "pq_sign_detached", lambda *_args, **_kwargs: DummySig())
     monkeypatch.setattr(tx, "verify_detached", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(tx, "_nonce_lock", lambda _addr: nullcontext())
+    monkeypatch.setattr(tx, "_build_tx_body", recording_build_tx_body)
     
     # Clear nonce cache to ensure clean test
     tx._NONCE_CACHE.clear()
@@ -193,6 +195,11 @@ def test_send_no_off_by_one_chase(monkeypatch) -> None:
     nonces: list[int] = []
     send_calls = 0
     nonce_calls = 0
+    original_build_tx_body = tx._build_tx_body
+
+    def recording_build_tx_body(*args, **kwargs):  # noqa: ANN001
+        nonces.append(int(kwargs["nonce"]))
+        return original_build_tx_body(*args, **kwargs)
 
     def fake_rpc(_url: str, method: str, params):  # noqa: ANN001
         nonlocal send_calls, nonce_calls
@@ -208,12 +215,8 @@ def test_send_no_off_by_one_chase(monkeypatch) -> None:
             return 1
         if method == "tx.sendRawTransaction":
             send_calls += 1
-            raw_hex = params[0]
-            raw_bytes = bytes.fromhex(raw_hex[2:] if raw_hex.startswith("0x") else raw_hex)
-            decoded = cbor2.loads(raw_bytes)
-            nonce_value = int(decoded["body"]["nonce"])
-            nonces.append(nonce_value)
-            
+            nonce_value = nonces[-1] if nonces else -1
+
             # First submission with wrong nonce fails
             if nonce_value < 64:
                 from animica.cli.tx import RpcError
@@ -248,6 +251,7 @@ def test_send_no_off_by_one_chase(monkeypatch) -> None:
     monkeypatch.setattr(tx, "pq_sign_detached", lambda *_args, **_kwargs: DummySig())
     monkeypatch.setattr(tx, "verify_detached", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(tx, "_nonce_lock", lambda _addr: nullcontext())
+    monkeypatch.setattr(tx, "_build_tx_body", recording_build_tx_body)
     
     # Pre-populate cache with stale value to test that it's properly handled
     tx._NONCE_CACHE[("http://node", "0x" + "11" * 32)] = 62
