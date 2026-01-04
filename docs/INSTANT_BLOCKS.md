@@ -82,6 +82,32 @@ Or in configuration:
 os.environ["ANIMICA_INSTANT_BLOCKS_ENABLED"] = "1"
 ```
 
+### Automatic Trigger (Recommended)
+
+**Instant blocks are automatically created when transactions arrive**, via:
+
+1. **CLI Transaction Submission**:
+   ```bash
+   animica tx send --from <addr> --to <addr> --value 1.0
+   # → Instant block created immediately with the transaction
+   ```
+
+2. **RPC Transaction Submission**:
+   ```bash
+   curl -X POST http://localhost:8545 \
+     -H "Content-Type: application/json" \
+     -d '{"jsonrpc":"2.0","method":"tx.sendRawTransaction","params":["0x..."],"id":1}'
+   # → Instant block created immediately with the transaction
+   ```
+
+3. **P2P Inbound Transactions**:
+   - Transactions received from P2P peers automatically trigger instant blocks
+   - No additional configuration needed
+
+**Integration Points**:
+- `rpc/methods/tx.py::_tx_send_raw_transaction()` - Triggers after mempool admission
+- `p2p/node/p2p_service.py::_admit_tx_result()` - Triggers after P2P admission
+
 ### Manual Instant Block Creation
 
 From the mining RPC:
@@ -93,14 +119,14 @@ success, reward, summary = _mine_instant_block()
 # reward will always be 0 for instant blocks
 ```
 
-### Automatic Trigger on Transaction Arrival
+### Programmatic Trigger
 
-When a transaction is added to the mempool, the system can automatically trigger instant block creation:
+Trigger instant block creation from code:
 
 ```python
 from rpc.methods.miner import trigger_instant_block_on_tx_arrival
 
-# Call this in mempool notification handler
+# Call this to queue an instant block (best-effort)
 trigger_instant_block_on_tx_arrival()
 ```
 
@@ -195,6 +221,16 @@ Chain state after 10 blocks (5 normal, 5 instant):
    - Added `trigger_instant_block_on_tx_arrival()` hook
    - Configuration via `ANIMICA_INSTANT_BLOCKS_ENABLED`
 
+6. **Transaction RPC** (`rpc/methods/tx.py`)
+   - Integrated instant block trigger in `_tx_send_raw_transaction()`
+   - Auto-trigger after successful mempool admission
+   - Updated `_ensure_tx_persisted_to_chain()` to prefer instant blocks
+
+7. **P2P Service** (`p2p/node/p2p_service.py`)
+   - Integrated instant block trigger in `_admit_tx_result()`
+   - Auto-trigger for inbound P2P transactions
+   - Best-effort triggering (doesn't fail tx admission)
+
 ### Specification
 
 - **Header Format** (`spec/header_format.cddl`)
@@ -203,23 +239,35 @@ Chain state after 10 blocks (5 normal, 5 instant):
 
 ## Testing
 
-Comprehensive tests in `core/chain/tests/test_instant_blocks.py`:
+Comprehensive tests in multiple locations:
 
-1. **Serialization**: Instant block flag roundtrip
-2. **Zero Rewards**: Verify instant blocks have no rewards
-3. **Canonical Height**: Verify height calculation excludes instant blocks
-4. **Hash Computation**: Verify instant block flag affects hash
-5. **Build Child**: Verify `build_child()` supports instant blocks
+1. **Unit Tests** (`core/chain/tests/test_instant_blocks.py`):
+   - **Serialization**: Instant block flag roundtrip
+   - **Zero Rewards**: Verify instant blocks have no rewards
+   - **Canonical Height**: Verify height calculation excludes instant blocks
+   - **Hash Computation**: Verify instant block flag affects hash
+   - **Build Child**: Verify `build_child()` supports instant blocks
+
+2. **Integration Tests** (`tests/integration/test_instant_block_tx_send.py`):
+   - **Automatic Triggering**: Verify instant blocks created on tx send
+   - **Block Properties**: Verify zero reward and non-advancing height
+   - **Header Flag**: Verify instantBlock=True in created blocks
+   - **Canonical Height Tracking**: Verify separate height counters
 
 ## Future Enhancements
+
+### Completed Features ✅
+
+1. **Mempool Integration**: ✅ Automatic trigger on transaction arrival (tx send & P2P)
+2. **Testing**: ✅ Comprehensive unit and integration tests
 
 ### Potential Improvements
 
 1. **P2P Propagation**: Optimize instant block propagation in gossip protocol
 2. **RPC Methods**: Add dedicated instant block query methods
 3. **Metrics**: Track instant block production rate and latency
-4. **Mempool Integration**: Automatic trigger on first transaction arrival
-5. **Batch Instant Blocks**: Group multiple transactions into single instant block
+4. **Batch Instant Blocks**: Group multiple transactions into single instant block
+5. **Rate Limiting**: Add configurable limits on instant block production rate
 
 ### Considerations
 
