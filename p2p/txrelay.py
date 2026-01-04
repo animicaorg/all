@@ -26,6 +26,10 @@ class TxIdSetLRU:
         if len(self._items) > self.cap:
             self._items.popitem(last=False)
 
+    def remove(self, txid: bytes) -> None:
+        """Remove a txid from the set if present."""
+        self._items.pop(txid, None)
+
     def __contains__(self, txid: bytes) -> bool:
         return txid in self._items
 
@@ -431,7 +435,7 @@ class TxRelayService:
                 self._reject_remember(txid)
                 # Clear from peer's known_txids since they don't have it
                 if state and txid in state.known_txids:
-                    state.known_txids._items.pop(txid, None)
+                    state.known_txids.remove(txid)
         log.info(
             "TX_NOTFOUND",
             extra={"peer": conn_id, "count": len(tx_list), **self._peer_log_extra(conn_id)},
@@ -619,8 +623,7 @@ class TxRelayService:
                             for source_conn_id in sources:
                                 state = self._peer_state.get(source_conn_id)
                                 if state and txid in state.known_txids:
-                                    # Remove from LRU to allow re-announcement
-                                    state.known_txids._items.pop(txid, None)
+                                    state.known_txids.remove(txid)
                         log.info(
                             "TX_FETCH_ABANDONED",
                             extra={
