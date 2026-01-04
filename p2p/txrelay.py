@@ -26,6 +26,10 @@ class TxIdSetLRU:
         if len(self._items) > self.cap:
             self._items.popitem(last=False)
 
+    def remove(self, txid: bytes) -> None:
+        """Remove a txid from the set if present."""
+        self._items.pop(txid, None)
+
     def __contains__(self, txid: bytes) -> bool:
         return txid in self._items
 
@@ -424,9 +428,14 @@ class TxRelayService:
 
     async def on_tx_notfound(self, conn_id: str, txids: Iterable[bytes]) -> None:
         tx_list = list(txids)
-        for txid in tx_list:
-            self._inflight.pop(txid, None)
-            self._reject_remember(txid)
+        async with self._lock:
+            state = self._peer_state.get(conn_id)
+            for txid in tx_list:
+                self._inflight.pop(txid, None)
+                self._reject_remember(txid)
+                # Clear from peer's known_txids since they don't have it
+                if state and txid in state.known_txids:
+                    state.known_txids.remove(txid)
         log.info(
             "TX_NOTFOUND",
             extra={"peer": conn_id, "count": len(tx_list), **self._peer_log_extra(conn_id)},
@@ -604,6 +613,23 @@ class TxRelayService:
                                 "count": 1,
                                 "retry": True,
                                 **self._peer_log_extra(next_peer),
+                            },
+                        )
+                    else:
+                        # No more retry candidates or max retries reached.
+                        # Remove txid from known_txids of all source peers so they can
+                        # announce it again, enabling transaction propagation recovery.
+                        async with self._lock:
+                            for source_conn_id in sources:
+                                state = self._peer_state.get(source_conn_id)
+                                if state and txid in state.known_txids:
+                                    state.known_txids.remove(txid)
+                        log.info(
+                            "TX_FETCH_ABANDONED",
+                            extra={
+                                "hash": txid.hex(),
+                                "attempts": entry.attempts,
+                                "cleared_from_peers": len(sources),
                             },
                         )
                 if now - last_heartbeat >= 10.0:
