@@ -227,7 +227,7 @@ def list_pending(
                 else:
                     typer.echo(f"  {i:3d}. {entry}")
     else:
-    typer.echo(json_lib.dumps(result, indent=2))
+        typer.echo(json_lib.dumps(result, indent=2))
 
 
 @app.command("drop")
