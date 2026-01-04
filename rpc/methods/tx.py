@@ -642,6 +642,8 @@ def _decode_tx(raw: bytes) -> tuple[t.Any, dict]:
             pass
 
     enriched_obj = dict(normalized_env)
+    if isinstance(obj, dict) and "body" in obj and isinstance(obj.get("body"), dict):
+        enriched_obj["body"] = obj["body"]
     enriched_obj["hash"] = tx_hash_hex
     enriched_obj["raw"] = raw_canonical
     return enriched_obj, enriched_obj
@@ -1684,7 +1686,10 @@ def tx_debug_verify_raw_transaction(rawTx: str) -> dict:
     chain_id = _validate_chain_id(obj)
 
     alg_id, pub, sig, domain, prehash = _extract_sig(obj)
-    candidates = _collect_sign_bytes(obj)
+    candidate_source = obj
+    if not (isinstance(candidate_source, dict) and isinstance(candidate_source.get("body"), dict)):
+        candidate_source = tx_like
+    candidates = _collect_sign_bytes(candidate_source)
     sig_env, alg_name = _build_sig_env(alg_id, sig, domain=domain, prehash=prehash)
 
     ok, used_label, verify_errors = _verify_pq_candidates(
