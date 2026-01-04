@@ -1445,6 +1445,270 @@ async def get_peer_info(peer_id: str) -> dict[str, t.Any] | None:
     return None
 
 
+@method(
+    "debug_mempool_stats",
+    desc="Return mempool statistics for diagnostics",
+    aliases=("debug.mempoolStats",),
+)
+async def debug_mempool_stats() -> dict[str, t.Any]:
+    """
+    Return mempool statistics including pending count, bytes, sources, and recent activity.
+    
+    Returns:
+        dict with fields:
+            - pending_count: int (total pending transactions)
+            - pending_bytes: int (total bytes of pending transactions)
+            - top_sources: list[dict] (top transaction sources by count)
+            - last_accept_at: float | None (timestamp of last acceptance)
+            - last_reject_at: float | None (timestamp of last rejection)
+            - recent_rejects: list[dict] (recent rejection records)
+            - persist_path: str | None (path to pending.jsonl)
+            - has_mempool_service: bool
+    """
+    from rpc import deps
+    
+    result: dict[str, t.Any] = {
+        "pending_count": 0,
+        "pending_bytes": 0,
+        "top_sources": [],
+        "last_accept_at": None,
+        "last_reject_at": None,
+        "recent_rejects": [],
+        "persist_path": None,
+        "has_mempool_service": False,
+    }
+    
+    try:
+        ctx = deps.get_ctx()
+        mempool_svc = getattr(ctx, "mempool", None)
+        
+        if mempool_svc is None:
+            # Try alternate locations
+            try:
+                import rpc.mempool_service as mp_mod
+                mempool_svc = getattr(mp_mod, "_mempool_service_singleton", None)
+            except Exception:
+                pass
+        
+        if mempool_svc is not None:
+            result["has_mempool_service"] = True
+            
+            # Get pool size
+            if hasattr(mempool_svc, "pool"):
+                try:
+                    pool = mempool_svc.pool
+                    result["pending_count"] = len(pool) if hasattr(pool, "__len__") else 0
+                    
+                    # Calculate total bytes
+                    if hasattr(pool, "entries") or hasattr(pool, "all"):
+                        entries = (
+                            pool.entries() if hasattr(pool, "entries") else
+                            pool.all() if hasattr(pool, "all") else []
+                        )
+                        total_bytes = 0
+                        for entry in entries:
+                            tx_obj = getattr(entry, "tx", None) or entry
+                            raw = getattr(tx_obj, "raw", None)
+                            if raw and isinstance(raw, (bytes, bytearray)):
+                                total_bytes += len(raw)
+                        result["pending_bytes"] = total_bytes
+                except Exception as e:
+                    log.debug(f"Error getting pool stats: {e}")
+            
+            # Get persist path
+            if hasattr(mempool_svc, "_persist_path"):
+                persist_path = getattr(mempool_svc, "_persist_path", None)
+                if persist_path:
+                    result["persist_path"] = str(persist_path)
+            
+            # Get recent rejects
+            if hasattr(mempool_svc, "_last_rejections"):
+                rejects = getattr(mempool_svc, "_last_rejections", {})
+                result["recent_rejects"] = [
+                    {"tx_hash": k, **v}
+                    for k, v in list(rejects.items())[-10:]  # Last 10
+                ]
+                if rejects:
+                    timestamps = [v.get("ts", 0) for v in rejects.values()]
+                    result["last_reject_at"] = max(timestamps) if timestamps else None
+    
+    except Exception as e:
+        log.error(f"Error in debug_mempool_stats: {e}", exc_info=True)
+    
+    return result
+
+
+@method(
+    "debug_tx_relay_stats",
+    desc="Return TX relay statistics for diagnostics",
+    aliases=("debug.txRelayStats",),
+)
+async def debug_tx_relay_stats() -> dict[str, t.Any]:
+    """
+    Return TX relay statistics including message counts, inflight requests, and missing txs.
+    
+    Returns:
+        dict with fields:
+            - inv_sent: int (TX_INV messages sent)
+            - inv_recv: int (TX_INV messages received)
+            - get_sent: int (TX_GET messages sent)
+            - get_recv: int (TX_GET messages received)
+            - push_sent: int (TX_DATA/TX_PUSH messages sent)
+            - push_recv: int (TX_DATA/TX_PUSH messages received)
+            - inflight_count: int (transactions currently being fetched)
+            - missing_count: int (transactions we know about but don't have)
+            - reject_count: int (transactions recently rejected)
+            - has_relay_service: bool
+    """
+    result: dict[str, t.Any] = {
+        "inv_sent": 0,
+        "inv_recv": 0,
+        "get_sent": 0,
+        "get_recv": 0,
+        "push_sent": 0,
+        "push_recv": 0,
+        "inflight_count": 0,
+        "missing_count": 0,
+        "reject_count": 0,
+        "has_relay_service": False,
+    }
+    
+    p2p_svc = _get_p2p_service()
+    if p2p_svc is not None:
+        # Try to get relay service
+        relay_svc = getattr(p2p_svc, "tx_relay_service", None) or getattr(p2p_svc, "_tx_relay", None) or getattr(p2p_svc, "_txrelay", None)
+        
+        if relay_svc is not None:
+            result["has_relay_service"] = True
+            
+            # Get snapshot
+            if hasattr(relay_svc, "snapshot"):
+                try:
+                    snapshot = relay_svc.snapshot()
+                    if isinstance(snapshot, dict):
+                        result["inflight_count"] = snapshot.get("inflight", 0)
+                        
+                        # Count missing from peers
+                        peers = snapshot.get("peers", [])
+                        total_known = sum(p.get("known_txids", 0) for p in peers)
+                        result["missing_count"] = total_known
+                except Exception as e:
+                    log.debug(f"Error getting relay snapshot: {e}")
+            
+            # Get reject cache size
+            if hasattr(relay_svc, "_reject_cache"):
+                try:
+                    result["reject_count"] = len(relay_svc._reject_cache)
+                except Exception:
+                    pass
+        
+        # Try to get stats from p2p_service directly
+        if hasattr(p2p_svc, "_stats"):
+            try:
+                stats = p2p_svc._stats
+                result["inv_sent"] = stats.get("tx_inv_sent", 0)
+                result["inv_recv"] = stats.get("tx_inv_recv", 0)
+                result["get_sent"] = stats.get("tx_get_sent", 0) + stats.get("tx_getdata_sent", 0)
+                result["get_recv"] = stats.get("tx_get_recv", 0) + stats.get("tx_getdata_recv", 0)
+                result["push_sent"] = stats.get("tx_data_sent", 0) + stats.get("tx_sent", 0)
+                result["push_recv"] = stats.get("tx_data_recv", 0) + stats.get("tx_recv", 0)
+            except Exception:
+                pass
+    
+    return result
+
+
+@method(
+    "debug_tx_by_id",
+    desc="Check if node has a transaction by ID and get its status",
+    aliases=("debug.txById",),
+)
+async def debug_tx_by_id(tx_hash: str) -> dict[str, t.Any]:
+    """
+    Check if node has a transaction by ID and return its status.
+    
+    Args:
+        tx_hash: Transaction hash (hex string with or without 0x prefix)
+    
+    Returns:
+        dict with fields:
+            - found: bool (whether we have the tx bytes)
+            - in_mempool: bool (whether it's in pending mempool)
+            - in_chain: bool (whether it's been mined)
+            - source_peer: str | None (peer that provided it)
+            - accept_reason: str | None (why it was accepted)
+            - reject_reason: str | None (why it was rejected)
+            - reject_details: dict | None (additional reject info)
+            - tx_hash: str (normalized hash)
+    """
+    from rpc import deps
+    
+    # Normalize hash
+    if not tx_hash.startswith("0x"):
+        tx_hash = f"0x{tx_hash}"
+    tx_hash = tx_hash.lower()
+    
+    result: dict[str, t.Any] = {
+        "found": False,
+        "in_mempool": False,
+        "in_chain": False,
+        "source_peer": None,
+        "accept_reason": None,
+        "reject_reason": None,
+        "reject_details": None,
+        "tx_hash": tx_hash,
+    }
+    
+    try:
+        ctx = deps.get_ctx()
+        
+        # Check mempool
+        mempool_svc = getattr(ctx, "mempool", None)
+        if mempool_svc is None:
+            try:
+                import rpc.mempool_service as mp_mod
+                mempool_svc = getattr(mp_mod, "_mempool_service_singleton", None)
+            except Exception:
+                pass
+        
+        if mempool_svc is not None:
+            # Check if in mempool
+            if hasattr(mempool_svc, "has_hash"):
+                try:
+                    result["in_mempool"] = mempool_svc.has_hash(tx_hash)
+                    if result["in_mempool"]:
+                        result["found"] = True
+                        result["accept_reason"] = "in_mempool"
+                except Exception:
+                    pass
+            
+            # Check reject cache
+            if hasattr(mempool_svc, "get_rejection"):
+                try:
+                    rejection = mempool_svc.get_rejection(tx_hash)
+                    if rejection:
+                        result["reject_reason"] = rejection.get("reason")
+                        result["reject_details"] = rejection.get("details")
+                except Exception:
+                    pass
+        
+        # Check if in chain (tx_index)
+        tx_index = getattr(ctx, "tx_index", None)
+        if tx_index is not None and hasattr(tx_index, "exists"):
+            try:
+                tx_hash_bytes = bytes.fromhex(tx_hash[2:] if tx_hash.startswith("0x") else tx_hash)
+                if tx_index.exists(tx_hash_bytes):
+                    result["in_chain"] = True
+                    result["found"] = True
+            except Exception:
+                pass
+    
+    except Exception as e:
+        log.error(f"Error in debug_tx_by_id: {e}", exc_info=True)
+    
+    return result
+
+
 # Export for RPC method discovery
 __all__ = [
     "list_peers",
@@ -1453,6 +1717,9 @@ __all__ = [
     "debug_status",
     "debug_p2p_status",
     "debug_tx_relay_metrics",
+    "debug_mempool_stats",
+    "debug_tx_relay_stats",
+    "debug_tx_by_id",
     "add_peer",
     "remove_peer",
     "get_peer_info",
