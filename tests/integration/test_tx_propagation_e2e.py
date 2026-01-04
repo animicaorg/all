@@ -25,7 +25,7 @@ class SimpleMempool:
     async def admit_tx(
         self,
         raw: bytes,
-        local: Optional[bool] = False,
+        local: Optional[bool] = None,
         origin_peer: Optional[str] = None,
     ) -> tuple[bool, Optional[str]]:
         """Admit a transaction to the mempool."""
@@ -363,7 +363,7 @@ async def test_inv_get_push_flow() -> None:
         assert "PUSH:peer-b" in flow, "Should send PUSH to peer-b"
         
         # Verify tx is in mempool B
-        assert mempool_b.has_tx(tx_hash), "Tx should be in mempool B"
+        assert await mempool_b.has_tx(tx_hash), "Tx should be in mempool B"
         
         # Verify caches are updated
         peer_state_b = relay_b._peer_state.get("peer-a")
