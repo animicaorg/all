@@ -1124,6 +1124,57 @@ async def startup(cfg: t.Any | None = None) -> RpcContext:
                     f"Failed to start core P2P service: {e}", exc_info=True
                 )
 
+        # Initialize PTL service if enabled
+        ptl_enabled = os.environ.get("ANIMICA_PTL_ENABLE", "").lower() in {"1", "true", "yes", "on"}
+        if not ptl_enabled:
+            # Check if using ptl tx_system (default)
+            tx_system = os.environ.get("ANIMICA_TX_SYSTEM", "ptl").lower()
+            ptl_enabled = tx_system == "ptl"
+        
+        if ptl_enabled:
+            try:
+                from core.ptl.config import PtlConfig
+                from core.ptl.service import PtlService
+                from core.ptl.store import PtlStore
+                
+                # Load PTL configuration
+                ptl_config = PtlConfig.from_env()
+                
+                # Determine PTL database path
+                ptl_db_path = ptl_config.db_path
+                if not ptl_db_path:
+                    ptl_db_path = str(_CTX.data_root / "ptl" / "ptl.db")
+                
+                # Initialize PTL store and service
+                ptl_store = PtlStore(ptl_db_path)
+                ptl_service = PtlService(
+                    store=ptl_store,
+                    ttl_seconds=ptl_config.ttl_seconds,
+                    min_peer_acks=ptl_config.min_peer_acks,
+                )
+                
+                # Register PTL service in global deps registry
+                register("ptl_service", ptl_service)
+                
+                # Start maintenance loop in background
+                import asyncio
+                asyncio.create_task(ptl_service.maintenance_loop())
+                
+                logging.getLogger("animica.rpc.deps").info(
+                    "PTL service initialized",
+                    extra={
+                        "db_path": ptl_db_path,
+                        "ttl_seconds": ptl_config.ttl_seconds,
+                        "min_peer_acks": ptl_config.min_peer_acks,
+                    },
+                )
+            except Exception as e:
+                logging.getLogger("animica.rpc.deps").warning(
+                    f"Failed to initialize PTL service: {e}", exc_info=True
+                )
+                # PTL is optional; continue without it
+                pass
+
         return _CTX
 
 
@@ -1132,6 +1183,17 @@ async def shutdown() -> None:
     with _CTX_LOCK:
         global _CTX
         if _CTX is not None:
+            # Stop PTL service if initialized
+            ptl_service = get("ptl_service")
+            if ptl_service is not None:
+                try:
+                    ptl_service.stop()
+                    logging.getLogger("animica.rpc.deps").info("PTL service stopped")
+                except Exception as e:
+                    logging.getLogger("animica.rpc.deps").warning(
+                        f"Failed to stop PTL service: {e}", exc_info=True
+                    )
+            
             # Stop P2P service before closing other resources
             if _CTX.p2p_service is not None:
                 try:
