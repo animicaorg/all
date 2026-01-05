@@ -82,7 +82,8 @@ class RPCClient:
                 data = response.json()
             elif HAVE_REQUESTS:
                 import requests
-                # allow_redirects=True explicitly handles redirects (default is True for requests)
+                # allow_redirects=True is the default for requests, but made explicit for
+                # consistency with httpx and to ensure redirect handling is clearly documented
                 response = requests.post(
                     self.rpc_url,
                     json=payload,
