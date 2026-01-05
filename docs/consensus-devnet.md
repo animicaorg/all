@@ -15,7 +15,7 @@ These values keep a single auto-mining node progressing without getting stuck or
 
 ## Rewards
 - **Block subsidy:** 10,000,000 nANM (0.01 ANM) per block on devnet.
-- **Split:** miner 60%, AICF 30%, treasury 10%.
+- **Split:** miner 100%, AICF 0%, treasury 0%.
 - Fees remain zeroed by default for devnet smoke tests.
 
 ## References
