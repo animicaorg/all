@@ -224,7 +224,9 @@ class DashboardTab(QWidget):
                     self.balance_label.setText(f"{balance_value:.9f} ANM")
                 except (ValueError, TypeError) as e:
                     logger.error(f"Failed to parse balance '{balance}': {e}")
-                    self.balance_label.setText(f"Parse error: {balance}")
+                    # Only show first 20 chars to avoid displaying sensitive data
+                    safe_balance = str(balance)[:20] if balance else "None"
+                    self.balance_label.setText(f"Parse error: {safe_balance}...")
             else:
                 self.balance_label.setText("Unable to query")
                 
