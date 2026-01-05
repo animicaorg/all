@@ -55,3 +55,4 @@ logs/
 .DS_Store
 Thumbs.db
 test_mining_gate_fix.py
+test_coinbase_encoding.py
