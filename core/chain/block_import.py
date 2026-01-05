@@ -1600,6 +1600,11 @@ class _OrphanBlock:
 _IMPORTER_CACHE: Dict[int, BlockImporter] = {}
 
 # Network key prefix for params.yaml lookup (e.g., "animica:1" for mainnet)
+# This matches the network key format in spec/params.yaml under the "networks" section:
+#   networks:
+#     "animica:1":    # mainnet
+#     "animica:2":    # testnet
+#     "animica:1337": # devnet
 _NETWORK_KEY_PREFIX = "animica"
 
 
