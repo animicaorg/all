@@ -153,8 +153,6 @@ class CreateWalletDialog(QDialog):
             logger.error(f"Wallet creation failed: {e}")
             self.status_label.setText(f"Error: {str(e)}")
             self.status_label.setStyleSheet("color: red;")
-            self.status_label.setText(f"Error: {str(e)}")
-            self.status_label.setStyleSheet("color: red;")
 
 
 class NetworkSelectionPage(QWizardPage):
@@ -626,11 +624,11 @@ class SummaryPage(QWizardPage):
     def _on_checkbox_toggled(self, checked: bool) -> None:
         """Show/hide help text based on checkbox state and update mode in summary."""
         self.help_label.setVisible(not checked)
-        # Only update the mode-dependent parts instead of regenerating entire HTML
+        # Update the summary display with the new mode
         self._update_mode_display()
     
     def _update_mode_display(self) -> None:
-        """Update only the mode and action text in the summary."""
+        """Update the complete summary with current mode and action text."""
         start_mining = self.start_mining_checkbox.isChecked()
         action_text = (
             "Click <b>Finish</b> to save this configuration and start mining."

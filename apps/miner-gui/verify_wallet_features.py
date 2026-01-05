@@ -137,7 +137,8 @@ def verify_summary_page():
         
         # Check checkbox label
         checkbox_text = page.start_mining_checkbox.text()
-        assert "wallet only" in checkbox_text.lower(), f"Checkbox text doesn't mention wallet-only: {checkbox_text}"
+        assert "wallet-only" in checkbox_text.lower() or "wallet only" in checkbox_text.lower(), \
+            f"Checkbox text doesn't mention wallet-only: {checkbox_text}"
         print(f"✓ Checkbox text mentions wallet-only: '{checkbox_text}'")
         
         # Check checkbox default state
