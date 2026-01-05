@@ -73,6 +73,11 @@ class LogsTab(QWidget):
     
     def on_mining_event(self, event: MiningEvent) -> None:
         """Handle mining events."""
+        # Guard against None event.data
+        if event.data is None:
+            logger.warning("Received mining event with None data")
+            return
+        
         if event.event_type == EventType.LOG:
             level = event.data.get('level', 'info')
             message = event.data.get('message', '')
