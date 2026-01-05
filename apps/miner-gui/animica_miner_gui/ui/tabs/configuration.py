@@ -45,7 +45,6 @@ class ConfigurationTab(QWidget):
         # JSON editor
         self.editor = QTextEdit()
         self.editor.setFontFamily("monospace")
-        self.load_config_to_editor()
         layout.addWidget(self.editor)
         
         # Buttons
@@ -71,6 +70,9 @@ class ConfigurationTab(QWidget):
         layout.addWidget(self.status_label)
         
         self.setLayout(layout)
+        
+        # Load config after UI is fully set up
+        self.load_config_to_editor()
     
     def load_config_to_editor(self) -> None:
         """Load current configuration into the editor."""
