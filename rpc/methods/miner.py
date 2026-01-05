@@ -1374,14 +1374,16 @@ def _apply_block_reward(ctx: Any, height: int, payout_address: bytes | None = No
             
             state_db = ctx.state_db
             # Apply block rewards to state (miner, aicf, treasury)
-            # For the first reward (miner), use the provided payout address
+            # For the first reward (miner), use the provided payout address (or default miner address)
             for idx, (reward_addr, amount) in enumerate(rewards):
-                # Override first reward (miner) with payout address if provided
+                # Override first reward (miner) with actual payout address
                 # Do this BEFORE trying to decode, since the first address may be a placeholder
-                if idx == 0 and payout_address is not None:
-                    reward_addr_bytes = payout_address
+                if idx == 0:
+                    # Always use miner_address for first reward (miner reward)
+                    # miner_address was set to payout_address if provided, else _get_miner_address()
+                    reward_addr_bytes = miner_address
                 else:
-                    # Convert bech32 address to bytes if needed
+                    # Convert bech32 address to bytes if needed (for aicf/treasury rewards)
                     if isinstance(reward_addr, str):
                         try:
                             reward_addr_bytes = _decode_bech32_address(reward_addr)
