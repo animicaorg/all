@@ -251,14 +251,40 @@ async def wallet_verify(request: WalletVerifyRequest, db: AsyncSession = Depends
             detail="Challenge expired or not found. Request a new challenge."
         )
     
-    # TODO: Verify Dilithium3 signature
-    # For now, we'll accept any signature (implement proper verification)
-    # from pq.dilithium import verify_signature
-    # if not verify_signature(challenge, request.signature, request.public_key):
-    #     raise HTTPException(
-    #         status_code=status.HTTP_401_UNAUTHORIZED,
-    #         detail="Invalid signature"
-    #     )
+    # Verify Dilithium3 signature
+    try:
+        # NOTE: Dynamic path manipulation is a development workaround
+        # In production, pq should be installed as a proper package dependency
+        # TODO: Install pq module as a package dependency and remove sys.path manipulation
+        import sys
+        import os
+        repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../../"))
+        if repo_root not in sys.path:
+            sys.path.insert(0, repo_root)
+        
+        from pq.py.algs.dilithium3 import verify
+        
+        # Decode hex signature and public key
+        signature_bytes = bytes.fromhex(request.signature)
+        public_key_bytes = bytes.fromhex(request.public_key)
+        challenge_bytes = challenge.encode('utf-8')
+        
+        # Verify signature
+        if not verify(public_key_bytes, challenge_bytes, signature_bytes):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid signature"
+            )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid signature format: {str(e)}"
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Signature verification failed: {str(e)}"
+        )
     
     # Find or create user
     result = await db.execute(
