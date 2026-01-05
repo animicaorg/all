@@ -6,7 +6,6 @@ This script tests the logic of wallet creation with custom paths
 without needing to run the actual GUI.
 """
 
-import tempfile
 from pathlib import Path
 
 
