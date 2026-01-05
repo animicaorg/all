@@ -537,15 +537,10 @@ def show(
         help="Allow using bootstrap RPC (requires ANIMICA_I_UNDERSTAND_REMOTE_RISK=1)",
     ),
     source: str = typer.Option(
-        "auto",
+        "chain",
         "--source",
-        help="Balance source: auto (default), chain, or cached",
+        help="Balance source: chain (default, query via RPC) or cached (from wallet file)",
         case_sensitive=False,
-    ),
-    chain: Optional[bool] = typer.Option(
-        None,
-        "--chain/--no-chain",
-        help="Force querying the chain for balance (overrides --source)",
     ),
     show_secret: bool = typer.Option(False, "--show-secret", help="Include secret key in output (WARNING: sensitive)"),
     i_know_what_im_doing: bool = typer.Option(
@@ -565,36 +560,47 @@ def show(
     raw_entry = _find_wallet_raw(store, identifier=lookup_id)
     entry = _entry_from_dict(raw_entry)
 
-    source_choice = (chain and "chain") or ((chain is False) and "cached") or source.lower()
-    if source_choice not in {"auto", "chain", "cached"}:
-        typer.echo("Error: --source must be one of auto, chain, cached", err=True)
+    source_choice = source.lower()
+    if source_choice not in {"chain", "cached"}:
+        typer.echo("Error: --source must be one of chain, cached", err=True)
         raise typer.Exit(code=1)
 
     balance_confirmed: Optional[int] = None
-    balance_source = "cached"
-    balance_warning: Optional[str] = None
+    balance_source = source_choice
+    head_info: Optional[Dict[str, Any]] = None
+    queried_at: Optional[str] = None
 
-    # Attempt to fetch live balance unless explicitly disabled
-    if source_choice != "cached":
+    # Query chain for balance and head info
+    if source_choice == "chain":
         rpc_endpoint = _resolve_rpc_url(rpc_url)
         guard_bootstrap_rpc(rpc_endpoint, allow_remote=allow_remote_rpc, method="state.getBalance")
+        
+        # Get head info
+        try:
+            head_result = _request_rpc("chain.getHead", [], rpc_endpoint)
+            if head_result and isinstance(head_result, dict):
+                head_info = {
+                    "height": head_result.get("height"),
+                    "hash": head_result.get("hash"),
+                    "rpc_url": rpc_endpoint,
+                }
+            queried_at = datetime.now(timezone.utc).isoformat()
+        except Exception as exc:
+            typer.echo(f"Warning: Failed to fetch head info: {exc}", err=True)
+        
+        # Get balance with tag="head"
         try:
             balance_confirmed = get_balance(entry.address, rpc_endpoint)
-            balance_source = "chain"
         except Exception as exc:
-            balance_warning = f"Failed to fetch balance from chain: {exc}"
-            if source_choice == "chain":
-                typer.echo(balance_warning, err=True)
-                raise typer.Exit(code=1)
-
-    # Fall back to cached balance if available
-    if balance_confirmed is None:
+            typer.echo(f"Error: Failed to fetch balance from chain: {exc}", err=True)
+            raise typer.Exit(code=1)
+    else:
+        # Cached balance from wallet file
         cached_balance = raw_entry.get("balance")
         try:
             balance_confirmed = int(cached_balance) if cached_balance is not None else None
         except Exception:
             balance_confirmed = None
-        balance_source = "cached"
 
     output = entry.to_dict()
 
@@ -617,8 +623,13 @@ def show(
         format_amount(balance_confirmed) if balance_confirmed is not None else None
     )
     output["balance_source"] = balance_source
-    if balance_warning:
-        output["balance_warning"] = balance_warning
+    
+    # Add head info if available
+    if head_info is not None:
+        output["head"] = head_info
+    if queried_at is not None:
+        output["queried_at"] = queried_at
+    
     typer.echo(json.dumps(output, indent=2))
 
 
