@@ -4706,10 +4706,8 @@ def miner_submit_block(**payload: Any) -> Dict[str, Any]:
                         exc_info=True,
                     )
 
-                try:
-                    _apply_block_reward(_ctx(), int(result.height or 0), payout_bytes)
-                except Exception:
-                    log.warning("Failed to apply block reward for submitted block", exc_info=True)
+                # Block rewards are now applied during block import in BlockImporter._apply_block_state
+                # No need to apply them again here (would cause double-crediting)
 
                 try:
                     tx_hashes = []
