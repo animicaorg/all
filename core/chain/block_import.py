@@ -843,19 +843,7 @@ class BlockImporter:
     ) -> Optional[str]:
         """
         Lightweight PoW threshold check aligned with miner target rules.
-        
-        Instant blocks skip PoW validation since they don't require mining.
         """
-        # Check if this is an instant block
-        is_instant = getattr(header, "instantBlock", False)
-        if is_instant:
-            # Instant blocks skip PoW validation
-            # They should have nonce=0 and reward=0
-            nonce = getattr(header, "nonce", 0)
-            if nonce != 0:
-                return "instant block must have nonce=0"
-            return None
-        
         # Normal block PoW validation
         try:
             theta_micro = _weight_micro_of(header, payload, self.params)
@@ -1103,9 +1091,6 @@ class BlockImporter:
                 continue
             height = _height_of(header)
             
-            # Check if this is an instant block
-            is_instant = getattr(header, "instantBlock", False)
-            
             if hasattr(self.block_db, "set_canonical"):
                 self.block_db.set_canonical(height, h)
             if self.tx_index is not None:
@@ -1113,10 +1098,9 @@ class BlockImporter:
                 if block is not None:
                     self._index_block_if_canonical(height=height, block_hash=h, block=block)
 
-            # Update canonical height (skip instant blocks)
-            if not is_instant:
-                canonical_height += 1
-                self.block_db.set_canonical_height(canonical_height)
+            # Update canonical height for all blocks
+            canonical_height += 1
+            self.block_db.set_canonical_height(canonical_height)
             
             ts = _timestamp_of(header)
             if ts is not None:

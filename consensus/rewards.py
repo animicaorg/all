@@ -83,7 +83,6 @@ def compute_block_reward(
     chain_id: int,
     height: int,
     params: Mapping[str, Any] | None = None,
-    instant_block: bool = False,
 ) -> List[Tuple[str, int]]:
     """
     Compute the block reward (coinbase outputs) for a given chain and height.
@@ -96,15 +95,10 @@ def compute_block_reward(
       - Use their own genesis allocation rules (not enforced here; handled by genesis loader)
       - At height >= 1, follow emission schedule per params
 
-    Instant blocks (instant_block=True):
-      - Always return empty list (zero rewards)
-      - These blocks do not advance the halving schedule
-
     Args:
         chain_id: Chain identifier (1 = mainnet, 1337 = devnet, etc.)
         height: Block height (0 = genesis, 1+ = post-genesis)
         params: Optional chain parameters (used for emission schedule at height >= 1)
-        instant_block: Whether this is an instant (zero-reward) block
 
     Returns:
         List of (address, amount) tuples representing coinbase outputs.
@@ -112,10 +106,6 @@ def compute_block_reward(
     Raises:
         ValueError: If parameters are invalid or missing for height >= 1.
     """
-    # Instant blocks always have zero rewards
-    if instant_block:
-        return []
-
     # Mainnet premine enforcement: height 0 only
     if chain_id == 1 and height == 0:
         return list(MAINNET_PREMINE_DISTRIBUTION)
@@ -330,49 +320,6 @@ def compute_subsidy_for_height(
     return (miner, aicf, treasury)
 
 
-def compute_canonical_height(height: int, instant_block: bool, canonical_height: int | None = None) -> int:
-    """
-    Compute the canonical height for halving schedule calculations.
-    
-    Instant blocks do not advance the canonical height. The canonical height
-    is used to determine the halving epoch and block rewards.
-    
-    Args:
-        height: The actual block height (including instant blocks)
-        instant_block: Whether this is an instant block
-        canonical_height: Previous canonical height (if known)
-        
-    Returns:
-        The canonical height to use for reward calculations
-        
-    Notes:
-        - Genesis (height=0) has canonical_height=0
-        - Normal blocks increment canonical height
-        - Instant blocks preserve the previous canonical height
-    """
-    if height == 0:
-        return 0
-    
-    if instant_block:
-        # Instant blocks do not advance canonical height
-        # If we don't know the previous canonical height, we can't compute it
-        # This should be provided by the caller (block importer)
-        if canonical_height is None:
-            raise ValueError(
-                "canonical_height must be provided for instant blocks to preserve halving schedule"
-            )
-        return canonical_height
-    
-    # Normal blocks: canonical height equals actual height for non-instant blocks
-    # In a chain with no instant blocks, canonical_height == height
-    # If we know the previous canonical height, increment it
-    if canonical_height is not None:
-        return canonical_height + 1
-    
-    # Fallback: assume no instant blocks before this height
-    return height
-
-
 # ==================================================================================
 # EXPORTS
 # ==================================================================================
@@ -384,5 +331,4 @@ __all__ = [
     "validate_mainnet_genesis_coinbase",
     "parse_emission_schedule",
     "compute_subsidy_for_height",
-    "compute_canonical_height",
 ]
