@@ -987,6 +987,12 @@ def sync_status(
     verbose: bool = typer.Option(
         False, "--verbose", "-v", help="Show detailed information"
     ),
+    persist: bool = typer.Option(
+        False, "--persist", help="Continuously monitor sync status (live updates)"
+    ),
+    interval: int = typer.Option(
+        5, "--interval", help="Refresh interval in seconds when using --persist (default: 5)"
+    ),
 ) -> None:
     """
     Show current blockchain synchronization status.
@@ -1001,6 +1007,8 @@ def sync_status(
         animica sync status
         animica sync status --json
         animica sync status --verbose
+        animica sync status --persist
+        animica sync status --persist --interval 10
     """
     url, bootstrap_url = _resolve_sync_endpoints(
         rpc_url, bootstrap_rpc, allow_bootstrap_rpc=allow_bootstrap_rpc
@@ -1343,6 +1351,139 @@ def sync_status(
         network_peer=best_peer,
         note="status",
     )
+    
+    # If persist mode is enabled, continuously monitor sync status
+    if persist:
+        if json_output:
+            typer.secho("Warning: --persist with --json will output continuous JSON stream. Use Ctrl+C to stop.", fg=typer.colors.YELLOW, err=True)
+        else:
+            typer.echo()
+            typer.secho(f"⏱ Monitoring sync status (refreshing every {interval}s). Press Ctrl+C to stop.", fg=typer.colors.CYAN)
+            typer.echo()
+        
+        last_status_line: Optional[str] = None
+        last_height = height or 0
+        
+        try:
+            while True:
+                time.sleep(interval)
+                
+                # Fetch fresh status
+                try:
+                    snapshot = asyncio.run(_get_local_sync_snapshot(url))
+                    head_info = snapshot.get("head_info")
+                    sync_status = snapshot.get("sync_status")
+                    peers = snapshot.get("peers") or []
+                    peer_count = snapshot.get("peer_count")
+                    
+                    # Refetch bootstrap head if needed
+                    if allow_bootstrap_rpc and bootstrap_url:
+                        try:
+                            bootstrap_head = asyncio.run(_get_bootstrap_head_info(bootstrap_url))
+                        except Exception:
+                            bootstrap_head = None
+                    
+                    height = _extract_height(head_info)
+                    head_hash = head_info.get("hash") or head_info.get("blockHash") if head_info else None
+                    bootstrap_height = _extract_height(bootstrap_head)
+                    bootstrap_hash = bootstrap_head.get("hash") if bootstrap_head else None
+                    
+                    best_peer_height, best_peer_hash, best_peer = _select_best_peer_head(peers)
+                    network_height = bootstrap_height
+                    network_hash = bootstrap_hash
+                    network_source = None
+                    if bootstrap_height is not None:
+                        network_source = "bootstrap"
+                    if best_peer_height is not None and (network_height is None or best_peer_height > network_height):
+                        network_height = best_peer_height
+                        network_hash = best_peer_hash
+                        network_source = "peer"
+                    
+                    metrics = _extract_sync_metrics(sync_status)
+                    is_syncing = bool(metrics.get("syncing"))
+                    target_height = metrics.get("target_height")
+                    best_header_height = metrics.get("best_header_height")
+                    best_block_height = metrics.get("best_block_height")
+                    sync_state = _compute_sync_state(
+                        head_height=height or 0 if height is not None else None,
+                        network_height=network_height,
+                        metrics=metrics,
+                    )
+                    
+                    if peer_count is None:
+                        if peers:
+                            peer_count = len(peers)
+                        elif p2p_status:
+                            peer_count = p2p_status.get("peers_total")
+                    
+                    progress_current = height if height is not None else best_block_height
+                    progress_target = target_height or network_height
+                    progress_pct = _compute_sync_percent(progress_current, progress_target)
+                    
+                    # JSON output mode
+                    if json_output:
+                        output = {
+                            "timestamp": time.time(),
+                            "rpc_url": url,
+                            "height": height,
+                            "head_hash": head_hash,
+                            "syncing": is_syncing,
+                            "sync_state": sync_state,
+                            "peer_count": peer_count,
+                        }
+                        if progress_pct is not None:
+                            output["sync_percent"] = round(progress_pct, 1)
+                        if network_height is not None:
+                            output["network_height"] = network_height
+                        if best_header_height is not None:
+                            output["best_header_height"] = best_header_height
+                        if best_block_height is not None:
+                            output["best_block_height"] = best_block_height
+                        typer.echo(_pretty(output))
+                    else:
+                        # Compact status line for live monitoring
+                        blocks_synced = (height or 0) - last_height
+                        sync_delta = f"+{blocks_synced}" if blocks_synced > 0 else ""
+                        
+                        status_line = (
+                            f"[{_format_timestamp(time.time())}] "
+                            f"Height: {height or 0}{sync_delta} | "
+                            f"Headers: {best_header_height or 0} | "
+                            f"Blocks: {best_block_height or 0} | "
+                            f"Peers: {peer_count if peer_count is not None else 'n/a'} | "
+                            f"State: {sync_state}"
+                        )
+                        
+                        if progress_pct is not None:
+                            status_line += f" | Sync: {progress_pct:.1f}%"
+                        
+                        # Only print if status changed or in verbose mode
+                        if verbose or status_line != last_status_line:
+                            typer.echo(status_line)
+                            last_status_line = status_line
+                        
+                        last_height = height or 0
+                    
+                    _persist_sync_state(
+                        net_cfg,
+                        rpc_url=url,
+                        head_info=head_info,
+                        peers=peers,
+                        network_head_height=network_height,
+                        network_head_hash=network_hash,
+                        network_peer=best_peer,
+                        note="persist",
+                    )
+                    
+                except Exception as e:
+                    if json_output:
+                        typer.echo(json.dumps({"error": str(e), "timestamp": time.time()}))
+                    else:
+                        typer.secho(f"⚠ Error fetching status: {e}", fg=typer.colors.YELLOW)
+                    
+        except KeyboardInterrupt:
+            typer.echo()
+            typer.secho("✓ Monitoring stopped", fg=typer.colors.GREEN)
 
 
 @app.command(name="pause")
