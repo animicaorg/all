@@ -2,18 +2,22 @@
 LLM Inference Router
 
 OpenAI-compatible API for chat completions, text completions, and embeddings.
+Proxies requests to the inference service.
 """
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, status, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any, Literal
 import httpx
 import json
-
-from api.config import settings
+import os
 
 router = APIRouter()
+
+# Inference service URL from environment
+INFERENCE_SERVICE_URL = os.getenv("INFERENCE_SERVICE_URL", "http://inference-service:8003")
+BILLING_SERVICE_URL = os.getenv("BILLING_SERVICE_URL", "http://billing-service:8002")
 
 
 class Message(BaseModel):
@@ -51,118 +55,156 @@ class EmbeddingRequest(BaseModel):
 
 
 @router.post("/chat/completions")
-async def chat_completions(request: ChatCompletionRequest):
+async def chat_completions(request: ChatCompletionRequest, http_request: Request):
     """
     Create a chat completion (OpenAI-compatible).
     
     Supports streaming via Server-Sent Events when stream=True.
     """
-    # TODO: Implement chat completions
-    # 1. Validate user has sufficient credits
-    # 2. Check rate limits
-    # 3. Forward request to inference service
-    # 4. If streaming, stream tokens via SSE
-    # 5. Track token usage for billing
-    # 6. Return response or stream
+    # Check user authentication
+    user_id = getattr(http_request.state, "user_id", None)
     
-    if request.stream:
-        # Return streaming response
-        async def event_generator():
-            # Mock streaming response
-            for i in range(10):
-                chunk = {
-                    "id": "chatcmpl-123",
-                    "object": "chat.completion.chunk",
-                    "created": 1677652288,
-                    "model": request.model,
-                    "choices": [{
-                        "index": 0,
-                        "delta": {"content": f"token_{i} "},
-                        "finish_reason": None if i < 9 else "stop"
-                    }]
-                }
-                yield f"data: {json.dumps(chunk)}\n\n"
-            yield "data: [DONE]\n\n"
-        
-        return StreamingResponse(
-            event_generator(),
-            media_type="text/event-stream"
+    if not user_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required"
         )
     
-    # Non-streaming response
-    return {
-        "id": "chatcmpl-123",
-        "object": "chat.completion",
-        "created": 1677652288,
-        "model": request.model,
-        "choices": [{
-            "index": 0,
-            "message": {
-                "role": "assistant",
-                "content": "This is a mock response. Actual LLM integration pending."
-            },
-            "finish_reason": "stop"
-        }],
-        "usage": {
-            "prompt_tokens": 10,
-            "completion_tokens": 15,
-            "total_tokens": 25
-        }
-    }
+    # Check balance (optional - billing service can handle this)
+    # For now, we'll let the inference service handle it
+    
+    async with httpx.AsyncClient() as client:
+        try:
+            # Forward request to inference service
+            headers = {
+                "X-User-ID": user_id,
+                "Content-Type": "application/json"
+            }
+            
+            response = await client.post(
+                f"{INFERENCE_SERVICE_URL}/v1/chat/completions",
+                json=request.dict(),
+                headers=headers,
+                timeout=120.0
+            )
+            response.raise_for_status()
+            
+            if request.stream:
+                # Stream response back to client
+                async def event_generator():
+                    async for chunk in response.aiter_bytes():
+                        yield chunk
+                
+                return StreamingResponse(
+                    event_generator(),
+                    media_type="text/event-stream"
+                )
+            else:
+                # Return complete response
+                return response.json()
+                
+        except httpx.HTTPStatusError as e:
+            raise HTTPException(
+                status_code=e.response.status_code,
+                detail=e.response.json().get("detail", "Inference request failed")
+            )
+        except httpx.RequestError as e:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=f"Inference service unavailable: {str(e)}"
+            )
 
 
 @router.post("/completions")
-async def completions(request: CompletionRequest):
+async def completions(request: CompletionRequest, http_request: Request):
     """
     Create a text completion (OpenAI-compatible).
     """
-    # TODO: Similar to chat_completions but for text completion
+    # Check user authentication
+    user_id = getattr(http_request.state, "user_id", None)
     
-    return {
-        "id": "cmpl-123",
-        "object": "text_completion",
-        "created": 1677652288,
-        "model": request.model,
-        "choices": [{
-            "text": "Mock completion text",
-            "index": 0,
-            "logprobs": None,
-            "finish_reason": "stop"
-        }],
-        "usage": {
-            "prompt_tokens": 5,
-            "completion_tokens": 10,
-            "total_tokens": 15
-        }
-    }
+    if not user_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required"
+        )
+    
+    async with httpx.AsyncClient() as client:
+        try:
+            headers = {
+                "X-User-ID": user_id,
+                "Content-Type": "application/json"
+            }
+            
+            response = await client.post(
+                f"{INFERENCE_SERVICE_URL}/v1/completions",
+                json=request.dict(),
+                headers=headers,
+                timeout=120.0
+            )
+            response.raise_for_status()
+            
+            if request.stream:
+                async def event_generator():
+                    async for chunk in response.aiter_bytes():
+                        yield chunk
+                
+                return StreamingResponse(
+                    event_generator(),
+                    media_type="text/event-stream"
+                )
+            else:
+                return response.json()
+                
+        except httpx.HTTPStatusError as e:
+            raise HTTPException(
+                status_code=e.response.status_code,
+                detail=e.response.json().get("detail", "Completion request failed")
+            )
+        except httpx.RequestError as e:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=f"Inference service unavailable: {str(e)}"
+            )
 
 
 @router.post("/embeddings")
-async def embeddings(request: EmbeddingRequest):
+async def embeddings(request: EmbeddingRequest, http_request: Request):
     """
     Generate embeddings for input text.
     """
-    # TODO: Implement embeddings
-    # 1. Validate input
-    # 2. Forward to inference service
-    # 3. Track usage for billing
-    # 4. Return embeddings
+    # Check user authentication
+    user_id = getattr(http_request.state, "user_id", None)
     
-    inputs = [request.input] if isinstance(request.input, str) else request.input
+    if not user_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required"
+        )
     
-    return {
-        "object": "list",
-        "data": [
-            {
-                "object": "embedding",
-                "embedding": [0.0] * 1536,  # Mock embedding vector
-                "index": i
+    async with httpx.AsyncClient() as client:
+        try:
+            headers = {
+                "X-User-ID": user_id,
+                "Content-Type": "application/json"
             }
-            for i in range(len(inputs))
-        ],
-        "model": request.model,
-        "usage": {
-            "prompt_tokens": sum(len(i.split()) for i in inputs),
-            "total_tokens": sum(len(i.split()) for i in inputs)
-        }
-    }
+            
+            response = await client.post(
+                f"{INFERENCE_SERVICE_URL}/v1/embeddings",
+                json=request.dict(),
+                headers=headers,
+                timeout=60.0
+            )
+            response.raise_for_status()
+            return response.json()
+                
+        except httpx.HTTPStatusError as e:
+            raise HTTPException(
+                status_code=e.response.status_code,
+                detail=e.response.json().get("detail", "Embeddings request failed")
+            )
+        except httpx.RequestError as e:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=f"Inference service unavailable: {str(e)}"
+            )
