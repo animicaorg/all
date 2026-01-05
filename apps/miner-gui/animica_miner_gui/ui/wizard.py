@@ -369,33 +369,101 @@ class WalletConfigPage(QWizardPage):
                 self.validation_label.setStyleSheet("color: green;")
     
     def import_from_wallets(self) -> None:
-        """Import address from ~/.animica/wallets.json."""
+        """Import address from a wallets.json file with file browser."""
+        from PySide6.QtWidgets import QFileDialog, QDialog, QListWidget, QDialogButtonBox, QVBoxLayout
         
-        wallet_path = Path.home() / ".animica" / "wallets.json"
+        # Open file dialog to choose wallets.json
+        default_wallet_path = Path.home() / ".animica" / "wallets.json"
+        
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select Wallets File",
+            str(default_wallet_path.parent),
+            "JSON Files (*.json);;All Files (*)"
+        )
+        
+        if not file_path:
+            return  # User cancelled
+        
+        wallet_path = Path(file_path)
         
         if not wallet_path.exists():
-            self.validation_label.setText("No wallets.json found")
-            self.validation_label.setStyleSheet("color: orange;")
+            self.validation_label.setText("File not found")
+            self.validation_label.setStyleSheet("color: red;")
             return
         
         try:
             with open(wallet_path, "r") as f:
-                wallets = json.load(f)
+                data = json.load(f)
+            
+            # Handle both list format and dict format
+            if isinstance(data, dict) and "wallets" in data:
+                wallets = data["wallets"]
+            elif isinstance(data, list):
+                wallets = data
+            else:
+                wallets = [data]  # Single wallet object
             
             if not wallets:
                 self.validation_label.setText("No wallets in file")
+                self.validation_label.setStyleSheet("color: orange;")
                 return
             
-            # Use first wallet's address
-            first_wallet = wallets[0]
-            address = first_wallet.get("address", "")
+            # If only one wallet, use it directly
+            if len(wallets) == 1:
+                address = wallets[0].get("address", "")
+                label = wallets[0].get("label", "Unknown")
+                
+                if address:
+                    self.address_input.setText(address)
+                    self.validation_label.setText(f"✓ Imported: {label}")
+                    self.validation_label.setStyleSheet("color: green;")
+                else:
+                    self.validation_label.setText("No address in wallet")
+                    self.validation_label.setStyleSheet("color: red;")
+                return
             
-            if address:
-                self.address_input.setText(address)
-                self.validation_label.setText(f"Imported: {first_wallet.get('label', 'Unknown')}")
-                self.validation_label.setStyleSheet("color: green;")
-            else:
-                self.validation_label.setText("No address in wallet")
+            # Multiple wallets - show selection dialog
+            dialog = QDialog(self)
+            dialog.setWindowTitle("Select Wallet")
+            dialog.setMinimumWidth(500)
+            
+            layout = QVBoxLayout()
+            layout.addWidget(QLabel("Choose a wallet to import:"))
+            
+            wallet_list = QListWidget()
+            for i, wallet in enumerate(wallets):
+                label = wallet.get("label", f"Wallet {i+1}")
+                address = wallet.get("address", "No address")
+                item_text = f"{label} - {address[:20]}...{address[-10:]}" if len(address) > 30 else f"{label} - {address}"
+                wallet_list.addItem(item_text)
+            
+            layout.addWidget(wallet_list)
+            
+            # Add buttons
+            button_box = QDialogButtonBox(
+                QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+            )
+            button_box.accepted.connect(dialog.accept)
+            button_box.rejected.connect(dialog.reject)
+            layout.addWidget(button_box)
+            
+            dialog.setLayout(layout)
+            
+            if dialog.exec() == QDialog.DialogCode.Accepted:
+                selected_idx = wallet_list.currentRow()
+                if selected_idx >= 0:
+                    selected_wallet = wallets[selected_idx]
+                    address = selected_wallet.get("address", "")
+                    label = selected_wallet.get("label", "Unknown")
+                    
+                    if address:
+                        self.address_input.setText(address)
+                        self.validation_label.setText(f"✓ Imported: {label}")
+                        self.validation_label.setStyleSheet("color: green;")
+                    else:
+                        self.validation_label.setText("No address in selected wallet")
+                        self.validation_label.setStyleSheet("color: red;")
         
         except Exception as e:
             self.validation_label.setText(f"Error: {e}")
