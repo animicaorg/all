@@ -19,7 +19,7 @@ DEVNET_RETARGET = RetargetParams(
     window=WindowSpec(size_blocks=20, include_tip=True),
 )
 DEVNET_SUBSIDY_NANM = 10_000_000
-DEVNET_SPLIT = {"miner": 60, "aicf": 30, "treasury": 10}
+DEVNET_SPLIT = {"miner": 100, "aicf": 0, "treasury": 0}
 
 
 @pytest.fixture()
@@ -85,7 +85,7 @@ def test_block_subsidy_split_is_deterministic() -> None:
     aicf = total * DEVNET_SPLIT["aicf"] // 100
     treasury = total - miner - aicf
 
-    assert miner == 60_000_000
-    assert aicf == 30_000_000
-    assert treasury == 10_000_000
+    assert miner == 100_000_000
+    assert aicf == 0
+    assert treasury == 0
     assert miner + aicf + treasury == total

@@ -166,7 +166,7 @@ networks:
           decay_pct_per_epoch: 50.0            # 50% decay per epoch (true halving)
           tail_nANM_per_block: 100000          # 0.0001 ANM tail (never below this)
           max_halvings: 64
-        subsidy_split_pct: { miner: 70, aicf: 20, treasury: 10 }
+        subsidy_split_pct: { miner: 100, aicf: 0, treasury: 0 }
       fees:
         base_fee: { burn_pct: 10, treasury_pct: 45, aicf_pct: 45 }
         tips_split_pct: { miner: 80, aicf: 20 }
@@ -238,7 +238,7 @@ networks:
           decay_pct_per_epoch: 50.0            # 50% decay per epoch (true halving)
           tail_nANM_per_block: 100000          # 0.0001 ANM tail (never below this)
           max_halvings: 64
-        subsidy_split_pct: { miner: 60, aicf: 30, treasury: 10 }
+        subsidy_split_pct: { miner: 100, aicf: 0, treasury: 0 }
       fees:
         base_fee: { burn_pct: 0, treasury_pct: 50, aicf_pct: 50 }
         tips_split_pct: { miner: 70, aicf: 30 }
