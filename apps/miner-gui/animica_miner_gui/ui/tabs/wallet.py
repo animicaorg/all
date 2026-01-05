@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 
 # Constants
 MIN_ADDRESS_LENGTH = 42  # Minimum length for valid Animica address
+TX_SEND_TIMEOUT = 60  # Timeout for transaction sending in seconds
 
 
 class WalletTab(QWidget):
@@ -169,7 +170,7 @@ class WalletTab(QWidget):
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=60
+                timeout=TX_SEND_TIMEOUT
             )
             
             # Display results
@@ -199,7 +200,7 @@ class WalletTab(QWidget):
                 )
         
         except subprocess.TimeoutExpired:
-            self.result_text.append("✗ Transaction timed out after 60 seconds.\n")
+            self.result_text.append(f"✗ Transaction timed out after {TX_SEND_TIMEOUT} seconds.\n")
             QMessageBox.critical(self, "Timeout", "Transaction timed out.")
         
         except Exception as e:
