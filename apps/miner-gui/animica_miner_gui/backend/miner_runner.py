@@ -215,72 +215,151 @@ class MinerRunner:
     def _run_miner_thread(self, config: Dict[str, Any]) -> None:
         """Run the miner in a background thread.
         
-        This simulates a mining process. In a real implementation,
-        this would either:
-        1. Call the mining orchestrator API directly (in-process)
-        2. Start a subprocess and parse its JSON-RPC/stdio output
-        
-        For now, we'll simulate mining with periodic updates.
+        This runs the actual mining CLI as a subprocess and monitors its output.
         """
         logger.info("Miner thread started")
         
         try:
-            # Simulate mining activity
-            cycle = 0
-            while not self.stop_event.is_set():
-                cycle += 1
-                time.sleep(2.0)
-                
-                # Simulate hashrate updates
-                hashrate = 1000000 * (1 + (cycle % 10) / 10.0)  # 1-2 MH/s
-                self._last_hashrate = hashrate
-                
+            # Build the mining command
+            import sys
+            from pathlib import Path
+            
+            # Get configuration
+            payout_address = config.get('miner', {}).get('payout_address')
+            if not payout_address:
+                logger.error("No payout address configured")
                 self._emit_event(MiningEvent(
-                    event_type=EventType.HASHRATE_UPDATE,
+                    event_type=EventType.ERROR,
                     timestamp=time.time(),
-                    data={"hashrate": hashrate, "unit": "H/s"}
+                    data={"error": "No payout address configured"}
                 ))
+                return
+            
+            rpc_url = config.get('network', {}).get('rpc_url', 'http://127.0.0.1:8545')
+            threads = config.get('cpu', {}).get('threads', 1)
+            
+            # Build command to run the internal miner CLI
+            cmd = [
+                sys.executable, "-m", "mining.cli.miner", "start",
+                "--threads", str(threads),
+                "--rpc-url", rpc_url,
+                "--getwork-enable"
+            ]
+            
+            logger.info(f"Starting miner: {' '.join(cmd)}")
+            
+            # Start the miner process
+            self.process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,  # Line buffered
+                env={**os.environ, 'ANIMICA_PAYOUT_ADDRESS': payout_address}
+            )
+            
+            # Monitor output and extract events
+            cycle = 0
+            last_hashrate_time = time.time()
+            
+            while not self.stop_event.is_set():
+                if self.process.poll() is not None:
+                    # Process exited
+                    logger.warning("Miner process exited")
+                    break
                 
-                # Simulate occasional shares
-                if cycle % 5 == 0:
-                    self._last_shares += 1
-                    self._emit_event(MiningEvent(
-                        event_type=EventType.SHARE_FOUND,
-                        timestamp=time.time(),
-                        data={"share_count": self._last_shares}
-                    ))
-                
-                # Simulate rare blocks
-                if cycle % 30 == 0:
-                    self._last_blocks += 1
-                    self._emit_event(MiningEvent(
-                        event_type=EventType.BLOCK_FOUND,
-                        timestamp=time.time(),
-                        data={"block_count": self._last_blocks, "height": 1000 + self._last_blocks}
-                    ))
-                
-                # Simulate template updates
-                if cycle % 10 == 0:
-                    self._emit_event(MiningEvent(
-                        event_type=EventType.TEMPLATE_UPDATE,
-                        timestamp=time.time(),
-                        data={
-                            "height": 1000 + cycle // 10,
-                            "transactions": (cycle % 50) + 10
-                        }
-                    ))
-                
-                # Simulate log messages
-                if cycle % 3 == 0:
+                # Read a line from output
+                try:
+                    line = self.process.stdout.readline()
+                    if not line:
+                        time.sleep(0.1)
+                        continue
+                    
+                    line = line.strip()
+                    if not line:
+                        continue
+                    
+                    # Emit as log
                     self._emit_event(MiningEvent(
                         event_type=EventType.LOG,
                         timestamp=time.time(),
                         data={
                             "level": "info",
-                            "message": f"Mining cycle {cycle} completed",
+                            "message": line,
                             "component": "miner"
                         }
                     ))
+                    
+                    # Parse mining events from output
+                    line_lower = line.lower()
+                    
+                    # Check for share found
+                    if "share" in line_lower and ("found" in line_lower or "accepted" in line_lower):
+                        self._last_shares += 1
+                        self._emit_event(MiningEvent(
+                            event_type=EventType.SHARE_FOUND,
+                            timestamp=time.time(),
+                            data={"share_count": self._last_shares}
+                        ))
+                    
+                    # Check for block found
+                    if "block" in line_lower and ("found" in line_lower or "mined" in line_lower or "accepted" in line_lower):
+                        self._last_blocks += 1
+                        self._emit_event(MiningEvent(
+                            event_type=EventType.BLOCK_FOUND,
+                            timestamp=time.time(),
+                            data={"block_count": self._last_blocks, "height": 0}
+                        ))
+                    
+                    # Check for template/job updates
+                    if "template" in line_lower or "job" in line_lower:
+                        self._emit_event(MiningEvent(
+                            event_type=EventType.TEMPLATE_UPDATE,
+                            timestamp=time.time(),
+                            data={"height": 0, "transactions": 0}
+                        ))
+                    
+                    # Check for hashrate info
+                    if "h/s" in line_lower or "hashrate" in line_lower:
+                        # Try to extract hashrate value
+                        import re
+                        match = re.search(r'([\d.]+)\s*(kh/s|mh/s|gh/s|h/s)', line_lower)
+                        if match:
+                            value = float(match.group(1))
+                            unit = match.group(2)
+                            
+                            # Convert to H/s
+                            if unit == "kh/s":
+                                hashrate = value * 1000
+                            elif unit == "mh/s":
+                                hashrate = value * 1000000
+                            elif unit == "gh/s":
+                                hashrate = value * 1000000000
+                            else:
+                                hashrate = value
+                            
+                            self._last_hashrate = hashrate
+                            self._emit_event(MiningEvent(
+                                event_type=EventType.HASHRATE_UPDATE,
+                                timestamp=time.time(),
+                                data={"hashrate": hashrate, "unit": "H/s"}
+                            ))
+                    
+                    cycle += 1
+                    
+                    # Emit periodic hashrate updates even if not in logs
+                    if time.time() - last_hashrate_time > 5.0:
+                        if self._last_hashrate > 0:
+                            self._emit_event(MiningEvent(
+                                event_type=EventType.HASHRATE_UPDATE,
+                                timestamp=time.time(),
+                                data={"hashrate": self._last_hashrate, "unit": "H/s"}
+                            ))
+                        last_hashrate_time = time.time()
+                
+                except Exception as e:
+                    logger.error(f"Error reading miner output: {e}")
+                    time.sleep(0.1)
         
         except Exception as e:
             logger.error(f"Error in miner thread: {e}")
