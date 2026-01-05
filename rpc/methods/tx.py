@@ -736,22 +736,8 @@ def _ensure_tx_persisted_to_chain(tx_hash_hex: str) -> tuple[bool, str | None]:
     if view is not None:
         return True, None
 
-    # Try instant block first if enabled (defaults to true)
-    instant_blocks_enabled = os.environ.get("ANIMICA_INSTANT_BLOCKS_ENABLED", "true").lower() in {
-        "1", "true", "yes", "on"
-    }
-    
+    # Mine a block to persist the transaction
     try:
-        if instant_blocks_enabled:
-            # Trigger instant block creation (zero-reward, non-advancing)
-            success, reward, summary = miner_methods._mine_instant_block()
-            if success:
-                # Instant block created successfully
-                view, *_ = _lookup_persisted_tx(tx_hash_hex)
-                if view is not None:
-                    return True, None
-        
-        # Fallback to normal mining if instant blocks disabled or failed
         miner_methods.miner_mine(
             count=1,
             include_mempool=True,
@@ -1641,16 +1627,6 @@ def _tx_send_raw_transaction(rawTx: str) -> t.Any:
             _gossip_tx_to_peers(raw_canonical)
         except Exception:
             pass
-
-        # Trigger instant block creation if enabled (best-effort, defaults to true)
-        instant_blocks_enabled = os.environ.get("ANIMICA_INSTANT_BLOCKS_ENABLED", "true").lower() in {
-            "1", "true", "yes", "on"
-        }
-        if instant_blocks_enabled:
-            try:
-                miner_methods.trigger_instant_block_on_tx_arrival()
-            except Exception as e:
-                log.debug(f"Failed to trigger instant block on tx arrival: {e}")
 
         persisted, mine_error = _ensure_tx_persisted_to_chain(tx_hash_hex)
         if _TX_SEND_FORCE_CHAIN and not persisted:

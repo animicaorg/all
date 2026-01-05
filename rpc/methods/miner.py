@@ -122,22 +122,6 @@ _MINER_DEBUG = os.getenv("ANIMICA_MINER_DEBUG", "").lower() in {
 }
 _MEMPOOL_BINDINGS_LOGGED: set[str] = set()
 
-# Instant block configuration
-# When enabled, transactions trigger immediate instant block creation (zero reward, no PoW)
-# Defaults to true (enabled) for instant transaction inclusion
-_instant_blocks_env = os.getenv("ANIMICA_INSTANT_BLOCKS_ENABLED", "true").lower()
-_INSTANT_BLOCKS_ENABLED = _instant_blocks_env in {
-    "1",
-    "true",
-    "yes",
-    "on",
-}
-_INSTANT_BLOCK_PENDING: bool = False  # Flag to track if instant block creation is pending
-
-# Instant block observability constants
-# Maximum number of blocks to scan backwards when listing instant blocks
-# This is a safety limit to prevent excessive database queries
-_MAX_INSTANT_BLOCK_SCAN = 1000
 
 
 def _tracked(tx: Any) -> tuple[str, bytes] | None:
@@ -1334,7 +1318,7 @@ def _get_miner_address() -> bytes:
     return ZERO32
 
 
-def _apply_block_reward(ctx: Any, height: int, payout_address: bytes | None = None, instant_block: bool = False) -> int:
+def _apply_block_reward(ctx: Any, height: int, payout_address: bytes | None = None) -> int:
     """
     Apply block reward to the miner's address in state.
     
@@ -1342,7 +1326,6 @@ def _apply_block_reward(ctx: Any, height: int, payout_address: bytes | None = No
         ctx: RPC context with state_db access
         height: Block height for reward calculation
         payout_address: Optional 32-byte payout address. If None, uses default miner address.
-        instant_block: Whether this is an instant block (zero reward). Default: False
         
     Returns:
         int: Total miner reward amount (in nANM) credited to payout address, or 0 if none
@@ -1357,21 +1340,15 @@ def _apply_block_reward(ctx: Any, height: int, payout_address: bytes | None = No
         chain_id = ctx.cfg.chain_id
         params = getattr(ctx, "params", None) or {}
         
-        # CRITICAL FIX: Pass instant_block flag to compute_block_reward
-        # This ensures instant blocks get zero rewards and normal blocks get proper rewards
-        rewards = compute_block_reward(chain_id=chain_id, height=height, params=params, instant_block=instant_block)
+        rewards = compute_block_reward(chain_id=chain_id, height=height, params=params)
         
-        # Log warning if rewards are empty when they shouldn't be (height >= 1, not instant)
-        if not rewards and height >= 1 and not instant_block:
+        # Log warning if rewards are empty when they shouldn't be (height >= 1)
+        if not rewards and height >= 1:
             log.warning(
-                f"Block reward at height {height} is empty for normal (non-instant) block. "
+                f"Block reward at height {height} is empty. "
                 f"This may indicate missing/invalid consensus params. "
                 f"Check that spec/params.yaml defines proper emission schedule for chain_id={chain_id}."
             )
-        
-        # Log instant block detection for traceability
-        if instant_block:
-            log.debug(f"Instant block at height {height}: zero rewards by design")
         
         # Track miner reward amount for return
         miner_reward_amount = 0
@@ -2009,7 +1986,7 @@ def _request_missing_mempool_txs(
 
 
 def _build_child_header(
-    parent_height: int, parent_hash: bytes, parent_header: Any, instant_block: bool = False
+    parent_height: int, parent_hash: bytes, parent_header: Any
 ) -> Header:
     timestamp_min, timestamp_max, timestamp = _timestamp_bounds(parent_header)
     theta = getattr(
@@ -2039,7 +2016,6 @@ def _build_child_header(
         thetaMicro=int(theta or _resolve_theta()),
         nonce=0,
         extra=b"",
-        instantBlock=instant_block,
     )
 
 
@@ -2968,13 +2944,10 @@ def _mine_once(
 
         # Apply block reward to coinbase/miner address
         # This also persists to state_db
-        # CRITICAL FIX: Pass instant_block flag from header to ensure correct reward calculation
-        instant_block_flag = getattr(header, "instantBlock", False)
         log.info(
-            f"Applying block reward to payout address at height {header.height} "
-            f"(instant_block={instant_block_flag})"
+            f"Applying block reward to payout address at height {header.height}"
         )
-        reward_amount = _apply_block_reward(ctx, header.height, payout_address, instant_block=instant_block_flag)
+        reward_amount = _apply_block_reward(ctx, header.height, payout_address)
 
         # Compute receipts root (if any receipts) and ensure txs root matches tx set
         receipts_root = ZERO32
@@ -3171,13 +3144,43 @@ def _mine_once(
             except Exception as e:
                 log.warning(f"Failed to clean up hash mapping: {e}")
 
-            log.info(
-                f"Mined block at height {header.height} with nonce {valid_nonce} "
-                f"(hash {block_hash_int} <= target {target}), reward={reward_amount} nANM, "
-                f"txs={len(txs)}, receipts={len(receipts) if receipts else 0}, "
-                f"included_tx_hashes={included_hashes_canonical[:MAX_DISPLAYED_TX_HASHES]}"
-                f"{' ...' if len(included_hashes_canonical) > MAX_DISPLAYED_TX_HASHES else ''}"
+            # Query final balance after mining to verify reward was applied
+            payout_addr_bytes = (
+                payout_address if payout_address is not None else _get_miner_address()
             )
+            try:
+                from execution.state.apply_balance import get_balance as get_balance_from_state
+                final_balance = get_balance_from_state(ctx.state_db, payout_addr_bytes)
+                block_hash_hex = "0x" + block_hash_bytes.hex()
+                
+                log.info(
+                    f"Mined block at height {header.height} | "
+                    f"hash={block_hash_hex} | "
+                    f"coinbase={payout_addr_bytes.hex()[:16]}... | "
+                    f"reward={reward_amount} nANM | "
+                    f"new_balance={final_balance} nANM | "
+                    f"txs={len(txs)} | receipts={len(receipts) if receipts else 0}"
+                )
+                
+                # If this was a fresh address with reward, verify balance increased
+                # Note: We can't reliably check this for addresses with existing balance
+                # because transactions may have spent funds during execution
+                if reward_amount > 0:
+                    if final_balance < reward_amount:
+                        log.warning(
+                            f"Balance verification: final balance ({final_balance}) is less than reward ({reward_amount}). "
+                            f"This may indicate transactions spent funds during block execution."
+                        )
+            except Exception as e:
+                log.warning(f"Failed to query balance after mining: {e}")
+                log.info(
+                    f"Mined block at height {header.height} with nonce {valid_nonce} "
+                    f"(hash {block_hash_int} <= target {target}), reward={reward_amount} nANM, "
+                    f"txs={len(txs)}, receipts={len(receipts) if receipts else 0}, "
+                    f"included_tx_hashes={included_hashes_canonical[:MAX_DISPLAYED_TX_HASHES]}"
+                    f"{' ...' if len(included_hashes_canonical) > MAX_DISPLAYED_TX_HASHES else ''}"
+                )
+            
             return (True, reward_amount, selection_summary)
         return (False, 0, selection_summary)
     
@@ -3198,223 +3201,6 @@ def _mine_once(
     return (False, 0, selection_summary)
 
 
-def _mine_instant_block(
-    payout_address: bytes | None = None,
-) -> tuple[bool, int, dict[str, Any]]:
-    """
-    Produce an instant block (zero-reward, non-advancing, no PoW required).
-    
-    Instant blocks are special blocks that:
-    - Carry zero block rewards (instantBlock flag set to True)
-    - Do not advance canonical height for halving schedule calculations
-    - Skip PoW/PoIES validation (nonce=0)
-    - Are produced immediately upon transaction arrival
-    - Include pending transactions for instant confirmation
-    
-    This provides instant transaction inclusion without affecting the emission
-    schedule or chain height used for halving calculations.
-    
-    Args:
-        payout_address: Unused for instant blocks (reward is always 0)
-        
-    Returns:
-        tuple[bool, int, dict]: (success, reward_amount=0, selection_summary)
-    """
-    global _INSTANT_BLOCK_PENDING
-    
-    # Check if instant blocks are enabled
-    if not _INSTANT_BLOCKS_ENABLED:
-        return (False, 0, {"error": "instant_blocks_disabled"})
-    
-    ctx = _ctx()
-    adapter = _adapter()
-    
-    # Collect pending transactions
-    pending_entries, pending_raw_by_hash, pending_total = _collect_mempool_entries(
-        ctx=ctx,
-        adapter=adapter,
-        limit=1000,
-    )
-    
-    if not pending_entries:
-        log.debug("No pending transactions for instant block")
-        _INSTANT_BLOCK_PENDING = False
-        return (False, 0, {"error": "no_pending_transactions"})
-    
-    # Get current head
-    head = adapter.get_head()
-    parent_height = int(head.get("height") or 0)
-    parent_hash_val = head.get("hash") or head.get("hash_hex")
-    parent_header = head.get("obj") or head.get("header")
-    parent_hash_bytes = _bytes32(parent_hash_val or ZERO32)
-    
-    if parent_header is None:
-        log.warning("Cannot create instant block: no parent header")
-        _INSTANT_BLOCK_PENDING = False
-        return (False, 0, {"error": "no_parent_header"})
-    
-    # Build instant block header (instantBlock=True, nonce=0, no PoW)
-    header_template = _build_child_header(
-        parent_height, parent_hash_bytes, parent_header, instant_block=True
-    )
-    
-    # Select transactions
-    state_adapter = deps.get_state_db_adapter()
-    block_gas_limit = DEFAULT_BLOCK_GAS_LIMIT
-    block_byte_limit = DEFAULT_BLOCK_BYTE_LIMIT
-    
-    try:
-        selection = select_for_block(
-            entries=pending_entries,
-            available_gas=block_gas_limit,
-            available_bytes=block_byte_limit,
-            state_adapter=state_adapter,
-        )
-        txs = selection.txs
-        included_hashes = [txid_bytes(tx) for tx in txs]
-    except Exception as e:
-        log.warning(f"Failed to select transactions for instant block: {e}")
-        _INSTANT_BLOCK_PENDING = False
-        return (False, 0, {"error": f"tx_selection_failed: {e}"})
-    
-    if not txs:
-        log.debug("No valid transactions for instant block after selection")
-        _INSTANT_BLOCK_PENDING = False
-        return (False, 0, {"error": "no_valid_transactions"})
-    
-    # Build the header with transaction root
-    from core.utils.merkle import compute_txs_root_from_txs
-    txs_root = compute_txs_root_from_txs(tuple(txs))
-    header = header_template.build_child(
-        timestamp=header_template.timestamp,
-        state_root=header_template.stateRoot,
-        txs_root=txs_root,
-        receipts_root=ZERO32,  # Will be updated after execution
-        proofs_root=ZERO32,
-        da_root=ZERO32,
-        instant_block=True,  # Ensure instant block flag is preserved
-    )
-    
-    # Execute transactions and update state
-    try:
-        from execution.runtime.executor import apply_block
-        from execution.runtime.env import make_block_env
-        
-        block_env = make_block_env(header)
-        receipts_dict = []
-        new_state_root = header.stateRoot
-        
-        # Apply transactions (with zero block reward for instant blocks)
-        result = apply_block(
-            block_env=block_env,
-            txs=txs,
-            state_adapter=state_adapter,
-            payout_address=payout_address or _get_miner_address(),
-            block_reward=0,  # Zero reward for instant blocks
-        )
-        receipts_dict = result.get("receipts", [])
-        new_state_root = result.get("state_root", header.stateRoot)
-    except Exception as e:
-        log.error(f"Failed to execute transactions for instant block: {e}")
-        _INSTANT_BLOCK_PENDING = False
-        return (False, 0, {"error": f"execution_failed: {e}"})
-    
-    # Convert receipts and compute receipt root
-    receipts = _convert_receipts_dict_to_objects(receipts_dict)
-    from core.utils.merkle import merkle_root
-    receipts_root = merkle_root([r.hash() for r in receipts]) if receipts else ZERO32
-    
-    # Rebuild header with final roots
-    header = header_template.build_child(
-        timestamp=header_template.timestamp,
-        state_root=new_state_root,
-        txs_root=txs_root,
-        receipts_root=receipts_root,
-        proofs_root=ZERO32,
-        da_root=ZERO32,
-        instant_block=True,
-    )
-    
-    # Create block
-    block = Block(
-        header=header,
-        txs=tuple(txs),
-        proofs=tuple(),
-        receipts=tuple(receipts),
-    )
-    
-    # Import block
-    try:
-        from core.chain.block_import import BlockImporter
-        block_db = deps.get_block_db()
-        importer = BlockImporter(block_db=block_db, state_adapter=state_adapter)
-        result = importer.import_block(block)
-        
-        if result.code != "accepted":
-            log.warning(f"Instant block rejected: {result.reason}")
-            _INSTANT_BLOCK_PENDING = False
-            return (False, 0, {"error": f"block_rejected: {result.reason}"})
-    except Exception as e:
-        log.error(f"Failed to import instant block: {e}")
-        _INSTANT_BLOCK_PENDING = False
-        return (False, 0, {"error": f"import_failed: {e}"})
-    
-    # Success - instant block created
-    _INSTANT_BLOCK_PENDING = False
-    block_hash_hex = "0x" + header.hash().hex()
-    
-    log.info(
-        f"Created instant block at height {header.height} with {len(txs)} transactions "
-        f"(hash: {block_hash_hex[:16]}..., reward: 0, instant: True)"
-    )
-    
-    # Remove transactions from mempool
-    mempool_service = getattr(ctx, "mempool", None)
-    if mempool_service:
-        for tx_hash in included_hashes:
-            try:
-                if hasattr(mempool_service, "mark_confirmed"):
-                    mempool_service.mark_confirmed(tx_hash)
-                elif hasattr(mempool_service, "remove"):
-                    mempool_service.remove(tx_hash)
-            except Exception:
-                pass
-    
-    selection_summary = {
-        "pending": pending_total,
-        "selected": len(txs),
-        "rejected": dict(selection.rejected),
-        "instant_block": True,
-    }
-    
-    return (True, 0, selection_summary)
-
-
-def trigger_instant_block_on_tx_arrival() -> None:
-    """
-    Trigger instant block creation when a transaction arrives.
-    
-    This is called by the mempool when a new transaction is added and
-    instant blocks are enabled. It sets a flag to produce an instant block
-    asynchronously.
-    """
-    global _INSTANT_BLOCK_PENDING
-    
-    if not _INSTANT_BLOCKS_ENABLED:
-        return
-    
-    if _INSTANT_BLOCK_PENDING:
-        # Already pending, don't trigger again
-        return
-    
-    _INSTANT_BLOCK_PENDING = True
-    
-    # Try to produce instant block immediately
-    try:
-        _mine_instant_block()
-    except Exception as e:
-        log.debug(f"Failed to produce instant block on tx arrival: {e}")
-        _INSTANT_BLOCK_PENDING = False
 
 
 async def _auto_mine_loop(interval: float = 1.0) -> None:
@@ -4771,9 +4557,7 @@ def miner_submit_block(**payload: Any) -> Dict[str, Any]:
                     )
 
                 try:
-                    # CRITICAL FIX: Pass instant_block flag from header to ensure correct reward calculation
-                    instant_block_flag = getattr(block_obj.header, "instantBlock", False)
-                    _apply_block_reward(_ctx(), int(result.height or 0), payout_bytes, instant_block=instant_block_flag)
+                    _apply_block_reward(_ctx(), int(result.height or 0), payout_bytes)
                 except Exception:
                     log.warning("Failed to apply block reward for submitted block", exc_info=True)
 
@@ -4883,206 +4667,87 @@ def miner_submit_sha256_block(**payload: Any) -> Dict[str, Any]:
     return {"accepted": True, "payload": block}
 
 
-@method(
-    "miner.listInstantBlocks",
-    desc="List recent instant blocks with zero reward and non-advancing canonical height",
-)
-def miner_list_instant_blocks(
-    limit: int | None = None,
-    offset: int | None = None,
-) -> Dict[str, Any]:
+@method("mining.getTemplateStatus", desc="Get mining template readiness status")
+def mining_get_template_status() -> dict[str, Any]:
     """
-    List recent instant blocks.
-    
-    Args:
-        limit: Maximum number of instant blocks to return (default: 10, max: 100)
-        offset: Number of blocks to skip from the most recent (default: 0)
-        
-    Returns:
-        dict: {
-            "instantBlocks": [
-                {
-                    "height": int,
-                    "hash": str,
-                    "timestamp": int,
-                    "txCount": int,
-                    "reward": 0,
-                    "instantBlock": true,
-                    "canonicalHeight": int,
-                },
-                ...
-            ],
-            "total": int,  # Total number of instant blocks found
-            "limit": int,
-            "offset": int,
-        }
-    """
-    # Input validation with error handling
-    try:
-        limit_val = min(int(limit or 10), 100)
-        offset_val = max(int(offset or 0), 0)
-    except (ValueError, TypeError) as e:
-        return {
-            "instantBlocks": [],
-            "total": 0,
-            "limit": 10,
-            "offset": 0,
-            "error": f"Invalid parameter: {e}",
-        }
-    
-    try:
-        ctx = _ctx()
-        block_db = ctx.block_db
-        
-        # Get current chain height
-        try:
-            head = ctx.get_head()
-            current_height = int(head.get("height") or 0)
-        except Exception:
-            current_height = 0
-        
-        # Get the current canonical height (chain height excluding instant blocks)
-        # This value is constant across all blocks being scanned, so retrieve it once
-        try:
-            canonical_height = block_db.get_canonical_height()
-        except Exception:
-            canonical_height = current_height
-        
-        instant_blocks = []
-        checked = 0
-        found = 0
-        
-        # Scan backwards from current height to find instant blocks
-        max_scan = min(current_height + 1, _MAX_INSTANT_BLOCK_SCAN)
-        start_height = current_height
-        stop_height = max(current_height - max_scan + 1, 0)
-        
-        for height in range(start_height, stop_height - 1, -1):
-            if found >= limit_val + offset_val:
-                break
-            
-            checked += 1
-            
-            try:
-                # Get block hash for this height
-                hash_bytes = block_db.get_canonical_hash(height)
-                if hash_bytes is None:
-                    continue
-                
-                # Get header for this block
-                header = block_db.get_header(hash_bytes)
-                if header is None:
-                    continue
-                
-                # Check if this is an instant block
-                # Note: instantBlock attribute is optional; defaults to False for regular blocks
-                is_instant = getattr(header, "instantBlock", False)
-                if not is_instant:
-                    continue
-                
-                found += 1
-                
-                # Skip blocks before our offset
-                if found <= offset_val:
-                    continue
-                
-                # Get transaction count
-                try:
-                    block = block_db.get_block(hash_bytes)
-                    tx_count = len(block.txs) if block and hasattr(block, "txs") else 0
-                except Exception:
-                    tx_count = 0
-                
-                instant_blocks.append({
-                    "height": int(height),
-                    "hash": "0x" + hash_bytes.hex(),
-                    "timestamp": int(getattr(header, "timestamp", 0)),
-                    "txCount": tx_count,
-                    "reward": 0,  # Instant blocks always have zero reward
-                    "instantBlock": True,
-                    "canonicalHeight": int(canonical_height),
-                })
-                
-            except Exception as e:
-                log.debug(f"Error processing block at height {height}: {e}")
-                continue
-        
-        return {
-            "instantBlocks": instant_blocks,
-            "total": found,
-            "limit": limit_val,
-            "offset": offset_val,
-            "scanned": checked,
-        }
-        
-    except Exception as e:
-        log.error(f"Failed to list instant blocks: {e}", exc_info=True)
-        return {
-            "instantBlocks": [],
-            "total": 0,
-            "limit": limit_val,
-            "offset": offset_val,
-            "error": str(e),
-        }
-
-
-@method(
-    "miner.getInstantBlockStats",
-    desc="Get statistics about instant blocks in the chain",
-)
-def miner_get_instant_block_stats() -> Dict[str, Any]:
-    """
-    Get statistics about instant blocks.
+    Get the current template readiness status.
     
     Returns:
         dict: {
-            "enabled": bool,  # Whether instant blocks are enabled
-            "totalBlocks": int,  # Total number of blocks in chain
-            "canonicalHeight": int,  # Canonical height (excluding instant blocks)
-            "instantBlockCount": int,  # Number of instant blocks (totalBlocks - canonicalHeight)
-            "instantBlockRatio": float,  # Ratio of instant blocks to total blocks
+            "can_mine": bool,  # Whether mining is allowed
+            "reason": str | None,  # Reason if mining is blocked
+            "sync_phase": str | None,  # Current sync phase
+            "head": {
+                "height": int,
+                "hash": str,
+                "has_state_root": bool,
+            },
+            "mempool": {
+                "size": int,
+            },
         }
     """
     try:
-        ctx = _ctx()
-        block_db = ctx.block_db
+        # Check mining gate
+        allowed, reason = _mining_gate(allow_offline_mining=False, allow_unsynced=False)
         
-        # Get current heights
-        # total_height: includes all blocks (normal + instant)
-        # canonical_height: includes only normal blocks (excludes instant blocks)
+        # Get head info
+        head_snap = _current_head_snapshot()
+        head_height = head_snap.get("height", 0)
+        head_hash = head_snap.get("hash")
+        head_header = head_snap.get("header")
+        
+        # Check if we have a state root
+        has_state_root = False
+        if head_header is not None:
+            state_root = getattr(head_header, "stateRoot", None)
+            if state_root and state_root != (b"\x00" * 32):
+                has_state_root = True
+        
+        # Get sync phase
+        sync_phase = None
         try:
-            head = ctx.get_head()
-            total_height = int(head.get("height") or 0)
+            import p2p
+            svc = p2p.get_service()
+            if svc is not None:
+                sync_status = svc.sync_status_snapshot().to_dict()
+                sync_phase = sync_status.get("phase")
         except Exception:
-            total_height = 0
+            pass
         
+        # Get mempool size
+        mempool_size = 0
         try:
-            canonical_height = block_db.get_canonical_height()
+            ctx = _ctx()
+            mempool_service = _resolve_mempool_service(ctx)
+            if mempool_service is not None:
+                if hasattr(mempool_service, "size"):
+                    mempool_size = mempool_service.size()
+                elif hasattr(mempool_service, "__len__"):
+                    mempool_size = len(mempool_service)
         except Exception:
-            canonical_height = total_height
-        
-        # Calculate instant block count
-        # By design: total_height increments for every block (normal + instant)
-        #            canonical_height increments only for normal blocks
-        # Therefore: instant_block_count = total_height - canonical_height
-        instant_block_count = max(0, total_height - canonical_height)
-        instant_block_ratio = instant_block_count / total_height if total_height > 0 else 0.0
+            pass
         
         return {
-            "enabled": _INSTANT_BLOCKS_ENABLED,
-            "totalBlocks": total_height,
-            "canonicalHeight": canonical_height,
-            "instantBlockCount": instant_block_count,
-            "instantBlockRatio": round(instant_block_ratio, 4),
+            "can_mine": allowed,
+            "reason": reason,
+            "sync_phase": sync_phase,
+            "head": {
+                "height": int(head_height) if head_height is not None else 0,
+                "hash": head_hash,
+                "has_state_root": has_state_root,
+            },
+            "mempool": {
+                "size": mempool_size,
+            },
         }
-        
     except Exception as e:
-        log.error(f"Failed to get instant block stats: {e}", exc_info=True)
+        log.error(f"Failed to get template status: {e}", exc_info=True)
         return {
-            "enabled": _INSTANT_BLOCKS_ENABLED,
-            "totalBlocks": 0,
-            "canonicalHeight": 0,
-            "instantBlockCount": 0,
-            "instantBlockRatio": 0.0,
-            "error": str(e),
+            "can_mine": False,
+            "reason": f"error: {e}",
+            "sync_phase": None,
+            "head": {"height": 0, "hash": None, "has_state_root": False},
+            "mempool": {"size": 0},
         }
+
