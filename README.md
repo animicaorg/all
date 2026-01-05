@@ -27,8 +27,20 @@ This monorepo contains:
 - **SDKs & APIs**: `sdk/` (Python/TypeScript/Rust), `docs/` (specifications), `spec/` (canonical schemas)
 - **Operations**: `ops/`, `tests/devnet/`, `installers/`, `chains/` (network metadata)
 - **Website**: `website/` (Astro + TypeScript main site)
+- **Compute Platform**: `packages/` (Auth, Billing, Inference, Sandbox, GitHub App services) - See [COMPUTE_PLATFORM_QUICKSTART.md](COMPUTE_PLATFORM_QUICKSTART.md)
 
 Each module has its own README with detailed information. See the Copilot instructions at the bottom of this file for coding guidelines.
+
+## 🚀 Animica Compute + LLM Cloud Platform
+
+The **Animica Compute Platform** provides enterprise-ready LLM inference, code execution, and GitHub integration with native ANM token payments. 
+
+**Quick Start**: 
+```bash
+make compute-dev  # Start all compute services with Docker Compose
+```
+
+See [COMPUTE_PLATFORM_QUICKSTART.md](COMPUTE_PLATFORM_QUICKSTART.md) for detailed setup instructions.
 
 ## 🌍 Website
 
