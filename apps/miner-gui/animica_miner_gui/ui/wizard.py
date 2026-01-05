@@ -69,7 +69,7 @@ class NetworkSelectionPage(QWizardPage):
         # Custom RPC URL field (enabled only for custom)
         self.custom_rpc_label = QLabel("Custom RPC URL:")
         self.custom_rpc_input = QLineEdit()
-        self.custom_rpc_input.setPlaceholderText("http://127.0.0.1:8545")
+        self.custom_rpc_input.setPlaceholderText("http://127.0.0.1:8545/rpc")
         self.custom_rpc_input.setEnabled(False)
         
         layout.addWidget(self.custom_rpc_label)
