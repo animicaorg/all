@@ -1287,7 +1287,7 @@ def mine_blocks(
                     nonce, digest = _mine_header(header, target_int)
                     if nonce is None or digest is None:
                         typer.secho(
-                            f"Warning: Block {i + 1}/{count} failed to mine",
+                            f"Warning: Block {i + 1}/{count} failed to find PoW",
                             fg=typer.colors.YELLOW,
                         )
                         typer.secho(
@@ -1297,6 +1297,15 @@ def mine_blocks(
                         )
                         stale_attempts = 0
                         break
+                    
+                    # PoW FOUND - hash meets target
+                    digest_int = int.from_bytes(digest, "big")
+                    pow_valid = digest_int <= target_int
+                    typer.secho(
+                        f"  FOUND: Block {i + 1}/{count} PoW (height: {header.height}, "
+                        f"nonce: {nonce}, hash: 0x{digest.hex()[:16]}...)",
+                        fg=typer.colors.CYAN,
+                    )
 
                     header = header.__class__(
                         v=header.v,
@@ -1337,8 +1346,6 @@ def mine_blocks(
                         "templateId": template_id,
                     }
 
-                    digest_int = int.from_bytes(digest, "big")
-                    pow_valid = digest_int <= target_int
                     summary = {
                         "template": {
                             "id": template_id,
@@ -1362,6 +1369,7 @@ def mine_blocks(
                     }
                     _emit_mining_summary(summary, verbose=verbose)
 
+                    # Submit block to node
                     try:
                         if proxy:
                             submit_result = proxy.sync_forward_request(
@@ -1381,10 +1389,13 @@ def mine_blocks(
                             isinstance(reason, str) and reason == "stale_template"
                         ) or "stale template" in error_str.lower()
                         _emit_mining_summary(summary, verbose=verbose, force=True)
+                        
+                        # REJECTED - explicit rejection with reason
                         typer.secho(
-                            f"Warning: Block {i + 1}/{count} rejected by node ({error_str})",
-                            fg=typer.colors.YELLOW,
+                            f"  REJECTED: Block {i + 1}/{count} (reason: {reason or error_str})",
+                            fg=typer.colors.RED,
                         )
+                        
                         if is_stale and stale_attempts < 3:
                             stale_attempts += 1
                             typer.secho(
@@ -1398,9 +1409,11 @@ def mine_blocks(
                     if not submit_result or not submit_result.get("accepted", False):
                         rejection_reason = submit_result.get("reason")
                         _emit_mining_summary(summary, verbose=verbose, force=True)
+                        
+                        # REJECTED - node did not accept
                         typer.secho(
-                            f"Warning: Block {i + 1}/{count} rejected by node (reason={rejection_reason})",
-                            fg=typer.colors.YELLOW,
+                            f"  REJECTED: Block {i + 1}/{count} by node (reason: {rejection_reason})",
+                            fg=typer.colors.RED,
                         )
                         if isinstance(rejection_reason, str) and "stale" in rejection_reason and stale_attempts < 3:
                             stale_attempts += 1
@@ -1411,16 +1424,24 @@ def mine_blocks(
                             continue
                         stale_attempts = 0
                         break
-
+                    
+                    # ACCEPTED - block fully validated, persisted, and reward credited
                     total_mined += 1
                     final_height = int(template.get("header", {}).get("height", 0))
                     block_reward = template.get("coinbase", {}).get("amount") or 0
                     total_reward += int(block_reward or 0)
                     reward_anm = int(block_reward or 0) / COIN_UNIT
+                    
+                    # Extract credited_amount from submit_result if available
+                    credited_amount = submit_result.get("credited_amount", block_reward)
+                    new_head_hash = submit_result.get("new_head") or submit_result.get("block_hash")
 
-                    typer.echo(
-                        f"  Block {i + 1}/{count} mined (height: {final_height}, "
-                        f"reward: {reward_anm:.9f} ANM = {block_reward} nANM)"
+                    typer.secho(
+                        f"  ACCEPTED: Block {i + 1}/{count} (height: {final_height}, "
+                        f"reward: {reward_anm:.9f} ANM = {block_reward} nANM, "
+                        f"credited: {credited_amount} nANM)",
+                        fg=typer.colors.GREEN,
+                        bold=True,
                     )
 
                     if include_mempool and pending_before > 0 and selected == 0:
@@ -1525,6 +1546,184 @@ def mine_blocks(
                 err=True,
             )
         raise typer.Exit(5)
+
+
+@app.command("credits")
+def show_mining_credits(
+    address: Optional[str] = typer.Option(
+        None,
+        "--address",
+        help="Filter by miner address (wallet label or Bech32 address)",
+    ),
+    last: int = typer.Option(
+        50,
+        "--last",
+        help="Show last N records (default: 50)",
+    ),
+    from_height: Optional[int] = typer.Option(
+        None,
+        "--from-height",
+        help="Filter by minimum block height",
+    ),
+    to_height: Optional[int] = typer.Option(
+        None,
+        "--to-height",
+        help="Filter by maximum block height",
+    ),
+    rpc_url: Optional[str] = typer.Option(
+        None,
+        "--rpc-url",
+        help="Node JSON-RPC endpoint URL",
+        envvar="ANIMICA_RPC_URL",
+    ),
+    format: str = typer.Option(
+        "table",
+        "--format",
+        help="Output format: table (default), json, or csv",
+    ),
+) -> None:
+    """
+    Show mining credits audit trail.
+    
+    Displays a record of locally mined blocks with expected vs credited rewards.
+    Useful for debugging and verifying that mining rewards are being credited correctly.
+    
+    Examples:
+        # Show last 50 mined blocks
+        animica miner credits
+        
+        # Show credits for a specific address
+        animica miner credits --address premine
+        
+        # Show last 100 blocks
+        animica miner credits --last 100
+        
+        # Show blocks in a height range
+        animica miner credits --from-height 100 --to-height 200
+        
+        # Output as JSON
+        animica miner credits --format json
+    """
+    # Resolve RPC URL
+    url = rpc_url or os.environ.get("ANIMICA_RPC_URL") or load_network_config().rpc_url
+    
+    # Resolve address if it's a wallet label
+    resolved_address = None
+    if address:
+        try:
+            resolved_address = _resolve_payout_address(address)
+        except typer.Exit:
+            # Address resolution failed, use as-is (might be hex address)
+            resolved_address = address
+    
+    try:
+        # Call RPC method
+        params = {}
+        if resolved_address:
+            params["address"] = resolved_address
+        if from_height is not None:
+            params["from_height"] = from_height
+        if to_height is not None:
+            params["to_height"] = to_height
+        if last is not None:
+            params["last"] = last
+        
+        result = call_rpc("mining.getCredits", params, url)
+        
+        if not isinstance(result, dict):
+            typer.secho(
+                f"Error: Unexpected response format: {result}",
+                fg=typer.colors.RED,
+                err=True,
+            )
+            raise typer.Exit(1)
+        
+        credits = result.get("credits", [])
+        count = result.get("count", 0)
+        
+        if count == 0:
+            typer.echo("No mining credits found matching the filters.")
+            return
+        
+        # Output based on format
+        if format == "json":
+            typer.echo(json.dumps(result, indent=2))
+        elif format == "csv":
+            # CSV format
+            if credits:
+                typer.echo("height,hash,miner_address,expected_reward,credited_reward,timestamp")
+                for credit in credits:
+                    typer.echo(
+                        f"{credit['height']},"
+                        f"{credit['hash']},"
+                        f"{credit['miner_address']},"
+                        f"{credit['expected_reward']},"
+                        f"{credit['credited_reward']},"
+                        f"{credit['timestamp']}"
+                    )
+        else:  # table format (default)
+            typer.secho(
+                f"\nMining Credits Audit Trail ({count} records)",
+                fg=typer.colors.CYAN,
+                bold=True,
+            )
+            typer.echo("=" * 80)
+            
+            for credit in credits:
+                height = credit.get("height", 0)
+                block_hash = credit.get("hash", "")
+                miner_addr = credit.get("miner_address", "")
+                expected = credit.get("expected_reward", 0)
+                credited = credit.get("credited_reward", 0)
+                timestamp_unix = credit.get("timestamp", 0)
+                
+                # Convert timestamp to readable format
+                try:
+                    from datetime import datetime
+                    timestamp_str = datetime.fromtimestamp(timestamp_unix).strftime("%Y-%m-%d %H:%M:%S")
+                except Exception:
+                    timestamp_str = str(timestamp_unix)
+                
+                # Convert rewards to ANM
+                expected_anm = expected / COIN_UNIT
+                credited_anm = credited / COIN_UNIT
+                
+                typer.echo(f"\nHeight: {height}")
+                typer.echo(f"  Block Hash:     {block_hash}")
+                typer.echo(f"  Miner Address:  {miner_addr[:42]}...")
+                typer.echo(f"  Expected Reward: {expected_anm:.9f} ANM ({expected} nANM)")
+                typer.echo(f"  Balance After:   {credited_anm:.9f} ANM ({credited} nANM)")
+                typer.echo(f"  Timestamp:      {timestamp_str}")
+                
+                # Warn if there's a mismatch (balance should be >= expected for fresh addresses)
+                if expected > 0 and credited == 0:
+                    typer.secho(
+                        "  ⚠ WARNING: Expected reward but balance is zero!",
+                        fg=typer.colors.RED,
+                    )
+            
+            typer.echo("\n" + "=" * 80)
+            
+            # Show filter summary
+            filters_applied = result.get("filters", {})
+            if any(v is not None for v in filters_applied.values()):
+                typer.echo("\nFilters applied:")
+                if filters_applied.get("address"):
+                    typer.echo(f"  Address: {filters_applied['address']}")
+                if filters_applied.get("from_height") is not None:
+                    typer.echo(f"  From Height: {filters_applied['from_height']}")
+                if filters_applied.get("to_height") is not None:
+                    typer.echo(f"  To Height: {filters_applied['to_height']}")
+                if filters_applied.get("last"):
+                    typer.echo(f"  Last: {filters_applied['last']}")
+    
+    except Exception as e:
+        typer.secho(
+            f"Error: Failed to retrieve mining credits: {e}",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(1)
 
 
 if __name__ == "__main__":  # pragma: no cover
