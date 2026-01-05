@@ -70,19 +70,24 @@ class RPCClient:
         
         try:
             if HAVE_HTTPX:
+                # follow_redirects=True ensures POST method is preserved across redirects
+                # (e.g., 307/308 redirects). Without this, redirects may fail or change method.
                 response = httpx.post(
                     self.rpc_url,
                     json=payload,
-                    timeout=self.timeout
+                    timeout=self.timeout,
+                    follow_redirects=True
                 )
                 response.raise_for_status()
                 data = response.json()
             elif HAVE_REQUESTS:
                 import requests
+                # allow_redirects=True explicitly handles redirects (default is True for requests)
                 response = requests.post(
                     self.rpc_url,
                     json=payload,
-                    timeout=self.timeout
+                    timeout=self.timeout,
+                    allow_redirects=True
                 )
                 response.raise_for_status()
                 data = response.json()
