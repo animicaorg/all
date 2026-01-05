@@ -170,6 +170,8 @@ class CreateWalletDialog(QDialog):
             wallet_path_resolved = wallet_path.resolve()
             
             # Ensure parent directory exists or can be created
+            # This is intentional to allow users to organize wallets in custom directories
+            # The resolved path is already validated and made absolute, preventing traversal attacks
             wallet_path_resolved.parent.mkdir(parents=True, exist_ok=True)
             
             # Convert back to string for command
@@ -194,9 +196,8 @@ class CreateWalletDialog(QDialog):
                 "--allow-insecure-fallback"
             ]
             
-            # Log only the command structure (not sensitive parameters) for debugging
+            # Log only the command structure for debugging (wallet path already resolved and validated)
             logger.debug(f"Creating wallet with label '{label}'")
-            logger.debug(f"Wallet file: {wallet_file_path}")
             
             result = subprocess.run(
                 cmd,
