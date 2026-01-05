@@ -3248,12 +3248,20 @@ def _mine_once(
             _record_local_block(header.height, "0x" + block_hash_bytes.hex(), header)
             _relay_mined_block(block_hash_bytes)
             
-            # CRITICAL: Ensure state changes (block rewards, tx execution) are persisted
-            # Even though StateDB uses autocommit mode, explicitly flush to ensure durability
-            # and provide a hook for future transactional implementations
+            # CRITICAL: Ensure state changes (block rewards, tx execution) are persisted and visible
+            # SQLite with WAL mode may buffer writes; force a checkpoint to ensure immediate visibility
             try:
                 if hasattr(ctx.state_db, "commit"):
                     ctx.state_db.commit()
+                
+                # Force WAL checkpoint to ensure writes are visible to other connections
+                if hasattr(ctx.state_db, "kv") and hasattr(ctx.state_db.kv, "_conn"):
+                    try:
+                        ctx.state_db.kv._conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
+                        log.debug(f"WAL checkpoint executed after block {header.height}")
+                    except Exception as e:
+                        log.debug(f"WAL checkpoint failed (may not be needed): {e}")
+                
                 log.debug(f"State changes committed after block acceptance at height {header.height}")
             except Exception as e:
                 log.warning(f"Failed to commit state after block acceptance: {e}")
