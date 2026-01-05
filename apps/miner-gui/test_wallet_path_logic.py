@@ -8,6 +8,10 @@ without needing to run the actual GUI.
 
 from pathlib import Path
 
+# Exit codes
+EXIT_SUCCESS = 0
+EXIT_FAILURE = 1
+
 
 def test_default_wallet_path():
     """Test that default wallet path is correctly set."""
@@ -165,11 +169,11 @@ def main():
     if all_passed:
         print("ALL TESTS PASSED ✓")
         print("=" * 60)
-        return 0
+        return EXIT_SUCCESS
     else:
         print("SOME TESTS FAILED ✗")
         print("=" * 60)
-        return 1
+        return EXIT_FAILURE
 
 
 if __name__ == "__main__":
