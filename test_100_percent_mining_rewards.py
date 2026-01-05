@@ -213,11 +213,14 @@ def test_no_aicf_or_treasury_rewards():
     
     rewards = compute_block_reward(chain_id=1337, height=1, params=params)
     
-    # Ensure no rewards go to AICF or treasury
-    for addr, amt in rewards:
-        assert "aicf" not in addr.lower(), f"AICF should not receive rewards, but got {amt}"
-        assert "treasury" not in addr.lower() or "coinbase" in addr.lower(), \
-            f"Treasury should not receive rewards, but got {amt}"
+    # With 100% to miner, should only have 1 reward entry
+    assert len(rewards) == 1, f"Expected exactly 1 reward (miner only), got {len(rewards)}"
+    
+    # The single reward should go to coinbase (miner), not AICF or treasury
+    addr, amt = rewards[0]
+    assert "coinbase" in addr.lower(), f"Expected coinbase address, got {addr}"
+    assert "aicf" not in addr.lower(), f"Reward should not go to AICF, but got {addr}"
+    assert amt == 5000000000, f"Expected full 5 ANM reward, got {amt}"
     
     print("  ✓ Confirmed: AICF receives 0 nANM")
     print("  ✓ Confirmed: Treasury receives 0 nANM")
