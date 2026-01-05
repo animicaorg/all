@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 # ------------------------------------------------------------------------------
 # Animica Explorer API Entrypoint
-# - Renders /etc/animica/explorer.toml from environment variables
+# - Renders explorer.toml in /data from environment variables
 # - Waits for the node RPC to be ready
 # - Starts the Explorer HTTP API (used by explorer-web)
 #
@@ -65,9 +65,10 @@ set -eu
 : "${STARTUP_WAIT_SECS:=90}"
 : "${EXPLORER_APP:=explorer.api:app}"
 : "${UVICORN_WORKERS:=1}"
+: "${DATA_DIR:=/data}"
 
-CONFIG_PATH="/etc/animica/explorer.toml"
-mkdir -p "$(dirname "${CONFIG_PATH}")" "${EXPLORER_CACHE_DIR}" /data
+CONFIG_PATH="${DATA_DIR}/explorer.toml"
+mkdir -p "${EXPLORER_CACHE_DIR}" "${DATA_DIR}"
 
 # ---- helpers ----------------------------------------------------------------
 comma_to_toml_array() {

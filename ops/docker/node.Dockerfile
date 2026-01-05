@@ -104,7 +104,7 @@ WORKDIR /app
 
 # Copy repository sources (expecting repo root as build context).
 # If you build only subpackages, adjust to COPY the relevant dirs.
-COPY . /app
+COPY --chown=${USER}:${USER} . /app
 
 # Install repo packages (animica + animica-pq) so pure-Python PQ backends are
 # available inside the container.
@@ -113,6 +113,9 @@ RUN python -m pip install --no-cache-dir -e /app/python -e /app/pq
 ENV ANIMICA_USER=${USER} \
     ANIMICA_UID=${UID} \
     ANIMICA_GID=${GID}
+
+# Switch to non-root user
+USER ${USER}
 
 # Export common ports:
 # - 8545: JSON-RPC HTTP

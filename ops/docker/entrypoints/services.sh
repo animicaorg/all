@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 # ------------------------------------------------------------------------------
 # Animica Studio Services Entrypoint
-# - Renders /etc/animica/services.toml from env
+# - Renders services.toml in /data from env
 # - Optionally migrates the DB on startup
 # - Waits for the node RPC to be ready
 # - Starts the Studio Services FastAPI (deploy/verify/faucet/artifacts/simulate)
@@ -86,9 +86,10 @@ set -eu
 : "${START_WORKER:=true}"
 : "${UVICORN_WORKERS:=1}"
 : "${STUDIO_SVC_APP:=studio_services.main:app}"
+: "${DATA_DIR:=/data}"
 
-CONFIG_PATH="/etc/animica/services.toml"
-mkdir -p "$(dirname "${CONFIG_PATH}")" "${SERVICES_STORAGE_DIR}" "${SERVICES_ARTIFACTS_DIR}"
+CONFIG_PATH="${DATA_DIR}/services.toml"
+mkdir -p "${SERVICES_STORAGE_DIR}" "${SERVICES_ARTIFACTS_DIR}"
 
 # ---- helpers ----------------------------------------------------------------
 comma_to_toml_array() {

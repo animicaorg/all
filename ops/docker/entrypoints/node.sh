@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 # ------------------------------------------------------------------------------
 # Animica Node Entrypoint
-# - Renders /etc/animica/node.toml from environment variables
+# - Renders node.toml in DATA_DIR from environment variables
 # - Ensures DB is initialized from genesis (for SQLite/RocksDB)
 # - Starts the JSON-RPC/WS server (FastAPI via uvicorn)
 #
@@ -71,9 +71,9 @@ fi
 : "${RANDOMNESS_ENABLE:=true}"
 : "${DA_ENABLE:=true}"
 
-CONFIG_PATH="/etc/animica/node.toml"
+CONFIG_PATH="${DATA_DIR}/node.toml"
 
-mkdir -p "${DATA_DIR}" "$(dirname "${CONFIG_PATH}")"
+mkdir -p "${DATA_DIR}"
 
 # --- derive DB URI ------------------------------------------------------------
 case "${DB_BACKEND}" in

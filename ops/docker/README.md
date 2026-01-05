@@ -180,6 +180,23 @@ docker compose -f ops/devnet/docker-compose.yml ps
 
 ⸻
 
+Security & Non-Root Containers
+
+All Animica containers run as non-root users by default for security best practices:
+	•	node: runs as `animica` user (UID 10001)
+	•	miner: runs as `animica` user (UID 10002)
+	•	explorer: runs as `animica` user (UID 10003)
+	•	studio-services: runs as `animica` user (UID 10004)
+
+Named volumes automatically have the correct permissions. If using bind mounts:
+	•	Ensure the host directory is writable by the container UID
+	•	Example: `chown -R 10001:10001 ./data` for node service
+
+The entrypoint scripts handle permission checks and provide helpful error messages
+if data directories are not writable.
+
+⸻
+
 Production Notes
 	•	Do not expose RPC write methods publicly. Use allowlists, auth, or a
 private RPC for writes.

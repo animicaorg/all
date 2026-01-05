@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 # ------------------------------------------------------------------------------
 # Animica Miner Entrypoint
-# - Renders /etc/animica/miner.toml from env
+# - Renders miner.toml in /data from env
 # - Waits for local node RPC to be ready
 # - Starts the built-in CPU/GPU miner (HashShare + optional useful proofs workers)
 #
@@ -48,8 +48,9 @@ set -eu
 
 : "${STARTUP_WAIT_SECS:=90}"
 
-CONFIG_PATH="/etc/animica/miner.toml"
-mkdir -p "$(dirname "${CONFIG_PATH}")"
+: "${DATA_DIR:=/data}"
+CONFIG_PATH="${DATA_DIR}/miner.toml"
+mkdir -p "${DATA_DIR}"
 
 # ---- helpers ----------------------------------------------------------------
 bool_to_toml() {
