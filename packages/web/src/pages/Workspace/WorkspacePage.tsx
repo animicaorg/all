@@ -1,16 +1,13 @@
 import { useState } from 'react'
-import { useParams } from 'react-router-dom'
 import Editor from '@monaco-editor/react'
 import { useWorkspaceStore } from '@/stores/workspaceStore'
 
 export default function WorkspacePage() {
-  const { projectId } = useParams()
   const {
     projects,
     activeProjectId,
     session,
     selectedFile,
-    setActiveProject,
     setSelectedFile,
     updateFile,
   } = useWorkspaceStore()
