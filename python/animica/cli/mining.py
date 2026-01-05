@@ -1439,14 +1439,14 @@ def mine_blocks(
                     
                     # ACCEPTED - block fully validated, persisted, and reward credited
                     total_mined += 1
-                    final_height = int(template.get("header", {}).get("height", 0))
                     block_reward = template.get("coinbase", {}).get("amount") or 0
                     total_reward += int(block_reward or 0)
                     reward_anm = int(block_reward or 0) / COIN_UNIT
                     
-                    # Extract credited_amount from submit_result if available
+                    # Extract credited_amount and height from submit_result
                     credited_amount = submit_result.get("credited_amount", block_reward)
                     new_head_hash = submit_result.get("new_head") or submit_result.get("block_hash")
+                    final_height = int(submit_result.get("new_head", 0))
 
                     typer.secho(
                         f"  ACCEPTED: Block {i + 1}/{count} (height: {final_height}, "
