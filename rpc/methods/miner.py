@@ -4650,11 +4650,87 @@ def miner_submit_sha256_block(**payload: Any) -> Dict[str, Any]:
     return {"accepted": True, "payload": block}
 
 
-@method(
-    "miner.listInstantBlocks",
-    desc="List recent instant blocks with zero reward and non-advancing canonical height",
-)
-@method(
-    "miner.getInstantBlockStats",
-    desc="Get statistics about instant blocks in the chain",
-)
+@method("mining.getTemplateStatus", desc="Get mining template readiness status")
+def mining_get_template_status() -> dict[str, Any]:
+    """
+    Get the current template readiness status.
+    
+    Returns:
+        dict: {
+            "can_mine": bool,  # Whether mining is allowed
+            "reason": str | None,  # Reason if mining is blocked
+            "sync_phase": str | None,  # Current sync phase
+            "head": {
+                "height": int,
+                "hash": str,
+                "has_state_root": bool,
+            },
+            "mempool": {
+                "size": int,
+            },
+        }
+    """
+    try:
+        # Check mining gate
+        allowed, reason = _mining_gate(allow_offline_mining=False, allow_unsynced=False)
+        
+        # Get head info
+        head_snap = _current_head_snapshot()
+        head_height = head_snap.get("height", 0)
+        head_hash = head_snap.get("hash")
+        head_header = head_snap.get("header")
+        
+        # Check if we have a state root
+        has_state_root = False
+        if head_header is not None:
+            state_root = getattr(head_header, "stateRoot", None)
+            if state_root and state_root != (b"\x00" * 32):
+                has_state_root = True
+        
+        # Get sync phase
+        sync_phase = None
+        try:
+            import p2p
+            svc = p2p.get_service()
+            if svc is not None:
+                sync_status = svc.sync_status_snapshot().to_dict()
+                sync_phase = sync_status.get("phase")
+        except Exception:
+            pass
+        
+        # Get mempool size
+        mempool_size = 0
+        try:
+            ctx = _ctx()
+            mempool_service = _resolve_mempool_service(ctx)
+            if mempool_service is not None:
+                if hasattr(mempool_service, "size"):
+                    mempool_size = mempool_service.size()
+                elif hasattr(mempool_service, "__len__"):
+                    mempool_size = len(mempool_service)
+        except Exception:
+            pass
+        
+        return {
+            "can_mine": allowed,
+            "reason": reason,
+            "sync_phase": sync_phase,
+            "head": {
+                "height": int(head_height) if head_height is not None else 0,
+                "hash": head_hash,
+                "has_state_root": has_state_root,
+            },
+            "mempool": {
+                "size": mempool_size,
+            },
+        }
+    except Exception as e:
+        log.error(f"Failed to get template status: {e}", exc_info=True)
+        return {
+            "can_mine": False,
+            "reason": f"error: {e}",
+            "sync_phase": None,
+            "head": {"height": 0, "hash": None, "has_state_root": False},
+            "mempool": {"size": 0},
+        }
+
