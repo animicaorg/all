@@ -12,10 +12,8 @@ Guides users through:
 import logging
 from typing import Optional
 
-from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QCheckBox,
-    QComboBox,
     QDialog,
     QDialogButtonBox,
     QHBoxLayout,
@@ -23,7 +21,6 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
-    QMessageBox,
     QPushButton,
     QRadioButton,
     QTextEdit,
@@ -35,7 +32,6 @@ from PySide6.QtWidgets import (
 
 from animica_miner_gui.backend.config import (
     MiningAppConfig,
-    NetworkConfig,
     NetworkType,
     save_config,
 )
@@ -96,8 +92,6 @@ class CreateWalletDialog(QDialog):
             return
         
         try:
-            from pathlib import Path
-            import json
             import subprocess
             import sys
             
@@ -128,7 +122,7 @@ class CreateWalletDialog(QDialog):
                 raise Exception("Could not parse wallet address from output")
             
             self.created_address = address
-            self.status_label.setText(f"✓ Wallet created successfully!")
+            self.status_label.setText("✓ Wallet created successfully!")
             self.status_label.setStyleSheet("color: green;")
             
             # Accept the dialog after successful creation
