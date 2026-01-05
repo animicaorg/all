@@ -9,7 +9,12 @@ Guides users through:
 6. Summary and start mining
 """
 
+import json
 import logging
+import re
+import subprocess
+import sys
+from pathlib import Path
 from typing import Optional
 
 from PySide6.QtWidgets import (
@@ -91,14 +96,23 @@ class CreateWalletDialog(QDialog):
             self.status_label.setStyleSheet("color: red;")
             return
         
+        # Validate label: only allow alphanumeric, spaces, hyphens, and underscores
+        # This prevents command injection and ensures clean wallet names
+        if not re.match(r'^[\w\s\-]+$', label):
+            self.status_label.setText("Label can only contain letters, numbers, spaces, hyphens, and underscores")
+            self.status_label.setStyleSheet("color: red;")
+            return
+        
+        if len(label) > 50:
+            self.status_label.setText("Label too long (max 50 characters)")
+            self.status_label.setStyleSheet("color: red;")
+            return
+        
         try:
-            import subprocess
-            import sys
-            
             self.status_label.setText("Creating wallet...")
             self.status_label.setStyleSheet("color: blue;")
             
-            # Call the wallet creation CLI
+            # Call the wallet creation CLI with label as a separate argument (safer)
             result = subprocess.run(
                 [sys.executable, "-m", "animica", "wallet", "create", 
                  "--label", label, "--allow-insecure-fallback"],
@@ -110,16 +124,20 @@ class CreateWalletDialog(QDialog):
             if result.returncode != 0:
                 raise Exception(f"Wallet creation failed: {result.stderr}")
             
-            # Parse the output to get the address
-            output_lines = result.stdout.strip().split("\n")
-            address = None
-            for line in output_lines:
-                if line.startswith("Address:"):
-                    address = line.split("Address:")[1].strip()
-                    break
-            
-            if not address:
-                raise Exception("Could not parse wallet address from output")
+            # Parse the output to get the address using regex for robustness
+            address_match = re.search(r'Address:\s*(anim1[a-z0-9]{39,})', result.stdout)
+            if address_match:
+                address = address_match.group(1)
+            else:
+                # Fallback to line-by-line parsing
+                address = None
+                for line in result.stdout.strip().split("\n"):
+                    if line.startswith("Address:"):
+                        address = line.split("Address:")[1].strip()
+                        break
+                
+                if not address:
+                    raise Exception("Could not parse wallet address from output")
             
             self.created_address = address
             self.status_label.setText("✓ Wallet created successfully!")
@@ -133,6 +151,8 @@ class CreateWalletDialog(QDialog):
             self.status_label.setStyleSheet("color: red;")
         except Exception as e:
             logger.error(f"Wallet creation failed: {e}")
+            self.status_label.setText(f"Error: {str(e)}")
+            self.status_label.setStyleSheet("color: red;")
             self.status_label.setText(f"Error: {str(e)}")
             self.status_label.setStyleSheet("color: red;")
 
@@ -352,8 +372,6 @@ class WalletConfigPage(QWizardPage):
     
     def import_from_wallets(self) -> None:
         """Import address from ~/.animica/wallets.json."""
-        from pathlib import Path
-        import json
         
         wallet_path = Path.home() / ".animica" / "wallets.json"
         
@@ -599,34 +617,20 @@ class SummaryPage(QWizardPage):
         self.setLayout(layout)
         
         self.registerField("start_mining", self.start_mining_checkbox)
+        
+        # Cache for summary data
+        self._network = ""
+        self._preset = ""
+        self._payout_address = ""
     
     def _on_checkbox_toggled(self, checked: bool) -> None:
-        """Show/hide help text based on checkbox state."""
+        """Show/hide help text based on checkbox state and update mode in summary."""
         self.help_label.setVisible(not checked)
-        # Re-initialize to update the summary text
-        self.initializePage()
+        # Only update the mode-dependent parts instead of regenerating entire HTML
+        self._update_mode_display()
     
-    def initializePage(self) -> None:
-        """Generate summary from wizard fields."""
-        # Network
-        if self.field("custom"):
-            network = f"Custom ({self.field('custom_rpc')})"
-        elif self.field("mainnet"):
-            network = "Mainnet"
-        elif self.field("testnet"):
-            network = "Testnet"
-        else:
-            network = "Devnet"
-        
-        # Preset
-        if self.field("preset_max"):
-            preset = "Maximum Performance"
-        elif self.field("preset_safe"):
-            preset = "Safe Mode"
-        else:
-            preset = "Recommended"
-        
-        # Determine action based on start_mining checkbox
+    def _update_mode_display(self) -> None:
+        """Update only the mode and action text in the summary."""
         start_mining = self.start_mining_checkbox.isChecked()
         action_text = (
             "Click <b>Finish</b> to save this configuration and start mining."
@@ -637,9 +641,9 @@ class SummaryPage(QWizardPage):
         summary = f"""
         <h3>Configuration Summary</h3>
         <table>
-        <tr><td><b>Network:</b></td><td>{network}</td></tr>
-        <tr><td><b>Payout Address:</b></td><td>{self.field('payout_address')}</td></tr>
-        <tr><td><b>Performance Preset:</b></td><td>{preset}</td></tr>
+        <tr><td><b>Network:</b></td><td>{self._network}</td></tr>
+        <tr><td><b>Payout Address:</b></td><td>{self._payout_address}</td></tr>
+        <tr><td><b>Performance Preset:</b></td><td>{self._preset}</td></tr>
         <tr><td><b>Mode:</b></td><td>{"Start mining immediately" if start_mining else "Wallet setup only"}</td></tr>
         </table>
         <br>
@@ -647,6 +651,32 @@ class SummaryPage(QWizardPage):
         """
         
         self.summary_text.setHtml(summary)
+    
+    def initializePage(self) -> None:
+        """Generate summary from wizard fields."""
+        # Network
+        if self.field("custom"):
+            self._network = f"Custom ({self.field('custom_rpc')})"
+        elif self.field("mainnet"):
+            self._network = "Mainnet"
+        elif self.field("testnet"):
+            self._network = "Testnet"
+        else:
+            self._network = "Devnet"
+        
+        # Preset
+        if self.field("preset_max"):
+            self._preset = "Maximum Performance"
+        elif self.field("preset_safe"):
+            self._preset = "Safe Mode"
+        else:
+            self._preset = "Recommended"
+        
+        # Payout address
+        self._payout_address = self.field('payout_address')
+        
+        # Generate full summary
+        self._update_mode_display()
 
 
 class FirstRunWizard(QWizard):
