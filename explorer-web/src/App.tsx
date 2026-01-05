@@ -1,5 +1,6 @@
 import React, { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BrowserRouter, NavLink } from "react-router-dom";
+import { QueryClientProvider } from "@tanstack/react-query";
 
 // Router (will be provided in explorer-web/src/router.tsx)
 import AppRouter from "./router";
@@ -8,6 +9,7 @@ import { useNetworkManager } from "./state/network";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { installGlobalErrorHandlers } from "./utils/errorHandler";
 import { resolveRpcUrl } from "./config/rpcUrl";
+import { queryClient } from "./lib/query/queryClient";
 
 // ────────────────────────────────────────────────────────────────────────────────
 // Global event channels so other modules can toggle loader / push toasts without
@@ -44,30 +46,32 @@ export default function App() {
 
   return (
     <ErrorBoundary>
-      <ExplorerStoreProvider>
-        <BrowserRouter basename={basename} future={{ v7_relativeSplatPath: true, v7_startTransition: true }}>
-          <NetworkInitializer />
-          <div className="app-root">
-            <TopBar />
-            <TopProgressBar />
-            <div className="app-container">
-              <SideNav />
-              <main className="app-main" role="main" aria-live="polite">
-                <ErrorBoundary>
-                  <Suspense fallback={<RouteFallback />}>
-                    <AppRouter />
-                  </Suspense>
-                </ErrorBoundary>
-              </main>
-            </div>
+      <QueryClientProvider client={queryClient}>
+        <ExplorerStoreProvider>
+          <BrowserRouter basename={basename} future={{ v7_relativeSplatPath: true, v7_startTransition: true }}>
+            <NetworkInitializer />
+            <div className="app-root">
+              <TopBar />
+              <TopProgressBar />
+              <div className="app-container">
+                <SideNav />
+                <main className="app-main" role="main" aria-live="polite">
+                  <ErrorBoundary>
+                    <Suspense fallback={<RouteFallback />}>
+                      <AppRouter />
+                    </Suspense>
+                  </ErrorBoundary>
+                </main>
+              </div>
 
-            <GlobalLoaderOverlay />
-            <ToastHost />
-            <Footer />
-            <style>{globalCss}</style>
-          </div>
-        </BrowserRouter>
-      </ExplorerStoreProvider>
+              <GlobalLoaderOverlay />
+              <ToastHost />
+              <Footer />
+              <style>{globalCss}</style>
+            </div>
+          </BrowserRouter>
+        </ExplorerStoreProvider>
+      </QueryClientProvider>
     </ErrorBoundary>
   );
 }
