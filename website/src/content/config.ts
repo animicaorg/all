@@ -23,7 +23,7 @@ const blog = defineCollection({
       author: z.string().default("Animica Team"),
       tags: z.array(z.string()).default([]),
       draft: z.boolean().default(false),
-      hero: image().optional(), // e.g. /public/blog/hero.png
+      hero: z.string().optional(), // e.g. /blog/hero.png (path in /public)
       canonicalUrl: z.string().url().optional(),
       // Optional search/SEO helpers
       ogTitle: z.string().optional(),

@@ -1,0 +1,96 @@
+---
+/**
+ * Badge Component
+ * 
+ * Small status indicator badge with color variants.
+ * 
+ * Props:
+ * - variant: 'default' | 'success' | 'warning' | 'error' | 'info'
+ * - size: 'sm' | 'md' | 'lg'
+ * - dot: boolean - shows a colored dot before the text
+ * 
+ * Usage:
+ * <Badge variant="success">Live</Badge>
+ * <Badge variant="warning" dot>In Progress</Badge>
+ */
+
+interface Props {
+  variant?: 'default' | 'success' | 'warning' | 'error' | 'info' | 'planned';
+  size?: 'sm' | 'md' | 'lg';
+  dot?: boolean;
+  class?: string;
+}
+
+const {
+  variant = 'default',
+  size = 'md',
+  dot = false,
+  class: className = '',
+  ...rest
+} = Astro.props;
+
+const baseStyles = `
+  inline-flex items-center gap-1.5
+  font-medium rounded-full
+  transition-colors duration-150
+`;
+
+const sizeStyles = {
+  sm: 'px-2 py-0.5 text-xs',
+  md: 'px-2.5 py-1 text-sm',
+  lg: 'px-3 py-1.5 text-base',
+};
+
+const variantStyles = {
+  default: `
+    bg-gray-100 text-gray-800
+    dark:bg-dark-200 dark:text-gray-200
+  `,
+  success: `
+    bg-success-50 text-success-700
+    dark:bg-success-700/20 dark:text-success-400
+  `,
+  warning: `
+    bg-warning-50 text-warning-700
+    dark:bg-warning-700/20 dark:text-warning-400
+  `,
+  error: `
+    bg-error-50 text-error-700
+    dark:bg-error-700/20 dark:text-error-400
+  `,
+  info: `
+    bg-brand-50 text-brand-700
+    dark:bg-brand-700/20 dark:text-brand-400
+  `,
+  planned: `
+    bg-gray-100 text-gray-600
+    dark:bg-dark-200 dark:text-gray-400
+  `,
+};
+
+const dotColors = {
+  default: 'bg-gray-600 dark:bg-gray-400',
+  success: 'bg-success-600 dark:bg-success-400',
+  warning: 'bg-warning-600 dark:bg-warning-400',
+  error: 'bg-error-600 dark:bg-error-400',
+  info: 'bg-brand-600 dark:bg-brand-400',
+  planned: 'bg-gray-500 dark:bg-gray-500',
+};
+
+const classes = [
+  baseStyles,
+  sizeStyles[size],
+  variantStyles[variant],
+  className,
+].filter(Boolean).join(' ').replace(/\s+/g, ' ');
+---
+
+<span class={classes} {...rest}>
+  {dot && (
+    <span 
+      class={`inline-block w-1.5 h-1.5 rounded-full ${dotColors[variant]}`}
+      aria-hidden="true"
+    />
+  )}
+  <slot />
+</span>
