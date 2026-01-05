@@ -2108,7 +2108,7 @@ def _request_missing_mempool_txs(
 
 
 def _build_child_header(
-    parent_height: int, parent_hash: bytes, parent_header: Any
+    parent_height: int, parent_hash: bytes, parent_header: Any, *, coinbase: bytes | None = None
 ) -> Header:
     timestamp_min, timestamp_max, timestamp = _timestamp_bounds(parent_header)
     theta = getattr(
@@ -2121,6 +2121,18 @@ def _build_child_header(
         parent_header, "stateRoot", getattr(parent_header, "state_root", None)
     )
     pq_root, poies_root = _policy_roots()
+    
+    # Encode coinbase in extra field if provided
+    # Format: CBOR({coinbase: bytes})
+    extra_data = b""
+    if coinbase is not None and coinbase != ZERO32:
+        try:
+            import cbor2
+            extra_data = cbor2.dumps({"coinbase": coinbase})
+        except Exception as e:
+            log.warning(f"Failed to encode coinbase in extra field: {e}")
+            extra_data = b""
+    
     return Header(
         v=1,
         chainId=_ctx().cfg.chain_id,
@@ -2137,7 +2149,7 @@ def _build_child_header(
         pqAlgPolicyRoot=pq_root,
         thetaMicro=int(theta or _resolve_theta()),
         nonce=0,
-        extra=b"",
+        extra=extra_data,
     )
 
 
@@ -2767,7 +2779,11 @@ def _mine_once(
     # Build child header template (nonce will be updated in mining loop). Update the
     # txsRoot to reflect any pending transactions we plan to include.
     timestamp_min, timestamp_max, _ = _timestamp_bounds(parent_header)
-    header_template = _build_child_header(parent_height, parent_hash_bytes, parent_header)
+    
+    # Use provided payout_address or fall back to default miner address
+    coinbase_bytes = payout_address if payout_address is not None else _get_miner_address()
+    
+    header_template = _build_child_header(parent_height, parent_hash_bytes, parent_header, coinbase=coinbase_bytes)
     
     # Apply dynamic theta adjustment based on recent block times
     # This adapts mining difficulty to network conditions (hash rate, block times)
@@ -4239,7 +4255,11 @@ def miner_get_block_template(*args: Any, **kwargs: Any) -> Dict[str, Any]:
             )
 
         timestamp_min, timestamp_max, _ = _timestamp_bounds(parent_header)
-        header_template = _build_child_header(parent_height, parent_hash_bytes, parent_header)
+        
+        # Convert payout address to bytes for coinbase
+        coinbase_bytes = _as_bytes32_addr(payout_address)
+        
+        header_template = _build_child_header(parent_height, parent_hash_bytes, parent_header, coinbase=coinbase_bytes)
 
         network_dt_seconds = None
         try:
