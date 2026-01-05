@@ -390,6 +390,9 @@ def get_balance(addr_str: str) -> int:
     """
     Returns the integer balance (base units) for the given address.
     """
+    import logging
+    log = logging.getLogger("animica.rpc.state_service")
+    
     ctx = get_ctx()
     addr = parse_address(addr_str)
     sdb = ctx.state_db
@@ -398,7 +401,15 @@ def get_balance(addr_str: str) -> int:
     for name in ("get_balance", "read_balance", "balance_of"):
         fn = getattr(sdb, name, None)
         if callable(fn):
-            return int(fn(addr))  # type: ignore
+            balance = int(fn(addr))  # type: ignore
+            log.info(
+                f"get_balance: address={addr_str}, "
+                f"addr_bytes={addr.hex()[:16]}..., "
+                f"balance={balance}, "
+                f"state_db_id={hex(id(sdb))}, "
+                f"method={name}"
+            )
+            return balance
 
     # Try account getter
     acct = None
@@ -408,9 +419,23 @@ def get_balance(addr_str: str) -> int:
             acct = fn(addr)  # type: ignore
             break
     if isinstance(acct, dict) and "balance" in acct:
-        return int(acct["balance"])
+        balance = int(acct["balance"])
+        log.info(
+            f"get_balance: address={addr_str}, "
+            f"addr_bytes={addr.hex()[:16]}..., "
+            f"balance={balance}, "
+            f"state_db_id={hex(id(sdb))}, "
+            f"method=get_account"
+        )
+        return balance
 
     # Fallback: zero if unknown
+    log.info(
+        f"get_balance: address={addr_str}, "
+        f"addr_bytes={addr.hex()[:16]}..., "
+        f"balance=0 (no account), "
+        f"state_db_id={hex(id(sdb))}"
+    )
     return 0
 
 

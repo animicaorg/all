@@ -1402,11 +1402,19 @@ def _apply_block_reward(ctx: Any, height: int, payout_address: bytes | None = No
                         reward_addr_bytes = reward_addr[:32].ljust(32, b"\x00")
                 
                 if amount > 0:
+                    # CRITICAL: Read balance BEFORE credit to verify the update
+                    old_balance = state_db.get_balance(reward_addr_bytes)
                     new_balance = credit(state_db, reward_addr_bytes, amount)
+                    # CRITICAL: Verify the balance actually changed
+                    verified_balance = state_db.get_balance(reward_addr_bytes)
                     log.info(
                         f"Applied block reward: height={height}, "
                         f"address={reward_addr_bytes.hex()[:16]}..., "
-                        f"amount={amount}, new_balance={new_balance}"
+                        f"old_balance={old_balance}, amount={amount}, "
+                        f"expected_new_balance={old_balance + amount}, "
+                        f"returned_new_balance={new_balance}, "
+                        f"verified_balance={verified_balance}, "
+                        f"verified_ok={verified_balance == old_balance + amount}"
                     )
                     
                     # Track miner reward (first reward entry)
