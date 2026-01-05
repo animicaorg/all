@@ -1215,17 +1215,29 @@ def mine_blocks(
                             if isinstance(template, dict)
                             else "unknown"
                         )
+                        
+                        # NEW: Handle execution head lagging (wait and retry)
+                        # This is the only reason we should wait-and-retry
                         if (
                             isinstance(reason, str)
-                            and reason.startswith("sync_phase:")
+                            and reason.startswith("exec_head_lagging:")
                             and not effective_allow_offline
                         ):
+                            # Extract lag info from reason string (format: "exec_head_lagging:N_blocks")
+                            lag_blocks = reason.split(":")[-1].replace("_blocks", "")
                             typer.secho(
-                                f"Info: Node is {reason}; waiting for a synced block template",
+                                f"Info: Execution head is lagging by {lag_blocks}; "
+                                f"waiting for block execution to catch up...",
                                 fg=typer.colors.YELLOW,
                             )
                             time.sleep(MIN_BLOCK_INTERVAL_SECONDS)
                             continue
+                        
+                        # REMOVED: sync_phase:* wait loop (lines 1218-1228 in original)
+                        # The node no longer blocks templates based on sync_phase.
+                        # If we get here, template is genuinely unavailable (not just "syncing headers").
+                        
+                        # Template unavailable for other reason - stop mining this iteration
                         if (
                             not isinstance(template, dict)
                             or not template.get("enabled", True)
