@@ -1599,6 +1599,9 @@ class _OrphanBlock:
 
 _IMPORTER_CACHE: Dict[int, BlockImporter] = {}
 
+# Network key prefix for params.yaml lookup (e.g., "animica:1" for mainnet)
+_NETWORK_KEY_PREFIX = "animica"
+
 
 @lru_cache(maxsize=4)
 def _load_full_params_dict(chain_id: int) -> Dict[str, Any]:
@@ -1614,8 +1617,13 @@ def _load_full_params_dict(chain_id: int) -> Dict[str, Any]:
     Returns:
         Dict with full network configuration including monetary.issuance
     """
-    import yaml
     from pathlib import Path
+    
+    try:
+        import yaml
+    except ImportError:
+        log.warning("PyYAML not available; rewards will not be calculated")
+        return {}
     
     # Find spec/params.yaml relative to this file (core/chain/block_import.py)
     # Repository root is two levels up
@@ -1623,7 +1631,9 @@ def _load_full_params_dict(chain_id: int) -> Dict[str, Any]:
     params_path = repo_root / "spec" / "params.yaml"
     
     if not params_path.exists():
-        log.warning(f"spec/params.yaml not found at {params_path}; rewards will not be calculated")
+        log.warning(
+            f"spec/params.yaml not found at {params_path}; rewards will not be calculated"
+        )
         return {}
     
     try:
@@ -1632,7 +1642,7 @@ def _load_full_params_dict(chain_id: int) -> Dict[str, Any]:
         
         # Look for network-specific config under networks.<network_key>
         networks = raw.get("networks", {})
-        network_key = f"animica:{chain_id}"
+        network_key = f"{_NETWORK_KEY_PREFIX}:{chain_id}"
         
         if network_key in networks:
             network_config = dict(networks[network_key])
@@ -1643,11 +1653,13 @@ def _load_full_params_dict(chain_id: int) -> Dict[str, Any]:
         
         log.warning(
             f"No network config found for chain_id={chain_id} (key={network_key}) "
-            f"in spec/params.yaml; rewards will not be calculated"
+            f"in {params_path}; rewards will not be calculated"
         )
         return {}
     except Exception as e:
-        log.warning(f"Failed to load spec/params.yaml: {e}; rewards will not be calculated")
+        log.warning(
+            f"Failed to load {params_path}: {e}; rewards will not be calculated"
+        )
         return {}
 
 
