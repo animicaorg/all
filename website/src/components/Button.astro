@@ -1,0 +1,120 @@
+---
+/**
+ * Button Component
+ * 
+ * Professional button component with multiple variants and sizes.
+ * Fully accessible with proper focus states and keyboard navigation.
+ * 
+ * Props:
+ * - variant: 'primary' | 'secondary' | 'outline' | 'ghost' | 'danger'
+ * - size: 'sm' | 'md' | 'lg'
+ * - href: string (renders as link)
+ * - disabled: boolean
+ * - fullWidth: boolean
+ * - type: 'button' | 'submit' | 'reset'
+ * 
+ * Usage:
+ * <Button variant="primary" size="lg">Get Started</Button>
+ * <Button href="/docs" variant="outline">Learn More</Button>
+ */
+
+interface Props {
+  variant?: 'primary' | 'secondary' | 'outline' | 'ghost' | 'danger';
+  size?: 'sm' | 'md' | 'lg';
+  href?: string;
+  disabled?: boolean;
+  fullWidth?: boolean;
+  type?: 'button' | 'submit' | 'reset';
+  class?: string;
+  target?: string;
+  rel?: string;
+}
+
+const {
+  variant = 'primary',
+  size = 'md',
+  href,
+  disabled = false,
+  fullWidth = false,
+  type = 'button',
+  class: className = '',
+  target,
+  rel,
+  ...rest
+} = Astro.props;
+
+// Base styles
+const baseStyles = `
+  inline-flex items-center justify-center
+  font-medium rounded-lg
+  transition-all duration-200 ease-in-out
+  focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2
+  disabled:opacity-50 disabled:cursor-not-allowed disabled:pointer-events-none
+  select-none
+`;
+
+// Size variants
+const sizeStyles = {
+  sm: 'px-3 py-1.5 text-sm',
+  md: 'px-4 py-2 text-base',
+  lg: 'px-6 py-3 text-lg',
+};
+
+// Variant styles
+const variantStyles = {
+  primary: `
+    bg-brand-500 text-white
+    hover:bg-brand-600 active:bg-brand-700
+    focus-visible:ring-brand-500
+    shadow-sm hover:shadow-md
+  `,
+  secondary: `
+    bg-gray-200 text-gray-900 dark:bg-dark-200 dark:text-white
+    hover:bg-gray-300 dark:hover:bg-dark-300
+    active:bg-gray-400 dark:active:bg-dark-400
+    focus-visible:ring-gray-500 dark:focus-visible:ring-dark-500
+    shadow-sm hover:shadow-md
+  `,
+  outline: `
+    border-2 border-brand-500 text-brand-500
+    hover:bg-brand-500 hover:text-white
+    active:bg-brand-600 active:border-brand-600
+    focus-visible:ring-brand-500
+  `,
+  ghost: `
+    text-gray-700 dark:text-gray-300
+    hover:bg-gray-100 dark:hover:bg-dark-100
+    active:bg-gray-200 dark:active:bg-dark-200
+    focus-visible:ring-gray-500 dark:focus-visible:ring-dark-500
+  `,
+  danger: `
+    bg-error-500 text-white
+    hover:bg-error-600 active:bg-error-700
+    focus-visible:ring-error-500
+    shadow-sm hover:shadow-md
+  `,
+};
+
+const widthStyle = fullWidth ? 'w-full' : '';
+
+const classes = [
+  baseStyles,
+  sizeStyles[size],
+  variantStyles[variant],
+  widthStyle,
+  className,
+].filter(Boolean).join(' ').replace(/\s+/g, ' ');
+
+const Element = href ? 'a' : 'button';
+const elementProps = href
+  ? { href, target, rel: rel || (target === '_blank' ? 'noopener noreferrer' : undefined) }
+  : { type, disabled };
+---
+
+<Element
+  class={classes}
+  {...elementProps}
+  {...rest}
+>
+  <slot />
+</Element>

@@ -1,0 +1,98 @@
+---
+/**
+ * Accordion Component
+ * 
+ * Collapsible content sections with smooth animations.
+ * Uses details/summary for native accessibility.
+ * 
+ * Props:
+ * - title: string - The accordion header text
+ * - open: boolean - Whether to start expanded
+ * - bordered: boolean - Add border styling
+ * 
+ * Usage:
+ * <Accordion title="How does mining work?">
+ *   Mining involves solving cryptographic puzzles...
+ * </Accordion>
+ */
+
+interface Props {
+  title: string;
+  open?: boolean;
+  bordered?: boolean;
+  class?: string;
+}
+
+const {
+  title,
+  open = false,
+  bordered = true,
+  class: className = '',
+  ...rest
+} = Astro.props;
+
+const baseStyles = `
+  group
+  transition-colors duration-150
+`;
+
+const borderedStyles = bordered ? `
+  border border-gray-200 dark:border-dark-300
+  rounded-lg
+  overflow-hidden
+` : '';
+
+const classes = [
+  baseStyles,
+  borderedStyles,
+  className,
+].filter(Boolean).join(' ').replace(/\s+/g, ' ');
+---
+
+<details class={classes} open={open} {...rest}>
+  <summary 
+    class="
+      flex items-center justify-between
+      px-4 py-3 cursor-pointer
+      font-medium text-lg
+      bg-white dark:bg-dark-50
+      hover:bg-gray-50 dark:hover:bg-dark-100
+      transition-colors duration-150
+      select-none
+      focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500
+    "
+  >
+    <span class="flex-1">{title}</span>
+    <svg 
+      class="w-5 h-5 text-gray-500 dark:text-gray-400 transition-transform duration-200 group-open:rotate-180"
+      xmlns="http://www.w3.org/2000/svg" 
+      fill="none" 
+      viewBox="0 0 24 24" 
+      stroke="currentColor"
+      aria-hidden="true"
+    >
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+    </svg>
+  </summary>
+  <div 
+    class="
+      px-4 py-4
+      bg-white dark:bg-dark-50
+      border-t border-gray-200 dark:border-dark-300
+      prose prose-sm dark:prose-invert max-w-none
+    "
+  >
+    <slot />
+  </div>
+</details>
+
+<style>
+  /* Smooth animation for accordion opening/closing */
+  details summary::-webkit-details-marker {
+    display: none;
+  }
+  
+  details[open] summary {
+    @apply border-b border-gray-200 dark:border-dark-300;
+  }
+</style>

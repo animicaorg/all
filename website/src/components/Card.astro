@@ -1,0 +1,101 @@
+---
+/**
+ * Card Component
+ * 
+ * Versatile card component for content sections.
+ * Supports interactive hover states, padding variants, and custom backgrounds.
+ * 
+ * Props:
+ * - variant: 'default' | 'bordered' | 'elevated' | 'flat'
+ * - padding: 'none' | 'sm' | 'md' | 'lg'
+ * - hoverable: boolean - adds hover lift effect
+ * - clickable: boolean - adds pointer cursor and active state
+ * - href: string - makes the entire card clickable
+ * 
+ * Usage:
+ * <Card variant="elevated" padding="lg">
+ *   <h3>Card Title</h3>
+ *   <p>Card content goes here</p>
+ * </Card>
+ */
+
+interface Props {
+  variant?: 'default' | 'bordered' | 'elevated' | 'flat';
+  padding?: 'none' | 'sm' | 'md' | 'lg';
+  hoverable?: boolean;
+  clickable?: boolean;
+  href?: string;
+  class?: string;
+}
+
+const {
+  variant = 'default',
+  padding = 'md',
+  hoverable = false,
+  clickable = false,
+  href,
+  class: className = '',
+  ...rest
+} = Astro.props;
+
+const baseStyles = `
+  rounded-xl
+  transition-all duration-200 ease-in-out
+  focus-within:outline-none
+`;
+
+const variantStyles = {
+  default: `
+    bg-white dark:bg-dark-100
+    border border-gray-200 dark:border-dark-300
+  `,
+  bordered: `
+    bg-transparent
+    border-2 border-gray-300 dark:border-dark-400
+  `,
+  elevated: `
+    bg-white dark:bg-dark-100
+    shadow-lg hover:shadow-xl
+  `,
+  flat: `
+    bg-gray-50 dark:bg-dark-50
+  `,
+};
+
+const paddingStyles = {
+  none: '',
+  sm: 'p-4',
+  md: 'p-6',
+  lg: 'p-8',
+};
+
+const interactiveStyles = hoverable || clickable ? `
+  hover:scale-[1.02]
+  hover:shadow-lg
+` : '';
+
+const clickableStyles = clickable || href ? `
+  cursor-pointer
+  active:scale-[0.98]
+` : '';
+
+const classes = [
+  baseStyles,
+  variantStyles[variant],
+  paddingStyles[padding],
+  interactiveStyles,
+  clickableStyles,
+  className,
+].filter(Boolean).join(' ').replace(/\s+/g, ' ');
+
+const Element = href ? 'a' : 'div';
+const elementProps = href ? { href } : {};
+---
+
+<Element
+  class={classes}
+  {...elementProps}
+  {...rest}
+>
+  <slot />
+</Element>
