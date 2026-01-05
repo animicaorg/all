@@ -763,5 +763,102 @@ def test_trigger_sync_uses_node_sync_trigger(monkeypatch):
     assert called[0] == "node.syncTrigger"
 
 
+def test_sync_status_persist_flag_shows_in_help():
+    """Test that --persist flag appears in help."""
+    result = runner.invoke(app, ["sync", "status", "--help"])
+    
+    assert result.exit_code == 0
+    assert "--persist" in result.stdout
+    assert "Continuously monitor" in result.stdout or "live" in result.stdout.lower()
+    assert "--interval" in result.stdout
+
+
+def test_sync_status_persist_mode(mock_rpc_success, monkeypatch):
+    """Test sync status with --persist flag."""
+    # Mock to stop after 2 iterations
+    iteration_count = [0]
+    
+    def mock_sleep(seconds):
+        iteration_count[0] += 1
+        if iteration_count[0] >= 2:
+            raise KeyboardInterrupt()
+    
+    monkeypatch.setattr("animica.cli.sync.time.sleep", mock_sleep)
+    
+    with patch("httpx.AsyncClient") as mock_client:
+        mock_client.return_value = MockAsyncClient(mock_rpc_success)
+        
+        result = runner.invoke(
+            app,
+            ["sync", "status", "--persist", "--interval", "1"]
+        )
+        
+        # Should exit with code 0 on KeyboardInterrupt
+        assert result.exit_code == 0
+        assert "Monitoring sync status" in result.stdout
+        assert "Monitoring stopped" in result.stdout
+
+
+def test_sync_status_persist_json_mode(mock_rpc_success, monkeypatch):
+    """Test sync status --persist with JSON output."""
+    iteration_count = [0]
+    
+    def mock_sleep(seconds):
+        iteration_count[0] += 1
+        if iteration_count[0] >= 2:
+            raise KeyboardInterrupt()
+    
+    monkeypatch.setattr("animica.cli.sync.time.sleep", mock_sleep)
+    
+    with patch("httpx.AsyncClient") as mock_client:
+        mock_client.return_value = MockAsyncClient(mock_rpc_success)
+        
+        result = runner.invoke(
+            app,
+            ["sync", "status", "--persist", "--json", "--interval", "1"]
+        )
+        
+        assert result.exit_code == 0
+        # Should output JSON stream
+        assert '"height"' in result.stdout
+        # Should show warning about JSON stream
+        assert "continuous JSON stream" in result.stderr or "continuous JSON stream" in result.stdout
+
+
+def test_sync_status_persist_shows_progress(mock_rpc_success, monkeypatch):
+    """Test that persist mode shows progress when height increases."""
+    iteration_count = [0]
+    
+    def mock_sleep(seconds):
+        iteration_count[0] += 1
+        if iteration_count[0] >= 3:
+            raise KeyboardInterrupt()
+    
+    monkeypatch.setattr("animica.cli.sync.time.sleep", mock_sleep)
+    
+    # Create responses that show height increasing
+    def get_mock_client(*args, **kwargs):
+        height = 100 + iteration_count[0] * 5  # Increase by 5 each time
+        responses = mock_rpc_success.copy()
+        responses["chain.getHead"] = {
+            "height": height,
+            "hash": "0x" + "a" * 64,
+            "chainId": 1337,
+        }
+        return MockAsyncClient(responses)
+    
+    with patch("httpx.AsyncClient", side_effect=get_mock_client):
+        result = runner.invoke(
+            app,
+            ["sync", "status", "--persist", "--interval", "1"]
+        )
+        
+        assert result.exit_code == 0
+        # Should show height updates
+        assert "Height:" in result.stdout
+        # Should show progress indicator when height increases
+        assert "+5" in result.stdout or "+10" in result.stdout
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
