@@ -161,7 +161,7 @@ class CreateWalletDialog(QDialog):
             wallet_path = Path(wallet_file_path)
             
             # Ensure the path is well-formed
-            if not wallet_path.suffix == '.json':
+            if wallet_path.suffix != '.json':
                 self.status_label.setText("Wallet file must have .json extension")
                 self.status_label.setStyleSheet("color: red;")
                 return
@@ -194,7 +194,9 @@ class CreateWalletDialog(QDialog):
                 "--allow-insecure-fallback"
             ]
             
-            logger.info(f"Creating wallet with command: {' '.join(cmd)}")
+            # Log only the command structure (not sensitive parameters) for debugging
+            logger.debug(f"Creating wallet with label '{label}'")
+            logger.debug(f"Wallet file: {wallet_file_path}")
             
             result = subprocess.run(
                 cmd,

@@ -54,7 +54,6 @@ def test_custom_wallet_path_validation():
     assert resolved.is_absolute(), f"Resolved path should be absolute: {resolved}"
     print(f"✓ Directory traversal prevented via resolve(): {test_path} -> {resolved}")
     
-    print("✓ Invalid paths correctly identified")
     return True
 
 
