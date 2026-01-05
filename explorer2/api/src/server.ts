@@ -12,7 +12,7 @@ export function createServer(service: ExplorerService, corsOrigin: string, logLe
 
   app.use(cors({ origin: corsOrigin }))
   app.use(express.json({ limit: '1mb' }))
-  app.use(pinoHttp({ logger }))
+  app.use(pinoHttp({ logger: logger as any }))
 
   app.get('/api/health', async (_req, res) => {
     res.json({ ok: true, timestamp: new Date().toISOString() })

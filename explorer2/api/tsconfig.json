@@ -12,5 +12,6 @@
     "types": ["node"],
     "esModuleInterop": true
   },
-  "include": ["src", "tests"]
+  "include": ["src"],
+  "exclude": ["tests", "dist", "node_modules"]
 }
