@@ -34,6 +34,7 @@ from animica_miner_gui.ui.tabs.pools import PoolsTab
 from animica_miner_gui.ui.tabs.configuration import ConfigurationTab
 from animica_miner_gui.ui.tabs.logs import LogsTab
 from animica_miner_gui.ui.tabs.stats import StatsTab
+from animica_miner_gui.ui.tabs.wallet import WalletTab
 
 logger = logging.getLogger(__name__)
 
@@ -142,6 +143,7 @@ class MainWindow(QMainWindow):
         self.dashboard_tab = DashboardTab(self.config)
         self.devices_tab = DevicesTab(self.config)
         self.pools_tab = PoolsTab(self.config)
+        self.wallet_tab = WalletTab(self.config)
         self.config_tab = ConfigurationTab(self.config)
         self.logs_tab = LogsTab()
         self.stats_tab = StatsTab()
@@ -150,6 +152,7 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.dashboard_tab, "Dashboard")
         self.tabs.addTab(self.devices_tab, "Devices")
         self.tabs.addTab(self.pools_tab, "Pools/Modes")
+        self.tabs.addTab(self.wallet_tab, "Wallet")
         self.tabs.addTab(self.config_tab, "Configuration")
         self.tabs.addTab(self.logs_tab, "Logs")
         self.tabs.addTab(self.stats_tab, "Stats/Graphs")
@@ -168,6 +171,12 @@ class MainWindow(QMainWindow):
         
         # File menu
         file_menu = menubar.addMenu("&File")
+        
+        restart_wizard_action = QAction("&Restart Setup Wizard", self)
+        restart_wizard_action.triggered.connect(self.restart_wizard)
+        file_menu.addAction(restart_wizard_action)
+        
+        file_menu.addSeparator()
         
         exit_action = QAction("E&xit", self)
         exit_action.setShortcut("Ctrl+Q")
@@ -417,6 +426,60 @@ class MainWindow(QMainWindow):
                 self.close()
         else:
             self.close()
+    
+    def restart_wizard(self) -> None:
+        """Restart the setup wizard."""
+        # Confirm with user
+        reply = QMessageBox.question(
+            self,
+            "Restart Setup Wizard",
+            "This will stop mining (if running) and restart the setup wizard. Continue?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        
+        # Stop mining if running
+        if self.miner_runner.is_running():
+            self.stop_mining()
+        
+        # Hide main window
+        self.hide()
+        
+        # Show wizard
+        from animica_miner_gui.ui.wizard import FirstRunWizard
+        wizard = FirstRunWizard()
+        if wizard.exec() == wizard.DialogCode.Accepted:
+            # Reload configuration
+            from animica_miner_gui.backend.config import load_config
+            self.config = load_config()
+            
+            # Update all tabs with new config
+            self.dashboard_tab.config = self.config
+            self.devices_tab.config = self.config
+            self.pools_tab.config = self.config
+            self.wallet_tab.config = self.config
+            self.config_tab.config = self.config
+            
+            # Refresh dashboard and wallet
+            self.dashboard_tab.payout_label.setText(
+                self.config.miner.payout_address or "--"
+            )
+            self.wallet_tab.address_label.setText(
+                self.config.miner.payout_address or "Not configured"
+            )
+            
+            # Show main window again
+            self.show()
+            
+            # Auto-start if configured
+            if self.config.miner.auto_start:
+                self.start_mining()
+        else:
+            # Wizard was cancelled, show main window again
+            self.show()
     
     def closeEvent(self, event) -> None:
         """Handle window close event."""

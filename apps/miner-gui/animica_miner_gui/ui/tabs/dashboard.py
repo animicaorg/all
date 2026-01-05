@@ -3,7 +3,7 @@
 import logging
 from typing import Optional
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtWidgets import (
     QGridLayout,
     QGroupBox,
@@ -16,8 +16,12 @@ from PySide6.QtWidgets import (
 
 from animica_miner_gui.backend.config import MiningAppConfig
 from animica_miner_gui.backend.miner_runner import MiningEvent, EventType
+from animica_miner_gui.backend.rpc_client import RPCClient
 
 logger = logging.getLogger(__name__)
+
+# Constants
+ANM_BASE_UNITS = 1_000_000_000  # 1 ANM = 1e9 base units
 
 
 class DashboardTab(QWidget):
@@ -29,7 +33,9 @@ class DashboardTab(QWidget):
     def __init__(self, config: MiningAppConfig, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.config = config
+        self.rpc_client: Optional[RPCClient] = None
         self.setup_ui()
+        self.setup_rpc_timer()
     
     def setup_ui(self) -> None:
         """Set up the UI."""
@@ -92,9 +98,14 @@ class DashboardTab(QWidget):
         self.payout_label.setWordWrap(True)
         payout_layout.addWidget(self.payout_label, 0, 1)
         
-        payout_layout.addWidget(QLabel("Estimated Earnings:"), 1, 0)
-        self.earnings_label = QLabel("--")
-        payout_layout.addWidget(self.earnings_label, 1, 1)
+        payout_layout.addWidget(QLabel("Balance:"), 1, 0)
+        self.balance_label = QLabel("--")
+        payout_layout.addWidget(self.balance_label, 1, 1)
+        
+        # Add refresh button for balance
+        refresh_button = QPushButton("Refresh Balance")
+        refresh_button.clicked.connect(self.refresh_balance)
+        payout_layout.addWidget(refresh_button, 2, 0, 1, 2)
         
         payout_group.setLayout(payout_layout)
         layout.addWidget(payout_group)
@@ -118,6 +129,98 @@ class DashboardTab(QWidget):
         
         layout.addStretch()
         self.setLayout(layout)
+    
+    def setup_rpc_timer(self) -> None:
+        """Set up timer to periodically query RPC for chain data."""
+        # Initialize RPC client
+        try:
+            self.rpc_client = RPCClient(self.config.network.rpc_url)
+        except Exception as e:
+            logger.error(f"Failed to initialize RPC client: {e}")
+            return
+        
+        # Set up timer to update chain info every 5 seconds
+        self.rpc_timer = QTimer()
+        self.rpc_timer.timeout.connect(self.update_chain_info)
+        self.rpc_timer.start(5000)
+        
+        # Do initial update
+        self.update_chain_info()
+    
+    def update_chain_info(self) -> None:
+        """Query RPC for current chain head and update display."""
+        if not self.rpc_client:
+            return
+        
+        try:
+            head = self.rpc_client.get_chain_head()
+            
+            # Update chain ID
+            chain_id = head.get("chainId") or head.get("chain_id")
+            if chain_id:
+                self.chain_id_label.setText(str(chain_id))
+            
+            # Update height
+            height = head.get("number") or head.get("height")
+            if height is not None:
+                self.height_label.setText(str(height))
+            
+            # Update sync status
+            try:
+                sync_status = self.rpc_client.get_sync_status()
+                if sync_status.get("syncing"):
+                    current = sync_status.get("currentBlock", 0)
+                    highest = sync_status.get("highestBlock", 0)
+                    self.sync_label.setText(f"Syncing: {current}/{highest}")
+                else:
+                    self.sync_label.setText("Synced")
+            except Exception:
+                self.sync_label.setText("Unknown")
+            
+        except Exception as e:
+            logger.debug(f"Failed to update chain info: {e}")
+            # Don't update labels if RPC fails - keep previous values
+    
+    def refresh_balance(self) -> None:
+        """Query RPC for wallet balance."""
+        if not self.rpc_client:
+            self.balance_label.setText("RPC not available")
+            return
+        
+        payout_address = self.config.miner.payout_address
+        if not payout_address:
+            self.balance_label.setText("No payout address")
+            return
+        
+        try:
+            # Try multiple balance methods
+            balance = None
+            for method in ["state_getBalance", "state.getBalance", "eth_getBalance"]:
+                try:
+                    result = self.rpc_client._call(method, [payout_address])
+                    if result is not None:
+                        # Result might be a dict with 'balance' key or just a number
+                        if isinstance(result, dict):
+                            balance = result.get("balance") or result.get("value")
+                        else:
+                            balance = result
+                        break
+                except Exception:
+                    continue
+            
+            if balance is not None:
+                # Convert from base units to ANM
+                try:
+                    balance_value = float(balance) / ANM_BASE_UNITS
+                    self.balance_label.setText(f"{balance_value:.9f} ANM")
+                except (ValueError, TypeError):
+                    self.balance_label.setText("Invalid balance")
+            else:
+                self.balance_label.setText("Unable to query")
+                
+        except Exception as e:
+            logger.error(f"Failed to query balance: {e}")
+            self.balance_label.setText("Query failed")
     
     def on_mining_event(self, event: MiningEvent) -> None:
         """Handle mining events."""
