@@ -23,6 +23,9 @@ from animica_miner_gui.backend.config import MiningAppConfig
 
 logger = logging.getLogger(__name__)
 
+# Constants
+MIN_ADDRESS_LENGTH = 42  # Minimum length for valid Animica address
+
 
 class WalletTab(QWidget):
     """Wallet tab for sending transactions."""
@@ -113,7 +116,7 @@ class WalletTab(QWidget):
             QMessageBox.warning(self, "Invalid Input", "Please enter a recipient address.")
             return
         
-        if not to_addr.startswith("anim1") or len(to_addr) < 42:
+        if not to_addr.startswith("anim1") or len(to_addr) < MIN_ADDRESS_LENGTH:
             QMessageBox.warning(self, "Invalid Address", "Recipient address must be a valid Animica address (anim1...).")
             return
         

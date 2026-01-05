@@ -16,9 +16,12 @@ from PySide6.QtWidgets import (
 
 from animica_miner_gui.backend.config import MiningAppConfig
 from animica_miner_gui.backend.miner_runner import MiningEvent, EventType
-from animica_miner_gui.backend.rpc_client import RPCClient, RPCError
+from animica_miner_gui.backend.rpc_client import RPCClient
 
 logger = logging.getLogger(__name__)
+
+# Constants
+ANM_BASE_UNITS = 1_000_000_000  # 1 ANM = 1e9 base units
 
 
 class DashboardTab(QWidget):
@@ -206,10 +209,9 @@ class DashboardTab(QWidget):
                     continue
             
             if balance is not None:
-                # Convert from base units to ANM (1 ANM = 1e9 base units)
-                # Balance is already in base units, just divide
+                # Convert from base units to ANM
                 try:
-                    balance_value = float(balance) / 1_000_000_000
+                    balance_value = float(balance) / ANM_BASE_UNITS
                     self.balance_label.setText(f"{balance_value:.9f} ANM")
                 except (ValueError, TypeError):
                     self.balance_label.setText("Invalid balance")

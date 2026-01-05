@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QDialog,
     QDialogButtonBox,
+    QFileDialog,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -370,8 +371,6 @@ class WalletConfigPage(QWizardPage):
     
     def import_from_wallets(self) -> None:
         """Import address from a wallets.json file with file browser."""
-        from PySide6.QtWidgets import QFileDialog, QDialog, QListWidget, QDialogButtonBox, QVBoxLayout
-        
         # Open file dialog to choose wallets.json
         default_wallet_path = Path.home() / ".animica" / "wallets.json"
         
