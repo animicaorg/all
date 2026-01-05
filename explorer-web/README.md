@@ -16,6 +16,48 @@ A lightweight, secure, and fast web explorer for Animica-compatible networks. It
 - **Responsive UI** — works well on desktop and mobile
 - **Zero-Config Deploy** — static bundle (Vite), content-hashed assets, safe caching
 
+## NEW: Enhanced Data Layer (v0.2.0)
+
+**🎯 Accurate & Validated Data**
+- **Schema Validation** — All RPC responses validated with Zod schemas; invalid data is caught early with detailed error logging
+- **Request Deduplication** — Identical concurrent requests (within 100ms) deduplicated to reduce node load
+- **Request Tracing** — Every RPC call has a unique request ID for easier debugging
+
+**⚡ Smart Data Fetching with TanStack Query**
+- **Intelligent Caching** — 5-second freshness for chain data, 60-second for immutable data (confirmed blocks/txs)
+- **Auto-Invalidation** — Related queries automatically refresh when new heads arrive
+- **Reorg Detection** — Detects chain reorganizations by comparing head hashes; shows toast notification and invalidates affected blocks
+- **Optimistic Updates** — UI stays responsive during data fetching
+
+**🔄 Sync-Aware UI**
+- **Sync Banner** — Prominent banner when node is syncing; shows sync phase (headers/syncing/catching-up), progress %, and peer count
+- **Feature Detection** — Automatically detects which RPC methods are available (mempool, peers, sync status, etc.) and degrades gracefully
+- **Graceful Degradation** — If optional methods unavailable, shows "Not available on this node" instead of errors
+
+**🛡️ Improved Resilience**
+- **Retry Logic** — Exponential backoff (150ms → 2.5s) with full jitter for server errors and timeouts
+- **CORS Detection** — Clear error messages when CORS issues detected
+- **WebSocket Fallback** — Automatically falls back to HTTP polling if WebSocket unavailable
+
+**📊 Enhanced Data Hooks**
+```typescript
+// Example: Use validated, cached data with automatic refresh
+import { useHead, useBlock, useTx, useAddress } from './hooks/data';
+
+function MyComponent() {
+  const { data: head, isSubscribed } = useHead({ 
+    rpcUrl, 
+    onReorg: (old, new) => alert('Reorg!') 
+  });
+  const { data: block } = useBlock({ rpcUrl, heightOrHash: head?.height });
+  return <div>Block {block?.height}</div>;
+}
+```
+
+**📖 Documentation**
+- **[EXPLORER_DATA_CONTRACT.md](EXPLORER_DATA_CONTRACT.md)** — Complete RPC method specs, schemas, and degradation behavior
+- **Type-Safe APIs** — Full TypeScript types for all schemas and hooks
+
 ---
 
 ## Architecture
