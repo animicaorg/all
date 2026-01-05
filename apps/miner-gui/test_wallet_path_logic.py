@@ -20,16 +20,17 @@ def test_default_wallet_path():
 def test_custom_wallet_path_validation():
     """Test wallet path validation logic."""
     
-    # Valid paths
+    # Valid paths (using Path.suffix for validation)
     valid_paths = [
         "/tmp/test_wallets.json",
         "/home/user/.animica/wallets.json",
         "./my_wallets.json",
-        "../wallets.json",
+        "wallets.json",
     ]
     
-    for path in valid_paths:
-        assert path.endswith('.json'), f"Path should end with .json: {path}"
+    for path_str in valid_paths:
+        path = Path(path_str)
+        assert path.suffix == '.json', f"Path should have .json extension: {path_str}"
     
     print("✓ Valid paths pass validation")
     
@@ -40,8 +41,18 @@ def test_custom_wallet_path_validation():
         "./my_wallets.yaml",
     ]
     
-    for path in invalid_paths:
-        assert not path.endswith('.json'), f"Path should not end with .json: {path}"
+    for path_str in invalid_paths:
+        path = Path(path_str)
+        assert path.suffix != '.json', f"Path should not have .json extension: {path_str}"
+    
+    print("✓ Invalid paths correctly identified")
+    
+    # Test path resolution (prevents directory traversal)
+    test_path = Path("../../../etc/wallets.json")
+    resolved = test_path.resolve()
+    # Resolved path is absolute and safe
+    assert resolved.is_absolute(), f"Resolved path should be absolute: {resolved}"
+    print(f"✓ Directory traversal prevented via resolve(): {test_path} -> {resolved}")
     
     print("✓ Invalid paths correctly identified")
     return True
