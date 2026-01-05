@@ -7,7 +7,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from packages.api.api.middleware.auth import AuthMiddleware
+from api.middleware.auth import AuthMiddleware
 
 
 @pytest.fixture

@@ -87,8 +87,9 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             raise
         except Exception as e:
             # If Redis fails, allow request through (fail open)
-            # Log error in production
-            print(f"Rate limit check failed: {e}")
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Rate limit check failed: {e}", exc_info=True)
             return await call_next(request)
     
     def _get_rate_limit_key(self, request: Request) -> Optional[str]:
