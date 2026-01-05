@@ -6,6 +6,12 @@ as non-root users for security best practices.
 """
 import subprocess
 import pytest
+import os
+
+
+def get_repo_root():
+    """Get the repository root directory."""
+    return os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
 def run_docker_command(image_name: str, command: list[str]) -> str:
@@ -18,12 +24,13 @@ def run_docker_command(image_name: str, command: list[str]) -> str:
 @pytest.mark.docker
 def test_node_runs_as_non_root():
     """Test that the node container runs as a non-root user."""
+    repo_root = get_repo_root()
     # Build the image
     subprocess.run(
         ["docker", "build", "-f", "ops/docker/node.Dockerfile", "-t", "animica-node:test", "."],
         check=True,
         capture_output=True,
-        cwd="/home/runner/work/all/all"
+        cwd=repo_root
     )
     
     # Check the user
@@ -39,12 +46,13 @@ def test_node_runs_as_non_root():
 @pytest.mark.docker
 def test_node_can_write_to_volume():
     """Test that the non-root node user can write to mounted volumes."""
+    repo_root = get_repo_root()
     # Build the image
     subprocess.run(
         ["docker", "build", "-f", "ops/docker/node.Dockerfile", "-t", "animica-node:test", "."],
         check=True,
         capture_output=True,
-        cwd="/home/runner/work/all/all"
+        cwd=repo_root
     )
     
     # Create a test volume
@@ -70,12 +78,13 @@ def test_node_can_write_to_volume():
 @pytest.mark.docker
 def test_miner_runs_as_non_root():
     """Test that the miner container runs as a non-root user."""
+    repo_root = get_repo_root()
     # Build the image
     subprocess.run(
         ["docker", "build", "-f", "ops/docker/miner.Dockerfile", "-t", "animica-miner:test", "."],
         check=True,
         capture_output=True,
-        cwd="/home/runner/work/all/all"
+        cwd=repo_root
     )
     
     # Check the user
@@ -91,12 +100,13 @@ def test_miner_runs_as_non_root():
 @pytest.mark.docker
 def test_explorer_runs_as_non_root():
     """Test that the explorer container runs as a non-root user."""
+    repo_root = get_repo_root()
     # Build the image
     subprocess.run(
         ["docker", "build", "-f", "ops/docker/explorer.Dockerfile", "-t", "animica-explorer:test", "."],
         check=True,
         capture_output=True,
-        cwd="/home/runner/work/all/all"
+        cwd=repo_root
     )
     
     # Check the user

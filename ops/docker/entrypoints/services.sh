@@ -86,8 +86,9 @@ set -eu
 : "${START_WORKER:=true}"
 : "${UVICORN_WORKERS:=1}"
 : "${STUDIO_SVC_APP:=studio_services.main:app}"
+: "${DATA_DIR:=/data}"
 
-CONFIG_PATH="/data/services.toml"
+CONFIG_PATH="${DATA_DIR}/services.toml"
 mkdir -p "${SERVICES_STORAGE_DIR}" "${SERVICES_ARTIFACTS_DIR}"
 
 # ---- helpers ----------------------------------------------------------------

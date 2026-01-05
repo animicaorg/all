@@ -65,9 +65,10 @@ set -eu
 : "${STARTUP_WAIT_SECS:=90}"
 : "${EXPLORER_APP:=explorer.api:app}"
 : "${UVICORN_WORKERS:=1}"
+: "${DATA_DIR:=/data}"
 
-CONFIG_PATH="/data/explorer.toml"
-mkdir -p "${EXPLORER_CACHE_DIR}" /data
+CONFIG_PATH="${DATA_DIR}/explorer.toml"
+mkdir -p "${EXPLORER_CACHE_DIR}" "${DATA_DIR}"
 
 # ---- helpers ----------------------------------------------------------------
 comma_to_toml_array() {

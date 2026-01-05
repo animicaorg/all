@@ -48,8 +48,9 @@ set -eu
 
 : "${STARTUP_WAIT_SECS:=90}"
 
-CONFIG_PATH="/data/miner.toml"
-mkdir -p /data
+: "${DATA_DIR:=/data}"
+CONFIG_PATH="${DATA_DIR}/miner.toml"
+mkdir -p "${DATA_DIR}"
 
 # ---- helpers ----------------------------------------------------------------
 bool_to_toml() {
