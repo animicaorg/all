@@ -1318,7 +1318,7 @@ def _get_miner_address() -> bytes:
     return ZERO32
 
 
-def _apply_block_reward(ctx: Any, height: int, payout_address: bytes | None = None, instant_block: bool = False) -> int:
+def _apply_block_reward(ctx: Any, height: int, payout_address: bytes | None = None) -> int:
     """
     Apply block reward to the miner's address in state.
     
@@ -1326,7 +1326,6 @@ def _apply_block_reward(ctx: Any, height: int, payout_address: bytes | None = No
         ctx: RPC context with state_db access
         height: Block height for reward calculation
         payout_address: Optional 32-byte payout address. If None, uses default miner address.
-        instant_block: Whether this is an instant block (zero reward). Default: False
         
     Returns:
         int: Total miner reward amount (in nANM) credited to payout address, or 0 if none
@@ -1341,21 +1340,15 @@ def _apply_block_reward(ctx: Any, height: int, payout_address: bytes | None = No
         chain_id = ctx.cfg.chain_id
         params = getattr(ctx, "params", None) or {}
         
-        # CRITICAL FIX: Pass instant_block flag to compute_block_reward
-        # This ensures instant blocks get zero rewards and normal blocks get proper rewards
-        rewards = compute_block_reward(chain_id=chain_id, height=height, params=params, instant_block=instant_block)
+        rewards = compute_block_reward(chain_id=chain_id, height=height, params=params)
         
-        # Log warning if rewards are empty when they shouldn't be (height >= 1, not instant)
-        if not rewards and height >= 1 and not instant_block:
+        # Log warning if rewards are empty when they shouldn't be (height >= 1)
+        if not rewards and height >= 1:
             log.warning(
-                f"Block reward at height {height} is empty for normal (non-instant) block. "
+                f"Block reward at height {height} is empty. "
                 f"This may indicate missing/invalid consensus params. "
                 f"Check that spec/params.yaml defines proper emission schedule for chain_id={chain_id}."
             )
-        
-        # Log instant block detection for traceability
-        if instant_block:
-            log.debug(f"Instant block at height {height}: zero rewards by design")
         
         # Track miner reward amount for return
         miner_reward_amount = 0
@@ -1993,7 +1986,7 @@ def _request_missing_mempool_txs(
 
 
 def _build_child_header(
-    parent_height: int, parent_hash: bytes, parent_header: Any, instant_block: bool = False
+    parent_height: int, parent_hash: bytes, parent_header: Any
 ) -> Header:
     timestamp_min, timestamp_max, timestamp = _timestamp_bounds(parent_header)
     theta = getattr(
@@ -2023,7 +2016,6 @@ def _build_child_header(
         thetaMicro=int(theta or _resolve_theta()),
         nonce=0,
         extra=b"",
-        instantBlock=instant_block,
     )
 
 
@@ -2952,13 +2944,10 @@ def _mine_once(
 
         # Apply block reward to coinbase/miner address
         # This also persists to state_db
-        # CRITICAL FIX: Pass instant_block flag from header to ensure correct reward calculation
-        instant_block_flag = getattr(header, "instantBlock", False)
         log.info(
-            f"Applying block reward to payout address at height {header.height} "
-            f"(instant_block={instant_block_flag})"
+            f"Applying block reward to payout address at height {header.height}"
         )
-        reward_amount = _apply_block_reward(ctx, header.height, payout_address, instant_block=instant_block_flag)
+        reward_amount = _apply_block_reward(ctx, header.height, payout_address)
 
         # Compute receipts root (if any receipts) and ensure txs root matches tx set
         receipts_root = ZERO32
@@ -3155,13 +3144,43 @@ def _mine_once(
             except Exception as e:
                 log.warning(f"Failed to clean up hash mapping: {e}")
 
-            log.info(
-                f"Mined block at height {header.height} with nonce {valid_nonce} "
-                f"(hash {block_hash_int} <= target {target}), reward={reward_amount} nANM, "
-                f"txs={len(txs)}, receipts={len(receipts) if receipts else 0}, "
-                f"included_tx_hashes={included_hashes_canonical[:MAX_DISPLAYED_TX_HASHES]}"
-                f"{' ...' if len(included_hashes_canonical) > MAX_DISPLAYED_TX_HASHES else ''}"
+            # Query final balance after mining to verify reward was applied
+            payout_addr_bytes = (
+                payout_address if payout_address is not None else _get_miner_address()
             )
+            try:
+                from execution.state.apply_balance import get_balance as get_balance_from_state
+                final_balance = get_balance_from_state(ctx.state_db, payout_addr_bytes)
+                block_hash_hex = "0x" + block_hash_bytes.hex()
+                
+                log.info(
+                    f"Mined block at height {header.height} | "
+                    f"hash={block_hash_hex} | "
+                    f"coinbase={payout_addr_bytes.hex()[:16]}... | "
+                    f"reward={reward_amount} nANM | "
+                    f"new_balance={final_balance} nANM | "
+                    f"txs={len(txs)} | receipts={len(receipts) if receipts else 0}"
+                )
+                
+                # If this was a fresh address with reward, verify balance increased
+                # Note: We can't reliably check this for addresses with existing balance
+                # because transactions may have spent funds during execution
+                if reward_amount > 0:
+                    if final_balance < reward_amount:
+                        log.warning(
+                            f"Balance verification: final balance ({final_balance}) is less than reward ({reward_amount}). "
+                            f"This may indicate transactions spent funds during block execution."
+                        )
+            except Exception as e:
+                log.warning(f"Failed to query balance after mining: {e}")
+                log.info(
+                    f"Mined block at height {header.height} with nonce {valid_nonce} "
+                    f"(hash {block_hash_int} <= target {target}), reward={reward_amount} nANM, "
+                    f"txs={len(txs)}, receipts={len(receipts) if receipts else 0}, "
+                    f"included_tx_hashes={included_hashes_canonical[:MAX_DISPLAYED_TX_HASHES]}"
+                    f"{' ...' if len(included_hashes_canonical) > MAX_DISPLAYED_TX_HASHES else ''}"
+                )
+            
             return (True, reward_amount, selection_summary)
         return (False, 0, selection_summary)
     
@@ -4538,9 +4557,7 @@ def miner_submit_block(**payload: Any) -> Dict[str, Any]:
                     )
 
                 try:
-                    # CRITICAL FIX: Pass instant_block flag from header to ensure correct reward calculation
-                    instant_block_flag = getattr(block_obj.header, "instantBlock", False)
-                    _apply_block_reward(_ctx(), int(result.height or 0), payout_bytes, instant_block=instant_block_flag)
+                    _apply_block_reward(_ctx(), int(result.height or 0), payout_bytes)
                 except Exception:
                     log.warning("Failed to apply block reward for submitted block", exc_info=True)
 
