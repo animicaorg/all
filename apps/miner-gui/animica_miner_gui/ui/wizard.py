@@ -104,14 +104,16 @@ class CreateWalletDialog(QDialog):
         """Open file dialog to select wallet file location."""
         current_path = self.wallet_path_input.text().strip()
         if current_path:
-            start_dir = str(Path(current_path).parent)
+            # If we have a current path, use the directory and filename
+            start_location = current_path
         else:
-            start_dir = str(Path.home() / ".animica")
+            # Default to .animica directory with wallets.json filename
+            start_location = str(Path.home() / ".animica" / "wallets.json")
         
         file_path, _ = QFileDialog.getSaveFileName(
             self,
             "Select Wallet File Location",
-            start_dir,
+            start_location,
             "JSON Files (*.json);;All Files (*)"
         )
         
@@ -155,7 +157,6 @@ class CreateWalletDialog(QDialog):
             return
         
         # Validate wallet file path
-        wallet_path = Path(wallet_file_path)
         if not wallet_file_path.endswith('.json'):
             self.status_label.setText("Wallet file must have .json extension")
             self.status_label.setStyleSheet("color: red;")
