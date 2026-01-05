@@ -91,7 +91,7 @@ class PoolConfig(BaseModel):
 class NetworkConfig(BaseModel):
     """Network and RPC configuration."""
     network_type: NetworkType = Field(default=NetworkType.DEVNET, description="Network type")
-    rpc_url: str = Field(default="http://127.0.0.1:8545", description="RPC endpoint URL")
+    rpc_url: str = Field(default="http://127.0.0.1:8545/rpc", description="RPC endpoint URL")
     custom_rpc_url: Optional[str] = Field(default=None, description="Custom RPC URL (when network_type=custom)")
     chain_id: Optional[int] = Field(default=None, ge=1, description="Chain ID (None=auto-detect)")
 
