@@ -1440,6 +1440,38 @@ def _get_miner_address() -> bytes:
     return ZERO32
 
 
+def _ensure_state_visibility(ctx: Any, height: int) -> None:
+    """
+    Ensure state changes are immediately visible to other connections.
+    
+    Forces a WAL checkpoint if using SQLite backend to flush buffered writes.
+    This ensures mining rewards and tx state changes are immediately queryable.
+    
+    Args:
+        ctx: RPC context with state_db access
+        height: Block height for logging
+    """
+    try:
+        # Call commit hook (may be a no-op depending on StateDB implementation)
+        if hasattr(ctx.state_db, "commit"):
+            ctx.state_db.commit()
+        
+        # Force WAL checkpoint for SQLite to ensure immediate visibility
+        if hasattr(ctx.state_db, "kv") and hasattr(ctx.state_db.kv, "_conn"):
+            try:
+                ctx.state_db.kv._conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
+                log.debug(f"WAL checkpoint executed after block {height}")
+            except Exception as e:
+                # Not all backends use SQLite WAL; this is expected for RocksDB, etc.
+                log.debug(
+                    f"WAL checkpoint failed (non-SQLite backend or connection issue): {e}"
+                )
+        
+        log.debug(f"State visibility ensured after block {height}")
+    except Exception as e:
+        log.warning(f"Failed to ensure state visibility after block {height}: {e}")
+
+
 def _apply_block_reward(ctx: Any, height: int, payout_address: bytes | None = None) -> int:
     """
     Apply block reward to the miner's address in state.
@@ -3248,23 +3280,8 @@ def _mine_once(
             _record_local_block(header.height, "0x" + block_hash_bytes.hex(), header)
             _relay_mined_block(block_hash_bytes)
             
-            # CRITICAL: Ensure state changes (block rewards, tx execution) are persisted and visible
-            # SQLite with WAL mode may buffer writes; force a checkpoint to ensure immediate visibility
-            try:
-                if hasattr(ctx.state_db, "commit"):
-                    ctx.state_db.commit()
-                
-                # Force WAL checkpoint to ensure writes are visible to other connections
-                if hasattr(ctx.state_db, "kv") and hasattr(ctx.state_db.kv, "_conn"):
-                    try:
-                        ctx.state_db.kv._conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
-                        log.debug(f"WAL checkpoint executed after block {header.height}")
-                    except Exception as e:
-                        log.debug(f"WAL checkpoint failed (may not be needed): {e}")
-                
-                log.debug(f"State changes committed after block acceptance at height {header.height}")
-            except Exception as e:
-                log.warning(f"Failed to commit state after block acceptance: {e}")
+            # Ensure state changes are immediately visible (force WAL checkpoint for SQLite)
+            _ensure_state_visibility(ctx, header.height)
             
             # Update mining state for theta adjustment
             _MINING_STATE["last_block_time"] = time.time()
