@@ -22,7 +22,7 @@ def test_config_defaults():
     
     assert config.version == "1.0"
     assert config.network.network_type == NetworkType.DEVNET
-    assert config.network.rpc_url == "http://127.0.0.1:8545"
+    assert config.network.rpc_url == "http://127.0.0.1:8545/rpc"
     assert config.miner.mining_mode == MiningMode.SOLO
     assert config.cpu.enabled is True
     assert config.ui.dark_theme is True
