@@ -1351,6 +1351,15 @@ def _apply_block_reward(ctx: Any, height: int, payout_address: bytes | None = No
         # Get miner address (use custom payout address if provided)
         miner_address = payout_address if payout_address is not None else _get_miner_address()
         
+        # DIAGNOSTIC: Log state_db instance ID to verify same instance is used everywhere
+        state_db = ctx.state_db
+        log.info(
+            f"_apply_block_reward: height={height}, "
+            f"state_db_id={hex(id(state_db))}, "
+            f"state_db_type={type(state_db).__name__}, "
+            f"payout_address={miner_address.hex()[:16]}..."
+        )
+        
         # Compute block reward (returns list of (address, amount) tuples)
         from consensus.rewards import compute_block_reward  # type: ignore[import-not-found]
         
@@ -1380,7 +1389,6 @@ def _apply_block_reward(ctx: Any, height: int, payout_address: bytes | None = No
         if rewards:
             from execution.state.apply_balance import credit  # type: ignore[import-not-found]
             
-            state_db = ctx.state_db
             # Apply block rewards to state (miner, aicf, treasury)
             # For the first reward (miner), use the provided payout address (or default miner address)
             for idx, (reward_addr, amount) in enumerate(rewards):
@@ -3106,6 +3114,19 @@ def _mine_once(
                 block_db.append_canonical_block(header.height, block)
                 accepted = True
                 log.info(f"Block persisted via append_canonical_block at height {header.height}")
+                
+                # CRITICAL FIX: Force SQLite WAL checkpoint to ensure state changes are visible
+                # Without this, readers might not see the latest writes until an automatic checkpoint
+                try:
+                    state_db = ctx.state_db
+                    if hasattr(state_db, "kv") and hasattr(state_db.kv, "_conn"):
+                        conn = state_db.kv._conn
+                        # Execute WAL checkpoint to flush pending writes
+                        # PASSIVE mode doesn't block writers but ensures readers see changes
+                        conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
+                        log.debug(f"Executed WAL checkpoint after block {header.height}")
+                except Exception as e:
+                    log.warning(f"Failed to execute WAL checkpoint: {e}")
                 
                 # CRITICAL FIX: Re-index receipts using canonical tx hashes
                 # append_canonical_block indexes receipts using tx.hash() which re-encodes,
