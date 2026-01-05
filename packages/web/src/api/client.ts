@@ -1,8 +1,8 @@
-import axios, { AxiosError, AxiosRequestConfig } from 'axios'
+import axios, { AxiosError } from 'axios'
 import { useAuthStore } from '@/stores/authStore'
 import type { ApiError } from '@/types'
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || '/api'
+const API_BASE_URL = (import.meta as any).env?.VITE_API_URL || '/api'
 
 export const apiClient = axios.create({
   baseURL: API_BASE_URL,

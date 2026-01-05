@@ -20,7 +20,7 @@ export default function ChatPage() {
   } = useChatStore()
   
   const [input, setInput] = useState('')
-  const [selectedModel, setSelectedModel] = useState('llama-3-8b-instruct')
+  const [selectedModel] = useState('llama-3-8b-instruct')
   const messagesEndRef = useRef<HTMLDivElement>(null)
   
   const activeConversation = conversations.find((c) => c.id === activeConversationId)
