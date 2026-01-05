@@ -17,3 +17,40 @@ native/target/
 .deps/
 test_peer_connectivity.py
 *.bak.*
+
+# Compute platform specific
+packages/*/.venv/
+packages/*/venv/
+packages/*/__pycache__/
+packages/*/.pytest_cache/
+packages/*/dist/
+packages/*/build/
+*.egg-info
+.mypy_cache/
+.ruff_cache/
+
+# Model cache
+models/
+model_cache/
+*.bin
+*.safetensors
+*.gguf
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs
+*.log
+logs/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
