@@ -12,6 +12,7 @@ export async function getStaticPaths() {
 }
 
 const { entry } = Astro.props;
+const { Content } = await entry.render();
 
 const pageTitle = entry.data.title;
 const pageDesc = entry.data.description || "Animica update";
@@ -27,7 +28,7 @@ const pageDesc = entry.data.description || "Animica update";
       {entry.data.date.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "2-digit" })}
     </p>
     <article class="prose prose-invert mt-6">
-      <entry.Content />
+      <Content />
     </article>
   </section>
 </BaseLayout>
