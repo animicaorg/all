@@ -149,11 +149,11 @@ class RPCConfigPage(QWizardPage):
         if self.field("custom"):
             rpc_url = self.field("custom_rpc")
         elif self.field("mainnet"):
-            rpc_url = "https://rpc.mainnet.animica.org"
+            rpc_url = "https://rpc.mainnet.animica.org/rpc"
         elif self.field("testnet"):
-            rpc_url = "https://rpc.testnet.animica.org"
+            rpc_url = "https://rpc.testnet.animica.org/rpc"
         else:  # devnet
-            rpc_url = "http://127.0.0.1:8545"
+            rpc_url = "http://127.0.0.1:8545/rpc"
         
         self.rpc_display.setText(rpc_url)
         self.info_text.clear()
@@ -545,13 +545,13 @@ class FirstRunWizard(QWizard):
                 config.network.rpc_url = self.field("custom_rpc")
             elif self.field("mainnet"):
                 config.network.network_type = NetworkType.MAINNET
-                config.network.rpc_url = "https://rpc.mainnet.animica.org"
+                config.network.rpc_url = "https://rpc.mainnet.animica.org/rpc"
             elif self.field("testnet"):
                 config.network.network_type = NetworkType.TESTNET
-                config.network.rpc_url = "https://rpc.testnet.animica.org"
+                config.network.rpc_url = "https://rpc.testnet.animica.org/rpc"
             else:
                 config.network.network_type = NetworkType.DEVNET
-                config.network.rpc_url = "http://127.0.0.1:8545"
+                config.network.rpc_url = "http://127.0.0.1:8545/rpc"
             
             # Payout address
             config.miner.payout_address = self.field("payout_address")
