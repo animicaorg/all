@@ -1,0 +1,343 @@
+---
+/**
+ * Technology Page
+ * 
+ * Deep dive into Animica's technical architecture, consensus, execution, and cryptography.
+ */
+
+import BaseLayout from "../layouts/BaseLayout.astro";
+import Header from "../components/Header.astro";
+import Footer from "../components/Footer.astro";
+import Accordion from "../components/Accordion.astro";
+import Card from "../components/Card.astro";
+import Callout from "../components/Callout.astro";
+
+const pageTitle = "Technology";
+const pageDesc = "Explore the technical architecture of Animica: PoIES consensus, Python-VM execution, post-quantum cryptography, and P2P networking.";
+---
+
+<BaseLayout title={pageTitle} description={pageDesc}>
+  <Header slot="header" />
+  
+  <main class="min-h-screen bg-white dark:bg-dark-50">
+    <!-- Hero Section -->
+    <section class="bg-gradient-to-b from-brand-50 to-white dark:from-dark-100 dark:to-dark-50 py-20 md:py-32">
+      <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
+        <h1 class="text-4xl sm:text-5xl lg:text-6xl font-bold text-gray-900 dark:text-white mb-6">
+          Technology
+        </h1>
+        <p class="text-xl sm:text-2xl text-gray-600 dark:text-gray-300 leading-relaxed">
+          {pageDesc}
+        </p>
+      </div>
+    </section>
+
+    <!-- Overview -->
+    <section class="py-16 md:py-24">
+      <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div class="prose prose-lg dark:prose-invert max-w-none mb-12">
+          <p class="text-gray-700 dark:text-gray-300 leading-relaxed">
+            Animica is built on four core technical pillars: post-quantum security, deterministic execution, useful-work consensus, and decentralized networking. Each layer is designed with transparency, verifiability, and long-term sustainability in mind.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Consensus Section -->
+    <section class="py-16 md:py-24 bg-gray-50 dark:bg-dark-100">
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div class="max-w-4xl mx-auto mb-12">
+          <h2 class="text-3xl sm:text-4xl font-bold text-gray-900 dark:text-white mb-4">
+            Consensus: PoIES
+          </h2>
+          <p class="text-xl text-gray-600 dark:text-gray-300">
+            Proof-of-Integrated-External-Services combines hash-based security with verifiable useful work
+          </p>
+        </div>
+
+        <div class="max-w-4xl mx-auto space-y-6">
+          <Accordion title="How PoIES Works">
+            <p class="mb-4">
+              PoIES (Proof-of-Integrated-External-Services) accepts blocks when a miner's score exceeds a moving threshold (Θ). The score combines:
+            </p>
+            <ul class="list-disc pl-6 space-y-2">
+              <li><strong>Hash-share work</strong>: Traditional cryptographic hashing with exponential scoring H(u) = −ln(u)</li>
+              <li><strong>Useful work proofs</strong>: Verified AI computation, quantum tasks, storage proofs, and VDF results</li>
+            </ul>
+            <p class="mt-4">
+              Each proof type has policy-defined caps (Γ) to maintain security and fairness. The threshold Θ adjusts dynamically using EMA-based retargeting to maintain target block times.
+            </p>
+          </Accordion>
+
+          <Accordion title="Security Model">
+            <p>
+              PoIES maintains security by:
+            </p>
+            <ul class="list-disc pl-6 space-y-2 mt-4">
+              <li><strong>Bounded proof contributions</strong>: No single proof type can dominate block production</li>
+              <li><strong>Nullifier windows</strong>: Prevents proof reuse across blocks with time-to-live tracking</li>
+              <li><strong>Fixed-point math</strong>: Deterministic scoring using micro-nats (μ-nats) for consensus stability</li>
+              <li><strong>EMA difficulty adjustment</strong>: Smooth retargeting based on recent block times</li>
+            </ul>
+          </Accordion>
+
+          <Accordion title="Useful Work Integration">
+            <p class="mb-4">
+              Miners can augment their hash-based score with proofs of useful computation:
+            </p>
+            <ul class="list-disc pl-6 space-y-2">
+              <li><strong>AI proofs</strong>: Inference results, model training contributions</li>
+              <li><strong>Quantum proofs</strong>: Quantum circuit execution, quantum random numbers</li>
+              <li><strong>Storage proofs</strong>: Data availability commitments, erasure coding</li>
+              <li><strong>VDF proofs</strong>: Verifiable delay functions for randomness</li>
+            </ul>
+            <p class="mt-4">
+              All proofs are verified deterministically by nodes before being included in the score calculation.
+            </p>
+          </Accordion>
+        </div>
+      </div>
+    </section>
+
+    <!-- Execution Section -->
+    <section class="py-16 md:py-24">
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div class="max-w-4xl mx-auto mb-12">
+          <h2 class="text-3xl sm:text-4xl font-bold text-gray-900 dark:text-white mb-4">
+            Execution: Python-VM
+          </h2>
+          <p class="text-xl text-gray-600 dark:text-gray-300">
+            Deterministic Python smart contracts with gas metering and reproducible state transitions
+          </p>
+        </div>
+
+        <div class="max-w-4xl mx-auto space-y-6">
+          <Accordion title="Python Smart Contracts">
+            <p class="mb-4">
+              Animica's execution layer runs smart contracts written in Python. The Python-VM ensures deterministic execution with:
+            </p>
+            <ul class="list-disc pl-6 space-y-2">
+              <li><strong>Pure functions</strong>: No I/O, clock access, or non-deterministic operations</li>
+              <li><strong>Gas metering</strong>: Per-opcode costs tracked for predictable resource usage</li>
+              <li><strong>Canonical encoding</strong>: CBOR serialization with sorted keys for state consistency</li>
+              <li><strong>Journaled state</strong>: Track reads/writes per transaction for rollback and snapshots</li>
+            </ul>
+          </Accordion>
+
+          <Accordion title="Contract Lifecycle">
+            <p class="mb-4">
+              Deploying and calling contracts follows a standard workflow:
+            </p>
+            <ol class="list-decimal pl-6 space-y-2">
+              <li>Write contract in Python following Python-VM spec</li>
+              <li>Compile to intermediate representation (IR)</li>
+              <li>Deploy via transaction with manifest and code</li>
+              <li>Call contract functions via transactions</li>
+              <li>Receive deterministic receipts with gas used and logs</li>
+            </ol>
+          </Accordion>
+
+          <Accordion title="Gas & Metering">
+            <p>
+              Gas costs are defined per-opcode in `gas_table.json`. Common operations:
+            </p>
+            <ul class="list-disc pl-6 space-y-2 mt-4">
+              <li>Storage read: 200 gas</li>
+              <li>Storage write: 5000 gas</li>
+              <li>Contract call: 700 gas + execution costs</li>
+              <li>Event emission: 375 gas + data costs</li>
+            </ul>
+            <p class="mt-4">
+              Transactions specify a gas limit. If exceeded, execution reverts but gas is still consumed.
+            </p>
+          </Accordion>
+        </div>
+      </div>
+    </section>
+
+    <!-- Cryptography Section -->
+    <section class="py-16 md:py-24 bg-gray-50 dark:bg-dark-100">
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div class="max-w-4xl mx-auto mb-12">
+          <h2 class="text-3xl sm:text-4xl font-bold text-gray-900 dark:text-white mb-4">
+            Post-Quantum Cryptography
+          </h2>
+          <p class="text-xl text-gray-600 dark:text-gray-300">
+            Quantum-resistant signatures and encryption built-in from day one
+          </p>
+        </div>
+
+        <div class="max-w-4xl mx-auto space-y-6">
+          <Accordion title="Signature Schemes">
+            <p class="mb-4">
+              Animica supports two NIST-standardized post-quantum signature schemes:
+            </p>
+            <ul class="list-disc pl-6 space-y-2">
+              <li><strong>Dilithium3 (ML-DSA-65)</strong>: Default stateless signature scheme with fast verification</li>
+              <li><strong>SPHINCS+</strong>: Alternative stateful scheme for high-security scenarios</li>
+            </ul>
+            <p class="mt-4">
+              Both schemes provide security against quantum attacks using lattice-based (Dilithium) or hash-based (SPHINCS+) constructions.
+            </p>
+          </Accordion>
+
+          <Accordion title="Key Management">
+            <p class="mb-4">
+              Keys are managed with:
+            </p>
+            <ul class="list-disc pl-6 space-y-2">
+              <li><strong>BIP39 mnemonics</strong>: 24-word phrases for seed generation</li>
+              <li><strong>Hierarchical derivation</strong>: Multiple keys from a single seed</li>
+              <li><strong>Address encoding</strong>: Bech32m format with 'anim1' prefix</li>
+              <li><strong>Domain separation</strong>: Unique prefixes for tx, commitment, header signatures</li>
+            </ul>
+          </Accordion>
+
+          <Accordion title="Encryption & Handshakes">
+            <p>
+              P2P connections use quantum-resistant encryption:
+            </p>
+            <ul class="list-disc pl-6 space-y-2 mt-4">
+              <li><strong>Kyber768</strong>: Key encapsulation mechanism for session keys</li>
+              <li><strong>ChaCha20-Poly1305</strong>: Symmetric encryption for data transport</li>
+              <li><strong>Noise protocol</strong>: Handshake patterns with forward secrecy</li>
+            </ul>
+          </Accordion>
+        </div>
+      </div>
+    </section>
+
+    <!-- Networking Section -->
+    <section class="py-16 md:py-24">
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div class="max-w-4xl mx-auto mb-12">
+          <h2 class="text-3xl sm:text-4xl font-bold text-gray-900 dark:text-white mb-4">
+            P2P Networking
+          </h2>
+          <p class="text-xl text-gray-600 dark:text-gray-300">
+            Fully decentralized gossip protocol with multi-transport support
+          </p>
+        </div>
+
+        <div class="max-w-4xl mx-auto space-y-6">
+          <Accordion title="Peer Discovery">
+            <p class="mb-4">
+              Nodes discover peers through multiple mechanisms:
+            </p>
+            <ul class="list-disc pl-6 space-y-2">
+              <li><strong>DNS seeds</strong>: Bootstrap from well-known seed nodes</li>
+              <li><strong>mDNS</strong>: Local network discovery for devnets</li>
+              <li><strong>Kademlia DHT</strong>: Distributed hash table for global discovery</li>
+              <li><strong>Peer exchange</strong>: Share known peers via gossip</li>
+            </ul>
+          </Accordion>
+
+          <Accordion title="Transport Protocols">
+            <p class="mb-4">
+              Animica supports multiple transport protocols:
+            </p>
+            <ul class="list-disc pl-6 space-y-2">
+              <li><strong>TCP</strong>: Reliable stream protocol for stable connections</li>
+              <li><strong>QUIC</strong>: UDP-based with built-in encryption and multiplexing</li>
+              <li><strong>WebSocket</strong>: Browser-compatible for web clients</li>
+            </ul>
+            <p class="mt-4">
+              All transports use end-to-end encryption with quantum-resistant handshakes.
+            </p>
+          </Accordion>
+
+          <Accordion title="Gossip Protocol">
+            <p>
+              Block, transaction, and proof propagation uses an efficient gossip protocol:
+            </p>
+            <ul class="list-disc pl-6 space-y-2 mt-4">
+              <li><strong>Push-pull</strong>: Proactive and reactive sync</li>
+              <li><strong>Bloom filters</strong>: Efficient set reconciliation</li>
+              <li><strong>Prioritization</strong>: High-value data (new blocks) spreads faster</li>
+              <li><strong>Rate limiting</strong>: Prevent spam and DoS attacks</li>
+            </ul>
+          </Accordion>
+        </div>
+      </div>
+    </section>
+
+    <!-- Data Availability -->
+    <section class="py-16 md:py-24 bg-gray-50 dark:bg-dark-100">
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div class="max-w-4xl mx-auto mb-12">
+          <h2 class="text-3xl sm:text-4xl font-bold text-gray-900 dark:text-white mb-4">
+            Data Availability
+          </h2>
+          <p class="text-xl text-gray-600 dark:text-gray-300">
+            NMT-based commitments for light client verification
+          </p>
+        </div>
+
+        <div class="max-w-4xl mx-auto space-y-6">
+          <Accordion title="Namespaced Merkle Trees (NMT)">
+            <p>
+              Animica uses NMTs for data availability commitments, allowing light clients to verify data for specific namespaces without downloading entire blocks. This enables efficient data availability sampling (DAS) for resource-constrained nodes.
+            </p>
+          </Accordion>
+
+          <Accordion title="Light Client Verification">
+            <p>
+              Light clients can verify block headers and sample data without full state:
+            </p>
+            <ul class="list-disc pl-6 space-y-2 mt-4">
+              <li>Download headers with NMT roots</li>
+              <li>Sample random data shares to probabilistically verify availability</li>
+              <li>Request Merkle proofs for specific transactions or state</li>
+            </ul>
+          </Accordion>
+        </div>
+      </div>
+    </section>
+
+    <!-- Learn More -->
+    <section class="py-16 md:py-24">
+      <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
+        <Callout type="info" title="Dive Deeper">
+          <p>
+            For detailed specifications, see the <a href="/docs" class="text-brand-600 dark:text-brand-400 underline">documentation</a>:
+          </p>
+          <ul class="list-disc pl-6 space-y-1 mt-4">
+            <li><code>spec/poies_math.md</code> - PoIES scoring and retargeting</li>
+            <li><code>vm_py/specs/</code> - Python-VM gas, determinism, ABI</li>
+            <li><code>execution/specs/</code> - Receipts, scheduler, state management</li>
+            <li><code>p2p/</code> - Networking architecture and protocols</li>
+            <li><code>pq/</code> - Post-quantum cryptography implementation</li>
+          </ul>
+        </Callout>
+      </div>
+    </section>
+
+    <!-- CTA -->
+    <section class="py-16 md:py-24 bg-brand-500 dark:bg-brand-600">
+      <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
+        <h2 class="text-3xl font-bold text-white mb-4">
+          Ready to build on Animica?
+        </h2>
+        <p class="text-xl text-brand-50 mb-8">
+          Start deploying Python smart contracts and exploring the technology today
+        </p>
+        <div class="flex flex-col sm:flex-row gap-4 justify-center">
+          <a 
+            href="/developers" 
+            class="inline-flex items-center justify-center px-6 py-3 bg-white text-brand-600 font-medium rounded-lg hover:bg-gray-100 transition-colors duration-150"
+          >
+            Developer Guide
+          </a>
+          <a 
+            href="/node" 
+            class="inline-flex items-center justify-center px-6 py-3 bg-brand-700 text-white font-medium rounded-lg hover:bg-brand-800 transition-colors duration-150"
+          >
+            Run a Node
+          </a>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <Footer slot="footer" />
+</BaseLayout>

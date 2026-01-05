@@ -1,321 +1,352 @@
 ---
+/**
+ * Homepage - Animica L1 Blockchain
+ * 
+ * Professional landing page showcasing Animica's key features,
+ * value propositions, and clear CTAs for different user types.
+ */
+
 import BaseLayout from "../layouts/BaseLayout.astro";
 import Header from "../components/Header.astro";
 import Footer from "../components/Footer.astro";
-import MetricTicker from "../components/MetricTicker.astro";
-import StatusBadge from "../components/StatusBadge.astro";
-import CTAButtons from "../components/CTAButtons.astro";
-import InlineLink from "../components/InlineLink.astro";
-
+import Button from "../components/Button.astro";
+import Card from "../components/Card.astro";
+import Badge from "../components/Badge.astro";
 import { links } from "../config/links";
 
-const heroTitle = "Animica — post-quantum blockchain";
-const heroDesc =
-  "A serious, production-ready L1 with useful-work consensus, deterministic execution, and a toolchain built for node operators, explorers, and developers.";
+const heroTitle = "Animica";
+const heroSubtitle = "Post-quantum blockchain for real-world compute";
+const heroDesc = "A production-ready L1 with quantum-resistant security, Python smart contracts, and useful-work consensus. Built for builders, miners, and node operators who value transparency and practical infrastructure.";
 
-const whyCards = [
+// Key features/proof points
+const proofPoints = [
   {
-    title: "Post-quantum security",
-    detail:
-      "Dilithium/SPHINCS+ signatures, hash-hardened primitives, and forward-looking crypto safety.",
+    icon: "🔐",
+    title: "Post-Quantum Security",
+    description: "Built-in Dilithium3 and SPHINCS+ signatures protect against future quantum threats"
   },
   {
-    title: "Useful work consensus",
-    detail:
-      "PoIES aligns block production with real compute, not wasted energy.",
+    icon: "🐍",
+    title: "Python Smart Contracts",
+    description: "Write and deploy deterministic contracts in Python with our Python-VM execution layer"
   },
   {
-    title: "Deterministic Python VM",
-    detail:
-      "Python-first contracts with reproducible execution and predictable gas.",
+    icon: "⚡",
+    title: "Useful Work Consensus",
+    description: "PoIES rewards meaningful computation alongside traditional mining"
   },
   {
-    title: "Real infrastructure",
-    detail:
-      "Explorer, RPC, wallet, node tooling, and monitoring built together.",
-  },
-  {
-    title: "Operational clarity",
-    detail:
-      "Stable APIs, strong observability, and docs for every operator workflow.",
-  },
+    icon: "🛠️",
+    title: "Production Tooling",
+    description: "Complete ecosystem with wallets, explorer, SDKs, and monitoring"
+  }
 ];
 
-const howSteps = [
-  {
-    step: "01",
-    title: "Run a node",
-    text: "Start a mainnet node in minutes with Docker or native installs.",
-  },
-  {
-    step: "02",
-    title: "Sync & secure",
-    text: "Connect to peers, validate headers, and lock down RPC/metrics.",
-  },
-  {
-    step: "03",
-    title: "Build or mine",
-    text: "Deploy contracts, mine blocks, or integrate with your stack.",
-  },
-];
-
-const startCols = [
-  {
-    title: "Get Wallet",
-    text: "Download the desktop wallet, or use CLI for hot/cold storage workflows.",
-    href: "/wallet",
-  },
+// Get started cards
+const getStartedCards = [
   {
     title: "Run a Node",
-    text: "Join the network with a single command and ship production configs.",
+    description: "Join the network and help secure the chain with a single command",
     href: "/node",
+    icon: "🖥️",
+    cta: "Setup Guide"
   },
   {
-    title: "Mining",
-    text: "CPU/GPU mining guides and pool endpoints for steady rewards.",
-    href: "/mine",
+    title: "Build Contracts",
+    description: "Deploy Python smart contracts using our SDKs and development tools",
+    href: "/developers",
+    icon: "👨‍💻",
+    cta: "Start Building"
   },
+  {
+    title: "Mine Blocks",
+    description: "Contribute hash power and earn rewards through CPU or GPU mining",
+    href: "/mine",
+    icon: "⛏️",
+    cta: "Mining Guide"
+  },
+  {
+    title: "Explore Chain",
+    description: "Browse blocks, transactions, and addresses on the live explorer",
+    href: links.explorer.home(),
+    icon: "🔍",
+    cta: "Open Explorer"
+  }
+];
+
+// Stats/metrics (can be updated with real data later)
+const stats = [
+  { label: "Post-Quantum", value: "Secure" },
+  { label: "Python VM", value: "Deterministic" },
+  { label: "Multi-Language", value: "3 SDKs" },
+  { label: "Network", value: "P2P First" }
 ];
 ---
 
-<BaseLayout title={heroTitle} description={heroDesc} bodyClass="home">
-  <fragment slot="header">
-    <Header />
-  </fragment>
+<BaseLayout title={heroTitle} description={heroDesc}>
+  <Header slot="header" />
+  
+  <main class="min-h-screen">
+    <!-- Hero Section -->
+    <section class="relative overflow-hidden bg-gradient-to-b from-white via-brand-50/30 to-white dark:from-dark-50 dark:via-dark-100 dark:to-dark-50">
+      <!-- Background decoration -->
+      <div class="absolute inset-0 bg-grid-gray-900/[0.02] dark:bg-grid-white/[0.02]" aria-hidden="true"></div>
+      
+      <div class="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-20 md:py-32">
+        <div class="text-center">
+          <!-- Badge -->
+          <div class="mb-6 animate-fade-in-up">
+            <Badge variant="info" class="text-sm">
+              Post-quantum · Useful work · Python VM
+            </Badge>
+          </div>
 
-  <section class="hero">
-    <div class="hero__content">
-      <p class="eyebrow">Post-quantum · Useful work · Python VM</p>
-      <h1>{heroTitle}</h1>
-      <p class="lede">{heroDesc}</p>
-      <div class="hero__actions">
-        <a class="button button--primary" href="/wallet">Get Wallet</a>
-        <a class="button button--outline" href="/node">Run a Node</a>
-        <a class="button button--ghost" href={links.explorer.home()}>Open Explorer</a>
-      </div>
-      <div class="hero__secondary">
-        <InlineLink href="/docs" class="hero__link">Read Docs →</InlineLink>
-        <InlineLink href={links.github.root} class="hero__link">View on GitHub →</InlineLink>
-      </div>
-      <div class="hero__badges">
-        <div class="badge">
-          <span class="label">Network</span>
-          <StatusBadge rpcUrl={links.rpc.url} />
+          <!-- Title -->
+          <h1 class="text-5xl sm:text-6xl lg:text-7xl font-bold text-gray-900 dark:text-white mb-6 tracking-tight animate-fade-in-up">
+            {heroTitle}
+          </h1>
+          
+          <!-- Subtitle -->
+          <p class="text-2xl sm:text-3xl text-gray-700 dark:text-gray-200 mb-4 font-medium animate-fade-in-up">
+            {heroSubtitle}
+          </p>
+
+          <!-- Description -->
+          <p class="text-lg sm:text-xl text-gray-600 dark:text-gray-300 max-w-3xl mx-auto mb-10 leading-relaxed animate-fade-in-up">
+            {heroDesc}
+          </p>
+
+          <!-- CTAs -->
+          <div class="flex flex-col sm:flex-row gap-4 justify-center items-center mb-8 animate-fade-in-up">
+            <Button href="/node" variant="primary" size="lg">
+              Run a Node
+            </Button>
+            <Button href="/developers" variant="outline" size="lg">
+              Build a Contract
+            </Button>
+            <Button href={links.explorer.home()} variant="ghost" size="lg">
+              Open Explorer →
+            </Button>
+          </div>
+
+          <!-- Secondary links -->
+          <div class="flex flex-wrap gap-6 justify-center text-sm animate-fade-in-up">
+            <a href="/docs" class="text-brand-600 dark:text-brand-400 hover:underline">
+              Read Docs
+            </a>
+            <a href={links.github.root} class="text-brand-600 dark:text-brand-400 hover:underline" target="_blank" rel="noopener">
+              View on GitHub
+            </a>
+            <a href="/wallet" class="text-brand-600 dark:text-brand-400 hover:underline">
+              Get Wallet
+            </a>
+          </div>
         </div>
-        <div class="badge">
-          <span class="label">Head height</span>
-          <span class="metric"><MetricTicker rpcUrl={links.rpc.url} kind="height" /></span>
-        </div>
-        <div class="badge">
-          <span class="label">TPS</span>
-          <span class="metric"><MetricTicker rpcUrl={links.rpc.url} kind="tps" /></span>
+
+        <!-- Stats bar -->
+        <div class="mt-16 grid grid-cols-2 md:grid-cols-4 gap-6 max-w-4xl mx-auto">
+          {stats.map((stat) => (
+            <div class="text-center p-4">
+              <div class="text-2xl font-bold text-gray-900 dark:text-white mb-1">
+                {stat.value}
+              </div>
+              <div class="text-sm text-gray-600 dark:text-gray-400">
+                {stat.label}
+              </div>
+            </div>
+          ))}
         </div>
       </div>
-    </div>
-    <div class="hero__panel">
-      <div class="panel-card">
-        <h2>Operate the serious chain</h2>
-        <p class="muted">
-          Animica ships with production infrastructure: Studio, Explorer, wallets, RPC APIs, and
-          a deterministic VM designed for long-term stability.
+    </section>
+
+    <!-- Proof Points Section -->
+    <section class="py-20 md:py-32 bg-white dark:bg-dark-50">
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div class="text-center mb-16">
+          <h2 class="text-3xl sm:text-4xl lg:text-5xl font-bold text-gray-900 dark:text-white mb-4">
+            Why Animica?
+          </h2>
+          <p class="text-xl text-gray-600 dark:text-gray-300 max-w-3xl mx-auto">
+            Built from the ground up with security, transparency, and practical infrastructure in mind
+          </p>
+        </div>
+
+        <div class="grid md:grid-cols-2 gap-8">
+          {proofPoints.map((point) => (
+            <Card variant="bordered" padding="lg" hoverable>
+              <div class="text-4xl mb-4">{point.icon}</div>
+              <h3 class="text-2xl font-bold text-gray-900 dark:text-white mb-3">
+                {point.title}
+              </h3>
+              <p class="text-gray-600 dark:text-gray-300 leading-relaxed">
+                {point.description}
+              </p>
+            </Card>
+          ))}
+        </div>
+      </div>
+    </section>
+
+    <!-- Get Started Section -->
+    <section class="py-20 md:py-32 bg-gray-50 dark:bg-dark-100">
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div class="text-center mb-16">
+          <h2 class="text-3xl sm:text-4xl lg:text-5xl font-bold text-gray-900 dark:text-white mb-4">
+            Get Started
+          </h2>
+          <p class="text-xl text-gray-600 dark:text-gray-300 max-w-3xl mx-auto">
+            Choose your path and start building on Animica today
+          </p>
+        </div>
+
+        <div class="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
+          {getStartedCards.map((card) => (
+            <Card variant="elevated" padding="lg" hoverable href={card.href}>
+              <div class="text-4xl mb-4">{card.icon}</div>
+              <h3 class="text-xl font-bold text-gray-900 dark:text-white mb-2">
+                {card.title}
+              </h3>
+              <p class="text-gray-600 dark:text-gray-300 mb-4 text-sm leading-relaxed">
+                {card.description}
+              </p>
+              <div class="text-brand-600 dark:text-brand-400 font-medium text-sm">
+                {card.cta} →
+              </div>
+            </Card>
+          ))}
+        </div>
+      </div>
+    </section>
+
+    <!-- How It Works Section -->
+    <section class="py-20 md:py-32 bg-white dark:bg-dark-50">
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div class="text-center mb-16">
+          <h2 class="text-3xl sm:text-4xl lg:text-5xl font-bold text-gray-900 dark:text-white mb-4">
+            How It Works
+          </h2>
+          <p class="text-xl text-gray-600 dark:text-gray-300 max-w-3xl mx-auto">
+            Simple, transparent, and secure from the ground up
+          </p>
+        </div>
+
+        <div class="grid md:grid-cols-3 gap-12">
+          <div class="text-center">
+            <div class="inline-flex items-center justify-center w-16 h-16 rounded-full bg-brand-100 dark:bg-brand-900/30 text-brand-600 dark:text-brand-400 font-bold text-2xl mb-6">
+              1
+            </div>
+            <h3 class="text-xl font-bold text-gray-900 dark:text-white mb-3">
+              Run a Node
+            </h3>
+            <p class="text-gray-600 dark:text-gray-300 leading-relaxed">
+              Start a mainnet node in minutes with Docker or native installs. Connect to peers and sync the chain.
+            </p>
+          </div>
+
+          <div class="text-center">
+            <div class="inline-flex items-center justify-center w-16 h-16 rounded-full bg-brand-100 dark:bg-brand-900/30 text-brand-600 dark:text-brand-400 font-bold text-2xl mb-6">
+              2
+            </div>
+            <h3 class="text-xl font-bold text-gray-900 dark:text-white mb-3">
+              Secure & Verify
+            </h3>
+            <p class="text-gray-600 dark:text-gray-300 leading-relaxed">
+              Validate headers with post-quantum signatures. Lock down RPC endpoints and enable monitoring.
+            </p>
+          </div>
+
+          <div class="text-center">
+            <div class="inline-flex items-center justify-center w-16 h-16 rounded-full bg-brand-100 dark:bg-brand-900/30 text-brand-600 dark:text-brand-400 font-bold text-2xl mb-6">
+              3
+            </div>
+            <h3 class="text-xl font-bold text-gray-900 dark:text-white mb-3">
+              Build or Mine
+            </h3>
+            <p class="text-gray-600 dark:text-gray-300 leading-relaxed">
+              Deploy contracts, mine blocks, or integrate with your stack using our SDKs and tooling.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- CTA Section -->
+    <section class="relative py-20 md:py-32 bg-brand-500 dark:bg-brand-600 overflow-hidden">
+      <div class="absolute inset-0 bg-grid-white/[0.05]" aria-hidden="true"></div>
+      
+      <div class="relative max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
+        <h2 class="text-3xl sm:text-4xl lg:text-5xl font-bold text-white mb-6">
+          Ready to get started?
+        </h2>
+        <p class="text-xl text-brand-50 mb-10 max-w-2xl mx-auto">
+          Join the community of builders, miners, and node operators making Animica a reality
         </p>
-        <CTAButtons align="start" />
-      </div>
-      <div class="panel-card panel-card--ghost">
-        <h3>Network snapshot</h3>
-        <MetricTicker rpcUrl={links.rpc.url} compact />
-        <p class="muted">Live head, TPS, and block age from your configured RPC.</p>
-        <a class="button button--full" href="/status">Open status dashboard</a>
-      </div>
-    </div>
-  </section>
-
-  <section class="section">
-    <header class="section__header">
-      <p class="eyebrow">Why Animica</p>
-      <h2>Infrastructure built for serious operators</h2>
-      <p class="muted">Modern primitives, predictable execution, and clean tooling for teams that ship.</p>
-    </header>
-    <div class="card-grid">
-      {whyCards.map((card) => (
-        <div class="card">
-          <h3>{card.title}</h3>
-          <p>{card.detail}</p>
+        <div class="flex flex-col sm:flex-row gap-4 justify-center">
+          <Button 
+            href="/node" 
+            variant="secondary"
+            size="lg"
+            class="bg-white text-brand-600 hover:bg-gray-100"
+          >
+            Run a Node
+          </Button>
+          <Button 
+            href="/community" 
+            variant="outline"
+            size="lg"
+            class="border-white text-white hover:bg-white hover:text-brand-600"
+          >
+            Join Community
+          </Button>
         </div>
-      ))}
-    </div>
-  </section>
-
-  <section class="section">
-    <header class="section__header">
-      <p class="eyebrow">How it works</p>
-      <h2>From node boot to production apps</h2>
-      <p class="muted">Each step is documented, observable, and ready for deployment.</p>
-    </header>
-    <div class="step-grid">
-      {howSteps.map((step) => (
-        <div class="step-card">
-          <div class="step-number">{step.step}</div>
-          <h3>{step.title}</h3>
-          <p>{step.text}</p>
-        </div>
-      ))}
-    </div>
-  </section>
-
-  <section class="section">
-    <header class="section__header">
-      <p class="eyebrow">Get started</p>
-      <h2>Choose your path</h2>
-      <p class="muted">Wallets, nodes, and mining — all documented and ready to go.</p>
-    </header>
-    <div class="start-grid">
-      {startCols.map((col) => (
-        <a class="start-card" href={col.href}>
-          <h3>{col.title}</h3>
-          <p>{col.text}</p>
-          <span class="inline-link">Go now →</span>
-        </a>
-      ))}
-    </div>
-  </section>
-
-  <section class="section section--cta">
-    <div class="cta-panel">
-      <div>
-        <p class="eyebrow">Ready to build</p>
-        <h2>Launch a node and ship production-grade apps today</h2>
-        <p class="muted">Join the network, instrument your RPC, and build with certainty.</p>
       </div>
-      <div class="cta-panel__actions">
-        <a class="button button--primary" href="/node">Run a Node</a>
-        <a class="button button--outline" href="/wallet">Get Wallet</a>
-        <a class="button button--ghost" href={links.docs.home()}>Read Docs</a>
-      </div>
-    </div>
-  </section>
+    </section>
+  </main>
 
-  <fragment slot="footer">
-    <Footer />
-  </fragment>
+  <Footer slot="footer" />
 </BaseLayout>
 
 <style>
-  .hero {
-    max-width: 1280px;
-    margin: 0 auto;
-    padding: 5rem 1rem 3rem;
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-    gap: 2rem;
-    align-items: center;
+  /* Grid pattern for background */
+  .bg-grid-gray-900\/\[0\.02\],
+  .bg-grid-white\/\[0\.02\],
+  .bg-grid-white\/\[0\.05\] {
+    background-size: 40px 40px;
+    background-image:
+      linear-gradient(to right, currentColor 1px, transparent 1px),
+      linear-gradient(to bottom, currentColor 1px, transparent 1px);
+    opacity: 0.5;
   }
 
-  .hero__content h1 {
-    font-size: clamp(2.5rem, 6vw, 4rem);
-    line-height: 1.05;
+  /* Animations */
+  @keyframes fadeInUp {
+    from {
+      opacity: 0;
+      transform: translateY(20px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
   }
 
-  .hero__actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.75rem;
-    margin-top: 1.5rem;
+  .animate-fade-in-up {
+    animation: fadeInUp 0.6s ease-out;
   }
 
-  .hero__secondary {
-    display: flex;
-    gap: 1rem;
-    margin-top: 1rem;
-    flex-wrap: wrap;
+  .animate-fade-in-up:nth-child(2) {
+    animation-delay: 0.1s;
   }
 
-  .hero__badges {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-    gap: 0.75rem;
-    margin-top: 2rem;
+  .animate-fade-in-up:nth-child(3) {
+    animation-delay: 0.2s;
   }
 
-  .badge {
-    padding: 0.75rem 1rem;
-    border-radius: 0.75rem;
-    background: rgba(15, 23, 42, 0.6);
-    border: 1px solid rgba(148, 163, 184, 0.2);
+  .animate-fade-in-up:nth-child(4) {
+    animation-delay: 0.3s;
   }
 
-  .section {
-    max-width: 1280px;
-    margin: 0 auto;
-    padding: 4rem 1rem;
-  }
-
-  .section__header h2 {
-    font-size: clamp(2rem, 4vw, 2.8rem);
-  }
-
-  .card-grid,
-  .step-grid,
-  .start-grid {
-    display: grid;
-    gap: 1.5rem;
-    margin-top: 2rem;
-  }
-
-  .card-grid {
-    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  }
-
-  .step-grid {
-    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  }
-
-  .start-grid {
-    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  }
-
-  .card,
-  .step-card,
-  .start-card {
-    padding: 1.5rem;
-    border-radius: 1rem;
-    background: rgba(15, 23, 42, 0.6);
-    border: 1px solid rgba(148, 163, 184, 0.15);
-    transition: transform 0.2s ease, border-color 0.2s ease;
-  }
-
-  .start-card:hover,
-  .card:hover,
-  .step-card:hover {
-    transform: translateY(-4px);
-    border-color: rgba(139, 92, 246, 0.5);
-  }
-
-  .step-number {
-    font-size: 0.9rem;
-    opacity: 0.6;
-    margin-bottom: 0.5rem;
-  }
-
-  .section--cta {
-    padding-bottom: 5rem;
-  }
-
-  .cta-panel {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 2rem;
-    align-items: center;
-    justify-content: space-between;
-    padding: 2.5rem;
-    border-radius: 1.5rem;
-    background: linear-gradient(135deg, rgba(30, 41, 59, 0.8), rgba(15, 23, 42, 0.9));
-    border: 1px solid rgba(148, 163, 184, 0.2);
-  }
-
-  .cta-panel__actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.75rem;
+  .animate-fade-in-up:nth-child(5) {
+    animation-delay: 0.4s;
   }
 </style>

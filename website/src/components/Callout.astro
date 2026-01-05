@@ -1,0 +1,104 @@
+---
+/**
+ * Callout Component
+ * 
+ * Highlighted information box for notes, warnings, tips, and errors.
+ * 
+ * Props:
+ * - type: 'info' | 'success' | 'warning' | 'error' | 'note'
+ * - title: string - optional title
+ * - icon: boolean - show icon (default true)
+ * 
+ * Usage:
+ * <Callout type="warning" title="Important">
+ *   Make sure to backup your keys before proceeding.
+ * </Callout>
+ */
+
+interface Props {
+  type?: 'info' | 'success' | 'warning' | 'error' | 'note';
+  title?: string;
+  icon?: boolean;
+  class?: string;
+}
+
+const {
+  type = 'info',
+  title,
+  icon = true,
+  class: className = '',
+  ...rest
+} = Astro.props;
+
+const baseStyles = `
+  rounded-lg border-l-4 p-4
+  transition-colors duration-150
+`;
+
+const typeStyles = {
+  info: `
+    bg-brand-50 border-brand-500 text-brand-900
+    dark:bg-brand-950/50 dark:border-brand-400 dark:text-brand-100
+  `,
+  success: `
+    bg-success-50 border-success-500 text-success-900
+    dark:bg-success-950/50 dark:border-success-400 dark:text-success-100
+  `,
+  warning: `
+    bg-warning-50 border-warning-500 text-warning-900
+    dark:bg-warning-950/50 dark:border-warning-400 dark:text-warning-100
+  `,
+  error: `
+    bg-error-50 border-error-500 text-error-900
+    dark:bg-error-950/50 dark:border-error-400 dark:text-error-100
+  `,
+  note: `
+    bg-gray-50 border-gray-500 text-gray-900
+    dark:bg-dark-100 dark:border-gray-400 dark:text-gray-100
+  `,
+};
+
+const icons = {
+  info: '&#9432;', // ℹ
+  success: '&#10004;', // ✓
+  warning: '&#9888;', // ⚠
+  error: '&#10006;', // ✗
+  note: '&#128221;', // 📝
+};
+
+const iconColors = {
+  info: 'text-brand-600 dark:text-brand-400',
+  success: 'text-success-600 dark:text-success-400',
+  warning: 'text-warning-600 dark:text-warning-400',
+  error: 'text-error-600 dark:text-error-400',
+  note: 'text-gray-600 dark:text-gray-400',
+};
+
+const classes = [
+  baseStyles,
+  typeStyles[type],
+  className,
+].filter(Boolean).join(' ').replace(/\s+/g, ' ');
+---
+
+<div class={classes} role="alert" {...rest}>
+  <div class="flex gap-3">
+    {icon && (
+      <span 
+        class={`text-xl leading-none flex-shrink-0 ${iconColors[type]}`}
+        aria-hidden="true"
+        set:html={icons[type]}
+      />
+    )}
+    <div class="flex-1 min-w-0">
+      {title && (
+        <div class="font-semibold mb-1">
+          {title}
+        </div>
+      )}
+      <div class="text-sm leading-relaxed">
+        <slot />
+      </div>
+    </div>
+  </div>
+</div>

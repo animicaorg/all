@@ -1,0 +1,78 @@
+---
+import BaseLayout from "../layouts/BaseLayout.astro";
+import Header from "../components/Header.astro";
+import Footer from "../components/Footer.astro";
+import Accordion from "../components/Accordion.astro";
+import faqData from "../data/faq";
+
+const pageTitle = "Frequently Asked Questions";
+const pageDesc = "Find answers to common questions about Animica blockchain, including technical details, development, mining, and security.";
+---
+
+<BaseLayout title={pageTitle} description={pageDesc}>
+  <Header slot="header" />
+  
+  <main class="min-h-screen bg-white dark:bg-dark-50">
+    <!-- Hero Section -->
+    <section class="bg-gradient-to-b from-brand-50 to-white dark:from-dark-100 dark:to-dark-50 py-16 md:py-24">
+      <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
+        <h1 class="text-4xl sm:text-5xl lg:text-6xl font-bold text-gray-900 dark:text-white mb-6">
+          Frequently Asked Questions
+        </h1>
+        <p class="text-xl text-gray-600 dark:text-gray-300 max-w-3xl mx-auto">
+          {pageDesc}
+        </p>
+      </div>
+    </section>
+
+    <!-- FAQ Content -->
+    <section class="py-16 md:py-24">
+      <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
+        {faqData.map((category) => (
+          <div class="mb-12">
+            <h2 class="text-2xl sm:text-3xl font-bold text-gray-900 dark:text-white mb-6">
+              {category.category}
+            </h2>
+            <div class="space-y-4">
+              {category.items.map((item) => (
+                <Accordion title={item.question}>
+                  <p class="text-gray-700 dark:text-gray-300 leading-relaxed">
+                    {item.answer}
+                  </p>
+                </Accordion>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+
+    <!-- CTA Section -->
+    <section class="bg-brand-500 dark:bg-brand-600 py-16">
+      <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
+        <h2 class="text-3xl font-bold text-white mb-4">
+          Still have questions?
+        </h2>
+        <p class="text-xl text-brand-50 mb-8">
+          Join our community or check out the documentation for more details.
+        </p>
+        <div class="flex flex-col sm:flex-row gap-4 justify-center">
+          <a 
+            href="/community" 
+            class="inline-flex items-center justify-center px-6 py-3 bg-white text-brand-600 font-medium rounded-lg hover:bg-gray-100 transition-colors duration-150"
+          >
+            Join Community
+          </a>
+          <a 
+            href="/docs" 
+            class="inline-flex items-center justify-center px-6 py-3 bg-brand-700 text-white font-medium rounded-lg hover:bg-brand-800 transition-colors duration-150"
+          >
+            Read Documentation
+          </a>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <Footer slot="footer" />
+</BaseLayout>
