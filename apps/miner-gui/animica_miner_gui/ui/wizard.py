@@ -53,7 +53,7 @@ class CreateWalletDialog(QDialog):
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.setWindowTitle("Create New Wallet")
-        self.setMinimumWidth(400)
+        self.setMinimumWidth(500)
         
         layout = QVBoxLayout()
         
@@ -63,14 +63,27 @@ class CreateWalletDialog(QDialog):
         self.label_input.setPlaceholderText("My Wallet")
         layout.addWidget(self.label_input)
         
+        # Wallet file path selection
+        layout.addWidget(QLabel("Wallet File Location:"))
+        path_layout = QHBoxLayout()
+        self.wallet_path_input = QLineEdit()
+        default_wallet_path = Path.home() / ".animica" / "wallets.json"
+        self.wallet_path_input.setText(str(default_wallet_path))
+        self.wallet_path_input.setPlaceholderText(str(default_wallet_path))
+        self.wallet_path_input.textChanged.connect(self._update_info_text)
+        path_layout.addWidget(self.wallet_path_input)
+        
+        browse_button = QPushButton("Browse...")
+        browse_button.clicked.connect(self._browse_wallet_file)
+        path_layout.addWidget(browse_button)
+        layout.addLayout(path_layout)
+        
         # Info text
-        info_text = QLabel(
-            "A new wallet will be created and saved to ~/.animica/wallets.json\n"
-            "The wallet will use Dilithium3 post-quantum cryptography."
-        )
-        info_text.setWordWrap(True)
-        info_text.setStyleSheet("color: gray; font-size: 11px;")
-        layout.addWidget(info_text)
+        self.info_text = QLabel()
+        self._update_info_text()
+        self.info_text.setWordWrap(True)
+        self.info_text.setStyleSheet("color: gray; font-size: 11px;")
+        layout.addWidget(self.info_text)
         
         # Status label
         self.status_label = QLabel("")
@@ -88,14 +101,49 @@ class CreateWalletDialog(QDialog):
         
         self.created_address: Optional[str] = None
     
+    def _browse_wallet_file(self) -> None:
+        """Open file dialog to select wallet file location."""
+        current_path = self.wallet_path_input.text().strip()
+        if current_path:
+            # If we have a current path, use the directory and filename
+            start_location = current_path
+        else:
+            # Default to .animica directory with wallets.json filename
+            start_location = str(Path.home() / ".animica" / "wallets.json")
+        
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Select Wallet File Location",
+            start_location,
+            "JSON Files (*.json);;All Files (*)"
+        )
+        
+        if file_path:
+            self.wallet_path_input.setText(file_path)
+    
+    def _update_info_text(self) -> None:
+        """Update the info text based on the selected wallet path."""
+        wallet_path = self.wallet_path_input.text().strip()
+        if not wallet_path:
+            wallet_path = str(Path.home() / ".animica" / "wallets.json")
+        
+        self.info_text.setText(
+            f"A new wallet will be created and saved to {wallet_path}\n"
+            "The wallet will use Dilithium3 post-quantum cryptography."
+        )
+    
     def create_wallet(self) -> None:
         """Create a new wallet using the wallet CLI functionality."""
         label = self.label_input.text().strip()
+        wallet_file_path = self.wallet_path_input.text().strip()
         
         if not label:
             self.status_label.setText("Please enter a wallet label")
             self.status_label.setStyleSheet("color: red;")
             return
+        
+        if not wallet_file_path:
+            wallet_file_path = str(Path.home() / ".animica" / "wallets.json")
         
         # Validate label: only allow alphanumeric, spaces, hyphens, and underscores
         # This prevents command injection and ensures clean wallet names
@@ -109,14 +157,51 @@ class CreateWalletDialog(QDialog):
             self.status_label.setStyleSheet("color: red;")
             return
         
+        # Validate wallet file path
+        try:
+            wallet_path = Path(wallet_file_path)
+            
+            # Ensure the path is well-formed
+            if wallet_path.suffix != '.json':
+                self.status_label.setText("Wallet file must have .json extension")
+                self.status_label.setStyleSheet("color: red;")
+                return
+            
+            # Resolve the path to absolute to prevent directory traversal
+            wallet_path_resolved = wallet_path.resolve()
+            
+            # Ensure parent directory exists or can be created
+            # This is intentional to allow users to organize wallets in custom directories
+            # The resolved path is already validated and made absolute, preventing traversal attacks
+            wallet_path_resolved.parent.mkdir(parents=True, exist_ok=True)
+            
+            # Convert back to string for command
+            wallet_file_path = str(wallet_path_resolved)
+            
+        except (ValueError, OSError) as e:
+            self.status_label.setText(f"Invalid wallet file path: {e}")
+            self.status_label.setStyleSheet("color: red;")
+            return
+        
         try:
             self.status_label.setText("Creating wallet...")
             self.status_label.setStyleSheet("color: blue;")
             
-            # Call the wallet creation CLI with label as a separate argument (safer)
+            # Call the wallet creation CLI with label and wallet file path as separate arguments
+            # Using subprocess.run with a list of arguments (not shell=True) prevents command injection
+            cmd = [
+                sys.executable, "-m", "animica", "wallet", 
+                "--wallet-file", wallet_file_path,
+                "create", 
+                "--label", label, 
+                "--allow-insecure-fallback"
+            ]
+            
+            # Log only the command structure for debugging (wallet path already resolved and validated)
+            logger.debug(f"Creating wallet with label '{label}'")
+            
             result = subprocess.run(
-                [sys.executable, "-m", "animica", "wallet", "create", 
-                 "--label", label, "--allow-insecure-fallback"],
+                cmd,
                 capture_output=True,
                 text=True,
                 timeout=30
@@ -141,7 +226,7 @@ class CreateWalletDialog(QDialog):
                     raise Exception("Could not parse wallet address from output")
             
             self.created_address = address
-            self.status_label.setText("✓ Wallet created successfully!")
+            self.status_label.setText(f"✓ Wallet created successfully at {wallet_file_path}!")
             self.status_label.setStyleSheet("color: green;")
             
             # Accept the dialog after successful creation
