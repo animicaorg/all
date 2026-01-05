@@ -253,7 +253,9 @@ async def wallet_verify(request: WalletVerifyRequest, db: AsyncSession = Depends
     
     # Verify Dilithium3 signature
     try:
-        # Import Dilithium3 verification from pq module
+        # NOTE: Dynamic path manipulation is a development workaround
+        # In production, pq should be installed as a proper package dependency
+        # TODO: Install pq module as a package dependency and remove sys.path manipulation
         import sys
         import os
         repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../../"))
