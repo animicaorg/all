@@ -207,8 +207,12 @@ class DashboardTab(QWidget):
             
             if balance is not None:
                 # Convert from base units to ANM (1 ANM = 1e9 base units)
-                balance_anm = int(balance) / 1_000_000_000
-                self.balance_label.setText(f"{balance_anm:.9f} ANM")
+                # Balance is already in base units, just divide
+                try:
+                    balance_value = float(balance) / 1_000_000_000
+                    self.balance_label.setText(f"{balance_value:.9f} ANM")
+                except (ValueError, TypeError):
+                    self.balance_label.setText("Invalid balance")
             else:
                 self.balance_label.setText("Unable to query")
                 
