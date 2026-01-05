@@ -1334,7 +1334,7 @@ def _get_miner_address() -> bytes:
     return ZERO32
 
 
-def _apply_block_reward(ctx: Any, height: int, payout_address: bytes | None = None) -> int:
+def _apply_block_reward(ctx: Any, height: int, payout_address: bytes | None = None, instant_block: bool = False) -> int:
     """
     Apply block reward to the miner's address in state.
     
@@ -1342,6 +1342,7 @@ def _apply_block_reward(ctx: Any, height: int, payout_address: bytes | None = No
         ctx: RPC context with state_db access
         height: Block height for reward calculation
         payout_address: Optional 32-byte payout address. If None, uses default miner address.
+        instant_block: Whether this is an instant block (zero reward). Default: False
         
     Returns:
         int: Total miner reward amount (in nANM) credited to payout address, or 0 if none
@@ -1355,15 +1356,22 @@ def _apply_block_reward(ctx: Any, height: int, payout_address: bytes | None = No
         
         chain_id = ctx.cfg.chain_id
         params = getattr(ctx, "params", None) or {}
-        rewards = compute_block_reward(chain_id=chain_id, height=height, params=params)
         
-        # Log warning if rewards are empty when they shouldn't be (height >= 1)
-        if not rewards and height >= 1:
+        # CRITICAL FIX: Pass instant_block flag to compute_block_reward
+        # This ensures instant blocks get zero rewards and normal blocks get proper rewards
+        rewards = compute_block_reward(chain_id=chain_id, height=height, params=params, instant_block=instant_block)
+        
+        # Log warning if rewards are empty when they shouldn't be (height >= 1, not instant)
+        if not rewards and height >= 1 and not instant_block:
             log.warning(
-                f"Block reward at height {height} is empty. "
+                f"Block reward at height {height} is empty for normal (non-instant) block. "
                 f"This may indicate missing/invalid consensus params. "
                 f"Check that spec/params.yaml defines proper emission schedule for chain_id={chain_id}."
             )
+        
+        # Log instant block detection for traceability
+        if instant_block:
+            log.debug(f"Instant block at height {height}: zero rewards by design")
         
         # Track miner reward amount for return
         miner_reward_amount = 0
@@ -2960,8 +2968,13 @@ def _mine_once(
 
         # Apply block reward to coinbase/miner address
         # This also persists to state_db
-        log.info(f"Applying block reward to payout address at height {header.height}")
-        reward_amount = _apply_block_reward(ctx, header.height, payout_address)
+        # CRITICAL FIX: Pass instant_block flag from header to ensure correct reward calculation
+        instant_block_flag = getattr(header, "instantBlock", False)
+        log.info(
+            f"Applying block reward to payout address at height {header.height} "
+            f"(instant_block={instant_block_flag})"
+        )
+        reward_amount = _apply_block_reward(ctx, header.height, payout_address, instant_block=instant_block_flag)
 
         # Compute receipts root (if any receipts) and ensure txs root matches tx set
         receipts_root = ZERO32
@@ -4758,7 +4771,9 @@ def miner_submit_block(**payload: Any) -> Dict[str, Any]:
                     )
 
                 try:
-                    _apply_block_reward(_ctx(), int(result.height or 0), payout_bytes)
+                    # CRITICAL FIX: Pass instant_block flag from header to ensure correct reward calculation
+                    instant_block_flag = getattr(block_obj.header, "instantBlock", False)
+                    _apply_block_reward(_ctx(), int(result.height or 0), payout_bytes, instant_block=instant_block_flag)
                 except Exception:
                     log.warning("Failed to apply block reward for submitted block", exc_info=True)
 
