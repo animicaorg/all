@@ -211,10 +211,22 @@ class DashboardTab(QWidget):
             if balance is not None:
                 # Convert from base units to ANM
                 try:
-                    balance_value = float(balance) / ANM_BASE_UNITS
+                    # Handle hex strings (e.g., "0x1234") and regular numbers
+                    if isinstance(balance, str):
+                        if balance.startswith("0x"):
+                            balance_int = int(balance, 16)
+                        else:
+                            balance_int = int(balance)
+                    else:
+                        balance_int = int(balance)
+                    
+                    balance_value = balance_int / ANM_BASE_UNITS
                     self.balance_label.setText(f"{balance_value:.9f} ANM")
-                except (ValueError, TypeError):
-                    self.balance_label.setText("Invalid balance")
+                except (ValueError, TypeError) as e:
+                    logger.error(f"Failed to parse balance '{balance}': {e}")
+                    # Only show first 20 chars to avoid displaying sensitive data
+                    safe_balance = str(balance)[:20] if balance else "None"
+                    self.balance_label.setText(f"Parse error: {safe_balance}...")
             else:
                 self.balance_label.setText("Unable to query")
                 
@@ -224,6 +236,11 @@ class DashboardTab(QWidget):
     
     def on_mining_event(self, event: MiningEvent) -> None:
         """Handle mining events."""
+        # Guard against None event.data
+        if event.data is None:
+            logger.warning("Received mining event with None data")
+            return
+        
         if event.event_type == EventType.STATUS_CHANGE:
             status = event.data.get('status', 'unknown')
             self.mining_status_label.setText(status.capitalize())
@@ -259,7 +276,11 @@ class DashboardTab(QWidget):
         elif event.event_type == EventType.BLOCK_FOUND:
             count = event.data.get('block_count', 0)
             self.blocks_label.setText(str(count))
+            
+            # Refresh balance when a block is found
+            self.refresh_balance()
         
         elif event.event_type == EventType.TEMPLATE_UPDATE:
-            height = event.data.get('height', 0)
-            self.height_label.setText(str(height))
+            # Don't update height from templates as it conflicts with RPC updates
+            # The RPC timer will update height from actual chain state
+            pass
