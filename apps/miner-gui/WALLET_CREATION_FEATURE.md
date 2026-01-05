@@ -51,7 +51,8 @@ This document describes the UI changes made to the Animica Miner GUI to support 
 **Features**:
 - Modal dialog that opens when "Create New Wallet" is clicked
 - Input field for wallet label
-- Informational text about wallet creation
+- **Input field for wallet file location with browse button (NEW)**
+- Informational text about wallet creation that updates based on selected path
 - Real-time status updates during wallet creation
 - Uses Dilithium3 post-quantum cryptography
 
@@ -66,12 +67,18 @@ This document describes the UI changes made to the Animica Miner GUI to support 
 │ │ My Wallet                                       │ │
 │ └─────────────────────────────────────────────────┘ │
 │                                                     │
+│ Wallet File Location:                               │
+│ ┌──────────────────────────────────┐  ┌─────────┐  │
+│ │ ~/.animica/wallets.json          │  │Browse...│  │
+│ └──────────────────────────────────┘  └─────────┘  │
+│                                                     │
 │ A new wallet will be created and saved to           │
 │ ~/.animica/wallets.json                            │
 │ The wallet will use Dilithium3 post-quantum        │
 │ cryptography.                                       │
 │                                                     │
-│ ✓ Wallet created successfully!                     │
+│ ✓ Wallet created successfully at                   │
+│   ~/.animica/wallets.json!                         │
 │                                                     │
 │                             ┌────┐  ┌────────┐     │
 │                             │ OK │  │ Cancel │     │
@@ -81,16 +88,19 @@ This document describes the UI changes made to the Animica Miner GUI to support 
 
 **Process Flow**:
 1. User clicks "Create New Wallet" on WalletConfigPage
-2. Dialog opens with label input field
-3. User enters wallet label and clicks OK
-4. Status shows "Creating wallet..." (blue text)
-5. CLI command runs: `python -m animica wallet create --label <label> --allow-insecure-fallback`
-6. On success: Status shows "✓ Wallet created successfully!" (green text)
-7. Dialog closes and new address is automatically filled into WalletConfigPage
-8. Success message appears: "✓ New wallet created and loaded"
+2. Dialog opens with label input field and wallet file location field (defaults to ~/.animica/wallets.json)
+3. User can optionally click "Browse..." to select a custom location for the wallets.json file
+4. Info text updates dynamically to show the selected path
+5. User enters wallet label and clicks OK
+6. Status shows "Creating wallet..." (blue text)
+7. CLI command runs: `python -m animica wallet --wallet-file <path> create --label <label> --allow-insecure-fallback`
+8. On success: Status shows "✓ Wallet created successfully at <path>!" (green text)
+9. Dialog closes and new address is automatically filled into WalletConfigPage
+10. Success message appears: "✓ New wallet created and loaded"
 
 **Error Handling**:
 - Empty label: "Please enter a wallet label" (red)
+- Invalid file extension: "Wallet file must have .json extension" (red)
 - Timeout: "Wallet creation timed out" (red)
 - Other errors: "Error: [error message]" (red)
 
@@ -201,20 +211,30 @@ This document describes the UI changes made to the Animica Miner GUI to support 
 ## Technical Implementation
 
 ### Wallet Creation
-- Uses subprocess to call `python -m animica wallet create`
+- Uses subprocess to call `python -m animica wallet --wallet-file <path> create`
+- Accepts custom wallet file path via `--wallet-file` parameter
+- Defaults to `~/.animica/wallets.json` if no custom path provided
 - Passes `--allow-insecure-fallback` flag for development/testing
 - 30-second timeout for wallet creation
 - Parses stdout to extract the created address
 - Error handling for timeout, subprocess errors, and parsing failures
+- Validates wallet file path has `.json` extension
+
+### UI Components
+- `CreateWalletDialog.wallet_path_input`: Editable text field for wallet file path
+- `CreateWalletDialog._browse_wallet_file()`: Opens file browser for path selection
+- `CreateWalletDialog._update_info_text()`: Dynamically updates info text based on selected path
+- Browse button uses `QFileDialog.getSaveFileName` to allow custom location selection
+- Info text updates in real-time as user changes the path
 
 ### State Management
 - `CreateWalletDialog.created_address` stores the new address
 - Address is transferred to `WalletConfigPage.address_input` on success
-- Validation label updated with success message
+- Validation label updated with success message including the file path
 - Wizard field registration ensures address is available to all pages
 
 ### Configuration Storage
-- Wallet is created in `~/.animica/wallets.json`
+- Wallet is created in user-specified location (defaults to `~/.animica/wallets.json`)
 - Mining configuration saved to `~/.animica/gui-miner/config.json`
 - `config.miner.auto_start` field controls mining startup
 - When checkbox is unchecked, `auto_start` is set to `False`
@@ -224,8 +244,9 @@ This document describes the UI changes made to the Animica Miner GUI to support 
 1. **Unified Application**: Users can now use the GUI as both a wallet and mining application
 2. **Simplified Onboarding**: New users don't need to use CLI to create wallets
 3. **Flexibility**: Users can setup wallet first, configure everything, then decide whether to mine
-4. **Clear Communication**: Labels and help text make it obvious what each option does
-5. **Secure**: Uses the same wallet creation CLI that's been tested and validated
+4. **Custom Wallet Location**: Users can choose where to save their wallet file (e.g., on a USB drive, cloud storage, etc.)
+5. **Clear Communication**: Labels and help text make it obvious what each option does
+6. **Secure**: Uses the same wallet creation CLI that's been tested and validated
 
 ## Testing
 
