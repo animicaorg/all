@@ -1,0 +1,250 @@
+# Docker Compose for Animica Compute Platform - Local Development
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: animica
+      POSTGRES_PASSWORD: animica_dev_password
+      POSTGRES_DB: animica_compute
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U animica"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  # RabbitMQ Message Queue
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: animica
+      RABBITMQ_DEFAULT_PASS: animica_dev_password
+    ports:
+      - "5672:5672"   # AMQP
+      - "15672:15672" # Management UI
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # MinIO (S3-compatible storage for models)
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: animica
+      MINIO_ROOT_PASSWORD: animica_dev_password
+    ports:
+      - "9000:9000"   # S3 API
+      - "9001:9001"   # Web Console
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+  # API Gateway
+  api-gateway:
+    build:
+      context: ./packages/api
+      dockerfile: Dockerfile
+    environment:
+      - DATABASE_URL=postgresql://animica:animica_dev_password@postgres:5432/animica_compute
+      - REDIS_URL=redis://redis:6379/0
+      - AUTH_SERVICE_URL=http://auth-service:8001
+      - BILLING_SERVICE_URL=http://billing-service:8002
+      - INFERENCE_SERVICE_URL=http://inference-service:8003
+      - SANDBOX_SERVICE_URL=http://sandbox-runner:8004
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./packages/api:/app
+    command: uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
+
+  # Auth Service
+  auth-service:
+    build:
+      context: ./packages/auth-service
+      dockerfile: Dockerfile
+    environment:
+      - DATABASE_URL=postgresql://animica:animica_dev_password@postgres:5432/animica_compute
+      - REDIS_URL=redis://redis:6379/1
+      - JWT_SECRET_KEY=dev_jwt_secret_change_in_production
+      - ANIMICA_RPC_URL=http://localhost:8545
+    ports:
+      - "8001:8001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./packages/auth-service:/app
+    command: uvicorn auth_service.main:app --host 0.0.0.0 --port 8001 --reload
+
+  # Billing Service
+  billing-service:
+    build:
+      context: ./packages/billing-service
+      dockerfile: Dockerfile
+    environment:
+      - DATABASE_URL=postgresql://animica:animica_dev_password@postgres:5432/animica_compute
+      - REDIS_URL=redis://redis:6379/2
+      - STRIPE_API_KEY=${STRIPE_API_KEY:-sk_test_example}
+      - PAYPAL_CLIENT_ID=${PAYPAL_CLIENT_ID:-}
+      - PAYPAL_CLIENT_SECRET=${PAYPAL_CLIENT_SECRET:-}
+    ports:
+      - "8002:8002"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./packages/billing-service:/app
+    command: uvicorn billing_service.main:app --host 0.0.0.0 --port 8002 --reload
+
+  # Inference Service (mock without GPU)
+  inference-service:
+    build:
+      context: ./packages/inference
+      dockerfile: Dockerfile.dev
+    environment:
+      - MODEL_PATH=/models
+      - REDIS_URL=redis://redis:6379/3
+      - GPU_ENABLED=false
+    ports:
+      - "8003:8003"
+    depends_on:
+      - redis
+      - minio
+    volumes:
+      - ./packages/inference:/app
+      - models_cache:/models
+    command: python -m inference.main --host 0.0.0.0 --port 8003
+
+  # Sandbox Runner
+  sandbox-runner:
+    build:
+      context: ./packages/sandbox-runner
+      dockerfile: Dockerfile
+    privileged: true  # Required for gVisor
+    environment:
+      - REDIS_URL=redis://redis:6379/4
+      - RABBITMQ_URL=amqp://animica:animica_dev_password@rabbitmq:5672/
+    ports:
+      - "8004:8004"
+    depends_on:
+      - redis
+      - rabbitmq
+    volumes:
+      - ./packages/sandbox-runner:/app
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: uvicorn sandbox_runner.main:app --host 0.0.0.0 --port 8004 --reload
+
+  # Queue Service (Celery Worker)
+  queue-worker:
+    build:
+      context: ./packages/queue-service
+      dockerfile: Dockerfile
+    environment:
+      - RABBITMQ_URL=amqp://animica:animica_dev_password@rabbitmq:5672/
+      - REDIS_URL=redis://redis:6379/5
+    depends_on:
+      - rabbitmq
+      - redis
+    volumes:
+      - ./packages/queue-service:/app
+    command: celery -A queue_service.worker worker --loglevel=info
+
+  # GitHub App Service
+  github-app:
+    build:
+      context: ./packages/github-app
+      dockerfile: Dockerfile
+    environment:
+      - DATABASE_URL=postgresql://animica:animica_dev_password@postgres:5432/animica_compute
+      - GITHUB_APP_ID=${GITHUB_APP_ID:-}
+      - GITHUB_APP_PRIVATE_KEY_PATH=/secrets/github-app.pem
+      - GITHUB_WEBHOOK_SECRET=${GITHUB_WEBHOOK_SECRET:-}
+    ports:
+      - "8005:8005"
+    depends_on:
+      - postgres
+    volumes:
+      - ./packages/github-app:/app
+      - ./secrets:/secrets:ro
+    command: uvicorn github_app.main:app --host 0.0.0.0 --port 8005 --reload
+
+  # Model Registry
+  model-registry:
+    build:
+      context: ./packages/model-registry
+      dockerfile: Dockerfile
+    environment:
+      - DATABASE_URL=postgresql://animica:animica_dev_password@postgres:5432/animica_compute
+      - S3_ENDPOINT=http://minio:9000
+      - S3_ACCESS_KEY=animica
+      - S3_SECRET_KEY=animica_dev_password
+      - S3_BUCKET=animica-models
+    ports:
+      - "8006:8006"
+    depends_on:
+      - postgres
+      - minio
+    volumes:
+      - ./packages/model-registry:/app
+    command: uvicorn model_registry.main:app --host 0.0.0.0 --port 8006 --reload
+
+  # Web Application
+  web:
+    build:
+      context: ./packages/web
+      dockerfile: Dockerfile.dev
+    environment:
+      - VITE_API_URL=http://localhost:8000
+      - VITE_WS_URL=ws://localhost:8000
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./packages/web:/app
+      - /app/node_modules
+    command: pnpm dev --host 0.0.0.0
+
+volumes:
+  postgres_data:
+  redis_data:
+  rabbitmq_data:
+  minio_data:
+  models_cache:
+
+networks:
+  default:
+    name: animica-compute-network
