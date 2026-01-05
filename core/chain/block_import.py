@@ -339,6 +339,7 @@ class BlockImporter:
 
     __slots__ = (
         "params",
+        "full_params_dict",
         "block_db",
         "tx_index",
         "state_db",
@@ -363,12 +364,18 @@ class BlockImporter:
         state_db=None,
         tx_index=None,
         fork_choice: Optional[Any] = None,
+        full_params_dict: Optional[Dict[str, Any]] = None,
     ):
         self.params = params
         self.block_db = block_db
         self.tx_index = tx_index
         self.state_db = state_db
         self.fork_choice = fork_choice
+        # Store full params dict for reward calculation (includes monetary.issuance)
+        # If not provided, try to load from spec/params.yaml
+        self.full_params_dict = full_params_dict
+        if self.full_params_dict is None:
+            self.full_params_dict = _load_full_params_dict(params.chain_id)
         
         # Initialize difficulty adjustment state
         self.difficulty_state = None
@@ -1281,7 +1288,7 @@ class BlockImporter:
             rewards = compute_block_reward(
                 chain_id=chain_id,
                 height=height,
-                params=self.params.to_dict() if hasattr(self.params, "to_dict") else {},
+                params=self.full_params_dict,
             )
         except Exception as e:
             log.warning(
@@ -1591,6 +1598,74 @@ class _OrphanBlock:
 
 
 _IMPORTER_CACHE: Dict[int, BlockImporter] = {}
+
+# Network key prefix for params.yaml lookup (e.g., "animica:1" for mainnet)
+# This matches the network key format in spec/params.yaml under the "networks" section:
+#   networks:
+#     "animica:1":    # mainnet
+#     "animica:2":    # testnet
+#     "animica:1337": # devnet
+_NETWORK_KEY_PREFIX = "animica"
+
+
+@lru_cache(maxsize=4)
+def _load_full_params_dict(chain_id: int) -> Dict[str, Any]:
+    """
+    Load full params dict from spec/params.yaml for reward calculation.
+    
+    This includes the monetary.issuance configuration needed by compute_block_reward().
+    Returns a network-specific dict with all parameters, or empty dict if file not found.
+    
+    Args:
+        chain_id: Chain identifier (1=mainnet, 2=testnet, 1337=devnet, etc.)
+        
+    Returns:
+        Dict with full network configuration including monetary.issuance
+    """
+    from pathlib import Path
+    
+    try:
+        import yaml
+    except ImportError:
+        log.warning("PyYAML not available; rewards will not be calculated")
+        return {}
+    
+    # Find spec/params.yaml relative to this file (core/chain/block_import.py)
+    # Repository root is two levels up
+    repo_root = Path(__file__).resolve().parents[2]
+    params_path = repo_root / "spec" / "params.yaml"
+    
+    if not params_path.exists():
+        log.warning(
+            f"spec/params.yaml not found at {params_path}; rewards will not be calculated"
+        )
+        return {}
+    
+    try:
+        with params_path.open("r", encoding="utf-8") as f:
+            raw = yaml.safe_load(f)
+        
+        # Look for network-specific config under networks.<network_key>
+        networks = raw.get("networks", {})
+        network_key = f"{_NETWORK_KEY_PREFIX}:{chain_id}"
+        
+        if network_key in networks:
+            network_config = dict(networks[network_key])
+            # Ensure chain_id is set
+            network_config["chain_id"] = chain_id
+            network_config["chainId"] = chain_id
+            return network_config
+        
+        log.warning(
+            f"No network config found for chain_id={chain_id} (key={network_key}) "
+            f"in {params_path}; rewards will not be calculated"
+        )
+        return {}
+    except Exception as e:
+        log.warning(
+            f"Failed to load {params_path}: {e}; rewards will not be calculated"
+        )
+        return {}
 
 
 @lru_cache(maxsize=4)
