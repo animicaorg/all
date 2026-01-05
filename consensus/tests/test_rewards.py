@@ -324,9 +324,9 @@ def test_compute_block_reward_with_params():
                     "max_halvings": 64,
                 },
                 "subsidy_split_pct": {
-                    "miner": 60,
-                    "aicf": 30,
-                    "treasury": 10,
+                    "miner": 100,  # 100% to miner
+                    "aicf": 0,
+                    "treasury": 0,
                 },
             }
         },
@@ -340,27 +340,21 @@ def test_compute_block_reward_with_params():
     # Test at height 1 (first post-genesis block)
     rewards = compute_block_reward(chain_id=1337, height=1, params=params)
     
-    # Should return 3 rewards (miner, aicf, treasury)
-    assert len(rewards) == 3
+    # Should return only 1 reward (miner gets 100%)
+    assert len(rewards) == 1, f"Expected 1 reward (100% to miner), got {len(rewards)}"
     
     # Verify addresses
     addresses = [addr for addr, _ in rewards]
     assert "anim1coinbasexxxxxxxxxxxxxxxxxxxxxxxxxxxxx" in addresses
-    assert "anim1aicfxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" in addresses
-    assert "anim1treasuryxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" in addresses
     
     # Verify amounts sum to start amount
     total = sum(amt for _, amt in rewards)
     assert total == 10000000
     
-    # Verify split percentages
+    # Verify miner gets 100%
     miner_amt = next(amt for addr, amt in rewards if "coinbase" in addr)
-    aicf_amt = next(amt for addr, amt in rewards if "aicf" in addr)
-    treasury_amt = next(amt for addr, amt in rewards if "treasury" in addr)
     
-    assert miner_amt == 6000000  # 60%
-    assert aicf_amt == 3000000  # 30%
-    assert treasury_amt == 1000000  # 10%
+    assert miner_amt == 10000000  # 100%
 
 
 def test_compute_block_reward_returns_empty_for_invalid_params():
@@ -387,9 +381,9 @@ def test_compute_block_reward_5_anm_base():
                     "max_halvings": 64,
                 },
                 "subsidy_split_pct": {
-                    "miner": 80,
-                    "aicf": 15,
-                    "treasury": 5,
+                    "miner": 100,  # 100% to miner
+                    "aicf": 0,
+                    "treasury": 0,
                 },
             }
         },
@@ -403,22 +397,18 @@ def test_compute_block_reward_5_anm_base():
     # Test at height 1 (first post-genesis block)
     rewards = compute_block_reward(chain_id=1337, height=1, params=params)
     
-    # Should return 3 rewards (miner, aicf, treasury)
-    assert len(rewards) == 3
+    # Should return only 1 reward (miner gets 100%)
+    assert len(rewards) == 1, f"Expected 1 reward (100% to miner), got {len(rewards)}"
     
     # Verify total reward is 5 ANM (5,000,000,000 nANM)
     base_reward = 5000000000  # 5 ANM in nANM
     total = sum(amt for _, amt in rewards)
     assert total == base_reward, f"Expected 5 ANM ({base_reward} nANM), got {total}"
     
-    # Verify split percentages (80% miner, 15% aicf, 5% treasury)
-    miner_amt = next(amt for addr, amt in rewards if "coinbase" in addr)
-    aicf_amt = next(amt for addr, amt in rewards if "aicf" in addr)
-    treasury_amt = next(amt for addr, amt in rewards if "treasury" in addr)
-    
-    assert miner_amt == base_reward * 80 // 100  # 80% of 5 ANM
-    assert aicf_amt == base_reward * 15 // 100    # 15% of 5 ANM
-    assert treasury_amt == base_reward * 5 // 100  # 5% of 5 ANM
+    # Verify miner gets 100%
+    miner_addr, miner_amt = rewards[0]
+    assert "coinbase" in miner_addr, f"Expected coinbase address, got {miner_addr}"
+    assert miner_amt == base_reward  # 100% of 5 ANM
 
 
 def test_compute_block_reward_halving_at_90m():
@@ -434,9 +424,9 @@ def test_compute_block_reward_halving_at_90m():
                     "max_halvings": 64,
                 },
                 "subsidy_split_pct": {
-                    "miner": 80,
-                    "aicf": 15,
-                    "treasury": 5,
+                    "miner": 100,  # 100% to miner
+                    "aicf": 0,
+                    "treasury": 0,
                 },
             }
         },
@@ -450,22 +440,18 @@ def test_compute_block_reward_halving_at_90m():
     # Test at height 90000001 (first block of epoch 1, after first halving)
     rewards = compute_block_reward(chain_id=1337, height=90000001, params=params)
     
-    # Should return 3 rewards (miner, aicf, treasury)
-    assert len(rewards) == 3
+    # Should return only 1 reward (miner gets 100%)
+    assert len(rewards) == 1, f"Expected 1 reward (100% to miner), got {len(rewards)}"
     
     # Verify total reward is 2.5 ANM (half of 5 ANM)
     halved_reward = 2500000000  # 2.5 ANM after first halving
     total = sum(amt for _, amt in rewards)
     assert total == halved_reward, f"Expected 2.5 ANM ({halved_reward} nANM) after first halving, got {total}"
     
-    # Verify split percentages (80% miner, 15% aicf, 5% treasury)
-    miner_amt = next(amt for addr, amt in rewards if "coinbase" in addr)
-    aicf_amt = next(amt for addr, amt in rewards if "aicf" in addr)
-    treasury_amt = next(amt for addr, amt in rewards if "treasury" in addr)
-    
-    assert miner_amt == halved_reward * 80 // 100  # 80% of 2.5 ANM
-    assert aicf_amt == halved_reward * 15 // 100    # 15% of 2.5 ANM
-    assert treasury_amt == halved_reward * 5 // 100  # 5% of 2.5 ANM
+    # Verify miner gets 100%
+    miner_addr, miner_amt = rewards[0]
+    assert "coinbase" in miner_addr, f"Expected coinbase address, got {miner_addr}"
+    assert miner_amt == halved_reward  # 100% of 2.5 ANM
 
 
 def test_compute_block_reward_second_halving_at_180m():
@@ -481,9 +467,9 @@ def test_compute_block_reward_second_halving_at_180m():
                     "max_halvings": 64,
                 },
                 "subsidy_split_pct": {
-                    "miner": 80,
-                    "aicf": 15,
-                    "treasury": 5,
+                    "miner": 100,  # 100% to miner
+                    "aicf": 0,
+                    "treasury": 0,
                 },
             }
         },
@@ -497,22 +483,18 @@ def test_compute_block_reward_second_halving_at_180m():
     # Test at height 180000001 (first block of epoch 2, after second halving)
     rewards = compute_block_reward(chain_id=1337, height=180000001, params=params)
     
-    # Should return 3 rewards (miner, aicf, treasury)
-    assert len(rewards) == 3
+    # Should return only 1 reward (miner gets 100%)
+    assert len(rewards) == 1, f"Expected 1 reward (100% to miner), got {len(rewards)}"
     
     # Verify total reward is 1.25 ANM (quarter of 5 ANM)
     double_halved_reward = 1250000000  # 1.25 ANM after second halving
     total = sum(amt for _, amt in rewards)
     assert total == double_halved_reward, f"Expected 1.25 ANM ({double_halved_reward} nANM) after second halving, got {total}"
     
-    # Verify split percentages (80% miner, 15% aicf, 5% treasury)
-    miner_amt = next(amt for addr, amt in rewards if "coinbase" in addr)
-    aicf_amt = next(amt for addr, amt in rewards if "aicf" in addr)
-    treasury_amt = next(amt for addr, amt in rewards if "treasury" in addr)
-    
-    assert miner_amt == double_halved_reward * 80 // 100  # 80% of 1.25 ANM
-    assert aicf_amt == double_halved_reward * 15 // 100    # 15% of 1.25 ANM
-    assert treasury_amt == double_halved_reward * 5 // 100  # 5% of 1.25 ANM
+    # Verify miner gets 100%
+    miner_addr, miner_amt = rewards[0]
+    assert "coinbase" in miner_addr, f"Expected coinbase address, got {miner_addr}"
+    assert miner_amt == double_halved_reward  # 100% of 1.25 ANM
 
 
 def test_compute_block_reward_mainnet_100_pct_to_miner():
