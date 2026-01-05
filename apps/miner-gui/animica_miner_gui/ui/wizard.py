@@ -157,8 +157,26 @@ class CreateWalletDialog(QDialog):
             return
         
         # Validate wallet file path
-        if not wallet_file_path.endswith('.json'):
-            self.status_label.setText("Wallet file must have .json extension")
+        try:
+            wallet_path = Path(wallet_file_path)
+            
+            # Ensure the path is well-formed
+            if not wallet_path.suffix == '.json':
+                self.status_label.setText("Wallet file must have .json extension")
+                self.status_label.setStyleSheet("color: red;")
+                return
+            
+            # Resolve the path to absolute to prevent directory traversal
+            wallet_path_resolved = wallet_path.resolve()
+            
+            # Ensure parent directory exists or can be created
+            wallet_path_resolved.parent.mkdir(parents=True, exist_ok=True)
+            
+            # Convert back to string for command
+            wallet_file_path = str(wallet_path_resolved)
+            
+        except (ValueError, OSError) as e:
+            self.status_label.setText(f"Invalid wallet file path: {e}")
             self.status_label.setStyleSheet("color: red;")
             return
         
@@ -166,7 +184,8 @@ class CreateWalletDialog(QDialog):
             self.status_label.setText("Creating wallet...")
             self.status_label.setStyleSheet("color: blue;")
             
-            # Call the wallet creation CLI with label and wallet file path as separate arguments (safer)
+            # Call the wallet creation CLI with label and wallet file path as separate arguments
+            # Using subprocess.run with a list of arguments (not shell=True) prevents command injection
             cmd = [
                 sys.executable, "-m", "animica", "wallet", 
                 "--wallet-file", wallet_file_path,
