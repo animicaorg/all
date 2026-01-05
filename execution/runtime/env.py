@@ -211,6 +211,21 @@ def make_block_env(
         if coinbase is not None
         else _first_present(head, ("coinbase", "miner", "proposer"))
     )
+    
+    # If coinbase is not found in standard fields, try decoding from extra field
+    # The extra field may contain CBOR-encoded metadata: {coinbase: bytes}
+    if cb_src is None:
+        extra_field = _first_present(head, ("extra",))
+        if extra_field and isinstance(extra_field, (bytes, bytearray)) and len(extra_field) > 0:
+            try:
+                import cbor2
+                extra_data = cbor2.loads(bytes(extra_field))
+                if isinstance(extra_data, dict) and "coinbase" in extra_data:
+                    cb_src = extra_data["coinbase"]
+            except Exception:
+                # Failed to decode extra field, use default
+                pass
+    
     # Animica uses 32-byte addresses (not 20-byte EVM addresses)
     cb = _as_bytes(cb_src, expect_len=ADDRESS_LEN) if cb_src is not None else b"\x00" * ADDRESS_LEN
 
