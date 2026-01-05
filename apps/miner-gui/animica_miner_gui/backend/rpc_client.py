@@ -70,8 +70,8 @@ class RPCClient:
         
         try:
             if HAVE_HTTPX:
-                # Without this, httpx won't follow redirects (default behavior), causing
-                # connection failures when the server issues redirects (e.g., 307/308).
+                # httpx won't follow redirects by default - this causes connection failures
+                # when the server issues redirects (e.g., 307/308). Enable it explicitly.
                 response = httpx.post(
                     self.rpc_url,
                     json=payload,
@@ -82,8 +82,8 @@ class RPCClient:
                 data = response.json()
             elif HAVE_REQUESTS:
                 import requests
-                # allow_redirects=True is the default for requests, but made explicit to
-                # document redirect handling behavior (similar to httpx's follow_redirects)
+                # requests follows redirects by default (allow_redirects=True), but made
+                # explicit here to document that redirect-following is enabled in both paths
                 response = requests.post(
                     self.rpc_url,
                     json=payload,
