@@ -9,14 +9,18 @@ Guides users through:
 6. Summary and start mining
 """
 
+import json
 import logging
+import re
+import subprocess
+import sys
+from pathlib import Path
 from typing import Optional
 
-from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QCheckBox,
-    QComboBox,
     QDialog,
+    QDialogButtonBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -33,7 +37,6 @@ from PySide6.QtWidgets import (
 
 from animica_miner_gui.backend.config import (
     MiningAppConfig,
-    NetworkConfig,
     NetworkType,
     save_config,
 )
@@ -41,6 +44,115 @@ from animica_miner_gui.backend.device_detection import detect_all
 from animica_miner_gui.backend.rpc_client import RPCClient
 
 logger = logging.getLogger(__name__)
+
+
+class CreateWalletDialog(QDialog):
+    """Dialog for creating a new wallet."""
+    
+    def __init__(self, parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self.setWindowTitle("Create New Wallet")
+        self.setMinimumWidth(400)
+        
+        layout = QVBoxLayout()
+        
+        # Label input
+        layout.addWidget(QLabel("Wallet Label:"))
+        self.label_input = QLineEdit()
+        self.label_input.setPlaceholderText("My Wallet")
+        layout.addWidget(self.label_input)
+        
+        # Info text
+        info_text = QLabel(
+            "A new wallet will be created and saved to ~/.animica/wallets.json\n"
+            "The wallet will use Dilithium3 post-quantum cryptography."
+        )
+        info_text.setWordWrap(True)
+        info_text.setStyleSheet("color: gray; font-size: 11px;")
+        layout.addWidget(info_text)
+        
+        # Status label
+        self.status_label = QLabel("")
+        layout.addWidget(self.status_label)
+        
+        # Buttons
+        button_box = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        button_box.accepted.connect(self.create_wallet)
+        button_box.rejected.connect(self.reject)
+        layout.addWidget(button_box)
+        
+        self.setLayout(layout)
+        
+        self.created_address: Optional[str] = None
+    
+    def create_wallet(self) -> None:
+        """Create a new wallet using the wallet CLI functionality."""
+        label = self.label_input.text().strip()
+        
+        if not label:
+            self.status_label.setText("Please enter a wallet label")
+            self.status_label.setStyleSheet("color: red;")
+            return
+        
+        # Validate label: only allow alphanumeric, spaces, hyphens, and underscores
+        # This prevents command injection and ensures clean wallet names
+        if not re.match(r'^[\w\s\-]+$', label):
+            self.status_label.setText("Label can only contain letters, numbers, spaces, hyphens, and underscores")
+            self.status_label.setStyleSheet("color: red;")
+            return
+        
+        if len(label) > 50:
+            self.status_label.setText("Label too long (max 50 characters)")
+            self.status_label.setStyleSheet("color: red;")
+            return
+        
+        try:
+            self.status_label.setText("Creating wallet...")
+            self.status_label.setStyleSheet("color: blue;")
+            
+            # Call the wallet creation CLI with label as a separate argument (safer)
+            result = subprocess.run(
+                [sys.executable, "-m", "animica", "wallet", "create", 
+                 "--label", label, "--allow-insecure-fallback"],
+                capture_output=True,
+                text=True,
+                timeout=30
+            )
+            
+            if result.returncode != 0:
+                raise Exception(f"Wallet creation failed: {result.stderr}")
+            
+            # Parse the output to get the address using regex for robustness
+            address_match = re.search(r'Address:\s*(anim1[a-z0-9]{39,})', result.stdout)
+            if address_match:
+                address = address_match.group(1)
+            else:
+                # Fallback to line-by-line parsing
+                address = None
+                for line in result.stdout.strip().split("\n"):
+                    if line.startswith("Address:"):
+                        address = line.split("Address:")[1].strip()
+                        break
+                
+                if not address:
+                    raise Exception("Could not parse wallet address from output")
+            
+            self.created_address = address
+            self.status_label.setText("✓ Wallet created successfully!")
+            self.status_label.setStyleSheet("color: green;")
+            
+            # Accept the dialog after successful creation
+            self.accept()
+            
+        except subprocess.TimeoutExpired:
+            self.status_label.setText("Wallet creation timed out")
+            self.status_label.setStyleSheet("color: red;")
+        except Exception as e:
+            logger.error(f"Wallet creation failed: {e}")
+            self.status_label.setText(f"Error: {str(e)}")
+            self.status_label.setStyleSheet("color: red;")
 
 
 class NetworkSelectionPage(QWizardPage):
@@ -209,7 +321,7 @@ class WalletConfigPage(QWizardPage):
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.setTitle("Payout Address")
-        self.setSubTitle("Configure where mining rewards will be sent")
+        self.setSubTitle("Configure your wallet address for receiving mining rewards")
         
         layout = QVBoxLayout()
         
@@ -221,14 +333,22 @@ class WalletConfigPage(QWizardPage):
         
         layout.addWidget(self.address_input)
         
+        # Buttons layout
+        buttons_layout = QHBoxLayout()
+        
+        # Create new wallet button
+        self.create_button = QPushButton("Create New Wallet")
+        self.create_button.clicked.connect(self.create_new_wallet)
+        buttons_layout.addWidget(self.create_button)
+        
         # Import from wallets.json button
-        import_layout = QHBoxLayout()
         self.import_button = QPushButton("Import from Wallets")
         self.import_button.clicked.connect(self.import_from_wallets)
-        import_layout.addWidget(self.import_button)
-        import_layout.addStretch()
+        buttons_layout.addWidget(self.import_button)
         
-        layout.addLayout(import_layout)
+        buttons_layout.addStretch()
+        
+        layout.addLayout(buttons_layout)
         
         # Validation status
         self.validation_label = QLabel("")
@@ -239,10 +359,17 @@ class WalletConfigPage(QWizardPage):
         
         self.registerField("payout_address*", self.address_input)
     
+    def create_new_wallet(self) -> None:
+        """Create a new wallet via dialog."""
+        dialog = CreateWalletDialog(self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            if dialog.created_address:
+                self.address_input.setText(dialog.created_address)
+                self.validation_label.setText("✓ New wallet created and loaded")
+                self.validation_label.setStyleSheet("color: green;")
+    
     def import_from_wallets(self) -> None:
         """Import address from ~/.animica/wallets.json."""
-        from pathlib import Path
-        import json
         
         wallet_path = Path.home() / ".animica" / "wallets.json"
         
@@ -461,7 +588,7 @@ class SummaryPage(QWizardPage):
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.setTitle("Summary")
-        self.setSubTitle("Review your configuration")
+        self.setSubTitle("Review your configuration and choose whether to start mining")
         
         layout = QVBoxLayout()
         
@@ -470,47 +597,84 @@ class SummaryPage(QWizardPage):
         
         layout.addWidget(self.summary_text)
         
-        # Start mining checkbox
-        self.start_mining_checkbox = QCheckBox("Start mining immediately")
+        # Start mining checkbox with more descriptive label
+        self.start_mining_checkbox = QCheckBox("Start mining immediately (uncheck to setup wallet only)")
         self.start_mining_checkbox.setChecked(True)
+        self.start_mining_checkbox.toggled.connect(self._on_checkbox_toggled)
         layout.addWidget(self.start_mining_checkbox)
+        
+        # Help text
+        self.help_label = QLabel(
+            "You can start mining later from the main window if you choose wallet-only setup."
+        )
+        self.help_label.setWordWrap(True)
+        self.help_label.setStyleSheet("color: gray; font-size: 11px;")
+        self.help_label.setVisible(False)
+        layout.addWidget(self.help_label)
         
         self.setLayout(layout)
         
         self.registerField("start_mining", self.start_mining_checkbox)
+        
+        # Cache for summary data
+        self._network = ""
+        self._preset = ""
+        self._payout_address = ""
+    
+    def _on_checkbox_toggled(self, checked: bool) -> None:
+        """Show/hide help text based on checkbox state and update mode in summary."""
+        self.help_label.setVisible(not checked)
+        # Update the summary display with the new mode
+        self._update_mode_display()
+    
+    def _update_mode_display(self) -> None:
+        """Update the complete summary with current mode and action text."""
+        start_mining = self.start_mining_checkbox.isChecked()
+        action_text = (
+            "Click <b>Finish</b> to save this configuration and start mining."
+            if start_mining
+            else "Click <b>Finish</b> to save this configuration. You can start mining later from the main window."
+        )
+        
+        summary = f"""
+        <h3>Configuration Summary</h3>
+        <table>
+        <tr><td><b>Network:</b></td><td>{self._network}</td></tr>
+        <tr><td><b>Payout Address:</b></td><td>{self._payout_address}</td></tr>
+        <tr><td><b>Performance Preset:</b></td><td>{self._preset}</td></tr>
+        <tr><td><b>Mode:</b></td><td>{"Start mining immediately" if start_mining else "Wallet setup only"}</td></tr>
+        </table>
+        <br>
+        <p>{action_text}</p>
+        """
+        
+        self.summary_text.setHtml(summary)
     
     def initializePage(self) -> None:
         """Generate summary from wizard fields."""
         # Network
         if self.field("custom"):
-            network = f"Custom ({self.field('custom_rpc')})"
+            self._network = f"Custom ({self.field('custom_rpc')})"
         elif self.field("mainnet"):
-            network = "Mainnet"
+            self._network = "Mainnet"
         elif self.field("testnet"):
-            network = "Testnet"
+            self._network = "Testnet"
         else:
-            network = "Devnet"
+            self._network = "Devnet"
         
         # Preset
         if self.field("preset_max"):
-            preset = "Maximum Performance"
+            self._preset = "Maximum Performance"
         elif self.field("preset_safe"):
-            preset = "Safe Mode"
+            self._preset = "Safe Mode"
         else:
-            preset = "Recommended"
+            self._preset = "Recommended"
         
-        summary = f"""
-        <h3>Configuration Summary</h3>
-        <table>
-        <tr><td><b>Network:</b></td><td>{network}</td></tr>
-        <tr><td><b>Payout Address:</b></td><td>{self.field('payout_address')}</td></tr>
-        <tr><td><b>Performance Preset:</b></td><td>{preset}</td></tr>
-        </table>
-        <br>
-        <p>Click <b>Finish</b> to save this configuration and start the miner.</p>
-        """
+        # Payout address
+        self._payout_address = self.field('payout_address')
         
-        self.summary_text.setHtml(summary)
+        # Generate full summary
+        self._update_mode_display()
 
 
 class FirstRunWizard(QWizard):
