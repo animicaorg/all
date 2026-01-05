@@ -1,0 +1,12 @@
+# Python SDK for Animica integration
+omni-sdk>=0.1.0
+# Async HTTP
+httpx>=0.25.0
+aiohttp>=3.9.0
+# Database
+asyncpg>=0.29.0
+sqlalchemy[asyncio]>=2.0.0
+# Redis
+redis>=5.0.0
+# Utilities
+python-dotenv>=1.0.0
