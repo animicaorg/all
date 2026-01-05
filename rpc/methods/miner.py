@@ -3248,6 +3248,16 @@ def _mine_once(
             _record_local_block(header.height, "0x" + block_hash_bytes.hex(), header)
             _relay_mined_block(block_hash_bytes)
             
+            # CRITICAL: Ensure state changes (block rewards, tx execution) are persisted
+            # Even though StateDB uses autocommit mode, explicitly flush to ensure durability
+            # and provide a hook for future transactional implementations
+            try:
+                if hasattr(ctx.state_db, "commit"):
+                    ctx.state_db.commit()
+                log.debug(f"State changes committed after block acceptance at height {header.height}")
+            except Exception as e:
+                log.warning(f"Failed to commit state after block acceptance: {e}")
+            
             # Update mining state for theta adjustment
             _MINING_STATE["last_block_time"] = time.time()
 
