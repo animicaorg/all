@@ -50,11 +50,11 @@ def test_load_full_params_dict_mainnet():
 def test_block_importer_initializes_with_full_params():
     """Test that BlockImporter initializes with full params dict."""
     from core.chain.block_import import BlockImporter
-    from core.types.params import ChainParams
+    from core.types.params import ChainParams, RetargetParams, RetargetBounds, BlockLimits
     from core.db.block_db import BlockDB
     from core.db.sqlite import SQLiteKV
     
-    # Create minimal ChainParams
+    # Create minimal but valid ChainParams
     params = ChainParams(
         chain_id=1337,
         chain_name="Test",
@@ -64,8 +64,18 @@ def test_block_importer_initializes_with_full_params():
         poies_policy_root=b"\x00" * 32,
         theta_initial=1_000_000,
         gamma_total_cap=1_000_000,
-        retarget=None,  # type: ignore
-        block=None,  # type: ignore
+        retarget=RetargetParams(
+            window=2048,
+            ema_alpha=0.1,
+            bounds=RetargetBounds(min=0.5, max=2.0),
+        ),
+        block=BlockLimits(
+            target_seconds=2.0,
+            max_bytes=1_500_000,
+            max_gas=20_000_000,
+            tx_max_bytes=1_500_000,
+            min_gas_price=0,
+        ),
     )
     
     # Create minimal block_db
@@ -106,11 +116,11 @@ def test_block_reward_computation_with_full_params():
 def test_block_importer_full_params_dict_fallback():
     """Test that BlockImporter falls back to empty dict if spec/params.yaml not found."""
     from core.chain.block_import import BlockImporter
-    from core.types.params import ChainParams
+    from core.types.params import ChainParams, RetargetParams, RetargetBounds, BlockLimits
     from core.db.block_db import BlockDB
     from core.db.sqlite import SQLiteKV
     
-    # Create minimal ChainParams with invalid chain_id (to test fallback)
+    # Create minimal but valid ChainParams with invalid chain_id (to test fallback)
     params = ChainParams(
         chain_id=99999,  # Non-existent network
         chain_name="Test",
@@ -120,8 +130,18 @@ def test_block_importer_full_params_dict_fallback():
         poies_policy_root=b"\x00" * 32,
         theta_initial=1_000_000,
         gamma_total_cap=1_000_000,
-        retarget=None,  # type: ignore
-        block=None,  # type: ignore
+        retarget=RetargetParams(
+            window=2048,
+            ema_alpha=0.1,
+            bounds=RetargetBounds(min=0.5, max=2.0),
+        ),
+        block=BlockLimits(
+            target_seconds=2.0,
+            max_bytes=1_500_000,
+            max_gas=20_000_000,
+            tx_max_bytes=1_500_000,
+            min_gas_price=0,
+        ),
     )
     
     # Create minimal block_db
