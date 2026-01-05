@@ -303,7 +303,8 @@ class MinerRunner:
                     line_lower = line.lower()
                     
                     # Check for share found - look for specific patterns
-                    if re.search(r'\bshare\b.*\b(found|accepted|submitted)\b', line_lower):
+                    # Matches: "share found", "found share", "share accepted", etc.
+                    if re.search(r'\b(share|found).*\b(share|found|accepted|submitted)\b', line_lower):
                         self._last_shares += 1
                         self._emit_event(MiningEvent(
                             event_type=EventType.SHARE_FOUND,
