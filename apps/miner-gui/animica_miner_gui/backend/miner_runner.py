@@ -248,6 +248,15 @@ class MinerRunner:
             
             logger.info(f"Starting miner: {' '.join(cmd)}")
             
+            # Create a minimal environment for the subprocess
+            minimal_env = {
+                'PATH': os.environ.get('PATH', ''),
+                'HOME': os.environ.get('HOME', ''),
+                'USER': os.environ.get('USER', ''),
+                'PYTHONPATH': os.environ.get('PYTHONPATH', ''),
+                'ANIMICA_PAYOUT_ADDRESS': payout_address
+            }
+            
             # Start the miner process
             self.process = subprocess.Popen(
                 cmd,
@@ -255,7 +264,7 @@ class MinerRunner:
                 stderr=subprocess.STDOUT,
                 text=True,
                 bufsize=1,  # Line buffered
-                env={**os.environ, 'ANIMICA_PAYOUT_ADDRESS': payout_address}
+                env=minimal_env
             )
             
             # Monitor output and extract events
@@ -293,8 +302,8 @@ class MinerRunner:
                     # Parse mining events from output
                     line_lower = line.lower()
                     
-                    # Check for share found
-                    if "share" in line_lower and ("found" in line_lower or "accepted" in line_lower):
+                    # Check for share found - look for specific patterns
+                    if re.search(r'\bshare\b.*\b(found|accepted|submitted)\b', line_lower):
                         self._last_shares += 1
                         self._emit_event(MiningEvent(
                             event_type=EventType.SHARE_FOUND,
@@ -302,21 +311,33 @@ class MinerRunner:
                             data={"share_count": self._last_shares}
                         ))
                     
-                    # Check for block found
-                    if "block" in line_lower and ("found" in line_lower or "mined" in line_lower or "accepted" in line_lower):
+                    # Check for block found - look for specific patterns
+                    if re.search(r'\bblock\b.*\b(found|mined|accepted)\b', line_lower):
                         self._last_blocks += 1
+                        
+                        # Try to extract height from output
+                        height_match = re.search(r'height[:\s]+(\d+)', line_lower)
+                        block_height = int(height_match.group(1)) if height_match else 0
+                        
                         self._emit_event(MiningEvent(
                             event_type=EventType.BLOCK_FOUND,
                             timestamp=time.time(),
-                            data={"block_count": self._last_blocks, "height": 0}
+                            data={"block_count": self._last_blocks, "height": block_height}
                         ))
                     
-                    # Check for template/job updates
-                    if "template" in line_lower or "job" in line_lower:
+                    # Check for template/job updates - look for specific patterns
+                    if re.search(r'\b(new\s+)?(template|job)\b', line_lower):
+                        # Try to extract height and transaction count
+                        height_match = re.search(r'height[:\s]+(\d+)', line_lower)
+                        tx_match = re.search(r'(\d+)\s+transactions?', line_lower)
+                        
+                        template_height = int(height_match.group(1)) if height_match else 0
+                        tx_count = int(tx_match.group(1)) if tx_match else 0
+                        
                         self._emit_event(MiningEvent(
                             event_type=EventType.TEMPLATE_UPDATE,
                             timestamp=time.time(),
-                            data={"height": 0, "transactions": 0}
+                            data={"height": template_height, "transactions": tx_count}
                         ))
                     
                     # Check for hashrate info
