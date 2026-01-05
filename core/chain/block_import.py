@@ -1207,6 +1207,22 @@ class BlockImporter:
         try:
             block_env = make_block_env(block.header, self.params)
             apply_block(block.txs, self.state_db, block_env, params=self.params)
+            
+            # Apply block rewards to state after applying transactions
+            # This ensures rewards are included in state snapshots and survive rebuilds
+            try:
+                self._apply_block_reward(block)
+            except Exception as reward_exc:
+                log.warning(
+                    "state: block reward application failed (non-fatal)",
+                    extra={
+                        "error": str(reward_exc),
+                        "height": getattr(block.header, "height", None),
+                    },
+                )
+                # Don't fail the entire block import if reward application fails
+                # This maintains backward compatibility with blocks that may not have rewards
+            
             return True
         except Exception as exc:
             log.error(
@@ -1214,6 +1230,134 @@ class BlockImporter:
                 extra={"error": str(exc), "height": getattr(block.header, "height", None)},
             )
             return False
+
+    def _apply_block_reward(self, block: Block) -> None:
+        """
+        Apply block rewards to state based on the block's height and params.
+        
+        This method is called during block state application to ensure rewards
+        are included in state snapshots and survive state rebuilds/reorgs.
+        
+        Args:
+            block: The block being imported
+            
+        Raises:
+            Exception: If reward computation or application fails
+        """
+        if self.state_db is None:
+            return
+        
+        try:
+            # Import reward computation and balance credit functions
+            from consensus.rewards import compute_block_reward
+            from execution.state.apply_balance import credit
+        except ImportError as e:
+            log.warning(
+                "Cannot apply block reward: missing dependencies",
+                extra={"error": str(e)},
+            )
+            return
+        
+        # Get block info
+        height = int(getattr(block.header, "height", 0))
+        chain_id = int(getattr(block.header, "chainId", self.params.chain_id))
+        
+        # Get coinbase address from block header
+        # The coinbase is stored in BlockEnv but we reconstruct it here
+        block_env = make_block_env(block.header, self.params)
+        coinbase_addr = getattr(block_env, "coinbase", None)
+        
+        # Fallback to zero address if coinbase is not available
+        if coinbase_addr is None or coinbase_addr == b"\x00" * 32:
+            log.debug(
+                "Block has no coinbase address; skipping reward application",
+                extra={"height": height},
+            )
+            return
+        
+        # Compute block rewards (returns list of (address, amount) tuples)
+        # First entry is miner reward, subsequent entries are for AICF/treasury
+        try:
+            rewards = compute_block_reward(
+                chain_id=chain_id,
+                height=height,
+                params=self.params.to_dict() if hasattr(self.params, "to_dict") else {},
+            )
+        except Exception as e:
+            log.warning(
+                "Failed to compute block reward",
+                extra={"height": height, "chain_id": chain_id, "error": str(e)},
+            )
+            return
+        
+        if not rewards:
+            # No rewards for this height (e.g., genesis block)
+            return
+        
+        # Apply rewards to state
+        for idx, (reward_addr, amount) in enumerate(rewards):
+            if amount <= 0:
+                continue
+            
+            # For first reward (miner), use coinbase address from block
+            # For other rewards (AICF, treasury), decode the address if needed
+            if idx == 0:
+                # Miner reward always goes to coinbase
+                target_addr = coinbase_addr
+            else:
+                # Decode other reward addresses (may be bech32 strings)
+                if isinstance(reward_addr, str):
+                    try:
+                        # Try to decode as bech32
+                        from pq.py.address import decode_address
+                        addr_record = decode_address(reward_addr)
+                        digest = (
+                            bytes(addr_record.digest)
+                            if isinstance(addr_record.digest, list)
+                            else addr_record.digest
+                        )
+                        target_addr = digest[:32].ljust(32, b"\x00")
+                    except Exception:
+                        # If bech32 decode fails, skip this reward
+                        log.warning(
+                            "Cannot decode reward address; skipping",
+                            extra={"address": reward_addr, "idx": idx},
+                        )
+                        continue
+                elif isinstance(reward_addr, (bytes, bytearray)):
+                    target_addr = bytes(reward_addr)[:32].ljust(32, b"\x00")
+                else:
+                    # Unknown address format
+                    log.warning(
+                        "Unknown reward address format; skipping",
+                        extra={"address": str(reward_addr), "idx": idx},
+                    )
+                    continue
+            
+            # Credit the reward to the target address
+            try:
+                new_balance = credit(self.state_db, target_addr, amount)
+                log.debug(
+                    "Applied block reward",
+                    extra={
+                        "height": height,
+                        "address": target_addr.hex()[:16] + "...",
+                        "amount": amount,
+                        "new_balance": new_balance,
+                        "reward_type": "miner" if idx == 0 else f"other_{idx}",
+                    },
+                )
+            except Exception as e:
+                log.error(
+                    "Failed to credit block reward",
+                    extra={
+                        "height": height,
+                        "address": target_addr.hex()[:16] + "..." if target_addr else None,
+                        "amount": amount,
+                        "error": str(e),
+                    },
+                )
+                raise
 
     def _capture_state_snapshot(self, height: int) -> None:
         if self.state_db is None:
