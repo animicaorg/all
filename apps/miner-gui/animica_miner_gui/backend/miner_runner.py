@@ -13,6 +13,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -344,7 +345,6 @@ class MinerRunner:
                     # Check for hashrate info
                     if "h/s" in line_lower or "hashrate" in line_lower:
                         # Try to extract hashrate value
-                        import re
                         match = re.search(r'([\d.]+)\s*(kh/s|mh/s|gh/s|h/s)', line_lower)
                         if match:
                             value = float(match.group(1))
