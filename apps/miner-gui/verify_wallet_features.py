@@ -89,21 +89,41 @@ def verify_create_wallet_dialog():
     try:
         from animica_miner_gui.ui.wizard import CreateWalletDialog
         from PySide6.QtWidgets import QApplication
+        from pathlib import Path
         
         app = QApplication.instance() or QApplication(sys.argv)
         dialog = CreateWalletDialog()
         
         assert hasattr(dialog, 'label_input'), "Missing label_input"
+        assert hasattr(dialog, 'wallet_path_input'), "Missing wallet_path_input"
+        assert hasattr(dialog, 'info_text'), "Missing info_text"
         assert hasattr(dialog, 'status_label'), "Missing status_label"
         assert hasattr(dialog, 'created_address'), "Missing created_address"
+        assert hasattr(dialog, '_browse_wallet_file'), "Missing _browse_wallet_file method"
+        assert hasattr(dialog, '_update_info_text'), "Missing _update_info_text method"
         
         print("✓ CreateWalletDialog has label_input")
+        print("✓ CreateWalletDialog has wallet_path_input (NEW)")
+        print("✓ CreateWalletDialog has info_text")
         print("✓ CreateWalletDialog has status_label")
         print("✓ CreateWalletDialog has created_address attribute")
+        print("✓ CreateWalletDialog has _browse_wallet_file method (NEW)")
+        print("✓ CreateWalletDialog has _update_info_text method (NEW)")
         
         # Check initial state
         assert dialog.created_address is None, "created_address should be None initially"
         print("✓ created_address is None initially (correct)")
+        
+        # Check wallet path default value
+        default_path = str(Path.home() / ".animica" / "wallets.json")
+        wallet_path = dialog.wallet_path_input.text()
+        assert wallet_path == default_path, f"Unexpected default wallet path: {wallet_path}"
+        print(f"✓ Default wallet path is set: {wallet_path}")
+        
+        # Check info text updates
+        info_text = dialog.info_text.text()
+        assert default_path in info_text, f"Info text doesn't contain default path: {info_text}"
+        print("✓ Info text contains the wallet file path")
         
         return True
         
@@ -204,8 +224,11 @@ def main():
         print("1. Run the GUI: animica-miner-gui")
         print("2. Click through the wizard")
         print("3. Test 'Create New Wallet' button on wallet page")
-        print("4. Test 'Start mining immediately' checkbox on summary page")
-        print("5. Verify wallet-only mode works (uncheck the checkbox)")
+        print("4. Test wallet file location selection (NEW FEATURE)")
+        print("   - Browse to custom location")
+        print("   - Verify info text updates with selected path")
+        print("5. Test 'Start mining immediately' checkbox on summary page")
+        print("6. Verify wallet-only mode works (uncheck the checkbox)")
         return 0
     else:
         print("SOME VERIFICATIONS FAILED ✗")
