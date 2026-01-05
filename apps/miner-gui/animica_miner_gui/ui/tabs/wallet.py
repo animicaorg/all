@@ -1,11 +1,8 @@
 """Wallet tab - send transactions and manage wallet."""
 
-import json
 import logging
-import re
 import subprocess
 import sys
-from pathlib import Path
 from typing import Optional
 
 from PySide6.QtCore import Qt
