@@ -32,27 +32,57 @@ export function formatHashLink(hash?: string | null): string {
   return shorten(hash)
 }
 
-export function formatBalance(balance?: string | null): { decimal: string; hex: string } {
-  if (!balance) return { decimal: '—', hex: '—' }
+export function formatBalance(balance?: string | null): { 
+  anm: string;      // Balance in ANM (user-friendly)
+  nanm: string;     // Balance in nANM (raw native units)
+  hex: string;      // Hexadecimal representation
+} {
+  if (!balance) return { anm: '—', nanm: '—', hex: '—' }
   
   try {
     // Handle hex format (e.g., "0x5") or plain number string
-    let value: bigint
+    let valueNanoAnm: bigint
     if (balance.startsWith('0x')) {
-      value = BigInt(balance)
+      valueNanoAnm = BigInt(balance)
     } else {
-      value = BigInt(balance)
+      valueNanoAnm = BigInt(balance)
     }
     
-    // Format decimal with thousand separators
-    const decimal = new Intl.NumberFormat('en-US').format(value)
+    // 1 ANM = 1,000,000,000 nANM (10^9)
+    const NANO_PER_ANM = 1_000_000_000n
+    
+    // Convert nANM to ANM with decimal precision
+    const anmWhole = valueNanoAnm / NANO_PER_ANM
+    const anmRemainder = valueNanoAnm % NANO_PER_ANM
+    
+    // Format ANM with up to 9 decimal places (removing trailing zeros)
+    let anmStr: string
+    if (anmRemainder === 0n) {
+      // No fractional part - format whole number only
+      anmStr = anmWhole.toLocaleString('en-US')
+    } else {
+      // Construct decimal string manually for precision
+      const remainderStr = anmRemainder.toString().padStart(9, '0')
+      const trimmedRemainder = remainderStr.replace(/0+$/, '')
+      // Format whole part using BigInt's toLocaleString to avoid precision loss
+      // Safety: only add decimal point if there's a non-zero fractional part
+      if (trimmedRemainder) {
+        anmStr = anmWhole.toLocaleString('en-US') + '.' + trimmedRemainder
+      } else {
+        anmStr = anmWhole.toLocaleString('en-US')
+      }
+    }
+    
+    // Format nANM with thousand separators
+    const nanmStr = new Intl.NumberFormat('en-US').format(valueNanoAnm)
     
     return {
-      decimal,
-      hex: balance.startsWith('0x') ? balance : `0x${value.toString(16)}`
+      anm: anmStr,
+      nanm: nanmStr,
+      hex: balance.startsWith('0x') ? balance : `0x${valueNanoAnm.toString(16)}`
     }
   } catch (error) {
     // If parsing fails, return the original value
-    return { decimal: balance, hex: balance }
+    return { anm: balance, nanm: balance, hex: balance }
   }
 }
