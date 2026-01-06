@@ -8,6 +8,8 @@ import '../pages/mining/pools_page.dart';
 import '../pages/mining/logs_page.dart';
 import '../pages/mining/stats_page.dart';
 import '../pages/wallet/wallet_page.dart';
+import '../pages/wallet/receive_page.dart';
+import '../pages/wallet/wallet_setup_page.dart';
 import '../pages/settings/settings_page.dart';
 import '../pages/settings/config_page.dart';
 import '../pages/onboarding/wizard_page.dart';
@@ -69,6 +71,20 @@ final routerProvider = Provider<GoRouter>((ref) {
             name: 'wallet',
             pageBuilder: (context, state) => NoTransitionPage(
               child: WalletPage(key: state.pageKey),
+            ),
+          ),
+          GoRoute(
+            path: '/receive',
+            name: 'receive',
+            pageBuilder: (context, state) => NoTransitionPage(
+              child: ReceivePage(key: state.pageKey),
+            ),
+          ),
+          GoRoute(
+            path: '/wallet-setup',
+            name: 'wallet-setup',
+            pageBuilder: (context, state) => NoTransitionPage(
+              child: WalletSetupPage(key: state.pageKey),
             ),
           ),
           GoRoute(

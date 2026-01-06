@@ -18,6 +18,36 @@ class SettingsPage extends ConsumerWidget {
       ),
       body: ListView(
         children: [
+          const Padding(
+            padding: EdgeInsets.all(16.0),
+            child: Text(
+              'Wallet',
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.bold,
+                color: Colors.grey,
+              ),
+            ),
+          ),
+          ListTile(
+            leading: const Icon(Icons.account_balance_wallet),
+            title: const Text('Wallet Setup'),
+            subtitle: const Text('Import or create a wallet'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => context.go('/wallet-setup'),
+          ),
+          const Divider(),
+          const Padding(
+            padding: EdgeInsets.all(16.0),
+            child: Text(
+              'Mining',
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.bold,
+                color: Colors.grey,
+              ),
+            ),
+          ),
           ListTile(
             leading: const Icon(Icons.devices),
             title: const Text('Devices'),
@@ -54,6 +84,17 @@ class SettingsPage extends ConsumerWidget {
             onTap: () => context.go('/config'),
           ),
           const Divider(),
+          const Padding(
+            padding: EdgeInsets.all(16.0),
+            child: Text(
+              'App Settings',
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.bold,
+                color: Colors.grey,
+              ),
+            ),
+          ),
           SwitchListTile(
             secondary: const Icon(Icons.system_update_alt),
             title: const Text('System Tray'),
@@ -77,6 +118,17 @@ class SettingsPage extends ConsumerWidget {
             },
           ),
           const Divider(),
+          const Padding(
+            padding: EdgeInsets.all(16.0),
+            child: Text(
+              'About',
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.bold,
+                color: Colors.grey,
+              ),
+            ),
+          ),
           ListTile(
             leading: const Icon(Icons.info_outline),
             title: const Text('About'),
