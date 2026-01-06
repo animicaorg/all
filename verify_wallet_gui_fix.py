@@ -19,14 +19,15 @@ def verify_rpc_option_fix():
         with open(wallet_file, 'r') as f:
             content = f.read()
         
-        # Check for the old incorrect option
-        if '"--rpc", rpc_url' in content or "'--rpc', rpc_url" in content:
+        # Check for the old incorrect option (using regex for robustness)
+        import re
+        if re.search(r'["\']--rpc["\'],\s*rpc_url', content):
             print("❌ FAIL: Found old '--rpc' option in wallet.py")
             print("   The code still uses '--rpc' which is incorrect.")
             return False
         
         # Check for the new correct option
-        if '"--rpc-url", rpc_url' in content or "'--rpc-url', rpc_url" in content:
+        if re.search(r'["\']--rpc-url["\'],\s*rpc_url', content):
             print("✅ PASS: Found correct '--rpc-url' option in wallet.py")
         else:
             print("⚠️  WARNING: Could not find '--rpc-url' option")
