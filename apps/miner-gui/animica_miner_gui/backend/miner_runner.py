@@ -249,14 +249,52 @@ class MinerRunner:
             
             logger.info(f"Starting miner: {' '.join(cmd)}")
             
-            # Create a minimal environment for the subprocess
+            # Find the repository root (where mining module exists)
+            # Try to locate mining module directory relative to common locations
+            repo_root = None
+            
+            # First, check if mining module is already importable (via PYTHONPATH or installed)
+            try:
+                import mining
+                mining_path = Path(mining.__file__).parent.parent.resolve()
+                if (mining_path / "mining").is_dir():
+                    repo_root = str(mining_path)
+                    logger.info(f"Found mining module at: {repo_root}")
+            except ImportError:
+                pass
+            
+            # If not found via import, try common relative paths from this file
+            if not repo_root:
+                current_file = Path(__file__).resolve()
+                # This file is at: apps/miner-gui/animica_miner_gui/backend/miner_runner.py
+                # Go up 5 levels: backend -> animica_miner_gui -> miner-gui -> apps -> repository root
+                potential_root = current_file.parent.parent.parent.parent.parent
+                if (potential_root / "mining" / "__init__.py").is_file():
+                    repo_root = str(potential_root)
+                    logger.info(f"Found repository root at: {repo_root}")
+            
+            # Create environment for the subprocess with proper PYTHONPATH
+            current_pythonpath = os.environ.get('PYTHONPATH', '')
+            
+            # Add repository root to PYTHONPATH if found
+            if repo_root:
+                if current_pythonpath:
+                    pythonpath = f"{repo_root}{os.pathsep}{current_pythonpath}"
+                else:
+                    pythonpath = repo_root
+            else:
+                pythonpath = current_pythonpath
+                logger.warning("Could not locate repository root; mining module may not be found")
+            
             minimal_env = {
                 'PATH': os.environ.get('PATH', ''),
                 'HOME': os.environ.get('HOME', ''),
                 'USER': os.environ.get('USER', ''),
-                'PYTHONPATH': os.environ.get('PYTHONPATH', ''),
+                'PYTHONPATH': pythonpath,
                 'ANIMICA_PAYOUT_ADDRESS': payout_address
             }
+            
+            logger.info(f"Subprocess PYTHONPATH: {pythonpath}")
             
             # Start the miner process
             self.process = subprocess.Popen(
