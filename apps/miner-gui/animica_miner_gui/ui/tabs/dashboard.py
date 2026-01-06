@@ -1,6 +1,7 @@
 """Dashboard tab - main status and control panel."""
 
 import logging
+import math
 from typing import Optional
 
 from PySide6.QtCore import Signal, Slot, QTimer
@@ -281,8 +282,6 @@ class DashboardTab(QWidget):
             return
         
         try:
-            import math
-            
             # Calculate probability of finding a block per hash
             # Block threshold is theta_micro (in micro-nats)
             # Probability = e^(-theta)
