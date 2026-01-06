@@ -83,21 +83,27 @@ class DashboardTab(QWidget):
         self.hashrate_label.setStyleSheet("font-weight: bold; font-size: 14pt;")
         mining_layout.addWidget(self.hashrate_label, 1, 1)
         
-        mining_layout.addWidget(QLabel("Time to Block:"), 2, 0)
+        mining_layout.addWidget(QLabel("Difficulty:"), 2, 0)
+        self.difficulty_label = QLabel("--")
+        self.difficulty_label.setToolTip("Network difficulty (theta) - higher values mean harder to find blocks")
+        mining_layout.addWidget(self.difficulty_label, 2, 1)
+        
+        mining_layout.addWidget(QLabel("Time to Block:"), 3, 0)
         self.time_to_block_label = QLabel("--")
-        mining_layout.addWidget(self.time_to_block_label, 2, 1)
+        self.time_to_block_label.setToolTip("Estimated average time to find a block at current hashrate")
+        mining_layout.addWidget(self.time_to_block_label, 3, 1)
         
-        mining_layout.addWidget(QLabel("Shares Found:"), 3, 0)
+        mining_layout.addWidget(QLabel("Shares Found:"), 4, 0)
         self.shares_label = QLabel("0")
-        mining_layout.addWidget(self.shares_label, 3, 1)
+        mining_layout.addWidget(self.shares_label, 4, 1)
         
-        mining_layout.addWidget(QLabel("Blocks Found:"), 4, 0)
+        mining_layout.addWidget(QLabel("Blocks Found:"), 5, 0)
         self.blocks_label = QLabel("0")
-        mining_layout.addWidget(self.blocks_label, 4, 1)
+        mining_layout.addWidget(self.blocks_label, 5, 1)
         
-        mining_layout.addWidget(QLabel("Last Submit:"), 5, 0)
+        mining_layout.addWidget(QLabel("Last Submit:"), 6, 0)
         self.last_submit_label = QLabel("--")
-        mining_layout.addWidget(self.last_submit_label, 5, 1)
+        mining_layout.addWidget(self.last_submit_label, 6, 1)
         
         mining_group.setLayout(mining_layout)
         layout.addWidget(mining_group)
@@ -189,6 +195,27 @@ class DashboardTab(QWidget):
                     self.sync_label.setText("Synced")
             except Exception:
                 self.sync_label.setText("Unknown")
+            
+            # Try to get template info to extract theta if we don't have it yet
+            if self.current_theta_micro == 0:
+                try:
+                    payout_address = self.config.miner.payout_address
+                    if payout_address:
+                        template = self.rpc_client.get_block_template(payout_address)
+                        theta_micro = template.get("thetaMicro") or template.get("theta_micro")
+                        if theta_micro:
+                            self.current_theta_micro = int(theta_micro)
+                            theta_nats = theta_micro / 1_000_000
+                            self.difficulty_label.setText(f"{theta_nats:.2f} nats")
+                            # Update time to block when we get difficulty
+                            self._update_time_to_block()
+                        
+                        # Also try to get share target if available
+                        share_target = template.get("shareTarget") or template.get("share_target")
+                        if share_target:
+                            self.current_share_target = float(share_target)
+                except Exception as e:
+                    logger.debug(f"Could not fetch template info: {e}")
             
         except Exception as e:
             logger.debug(f"Failed to update chain info: {e}")
@@ -365,6 +392,12 @@ class DashboardTab(QWidget):
             
             if theta_micro > 0:
                 self.current_theta_micro = theta_micro
+                # Display difficulty in a readable format
+                # Theta is in micro-nats, convert to difficulty display
+                # Higher theta = higher difficulty
+                theta_nats = theta_micro / 1_000_000
+                self.difficulty_label.setText(f"{theta_nats:.2f} nats")
+            
             if share_target > 0:
                 self.current_share_target = share_target
             
