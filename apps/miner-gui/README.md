@@ -5,12 +5,12 @@ Production-quality Qt (PySide6) desktop GUI miner for Animica blockchain with ex
 ## Features
 
 - **First-Run Wizard**: Guided setup for network, RPC, wallet, and device selection
-- **Dashboard**: Real-time mining status, hashrate, shares, and blocks
+- **Dashboard**: Real-time mining status, hashrate, and blocks
 - **Device Management**: CPU/GPU/ASIC configuration with auto-detection
 - **Pool Support**: Solo mining (default) with Stratum pool configuration stub
 - **Configuration**: JSON editor with schema validation and profiles
 - **Logs**: Real-time log stream with filtering, search, and export
-- **Stats/Graphs**: Hashrate and shares visualization with matplotlib
+- **Stats/Graphs**: Hashrate visualization with matplotlib
 - **Dark Theme**: Professional dark theme by default
 - **System Tray**: Minimize to tray with notifications
 - **Auto-start**: Optional auto-start mining on launch
