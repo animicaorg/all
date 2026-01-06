@@ -46,7 +46,7 @@
     "@typescript-eslint/eslint-plugin": "^8.46.3",
     "@typescript-eslint/parser": "^8.46.3",
     "@vitest/ui": "^1.6.1",
-    "autoprefixer": "^10.4.21",
+    "autoprefixer": "^10.4.23",
     "eslint": "^9.39.1",
     "eslint-plugin-astro": "^1.4.0",
     "eslint-plugin-import": "^2.32.0",
