@@ -211,11 +211,9 @@ def test_wallet_info_refresh(qapp, config_with_address):
         mock_rpc_instance = MagicMock()
         mock_rpc_class.return_value = mock_rpc_instance
         
-        # Mock balance response
-        mock_rpc_instance._call.side_effect = lambda method, params: {
-            "state.getBalance": 1_500_000_000,  # 1.5 ANM
-            "state.getNonce": 5,
-        }.get(method)
+        # Mock balance and nonce responses using the new public methods
+        mock_rpc_instance.get_balance.return_value = 1_500_000_000  # 1.5 ANM in base units
+        mock_rpc_instance.get_nonce.return_value = 5
         
         tab = WalletTab(config_with_address)
         
