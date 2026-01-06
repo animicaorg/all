@@ -1075,3 +1075,119 @@ def test_mine_blocks_without_no_timeout_uses_default(monkeypatch: Any) -> None:
     # Timeout should default to None (unbounded) when --no-timeout is not used
     assert timeout_tracker["timeout"] is None
     assert "RPC timeout disabled" not in result.output
+
+
+def test_mine_blocks_continues_after_consecutive_rejections(monkeypatch: Any) -> None:
+    """
+    Test that miner continues mining remaining blocks after 3 consecutive stale rejections.
+    
+    Regression test for issue: "Rejected 3/3 then miner stops"
+    Previously, after exhausting 3 stale retries on one block, the miner would stop
+    completely instead of continuing to mine the remaining blocks.
+    """
+    test_address = "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz"
+    monkeypatch.setattr(mining, "_validate_bech32_address", lambda x: True if x == test_address else False)
+
+    class FakeRpcError(Exception):
+        def __init__(self, code: int, message: str, data: dict | None = None) -> None:
+            super().__init__(message)
+            self.code = code
+            self.message = message
+            self.data = data
+
+    block_attempts = {"count": 0, "current_block": 0}
+
+    class MockRpcClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def request(self, method: str, params: Any):
+            if method == "miner.getBlockTemplate":
+                return {
+                    "enabled": True,
+                    "header": {
+                        "v": 1,
+                        "chainId": 1337,
+                        "height": 100 + block_attempts["current_block"],
+                        "parentHash": "0x" + "00" * 32,
+                        "timestamp": 0,
+                        "stateRoot": "0x" + "00" * 32,
+                        "txsRoot": "0x" + "00" * 32,
+                        "receiptsRoot": "0x" + "00" * 32,
+                        "proofsRoot": "0x" + "00" * 32,
+                        "daRoot": "0x" + "00" * 32,
+                        "mixSeed": "0x" + "00" * 32,
+                        "poiesPolicyRoot": "0x" + "00" * 32,
+                        "pqAlgPolicyRoot": "0x" + "00" * 32,
+                        "thetaMicro": 1,
+                        "nonce": 0,
+                    },
+                    "target": hex((1 << 256) - 1),
+                    "coinbase": {"amount": 1000},
+                    "txs": [],
+                    "mempool": {"pending": 0, "selected": 0, "rejected": {}, "rejectedByHash": {}},
+                }
+            if method == "miner.submitBlock":
+                block_attempts["count"] += 1
+                # First block: reject 3 times (stale), then accept on 4th attempt would fail
+                # But we only retry 3 times, so all 3 attempts fail
+                if block_attempts["current_block"] == 0:
+                    if block_attempts["count"] <= 3:
+                        # All 3 attempts for first block should be rejected as stale
+                        raise FakeRpcError(-32000, "stale template", {"reason": "stale_template"})
+                # Second block: accept immediately (shows miner continued after first block failed)
+                if block_attempts["current_block"] == 1:
+                    return {"accepted": True, "new_head": 101, "credited_amount": 1000}
+                # Should not reach here
+                raise AssertionError(f"Unexpected block attempt: block={block_attempts['current_block']}, count={block_attempts['count']}")
+
+    mock_module = Mock()
+    mock_module.RpcClient = MockRpcClient
+    mock_module.RpcError = FakeRpcError
+
+    monkeypatch.setitem(__import__("sys").modules, "omni_sdk.rpc.http", mock_module)
+    monkeypatch.setitem(__import__("sys").modules, "sdk.python.omni_sdk.rpc.http", mock_module)
+    monkeypatch.setitem(__import__("sys").modules, "omni_sdk.errors", mock_module)
+
+    # Patch to track when we move to next block
+    original_sleep = __import__("time").sleep
+    def tracked_sleep(seconds):
+        # Sleep between blocks indicates we're moving to next block
+        if seconds >= 2.0:  # MIN_BLOCK_INTERVAL_SECONDS
+            block_attempts["current_block"] += 1
+            block_attempts["count"] = 0
+        return original_sleep(seconds)
+    
+    monkeypatch.setattr("time.sleep", tracked_sleep)
+
+    result = runner.invoke(
+        mining.app,
+        [
+            "mine-blocks",
+            "--address", test_address,
+            "--count", "2",  # Mine 2 blocks
+            "--rpc-url", "http://127.0.0.1:8545",
+            "--no-proxy",
+        ],
+    )
+
+    # The miner should:
+    # 1. Try to mine first block, get rejected 3 times (stale_template)
+    # 2. Give up on first block after 3 attempts
+    # 3. Continue to mine second block (NOT stop entirely)
+    # 4. Accept second block successfully
+    
+    # Should have attempted first block 3 times, then moved to second block
+    assert "REJECTED" in result.output, "Should show rejection messages"
+    assert "stale attempt" in result.output, "Should show stale retry attempts"
+    assert "Successfully mined 1 block" in result.output, "Should mine the second block after first failed"
+    assert block_attempts["current_block"] >= 1, "Should have moved to second block"
+    
+    # Should NOT exit with error (only warning about partial success)
+    assert result.exit_code == 0, f"Should complete successfully, got exit code {result.exit_code}\nOutput: {result.output}"

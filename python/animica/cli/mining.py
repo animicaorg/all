@@ -1480,8 +1480,9 @@ def mine_blocks(
 
                     break
 
-                if stale_attempts == 0 and (not submit_result or not submit_result.get("accepted", False)):
-                    break
+                # Continue to next block even if this one failed after retries
+                # The inner loop has already handled retry logic (up to 3 attempts for stale)
+                # and decided to break, so we just move on to the next block in the sequence
 
                 # Sleep between blocks (except after the last one)
                 if i < count - 1:
