@@ -737,12 +737,14 @@ def _ensure_tx_persisted_to_chain(tx_hash_hex: str) -> tuple[bool, str | None]:
         return True, None
 
     # Mine a block to persist the transaction
+    # Use instant_block=True to ensure zero rewards for tx send blocks
     try:
         miner_methods.miner_mine(
             count=1,
             include_mempool=True,
             allow_offline_mining=True,
             allow_unsynced_mining=True,
+            instant_block=True,
         )
     except Exception as exc:
         return False, str(exc)

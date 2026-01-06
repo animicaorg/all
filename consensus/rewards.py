@@ -83,6 +83,7 @@ def compute_block_reward(
     chain_id: int,
     height: int,
     params: Mapping[str, Any] | None = None,
+    instant_block: bool = False,
 ) -> List[Tuple[str, int]]:
     """
     Compute the block reward (coinbase outputs) for a given chain and height.
@@ -95,10 +96,16 @@ def compute_block_reward(
       - Use their own genesis allocation rules (not enforced here; handled by genesis loader)
       - At height >= 1, follow emission schedule per params
 
+    Instant blocks (instant_block=True):
+      - Always return empty list (zero rewards)
+      - These blocks are created by tx send to persist transactions immediately
+      - They do not advance the halving schedule or issue new tokens
+
     Args:
         chain_id: Chain identifier (1 = mainnet, 1337 = devnet, etc.)
         height: Block height (0 = genesis, 1+ = post-genesis)
         params: Optional chain parameters (used for emission schedule at height >= 1)
+        instant_block: If True, this is an instant block with zero rewards (default: False)
 
     Returns:
         List of (address, amount) tuples representing coinbase outputs.
@@ -106,6 +113,10 @@ def compute_block_reward(
     Raises:
         ValueError: If parameters are invalid or missing for height >= 1.
     """
+    # Instant blocks always have zero rewards
+    if instant_block:
+        return []
+    
     # Mainnet premine enforcement: height 0 only
     if chain_id == 1 and height == 0:
         return list(MAINNET_PREMINE_DISTRIBUTION)
