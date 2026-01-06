@@ -290,7 +290,7 @@ def _normalize_metrics_bind(spec: str | None) -> Optional[Tuple[str, int]]:
 def _device_from_choice(choice: str) -> str:
     if choice == "auto":
         # Ask device module to choose; it may fall back to CPU.
-        return miner_device.Device.auto_select()
+        return miner_device.auto_detect_device()
     return choice
 
 
@@ -606,7 +606,9 @@ async def _amain(argv: list[str]) -> int:
 
     # Device probe early to fail fast
     try:
-        miner_device.Device.ensure_available(cfg["device"])
+        # Try to create the device to ensure it's available
+        dev = miner_device.create(cfg["device"])
+        dev.close()  # Clean up immediately, we just wanted to verify availability
     except miner_errors.DeviceUnavailable as e:
         log.error("device unavailable: %s", e)
         return 3
