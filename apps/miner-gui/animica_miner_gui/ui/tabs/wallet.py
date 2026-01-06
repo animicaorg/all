@@ -32,6 +32,7 @@ MIN_ADDRESS_LENGTH = 42  # Minimum length for valid Animica address
 TX_SEND_TIMEOUT = 60  # Timeout for transaction sending in seconds
 ADDRESS_PREVIEW_LENGTH = 20  # Number of characters to show in address preview
 ANM_BASE_UNITS = 1_000_000_000  # 1 ANM = 1e9 base units
+WALLET_INFO_REFRESH_INTERVAL = 10000  # Refresh wallet info every 10 seconds (milliseconds)
 
 
 class WalletTab(QWidget):
@@ -152,10 +153,10 @@ class WalletTab(QWidget):
     
     def setup_auto_refresh(self) -> None:
         """Set up timer to auto-refresh wallet info."""
-        # Refresh wallet info every 10 seconds
+        # Refresh wallet info periodically
         self.refresh_timer = QTimer()
         self.refresh_timer.timeout.connect(self.refresh_wallet_info)
-        self.refresh_timer.start(10000)  # 10 seconds
+        self.refresh_timer.start(WALLET_INFO_REFRESH_INTERVAL)
         
         # Do initial refresh
         if self.config.miner.payout_address:
@@ -173,39 +174,13 @@ class WalletTab(QWidget):
             self.nonce_label.setText("--")
             return
         
-        # Query balance
+        # Query balance using public method
         try:
-            balance = None
-            for method in ["state.getBalance", "state_getBalance"]:
-                try:
-                    result = self.rpc_client._call(method, [payout_address])
-                    if result is not None:
-                        # Result might be a dict with 'balance' key or just a number
-                        if isinstance(result, dict):
-                            balance = result.get("balance") or result.get("value")
-                        else:
-                            balance = result
-                        break
-                except Exception:
-                    continue
+            balance_int = self.rpc_client.get_balance(payout_address)
             
-            if balance is not None:
-                # Convert from base units to ANM
-                try:
-                    # Handle hex strings (e.g., "0x1234") and regular numbers
-                    if isinstance(balance, str):
-                        if balance.startswith("0x"):
-                            balance_int = int(balance, 16)
-                        else:
-                            balance_int = int(balance)
-                    else:
-                        balance_int = int(balance)
-                    
-                    balance_value = balance_int / ANM_BASE_UNITS
-                    self.balance_label.setText(f"{balance_value:.9f} ANM")
-                except (ValueError, TypeError) as e:
-                    logger.error(f"Failed to parse balance '{balance}': {e}")
-                    self.balance_label.setText("Parse error")
+            if balance_int is not None:
+                balance_value = balance_int / ANM_BASE_UNITS
+                self.balance_label.setText(f"{balance_value:.9f} ANM")
             else:
                 self.balance_label.setText("Unable to query")
                 
@@ -213,37 +188,12 @@ class WalletTab(QWidget):
             logger.debug(f"Failed to query balance: {e}")
             self.balance_label.setText("Query failed")
         
-        # Query nonce
+        # Query nonce using public method
         try:
-            nonce = None
-            for method in ["state.getNonce", "state_getNonce"]:
-                try:
-                    result = self.rpc_client._call(method, [payout_address])
-                    if result is not None:
-                        # Result might be a dict with 'nonce' key or just a number
-                        if isinstance(result, dict):
-                            nonce = result.get("nonce")
-                        else:
-                            nonce = result
-                        break
-                except Exception:
-                    continue
+            nonce_int = self.rpc_client.get_nonce(payout_address)
             
-            if nonce is not None:
-                try:
-                    # Handle hex strings and regular numbers
-                    if isinstance(nonce, str):
-                        if nonce.startswith("0x"):
-                            nonce_int = int(nonce, 16)
-                        else:
-                            nonce_int = int(nonce)
-                    else:
-                        nonce_int = int(nonce)
-                    
-                    self.nonce_label.setText(str(nonce_int))
-                except (ValueError, TypeError) as e:
-                    logger.error(f"Failed to parse nonce '{nonce}': {e}")
-                    self.nonce_label.setText("Parse error")
+            if nonce_int is not None:
+                self.nonce_label.setText(str(nonce_int))
             else:
                 self.nonce_label.setText("Unable to query")
                 

@@ -198,3 +198,69 @@ class RPCClient:
         except Exception as e:
             logger.error(f"Error submitting block: {e}")
             return False
+    
+    def get_balance(self, address: str) -> Optional[int]:
+        """Get balance for an address.
+        
+        Args:
+            address: Address to query balance for
+        
+        Returns:
+            Balance in base units (1 ANM = 1e9 base units) or None if unavailable
+        """
+        # Try multiple RPC method names for compatibility
+        for method in ["state.getBalance", "state_getBalance"]:
+            try:
+                result = self._call(method, [address])
+                if result is not None:
+                    # Result might be a dict with 'balance' key or just a number
+                    if isinstance(result, dict):
+                        balance = result.get("balance") or result.get("value")
+                    else:
+                        balance = result
+                    
+                    # Handle hex strings and regular numbers
+                    if isinstance(balance, str):
+                        if balance.startswith("0x"):
+                            return int(balance, 16)
+                        else:
+                            return int(balance)
+                    else:
+                        return int(balance)
+            except Exception as e:
+                logger.debug(f"Method {method} failed: {e}")
+                continue
+        return None
+    
+    def get_nonce(self, address: str) -> Optional[int]:
+        """Get nonce (transaction count) for an address.
+        
+        Args:
+            address: Address to query nonce for
+        
+        Returns:
+            Nonce (number of transactions sent) or None if unavailable
+        """
+        # Try multiple RPC method names for compatibility
+        for method in ["state.getNonce", "state_getNonce"]:
+            try:
+                result = self._call(method, [address])
+                if result is not None:
+                    # Result might be a dict with 'nonce' key or just a number
+                    if isinstance(result, dict):
+                        nonce = result.get("nonce")
+                    else:
+                        nonce = result
+                    
+                    # Handle hex strings and regular numbers
+                    if isinstance(nonce, str):
+                        if nonce.startswith("0x"):
+                            return int(nonce, 16)
+                        else:
+                            return int(nonce)
+                    else:
+                        return int(nonce)
+            except Exception as e:
+                logger.debug(f"Method {method} failed: {e}")
+                continue
+        return None
