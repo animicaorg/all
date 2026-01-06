@@ -6,7 +6,7 @@ Provides tabbed interface for:
 - Pools/Modes: solo/pool configuration
 - Configuration: JSON editor
 - Logs: real-time log stream
-- Stats/Graphs: hashrate and shares charts
+- Stats/Graphs: hashrate charts
 """
 
 import logging
@@ -351,7 +351,7 @@ class MainWindow(QMainWindow):
                 hr_str = f"{hashrate:.0f} H/s"
             
             self.status_bar.showMessage(
-                f"Mining: {hr_str} | Shares: {stats['shares']} | Blocks: {stats['blocks']}"
+                f"Mining: {hr_str} | Blocks: {stats['blocks']}"
             )
         else:
             self.status_bar.showMessage(f"Status: {status}")
