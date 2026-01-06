@@ -64,23 +64,33 @@ export default function AddressPage() {
           <div>
             <p className="text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-slate-500">Confirmed Balance</p>
             <p className="mt-2 font-mono text-lg font-semibold text-gray-900 dark:text-slate-200">
-              {formatBalance(summary.confirmedBalance).decimal}
+              {formatBalance(summary.confirmedBalance).anm} <span className="text-base font-normal text-gray-600 dark:text-slate-400">ANM</span>
             </p>
             {summary.confirmedBalance && summary.confirmedBalance !== '—' && (
-              <p className="mt-1 font-mono text-xs text-gray-500 dark:text-slate-500" title="Hexadecimal representation">
-                {formatBalance(summary.confirmedBalance).hex}
-              </p>
+              <>
+                <p className="mt-1 font-mono text-xs text-gray-500 dark:text-slate-500" title="Native units (nano-ANM)">
+                  {formatBalance(summary.confirmedBalance).nanm} nANM
+                </p>
+                <p className="mt-1 font-mono text-xs text-gray-500 dark:text-slate-500" title="Hexadecimal representation">
+                  {formatBalance(summary.confirmedBalance).hex}
+                </p>
+              </>
             )}
           </div>
           <div>
             <p className="text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-slate-500">Pending Balance</p>
             <p className="mt-2 font-mono text-lg font-semibold text-gray-900 dark:text-slate-200">
-              {formatBalance(summary.pendingBalance).decimal}
+              {formatBalance(summary.pendingBalance).anm} <span className="text-base font-normal text-gray-600 dark:text-slate-400">ANM</span>
             </p>
             {summary.pendingBalance && summary.pendingBalance !== '—' && (
-              <p className="mt-1 font-mono text-xs text-gray-500 dark:text-slate-500" title="Hexadecimal representation">
-                {formatBalance(summary.pendingBalance).hex}
-              </p>
+              <>
+                <p className="mt-1 font-mono text-xs text-gray-500 dark:text-slate-500" title="Native units (nano-ANM)">
+                  {formatBalance(summary.pendingBalance).nanm} nANM
+                </p>
+                <p className="mt-1 font-mono text-xs text-gray-500 dark:text-slate-500" title="Hexadecimal representation">
+                  {formatBalance(summary.pendingBalance).hex}
+                </p>
+              </>
             )}
           </div>
         </div>
