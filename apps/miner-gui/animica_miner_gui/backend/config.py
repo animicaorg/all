@@ -100,6 +100,7 @@ class MinerConfig(BaseModel):
     """Core miner settings."""
     mining_mode: MiningMode = Field(default=MiningMode.SOLO, description="Mining mode")
     payout_address: str = Field(default="", description="Payout address for mining rewards")
+    wallet_file: Optional[str] = Field(default=None, description="Custom wallet file location (default: ~/.animica/wallets.json)")
     auto_start: bool = Field(default=False, description="Auto-start mining on launch")
     auto_restart_on_crash: bool = Field(default=True, description="Auto-restart miner on crash")
 
