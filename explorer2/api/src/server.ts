@@ -3,10 +3,20 @@ import cors from 'cors'
 import pino from 'pino'
 import pinoHttp from 'pino-http'
 import type { ApiError } from '@animica/explorer2-shared'
-import { ExplorerService } from './service'
-import { HttpError } from './errors'
+import { ExplorerService } from './service.js'
+import { HttpError } from './errors.js'
+import fs from 'node:fs'
 
-export function createServer(service: ExplorerService, corsOrigin: string, logLevel: string) {
+interface DiagnosticsInfo {
+  mode: string
+  rpcUrl: string | null
+  chainDbPath: string | null
+  chainId: number
+  detectedHead: number | null
+  timestamp: string
+}
+
+export function createServer(service: ExplorerService, corsOrigin: string, logLevel: string, diagnostics?: DiagnosticsInfo) {
   const app = express()
   const logger = pino({ level: logLevel })
 
@@ -16,6 +26,67 @@ export function createServer(service: ExplorerService, corsOrigin: string, logLe
 
   app.get('/api/health', async (_req, res) => {
     res.json({ ok: true, timestamp: new Date().toISOString() })
+  })
+
+  app.get('/api/diagnostics', async (_req, res) => {
+    try {
+      // Get current head from service
+      interface HeadData {
+        head?: {
+          height: number
+          hash: string
+          time: number
+        }
+      }
+      let currentHead: HeadData['head'] | null = null
+      try {
+        const headData = await service.getHead() as HeadData
+        currentHead = headData?.head ?? null
+      } catch (err) {
+        // Ignore errors, diagnostics should still work
+      }
+
+      const dbPath = diagnostics?.chainDbPath
+      let dbExists = false
+      let dbSizeBytes: number | null = null
+      let dbLastModified: string | null = null
+
+      if (dbPath && typeof dbPath === 'string') {
+        try {
+          const stats = fs.statSync(dbPath)
+          dbExists = true
+          dbSizeBytes = stats.size
+          dbLastModified = stats.mtime.toISOString()
+        } catch {
+          // DB doesn't exist or not accessible
+        }
+      }
+
+      res.json({
+        mode: diagnostics?.mode || 'Unknown',
+        rpcUrl: diagnostics?.rpcUrl || null,
+        chainDbPath: dbPath || null,
+        chainId: diagnostics?.chainId || null,
+        detectedHead: diagnostics?.detectedHead || null,
+        currentHead: currentHead ? {
+          height: currentHead.height,
+          hash: currentHead.hash,
+          time: currentHead.time
+        } : null,
+        database: {
+          exists: dbExists,
+          sizeBytes: dbSizeBytes,
+          lastModified: dbLastModified
+        },
+        startupTime: diagnostics?.timestamp || null,
+        currentTime: new Date().toISOString()
+      })
+    } catch (err) {
+      res.status(500).json({ 
+        error: 'diagnostics_failed', 
+        message: err instanceof Error ? err.message : String(err) 
+      })
+    }
   })
 
   app.get('/api/head', async (_req, res, next) => {

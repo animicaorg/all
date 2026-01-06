@@ -14,19 +14,64 @@ Explorer2 is a modern, standalone Animica blockchain explorer with a dedicated A
 pnpm install
 ```
 
-Copy the env example:
+## Quick Start
+
+The explorer automatically connects to a local node at `http://127.0.0.1:8545/rpc` by default. If you have a node running with the default RPC endpoint, you can start the explorer directly:
+
+```bash
+pnpm -C explorer2 dev
+```
+
+This will start:
+- API server on `http://localhost:8081`
+- Web UI on `http://localhost:3001`
+
+Visit `http://localhost:3001/diagnostics` to verify the connection status.
+
+## Configuration
+
+To customize the RPC endpoint or other settings, copy the env example:
 
 ```bash
 cp explorer2/.env.example explorer2/.env
 ```
 
-Edit `.env` and set `EXPLORER2_RPC_URL` to your node's RPC endpoint:
+Edit `.env` to customize settings:
 
 ```bash
+# RPC endpoint (defaults to http://127.0.0.1:8545/rpc if not set)
 EXPLORER2_RPC_URL=http://127.0.0.1:8545/rpc
+
+# Optional: WebSocket endpoint for real-time updates
+EXPLORER2_WS_URL=
+
+# Port for the API server
+EXPLORER2_PORT=8081
+
+# Fallback settings (used only if RPC is unavailable)
+EXPLORER2_DATA_ROOT=~/.animica
+EXPLORER2_CHAIN_ID=1
 ```
 
+## How It Works
+
+**Auto-detection behavior:**
+1. Explorer tries to connect to the RPC URL (defaults to `http://127.0.0.1:8545/rpc`)
+2. If RPC connection succeeds, explorer runs in **RPC mode** (recommended)
+3. If RPC connection fails, explorer falls back to **Local DB mode** (limited functionality)
+
+**Connection modes:**
+
+| Mode | Description | Capabilities |
+|------|-------------|--------------|
+| **RPC** | Direct connection to node | Full features: real-time blocks, mempool, peers, tx status |
+| **Local DB** | Reads from `~/.animica/chain-{id}/animica.db` | Basic features: block history, transactions (no mempool/peers) |
+
+Use the **Diagnostics** page in the web UI (`/diagnostics`) to check which mode is active and troubleshoot connection issues.
+
 ## Development (API + Web)
+
+Run the full development stack:
 
 ```bash
 pnpm -C explorer2 dev
@@ -34,6 +79,16 @@ pnpm -C explorer2 dev
 
 - API runs on `http://localhost:8081`
 - Web runs on `http://localhost:3001` and proxies `/api` to the API service
+
+Run individual services:
+
+```bash
+# API only
+pnpm -C explorer2/api dev
+
+# Web only (requires API to be running)
+pnpm -C explorer2/web dev
+```
 
 ## Production build
 
@@ -53,7 +108,7 @@ docker compose -f explorer2/docker/docker-compose.explorer2.yml up --build
 | Variable | Description | Default |
 | --- | --- | --- |
 | `EXPLORER2_PORT` | API port | `8081` |
-| `EXPLORER2_RPC_URL` | **Node RPC endpoint (recommended)** | unset |
+| `EXPLORER2_RPC_URL` | **Node RPC endpoint** | `http://127.0.0.1:8545/rpc` |
 | `EXPLORER2_WS_URL` | WebSocket endpoint for real-time updates (optional) | unset |
 | `EXPLORER2_DATA_ROOT` | Base directory for local chain data (fallback) | `~/.animica` |
 | `EXPLORER2_CHAIN_ID` | Chain ID for local data lookup (fallback) | `1` |
