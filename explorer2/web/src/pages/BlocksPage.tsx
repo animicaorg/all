@@ -91,6 +91,11 @@ export default function BlocksPage() {
                     >
                       #{formatNumber(block.height)}
                     </Link>
+                    {block.canonicalHeight !== undefined && block.canonicalHeight !== block.height && (
+                      <span className="ml-2 inline-flex items-center rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-800 dark:bg-blue-900/30 dark:text-blue-300">
+                        instant
+                      </span>
+                    )}
                   </td>
                   <td className="hidden px-4 py-3 font-mono text-gray-600 dark:text-slate-300 sm:table-cell sm:px-6">
                     {shorten(block.hash, 10, 8)}

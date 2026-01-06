@@ -3,6 +3,7 @@ export type Address = `anim1${string}` | string
 
 export interface HeadView {
   height: number
+  canonicalHeight?: number
   hash: Hash
   time: number
   chainId?: number
@@ -10,6 +11,7 @@ export interface HeadView {
 
 export interface BlockSummary {
   height: number
+  canonicalHeight?: number
   hash: Hash
   time: number
   txCount: number
@@ -18,11 +20,13 @@ export interface BlockSummary {
 
 export interface BlockDetail {
   height: number
+  canonicalHeight?: number
   hash: Hash
   parentHash?: Hash
   time: number
   chainId?: number
   difficulty?: string | number | null
+  nonce?: number
   txs: TxSummary[]
   raw: unknown
 }

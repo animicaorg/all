@@ -31,6 +31,7 @@ const PFX_META = Buffer.from([0x1f])
 
 const META_HEAD_HASH = Buffer.concat([PFX_META, Buffer.from('head_hash')])
 const META_HEAD_HEIGHT = Buffer.concat([PFX_META, Buffer.from('head_height')])
+const META_CANONICAL_HEIGHT = Buffer.concat([PFX_META, Buffer.from('canonical_height')])
 
 const PFX_ACC = Buffer.from([0x01])
 
@@ -220,12 +221,20 @@ export class LocalChainClient {
       throw new Error('Head not found')
     }
 
-    return {
+    const result: Record<string, any> = {
       height,
       hash: toHex(headHashRaw),
       chainId: formatTxValue(header.chainId),
       time: formatTxValue(header.timestamp)
     }
+
+    // Include canonical height if available
+    const canonicalHeightRaw = this.getKv(META_CANONICAL_HEIGHT)
+    if (canonicalHeightRaw) {
+      result.canonicalHeight = fromU64be(canonicalHeightRaw)
+    }
+
+    return result
   }
 
   async getBlockByNumber(
