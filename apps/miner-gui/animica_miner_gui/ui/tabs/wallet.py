@@ -128,11 +128,12 @@ class WalletTab(QWidget):
             clipboard = QApplication.clipboard()
             if clipboard:
                 clipboard.setText(address)
-                # Show brief notification
+                # Show brief notification with preview
+                preview = address[:ADDRESS_PREVIEW_LENGTH] + "..." if len(address) > ADDRESS_PREVIEW_LENGTH else address
                 QMessageBox.information(
                     self,
                     "Copied",
-                    f"Address copied to clipboard!\n\n{address[:ADDRESS_PREVIEW_LENGTH]}..."
+                    f"Address copied to clipboard!\n\n{preview}"
                 )
             else:
                 QMessageBox.warning(
