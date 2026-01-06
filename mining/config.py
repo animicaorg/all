@@ -49,6 +49,19 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
+def auto_detect_thread_count() -> int:
+    """
+    Auto-detect the optimal thread count for mining.
+    
+    Returns the number of available CPU cores, or 1 if detection fails.
+    This is used as the default for multi-threaded mining operations.
+    
+    Returns:
+        int: Number of CPU cores available (minimum 1)
+    """
+    return os.cpu_count() or 1
+
+
 @dataclass
 class MiningConfig:
     """
@@ -197,4 +210,4 @@ class MiningConfig:
 # Convenience singleton for simple scripts:
 DEFAULT_CONFIG = MiningConfig.from_env()
 
-__all__ = ["MiningConfig", "DeviceKind", "DEFAULT_CONFIG"]
+__all__ = ["MiningConfig", "DeviceKind", "DEFAULT_CONFIG", "auto_detect_thread_count"]

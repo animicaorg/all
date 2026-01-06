@@ -20,6 +20,7 @@ from core.types.tx import Tx
 from core.utils.merkle import merkle_root
 from core.utils.tx import TxNormalizationError, normalize_tx, normalize_tx_bytes, normalize_tx_envelope
 from mining.adapters.core_chain import CoreChainAdapter
+from mining.config import auto_detect_thread_count
 import p2p
 from rpc import deps
 from rpc import errors as rpc_errors
@@ -2529,7 +2530,7 @@ def _construct_tx_from_dict(normalized: dict) -> Tx | None:
 
 def _mine_once(
     payout_address: bytes | None = None,
-    threads: int = 1,
+    threads: int | None = None,
     *,
     include_mempool: bool = True,
     allow_offline_mining: bool = False,
@@ -2558,13 +2559,17 @@ def _mine_once(
     
     Args:
         payout_address: Optional 32-byte payout address. If None, uses default miner address.
-        threads: Number of parallel threads to use for nonce search (default: 1)
+        threads: Number of parallel threads to use for nonce search (default: CPU count)
         
     Returns:
-        tuple[bool, int]: (success, reward_amount) where:
+        tuple[bool, int, dict[str, Any]]: (success, reward_amount, selection_summary) where:
             - success: True if block was mined and accepted, False otherwise
             - reward_amount: Miner reward in nANM (0 if mining failed or no reward)
+            - selection_summary: Dict with mempool selection statistics (pending, selected, rejected, etc.)
     """
+    # Default threads to CPU count for optimal multi-core mining
+    if threads is None:
+        threads = auto_detect_thread_count()
     allowed, reason = _mining_gate(
         allow_offline_mining=allow_offline_mining,
         allow_unsynced=allow_unsynced_mining,
@@ -3034,6 +3039,16 @@ def _mine_once(
     # Compute target from theta
     theta_micro = header_template.thetaMicro
     target = _theta_to_target(theta_micro)
+    
+    # Log mining configuration
+    log.info(
+        f"Starting PoW mining with {threads} thread(s) for parallel nonce search",
+        extra={
+            "threads": threads,
+            "theta_micro": theta_micro,
+            "target_hex": hex(target)[:18] + "...",
+        }
+    )
     
     # Mining loop: iterate through nonces until we find one that meets the target
     # Cap iterations to avoid infinite loops in tests or misconfigured environments
