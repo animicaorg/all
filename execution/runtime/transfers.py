@@ -621,7 +621,9 @@ def apply_transfer(
     if emit_event and amount > 0:
         logs.append(_make_transfer_log(sender, to, amount))
 
-    _increment_nonce(state, sender)
+    # Coinbase transactions don't increment nonce (protocol-generated, not user txs)
+    if not is_coinbase:
+        _increment_nonce(state, sender)
 
     if log.isEnabledFor(logging.DEBUG):
         post_sender_balance = _get_balance(state, sender)
