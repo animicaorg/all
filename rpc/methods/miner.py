@@ -1159,10 +1159,23 @@ def _mining_gate(
         )
         return False, f"fatal_error:{fatal_error}"
     
+    # Disable mining completely if we are 100 blocks or more behind the highest known height
+    # This prevents mining on a fork or during initial sync when significantly behind
+    header_lag = best_header_height - exec_head
+    if header_lag >= 100:
+        log.info(
+            "MINER_TOO_FAR_BEHIND",
+            extra={
+                "exec_head": exec_head,
+                "best_header_height": best_header_height,
+                "lag": header_lag,
+            },
+        )
+        return False, f"too_far_behind:{header_lag}_blocks"
+    
     # Check execution lag: if exec_head is too far behind best known headers,
     # we may be in "headers-only" mode (headers synced but blocks not executed yet)
     max_lag = int(os.getenv("ANIMICA_MINING_MAX_LAG", "10"))  # Increased default from 2 to 10
-    header_lag = best_header_height - exec_head
     
     if header_lag > max_lag:
         # Execution is lagging significantly behind headers
