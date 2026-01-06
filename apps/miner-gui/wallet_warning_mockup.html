@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wallet Configuration Page - Mockup</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', sans-serif;
+            background-color: #f0f0f0;
+            padding: 20px;
+        }
+        .wizard-page {
+            max-width: 600px;
+            margin: 0 auto;
+            background-color: white;
+            border: 1px solid #ccc;
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        .title {
+            font-size: 24px;
+            font-weight: bold;
+            margin-bottom: 8px;
+        }
+        .subtitle {
+            color: #666;
+            margin-bottom: 24px;
+        }
+        .field-label {
+            font-weight: 500;
+            margin-bottom: 8px;
+        }
+        .input-field {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            margin-bottom: 16px;
+            font-size: 14px;
+            box-sizing: border-box;
+        }
+        .button-row {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+        .button {
+            padding: 8px 16px;
+            background-color: #3c3c3c;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        .button:hover {
+            background-color: #4a4a4a;
+        }
+        .warning-box {
+            color: #ff9800;
+            background-color: rgba(255, 152, 0, 0.1);
+            padding: 12px;
+            border-left: 3px solid #ff9800;
+            border-radius: 3px;
+            margin-top: 8px;
+            margin-bottom: 12px;
+            font-size: 14px;
+            line-height: 1.5;
+        }
+        .warning-icon {
+            font-size: 16px;
+            margin-right: 4px;
+        }
+        .validation-label {
+            color: #666;
+            font-size: 14px;
+            font-style: italic;
+        }
+        .highlight {
+            background-color: #fffbcc;
+            padding: 4px;
+            border-radius: 2px;
+            animation: highlight-fade 3s ease-out;
+        }
+        @keyframes highlight-fade {
+            0% { background-color: #ffeb3b; }
+            100% { background-color: transparent; }
+        }
+        .note {
+            margin-top: 20px;
+            padding: 12px;
+            background-color: #e3f2fd;
+            border-left: 3px solid #2196f3;
+            border-radius: 3px;
+            font-size: 13px;
+        }
+    </style>
+</head>
+<body>
+    <div class="wizard-page">
+        <div class="title">Payout Address</div>
+        <div class="subtitle">Configure your wallet address for receiving mining rewards</div>
+        
+        <div class="field-label">Enter payout address:</div>
+        <input type="text" class="input-field" placeholder="anim1..." value="">
+        
+        <div class="button-row">
+            <button class="button">Create New Wallet</button>
+            <button class="button">Import from Wallets</button>
+        </div>
+        
+        <div class="warning-box highlight">
+            <span class="warning-icon">⚠️</span>
+            <strong>Note:</strong> When importing from wallets, your wallets.json file must be located at <code>~/.animica/wallets.json</code> or you can browse to select a custom wallet file location.
+        </div>
+        
+        <div class="validation-label">
+            <!-- Validation status appears here -->
+        </div>
+    </div>
+
+    <div class="note" style="max-width: 600px; margin: 20px auto;">
+        <strong>Implementation Note:</strong> This HTML mockup shows how the warning appears in the Animica GUI miner wizard. 
+        The warning box is styled with an orange color scheme to make it stand out without being intrusive. 
+        The message informs users about the default wallet location and reminds them they can browse for custom locations.
+    </div>
+</body>
+</html>
