@@ -1,19 +1,57 @@
 import { describe, expect, it } from 'vitest'
-import { normalizeBlockDetail, normalizeHead, normalizeTxDetail } from '../src/normalize'
+import { normalizeBlockDetail, normalizeBlockSummary, normalizeHead, normalizeTxDetail } from '../src/normalize'
 
 describe('normalizeHead', () => {
-  it('normalizes core fields', () => {
+  it('normalizes core fields with height', () => {
     const head = normalizeHead({ height: '0x0a', hash: '0xabc', time: 123 })
     expect(head.height).toBe(10)
     expect(head.hash).toBe('0xabc')
   })
+
+  it('falls back to number field when height is missing', () => {
+    const head = normalizeHead({ number: 42, hash: '0xdef', time: 456 })
+    expect(head.height).toBe(42)
+    expect(head.hash).toBe('0xdef')
+  })
+})
+
+describe('normalizeBlockSummary', () => {
+  it('normalizes block with number field in header', () => {
+    const block = normalizeBlockSummary({ 
+      header: { number: 5, hash: '0xblock5', timestamp: 1000 }, 
+      txs: ['0xtx1', '0xtx2'] 
+    })
+    expect(block.height).toBe(5)
+    expect(block.hash).toBe('0xblock5')
+    expect(block.txCount).toBe(2)
+  })
+
+  it('falls back to top-level number when header.number is missing', () => {
+    const block = normalizeBlockSummary({ 
+      number: 10, 
+      hash: '0xblock10', 
+      time: 2000, 
+      transactions: [] 
+    })
+    expect(block.height).toBe(10)
+    expect(block.hash).toBe('0xblock10')
+  })
 })
 
 describe('normalizeBlockDetail', () => {
-  it('normalizes block detail', () => {
+  it('normalizes block detail with height', () => {
     const block = normalizeBlockDetail({ header: { height: 2, hash: '0x1', parentHash: '0x0', time: 12 }, txs: [] })
     expect(block.height).toBe(2)
     expect(block.hash).toBe('0x1')
+  })
+
+  it('normalizes block detail with number field', () => {
+    const block = normalizeBlockDetail({ 
+      header: { number: 7, hash: '0x7', parentHash: '0x6', timestamp: 700 }, 
+      txs: [] 
+    })
+    expect(block.height).toBe(7)
+    expect(block.hash).toBe('0x7')
   })
 })
 
