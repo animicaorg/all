@@ -20,6 +20,7 @@ from core.types.tx import Tx
 from core.utils.merkle import merkle_root
 from core.utils.tx import TxNormalizationError, normalize_tx, normalize_tx_bytes, normalize_tx_envelope
 from mining.adapters.core_chain import CoreChainAdapter
+from mining.config import auto_detect_thread_count
 import p2p
 from rpc import deps
 from rpc import errors as rpc_errors
@@ -2567,7 +2568,7 @@ def _mine_once(
     """
     # Default threads to CPU count for optimal multi-core mining
     if threads is None:
-        threads = os.cpu_count() or 1
+        threads = auto_detect_thread_count()
     allowed, reason = _mining_gate(
         allow_offline_mining=allow_offline_mining,
         allow_unsynced=allow_unsynced_mining,
