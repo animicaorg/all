@@ -46,6 +46,8 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
+from mining.config import auto_detect_thread_count
+
 log = logging.getLogger("mining.cpu_backend")
 
 # Optional accelerators (very light usage)
@@ -204,8 +206,8 @@ class _CPUDevice:
         max_found: int = 1,
         thread_id: int = 0,
     ) -> List[Dict[str, Any]]:
-        # Determine effective thread count (0 or None means auto-detect)
-        effective_threads = self._threads if self._threads > 0 else (os.cpu_count() or 1)
+        # Determine effective thread count (0 means auto-detect CPU count)
+        effective_threads = self._threads if self._threads > 0 else auto_detect_thread_count()
         
         # Single-threaded fast path for very small iteration counts or explicit single-thread mode
         if effective_threads == 1 or iterations <= 1_000:
