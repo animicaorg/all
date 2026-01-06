@@ -32,6 +32,9 @@ except Exception:
 # Maximum height to scan when doing linear fallback
 MAX_LINEAR_SCAN_HEIGHT = 10000
 
+# Logger for chain methods
+_log = logging.getLogger("animica.rpc.chain")
+
 try:
     from core.utils.hash import sha3_256 as _sha3_256  # type: ignore
 except Exception:  # pragma: no cover
@@ -271,13 +274,11 @@ def _scan_for_highest_block() -> t.Tuple[int, t.Any] | None:
     Scan the block database to find the highest block when the head pointer is missing.
     Returns (height, block) or None if no blocks found.
     """
-    log = logging.getLogger("animica.rpc.chain")
-    
     try:
         ctx = deps.get_ctx()
         block_db = getattr(ctx, "block_db", None)
         if block_db is None:
-            log.warning("block_db not available, cannot scan for highest block")
+            _log.warning("block_db not available, cannot scan for highest block")
             return None
         
         # Try to access the KV store directly to scan the height index
@@ -285,31 +286,56 @@ def _scan_for_highest_block() -> t.Tuple[int, t.Any] | None:
         if kv is not None and hasattr(kv, "iter_prefix") and _HAS_BLOCK_DB_UTILS:
             try:
                 max_height = -1
-                for key, _ in kv.iter_prefix(PFX_HIX):
-                    if len(key) < len(PFX_HIX) + 8:
-                        continue
-                    height = _from_u64be(key[-8:])
-                    if height > max_height:
-                        max_height = height
+                # Try reverse iteration if supported for better performance
+                iter_method = getattr(kv, "iter_prefix_reverse", None)
+                if iter_method and callable(iter_method):
+                    # If reverse iteration is available, we can get the max quickly
+                    for key, _ in iter_method(PFX_HIX):
+                        if len(key) >= len(PFX_HIX) + 8:
+                            max_height = _from_u64be(key[-8:])
+                            break  # First item is the highest
+                else:
+                    # Fall back to forward iteration
+                    for key, _ in kv.iter_prefix(PFX_HIX):
+                        if len(key) < len(PFX_HIX) + 8:
+                            continue
+                        height = _from_u64be(key[-8:])
+                        if height > max_height:
+                            max_height = height
                 
                 if max_height >= 0:
                     # Found a block, try to retrieve it
                     h, blk = _resolve_block_by_number(max_height)
                     if blk is not None:
-                        log.info(f"Recovered head at height {max_height} via index scan")
+                        _log.info(f"Recovered head at height {max_height} via index scan")
                         return (h, blk)
             except Exception as e:
-                log.warning(f"Index scan failed: {e}, trying linear scan")
+                _log.warning(f"Index scan failed: {e}, trying exponential search")
         
-        # Fallback: try scanning backwards from MAX_LINEAR_SCAN_HEIGHT
-        log.info(f"Attempting linear scan from height {MAX_LINEAR_SCAN_HEIGHT}")
-        for height in range(MAX_LINEAR_SCAN_HEIGHT, -1, -1):
-            h, blk = _resolve_block_by_number(height)
+        # Exponential search strategy: try heights in exponentially decreasing steps
+        # This is much faster than linear scan when blocks are sparse
+        _log.info(f"Attempting exponential search up to height {MAX_LINEAR_SCAN_HEIGHT}")
+        search_heights = [MAX_LINEAR_SCAN_HEIGHT, 1000, 100, 10, 1, 0]
+        
+        for search_height in search_heights:
+            h, blk = _resolve_block_by_number(search_height)
             if blk is not None:
-                log.info(f"Recovered head at height {height} via linear scan")
-                return (h, blk)
+                # Found a block, now scan linearly from here to find the actual max
+                _log.info(f"Found block at height {search_height}, scanning forward")
+                for height in range(search_height, search_height + 1000):
+                    h, blk = _resolve_block_by_number(height)
+                    if blk is None:
+                        # Previous height was the max
+                        if height > search_height:
+                            h, blk = _resolve_block_by_number(height - 1)
+                            _log.info(f"Recovered head at height {height - 1} via exponential search")
+                            return (h, blk)
+                        break
+                # If we got here, the block at search_height is valid
+                _log.info(f"Recovered head at height {search_height} via exponential search")
+                return (search_height, blk)
     except Exception as e:
-        log.error(f"Failed to scan for highest block: {e}")
+        _log.error(f"Failed to scan for highest block: {e}")
     
     return None
 
