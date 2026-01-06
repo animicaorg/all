@@ -1440,6 +1440,87 @@ def _get_miner_address() -> bytes:
     return ZERO32
 
 
+def _build_coinbase_transactions(ctx: Any, height: int, payout_address: bytes | None = None, instant_block: bool = False) -> tuple[list, int]:
+    """
+    Build coinbase transactions for block rewards.
+    
+    Args:
+        ctx: RPC context with chain_id and params
+        height: Block height for reward calculation
+        payout_address: Optional 32-byte payout address. If None, uses default miner address.
+        instant_block: If True, this is an instant block with zero rewards (default: False)
+        
+    Returns:
+        tuple: (list of Tx objects for rewards, total miner reward amount)
+    """
+    try:
+        from core.types.tx import Tx, UnsignedTx, TxKind  # type: ignore[import-not-found]
+        from consensus.rewards import compute_block_reward  # type: ignore[import-not-found]
+        
+        # Get miner address (use custom payout address if provided)
+        miner_address = payout_address if payout_address is not None else _get_miner_address()
+        
+        chain_id = ctx.cfg.chain_id
+        params = getattr(ctx, "params", None) or {}
+        
+        rewards = compute_block_reward(chain_id=chain_id, height=height, params=params, instant_block=instant_block)
+        
+        # Log warning if rewards are empty when they shouldn't be (height >= 1 and not instant block)
+        if not rewards and height >= 1 and not instant_block:
+            log.warning(
+                f"Block reward at height {height} is empty. "
+                f"This may indicate missing/invalid consensus params. "
+                f"Check that spec/params.yaml defines proper emission schedule for chain_id={chain_id}."
+            )
+        
+        coinbase_txs = []
+        miner_reward_amount = 0
+        
+        # Create coinbase transaction for each reward
+        for idx, (reward_addr, amount) in enumerate(rewards):
+            if amount <= 0:
+                continue
+                
+            # Override first reward (miner) with actual payout address
+            if idx == 0:
+                reward_addr_bytes = miner_address
+                miner_reward_amount = amount
+            else:
+                # Convert bech32 address to bytes if needed (for aicf/treasury rewards)
+                if isinstance(reward_addr, str):
+                    try:
+                        reward_addr_bytes = _decode_bech32_address(reward_addr)
+                    except Exception:
+                        log.warning(f"Could not decode reward address {reward_addr}; skipping")
+                        continue
+                else:
+                    reward_addr_bytes = reward_addr[:32].ljust(32, b"\x00")
+            
+            # Build coinbase transaction
+            unsigned_tx = UnsignedTx.build_coinbase(
+                chain_id=chain_id,
+                height=height,
+                to=reward_addr_bytes,
+                amount=amount,
+            )
+            
+            # Create signed tx with empty signatures (coinbase txs don't need signatures)
+            coinbase_tx = Tx(unsigned=unsigned_tx, sigs=tuple())
+            coinbase_txs.append(coinbase_tx)
+            
+            log.info(
+                f"Created coinbase tx: height={height}, "
+                f"to={reward_addr_bytes.hex()[:16]}..., "
+                f"amount={amount}"
+            )
+        
+        return coinbase_txs, miner_reward_amount
+    except Exception as e:
+        # Don't fail mining if coinbase creation has issues
+        log.error(f"Failed to build coinbase transactions at height {height}: {e}", exc_info=True)
+        return [], 0
+
+
 def _apply_block_reward(ctx: Any, height: int, payout_address: bytes | None = None, instant_block: bool = False) -> int:
     """
     Apply block reward to the miner's address in state.
@@ -2824,6 +2905,26 @@ def _mine_once(
             # First block - initialize adjustment state
             _adjust_theta_for_mining(dt_seconds=None)
             log.info("Initialized theta adjustment for first mined block")
+    
+    # Create coinbase transactions for block rewards
+    # These must be added BEFORE computing txsRoot since they're part of the block
+    next_height = parent_height + 1
+    coinbase_txs, reward_amount = _build_coinbase_transactions(
+        ctx, next_height, payout_address, instant_block=instant_block
+    )
+    
+    # Prepend coinbase transactions to the tx list
+    # Coinbase txs always come first in the block
+    if coinbase_txs:
+        txs = coinbase_txs + txs
+        # Generate hash identifiers for coinbase txs
+        for coinbase_tx in coinbase_txs:
+            try:
+                coinbase_hash_hex = "0x" + coinbase_tx.hash().hex()
+                included_hashes.insert(0, coinbase_hash_hex)
+            except Exception as e:
+                log.warning(f"Failed to compute hash for coinbase tx: {e}")
+        log.info(f"Added {len(coinbase_txs)} coinbase transaction(s) for rewards")
 
     if txs:
         # Build merkle root from canonical tx.hash() values to match Block.txs_root().
@@ -3071,6 +3172,7 @@ def _mine_once(
         
         # Execute all transactions and generate receipts
         # State changes (balance transfers, nonce increments) are persisted via state_db
+        # Coinbase transactions are executed first (they're prepended to txs list)
         log.info(f"Executing {len(txs)} transactions for block at height {header.height}")
         receipts_dict = _execute_transactions(
             txs=txs,
@@ -3082,12 +3184,11 @@ def _mine_once(
         # Convert dict receipts to Receipt objects for compatibility with receiptsRoot computation
         receipts = _convert_receipts_dict_to_objects(receipts_dict)
 
-        # Apply block reward to coinbase/miner address
-        # This also persists to state_db
+        # Block reward was already applied via coinbase transaction execution
+        # reward_amount was set earlier from _build_coinbase_transactions
         log.info(
-            f"Applying block reward to payout address at height {header.height}"
+            f"Block reward applied via coinbase transaction: {reward_amount} nANM"
         )
-        reward_amount = _apply_block_reward(ctx, header.height, payout_address, instant_block=instant_block)
 
         # Compute receipts root (if any receipts) and ensure txs root matches tx set
         receipts_root = ZERO32
