@@ -608,7 +608,11 @@ async def _amain(argv: list[str]) -> int:
     try:
         # Try to create the device to validate it's available
         dev = miner_device.create(cfg["device"])
-        dev.close()
+        try:
+            # Device created successfully, just validating availability
+            pass
+        finally:
+            dev.close()
     except miner_errors.DeviceUnavailable as e:
         log.error("device unavailable: %s", e)
         return 3
