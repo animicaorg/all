@@ -66,6 +66,51 @@ class _WalletPageState extends ConsumerState<WalletPage> {
     // Convert ANM to base units (assuming 6 decimals)
     final valueInBaseUnits = (amount * 1000000).toInt();
 
+    // Show confirmation dialog
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Confirm Transaction'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Send $amountStr ANM to:'),
+            const SizedBox(height: 8),
+            SelectableText(
+              toAddress,
+              style: const TextStyle(
+                fontFamily: 'monospace',
+                fontSize: 12,
+              ),
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              'This action cannot be undone.',
+              style: TextStyle(
+                fontSize: 12,
+                color: Colors.grey,
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Confirm'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) {
+      return;
+    }
+
     try {
       await ref.read(sendTransactionProvider.notifier).sendTransaction(
         from: address,
@@ -79,7 +124,10 @@ class _WalletPageState extends ConsumerState<WalletPage> {
           data: (txHash) {
             if (txHash != null) {
               ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(content: Text('Transaction sent: ${truncateAddress(txHash)}')),
+                SnackBar(
+                  content: Text('Transaction sent: ${truncateAddress(txHash)}'),
+                  duration: const Duration(seconds: 5),
+                ),
               );
               _toAddressController.clear();
               _amountController.clear();
@@ -92,6 +140,7 @@ class _WalletPageState extends ConsumerState<WalletPage> {
               SnackBar(
                 content: Text('Transaction failed: ${error.toString()}'),
                 backgroundColor: Theme.of(context).colorScheme.error,
+                duration: const Duration(seconds: 5),
               ),
             );
           },
@@ -103,6 +152,7 @@ class _WalletPageState extends ConsumerState<WalletPage> {
           SnackBar(
             content: Text('Error: ${e.toString()}'),
             backgroundColor: Theme.of(context).colorScheme.error,
+            duration: const Duration(seconds: 5),
           ),
         );
       }
@@ -120,6 +170,11 @@ class _WalletPageState extends ConsumerState<WalletPage> {
       appBar: AppBar(
         title: const Text('Wallet'),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.history),
+            tooltip: 'Transaction History',
+            onPressed: () => context.go('/transaction-history'),
+          ),
           IconButton(
             icon: const Icon(Icons.qr_code),
             tooltip: 'Receive',

@@ -10,6 +10,7 @@ import '../pages/mining/stats_page.dart';
 import '../pages/wallet/wallet_page.dart';
 import '../pages/wallet/receive_page.dart';
 import '../pages/wallet/wallet_setup_page.dart';
+import '../pages/wallet/transaction_history_page.dart';
 import '../pages/settings/settings_page.dart';
 import '../pages/settings/config_page.dart';
 import '../pages/onboarding/wizard_page.dart';
@@ -85,6 +86,13 @@ final routerProvider = Provider<GoRouter>((ref) {
             name: 'wallet-setup',
             pageBuilder: (context, state) => NoTransitionPage(
               child: WalletSetupPage(key: state.pageKey),
+            ),
+          ),
+          GoRoute(
+            path: '/transaction-history',
+            name: 'transaction-history',
+            pageBuilder: (context, state) => NoTransitionPage(
+              child: TransactionHistoryPage(key: state.pageKey),
             ),
           ),
           GoRoute(
