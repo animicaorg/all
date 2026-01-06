@@ -2,108 +2,165 @@
 # Build macOS executable for Animica Miner GUI
 # Creates a standalone .app bundle and DMG installer
 #
-# Requirements:
-#   - macOS 10.15 or later
-#   - Python 3.10 or higher
-#   - Xcode Command Line Tools
-#
 # Usage:
-#   ./build_macos.sh
+#   ./build-scripts/build_macos.sh
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-APP_DIR="$(dirname "$SCRIPT_DIR")"
-REPO_ROOT="$(cd "$APP_DIR/../.." && pwd)"
-DIST_DIR="${APP_DIR}/dist"
-BUILD_DIR="${APP_DIR}/build"
-
-log() { printf "\033[1;34m[build-macos]\033[0m %s\n" "$*"; }
+log()  { printf "\033[1;34m[build-macos]\033[0m %s\n" "$*"; }
 warn() { printf "\033[1;33m[warn]\033[0m %s\n" "$*" >&2; }
-err() { printf "\033[1;31m[error]\033[0m %s\n" "$*" >&2; }
-die() { err "$*"; exit 1; }
+err()  { printf "\033[1;31m[error]\033[0m %s\n" "$*" >&2; }
+die()  { err "$*"; exit 1; }
 
-# Check if running on macOS
+# ---- Paths ----
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+APP_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"          # apps/miner-gui
+REPO_ROOT="$(cd "$APP_DIR/../.." && pwd)"        # repo root
+DIST_DIR="$APP_DIR/dist"
+BUILD_DIR="$APP_DIR/build"
+SPEC_FILE="$BUILD_DIR/animica-miner-gui-macos.spec"
+PYI_WORK="$BUILD_DIR/pyinstaller-work"
+RUNTIME_HOOK="$BUILD_DIR/qt_runtime_hook.py"
+
+# ---- Platform checks ----
 if [[ "$(uname -s)" != "Darwin" ]]; then
-    die "This script must be run on macOS"
+  die "This script must be run on macOS"
 fi
-
-# Check Python version
-PYTHON_VERSION=$(python3 --version 2>&1 | awk '{print $2}')
-log "Using Python $PYTHON_VERSION"
-
-# Check for required tools
-command -v python3 >/dev/null 2>&1 || die "Python 3 is required"
 command -v hdiutil >/dev/null 2>&1 || die "hdiutil not found (macOS tool)"
 
-# Clean previous builds
+# ---- Choose python (prefer venv) ----
+choose_python() {
+  # Prefer active venv
+  if [[ -n "${VIRTUAL_ENV:-}" ]] && [[ -x "${VIRTUAL_ENV}/bin/python3" ]]; then
+    echo "${VIRTUAL_ENV}/bin/python3"
+    return
+  fi
+  # Prefer repo-root .venv
+  if [[ -x "${REPO_ROOT}/.venv/bin/python3" ]]; then
+    echo "${REPO_ROOT}/.venv/bin/python3"
+    return
+  fi
+  # Fallback
+  command -v python3 >/dev/null 2>&1 || return 1
+  echo "$(command -v python3)"
+}
+PY="$(choose_python)" || die "Python 3 not found"
+
+PY_VERSION="$("$PY" --version 2>&1 | awk '{print $2}')"
+log "Using Python $PY_VERSION ($PY)"
+
+# ---- Clean previous builds ----
 log "Cleaning previous builds..."
 rm -rf "$DIST_DIR" "$BUILD_DIR"
-mkdir -p "$DIST_DIR"
+mkdir -p "$DIST_DIR" "$BUILD_DIR" "$PYI_WORK"
 
-# Install/upgrade PyInstaller
-log "Installing PyInstaller..."
-python3 -m pip install --upgrade pip setuptools wheel
-python3 -m pip install --upgrade pyinstaller
+# ---- Install build tooling ----
+log "Installing PyInstaller tooling..."
+"$PY" -m pip install --upgrade pip setuptools wheel
+"$PY" -m pip install --upgrade pyinstaller pyinstaller-hooks-contrib
 
-# Install the miner-gui package and its dependencies
+# ---- Install miner-gui deps ----
 log "Installing miner-gui dependencies..."
-cd "$APP_DIR"
-python3 -m pip install -e .
+"$PY" -m pip install -e "$APP_DIR"
 
-# Get version from pyproject.toml
-VERSION=$(python3 -c "import tomllib; print(tomllib.load(open('$APP_DIR/pyproject.toml', 'rb'))['project']['version'])" 2>/dev/null || echo "0.1.0")
+# ---- Resolve version ----
+VERSION="$("$PY" -c "import tomllib, pathlib; p=pathlib.Path('$APP_DIR')/'pyproject.toml'; print(tomllib.loads(p.read_bytes())['project']['version'])" 2>/dev/null || echo "0.1.0")"
 log "Building version: $VERSION"
 
-# Create PyInstaller spec if it doesn't exist
-SPEC_FILE="${BUILD_DIR}/animica-miner-gui-macos.spec"
-mkdir -p "$BUILD_DIR"
+# ---- Determine entry script robustly ----
+ENTRY=""
+for c in \
+  "$APP_DIR/animica_miner_gui/main.py" \
+  "$APP_DIR/animica_miner_gui/__main__.py" \
+  "$APP_DIR/animica_miner_gui/app.py"
+do
+  if [[ -f "$c" ]]; then ENTRY="$c"; break; fi
+done
+if [[ -z "$ENTRY" ]]; then
+  die "Could not find an entry script. Expected one of:
+  - $APP_DIR/animica_miner_gui/main.py
+  - $APP_DIR/animica_miner_gui/__main__.py
+  - $APP_DIR/animica_miner_gui/app.py"
+fi
+log "Entry script: $ENTRY"
 
+# ---- Optional: disable UPX if not installed (UPX can break on macOS arm64) ----
+UPX_ENABLED="False"
+if command -v upx >/dev/null 2>&1; then
+  UPX_ENABLED="True"
+  log "UPX found; enabling UPX compression."
+else
+  log "UPX not found; disabling UPX (recommended on macOS arm64)."
+fi
+
+# ---- Runtime hook to ensure Qt plugin paths are set inside packaged app ----
+cat > "$RUNTIME_HOOK" <<'PYEOF'
+import os
+
+def _fix_qt_plugin_paths():
+    # Avoid breaking Qt discovery if user has these set weirdly (empty/invalid)
+    for k in ("QT_PLUGIN_PATH", "QT_QPA_PLATFORM_PLUGIN_PATH"):
+        if k in os.environ and not os.environ[k].strip():
+            os.environ.pop(k, None)
+
+    try:
+        from PySide6.QtCore import QLibraryInfo
+        plugins = QLibraryInfo.path(QLibraryInfo.PluginsPath)
+        if plugins:
+            os.environ.setdefault("QT_PLUGIN_PATH", plugins)
+            plat = os.path.join(plugins, "platforms")
+            os.environ.setdefault("QT_QPA_PLATFORM_PLUGIN_PATH", plat)
+    except Exception:
+        pass
+
+_fix_qt_plugin_paths()
+PYEOF
+
+# ---- Create PyInstaller spec ----
 log "Creating PyInstaller spec file..."
-cat > "$SPEC_FILE" << 'SPEC_EOF'
+cat > "$SPEC_FILE" <<SPEC_EOF
 # -*- mode: python ; coding: utf-8 -*-
-import sys
 from pathlib import Path
+
+# IMPORTANT:
+# Spec lives in apps/miner-gui/build, so resolve paths relative to that.
+SPEC_DIR = Path(__file__).resolve().parent
+APP_DIR  = SPEC_DIR.parent  # apps/miner-gui
+ENTRY    = Path(r"${ENTRY}").resolve()
 
 block_cipher = None
 
-# Get the logo path
-logo_path = Path('logo.png')
-if not logo_path.exists():
-    print("Warning: logo.png not found")
-    logo_path = None
+logo = APP_DIR / "logo.png"
+datas = []
+if logo.exists():
+    datas.append((str(logo), "."))
+
+# Note: rely on PyInstaller's PySide6 hooks, but keep a few safety hiddenimports.
+hiddenimports = [
+    "PySide6.QtCore",
+    "PySide6.QtGui",
+    "PySide6.QtWidgets",
+    "shiboken6",
+    "matplotlib",
+    "matplotlib.backends.backend_qtagg",
+    "matplotlib.backends.backend_qt5agg",
+    "pydantic",
+    "httpx",
+]
 
 a = Analysis(
-    ['animica_miner_gui/main.py'],
-    pathex=[],
+    [str(ENTRY)],
+    pathex=[str(APP_DIR)],
     binaries=[],
-    datas=[
-        ('logo.png', '.') if logo_path else None,
-    ],
-    hiddenimports=[
-        'PySide6.QtCore',
-        'PySide6.QtGui',
-        'PySide6.QtWidgets',
-        'matplotlib.backends.backend_qt5agg',
-        'pydantic',
-        'httpx',
-    ],
+    datas=datas,
+    hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
-    runtime_hooks=[],
-    excludes=[
-        'tkinter',
-        'test',
-        'unittest',
-    ],
-    win_no_prefer_redirects=False,
-    win_private_assemblies=False,
+    runtime_hooks=[str(SPEC_DIR / "qt_runtime_hook.py")],
+    excludes=["tkinter", "test", "unittest"],
     cipher=block_cipher,
     noarchive=False,
 )
-
-# Filter out None from datas
-a.datas = [d for d in a.datas if d is not None]
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
@@ -112,17 +169,14 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name='Animica Miner GUI',
+    name="Animica Miner GUI",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    upx=${UPX_ENABLED},
     console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
-    target_arch=None,
-    codesign_identity=None,
-    entitlements_file=None,
 )
 
 coll = COLLECT(
@@ -131,68 +185,63 @@ coll = COLLECT(
     a.zipfiles,
     a.datas,
     strip=False,
-    upx=True,
-    upx_exclude=[],
-    name='Animica Miner GUI',
+    upx=${UPX_ENABLED},
+    name="Animica Miner GUI",
 )
 
 app = BUNDLE(
     coll,
-    name='Animica Miner GUI.app',
+    name="Animica Miner GUI.app",
     icon=None,
-    bundle_identifier='org.animica.miner-gui',
-    version='0.1.0',
+    bundle_identifier="org.animica.miner-gui",
+    version="${VERSION}",
     info_plist={
-        'CFBundleName': 'Animica Miner GUI',
-        'CFBundleDisplayName': 'Animica Miner GUI',
-        'CFBundleShortVersionString': '0.1.0',
-        'CFBundleVersion': '0.1.0',
-        'NSHighResolutionCapable': True,
-        'LSMinimumSystemVersion': '10.15',
-        'NSRequiresAquaSystemAppearance': False,
-        'CFBundlePackageType': 'APPL',
-        'LSApplicationCategoryType': 'public.app-category.finance',
+        "CFBundleName": "Animica Miner GUI",
+        "CFBundleDisplayName": "Animica Miner GUI",
+        "CFBundleShortVersionString": "${VERSION}",
+        "CFBundleVersion": "${VERSION}",
+        "NSHighResolutionCapable": True,
+        "LSMinimumSystemVersion": "10.15",
+        "NSRequiresAquaSystemAppearance": False,
+        "CFBundlePackageType": "APPL",
+        "LSApplicationCategoryType": "public.app-category.finance",
     },
 )
 SPEC_EOF
 
-# Update version in spec file
-sed -i.bak "s/version='0.1.0'/version='$VERSION'/g" "$SPEC_FILE"
-sed -i.bak "s/'CFBundleShortVersionString': '0.1.0'/'CFBundleShortVersionString': '$VERSION'/g" "$SPEC_FILE"
-sed -i.bak "s/'CFBundleVersion': '0.1.0'/'CFBundleVersion': '$VERSION'/g" "$SPEC_FILE"
-rm -f "${SPEC_FILE}.bak"
-
-# Build with PyInstaller
+# ---- Build with PyInstaller (explicit dist/work paths so outputs are predictable) ----
 log "Running PyInstaller..."
-cd "$APP_DIR"
-python3 -m PyInstaller --clean --noconfirm "$SPEC_FILE"
+"$PY" -m PyInstaller --noconfirm --clean \
+  --distpath "$DIST_DIR" \
+  --workpath "$PYI_WORK" \
+  "$SPEC_FILE"
 
-# Check if app bundle was created
-APP_BUNDLE="${DIST_DIR}/Animica Miner GUI.app"
+APP_BUNDLE="$DIST_DIR/Animica Miner GUI.app"
 if [[ ! -d "$APP_BUNDLE" ]]; then
-    die "Failed to create app bundle"
+  # Sometimes PyInstaller nests under a folder; try to locate it.
+  FOUND="$(find "$DIST_DIR" -maxdepth 3 -name "Animica Miner GUI.app" -type d -print -quit || true)"
+  if [[ -n "$FOUND" ]]; then
+    APP_BUNDLE="$FOUND"
+  else
+    die "Failed to create app bundle. Look in: $DIST_DIR"
+  fi
 fi
 
 log "App bundle created successfully at: $APP_BUNDLE"
 
-# Create DMG
+# ---- Create DMG ----
 DMG_NAME="Animica-Miner-GUI-${VERSION}-macOS-$(uname -m).dmg"
-DMG_PATH="${DIST_DIR}/${DMG_NAME}"
+DMG_PATH="$DIST_DIR/$DMG_NAME"
 
 log "Creating DMG installer..."
 hdiutil create -volname "Animica Miner GUI" \
-    -srcfolder "$APP_BUNDLE" \
-    -ov -format UDZO \
-    "$DMG_PATH"
+  -srcfolder "$APP_BUNDLE" \
+  -ov -format UDZO \
+  "$DMG_PATH"
 
 log "✅ Build completed successfully!"
-log ""
 log "Artifacts:"
 log "  App Bundle: $APP_BUNDLE"
 log "  DMG:        $DMG_PATH"
-log ""
-log "To test the app, run:"
+log "Test:"
 log "  open \"$APP_BUNDLE\""
-log ""
-log "To install, mount the DMG and drag the app to /Applications:"
-log "  open \"$DMG_PATH\""
