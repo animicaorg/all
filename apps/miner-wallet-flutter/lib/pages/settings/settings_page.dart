@@ -1,11 +1,17 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
+
+import '../../state/app_state.dart';
 
 class SettingsPage extends ConsumerWidget {
   const SettingsPage({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final config = ref.watch(configProvider);
+    final uiConfig = config.ui;
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('Settings'),
@@ -13,90 +19,75 @@ class SettingsPage extends ConsumerWidget {
       body: ListView(
         children: [
           ListTile(
-            leading: const Icon(Icons.language),
-            title: const Text('Network'),
-            subtitle: const Text('RPC URL and Chain ID'),
+            leading: const Icon(Icons.devices),
+            title: const Text('Devices'),
+            subtitle: const Text('Configure CPU and GPU devices'),
             trailing: const Icon(Icons.chevron_right),
-            onTap: () {
-              // TODO: Navigate to network settings
-            },
+            onTap: () => context.go('/devices'),
           ),
-          const Divider(),
-          ListTile(
-            leading: const Icon(Icons.settings_applications),
-            title: const Text('Mining Configuration'),
-            subtitle: const Text('Device settings and performance'),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () {
-              // TODO: Navigate to mining config
-            },
-          ),
-          const Divider(),
           ListTile(
             leading: const Icon(Icons.pool),
             title: const Text('Pool Settings'),
-            subtitle: const Text('Configure mining pool'),
+            subtitle: const Text('Mining pool configuration'),
             trailing: const Icon(Icons.chevron_right),
-            onTap: () {
-              // TODO: Navigate to pool settings
-            },
+            onTap: () => context.go('/pools'),
           ),
-          const Divider(),
           ListTile(
-            leading: const Icon(Icons.code),
-            title: const Text('JSON Configuration'),
-            subtitle: const Text('Edit raw config'),
+            leading: const Icon(Icons.article),
+            title: const Text('View Logs'),
+            subtitle: const Text('Mining logs and debug info'),
             trailing: const Icon(Icons.chevron_right),
-            onTap: () {
-              // TODO: Navigate to JSON editor
-            },
+            onTap: () => context.go('/logs'),
           ),
-          const Divider(),
-          ListTile(
-            leading: const Icon(Icons.list_alt),
-            title: const Text('Logs'),
-            subtitle: const Text('View mining logs'),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () {
-              // TODO: Navigate to logs
-            },
-          ),
-          const Divider(),
           ListTile(
             leading: const Icon(Icons.bar_chart),
             title: const Text('Statistics'),
-            subtitle: const Text('Hashrate graphs and stats'),
+            subtitle: const Text('Mining stats and charts'),
             trailing: const Icon(Icons.chevron_right),
-            onTap: () {
-              // TODO: Navigate to stats
-            },
+            onTap: () => context.go('/stats'),
+          ),
+          ListTile(
+            leading: const Icon(Icons.code),
+            title: const Text('JSON Configuration'),
+            subtitle: const Text('Advanced: Edit raw config'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => context.go('/config'),
           ),
           const Divider(),
           SwitchListTile(
-            secondary: const Icon(Icons.app_shortcut),
+            secondary: const Icon(Icons.system_update_alt),
             title: const Text('System Tray'),
             subtitle: const Text('Minimize to system tray'),
-            value: true,
+            value: uiConfig.systemTray,
             onChanged: (value) {
-              // TODO: Toggle system tray
+              ref.read(configProvider.notifier).updateUiConfig(
+                uiConfig.copyWith(systemTray: value),
+              );
             },
           ),
           SwitchListTile(
             secondary: const Icon(Icons.notifications),
             title: const Text('Notifications'),
-            subtitle: const Text('Show mining notifications'),
-            value: true,
+            subtitle: const Text('Block found, errors, etc.'),
+            value: uiConfig.notifications,
             onChanged: (value) {
-              // TODO: Toggle notifications
+              ref.read(configProvider.notifier).updateUiConfig(
+                uiConfig.copyWith(notifications: value),
+              );
             },
           ),
           const Divider(),
           ListTile(
             leading: const Icon(Icons.info_outline),
             title: const Text('About'),
-            subtitle: const Text('Version 0.1.0'),
+            subtitle: const Text('Version 0.1.0+1'),
             onTap: () {
-              // TODO: Show about dialog
+              showAboutDialog(
+                context: context,
+                applicationName: 'Animica Miner-Wallet',
+                applicationVersion: '0.1.0+1',
+                applicationLegalese: '© 2024 Animica',
+              );
             },
           ),
         ],
