@@ -20,10 +20,6 @@ logger = logging.getLogger(__name__)
 
 def main() -> int:
     """Main entry point for the GUI miner."""
-    # Required for PyInstaller frozen executables on macOS/Windows to prevent
-    # infinite process spawning when using multiprocessing module
-    multiprocessing.freeze_support()
-    
     try:
         # Ensure config directory exists
         from animica_miner_gui.backend.config import get_default_config_dir
@@ -68,4 +64,8 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    # Required for PyInstaller frozen executables on macOS/Windows to prevent
+    # infinite process spawning when using multiprocessing module.
+    # MUST be called before main() to work correctly.
+    multiprocessing.freeze_support()
     sys.exit(main())
