@@ -179,8 +179,11 @@ class WalletTab(QWidget):
                         if str(w.get("address")) == from_addr:
                             address_in_wallet = True
                             break
-        except Exception as e:
+        except (json.JSONDecodeError, FileNotFoundError, PermissionError, KeyError) as e:
             logger.warning(f"Could not check wallet file: {e}")
+        except Exception as e:
+            # Catch any other unexpected errors but log them
+            logger.error(f"Unexpected error checking wallet file: {e}", exc_info=True)
         
         if not address_in_wallet:
             reply = QMessageBox.warning(
