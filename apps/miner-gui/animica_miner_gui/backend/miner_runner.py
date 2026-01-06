@@ -273,7 +273,12 @@ class MinerRunner:
         """Run the miner in a background thread.
         
         This runs the actual mining CLI as a subprocess and monitors its output.
-        Uses mine-blocks command in a loop for continuous mining.
+        
+        Uses the 'mine-blocks' command in a continuous loop for batch-based mining:
+        - Mines a configurable number of blocks per batch (blocks_per_batch)
+        - Automatically restarts after each batch completes
+        - Retries with configurable delay on errors (retry_delay)
+        - Checks stop_event regularly for fast shutdown response
         """
         logger.info("Miner thread started")
         
@@ -314,7 +319,10 @@ class MinerRunner:
             # Prepare environment
             current_pythonpath = os.environ.get('PYTHONPATH', '')
             if repo_root:
-                pythonpath = f"{repo_root}{os.pathsep}{current_pythonpath}" if current_pythonpath else repo_root
+                if current_pythonpath:
+                    pythonpath = f"{repo_root}{os.pathsep}{current_pythonpath}"
+                else:
+                    pythonpath = repo_root
             else:
                 pythonpath = current_pythonpath
                 logger.warning("Could not locate repository root; mining module may not be found")
@@ -374,11 +382,8 @@ class MinerRunner:
                             logger.info(f"Miner batch completed successfully, starting next batch")
                         else:
                             logger.warning(f"Miner process exited with code {return_code}, retrying in {retry_delay}s")
-                            # Wait before retrying on error, checking stop_event periodically
-                            for _ in range(int(retry_delay * 10)):
-                                if self.stop_event.is_set():
-                                    break
-                                time.sleep(0.1)
+                            # Wait before retrying on error, using stop_event with timeout for better responsiveness
+                            self.stop_event.wait(retry_delay)
                         break
                     
                     # Read a line from output
