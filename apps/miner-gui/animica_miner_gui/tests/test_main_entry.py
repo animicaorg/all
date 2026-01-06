@@ -2,6 +2,7 @@
 
 import ast
 import inspect
+import pytest
 from pathlib import Path
 
 
@@ -72,7 +73,6 @@ def test_main_function_signature():
         from animica_miner_gui.main import main
     except ImportError as e:
         # Skip if Qt dependencies are not available (headless environment)
-        import pytest
         pytest.skip(f"Cannot import main due to missing Qt dependencies: {e}")
     
     # Check return type annotation
