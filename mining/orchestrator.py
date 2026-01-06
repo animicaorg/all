@@ -808,6 +808,59 @@ def _leading_zero_bits(b: bytes) -> int:
 # --------------------------- Convenience factory ---------------------------
 
 
+async def cli_main(cfg: Dict[str, Any]) -> None:
+    """
+    CLI entrypoint that builds template_provider and submitter from config dict.
+    
+    Expected config keys:
+        rpc_url: str - RPC endpoint URL
+        device: str - Device type (cpu, cuda, opencl, etc.)
+        threads: int - Number of threads
+        enable_workers: dict - Worker flags (ai, quantum, storage, vdf)
+        
+    Note: Additional config keys like ws_url, chain_id, share_target_fraction,
+    stratum, getwork, metrics, and log_level are present in the config but not
+    currently used by the basic orchestrator initialization. They may be used
+    by other components or in future enhancements.
+    """
+    from .rpc_adapter import RpcTemplateProvider
+    from .share_submitter import ShareSubmitter, SubmitterConfig
+    
+    # Extract config values with defaults
+    rpc_url = cfg.get("rpc_url", "http://127.0.0.1:8545/rpc")
+    device = cfg.get("device", "cpu")
+    threads = cfg.get("threads", 0)
+    enable_workers = cfg.get("enable_workers", {})
+    
+    # Build template provider
+    template_provider = RpcTemplateProvider(
+        rpc_url=rpc_url,
+        proof_type="sha256d",
+    )
+    
+    # Build submitter
+    submitter = ShareSubmitter(
+        SubmitterConfig(rpc_url=rpc_url)
+    )
+    
+    # Build OrchestratorConfig
+    config = OrchestratorConfig(
+        device_kind=device,
+        threads=threads,
+        run_ai_worker=enable_workers.get("ai", True),
+        run_quantum_worker=enable_workers.get("quantum", True),
+        run_storage_worker=enable_workers.get("storage", True),
+        run_vdf_worker=enable_workers.get("vdf", True),
+    )
+    
+    # Create and run orchestrator
+    await run_orchestrator(
+        template_provider=template_provider,
+        submitter=submitter,
+        config=config,
+    )
+
+
 async def run_orchestrator(
     *,
     template_provider: Any,
@@ -841,4 +894,5 @@ __all__ = [
     "MinerOrchestrator",
     "Orchestrator",
     "run_orchestrator",
+    "cli_main",
 ]
