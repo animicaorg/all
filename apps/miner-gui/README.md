@@ -71,13 +71,24 @@ Configuration is stored in `~/.animica/gui-miner/config.json` with secure permis
 ### Configuration Structure
 
 - **network**: Network type, RPC URL, chain ID
-- **miner**: Mining mode, payout address, auto-start
+- **miner**: Mining mode, payout address, auto-start, blocks_per_batch
 - **cpu**: CPU threads, affinity, hugepages, priority
 - **gpus**: List of GPU devices with intensity and worksize
 - **asic**: ASIC worker configuration (stub)
 - **pool**: Stratum pool configuration
 - **ui**: Theme, system tray, notifications
 - **safe_mode**: Resource-constrained operation
+
+### Mining Behavior
+
+The GUI miner uses the `mine-blocks` command for continuous mining. It mines in batches of blocks (default: 10), automatically restarting after each batch completes. This provides:
+
+- Better control over the mining process
+- Automatic retry on errors
+- Clear progress tracking per batch
+- Easy adjustment of batch size via `blocks_per_batch` config (1-100)
+
+The miner will continue mining until you click "Stop Mining" in the dashboard.
 
 ### Payout Address
 
