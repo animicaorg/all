@@ -99,7 +99,9 @@ def compute_block_reward(
     Instant blocks (instant_block=True):
       - Always return empty list (zero rewards)
       - These blocks are created by tx send to persist transactions immediately
-      - They do not advance the halving schedule or issue new tokens
+      - By returning zero rewards, these blocks don't add to the total supply
+      - Note: Halving schedule tracking (if any) is handled by the block import layer,
+        not by this function. This function only determines reward amounts.
 
     Args:
         chain_id: Chain identifier (1 = mainnet, 1337 = devnet, etc.)
