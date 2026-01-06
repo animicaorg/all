@@ -5,7 +5,6 @@ This script verifies the fix without requiring PySide6 dependencies.
 """
 
 import sys
-import re
 
 
 def verify_rpc_option_fix():
