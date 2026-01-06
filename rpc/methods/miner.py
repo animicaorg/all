@@ -1465,8 +1465,8 @@ def _apply_block_reward(ctx: Any, height: int, payout_address: bytes | None = No
         
         rewards = compute_block_reward(chain_id=chain_id, height=height, params=params, instant_block=instant_block)
         
-        # Log warning if rewards are empty when they shouldn't be (height >= 1)
-        if not rewards and height >= 1:
+        # Log warning if rewards are empty when they shouldn't be (height >= 1 and not instant block)
+        if not rewards and height >= 1 and not instant_block:
             log.warning(
                 f"Block reward at height {height} is empty. "
                 f"This may indicate missing/invalid consensus params. "
