@@ -838,7 +838,7 @@ async def cli_main(cfg: Dict[str, Any]) -> None:
     
     # Build submitter
     submitter = ShareSubmitter(
-        config=SubmitterConfig(rpc_url=rpc_url)
+        SubmitterConfig(rpc_url=rpc_url)
     )
     
     # Build OrchestratorConfig
