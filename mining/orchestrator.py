@@ -814,12 +814,14 @@ async def cli_main(cfg: Dict[str, Any]) -> None:
     
     Expected config keys:
         rpc_url: str - RPC endpoint URL
-        ws_url: str - WebSocket endpoint URL (optional)
         device: str - Device type (cpu, cuda, opencl, etc.)
         threads: int - Number of threads
-        chain_id: int - Chain ID
-        share_target_fraction: float - Target fraction for shares
         enable_workers: dict - Worker flags (ai, quantum, storage, vdf)
+        
+    Note: Additional config keys like ws_url, chain_id, share_target_fraction,
+    stratum, getwork, metrics, and log_level are present in the config but not
+    currently used by the basic orchestrator initialization. They may be used
+    by other components or in future enhancements.
     """
     from .rpc_adapter import RpcTemplateProvider
     from .share_submitter import ShareSubmitter, SubmitterConfig
