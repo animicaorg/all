@@ -65,7 +65,12 @@ export function formatBalance(balance?: string | null): {
       const remainderStr = anmRemainder.toString().padStart(9, '0')
       const trimmedRemainder = remainderStr.replace(/0+$/, '')
       // Format whole part using BigInt's toLocaleString to avoid precision loss
-      anmStr = anmWhole.toLocaleString('en-US') + '.' + trimmedRemainder
+      // Safety: only add decimal point if there's a non-zero fractional part
+      if (trimmedRemainder) {
+        anmStr = anmWhole.toLocaleString('en-US') + '.' + trimmedRemainder
+      } else {
+        anmStr = anmWhole.toLocaleString('en-US')
+      }
     }
     
     // Format nANM with thousand separators
