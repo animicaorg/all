@@ -210,4 +210,4 @@ class MiningConfig:
 # Convenience singleton for simple scripts:
 DEFAULT_CONFIG = MiningConfig.from_env()
 
-__all__ = ["MiningConfig", "DeviceKind", "DEFAULT_CONFIG"]
+__all__ = ["MiningConfig", "DeviceKind", "DEFAULT_CONFIG", "auto_detect_thread_count"]
