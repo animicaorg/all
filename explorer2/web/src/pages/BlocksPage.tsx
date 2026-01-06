@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import type { BlockSummary } from '@animica/explorer2-shared'
 import { api } from '../lib/api'
@@ -10,9 +10,9 @@ export default function BlocksPage() {
   const [cursor, setCursor] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [isPaginated, setIsPaginated] = useState(false)
+  const isPaginatedRef = useRef(false)
 
-  const loadBlocks = async (cursorValue?: string | null) => {
+  const loadBlocks = useCallback(async (cursorValue?: string | null) => {
     setLoading(true)
     try {
       const res = await api.getBlocks(20, cursorValue ?? undefined)
@@ -20,14 +20,14 @@ export default function BlocksPage() {
       setCursor(res.nextCursor)
       setError(null)
       if (cursorValue) {
-        setIsPaginated(true)
+        isPaginatedRef.current = true
       }
     } catch (err) {
       setError(String(err))
     } finally {
       setLoading(false)
     }
-  }
+  }, [])
 
   useEffect(() => {
     // Initial load
@@ -36,7 +36,7 @@ export default function BlocksPage() {
     // Poll every 5 seconds for new blocks, but only if user hasn't paginated
     // and the page is visible
     const intervalId = setInterval(() => {
-      if (!isPaginated && document.visibilityState === 'visible') {
+      if (!isPaginatedRef.current && document.visibilityState === 'visible') {
         loadBlocks()
       }
     }, 5000)
@@ -44,7 +44,7 @@ export default function BlocksPage() {
     return () => {
       clearInterval(intervalId)
     }
-  }, [isPaginated])
+  }, [loadBlocks])
 
   if (error) {
     return (
