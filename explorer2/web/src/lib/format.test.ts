@@ -42,6 +42,13 @@ describe('formatBalance', () => {
     expect(result.nanm).toBe('1,000,000,000,000,000')
   })
 
+  it('should handle extremely large balance without precision loss', () => {
+    // 1 trillion ANM = 10^21 nANM (larger than Number.MAX_SAFE_INTEGER)
+    const result = formatBalance('1000000000000000000000') 
+    expect(result.anm).toBe('1,000,000,000,000')
+    expect(result.nanm).toBe('1,000,000,000,000,000,000,000')
+  })
+
   it('should handle zero balance', () => {
     const result = formatBalance('0x0')
     expect(result.anm).toBe('0')
