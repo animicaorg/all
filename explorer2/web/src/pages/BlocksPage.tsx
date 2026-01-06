@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import type { BlockSummary } from '@animica/explorer2-shared'
 import { api } from '../lib/api'
@@ -10,23 +10,53 @@ export default function BlocksPage() {
   const [cursor, setCursor] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const isPaginatedRef = useRef(false)
+  const mountedRef = useRef(true)
 
-  const loadBlocks = async (cursorValue?: string | null) => {
+  const loadBlocks = useCallback(async (cursorValue?: string | null) => {
+    if (!mountedRef.current) return
     setLoading(true)
     try {
       const res = await api.getBlocks(20, cursorValue ?? undefined)
+      if (!mountedRef.current) return
       setBlocks((prev) => (cursorValue ? [...prev, ...res.items] : res.items))
       setCursor(res.nextCursor)
+      setError(null)
+      if (cursorValue) {
+        isPaginatedRef.current = true
+      } else {
+        // Reset pagination flag when loading first page
+        isPaginatedRef.current = false
+      }
     } catch (err) {
+      if (!mountedRef.current) return
       setError(String(err))
     } finally {
-      setLoading(false)
+      if (mountedRef.current) {
+        setLoading(false)
+      }
     }
-  }
+  }, [])
 
   useEffect(() => {
+    mountedRef.current = true
+    
+    // Initial load
     loadBlocks()
-  }, [])
+
+    // Poll every 5 seconds for new blocks, but only if user hasn't paginated
+    // and the page is visible
+    const intervalId = setInterval(() => {
+      if (mountedRef.current && !isPaginatedRef.current && document.visibilityState === 'visible') {
+        loadBlocks()
+      }
+    }, 5000)
+
+    return () => {
+      mountedRef.current = false
+      clearInterval(intervalId)
+    }
+  }, [loadBlocks])
 
   if (error) {
     return (
