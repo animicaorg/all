@@ -10,12 +10,32 @@ export default function HomePage() {
 
   useEffect(() => {
     let mounted = true
-    api
-      .getHead()
-      .then((res) => mounted && setData(res))
-      .catch((err) => mounted && setError(String(err)))
+    
+    const fetchData = () => {
+      api
+        .getHead()
+        .then((res) => {
+          if (mounted) {
+            setData(res)
+            setError(null)
+          }
+        })
+        .catch((err) => {
+          if (mounted) {
+            setError(String(err))
+          }
+        })
+    }
+
+    // Initial fetch
+    fetchData()
+
+    // Poll every 5 seconds for new blocks
+    const intervalId = setInterval(fetchData, 5000)
+
     return () => {
       mounted = false
+      clearInterval(intervalId)
     }
   }, [])
 
