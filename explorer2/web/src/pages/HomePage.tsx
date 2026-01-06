@@ -67,7 +67,19 @@ export default function HomePage() {
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {data ? (
             <>
-              <StatCard label="Current Block" value={`#${formatNumber(data.head.height)}`} />
+              <StatCard 
+                label="Current Block" 
+                value={
+                  <span>
+                    #{formatNumber(data.head.height)}
+                    {data.head.canonicalHeight !== undefined && data.head.canonicalHeight !== data.head.height && (
+                      <span className="block text-xs text-gray-500 dark:text-slate-400 mt-1">
+                        Canonical: #{formatNumber(data.head.canonicalHeight)}
+                      </span>
+                    )}
+                  </span>
+                }
+              />
               <StatCard label="Block Hash" value={<span className="truncate text-sm">{shorten(data.head.hash)}</span>} />
               <StatCard label="Last Block" value={`${timeAgo(data.head.time)}`} />
             </>

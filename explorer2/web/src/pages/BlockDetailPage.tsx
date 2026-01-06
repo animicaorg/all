@@ -44,11 +44,27 @@ export default function BlockDetailPage() {
         <div className="flex flex-wrap items-center justify-between gap-4">
           <h1 className="text-2xl font-bold text-gray-900 dark:text-slate-100">
             Block #{formatNumber(block.height)}
+            {block.nonce === 0 && (
+              <span className="ml-3 inline-flex items-center rounded-full bg-blue-100 px-3 py-1 text-xs font-medium text-blue-800 dark:bg-blue-900/30 dark:text-blue-300">
+                Instant Block
+              </span>
+            )}
           </h1>
           <CopyButton value={block.hash} />
         </div>
         
         <div className="mt-6 grid gap-6 sm:grid-cols-2">
+          <div>
+            <p className="text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-slate-500">Block Height</p>
+            <p className="mt-2 font-mono text-sm text-gray-900 dark:text-slate-200">
+              {formatNumber(block.height)}
+              {block.canonicalHeight !== undefined && block.canonicalHeight !== block.height && (
+                <span className="ml-2 text-xs text-gray-500 dark:text-slate-400">
+                  (canonical: {formatNumber(block.canonicalHeight)})
+                </span>
+              )}
+            </p>
+          </div>
           <div>
             <p className="text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-slate-500">Block Hash</p>
             <p className="mt-2 break-all font-mono text-sm text-gray-900 dark:text-slate-200">{block.hash}</p>
@@ -75,6 +91,18 @@ export default function BlockDetailPage() {
             <p className="text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-slate-500">Difficulty / Target</p>
             <p className="mt-2 font-mono text-sm text-gray-700 dark:text-slate-200">{block.difficulty ?? '—'}</p>
           </div>
+          {block.nonce !== undefined && (
+            <div>
+              <p className="text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-slate-500">Nonce</p>
+              <p className="mt-2 font-mono text-sm text-gray-700 dark:text-slate-200">
+                {block.nonce === 0 ? (
+                  <span className="text-blue-600 dark:text-blue-400">0 (instant)</span>
+                ) : (
+                  block.nonce
+                )}
+              </p>
+            </div>
+          )}
         </div>
       </div>
 
