@@ -34,21 +34,37 @@ const META_HEAD_HEIGHT = Buffer.concat([PFX_META, Buffer.from('head_height')])
 
 const PFX_ACC = Buffer.from([0x01])
 
+// Type definitions to handle ES module import of cbor
+interface CborModule {
+  decodeFirstSync?: (input: Buffer) => unknown
+  encodeCanonical?: (input: unknown) => Buffer
+  Encoder: {
+    encode: (value: unknown) => Buffer
+    encodeCanonical: (value: unknown) => Buffer
+  }
+  default?: {
+    decodeFirstSync: (input: Buffer) => unknown
+    encodeCanonical: (input: unknown) => Buffer
+  }
+}
+
 const CANONICAL_ENCODER = new cbor.Encoder({ canonical: true })
 
 function encodeCanonical(value: unknown): Buffer {
   // In ES modules, encodeCanonical may be on the default export
-  const encoder = (cbor as any).default?.encodeCanonical || (cbor as any).encodeCanonical
+  const cborModule = cbor as unknown as CborModule
+  const encoder = cborModule.default?.encodeCanonical || cborModule.encodeCanonical
   if (typeof encoder === 'function') {
     return encoder(value)
   }
-  // Use static Encoder.encode method as fallback
-  return cbor.Encoder.encode(value) as Buffer
+  // Use static Encoder.encodeCanonical method as fallback
+  return cbor.Encoder.encodeCanonical(value) as Buffer
 }
 
 function decodeCbor(buffer: Buffer): any {
   // In ES modules, cbor.decodeFirstSync is on the default export
-  const decoder = (cbor as any).default?.decodeFirstSync || (cbor as any).decodeFirstSync
+  const cborModule = cbor as unknown as CborModule
+  const decoder = cborModule.default?.decodeFirstSync || cborModule.decodeFirstSync
   if (!decoder) {
     throw new Error('cbor.decodeFirstSync not available')
   }
