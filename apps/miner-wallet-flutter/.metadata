@@ -1,0 +1,33 @@
+# This file is generated and used by the Flutter tool.
+# It is safe to commit to source control.
+
+version:
+  revision: unknown
+  channel: stable
+project_type: app
+
+migration:
+  platforms:
+    - platform: root
+      create_revision: unknown
+      base_revision: unknown
+    - platform: android
+      create_revision: unknown
+      base_revision: unknown
+    - platform: ios
+      create_revision: unknown
+      base_revision: unknown
+    - platform: macos
+      create_revision: unknown
+      base_revision: unknown
+    - platform: linux
+      create_revision: unknown
+      base_revision: unknown
+    - platform: windows
+      create_revision: unknown
+      base_revision: unknown
+    - platform: web
+      create_revision: unknown
+      base_revision: unknown
+
+  unmanaged_files: []
