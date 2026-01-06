@@ -37,15 +37,22 @@ const PFX_ACC = Buffer.from([0x01])
 const CANONICAL_ENCODER = new cbor.Encoder({ canonical: true })
 
 function encodeCanonical(value: unknown): Buffer {
-  if (typeof (cbor as { encodeCanonical?: (input: unknown) => Buffer }).encodeCanonical === 'function') {
-    return (cbor as { encodeCanonical: (input: unknown) => Buffer }).encodeCanonical(value)
+  // In ES modules, encodeCanonical may be on the default export
+  const encoder = (cbor as any).default?.encodeCanonical || (cbor as any).encodeCanonical
+  if (typeof encoder === 'function') {
+    return encoder(value)
   }
-  // Use static Encoder.encode method
+  // Use static Encoder.encode method as fallback
   return cbor.Encoder.encode(value) as Buffer
 }
 
 function decodeCbor(buffer: Buffer): any {
-  return (cbor as { decodeFirstSync: (input: Buffer) => unknown }).decodeFirstSync(buffer)
+  // In ES modules, cbor.decodeFirstSync is on the default export
+  const decoder = (cbor as any).default?.decodeFirstSync || (cbor as any).decodeFirstSync
+  if (!decoder) {
+    throw new Error('cbor.decodeFirstSync not available')
+  }
+  return decoder(buffer)
 }
 
 function u64be(value: number): Buffer {
