@@ -123,6 +123,28 @@ def json_validate(obj: Any) -> Json:
     return sanitized
 
 
+# Constants for auto-generated jobId
+TIMESTAMP_SUFFIX_MODULO = 100000  # Last 5 digits of timestamp for uniqueness
+
+
+def _extract_nonce_value(m: Dict[str, Any]) -> Any:
+    """Extract nonce value from share dict using common key variants."""
+    return m.get("nonce") or m.get("nonce64") or m.get("n") or 0
+
+
+def _format_nonce_for_jobid(nonce_val: Any) -> str:
+    """Format nonce value as hex string prefix for jobId generation."""
+    if isinstance(nonce_val, int):
+        return f"{nonce_val:016x}"[:8]  # First 8 hex chars
+    elif isinstance(nonce_val, (bytes, bytearray)):
+        return nonce_val.hex()[:8]
+    elif isinstance(nonce_val, str):
+        nonce_str = nonce_val.replace("0x", "")
+        return nonce_str[:8]
+    else:
+        return "00000000"  # Fallback for invalid nonce
+
+
 def _default_share_encoder(share: Any) -> Dict[str, Any]:
     """
     Try hard to convert a FoundShare-like object into a JSON-RPC payload.
@@ -159,8 +181,21 @@ def _default_share_encoder(share: Any) -> Dict[str, Any]:
     payload: Dict[str, Any] = {}
     # Job id (for stale rejection)
     job_id = m.get("jobId") or m.get("job_id") or m.get("job")
-    if job_id is not None:
-        payload["jobId"] = job_id
+    if job_id is None:
+        # Generate a fallback jobId from nonce, height, and timestamp
+        # This ensures shares always have a jobId for tracking and deduplication
+        nonce_val = _extract_nonce_value(m)
+        height_val = m.get("height") or 0
+        timestamp_val = int(time.time() * 1000)
+        
+        # Format nonce as hex prefix
+        nonce_prefix = _format_nonce_for_jobid(nonce_val)
+        
+        # Generate deterministic jobId: "auto-{height}-{nonce_prefix}-{timestamp_suffix}"
+        # This format helps identify auto-generated IDs and provides uniqueness
+        job_id = f"auto-{height_val}-{nonce_prefix}-{timestamp_val % TIMESTAMP_SUFFIX_MODULO}"
+    
+    payload["jobId"] = job_id
 
     # Header/template
     header = m.get("header") or m.get("header_template") or m.get("candidate_header")
@@ -169,8 +204,8 @@ def _default_share_encoder(share: Any) -> Dict[str, Any]:
     payload["header"] = header
 
     # Nonce / mixSeed
-    nonce = m.get("nonce") or m.get("nonce64") or m.get("n")
-    if nonce is None:
+    nonce = _extract_nonce_value(m)
+    if nonce is None or nonce == 0:
         raise ValueError("share encoder: missing 'nonce'")
     payload["nonce"] = nonce
 
@@ -458,8 +493,12 @@ class ShareSubmitter:
         payload = json_validate(self._share_encoder(params))
         if not isinstance(payload, dict):
             raise ValueError("share payload must be an object")
+        # Note: jobId should always be present due to fallback generation in encoder
+        # This check is a safety net for custom encoders
         if not payload.get("jobId"):
-            raise ValueError("share payload missing jobId")
+            raise ValueError(
+                "share payload missing jobId (encoder should have generated fallback)"
+            )
         backoff = self.cfg.initial_backoff_s
         tries = 0
         while True:
@@ -574,8 +613,12 @@ class ShareSubmitter:
         payload = json_validate(self._share_encoder(share))
         if not isinstance(payload, dict):
             raise ValueError("share payload must be an object")
+        # Note: jobId should always be present due to fallback generation in encoder
+        # This check is a safety net for custom encoders
         if not payload.get("jobId"):
-            raise ValueError("share payload missing jobId")
+            raise ValueError(
+                "share payload missing jobId (encoder should have generated fallback)"
+            )
         backoff = self.cfg.initial_backoff_s
         tries = 0
         while True:
