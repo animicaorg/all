@@ -1,5 +1,5 @@
 {
   "dependencies": {
-    "@animica/sdk": "file:../sdk"
+    "@animica/sdk": "workspace:*"
   }
 }
