@@ -179,6 +179,35 @@ def _timestamp_of(header: Header, payload: Optional[Dict[str, Any]] = None) -> O
     return None
 
 
+def _is_instant_block(header: Header, payload: Optional[Dict[str, Any]] = None) -> bool:
+    """
+    Check if a block is an instant block by examining the extra field.
+    Instant blocks are marked with {instant_block: true} in the extra CBOR data.
+    
+    Returns:
+        True if the block is an instant block, False otherwise.
+    """
+    extra = None
+    if hasattr(header, "extra"):
+        extra = getattr(header, "extra")
+    elif payload and "extra" in payload:
+        extra = payload["extra"]
+    
+    if not extra:
+        return False
+    
+    # Try to decode the extra field as CBOR
+    try:
+        import cbor2
+        extra_dict = cbor2.loads(extra)
+        if isinstance(extra_dict, dict):
+            return bool(extra_dict.get("instant_block", False))
+    except Exception:
+        pass
+    
+    return False
+
+
 def compute_header_hash(header: Header) -> bytes:
     """
     Canonical header hash. Prefer header.hash() to match BlockDB storage.
@@ -1105,9 +1134,12 @@ class BlockImporter:
                 if block is not None:
                     self._index_block_if_canonical(height=height, block_hash=h, block=block)
 
-            # Update canonical height for all blocks
-            canonical_height += 1
-            self.block_db.set_canonical_height(canonical_height)
+            # Update canonical height only for non-instant blocks (mining blocks)
+            # Instant blocks are created by tx.sendRawTransaction with instant_block=True
+            # and should not count towards the halving schedule
+            if not _is_instant_block(header):
+                canonical_height += 1
+                self.block_db.set_canonical_height(canonical_height)
             
             ts = _timestamp_of(header)
             if ts is not None:
