@@ -267,7 +267,7 @@ class MinerRunner:
             if not repo_root:
                 current_file = Path(__file__).resolve()
                 # This file is at: apps/miner-gui/animica_miner_gui/backend/miner_runner.py
-                # Repository root is 4 levels up
+                # Repository root is 5 levels up (backend -> animica_miner_gui -> miner-gui -> apps -> root)
                 potential_root = current_file.parent.parent.parent.parent.parent
                 if (potential_root / "mining" / "__init__.py").is_file():
                     repo_root = str(potential_root)
