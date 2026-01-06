@@ -17,6 +17,7 @@
   "dependencies": {
     "@animica/sdk": "file:../sdk",
     "@tanstack/react-query": "^5.55.4",
+    "cborg": "^4.3.2",
     "i18next": "^25.7.2",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
