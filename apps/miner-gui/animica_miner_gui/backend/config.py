@@ -103,6 +103,8 @@ class MinerConfig(BaseModel):
     wallet_file: Optional[str] = Field(default=None, description="Custom wallet file location (default: ~/.animica/wallets.json)")
     auto_start: bool = Field(default=False, description="Auto-start mining on launch")
     auto_restart_on_crash: bool = Field(default=True, description="Auto-restart miner on crash")
+    blocks_per_batch: int = Field(default=10, ge=1, le=100, description="Number of blocks to mine per batch (default: 10)")
+    retry_delay: float = Field(default=2.0, ge=0.1, le=60.0, description="Delay in seconds before retrying on error (default: 2.0)")
 
 
 class UIConfig(BaseModel):
