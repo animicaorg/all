@@ -157,12 +157,10 @@ def test_pythonpath_detection():
     # If not found via import, try common relative paths from this file
     if not repo_root:
         # This test is at: apps/miner-gui/animica_miner_gui/tests/test_miner_runner.py
-        # miner_runner.py is at: apps/miner-gui/animica_miner_gui/backend/miner_runner.py
-        # Repository root is 5 levels up from miner_runner.py
-        # From this test file: tests -> animica_miner_gui -> miner-gui -> apps -> root
+        # Repository root is 5 levels up (tests -> animica_miner_gui -> miner-gui -> apps -> all -> root)
+        # Same calculation as miner_runner.py
         test_file = Path(__file__).resolve()
-        # Go up to miner-gui, then up to apps, then up to repo root (4 levels from test)
-        potential_root = test_file.parent.parent.parent.parent
+        potential_root = test_file.parent.parent.parent.parent.parent
         if (potential_root / "mining" / "__init__.py").is_file():
             repo_root = str(potential_root)
     
@@ -206,7 +204,8 @@ def test_mining_cli_executable_with_pythonpath():
     
     if not repo_root:
         test_file = Path(__file__).resolve()
-        potential_root = test_file.parent.parent.parent.parent
+        # Same path traversal as in miner_runner.py: 5 levels up
+        potential_root = test_file.parent.parent.parent.parent.parent
         if (potential_root / "mining" / "__init__.py").is_file():
             repo_root = str(potential_root)
     
