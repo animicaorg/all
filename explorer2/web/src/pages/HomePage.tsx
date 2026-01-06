@@ -12,6 +12,7 @@ export default function HomePage() {
     let mounted = true
     
     const fetchData = () => {
+      if (!mounted) return
       api
         .getHead()
         .then((res) => {
@@ -32,7 +33,7 @@ export default function HomePage() {
 
     // Poll every 5 seconds for new blocks, but only when page is visible
     const intervalId = setInterval(() => {
-      if (document.visibilityState === 'visible') {
+      if (mounted && document.visibilityState === 'visible') {
         fetchData()
       }
     }, 5000)
