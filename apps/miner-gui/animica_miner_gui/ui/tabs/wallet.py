@@ -6,7 +6,9 @@ import sys
 from typing import Optional
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QClipboard
 from PySide6.QtWidgets import (
+    QApplication,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
@@ -44,9 +46,24 @@ class WalletTab(QWidget):
         wallet_group = QGroupBox("Wallet Information")
         wallet_layout = QFormLayout()
         
+        # Address with copy button
+        address_layout = QHBoxLayout()
         self.address_label = QLabel(self.config.miner.payout_address or "Not configured")
         self.address_label.setWordWrap(True)
-        wallet_layout.addRow("Address:", self.address_label)
+        self.address_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        address_layout.addWidget(self.address_label, stretch=1)
+        
+        self.copy_address_button = QPushButton("📋 Copy")
+        self.copy_address_button.setMaximumWidth(80)
+        self.copy_address_button.setToolTip("Copy address to clipboard")
+        self.copy_address_button.clicked.connect(self.copy_address_to_clipboard)
+        if not self.config.miner.payout_address:
+            self.copy_address_button.setEnabled(False)
+        address_layout.addWidget(self.copy_address_button)
+        
+        address_widget = QWidget()
+        address_widget.setLayout(address_layout)
+        wallet_layout.addRow("Address:", address_widget)
         
         wallet_group.setLayout(wallet_layout)
         layout.addWidget(wallet_group)
@@ -95,6 +112,33 @@ class WalletTab(QWidget):
         
         layout.addStretch()
         self.setLayout(layout)
+    
+    def copy_address_to_clipboard(self) -> None:
+        """Copy the wallet address to clipboard."""
+        address = self.config.miner.payout_address
+        if not address:
+            QMessageBox.warning(
+                self,
+                "No Address",
+                "No payout address configured."
+            )
+            return
+        
+        clipboard = QApplication.clipboard()
+        if clipboard:
+            clipboard.setText(address)
+            # Show brief notification
+            QMessageBox.information(
+                self,
+                "Copied",
+                f"Address copied to clipboard!\n\n{address[:20]}..."
+            )
+        else:
+            QMessageBox.warning(
+                self,
+                "Error",
+                "Unable to access clipboard."
+            )
     
     def send_transaction(self) -> None:
         """Send a transaction using the wallet CLI."""
@@ -160,7 +204,7 @@ class WalletTab(QWidget):
                 "--from", from_addr,
                 "--to", to_addr,
                 "--value", str(amount),
-                "--rpc", rpc_url,
+                "--rpc-url", rpc_url,
             ]
             
             self.result_text.append(f"Running: {' '.join(cmd)}\n")
