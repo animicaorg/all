@@ -120,6 +120,37 @@ class StatelessConfig:
 # -----------------------------
 
 
+def _is_coinbase_tx(tx: "Tx") -> bool:
+    """
+    Check if a transaction is a coinbase transaction (protocol-generated mining reward).
+    
+    Coinbase transactions have:
+    - kind = COINBASE (TxKind.COINBASE = 3)
+    - sender = ZERO_ADDRESS (32 zero bytes)
+    - No signature (empty sigs tuple)
+    
+    Returns:
+        bool: True if this is a coinbase transaction
+    """
+    try:
+        # Check kind (COINBASE = 3)
+        kind = None
+        if hasattr(tx, "unsigned"):
+            kind = getattr(tx.unsigned, "kind", None)
+        elif hasattr(tx, "kind"):
+            kind = getattr(tx, "kind", None)
+        
+        # TxKind.COINBASE = 3
+        if kind is not None:
+            kind_int = int(kind) if hasattr(kind, "__int__") else kind
+            if kind_int == 3:  # COINBASE
+                return True
+        
+        return False
+    except Exception:
+        return False
+
+
 def validate_stateless(
     tx: "Tx",
     raw: bytes,
@@ -140,12 +171,20 @@ def validate_stateless(
     """
     effective_cfg = _derive_cfg(params, cfg)
 
+    # Check if this is a coinbase transaction (protocol-generated, no signature needed)
+    is_coinbase = _is_coinbase_tx(tx)
+
     _check_size(raw, effective_cfg)
     _check_chain_id(tx, effective_cfg)
-    _check_gas_limits(tx, effective_cfg)
+    
+    # Coinbase transactions can have zero gas_limit
+    if not is_coinbase:
+        _check_gas_limits(tx, effective_cfg)
+    
     _check_payload_shape(tx)
 
-    if effective_cfg.enforce_sig_precheck:
+    # Skip signature verification for coinbase transactions (they have no signature)
+    if effective_cfg.enforce_sig_precheck and not is_coinbase:
         _precheck_pq_signature(tx)
 
 
@@ -167,7 +206,13 @@ def _check_size(raw: bytes, cfg: StatelessConfig) -> None:
 
 def _check_chain_id(tx: "Tx", cfg: StatelessConfig) -> None:
     try:
-        tx_chain_id = int(getattr(tx, "chain_id"))
+        # Try to get chain_id from various locations
+        tx_chain_id = getattr(tx, "chain_id", None)
+        if tx_chain_id is None and hasattr(tx, "unsigned"):
+            tx_chain_id = getattr(tx.unsigned, "chain_id", None)
+        if tx_chain_id is None:
+            raise AttributeError("chain_id not found")
+        tx_chain_id = int(tx_chain_id)
     except Exception:
         raise StatelessValidationError("MissingField", "Transaction missing chain_id.")
     if tx_chain_id != int(cfg.chain_id):
@@ -178,7 +223,14 @@ def _check_chain_id(tx: "Tx", cfg: StatelessConfig) -> None:
 
 
 def _check_gas_limits(tx: "Tx", cfg: StatelessConfig) -> None:
-    gas = int(getattr(tx, "gas_limit", 0))
+    # Try to get gas_limit from various locations
+    gas = getattr(tx, "gas_limit", None)
+    if gas is None and hasattr(tx, "unsigned"):
+        gas = getattr(tx.unsigned, "gas_limit", None)
+    if gas is None:
+        gas = 0
+    gas = int(gas)
+    
     if gas <= 0:
         raise StatelessValidationError("BadGasLimit", "gas_limit must be > 0.")
     if gas > int(cfg.max_gas_limit):
@@ -194,8 +246,34 @@ def _check_payload_shape(tx: "Tx") -> None:
     remain compatible with VM evolution. Tight checks belong in execution.
     """
     kind = (getattr(tx, "kind", None) or "").lower()
-    data = getattr(tx, "data", b"")
-    to_field = getattr(tx, "to", None)
+    
+    # Handle integer kind values (e.g., TxKind enum)
+    if isinstance(kind, int):
+        # TxKind: TRANSFER=0, DEPLOY=1, CALL=2, COINBASE=3
+        kind_map = {0: "transfer", 1: "deploy", 2: "call", 3: "coinbase"}
+        kind = kind_map.get(kind, "")
+    elif hasattr(kind, "name"):
+        # Handle enum with .name attribute
+        kind = kind.name.lower()
+    
+    # Extract from unsigned wrapper if present
+    if hasattr(tx, "unsigned"):
+        unsigned = tx.unsigned
+        kind_val = getattr(unsigned, "kind", None)
+        if isinstance(kind_val, int):
+            kind_map = {0: "transfer", 1: "deploy", 2: "call", 3: "coinbase"}
+            kind = kind_map.get(kind_val, "")
+        elif hasattr(kind_val, "name"):
+            kind = kind_val.name.lower()
+        data = getattr(unsigned, "data", b"") or getattr(getattr(unsigned, "payload", None), "data", b"")
+        to_field = getattr(getattr(unsigned, "payload", None), "to", None)
+    else:
+        data = getattr(tx, "data", b"")
+        to_field = getattr(tx, "to", None)
+
+    # Coinbase transactions are always valid (protocol-generated)
+    if kind == "coinbase":
+        return
 
     if kind in ("transfer", "xfer"):
         # For transfers, data should usually be empty or very small (e.g., memo).
