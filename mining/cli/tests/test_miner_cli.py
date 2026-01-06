@@ -446,3 +446,29 @@ class TestMineBlocksCommand:
         finally:
             sys.modules.pop('omni_sdk.rpc.http', None)
             sys.modules.pop('sdk.python.omni_sdk.rpc.http', None)
+
+
+class TestDeviceAutoDetection:
+    """Test suite for device auto-detection functionality."""
+
+    def test_device_from_choice_auto(self):
+        """Test that _device_from_choice calls auto_detect_device for 'auto' choice."""
+        from mining.cli.miner import _device_from_choice
+        
+        # Test auto detection
+        device = _device_from_choice("auto")
+        # Should return a valid device type string
+        assert device in ["cpu", "cuda", "rocm", "opencl", "metal"]
+        # In CI environment, should typically be cpu
+        assert isinstance(device, str)
+    
+    def test_device_from_choice_explicit(self):
+        """Test that _device_from_choice returns explicit device choices as-is."""
+        from mining.cli.miner import _device_from_choice
+        
+        # Test explicit device choices
+        assert _device_from_choice("cpu") == "cpu"
+        assert _device_from_choice("cuda") == "cuda"
+        assert _device_from_choice("rocm") == "rocm"
+        assert _device_from_choice("opencl") == "opencl"
+        assert _device_from_choice("metal") == "metal"
