@@ -4430,6 +4430,33 @@ def miner_stop() -> bool:
     return False
 
 
+def _extract_payload(payload: Any, kwargs: Dict[str, Any]) -> Any:
+    """
+    Extract payload from either positional or keyword arguments.
+    
+    Supports:
+    - params=[payload_dict] -> positional dict (from share_submitter)
+    - params={key: val, ...} -> keyword arguments (backward compatibility)
+    - params=[{"payload": {...}}] -> wrapped payload (legacy pattern)
+    
+    Args:
+        payload: First positional argument (None if called with kwargs only)
+        kwargs: Keyword arguments
+        
+    Returns:
+        Extracted payload dict, or None if no valid payload provided
+    """
+    if payload is not None:
+        return payload
+    elif kwargs:
+        # Support legacy wrapped format: {"payload": {...}}
+        if len(kwargs) == 1 and "payload" in kwargs:
+            return kwargs.get("payload")
+        # Direct keyword arguments
+        return kwargs
+    return None
+
+
 @method(
     "miner.submitShare",
     desc="Accept a submitted share from the mining pool",
@@ -4437,16 +4464,9 @@ def miner_stop() -> bool:
 )
 def miner_submit_share(payload: Any = None, **kwargs: Any) -> Dict[str, Any]:
     # Support both positional (share as first param) and keyword arguments
-    # This allows params=[{share_dict}] from share_submitter and params={key: val} for backward compatibility
-    if payload is not None:
-        share = payload
-    elif kwargs:
-        share = (
-            kwargs.get("payload")
-            if len(kwargs) == 1 and "payload" in kwargs
-            else kwargs
-        )
-    else:
+    # This allows params=[payload_dict] from share_submitter and params={key: val} for backward compatibility
+    share = _extract_payload(payload, kwargs)
+    if share is None:
         # No payload provided at all - return rejection (matches existing pattern for shares)
         return {"accepted": False, "reason": "invalid share payload"}
     
@@ -4547,16 +4567,9 @@ def miner_submit_share(payload: Any = None, **kwargs: Any) -> Dict[str, Any]:
 )
 def miner_submit_block(payload: Any = None, **kwargs: Any) -> Dict[str, Any]:
     # Support both positional (block as first param) and keyword arguments
-    # This allows params=[{block_dict}] from share_submitter and params={key: val} for backward compatibility
-    if payload is not None:
-        block = payload
-    elif kwargs:
-        block = (
-            kwargs.get("payload")
-            if len(kwargs) == 1 and "payload" in kwargs
-            else kwargs
-        )
-    else:
+    # This allows params=[payload_dict] from share_submitter and params={key: val} for backward compatibility
+    block = _extract_payload(payload, kwargs)
+    if block is None:
         # No payload provided at all - raise exception (matches existing pattern for blocks)
         raise rpc_errors.InvalidParams("invalid block payload")
     
