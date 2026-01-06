@@ -37,6 +37,9 @@ class DashboardTab(QWidget):
         super().__init__(parent)
         self.config = config
         self.rpc_client: Optional[RPCClient] = None
+        self.current_hashrate = 0.0
+        self.current_theta_micro = 0
+        self.current_share_target = 0.25
         self.setup_ui()
         self.setup_rpc_timer()
         
@@ -80,17 +83,21 @@ class DashboardTab(QWidget):
         self.hashrate_label.setStyleSheet("font-weight: bold; font-size: 14pt;")
         mining_layout.addWidget(self.hashrate_label, 1, 1)
         
-        mining_layout.addWidget(QLabel("Shares Found:"), 2, 0)
+        mining_layout.addWidget(QLabel("Time to Block:"), 2, 0)
+        self.time_to_block_label = QLabel("--")
+        mining_layout.addWidget(self.time_to_block_label, 2, 1)
+        
+        mining_layout.addWidget(QLabel("Shares Found:"), 3, 0)
         self.shares_label = QLabel("0")
-        mining_layout.addWidget(self.shares_label, 2, 1)
+        mining_layout.addWidget(self.shares_label, 3, 1)
         
-        mining_layout.addWidget(QLabel("Blocks Found:"), 3, 0)
+        mining_layout.addWidget(QLabel("Blocks Found:"), 4, 0)
         self.blocks_label = QLabel("0")
-        mining_layout.addWidget(self.blocks_label, 3, 1)
+        mining_layout.addWidget(self.blocks_label, 4, 1)
         
-        mining_layout.addWidget(QLabel("Last Submit:"), 4, 0)
+        mining_layout.addWidget(QLabel("Last Submit:"), 5, 0)
         self.last_submit_label = QLabel("--")
-        mining_layout.addWidget(self.last_submit_label, 4, 1)
+        mining_layout.addWidget(self.last_submit_label, 5, 1)
         
         mining_group.setLayout(mining_layout)
         layout.addWidget(mining_group)
@@ -240,6 +247,50 @@ class DashboardTab(QWidget):
             logger.error(f"Failed to query balance: {e}")
             self.balance_label.setText("Query failed")
     
+    def _update_time_to_block(self) -> None:
+        """Update the estimated time to find a block based on current hashrate and difficulty."""
+        if self.current_hashrate <= 0 or self.current_theta_micro <= 0:
+            self.time_to_block_label.setText("--")
+            return
+        
+        try:
+            import math
+            
+            # Calculate probability of finding a block per hash
+            # Block threshold is theta_micro (in micro-nats)
+            # Probability = e^(-theta)
+            theta_nats = self.current_theta_micro / 1_000_000
+            block_probability = math.exp(-theta_nats)
+            
+            if block_probability <= 0:
+                self.time_to_block_label.setText("Very high")
+                return
+            
+            # Average hashes needed = 1 / probability
+            avg_hashes_needed = 1.0 / block_probability
+            
+            # Time = hashes / hashrate (in seconds)
+            time_seconds = avg_hashes_needed / self.current_hashrate
+            
+            # Format the time nicely
+            if time_seconds < 60:
+                time_str = f"{time_seconds:.0f}s"
+            elif time_seconds < 3600:
+                minutes = time_seconds / 60
+                time_str = f"{minutes:.1f}m"
+            elif time_seconds < 86400:
+                hours = time_seconds / 3600
+                time_str = f"{hours:.1f}h"
+            else:
+                days = time_seconds / 86400
+                time_str = f"{days:.1f}d"
+            
+            self.time_to_block_label.setText(f"~{time_str}")
+        
+        except Exception as e:
+            logger.debug(f"Error calculating time to block: {e}")
+            self.time_to_block_label.setText("--")
+    
     def on_mining_event(self, event: MiningEvent) -> None:
         """Handle mining events from any thread.
         
@@ -272,6 +323,7 @@ class DashboardTab(QWidget):
         
         elif event.event_type == EventType.HASHRATE_UPDATE:
             hashrate = event.data.get('hashrate', 0)
+            self.current_hashrate = hashrate
             
             if hashrate >= 1e9:
                 hr_str = f"{hashrate/1e9:.2f} GH/s"
@@ -283,6 +335,9 @@ class DashboardTab(QWidget):
                 hr_str = f"{hashrate:.0f} H/s"
             
             self.hashrate_label.setText(hr_str)
+            
+            # Update time to block when hashrate changes
+            self._update_time_to_block()
         
         elif event.event_type == EventType.SHARE_FOUND:
             count = event.data.get('share_count', 0)
@@ -303,4 +358,15 @@ class DashboardTab(QWidget):
         elif event.event_type == EventType.TEMPLATE_UPDATE:
             # Don't update height from templates as it conflicts with RPC updates
             # The RPC timer will update height from actual chain state
-            pass
+            
+            # Extract theta and share target if available
+            theta_micro = event.data.get('theta_micro', 0)
+            share_target = event.data.get('share_target', 0)
+            
+            if theta_micro > 0:
+                self.current_theta_micro = theta_micro
+            if share_target > 0:
+                self.current_share_target = share_target
+            
+            # Update time to block when difficulty changes
+            self._update_time_to_block()
