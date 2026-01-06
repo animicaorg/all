@@ -1,6 +1,8 @@
 """Wallet tab - send transactions and manage wallet."""
 
+import json
 import logging
+import os
 import subprocess
 import sys
 from typing import Optional
@@ -158,6 +160,39 @@ class WalletTab(QWidget):
                 self,
                 "No Wallet",
                 "No payout address configured. Please configure a wallet first."
+            )
+            return
+        
+        # Check if the address exists in wallets.json
+        wallet_path = os.path.expanduser("~/.animica/wallets.json")
+        address_in_wallet = False
+        
+        try:
+            if os.path.exists(wallet_path):
+                with open(wallet_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                
+                # Handle both dict and list formats
+                entries = data.get("wallets") if isinstance(data, dict) else data
+                if isinstance(entries, list):
+                    for w in entries:
+                        if str(w.get("address")) == from_addr:
+                            address_in_wallet = True
+                            break
+        except Exception as e:
+            logger.warning(f"Could not check wallet file: {e}")
+        
+        if not address_in_wallet:
+            reply = QMessageBox.warning(
+                self,
+                "Address Not in Wallet",
+                f"The payout address:\n\n{from_addr}\n\n"
+                f"is not found in your wallet file ({wallet_path}).\n\n"
+                f"You cannot send transactions from addresses that aren't in your wallet file.\n\n"
+                f"To fix this:\n"
+                f"1. Go to Configuration and import/create a wallet with this address, OR\n"
+                f"2. Change your payout address to one that exists in your wallet file",
+                QMessageBox.StandardButton.Ok
             )
             return
         
