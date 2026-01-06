@@ -42,8 +42,13 @@ import math
 import os
 import struct
 import threading
+import logging
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Optional, Tuple
+
+from mining.config import auto_detect_thread_count
+
+log = logging.getLogger("mining.cpu_backend")
 
 # Optional accelerators (very light usage)
 try:
@@ -201,8 +206,16 @@ class _CPUDevice:
         max_found: int = 1,
         thread_id: int = 0,
     ) -> List[Dict[str, Any]]:
-        # Single-threaded fast path
-        if self._threads <= 1 or iterations <= 1_000:
+        # Determine effective thread count (0 means auto-detect CPU count)
+        effective_threads = self._threads if self._threads > 0 else auto_detect_thread_count()
+        
+        # Single-threaded fast path for very small iteration counts or explicit single-thread mode
+        if effective_threads == 1 or iterations <= 1_000:
+            log.debug(
+                "CPU scan using single-threaded mode (effective_threads=%d, iterations=%d)",
+                effective_threads,
+                iterations,
+            )
             return _scan_range(
                 prepared.header,
                 prepared.mix_seed,
@@ -213,7 +226,13 @@ class _CPUDevice:
             )
 
         # Parallel split across T threads; maintain deterministic ordering
-        T = min(self._threads, max(1, os.cpu_count() or 1))
+        T = min(effective_threads, max(1, os.cpu_count() or 1))
+        log.info(
+            "CPU scan using multi-threaded mode with %d threads (configured=%d, iterations=%d)",
+            T,
+            self._threads,
+            iterations,
+        )
         # Split into contiguous chunks; last thread gets the remainder
         base = iterations // T
         rem = iterations % T
