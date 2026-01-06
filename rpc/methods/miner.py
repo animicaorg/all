@@ -1457,18 +1457,38 @@ def _apply_block_reward(ctx: Any, height: int, payout_address: bytes | None = No
         # Get miner address (use custom payout address if provided)
         miner_address = payout_address if payout_address is not None else _get_miner_address()
         
+        # Calculate canonical_height (count of non-instant blocks) for halving
+        # This is the current canonical_height + 1 if this is a mining block, or unchanged if instant
+        canonical_height = None
+        try:
+            block_db = getattr(ctx, "block_db", None)
+            if block_db is not None and hasattr(block_db, "get_canonical_height"):
+                current_canonical = block_db.get_canonical_height()
+                if current_canonical is not None:
+                    # For mining blocks, this will be the next canonical height
+                    # For instant blocks, we still pass current + 1 but rewards will be 0 anyway
+                    canonical_height = current_canonical + (0 if instant_block else 1)
+        except Exception:
+            pass
+        
         # Compute block reward (returns list of (address, amount) tuples)
         from consensus.rewards import compute_block_reward  # type: ignore[import-not-found]
         
         chain_id = ctx.cfg.chain_id
         params = getattr(ctx, "params", None) or {}
         
-        rewards = compute_block_reward(chain_id=chain_id, height=height, params=params, instant_block=instant_block)
+        rewards = compute_block_reward(
+            chain_id=chain_id, 
+            height=height, 
+            params=params, 
+            instant_block=instant_block,
+            canonical_height=canonical_height
+        )
         
         # Log warning if rewards are empty when they shouldn't be (height >= 1 and not instant block)
         if not rewards and height >= 1 and not instant_block:
             log.warning(
-                f"Block reward at height {height} is empty. "
+                f"Block reward at height {height} (canonical_height={canonical_height}) is empty. "
                 f"This may indicate missing/invalid consensus params. "
                 f"Check that spec/params.yaml defines proper emission schedule for chain_id={chain_id}."
             )
@@ -1504,7 +1524,7 @@ def _apply_block_reward(ctx: Any, height: int, payout_address: bytes | None = No
                 if amount > 0:
                     new_balance = credit(state_db, reward_addr_bytes, amount)
                     log.info(
-                        f"Applied block reward: height={height}, "
+                        f"Applied block reward: height={height}, canonical_height={canonical_height}, "
                         f"address={reward_addr_bytes.hex()[:16]}..., "
                         f"amount={amount}, new_balance={new_balance}"
                     )
@@ -2109,7 +2129,7 @@ def _request_missing_mempool_txs(
 
 
 def _build_child_header(
-    parent_height: int, parent_hash: bytes, parent_header: Any, *, coinbase: bytes | None = None
+    parent_height: int, parent_hash: bytes, parent_header: Any, *, coinbase: bytes | None = None, instant_block: bool = False
 ) -> Header:
     timestamp_min, timestamp_max, timestamp = _timestamp_bounds(parent_header)
     theta = getattr(
@@ -2123,15 +2143,21 @@ def _build_child_header(
     )
     pq_root, poies_root = _policy_roots()
     
-    # Encode coinbase in extra field if provided
-    # Format: CBOR({coinbase: bytes})
+    # Encode coinbase and instant_block flag in extra field
+    # Format: CBOR({coinbase: bytes, instant_block: bool})
     extra_data = b""
+    extra_dict = {}
     if coinbase is not None and coinbase != ZERO32:
+        extra_dict["coinbase"] = coinbase
+    if instant_block:
+        extra_dict["instant_block"] = instant_block
+    
+    if extra_dict:
         try:
             import cbor2
-            extra_data = cbor2.dumps({"coinbase": coinbase})
+            extra_data = cbor2.dumps(extra_dict)
         except Exception as e:
-            log.warning(f"Failed to encode coinbase in extra field: {e}")
+            log.warning(f"Failed to encode extra field: {e}")
             extra_data = b""
     
     return Header(
@@ -2785,7 +2811,7 @@ def _mine_once(
     # Use provided payout_address or fall back to default miner address
     coinbase_bytes = payout_address if payout_address is not None else _get_miner_address()
     
-    header_template = _build_child_header(parent_height, parent_hash_bytes, parent_header, coinbase=coinbase_bytes)
+    header_template = _build_child_header(parent_height, parent_hash_bytes, parent_header, coinbase=coinbase_bytes, instant_block=instant_block)
     
     # Apply dynamic theta adjustment based on recent block times
     # This adapts mining difficulty to network conditions (hash rate, block times)
