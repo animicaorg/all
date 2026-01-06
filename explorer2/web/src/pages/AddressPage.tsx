@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import type { AddressSummary, TxSummary } from '@animica/explorer2-shared'
 import { api } from '../lib/api'
-import { formatNumber, shorten } from '../lib/format'
+import { formatNumber, shorten, formatBalance } from '../lib/format'
 import CopyButton from '../components/CopyButton'
 import Skeleton from '../components/Skeleton'
 
@@ -63,11 +63,25 @@ export default function AddressPage() {
         <div className="mt-6 grid gap-4 sm:grid-cols-2">
           <div>
             <p className="text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-slate-500">Confirmed Balance</p>
-            <p className="mt-2 font-mono text-lg font-semibold text-gray-900 dark:text-slate-200">{summary.confirmedBalance ?? '—'}</p>
+            <p className="mt-2 font-mono text-lg font-semibold text-gray-900 dark:text-slate-200">
+              {formatBalance(summary.confirmedBalance).decimal}
+            </p>
+            {summary.confirmedBalance && summary.confirmedBalance !== '—' && (
+              <p className="mt-1 font-mono text-xs text-gray-500 dark:text-slate-500" title="Hexadecimal representation">
+                {formatBalance(summary.confirmedBalance).hex}
+              </p>
+            )}
           </div>
           <div>
             <p className="text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-slate-500">Pending Balance</p>
-            <p className="mt-2 font-mono text-lg font-semibold text-gray-900 dark:text-slate-200">{summary.pendingBalance ?? '—'}</p>
+            <p className="mt-2 font-mono text-lg font-semibold text-gray-900 dark:text-slate-200">
+              {formatBalance(summary.pendingBalance).decimal}
+            </p>
+            {summary.pendingBalance && summary.pendingBalance !== '—' && (
+              <p className="mt-1 font-mono text-xs text-gray-500 dark:text-slate-500" title="Hexadecimal representation">
+                {formatBalance(summary.pendingBalance).hex}
+              </p>
+            )}
           </div>
         </div>
         {summary.partial && (
