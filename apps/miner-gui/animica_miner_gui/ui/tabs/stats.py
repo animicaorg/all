@@ -1,4 +1,4 @@
-"""Stats/Graphs tab - hashrate and shares visualization."""
+"""Stats/Graphs tab - hashrate visualization."""
 
 import logging
 from collections import deque
@@ -26,7 +26,6 @@ class StatsTab(QWidget):
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.hashrate_history = deque(maxlen=300)  # 5 minutes at 1s interval
-        self.shares_history = deque(maxlen=300)
         self.setup_ui()
         
         # Connect signal to slot for thread-safe UI updates
@@ -41,12 +40,8 @@ class StatsTab(QWidget):
         stats_layout = QVBoxLayout()
         
         self.avg_hashrate_label = QLabel("Average Hashrate: --")
-        self.total_shares_label = QLabel("Total Shares: 0")
-        self.share_rate_label = QLabel("Share Rate: --")
         
         stats_layout.addWidget(self.avg_hashrate_label)
-        stats_layout.addWidget(self.total_shares_label)
-        stats_layout.addWidget(self.share_rate_label)
         
         stats_group.setLayout(stats_layout)
         layout.addWidget(stats_group)
@@ -125,11 +120,6 @@ class StatsTab(QWidget):
             self.update_stats()
             self.update_graph()
         
-        elif event.event_type == EventType.SHARE_FOUND:
-            count = event.data.get('share_count', 0)
-            self.shares_history.append(count)
-            self.total_shares_label.setText(f"Total Shares: {count}")
-        
         elif event.event_type == EventType.TEMPLATE_UPDATE:
             tx_count = event.data.get('transactions', 0)
             self.mempool_total_label.setText(f"Mempool Total: {tx_count}")
@@ -151,15 +141,6 @@ class StatsTab(QWidget):
             hr_str = f"{avg_hashrate:.0f} H/s"
         
         self.avg_hashrate_label.setText(f"Average Hashrate: {hr_str}")
-        
-        # Calculate share rate (shares per minute)
-        if len(self.shares_history) >= 2:
-            recent_shares = list(self.shares_history)
-            if recent_shares[-1] > recent_shares[0]:
-                time_span = len(recent_shares)  # seconds
-                shares_gained = recent_shares[-1] - recent_shares[0]
-                shares_per_min = (shares_gained / time_span) * 60
-                self.share_rate_label.setText(f"Share Rate: {shares_per_min:.2f} shares/min")
     
     def update_graph(self) -> None:
         """Update the hashrate graph."""

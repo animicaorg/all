@@ -107,7 +107,7 @@ def test_miner_runner_stats():
     stats = runner.get_stats()
     assert stats['status'] == 'stopped'
     assert stats['hashrate'] == 0.0
-    assert stats['shares'] == 0
+    assert stats['blocks'] == 0
     
     # Start mining
     runner.start({})
