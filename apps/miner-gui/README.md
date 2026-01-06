@@ -89,6 +89,8 @@ The miner requires a valid payout address for mining rewards. You can:
 
 Format: `anim1...` (42+ characters, bech32-like)
 
+**Note**: When importing wallets during the setup wizard, the wallet configuration page displays a warning reminding users that the default wallet location is `~/.animica/wallets.json`. Users can also browse to select a custom wallet file location.
+
 ## Device Detection
 
 The miner automatically detects available mining hardware:
