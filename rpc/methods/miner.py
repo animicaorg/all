@@ -4437,6 +4437,7 @@ def miner_stop() -> bool:
 )
 def miner_submit_share(payload: Any = None, **kwargs: Any) -> Dict[str, Any]:
     # Support both positional (share as first param) and keyword arguments
+    # This allows params=[{share_dict}] from share_submitter and params={key: val} for backward compat
     if payload is not None:
         share = payload
     elif kwargs:
@@ -4446,6 +4447,7 @@ def miner_submit_share(payload: Any = None, **kwargs: Any) -> Dict[str, Any]:
             else kwargs
         )
     else:
+        # No payload provided at all - return rejection (matches existing pattern for shares)
         return {"accepted": False, "reason": "invalid share payload"}
     
     if isinstance(share, list) and share:
@@ -4545,6 +4547,7 @@ def miner_submit_share(payload: Any = None, **kwargs: Any) -> Dict[str, Any]:
 )
 def miner_submit_block(payload: Any = None, **kwargs: Any) -> Dict[str, Any]:
     # Support both positional (block as first param) and keyword arguments
+    # This allows params=[{block_dict}] from share_submitter and params={key: val} for backward compat
     if payload is not None:
         block = payload
     elif kwargs:
@@ -4554,6 +4557,7 @@ def miner_submit_block(payload: Any = None, **kwargs: Any) -> Dict[str, Any]:
             else kwargs
         )
     else:
+        # No payload provided at all - raise exception (matches existing pattern for blocks)
         raise rpc_errors.InvalidParams("invalid block payload")
     
     if isinstance(block, list) and block:
