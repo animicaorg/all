@@ -7,7 +7,7 @@ import subprocess
 import sys
 from typing import Optional
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QApplication,
     QFormLayout,
@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
 )
 
 from animica_miner_gui.backend.config import MiningAppConfig
+from animica_miner_gui.backend.rpc_client import RPCClient
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +31,8 @@ logger = logging.getLogger(__name__)
 MIN_ADDRESS_LENGTH = 42  # Minimum length for valid Animica address
 TX_SEND_TIMEOUT = 60  # Timeout for transaction sending in seconds
 ADDRESS_PREVIEW_LENGTH = 20  # Number of characters to show in address preview
+ANM_BASE_UNITS = 1_000_000_000  # 1 ANM = 1e9 base units
+WALLET_INFO_REFRESH_INTERVAL = 10000  # Refresh wallet info every 10 seconds (milliseconds)
 
 
 class WalletTab(QWidget):
@@ -38,7 +41,10 @@ class WalletTab(QWidget):
     def __init__(self, config: MiningAppConfig, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.config = config
+        self.rpc_client: Optional[RPCClient] = None
         self.setup_ui()
+        self.setup_rpc_client()
+        self.setup_auto_refresh()
     
     def setup_ui(self) -> None:
         """Set up the UI."""
@@ -66,6 +72,29 @@ class WalletTab(QWidget):
         address_widget = QWidget()
         address_widget.setLayout(address_layout)
         wallet_layout.addRow("Address:", address_widget)
+        
+        # Balance with refresh button
+        balance_layout = QHBoxLayout()
+        self.balance_label = QLabel("--")
+        self.balance_label.setStyleSheet("font-weight: bold; font-size: 12pt;")
+        balance_layout.addWidget(self.balance_label, stretch=1)
+        
+        self.refresh_balance_button = QPushButton("🔄 Refresh")
+        self.refresh_balance_button.setMaximumWidth(80)
+        self.refresh_balance_button.setToolTip("Refresh wallet balance")
+        self.refresh_balance_button.clicked.connect(self.refresh_wallet_info)
+        if not self.config.miner.payout_address:
+            self.refresh_balance_button.setEnabled(False)
+        balance_layout.addWidget(self.refresh_balance_button)
+        
+        balance_widget = QWidget()
+        balance_widget.setLayout(balance_layout)
+        wallet_layout.addRow("Balance:", balance_widget)
+        
+        # Nonce (transaction count)
+        self.nonce_label = QLabel("--")
+        self.nonce_label.setToolTip("Current nonce - number of transactions sent from this address")
+        wallet_layout.addRow("Nonce:", self.nonce_label)
         
         wallet_group.setLayout(wallet_layout)
         layout.addWidget(wallet_group)
@@ -114,6 +143,70 @@ class WalletTab(QWidget):
         
         layout.addStretch()
         self.setLayout(layout)
+    
+    def setup_rpc_client(self) -> None:
+        """Set up RPC client for querying wallet info."""
+        try:
+            self.rpc_client = RPCClient(self.config.network.rpc_url)
+        except Exception as e:
+            logger.error(f"Failed to initialize RPC client: {e}")
+    
+    def setup_auto_refresh(self) -> None:
+        """Set up timer to auto-refresh wallet info."""
+        # Refresh wallet info periodically
+        self.refresh_timer = QTimer(self)  # Set parent to ensure cleanup
+        self.refresh_timer.timeout.connect(self.refresh_wallet_info)
+        self.refresh_timer.start(WALLET_INFO_REFRESH_INTERVAL)
+        
+        # Do initial refresh
+        if self.config.miner.payout_address:
+            self.refresh_wallet_info()
+    
+    def closeEvent(self, event) -> None:
+        """Clean up resources when widget is closed."""
+        # Stop the refresh timer to prevent memory leaks
+        if hasattr(self, 'refresh_timer') and self.refresh_timer.isActive():
+            self.refresh_timer.stop()
+        super().closeEvent(event)
+    
+    def refresh_wallet_info(self) -> None:
+        """Query RPC for wallet balance and nonce."""
+        if not self.rpc_client:
+            logger.debug("No RPC client available")
+            return
+        
+        payout_address = self.config.miner.payout_address
+        if not payout_address:
+            self.balance_label.setText("No payout address")
+            self.nonce_label.setText("--")
+            return
+        
+        # Query balance using public method
+        try:
+            balance_int = self.rpc_client.get_balance(payout_address)
+            
+            if balance_int is not None:
+                balance_value = balance_int / ANM_BASE_UNITS
+                self.balance_label.setText(f"{balance_value:.9f} ANM")
+            else:
+                self.balance_label.setText("Unable to query")
+                
+        except Exception as e:
+            logger.debug(f"Failed to query balance: {e}")
+            self.balance_label.setText("Query failed")
+        
+        # Query nonce using public method
+        try:
+            nonce_int = self.rpc_client.get_nonce(payout_address)
+            
+            if nonce_int is not None:
+                self.nonce_label.setText(str(nonce_int))
+            else:
+                self.nonce_label.setText("Unable to query")
+                
+        except Exception as e:
+            logger.debug(f"Failed to query nonce: {e}")
+            self.nonce_label.setText("Query failed")
     
     def copy_address_to_clipboard(self) -> None:
         """Copy the wallet address to clipboard."""
@@ -280,6 +373,9 @@ class WalletTab(QWidget):
                 # Clear inputs on success
                 self.recipient_input.clear()
                 self.amount_input.clear()
+                
+                # Refresh wallet info after successful transaction
+                self.refresh_wallet_info()
                 
                 QMessageBox.information(
                     self,
