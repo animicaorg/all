@@ -1163,7 +1163,7 @@ def send(
         None, "--public-key-hex", help="Public key hex (required with --secret-key-hex)"
     ),
     alg_id: Optional[int] = typer.Option(
-        None, "--alg-id", help="Signature algorithm ID (e.g., 0x1001 for Dilithium3, 0xFFFF for Ed25519)"
+        None, "--alg-id", help="Signature algorithm ID (4098 for Dilithium3, 65535 for Ed25519, or hex 0x1001/0xFFFF)"
     ),
 ):
     """
