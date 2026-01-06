@@ -3,13 +3,27 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../pages/mining/dashboard_page.dart';
+import '../pages/mining/devices_page.dart';
+import '../pages/mining/pools_page.dart';
+import '../pages/mining/logs_page.dart';
+import '../pages/mining/stats_page.dart';
 import '../pages/wallet/wallet_page.dart';
 import '../pages/settings/settings_page.dart';
+import '../pages/settings/config_page.dart';
+import '../pages/onboarding/wizard_page.dart';
 
 final routerProvider = Provider<GoRouter>((ref) {
   return GoRouter(
     initialLocation: '/dashboard',
     routes: [
+      // Wizard route (standalone, not in shell)
+      GoRoute(
+        path: '/wizard',
+        name: 'wizard',
+        builder: (context, state) => const WizardPage(),
+      ),
+      
+      // Main shell routes
       ShellRoute(
         builder: (context, state, child) {
           return MainScaffold(child: child);
@@ -20,6 +34,34 @@ final routerProvider = Provider<GoRouter>((ref) {
             name: 'dashboard',
             pageBuilder: (context, state) => NoTransitionPage(
               child: DashboardPage(key: state.pageKey),
+            ),
+          ),
+          GoRoute(
+            path: '/devices',
+            name: 'devices',
+            pageBuilder: (context, state) => NoTransitionPage(
+              child: DevicesPage(key: state.pageKey),
+            ),
+          ),
+          GoRoute(
+            path: '/pools',
+            name: 'pools',
+            pageBuilder: (context, state) => NoTransitionPage(
+              child: PoolsPage(key: state.pageKey),
+            ),
+          ),
+          GoRoute(
+            path: '/logs',
+            name: 'logs',
+            pageBuilder: (context, state) => NoTransitionPage(
+              child: LogsPage(key: state.pageKey),
+            ),
+          ),
+          GoRoute(
+            path: '/stats',
+            name: 'stats',
+            pageBuilder: (context, state) => NoTransitionPage(
+              child: StatsPage(key: state.pageKey),
             ),
           ),
           GoRoute(
@@ -34,6 +76,13 @@ final routerProvider = Provider<GoRouter>((ref) {
             name: 'settings',
             pageBuilder: (context, state) => NoTransitionPage(
               child: SettingsPage(key: state.pageKey),
+            ),
+          ),
+          GoRoute(
+            path: '/config',
+            name: 'config',
+            pageBuilder: (context, state) => NoTransitionPage(
+              child: ConfigPage(key: state.pageKey),
             ),
           ),
         ],

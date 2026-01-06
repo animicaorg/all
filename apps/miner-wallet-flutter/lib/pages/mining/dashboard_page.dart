@@ -1,14 +1,36 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../state/app_state.dart';
+import '../../state/miner_state.dart';
+import '../../utils/formatters.dart';
+
 class DashboardPage extends ConsumerWidget {
   const DashboardPage({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final chainIdAsync = ref.watch(chainIdProvider);
+    final blockHeightAsync = ref.watch(blockHeightProvider);
+    final syncStatusAsync = ref.watch(syncStatusProvider);
+    final miningStatus = ref.watch(miningStatusProvider);
+    final hashrate = ref.watch(hashrateProvider);
+    final blocksFound = ref.watch(blocksFoundProvider);
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('Mining Dashboard'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: () {
+              ref.invalidate(chainIdProvider);
+              ref.invalidate(blockHeightProvider);
+              ref.invalidate(syncStatusProvider);
+            },
+            tooltip: 'Refresh',
+          ),
+        ],
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
@@ -27,9 +49,32 @@ class DashboardPage extends ConsumerWidget {
                       style: Theme.of(context).textTheme.headlineSmall,
                     ),
                     const SizedBox(height: 16),
-                    _InfoRow(label: 'Chain ID', value: '--'),
-                    _InfoRow(label: 'Block Height', value: '--'),
-                    _InfoRow(label: 'Sync Status', value: '--'),
+                    chainIdAsync.when(
+                      data: (chainId) => _InfoRow(
+                        label: 'Chain ID',
+                        value: chainId.toString(),
+                      ),
+                      loading: () => _InfoRow(label: 'Chain ID', value: 'Loading...'),
+                      error: (_, __) => _InfoRow(label: 'Chain ID', value: 'Error'),
+                    ),
+                    blockHeightAsync.when(
+                      data: (height) => _InfoRow(
+                        label: 'Block Height',
+                        value: height.toString(),
+                      ),
+                      loading: () => _InfoRow(label: 'Block Height', value: 'Loading...'),
+                      error: (_, __) => _InfoRow(label: 'Block Height', value: 'Error'),
+                    ),
+                    syncStatusAsync.when(
+                      data: (status) => _InfoRow(
+                        label: 'Sync Status',
+                        value: status.syncing 
+                            ? 'Syncing (${(status.progress! * 100).toStringAsFixed(1)}%)'
+                            : 'Synced',
+                      ),
+                      loading: () => _InfoRow(label: 'Sync Status', value: 'Checking...'),
+                      error: (_, __) => _InfoRow(label: 'Sync Status', value: 'Unknown'),
+                    ),
                   ],
                 ),
               ),
@@ -48,28 +93,46 @@ class DashboardPage extends ConsumerWidget {
                       style: Theme.of(context).textTheme.headlineSmall,
                     ),
                     const SizedBox(height: 16),
-                    _InfoRow(label: 'Status', value: 'Stopped'),
-                    _InfoRow(label: 'Hashrate', value: '0 H/s', 
-                      valueStyle: Theme.of(context).textTheme.headlineMedium),
-                    _InfoRow(label: 'Difficulty', value: '--'),
-                    _InfoRow(label: 'Time to Block', value: '--'),
-                    _InfoRow(label: 'Blocks Found', value: '0'),
+                    _InfoRow(
+                      label: 'Status',
+                      value: miningStatus.displayName,
+                      valueStyle: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                        color: miningStatus == MiningStatus.mining
+                            ? Colors.green
+                            : null,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    _InfoRow(
+                      label: 'Hashrate',
+                      value: formatHashrate(hashrate),
+                      valueStyle: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    _InfoRow(label: 'Blocks Found', value: blocksFound.toString()),
                     const SizedBox(height: 16),
                     Row(
                       children: [
-                        ElevatedButton.icon(
-                          onPressed: () {
-                            // TODO: Start mining
-                          },
-                          icon: const Icon(Icons.play_arrow),
-                          label: const Text('Start Mining'),
-                        ),
-                        const SizedBox(width: 8),
-                        OutlinedButton.icon(
-                          onPressed: null,
-                          icon: const Icon(Icons.stop),
-                          label: const Text('Stop'),
-                        ),
+                        if (miningStatus == MiningStatus.stopped) ...[
+                          ElevatedButton.icon(
+                            onPressed: () {
+                              ref.read(miningStatusProvider.notifier).startMining();
+                            },
+                            icon: const Icon(Icons.play_arrow),
+                            label: const Text('Start Mining'),
+                          ),
+                        ] else ...[
+                          OutlinedButton.icon(
+                            onPressed: miningStatus == MiningStatus.mining
+                                ? () {
+                                    ref.read(miningStatusProvider.notifier).stopMining();
+                                  }
+                                : null,
+                            icon: const Icon(Icons.stop),
+                            label: const Text('Stop'),
+                          ),
+                        ],
                       ],
                     ),
                   ],
