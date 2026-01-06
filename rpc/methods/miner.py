@@ -1440,7 +1440,7 @@ def _get_miner_address() -> bytes:
     return ZERO32
 
 
-def _apply_block_reward(ctx: Any, height: int, payout_address: bytes | None = None) -> int:
+def _apply_block_reward(ctx: Any, height: int, payout_address: bytes | None = None, instant_block: bool = False) -> int:
     """
     Apply block reward to the miner's address in state.
     
@@ -1448,6 +1448,7 @@ def _apply_block_reward(ctx: Any, height: int, payout_address: bytes | None = No
         ctx: RPC context with state_db access
         height: Block height for reward calculation
         payout_address: Optional 32-byte payout address. If None, uses default miner address.
+        instant_block: If True, this is an instant block with zero rewards (default: False)
         
     Returns:
         int: Total miner reward amount (in nANM) credited to payout address, or 0 if none
@@ -1462,7 +1463,7 @@ def _apply_block_reward(ctx: Any, height: int, payout_address: bytes | None = No
         chain_id = ctx.cfg.chain_id
         params = getattr(ctx, "params", None) or {}
         
-        rewards = compute_block_reward(chain_id=chain_id, height=height, params=params)
+        rewards = compute_block_reward(chain_id=chain_id, height=height, params=params, instant_block=instant_block)
         
         # Log warning if rewards are empty when they shouldn't be (height >= 1)
         if not rewards and height >= 1:
@@ -2417,6 +2418,7 @@ def _mine_once(
     include_mempool: bool = True,
     allow_offline_mining: bool = False,
     allow_unsynced_mining: bool = False,
+    instant_block: bool = False,
 ) -> tuple[bool, int, dict[str, Any]]:
     """
     Mine a single block with proof-of-work.
@@ -3085,7 +3087,7 @@ def _mine_once(
         log.info(
             f"Applying block reward to payout address at height {header.height}"
         )
-        reward_amount = _apply_block_reward(ctx, header.height, payout_address)
+        reward_amount = _apply_block_reward(ctx, header.height, payout_address, instant_block=instant_block)
 
         # Compute receipts root (if any receipts) and ensure txs root matches tx set
         receipts_root = ZERO32
@@ -3708,6 +3710,7 @@ def miner_mine(
     allow_offline_mining: bool | None = None,
     allow_unsynced_mining: bool | None = None,
     force_empty_template: bool | None = None,
+    instant_block: bool | None = None,
 ) -> dict[str, int | list[dict[str, int]] | dict[str, Any]]:
     """
     Mine N blocks locally with dynamic theta micro adjustment.
@@ -3720,6 +3723,7 @@ def miner_mine(
         include_mempool: Whether to include pending mempool transactions (default: True).
         allow_unsynced_mining: Allow mining even when sync_phase is not synced.
         force_empty_template: Force mining without mempool inclusion.
+        instant_block: If True, mine instant blocks with zero rewards (default: False).
         
     Returns:
         dict: {
@@ -3818,6 +3822,7 @@ def miner_mine(
     total_included = 0
     aggregated_rejected: dict[str, int] = {}
     rejected_by_hash_sample: dict[str, str] = {}
+    instant_block_flag = bool(instant_block)
     
     for _ in range(target):
         mine_result = _mine_once(
@@ -3826,6 +3831,7 @@ def miner_mine(
             include_mempool=include_mempool_flag,
             allow_offline_mining=bool(allow_offline_mining),
             allow_unsynced_mining=allow_unsynced_flag,
+            instant_block=instant_block_flag,
         )
         if isinstance(mine_result, tuple) and len(mine_result) == 2:
             success, reward_amount = mine_result
