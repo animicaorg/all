@@ -58,15 +58,14 @@ export function formatBalance(balance?: string | null): {
     // Format ANM with up to 9 decimal places (removing trailing zeros)
     let anmStr: string
     if (anmRemainder === 0n) {
-      anmStr = new Intl.NumberFormat('en-US', { 
-        minimumFractionDigits: 0,
-        maximumFractionDigits: 0 
-      }).format(Number(anmWhole))
+      // No fractional part - format whole number only
+      anmStr = anmWhole.toLocaleString('en-US')
     } else {
       // Construct decimal string manually for precision
       const remainderStr = anmRemainder.toString().padStart(9, '0')
       const trimmedRemainder = remainderStr.replace(/0+$/, '')
-      anmStr = new Intl.NumberFormat('en-US').format(Number(anmWhole)) + '.' + trimmedRemainder
+      // Format whole part using BigInt's toLocaleString to avoid precision loss
+      anmStr = anmWhole.toLocaleString('en-US') + '.' + trimmedRemainder
     }
     
     // Format nANM with thousand separators
