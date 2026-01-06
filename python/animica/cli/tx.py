@@ -1156,6 +1156,15 @@ def send(
     wait_timeout: int = typer.Option(30, "--wait-timeout", help="Max wait time for peer acks (seconds)"),
     verbose: bool = typer.Option(False, "-v", "--verbose", help="Verbose debug output"),
     debug_signing: bool = typer.Option(False, "--debug-signing", help="Dump canonical sign-bytes debug info"),
+    secret_key_hex: Optional[str] = typer.Option(
+        None, "--secret-key-hex", help="Secret key hex (for external wallets, bypasses wallets.json lookup)"
+    ),
+    public_key_hex: Optional[str] = typer.Option(
+        None, "--public-key-hex", help="Public key hex (required with --secret-key-hex)"
+    ),
+    alg_id: Optional[int] = typer.Option(
+        None, "--alg-id", help="Signature algorithm ID (4098 for Dilithium3, 65535 for Ed25519, or hex 0x1001/0xFFFF)"
+    ),
 ):
     """
     Send a raw transaction via tx.sendRawTransaction using PQ signature.
@@ -1226,15 +1235,43 @@ def send(
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
 
-    # Load wallet keys
-    w = _load_wallet_entry(from_addr)
+    # Load wallet keys - either from external parameters or wallet file
+    if secret_key_hex and public_key_hex:
+        # Using external keys provided via command-line
+        if not alg_id:
+            raise typer.BadParameter(
+                "--alg-id is required when using --secret-key-hex and --public-key-hex"
+            )
+        pk_hex = public_key_hex
+        sk_hex = secret_key_hex
+        used_alg_id = alg_id
+    elif secret_key_hex or public_key_hex:
+        # Partial external keys - error
+        raise typer.BadParameter(
+            "Both --secret-key-hex and --public-key-hex must be provided together"
+        )
+    else:
+        # Load from wallet file (original behavior)
+        try:
+            w = _load_wallet_entry(from_addr)
+        except FileNotFoundError:
+            raise RuntimeError(
+                f"Wallet file not found. Please create a wallet using 'animica wallet create' "
+                f"or provide signing keys via --secret-key-hex and --public-key-hex options."
+            )
+        except RuntimeError as e:
+            # Re-raise with more helpful message
+            raise RuntimeError(
+                f"{e}\n\nTip: If this address is from an external wallet, "
+                f"provide signing keys using --secret-key-hex, --public-key-hex, and --alg-id options."
+            )
+        
+        used_alg_id = int(w.get("alg_id") or w.get("algId") or 0x1001)
+        pk_hex = str(w.get("public_key_hex") or w.get("publicKeyHex") or "")
+        sk_hex = str(w.get("secret_key_hex") or w.get("secretKeyHex") or "")
 
-    alg_id = int(w.get("alg_id") or w.get("algId") or 0x1001)
-    pk_hex = str(w.get("public_key_hex") or w.get("publicKeyHex") or "")
-    sk_hex = str(w.get("secret_key_hex") or w.get("secretKeyHex") or "")
-
-    if not pk_hex or not sk_hex:
-        raise RuntimeError("wallet entry missing public_key_hex or secret_key_hex")
+        if not pk_hex or not sk_hex:
+            raise RuntimeError("wallet entry missing public_key_hex or secret_key_hex")
 
     pk = _hex_to_bytes(pk_hex)
     sk = _hex_to_bytes(sk_hex)
@@ -1286,7 +1323,7 @@ def send(
                 domain=domain,
                 chain_id=cid,
                 fork_id=fork_id,
-                alg_id=alg_id,
+                alg_id=used_alg_id,
                 prehash=prehash,  # type: ignore[arg-type]
             )
 
@@ -1312,7 +1349,7 @@ def send(
                 console.print("[bold]PQ SIGNATURE DEBUG[/bold]")
                 console.print(
                     {
-                        "algorithm_id": alg_id,
+                        "algorithm_id": used_alg_id,
                         "domain": domain,
                         "prehash": prehash,
                         "chain_id_in_pq": cid,
@@ -1329,7 +1366,7 @@ def send(
             # Sign
             pq = pq_sign_detached(
                 body_bytes,
-                alg=alg_id,
+                alg=used_alg_id,
                 sk=sk,
                 pk=pk,
                 domain=domain,
