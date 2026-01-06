@@ -48,6 +48,7 @@ class TxKind(IntEnum):
     TRANSFER = 0
     DEPLOY = 1
     CALL = 2
+    COINBASE = 3  # Mining reward transaction (protocol-generated)
 
 
 @dataclass(frozen=True)
@@ -266,12 +267,22 @@ class UnsignedTx:
     nonce: Optional[int] = None  # legacy v1 only
 
     def __post_init__(self) -> None:
+        # Special rules for coinbase transactions (protocol-generated)
+        is_coinbase = (self.kind == TxKind.COINBASE)
+        
         if self.version not in (1, 2):
             raise ValueError("UnsignedTx.version must be 1 or 2")
         if self.chain_id <= 0:
             raise ValueError("UnsignedTx.chain_id must be positive")
-        if self.gas_price < 0 or self.gas_limit <= 0:
-            raise ValueError("UnsignedTx.gas_price must be ≥ 0 and gas_limit > 0")
+        
+        # Coinbase txs can have zero gas_limit, others must have gas_limit > 0
+        if is_coinbase:
+            if self.gas_price < 0 or self.gas_limit < 0:
+                raise ValueError("UnsignedTx.gas_price and gas_limit must be ≥ 0")
+        else:
+            if self.gas_price < 0 or self.gas_limit <= 0:
+                raise ValueError("UnsignedTx.gas_price must be ≥ 0 and gas_limit > 0")
+        
         if self.version == 1:
             if self.nonce is None or self.nonce < 0:
                 raise ValueError("UnsignedTx.nonce must be ≥ 0 for v1")
@@ -316,6 +327,8 @@ class UnsignedTx:
             payload_obj = {"t": int(TxKind.DEPLOY), "v": self.payload.to_obj()}  # type: ignore[union-attr]
         elif self.kind is TxKind.CALL:
             payload_obj = {"t": int(TxKind.CALL), "v": self.payload.to_obj()}  # type: ignore[union-attr]
+        elif self.kind is TxKind.COINBASE:
+            payload_obj = {"t": int(TxKind.COINBASE), "v": self.payload.to_obj()}  # type: ignore[union-attr]
         else:  # pragma: no cover
             raise ValueError("unknown tx kind")
 
@@ -381,6 +394,9 @@ class UnsignedTx:
         elif payload_tag == int(TxKind.CALL):
             payload = TxCall.from_obj(payload_val)
             kind = TxKind.CALL
+        elif payload_tag == int(TxKind.COINBASE):
+            payload = TxTransfer.from_obj(payload_val)
+            kind = TxKind.COINBASE
         else:
             raise ValueError("Unknown payload tag")
 
@@ -505,6 +521,57 @@ class UnsignedTx:
             kind=TxKind.CALL,
             payload=TxCall(to=to, data=data),
             access_list=tuple(access_list or ()),
+        )
+
+    @staticmethod
+    def build_coinbase(
+        *,
+        chain_id: int,
+        height: int,
+        to: bytes,
+        amount: int,
+        version: int = 2,
+    ) -> "UnsignedTx":
+        """
+        Build a coinbase transaction for mining rewards.
+        
+        Coinbase transactions are protocol-generated and have special properties:
+        - sender: ZERO_ADDRESS (32 zero bytes)
+        - gas_price: 0 (no gas charged)
+        - gas_limit: 0 (no gas limit)
+        - nonce: 0 (coinbase txs don't consume nonces)
+        - valid_after: height (only valid at current block)
+        - valid_until: height (only valid at current block)
+        - salt: deterministic based on height
+        - No signature required (will be empty tuple)
+        
+        Args:
+            chain_id: Chain ID
+            height: Block height where this reward is issued
+            to: Miner address receiving the reward
+            amount: Reward amount in base units (nANM)
+            version: Transaction version (default: 2)
+            
+        Returns:
+            UnsignedTx with kind=COINBASE
+        """
+        zero_address = bytes(32)  # 32 zero bytes for sender
+        salt = height.to_bytes(32, byteorder='big')  # Deterministic salt from height
+        
+        return UnsignedTx(
+            version=version,
+            chain_id=chain_id,
+            fork_id=None,
+            valid_after=height,
+            valid_until=height,
+            salt=salt,
+            sender=zero_address,
+            nonce=None,
+            gas_price=0,
+            gas_limit=0,
+            kind=TxKind.COINBASE,
+            payload=TxTransfer(to=to, amount=amount, data=b""),
+            access_list=tuple(),
         )
 
 
