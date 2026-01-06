@@ -48,20 +48,19 @@ def test_freeze_support_in_main_guard():
     # Get the first statement in the if __name__ block (after any comments)
     first_statements = []
     for stmt in main_guard.body:
-        if isinstance(stmt, ast.Expr):
-            # This is likely a function call
-            if isinstance(stmt.value, ast.Call):
-                if isinstance(stmt.value.func, ast.Attribute):
-                    if (isinstance(stmt.value.func.value, ast.Name) and
-                        stmt.value.func.value.id == "multiprocessing" and
-                        stmt.value.func.attr == "freeze_support"):
-                        first_statements.append("freeze_support")
-        elif isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Call):
-            # Record the call
-            if hasattr(stmt.value.func, 'id'):
+        if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Call):
+            # This is a function call expression
+            if isinstance(stmt.value.func, ast.Attribute):
+                # Method call like multiprocessing.freeze_support()
+                if (isinstance(stmt.value.func.value, ast.Name) and
+                    stmt.value.func.value.id == "multiprocessing" and
+                    stmt.value.func.attr == "freeze_support"):
+                    first_statements.append("freeze_support")
+                elif hasattr(stmt.value.func, 'attr'):
+                    first_statements.append(stmt.value.func.attr)
+            elif hasattr(stmt.value.func, 'id'):
+                # Simple function call like main()
                 first_statements.append(stmt.value.func.id)
-            elif hasattr(stmt.value.func, 'attr'):
-                first_statements.append(stmt.value.func.attr)
     
     # The first executable statement should involve freeze_support
     assert len(first_statements) > 0, "No statements found in if __name__ block"
