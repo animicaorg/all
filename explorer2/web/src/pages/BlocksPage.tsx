@@ -17,6 +17,7 @@ export default function BlocksPage() {
       const res = await api.getBlocks(20, cursorValue ?? undefined)
       setBlocks((prev) => (cursorValue ? [...prev, ...res.items] : res.items))
       setCursor(res.nextCursor)
+      setError(null)
     } catch (err) {
       setError(String(err))
     } finally {
@@ -25,7 +26,17 @@ export default function BlocksPage() {
   }
 
   useEffect(() => {
+    // Initial load
     loadBlocks()
+
+    // Poll every 5 seconds for new blocks (only refresh the first page, not paginated results)
+    const intervalId = setInterval(() => {
+      loadBlocks()
+    }, 5000)
+
+    return () => {
+      clearInterval(intervalId)
+    }
   }, [])
 
   if (error) {
