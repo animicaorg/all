@@ -2562,9 +2562,10 @@ def _mine_once(
         threads: Number of parallel threads to use for nonce search (default: CPU count)
         
     Returns:
-        tuple[bool, int]: (success, reward_amount) where:
+        tuple[bool, int, dict[str, Any]]: (success, reward_amount, selection_summary) where:
             - success: True if block was mined and accepted, False otherwise
             - reward_amount: Miner reward in nANM (0 if mining failed or no reward)
+            - selection_summary: Dict with mempool selection statistics (pending, selected, rejected, etc.)
     """
     # Default threads to CPU count for optimal multi-core mining
     if threads is None:
