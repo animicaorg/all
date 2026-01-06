@@ -2380,8 +2380,17 @@ def _execute_transactions(
                 receipts.append({"status": 0, "gasUsed": 0, "logs": []})
                 continue
 
-            # Validate sender is not zero address
-            if sender_bytes == ZERO32 or not any(sender_bytes):
+            # Validate sender is not zero address (except for coinbase transactions)
+            # Coinbase transactions are protocol-generated and have sender = ZERO_ADDRESS
+            is_coinbase = False
+            if hasattr(tx, "unsigned"):
+                unsigned = tx.unsigned
+                kind = getattr(unsigned, "kind", None)
+                if kind is not None:
+                    kind_int = int(kind) if hasattr(kind, "__int__") else kind
+                    is_coinbase = (kind_int == 3)  # TxKind.COINBASE = 3
+            
+            if not is_coinbase and (sender_bytes == ZERO32 or not any(sender_bytes)):
                 logger.warning(
                     "Transaction %s has zero/invalid sender address; "
                     "attempting signature-based execution",
