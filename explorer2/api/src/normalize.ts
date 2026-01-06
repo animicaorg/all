@@ -44,6 +44,7 @@ function getHeader(block: any): any {
 export function normalizeHead(head: any): HeadView {
   return {
     height: toNumber(head?.height ?? head?.number) ?? 0,
+    canonicalHeight: toNumber(head?.canonicalHeight ?? head?.canonical_height),
     hash: head?.hash ?? head?.headerHash ?? '0x0',
     time: toNumber(head?.time ?? head?.timestamp ?? head?.header?.time) ?? 0,
     chainId: toNumber(head?.chainId)

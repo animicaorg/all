@@ -250,7 +250,7 @@ class WalletTab(QWidget):
         
         try:
             # Build the tx send command
-            # Use the animica CLI: animica tx send --from <addr> --to <addr> --value <amount>
+            # Use the animica CLI: animica tx send --from <addr> --to <addr> --value <amount> --mine
             rpc_url = self.config.network.rpc_url
             
             cmd = [
@@ -259,6 +259,7 @@ class WalletTab(QWidget):
                 "--to", to_addr,
                 "--value", str(amount),
                 "--rpc-url", rpc_url,
+                "--mine",  # Mine an instant block after sending
             ]
             
             self.result_text.append(f"Running: {' '.join(cmd)}\n")

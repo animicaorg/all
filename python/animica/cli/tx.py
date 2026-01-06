@@ -1154,6 +1154,7 @@ def send(
     prehash: str = typer.Option(DEFAULT_PREHASH, "--prehash", help="Prehash: sha3-512 | sha3-256"),
     min_peers: Optional[int] = typer.Option(None, "--min-peers", help="Wait for min peer acks (PTL)"),
     wait_timeout: int = typer.Option(30, "--wait-timeout", help="Max wait time for peer acks (seconds)"),
+    mine: bool = typer.Option(False, "--mine", help="Mine an instant block after sending transaction"),
     verbose: bool = typer.Option(False, "-v", "--verbose", help="Verbose debug output"),
     debug_signing: bool = typer.Option(False, "--debug-signing", help="Dump canonical sign-bytes debug info"),
     secret_key_hex: Optional[str] = typer.Option(
@@ -1609,6 +1610,30 @@ def send(
             console.print(f"[yellow]Warning: Only {ack_count}/{min_peers} acks after {elapsed:.1f}s[/yellow]")
             console.print("[yellow]Transaction may still replicate. Use 'animica tx replicate' to check status.[/yellow]")
 
+    # Mine an instant block if requested
+    if mine:
+        console.print("\n[bold]Mining instant block...[/bold]")
+        try:
+            mine_result = _rpc(rpc, "miner.mine", [1])
+            if mine_result and isinstance(mine_result, dict):
+                mined_blocks = mine_result.get("blocks_mined", 0)
+                if mined_blocks > 0:
+                    console.print(f"[green]✓ Mined {mined_blocks} block(s) successfully[/green]")
+                    if verbose and "heights" in mine_result:
+                        console.print(f"[dim]Block heights: {mine_result['heights']}[/dim]")
+                else:
+                    console.print("[yellow]Warning: Mining returned 0 blocks[/yellow]")
+            else:
+                console.print("[yellow]Warning: Unexpected mining response[/yellow]")
+        except RpcError as e:
+            if e.code == -32601:
+                console.print("[yellow]Warning: miner.mine method not available on this node[/yellow]")
+            else:
+                console.print(f"[yellow]Warning: Mining failed: {e.message}[/yellow]")
+            if verbose:
+                console.print(f"[dim]Error code: {e.code}, data: {e.data}[/dim]")
+        except Exception as exc:
+            console.print(f"[yellow]Warning: Mining error: {exc}[/yellow]")
     
     if verbose:
         console.print("\n[bold]TX BODY[/bold]")

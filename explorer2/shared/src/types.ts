@@ -3,6 +3,7 @@ export type Address = `anim1${string}` | string
 
 export interface HeadView {
   height: number
+  canonicalHeight?: number  // Height excluding instant blocks (used for halving schedule)
   hash: Hash
   time: number
   chainId?: number

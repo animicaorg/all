@@ -392,6 +392,17 @@ def chain_get_head() -> dict:
         return header_view
 
     view = _header_view(int(height), header, chain_id_fallback=chain_id_val)
+    
+    # Add canonical_height to the response (height excluding instant blocks)
+    try:
+        block_db = deps.get_block_db()
+        if block_db is not None and hasattr(block_db, "get_canonical_height"):
+            canonical_height = block_db.get_canonical_height()
+            if canonical_height is not None:
+                view["canonicalHeight"] = canonical_height
+    except Exception:
+        pass
+    
     try:
         from rpc.methods import miner as miner_methods
 

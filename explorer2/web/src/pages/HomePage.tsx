@@ -64,15 +64,22 @@ export default function HomePage() {
     <div className="space-y-6">
       <section>
         <h2 className="mb-4 text-lg font-semibold text-gray-900 dark:text-slate-100">Chain Status</h2>
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {data ? (
             <>
               <StatCard label="Current Block" value={`#${formatNumber(data.head.height)}`} />
+              {data.head.canonicalHeight !== undefined && (
+                <StatCard 
+                  label="Canonical Height" 
+                  value={`#${formatNumber(data.head.canonicalHeight)}`}
+                  hint="Excludes instant blocks"
+                />
+              )}
               <StatCard label="Block Hash" value={<span className="truncate text-sm">{shorten(data.head.hash)}</span>} />
               <StatCard label="Last Block" value={`${timeAgo(data.head.time)}`} />
             </>
           ) : (
-            Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-20" />)
+            Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-20" />)
           )}
         </div>
       </section>
