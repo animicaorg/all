@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import os
 import re
 import signal
@@ -77,6 +78,10 @@ class MinerRunner:
         self._last_shares = 0
         self._last_blocks = 0
         self._start_time = 0.0
+        self._last_share_time = 0.0
+        self._share_times = []  # Track recent share timestamps for hashrate calculation
+        self._current_theta_micro = 0  # Current network difficulty
+        self._current_share_target = 0.25  # Default share target (25% of theta)
     
     def add_event_callback(self, callback: Callable[[MiningEvent], None]) -> None:
         """Add a callback for mining events.
@@ -119,6 +124,53 @@ class MinerRunner:
             data={"status": new_status.value, "reason": reason}
         ))
     
+    def _calculate_hashrate_from_shares(self) -> float:
+        """Calculate hashrate based on share submission rate and difficulty.
+        
+        Returns:
+            Estimated hashrate in H/s
+        """
+        with self._lock:
+            # Keep only recent shares (last 5 minutes)
+            now = time.time()
+            cutoff = now - 300  # 5 minutes
+            self._share_times = [t for t in self._share_times if t >= cutoff]
+            
+            if len(self._share_times) < 2:
+                return 0.0
+            
+            # Calculate share rate (shares per second)
+            time_span = self._share_times[-1] - self._share_times[0]
+            if time_span <= 0:
+                return 0.0
+            
+            share_count = len(self._share_times)
+            shares_per_second = share_count / time_span
+            
+            # Estimate hashrate from share rate and difficulty
+            # Each share requires on average 1/probability hashes
+            # probability = e^(-threshold) where threshold = theta * share_target
+            # Therefore: hashrate = shares_per_second / e^(-threshold)
+            
+            if self._current_share_target > 0:
+                # Use exponential relationship for accurate calculation
+                if self._current_theta_micro > 0:
+                    threshold_share_micro = self._current_theta_micro * self._current_share_target
+                    # e^(-t) where t is in micro-nats, so convert: t_nats = t_micro / 1e6
+                    threshold_nats = threshold_share_micro / 1_000_000
+                    probability = math.exp(-threshold_nats)
+                    if probability > 0:
+                        hashrate = shares_per_second / probability
+                        return hashrate
+                
+                # Fallback: simple approximation when theta not known
+                # For small thresholds: e^(-t) ≈ 1-t, so probability ≈ share_target
+                hashrate = shares_per_second / self._current_share_target
+                return hashrate
+            
+            # If no difficulty info, just report shares per second scaled by a reasonable factor
+            return shares_per_second * 4.0  # Assume ~25% share target as default
+    
     def start(self, config: Dict[str, Any]) -> bool:
         """Start the mining process.
         
@@ -139,6 +191,10 @@ class MinerRunner:
             self._last_hashrate = 0.0
             self._last_shares = 0
             self._last_blocks = 0
+            self._last_share_time = 0.0
+            self._share_times = []
+            self._current_theta_micro = 0
+            self._current_share_target = 0.25
         
         try:
             # Start miner in a background thread
@@ -222,9 +278,6 @@ class MinerRunner:
         
         try:
             # Build the mining command
-            import sys
-            from pathlib import Path
-            
             # Get configuration
             payout_address = config.get('miner', {}).get('payout_address')
             if not payout_address:
@@ -350,12 +403,29 @@ class MinerRunner:
                     # Check for share found - look for specific patterns
                     # Matches: "share found", "found share", "share accepted", etc.
                     if re.search(r'\b(share|found).*\b(share|found|accepted|submitted)\b', line_lower):
+                        now = time.time()
                         self._last_shares += 1
+                        self._last_share_time = now
+                        self._share_times.append(now)
+                        
+                        # Calculate hashrate from share rate
+                        calculated_hashrate = self._calculate_hashrate_from_shares()
+                        if calculated_hashrate > 0:
+                            self._last_hashrate = calculated_hashrate
+                        
                         self._emit_event(MiningEvent(
                             event_type=EventType.SHARE_FOUND,
-                            timestamp=time.time(),
+                            timestamp=now,
                             data={"share_count": self._last_shares}
                         ))
+                        
+                        # Also emit hashrate update when share is found
+                        if calculated_hashrate > 0:
+                            self._emit_event(MiningEvent(
+                                event_type=EventType.HASHRATE_UPDATE,
+                                timestamp=now,
+                                data={"hashrate": calculated_hashrate, "unit": "H/s"}
+                            ))
                     
                     # Check for block found - look for specific patterns
                     if re.search(r'\bblock\b.*\b(found|mined|accepted)\b', line_lower):
@@ -380,10 +450,25 @@ class MinerRunner:
                         template_height = int(height_match.group(1)) if height_match else 0
                         tx_count = int(tx_match.group(1)) if tx_match else 0
                         
+                        # Try to extract theta (difficulty) - look for patterns like "theta: 12345678" or "Θ: 12345678"
+                        theta_match = re.search(r'(?:theta|Θ)[:\s]+([\d]+)', line_lower)
+                        if theta_match:
+                            self._current_theta_micro = int(theta_match.group(1))
+                        
+                        # Try to extract share target - look for patterns like "target: 0.25" or "share_target: 0.25"
+                        target_match = re.search(r'(?:share[_\s]?target|target)[:\s]+([\d.]+)', line_lower)
+                        if target_match:
+                            self._current_share_target = float(target_match.group(1))
+                        
                         self._emit_event(MiningEvent(
                             event_type=EventType.TEMPLATE_UPDATE,
                             timestamp=time.time(),
-                            data={"height": template_height, "transactions": tx_count}
+                            data={
+                                "height": template_height,
+                                "transactions": tx_count,
+                                "theta_micro": self._current_theta_micro,
+                                "share_target": self._current_share_target
+                            }
                         ))
                     
                     # Check for hashrate info
@@ -415,11 +500,14 @@ class MinerRunner:
                     
                     # Emit periodic hashrate updates even if not in logs
                     if time.time() - last_hashrate_time > 5.0:
-                        if self._last_hashrate > 0:
+                        # Recalculate hashrate from share rate
+                        calculated_hashrate = self._calculate_hashrate_from_shares()
+                        if calculated_hashrate > 0:
+                            self._last_hashrate = calculated_hashrate
                             self._emit_event(MiningEvent(
                                 event_type=EventType.HASHRATE_UPDATE,
                                 timestamp=time.time(),
-                                data={"hashrate": self._last_hashrate, "unit": "H/s"}
+                                data={"hashrate": calculated_hashrate, "unit": "H/s"}
                             ))
                         last_hashrate_time = time.time()
                 
@@ -452,7 +540,9 @@ class MinerRunner:
                 "hashrate": self._last_hashrate,
                 "shares": self._last_shares,
                 "blocks": self._last_blocks,
-                "uptime_seconds": uptime
+                "uptime_seconds": uptime,
+                "theta_micro": self._current_theta_micro,
+                "share_target": self._current_share_target
             }
     
     def is_running(self) -> bool:
