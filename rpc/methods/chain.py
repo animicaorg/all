@@ -255,6 +255,49 @@ def chain_get_chain_identity() -> dict:
     return deps.get_chain_identity()
 
 
+def _scan_for_highest_block() -> t.Tuple[int, t.Any] | None:
+    """
+    Scan the block database to find the highest block when the head pointer is missing.
+    Returns (height, block) or None if no blocks found.
+    """
+    try:
+        ctx = deps.get_ctx()
+        block_db = getattr(ctx, "block_db", None)
+        if block_db is None:
+            return None
+        
+        # Try to access the KV store directly to scan the height index
+        kv = getattr(block_db, "kv", None)
+        if kv is not None and hasattr(kv, "iter_prefix"):
+            try:
+                from core.db.block_db import PFX_HIX, _from_u64be
+                max_height = -1
+                for key, _ in kv.iter_prefix(PFX_HIX):
+                    if len(key) < len(PFX_HIX) + 8:
+                        continue
+                    height = _from_u64be(key[-8:])
+                    if height > max_height:
+                        max_height = height
+                
+                if max_height >= 0:
+                    # Found a block, try to retrieve it
+                    h, blk = _resolve_block_by_number(max_height)
+                    if blk is not None:
+                        return (h, blk)
+            except Exception:
+                pass
+        
+        # Fallback: try scanning backwards from a reasonable max height
+        for height in range(10000, -1, -1):
+            h, blk = _resolve_block_by_number(height)
+            if blk is not None:
+                return (h, blk)
+    except Exception:
+        pass
+    
+    return None
+
+
 @method(
     "chain.getHead",
     desc="Return the current best head (height + header view).",
@@ -280,10 +323,16 @@ def chain_get_head() -> dict:
 
     chain_id_val = int(deps.get_chain_id())
     if height is None or header is None:
-        h, blk = _resolve_block_by_number(0)
-        if blk is None:
-            blk = _fallback_block(chain_id_val)
-            h = 0
+        # Try to scan for the highest block instead of falling back to block 0
+        scanned = _scan_for_highest_block()
+        if scanned is not None:
+            h, blk = scanned
+        else:
+            # Last resort: try block 0
+            h, blk = _resolve_block_by_number(0)
+            if blk is None:
+                blk = _fallback_block(chain_id_val)
+                h = 0
         block_view = _block_view(
             blk,
             h,
