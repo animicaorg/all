@@ -160,7 +160,7 @@ export class ExplorerService {
     for (const height of heights) {
       const block = await this.safeRpc(() => this.rpc.getBlockByNumber(height, true, false)).catch(() => null)
       if (!block) continue
-      const blockTxs = Array.isArray(block?.txs) ? block.txs : []
+      const blockTxs = Array.isArray((block as any)?.txs) ? (block as any).txs : []
       for (const tx of blockTxs) {
         const summary = normalizeTxSummary(tx)
         if (summary.from === address || summary.to === address) {

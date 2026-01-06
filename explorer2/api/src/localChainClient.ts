@@ -40,7 +40,8 @@ function encodeCanonical(value: unknown): Buffer {
   if (typeof (cbor as { encodeCanonical?: (input: unknown) => Buffer }).encodeCanonical === 'function') {
     return (cbor as { encodeCanonical: (input: unknown) => Buffer }).encodeCanonical(value)
   }
-  return CANONICAL_ENCODER.encode(value) as Buffer
+  // Use static Encoder.encode method
+  return cbor.Encoder.encode(value) as Buffer
 }
 
 function decodeCbor(buffer: Buffer): any {

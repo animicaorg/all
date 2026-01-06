@@ -6,30 +6,38 @@ import TxDetailPage from './pages/TxDetailPage'
 import AddressPage from './pages/AddressPage'
 import MempoolPage from './pages/MempoolPage'
 import SearchBar from './components/SearchBar'
+import ThemeToggle from './components/ThemeToggle'
 
 export default function App() {
   return (
-    <div className="min-h-screen bg-night-950 text-slate-100">
-      <header className="border-b border-night-800 bg-night-900/80">
-        <div className="mx-auto flex w-full max-w-6xl flex-col gap-4 px-4 py-6">
+    <div className="min-h-screen bg-day-50 text-gray-900 transition-colors dark:bg-night-950 dark:text-slate-100">
+      <header className="sticky top-0 z-10 border-b border-day-200 bg-white/80 backdrop-blur-sm dark:border-night-800 dark:bg-night-900/80">
+        <div className="mx-auto flex w-full max-w-7xl flex-col gap-4 px-4 py-4 sm:px-6 lg:px-8">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <Link to="/" className="text-xl font-semibold text-animica-400">
-              Animica Explorer 2
+            <Link to="/" className="flex items-center gap-2 text-xl font-semibold text-animica-600 dark:text-animica-400">
+              <svg className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24" aria-hidden="true">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
+              </svg>
+              <span className="hidden sm:inline">Animica Explorer</span>
+              <span className="sm:hidden">Explorer</span>
             </Link>
-            <nav className="flex gap-4 text-sm text-slate-300">
-              <Link className="hover:text-animica-400" to="/blocks">
-                Blocks
-              </Link>
-              <Link className="hover:text-animica-400" to="/mempool">
-                Mempool
-              </Link>
-            </nav>
+            <div className="flex items-center gap-2 sm:gap-3">
+              <nav className="flex gap-2 text-sm text-gray-600 dark:text-slate-300 sm:gap-4">
+                <Link className="hover:text-animica-600 dark:hover:text-animica-400" to="/blocks">
+                  Blocks
+                </Link>
+                <Link className="hover:text-animica-600 dark:hover:text-animica-400" to="/mempool">
+                  Mempool
+                </Link>
+              </nav>
+              <ThemeToggle />
+            </div>
           </div>
           <SearchBar />
         </div>
       </header>
 
-      <main className="mx-auto w-full max-w-6xl px-4 py-8">
+      <main className="mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 sm:py-8 lg:px-8">
         <Routes>
           <Route path="/" element={<HomePage />} />
           <Route path="/blocks" element={<BlocksPage />} />
@@ -40,9 +48,9 @@ export default function App() {
           <Route
             path="*"
             element={
-              <div className="rounded-xl border border-night-800 bg-night-900 p-6">
+              <div className="rounded-xl border border-day-200 bg-white p-6 dark:border-night-800 dark:bg-night-900">
                 <h2 className="text-lg font-semibold">Page not found</h2>
-                <p className="mt-2 text-sm text-slate-400">
+                <p className="mt-2 text-sm text-gray-600 dark:text-slate-400">
                   The page you requested does not exist.
                 </p>
               </div>
@@ -50,6 +58,12 @@ export default function App() {
           />
         </Routes>
       </main>
+
+      <footer className="mt-12 border-t border-day-200 bg-white dark:border-night-800 dark:bg-night-900">
+        <div className="mx-auto max-w-7xl px-4 py-6 text-center text-sm text-gray-600 dark:text-slate-400 sm:px-6 lg:px-8">
+          <p>Animica Explorer — powered by the Animica blockchain</p>
+        </div>
+      </footer>
     </div>
   )
 }
