@@ -44,6 +44,7 @@ function getHeader(block: any): any {
 export function normalizeHead(head: any): HeadView {
   return {
     height: toNumber(head?.height ?? head?.number) ?? 0,
+    canonicalHeight: toNumber(head?.canonicalHeight ?? head?.canonical_height),
     hash: head?.hash ?? head?.headerHash ?? '0x0',
     time: toNumber(head?.time ?? head?.timestamp ?? head?.header?.time) ?? 0,
     chainId: toNumber(head?.chainId)
@@ -53,11 +54,13 @@ export function normalizeHead(head: any): HeadView {
 export function normalizeBlockSummary(block: any): BlockSummary {
   const header = getHeader(block)
   const height = toNumber(header?.height ?? header?.number ?? block?.number) ?? 0
+  const canonicalHeight = toNumber(header?.canonicalHeight ?? header?.canonical_height ?? block?.canonicalHeight ?? block?.canonical_height)
   const hash = header?.hash ?? header?.headerHash ?? block?.hash ?? '0x0'
   const time = toNumber(header?.time ?? header?.timestamp ?? block?.time) ?? 0
   const txs = Array.isArray(block?.txs) ? block.txs : Array.isArray(block?.transactions) ? block.transactions : []
   return {
     height,
+    canonicalHeight,
     hash,
     time,
     txCount: txs.length,
@@ -83,11 +86,13 @@ export function normalizeBlockDetail(block: any): BlockDetail {
   const txs = Array.isArray(block?.txs) ? block.txs : Array.isArray(block?.transactions) ? block.transactions : []
   return {
     height: toNumber(header?.height ?? header?.number ?? block?.number) ?? 0,
+    canonicalHeight: toNumber(header?.canonicalHeight ?? header?.canonical_height ?? block?.canonicalHeight ?? block?.canonical_height),
     hash: header?.hash ?? header?.headerHash ?? block?.hash ?? '0x0',
     parentHash: header?.parentHash ?? header?.parent ?? header?.prevHash,
     time: toNumber(header?.time ?? header?.timestamp ?? block?.time) ?? 0,
     chainId: toNumber(header?.chainId),
     difficulty: header?.difficulty ?? header?.target ?? header?.thetaMicro ?? null,
+    nonce: toNumber(header?.nonce),
     txs: txs.map(normalizeTxSummary),
     raw: block
   }
