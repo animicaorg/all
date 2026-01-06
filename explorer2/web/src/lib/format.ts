@@ -31,3 +31,28 @@ export function formatHashLink(hash?: string | null): string {
   if (!hash) return '—'
   return shorten(hash)
 }
+
+export function formatBalance(balance?: string | null): { decimal: string; hex: string } {
+  if (!balance) return { decimal: '—', hex: '—' }
+  
+  try {
+    // Handle hex format (e.g., "0x5") or plain number string
+    let value: bigint
+    if (balance.startsWith('0x')) {
+      value = BigInt(balance)
+    } else {
+      value = BigInt(balance)
+    }
+    
+    // Format decimal with thousand separators
+    const decimal = new Intl.NumberFormat('en-US').format(value)
+    
+    return {
+      decimal,
+      hex: balance.startsWith('0x') ? balance : `0x${value.toString(16)}`
+    }
+  } catch (error) {
+    // If parsing fails, return the original value
+    return { decimal: balance, hex: balance }
+  }
+}
