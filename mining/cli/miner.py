@@ -18,7 +18,9 @@ Usage:
                                           [--retry-delay SECONDS] [--no-timeout]
   
   The --threads option controls the number of CPU threads used for parallel nonce search.
-  Higher thread counts can speed up mining on multi-core systems.
+  By default, the miner automatically detects and uses all available CPU cores for 
+  optimal performance. Higher thread counts can significantly speed up mining on 
+  multi-core systems.
 
 Commands:
   start       - Start the continuous miner (orchestrator)
@@ -32,12 +34,22 @@ rewards credited to the specified address. This is useful for testing and develo
 RPC operations retry indefinitely on network errors with configurable delay between
 attempts (default: 1.0 second).
 
+Multi-Core Mining:
+  - By default, mining uses ALL available CPU cores for parallel nonce search
+  - Each thread searches a different range of nonces simultaneously
+  - The miner automatically distributes work across threads for maximum efficiency
+  - You can limit threads with --threads N if needed (e.g., to reduce CPU usage)
+  - Example: --threads 2 uses only 2 cores even if 8 are available
+
 Examples:
-  # Start the miner
+  # Start the miner (uses all CPU cores by default)
+  python -m mining.cli.miner start
+
+  # Start with explicit thread count
   python -m mining.cli.miner start --threads 4
 
-  # Mine 5 blocks for testing with 4 threads
-  python -m mining.cli.miner mine-blocks --address anim1test123 --count 5 --threads 4
+  # Mine 5 blocks for testing (uses all CPU cores by default)
+  python -m mining.cli.miner mine-blocks --address anim1test123 --count 5
   
   # Mine blocks with custom retry delay (2.5 seconds between retries)
   python -m mining.cli.miner mine-blocks --address anim1test123 --count 3 --retry-delay 2.5
