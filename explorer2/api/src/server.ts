@@ -7,7 +7,16 @@ import { ExplorerService } from './service.js'
 import { HttpError } from './errors.js'
 import fs from 'node:fs'
 
-export function createServer(service: ExplorerService, corsOrigin: string, logLevel: string, diagnostics?: any) {
+interface DiagnosticsInfo {
+  mode: string
+  rpcUrl: string | null
+  chainDbPath: string | null
+  chainId: number
+  detectedHead: number | null
+  timestamp: string
+}
+
+export function createServer(service: ExplorerService, corsOrigin: string, logLevel: string, diagnostics?: DiagnosticsInfo) {
   const app = express()
   const logger = pino({ level: logLevel })
 
@@ -22,9 +31,16 @@ export function createServer(service: ExplorerService, corsOrigin: string, logLe
   app.get('/api/diagnostics', async (_req, res) => {
     try {
       // Get current head from service
-      let currentHead: any = null
+      interface HeadData {
+        head?: {
+          height: number
+          hash: string
+          time: number
+        }
+      }
+      let currentHead: HeadData['head'] | null = null
       try {
-        const headData = await service.getHead()
+        const headData = await service.getHead() as HeadData
         currentHead = headData?.head ?? null
       } catch (err) {
         // Ignore errors, diagnostics should still work
