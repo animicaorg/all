@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import dataclasses as _dc
+import logging
 import time
 import typing as t
 
@@ -20,6 +21,16 @@ except Exception:  # fallback: CBOR
         from core.encoding.cbor import dumps as _cbor_dumps  # type: ignore
     except Exception:  # pragma: no cover - will raise if absolutely nothing available
         _cbor_dumps = None  # type: ignore
+
+# Import block_db utilities at module level for efficiency
+try:
+    from core.db.block_db import PFX_HIX, _from_u64be
+    _HAS_BLOCK_DB_UTILS = True
+except Exception:
+    _HAS_BLOCK_DB_UTILS = False
+
+# Maximum height to scan when doing linear fallback
+MAX_LINEAR_SCAN_HEIGHT = 10000
 
 try:
     from core.utils.hash import sha3_256 as _sha3_256  # type: ignore
@@ -260,17 +271,19 @@ def _scan_for_highest_block() -> t.Tuple[int, t.Any] | None:
     Scan the block database to find the highest block when the head pointer is missing.
     Returns (height, block) or None if no blocks found.
     """
+    log = logging.getLogger("animica.rpc.chain")
+    
     try:
         ctx = deps.get_ctx()
         block_db = getattr(ctx, "block_db", None)
         if block_db is None:
+            log.warning("block_db not available, cannot scan for highest block")
             return None
         
         # Try to access the KV store directly to scan the height index
         kv = getattr(block_db, "kv", None)
-        if kv is not None and hasattr(kv, "iter_prefix"):
+        if kv is not None and hasattr(kv, "iter_prefix") and _HAS_BLOCK_DB_UTILS:
             try:
-                from core.db.block_db import PFX_HIX, _from_u64be
                 max_height = -1
                 for key, _ in kv.iter_prefix(PFX_HIX):
                     if len(key) < len(PFX_HIX) + 8:
@@ -283,17 +296,20 @@ def _scan_for_highest_block() -> t.Tuple[int, t.Any] | None:
                     # Found a block, try to retrieve it
                     h, blk = _resolve_block_by_number(max_height)
                     if blk is not None:
+                        log.info(f"Recovered head at height {max_height} via index scan")
                         return (h, blk)
-            except Exception:
-                pass
+            except Exception as e:
+                log.warning(f"Index scan failed: {e}, trying linear scan")
         
-        # Fallback: try scanning backwards from a reasonable max height
-        for height in range(10000, -1, -1):
+        # Fallback: try scanning backwards from MAX_LINEAR_SCAN_HEIGHT
+        log.info(f"Attempting linear scan from height {MAX_LINEAR_SCAN_HEIGHT}")
+        for height in range(MAX_LINEAR_SCAN_HEIGHT, -1, -1):
             h, blk = _resolve_block_by_number(height)
             if blk is not None:
+                log.info(f"Recovered head at height {height} via linear scan")
                 return (h, blk)
-    except Exception:
-        pass
+    except Exception as e:
+        log.error(f"Failed to scan for highest block: {e}")
     
     return None
 
