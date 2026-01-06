@@ -571,3 +571,90 @@ def test_compute_block_reward_mainnet_100_pct_halving():
     miner_addr, miner_amt = rewards[0]
     assert "coinbase" in miner_addr, f"Expected coinbase address, got {miner_addr}"
     assert miner_amt == 2500000000, f"Expected 2.5 ANM (2500000000 nANM) after halving, got {miner_amt}"
+
+
+def test_instant_block_always_returns_zero_rewards():
+    """Instant blocks always return zero rewards regardless of height or params."""
+    # Test at various heights
+    test_heights = [0, 1, 10, 100, 1000, 1000000]
+    
+    for height in test_heights:
+        # Without params
+        rewards = compute_block_reward(chain_id=1337, height=height, params=None, instant_block=True)
+        assert rewards == [], f"Height {height} without params: Expected empty, got {rewards}"
+        
+        # With params (should still be empty)
+        params = {
+            "monetary": {
+                "issuance": {
+                    "subsidy": {
+                        "start_nANM_per_block": 5000000000,
+                        "epoch_length_blocks": 90000000,
+                        "decay_pct_per_epoch": 50,
+                        "tail_nANM_per_block": 100000000,
+                        "max_halvings": 64,
+                    },
+                    "subsidy_split_pct": {
+                        "miner": 100,
+                        "aicf": 0,
+                        "treasury": 0,
+                    },
+                }
+            },
+            "system_addresses": {
+                "coinbase_default": "anim1coinbasexxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+                "aicf_treasury": "anim1aicfxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+                "treasury": "anim1treasuryxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+            },
+        }
+        rewards = compute_block_reward(chain_id=1337, height=height, params=params, instant_block=True)
+        assert rewards == [], f"Height {height} with params: Expected empty, got {rewards}"
+
+
+def test_instant_block_mainnet_genesis_returns_zero():
+    """Instant blocks at mainnet genesis return zero (no premine)."""
+    # Mainnet genesis normally has premine
+    normal_rewards = compute_block_reward(chain_id=1, height=0, params=None, instant_block=False)
+    assert len(normal_rewards) > 0, "Normal mainnet genesis should have premine"
+    
+    # But instant block at genesis has no premine
+    instant_rewards = compute_block_reward(chain_id=1, height=0, params=None, instant_block=True)
+    assert instant_rewards == [], "Instant mainnet genesis should have zero rewards"
+
+
+def test_instant_block_vs_normal_block():
+    """Verify that instant blocks have zero rewards while normal blocks have rewards."""
+    params = {
+        "monetary": {
+            "issuance": {
+                "subsidy": {
+                    "start_nANM_per_block": 5000000000,
+                    "epoch_length_blocks": 90000000,
+                    "decay_pct_per_epoch": 50,
+                    "tail_nANM_per_block": 100000000,
+                    "max_halvings": 64,
+                },
+                "subsidy_split_pct": {
+                    "miner": 80,
+                    "aicf": 15,
+                    "treasury": 5,
+                },
+            }
+        },
+        "system_addresses": {
+            "coinbase_default": "anim1coinbasexxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+            "aicf_treasury": "anim1aicfxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+            "treasury": "anim1treasuryxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        },
+    }
+    
+    # Normal block should have rewards
+    normal = compute_block_reward(chain_id=1337, height=1, params=params, instant_block=False)
+    assert len(normal) == 3, f"Normal block should have 3 rewards (miner, aicf, treasury), got {len(normal)}"
+    
+    total_normal = sum(amt for _, amt in normal)
+    assert total_normal == 5000000000, f"Normal block should have 5 ANM total, got {total_normal}"
+    
+    # Instant block should have zero rewards
+    instant = compute_block_reward(chain_id=1337, height=1, params=params, instant_block=True)
+    assert instant == [], f"Instant block should have zero rewards, got {instant}"
