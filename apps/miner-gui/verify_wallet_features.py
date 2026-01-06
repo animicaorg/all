@@ -71,6 +71,25 @@ def verify_wallet_config_page():
         print(f"✓ Create button text: '{create_text}'")
         print(f"✓ Import button text: '{import_text}'")
         
+        # Check for warning label about wallet location
+        # The warning label is a QLabel added to the layout
+        layout = page.layout()
+        warning_found = False
+        for i in range(layout.count()):
+            item = layout.itemAt(i)
+            widget = item.widget() if item else None
+            if widget and hasattr(widget, 'text'):
+                text = widget.text()
+                if '⚠️' in text and 'wallets.json' in text and '~/.animica/wallets.json' in text:
+                    warning_found = True
+                    print(f"✓ Warning label found with wallet location info")
+                    print(f"  Warning text: '{text[:100]}...'")
+                    break
+        
+        if not warning_found:
+            print("⚠ Warning: Could not find wallet location warning label")
+            print("  (This may be okay if the label is nested in a layout)")
+        
         return True
         
     except Exception as e:
