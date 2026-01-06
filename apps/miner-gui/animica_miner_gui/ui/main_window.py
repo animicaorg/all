@@ -48,6 +48,12 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("Animica Miner")
         self.setMinimumSize(1000, 700)
         
+        # Set window icon
+        from animica_miner_gui.resources import get_logo_path
+        logo_path = get_logo_path()
+        if logo_path:
+            self.setWindowIcon(QIcon(str(logo_path)))
+        
         # Load configuration
         self.config = load_config()
         
@@ -223,7 +229,13 @@ class MainWindow(QMainWindow):
             return
         
         self.tray_icon = QSystemTrayIcon(self)
-        # Use a simple icon (in production, use proper icon file)
+        
+        # Set tray icon to logo
+        from animica_miner_gui.resources import get_logo_path
+        logo_path = get_logo_path()
+        if logo_path:
+            self.tray_icon.setIcon(QIcon(str(logo_path)))
+        
         self.tray_icon.setToolTip("Animica Miner")
         
         # Tray menu

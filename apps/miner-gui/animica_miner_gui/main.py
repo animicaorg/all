@@ -4,6 +4,7 @@ import logging
 import sys
 from pathlib import Path
 
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
 # Set up logging
@@ -29,6 +30,12 @@ def main() -> int:
         app.setApplicationName("Animica Miner")
         app.setOrganizationName("Animica")
         app.setOrganizationDomain("animica.org")
+        
+        # Set application icon
+        from animica_miner_gui.resources import get_logo_path
+        logo_path = get_logo_path()
+        if logo_path:
+            app.setWindowIcon(QIcon(str(logo_path)))
         
         # Import UI components
         from animica_miner_gui.ui.main_window import MainWindow
