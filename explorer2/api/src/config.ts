@@ -4,9 +4,12 @@ import dotenv from 'dotenv'
 
 dotenv.config()
 
+// Default RPC URL when not explicitly configured
+const DEFAULT_RPC_URL = 'http://127.0.0.1:8545/rpc'
+
 export const config = {
   port: Number(process.env.EXPLORER2_PORT || process.env.PORT || 8081),
-  rpcUrl: process.env.EXPLORER2_RPC_URL || process.env.ANIMICA_RPC_URL || '',
+  rpcUrl: process.env.EXPLORER2_RPC_URL || process.env.ANIMICA_RPC_URL || DEFAULT_RPC_URL,
   wsUrl: process.env.EXPLORER2_WS_URL || process.env.ANIMICA_WS_URL || '',
   dataRoot: process.env.EXPLORER2_DATA_ROOT || process.env.ANIMICA_DATA_ROOT || path.join(homedir(), '.animica'),
   chainId: Number(process.env.EXPLORER2_CHAIN_ID || process.env.ANIMICA_CHAIN_ID || 1),
