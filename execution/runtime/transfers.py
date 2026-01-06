@@ -443,8 +443,25 @@ def apply_transfer(
     """
     sig_pubkey, sig_alg_id = _extract_signature_pubkey(tx)
     payload_sender = _payload_sender_value(tx, tx_env)
+    
+    # Check if this is a coinbase transaction
+    is_coinbase = False
+    kind = None
+    unsigned = _get(tx, "unsigned")
+    if unsigned is not None:
+        kind = _get(unsigned, "kind")
+    else:
+        kind = _get(tx, "kind")
+    if kind is not None:
+        kind_int = int(kind) if hasattr(kind, "__int__") else kind
+        is_coinbase = (kind_int == 3)  # TxKind.COINBASE = 3
+    
     sender = b""
-    if sig_pubkey is not None:
+    if is_coinbase:
+        # Coinbase transactions have sender = ZERO_ADDRESS (protocol-generated)
+        # They don't need signature verification and sender balance checks
+        sender = b"\x00" * ADDRESS_LEN
+    elif sig_pubkey is not None:
         sender = account_key_from_pubkey(sig_pubkey, sig_alg_id)
         if payload_sender is not None:
             payload_key = _account_key_from_value(payload_sender)
@@ -456,7 +473,7 @@ def apply_transfer(
     else:
         sender = _account_key_from_value(payload_sender)
 
-    if not sender:
+    if not is_coinbase and not sender:
         raise ExecError("missing sender", code="MISSING_SENDER")
     if len(sender) != ADDRESS_LEN:
         raise ExecError(f"TxEnv.sender must be {ADDRESS_LEN} bytes, got {len(sender)}")
@@ -540,16 +557,19 @@ def apply_transfer(
     _ensure_account(state, sender)
     _ensure_account(state, to)
 
-    # Ensure sender has enough to cover amount + fee
-    sender_balance = _get_balance(state, sender)
-    required = amount + total_fee
-    if sender_balance < required:
-        raise InsufficientBalance(
-            f"Insufficient balance for transfer",
-            required=required,
-            available=sender_balance,
-            shortfall=required - sender_balance,
-        )
+    # Coinbase transactions (protocol-generated) don't check sender balance
+    # They create value from nothing (protocol issuance)
+    if not is_coinbase:
+        # Ensure sender has enough to cover amount + fee
+        sender_balance = _get_balance(state, sender)
+        required = amount + total_fee
+        if sender_balance < required:
+            raise InsufficientBalance(
+                f"Insufficient balance for transfer",
+                required=required,
+                available=sender_balance,
+                shortfall=required - sender_balance,
+            )
 
     if log.isEnabledFor(logging.DEBUG):
         log.debug(
@@ -562,30 +582,39 @@ def apply_transfer(
             },
         )
 
+    sender_balance = _get_balance(state, sender)
     pre_sender_balance = sender_balance
     pre_recipient_balance = _get_balance(state, to)
     pre_coinbase_balance = _get_balance(state, coinbase) if coinbase else 0
     pre_treasury_balance = _get_balance(state, t_addr) if t_addr else 0
 
-    # Debit fees first (burn base, tip to coinbase)
-    _debit_balance(state, sender, total_fee)
+    # Coinbase transactions don't debit sender (they mint new value)
+    # Regular transactions debit fees and value from sender
+    if not is_coinbase:
+        # Debit fees first (burn base, tip to coinbase)
+        _debit_balance(state, sender, total_fee)
 
-    # Tip → coinbase
-    if tip_fee_part > 0 and any(coinbase) and coinbase != b"\x00" * ADDRESS_LEN:
-        _ensure_account(state, coinbase)
-        _credit_balance(state, coinbase, tip_fee_part)
+        # Tip → coinbase
+        if tip_fee_part > 0 and any(coinbase) and coinbase != b"\x00" * ADDRESS_LEN:
+            _ensure_account(state, coinbase)
+            _credit_balance(state, coinbase, tip_fee_part)
 
-    # Optional: send base fee to a treasury if exposed
-    if base_fee_part > 0:
-        if any(t_addr):
-            _ensure_account(state, t_addr)
-            _credit_balance(state, t_addr, base_fee_part)
-        # Else burned (no credit)
+        # Optional: send base fee to a treasury if exposed
+        if base_fee_part > 0:
+            if any(t_addr):
+                _ensure_account(state, t_addr)
+                _credit_balance(state, t_addr, base_fee_part)
+            # Else burned (no credit)
 
-    # Value transfer (skip if sending to self; fees already debited)
-    if sender != to and amount > 0:
-        _debit_balance(state, sender, amount)
-        _credit_balance(state, to, amount)
+        # Value transfer (skip if sending to self; fees already debited)
+        if sender != to and amount > 0:
+            _debit_balance(state, sender, amount)
+            _credit_balance(state, to, amount)
+    else:
+        # Coinbase: just credit recipient (miner) with the reward amount
+        # No debit from sender (protocol issuance)
+        if amount > 0:
+            _credit_balance(state, to, amount)
 
     # Logs
     logs: List[LogEvent] = []
