@@ -18,6 +18,29 @@ Production-quality Qt (PySide6) desktop GUI miner for Animica blockchain with ex
 
 ## Installation
 
+### Binary Releases (Recommended)
+
+Pre-built executables are available for macOS, Windows, and Linux. Download the latest release from the [Releases page](https://github.com/animicaorg/all/releases).
+
+### Building from Source
+
+See [build-scripts/README.md](build-scripts/README.md) for instructions on building standalone executables for:
+- **macOS**: `.app` bundle and `.dmg` installer
+- **Windows**: `.exe` executable and `.zip` package
+- **Linux**: Standalone binary, `.tar.gz` archive, and `.AppImage`
+
+Quick build commands:
+```bash
+# macOS (on Mac)
+cd apps/miner-gui/build-scripts && ./build_macos.sh
+
+# Windows (on Windows or with Wine)
+cd apps/miner-gui/build-scripts && ./build_windows.sh
+
+# Linux (on Linux)
+cd apps/miner-gui/build-scripts && ./build_linux.sh
+```
+
 ### Prerequisites
 
 - Python 3.10 or higher
