@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import random
@@ -159,8 +160,28 @@ def _default_share_encoder(share: Any) -> Dict[str, Any]:
     payload: Dict[str, Any] = {}
     # Job id (for stale rejection)
     job_id = m.get("jobId") or m.get("job_id") or m.get("job")
-    if job_id is not None:
-        payload["jobId"] = job_id
+    if job_id is None:
+        # Generate a fallback jobId from nonce, height, and timestamp
+        # This ensures shares always have a jobId for tracking and deduplication
+        nonce_val = m.get("nonce") or m.get("nonce64") or m.get("n") or 0
+        height_val = m.get("height") or 0
+        timestamp_val = int(time.time() * 1000)
+        
+        # Convert nonce to string if it's an int or bytes
+        if isinstance(nonce_val, int):
+            nonce_str = f"{nonce_val:016x}"
+        elif isinstance(nonce_val, (bytes, bytearray)):
+            nonce_str = nonce_val.hex()
+        elif isinstance(nonce_val, str):
+            nonce_str = nonce_val.replace("0x", "")
+        else:
+            nonce_str = "0"
+        
+        # Generate deterministic jobId: "auto-{height}-{nonce_prefix}-{timestamp_suffix}"
+        # This format helps identify auto-generated IDs and provides uniqueness
+        job_id = f"auto-{height_val}-{nonce_str[:8]}-{timestamp_val % 100000}"
+    
+    payload["jobId"] = job_id
 
     # Header/template
     header = m.get("header") or m.get("header_template") or m.get("candidate_header")
@@ -458,8 +479,12 @@ class ShareSubmitter:
         payload = json_validate(self._share_encoder(params))
         if not isinstance(payload, dict):
             raise ValueError("share payload must be an object")
+        # Note: jobId should always be present due to fallback generation in encoder
+        # This check is a safety net for custom encoders
         if not payload.get("jobId"):
-            raise ValueError("share payload missing jobId")
+            raise ValueError(
+                "share payload missing jobId (encoder should have generated fallback)"
+            )
         backoff = self.cfg.initial_backoff_s
         tries = 0
         while True:
@@ -574,8 +599,12 @@ class ShareSubmitter:
         payload = json_validate(self._share_encoder(share))
         if not isinstance(payload, dict):
             raise ValueError("share payload must be an object")
+        # Note: jobId should always be present due to fallback generation in encoder
+        # This check is a safety net for custom encoders
         if not payload.get("jobId"):
-            raise ValueError("share payload missing jobId")
+            raise ValueError(
+                "share payload missing jobId (encoder should have generated fallback)"
+            )
         backoff = self.cfg.initial_backoff_s
         tries = 0
         while True:

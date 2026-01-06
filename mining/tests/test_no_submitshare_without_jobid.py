@@ -7,19 +7,37 @@ from mining.share_submitter import ShareSubmitter, SubmitterConfig
 
 
 @pytest.mark.asyncio
-async def test_submit_share_rejects_missing_job_id() -> None:
+async def test_submit_share_generates_fallback_job_id() -> None:
+    """Shares without explicit jobId now get auto-generated jobId."""
+    seen = {}
+
     async def handler(request: httpx.Request) -> httpx.Response:
-        raise AssertionError("submitShare should not be called without jobId")
+        payload = json.loads(request.content)
+        seen.update(payload["params"][0])
+        return httpx.Response(
+            200,
+            json={
+                "jsonrpc": "2.0",
+                "id": payload["id"],
+                "result": {"accepted": True},
+            },
+        )
 
     transport = httpx.MockTransport(handler)
     async with httpx.AsyncClient(transport=transport) as client:
         submitter = ShareSubmitter(
             SubmitterConfig(rpc_url="http://test"), http_client=client
         )
-        with pytest.raises(ValueError, match="jobId"):
-            await submitter.submit(
-                {"header": {"height": 1}, "nonce": 1, "proof": {"type": "hashshare"}}
-            )
+        # Share without explicit jobId - should get auto-generated one
+        res = await submitter.submit(
+            {"header": {"height": 1}, "nonce": 1, "proof": {"type": "hashshare"}}
+        )
+
+    # Share should be accepted
+    assert res["accepted"] is True
+    # jobId should have been auto-generated
+    assert "jobId" in seen
+    assert seen["jobId"].startswith("auto-")  # Auto-generated format
 
 
 @pytest.mark.asyncio
