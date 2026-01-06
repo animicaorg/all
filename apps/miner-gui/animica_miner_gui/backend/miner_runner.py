@@ -273,11 +273,16 @@ class MinerRunner:
         """Run the miner in a background thread.
         
         This runs the actual mining CLI as a subprocess and monitors its output.
+        
+        Uses the 'mine-blocks' command in a continuous loop for batch-based mining:
+        - Mines a configurable number of blocks per batch (blocks_per_batch)
+        - Automatically restarts after each batch completes
+        - Retries with configurable delay on errors (retry_delay)
+        - Checks stop_event regularly for fast shutdown response
         """
         logger.info("Miner thread started")
         
         try:
-            # Build the mining command
             # Get configuration
             payout_address = config.get('miner', {}).get('payout_address')
             if not payout_address:
@@ -291,22 +296,10 @@ class MinerRunner:
             
             rpc_url = config.get('network', {}).get('rpc_url', 'http://127.0.0.1:8545')
             threads = config.get('cpu', {}).get('threads', 1)
-            
-            # Build command to run the internal miner CLI
-            cmd = [
-                sys.executable, "-m", "mining.cli.miner", "start",
-                "--threads", str(threads),
-                "--rpc-url", rpc_url,
-                "--getwork-enable"
-            ]
-            
-            logger.info(f"Starting miner: {' '.join(cmd)}")
+            blocks_per_batch = config.get('miner', {}).get('blocks_per_batch', 10)
             
             # Find the repository root (where mining module exists)
-            # Try to locate mining module directory relative to common locations
             repo_root = None
-            
-            # First, check if mining module is already importable (via PYTHONPATH or installed)
             try:
                 import mining
                 mining_path = Path(mining.__file__).parent.parent.resolve()
@@ -316,20 +309,15 @@ class MinerRunner:
             except ImportError:
                 pass
             
-            # If not found via import, try common relative paths from this file
             if not repo_root:
                 current_file = Path(__file__).resolve()
-                # This file is at: apps/miner-gui/animica_miner_gui/backend/miner_runner.py
-                # Go up 5 levels: backend -> animica_miner_gui -> miner-gui -> apps -> repository root
                 potential_root = current_file.parent.parent.parent.parent.parent
                 if (potential_root / "mining" / "__init__.py").is_file():
                     repo_root = str(potential_root)
                     logger.info(f"Found repository root at: {repo_root}")
             
-            # Create environment for the subprocess with proper PYTHONPATH
+            # Prepare environment
             current_pythonpath = os.environ.get('PYTHONPATH', '')
-            
-            # Add repository root to PYTHONPATH if found
             if repo_root:
                 if current_pythonpath:
                     pythonpath = f"{repo_root}{os.pathsep}{current_pythonpath}"
@@ -347,7 +335,6 @@ class MinerRunner:
                 'ANIMICA_PAYOUT_ADDRESS': payout_address
             }
             
-            # Set custom wallet file location if configured
             wallet_file = config.get('miner', {}).get('wallet_file')
             if wallet_file:
                 minimal_env['ANIMICA_WALLETS_FILE'] = wallet_file
@@ -355,165 +342,189 @@ class MinerRunner:
             
             logger.info(f"Subprocess PYTHONPATH: {pythonpath}")
             
-            # Start the miner process
-            self.process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                bufsize=1,  # Line buffered
-                env=minimal_env
-            )
+            # Build command once outside the loop (optimization)
+            cmd = [
+                sys.executable, "-m", "mining.cli.miner", "mine-blocks",
+                "--address", payout_address,
+                "--count", str(blocks_per_batch),
+                "--threads", str(threads),
+                "--rpc-url", rpc_url,
+                "--allow-offline-mining",
+                "--allow-unsynced"
+            ]
             
-            # Monitor output and extract events
-            cycle = 0
-            last_hashrate_time = time.time()
+            # Configurable retry delay (default: 2 seconds)
+            retry_delay = config.get('miner', {}).get('retry_delay', 2.0)
             
+            # Continuous mining loop - restart mine-blocks after each batch
             while not self.stop_event.is_set():
-                if self.process.poll() is not None:
-                    # Process exited
-                    logger.warning("Miner process exited")
-                    break
+                logger.info(f"Starting miner batch: {' '.join(cmd)}")
                 
-                # Read a line from output
-                try:
-                    line = self.process.stdout.readline()
-                    if not line:
-                        time.sleep(0.1)
-                        continue
+                # Start the miner process
+                self.process = subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    bufsize=1,  # Line buffered
+                    env=minimal_env
+                )
+                
+                # Monitor output and extract events
+                cycle = 0
+                last_hashrate_time = time.time()
+                
+                while not self.stop_event.is_set():
+                    if self.process.poll() is not None:
+                        # Process exited - check return code
+                        return_code = self.process.returncode
+                        if return_code == 0:
+                            logger.info(f"Miner batch completed successfully, starting next batch")
+                        else:
+                            logger.warning(f"Miner process exited with code {return_code}, retrying in {retry_delay}s")
+                            # Wait before retrying on error, using stop_event with timeout for better responsiveness
+                            self.stop_event.wait(retry_delay)
+                        break
                     
-                    line = line.strip()
-                    if not line:
-                        continue
-                    
-                    # Emit as log
-                    self._emit_event(MiningEvent(
-                        event_type=EventType.LOG,
-                        timestamp=time.time(),
-                        data={
-                            "level": "info",
-                            "message": line,
-                            "component": "miner"
-                        }
-                    ))
-                    
-                    # Parse mining events from output
-                    line_lower = line.lower()
-                    
-                    # Check for share found - look for specific patterns
-                    # Matches: "share found", "found share", "share accepted", etc.
-                    if re.search(r'\b(share|found).*\b(share|found|accepted|submitted)\b', line_lower):
-                        now = time.time()
-                        self._last_shares += 1
-                        self._last_share_time = now
-                        self._share_times.append(now)
+                    # Read a line from output
+                    try:
+                        line = self.process.stdout.readline()
+                        if not line:
+                            time.sleep(0.1)
+                            continue
                         
-                        # Calculate hashrate from share rate
-                        calculated_hashrate = self._calculate_hashrate_from_shares()
-                        if calculated_hashrate > 0:
-                            self._last_hashrate = calculated_hashrate
+                        line = line.strip()
+                        if not line:
+                            continue
                         
+                        # Emit as log
                         self._emit_event(MiningEvent(
-                            event_type=EventType.SHARE_FOUND,
-                            timestamp=now,
-                            data={"share_count": self._last_shares}
-                        ))
-                        
-                        # Also emit hashrate update when share is found
-                        if calculated_hashrate > 0:
-                            self._emit_event(MiningEvent(
-                                event_type=EventType.HASHRATE_UPDATE,
-                                timestamp=now,
-                                data={"hashrate": calculated_hashrate, "unit": "H/s"}
-                            ))
-                    
-                    # Check for block found - look for specific patterns
-                    if re.search(r'\bblock\b.*\b(found|mined|accepted)\b', line_lower):
-                        self._last_blocks += 1
-                        
-                        # Try to extract height from output
-                        height_match = re.search(r'height[:\s]+(\d+)', line_lower)
-                        block_height = int(height_match.group(1)) if height_match else 0
-                        
-                        self._emit_event(MiningEvent(
-                            event_type=EventType.BLOCK_FOUND,
-                            timestamp=time.time(),
-                            data={"block_count": self._last_blocks, "height": block_height}
-                        ))
-                    
-                    # Check for template/job updates - look for specific patterns
-                    if re.search(r'\b(new\s+)?(template|job)\b', line_lower):
-                        # Try to extract height and transaction count
-                        height_match = re.search(r'height[:\s]+(\d+)', line_lower)
-                        tx_match = re.search(r'(\d+)\s+transactions?', line_lower)
-                        
-                        template_height = int(height_match.group(1)) if height_match else 0
-                        tx_count = int(tx_match.group(1)) if tx_match else 0
-                        
-                        # Try to extract theta (difficulty) - look for patterns like "theta: 12345678" or "Θ: 12345678"
-                        theta_match = re.search(r'(?:theta|Θ)[:\s]+([\d]+)', line_lower)
-                        if theta_match:
-                            self._current_theta_micro = int(theta_match.group(1))
-                        
-                        # Try to extract share target - look for patterns like "target: 0.25" or "share_target: 0.25"
-                        target_match = re.search(r'(?:share[_\s]?target|target)[:\s]+([\d.]+)', line_lower)
-                        if target_match:
-                            self._current_share_target = float(target_match.group(1))
-                        
-                        self._emit_event(MiningEvent(
-                            event_type=EventType.TEMPLATE_UPDATE,
+                            event_type=EventType.LOG,
                             timestamp=time.time(),
                             data={
-                                "height": template_height,
-                                "transactions": tx_count,
-                                "theta_micro": self._current_theta_micro,
-                                "share_target": self._current_share_target
+                                "level": "info",
+                                "message": line,
+                                "component": "miner"
                             }
                         ))
-                    
-                    # Check for hashrate info
-                    if "h/s" in line_lower or "hashrate" in line_lower:
-                        # Try to extract hashrate value
-                        match = re.search(r'([\d.]+)\s*(kh/s|mh/s|gh/s|h/s)', line_lower)
-                        if match:
-                            value = float(match.group(1))
-                            unit = match.group(2)
+                        
+                        # Parse mining events from output
+                        line_lower = line.lower()
+                        
+                        # Check for share found - look for specific patterns
+                        # Matches: "share found", "found share", "share accepted", etc.
+                        if re.search(r'\b(share|found).*\b(share|found|accepted|submitted)\b', line_lower):
+                            now = time.time()
+                            self._last_shares += 1
+                            self._last_share_time = now
+                            self._share_times.append(now)
                             
-                            # Convert to H/s
-                            if unit == "kh/s":
-                                hashrate = value * 1000
-                            elif unit == "mh/s":
-                                hashrate = value * 1000000
-                            elif unit == "gh/s":
-                                hashrate = value * 1000000000
-                            else:
-                                hashrate = value
+                            # Calculate hashrate from share rate
+                            calculated_hashrate = self._calculate_hashrate_from_shares()
+                            if calculated_hashrate > 0:
+                                self._last_hashrate = calculated_hashrate
                             
-                            self._last_hashrate = hashrate
                             self._emit_event(MiningEvent(
-                                event_type=EventType.HASHRATE_UPDATE,
-                                timestamp=time.time(),
-                                data={"hashrate": hashrate, "unit": "H/s"}
+                                event_type=EventType.SHARE_FOUND,
+                                timestamp=now,
+                                data={"share_count": self._last_shares}
                             ))
-                    
-                    cycle += 1
-                    
-                    # Emit periodic hashrate updates even if not in logs
-                    if time.time() - last_hashrate_time > 5.0:
-                        # Recalculate hashrate from share rate
-                        calculated_hashrate = self._calculate_hashrate_from_shares()
-                        if calculated_hashrate > 0:
-                            self._last_hashrate = calculated_hashrate
+                            
+                            # Also emit hashrate update when share is found
+                            if calculated_hashrate > 0:
+                                self._emit_event(MiningEvent(
+                                    event_type=EventType.HASHRATE_UPDATE,
+                                    timestamp=now,
+                                    data={"hashrate": calculated_hashrate, "unit": "H/s"}
+                                ))
+                        
+                        # Check for block found - look for specific patterns
+                        if re.search(r'\bblock\b.*\b(found|mined|accepted)\b', line_lower):
+                            self._last_blocks += 1
+                            
+                            # Try to extract height from output
+                            height_match = re.search(r'height[:\s]+(\d+)', line_lower)
+                            block_height = int(height_match.group(1)) if height_match else 0
+                            
                             self._emit_event(MiningEvent(
-                                event_type=EventType.HASHRATE_UPDATE,
+                                event_type=EventType.BLOCK_FOUND,
                                 timestamp=time.time(),
-                                data={"hashrate": calculated_hashrate, "unit": "H/s"}
+                                data={"block_count": self._last_blocks, "height": block_height}
                             ))
-                        last_hashrate_time = time.time()
-                
-                except Exception as e:
-                    logger.error(f"Error reading miner output: {e}")
-                    time.sleep(0.1)
+                        
+                        # Check for template/job updates - look for specific patterns
+                        if re.search(r'\b(new\s+)?(template|job)\b', line_lower):
+                            # Try to extract height and transaction count
+                            height_match = re.search(r'height[:\s]+(\d+)', line_lower)
+                            tx_match = re.search(r'(\d+)\s+transactions?', line_lower)
+                            
+                            template_height = int(height_match.group(1)) if height_match else 0
+                            tx_count = int(tx_match.group(1)) if tx_match else 0
+                            
+                            # Try to extract theta (difficulty) - look for patterns like "theta: 12345678" or "Θ: 12345678"
+                            theta_match = re.search(r'(?:theta|Θ)[:\s]+([\d]+)', line_lower)
+                            if theta_match:
+                                self._current_theta_micro = int(theta_match.group(1))
+                            
+                            # Try to extract share target - look for patterns like "target: 0.25" or "share_target: 0.25"
+                            target_match = re.search(r'(?:share[_\s]?target|target)[:\s]+([\d.]+)', line_lower)
+                            if target_match:
+                                self._current_share_target = float(target_match.group(1))
+                            
+                            self._emit_event(MiningEvent(
+                                event_type=EventType.TEMPLATE_UPDATE,
+                                timestamp=time.time(),
+                                data={
+                                    "height": template_height,
+                                    "transactions": tx_count,
+                                    "theta_micro": self._current_theta_micro,
+                                    "share_target": self._current_share_target
+                                }
+                            ))
+                        
+                        # Check for hashrate info
+                        if "h/s" in line_lower or "hashrate" in line_lower:
+                            # Try to extract hashrate value
+                            match = re.search(r'([\d.]+)\s*(kh/s|mh/s|gh/s|h/s)', line_lower)
+                            if match:
+                                value = float(match.group(1))
+                                unit = match.group(2)
+                                
+                                # Convert to H/s
+                                if unit == "kh/s":
+                                    hashrate = value * 1000
+                                elif unit == "mh/s":
+                                    hashrate = value * 1000000
+                                elif unit == "gh/s":
+                                    hashrate = value * 1000000000
+                                else:
+                                    hashrate = value
+                                
+                                self._last_hashrate = hashrate
+                                self._emit_event(MiningEvent(
+                                    event_type=EventType.HASHRATE_UPDATE,
+                                    timestamp=time.time(),
+                                    data={"hashrate": hashrate, "unit": "H/s"}
+                                ))
+                        
+                        cycle += 1
+                        
+                        # Emit periodic hashrate updates even if not in logs
+                        if time.time() - last_hashrate_time > 5.0:
+                            # Recalculate hashrate from share rate
+                            calculated_hashrate = self._calculate_hashrate_from_shares()
+                            if calculated_hashrate > 0:
+                                self._last_hashrate = calculated_hashrate
+                                self._emit_event(MiningEvent(
+                                    event_type=EventType.HASHRATE_UPDATE,
+                                    timestamp=time.time(),
+                                    data={"hashrate": calculated_hashrate, "unit": "H/s"}
+                                ))
+                            last_hashrate_time = time.time()
+                    
+                    except Exception as e:
+                        logger.error(f"Error reading miner output: {e}")
+                        time.sleep(0.1)
         
         except Exception as e:
             logger.error(f"Error in miner thread: {e}")
