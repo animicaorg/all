@@ -33,6 +33,9 @@ animica-miner-gui = "animica_miner_gui.main:main"
 [tool.hatch.build.targets.wheel]
 packages = ["animica_miner_gui"]
 
+[tool.hatch.build.targets.wheel.force-include]
+"logo.png" = "animica_miner_gui/logo.png"
+
 [tool.ruff]
 line-length = 100
 target-version = "py310"

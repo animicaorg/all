@@ -840,6 +840,13 @@ class FirstRunWizard(QWizard):
         self.setOption(QWizard.WizardOption.HaveHelpButton, False)
         self.setMinimumSize(600, 500)
         
+        # Set window icon
+        from animica_miner_gui.resources import get_logo_path
+        from PySide6.QtGui import QIcon
+        logo_path = get_logo_path()
+        if logo_path:
+            self.setWindowIcon(QIcon(str(logo_path)))
+        
         # Add pages
         self.addPage(NetworkSelectionPage())
         self.addPage(RPCConfigPage())
