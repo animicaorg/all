@@ -94,17 +94,13 @@ class DashboardTab(QWidget):
         self.time_to_block_label.setToolTip("Estimated average time to find a block at current hashrate")
         mining_layout.addWidget(self.time_to_block_label, 3, 1)
         
-        mining_layout.addWidget(QLabel("Shares Found:"), 4, 0)
-        self.shares_label = QLabel("0")
-        mining_layout.addWidget(self.shares_label, 4, 1)
-        
-        mining_layout.addWidget(QLabel("Blocks Found:"), 5, 0)
+        mining_layout.addWidget(QLabel("Blocks Found:"), 4, 0)
         self.blocks_label = QLabel("0")
-        mining_layout.addWidget(self.blocks_label, 5, 1)
+        mining_layout.addWidget(self.blocks_label, 4, 1)
         
-        mining_layout.addWidget(QLabel("Last Submit:"), 6, 0)
+        mining_layout.addWidget(QLabel("Last Submit:"), 5, 0)
         self.last_submit_label = QLabel("--")
-        mining_layout.addWidget(self.last_submit_label, 6, 1)
+        mining_layout.addWidget(self.last_submit_label, 5, 1)
         
         mining_group.setLayout(mining_layout)
         layout.addWidget(mining_group)
@@ -365,18 +361,14 @@ class DashboardTab(QWidget):
             # Update time to block when hashrate changes
             self._update_time_to_block()
         
-        elif event.event_type == EventType.SHARE_FOUND:
-            count = event.data.get('share_count', 0)
-            self.shares_label.setText(str(count))
+        elif event.event_type == EventType.BLOCK_FOUND:
+            count = event.data.get('block_count', 0)
+            self.blocks_label.setText(str(count))
             
             import time
             self.last_submit_label.setText(
                 time.strftime("%H:%M:%S", time.localtime(event.timestamp))
             )
-        
-        elif event.event_type == EventType.BLOCK_FOUND:
-            count = event.data.get('block_count', 0)
-            self.blocks_label.setText(str(count))
             
             # Refresh balance when a block is found
             self.refresh_balance()
