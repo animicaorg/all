@@ -45,6 +45,12 @@ def test_orchestrator_exports_run_function():
     assert callable(miner_orchestrator.run_orchestrator)
 
 
+def test_orchestrator_exports_cli_main():
+    """Test that mining.orchestrator exports cli_main function."""
+    assert hasattr(miner_orchestrator, "cli_main")
+    assert callable(miner_orchestrator.cli_main)
+
+
 def test_all_exports():
     """Test that __all__ includes all expected exports."""
     expected_exports = [
@@ -52,6 +58,7 @@ def test_all_exports():
         "MinerOrchestrator", 
         "Orchestrator",
         "run_orchestrator",
+        "cli_main",
     ]
     
     for export in expected_exports:
