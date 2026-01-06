@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import os
 import re
 import signal
@@ -148,14 +149,11 @@ class MinerRunner:
             
             # Estimate hashrate from share rate and difficulty
             # Each share requires on average 1/probability hashes
-            # probability = e^(-threshold)
-            # For share target: threshold_share = theta * share_target
-            # So probability ≈ share_target (for small thresholds)
-            # hashrate ≈ shares_per_second / share_target
+            # probability = e^(-threshold) where threshold = theta * share_target
+            # Therefore: hashrate = shares_per_second / e^(-threshold)
             
             if self._current_share_target > 0:
-                # More accurate: use exponential relationship
-                import math
+                # Use exponential relationship for accurate calculation
                 if self._current_theta_micro > 0:
                     threshold_share_micro = self._current_theta_micro * self._current_share_target
                     # e^(-t) where t is in micro-nats, so convert: t_nats = t_micro / 1e6
@@ -165,7 +163,8 @@ class MinerRunner:
                         hashrate = shares_per_second / probability
                         return hashrate
                 
-                # Fallback: simple approximation
+                # Fallback: simple approximation when theta not known
+                # For small thresholds: e^(-t) ≈ 1-t, so probability ≈ share_target
                 hashrate = shares_per_second / self._current_share_target
                 return hashrate
             
@@ -279,9 +278,6 @@ class MinerRunner:
         
         try:
             # Build the mining command
-            import sys
-            from pathlib import Path
-            
             # Get configuration
             payout_address = config.get('miner', {}).get('payout_address')
             if not payout_address:
