@@ -2,6 +2,17 @@
 
 A unified cross-platform mining and wallet application for the Animica network. Combines mining management (device configuration, real-time stats, logs) with wallet functionality (balance, transactions, QR codes) in a single Flutter application.
 
+## Status
+
+**Implementation: ~90% Complete** 🎉
+
+- ✅ **Mining Features**: Fully implemented (dashboard, devices, pools, stats, logs)
+- ✅ **Wallet UI**: Complete (balance, send form, receive QR, import, history)
+- ⚠️ **Transaction Signing**: Requires PQ crypto implementation (use CLI wallet as workaround)
+- ⚠️ **Transaction History**: Requires RPC methods on node (UI ready)
+
+See [WALLET_IMPLEMENTATION_COMPLETE.md](./WALLET_IMPLEMENTATION_COMPLETE.md) for detailed status.
+
 ## Features
 
 ### Mining Features
@@ -15,11 +26,12 @@ A unified cross-platform mining and wallet application for the Animica network. 
 - **System Tray**: Minimize to tray with notifications (desktop)
 
 ### Wallet Features
-- **Balance & Info**: View address, balance, and nonce
-- **Send Transactions**: Send ANM with QR code scanning
-- **Transaction History**: View past transactions
-- **Address Management**: Copy address, view QR code
-- **Secure Storage**: Encrypted keystore with biometric support
+- **Balance & Info**: View address, balance, and nonce ✅
+- **Send Transactions**: Send ANM with form validation and confirmation ⚠️ (requires PQ crypto)
+- **Transaction History**: View past transactions ⚠️ (requires RPC methods)
+- **Receive QR Code**: Display and share wallet address via QR code ✅
+- **Address Management**: Copy address, import wallet ✅
+- **Secure Storage**: Encrypted keystore with FlutterSecureStorage ✅
 
 ### Cross-Platform
 - Android, iOS (mobile)
@@ -102,6 +114,34 @@ CHAIN_ID=2
 - **CPU**: Thread count, affinity
 - **GPU**: Device selection, intensity
 - **Pool**: Stratum server URL (optional)
+
+### Wallet Setup
+
+#### Using CLI Wallet (Recommended for now)
+1. Create wallet with CLI:
+   ```bash
+   animica wallet create
+   # Save your private key and address
+   ```
+
+2. Import into Flutter app:
+   - Open Settings → Wallet Setup
+   - Choose "Import Wallet"
+   - Enter your address and private key
+   - Tap "Import Wallet"
+
+3. View balance and receive funds:
+   - Go to Wallet tab
+   - See your balance update in real-time
+   - Tap QR icon to share your address
+
+#### Transaction Operations
+- **View Balance**: Automatic in Wallet tab
+- **Receive Funds**: Tap QR icon, share address or QR code
+- **Send Funds**: Use CLI wallet until PQ crypto is implemented in Flutter
+  ```bash
+  animica wallet send <to-address> <amount>
+  ```
 
 ## Architecture
 
