@@ -13,6 +13,18 @@ describe('normalizeHead', () => {
     expect(head.height).toBe(42)
     expect(head.hash).toBe('0xdef')
   })
+
+  it('includes canonicalHeight when present', () => {
+    const head = normalizeHead({ height: 10, canonicalHeight: 8, hash: '0xabc', time: 123 })
+    expect(head.height).toBe(10)
+    expect(head.canonicalHeight).toBe(8)
+  })
+
+  it('handles canonical_height snake_case variant', () => {
+    const head = normalizeHead({ height: 10, canonical_height: 8, hash: '0xabc', time: 123 })
+    expect(head.height).toBe(10)
+    expect(head.canonicalHeight).toBe(8)
+  })
 })
 
 describe('normalizeBlockSummary', () => {
@@ -36,6 +48,15 @@ describe('normalizeBlockSummary', () => {
     expect(block.height).toBe(10)
     expect(block.hash).toBe('0xblock10')
   })
+
+  it('includes canonicalHeight when present', () => {
+    const block = normalizeBlockSummary({ 
+      header: { height: 10, canonicalHeight: 8, hash: '0xblock10', time: 1000 }, 
+      txs: [] 
+    })
+    expect(block.height).toBe(10)
+    expect(block.canonicalHeight).toBe(8)
+  })
 })
 
 describe('normalizeBlockDetail', () => {
@@ -52,6 +73,25 @@ describe('normalizeBlockDetail', () => {
     })
     expect(block.height).toBe(7)
     expect(block.hash).toBe('0x7')
+  })
+
+  it('includes canonicalHeight and nonce when present', () => {
+    const block = normalizeBlockDetail({ 
+      header: { height: 10, canonicalHeight: 8, nonce: 12345, hash: '0x1', parentHash: '0x0', time: 12 }, 
+      txs: [] 
+    })
+    expect(block.height).toBe(10)
+    expect(block.canonicalHeight).toBe(8)
+    expect(block.nonce).toBe(12345)
+  })
+
+  it('detects instant blocks with nonce=0', () => {
+    const block = normalizeBlockDetail({ 
+      header: { height: 10, canonicalHeight: 8, nonce: 0, hash: '0x1', parentHash: '0x0', time: 12 }, 
+      txs: [] 
+    })
+    expect(block.height).toBe(10)
+    expect(block.nonce).toBe(0)
   })
 })
 
