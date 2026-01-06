@@ -4,6 +4,7 @@ import logging
 from collections import deque
 from typing import List, Optional
 
+from PySide6.QtCore import Signal, Slot
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -24,10 +25,16 @@ logger = logging.getLogger(__name__)
 class LogsTab(QWidget):
     """Logs viewing tab with filtering."""
     
+    # Signal for thread-safe event handling
+    mining_event_received = Signal(object)  # MiningEvent
+    
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.log_buffer = deque(maxlen=1000)  # Keep last 1000 log entries
         self.setup_ui()
+        
+        # Connect signal to slot for thread-safe UI updates
+        self.mining_event_received.connect(self._handle_mining_event_in_main_thread)
     
     def setup_ui(self) -> None:
         """Set up the UI."""
@@ -72,7 +79,21 @@ class LogsTab(QWidget):
         self.setLayout(layout)
     
     def on_mining_event(self, event: MiningEvent) -> None:
-        """Handle mining events."""
+        """Handle mining events from any thread.
+        
+        This method can be called from background threads, so it emits a signal
+        to ensure UI updates happen in the main thread.
+        """
+        # Emit signal to handle in main thread
+        self.mining_event_received.emit(event)
+    
+    @Slot(object)
+    def _handle_mining_event_in_main_thread(self, event: MiningEvent) -> None:
+        """Handle mining events in the main thread (thread-safe).
+        
+        This slot is called via Qt's signal/slot mechanism, ensuring it runs
+        in the main thread regardless of where on_mining_event was called from.
+        """
         # Guard against None event.data
         if event.data is None:
             logger.warning("Received mining event with None data")
