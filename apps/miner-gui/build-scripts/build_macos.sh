@@ -30,17 +30,12 @@ command -v hdiutil >/dev/null 2>&1 || die "hdiutil not found (macOS tool)"
 
 # ---- Choose python (prefer venv) ----
 choose_python() {
-  # Prefer active venv
   if [[ -n "${VIRTUAL_ENV:-}" ]] && [[ -x "${VIRTUAL_ENV}/bin/python3" ]]; then
-    echo "${VIRTUAL_ENV}/bin/python3"
-    return
+    echo "${VIRTUAL_ENV}/bin/python3"; return
   fi
-  # Prefer repo-root .venv
   if [[ -x "${REPO_ROOT}/.venv/bin/python3" ]]; then
-    echo "${REPO_ROOT}/.venv/bin/python3"
-    return
+    echo "${REPO_ROOT}/.venv/bin/python3"; return
   fi
-  # Fallback
   command -v python3 >/dev/null 2>&1 || return 1
   echo "$(command -v python3)"
 }
@@ -63,8 +58,8 @@ log "Installing PyInstaller tooling..."
 log "Installing miner-gui dependencies..."
 "$PY" -m pip install -e "$APP_DIR"
 
-# ---- Resolve version ----
-VERSION="$("$PY" -c "import tomllib, pathlib; p=pathlib.Path('$APP_DIR')/'pyproject.toml'; print(tomllib.loads(p.read_bytes())['project']['version'])" 2>/dev/null || echo "0.1.0")"
+# ---- Resolve version (robust) ----
+VERSION="$("$PY" -c "import tomllib; print(tomllib.load(open(r'$APP_DIR/pyproject.toml','rb'))['project']['version'])" 2>/dev/null || echo "0.1.0")"
 log "Building version: $VERSION"
 
 # ---- Determine entry script robustly ----
@@ -84,7 +79,7 @@ if [[ -z "$ENTRY" ]]; then
 fi
 log "Entry script: $ENTRY"
 
-# ---- Optional: disable UPX if not installed (UPX can break on macOS arm64) ----
+# ---- Optional: disable UPX if not installed ----
 UPX_ENABLED="False"
 if command -v upx >/dev/null 2>&1; then
   UPX_ENABLED="True"
@@ -93,12 +88,11 @@ else
   log "UPX not found; disabling UPX (recommended on macOS arm64)."
 fi
 
-# ---- Runtime hook to ensure Qt plugin paths are set inside packaged app ----
+# ---- Runtime hook: help Qt find platform plugins inside packaged build ----
 cat > "$RUNTIME_HOOK" <<'PYEOF'
 import os
 
 def _fix_qt_plugin_paths():
-    # Avoid breaking Qt discovery if user has these set weirdly (empty/invalid)
     for k in ("QT_PLUGIN_PATH", "QT_QPA_PLATFORM_PLUGIN_PATH"):
         if k in os.environ and not os.environ[k].strip():
             os.environ.pop(k, None)
@@ -116,16 +110,16 @@ def _fix_qt_plugin_paths():
 _fix_qt_plugin_paths()
 PYEOF
 
-# ---- Create PyInstaller spec ----
+# ---- Create spec (NO __file__ usage; hardcode paths from bash) ----
 log "Creating PyInstaller spec file..."
 cat > "$SPEC_FILE" <<SPEC_EOF
 # -*- mode: python ; coding: utf-8 -*-
 from pathlib import Path
 
-# IMPORTANT:
-# Spec lives in apps/miner-gui/build, so resolve paths relative to that.
-SPEC_DIR = Path(__file__).resolve().parent
-APP_DIR  = SPEC_DIR.parent  # apps/miner-gui
+# PyInstaller does NOT guarantee __file__ exists in the spec exec namespace.
+# Use absolute paths injected by the build script instead.
+SPEC_DIR = Path(r"${BUILD_DIR}").resolve()
+APP_DIR  = Path(r"${APP_DIR}").resolve()
 ENTRY    = Path(r"${ENTRY}").resolve()
 
 block_cipher = None
@@ -135,7 +129,6 @@ datas = []
 if logo.exists():
     datas.append((str(logo), "."))
 
-# Note: rely on PyInstaller's PySide6 hooks, but keep a few safety hiddenimports.
 hiddenimports = [
     "PySide6.QtCore",
     "PySide6.QtGui",
@@ -209,7 +202,7 @@ app = BUNDLE(
 )
 SPEC_EOF
 
-# ---- Build with PyInstaller (explicit dist/work paths so outputs are predictable) ----
+# ---- Build with PyInstaller ----
 log "Running PyInstaller..."
 "$PY" -m PyInstaller --noconfirm --clean \
   --distpath "$DIST_DIR" \
@@ -218,7 +211,6 @@ log "Running PyInstaller..."
 
 APP_BUNDLE="$DIST_DIR/Animica Miner GUI.app"
 if [[ ! -d "$APP_BUNDLE" ]]; then
-  # Sometimes PyInstaller nests under a folder; try to locate it.
   FOUND="$(find "$DIST_DIR" -maxdepth 3 -name "Animica Miner GUI.app" -type d -print -quit || true)"
   if [[ -n "$FOUND" ]]; then
     APP_BUNDLE="$FOUND"
