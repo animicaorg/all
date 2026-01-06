@@ -157,8 +157,8 @@ def test_pythonpath_detection():
     # If not found via import, try common relative paths from this file
     if not repo_root:
         # This test is at: apps/miner-gui/animica_miner_gui/tests/test_miner_runner.py
-        # Repository root is 5 levels up (tests -> animica_miner_gui -> miner-gui -> apps -> all -> root)
-        # Same calculation as miner_runner.py
+        # Go up 5 levels: tests -> animica_miner_gui -> miner-gui -> apps -> repository root
+        # Same calculation as miner_runner.py (5 .parent calls)
         test_file = Path(__file__).resolve()
         potential_root = test_file.parent.parent.parent.parent.parent
         if (potential_root / "mining" / "__init__.py").is_file():
