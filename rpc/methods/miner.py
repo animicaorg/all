@@ -3167,11 +3167,41 @@ def _mine_once(
     block_hash_bytes = None
     block_hash_int = None
 
-    result = _mine_for_header(header_template, target, start_nonce=0)
-    if result:
-        valid_nonce, block_hash_bytes, block_hash_int = result
+    # Skip PoW for instant blocks - use nonce=0 immediately
+    if instant_block:
+        log.info("Instant block mode: skipping PoW, using nonce=0")
+        valid_nonce = 0
+        # Compute hash with nonce=0
+        try:
+            header_with_nonce = replace(header_template, nonce=0)
+        except Exception:
+            header_with_nonce = Header(
+                v=header_template.v,
+                chainId=header_template.chainId,
+                height=header_template.height,
+                parentHash=header_template.parentHash,
+                timestamp=header_template.timestamp,
+                stateRoot=header_template.stateRoot,
+                txsRoot=header_template.txsRoot,
+                receiptsRoot=header_template.receiptsRoot,
+                proofsRoot=header_template.proofsRoot,
+                daRoot=header_template.daRoot,
+                mixSeed=header_template.mixSeed,
+                poiesPolicyRoot=header_template.poiesPolicyRoot,
+                pqAlgPolicyRoot=header_template.pqAlgPolicyRoot,
+                thetaMicro=header_template.thetaMicro,
+                nonce=0,
+                extra=header_template.extra,
+            )
+        block_hash_bytes = header_with_nonce.hash()
+        block_hash_int = int.from_bytes(block_hash_bytes, "big")
+    else:
+        # Normal block: perform PoW
+        result = _mine_for_header(header_template, target, start_nonce=0)
+        if result:
+            valid_nonce, block_hash_bytes, block_hash_int = result
 
-    # Check if we found a valid nonce
+    # Check if we found a valid nonce (or using nonce=0 for instant block)
     if valid_nonce is not None and block_hash_bytes is not None and block_hash_int is not None:
         try:
             latest_head = adapter.get_head()
