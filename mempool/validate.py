@@ -206,7 +206,13 @@ def _check_size(raw: bytes, cfg: StatelessConfig) -> None:
 
 def _check_chain_id(tx: "Tx", cfg: StatelessConfig) -> None:
     try:
-        tx_chain_id = int(getattr(tx, "chain_id"))
+        # Try to get chain_id from various locations
+        tx_chain_id = getattr(tx, "chain_id", None)
+        if tx_chain_id is None and hasattr(tx, "unsigned"):
+            tx_chain_id = getattr(tx.unsigned, "chain_id", None)
+        if tx_chain_id is None:
+            raise AttributeError("chain_id not found")
+        tx_chain_id = int(tx_chain_id)
     except Exception:
         raise StatelessValidationError("MissingField", "Transaction missing chain_id.")
     if tx_chain_id != int(cfg.chain_id):
@@ -217,7 +223,14 @@ def _check_chain_id(tx: "Tx", cfg: StatelessConfig) -> None:
 
 
 def _check_gas_limits(tx: "Tx", cfg: StatelessConfig) -> None:
-    gas = int(getattr(tx, "gas_limit", 0))
+    # Try to get gas_limit from various locations
+    gas = getattr(tx, "gas_limit", None)
+    if gas is None and hasattr(tx, "unsigned"):
+        gas = getattr(tx.unsigned, "gas_limit", None)
+    if gas is None:
+        gas = 0
+    gas = int(gas)
+    
     if gas <= 0:
         raise StatelessValidationError("BadGasLimit", "gas_limit must be > 0.")
     if gas > int(cfg.max_gas_limit):
