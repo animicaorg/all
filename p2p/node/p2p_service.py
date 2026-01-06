@@ -6999,10 +6999,11 @@ class P2PService:
                             },
                         )
                     else:
+                        # Check if we still have pending block downloads before marking as synced
                         if (
                             self._sync_best_header is None
                             or self._sync_best_header.height <= local_height
-                        ):
+                        ) and not self._sync_block_queue and not self._sync_inflight_blocks:
                             self._sync_phase = "SYNCED" if local_height > 0 else "IDLE"
                             log.debug(
                                 "Skipped header request: already at tip",
@@ -7012,6 +7013,19 @@ class P2PService:
                                     "remote_height": remote_height,
                                 },
                             )
+                            return result
+                        elif self._sync_block_queue or self._sync_inflight_blocks:
+                            # We have pending blocks, continue to download them
+                            log.debug(
+                                "Continuing sync for pending blocks",
+                                extra={
+                                    "remote": peer.remote,
+                                    "local_height": local_height,
+                                    "block_queue": len(self._sync_block_queue),
+                                    "inflight_blocks": len(self._sync_inflight_blocks),
+                                },
+                            )
+                            # Skip header sync but continue with block downloads
                             return result
 
                 saw_headers = False
@@ -7310,10 +7324,11 @@ class P2PService:
                 self._log_sync_cycle()
                 if self._sync_block_stalled_reason is None:
                     await self._schedule_block_requests()
+                    # Continue requesting blocks if we're behind, regardless of inflight status
+                    # This ensures sync continues even if some blocks are already being downloaded
                     if (
                         network_best_height is not None
                         and best_block_height < int(network_best_height)
-                        and not self._sync_inflight_blocks
                     ):
                         await self._schedule_block_requests()
         except asyncio.CancelledError:
