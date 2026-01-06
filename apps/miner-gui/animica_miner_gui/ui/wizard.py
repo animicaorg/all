@@ -436,6 +436,23 @@ class WalletConfigPage(QWizardPage):
         
         layout.addLayout(buttons_layout)
         
+        # Warning about wallet location
+        warning_label = QLabel(
+            "⚠️ Note: When importing from wallets, your wallets.json file must be located at ~/.animica/wallets.json\n"
+            "or you can browse to select a custom wallet file location."
+        )
+        warning_label.setWordWrap(True)
+        warning_label.setStyleSheet(
+            "color: #ff9800; "
+            "background-color: rgba(255, 152, 0, 0.1); "
+            "padding: 8px; "
+            "border-left: 3px solid #ff9800; "
+            "border-radius: 3px; "
+            "margin-top: 8px; "
+            "margin-bottom: 8px;"
+        )
+        layout.addWidget(warning_label)
+        
         # Validation status
         self.validation_label = QLabel("")
         layout.addWidget(self.validation_label)
