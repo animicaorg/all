@@ -39,7 +39,6 @@ interface CborModule {
   decodeFirstSync?: (input: Buffer) => unknown
   encodeCanonical?: (input: unknown) => Buffer
   Encoder: {
-    encode: (value: unknown) => Buffer
     encodeCanonical: (value: unknown) => Buffer
   }
   default?: {
@@ -47,8 +46,6 @@ interface CborModule {
     encodeCanonical: (input: unknown) => Buffer
   }
 }
-
-const CANONICAL_ENCODER = new cbor.Encoder({ canonical: true })
 
 function encodeCanonical(value: unknown): Buffer {
   // In ES modules, encodeCanonical may be on the default export
