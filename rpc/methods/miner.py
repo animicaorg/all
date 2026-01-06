@@ -4430,14 +4430,14 @@ def miner_stop() -> bool:
     return False
 
 
-def _extract_payload(payload: Any, kwargs: Dict[str, Any]) -> Any:
+def _extract_payload(payload: Any, kwargs: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """
     Extract payload from either positional or keyword arguments.
     
     Supports:
     - params=[payload_dict] -> positional dict (from share_submitter)
     - params={key: val, ...} -> keyword arguments (backward compatibility)
-    - params=[{"payload": {...}}] -> wrapped payload (legacy pattern)
+    - params=[{"payload": {...}}] -> wrapped payload format (for compatibility with wrapped payloads)
     
     Args:
         payload: First positional argument (None if called with kwargs only)
@@ -4449,7 +4449,7 @@ def _extract_payload(payload: Any, kwargs: Dict[str, Any]) -> Any:
     if payload is not None:
         return payload
     elif kwargs:
-        # Support legacy wrapped format: {"payload": {...}}
+        # Support wrapped payload format: {"payload": {...}}
         if len(kwargs) == 1 and "payload" in kwargs:
             return kwargs.get("payload")
         # Direct keyword arguments
@@ -4467,7 +4467,7 @@ def miner_submit_share(payload: Any = None, **kwargs: Any) -> Dict[str, Any]:
     # This allows params=[payload_dict] from share_submitter and params={key: val} for backward compatibility
     share = _extract_payload(payload, kwargs)
     if share is None:
-        # No payload provided at all - return rejection (matches existing pattern for shares)
+        # No payload provided - return rejection response (standard pattern for share submissions in mining pools)
         return {"accepted": False, "reason": "invalid share payload"}
     
     if isinstance(share, list) and share:
@@ -4570,7 +4570,8 @@ def miner_submit_block(payload: Any = None, **kwargs: Any) -> Dict[str, Any]:
     # This allows params=[payload_dict] from share_submitter and params={key: val} for backward compatibility
     block = _extract_payload(payload, kwargs)
     if block is None:
-        # No payload provided at all - raise exception (matches existing pattern for blocks)
+        # No payload provided - raise exception (standard pattern for block submissions; differs from shares)
+        # Block submissions are critical operations that should fail fast with exceptions
         raise rpc_errors.InvalidParams("invalid block payload")
     
     if isinstance(block, list) and block:
