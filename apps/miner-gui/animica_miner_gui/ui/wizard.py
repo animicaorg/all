@@ -443,7 +443,13 @@ class WalletConfigPage(QWizardPage):
         layout.addStretch()
         self.setLayout(layout)
         
+        # Hidden field to store wallet file path
+        self.wallet_file_path_input = QLineEdit()
+        self.wallet_file_path_input.setVisible(False)
+        layout.addWidget(self.wallet_file_path_input)
+        
         self.registerField("payout_address*", self.address_input)
+        self.registerField("wallet_file_path", self.wallet_file_path_input)
     
     def create_new_wallet(self) -> None:
         """Create a new wallet via dialog."""
@@ -451,6 +457,10 @@ class WalletConfigPage(QWizardPage):
         if dialog.exec() == QDialog.DialogCode.Accepted:
             if dialog.created_address:
                 self.address_input.setText(dialog.created_address)
+                # Save the wallet file path used during creation
+                wallet_path = dialog.wallet_path_input.text().strip()
+                if wallet_path:
+                    self.wallet_file_path_input.setText(wallet_path)
                 self.validation_label.setText("✓ New wallet created and loaded")
                 self.validation_label.setStyleSheet("color: green;")
     
@@ -500,6 +510,8 @@ class WalletConfigPage(QWizardPage):
                 
                 if address:
                     self.address_input.setText(address)
+                    # Save the wallet file path for later use
+                    self.wallet_file_path_input.setText(str(wallet_path))
                     self.validation_label.setText(f"✓ Imported: {label}")
                     self.validation_label.setStyleSheet("color: green;")
                 else:
@@ -543,6 +555,8 @@ class WalletConfigPage(QWizardPage):
                     
                     if address:
                         self.address_input.setText(address)
+                        # Save the wallet file path for later use
+                        self.wallet_file_path_input.setText(str(wallet_path))
                         self.validation_label.setText(f"✓ Imported: {label}")
                         self.validation_label.setStyleSheet("color: green;")
                     else:
@@ -878,6 +892,11 @@ class FirstRunWizard(QWizard):
             
             # Payout address
             config.miner.payout_address = self.field("payout_address")
+            
+            # Wallet file path (if custom location was used)
+            wallet_file_path = self.field("wallet_file_path")
+            if wallet_file_path:
+                config.miner.wallet_file = wallet_file_path
             
             # Auto-start based on wizard choice
             config.miner.auto_start = self.field("start_mining")
