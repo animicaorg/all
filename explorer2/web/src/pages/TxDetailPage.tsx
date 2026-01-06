@@ -22,69 +22,102 @@ export default function TxDetailPage() {
 
   if (error) {
     return (
-      <div className="rounded-xl border border-red-500/40 bg-red-500/10 p-6 text-sm text-red-100">
-        Failed to load transaction. {error}
+      <div className="rounded-xl border border-red-200 bg-red-50 p-6 text-sm text-red-700 dark:border-red-900/40 dark:bg-red-900/10 dark:text-red-100">
+        <strong className="font-semibold">Error:</strong> {error}
       </div>
     )
   }
 
   if (!tx) {
-    return <Skeleton className="h-40" />
+    return (
+      <div className="space-y-4">
+        <Skeleton className="h-8 w-64" />
+        <Skeleton className="h-40" />
+      </div>
+    )
+  }
+
+  const getStatusColor = (status: string) => {
+    if (status === 'confirmed') return 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400'
+    if (status === 'failed') return 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400'
+    return 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400'
   }
 
   return (
     <div className="space-y-6">
-      <div className="rounded-xl border border-night-800 bg-night-900 p-6">
+      <div className="rounded-xl border border-day-200 bg-white p-6 shadow-sm dark:border-night-800 dark:bg-night-900">
         <div className="flex flex-wrap items-center justify-between gap-4">
-          <h1 className="text-xl font-semibold">Transaction</h1>
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-slate-100">Transaction</h1>
           <CopyButton value={tx.hash} />
         </div>
-        <div className="mt-4 grid gap-4 md:grid-cols-2">
+        
+        <div className="mt-6 grid gap-6 sm:grid-cols-2">
           <div>
-            <p className="text-xs uppercase text-slate-500">Hash</p>
-            <p className="mt-1 text-sm text-slate-200">{tx.hash}</p>
+            <p className="text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-slate-500">Transaction Hash</p>
+            <p className="mt-2 break-all font-mono text-sm text-gray-900 dark:text-slate-200">{tx.hash}</p>
           </div>
           <div>
-            <p className="text-xs uppercase text-slate-500">Status</p>
-            <p className="mt-1 text-sm text-slate-200">
-              {tx.status === 'confirmed' ? 'Confirmed' : tx.status === 'failed' ? 'Failed' : 'Pending'}
+            <p className="text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-slate-500">Status</p>
+            <p className="mt-2">
+              <span className={`inline-flex rounded-full px-3 py-1 text-xs font-medium ${getStatusColor(tx.status)}`}>
+                {tx.status === 'confirmed' ? 'Confirmed' : tx.status === 'failed' ? 'Failed' : 'Pending'}
+              </span>
             </p>
           </div>
           <div>
-            <p className="text-xs uppercase text-slate-500">From</p>
-            <p className="mt-1 text-sm text-slate-200">{tx.from ?? '—'}</p>
+            <p className="text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-slate-500">From</p>
+            <p className="mt-2 break-all font-mono text-sm text-gray-700 dark:text-slate-200">
+              {tx.from ? (
+                <Link to={`/address/${tx.from}`} className="text-animica-600 hover:underline dark:text-animica-400">
+                  {shorten(tx.from, 10, 8)}
+                </Link>
+              ) : (
+                '—'
+              )}
+            </p>
           </div>
           <div>
-            <p className="text-xs uppercase text-slate-500">To</p>
-            <p className="mt-1 text-sm text-slate-200">{tx.to ?? '—'}</p>
+            <p className="text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-slate-500">To</p>
+            <p className="mt-2 break-all font-mono text-sm text-gray-700 dark:text-slate-200">
+              {tx.to ? (
+                <Link to={`/address/${tx.to}`} className="text-animica-600 hover:underline dark:text-animica-400">
+                  {shorten(tx.to, 10, 8)}
+                </Link>
+              ) : (
+                '—'
+              )}
+            </p>
           </div>
           <div>
-            <p className="text-xs uppercase text-slate-500">Block</p>
+            <p className="text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-slate-500">Block</p>
             {tx.blockHeight ? (
-              <Link className="mt-1 text-sm text-animica-400 hover:underline" to={`/block/${tx.blockHeight}`}>
+              <Link 
+                className="mt-2 block font-mono text-sm text-animica-600 hover:underline dark:text-animica-400" 
+                to={`/block/${tx.blockHeight}`}
+              >
                 #{formatNumber(tx.blockHeight)}
               </Link>
             ) : (
-              <p className="mt-1 text-sm text-slate-200">Pending</p>
+              <p className="mt-2 text-sm text-gray-500 dark:text-slate-400">Pending</p>
             )}
           </div>
           <div>
-            <p className="text-xs uppercase text-slate-500">Fee paid</p>
-            <p className="mt-1 text-sm text-slate-200">{tx.feePaid ?? tx.gasUsed ?? '—'}</p>
+            <p className="text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-slate-500">Fee / Gas Used</p>
+            <p className="mt-2 font-mono text-sm text-gray-700 dark:text-slate-200">{tx.feePaid ?? tx.gasUsed ?? '—'}</p>
           </div>
         </div>
       </div>
 
-      <div className="rounded-xl border border-night-800 bg-night-900 p-6">
-        <h2 className="text-lg font-semibold">Summary</h2>
-        <div className="mt-3 text-sm text-slate-400">
-          <p>Inputs/outputs are displayed based on available Animica transaction fields.</p>
-          <p className="mt-2">Transaction: {shorten(tx.hash)}</p>
+      <div className="rounded-xl border border-day-200 bg-white p-6 shadow-sm dark:border-night-800 dark:bg-night-900">
+        <h2 className="text-lg font-semibold text-gray-900 dark:text-slate-100">Details</h2>
+        <div className="mt-3 space-y-2 text-sm text-gray-600 dark:text-slate-400">
+          <p>Transaction details are displayed based on available Animica transaction fields.</p>
+          <p className="font-mono text-xs">{shorten(tx.hash, 16, 16)}</p>
         </div>
       </div>
 
       <JsonViewer data={tx.raw} />
-      {tx.receipt && <JsonViewer data={tx.receipt} label="Receipt" />}
+      {tx.receipt ? <JsonViewer data={tx.receipt} label="Receipt" /> : null}
     </div>
   )
 }
