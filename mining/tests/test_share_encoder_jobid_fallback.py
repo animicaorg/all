@@ -25,7 +25,7 @@ def test_share_encoder_generates_fallback_jobid_from_nonce_hex():
     """Share encoder generates fallback jobId when missing (hex nonce)."""
     share = {
         # No jobId
-        "header": {"height": 100},
+        "header": {"chainId": 1},
         "nonce": "0x1234567890abcdef",
         "proof": {"type": "hashshare", "work": 1000},
         "height": 42,
@@ -45,7 +45,7 @@ def test_share_encoder_generates_fallback_jobid_from_nonce_int():
     """Share encoder generates fallback jobId when missing (int nonce)."""
     share = {
         # No jobId
-        "header": {"height": 100},
+        "header": {"chainId": 1},
         "nonce": 0x1234567890abcdef,  # int nonce
         "proof": {"type": "hashshare", "work": 1000},
         "height": 42,
@@ -62,7 +62,7 @@ def test_share_encoder_generates_fallback_jobid_from_nonce_bytes():
     """Share encoder generates fallback jobId when missing (bytes nonce)."""
     share = {
         # No jobId
-        "header": {"height": 100},
+        "header": {"chainId": 1},
         "nonce": bytes.fromhex("1234567890abcdef"),  # bytes nonce
         "proof": {"type": "hashshare", "work": 1000},
         "height": 42,
@@ -78,8 +78,8 @@ def test_share_encoder_generates_fallback_jobid_from_nonce_bytes():
 def test_share_encoder_generates_fallback_jobid_no_height():
     """Share encoder generates fallback jobId when height is missing."""
     share = {
-        # No jobId, no height
-        "header": {"height": 100},
+        # No jobId, no height at root level
+        "header": {"chainId": 1},
         "nonce": "0xabcdef1234567890",
         "proof": {"type": "hashshare", "work": 1000},
     }
