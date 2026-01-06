@@ -1,0 +1,83 @@
+┌──────────────────────────────────────────────────────────────────────────┐
+│                                                                          │
+│  Animica Miner Setup                                          [_][□][X] │
+│  ──────────────────────────────────────────────────────────────────────  │
+│                                                                          │
+│  Step 3 of 6                                                             │
+│                                                                          │
+│  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━  │
+│                                                                          │
+│  Payout Address                                                          │
+│  Configure your wallet address for receiving mining rewards              │
+│                                                                          │
+│  ┌──────────────────────────────────────────────────────────────────┐  │
+│  │                                                                  │  │
+│  │  Enter payout address:                                           │  │
+│  │  ┌────────────────────────────────────────────────────────┐     │  │
+│  │  │ anim1...                                                │     │  │
+│  │  └────────────────────────────────────────────────────────┘     │  │
+│  │                                                                  │  │
+│  │  ┌──────────────────┐   ┌──────────────────┐                   │  │
+│  │  │ Create New Wallet│   │ Import from Wallets│                 │  │
+│  │  └──────────────────┘   └──────────────────┘                   │  │
+│  │                                                                  │  │
+│  │  ╔════════════════════════════════════════════════════════════╗ │  │
+│  │  ║ ⚠️  Note: When importing from wallets, your wallets.json  ║ │  │
+│  │  ║ file must be located at ~/.animica/wallets.json or you   ║ │  │
+│  │  ║ can browse to select a custom wallet file location.      ║ │  │
+│  │  ╚════════════════════════════════════════════════════════════╝ │  │
+│  │       ▲                                                          │  │
+│  │       │                                                          │  │
+│  │       └─ NEW WARNING BOX (Orange background, emphasized)        │  │
+│  │                                                                  │  │
+│  │                                                                  │  │
+│  └──────────────────────────────────────────────────────────────────┘  │
+│                                                                          │
+│                                         ┌──────┐    ┌──────┐            │
+│                                         │ Back │    │ Next │            │
+│                                         └──────┘    └──────┘            │
+│                                                                          │
+└──────────────────────────────────────────────────────────────────────────┘
+
+VISUAL DESCRIPTION:
+═══════════════════
+
+The warning box appears below the "Create New Wallet" and "Import from Wallets" 
+buttons. It features:
+
+• Orange/amber color scheme (#ff9800)
+• Light orange background with transparency
+• 3px solid orange left border for emphasis
+• Warning emoji (⚠️) at the start
+• Clear, concise message about wallet location
+• Word-wrapped text for readability
+• Rounded corners (3px border-radius)
+• 8px padding for comfortable spacing
+
+The warning is visually distinct but not intrusive, using established UI patterns
+for informational/warning messages. It provides essential information without
+blocking the user's workflow.
+
+BEFORE vs AFTER:
+═══════════════
+
+BEFORE:
+-------
+Users would click "Import from Wallets" and if their wallets.json file wasn't
+in the default location (~/.animica/wallets.json), they'd get an error or 
+confusion about where the file should be.
+
+AFTER:
+------
+Users are proactively informed about the wallet file location requirement
+before attempting to import, reducing friction and support requests.
+
+KEY BENEFITS:
+═════════════
+
+✓ Prevents user confusion
+✓ Reduces support burden
+✓ Educates users about custom locations
+✓ Follows UI best practices for warnings
+✓ Non-intrusive but clearly visible
+✓ Consistent with existing design language
