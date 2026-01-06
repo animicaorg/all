@@ -833,8 +833,12 @@ async def run_orchestrator(
     await orch.run_forever()
 
 
+# Backward compatibility alias for CLI
+Orchestrator = MinerOrchestrator
+
 __all__ = [
     "OrchestratorConfig",
     "MinerOrchestrator",
+    "Orchestrator",
     "run_orchestrator",
 ]
