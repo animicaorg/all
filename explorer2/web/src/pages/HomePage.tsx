@@ -30,8 +30,12 @@ export default function HomePage() {
     // Initial fetch
     fetchData()
 
-    // Poll every 5 seconds for new blocks
-    const intervalId = setInterval(fetchData, 5000)
+    // Poll every 5 seconds for new blocks, but only when page is visible
+    const intervalId = setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        fetchData()
+      }
+    }, 5000)
 
     return () => {
       mounted = false
