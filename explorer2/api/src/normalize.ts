@@ -43,7 +43,7 @@ function getHeader(block: any): any {
 
 export function normalizeHead(head: any): HeadView {
   return {
-    height: toNumber(head?.height) ?? 0,
+    height: toNumber(head?.height ?? head?.number) ?? 0,
     hash: head?.hash ?? head?.headerHash ?? '0x0',
     time: toNumber(head?.time ?? head?.timestamp ?? head?.header?.time) ?? 0,
     chainId: toNumber(head?.chainId)
@@ -52,7 +52,7 @@ export function normalizeHead(head: any): HeadView {
 
 export function normalizeBlockSummary(block: any): BlockSummary {
   const header = getHeader(block)
-  const height = toNumber(header?.height) ?? 0
+  const height = toNumber(header?.height ?? header?.number ?? block?.number) ?? 0
   const hash = header?.hash ?? header?.headerHash ?? block?.hash ?? '0x0'
   const time = toNumber(header?.time ?? header?.timestamp ?? block?.time) ?? 0
   const txs = Array.isArray(block?.txs) ? block.txs : Array.isArray(block?.transactions) ? block.transactions : []
@@ -82,7 +82,7 @@ export function normalizeBlockDetail(block: any): BlockDetail {
   const header = getHeader(block)
   const txs = Array.isArray(block?.txs) ? block.txs : Array.isArray(block?.transactions) ? block.transactions : []
   return {
-    height: toNumber(header?.height) ?? 0,
+    height: toNumber(header?.height ?? header?.number ?? block?.number) ?? 0,
     hash: header?.hash ?? header?.headerHash ?? block?.hash ?? '0x0',
     parentHash: header?.parentHash ?? header?.parent ?? header?.prevHash,
     time: toNumber(header?.time ?? header?.timestamp ?? block?.time) ?? 0,

@@ -4,7 +4,6 @@ import BlocksPage from './pages/BlocksPage'
 import BlockDetailPage from './pages/BlockDetailPage'
 import TxDetailPage from './pages/TxDetailPage'
 import AddressPage from './pages/AddressPage'
-import MempoolPage from './pages/MempoolPage'
 import DiagnosticsPage from './pages/DiagnosticsPage'
 import SearchBar from './components/SearchBar'
 import ThemeToggle from './components/ThemeToggle'
@@ -27,9 +26,6 @@ export default function App() {
                 <Link className="hover:text-animica-600 dark:hover:text-animica-400" to="/blocks">
                   Blocks
                 </Link>
-                <Link className="hover:text-animica-600 dark:hover:text-animica-400" to="/mempool">
-                  Mempool
-                </Link>
                 <Link className="hover:text-animica-600 dark:hover:text-animica-400" to="/diagnostics">
                   Diagnostics
                 </Link>
@@ -48,7 +44,6 @@ export default function App() {
           <Route path="/block/:hashOrHeight" element={<BlockDetailPage />} />
           <Route path="/tx/:hash" element={<TxDetailPage />} />
           <Route path="/address/:address" element={<AddressPage />} />
-          <Route path="/mempool" element={<MempoolPage />} />
           <Route path="/diagnostics" element={<DiagnosticsPage />} />
           <Route
             path="*"
