@@ -4435,12 +4435,19 @@ def miner_stop() -> bool:
     desc="Accept a submitted share from the mining pool",
     aliases=("miner_submitShare",),
 )
-def miner_submit_share(**payload: Any) -> Dict[str, Any]:
-    share = (
-        payload.get("payload")
-        if len(payload) == 1 and "payload" in payload
-        else payload
-    )
+def miner_submit_share(payload: Any = None, **kwargs: Any) -> Dict[str, Any]:
+    # Support both positional (share as first param) and keyword arguments
+    if payload is not None:
+        share = payload
+    elif kwargs:
+        share = (
+            kwargs.get("payload")
+            if len(kwargs) == 1 and "payload" in kwargs
+            else kwargs
+        )
+    else:
+        return {"accepted": False, "reason": "invalid share payload"}
+    
     if isinstance(share, list) and share:
         share = share[0]
     if not isinstance(share, dict):
@@ -4536,12 +4543,19 @@ def miner_submit_share(**payload: Any) -> Dict[str, Any]:
     desc="Accept a candidate block from the miner/pool",
     aliases=("miner_submitBlock",),
 )
-def miner_submit_block(**payload: Any) -> Dict[str, Any]:
-    block = (
-        payload.get("payload")
-        if len(payload) == 1 and "payload" in payload
-        else payload
-    )
+def miner_submit_block(payload: Any = None, **kwargs: Any) -> Dict[str, Any]:
+    # Support both positional (block as first param) and keyword arguments
+    if payload is not None:
+        block = payload
+    elif kwargs:
+        block = (
+            kwargs.get("payload")
+            if len(kwargs) == 1 and "payload" in kwargs
+            else kwargs
+        )
+    else:
+        raise rpc_errors.InvalidParams("invalid block payload")
+    
     if isinstance(block, list) and block:
         block = block[0]
     if not isinstance(block, dict):
