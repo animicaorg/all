@@ -10,6 +10,7 @@ export default function BlocksPage() {
   const [cursor, setCursor] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [isPaginated, setIsPaginated] = useState(false)
 
   const loadBlocks = async (cursorValue?: string | null) => {
     setLoading(true)
@@ -18,6 +19,9 @@ export default function BlocksPage() {
       setBlocks((prev) => (cursorValue ? [...prev, ...res.items] : res.items))
       setCursor(res.nextCursor)
       setError(null)
+      if (cursorValue) {
+        setIsPaginated(true)
+      }
     } catch (err) {
       setError(String(err))
     } finally {
@@ -29,15 +33,18 @@ export default function BlocksPage() {
     // Initial load
     loadBlocks()
 
-    // Poll every 5 seconds for new blocks (only refresh the first page, not paginated results)
+    // Poll every 5 seconds for new blocks, but only if user hasn't paginated
+    // and the page is visible
     const intervalId = setInterval(() => {
-      loadBlocks()
+      if (!isPaginated && document.visibilityState === 'visible') {
+        loadBlocks()
+      }
     }, 5000)
 
     return () => {
       clearInterval(intervalId)
     }
-  }, [])
+  }, [isPaginated])
 
   if (error) {
     return (
