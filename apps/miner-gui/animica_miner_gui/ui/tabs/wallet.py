@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 # Constants
 MIN_ADDRESS_LENGTH = 42  # Minimum length for valid Animica address
 TX_SEND_TIMEOUT = 60  # Timeout for transaction sending in seconds
+ADDRESS_PREVIEW_LENGTH = 20  # Number of characters to show in address preview
 
 
 class WalletTab(QWidget):
@@ -123,20 +124,28 @@ class WalletTab(QWidget):
             )
             return
         
-        clipboard = QApplication.clipboard()
-        if clipboard:
-            clipboard.setText(address)
-            # Show brief notification
-            QMessageBox.information(
-                self,
-                "Copied",
-                f"Address copied to clipboard!\n\n{address[:20]}..."
-            )
-        else:
+        try:
+            clipboard = QApplication.clipboard()
+            if clipboard:
+                clipboard.setText(address)
+                # Show brief notification
+                QMessageBox.information(
+                    self,
+                    "Copied",
+                    f"Address copied to clipboard!\n\n{address[:ADDRESS_PREVIEW_LENGTH]}..."
+                )
+            else:
+                QMessageBox.warning(
+                    self,
+                    "Error",
+                    "Unable to access clipboard."
+                )
+        except Exception as e:
+            logger.error(f"Failed to copy address to clipboard: {e}")
             QMessageBox.warning(
                 self,
                 "Error",
-                "Unable to access clipboard."
+                f"Failed to copy address: {str(e)}"
             )
     
     def send_transaction(self) -> None:
