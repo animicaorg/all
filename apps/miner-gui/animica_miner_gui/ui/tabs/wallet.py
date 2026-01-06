@@ -154,13 +154,20 @@ class WalletTab(QWidget):
     def setup_auto_refresh(self) -> None:
         """Set up timer to auto-refresh wallet info."""
         # Refresh wallet info periodically
-        self.refresh_timer = QTimer()
+        self.refresh_timer = QTimer(self)  # Set parent to ensure cleanup
         self.refresh_timer.timeout.connect(self.refresh_wallet_info)
         self.refresh_timer.start(WALLET_INFO_REFRESH_INTERVAL)
         
         # Do initial refresh
         if self.config.miner.payout_address:
             self.refresh_wallet_info()
+    
+    def closeEvent(self, event) -> None:
+        """Clean up resources when widget is closed."""
+        # Stop the refresh timer to prevent memory leaks
+        if hasattr(self, 'refresh_timer') and self.refresh_timer.isActive():
+            self.refresh_timer.stop()
+        super().closeEvent(event)
     
     def refresh_wallet_info(self) -> None:
         """Query RPC for wallet balance and nonce."""

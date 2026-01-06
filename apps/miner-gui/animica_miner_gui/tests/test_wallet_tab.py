@@ -236,3 +236,24 @@ def test_wallet_info_refresh_no_address(qapp, config_no_address):
         # Should show appropriate message
         assert "No payout address" in tab.balance_label.text()
         assert tab.nonce_label.text() == "--"
+
+
+def test_wallet_info_refresh_zero_balance_and_nonce(qapp, config_with_address):
+    """Test wallet info refresh handles zero balance and nonce correctly."""
+    with patch('animica_miner_gui.ui.tabs.wallet.RPCClient') as mock_rpc_class:
+        # Mock the RPC client instance
+        mock_rpc_instance = MagicMock()
+        mock_rpc_class.return_value = mock_rpc_instance
+        
+        # Mock zero balance and zero nonce (new address)
+        mock_rpc_instance.get_balance.return_value = 0
+        mock_rpc_instance.get_nonce.return_value = 0
+        
+        tab = WalletTab(config_with_address)
+        
+        # Trigger refresh
+        tab.refresh_wallet_info()
+        
+        # Check that zero balance and nonce are displayed correctly
+        assert "0.000000000 ANM" in tab.balance_label.text()
+        assert tab.nonce_label.text() == "0"

@@ -215,7 +215,8 @@ class RPCClient:
                 if result is not None:
                     # Result might be a dict with 'balance' key or just a number
                     if isinstance(result, dict):
-                        balance = result.get("balance") or result.get("value")
+                        # Explicitly check for key existence to handle zero balance correctly
+                        balance = result.get('balance') if 'balance' in result else result.get('value')
                     else:
                         balance = result
                     
@@ -248,7 +249,8 @@ class RPCClient:
                 if result is not None:
                     # Result might be a dict with 'nonce' key or just a number
                     if isinstance(result, dict):
-                        nonce = result.get("nonce")
+                        # Explicitly check for key existence to handle zero nonce correctly
+                        nonce = result.get('nonce') if 'nonce' in result else result
                     else:
                         nonce = result
                     
