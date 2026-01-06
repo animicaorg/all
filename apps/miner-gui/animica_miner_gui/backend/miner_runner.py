@@ -334,19 +334,22 @@ class MinerRunner:
             
             logger.info(f"Subprocess PYTHONPATH: {pythonpath}")
             
+            # Build command once outside the loop (optimization)
+            cmd = [
+                sys.executable, "-m", "mining.cli.miner", "mine-blocks",
+                "--address", payout_address,
+                "--count", str(blocks_per_batch),
+                "--threads", str(threads),
+                "--rpc-url", rpc_url,
+                "--allow-offline-mining",
+                "--allow-unsynced"
+            ]
+            
+            # Configurable retry delay (default: 2 seconds)
+            retry_delay = config.get('miner', {}).get('retry_delay', 2.0)
+            
             # Continuous mining loop - restart mine-blocks after each batch
             while not self.stop_event.is_set():
-                # Build command to run the internal miner CLI using mine-blocks
-                cmd = [
-                    sys.executable, "-m", "mining.cli.miner", "mine-blocks",
-                    "--address", payout_address,
-                    "--count", str(blocks_per_batch),
-                    "--threads", str(threads),
-                    "--rpc-url", rpc_url,
-                    "--allow-offline-mining",
-                    "--allow-unsynced"
-                ]
-                
                 logger.info(f"Starting miner batch: {' '.join(cmd)}")
                 
                 # Start the miner process
@@ -370,9 +373,12 @@ class MinerRunner:
                         if return_code == 0:
                             logger.info(f"Miner batch completed successfully, starting next batch")
                         else:
-                            logger.warning(f"Miner process exited with code {return_code}")
-                            # Wait a bit before retrying on error
-                            time.sleep(2)
+                            logger.warning(f"Miner process exited with code {return_code}, retrying in {retry_delay}s")
+                            # Wait before retrying on error, checking stop_event periodically
+                            for _ in range(int(retry_delay * 10)):
+                                if self.stop_event.is_set():
+                                    break
+                                time.sleep(0.1)
                         break
                     
                     # Read a line from output
