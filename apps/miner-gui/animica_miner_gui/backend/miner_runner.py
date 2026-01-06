@@ -294,6 +294,12 @@ class MinerRunner:
                 'ANIMICA_PAYOUT_ADDRESS': payout_address
             }
             
+            # Set custom wallet file location if configured
+            wallet_file = config.get('miner', {}).get('wallet_file')
+            if wallet_file:
+                minimal_env['ANIMICA_WALLETS_FILE'] = wallet_file
+                logger.info(f"Using custom wallet file: {wallet_file}")
+            
             logger.info(f"Subprocess PYTHONPATH: {pythonpath}")
             
             # Start the miner process
