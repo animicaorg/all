@@ -84,6 +84,7 @@ def compute_block_reward(
     height: int,
     params: Mapping[str, Any] | None = None,
     instant_block: bool = False,
+    canonical_height: int | None = None,
 ) -> List[Tuple[str, int]]:
     """
     Compute the block reward (coinbase outputs) for a given chain and height.
@@ -100,14 +101,15 @@ def compute_block_reward(
       - Always return empty list (zero rewards)
       - These blocks are created by tx send to persist transactions immediately
       - By returning zero rewards, these blocks don't add to the total supply
-      - Note: Halving schedule tracking (if any) is handled by the block import layer,
-        not by this function. This function only determines reward amounts.
+      - Instant blocks do NOT count towards halving (canonical_height excludes them)
 
     Args:
         chain_id: Chain identifier (1 = mainnet, 1337 = devnet, etc.)
         height: Block height (0 = genesis, 1+ = post-genesis)
         params: Optional chain parameters (used for emission schedule at height >= 1)
         instant_block: If True, this is an instant block with zero rewards (default: False)
+        canonical_height: Height counting only non-instant (mining) blocks, used for halving.
+                         If None, falls back to using height for backward compatibility.
 
     Returns:
         List of (address, amount) tuples representing coinbase outputs.
@@ -130,10 +132,14 @@ def compute_block_reward(
         # If no params provided and height >= 1, return empty (caller must provide params)
         return []
     
+    # Use canonical_height for halving calculation if provided, otherwise fall back to height
+    # canonical_height only counts mining blocks (excludes instant blocks)
+    height_for_halving = canonical_height if canonical_height is not None else height
+    
     # Parse emission schedule and compute subsidy for this height
     try:
         schedule = parse_emission_schedule(params)
-        miner_amount, aicf_amount, treasury_amount = compute_subsidy_for_height(height, schedule)
+        miner_amount, aicf_amount, treasury_amount = compute_subsidy_for_height(height_for_halving, schedule)
         
         # If all amounts are zero, no subsidy at this height
         if miner_amount == 0 and aicf_amount == 0 and treasury_amount == 0:
