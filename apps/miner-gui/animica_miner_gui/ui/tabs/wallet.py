@@ -7,6 +7,7 @@ from typing import Optional
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QApplication,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
@@ -26,6 +27,7 @@ logger = logging.getLogger(__name__)
 # Constants
 MIN_ADDRESS_LENGTH = 42  # Minimum length for valid Animica address
 TX_SEND_TIMEOUT = 60  # Timeout for transaction sending in seconds
+ADDRESS_PREVIEW_LENGTH = 20  # Number of characters to show in address preview
 
 
 class WalletTab(QWidget):
@@ -44,9 +46,24 @@ class WalletTab(QWidget):
         wallet_group = QGroupBox("Wallet Information")
         wallet_layout = QFormLayout()
         
+        # Address with copy button
+        address_layout = QHBoxLayout()
         self.address_label = QLabel(self.config.miner.payout_address or "Not configured")
         self.address_label.setWordWrap(True)
-        wallet_layout.addRow("Address:", self.address_label)
+        self.address_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        address_layout.addWidget(self.address_label, stretch=1)
+        
+        self.copy_address_button = QPushButton("📋 Copy")
+        self.copy_address_button.setMaximumWidth(80)
+        self.copy_address_button.setToolTip("Copy address to clipboard")
+        self.copy_address_button.clicked.connect(self.copy_address_to_clipboard)
+        if not self.config.miner.payout_address:
+            self.copy_address_button.setEnabled(False)
+        address_layout.addWidget(self.copy_address_button)
+        
+        address_widget = QWidget()
+        address_widget.setLayout(address_layout)
+        wallet_layout.addRow("Address:", address_widget)
         
         wallet_group.setLayout(wallet_layout)
         layout.addWidget(wallet_group)
@@ -95,6 +112,42 @@ class WalletTab(QWidget):
         
         layout.addStretch()
         self.setLayout(layout)
+    
+    def copy_address_to_clipboard(self) -> None:
+        """Copy the wallet address to clipboard."""
+        address = self.config.miner.payout_address
+        if not address:
+            QMessageBox.warning(
+                self,
+                "No Address",
+                "No payout address configured."
+            )
+            return
+        
+        try:
+            clipboard = QApplication.clipboard()
+            if clipboard:
+                clipboard.setText(address)
+                # Show brief notification with preview
+                preview = address[:ADDRESS_PREVIEW_LENGTH] + "..." if len(address) > ADDRESS_PREVIEW_LENGTH else address
+                QMessageBox.information(
+                    self,
+                    "Copied",
+                    f"Address copied to clipboard!\n\n{preview}"
+                )
+            else:
+                QMessageBox.warning(
+                    self,
+                    "Error",
+                    "Unable to access clipboard."
+                )
+        except Exception as e:
+            logger.error(f"Failed to copy address to clipboard: {e}")
+            QMessageBox.warning(
+                self,
+                "Error",
+                f"Failed to copy address: {str(e)}"
+            )
     
     def send_transaction(self) -> None:
         """Send a transaction using the wallet CLI."""
@@ -160,7 +213,7 @@ class WalletTab(QWidget):
                 "--from", from_addr,
                 "--to", to_addr,
                 "--value", str(amount),
-                "--rpc", rpc_url,
+                "--rpc-url", rpc_url,
             ]
             
             self.result_text.append(f"Running: {' '.join(cmd)}\n")
