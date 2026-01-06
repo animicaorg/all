@@ -4,6 +4,7 @@ Manual verification script for wallet.py RPC option fix.
 This script verifies the fix without requiring PySide6 dependencies.
 """
 
+import re
 import sys
 
 
@@ -20,7 +21,6 @@ def verify_rpc_option_fix():
             content = f.read()
         
         # Check for the old incorrect option (using regex for robustness)
-        import re
         if re.search(r'["\']--rpc["\'],\s*rpc_url', content):
             print("❌ FAIL: Found old '--rpc' option in wallet.py")
             print("   The code still uses '--rpc' which is incorrect.")
