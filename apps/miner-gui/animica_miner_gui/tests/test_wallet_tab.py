@@ -8,6 +8,11 @@ from PySide6.QtWidgets import QApplication
 from animica_miner_gui.backend.config import MiningAppConfig
 from animica_miner_gui.ui.tabs.wallet import WalletTab
 
+# Test constants
+TEST_WALLET_ADDRESS = "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz"
+TEST_RECIPIENT_ADDRESS = "anim1zqp2pg8s9mjhyfkmkdwfxzyaw6tzn3afqt2jj4kd2un3uz89e7n2rggxgsw3p"
+TEST_RPC_URL = "https://rpc.mainnet.animica.org/rpc"
+
 
 @pytest.fixture
 def qapp():
@@ -22,8 +27,8 @@ def qapp():
 def config_with_address():
     """Config with a valid payout address."""
     config = MiningAppConfig()
-    config.miner.payout_address = "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz"
-    config.network.rpc_url = "https://rpc.mainnet.animica.org/rpc"
+    config.miner.payout_address = TEST_WALLET_ADDRESS
+    config.network.rpc_url = TEST_RPC_URL
     return config
 
 
@@ -85,7 +90,7 @@ def test_tx_send_command_uses_correct_rpc_option(qapp, config_with_address):
     tab = WalletTab(config_with_address)
     
     # Set up valid inputs
-    tab.recipient_input.setText("anim1zqp2pg8s9mjhyfkmkdwfxzyaw6tzn3afqt2jj4kd2un3uz89e7n2rggxgsw3p")
+    tab.recipient_input.setText(TEST_RECIPIENT_ADDRESS)
     tab.amount_input.setText("1.0")
     
     # Mock subprocess and message boxes
@@ -155,7 +160,7 @@ def test_tx_send_validation_invalid_amount(qapp, config_with_address):
     """Test transaction validation for invalid amount."""
     tab = WalletTab(config_with_address)
     
-    tab.recipient_input.setText("anim1zqp2pg8s9mjhyfkmkdwfxzyaw6tzn3afqt2jj4kd2un3uz89e7n2rggxgsw3p")
+    tab.recipient_input.setText(TEST_RECIPIENT_ADDRESS)
     
     # Test negative amount
     tab.amount_input.setText("-1.0")
