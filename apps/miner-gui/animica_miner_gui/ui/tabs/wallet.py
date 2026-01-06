@@ -164,7 +164,14 @@ class WalletTab(QWidget):
             return
         
         # Check if the address exists in wallets.json
-        wallet_path = os.path.expanduser("~/.animica/wallets.json")
+        # Use configured wallet file path or default
+        if self.config.miner.wallet_file:
+            wallet_path = os.path.expanduser(self.config.miner.wallet_file)
+        else:
+            # Check environment variable, then default
+            wallet_path = os.path.expanduser(
+                os.environ.get("ANIMICA_WALLETS_FILE", "~/.animica/wallets.json")
+            )
         address_in_wallet = False
         
         try:
