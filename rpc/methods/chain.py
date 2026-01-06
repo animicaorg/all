@@ -347,16 +347,18 @@ def _scan_for_highest_block() -> t.Tuple[int, t.Any] | None:
 )
 def chain_get_head() -> dict:
     """
-    Returns an object: { height, hash, chainId, thetaMicro, mixSeed, nonce, roots }
+    Returns an object: { height, canonicalHeight, hash, chainId, thetaMicro, mixSeed, nonce, roots }
     The 'hash' field is computed from canonical sign-bytes when available.
     """
     # deps.get_head() may return:
     #   - (height, header)      OR
     #   - (height, header, hsh) OR
-    #   - {"height":..., "header":...}
+    #   - {"height":..., "canonicalHeight":..., "header":...}
     snap = deps.get_head()
+    canonical_height = None
     if isinstance(snap, dict):
         height = snap.get("height")
+        canonical_height = snap.get("canonicalHeight")
         header = snap.get("header")
     elif isinstance(snap, (list, tuple)) and len(snap) >= 2:
         height, header = snap[0], snap[1]
@@ -392,6 +394,8 @@ def chain_get_head() -> dict:
         return header_view
 
     view = _header_view(int(height), header, chain_id_fallback=chain_id_val)
+    if canonical_height is not None:
+        view["canonicalHeight"] = canonical_height
     try:
         from rpc.methods import miner as miner_methods
 

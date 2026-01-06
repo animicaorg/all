@@ -425,9 +425,17 @@ class _HeadAccessor:
 
     def get(self) -> dict[str, t.Any]:
         """
-        Returns {'height': int|None, 'hash': '0x…'|None, 'header': <obj|dict>|None}
+        Returns {'height': int|None, 'canonicalHeight': int|None, 'hash': '0x…'|None, 'header': <obj|dict>|None}
         """
         with self._lock:
+            # Get canonical_height from block_db if available
+            canonical_height = None
+            if hasattr(self._bundle.block_db, "get_canonical_height"):
+                try:
+                    canonical_height = self._bundle.block_db.get_canonical_height()
+                except Exception:
+                    pass
+            
             # Try the canonical helper path first
             if hasattr(self._head_mod, "read_head"):
                 try:
@@ -444,11 +452,14 @@ class _HeadAccessor:
                         # Ensure hash is hex string for JSON serialization
                         if isinstance(hash_val, bytes):
                             hash_val = "0x" + hash_val.hex()
-                        return {
+                        result = {
                             "height": head.get("height"),
                             "hash": hash_val,
                             "header": head.get("header") or head,
                         }
+                        if canonical_height is not None:
+                            result["canonicalHeight"] = canonical_height
+                        return result
                     if isinstance(head, (tuple, list)) and len(head) >= 2:
                         height_val, hash_val = head[0], head[1]
                         # Ensure hash is hex string for JSON serialization
@@ -465,11 +476,14 @@ class _HeadAccessor:
                                 header_obj = getter(getter_input)
                             except Exception:
                                 header_obj = None
-                        return {
+                        result = {
                             "height": height_val,
                             "hash": hash_val,
                             "header": header_obj,
                         }
+                        if canonical_height is not None:
+                            result["canonicalHeight"] = canonical_height
+                        return result
                 # If read_head didn't work, fall through to alternative methods
             # Fallback path via block_db facade:
             if hasattr(self._block_db_mod, "get_canonical_head"):
@@ -480,13 +494,19 @@ class _HeadAccessor:
                 # Ensure hash is hex string for JSON serialization
                 if isinstance(hash_val, bytes):
                     hash_val = "0x" + hash_val.hex()
-                return {
+                result = {
                     "height": h.get("height") if isinstance(h, dict) else None,
                     "hash": hash_val,
                     "header": h,
                 }
+                if canonical_height is not None:
+                    result["canonicalHeight"] = canonical_height
+                return result
             # Last resort: nothing known
-            return {"height": None, "hash": None, "header": None}
+            result = {"height": None, "hash": None, "header": None}
+            if canonical_height is not None:
+                result["canonicalHeight"] = canonical_height
+            return result
 
     def height(self) -> int | None:
         return t.cast(t.Optional[int], self.get()["height"])
