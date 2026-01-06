@@ -3,8 +3,8 @@
  * Connects directly to the Animica node's JSON-RPC endpoint.
  */
 
-import { RpcClient } from './rpcClient'
-import type { ChainClient } from './service'
+import { RpcClient } from './rpcClient.js'
+import type { ChainClient } from './service.js'
 import pino from 'pino'
 
 const log = pino({ name: 'rpc-chain-client' })

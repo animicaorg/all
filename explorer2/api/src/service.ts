@@ -1,8 +1,8 @@
 import type { AddressSummary, BlockDetail, BlockSummary, HeadView, MempoolView, TxDetail } from '@animica/explorer2-shared'
-import { RequestCoalescer, TtlCache } from './cache'
-import { HttpError } from './errors'
-import { normalizeBlockDetail, normalizeBlockSummary, normalizeHead, normalizeTxDetail, normalizeTxSummary } from './normalize'
-import { clampLimit, nextCursorForHeight, parseCursor } from './pagination'
+import { RequestCoalescer, TtlCache } from './cache.js'
+import { HttpError } from './errors.js'
+import { normalizeBlockDetail, normalizeBlockSummary, normalizeHead, normalizeTxDetail, normalizeTxSummary } from './normalize.js'
+import { clampLimit, nextCursorForHeight, parseCursor } from './pagination.js'
 export interface ChainClient {
   getHead: () => Promise<unknown>
   getBlockByNumber: (height: number | string, includeTxs?: boolean, includeReceipts?: boolean) => Promise<unknown>

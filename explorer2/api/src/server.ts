@@ -3,8 +3,8 @@ import cors from 'cors'
 import pino from 'pino'
 import pinoHttp from 'pino-http'
 import type { ApiError } from '@animica/explorer2-shared'
-import { ExplorerService } from './service'
-import { HttpError } from './errors'
+import { ExplorerService } from './service.js'
+import { HttpError } from './errors.js'
 import fs from 'node:fs'
 
 export function createServer(service: ExplorerService, corsOrigin: string, logLevel: string, diagnostics?: any) {
