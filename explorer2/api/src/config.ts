@@ -6,6 +6,8 @@ dotenv.config()
 
 export const config = {
   port: Number(process.env.EXPLORER2_PORT || process.env.PORT || 8081),
+  rpcUrl: process.env.EXPLORER2_RPC_URL || process.env.ANIMICA_RPC_URL || '',
+  wsUrl: process.env.EXPLORER2_WS_URL || process.env.ANIMICA_WS_URL || '',
   dataRoot: process.env.EXPLORER2_DATA_ROOT || process.env.ANIMICA_DATA_ROOT || path.join(homedir(), '.animica'),
   chainId: Number(process.env.EXPLORER2_CHAIN_ID || process.env.ANIMICA_CHAIN_ID || 1),
   dbPath: process.env.EXPLORER2_DB_PATH || '',
@@ -14,5 +16,7 @@ export const config = {
   cacheHeadTtlMs: Number(process.env.EXPLORER2_CACHE_HEAD_TTL_MS || 5000),
   cacheBlocksTtlMs: Number(process.env.EXPLORER2_CACHE_BLOCKS_TTL_MS || 8000),
   cacheTxTtlMs: Number(process.env.EXPLORER2_CACHE_TX_TTL_MS || 20000),
-  cachePersistPath: process.env.EXPLORER2_CACHE_PERSIST_PATH || ''
+  cachePersistPath: process.env.EXPLORER2_CACHE_PERSIST_PATH || '',
+  rpcTimeout: Number(process.env.EXPLORER2_RPC_TIMEOUT_MS || 30000),
+  rpcMaxRetries: Number(process.env.EXPLORER2_RPC_MAX_RETRIES || 3)
 }
