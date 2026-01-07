@@ -425,13 +425,13 @@ class BlockImporter:
                     self._max_reorg_depth = int(env_val)
                 except ValueError:
                     log.warning(
-                        f"Invalid ANIMICA_MAX_REORG_DEPTH value: {env_val!r}, using default {DEFAULT_MAX_REORG_DEPTH}"
+                        f"Invalid ANIMICA_MAX_REORG_DEPTH value: '{env_val}', using default {DEFAULT_MAX_REORG_DEPTH}"
                     )
                     self._max_reorg_depth = DEFAULT_MAX_REORG_DEPTH
             else:
                 self._max_reorg_depth = DEFAULT_MAX_REORG_DEPTH
 
-        # Validate max_reorg_depth is non-negative
+        # Validate max_reorg_depth is non-negative (handles direct constructor param)
         if self._max_reorg_depth is not None and self._max_reorg_depth < 0:
             log.warning(
                 f"max_reorg_depth must be non-negative, got {self._max_reorg_depth}, using default {DEFAULT_MAX_REORG_DEPTH}"
