@@ -142,9 +142,9 @@ class PerPeerRecentlySent:
 @dataclass(slots=True)
 class ShareSyncConfig:
     request_timeout_sec: float = DEFAULT_REQUEST_TIMEOUT_SEC
-    max_in_flight_batches: int = min(32, DEFAULT_MAX_IN_FLIGHT)  # Increased from 8 for faster share sync
-    fetch_batch_size: int = 512  # Increased from 128 for better throughput
-    inv_batch_size: int = 4096  # Increased from 1024 for larger announcements
+    max_in_flight_batches: int = min(128, DEFAULT_MAX_IN_FLIGHT)  # Massively increased from 32 to 128 for ultra-fast share sync
+    fetch_batch_size: int = 2048  # Massively increased from 512 to 2048 for better throughput
+    inv_batch_size: int = 16384  # Massively increased from 4096 to 16384 for larger announcements
     max_retries: int = 2
     seen_ttl_sec: float = (
         2 * 60

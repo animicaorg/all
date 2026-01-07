@@ -131,9 +131,9 @@ class PerPeerRecentlySent:
 @dataclass(slots=True)
 class MempoolSyncConfig:
     request_timeout_sec: float = DEFAULT_REQUEST_TIMEOUT_SEC
-    max_in_flight_batches: int = min(32, DEFAULT_MAX_IN_FLIGHT)  # Increased from 8 for faster tx sync
-    fetch_batch_size: int = 256  # Increased from 64 for better throughput
-    inv_batch_size: int = 2048  # Increased from 512 for larger announcements
+    max_in_flight_batches: int = min(128, DEFAULT_MAX_IN_FLIGHT)  # Massively increased from 32 to 128 for ultra-fast tx sync
+    fetch_batch_size: int = 1024  # Massively increased from 256 to 1024 for better throughput
+    inv_batch_size: int = 8192  # Massively increased from 2048 to 8192 for larger announcements
     max_retries: int = 2
     seen_ttl_sec: float = 5 * 60  # suppress refetching the same tx for 5 minutes
     per_peer_suppress_sec: float = (
