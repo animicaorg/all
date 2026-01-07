@@ -485,6 +485,84 @@ class ExpExample:
 
 
 # ---------------------------
+# 0x09xx — Snapshots (fast sync)
+# ---------------------------
+
+
+@dataclass(frozen=True)
+class SnapshotInfo:
+    """Information about an available snapshot."""
+    chain_id: int = 0
+    checkpoint_height: int = 0
+    checkpoint_hash: Hash32 = b""
+    timestamp: int = 0
+    blocks_count: int = 0
+    accounts_count: int = 0
+    size_bytes: int = 0
+
+
+@dataclass(frozen=True)
+class SnapshotListReq:
+    """Request list of available snapshots from peer."""
+    msg_id: MsgID = MsgID.SNAPSHOT_LIST_REQ
+    chain_id: Optional[int] = None  # Filter by chain ID, or None for all
+
+
+@dataclass(frozen=True)
+class SnapshotListResp:
+    """Response with list of available snapshots."""
+    msg_id: MsgID = MsgID.SNAPSHOT_LIST_RESP
+    snapshots: List[SnapshotInfo] = dc.field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class SnapshotGetManifest:
+    """Request snapshot manifest for specific checkpoint."""
+    msg_id: MsgID = MsgID.SNAPSHOT_GET_MANIFEST
+    chain_id: int = 0
+    checkpoint_height: int = 0
+
+
+@dataclass(frozen=True)
+class SnapshotManifestData:
+    """Snapshot manifest response."""
+    msg_id: MsgID = MsgID.SNAPSHOT_MANIFEST
+    chain_id: int = 0
+    checkpoint_height: int = 0
+    checkpoint_hash: Hash32 = b""
+    timestamp: int = 0
+    blocks_count: int = 0
+    accounts_count: int = 0
+    storage_keys_count: int = 0
+    # Chunk metadata
+    chunks: List[Dict[str, Any]] = dc.field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class SnapshotGetChunk:
+    """Request a specific chunk of a snapshot."""
+    msg_id: MsgID = MsgID.SNAPSHOT_GET_CHUNK
+    chain_id: int = 0
+    checkpoint_height: int = 0
+    chunk_name: str = ""  # e.g., "blocks.cbor.gz"
+    offset: int = 0  # Byte offset for partial download
+    length: int = 0  # Number of bytes to download (0 = all remaining)
+
+
+@dataclass(frozen=True)
+class SnapshotChunk:
+    """Snapshot chunk data response."""
+    msg_id: MsgID = MsgID.SNAPSHOT_CHUNK
+    chain_id: int = 0
+    checkpoint_height: int = 0
+    chunk_name: str = ""
+    offset: int = 0
+    total_size: int = 0
+    data: bytes = b""
+    is_final: bool = False  # True if this is the last chunk in sequence
+
+
+# ---------------------------
 # Schema fingerprint
 # ---------------------------
 
@@ -536,6 +614,13 @@ def _schema_descriptor() -> str:
         RandBeacon,
         ReceiptHint,
         ExpExample,
+        SnapshotInfo,
+        SnapshotListReq,
+        SnapshotListResp,
+        SnapshotGetManifest,
+        SnapshotManifestData,
+        SnapshotGetChunk,
+        SnapshotChunk,
     ]
     return "|".join(desc(c) for c in classes)
 
