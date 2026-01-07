@@ -358,14 +358,14 @@ Key success factors:
 
 ## Comparison Summary
 
-| Setting | Original | Previous | Ultra-Fast | Multiplier |
-|---------|----------|----------|------------|------------|
-| **Sync Tick** | 50ms | 25ms | **5ms** | 10x |
-| **Max Inflight Blocks** | 512 | 2048 | **16384** | 32x |
-| **Parallel Workers** | 64 | 256 | **2048** | 32x |
-| **Header Batch** | 1024 | 4096 | **16384** | 16x |
-| **Per-Peer Inflight** | 128 | 512 | **2048** | 16x |
-| **Cache (MB)** | 100 | 256 | **1024** | 10x |
+| Setting | Original | Previous | Ultra-Fast | Speed Increase |
+|---------|----------|----------|------------|----------------|
+| **Sync Tick** | 50ms | 25ms | **5ms** | 10x faster |
+| **Max Inflight Blocks** | 512 | 2048 | **16384** | 32x more |
+| **Parallel Workers** | 64 | 256 | **2048** | 32x more |
+| **Header Batch** | 1024 | 4096 | **16384** | 16x larger |
+| **Per-Peer Inflight** | 128 | 512 | **2048** | 16x more |
+| **Cache (MB)** | 100 | 256 | **1024** | 10x larger |
 | **Expected Throughput** | 2-5 bps | 8-50 bps | **100-1000 bps** | 20-200x |
 
 **Legend:** bps = blocks per second

@@ -67,7 +67,7 @@ class BlockFetcher(Protocol):
 
 @dataclass(slots=True)
 class BlocksSyncConfig:
-    max_parallel: int = min(2048, DEFAULT_MAX_IN_FLIGHT)  # Massively increased from 256 to 2048 for hundreds-to-thousands blocks/sec sync
+    max_parallel: int = 2048  # Massively increased from 256 to 2048 for hundreds-to-thousands blocks/sec sync
     request_timeout_sec: float = DEFAULT_REQUEST_TIMEOUT_SEC
     max_retries: int = 3
     jitter_frac: float = 0.15

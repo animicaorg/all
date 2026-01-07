@@ -67,7 +67,7 @@ export SYNC_TICK_MS=10
 | Environment Variable | Original | Previous | Ultra-Fast | Description |
 |---------------------|----------|----------|------------|-------------|
 | `SYNC_TICK_MS` | 50 | 25 | **5** | Sync loop interval (ms) |
-| `SYNC_MAX_INFLIGHT_HEADERS` | 256 | 1024 | **8192** | Max headers in-flight |
+| `ANIMICA_SYNC_MAX_INFLIGHT_HEADERS` | 256 | 1024 | **8192** | Max headers in-flight |
 | `ANIMICA_SYNC_MAX_INFLIGHT_BLOCKS` | 512 | 2048 | **16384** | Max blocks in-flight |
 | `ANIMICA_P2P_SYNC_INFLIGHT_PER_PEER` | 128 | 512 | **2048** | Max per-peer requests |
 | `ANIMICA_P2P_SYNC_HEADERS_BATCH` | 1024 | 4096 | **16384** | Headers per request |
@@ -225,7 +225,7 @@ fi
 ### Revert to Previous Optimization (1GB memory)
 ```bash
 export ANIMICA_SYNC_MAX_INFLIGHT_BLOCKS=2048
-export SYNC_MAX_INFLIGHT_HEADERS=1024
+export ANIMICA_SYNC_MAX_INFLIGHT_BLOCKS=2048
 export ANIMICA_P2P_SYNC_INFLIGHT_PER_PEER=512
 export ANIMICA_P2P_SYNC_HEADERS_BATCH=4096
 export SYNC_TICK_MS=25
