@@ -12,6 +12,7 @@
 - **AI & Quantum Integration**: Off-chain compute coordination via AICF (AI Capability Framework)
 - **Multi-Network Support**: Mainnet, testnet, devnet configurations with isolated state
 - **Developer Tools**: Studio IDE, contract templates, multi-language SDKs (Python, TypeScript, Rust)
+- **Fast Sync with Snapshots**: Bootstrap new nodes in minutes using pre-built chain snapshots at checkpoints
 
 ## 📁 Repository Structure
 
@@ -117,7 +118,27 @@ animica node up --with-miner        # include miner service
 animica node status                 # chain head, peers, sync info
 animica node head                   # latest block header
 animica peer list                   # connected peers (expect >0)
+animica sync status                 # detailed sync progress
 ```
+
+**💡 Fast Sync with Snapshots:**
+
+New nodes can bootstrap much faster using chain snapshots:
+
+```bash
+# Enable snapshot sync (enabled by default)
+export ANIMICA_SNAPSHOT_SYNC_ENABLED=true
+export ANIMICA_SNAPSHOT_RPC_URL=http://snapshots.animica.org:8545/rpc
+
+# Start node - automatically downloads snapshot if available
+animica node up
+
+# Or manually download/import snapshot
+animica snapshot list
+animica snapshot import /path/to/snapshot
+```
+
+See [CHAIN_SNAPSHOT_SYNC.md](CHAIN_SNAPSHOT_SYNC.md) for details.
 
 5) **Ensure peers connect** (connectivity checklist):
 
