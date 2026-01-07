@@ -91,7 +91,7 @@ class AccessTracker:
             t = tracker.checkpoint()
             try:
                 ...
-            except:
+            except Exception:
                 tracker.rollback(t)
                 raise
             else:

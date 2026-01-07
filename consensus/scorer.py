@@ -67,6 +67,13 @@ from .policy import PoiesPolicy
 from .types import MicroNat, ProofType
 
 # ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
+# Maximum safe value for micro-nats (1 billion nats in micro-nats)
+MAX_MICRO = 10 ** 15
+
+# ---------------------------------------------------------------------------
 # Hook interface & defaults
 # ---------------------------------------------------------------------------
 
@@ -84,10 +91,14 @@ def _to_micro(x: float) -> MicroNat:
     """Convert a non-negative real 'nats' weight to integer micro-nats deterministically."""
     if not math.isfinite(x) or x <= 0.0:
         return 0
+    # Prevent extremely large values that could cause issues
+    if x > MAX_MICRO / 1_000_000:
+        return MAX_MICRO
     # Round to nearest integer micro-nat (ties to away-from-zero via round in py3 == bankers? We
     # prefer conventional round; downstream caps keep determinism). Use +1e-12 to avoid
     # pathological float errors near .5 boundaries.
-    return int(round(x * 1_000_000 + 1e-12))
+    result = int(round(x * 1_000_000 + 1e-12))
+    return min(result, MAX_MICRO)
 
 
 # ---------------------------------------------------------------------------

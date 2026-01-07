@@ -37,6 +37,7 @@ c_out, stats = apply_all_caps(c_in, pol)
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import (Any, Dict, Iterable, List, Mapping, MutableSequence,
                     Sequence, Tuple)
@@ -86,6 +87,10 @@ def clip_total_gamma(total: float, policy: Any) -> float:
     )
     if total <= 0:
         return 0.0
+    if not math.isfinite(total):
+        return 0.0
+    if not math.isfinite(gamma):
+        return 1.0
     if total <= gamma:
         return 1.0
     return gamma / float(total)

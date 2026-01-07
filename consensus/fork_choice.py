@@ -148,6 +148,7 @@ class ForkChoice:
         genesis_weight_micro: WeightMicro = 0,
         genesis_height: int = 0,
         max_reorg_depth: Optional[int] = None,
+        max_orphans: int = 10000,  # Limit orphan storage to prevent DoS
     ) -> None:
         g = _hex_to_bytes(genesis_hash)
         if genesis_weight_micro < 0:
@@ -160,6 +161,7 @@ class ForkChoice:
             h=g, height=int(genesis_height), cum_weight_micro=int(genesis_weight_micro)
         )
         self.max_reorg_depth = max_reorg_depth
+        self.max_orphans = max_orphans  # Maximum orphans to prevent DoS
 
         self.nodes[g] = Node(
             h=g,
@@ -244,6 +246,14 @@ class ForkChoice:
 
         if ph not in self.nodes:
             # Buffer as orphan
+            # Check total orphan count to prevent DoS
+            total_orphans = sum(len(v) for v in self.orphans.values())
+            if total_orphans >= self.max_orphans:
+                # Evict oldest orphans (first parent in dict)
+                if self.orphans:
+                    oldest_parent = next(iter(self.orphans))
+                    del self.orphans[oldest_parent]
+            
             self.orphans.setdefault(ph, []).append((hh, int(height), int(weight_micro)))
             return self._result(accepted=False, new_tip=self._best.h)
 
