@@ -137,7 +137,14 @@ export ANIMICA_SNAPSHOT_TIMEOUT=600
 animica node up
 ```
 
-**Note:** Currently, automatic snapshot bootstrap only works with local snapshot files. The snapshot must already exist in the local `~/.animica/snapshots/` directory. Remote HTTP download of snapshots is planned for a future release.
+**Note:** Snapshot bootstrap is now fully implemented with automatic download capability. The node will:
+1. Check if snapshot sync is enabled and configured
+2. Query available snapshots from the configured RPC endpoint
+3. Download the best snapshot (highest height) to a temporary directory
+4. Verify chunk hashes for integrity
+5. Import the snapshot into local databases
+6. Continue P2P sync from the snapshot checkpoint
+7. Fall back to normal P2P sync if snapshot bootstrap fails
 
 ## Configuration
 
@@ -355,9 +362,10 @@ Delete a snapshot.
 
 ## Future Improvements
 
-1. **HTTP Chunk Download**: Direct download of snapshot chunks via HTTP (in progress)
-   - Currently only local snapshots are supported for auto-bootstrap
-   - Remote download requires manual `animica snapshot import` with local path
+1. **HTTP Chunk Download**: ✅ **COMPLETED** - Direct download of snapshot chunks via HTTP
+   - Implemented with RPC method fallback
+   - Downloads to temporary directory
+   - Automatic cleanup after import
 2. **Torrent Distribution**: P2P distribution of snapshots via BitTorrent
 3. **Incremental Snapshots**: Delta snapshots between checkpoints
 4. **Streaming Import**: Import while downloading (pipelined)
