@@ -204,7 +204,7 @@ animica node restart
 
 Or revert the code:
 ```bash
-git revert 48572150  # Use the actual commit hash
+git revert <commit-hash>  # Replace with actual commit hash from git log
 ```
 
 ## FAQ
