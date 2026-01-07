@@ -153,7 +153,7 @@ export class ExplorerService {
         return normalizeBlockSummary(raw)
       })
     )
-    return blocks.filter((block: BlockSummary | null): block is BlockSummary => Boolean(block))
+    return blocks.filter((block): block is BlockSummary => block !== null)
   }
 
   private async safeRpc<T>(fn: () => Promise<T>): Promise<T>
