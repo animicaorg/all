@@ -3105,6 +3105,7 @@ def _mine_once(
                     poiesPolicyRoot=template.poiesPolicyRoot,
                     pqAlgPolicyRoot=template.pqAlgPolicyRoot,
                     thetaMicro=template.thetaMicro,
+                    workType=getattr(template, 'workType', 0),
                     nonce=nonce_val,
                     extra=template.extra,
                 )
@@ -3190,6 +3191,7 @@ def _mine_once(
                 poiesPolicyRoot=header_template.poiesPolicyRoot,
                 pqAlgPolicyRoot=header_template.pqAlgPolicyRoot,
                 thetaMicro=header_template.thetaMicro,
+                workType=getattr(header_template, 'workType', 0),
                 nonce=0,
                 extra=header_template.extra,
             )
@@ -3248,6 +3250,7 @@ def _mine_once(
                 poiesPolicyRoot=header_template.poiesPolicyRoot,
                 pqAlgPolicyRoot=header_template.pqAlgPolicyRoot,
                 thetaMicro=header_template.thetaMicro,
+                workType=getattr(header_template, 'workType', 0),
                 nonce=valid_nonce,
                 extra=header_template.extra,
             )
