@@ -129,6 +129,7 @@ def _iter_builtin_modules() -> Iterable[str]:
         "rpc.methods.da",
         "rpc.methods.faucet",
         "rpc.methods.p2p",
+        "rpc.methods.snapshot",
         # "rpc.methods.account",  # disabled: module does not exist yet
         "rpc.methods.marketplace",
         # "rpc.methods.payments",  # disabled: depends on consensus.PolicyProvider which may be absent
