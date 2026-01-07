@@ -113,17 +113,24 @@ def assess_tx_submission_readiness(
         "last_header_error": last_header_error,
     }
 
+    # Primary check: node must be at highest height to send transactions
+    # This is the strict requirement - head_height must be >= best_header_height
+    if head_height is not None and best_header_height is not None:
+        if head_height < best_header_height:
+            # Node is behind, reject transaction submission
+            return False, info
+    
+    # If we reach here, either heights are equal/ahead, or heights are unknown
+    # For unknown heights, allow legacy checks to determine readiness
+    
     if synchronized is True:
         return True, info
     if syncing_flag is False:
         return True, info
     if phase in {"SYNCED", "IDLE", "TARGET_REACHED"}:
         return True, info
-    if phase in {"HEADERS", "SYNCING_HEADERS"}:
-        if head_height is not None and best_header_height is not None:
-            if head_height >= best_header_height:
-                return True, info
 
+    # If heights are at tip and no work in progress, allow
     empty_inflight = (
         pending_header_batches == 0
         and in_flight_headers == 0
@@ -132,11 +139,7 @@ def assess_tx_submission_readiness(
     )
 
     if head_height is not None and best_header_height is not None:
-        delta = best_header_height - head_height
-        if delta <= 0 and (best_block_height is None or best_block_height >= best_header_height):
-            if empty_inflight:
-                return True, info
-        if delta <= tip_tolerance and empty_inflight:
+        if head_height >= best_header_height and empty_inflight:
             return True, info
 
     if (
