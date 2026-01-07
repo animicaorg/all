@@ -97,6 +97,14 @@ _POW_LOG_AT: dict[str, float] = {}
 # malicious or accidental deep chain switches that destabilize the network.
 DEFAULT_MAX_REORG_DEPTH = 96
 
+# Snapshot creation interval
+# Create on-disk snapshots every N blocks for fast sync
+# Can be overridden via ANIMICA_SNAPSHOT_INTERVAL environment variable
+DEFAULT_SNAPSHOT_INTERVAL = int(os.getenv("ANIMICA_SNAPSHOT_INTERVAL", "2000"))
+
+# Enable/disable automatic snapshot creation
+SNAPSHOT_AUTO_CREATE = os.getenv("ANIMICA_SNAPSHOT_AUTO_CREATE", "true").lower() in ("true", "1", "yes", "on")
+
 
 class ImportErrorCode(str):
     INVALID = "invalid"
@@ -391,6 +399,10 @@ class BlockImporter:
         "_state_snapshots",
         "_state_snapshot_limit",
         "_max_reorg_depth",
+        "_snapshot_interval",
+        "_snapshot_auto_create",
+        "_created_snapshots",
+        "_pending_snapshots",
     )
 
     def __init__(
@@ -453,6 +465,13 @@ class BlockImporter:
         self._state_snapshot_limit = int(
             os.getenv("ANIMICA_STATE_SNAPSHOT_CACHE", "2048") or 2048
         )
+        
+        # Disk snapshot tracking for fast sync
+        self._snapshot_interval = DEFAULT_SNAPSHOT_INTERVAL
+        self._snapshot_auto_create = SNAPSHOT_AUTO_CREATE
+        self._created_snapshots: set[int] = set()  # Track which snapshots we've created
+        self._pending_snapshots: set[int] = set()  # Track snapshots in progress
+        
         self._init_fork_choice_from_db()
 
     # --- Basics -------------------------------------------------------------
@@ -1174,6 +1193,10 @@ class BlockImporter:
             if not _is_instant_block(header):
                 canonical_height += 1
                 self.block_db.set_canonical_height(canonical_height)
+                
+                # Check if we should create a disk snapshot at this height
+                if self._should_create_disk_snapshot(height):
+                    self._create_disk_snapshot(height)
             
             ts = _timestamp_of(header)
             if ts is not None:
@@ -1191,6 +1214,11 @@ class BlockImporter:
             if old_height is not None and old_height not in self._state_snapshots:
                 self._capture_state_snapshot(old_height)
             self._apply_state_reorg(detached_list, attached_list, best)
+        
+        # Check for and create missing snapshots (run periodically, not on every block)
+        # Only check every 100 blocks to avoid overhead
+        if best.height % 100 == 0:
+            self._check_and_create_missing_snapshots(best.height)
 
     def _apply_state_reorg(
         self,
@@ -1453,6 +1481,167 @@ class BlockImporter:
             : max(0, len(self._state_snapshots) - self._state_snapshot_limit)
         ]:
             self._state_snapshots.pop(height, None)
+
+    def _should_create_disk_snapshot(self, height: int) -> bool:
+        """
+        Check if a disk snapshot should be created for the given height.
+        
+        Snapshots are created every SNAPSHOT_INTERVAL blocks (default 2000)
+        to enable fast sync for new nodes.
+        """
+        if not self._snapshot_auto_create:
+            return False
+        if height <= 0:
+            return False
+        if self._snapshot_interval <= 0:
+            return False
+        if height % self._snapshot_interval != 0:
+            return False
+        # Don't create if already created or in progress
+        if height in self._created_snapshots or height in self._pending_snapshots:
+            return False
+        return True
+
+    def _create_disk_snapshot(self, height: int) -> None:
+        """
+        Create a disk snapshot at the given height asynchronously.
+        
+        This snapshot can be used by new nodes to fast sync without
+        downloading all blocks from genesis.
+        """
+        if height in self._pending_snapshots or height in self._created_snapshots:
+            return
+        
+        # Mark as pending to prevent duplicate creation
+        self._pending_snapshots.add(height)
+        
+        try:
+            # Lazy import to avoid circular dependencies
+            from core.db.snapshot import export_snapshot
+            from pathlib import Path
+            import threading
+            
+            def create_snapshot_async():
+                try:
+                    # Get snapshot directory
+                    chain_id = self.params.chain_id
+                    data_dir = os.environ.get("ANIMICA_DATA_DIR", "~/.animica")
+                    snapshots_dir = Path(data_dir).expanduser() / "snapshots"
+                    snapshots_dir.mkdir(parents=True, exist_ok=True)
+                    
+                    snapshot_dir = snapshots_dir / f"chain-{chain_id}-height-{height}"
+                    
+                    # Skip if snapshot already exists
+                    if snapshot_dir.exists():
+                        log.info(
+                            f"Snapshot already exists at height {height}, skipping creation",
+                            extra={"height": height, "path": str(snapshot_dir)}
+                        )
+                        self._created_snapshots.add(height)
+                        self._pending_snapshots.discard(height)
+                        return
+                    
+                    log.info(
+                        f"Creating disk snapshot at height {height}",
+                        extra={"height": height, "path": str(snapshot_dir)}
+                    )
+                    
+                    start_time = time.time()
+                    
+                    # Create the snapshot
+                    manifest = export_snapshot(
+                        block_db=self.block_db,
+                        state_db=self.state_db if self.state_db else None,
+                        checkpoint_height=height,
+                        output_dir=snapshot_dir,
+                        compress=True,
+                    )
+                    
+                    elapsed = time.time() - start_time
+                    
+                    log.info(
+                        f"Snapshot created successfully at height {height}",
+                        extra={
+                            "height": height,
+                            "blocks": manifest.blocks_count,
+                            "accounts": manifest.accounts_count,
+                            "elapsed_seconds": round(elapsed, 2),
+                            "path": str(snapshot_dir),
+                        }
+                    )
+                    
+                    self._created_snapshots.add(height)
+                    
+                except Exception as e:
+                    log.warning(
+                        f"Failed to create snapshot at height {height}: {e}",
+                        extra={"height": height, "error": str(e)},
+                        exc_info=True
+                    )
+                finally:
+                    self._pending_snapshots.discard(height)
+            
+            # Create snapshot in background thread to avoid blocking block import
+            thread = threading.Thread(
+                target=create_snapshot_async,
+                name=f"snapshot-{height}",
+                daemon=True
+            )
+            thread.start()
+            
+        except Exception as e:
+            log.warning(
+                f"Failed to initiate snapshot creation at height {height}: {e}",
+                extra={"height": height, "error": str(e)}
+            )
+            self._pending_snapshots.discard(height)
+
+    def _check_and_create_missing_snapshots(self, current_height: int) -> None:
+        """
+        Check for missing snapshots and create them if needed.
+        
+        When a node is past snapshot intervals (e.g., 2000, 4000, 6000),
+        this ensures those snapshots exist for future sync operations.
+        """
+        if not self._snapshot_auto_create:
+            return
+        if self._snapshot_interval <= 0:
+            return
+        if current_height <= self._snapshot_interval:
+            return
+        
+        # Find all snapshot heights we should have
+        missing_heights = []
+        for h in range(self._snapshot_interval, current_height, self._snapshot_interval):
+            if h not in self._created_snapshots and h not in self._pending_snapshots:
+                # Quick check: does snapshot already exist on disk?
+                try:
+                    chain_id = self.params.chain_id
+                    data_dir = os.environ.get("ANIMICA_DATA_DIR", "~/.animica")
+                    from pathlib import Path
+                    snapshots_dir = Path(data_dir).expanduser() / "snapshots"
+                    snapshot_dir = snapshots_dir / f"chain-{chain_id}-height-{h}"
+                    
+                    if snapshot_dir.exists():
+                        self._created_snapshots.add(h)
+                    else:
+                        missing_heights.append(h)
+                except Exception:
+                    missing_heights.append(h)
+        
+        if missing_heights:
+            log.info(
+                f"Found {len(missing_heights)} missing snapshots, will create in background",
+                extra={
+                    "missing_count": len(missing_heights),
+                    "heights": missing_heights[:10],  # Log first 10
+                    "current_height": current_height,
+                }
+            )
+            
+            # Create missing snapshots (oldest first, but limited to avoid overwhelming)
+            for height in sorted(missing_heights)[:3]:  # Create max 3 at a time
+                self._create_disk_snapshot(height)
 
     def _rebuild_state_from_canonical(self, target_height: int) -> None:
         if self.state_db is None:
