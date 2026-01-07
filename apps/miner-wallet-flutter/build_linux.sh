@@ -171,7 +171,7 @@ if [[ -n "$APPIMAGE_TOOL_URL" ]]; then
         
         # Create wrapper script
         cat > "$APPDIR/usr/bin/animica-miner-wallet-wrapper" << 'WRAPPER_EOF'
-#!/bin/bash
+#!/usr/bin/env bash
 SELF=$(readlink -f "$0")
 HERE=${SELF%/*}
 export LD_LIBRARY_PATH="${HERE}:${HERE}/lib:${LD_LIBRARY_PATH}"
@@ -203,7 +203,7 @@ DESKTOP_EOF
         
         # Create AppRun script
         cat > "$APPDIR/AppRun" << 'APPRUN_EOF'
-#!/bin/bash
+#!/usr/bin/env bash
 SELF=$(readlink -f "$0")
 HERE=${SELF%/*}
 export PATH="${HERE}/usr/bin:${PATH}"
