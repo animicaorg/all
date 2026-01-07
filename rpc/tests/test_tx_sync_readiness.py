@@ -73,3 +73,57 @@ def test_tx_sync_gate_blocks_when_behind(monkeypatch: pytest.MonkeyPatch) -> Non
 
     with pytest.raises(rpc_errors.TemporarilyUnavailable):
         tx_methods._sync_gate_tx_submit()
+
+
+def test_tx_sync_gate_blocks_when_one_block_behind(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test that even being 1 block behind blocks transaction submission."""
+    status = {
+        "phase": "SYNCED",
+        "synchronized": True,
+        "head_height": 99,
+        "best_header_height": 100,
+        "in_flight_headers": 0,
+        "in_flight_blocks": 0,
+        "queued_blocks_count": 0,
+    }
+    svc = _Svc(status, status)
+    monkeypatch.setattr(deps, "get_ctx", lambda: _Ctx(svc))
+
+    with pytest.raises(rpc_errors.TemporarilyUnavailable):
+        tx_methods._sync_gate_tx_submit()
+
+
+def test_tx_sync_gate_allows_at_highest_height(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test that being at the highest height allows transaction submission."""
+    status = {
+        "phase": "SYNCED",
+        "synchronized": True,
+        "head_height": 100,
+        "best_header_height": 100,
+        "in_flight_headers": 0,
+        "in_flight_blocks": 0,
+        "queued_blocks_count": 0,
+    }
+    svc = _Svc(status, status)
+    monkeypatch.setattr(deps, "get_ctx", lambda: _Ctx(svc))
+
+    # Should not raise
+    tx_methods._sync_gate_tx_submit()
+
+
+def test_tx_sync_gate_allows_ahead_of_network(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test that being ahead of the network allows transaction submission."""
+    status = {
+        "phase": "IDLE",
+        "synchronized": True,
+        "head_height": 105,
+        "best_header_height": 100,
+        "in_flight_headers": 0,
+        "in_flight_blocks": 0,
+        "queued_blocks_count": 0,
+    }
+    svc = _Svc(status, status)
+    monkeypatch.setattr(deps, "get_ctx", lambda: _Ctx(svc))
+
+    # Should not raise
+    tx_methods._sync_gate_tx_submit()
