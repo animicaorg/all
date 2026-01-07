@@ -73,6 +73,9 @@ from p2p.sync.cache_store import SyncCacheConfig, SyncCacheState, SyncCacheStore
 
 log = logging.getLogger("animica.p2p.service")
 
+# Sync performance tuning constants
+MIN_SYNC_TICK_SEC: float = 0.025  # Minimum sync tick interval (25ms)
+
 DEFAULT_BOOTSTRAP_SEEDS = [
     "/dns4/mainnet.animica.org/tcp/30333",
     "/ip4/144.126.133.21/tcp/30333",
@@ -1103,7 +1106,7 @@ class P2PService:
         self._sync_requested = False
         self._sync_requested_at: Optional[float] = None
         tick_ms = float(_env_value("SYNC_TICK_MS", "ANIMICA_SYNC_TICK_MS", default="25") or 25)  # Reduced from 50ms to 25ms for faster sync
-        self._sync_tick_sec = max(0.025, tick_ms / 1000.0)  # Reduced min from 0.05 to 0.025
+        self._sync_tick_sec = max(MIN_SYNC_TICK_SEC, tick_ms / 1000.0)  # Use named constant for minimum
         self._sync_boost_until: Optional[float] = None
         self._sync_boost_tick_sec: Optional[float] = None
         self._sync_target_height: Optional[int] = None
