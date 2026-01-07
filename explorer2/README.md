@@ -99,9 +99,19 @@ pnpm -C explorer2/api start
 
 ## Docker deployment
 
+The explorer can be deployed using Docker Compose. By default, it will try to connect to an RPC node running on the host machine.
+
 ```bash
+# Deploy with default settings (connects to host.docker.internal:8545/rpc)
 docker compose -f explorer2/docker/docker-compose.explorer2.yml up --build
+
+# Deploy with custom RPC URL
+EXPLORER2_RPC_URL=http://your-rpc-node:8545/rpc docker compose -f explorer2/docker/docker-compose.explorer2.yml up --build
 ```
+
+The web UI will be available at `http://localhost:3001` and the API at `http://localhost:8081`.
+
+**Note**: The Docker deployment uses `host.docker.internal` to access services running on the host machine. If your RPC node is running elsewhere, set the `EXPLORER2_RPC_URL` environment variable to point to it.
 
 ## Environment variables
 
