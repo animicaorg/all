@@ -7291,6 +7291,7 @@ class P2PService:
                     },
                 )
                 self._expire_inflight_headers()
+                self._expire_inflight_blocks()
                 self._maybe_mark_block_stalled(now)
                 network_best_height = self._network_best_height()
                 if (
