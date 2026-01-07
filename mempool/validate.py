@@ -245,13 +245,43 @@ def _check_payload_shape(tx: "Tx") -> None:
     Basic kind-aware payload sanity checks. These are deliberately loose to
     remain compatible with VM evolution. Tight checks belong in execution.
     """
+    # Unified kind mapping to avoid duplication
+    KIND_MAP = {0: "transfer", 1: "deploy", 2: "call", 3: "coinbase"}
+    
     kind = (getattr(tx, "kind", None) or "").lower()
     
     # Handle integer kind values (e.g., TxKind enum)
     if isinstance(kind, int):
-        # TxKind: TRANSFER=0, DEPLOY=1, CALL=2, COINBASE=3
-        kind_map = {0: "transfer", 1: "deploy", 2: "call", 3: "coinbase"}
-        kind = kind_map.get(kind, "")
+        kind = KIND_MAP.get(kind, str(kind))
+    
+    # Basic sanity: data field should exist and be bounded
+    try:
+        data = getattr(tx, "data", None)
+        if data is None and hasattr(tx, "unsigned"):
+            data = getattr(tx.unsigned, "data", None)
+        
+        if data is not None:
+            # Ensure data is bytes-like
+            if not isinstance(data, (bytes, bytearray)):
+                raise StatelessValidationError(
+                    "MalformedPayload",
+                    "Transaction data must be bytes."
+                )
+            # Prevent extremely large data fields (defense in depth)
+            if len(data) > 10_485_760:  # 10 MiB absolute maximum
+                raise StatelessValidationError(
+                    "DataTooLarge",
+                    f"Transaction data too large: {len(data)} bytes (max 10 MiB)"
+                )
+    except StatelessValidationError:
+        raise
+    except Exception:
+        # Don't fail on edge cases in payload introspection
+        pass
+    
+    # Re-extract kind if integer after data check
+    if isinstance(kind, int):
+        kind = KIND_MAP.get(kind, "")
     elif hasattr(kind, "name"):
         # Handle enum with .name attribute
         kind = kind.name.lower()
@@ -261,8 +291,7 @@ def _check_payload_shape(tx: "Tx") -> None:
         unsigned = tx.unsigned
         kind_val = getattr(unsigned, "kind", None)
         if isinstance(kind_val, int):
-            kind_map = {0: "transfer", 1: "deploy", 2: "call", 3: "coinbase"}
-            kind = kind_map.get(kind_val, "")
+            kind = KIND_MAP.get(kind_val, "")
         elif hasattr(kind_val, "name"):
             kind = kind_val.name.lower()
         data = getattr(unsigned, "data", b"") or getattr(getattr(unsigned, "payload", None), "data", b"")
@@ -323,6 +352,32 @@ def _precheck_pq_signature(tx: "Tx") -> None:
     Raises StatelessValidationError if verification fails or fields are missing.
     """
     alg_id, pubkey, signature = _extract_sig_tuple(tx)
+
+    # Validate signature components before verification
+    if not isinstance(alg_id, int) or alg_id < 0:
+        raise StatelessValidationError(
+            "InvalidAlgId", f"Invalid algorithm ID: {alg_id}"
+        )
+    if alg_id > 100000:  # Sanity check for unreasonably large alg_id
+        raise StatelessValidationError(
+            "InvalidAlgId", f"Algorithm ID too large: {alg_id}"
+        )
+    if not isinstance(pubkey, (bytes, bytearray)) or len(pubkey) == 0:
+        raise StatelessValidationError(
+            "InvalidPubkey", "Public key must be non-empty bytes"
+        )
+    if len(pubkey) > 10000:  # Sanity check (largest PQ keys are ~2KB)
+        raise StatelessValidationError(
+            "InvalidPubkey", f"Public key too large: {len(pubkey)} bytes"
+        )
+    if not isinstance(signature, (bytes, bytearray)) or len(signature) == 0:
+        raise StatelessValidationError(
+            "InvalidSignature", "Signature must be non-empty bytes"
+        )
+    if len(signature) > 50000:  # Sanity check (largest PQ sigs are ~16KB)
+        raise StatelessValidationError(
+            "InvalidSignature", f"Signature too large: {len(signature)} bytes"
+        )
 
     # Build message bytes using whichever API the Tx exposes.
     msg = _sign_bytes_for_tx(tx)

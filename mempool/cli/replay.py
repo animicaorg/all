@@ -514,7 +514,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                         try:
                             jobs.put(raw_hex, timeout=0.1)
                             break
-                        except:
+                        except Exception:
                             # allow graceful exit checks
                             if stop_ev.is_set():
                                 break

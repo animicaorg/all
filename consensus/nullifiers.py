@@ -90,6 +90,12 @@ class MemoryNullifierStore:
     def __init__(self, cfg: Config):
         if cfg.window < 0:
             raise ValueError("window must be non-negative")
+        if cfg.max_entries < 0:
+            raise ValueError("max_entries must be non-negative")
+        if cfg.window > 10_000_000:
+            raise ValueError("window too large - max 10M blocks")
+        if cfg.max_entries > 100_000_000:
+            raise ValueError("max_entries too large - max 100M entries")
         self.cfg = cfg
         self._by_null: Dict[bytes, int] = {}
         self._by_height: Dict[int, set[bytes]] = {}
@@ -99,6 +105,10 @@ class MemoryNullifierStore:
 
     def seen(self, nullifier: bytes) -> bool:
         """Return True if this nullifier is currently active within the window."""
+        if not isinstance(nullifier, (bytes, bytearray)):
+            return False
+        if len(nullifier) == 0 or len(nullifier) > 256:
+            return False
         h = self._by_null.get(nullifier)
         return h is not None
 
@@ -110,6 +120,12 @@ class MemoryNullifierStore:
         """
         if height < 0:
             raise ValueError("height must be non-negative")
+        if not isinstance(nullifier, (bytes, bytearray)):
+            raise TypeError("nullifier must be bytes or bytearray")
+        if len(nullifier) == 0:
+            raise ValueError("nullifier cannot be empty")
+        if len(nullifier) > 256:
+            raise ValueError("nullifier too large - max 256 bytes")
         existing = self._by_null.get(nullifier)
         if existing is not None:
             # Keep earliest; nothing to do if already present.
