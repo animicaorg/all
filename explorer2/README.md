@@ -116,11 +116,22 @@ docker compose -f explorer2/docker/docker-compose.explorer2.yml up --build
 | `EXPLORER2_CORS_ORIGIN` | CORS allowed origins | `*` |
 | `EXPLORER2_LOG_LEVEL` | API log level | `info` |
 | `EXPLORER2_CACHE_HEAD_TTL_MS` | Cache TTL for head endpoint | `5000` |
-| `EXPLORER2_CACHE_BLOCKS_TTL_MS` | Cache TTL for blocks | `8000` |
+| `EXPLORER2_CACHE_BLOCKS_TTL_MS` | Cache TTL for recent blocks (within 10 blocks of head) | `8000` |
 | `EXPLORER2_CACHE_TX_TTL_MS` | Cache TTL for transactions | `20000` |
 | `EXPLORER2_CACHE_PERSIST_PATH` | Cache persistence file path (enables warm-start cache) | unset |
 | `EXPLORER2_RPC_TIMEOUT_MS` | RPC request timeout | `30000` |
 | `EXPLORER2_RPC_MAX_RETRIES` | Max retry attempts for RPC calls | `3` |
+
+## Caching Strategy
+
+Explorer2 implements a **tiered caching system** to minimize RPC load:
+
+- **Recent blocks** (within 10 blocks of head): Cached with configurable TTL (default 8s) since they may be reorged
+- **Finalized blocks** (older than 10 blocks): Cached for 24 hours since they are immutable
+- **Head data**: Cached for 5 seconds to balance real-time updates with performance
+- **Transactions**: Cached for 20 seconds
+
+This approach dramatically reduces repeated RPC calls for historical data while keeping recent blockchain state fresh. When `EXPLORER2_CACHE_PERSIST_PATH` is set, the cache persists to disk and survives restarts for even better performance.
 
 ## Connection Modes
 
