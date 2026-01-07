@@ -245,13 +245,14 @@ def _check_payload_shape(tx: "Tx") -> None:
     Basic kind-aware payload sanity checks. These are deliberately loose to
     remain compatible with VM evolution. Tight checks belong in execution.
     """
+    # Unified kind mapping to avoid duplication
+    KIND_MAP = {0: "transfer", 1: "deploy", 2: "call", 3: "coinbase"}
+    
     kind = (getattr(tx, "kind", None) or "").lower()
     
     # Handle integer kind values (e.g., TxKind enum)
     if isinstance(kind, int):
-        # Map common kinds
-        kind_map = {0: "call", 1: "deploy", 2: "transfer", 3: "coinbase"}
-        kind = kind_map.get(kind, str(kind))
+        kind = KIND_MAP.get(kind, str(kind))
     
     # Basic sanity: data field should exist and be bounded
     try:
@@ -277,10 +278,10 @@ def _check_payload_shape(tx: "Tx") -> None:
     except Exception:
         # Don't fail on edge cases in payload introspection
         pass
+    
+    # Re-extract kind if integer after data check
     if isinstance(kind, int):
-        # TxKind: TRANSFER=0, DEPLOY=1, CALL=2, COINBASE=3
-        kind_map = {0: "transfer", 1: "deploy", 2: "call", 3: "coinbase"}
-        kind = kind_map.get(kind, "")
+        kind = KIND_MAP.get(kind, "")
     elif hasattr(kind, "name"):
         # Handle enum with .name attribute
         kind = kind.name.lower()
@@ -290,8 +291,7 @@ def _check_payload_shape(tx: "Tx") -> None:
         unsigned = tx.unsigned
         kind_val = getattr(unsigned, "kind", None)
         if isinstance(kind_val, int):
-            kind_map = {0: "transfer", 1: "deploy", 2: "call", 3: "coinbase"}
-            kind = kind_map.get(kind_val, "")
+            kind = KIND_MAP.get(kind_val, "")
         elif hasattr(kind_val, "name"):
             kind = kind_val.name.lower()
         data = getattr(unsigned, "data", b"") or getattr(getattr(unsigned, "payload", None), "data", b"")

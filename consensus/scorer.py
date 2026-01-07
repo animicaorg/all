@@ -67,6 +67,13 @@ from .policy import PoiesPolicy
 from .types import MicroNat, ProofType
 
 # ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
+# Maximum safe value for micro-nats (1 billion nats in micro-nats)
+MAX_MICRO = 10 ** 15
+
+# ---------------------------------------------------------------------------
 # Hook interface & defaults
 # ---------------------------------------------------------------------------
 
@@ -85,7 +92,6 @@ def _to_micro(x: float) -> MicroNat:
     if not math.isfinite(x) or x <= 0.0:
         return 0
     # Prevent extremely large values that could cause issues
-    MAX_MICRO = 10 ** 15  # 1 billion nats in micro-nats
     if x > MAX_MICRO / 1_000_000:
         return MAX_MICRO
     # Round to nearest integer micro-nat (ties to away-from-zero via round in py3 == bankers? We

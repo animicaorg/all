@@ -75,6 +75,9 @@ class NegativeAmount(ExecError):
 # Internal helpers
 # =============================================================================
 
+# Maximum safe balance value to prevent overflow (2^256 - 1)
+MAX_BALANCE = 2**256 - 1
+
 
 def _ensure_non_negative(amount: int) -> None:
     if amount < 0:
@@ -84,7 +87,6 @@ def _ensure_non_negative(amount: int) -> None:
 def _safe_add(a: int, b: int) -> int:
     # Python ints are unbounded; keep a guard for semantic clarity.
     # Also protect against extremely large values that could cause issues
-    MAX_BALANCE = 2**256 - 1  # Maximum safe balance value
     if a < 0 or b < 0:
         raise ExecError("negative balance component")
     res = a + b
