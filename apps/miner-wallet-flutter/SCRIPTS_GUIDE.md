@@ -260,17 +260,26 @@ codesign --deep --force --verify --verbose \
   --sign "Developer ID Application: Your Name" \
   "dist/Animica Miner Wallet.app"
 
-# Notarize for distribution
+# Notarize for distribution (store password in keychain first with --store-password-in-keychain)
 xcrun notarytool submit "dist/Animica-Miner-Wallet-*.dmg" \
-  --apple-id your@email.com --password app-specific-password --team-id TEAMID
+  --apple-id your@email.com --keychain-profile "notary-profile" --team-id TEAMID
+
+# Or use environment variable:
+# xcrun notarytool submit "dist/Animica-Miner-Wallet-*.dmg" \
+#   --apple-id your@email.com --password "$NOTARY_PASSWORD" --team-id TEAMID
 ```
 
 ### Windows
 ```bash
-# Sign the executable
-signtool sign /f certificate.pfx /p password \
+# Sign the executable (use environment variable or certificate store)
+signtool sign /f certificate.pfx /p "$CERT_PASSWORD" \
   /tr http://timestamp.digicert.com /td SHA256 /fd SHA256 \
   "dist/Animica-Miner-Wallet-Windows/animica_miner_wallet.exe"
+
+# Or use Windows certificate store (more secure):
+# signtool sign /sha1 CERT_THUMBPRINT \
+#   /tr http://timestamp.digicert.com /td SHA256 /fd SHA256 \
+#   "dist/Animica-Miner-Wallet-Windows/animica_miner_wallet.exe"
 ```
 
 ### Linux
