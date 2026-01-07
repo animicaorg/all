@@ -74,7 +74,7 @@ from p2p.sync.cache_store import SyncCacheConfig, SyncCacheState, SyncCacheStore
 log = logging.getLogger("animica.p2p.service")
 
 # Sync performance tuning constants
-MIN_SYNC_TICK_SEC: float = 0.025  # Minimum sync tick interval (25ms)
+MIN_SYNC_TICK_SEC: float = 0.005  # Minimum sync tick interval (5ms) - massively reduced for ultra-fast sync
 
 DEFAULT_BOOTSTRAP_SEEDS = [
     "/dns4/mainnet.animica.org/tcp/30333",
@@ -1105,7 +1105,7 @@ class P2PService:
         self._sync_enabled = _env_flag("SYNC_ENABLED", "ANIMICA_SYNC_ENABLED", default=True)
         self._sync_requested = False
         self._sync_requested_at: Optional[float] = None
-        tick_ms = float(_env_value("SYNC_TICK_MS", "ANIMICA_SYNC_TICK_MS", default="25") or 25)  # Reduced from 50ms to 25ms for faster sync
+        tick_ms = float(_env_value("SYNC_TICK_MS", "ANIMICA_SYNC_TICK_MS", default="5") or 5)  # Massively reduced from 25ms to 5ms for ultra-fast sync (hundreds-to-thousands blocks/sec)
         self._sync_tick_sec = max(MIN_SYNC_TICK_SEC, tick_ms / 1000.0)  # Use named constant for minimum
         self._sync_boost_until: Optional[float] = None
         self._sync_boost_tick_sec: Optional[float] = None
@@ -1114,7 +1114,7 @@ class P2PService:
             _env_value(
                 "SYNC_MAX_INFLIGHT_HEADERS",
                 "ANIMICA_SYNC_MAX_INFLIGHT_HEADERS",
-                default="1024",  # Increased from 256 for faster sync
+                default="8192",  # Massively increased from 1024 for ultra-fast sync (hundreds-to-thousands blocks/sec)
             )
             or 4
         )
@@ -1123,18 +1123,18 @@ class P2PService:
                 "SYNC_MAX_INFLIGHT_BLOCKS",
                 "ANIMICA_SYNC_MAX_INFLIGHT_BLOCKS",
                 "ANIMICA_P2P_SYNC_INFLIGHT",
-                default="2048",  # Increased from 512 for faster sync (500+ blocks/min target)
+                default="16384",  # Massively increased from 2048 for ultra-fast sync (hundreds-to-thousands blocks/sec)
             )
             or 32
         )
         self._sync_max_inflight_per_peer = int(
-            os.environ.get("ANIMICA_P2P_SYNC_INFLIGHT_PER_PEER", "512") or 512  # Increased from 128
+            os.environ.get("ANIMICA_P2P_SYNC_INFLIGHT_PER_PEER", "2048") or 2048  # Massively increased from 512 for ultra-fast sync
         )
         self._sync_headers_batch = int(
-            os.environ.get("ANIMICA_P2P_SYNC_HEADERS_BATCH", "4096") or 4096  # Increased from 2048
+            os.environ.get("ANIMICA_P2P_SYNC_HEADERS_BATCH", "16384") or 16384  # Massively increased from 4096 for ultra-fast sync
         )
         self._sync_request_timeout = float(
-            os.environ.get("ANIMICA_P2P_SYNC_TIMEOUT", "10.0") or 10.0  # Increased from 6.0 for larger batches
+            os.environ.get("ANIMICA_P2P_SYNC_TIMEOUT", "15.0") or 15.0  # Increased from 10.0 for much larger batches
         )
         self._sync_peer_penalty_threshold = int(
             os.environ.get("ANIMICA_P2P_SYNC_PENALTY_THRESHOLD", "6") or 6
@@ -1176,13 +1176,13 @@ class P2PService:
             os.environ.get("ANIMICA_SYNC_CACHE_PRUNE_INTERVAL", "60") or 60
         )
         self._sync_cache_max_bytes = int(
-            os.environ.get("ANIMICA_SYNC_CACHE_MAX_MB", "256") or 256
+            os.environ.get("ANIMICA_SYNC_CACHE_MAX_MB", "1024") or 1024  # Massively increased from 256MB to 1024MB for ultra-fast sync
         ) * 1024 * 1024
         self._sync_cache_max_blocks = int(
-            os.environ.get("ANIMICA_SYNC_CACHE_MAX_BLOCKS", "2000") or 2000
+            os.environ.get("ANIMICA_SYNC_CACHE_MAX_BLOCKS", "10000") or 10000  # Massively increased from 2000 for ultra-fast sync
         )
         self._sync_cache_max_headers = int(
-            os.environ.get("ANIMICA_SYNC_CACHE_MAX_HEADERS", "5000") or 5000
+            os.environ.get("ANIMICA_SYNC_CACHE_MAX_HEADERS", "20000") or 20000  # Massively increased from 5000 for ultra-fast sync
         )
         self._sync_cache_task: Optional[asyncio.Task] = None
         self._sync_last_reorg_at: Optional[float] = None
