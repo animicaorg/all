@@ -27,8 +27,6 @@ def _first_int(status: StatusMapping, keys: t.Iterable[str]) -> int | None:
 
 def assess_tx_submission_readiness(
     status: StatusMapping,
-    *,
-    tip_tolerance: int = 2,
 ) -> tuple[bool, dict[str, t.Any]]:
     phase_raw = status.get("phase") or status.get("state")
     phase = str(phase_raw).upper() if phase_raw is not None else ""
@@ -119,9 +117,12 @@ def assess_tx_submission_readiness(
         if head_height < best_header_height:
             # Node is behind, reject transaction submission
             return False, info
+        if head_height > best_header_height:
+            # Node is ahead of network - allow transactions immediately
+            return True, info
     
-    # If we reach here, either heights are equal/ahead, or heights are unknown
-    # For unknown heights, allow legacy checks to determine readiness
+    # If we reach here, either heights are equal or heights are unknown
+    # For equal heights or unknown heights, check sync status flags
     
     if synchronized is True:
         return True, info
