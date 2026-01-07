@@ -249,6 +249,35 @@ def _check_payload_shape(tx: "Tx") -> None:
     
     # Handle integer kind values (e.g., TxKind enum)
     if isinstance(kind, int):
+        # Map common kinds
+        kind_map = {0: "call", 1: "deploy", 2: "transfer", 3: "coinbase"}
+        kind = kind_map.get(kind, str(kind))
+    
+    # Basic sanity: data field should exist and be bounded
+    try:
+        data = getattr(tx, "data", None)
+        if data is None and hasattr(tx, "unsigned"):
+            data = getattr(tx.unsigned, "data", None)
+        
+        if data is not None:
+            # Ensure data is bytes-like
+            if not isinstance(data, (bytes, bytearray)):
+                raise StatelessValidationError(
+                    "MalformedPayload",
+                    "Transaction data must be bytes."
+                )
+            # Prevent extremely large data fields (defense in depth)
+            if len(data) > 10_485_760:  # 10 MiB absolute maximum
+                raise StatelessValidationError(
+                    "DataTooLarge",
+                    f"Transaction data too large: {len(data)} bytes (max 10 MiB)"
+                )
+    except StatelessValidationError:
+        raise
+    except Exception:
+        # Don't fail on edge cases in payload introspection
+        pass
+    if isinstance(kind, int):
         # TxKind: TRANSFER=0, DEPLOY=1, CALL=2, COINBASE=3
         kind_map = {0: "transfer", 1: "deploy", 2: "call", 3: "coinbase"}
         kind = kind_map.get(kind, "")
