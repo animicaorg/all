@@ -90,6 +90,13 @@ log = logging.getLogger("animica.chain.block_import")
 _POW_LOG_MIN_S = float(os.getenv("ANIMICA_POW_LOG_MIN_S", "5.0") or 5.0)
 _POW_LOG_AT: dict[str, float] = {}
 
+# Fork choice reorg depth limit
+# This prevents excessive chain switching by limiting how deep a reorganization can be.
+# The default of 96 blocks matches the P2P sync configuration (p2p/sync/__init__.py)
+# and provides a good balance between allowing legitimate short reorgs and preventing
+# malicious or accidental deep chain switches that destabilize the network.
+DEFAULT_MAX_REORG_DEPTH = 96
+
 
 class ImportErrorCode(str):
     INVALID = "invalid"
@@ -409,10 +416,10 @@ class BlockImporter:
             self.full_params_dict = _load_full_params_dict(params.chain_id)
         
         # Fork choice reorg depth limit (prevents excessive chain switching)
-        # Default to 96 blocks (same as P2P sync) or allow override via environment
+        # Default to DEFAULT_MAX_REORG_DEPTH or allow override via environment
         self._max_reorg_depth = max_reorg_depth
         if self._max_reorg_depth is None:
-            self._max_reorg_depth = int(os.getenv("ANIMICA_MAX_REORG_DEPTH", "96"))
+            self._max_reorg_depth = int(os.getenv("ANIMICA_MAX_REORG_DEPTH", str(DEFAULT_MAX_REORG_DEPTH)))
         
         # Initialize difficulty adjustment state
         self.difficulty_state = None
