@@ -588,6 +588,14 @@ __all__ = [
     "RandBeacon",
     "ReceiptHint",
     "ExpExample",
+    # Snapshot messages
+    "SnapshotInfo",
+    "SnapshotListReq",
+    "SnapshotListResp",
+    "SnapshotGetManifest",
+    "SnapshotManifestData",
+    "SnapshotGetChunk",
+    "SnapshotChunk",
     # aliases
     "Hash32",
     "Hash64",

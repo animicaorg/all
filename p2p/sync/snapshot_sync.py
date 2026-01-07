@@ -51,9 +51,13 @@ async def try_snapshot_bootstrap(
     chain_id: int,
     current_height: int = 0,
     min_checkpoint_height: Optional[int] = None,
+    peers: Optional[list] = None,
 ) -> Tuple[bool, Optional[str]]:
     """
     Attempt to bootstrap chain sync using a snapshot.
+    
+    New: Also tries to discover and download snapshots from P2P peers if
+    local/RPC snapshots are unavailable.
 
     Args:
         block_db: Block database instance
@@ -61,6 +65,7 @@ async def try_snapshot_bootstrap(
         chain_id: Chain ID to sync
         current_height: Current chain height (0 if empty)
         min_checkpoint_height: Minimum checkpoint height to consider
+        peers: Optional list of P2P peers to query for snapshots
 
     Returns:
         Tuple of (success, error_message)
@@ -82,6 +87,29 @@ async def try_snapshot_bootstrap(
         )
         return False, "Already synced past snapshot threshold"
 
+    # Try P2P snapshot discovery first (NEW)
+    if peers:
+        _log.info("Attempting snapshot sync from P2P peers...")
+        try:
+            from p2p.sync.snapshot_protocol import try_snapshot_sync_from_peers
+            
+            success, error = await try_snapshot_sync_from_peers(
+                block_db=block_db,
+                state_db=state_db,
+                chain_id=chain_id,
+                peers=peers,
+                current_height=current_height,
+            )
+            
+            if success:
+                _log.info("Successfully bootstrapped from P2P snapshot")
+                return True, None
+            else:
+                _log.info(f"P2P snapshot sync failed: {error}, trying RPC fallback...")
+        except Exception as e:
+            _log.warning(f"P2P snapshot sync error: {e}, trying RPC fallback...")
+
+    # Fallback to RPC-based snapshot (existing logic)
     # Get RPC URL for snapshot source
     rpc_url = _get_snapshot_rpc_url()
     if not rpc_url:
