@@ -1,5 +1,3 @@
-version: '3.9'
-
 services:
   explorer2-api:
     build:
@@ -8,6 +6,13 @@ services:
     environment:
       EXPLORER2_PORT: 8081
       EXPLORER2_CORS_ORIGIN: "*"
+      # Configure RPC URL for the API server
+      # Default: http://host.docker.internal:8545/rpc (to reach RPC node on host)
+      # Override: EXPLORER2_RPC_URL=http://your-rpc:8545/rpc docker compose up
+      EXPLORER2_RPC_URL: ${EXPLORER2_RPC_URL:-http://host.docker.internal:8545/rpc}
+    extra_hosts:
+      # Allow containers to access host services via host.docker.internal
+      - "host.docker.internal:host-gateway"
     ports:
       - "8081:8081"
     healthcheck:
