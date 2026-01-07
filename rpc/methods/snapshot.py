@@ -142,22 +142,26 @@ def snapshot_list(chain_id: int | None = None) -> dict:
                 # Load manifest if exists
                 manifest_file = item / "manifest.json"
                 if manifest_file.exists():
-                    import json
-                    with open(manifest_file) as f:
-                        manifest_data = json.load(f)
-                    
-                    snapshots.append({
-                        "chain_id": snap_chain_id,
-                        "checkpoint_height": snap_height,
-                        "checkpoint_hash": manifest_data.get("checkpoint_hash"),
-                        "timestamp": manifest_data.get("timestamp"),
-                        "blocks_count": manifest_data.get("blocks_count"),
-                        "accounts_count": manifest_data.get("accounts_count"),
-                        "path": str(item),
-                        "size_mb": sum(
-                            chunk["size"] for chunk in manifest_data.get("chunks", [])
-                        ) / (1024 * 1024),
-                    })
+                    try:
+                        import json
+                        with open(manifest_file) as f:
+                            manifest_data = json.load(f)
+                        
+                        snapshots.append({
+                            "chain_id": snap_chain_id,
+                            "checkpoint_height": snap_height,
+                            "checkpoint_hash": manifest_data.get("checkpoint_hash"),
+                            "timestamp": manifest_data.get("timestamp"),
+                            "blocks_count": manifest_data.get("blocks_count"),
+                            "accounts_count": manifest_data.get("accounts_count"),
+                            "path": str(item),
+                            "size_mb": sum(
+                                chunk["size"] for chunk in manifest_data.get("chunks", [])
+                            ) / (1024 * 1024),
+                        })
+                    except (json.JSONDecodeError, IOError) as e:
+                        _log.warning(f"Failed to read manifest from {manifest_file}: {e}")
+                        continue
         
         # Sort by chain_id, then height (descending)
         snapshots.sort(key=lambda s: (s["chain_id"], -s["checkpoint_height"]))

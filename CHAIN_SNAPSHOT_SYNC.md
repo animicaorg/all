@@ -137,6 +137,8 @@ export ANIMICA_SNAPSHOT_TIMEOUT=600
 animica node up
 ```
 
+**Note:** Currently, automatic snapshot bootstrap only works with local snapshot files. The snapshot must already exist in the local `~/.animica/snapshots/` directory. Remote HTTP download of snapshots is planned for a future release.
+
 ## Configuration
 
 ### Environment Variables
@@ -353,7 +355,9 @@ Delete a snapshot.
 
 ## Future Improvements
 
-1. **HTTP Chunk Download**: Direct download of snapshot chunks via HTTP
+1. **HTTP Chunk Download**: Direct download of snapshot chunks via HTTP (in progress)
+   - Currently only local snapshots are supported for auto-bootstrap
+   - Remote download requires manual `animica snapshot import` with local path
 2. **Torrent Distribution**: P2P distribution of snapshots via BitTorrent
 3. **Incremental Snapshots**: Delta snapshots between checkpoints
 4. **Streaming Import**: Import while downloading (pipelined)

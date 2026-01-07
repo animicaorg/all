@@ -163,15 +163,20 @@ def export_snapshot(
                 header = block_db.get_header(block_hash)
                 if header:
                     # Write height-prefixed entry
+                    # Format: [entry_cbor_bytes]\n for easy delimiting
                     entry = {"type": "header", "height": height, "data": header}
-                    f.write(cbor_dumps(entry))
+                    entry_bytes = cbor_dumps(entry)
+                    f.write(entry_bytes)
+                    f.write(b"\n")  # Delimiter for easier parsing
                     manifest.headers_count += 1
 
                 # Export block at this height
                 block = block_db.get_block(block_hash)
                 if block:
                     entry = {"type": "block", "height": height, "data": block}
-                    f.write(cbor_dumps(entry))
+                    entry_bytes = cbor_dumps(entry)
+                    f.write(entry_bytes)
+                    f.write(b"\n")  # Delimiter
                     manifest.blocks_count += 1
 
             if height % 1000 == 0:
@@ -197,19 +202,25 @@ def export_snapshot(
         # Export accounts
         for key, value in state_db._db.scan(prefix=PFX_ACC):
             entry = {"type": "account", "key": key, "value": value}
-            f.write(cbor_dumps(entry))
+            entry_bytes = cbor_dumps(entry)
+            f.write(entry_bytes)
+            f.write(b"\n")  # Delimiter
             manifest.accounts_count += 1
 
         # Export code
         for key, value in state_db._db.scan(prefix=PFX_CODE):
             entry = {"type": "code", "key": key, "value": value}
-            f.write(cbor_dumps(entry))
+            entry_bytes = cbor_dumps(entry)
+            f.write(entry_bytes)
+            f.write(b"\n")  # Delimiter
             manifest.code_contracts_count += 1
 
         # Export storage
         for key, value in state_db._db.scan(prefix=PFX_STO):
             entry = {"type": "storage", "key": key, "value": value}
-            f.write(cbor_dumps(entry))
+            entry_bytes = cbor_dumps(entry)
+            f.write(entry_bytes)
+            f.write(b"\n")  # Delimiter
             manifest.storage_keys_count += 1
 
             if manifest.storage_keys_count % 10000 == 0:
@@ -354,14 +365,15 @@ def _import_blocks_chunk(block_db: BlockDB, chunk_file: Path, compressed: bool):
     imported_count = 0
 
     with open_fn(chunk_file, "rb") as f:
-        buffer = f.read()
-        offset = 0
+        # Read line by line (entries are newline-delimited)
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
 
-        while offset < len(buffer):
             try:
                 # Decode CBOR entry
-                entry, new_offset = cbor_loads(buffer[offset:], return_offset=True)
-                offset += new_offset
+                entry = cbor_loads(line)
 
                 entry_type = entry.get("type")
                 height = entry.get("height")
@@ -381,8 +393,8 @@ def _import_blocks_chunk(block_db: BlockDB, chunk_file: Path, compressed: bool):
                     _log.info(f"Imported {imported_count} entries from {chunk_file.name}")
 
             except Exception as e:
-                _log.warning(f"Error importing entry at offset {offset}: {e}")
-                break
+                _log.warning(f"Error importing entry: {e}")
+                continue
 
     _log.info(f"Imported {imported_count} entries from {chunk_file.name}")
 
@@ -395,14 +407,15 @@ def _import_state_chunk(state_db: StateDB, chunk_file: Path, compressed: bool):
     imported_count = 0
 
     with open_fn(chunk_file, "rb") as f:
-        buffer = f.read()
-        offset = 0
+        # Read line by line (entries are newline-delimited)
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
 
-        while offset < len(buffer):
             try:
                 # Decode CBOR entry
-                entry, new_offset = cbor_loads(buffer[offset:], return_offset=True)
-                offset += new_offset
+                entry = cbor_loads(line)
 
                 entry_type = entry.get("type")
                 key = entry.get("key")
@@ -416,8 +429,8 @@ def _import_state_chunk(state_db: StateDB, chunk_file: Path, compressed: bool):
                     _log.info(f"Imported {imported_count} state entries from {chunk_file.name}")
 
             except Exception as e:
-                _log.warning(f"Error importing entry at offset {offset}: {e}")
-                break
+                _log.warning(f"Error importing entry: {e}")
+                continue
 
     _log.info(f"Imported {imported_count} state entries from {chunk_file.name}")
 
