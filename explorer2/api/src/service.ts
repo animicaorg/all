@@ -17,6 +17,7 @@ export interface ChainClient {
 
 const RECENT_BLOCK_WINDOW = 20
 const ADDRESS_SCAN_WINDOW = 50
+const FINALIZED_BLOCK_DEPTH = 10 // Blocks older than this are considered finalized
 
 export class ExplorerService {
   private cache: TtlCache
@@ -28,6 +29,21 @@ export class ExplorerService {
     options?: { persistPath?: string }
   ) {
     this.cache = new TtlCache({ persistPath: options?.persistPath })
+  }
+
+  /**
+   * Calculate cache TTL based on block age relative to head.
+   * Recent blocks (within FINALIZED_BLOCK_DEPTH): short TTL (configured cacheTtls.blocks)
+   * Finalized blocks (older than FINALIZED_BLOCK_DEPTH): very long TTL (24 hours)
+   */
+  private getBlockCacheTtl(blockHeight: number, headHeight: number): number {
+    const age = headHeight - blockHeight
+    if (age > FINALIZED_BLOCK_DEPTH) {
+      // Finalized blocks: cache for 24 hours
+      return 24 * 60 * 60 * 1000
+    }
+    // Recent blocks: use configured TTL
+    return this.cacheTtls.blocks
   }
 
   async getHead(): Promise<{ head: HeadView; stats: any }> {
@@ -83,7 +99,8 @@ export class ExplorerService {
             if (cached) return cached
             const raw = await this.safeRpc(() => this.rpc.getBlockByNumber(height, false, false))
             const summary = normalizeBlockSummary(raw)
-            this.cache.set(`block:${height}`, summary, this.cacheTtls.blocks)
+            const ttl = this.getBlockCacheTtl(height, head.height)
+            this.cache.set(`block:${height}`, summary, ttl)
             return summary
           })
         )
@@ -124,7 +141,30 @@ export class ExplorerService {
       )
       if (!raw) throw new HttpError(404, 'Block not found')
       const detail = normalizeBlockDetail(raw)
-      this.cache.set(cacheKey, detail, this.cacheTtls.blocks)
+      
+      // Get head height to determine cache TTL
+      let cachedHead = this.cache.get<HeadView>('head-view')
+      
+      // If head is not cached and block height is known, try to fetch it (coalesced)
+      if (!cachedHead && typeof detail.height === 'number') {
+        try {
+          const headRaw = await this.coalescer.run('head-for-ttl', async () => {
+            const raw = await this.safeRpc(() => this.rpc.getHead())
+            const head = normalizeHead(raw)
+            this.cache.set('head-view', head, this.cacheTtls.head)
+            return head
+          })
+          cachedHead = headRaw
+        } catch {
+          // Ignore errors, fall back to default TTL
+        }
+      }
+      
+      const ttl = cachedHead && typeof detail.height === 'number'
+        ? this.getBlockCacheTtl(detail.height, cachedHead.height)
+        : this.cacheTtls.blocks
+      
+      this.cache.set(cacheKey, detail, ttl)
       return detail
     })
   }
@@ -158,7 +198,18 @@ export class ExplorerService {
 
     const txs: any[] = []
     for (const height of heights) {
-      const block = await this.safeRpc(() => this.rpc.getBlockByNumber(height, true, false)).catch(() => null)
+      // Check cache first for block detail
+      const cacheKey = `block-detail:${height}`
+      let block: unknown = this.cache.get<BlockDetail>(cacheKey)
+      
+      if (!block) {
+        block = await this.safeRpc(() => this.rpc.getBlockByNumber(height, true, false)).catch(() => null)
+        if (block) {
+          const ttl = this.getBlockCacheTtl(height, head.height)
+          this.cache.set(cacheKey, block, ttl)
+        }
+      }
+      
       if (!block) continue
       const blockTxs = Array.isArray((block as any)?.txs) ? (block as any).txs : []
       for (const tx of blockTxs) {
@@ -225,11 +276,22 @@ export class ExplorerService {
   private async getRecentBlocks(headHeight: number): Promise<BlockSummary[]> {
     const heights = Array.from({ length: RECENT_BLOCK_WINDOW }, (_, i) => headHeight - i).filter((h) => h >= 0)
     const blocks = await Promise.all(
-      heights.map((height) =>
-        this.safeRpc(() => this.rpc.getBlockByNumber(height, false, false)).catch(() => null)
-      )
+      heights.map(async (height) => {
+        // Check cache first
+        const cached = this.cache.get<BlockSummary>(`block:${height}`)
+        if (cached) return cached
+        
+        // Fetch from RPC if not cached
+        const raw = await this.safeRpc(() => this.rpc.getBlockByNumber(height, false, false)).catch(() => null)
+        if (!raw) return null
+        
+        const summary = normalizeBlockSummary(raw)
+        const ttl = this.getBlockCacheTtl(height, headHeight)
+        this.cache.set(`block:${height}`, summary, ttl)
+        return summary
+      })
     )
-    return blocks.filter(Boolean).map((block) => normalizeBlockSummary(block))
+    return blocks.filter((block): block is BlockSummary => Boolean(block))
   }
 
   private async safeRpc<T>(fn: () => Promise<T>): Promise<T>
