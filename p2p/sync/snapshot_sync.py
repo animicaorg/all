@@ -244,7 +244,6 @@ async def _download_and_import_snapshot(
             
             try:
                 # Write manifest to temp directory
-                import json
                 manifest_path = temp_dir / "manifest.json"
                 with open(manifest_path, "w") as f:
                     json.dump(manifest, f, indent=2)
@@ -280,7 +279,6 @@ async def _download_and_import_snapshot(
                             
                             # Construct direct URL from source_path
                             # Assume snapshot is served via HTTP at the RPC URL's base
-                            from urllib.parse import urljoin, urlparse
                             parsed_rpc = urlparse(rpc_url)
                             base_url = f"{parsed_rpc.scheme}://{parsed_rpc.netloc}"
                             chunk_url = urljoin(base_url, f"/snapshots/chain-{chain_id}-height-{checkpoint_height}/{chunk_name}")
@@ -305,7 +303,6 @@ async def _download_and_import_snapshot(
                                 )
                             
                             # Chunk data should be base64 encoded
-                            import base64
                             chunk_data_b64 = chunk_result.get("data")
                             if not chunk_data_b64:
                                 raise RuntimeError(f"No data in chunk response for {chunk_name}")
@@ -336,7 +333,6 @@ async def _download_and_import_snapshot(
                 
             finally:
                 # Clean up temporary directory
-                import shutil
                 try:
                     shutil.rmtree(temp_dir)
                     _log.debug(f"Cleaned up temporary directory: {temp_dir}")
