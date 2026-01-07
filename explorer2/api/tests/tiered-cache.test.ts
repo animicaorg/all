@@ -2,7 +2,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { ExplorerService } from '../src/service'
 import type { ChainClient } from '../src/service'
 
-describe('ExplorerService - Tiered Block Caching', () => {
+describe('ExplorerService - Request Coalescing', () => {
   let mockRpc: ChainClient
   let service: ExplorerService
 
@@ -19,15 +19,11 @@ describe('ExplorerService - Tiered Block Caching', () => {
       getBalance: vi.fn()
     }
 
-    service = new ExplorerService(
-      mockRpc,
-      { head: 5000, blocks: 8000, tx: 20000 }
-    )
+    service = new ExplorerService(mockRpc)
   })
 
-  it('should cache recent blocks with short TTL', async () => {
+  it('should make RPC calls for blocks', async () => {
     const headHeight = 100
-    const recentBlockHeight = 95 // 5 blocks old
 
     vi.mocked(mockRpc.getHead).mockResolvedValue({
       height: headHeight,
@@ -36,60 +32,27 @@ describe('ExplorerService - Tiered Block Caching', () => {
     })
 
     vi.mocked(mockRpc.getBlockByNumber).mockResolvedValue({
-      height: recentBlockHeight,
+      height: 95,
       hash: '0xblock',
       time: Date.now(),
       txs: []
     })
 
-    // First call - should hit RPC
-    await service.getBlocks(1)
-    expect(mockRpc.getBlockByNumber).toHaveBeenCalledTimes(1)
-
-    // Second call - should use cache (within 8s TTL)
-    await service.getBlocks(1)
-    expect(mockRpc.getBlockByNumber).toHaveBeenCalledTimes(1) // Still 1 call
-  })
-
-  it('should cache finalized blocks with long TTL', async () => {
-    const headHeight = 100
-    const finalizedBlockHeight = 85 // 15 blocks old (> FINALIZED_BLOCK_DEPTH of 10)
-
-    vi.mocked(mockRpc.getHead).mockResolvedValue({
-      height: headHeight,
-      hash: '0xhead',
-      time: Date.now()
+    vi.mocked(mockRpc.getMempoolStats).mockResolvedValue({
+      count: 0,
+      totalBytes: 0,
+      oldestAgeSec: null
     })
 
-    vi.mocked(mockRpc.getBlockByNumber).mockResolvedValue({
-      height: finalizedBlockHeight,
-      hash: '0xblock',
-      time: Date.now(),
-      txs: []
-    })
+    vi.mocked(mockRpc.getPeers).mockResolvedValue([])
 
     // First call - should hit RPC
-    await service.getBlocks(1, String(finalizedBlockHeight))
-    expect(mockRpc.getBlockByNumber).toHaveBeenCalledTimes(1)
-
-    // Second call - should use cache
-    await service.getBlocks(1, String(finalizedBlockHeight))
-    expect(mockRpc.getBlockByNumber).toHaveBeenCalledTimes(1) // Still 1 call
-
-    // Even after a delay, finalized blocks stay cached (24h TTL vs 8s)
-    // In a real scenario, this would be cached for 24 hours
+    await service.getBlocks(1)
+    expect(mockRpc.getBlockByNumber).toHaveBeenCalled()
   })
 
-  it('should use tiered caching for getBlockDetail', async () => {
-    const headHeight = 100
+  it('should make RPC calls for block details', async () => {
     const blockHeight = 85
-
-    // Mock head in cache
-    vi.mocked(mockRpc.getHead).mockResolvedValue({
-      height: headHeight,
-      hash: '0xhead',
-      time: Date.now()
-    })
 
     vi.mocked(mockRpc.getBlockByNumber).mockResolvedValue({
       height: blockHeight,
@@ -98,21 +61,12 @@ describe('ExplorerService - Tiered Block Caching', () => {
       txs: []
     })
 
-    // Prime the head cache
-    await service.getHead()
-
-    // First call - should hit RPC
+    // Call should hit RPC
     await service.getBlockDetail(String(blockHeight))
     expect(mockRpc.getBlockByNumber).toHaveBeenCalled()
-
-    const firstCallCount = vi.mocked(mockRpc.getBlockByNumber).mock.calls.length
-
-    // Second call - should use cache
-    await service.getBlockDetail(String(blockHeight))
-    expect(mockRpc.getBlockByNumber).toHaveBeenCalledTimes(firstCallCount) // No additional calls
   })
 
-  it('should not cache head blocks indefinitely', async () => {
+  it('should coalesce concurrent requests to the same resource', async () => {
     const headHeight = 100
 
     vi.mocked(mockRpc.getHead).mockResolvedValue({
@@ -121,21 +75,29 @@ describe('ExplorerService - Tiered Block Caching', () => {
       time: Date.now()
     })
 
+    vi.mocked(mockRpc.getMempoolStats).mockResolvedValue({
+      count: 0,
+      totalBytes: 0,
+      oldestAgeSec: null
+    })
+
+    vi.mocked(mockRpc.getPeers).mockResolvedValue([])
+
     vi.mocked(mockRpc.getBlockByNumber).mockResolvedValue({
-      height: headHeight,
+      height: 95,
       hash: '0xblock',
       time: Date.now(),
       txs: []
     })
 
-    // First call
-    await service.getBlocks(1)
-    const firstCallCount = vi.mocked(mockRpc.getBlockByNumber).mock.calls.length
+    // Make two concurrent calls - should only call RPC once due to coalescing
+    const [result1, result2] = await Promise.all([
+      service.getHead(),
+      service.getHead()
+    ])
 
-    // Second call immediately should use cache
-    await service.getBlocks(1)
-    expect(mockRpc.getBlockByNumber).toHaveBeenCalledTimes(firstCallCount)
-
-    // The head block should have a short TTL (8s), not 24h
+    expect(result1.head.height).toBe(headHeight)
+    expect(result2.head.height).toBe(headHeight)
+    expect(mockRpc.getHead).toHaveBeenCalledTimes(1)
   })
 })

@@ -16,10 +16,6 @@ export const config = {
   dbPath: process.env.EXPLORER2_DB_PATH || '',
   corsOrigin: process.env.EXPLORER2_CORS_ORIGIN || '*',
   logLevel: process.env.EXPLORER2_LOG_LEVEL || 'info',
-  cacheHeadTtlMs: Number(process.env.EXPLORER2_CACHE_HEAD_TTL_MS || 5000),
-  cacheBlocksTtlMs: Number(process.env.EXPLORER2_CACHE_BLOCKS_TTL_MS || 8000),
-  cacheTxTtlMs: Number(process.env.EXPLORER2_CACHE_TX_TTL_MS || 20000),
-  cachePersistPath: process.env.EXPLORER2_CACHE_PERSIST_PATH || '',
   rpcTimeout: Number(process.env.EXPLORER2_RPC_TIMEOUT_MS || 30000),
   rpcMaxRetries: Number(process.env.EXPLORER2_RPC_MAX_RETRIES || 3)
 }
