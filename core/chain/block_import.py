@@ -383,6 +383,7 @@ class BlockImporter:
         "_min_block_spacing_ms",
         "_state_snapshots",
         "_state_snapshot_limit",
+        "_max_reorg_depth",
     )
 
     def __init__(
@@ -394,6 +395,7 @@ class BlockImporter:
         tx_index=None,
         fork_choice: Optional[Any] = None,
         full_params_dict: Optional[Dict[str, Any]] = None,
+        max_reorg_depth: Optional[int] = None,
     ):
         self.params = params
         self.block_db = block_db
@@ -405,6 +407,12 @@ class BlockImporter:
         self.full_params_dict = full_params_dict
         if self.full_params_dict is None:
             self.full_params_dict = _load_full_params_dict(params.chain_id)
+        
+        # Fork choice reorg depth limit (prevents excessive chain switching)
+        # Default to 96 blocks (same as P2P sync) or allow override via environment
+        self._max_reorg_depth = max_reorg_depth
+        if self._max_reorg_depth is None:
+            self._max_reorg_depth = int(os.getenv("ANIMICA_MAX_REORG_DEPTH", "96"))
         
         # Initialize difficulty adjustment state
         self.difficulty_state = None
@@ -967,6 +975,7 @@ class BlockImporter:
             genesis_hash=genesis_hash,
             genesis_weight_micro=genesis_weight,
             genesis_height=0,
+            max_reorg_depth=self._max_reorg_depth,
         )
 
     def _init_fork_choice_from_db(self) -> None:
@@ -994,6 +1003,7 @@ class BlockImporter:
             genesis_hash=genesis_hash,
             genesis_weight_micro=genesis_weight,
             genesis_height=0,
+            max_reorg_depth=self._max_reorg_depth,
         )
         self._seed_fork_choice_from_canonical()
 
