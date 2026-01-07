@@ -1105,17 +1105,28 @@ def _ensure_node_ready_for_tx(rpc: str) -> int | None:
 
     if not isinstance(status, dict):
         return head_height
-    allowed, _info = assess_tx_submission_readiness(status)
+    allowed, info = assess_tx_submission_readiness(status)
     if allowed:
         return head_height
 
-    phase = status.get("phase") or status.get("state")
-    phase_name = str(phase).upper() if phase is not None else ""
-    if status.get("synchronized") is False or phase_name:
+    # Generate appropriate error message based on height status
+    head_h = info.get("head_height")
+    best_h = info.get("best_header_height")
+    
+    if head_h and best_h and head_h < best_h:
+        blocks_behind = best_h - head_h
+        console.print(f"\n[bold red]Node is not at highest height; transaction submission is unavailable.[/bold red]")
+        console.print(f"[red]Node is behind by {blocks_behind} block{'s' if blocks_behind != 1 else ''} (head={head_h}, best={best_h}).[/red]")
+        console.print(f"\n[yellow]Tip:[/yellow] Wait for node to sync to height {best_h} before resubmitting.")
+    else:
+        phase = status.get("phase") or status.get("state")
+        phase_name = str(phase).upper() if phase is not None else ""
         console.print("\n[bold red]Node is still syncing; transaction submission is unavailable.[/bold red]")
-        console.print(Pretty(status))
+        if phase_name:
+            console.print(f"[red]Sync phase: {phase_name}[/red]")
         console.print("\n[yellow]Tip:[/yellow] Wait for sync to complete or run `animica sync status`.")
-        raise typer.Exit(code=1)
+    
+    raise typer.Exit(code=1)
 
     return head_height
 
@@ -1440,10 +1451,23 @@ def send(
                     _format_insufficient_funds_error(e)
                     raise typer.Exit(code=1)
                 if e.code == -32002:
-                    console.print("\n[bold red]Node is still syncing; transaction submission is unavailable.[/bold red]")
-                    if e.data is not None:
-                        console.print(Pretty(e.data))
-                    console.print("\n[yellow]Tip:[/yellow] Wait for sync to complete or run `animica sync status`.")
+                    # Extract height information from error data if available
+                    head_h = None
+                    best_h = None
+                    if e.data is not None and isinstance(e.data, dict):
+                        head_h = e.data.get("head_height")
+                        best_h = e.data.get("best_header_height")
+                    
+                    if head_h and best_h and head_h < best_h:
+                        blocks_behind = best_h - head_h
+                        console.print(f"\n[bold red]Node is not at highest height; transaction submission is unavailable.[/bold red]")
+                        console.print(f"[red]Node is behind by {blocks_behind} block{'s' if blocks_behind != 1 else ''} (head={head_h}, best={best_h}).[/red]")
+                        console.print(f"\n[yellow]Tip:[/yellow] Wait for node to sync to height {best_h} before resubmitting.")
+                    else:
+                        console.print("\n[bold red]Node is still syncing; transaction submission is unavailable.[/bold red]")
+                        if e.data is not None:
+                            console.print(Pretty(e.data))
+                        console.print("\n[yellow]Tip:[/yellow] Wait for sync to complete or run `animica sync status`.")
                     raise typer.Exit(code=1)
                 reason, expected, got = _extract_nonce_mismatch(e.data, verbose=verbose)
                 if nonce_value is None and reason in {"nonce_too_low", "nonce_gap"} and attempt + 1 < max_attempts:

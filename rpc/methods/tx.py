@@ -237,12 +237,22 @@ def _sync_gate_tx_submit() -> None:
     phase = info.get("phase") or ""
     head_height = int(info.get("head_height") or 0)
     best_header_height = int(info.get("best_header_height") or 0)
+    
+    # Generate appropriate error message based on height status
+    if head_height > 0 and best_header_height > 0 and head_height < best_header_height:
+        blocks_behind = best_header_height - head_height
+        msg = f"Node is not at highest height; transaction submission is unavailable (behind by {blocks_behind} block{'s' if blocks_behind != 1 else ''})"
+        hint = f"Wait for node to sync to height {best_header_height} before resubmitting."
+    else:
+        msg = "Node is still syncing; transaction submission is unavailable"
+        hint = "Wait for sync to reach synced state before resubmitting."
+    
     raise rpc_errors.TemporarilyUnavailable(
-        "Node is still syncing; transaction submission is unavailable",
+        msg,
         phase=phase.lower() if phase else None,
         head_height=head_height,
         best_header_height=best_header_height,
-        hint="Wait for sync to reach synced state before resubmitting.",
+        hint=hint,
     )
 
 
