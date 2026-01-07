@@ -419,7 +419,24 @@ class BlockImporter:
         # Default to DEFAULT_MAX_REORG_DEPTH or allow override via environment
         self._max_reorg_depth = max_reorg_depth
         if self._max_reorg_depth is None:
-            self._max_reorg_depth = int(os.getenv("ANIMICA_MAX_REORG_DEPTH", str(DEFAULT_MAX_REORG_DEPTH)))
+            env_val = os.getenv("ANIMICA_MAX_REORG_DEPTH")
+            if env_val is not None:
+                try:
+                    self._max_reorg_depth = int(env_val)
+                except ValueError:
+                    log.warning(
+                        f"Invalid ANIMICA_MAX_REORG_DEPTH value: {env_val!r}, using default {DEFAULT_MAX_REORG_DEPTH}"
+                    )
+                    self._max_reorg_depth = DEFAULT_MAX_REORG_DEPTH
+            else:
+                self._max_reorg_depth = DEFAULT_MAX_REORG_DEPTH
+        
+        # Validate max_reorg_depth is non-negative
+        if self._max_reorg_depth is not None and self._max_reorg_depth < 0:
+            log.warning(
+                f"max_reorg_depth must be non-negative, got {self._max_reorg_depth}, using default {DEFAULT_MAX_REORG_DEPTH}"
+            )
+            self._max_reorg_depth = DEFAULT_MAX_REORG_DEPTH
         
         # Initialize difficulty adjustment state
         self.difficulty_state = None
