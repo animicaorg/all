@@ -114,25 +114,25 @@ def test_should_create_disk_snapshot():
     importer = MockImporter()
     
     # Test snapshot should be created at interval boundaries
-    assert importer._should_create_disk_snapshot(2000) == True
-    assert importer._should_create_disk_snapshot(4000) == True
-    assert importer._should_create_disk_snapshot(6000) == True
+    assert importer._should_create_disk_snapshot(2000)
+    assert importer._should_create_disk_snapshot(4000)
+    assert importer._should_create_disk_snapshot(6000)
     
     # Test snapshot should NOT be created at non-interval heights
-    assert importer._should_create_disk_snapshot(1999) == False
-    assert importer._should_create_disk_snapshot(2001) == False
-    assert importer._should_create_disk_snapshot(1500) == False
+    assert not importer._should_create_disk_snapshot(1999)
+    assert not importer._should_create_disk_snapshot(2001)
+    assert not importer._should_create_disk_snapshot(1500)
     
     # Test snapshot should NOT be created at genesis
-    assert importer._should_create_disk_snapshot(0) == False
+    assert not importer._should_create_disk_snapshot(0)
     
     # Test snapshot should NOT be created twice
     importer._created_snapshots.add(2000)
-    assert importer._should_create_disk_snapshot(2000) == False
+    assert not importer._should_create_disk_snapshot(2000)
     
     # Test snapshot should NOT be created if pending
     importer._pending_snapshots.add(4000)
-    assert importer._should_create_disk_snapshot(4000) == False
+    assert not importer._should_create_disk_snapshot(4000)
 
 
 def test_snapshot_auto_create_disabled():
@@ -162,8 +162,8 @@ def test_snapshot_auto_create_disabled():
     importer = MockImporter(auto_create=False)
     
     # Should not create snapshots when disabled
-    assert importer._should_create_disk_snapshot(2000) == False
-    assert importer._should_create_disk_snapshot(4000) == False
+    assert not importer._should_create_disk_snapshot(2000)
+    assert not importer._should_create_disk_snapshot(4000)
 
 
 def test_check_missing_snapshots():
