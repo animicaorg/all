@@ -124,15 +124,16 @@ def export_snapshot(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Get checkpoint block hash
-    checkpoint_hash_bytes = block_db.get_block_hash_by_height(checkpoint_height)
+    checkpoint_hash_bytes = block_db.get_canonical_hash(checkpoint_height)
     if not checkpoint_hash_bytes:
         raise ValueError(f"No block found at height {checkpoint_height}")
 
     checkpoint_hash = _hex(checkpoint_hash_bytes)
 
     # Get chain ID
-    chain_id_bytes = block_db._db.get(META_CHAIN_ID)
-    chain_id = _from_u64be(chain_id_bytes) if chain_id_bytes else 0
+    chain_id = block_db.get_chain_id()
+    if chain_id is None:
+        chain_id = 0
 
     # Initialize manifest
     manifest = SnapshotManifest(
@@ -158,9 +159,9 @@ def export_snapshot(
     with gzip.open(blocks_file, "wb") if compress else open(blocks_file, "wb") as f:
         for height in range(0, checkpoint_height + 1):
             # Export header at this height
-            block_hash = block_db.get_block_hash_by_height(height)
+            block_hash = block_db.get_canonical_hash(height)
             if block_hash:
-                header = block_db.get_header(block_hash)
+                header = block_db.get_header_by_hash(block_hash)
                 if header:
                     # Write height-prefixed entry
                     # Format: [entry_cbor_bytes]\n for easy delimiting
@@ -171,7 +172,7 @@ def export_snapshot(
                     manifest.headers_count += 1
 
                 # Export block at this height
-                block = block_db.get_block(block_hash)
+                block = block_db.get_block_by_hash(block_hash)
                 if block:
                     entry = {"type": "block", "height": height, "data": block}
                     entry_bytes = cbor_dumps(entry)
@@ -200,7 +201,7 @@ def export_snapshot(
 
     with gzip.open(state_file, "wb") if compress else open(state_file, "wb") as f:
         # Export accounts
-        for key, value in state_db._db.scan(prefix=PFX_ACC):
+        for key, value in state_db.kv.iter_prefix(PFX_ACC):
             entry = {"type": "account", "key": key, "value": value}
             entry_bytes = cbor_dumps(entry)
             f.write(entry_bytes)
@@ -208,7 +209,7 @@ def export_snapshot(
             manifest.accounts_count += 1
 
         # Export code
-        for key, value in state_db._db.scan(prefix=PFX_CODE):
+        for key, value in state_db.kv.iter_prefix(PFX_CODE):
             entry = {"type": "code", "key": key, "value": value}
             entry_bytes = cbor_dumps(entry)
             f.write(entry_bytes)
@@ -216,7 +217,7 @@ def export_snapshot(
             manifest.code_contracts_count += 1
 
         # Export storage
-        for key, value in state_db._db.scan(prefix=PFX_STO):
+        for key, value in state_db.kv.iter_prefix(PFX_STO):
             entry = {"type": "storage", "key": key, "value": value}
             entry_bytes = cbor_dumps(entry)
             f.write(entry_bytes)
@@ -383,7 +384,7 @@ def _import_blocks_chunk(block_db: BlockDB, chunk_file: Path, compressed: bool):
                     # Store header (data should already be in proper format)
                     block_hash = block_db.put_header(data)
                     # Update height index
-                    block_db.set_block_hash_by_height(height, block_hash)
+                    block_db.set_canonical(height, block_hash)
                 elif entry_type == "block":
                     # Store block
                     block_db.put_block(data)
@@ -422,7 +423,7 @@ def _import_state_chunk(state_db: StateDB, chunk_file: Path, compressed: bool):
                 value = entry.get("value")
 
                 # Write directly to underlying KV store
-                state_db._db.put(key, value)
+                state_db.kv.put(key, value)
 
                 imported_count += 1
                 if imported_count % 10000 == 0:
