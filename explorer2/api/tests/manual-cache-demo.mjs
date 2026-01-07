@@ -155,4 +155,7 @@ async function testTieredCaching() {
 }
 
 // Run the test
-testTieredCaching().catch(console.error)
+testTieredCaching().catch((err) => {
+  console.error(err)
+  process.exit(1)
+})

@@ -143,7 +143,23 @@ export class ExplorerService {
       const detail = normalizeBlockDetail(raw)
       
       // Get head height to determine cache TTL
-      const cachedHead = this.cache.get<HeadView>('head-view')
+      let cachedHead = this.cache.get<HeadView>('head-view')
+      
+      // If head is not cached and block height is known, try to fetch it (coalesced)
+      if (!cachedHead && typeof detail.height === 'number') {
+        try {
+          const headRaw = await this.coalescer.run('head-for-ttl', async () => {
+            const raw = await this.safeRpc(() => this.rpc.getHead())
+            const head = normalizeHead(raw)
+            this.cache.set('head-view', head, this.cacheTtls.head)
+            return head
+          })
+          cachedHead = headRaw
+        } catch {
+          // Ignore errors, fall back to default TTL
+        }
+      }
+      
       const ttl = cachedHead && typeof detail.height === 'number'
         ? this.getBlockCacheTtl(detail.height, cachedHead.height)
         : this.cacheTtls.blocks
