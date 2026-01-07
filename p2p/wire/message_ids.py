@@ -116,6 +116,16 @@ class MsgID(IntEnum):
     RECEIPT_HINT = 0x0800  # compact receipt bloom/logs root announce (optional)
 
     # ---------------------------
+    # 0x09xx — Snapshots (fast sync)
+    # ---------------------------
+    SNAPSHOT_LIST_REQ = 0x0900  # request available snapshots from peer
+    SNAPSHOT_LIST_RESP = 0x0901  # list of available snapshots
+    SNAPSHOT_GET_MANIFEST = 0x0902  # request snapshot manifest
+    SNAPSHOT_MANIFEST = 0x0903  # snapshot manifest response
+    SNAPSHOT_GET_CHUNK = 0x0904  # request snapshot chunk
+    SNAPSHOT_CHUNK = 0x0905  # snapshot chunk data
+
+    # ---------------------------
     # 0x0Exx — Experimental
     # ---------------------------
     EXP_EXAMPLE = 0x0E00
@@ -136,6 +146,9 @@ _REQUEST_RESPONSE: Dict[MsgID, MsgID] = {
     MsgID.TX_GET: MsgID.TX_DATA,
     MsgID.TX_MEMPOOL_REQ: MsgID.TX_MEMPOOL_RESP,
     MsgID.PTL_WANT: MsgID.PTL_PUSH,
+    MsgID.SNAPSHOT_LIST_REQ: MsgID.SNAPSHOT_LIST_RESP,
+    MsgID.SNAPSHOT_GET_MANIFEST: MsgID.SNAPSHOT_MANIFEST,
+    MsgID.SNAPSHOT_GET_CHUNK: MsgID.SNAPSHOT_CHUNK,
 }
 
 
@@ -170,6 +183,8 @@ def category(mid: MsgID) -> str:
         return "randomness"
     if 0x0800 <= v <= 0x08FF:
         return "execution"
+    if 0x0900 <= v <= 0x09FF:
+        return "snapshot"
     if 0x0E00 <= v <= 0x0EFF:
         return "experimental"
     if 0x0F00 <= v <= 0x0FFF:

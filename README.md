@@ -12,7 +12,7 @@
 - **AI & Quantum Integration**: Off-chain compute coordination via AICF (AI Capability Framework)
 - **Multi-Network Support**: Mainnet, testnet, devnet configurations with isolated state
 - **Developer Tools**: Studio IDE, contract templates, multi-language SDKs (Python, TypeScript, Rust)
-- **Fast Sync with Snapshots**: Bootstrap new nodes in minutes using pre-built chain snapshots at checkpoints
+- **Fast Sync with Automatic Snapshots**: Bootstrap new nodes in minutes using automatically-created snapshots at 2000 block intervals, with P2P discovery
 
 ## 📁 Repository Structure
 
@@ -121,21 +121,31 @@ animica peer list                   # connected peers (expect >0)
 animica sync status                 # detailed sync progress
 ```
 
-**💡 Fast Sync with Snapshots:**
+💡 Fast Sync with Snapshots:**
 
-New nodes can bootstrap much faster using chain snapshots:
+New nodes can bootstrap much faster using **automatic snapshots** created every 2000 blocks:
 
 ```bash
-# Enable snapshot sync (enabled by default)
+# Snapshots are created automatically at regular intervals
+# Enable P2P snapshot discovery (default: enabled)
 export ANIMICA_SNAPSHOT_SYNC_ENABLED=true
-export ANIMICA_SNAPSHOT_RPC_URL=http://snapshots.animica.org:8545/rpc
 
-# Start node - automatically downloads snapshot if available
+# Start node - automatically discovers and downloads snapshots from peers
 animica node up
 
-# Or manually download/import snapshot
+# Configure snapshot creation interval (default: 2000 blocks)
+export ANIMICA_SNAPSHOT_INTERVAL=2000
+export ANIMICA_SNAPSHOT_RETENTION=5  # Keep last 5 snapshots
+
+# Or manually manage snapshots
 animica snapshot list
+animica snapshot create --height 10000
 animica snapshot import /path/to/snapshot
+```
+
+**P2P Snapshot Discovery**: Nodes automatically query connected peers for available snapshots on startup, enabling truly decentralized fast sync (10-50x faster than genesis sync).
+
+See [AUTOMATIC_SNAPSHOTS.md](AUTOMATIC_SNAPSHOTS.md) for complete documentation.
 ```
 
 See [CHAIN_SNAPSHOT_SYNC.md](CHAIN_SNAPSHOT_SYNC.md) for details.
