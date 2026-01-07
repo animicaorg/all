@@ -1099,6 +1099,38 @@ async def startup(cfg: t.Any | None = None) -> RpcContext:
                     _CTX = None
             _CTX = build_context(cfg)
 
+        # Try snapshot bootstrap before starting P2P sync
+        if _CTX.p2p_service is not None and _CTX.block_db is not None and _CTX.state_db is not None:
+            try:
+                from p2p.sync.snapshot_sync import try_snapshot_bootstrap
+                
+                # Get current chain height
+                current_height = 0
+                head = _CTX.block_db.get_head()
+                if head:
+                    current_height = head[0]
+                
+                # Attempt snapshot bootstrap
+                success, error = await try_snapshot_bootstrap(
+                    block_db=_CTX.block_db,
+                    state_db=_CTX.state_db,
+                    chain_id=_CTX.cfg.chain_id,
+                    current_height=current_height,
+                )
+                
+                if success:
+                    logging.getLogger("animica.rpc.deps").info(
+                        "Snapshot bootstrap completed successfully"
+                    )
+                elif error:
+                    logging.getLogger("animica.rpc.deps").debug(
+                        f"Snapshot bootstrap skipped: {error}"
+                    )
+            except Exception as e:
+                logging.getLogger("animica.rpc.deps").debug(
+                    f"Snapshot bootstrap failed, falling back to P2P sync: {e}"
+                )
+        
         # Start P2P service if it was initialized
         if _CTX.p2p_service is not None:
             try:

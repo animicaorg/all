@@ -325,6 +325,52 @@ def snapshot_delete(height: int, chain_id: int | None = None) -> dict:
         return {"success": False, "error": str(e)}
 
 
+@method(
+    "snapshot.downloadChunk",
+    desc="Download a specific chunk from a snapshot",
+)
+def snapshot_download_chunk(
+    height: int, 
+    chunk_name: str, 
+    chain_id: int | None = None
+) -> dict:
+    """
+    Download a specific chunk from a snapshot.
+    
+    Returns the chunk data as base64-encoded bytes.
+    """
+    try:
+        import base64
+        
+        if chain_id is None:
+            chain_id = int(deps.get_chain_id())
+        
+        snapshot_dir = _get_checkpoint_snapshots_dir(chain_id, height)
+        chunk_file = snapshot_dir / chunk_name
+        
+        if not chunk_file.exists():
+            return {
+                "success": False,
+                "error": f"Chunk {chunk_name} not found in snapshot at height {height}",
+            }
+        
+        # Read and encode chunk data
+        with open(chunk_file, "rb") as f:
+            chunk_data = f.read()
+        
+        chunk_data_b64 = base64.b64encode(chunk_data).decode("ascii")
+        
+        return {
+            "success": True,
+            "chunk_name": chunk_name,
+            "size": len(chunk_data),
+            "data": chunk_data_b64,
+        }
+    except Exception as e:
+        _log.exception("Error downloading chunk")
+        return {"success": False, "error": str(e)}
+
+
 __all__ = [
     "snapshot_create",
     "snapshot_list",
@@ -332,4 +378,5 @@ __all__ = [
     "snapshot_verify",
     "snapshot_import",
     "snapshot_delete",
+    "snapshot_download_chunk",
 ]

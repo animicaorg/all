@@ -9,11 +9,15 @@ normal P2P sync if snapshots are unavailable.
 """
 
 import asyncio
+import base64
+import json
 import logging
 import os
+import shutil
 import tempfile
 from pathlib import Path
 from typing import Any, Optional, Tuple
+from urllib.parse import urljoin, urlparse
 
 import httpx
 
@@ -230,11 +234,114 @@ async def _download_and_import_snapshot(
             _log.error(f"Failed to import snapshot: {e}")
             return False
     else:
-        _log.warning(
-            f"Remote snapshot download not yet implemented. "
-            f"Snapshot path: {source_path}"
-        )
-        return False
+        # Remote snapshot - download chunks to temporary directory
+        _log.info(f"Remote snapshot path {source_path} not found locally, attempting download...")
+        
+        try:
+            # Create temporary directory for download
+            temp_dir = Path(tempfile.mkdtemp(prefix="animica_snapshot_"))
+            _log.info(f"Downloading snapshot to temporary directory: {temp_dir}")
+            
+            try:
+                # Write manifest to temp directory
+                manifest_path = temp_dir / "manifest.json"
+                with open(manifest_path, "w") as f:
+                    json.dump(manifest, f, indent=2)
+                
+                # Download each chunk
+                chunks = manifest.get("chunks", [])
+                if not chunks:
+                    raise RuntimeError("No chunks in manifest")
+                
+                async with httpx.AsyncClient(timeout=timeout) as client:
+                    for chunk_info in chunks:
+                        chunk_name = chunk_info["name"]
+                        _log.info(f"Downloading chunk: {chunk_name}")
+                        
+                        # Request chunk download via RPC
+                        chunk_payload = {
+                            "jsonrpc": "2.0",
+                            "id": 1,
+                            "method": "snapshot.downloadChunk",
+                            "params": {
+                                "height": checkpoint_height,
+                                "chain_id": chain_id,
+                                "chunk_name": chunk_name,
+                            },
+                        }
+                        
+                        chunk_response = await client.post(rpc_url, json=chunk_payload)
+                        chunk_data = chunk_response.json()
+                        
+                        if "error" in chunk_data:
+                            # Try direct HTTP download as fallback
+                            _log.debug(f"RPC download failed, trying direct HTTP download")
+                            
+                            # Construct direct URL from source_path
+                            # Assume snapshot is served via HTTP at the RPC URL's base
+                            parsed_rpc = urlparse(rpc_url)
+                            base_url = f"{parsed_rpc.scheme}://{parsed_rpc.netloc}"
+                            chunk_url = urljoin(base_url, f"/snapshots/chain-{chain_id}-height-{checkpoint_height}/{chunk_name}")
+                            
+                            _log.debug(f"Attempting direct download from: {chunk_url}")
+                            chunk_http_response = await client.get(chunk_url, timeout=timeout)
+                            
+                            if chunk_http_response.status_code != 200:
+                                raise RuntimeError(
+                                    f"Failed to download chunk {chunk_name}: "
+                                    f"HTTP {chunk_http_response.status_code}"
+                                )
+                            
+                            chunk_content = chunk_http_response.content
+                        else:
+                            # Extract chunk data from RPC response
+                            chunk_result = chunk_data.get("result", {})
+                            if not chunk_result.get("success"):
+                                raise RuntimeError(
+                                    f"Failed to download chunk {chunk_name}: "
+                                    f"{chunk_result.get('error', 'Unknown error')}"
+                                )
+                            
+                            # Chunk data should be base64 encoded
+                            chunk_data_b64 = chunk_result.get("data")
+                            if not chunk_data_b64:
+                                raise RuntimeError(f"No data in chunk response for {chunk_name}")
+                            
+                            chunk_content = base64.b64decode(chunk_data_b64)
+                        
+                        # Write chunk to temp directory
+                        chunk_path = temp_dir / chunk_name
+                        with open(chunk_path, "wb") as f:
+                            f.write(chunk_content)
+                        
+                        _log.info(
+                            f"Downloaded chunk {chunk_name}: "
+                            f"{len(chunk_content)} bytes"
+                        )
+                
+                # Now import the snapshot from temp directory
+                _log.info(f"Importing downloaded snapshot from {temp_dir}")
+                import_snapshot(
+                    block_db=block_db,
+                    state_db=state_db,
+                    snapshot_dir=temp_dir,
+                    verify_hashes=True,
+                )
+                
+                _log.info("Successfully imported downloaded snapshot")
+                return True
+                
+            finally:
+                # Clean up temporary directory
+                try:
+                    shutil.rmtree(temp_dir)
+                    _log.debug(f"Cleaned up temporary directory: {temp_dir}")
+                except Exception as e:
+                    _log.warning(f"Failed to clean up temp directory {temp_dir}: {e}")
+        
+        except Exception as e:
+            _log.error(f"Failed to download and import remote snapshot: {e}")
+            return False
 
 
 def should_try_snapshot_bootstrap(current_height: int, target_height: Optional[int] = None) -> bool:
