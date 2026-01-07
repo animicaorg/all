@@ -1,13 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { RequestCoalescer, TtlCache } from '../src/cache'
-
-describe('TtlCache', () => {
-  it('returns cached values until expiry', () => {
-    const cache = new TtlCache()
-    cache.set('a', 1, 1000)
-    expect(cache.get('a')).toBe(1)
-  })
-})
+import { RequestCoalescer } from '../src/cache'
 
 describe('RequestCoalescer', () => {
   it('coalesces concurrent requests', async () => {

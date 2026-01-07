@@ -95,15 +95,7 @@ if (config.rpcUrl) {
   chain = new HybridChainClient(local)
 }
 
-const service = new ExplorerService(
-  chain,
-  {
-    head: config.cacheHeadTtlMs,
-    blocks: config.cacheBlocksTtlMs,
-    tx: config.cacheTxTtlMs
-  },
-  { persistPath: config.cachePersistPath || undefined }
-)
+const service = new ExplorerService(chain)
 
 // Export diagnostics info for /api/diagnostics endpoint
 export const diagnostics = {
