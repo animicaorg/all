@@ -184,7 +184,7 @@ export class ExplorerService {
     for (const height of heights) {
       // Check cache first for block detail
       const cacheKey = `block-detail:${height}`
-      let block = this.cache.get<BlockDetail>(cacheKey)
+      let block: unknown = this.cache.get<BlockDetail>(cacheKey)
       
       if (!block) {
         block = await this.safeRpc(() => this.rpc.getBlockByNumber(height, true, false)).catch(() => null)
@@ -275,7 +275,7 @@ export class ExplorerService {
         return summary
       })
     )
-    return blocks.filter(Boolean).map((block) => block as BlockSummary)
+    return blocks.filter((block): block is BlockSummary => Boolean(block))
   }
 
   private async safeRpc<T>(fn: () => Promise<T>): Promise<T>
