@@ -81,6 +81,15 @@ except ImportError:
     DIFFICULTY_AVAILABLE = False
     diff = None  # type: ignore[assignment]
 
+# Import snapshot manager for automatic snapshot creation
+try:
+    from core.chain.snapshot_manager import init_snapshot_manager, get_snapshot_manager
+    SNAPSHOT_MANAGER_AVAILABLE = True
+except ImportError:
+    SNAPSHOT_MANAGER_AVAILABLE = False
+    init_snapshot_manager = None  # type: ignore[assignment]
+    get_snapshot_manager = None  # type: ignore[assignment]
+
 try:
     from consensus.fork_choice import ForkChoice as WeightForkChoice
 except Exception:  # pragma: no cover - consensus optional
@@ -422,6 +431,18 @@ class BlockImporter:
             os.getenv("ANIMICA_STATE_SNAPSHOT_CACHE", "2048") or 2048
         )
         self._init_fork_choice_from_db()
+        
+        # Initialize snapshot manager for automatic snapshot creation
+        if SNAPSHOT_MANAGER_AVAILABLE and init_snapshot_manager is not None:
+            try:
+                init_snapshot_manager(
+                    block_db=block_db,
+                    state_db=state_db,
+                    chain_id=params.chain_id,
+                )
+                log.info("Automatic snapshot creation initialized")
+            except Exception as e:
+                log.warning(f"Failed to initialize snapshot manager: {e}")
 
     # --- Basics -------------------------------------------------------------
 
@@ -1140,6 +1161,13 @@ class BlockImporter:
             if not _is_instant_block(header):
                 canonical_height += 1
                 self.block_db.set_canonical_height(canonical_height)
+                
+                # Check if we should create a snapshot at this height
+                if SNAPSHOT_MANAGER_AVAILABLE and get_snapshot_manager is not None:
+                    manager = get_snapshot_manager()
+                    if manager is not None and manager.should_create_snapshot(height):
+                        log.info(f"Triggering automatic snapshot creation at height {height}")
+                        manager.create_snapshot_async(height)
             
             ts = _timestamp_of(header)
             if ts is not None:
