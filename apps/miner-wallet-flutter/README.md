@@ -59,36 +59,84 @@ flutter run -d <device>
 # Available devices: android, ios, macos, windows, linux, chrome
 ```
 
+### Using Launch Scripts
+
+Convenient bash scripts are provided for launching the app on each platform:
+
+```bash
+# Launch on Web
+./run_web.sh
+
+# Launch on macOS (macOS only)
+./run_macos.sh
+
+# Launch on Windows (Windows only)
+./run_windows.sh
+
+# Launch on Linux (Linux only)
+./run_linux.sh
+```
+
+These scripts automatically check for dependencies and install them if needed.
+
 ## Building
 
-### Android
+### Using Build Scripts
+
+Production-ready build scripts are provided for creating executables:
+
+```bash
+# Build for Web (creates tarball and zip in dist/)
+./build_web.sh
+
+# Build for macOS (creates .app bundle and DMG in dist/)
+./build_macos.sh
+
+# Build for Windows (creates executable and zip in dist/)
+./build_windows.sh
+
+# Build for Linux (creates tarball and AppImage in dist/)
+./build_linux.sh
+```
+
+All build scripts:
+- Clean previous builds
+- Install dependencies automatically
+- Create distribution packages in the `dist/` directory
+- Include version information from `pubspec.yaml`
+
+### Manual Building
+
+You can also build manually using Flutter commands:
+
+#### Android
 ```bash
 flutter build apk --release
 flutter build appbundle --release
 ```
 
-### iOS (on macOS)
+#### iOS (on macOS)
 ```bash
 cd ios && pod install && cd ..
 flutter build ipa --release
 ```
 
-### macOS
+#### macOS
 ```bash
 flutter build macos --release
 ```
 
-### Windows
+#### Windows
 ```bash
 flutter build windows --release
 ```
 
-### Linux
+#### Linux
 ```bash
 flutter build linux --release
 ```
 
-### Web
+#### Web
 ```bash
 flutter build web --release
 ```
