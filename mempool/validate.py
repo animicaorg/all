@@ -353,6 +353,32 @@ def _precheck_pq_signature(tx: "Tx") -> None:
     """
     alg_id, pubkey, signature = _extract_sig_tuple(tx)
 
+    # Validate signature components before verification
+    if not isinstance(alg_id, int) or alg_id < 0:
+        raise StatelessValidationError(
+            "InvalidAlgId", f"Invalid algorithm ID: {alg_id}"
+        )
+    if alg_id > 100000:  # Sanity check for unreasonably large alg_id
+        raise StatelessValidationError(
+            "InvalidAlgId", f"Algorithm ID too large: {alg_id}"
+        )
+    if not isinstance(pubkey, (bytes, bytearray)) or len(pubkey) == 0:
+        raise StatelessValidationError(
+            "InvalidPubkey", "Public key must be non-empty bytes"
+        )
+    if len(pubkey) > 10000:  # Sanity check (largest PQ keys are ~2KB)
+        raise StatelessValidationError(
+            "InvalidPubkey", f"Public key too large: {len(pubkey)} bytes"
+        )
+    if not isinstance(signature, (bytes, bytearray)) or len(signature) == 0:
+        raise StatelessValidationError(
+            "InvalidSignature", "Signature must be non-empty bytes"
+        )
+    if len(signature) > 50000:  # Sanity check (largest PQ sigs are ~16KB)
+        raise StatelessValidationError(
+            "InvalidSignature", f"Signature too large: {len(signature)} bytes"
+        )
+
     # Build message bytes using whichever API the Tx exposes.
     msg = _sign_bytes_for_tx(tx)
     if not isinstance(msg, (bytes, bytearray)) or len(msg) == 0:

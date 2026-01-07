@@ -356,6 +356,13 @@ class Pool:
             tx = sender_or_tx
             meta = nonce_or_meta if isinstance(nonce_or_meta, TxMeta) or nonce_or_meta is None else None
 
+        # Input validation for transaction hash
+        h = getattr(tx, "hash", None) or getattr(tx, "tx_hash", None)
+        if not isinstance(h, (bytes, bytearray)) or len(h) == 0:
+            raise AdmissionError("Transaction hash missing or invalid")
+        if len(h) > 64:  # Sanity check for hash size
+            raise AdmissionError(f"Transaction hash too large: {len(h)} bytes")
+
         # Build metadata defaults if caller didn't supply (needed for RBF check)
         if meta is None:
             # Try multiple fee attribute names for compatibility
@@ -364,6 +371,10 @@ class Pool:
                 getattr(tx, "fee", None) or
                 getattr(tx, "max_fee_per_gas", 0)
             )
+            
+            # Validate fee is non-negative
+            if effective_fee is not None and effective_fee < 0:
+                raise AdmissionError("Transaction fee cannot be negative")
             
             # Normalize sender to string (handle bytes from tests)
             raw_sender = getattr(tx, "sender", sender if 'sender' in locals() else "")
@@ -374,8 +385,15 @@ class Pool:
             else:
                 sender_str = str(raw_sender)
             
+            size_bytes = getattr(tx, "size_bytes", getattr(tx, "serialized_size", 0))
+            # Validate size
+            if size_bytes < 0:
+                raise AdmissionError("Transaction size cannot be negative")
+            if size_bytes > 10_485_760:  # 10 MiB sanity check
+                raise AdmissionError(f"Transaction too large: {size_bytes} bytes")
+            
             meta = TxMeta(
-                size_bytes=getattr(tx, "size_bytes", getattr(tx, "serialized_size", 0)),
+                size_bytes=size_bytes,
                 first_seen_s=self.clock(),
                 effective_fee_wei=effective_fee,
                 sender=sender_str,
@@ -384,8 +402,18 @@ class Pool:
                 valid_until=getattr(tx, "valid_until", None),
                 salt=getattr(tx, "salt", None),
             )
-
-        h = getattr(tx, "hash", None) or getattr(tx, "tx_hash", None)
+        
+        # Validate metadata if provided externally
+        if meta is not None:
+            size_bytes = getattr(meta, "size_bytes", 0)
+            if size_bytes < 0:
+                raise AdmissionError("Invalid transaction size (negative)")
+            if size_bytes > 10_485_760:  # 10 MiB sanity check
+                raise AdmissionError(f"Transaction too large: {size_bytes} bytes")
+            
+            effective_fee = getattr(meta, "effective_fee_wei", 0)
+            if effective_fee < 0:
+                raise AdmissionError("Invalid fee (negative)")
         
         # Check if hash is already in pool
         if self.index.get(h) is not None:
