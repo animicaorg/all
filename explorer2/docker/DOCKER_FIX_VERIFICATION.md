@@ -37,8 +37,8 @@ grep "EXPOSE" explorer2/docker/Dockerfile.api
 # Expected output: EXPOSE 8081
 
 # Check docker-compose has RPC URL configured
-grep -A 2 "EXPLORER2_RPC_URL" explorer2/docker/docker-compose.explorer2.yml
-# Expected output should include: EXPLORER2_RPC_URL: ${EXPLORER2_RPC_URL:-http://host.docker.internal:8545/rpc}
+grep "EXPLORER2_RPC_URL:" explorer2/docker/docker-compose.explorer2.yml | grep -v "^#"
+# Expected output: EXPLORER2_RPC_URL: ${EXPLORER2_RPC_URL:-http://host.docker.internal:8545/rpc}
 
 # Check extra_hosts is present
 grep -A 1 "extra_hosts" explorer2/docker/docker-compose.explorer2.yml
@@ -150,8 +150,23 @@ If you still see 502 errors:
    # From host machine
    curl -X POST http://127.0.0.1:8545/rpc -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","id":1,"method":"chain.getChainId","params":[]}'
    
-   # From within API container
-   docker compose -f explorer2/docker/docker-compose.explorer2.yml exec explorer2-api node -e "fetch('http://host.docker.internal:8545/rpc',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'chain.getChainId',params:[]})}).then(r=>r.json()).then(console.log)"
+   # From within API container (test RPC connectivity)
+   docker compose -f explorer2/docker/docker-compose.explorer2.yml exec explorer2-api \
+     sh -c 'node -e "
+       fetch(\"http://host.docker.internal:8545/rpc\", {
+         method: \"POST\",
+         headers: { \"Content-Type\": \"application/json\" },
+         body: JSON.stringify({
+           jsonrpc: \"2.0\",
+           id: 1,
+           method: \"chain.getChainId\",
+           params: []
+         })
+       })
+       .then(r => r.json())
+       .then(console.log)
+       .catch(console.error)
+     "'
    ```
 
 4. **Check nginx proxy configuration**:
