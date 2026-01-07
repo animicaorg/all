@@ -90,6 +90,13 @@ log = logging.getLogger("animica.chain.block_import")
 _POW_LOG_MIN_S = float(os.getenv("ANIMICA_POW_LOG_MIN_S", "5.0") or 5.0)
 _POW_LOG_AT: dict[str, float] = {}
 
+# Fork choice reorg depth limit
+# This prevents excessive chain switching by limiting how deep a reorganization can be.
+# The default of 96 blocks matches the P2P sync configuration (p2p/sync/__init__.py)
+# and provides a good balance between allowing legitimate short reorgs and preventing
+# malicious or accidental deep chain switches that destabilize the network.
+DEFAULT_MAX_REORG_DEPTH = 96
+
 
 class ImportErrorCode(str):
     INVALID = "invalid"
@@ -383,6 +390,7 @@ class BlockImporter:
         "_min_block_spacing_ms",
         "_state_snapshots",
         "_state_snapshot_limit",
+        "_max_reorg_depth",
     )
 
     def __init__(
@@ -394,6 +402,7 @@ class BlockImporter:
         tx_index=None,
         fork_choice: Optional[Any] = None,
         full_params_dict: Optional[Dict[str, Any]] = None,
+        max_reorg_depth: Optional[int] = None,
     ):
         self.params = params
         self.block_db = block_db
@@ -405,7 +414,30 @@ class BlockImporter:
         self.full_params_dict = full_params_dict
         if self.full_params_dict is None:
             self.full_params_dict = _load_full_params_dict(params.chain_id)
-        
+
+        # Fork choice reorg depth limit (prevents excessive chain switching)
+        # Default to DEFAULT_MAX_REORG_DEPTH or allow override via environment
+        self._max_reorg_depth = max_reorg_depth
+        if self._max_reorg_depth is None:
+            env_val = os.getenv("ANIMICA_MAX_REORG_DEPTH")
+            if env_val is not None:
+                try:
+                    self._max_reorg_depth = int(env_val)
+                except ValueError:
+                    log.warning(
+                        f"Invalid ANIMICA_MAX_REORG_DEPTH value: '{env_val}', using default {DEFAULT_MAX_REORG_DEPTH}"
+                    )
+                    self._max_reorg_depth = DEFAULT_MAX_REORG_DEPTH
+            else:
+                self._max_reorg_depth = DEFAULT_MAX_REORG_DEPTH
+
+        # Validate max_reorg_depth is non-negative (handles direct constructor param)
+        if self._max_reorg_depth is not None and self._max_reorg_depth < 0:
+            log.warning(
+                f"max_reorg_depth must be non-negative, got {self._max_reorg_depth}, using default {DEFAULT_MAX_REORG_DEPTH}"
+            )
+            self._max_reorg_depth = DEFAULT_MAX_REORG_DEPTH
+
         # Initialize difficulty adjustment state
         self.difficulty_state = None
         self._last_block_time: Optional[int] = None
@@ -967,6 +999,7 @@ class BlockImporter:
             genesis_hash=genesis_hash,
             genesis_weight_micro=genesis_weight,
             genesis_height=0,
+            max_reorg_depth=self._max_reorg_depth,
         )
 
     def _init_fork_choice_from_db(self) -> None:
@@ -994,6 +1027,7 @@ class BlockImporter:
             genesis_hash=genesis_hash,
             genesis_weight_micro=genesis_weight,
             genesis_height=0,
+            max_reorg_depth=self._max_reorg_depth,
         )
         self._seed_fork_choice_from_canonical()
 
