@@ -11,6 +11,6 @@ RUN pnpm install --filter @animica/explorer2-api... --filter @animica/explorer2-
 RUN pnpm -C explorer2/shared build && pnpm -C explorer2/api build
 
 ENV NODE_ENV=production
-EXPOSE 3001
+EXPOSE 8081
 
 CMD ["node", "explorer2/api/dist/index.js"]
