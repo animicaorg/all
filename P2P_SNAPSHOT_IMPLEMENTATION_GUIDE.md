@@ -223,16 +223,35 @@ Snapshot discovery and download happens automatically when:
 
 ### Manual via CLI
 
-```bash
-# List snapshots from connected peers
-animica snapshot list --from-peers
+The CLI commands now properly use the P2P protocol for snapshot discovery:
 
-# Discover best snapshot from peers
+```bash
+# Discover best snapshot from connected peers via P2P protocol
+# (Works automatically, no need for peers to expose RPC)
 animica snapshot discover
 
-# Query specific node (if RPC exposed)
+# List snapshots from connected peers via P2P protocol
+animica snapshot list --from-peers
+
+# List local snapshots + highest peer snapshot
+animica snapshot list
+
+# Query specific node via RPC (if peer explicitly exposes RPC)
+# Note: Most peers don't expose RPC for security reasons
 animica snapshot list --rpc http://peer-node:8545
 ```
+
+**How it works:**
+1. CLI calls `snapshot.discoverFromPeers` RPC method on your local node
+2. Your node uses its P2P service to query connected peers via P2P protocol
+3. Peers respond with available snapshots (using GET_SNAPSHOTS/SNAPSHOTS messages)
+4. Results are returned to the CLI
+
+**Note:** This means:
+- ✅ Works with any P2P-connected peer (no RPC exposure needed)
+- ✅ Uses the same P2P protocol as automatic discovery during node startup
+- ✅ Peers don't need to expose their RPC endpoints
+- ✅ More secure and reliable than trying to query peers' RPC directly
 
 ## Testing
 
