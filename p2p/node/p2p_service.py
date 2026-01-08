@@ -114,6 +114,8 @@ class _PeerState:
     hello_done: asyncio.Event = field(default_factory=asyncio.Event)
     pending_headers: Optional[asyncio.Future] = None
     pending_header_request_id: Optional[str] = None
+    pending_snapshot_list: Optional[asyncio.Future] = None
+    pending_snapshot_chunk: Optional[asyncio.Future] = None
     ready_for_sync: bool = False
     connected_at: float = field(default_factory=time.time)
     feeler: bool = False
@@ -4306,6 +4308,12 @@ class P2PService:
         if mid == int(MsgID.GETDATA):
             await self._handle_getdata(peer, payload)
             return
+        if mid == int(MsgID.SNAPSHOTS):
+            await self._handle_snapshots(peer, payload)
+            return
+        if mid == int(MsgID.SNAPSHOT_CHUNK):
+            await self._handle_snapshot_chunk(peer, payload)
+            return
         if mid == int(MsgID.TX):
             await self._handle_tx(peer, payload)
             return
@@ -5013,6 +5021,104 @@ class P2PService:
                     self._mark_peer_known(peer, addr)
             self._ingest_peer_entries(entries, source=f"announce:{peer.remote}", source_peer=peer)
 
+    async def query_peer_snapshots(
+        self, peer: _PeerState, chain_id: Optional[int] = None, timeout: float = 10.0
+    ) -> Optional[list[dict[str, Any]]]:
+        """
+        Query a peer for available snapshots via P2P.
+        
+        Args:
+            peer: Peer state object
+            chain_id: Optional chain ID filter
+            timeout: Timeout in seconds
+            
+        Returns:
+            List of snapshot info dicts, or None if request failed/timed out
+        """
+        try:
+            from p2p.wire.messages import GetSnapshots
+            from p2p.wire.message_ids import MsgID
+            
+            # Create future for response
+            fut: asyncio.Future = asyncio.get_event_loop().create_future()
+            peer.pending_snapshot_list = fut
+            
+            # Send GET_SNAPSHOTS request
+            req = GetSnapshots(chain_id=chain_id)
+            await self._send(peer, MsgID.GET_SNAPSHOTS, req)
+            
+            # Wait for response
+            try:
+                response = await asyncio.wait_for(fut, timeout=timeout)
+                return response
+            except asyncio.TimeoutError:
+                self._log.debug(f"Snapshot list request to {peer.remote} timed out")
+                return None
+            finally:
+                peer.pending_snapshot_list = None
+                
+        except Exception as e:
+            self._log.warning(f"Error querying peer {peer.remote} for snapshots: {e}")
+            peer.pending_snapshot_list = None
+            return None
+
+    async def query_peer_snapshot_chunk(
+        self,
+        peer: _PeerState,
+        chain_id: int,
+        checkpoint_height: int,
+        chunk_name: str,
+        timeout: float = 30.0,
+    ) -> Optional[tuple[bytes, bool]]:
+        """
+        Query a peer for a specific snapshot chunk via P2P.
+        
+        Args:
+            peer: Peer state object
+            chain_id: Chain ID
+            checkpoint_height: Snapshot checkpoint height
+            chunk_name: Name of the chunk (e.g., "blocks.tar.zst")
+            timeout: Timeout in seconds
+            
+        Returns:
+            Tuple of (chunk_data, found) or None if request failed/timed out
+        """
+        try:
+            from p2p.wire.messages import GetSnapshotChunk
+            from p2p.wire.message_ids import MsgID
+            
+            # Create future for response
+            fut: asyncio.Future = asyncio.get_event_loop().create_future()
+            peer.pending_snapshot_chunk = fut
+            
+            # Send GET_SNAPSHOT_CHUNK request
+            req = GetSnapshotChunk(
+                chain_id=chain_id,
+                checkpoint_height=checkpoint_height,
+                chunk_name=chunk_name,
+            )
+            await self._send(peer, MsgID.GET_SNAPSHOT_CHUNK, req)
+            
+            # Wait for response
+            try:
+                response = await asyncio.wait_for(fut, timeout=timeout)
+                return response
+            except asyncio.TimeoutError:
+                self._log.debug(
+                    f"Snapshot chunk request to {peer.remote} "
+                    f"(chunk={chunk_name}) timed out"
+                )
+                return None
+            finally:
+                peer.pending_snapshot_chunk = None
+                
+        except Exception as e:
+            self._log.warning(
+                f"Error querying peer {peer.remote} for snapshot chunk {chunk_name}: {e}"
+            )
+            peer.pending_snapshot_chunk = None
+            return None
+
     async def _close_feeler_after_delay(self, peer: _PeerState) -> None:
         try:
             await asyncio.sleep(self._feeler_hold_s)
@@ -5550,6 +5656,76 @@ class P2PService:
             )
             self._sync_header_queue.append((peer.remote, list(msg.headers)))
             self._sync_wakeup.set()
+
+    async def _handle_snapshots(self, peer: _PeerState, payload: bytes) -> None:
+        """Handle SNAPSHOTS response from peer."""
+        try:
+            from p2p.wire.messages import SnapshotInfo
+            
+            data = self._decode_map(payload)
+            raw_snapshots = data.get("snapshots") or []
+            
+            # Convert raw snapshot data to dicts
+            snapshots = []
+            for snap_data in raw_snapshots:
+                if isinstance(snap_data, dict):
+                    snapshots.append(snap_data)
+                elif hasattr(snap_data, 'to_dict'):
+                    snapshots.append(snap_data.to_dict())
+                else:
+                    # Try to extract fields from SnapshotInfo-like object
+                    try:
+                        snapshot_dict = {
+                            "chain_id": getattr(snap_data, 'chain_id', 0),
+                            "checkpoint_height": getattr(snap_data, 'checkpoint_height', 0),
+                            "checkpoint_hash": getattr(snap_data, 'checkpoint_hash', ''),
+                            "blocks_count": getattr(snap_data, 'blocks_count', 0),
+                            "accounts_count": getattr(snap_data, 'accounts_count', 0),
+                            "size_mb": getattr(snap_data, 'size_mb', 0.0),
+                            "timestamp": getattr(snap_data, 'timestamp', 0),
+                        }
+                        snapshots.append(snapshot_dict)
+                    except Exception as e:
+                        self._log.debug(f"Failed to convert snapshot data: {e}")
+                        continue
+            
+            self._log.debug(
+                f"Received {len(snapshots)} snapshot(s) from {peer.remote}"
+            )
+            
+            # If we have a pending request, fulfill it
+            fut = peer.pending_snapshot_list
+            if fut is not None and not fut.done():
+                fut.set_result(snapshots)
+                
+        except Exception as e:
+            self._log.warning(f"Error handling SNAPSHOTS from {peer.remote}: {e}")
+            fut = peer.pending_snapshot_list
+            if fut is not None and not fut.done():
+                fut.set_result([])
+
+    async def _handle_snapshot_chunk(self, peer: _PeerState, payload: bytes) -> None:
+        """Handle SNAPSHOT_CHUNK response from peer."""
+        try:
+            data = self._decode_map(payload)
+            chunk_data = data.get("data") or b""
+            found = data.get("found", False)
+            
+            self._log.debug(
+                f"Received snapshot chunk from {peer.remote}: "
+                f"{len(chunk_data)} bytes, found={found}"
+            )
+            
+            # If we have a pending request, fulfill it
+            fut = peer.pending_snapshot_chunk
+            if fut is not None and not fut.done():
+                fut.set_result((chunk_data, found))
+                
+        except Exception as e:
+            self._log.warning(f"Error handling SNAPSHOT_CHUNK from {peer.remote}: {e}")
+            fut = peer.pending_snapshot_chunk
+            if fut is not None and not fut.done():
+                fut.set_result((b"", False))
 
     async def _handle_get_blocks(self, peer: _PeerState, payload: bytes) -> None:
         data = self._decode_map(payload)
