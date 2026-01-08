@@ -296,6 +296,44 @@ class BlockAnnounce:
         _ensure_len("hash", self.hash, 32)
 
 
+@dataclass(frozen=True)
+class SnapshotInfo:
+    """Metadata for a single snapshot."""
+    chain_id: ChainId
+    checkpoint_height: Height
+    checkpoint_hash: str  # hex string
+    blocks_count: int
+    accounts_count: int
+    size_mb: float
+    timestamp: int
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for JSON/RPC compatibility."""
+        return {
+            "chain_id": self.chain_id,
+            "checkpoint_height": self.checkpoint_height,
+            "checkpoint_hash": self.checkpoint_hash,
+            "blocks_count": self.blocks_count,
+            "accounts_count": self.accounts_count,
+            "size_mb": self.size_mb,
+            "timestamp": self.timestamp,
+        }
+
+
+@dataclass(frozen=True)
+class GetSnapshots:
+    """Request list of available snapshots from a peer."""
+    msg_id: MsgID = MsgID.GET_SNAPSHOTS
+    chain_id: Optional[ChainId] = None  # Filter by chain ID, None = all chains
+
+
+@dataclass(frozen=True)
+class Snapshots:
+    """Response containing list of available snapshots."""
+    msg_id: MsgID = MsgID.SNAPSHOTS
+    snapshots: List[SnapshotInfo] = dc.field(default_factory=list)
+
+
 # ---------------------------
 # 0x04xx — Transactions
 # ---------------------------
@@ -571,6 +609,9 @@ __all__ = [
     "GetBlocks",
     "Blocks",
     "BlockAnnounce",
+    "GetSnapshots",
+    "Snapshots",
+    "SnapshotInfo",
     "Tx",
     "GetTx",
     "TxNotFound",

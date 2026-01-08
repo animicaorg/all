@@ -36,12 +36,13 @@ try:
     from ..protocol import hello as proto_hello
     from ..protocol import inventory as proto_inv
     from ..protocol import share_relay as proto_share
+    from ..protocol import snapshot as proto_snapshot
     from ..protocol import tx_relay as proto_tx
     from ..wire import encoding as wire_codec
 except Exception:  # pragma: no cover - optional full stack
     gossip_engine = None  # type: ignore
     gossip_topics = None  # type: ignore
-    proto_hello = proto_inv = proto_blk = proto_tx = proto_share = proto_flow = wire_codec = None  # type: ignore
+    proto_hello = proto_inv = proto_blk = proto_tx = proto_share = proto_flow = proto_snapshot = wire_codec = None  # type: ignore
 
 # Node router/event-bus (these are small glue modules under p2p/node/)
 from . import events as node_events
@@ -369,6 +370,11 @@ class NodeService:
 
         # Flow control (credits/window updates)
         self.router.add_handler(self.flowctl.handler(codec))
+        
+        # Snapshot discovery handler
+        self.router.add_handler(
+            proto_snapshot.SnapshotHandler(codec=codec)
+        )
 
         # Gossip topics
         self.gossip.register_topic(gossip_topics.BLOCKS)
