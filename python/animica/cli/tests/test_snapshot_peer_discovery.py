@@ -7,6 +7,7 @@ import json
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
+import httpx
 import pytest
 from typer.testing import CliRunner
 
@@ -641,8 +642,6 @@ def test_empty_error_message_handling():
 
 def test_connection_error_handling():
     """Test that connection errors provide meaningful messages."""
-    
-    import httpx
     
     class MockClientConnectionError:
         """Mock client that raises a connection error."""
