@@ -126,9 +126,12 @@ animica sync status                 # detailed sync progress
 New nodes can bootstrap much faster using chain snapshots:
 
 ```bash
+# Verify snapshot system is working
+python3 scripts/verify_snapshot_system.py
+
 # Enable snapshot sync (enabled by default)
 export ANIMICA_SNAPSHOT_SYNC_ENABLED=true
-export ANIMICA_SNAPSHOT_RPC_URL=http://snapshots.animica.org:8545/rpc
+export ANIMICA_SNAPSHOT_RPC_URL=http://snapshots.animica.org:8545/rpc  # Optional
 
 # Start node - automatically downloads snapshot if available
 animica node up
@@ -138,7 +141,7 @@ animica snapshot list
 animica snapshot import /path/to/snapshot
 ```
 
-See [CHAIN_SNAPSHOT_SYNC.md](CHAIN_SNAPSHOT_SYNC.md) for details.
+See [SNAPSHOT_VERIFICATION_GUIDE.md](SNAPSHOT_VERIFICATION_GUIDE.md) for complete guide and troubleshooting.
 
 5) **Ensure peers connect** (connectivity checklist):
 
