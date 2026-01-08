@@ -1109,8 +1109,9 @@ async def _background_snapshot_discovery(
         max_wait_seconds: Maximum time to wait for peers (default: 30s)
         retry_interval: Seconds between peer checks (default: 5s)
     """
+    # Local imports to avoid circular dependencies and lazy loading
     import asyncio
-    from p2p.sync.snapshot_sync import try_snapshot_bootstrap
+    from p2p.sync.snapshot_sync import try_snapshot_bootstrap, should_try_snapshot_bootstrap
     
     log = logging.getLogger("animica.rpc.deps.snapshot_discovery")
     
@@ -1130,7 +1131,6 @@ async def _background_snapshot_discovery(
             current_height = head[0]
         
         # Check if we should attempt snapshot bootstrap
-        from p2p.sync.snapshot_sync import should_try_snapshot_bootstrap
         if not should_try_snapshot_bootstrap(current_height):
             log.debug(f"Node at height {current_height}, skipping automatic snapshot discovery")
             return
