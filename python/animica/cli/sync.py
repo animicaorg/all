@@ -1323,7 +1323,7 @@ def sync_status(
             from animica.cli.snapshot import _query_all_peers_for_snapshots
             
             typer.echo("🔍 Checking for available snapshots from peers...")
-            snapshots_by_peer, errors = asyncio.run(_query_all_peers_for_snapshots(url, chain_id))
+            snapshots_by_peer, errors, peer_count = asyncio.run(_query_all_peers_for_snapshots(url, chain_id))
             
             if snapshots_by_peer:
                 all_snapshots = []
