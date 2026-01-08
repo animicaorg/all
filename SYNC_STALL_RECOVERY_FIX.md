@@ -253,14 +253,14 @@ animica sync status --json | jq '{phase, height, network_best_height}'
 
 ## Rollback Plan
 
-If issues arise, revert with:
+If issues arise, the changes can be easily reverted:
 
 ```bash
-git revert 81a7953a  # This commit
-git push origin copilot/fix-sync-issues
+git revert <commit-hash>  # Revert this PR's changes
+git push origin main
 ```
 
-The change is minimal (9 lines added, 8 removed) and isolated to the sync loop.
+The change is minimal (a few lines modified) and isolated to the sync loop.
 
 ## Related Issues
 

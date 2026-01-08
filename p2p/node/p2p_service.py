@@ -7557,6 +7557,8 @@ class P2PService:
                 # Schedule block requests regardless of stall status
                 # This breaks the catch-22 where stall detection prevented recovery
                 # _handle_sync_stall() above still provides peer rotation and diagnostics
+                # Single call is sufficient: _schedule_block_requests() handles all cases
+                # internally (seeding from headers, checking inflight, respecting limits)
                 await self._schedule_block_requests()
         except asyncio.CancelledError:
             return
