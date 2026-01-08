@@ -447,6 +447,15 @@ def test_snapshot_list_local_only_flag():
         assert "🌐 Highest snapshot from connected peers" not in result.stdout
 
 
+def test_snapshot_list_mutually_exclusive_flags():
+    """Test that --from-peers and --local-only are mutually exclusive."""
+    runner = CliRunner()
+    result = runner.invoke(app, ["snapshot", "list", "--from-peers", "--local-only"])
+    
+    assert result.exit_code == 1
+    assert "mutually exclusive" in result.stdout
+
+
 def test_snapshot_list_help():
     """Test snapshot list command help."""
     result = runner.invoke(app, ["snapshot", "list", "--help"])

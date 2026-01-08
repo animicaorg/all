@@ -267,6 +267,11 @@ def list_snapshots(
     """
     url = _resolve_rpc_url(rpc_url)
     
+    # Validate mutually exclusive flags
+    if from_peers and local_only:
+        typer.echo("❌ Error: --from-peers and --local-only are mutually exclusive", err=True)
+        raise typer.Exit(code=1)
+    
     try:
         if from_peers:
             # Query all connected peers for snapshots
@@ -387,7 +392,7 @@ def list_snapshots(
                 typer.echo("")
                 
                 # Check if peer snapshot is higher than local
-                local_max_height = max([s['checkpoint_height'] for s in local_snapshots]) if local_snapshots else 0
+                local_max_height = max((s['checkpoint_height'] for s in local_snapshots)) if local_snapshots else 0
                 if highest_peer_snapshot['checkpoint_height'] > local_max_height:
                     typer.echo("💡 A higher snapshot is available from peers for faster sync!")
                     typer.echo("   The node will automatically use it during sync if ANIMICA_SNAPSHOT_SYNC_ENABLED=true")
