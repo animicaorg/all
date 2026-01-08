@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import sys
 from pathlib import Path
@@ -19,6 +20,8 @@ import typer
 from animica.config import load_network_config
 from animica.cli.rpc_utils import candidate_rpc_urls
 from .timeouts import DEFAULT_RPC_TIMEOUT, RPC_TIMEOUT_ENV, resolve_timeout
+
+_log = logging.getLogger("animica.cli.snapshot")
 
 app = typer.Typer(help="Manage chain snapshots for fast sync.")
 
@@ -90,12 +93,13 @@ async def _query_peer_snapshots(
     peer_address: str,
     chain_id: Optional[int] = None,
     timeout: Optional[float] = None,
-) -> tuple[str, list[dict[str, Any]]]:
+) -> tuple[str, list[dict[str, Any]], Optional[str]]:
     """
     Query a single peer for available snapshots.
     
     Returns:
-        Tuple of (peer_rpc_url, snapshots_list)
+        Tuple of (peer_rpc_url, snapshots_list, error_message)
+        error_message is None if successful
     """
     # Construct RPC URL for the peer
     if not peer_address.startswith("http"):
@@ -118,10 +122,12 @@ async def _query_peer_snapshots(
         params["chain_id"] = chain_id
     
     try:
+        _log.debug(f"Querying peer {peer_address} (RPC: {rpc_url}) for snapshots")
         result = await rpc_call("snapshot.list", params, rpc_url=rpc_url, timeout=timeout or 10.0)
         
         if result and result.get("success"):
             snapshots = result.get("snapshots", [])
+            _log.debug(f"Peer {peer_address} returned {len(snapshots)} snapshot(s)")
             # Add source information to each snapshot (create copies to avoid side effects)
             enriched_snapshots = []
             for snap in snapshots:
@@ -129,29 +135,37 @@ async def _query_peer_snapshots(
                 snap_copy["_source"] = peer_address
                 snap_copy["_source_rpc"] = rpc_url
                 enriched_snapshots.append(snap_copy)
-            return rpc_url, enriched_snapshots
+            return rpc_url, enriched_snapshots, None
         else:
-            return rpc_url, []
-    except Exception:
-        return rpc_url, []
+            _log.debug(f"Peer {peer_address} returned no snapshots")
+            return rpc_url, [], None
+    except Exception as e:
+        error_msg = str(e)
+        _log.warning(f"Failed to query peer {peer_address} (RPC: {rpc_url}): {error_msg}")
+        return rpc_url, [], error_msg
 
 
 async def _query_all_peers_for_snapshots(
     rpc_url: str,
     chain_id: Optional[int] = None,
     timeout: Optional[float] = None,
-) -> dict[str, list[dict[str, Any]]]:
+) -> tuple[dict[str, list[dict[str, Any]]], list[dict[str, str]]]:
     """
     Query all connected peers for their available snapshots.
     
     Returns:
-        Dictionary mapping peer RPC URLs to their snapshot lists
+        Tuple of (snapshots_by_peer, errors)
+        - snapshots_by_peer: Dictionary mapping peer RPC URLs to their snapshot lists
+        - errors: List of error dictionaries with 'peer' and 'error' keys
     """
     # Get list of connected peers
     peers = await _get_peers(rpc_url, timeout=timeout)
     
     if not peers:
-        return {}
+        _log.debug("No connected peers found")
+        return {}, []
+    
+    _log.debug(f"Found {len(peers)} connected peer(s)")
     
     # Extract peer addresses
     peer_addresses = []
@@ -159,9 +173,13 @@ async def _query_all_peers_for_snapshots(
         addr = peer.get("remote") or peer.get("address") or peer.get("addr")
         if addr:
             peer_addresses.append(addr)
+            _log.debug(f"Extracted peer address: {addr}")
     
     if not peer_addresses:
-        return {}
+        _log.debug("No valid peer addresses found")
+        return {}, []
+    
+    _log.info(f"Querying {len(peer_addresses)} peer(s) for snapshots")
     
     # Query each peer in parallel
     tasks = [
@@ -171,19 +189,32 @@ async def _query_all_peers_for_snapshots(
     
     results = await asyncio.gather(*tasks, return_exceptions=True)
     
-    # Collect successful results and log errors
+    # Collect successful results and errors
     snapshots_by_peer = {}
-    for result in results:
+    errors = []
+    
+    for i, result in enumerate(results):
+        peer_addr = peer_addresses[i]
+        
         if isinstance(result, Exception):
-            # Log exception but continue processing other peers
-            # (could add logging here if needed)
+            # Unexpected exception from asyncio.gather
+            error_msg = str(result)
+            _log.error(f"Unexpected error querying peer {peer_addr}: {error_msg}")
+            errors.append({"peer": peer_addr, "error": error_msg})
             continue
-        if isinstance(result, tuple) and len(result) == 2:
-            peer_rpc, snapshots = result
-            if snapshots:
+        
+        if isinstance(result, tuple) and len(result) == 3:
+            peer_rpc, snapshots, error = result
+            if error:
+                # Query returned an error
+                errors.append({"peer": peer_addr, "error": error})
+            elif snapshots:
+                # Query succeeded with snapshots
                 snapshots_by_peer[peer_rpc] = snapshots
     
-    return snapshots_by_peer
+    _log.info(f"Successfully queried {len(snapshots_by_peer)} peer(s), {len(errors)} failed")
+    
+    return snapshots_by_peer, errors
 
 
 def _flatten_snapshots_by_peer(snapshots_by_peer: dict[str, list[dict[str, Any]]]) -> list[dict[str, Any]]:
@@ -292,16 +323,28 @@ def list_snapshots(
         if from_peers:
             # Query all connected peers for snapshots
             typer.echo("Querying connected peers for snapshots...")
-            snapshots_by_peer = asyncio.run(
+            snapshots_by_peer, errors = asyncio.run(
                 _query_all_peers_for_snapshots(url, chain_id, timeout)
             )
             
             if not snapshots_by_peer:
                 typer.echo("No snapshots found on connected peers.")
+                
+                # Show errors if any
+                if errors:
+                    typer.echo(f"\n⚠️  Failed to query {len(errors)} peer(s):")
+                    for err_info in errors[:5]:  # Show first 5 errors
+                        typer.echo(f"  - {err_info['peer']}: {err_info['error']}")
+                    if len(errors) > 5:
+                        typer.echo(f"  ... and {len(errors) - 5} more")
+                
                 typer.echo("\n💡 Tips:")
                 typer.echo("  - Ensure you have peers connected (animica peer list)")
                 typer.echo("  - Peers must have snapshots available")
                 typer.echo("  - Try querying the local node without --from-peers")
+                if errors:
+                    typer.echo("  - Check peer RPC accessibility (peers may not expose RPC)")
+                    typer.echo("  - Enable debug logging: export ANIMICA_LOG_LEVEL=DEBUG")
                 return
             
             # Flatten all snapshots
@@ -348,9 +391,11 @@ def list_snapshots(
             
             # Also query peers for the highest available snapshot (unless --local-only)
             highest_peer_snapshot = None
+            peer_query_errors = []
+            
             if not local_only:
                 try:
-                    snapshots_by_peer = asyncio.run(
+                    snapshots_by_peer, peer_query_errors = asyncio.run(
                         _query_all_peers_for_snapshots(url, chain_id, timeout)
                     )
                     
@@ -364,9 +409,10 @@ def list_snapshots(
                                 all_peer_snapshots, 
                                 key=lambda s: s["checkpoint_height"]
                             )
-                except Exception:
-                    # Silently ignore peer query errors in default mode
-                    pass
+                except Exception as e:
+                    # Log the error but continue
+                    _log.warning(f"Error querying peers for snapshots: {e}")
+                    peer_query_errors.append({"peer": "all", "error": str(e)})
             
             # Prepare output
             if json_output:
@@ -412,12 +458,24 @@ def list_snapshots(
             elif not local_only:
                 typer.echo("\n💡 No snapshots found on connected peers.")
                 
+                # Show errors if any
+                if peer_query_errors:
+                    typer.echo(f"\n⚠️  Failed to query {len(peer_query_errors)} peer(s):")
+                    for err_info in peer_query_errors[:3]:  # Show first 3 errors
+                        typer.echo(f"  - {err_info['peer']}: {err_info['error']}")
+                    if len(peer_query_errors) > 3:
+                        typer.echo(f"  ... and {len(peer_query_errors) - 3} more")
+                    typer.echo("\n  Use --from-peers to see detailed peer query results")
+                
             # Show tips if no snapshots at all
             if not local_snapshots and not highest_peer_snapshot:
                 typer.echo("\n💡 Tips:")
                 typer.echo("  - Create snapshots with: animica snapshot create")
                 typer.echo("  - Query all peer snapshots: animica snapshot list --from-peers")
                 typer.echo("  - Connect to more peers: animica peer add <address>")
+                if peer_query_errors:
+                    typer.echo("  - Check peer RPC accessibility (peers may not expose RPC)")
+                    typer.echo("  - Enable debug logging: export ANIMICA_LOG_LEVEL=DEBUG")
         
     except Exception as e:
         typer.echo(f"❌ Error listing snapshots: {e}", err=True)
@@ -637,17 +695,28 @@ def discover(
     try:
         typer.echo("🔍 Discovering snapshots from connected peers...")
         
-        snapshots_by_peer = asyncio.run(
+        snapshots_by_peer, errors = asyncio.run(
             _query_all_peers_for_snapshots(url, chain_id, timeout)
         )
         
         if not snapshots_by_peer:
             typer.echo("\n❌ No snapshots found on connected peers.")
+            
+            # Show errors if any
+            if errors:
+                typer.echo(f"\n⚠️  Failed to query {len(errors)} peer(s):")
+                for err_info in errors[:5]:  # Show first 5 errors
+                    typer.echo(f"  - {err_info['peer']}: {err_info['error']}")
+                if len(errors) > 5:
+                    typer.echo(f"  ... and {len(errors) - 5} more")
+            
             typer.echo("\n💡 Troubleshooting:")
             typer.echo("  1. Check peer connections: animica peer list")
             typer.echo("  2. Ensure peers have snapshots: they must create them first")
-            typer.echo("  3. Check peer RPC accessibility")
+            typer.echo("  3. Check peer RPC accessibility (peers may not expose RPC)")
             typer.echo("  4. Try connecting to more peers: animica peer add <address>")
+            if errors:
+                typer.echo("  5. Enable debug logging: export ANIMICA_LOG_LEVEL=DEBUG")
             raise typer.Exit(code=1)
         
         # Flatten all snapshots
