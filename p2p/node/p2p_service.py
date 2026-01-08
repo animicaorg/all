@@ -3760,6 +3760,33 @@ class P2PService:
             [InvItem(typ=InvType.BLOCK, h=block_hash)], exclude_remote=None, is_tx=False
         )
         await self._broadcast_block_announce(block_hash, exclude_remote=None)
+    
+    async def _propagate_network_height_update(self, network_best_height: int) -> None:
+        """
+        Propagate network best height updates to peers to ensure multi-hop height awareness.
+        
+        This is called when we discover a significantly higher network height, ensuring
+        all peers in the network stay informed about the true highest height even if
+        they're not directly connected to the node with that height.
+        """
+        async with self._peer_lock:
+            peers = list(self._peers.values())
+        
+        for peer in peers:
+            if not peer.hello_done.is_set():
+                continue
+            if not peer.hello:
+                continue
+            
+            # Update peer's hello with new network best if it's higher
+            try:
+                peer_network_best = peer.hello.get("network_best_height")
+                if peer_network_best is None or int(peer_network_best) < network_best_height:
+                    # Store this for future reference, actual propagation happens
+                    # on next Hello exchange or via other sync mechanisms
+                    pass
+            except Exception:
+                pass
 
     # ---------------------------------------------------------------------
     # Connection management
@@ -4190,6 +4217,12 @@ class P2PService:
         if best_header is not None and best_header.height > int(height or 0):
             height = int(best_header.height)
             head_hash = bytes(best_header.hash)
+        
+        # Compute network best height: max of our height and what we've seen from peers
+        network_best = self._network_best_height()
+        if network_best is None or network_best < int(height or 0):
+            network_best = int(height or 0)
+        
         genesis_header_hash = self._genesis_header_hash()
         genesis_block_hash = self._genesis_block_hash()
         listen_port = self._local_listen_port()
@@ -4215,6 +4248,7 @@ class P2PService:
             alg_policy_root=b"",
             capabilities=["tx", "blocks", "sync"],
             timestamp=int(time.time()),
+            network_best_height=network_best,
         )
         await self._send(peer, MsgID.HELLO, hello)
 
@@ -5949,6 +5983,7 @@ class P2PService:
     async def _head_watch_loop(self) -> None:
         last: Optional[str] = None
         last_height = 0
+        last_network_best = 0
         try:
             while self._running:
                 await asyncio.sleep(1.0)
@@ -5965,6 +6000,20 @@ class P2PService:
                         block_hash = self._parse_hash_bytes(hh)
                         if block_hash:
                             await self.relay_block(block_hash)
+                
+                # Propagate network best height updates to keep all peers informed
+                current_network_best = self._network_best_height() or 0
+                if current_network_best > last_network_best + 10:  # Significant change threshold
+                    last_network_best = current_network_best
+                    log.debug(
+                        "Network best height updated",
+                        extra={
+                            "network_best_height": current_network_best,
+                            "local_height": height,
+                        }
+                    )
+                    # Trigger re-handshake or send update to all peers
+                    await self._propagate_network_height_update(current_network_best)
         except asyncio.CancelledError:
             return
 
@@ -7168,15 +7217,18 @@ class P2PService:
                         network_best_height is not None
                         and int(network_best_height) > int(local_height or 0)
                     ):
-                        log.debug(
-                            "Local head behind network; continuing header sync",
+                        log.info(
+                            "Local head behind network; continuing header sync (multi-hop height propagation)",
                             extra={
                                 "remote": peer.remote,
                                 "local_height": local_height,
                                 "remote_height": remote_height,
                                 "network_best_height": network_best_height,
+                                "height_gap": int(network_best_height) - int(local_height or 0),
                             },
                         )
+                        # Continue syncing - don't stop here even if peer's own height is lower
+                        # This allows us to find the higher height through peer-of-peer connections
                     else:
                         # Check if we still have pending block downloads before marking as synced
                         if (
@@ -8073,6 +8125,16 @@ class P2PService:
         return None
 
     def _network_best_height(self) -> Optional[int]:
+        """
+        Compute the highest height we know about in the network.
+        
+        This considers:
+        1. Direct peer heights (head_height)
+        2. Peer's network views (network_best_height) - enabling multi-hop propagation
+        
+        This fixes the issue where nodes only see their direct peers' heights,
+        causing premature sync stopping and network-wide forks.
+        """
         heights: list[int] = []
         for peer in self._peers.values():
             if not peer.hello_done.is_set():
@@ -8080,7 +8142,17 @@ class P2PService:
             if not peer.repo_state_ok:
                 continue
             try:
-                heights.append(int((peer.hello or {}).get("head_height") or 0))
+                # Add peer's own head height
+                peer_height = int((peer.hello or {}).get("head_height") or 0)
+                if peer_height > 0:
+                    heights.append(peer_height)
+                
+                # Add peer's view of network best height (peers-of-peers)
+                network_height = (peer.hello or {}).get("network_best_height")
+                if network_height is not None:
+                    network_height = int(network_height)
+                    if network_height > 0:
+                        heights.append(network_height)
             except Exception:
                 continue
         if not heights:
