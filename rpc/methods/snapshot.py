@@ -530,7 +530,7 @@ def snapshot_status() -> dict:
     "snapshot.discoverFromPeers",
     desc="Discover snapshots from connected P2P peers",
 )
-def snapshot_discover_from_peers(chain_id: int | None = None) -> dict:
+async def snapshot_discover_from_peers(chain_id: int | None = None) -> dict:
     """
     Discover snapshots available from connected P2P peers.
     
@@ -543,8 +543,6 @@ def snapshot_discover_from_peers(chain_id: int | None = None) -> dict:
     Returns:
         Dictionary with success status, peer snapshots, and any errors
     """
-    import asyncio
-    import concurrent.futures
     from p2p.sync.snapshot_sync import _query_peers_for_snapshots
     
     try:
@@ -571,21 +569,8 @@ def snapshot_discover_from_peers(chain_id: int | None = None) -> dict:
                 "message": "The P2P service version does not support snapshot discovery.",
             }
         
-        # Define the async query function once
-        async def _query():
-            return await _query_peers_for_snapshots(p2p_service, target_chain_id)
-        
-        # Run the async query - handle both sync and async contexts
-        try:
-            loop = asyncio.get_running_loop()
-            # We're in an async context, but RPC methods are sync
-            # Use run_in_executor to bridge sync/async
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                future = executor.submit(asyncio.run, _query())
-                snapshots_by_peer = future.result(timeout=30.0)
-        except RuntimeError:
-            # No event loop running, we can use asyncio.run directly
-            snapshots_by_peer = asyncio.run(_query())
+        # Query peers for snapshots directly (no threading needed - we're already async)
+        snapshots_by_peer = await _query_peers_for_snapshots(p2p_service, target_chain_id)
         
         if not snapshots_by_peer:
             # Check if we have peers at all
@@ -631,12 +616,6 @@ def snapshot_discover_from_peers(chain_id: int | None = None) -> dict:
             "message": f"Found {len(all_snapshots)} snapshot(s) from {len(snapshots_by_peer)} peer(s)",
         }
         
-    except (concurrent.futures.TimeoutError, asyncio.TimeoutError):
-        return {
-            "success": False,
-            "error": "Timeout querying peers for snapshots",
-            "message": "The query took too long. This may indicate network issues or slow peers.",
-        }
     except Exception as e:
         _log.exception("Error discovering snapshots from peers")
         return {
