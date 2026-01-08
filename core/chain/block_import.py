@@ -1507,6 +1507,27 @@ class BlockImporter:
         if height in self._created_snapshots or height in self._pending_snapshots:
             return False
         return True
+    
+    def _get_snapshots_base_dir(self) -> "Path":
+        """
+        Get the base directory for snapshots.
+        
+        Returns the directory where snapshot subdirectories should be created.
+        Handles chain-specific data directories by using the parent.
+        """
+        from pathlib import Path
+        
+        # Use data_dir if provided, otherwise use environment or default
+        if self._data_dir:
+            base_dir = Path(self._data_dir)
+        else:
+            base_dir = Path(os.environ.get("ANIMICA_DATA_DIR", "~/.animica")).expanduser()
+        
+        # If base_dir ends with chain-{id}, use parent for global snapshots
+        if base_dir.name.startswith("chain-"):
+            base_dir = base_dir.parent
+        
+        return base_dir
 
     def _create_disk_snapshot(self, height: int) -> None:
         """
@@ -1529,18 +1550,9 @@ class BlockImporter:
             
             def create_snapshot_async():
                 try:
-                    # Get snapshot directory
+                    # Get snapshot directory using helper method
                     chain_id = self.params.chain_id
-                    
-                    # Use data_dir if provided, otherwise use environment or default
-                    if self._data_dir:
-                        base_dir = Path(self._data_dir)
-                    else:
-                        base_dir = Path(os.environ.get("ANIMICA_DATA_DIR", "~/.animica")).expanduser()
-                    
-                    # If base_dir ends with chain-{id}, use parent for global snapshots
-                    if base_dir.name.startswith("chain-"):
-                        base_dir = base_dir.parent
+                    base_dir = self._get_snapshots_base_dir()
                     
                     snapshots_dir = base_dir / "snapshots"
                     snapshots_dir.mkdir(parents=True, exist_ok=True)
@@ -1635,16 +1647,8 @@ class BlockImporter:
                     from pathlib import Path
                     chain_id = self.params.chain_id
                     
-                    # Use data_dir if provided, otherwise use environment or default
-                    if self._data_dir:
-                        base_dir = Path(self._data_dir)
-                    else:
-                        base_dir = Path(os.environ.get("ANIMICA_DATA_DIR", "~/.animica")).expanduser()
-                    
-                    # If base_dir ends with chain-{id}, use parent for global snapshots
-                    if base_dir.name.startswith("chain-"):
-                        base_dir = base_dir.parent
-                    
+                    # Use helper method for consistent directory resolution
+                    base_dir = self._get_snapshots_base_dir()
                     snapshots_dir = base_dir / "snapshots"
                     snapshot_dir = snapshots_dir / f"chain-{chain_id}-height-{h}"
                     

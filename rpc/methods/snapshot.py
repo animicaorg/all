@@ -26,7 +26,7 @@ def _get_snapshots_dir() -> Path:
     """Get the snapshots directory path."""
     ctx = deps.get_ctx()
     # Use data_root from context which is derived from:
-    # 1. ANIMICA_DATA_DIR if set (used directly)
+    # 1. ANIMICA_DATA_DIR if set (combined with chain-{id})
     # 2. SQLite DB parent directory
     # 3. ~/.animica/chain-<id> as fallback
     #

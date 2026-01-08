@@ -8,6 +8,7 @@ This test verifies that:
 3. Both use consistent directory resolution logic
 """
 
+import inspect
 import os
 import sys
 import tempfile
@@ -17,15 +18,17 @@ from unittest.mock import MagicMock, patch
 # Add repo to path
 sys.path.insert(0, str(Path(__file__).parent))
 
+# Import core modules
+from rpc import deps
+from rpc.methods import snapshot
+from core.chain.block_import import BlockImporter
+
 
 def test_rpc_snapshot_dir_resolution():
     """Test that RPC snapshot methods use correct data_root."""
     print("=" * 60)
     print("Test 1: RPC Snapshot Directory Resolution")
     print("=" * 60)
-    
-    from rpc import deps
-    from rpc.methods import snapshot
     
     # Test with chain-specific data_root
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -71,9 +74,6 @@ def test_block_importer_snapshot_dir():
     print("  (Skipping full BlockImporter initialization to avoid DB dependencies)")
     
     # Verify the __init__ signature accepts data_dir
-    from core.chain.block_import import BlockImporter
-    import inspect
-    
     sig = inspect.signature(BlockImporter.__init__)
     params = sig.parameters
     
@@ -98,11 +98,6 @@ def test_snapshot_directory_consistency():
         os.environ["ANIMICA_DATA_DIR"] = str(test_data_dir)
         
         try:
-            from rpc import deps
-            from rpc.methods import snapshot
-            from core.chain.block_import import BlockImporter
-            from core.types.params import ChainParams
-            
             # Mock RPC context with data_root derived from ANIMICA_DATA_DIR
             mock_ctx = MagicMock()
             # Simulate what _infer_data_root would do: if ANIMICA_DATA_DIR is set directly, use it
@@ -137,9 +132,6 @@ def test_snapshot_checkpoint_dir():
     print("=" * 60)
     print("Test 4: Snapshot Checkpoint Directory Naming")
     print("=" * 60)
-    
-    from rpc import deps
-    from rpc.methods import snapshot
     
     with tempfile.TemporaryDirectory() as tmpdir:
         mock_ctx = MagicMock()
