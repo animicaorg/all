@@ -188,7 +188,162 @@ async def _query_peers_for_snapshots(
     chain_id: int,
 ) -> dict[str, list[dict[str, Any]]]:
     """
-    Query all connected peers for their available snapshots.
+    Query all connected peers for their available snapshots via P2P messages.
+    
+    Args:
+        p2p_service: P2P service instance with peer information
+        chain_id: Chain ID to query for
+    
+    Returns:
+        Dictionary mapping peer identifiers to their snapshot lists
+    """
+    snapshots_by_peer: dict[str, list[dict[str, Any]]] = {}
+    
+    try:
+        # Import P2P wire messages
+        try:
+            from p2p.wire.messages import GetSnapshots, Snapshots
+            from p2p.wire.message_ids import MsgID
+        except ImportError:
+            _log.warning("P2P wire messages not available, falling back to RPC")
+            return await _query_peers_for_snapshots_via_rpc(p2p_service, chain_id)
+        
+        # Get list of connected peers from P2P service
+        peers_info = []
+        
+        # Try to get peers from connmgr (connection manager)
+        if hasattr(p2p_service, 'connmgr') and p2p_service.connmgr:
+            try:
+                # Get active connections
+                if hasattr(p2p_service.connmgr, 'active_conns'):
+                    for peer_id, conn in p2p_service.connmgr.active_conns.items():
+                        peers_info.append({
+                            'peer_id': peer_id,
+                            'conn': conn,
+                        })
+            except Exception as e:
+                _log.debug(f"Error accessing connmgr: {e}")
+        
+        # Fallback: try peer_registry
+        if not peers_info and hasattr(p2p_service, 'peer_registry'):
+            try:
+                peer_snapshots = p2p_service.peer_registry.snapshot()
+                peers_info.extend(peer_snapshots)
+            except Exception as e:
+                _log.debug(f"Error accessing peer_registry: {e}")
+        
+        # Fallback: try peers property
+        if not peers_info and hasattr(p2p_service, 'peers'):
+            try:
+                peers_dict = p2p_service.peers
+                if isinstance(peers_dict, dict):
+                    peers_info.extend(peers_dict.values())
+            except Exception as e:
+                _log.debug(f"Error accessing peers: {e}")
+        
+        if not peers_info:
+            _log.debug("No connected peers available for snapshot query")
+            return snapshots_by_peer
+        
+        _log.info(f"Querying {len(peers_info)} peer(s) for available snapshots via P2P")
+        
+        # Get codec for encoding/decoding
+        codec = None
+        if hasattr(p2p_service, 'router') and hasattr(p2p_service.router, 'codec'):
+            codec = p2p_service.router.codec
+        
+        # Query each peer for snapshots via P2P message
+        for peer_info in peers_info:
+            peer_id = peer_info.get('peer_id')
+            conn = peer_info.get('conn')
+            
+            if not peer_id or not conn:
+                # Extract peer address for logging
+                peer_address = peer_info.get("remote") or peer_info.get("address") or peer_info.get("addr")
+                _log.debug(f"Skipping peer without connection: {peer_address}")
+                continue
+            
+            try:
+                # Create GET_SNAPSHOTS request
+                request = GetSnapshots(chain_id=chain_id)
+                
+                # Encode the request
+                if codec:
+                    request_bytes = codec.encode(request)
+                else:
+                    # Fallback: use msgspec directly
+                    import msgspec
+                    request_bytes = msgspec.msgpack.encode(request)
+                
+                # Send request and wait for response
+                # This depends on the P2P service's send/receive API
+                # For now, try using the router if available
+                if hasattr(p2p_service, 'router'):
+                    try:
+                        # Send message via router
+                        response_bytes = await p2p_service.router.send_request(
+                            peer_id=peer_id,
+                            msg_id=MsgID.GET_SNAPSHOTS,
+                            payload=request_bytes,
+                            timeout=10.0,
+                        )
+                        
+                        # Decode response
+                        if codec:
+                            response = codec.decode(response_bytes, Snapshots)
+                        else:
+                            import msgspec
+                            response = msgspec.msgpack.decode(response_bytes, type=Snapshots)
+                        
+                        # Convert to dict format
+                        snapshots = [snap.to_dict() for snap in response.snapshots]
+                        
+                        if snapshots:
+                            peer_str = str(peer_id.hex()[:8]) if isinstance(peer_id, bytes) else str(peer_id)
+                            snapshots_by_peer[peer_str] = snapshots
+                            _log.info(
+                                f"Peer {peer_str} has {len(snapshots)} snapshot(s): "
+                                f"heights {[s['checkpoint_height'] for s in snapshots]}"
+                            )
+                        else:
+                            _log.debug(f"Peer {peer_id} has no snapshots")
+                    except AttributeError:
+                        _log.debug("Router does not support send_request, falling back to RPC")
+                        # Fall back to RPC for this peer
+                        pass
+                    except Exception as e:
+                        _log.debug(f"Failed to query peer {peer_id} via P2P: {e}")
+                        continue
+                else:
+                    _log.debug("P2P service has no router, skipping P2P query")
+                    
+            except Exception as e:
+                _log.debug(f"Failed to query peer {peer_id} for snapshots: {e}")
+                continue
+        
+        # If P2P queries yielded no results, fall back to RPC queries
+        if not snapshots_by_peer:
+            _log.debug("No snapshots found via P2P, falling back to RPC queries")
+            return await _query_peers_for_snapshots_via_rpc(p2p_service, chain_id)
+        
+        _log.info(
+            f"Successfully queried snapshots from {len(snapshots_by_peer)} peer(s) via P2P"
+        )
+        
+    except Exception as e:
+        _log.warning(f"Error querying peers for snapshots via P2P: {e}")
+    
+    return snapshots_by_peer
+
+
+async def _query_peers_for_snapshots_via_rpc(
+    p2p_service: Any,
+    chain_id: int,
+) -> dict[str, list[dict[str, Any]]]:
+    """
+    Query all connected peers for their available snapshots via RPC (fallback).
+    
+    This is a fallback method when P2P messaging is not available or fails.
     
     Args:
         p2p_service: P2P service instance with peer information
@@ -214,12 +369,12 @@ async def _query_peers_for_snapshots(
                 peers_info.extend(peers_dict.values())
         
         if not peers_info:
-            _log.debug("No connected peers available for snapshot query")
+            _log.debug("No connected peers available for RPC snapshot query")
             return snapshots_by_peer
         
-        _log.info(f"Querying {len(peers_info)} peer(s) for available snapshots")
+        _log.info(f"Querying {len(peers_info)} peer(s) for available snapshots via RPC (fallback)")
         
-        # Query each peer for snapshots
+        # Query each peer for snapshots via RPC
         timeout = _get_snapshot_timeout()
         
         for peer_info in peers_info:
@@ -251,7 +406,7 @@ async def _query_peers_for_snapshots(
                 rpc_url = f"{rpc_url}/rpc"
             
             try:
-                _log.debug(f"Querying peer {peer_address} at {rpc_url}")
+                _log.debug(f"Querying peer {peer_address} at {rpc_url} via RPC")
                 snapshots = await _fetch_available_snapshots(rpc_url, chain_id)
                 
                 if snapshots:
@@ -264,17 +419,18 @@ async def _query_peers_for_snapshots(
                     _log.debug(f"Peer {peer_address} has no snapshots")
                     
             except Exception as e:
-                _log.debug(f"Failed to query peer {peer_address} for snapshots: {e}")
+                _log.debug(f"Failed to query peer {peer_address} for snapshots via RPC: {e}")
                 continue
         
         _log.info(
-            f"Successfully queried snapshots from {len(snapshots_by_peer)} peer(s)"
+            f"Successfully queried snapshots from {len(snapshots_by_peer)} peer(s) via RPC"
         )
         
     except Exception as e:
-        _log.warning(f"Error querying peers for snapshots: {e}")
+        _log.warning(f"Error querying peers for snapshots via RPC: {e}")
     
     return snapshots_by_peer
+
 
 
 async def _fetch_available_snapshots(
