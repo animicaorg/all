@@ -1110,12 +1110,13 @@ async def startup(cfg: t.Any | None = None) -> RpcContext:
                 if head:
                     current_height = head[0]
                 
-                # Attempt snapshot bootstrap
+                # Attempt snapshot bootstrap, passing P2P service for peer queries
                 success, error = await try_snapshot_bootstrap(
                     block_db=_CTX.block_db,
                     state_db=_CTX.state_db,
                     chain_id=_CTX.cfg.chain_id,
                     current_height=current_height,
+                    p2p_service=_CTX.p2p_service,
                 )
                 
                 if success:

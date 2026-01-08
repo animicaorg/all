@@ -55,6 +55,7 @@ async def try_snapshot_bootstrap(
     chain_id: int,
     current_height: int = 0,
     min_checkpoint_height: Optional[int] = None,
+    p2p_service: Optional[Any] = None,
 ) -> Tuple[bool, Optional[str]]:
     """
     Attempt to bootstrap chain sync using a snapshot.
@@ -65,6 +66,7 @@ async def try_snapshot_bootstrap(
         chain_id: Chain ID to sync
         current_height: Current chain height (0 if empty)
         min_checkpoint_height: Minimum checkpoint height to consider
+        p2p_service: Optional P2P service for querying connected peers
 
     Returns:
         Tuple of (success, error_message)
@@ -86,24 +88,48 @@ async def try_snapshot_bootstrap(
         )
         return False, "Already synced past snapshot threshold"
 
-    # Get RPC URL for snapshot source
+    # Strategy: Try peers first, then fall back to static RPC URL
+    snapshots_by_source: dict[str, list[dict[str, Any]]] = {}
+    
+    # Try querying connected peers for snapshots
+    if p2p_service is not None:
+        peer_snapshots = await _query_peers_for_snapshots(p2p_service, chain_id)
+        if peer_snapshots:
+            snapshots_by_source.update(peer_snapshots)
+            _log.info(f"Found snapshots from {len(peer_snapshots)} peer(s)")
+    
+    # Also try static RPC URL if configured
     rpc_url = _get_snapshot_rpc_url()
-    if not rpc_url:
-        _log.debug("No snapshot RPC URL configured")
-        return False, "No snapshot source configured"
+    if rpc_url:
+        try:
+            _log.info(f"Querying snapshots from configured RPC URL: {rpc_url}")
+            rpc_snapshots = await _fetch_available_snapshots(rpc_url, chain_id)
+            if rpc_snapshots:
+                snapshots_by_source[rpc_url] = rpc_snapshots
+        except Exception as e:
+            _log.debug(f"Failed to query static RPC URL: {e}")
+    
+    # Check if we have any snapshots
+    if not snapshots_by_source:
+        _log.info("No snapshots available from peers or configured RPC")
+        return False, "No snapshots available"
 
     try:
-        # Query available snapshots
-        _log.info(f"Querying snapshots from {rpc_url}")
-        snapshots = await _fetch_available_snapshots(rpc_url, chain_id)
+        # Aggregate all snapshots and find the highest one
+        all_snapshots = []
+        for source, snaps in snapshots_by_source.items():
+            for snap in snaps:
+                snap["_source"] = source  # Track source for download
+                all_snapshots.append(snap)
 
-        if not snapshots:
+        if not all_snapshots:
             _log.info("No snapshots available")
             return False, "No snapshots available"
 
         # Find best snapshot (highest height)
-        best_snapshot = max(snapshots, key=lambda s: s["checkpoint_height"])
+        best_snapshot = max(all_snapshots, key=lambda s: s["checkpoint_height"])
         snapshot_height = best_snapshot["checkpoint_height"]
+        source = best_snapshot.get("_source", "unknown")
 
         if min_checkpoint_height and snapshot_height < min_checkpoint_height:
             _log.info(
@@ -113,13 +139,13 @@ async def try_snapshot_bootstrap(
             return False, "No suitable snapshot found"
 
         _log.info(
-            f"Found snapshot at height {snapshot_height}, "
+            f"Found best snapshot at height {snapshot_height} from {source}, "
             f"hash {best_snapshot['checkpoint_hash']}"
         )
 
-        # Download and import snapshot
+        # Download and import snapshot from the best source
         success = await _download_and_import_snapshot(
-            rpc_url=rpc_url,
+            rpc_url=source,
             chain_id=chain_id,
             checkpoint_height=snapshot_height,
             block_db=block_db,
@@ -137,6 +163,100 @@ async def try_snapshot_bootstrap(
     except Exception as e:
         _log.warning(f"Snapshot bootstrap failed: {e}")
         return False, str(e)
+
+
+async def _query_peers_for_snapshots(
+    p2p_service: Any,
+    chain_id: int,
+) -> dict[str, list[dict[str, Any]]]:
+    """
+    Query all connected peers for their available snapshots.
+    
+    Args:
+        p2p_service: P2P service instance with peer information
+        chain_id: Chain ID to query for
+    
+    Returns:
+        Dictionary mapping peer RPC URLs to their snapshot lists
+    """
+    snapshots_by_peer: dict[str, list[dict[str, Any]]] = {}
+    
+    try:
+        # Get list of connected peers from P2P service
+        peers_info = []
+        
+        # Try to get peers from peer_registry
+        if hasattr(p2p_service, 'peer_registry'):
+            peer_snapshots = p2p_service.peer_registry.snapshot()
+            peers_info.extend(peer_snapshots)
+        elif hasattr(p2p_service, 'peers'):
+            # Fallback: try peers property
+            peers_dict = p2p_service.peers
+            if isinstance(peers_dict, dict):
+                peers_info.extend(peers_dict.values())
+        
+        if not peers_info:
+            _log.debug("No connected peers available for snapshot query")
+            return snapshots_by_peer
+        
+        _log.info(f"Querying {len(peers_info)} peer(s) for available snapshots")
+        
+        # Query each peer for snapshots
+        timeout = _get_snapshot_timeout()
+        
+        for peer_info in peers_info:
+            # Extract peer address/URL
+            peer_address = None
+            if isinstance(peer_info, dict):
+                # Try various fields that might contain the peer address
+                peer_address = peer_info.get("remote") or peer_info.get("address") or peer_info.get("addr")
+            
+            if not peer_address:
+                continue
+            
+            # Construct RPC URL for the peer
+            # Assume peers run RPC on standard port 8545
+            if not peer_address.startswith("http"):
+                # Parse host:port format
+                if ":" in peer_address:
+                    host, port = peer_address.rsplit(":", 1)
+                    # Try to use P2P port to infer RPC port
+                    # Standard: P2P port + 1 = RPC port, or just use 8545
+                    rpc_url = f"http://{host}:8545"
+                else:
+                    rpc_url = f"http://{peer_address}:8545"
+            else:
+                rpc_url = peer_address
+            
+            # Ensure RPC URL has /rpc suffix
+            if not rpc_url.endswith("/rpc"):
+                rpc_url = f"{rpc_url}/rpc"
+            
+            try:
+                _log.debug(f"Querying peer {peer_address} at {rpc_url}")
+                snapshots = await _fetch_available_snapshots(rpc_url, chain_id)
+                
+                if snapshots:
+                    snapshots_by_peer[rpc_url] = snapshots
+                    _log.info(
+                        f"Peer {peer_address} has {len(snapshots)} snapshot(s): "
+                        f"heights {[s['checkpoint_height'] for s in snapshots]}"
+                    )
+                else:
+                    _log.debug(f"Peer {peer_address} has no snapshots")
+                    
+            except Exception as e:
+                _log.debug(f"Failed to query peer {peer_address} for snapshots: {e}")
+                continue
+        
+        _log.info(
+            f"Successfully queried snapshots from {len(snapshots_by_peer)} peer(s)"
+        )
+        
+    except Exception as e:
+        _log.warning(f"Error querying peers for snapshots: {e}")
+    
+    return snapshots_by_peer
 
 
 async def _fetch_available_snapshots(

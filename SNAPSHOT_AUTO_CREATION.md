@@ -175,12 +175,14 @@ Snapshots are created in `core/chain/block_import.py` when blocks become canonic
 
 ### Peer Discovery
 
-Peers advertise available snapshots via RPC:
+When nodes sync, they now automatically discover snapshots from connected peers:
 
-1. Node queries peer's `snapshot.list` RPC method
-2. Peer returns list of available snapshot heights and metadata
-3. Node selects best snapshot (typically highest height)
-4. Node downloads snapshot via `snapshot.downloadChunk` or HTTP
+1. Node queries all connected P2P peers for their available snapshots via RPC
+2. Peers respond with a list of snapshot heights and metadata
+3. Node aggregates responses and selects the highest snapshot available
+4. Node downloads and imports the best snapshot, then continues P2P sync from that checkpoint
+
+This eliminates the need to manually configure snapshot sources in most cases. As long as the network has peers with snapshots, new nodes can automatically discover and use them.
 
 ### Snapshot Sync Flow
 
@@ -196,15 +198,33 @@ Peers advertise available snapshots via RPC:
          │ Yes
          ▼
 ┌─────────────────────────┐
-│ Query peers for         │
-│ available snapshots     │
+│ Query connected peers   │
+│ for snapshots           │
 └────────┬────────────────┘
          │
          ▼
 ┌─────────────────────────┐
-│ Snapshots available?    │─── No ──> Use normal P2P sync
+│ Also query static RPC   │
+│ URL if configured       │
+└────────┬────────────────┘
+         │
+         ▼
+┌─────────────────────────┐
+│ Aggregate all snapshots │
+│ from all sources        │
+└────────┬────────────────┘
+         │
+         ▼
+┌─────────────────────────┐
+│ Any snapshots found?    │─── No ──> Use normal P2P sync
 └────────┬────────────────┘
          │ Yes
+         ▼
+┌─────────────────────────┐
+│ Select highest          │
+│ checkpoint snapshot     │
+└────────┬────────────────┘
+         │
          ▼
 ┌─────────────────────────┐
 │ Download & import       │
@@ -236,10 +256,11 @@ Check:
 ### Snapshot sync failing
 
 Check:
-1. `ANIMICA_SNAPSHOT_RPC_URL` is set to a valid peer
-2. Peer has snapshots available (check with `animica snapshot list --rpc <peer-url>`)
-3. Network connectivity to peer
-4. Increase `ANIMICA_SNAPSHOT_TIMEOUT` if downloads are slow
+1. P2P connectivity - ensure node can connect to peers with `animica net peers`
+2. Peer snapshots - verify connected peers have snapshots at appropriate heights
+3. Alternatively, set `ANIMICA_SNAPSHOT_RPC_URL` to a trusted snapshot source
+4. Network connectivity to peers' RPC endpoints (port 8545)
+5. Increase `ANIMICA_SNAPSHOT_TIMEOUT` if downloads are slow
 
 ### Large disk usage
 
