@@ -250,25 +250,32 @@ async def _query_peers_for_snapshots(
         _log.info(f"Querying {len(ready_peers)} peer(s) for available snapshots via P2P")
         
         # Query each peer in parallel
-        tasks = []
-        for peer in ready_peers:
-            task = p2p_service.query_peer_snapshots(peer, chain_id, timeout=P2P_SNAPSHOT_QUERY_TIMEOUT)
-            tasks.append((peer.remote, task))
-        
-        # Wait for all queries to complete
-        for peer_remote, task in tasks:
+        async def query_peer_with_error_handling(peer):
+            """Query a single peer and return (peer_remote, snapshots or None)."""
             try:
-                snapshots = await task
-                if snapshots:
-                    # Use "peer:" prefix to distinguish from RPC URLs
-                    peer_key = f"peer:{peer_remote}"
-                    snapshots_by_peer[peer_key] = snapshots
-                    _log.info(f"Peer {peer_remote} reported {len(snapshots)} snapshot(s)")
-                else:
-                    _log.debug(f"Peer {peer_remote} has no snapshots available")
+                snapshots = await p2p_service.query_peer_snapshots(
+                    peer, chain_id, timeout=P2P_SNAPSHOT_QUERY_TIMEOUT
+                )
+                return (peer.remote, snapshots)
             except Exception as e:
-                _log.debug(f"Error querying peer {peer_remote}: {e}")
-                continue
+                _log.debug(f"Error querying peer {peer.remote}: {e}")
+                return (peer.remote, None)
+        
+        # Execute all queries concurrently
+        results = await asyncio.gather(
+            *[query_peer_with_error_handling(peer) for peer in ready_peers],
+            return_exceptions=False  # Exceptions are handled in query_peer_with_error_handling
+        )
+        
+        # Process results
+        for peer_remote, snapshots in results:
+            if snapshots:
+                # Use "peer:" prefix to distinguish from RPC URLs
+                peer_key = f"peer:{peer_remote}"
+                snapshots_by_peer[peer_key] = snapshots
+                _log.info(f"Peer {peer_remote} reported {len(snapshots)} snapshot(s)")
+            else:
+                _log.debug(f"Peer {peer_remote} has no snapshots available")
         
         if snapshots_by_peer:
             _log.info(f"Successfully discovered snapshots from {len(snapshots_by_peer)} peer(s)")
