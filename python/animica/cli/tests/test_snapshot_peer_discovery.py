@@ -205,7 +205,7 @@ def test_query_all_peers_for_snapshots(mock_rpc_with_peers, mock_peer_snapshots)
     with patch("httpx.AsyncClient") as mock_client:
         mock_client.return_value = MockAsyncClient(responses)
         
-        snapshots_by_peer, errors = asyncio.run(
+        snapshots_by_peer, errors, peer_count = asyncio.run(
             snapshot_cli._query_all_peers_for_snapshots(
                 "http://127.0.0.1:8545/rpc", chain_id=1
             )
@@ -215,6 +215,7 @@ def test_query_all_peers_for_snapshots(mock_rpc_with_peers, mock_peer_snapshots)
         assert "http://192.168.1.10:8545/rpc" in snapshots_by_peer
         assert "http://192.168.1.11:8545/rpc" in snapshots_by_peer
         assert len(errors) == 0
+        assert peer_count == 2
         
         # Check peer 1 has 2 snapshots
         peer1_snapshots = snapshots_by_peer["http://192.168.1.10:8545/rpc"]
@@ -237,12 +238,13 @@ def test_query_all_peers_no_peers():
     with patch("httpx.AsyncClient") as mock_client:
         mock_client.return_value = MockAsyncClient(responses)
         
-        snapshots_by_peer, errors = asyncio.run(
+        snapshots_by_peer, errors, peer_count = asyncio.run(
             snapshot_cli._query_all_peers_for_snapshots("http://127.0.0.1:8545/rpc")
         )
         
         assert snapshots_by_peer == {}
         assert len(errors) == 0
+        assert peer_count == 0
 
 
 def test_snapshot_list_from_peers(mock_rpc_with_peers, mock_peer_snapshots):
@@ -538,6 +540,46 @@ def test_snapshot_discover_with_peer_errors():
         # Should show error info
         assert "⚠️  Failed to query" in result.stdout
         assert "192.168.1.10:30303" in result.stdout
+
+
+def test_snapshot_discover_no_peers_connected():
+    """Test snapshot discover command when no peers are connected."""
+    responses = {
+        "net.peers": [],  # No peers connected
+    }
+    
+    with patch("httpx.AsyncClient") as mock_client:
+        mock_client.return_value = MockAsyncClient(responses)
+        
+        result = runner.invoke(app, ["snapshot", "discover"])
+        
+        assert result.exit_code == 1
+        assert "❌ No peers connected" in result.stdout
+        assert "Connect to peers first" in result.stdout or "animica peer add" in result.stdout
+        # Should NOT show the "no snapshots found" message
+        assert "No snapshots found on connected peers" not in result.stdout
+
+
+def test_snapshot_list_no_peers_connected():
+    """Test snapshot list command when no peers are connected."""
+    responses = {
+        "snapshot.list": {
+            "success": True,
+            "snapshots": [],
+        },
+        "net.peers": [],  # No peers connected
+    }
+    
+    with patch("httpx.AsyncClient") as mock_client:
+        mock_client.return_value = MockAsyncClient(responses)
+        
+        result = runner.invoke(app, ["snapshot", "list"])
+        
+        assert result.exit_code == 0
+        assert "❌ No peers connected" in result.stdout
+        assert "Connect to peers first" in result.stdout
+        # Should NOT show the "no snapshots found on connected peers" message
+        assert "No snapshots found on connected peers" not in result.stdout
 
 
 if __name__ == "__main__":
