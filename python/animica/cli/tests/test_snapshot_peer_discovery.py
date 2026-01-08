@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import Any, Dict
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -35,7 +35,7 @@ class MockRPCResponse:
 class MockAsyncClient:
     """Mock async HTTP client for testing."""
     
-    def __init__(self, responses: Dict[str, Any]):
+    def __init__(self, responses: dict[str, Any]):
         self.responses = responses
         self.call_count = 0
     
@@ -45,7 +45,7 @@ class MockAsyncClient:
     async def __aexit__(self, *args):
         pass
     
-    async def post(self, url: str, json: Dict[str, Any], **_kwargs: Any):
+    async def post(self, url: str, json: dict[str, Any], **_kwargs: Any):
         self.call_count += 1
         method = json.get("method", "")
         

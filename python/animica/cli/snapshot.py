@@ -122,11 +122,14 @@ async def _query_peer_snapshots(
         
         if result and result.get("success"):
             snapshots = result.get("snapshots", [])
-            # Add source information to each snapshot
+            # Add source information to each snapshot (create copies to avoid side effects)
+            enriched_snapshots = []
             for snap in snapshots:
-                snap["_source"] = peer_address
-                snap["_source_rpc"] = rpc_url
-            return rpc_url, snapshots
+                snap_copy = snap.copy()
+                snap_copy["_source"] = peer_address
+                snap_copy["_source_rpc"] = rpc_url
+                enriched_snapshots.append(snap_copy)
+            return rpc_url, enriched_snapshots
         else:
             return rpc_url, []
     except Exception:
@@ -168,9 +171,13 @@ async def _query_all_peers_for_snapshots(
     
     results = await asyncio.gather(*tasks, return_exceptions=True)
     
-    # Collect successful results
+    # Collect successful results and log errors
     snapshots_by_peer = {}
     for result in results:
+        if isinstance(result, Exception):
+            # Log exception but continue processing other peers
+            # (could add logging here if needed)
+            continue
         if isinstance(result, tuple) and len(result) == 2:
             peer_rpc, snapshots = result
             if snapshots:
