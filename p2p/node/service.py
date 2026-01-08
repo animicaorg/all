@@ -372,9 +372,7 @@ class NodeService:
         self.router.add_handler(self.flowctl.handler(codec))
         
         # Snapshot discovery handler
-        self.router.add_handler(
-            proto_snapshot.SnapshotHandler(codec=codec)
-        )
+        self.router.add_handler(proto_snapshot.SnapshotHandler())
 
         # Gossip topics
         self.gossip.register_topic(gossip_topics.BLOCKS)
