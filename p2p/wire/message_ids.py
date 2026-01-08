@@ -71,6 +71,8 @@ class MsgID(IntEnum):
     BLOCK_ANNOUNCE = 0x0304  # compact announce (hash, height, hints)
     GET_SNAPSHOTS = 0x0305  # request list of available snapshots
     SNAPSHOTS = 0x0306  # response with snapshot metadata list
+    GET_SNAPSHOT_CHUNK = 0x0307  # request a specific snapshot chunk
+    SNAPSHOT_CHUNK = 0x0308  # response with snapshot chunk data
 
     # ---------------------------
     # 0x04xx — Transactions
@@ -133,6 +135,7 @@ _REQUEST_RESPONSE: Dict[MsgID, MsgID] = {
     MsgID.GET_HEADERS: MsgID.HEADERS,
     MsgID.GET_BLOCKS: MsgID.BLOCKS,
     MsgID.GET_SNAPSHOTS: MsgID.SNAPSHOTS,
+    MsgID.GET_SNAPSHOT_CHUNK: MsgID.SNAPSHOT_CHUNK,
     MsgID.GET_TX: MsgID.TX,
     MsgID.GET_SHARE: MsgID.SHARE,
     MsgID.DA_GET: MsgID.DA_PROOF,
