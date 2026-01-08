@@ -12,8 +12,22 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 
+@pytest.fixture
+def clean_snapshot_env():
+    """Fixture to clean up snapshot environment variables after each test."""
+    yield
+    # Cleanup after test
+    for key in [
+        "ANIMICA_SNAPSHOT_SYNC_ENABLED",
+        "ANIMICA_SNAPSHOT_MIN_HEIGHT",
+        "ANIMICA_SNAPSHOT_RETRY_INTERVAL",
+        "ANIMICA_SNAPSHOT_MAX_RETRIES",
+    ]:
+        os.environ.pop(key, None)
+
+
 @pytest.mark.asyncio
-async def test_continuous_snapshot_discovery_retries():
+async def test_continuous_snapshot_discovery_retries(clean_snapshot_env):
     """Test that continuous discovery retries until snapshot is found."""
     
     from p2p.sync.snapshot_sync import continuous_snapshot_discovery
@@ -33,34 +47,28 @@ async def test_continuous_snapshot_discovery_retries():
     os.environ["ANIMICA_SNAPSHOT_RETRY_INTERVAL"] = "0.1"  # Fast retry for test
     os.environ["ANIMICA_SNAPSHOT_MAX_RETRIES"] = "3"
     
-    try:
-        # Mock try_snapshot_bootstrap to fail first 2 times, succeed on 3rd
-        async def mock_bootstrap(*args, **kwargs):
-            retry_count[0] += 1
-            if retry_count[0] < 3:
-                return (False, "No snapshots available")
-            return (True, None)
-        
-        with patch("p2p.sync.snapshot_sync.try_snapshot_bootstrap", side_effect=mock_bootstrap):
-            # Run continuous discovery
-            await continuous_snapshot_discovery(
-                block_db=mock_block_db,
-                state_db=mock_state_db,
-                chain_id=1,
-                p2p_service=mock_p2p_service,
-            )
-        
-        # Should have retried 3 times (2 failures + 1 success)
-        assert retry_count[0] == 3
-        
-    finally:
-        for key in ["ANIMICA_SNAPSHOT_SYNC_ENABLED", "ANIMICA_SNAPSHOT_MIN_HEIGHT", 
-                    "ANIMICA_SNAPSHOT_RETRY_INTERVAL", "ANIMICA_SNAPSHOT_MAX_RETRIES"]:
-            os.environ.pop(key, None)
+    # Mock try_snapshot_bootstrap to fail first 2 times, succeed on 3rd
+    async def mock_bootstrap(*args, **kwargs):
+        retry_count[0] += 1
+        if retry_count[0] < 3:
+            return (False, "No snapshots available")
+        return (True, None)
+    
+    with patch("p2p.sync.snapshot_sync.try_snapshot_bootstrap", side_effect=mock_bootstrap):
+        # Run continuous discovery
+        await continuous_snapshot_discovery(
+            block_db=mock_block_db,
+            state_db=mock_state_db,
+            chain_id=1,
+            p2p_service=mock_p2p_service,
+        )
+    
+    # Should have retried 3 times (2 failures + 1 success)
+    assert retry_count[0] == 3
 
 
 @pytest.mark.asyncio
-async def test_continuous_discovery_stops_on_max_retries():
+async def test_continuous_discovery_stops_on_max_retries(clean_snapshot_env):
     """Test that continuous discovery respects max retry limit."""
     
     from p2p.sync.snapshot_sync import continuous_snapshot_discovery
@@ -78,31 +86,25 @@ async def test_continuous_discovery_stops_on_max_retries():
     os.environ["ANIMICA_SNAPSHOT_RETRY_INTERVAL"] = "0.1"
     os.environ["ANIMICA_SNAPSHOT_MAX_RETRIES"] = "5"
     
-    try:
-        # Mock bootstrap to always fail
-        async def mock_bootstrap(*args, **kwargs):
-            retry_count[0] += 1
-            return (False, "No snapshots available")
-        
-        with patch("p2p.sync.snapshot_sync.try_snapshot_bootstrap", side_effect=mock_bootstrap):
-            await continuous_snapshot_discovery(
-                block_db=mock_block_db,
-                state_db=mock_state_db,
-                chain_id=1,
-                p2p_service=mock_p2p_service,
-            )
-        
-        # Should have stopped after exactly 5 retries
-        assert retry_count[0] == 5
-        
-    finally:
-        for key in ["ANIMICA_SNAPSHOT_SYNC_ENABLED", "ANIMICA_SNAPSHOT_MIN_HEIGHT",
-                    "ANIMICA_SNAPSHOT_RETRY_INTERVAL", "ANIMICA_SNAPSHOT_MAX_RETRIES"]:
-            os.environ.pop(key, None)
+    # Mock bootstrap to always fail
+    async def mock_bootstrap(*args, **kwargs):
+        retry_count[0] += 1
+        return (False, "No snapshots available")
+    
+    with patch("p2p.sync.snapshot_sync.try_snapshot_bootstrap", side_effect=mock_bootstrap):
+        await continuous_snapshot_discovery(
+            block_db=mock_block_db,
+            state_db=mock_state_db,
+            chain_id=1,
+            p2p_service=mock_p2p_service,
+        )
+    
+    # Should have stopped after exactly 5 retries
+    assert retry_count[0] == 5
 
 
 @pytest.mark.asyncio
-async def test_continuous_discovery_stops_when_synced():
+async def test_continuous_discovery_stops_when_synced(clean_snapshot_env):
     """Test that continuous discovery stops when node reaches sync threshold."""
     
     from p2p.sync.snapshot_sync import continuous_snapshot_discovery
@@ -131,31 +133,25 @@ async def test_continuous_discovery_stops_when_synced():
     os.environ["ANIMICA_SNAPSHOT_RETRY_INTERVAL"] = "0.1"
     os.environ["ANIMICA_SNAPSHOT_MAX_RETRIES"] = "0"  # Unlimited
     
-    try:
-        async def mock_bootstrap(*args, **kwargs):
-            retry_count[0] += 1
-            return (False, "No snapshots available")
-        
-        with patch("p2p.sync.snapshot_sync.try_snapshot_bootstrap", side_effect=mock_bootstrap):
-            await continuous_snapshot_discovery(
-                block_db=mock_block_db,
-                state_db=mock_state_db,
-                chain_id=1,
-                p2p_service=mock_p2p_service,
-            )
-        
-        # Should have stopped when height reached 1500 (above threshold)
-        # Might be 2 or 3 attempts depending on timing
-        assert 1 <= retry_count[0] <= 3
-        
-    finally:
-        for key in ["ANIMICA_SNAPSHOT_SYNC_ENABLED", "ANIMICA_SNAPSHOT_MIN_HEIGHT",
-                    "ANIMICA_SNAPSHOT_RETRY_INTERVAL", "ANIMICA_SNAPSHOT_MAX_RETRIES"]:
-            os.environ.pop(key, None)
+    async def mock_bootstrap(*args, **kwargs):
+        retry_count[0] += 1
+        return (False, "No snapshots available")
+    
+    with patch("p2p.sync.snapshot_sync.try_snapshot_bootstrap", side_effect=mock_bootstrap):
+        await continuous_snapshot_discovery(
+            block_db=mock_block_db,
+            state_db=mock_state_db,
+            chain_id=1,
+            p2p_service=mock_p2p_service,
+        )
+    
+    # Should have stopped when height reached 1500 (above threshold)
+    # Might be 2 or 3 attempts depending on timing
+    assert 1 <= retry_count[0] <= 3
 
 
 @pytest.mark.asyncio
-async def test_continuous_discovery_respects_stop_event():
+async def test_continuous_discovery_respects_stop_event(clean_snapshot_env):
     """Test that continuous discovery can be stopped via event."""
     
     from p2p.sync.snapshot_sync import continuous_snapshot_discovery
@@ -174,44 +170,38 @@ async def test_continuous_discovery_respects_stop_event():
     os.environ["ANIMICA_SNAPSHOT_RETRY_INTERVAL"] = "1.0"  # Longer interval
     os.environ["ANIMICA_SNAPSHOT_MAX_RETRIES"] = "0"  # Unlimited
     
-    try:
-        async def mock_bootstrap(*args, **kwargs):
-            retry_count[0] += 1
-            return (False, "No snapshots available")
-        
-        with patch("p2p.sync.snapshot_sync.try_snapshot_bootstrap", side_effect=mock_bootstrap):
-            # Start discovery in background
-            task = asyncio.create_task(
-                continuous_snapshot_discovery(
-                    block_db=mock_block_db,
-                    state_db=mock_state_db,
-                    chain_id=1,
-                    p2p_service=mock_p2p_service,
-                    stop_event=stop_event,
-                )
+    async def mock_bootstrap(*args, **kwargs):
+        retry_count[0] += 1
+        return (False, "No snapshots available")
+    
+    with patch("p2p.sync.snapshot_sync.try_snapshot_bootstrap", side_effect=mock_bootstrap):
+        # Start discovery in background
+        task = asyncio.create_task(
+            continuous_snapshot_discovery(
+                block_db=mock_block_db,
+                state_db=mock_state_db,
+                chain_id=1,
+                p2p_service=mock_p2p_service,
+                stop_event=stop_event,
             )
-            
-            # Let it run for a short time
-            await asyncio.sleep(0.3)
-            
-            # Signal stop
-            stop_event.set()
-            
-            # Wait for task to complete
-            await asyncio.wait_for(task, timeout=2.0)
+        )
         
-        # Should have stopped quickly after event was set
-        # At most 1 or 2 attempts before stopping
-        assert 1 <= retry_count[0] <= 2
+        # Let it run for a short time
+        await asyncio.sleep(0.3)
         
-    finally:
-        for key in ["ANIMICA_SNAPSHOT_SYNC_ENABLED", "ANIMICA_SNAPSHOT_MIN_HEIGHT",
-                    "ANIMICA_SNAPSHOT_RETRY_INTERVAL", "ANIMICA_SNAPSHOT_MAX_RETRIES"]:
-            os.environ.pop(key, None)
+        # Signal stop
+        stop_event.set()
+        
+        # Wait for task to complete
+        await asyncio.wait_for(task, timeout=2.0)
+    
+    # Should have stopped quickly after event was set
+    # At most 1 or 2 attempts before stopping
+    assert 1 <= retry_count[0] <= 2
 
 
 @pytest.mark.asyncio
-async def test_continuous_discovery_handles_exceptions():
+async def test_continuous_discovery_handles_exceptions(clean_snapshot_env):
     """Test that continuous discovery handles errors gracefully."""
     
     from p2p.sync.snapshot_sync import continuous_snapshot_discovery
@@ -229,33 +219,27 @@ async def test_continuous_discovery_handles_exceptions():
     os.environ["ANIMICA_SNAPSHOT_RETRY_INTERVAL"] = "0.1"
     os.environ["ANIMICA_SNAPSHOT_MAX_RETRIES"] = "3"
     
-    try:
-        async def mock_bootstrap(*args, **kwargs):
-            retry_count[0] += 1
-            if retry_count[0] < 3:
-                # Raise exception on first 2 attempts
-                raise RuntimeError("Network error")
-            return (True, None)
-        
-        with patch("p2p.sync.snapshot_sync.try_snapshot_bootstrap", side_effect=mock_bootstrap):
-            # Should handle exceptions and continue
-            await continuous_snapshot_discovery(
-                block_db=mock_block_db,
-                state_db=mock_state_db,
-                chain_id=1,
-                p2p_service=mock_p2p_service,
-            )
-        
-        # Should have recovered from errors and succeeded
-        assert retry_count[0] == 3
-        
-    finally:
-        for key in ["ANIMICA_SNAPSHOT_SYNC_ENABLED", "ANIMICA_SNAPSHOT_MIN_HEIGHT",
-                    "ANIMICA_SNAPSHOT_RETRY_INTERVAL", "ANIMICA_SNAPSHOT_MAX_RETRIES"]:
-            os.environ.pop(key, None)
+    async def mock_bootstrap(*args, **kwargs):
+        retry_count[0] += 1
+        if retry_count[0] < 3:
+            # Raise exception on first 2 attempts
+            raise RuntimeError("Network error")
+        return (True, None)
+    
+    with patch("p2p.sync.snapshot_sync.try_snapshot_bootstrap", side_effect=mock_bootstrap):
+        # Should handle exceptions and continue
+        await continuous_snapshot_discovery(
+            block_db=mock_block_db,
+            state_db=mock_state_db,
+            chain_id=1,
+            p2p_service=mock_p2p_service,
+        )
+    
+    # Should have recovered from errors and succeeded
+    assert retry_count[0] == 3
 
 
-def test_snapshot_retry_environment_variables():
+def test_snapshot_retry_environment_variables(clean_snapshot_env):
     """Test that retry configuration environment variables are properly read."""
     
     from p2p.sync.snapshot_sync import (
@@ -283,10 +267,6 @@ def test_snapshot_retry_environment_variables():
     
     assert _get_snapshot_retry_interval() == 60.0  # Default 60s
     assert _get_snapshot_max_retries() == 0  # Default unlimited
-    
-    # Cleanup
-    for key in ["ANIMICA_SNAPSHOT_RETRY_INTERVAL", "ANIMICA_SNAPSHOT_MAX_RETRIES"]:
-        os.environ.pop(key, None)
 
 
 if __name__ == "__main__":

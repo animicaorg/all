@@ -60,7 +60,7 @@ def _get_snapshot_retry_interval() -> float:
 
 
 def _get_snapshot_max_retries() -> int:
-    """Get maximum number of snapshot discovery retries (0 = infinite)."""
+    """Get maximum number of snapshot discovery retries (0 = unlimited)."""
     try:
         return int(os.environ.get(SNAPSHOT_MAX_RETRIES, "0"))
     except ValueError:
