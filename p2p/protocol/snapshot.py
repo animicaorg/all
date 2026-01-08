@@ -24,7 +24,7 @@ class SnapshotHandler:
     Responds to GET_SNAPSHOTS messages by listing locally available snapshots.
     """
     
-    codec: Any  # p2p.wire.encoding.Codec
+    codec: Any = None  # Unused, kept for compatibility
     snapshots_dir: Optional[Path] = None
     
     def __post_init__(self):
@@ -49,22 +49,52 @@ class SnapshotHandler:
     def msg_ids(self) -> Iterable[int]:
         """Return message IDs this handler processes."""
         from p2p.wire.message_ids import MsgID
-        return [MsgID.GET_SNAPSHOTS]
+        return [MsgID.GET_SNAPSHOTS, MsgID.GET_SNAPSHOT_CHUNK]
+    
+    def _decode_request(self, payload: bytes, request_class: type) -> Any:
+        """
+        Decode a request payload into a message object.
+        
+        Args:
+            payload: Encoded payload bytes
+            request_class: The dataclass type to construct (e.g., GetSnapshots)
+            
+        Returns:
+            Instance of request_class
+        """
+        from p2p.wire.encoding import decode_payload
+        
+        payload_dict = decode_payload(payload)
+        # Filter out msg_id field as it's already in the frame header
+        request_kwargs = {k: v for k, v in payload_dict.items() if k != 'msg_id'}
+        return request_class(**request_kwargs)
     
     async def handle(self, conn: Any, frame: Any) -> None:
         """
-        Handle incoming GET_SNAPSHOTS request.
+        Handle incoming snapshot-related requests.
         
         Args:
             conn: Connection object
             frame: Frame containing the request
         """
+        from p2p.wire.message_ids import MsgID
+        
+        if frame.msg_id == MsgID.GET_SNAPSHOTS:
+            await self._handle_get_snapshots(conn, frame)
+        elif frame.msg_id == MsgID.GET_SNAPSHOT_CHUNK:
+            await self._handle_get_snapshot_chunk(conn, frame)
+        else:
+            log.warning(f"Unknown message ID in SnapshotHandler: {frame.msg_id}")
+    
+    async def _handle_get_snapshots(self, conn: Any, frame: Any) -> None:
+        """Handle GET_SNAPSHOTS request."""
         try:
             from p2p.wire.messages import GetSnapshots, Snapshots
             from p2p.wire.message_ids import MsgID
+            from p2p.wire.encoding import encode_payload
             
-            # Decode request
-            req = self.codec.decode(frame.payload, GetSnapshots)
+            # Decode request using helper
+            req = self._decode_request(frame.payload, GetSnapshots)
             log.debug(f"Received GET_SNAPSHOTS request from {conn.remote_addr}, chain_id={req.chain_id}")
             
             # List available snapshots
@@ -74,7 +104,7 @@ class SnapshotHandler:
             response = Snapshots(snapshots=snapshots)
             
             # Encode and send response
-            response_bytes = self.codec.encode(response)
+            response_bytes = encode_payload(response)
             await conn.send_frame(MsgID.SNAPSHOTS, response_bytes)
             
             log.debug(f"Sent {len(snapshots)} snapshot(s) to {conn.remote_addr}")
@@ -85,9 +115,78 @@ class SnapshotHandler:
             try:
                 from p2p.wire.messages import Snapshots
                 from p2p.wire.message_ids import MsgID
+                from p2p.wire.encoding import encode_payload
                 empty_response = Snapshots(snapshots=[])
-                response_bytes = self.codec.encode(empty_response)
+                response_bytes = encode_payload(empty_response)
                 await conn.send_frame(MsgID.SNAPSHOTS, response_bytes)
+            except Exception:
+                pass  # Best effort
+    
+    async def _handle_get_snapshot_chunk(self, conn: Any, frame: Any) -> None:
+        """Handle GET_SNAPSHOT_CHUNK request."""
+        # Initialize defaults for error handling
+        req_chain_id = 0
+        req_height = 0
+        req_chunk_name = ""
+        
+        try:
+            from p2p.wire.messages import GetSnapshotChunk, SnapshotChunk
+            from p2p.wire.message_ids import MsgID
+            from p2p.wire.encoding import encode_payload
+            
+            # Decode request using helper
+            req = self._decode_request(frame.payload, GetSnapshotChunk)
+            req_chain_id = req.chain_id
+            req_height = req.checkpoint_height
+            req_chunk_name = req.chunk_name
+            
+            log.debug(
+                f"Received GET_SNAPSHOT_CHUNK request from {conn.remote_addr}: "
+                f"chain_id={req.chain_id}, height={req.checkpoint_height}, chunk={req.chunk_name}"
+            )
+            
+            # Read the chunk file
+            chunk_data, found = self._read_chunk(
+                req.chain_id, req.checkpoint_height, req.chunk_name
+            )
+            
+            # Build response
+            response = SnapshotChunk(
+                chain_id=req.chain_id,
+                checkpoint_height=req.checkpoint_height,
+                chunk_name=req.chunk_name,
+                data=chunk_data,
+                found=found,
+            )
+            
+            # Encode and send response
+            response_bytes = encode_payload(response)
+            await conn.send_frame(MsgID.SNAPSHOT_CHUNK, response_bytes)
+            
+            if found:
+                log.info(
+                    f"Sent snapshot chunk {req.chunk_name} ({len(chunk_data)} bytes) "
+                    f"to {conn.remote_addr}"
+                )
+            else:
+                log.debug(f"Snapshot chunk {req.chunk_name} not found for {conn.remote_addr}")
+            
+        except Exception as e:
+            log.warning(f"Error handling GET_SNAPSHOT_CHUNK: {e}", exc_info=True)
+            # Send not-found response on error using captured values
+            try:
+                from p2p.wire.messages import SnapshotChunk
+                from p2p.wire.message_ids import MsgID
+                from p2p.wire.encoding import encode_payload
+                error_response = SnapshotChunk(
+                    chain_id=req_chain_id,
+                    checkpoint_height=req_height,
+                    chunk_name=req_chunk_name,
+                    data=b"",
+                    found=False,
+                )
+                response_bytes = encode_payload(error_response)
+                await conn.send_frame(MsgID.SNAPSHOT_CHUNK, response_bytes)
             except Exception:
                 pass  # Best effort
     
@@ -161,6 +260,44 @@ class SnapshotHandler:
         
         log.debug(f"Found {len(snapshots)} snapshot(s) in {self.snapshots_dir}")
         return snapshots
+    
+    def _read_chunk(
+        self, chain_id: int, checkpoint_height: int, chunk_name: str
+    ) -> tuple[bytes, bool]:
+        """
+        Read a snapshot chunk file.
+        
+        Args:
+            chain_id: Chain ID
+            checkpoint_height: Snapshot checkpoint height
+            chunk_name: Name of the chunk file (e.g., "blocks.tar.zst")
+            
+        Returns:
+            Tuple of (chunk_data, found)
+        """
+        if not self.snapshots_dir or not self.snapshots_dir.exists():
+            return b"", False
+        
+        # Construct snapshot directory name
+        snapshot_dir = self.snapshots_dir / f"chain-{chain_id}-height-{checkpoint_height}"
+        if not snapshot_dir.exists() or not snapshot_dir.is_dir():
+            log.debug(f"Snapshot directory not found: {snapshot_dir}")
+            return b"", False
+        
+        # Read the chunk file
+        chunk_path = snapshot_dir / chunk_name
+        if not chunk_path.exists() or not chunk_path.is_file():
+            log.debug(f"Chunk file not found: {chunk_path}")
+            return b"", False
+        
+        try:
+            with open(chunk_path, "rb") as f:
+                data = f.read()
+            log.debug(f"Read chunk {chunk_name} ({len(data)} bytes) from {snapshot_dir}")
+            return data, True
+        except (IOError, OSError) as e:
+            log.warning(f"Failed to read chunk {chunk_path}: {e}")
+            return b"", False
 
 
 __all__ = ["SnapshotHandler"]
