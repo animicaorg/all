@@ -15,6 +15,7 @@ Supported Python types:
 - list/tuple
 - dict (keys must be int/bytes/str; encoded with *deterministic* ordering)
 - dataclasses (treated as maps of field name -> value)
+- objects with to_obj() method (converted to dict via to_obj() before encoding)
 
 Not supported (by design for consensus):
 - float/Decimal
