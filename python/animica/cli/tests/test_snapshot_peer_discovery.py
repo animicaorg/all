@@ -365,6 +365,7 @@ def test_snapshot_list_local_no_snapshots():
             "success": True,
             "snapshots": [],
         },
+        "net.peers": [],  # No peers connected
     }
     
     with patch("httpx.AsyncClient") as mock_client:
@@ -376,7 +377,82 @@ def test_snapshot_list_local_no_snapshots():
         assert "No snapshots found on local node" in result.stdout
         assert "💡 Tips:" in result.stdout
         assert "animica snapshot create" in result.stdout
-        assert "animica snapshot list --from-peers" in result.stdout
+
+
+def test_snapshot_list_local_with_auto_peer_discovery(mock_rpc_with_peers, mock_peer_snapshots):
+    """Test snapshot list command with automatic peer discovery (default behavior)."""
+    responses = {
+        "snapshot.list": {
+            "success": True,
+            "snapshots": [
+                {
+                    "chain_id": 1,
+                    "checkpoint_height": 1000,
+                    "checkpoint_hash": "0xaaa",
+                    "blocks_count": 1001,
+                    "accounts_count": 50,
+                    "size_mb": 10.5,
+                    "path": "/data/snapshots/chain-1-height-1000",
+                }
+            ],
+        },
+        **mock_rpc_with_peers,
+        **mock_peer_snapshots,
+    }
+    
+    with patch("httpx.AsyncClient") as mock_client:
+        mock_client.return_value = MockAsyncClient(responses)
+        
+        result = runner.invoke(app, ["snapshot", "list"])
+        
+        assert result.exit_code == 0
+        # Should show local snapshots
+        assert "Found 1 local snapshot(s)" in result.stdout
+        assert "Height 1000" in result.stdout
+        # Should also show highest peer snapshot
+        assert "🌐 Highest snapshot from connected peers" in result.stdout
+        assert "Height 2000" in result.stdout
+        assert "192.168.1.10:30303" in result.stdout
+        assert "💡 A higher snapshot is available from peers" in result.stdout
+
+
+def test_snapshot_list_local_only_flag():
+    """Test snapshot list with --local-only flag."""
+    responses = {
+        "snapshot.list": {
+            "success": True,
+            "snapshots": [
+                {
+                    "chain_id": 1,
+                    "checkpoint_height": 1000,
+                    "checkpoint_hash": "0xaaa",
+                    "blocks_count": 1001,
+                    "accounts_count": 50,
+                    "size_mb": 10.5,
+                    "path": "/data/snapshots/chain-1-height-1000",
+                }
+            ],
+        },
+    }
+    
+    with patch("httpx.AsyncClient") as mock_client:
+        mock_client.return_value = MockAsyncClient(responses)
+        
+        result = runner.invoke(app, ["snapshot", "list", "--local-only"])
+        
+        assert result.exit_code == 0
+        # Should show local snapshots
+        assert "Found 1 local snapshot(s)" in result.stdout
+        # Should NOT query peers
+        assert "🌐 Highest snapshot from connected peers" not in result.stdout
+
+
+def test_snapshot_list_mutually_exclusive_flags():
+    """Test that --from-peers and --local-only are mutually exclusive."""
+    result = runner.invoke(app, ["snapshot", "list", "--from-peers", "--local-only"])
+    
+    assert result.exit_code == 1
+    assert "mutually exclusive" in result.stdout
 
 
 def test_snapshot_list_help():
@@ -386,7 +462,7 @@ def test_snapshot_list_help():
     assert result.exit_code == 0
     assert "List all available snapshots" in result.stdout
     assert "--from-peers" in result.stdout
-    assert "discover snapshots from all connected peers" in result.stdout
+    assert "--local-only" in result.stdout
 
 
 def test_snapshot_discover_help():
