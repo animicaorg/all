@@ -71,7 +71,9 @@ async def rpc_call(
             error_msg = str(error_info)
         # Ensure we have a meaningful error message
         if not error_msg or not error_msg.strip():
-            error_msg = f"RPC error without message (error object: {error_info!r})"
+            # Include error type and representation for debugging
+            error_type = type(error_info).__name__
+            error_msg = f"RPC error without message ({error_type}: {error_info!r})"
         raise RuntimeError(error_msg)
     return data.get("result")
 
