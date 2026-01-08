@@ -334,6 +334,26 @@ class Snapshots:
     snapshots: List[SnapshotInfo] = dc.field(default_factory=list)
 
 
+@dataclass(frozen=True)
+class GetSnapshotChunk:
+    """Request a specific chunk of a snapshot."""
+    msg_id: MsgID = MsgID.GET_SNAPSHOT_CHUNK
+    chain_id: ChainId = 0
+    checkpoint_height: Height = 0
+    chunk_name: str = ""  # e.g., "blocks.tar.zst", "state.tar.zst"
+
+
+@dataclass(frozen=True)
+class SnapshotChunk:
+    """Response with snapshot chunk data."""
+    msg_id: MsgID = MsgID.SNAPSHOT_CHUNK
+    chain_id: ChainId = 0
+    checkpoint_height: Height = 0
+    chunk_name: str = ""
+    data: bytes = b""
+    found: bool = True  # False if chunk not found
+
+
 # ---------------------------
 # 0x04xx — Transactions
 # ---------------------------

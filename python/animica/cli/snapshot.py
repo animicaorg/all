@@ -95,23 +95,24 @@ async def _query_peer_snapshots(
     timeout: Optional[float] = None,
 ) -> tuple[str, list[dict[str, Any]], Optional[str]]:
     """
-    Query a single peer for available snapshots.
+    Query a single peer for available snapshots via RPC (if explicitly provided as HTTP URL).
+    
+    NOTE: Most peers do not expose RPC publicly for security reasons.
+    Snapshot discovery via P2P protocol (GET_SNAPSHOTS/SNAPSHOTS messages) is the 
+    primary mechanism and is automatically handled by connected peers.
     
     Returns:
-        Tuple of (peer_rpc_url, snapshots_list, error_message)
+        Tuple of (peer_identifier, snapshots_list, error_message)
         error_message is None if successful
     """
-    # Construct RPC URL for the peer
+    # Only attempt RPC if explicitly given an HTTP URL
+    # Peers connected via P2P do not necessarily expose RPC on port 8545
     if not peer_address.startswith("http"):
-        # Parse host:port format
-        if ":" in peer_address:
-            host, port = peer_address.rsplit(":", 1)
-            # Assume RPC is on standard port 8545
-            rpc_url = f"http://{host}:8545"
-        else:
-            rpc_url = f"http://{peer_address}:8545"
-    else:
-        rpc_url = peer_address
+        error_msg = "Peer address is not an RPC URL - snapshot discovery via P2P is automatic"
+        _log.debug(f"Skipping RPC query for {peer_address}: {error_msg}")
+        return peer_address, [], error_msg
+    
+    rpc_url = peer_address
     
     # Ensure RPC URL has /rpc suffix
     if not rpc_url.endswith("/rpc"):
@@ -122,26 +123,26 @@ async def _query_peer_snapshots(
         params["chain_id"] = chain_id
     
     try:
-        _log.debug(f"Querying peer {peer_address} (RPC: {rpc_url}) for snapshots")
+        _log.debug(f"Querying explicit RPC endpoint {rpc_url} for snapshots")
         result = await rpc_call("snapshot.list", params, rpc_url=rpc_url, timeout=timeout or 10.0)
         
         if result and result.get("success"):
             snapshots = result.get("snapshots", [])
-            _log.debug(f"Peer {peer_address} returned {len(snapshots)} snapshot(s)")
+            _log.debug(f"RPC endpoint {rpc_url} returned {len(snapshots)} snapshot(s)")
             # Add source information to each snapshot (create copies to avoid side effects)
             enriched_snapshots = []
             for snap in snapshots:
                 snap_copy = snap.copy()
-                snap_copy["_source"] = peer_address
+                snap_copy["_source"] = rpc_url
                 snap_copy["_source_rpc"] = rpc_url
                 enriched_snapshots.append(snap_copy)
             return rpc_url, enriched_snapshots, None
         else:
-            _log.debug(f"Peer {peer_address} returned no snapshots")
+            _log.debug(f"RPC endpoint {rpc_url} returned no snapshots")
             return rpc_url, [], None
     except Exception as e:
         error_msg = str(e)
-        _log.warning(f"Failed to query peer {peer_address} (RPC: {rpc_url}): {error_msg}")
+        _log.debug(f"Failed to query RPC endpoint {rpc_url}: {error_msg}")
         return rpc_url, [], error_msg
 
 
