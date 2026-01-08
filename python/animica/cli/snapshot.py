@@ -46,15 +46,34 @@ async def rpc_call(
         "method": method,
         "params": params or [],
     }
-    async with httpx.AsyncClient(timeout=resolved_timeout) as client:
-        response = await client.post(rpc_url, json=payload)
-        data = response.json()
+    try:
+        async with httpx.AsyncClient(timeout=resolved_timeout) as client:
+            response = await client.post(rpc_url, json=payload)
+            data = response.json()
+    except httpx.TimeoutException as e:
+        error_msg = f"RPC timeout connecting to {rpc_url}: {e}"
+        raise RuntimeError(error_msg) from e
+    except httpx.ConnectError as e:
+        error_msg = f"Failed to connect to RPC at {rpc_url}: {e}"
+        raise RuntimeError(error_msg) from e
+    except httpx.HTTPError as e:
+        error_msg = f"HTTP error calling {rpc_url}: {e}"
+        raise RuntimeError(error_msg) from e
+    except Exception as e:
+        error_msg = f"Unexpected error calling RPC {method} at {rpc_url}: {e}"
+        raise RuntimeError(error_msg) from e
+    
     if "error" in data:
         error_info = data["error"]
         if isinstance(error_info, dict):
             error_msg = error_info.get("message", str(error_info))
         else:
             error_msg = str(error_info)
+        # Ensure we have a meaningful error message
+        if not error_msg or not error_msg.strip():
+            # Include error type and representation for debugging
+            error_type = type(error_info).__name__
+            error_msg = f"RPC error without message ({error_type}: {error_info!r})"
         raise RuntimeError(error_msg)
     return data.get("result")
 
@@ -141,7 +160,7 @@ async def _query_peer_snapshots(
             _log.debug(f"RPC endpoint {rpc_url} returned no snapshots")
             return rpc_url, [], None
     except Exception as e:
-        error_msg = str(e)
+        error_msg = str(e) if str(e).strip() else f"Unknown error ({type(e).__name__})"
         _log.debug(f"Failed to query RPC endpoint {rpc_url}: {error_msg}")
         return rpc_url, [], error_msg
 
@@ -283,7 +302,8 @@ def create(
         typer.echo(f"  Path: {result['path']}")
         
     except Exception as e:
-        typer.echo(f"❌ Error creating snapshot: {e}", err=True)
+        error_msg = str(e) if str(e).strip() else f"Unknown error ({type(e).__name__})"
+        typer.echo(f"❌ Error creating snapshot: {error_msg}", err=True)
         raise typer.Exit(code=1)
 
 
@@ -430,8 +450,10 @@ def list_snapshots(
                                 key=lambda s: s["checkpoint_height"]
                             )
                 except Exception as e:
-                    # Log the error but continue
-                    _log.warning(f"Error querying peers for snapshots: {e}")
+                    # Log the error but continue - provide meaningful error message
+                    error_msg = str(e) if str(e).strip() else "Unknown error or connection issue"
+                    _log.warning(f"Error querying peers for snapshots: {error_msg}")
+                    _log.debug(f"Full error details: {e!r}", exc_info=True)
                     
                     # Even if snapshot discovery failed, try to get actual peer count
                     # so we don't incorrectly report "no peers connected"
@@ -499,7 +521,8 @@ def list_snapshots(
                 typer.echo("  - Connect to more peers: animica peer add <address>")
         
     except Exception as e:
-        typer.echo(f"❌ Error listing snapshots: {e}", err=True)
+        error_msg = str(e) if str(e).strip() else f"Unknown error ({type(e).__name__})"
+        typer.echo(f"❌ Error listing snapshots: {error_msg}", err=True)
         raise typer.Exit(code=1)
 
 
@@ -538,7 +561,8 @@ def get(
         typer.echo(json.dumps(manifest, indent=2))
         
     except Exception as e:
-        typer.echo(f"❌ Error getting snapshot: {e}", err=True)
+        error_msg = str(e) if str(e).strip() else f"Unknown error ({type(e).__name__})"
+        typer.echo(f"❌ Error getting snapshot: {error_msg}", err=True)
         raise typer.Exit(code=1)
 
 
@@ -584,7 +608,8 @@ def verify(
             raise typer.Exit(code=1)
         
     except Exception as e:
-        typer.echo(f"❌ Error verifying snapshot: {e}", err=True)
+        error_msg = str(e) if str(e).strip() else f"Unknown error ({type(e).__name__})"
+        typer.echo(f"❌ Error verifying snapshot: {error_msg}", err=True)
         raise typer.Exit(code=1)
 
 
@@ -641,7 +666,8 @@ def import_snapshot(
         typer.echo(f"  Elapsed: {result['elapsed_seconds']}s")
         
     except Exception as e:
-        typer.echo(f"❌ Error importing snapshot: {e}", err=True)
+        error_msg = str(e) if str(e).strip() else f"Unknown error ({type(e).__name__})"
+        typer.echo(f"❌ Error importing snapshot: {error_msg}", err=True)
         raise typer.Exit(code=1)
 
 
@@ -686,7 +712,8 @@ def delete(
         typer.echo(f"✅ {result.get('message', 'Snapshot deleted')}")
         
     except Exception as e:
-        typer.echo(f"❌ Error deleting snapshot: {e}", err=True)
+        error_msg = str(e) if str(e).strip() else f"Unknown error ({type(e).__name__})"
+        typer.echo(f"❌ Error deleting snapshot: {error_msg}", err=True)
         raise typer.Exit(code=1)
 
 
@@ -792,7 +819,8 @@ def discover(
     except Exception as e:
         if isinstance(e, typer.Exit):
             raise
-        typer.echo(f"❌ Error discovering snapshots: {e}", err=True)
+        error_msg = str(e) if str(e).strip() else f"Unknown error ({type(e).__name__})"
+        typer.echo(f"❌ Error discovering snapshots: {error_msg}", err=True)
         raise typer.Exit(code=1)
 
 
@@ -920,7 +948,8 @@ def status(
         typer.echo()
         
     except Exception as e:
-        typer.echo(f"❌ Error getting status: {e}", err=True)
+        error_msg = str(e) if str(e).strip() else f"Unknown error ({type(e).__name__})"
+        typer.echo(f"❌ Error getting status: {error_msg}", err=True)
         raise typer.Exit(code=1)
 
 
