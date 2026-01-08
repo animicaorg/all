@@ -47,8 +47,8 @@ def test_orchestrator_initialization():
     
     assert orchestrator.chain_id == 1
     assert orchestrator.config.interval == 2000
-    assert orchestrator.config.auto_create == True
-    assert orchestrator.status.healthy == True
+    assert orchestrator.config.auto_create is True
+    assert orchestrator.status.healthy is True
     print("  ✅ Orchestrator initializes with default config")
     
     # Test with custom config
@@ -65,7 +65,7 @@ def test_orchestrator_initialization():
     )
     
     assert orchestrator2.config.interval == 1000
-    assert orchestrator2.config.auto_create == False
+    assert orchestrator2.config.auto_create is False
     assert orchestrator2.config.max_snapshots == 5
     print("  ✅ Orchestrator initializes with custom config")
     
@@ -148,19 +148,19 @@ def test_snapshot_creation_decision():
         )
         
         # Test interval heights
-        assert orchestrator.should_create_snapshot(0) == False
+        assert orchestrator.should_create_snapshot(0) is False
         print("  ✅ No snapshot at height 0")
         
-        assert orchestrator.should_create_snapshot(1000) == False
+        assert orchestrator.should_create_snapshot(1000) is False
         print("  ✅ No snapshot at height 1000 (not interval)")
         
-        assert orchestrator.should_create_snapshot(2000) == True
+        assert orchestrator.should_create_snapshot(2000) is True
         print("  ✅ Snapshot at height 2000 (interval)")
         
-        assert orchestrator.should_create_snapshot(4000) == True
+        assert orchestrator.should_create_snapshot(4000) is True
         print("  ✅ Snapshot at height 4000 (interval)")
         
-        assert orchestrator.should_create_snapshot(4001) == False
+        assert orchestrator.should_create_snapshot(4001) is False
         print("  ✅ No snapshot at height 4001 (not interval)")
         
         # Test with auto_create disabled
@@ -176,7 +176,7 @@ def test_snapshot_creation_decision():
             config=config2,
         )
         
-        assert orchestrator2.should_create_snapshot(2000) == False
+        assert orchestrator2.should_create_snapshot(2000) is False
         print("  ✅ No snapshot when auto_create=False")
     
     print()
@@ -210,8 +210,8 @@ async def test_health_check():
         print("  ✅ Health check timestamp recorded")
         
         # Should be healthy initially
-        assert healthy == True
-        assert orchestrator.status.healthy == True
+        assert healthy is True
+        assert orchestrator.status.healthy is True
         print("  ✅ Initial health status is healthy")
         
         # Check that warnings are generated for missing snapshots
@@ -311,7 +311,7 @@ async def test_orchestrator_lifecycle():
         
         # Start orchestrator
         await orchestrator.start()
-        assert orchestrator._running == True
+        assert orchestrator._running is True
         assert len(orchestrator._tasks) == 2  # Monitor + health check
         print("  ✅ Orchestrator started with 2 background tasks")
         
@@ -320,7 +320,7 @@ async def test_orchestrator_lifecycle():
         
         # Stop orchestrator
         await orchestrator.stop()
-        assert orchestrator._running == False
+        assert orchestrator._running is False
         assert len(orchestrator._tasks) == 0
         print("  ✅ Orchestrator stopped cleanly")
     
@@ -346,8 +346,8 @@ def test_rpc_status_method():
             with patch.object(deps, 'get_chain_id', return_value=1):
                 result = snapshot_status()
                 
-                assert result["success"] == True
-                assert result["orchestrator_running"] == False
+                assert result["success"] is True
+                assert result["orchestrator_running"] is False
                 assert "message" in result
                 print("  ✅ Status works without orchestrator (manual mode)")
     
@@ -374,8 +374,8 @@ def test_rpc_status_method():
         with patch.object(deps, 'get_ctx', return_value=mock_ctx):
             result = snapshot_status()
             
-            assert result["success"] == True
-            assert result["orchestrator_running"] == True
+            assert result["success"] is True
+            assert result["orchestrator_running"] is True
             assert "config" in result
             assert "status" in result
             assert "statistics" in result
