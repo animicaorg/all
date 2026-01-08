@@ -1319,8 +1319,8 @@ def sync_status(
     # Check for available snapshots if node is behind
     if height is not None and network_height is not None and network_height > height + 100:
         try:
-            # Import the snapshot discovery functions
-            from python.animica.cli.snapshot import _query_all_peers_for_snapshots
+            # Query peers for snapshots if significantly behind
+            from animica.cli.snapshot import _query_all_peers_for_snapshots
             
             typer.echo("🔍 Checking for available snapshots from peers...")
             snapshots_by_peer = asyncio.run(_query_all_peers_for_snapshots(url, chain_id))
