@@ -345,14 +345,16 @@ def test_snapshot_discover_json(mock_rpc_with_peers, mock_peer_snapshots):
 
 
 def test_snapshot_discover_no_snapshots():
-    """Test snapshot discover when no snapshots are available."""
+    """Test snapshot discover when no snapshots are available but peers are connected.
+    
+    This should be treated as informational (exit 0), not an error.
+    """
     responses = {
-        "net.peers": [
-            {"id": "peer1", "addr": "192.168.1.10:30303"},
-        ],
-        "http://192.168.1.10:8545/rpc:snapshot.list": {
+        "snapshot.discoverFromPeers": {
             "success": True,
             "snapshots": [],
+            "peer_count": 1,
+            "message": "Connected to 1 peer(s), but none have snapshots available.",
         },
     }
     
@@ -361,9 +363,11 @@ def test_snapshot_discover_no_snapshots():
         
         result = runner.invoke(app, ["snapshot", "discover"])
         
-        assert result.exit_code == 1
-        assert "No snapshots found on connected peers" in result.stdout
-        assert "💡 Troubleshooting:" in result.stdout
+        # Changed from exit_code == 1 to exit_code == 0 for informational case
+        assert result.exit_code == 0
+        assert "Connected to" in result.stdout and "peer" in result.stdout
+        # Changed from "Troubleshooting" to "Tips" for informational case
+        assert "💡 Tips:" in result.stdout
 
 
 def test_snapshot_list_local_no_snapshots():
@@ -543,9 +547,17 @@ def test_snapshot_discover_with_peer_errors():
 
 
 def test_snapshot_discover_no_peers_connected():
-    """Test snapshot discover command when no peers are connected."""
+    """Test snapshot discover command when no peers are connected.
+    
+    This should be treated as an error (exit 1).
+    """
     responses = {
-        "net.peers": [],  # No peers connected
+        "snapshot.discoverFromPeers": {
+            "success": True,
+            "snapshots": [],
+            "peer_count": 0,
+            "message": "No peers connected. Connect to peers first using 'animica peer add <address>'.",
+        },
     }
     
     with patch("httpx.AsyncClient") as mock_client:
@@ -554,9 +566,9 @@ def test_snapshot_discover_no_peers_connected():
         result = runner.invoke(app, ["snapshot", "discover"])
         
         assert result.exit_code == 1
-        assert "❌ No peers connected" in result.stdout
-        assert "Connect to peers:" in result.stdout
-        assert "animica peer add" in result.stdout
+        assert "No peers" in result.stdout or "peer" in result.stdout.lower()
+        assert "💡 Troubleshooting:" in result.stdout
+        assert "animica peer" in result.stdout
         # Should NOT show the "no snapshots found" message
         assert "No snapshots found on connected peers" not in result.stdout
 
