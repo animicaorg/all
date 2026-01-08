@@ -165,7 +165,7 @@ def export_snapshot(
                 if header:
                     # Write height-prefixed entry
                     # Format: [entry_cbor_bytes]\n for easy delimiting
-                    entry = {"type": "header", "height": height, "data": header}
+                    entry = {"type": "header", "height": height, "data": header.to_obj()}
                     entry_bytes = cbor_dumps(entry)
                     f.write(entry_bytes)
                     f.write(b"\n")  # Delimiter for easier parsing
@@ -174,7 +174,7 @@ def export_snapshot(
                 # Export block at this height
                 block = block_db.get_block_by_hash(block_hash)
                 if block:
-                    entry = {"type": "block", "height": height, "data": block}
+                    entry = {"type": "block", "height": height, "data": block.to_obj()}
                     entry_bytes = cbor_dumps(entry)
                     f.write(entry_bytes)
                     f.write(b"\n")  # Delimiter
