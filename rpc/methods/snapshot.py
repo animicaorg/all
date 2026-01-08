@@ -208,8 +208,12 @@ def _query_peers_for_snapshots_sync(chain_id: int | None = None) -> dict:
     """
     Query connected P2P peers for their available snapshots (synchronous wrapper).
     
+    NOTE: This function currently returns an empty dict because P2P message exchange
+    requires async context which RPC methods don't have. This is a placeholder for
+    future async RPC support or can be implemented using a thread pool executor.
+    
     Returns:
-        Dictionary mapping peer IDs to their snapshot lists
+        Dictionary mapping peer IDs to their snapshot lists (currently always empty)
     """
     try:
         ctx = deps.get_ctx()
@@ -247,22 +251,11 @@ def _query_peers_for_snapshots_sync(chain_id: int | None = None) -> dict:
             _log.debug("No connected peers available")
             return {}
         
-        _log.debug(f"Querying {len(peers_info)} peer(s) for snapshots via P2P")
+        _log.debug(f"P2P peer snapshot query not implemented in sync RPC context ({len(peers_info)} peers available)")
         
-        # Get the snapshot handler to reuse its listing logic
-        snapshots_by_peer = {}
-        
-        for peer_id, conn in peers_info:
-            try:
-                # For now, just return empty dict - the P2P message exchange
-                # requires async context which we don't have in RPC methods
-                # This will be implemented properly when we add async RPC support
-                pass
-            except Exception as e:
-                _log.debug(f"Error querying peer {peer_id}: {e}")
-                continue
-        
-        return snapshots_by_peer
+        # TODO: Implement using thread pool executor or when async RPC methods are supported
+        # For now, return empty dict
+        return {}
         
     except Exception as e:
         _log.warning(f"Error querying peers for snapshots: {e}")

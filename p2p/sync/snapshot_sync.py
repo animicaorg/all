@@ -31,6 +31,9 @@ SNAPSHOT_TIMEOUT = "ANIMICA_SNAPSHOT_TIMEOUT"
 SNAPSHOT_RETRY_INTERVAL = "ANIMICA_SNAPSHOT_RETRY_INTERVAL"
 SNAPSHOT_MAX_RETRIES = "ANIMICA_SNAPSHOT_MAX_RETRIES"
 
+# P2P snapshot query timeout in seconds
+P2P_SNAPSHOT_QUERY_TIMEOUT = 10.0
+
 
 def _is_snapshot_sync_enabled() -> bool:
     """Check if snapshot sync is enabled via environment."""
@@ -285,7 +288,7 @@ async def _query_peers_for_snapshots(
                             peer_id=peer_id,
                             msg_id=MsgID.GET_SNAPSHOTS,
                             payload=request_bytes,
-                            timeout=10.0,
+                            timeout=P2P_SNAPSHOT_QUERY_TIMEOUT,
                         )
                         
                         # Decode response
@@ -299,14 +302,25 @@ async def _query_peers_for_snapshots(
                         snapshots = [snap.to_dict() for snap in response.snapshots]
                         
                         if snapshots:
-                            peer_str = str(peer_id.hex()[:8]) if isinstance(peer_id, bytes) else str(peer_id)
+                            # Safely convert peer_id to string
+                            if peer_id is None:
+                                peer_str = "unknown"
+                            elif isinstance(peer_id, bytes):
+                                try:
+                                    peer_str = peer_id.hex()[:8]
+                                except Exception:
+                                    peer_str = str(peer_id)[:8]
+                            else:
+                                peer_str = str(peer_id)[:8]
+                            
                             snapshots_by_peer[peer_str] = snapshots
                             _log.info(
                                 f"Peer {peer_str} has {len(snapshots)} snapshot(s): "
                                 f"heights {[s['checkpoint_height'] for s in snapshots]}"
                             )
                         else:
-                            _log.debug(f"Peer {peer_id} has no snapshots")
+                            peer_str = "unknown" if peer_id is None else str(peer_id)[:8]
+                            _log.debug(f"Peer {peer_str} has no snapshots")
                     except AttributeError:
                         _log.debug("Router does not support send_request, falling back to RPC")
                         # Fall back to RPC for this peer
