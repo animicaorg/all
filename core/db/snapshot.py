@@ -381,13 +381,17 @@ def _import_blocks_chunk(block_db: BlockDB, chunk_file: Path, compressed: bool):
                 data = entry.get("data")
 
                 if entry_type == "header":
-                    # Store header (data should already be in proper format)
-                    block_hash = block_db.put_header(data)
+                    # Reconstruct header from dict and store
+                    from core.types.header import Header
+                    header_obj = Header.from_obj(data)
+                    block_hash = block_db.put_header(header_obj)
                     # Update height index
                     block_db.set_canonical(height, block_hash)
                 elif entry_type == "block":
-                    # Store block
-                    block_db.put_block(data)
+                    # Reconstruct block from dict and store
+                    from core.types.block import Block
+                    block_obj = Block.from_obj(data)
+                    block_db.put_block(block_obj)
 
                 imported_count += 1
                 if imported_count % 1000 == 0:
