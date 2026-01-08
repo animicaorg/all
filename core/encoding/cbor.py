@@ -15,6 +15,7 @@ Supported Python types:
 - list/tuple
 - dict (keys must be int/bytes/str; encoded with *deterministic* ordering)
 - dataclasses (treated as maps of field name -> value)
+- objects with to_obj() method (converted to dict via to_obj() before encoding)
 
 Not supported (by design for consensus):
 - float/Decimal
@@ -140,6 +141,12 @@ def _encode_obj(obj: Any) -> bytes:
     # dataclasses become dicts
     if is_dataclass(obj):
         obj = asdict(obj)
+    # Objects with to_obj() method can convert themselves to dicts
+    elif callable(getattr(obj, "to_obj", None)):
+        try:
+            obj = obj.to_obj()
+        except Exception as e:
+            raise EncodeError(f"to_obj() failed for {type(obj).__name__}: {e}") from e
 
     if obj is None:
         return bytes([0xF6])  # null
