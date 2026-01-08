@@ -28,6 +28,8 @@ SNAPSHOT_SYNC_ENABLED = "ANIMICA_SNAPSHOT_SYNC_ENABLED"
 SNAPSHOT_RPC_URL = "ANIMICA_SNAPSHOT_RPC_URL"
 SNAPSHOT_MIN_HEIGHT = "ANIMICA_SNAPSHOT_MIN_HEIGHT"
 SNAPSHOT_TIMEOUT = "ANIMICA_SNAPSHOT_TIMEOUT"
+SNAPSHOT_RETRY_INTERVAL = "ANIMICA_SNAPSHOT_RETRY_INTERVAL"
+SNAPSHOT_MAX_RETRIES = "ANIMICA_SNAPSHOT_MAX_RETRIES"
 
 
 def _is_snapshot_sync_enabled() -> bool:
@@ -47,6 +49,22 @@ def _get_snapshot_timeout() -> float:
         return float(os.environ.get(SNAPSHOT_TIMEOUT, "600"))
     except ValueError:
         return 600.0
+
+
+def _get_snapshot_retry_interval() -> float:
+    """Get interval between snapshot discovery retries in seconds."""
+    try:
+        return float(os.environ.get(SNAPSHOT_RETRY_INTERVAL, "60"))
+    except ValueError:
+        return 60.0
+
+
+def _get_snapshot_max_retries() -> int:
+    """Get maximum number of snapshot discovery retries (0 = unlimited)."""
+    try:
+        return int(os.environ.get(SNAPSHOT_MAX_RETRIES, "0"))
+    except ValueError:
+        return 0
 
 
 async def try_snapshot_bootstrap(
@@ -497,7 +515,119 @@ def should_try_snapshot_bootstrap(current_height: int, target_height: Optional[i
     return True
 
 
+async def continuous_snapshot_discovery(
+    block_db: Any,
+    state_db: Any,
+    chain_id: int,
+    p2p_service: Optional[Any] = None,
+    stop_event: Optional[asyncio.Event] = None,
+) -> None:
+    """
+    Continuously attempt to discover and bootstrap from peer snapshots.
+    
+    This runs in a background loop, periodically checking for snapshots from peers
+    until one is successfully imported or the stop event is set.
+    
+    Args:
+        block_db: Block database instance
+        state_db: State database instance
+        chain_id: Chain ID to sync
+        p2p_service: Optional P2P service for querying connected peers
+        stop_event: Optional event to signal when to stop retrying
+    """
+    if not _is_snapshot_sync_enabled():
+        _log.debug("Snapshot sync disabled, skipping continuous discovery")
+        return
+    
+    retry_interval = _get_snapshot_retry_interval()
+    max_retries = _get_snapshot_max_retries()
+    retry_count = 0
+    
+    _log.info(
+        f"Starting continuous snapshot discovery (interval={retry_interval}s, "
+        f"max_retries={max_retries if max_retries > 0 else 'unlimited'})"
+    )
+    
+    while True:
+        # Check if we should stop
+        if stop_event and stop_event.is_set():
+            _log.debug("Stop event set, ending continuous snapshot discovery")
+            break
+        
+        # Check if we've exceeded max retries
+        if max_retries > 0 and retry_count >= max_retries:
+            _log.info(
+                f"Reached maximum retry attempts ({max_retries}), "
+                "falling back to block-by-block sync"
+            )
+            break
+        
+        retry_count += 1
+        
+        # Get current chain height
+        try:
+            current_height = 0
+            head = block_db.get_head()
+            if head:
+                current_height = head[0]
+            
+            # Check if we still need a snapshot
+            if not should_try_snapshot_bootstrap(current_height):
+                _log.info(
+                    f"Node at height {current_height}, no longer need snapshot bootstrap"
+                )
+                break
+            
+            _log.debug(
+                f"Snapshot discovery attempt {retry_count} "
+                f"(current height: {current_height})"
+            )
+            
+            # Attempt snapshot bootstrap
+            success, error = await try_snapshot_bootstrap(
+                block_db=block_db,
+                state_db=state_db,
+                chain_id=chain_id,
+                current_height=current_height,
+                p2p_service=p2p_service,
+            )
+            
+            if success:
+                _log.info(
+                    f"Successfully bootstrapped from snapshot after {retry_count} attempt(s)"
+                )
+                break
+            else:
+                if error:
+                    _log.debug(f"Snapshot bootstrap attempt {retry_count} failed: {error}")
+                else:
+                    _log.debug(f"No snapshots found on attempt {retry_count}")
+        
+        except Exception as e:
+            _log.debug(
+                f"Error during snapshot discovery attempt {retry_count}: {e}",
+                exc_info=True
+            )
+        
+        # Wait before next retry
+        _log.debug(f"Waiting {retry_interval}s before next snapshot discovery attempt")
+        try:
+            if stop_event:
+                await asyncio.wait_for(stop_event.wait(), timeout=retry_interval)
+                # If we got here, stop_event was set
+                _log.debug("Stop event set during wait, ending continuous snapshot discovery")
+                break
+            else:
+                await asyncio.sleep(retry_interval)
+        except asyncio.TimeoutError:
+            # Normal timeout, continue to next iteration
+            pass
+    
+    _log.debug("Continuous snapshot discovery ended")
+
+
 __all__ = [
     "try_snapshot_bootstrap",
     "should_try_snapshot_bootstrap",
+    "continuous_snapshot_discovery",
 ]

@@ -118,6 +118,47 @@ animica snapshot import /path/to/snapshot --no-verify
 
 ### Automatic Snapshot Bootstrap
 
+**New: Continuous Discovery with Retry!**
+
+Nodes automatically discover and use snapshots from peers with **continuous retry** capability:
+
+```bash
+# Just start your node - discovery happens automatically with retry!
+animica node up
+
+# The node will continuously:
+# 1. Query connected peers for snapshots
+# 2. Select the highest available snapshot
+# 3. Download and import automatically
+# 4. Retry periodically until successful or node synced
+# 5. Fall back to block-by-block sync if no snapshots found after max retries
+```
+
+**Key Features:**
+- ✅ **Automatic**: No configuration needed
+- ✅ **Continuous**: Retries until snapshot found
+- ✅ **Resilient**: Works even if peers connect slowly
+- ✅ **Configurable**: Tune retry interval and max attempts
+- ✅ **Smart**: Stops when snapshot imported or node synced
+
+**Configuration:**
+
+```bash
+# Retry interval (default: 60 seconds)
+export ANIMICA_SNAPSHOT_RETRY_INTERVAL=60
+
+# Max retry attempts (default: 0 = unlimited)
+export ANIMICA_SNAPSHOT_MAX_RETRIES=0
+
+# Disable continuous discovery (use one-shot only)
+export ANIMICA_SNAPSHOT_AUTO_DISCOVER=false
+
+# Optional: Use static snapshot source
+export ANIMICA_SNAPSHOT_RPC_URL=http://snapshots.example.com:8545/rpc
+```
+
+For detailed information about continuous discovery, see [CONTINUOUS_SNAPSHOT_DISCOVERY.md](CONTINUOUS_SNAPSHOT_DISCOVERY.md).
+
 Nodes now **automatically** discover and download snapshots from connected peers on startup:
 
 ```bash
@@ -179,9 +220,11 @@ animica snapshot list --from-peers   # List all peer snapshots
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `ANIMICA_SNAPSHOT_SYNC_ENABLED` | `true` | Enable automatic snapshot bootstrap |
-| `ANIMICA_SNAPSHOT_AUTO_DISCOVER` | `true` | Enable automatic peer snapshot discovery on startup |
+| `ANIMICA_SNAPSHOT_AUTO_DISCOVER` | `true` | Enable automatic peer snapshot discovery with continuous retry |
+| `ANIMICA_SNAPSHOT_RETRY_INTERVAL` | `60` | Seconds between snapshot discovery retry attempts |
+| `ANIMICA_SNAPSHOT_MAX_RETRIES` | `0` | Maximum retry attempts (0 = unlimited, keeps trying until success) |
 | `ANIMICA_SNAPSHOT_RPC_URL` | _(none)_ | Optional RPC endpoint to fetch snapshots from. If not set, queries connected peers automatically. |
-| `ANIMICA_SNAPSHOT_MIN_HEIGHT` | `1000` | Minimum height gap to use snapshots |
+| `ANIMICA_SNAPSHOT_MIN_HEIGHT` | `1000` | Minimum height gap to use snapshots (won't use if already synced past this) |
 | `ANIMICA_SNAPSHOT_TIMEOUT` | `600` | Timeout for snapshot operations (seconds) |
 
 ### Storage Location

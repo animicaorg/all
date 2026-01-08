@@ -1098,20 +1098,21 @@ async def _background_snapshot_discovery(
     """
     Background task to automatically discover and bootstrap from peer snapshots.
     
-    Waits for P2P service to connect to peers, then attempts snapshot discovery.
-    This runs after P2P service has started, allowing time for peer connections.
+    This task uses continuous retry logic to keep attempting snapshot discovery
+    until a snapshot is successfully imported or the node is synced.
     
     Args:
         p2p_service: P2P service instance
         block_db: Block database instance
         state_db: State database instance
         chain_id: Chain ID to sync
-        max_wait_seconds: Maximum time to wait for peers (default: 30s)
-        retry_interval: Seconds between peer checks (default: 5s)
+        max_wait_seconds: Maximum time to wait for initial peers (default: 30s)
+        retry_interval: Seconds between peer checks for initial wait (default: 5s)
+                       (Continuous retry interval is configured via env var)
     """
     # Local imports to avoid circular dependencies and lazy loading
     import asyncio
-    from p2p.sync.snapshot_sync import try_snapshot_bootstrap, should_try_snapshot_bootstrap
+    from p2p.sync.snapshot_sync import continuous_snapshot_discovery, should_try_snapshot_bootstrap
     
     log = logging.getLogger("animica.rpc.deps.snapshot_discovery")
     
@@ -1137,7 +1138,7 @@ async def _background_snapshot_discovery(
         
         log.info("Starting automatic snapshot discovery from peers...")
         
-        # Wait for peers to connect (with timeout)
+        # Wait for peers to connect initially (with timeout)
         waited = 0
         peers_found = False
         
@@ -1157,7 +1158,7 @@ async def _background_snapshot_discovery(
             
             if peer_count > 0:
                 peers_found = True
-                log.info(f"Found {peer_count} connected peer(s), attempting snapshot discovery...")
+                log.info(f"Found {peer_count} connected peer(s), starting continuous snapshot discovery...")
                 break
             
             # Wait before next check
@@ -1166,24 +1167,16 @@ async def _background_snapshot_discovery(
             waited += retry_interval
         
         if not peers_found:
-            log.info("No peers connected within timeout, skipping automatic snapshot discovery")
-            return
+            log.info("No peers connected initially, will retry periodically...")
         
-        # Attempt snapshot bootstrap with peer discovery
-        success, error = await try_snapshot_bootstrap(
+        # Start continuous snapshot discovery
+        # This will keep retrying until a snapshot is found or the node is synced
+        await continuous_snapshot_discovery(
             block_db=block_db,
             state_db=state_db,
             chain_id=chain_id,
-            current_height=current_height,
             p2p_service=p2p_service,
         )
-        
-        if success:
-            log.info("Automatic snapshot discovery and bootstrap completed successfully")
-        elif error:
-            log.debug(f"Automatic snapshot discovery skipped: {error}")
-        else:
-            log.debug("Automatic snapshot discovery completed without finding snapshots")
             
     except Exception as e:
         log.debug(f"Automatic snapshot discovery failed: {e}", exc_info=True)
