@@ -186,6 +186,22 @@ async def _query_all_peers_for_snapshots(
     return snapshots_by_peer
 
 
+def _flatten_snapshots_by_peer(snapshots_by_peer: dict[str, list[dict[str, Any]]]) -> list[dict[str, Any]]:
+    """
+    Flatten snapshots from multiple peers into a single list.
+    
+    Args:
+        snapshots_by_peer: Dictionary mapping peer RPC URLs to their snapshot lists
+    
+    Returns:
+        Flattened list of all snapshots
+    """
+    all_snapshots = []
+    for peer_rpc, snapshots in snapshots_by_peer.items():
+        all_snapshots.extend(snapshots)
+    return all_snapshots
+
+
 @app.command("create")
 def create(
     height: Optional[int] = typer.Option(
@@ -289,9 +305,7 @@ def list_snapshots(
                 return
             
             # Flatten all snapshots
-            all_snapshots = []
-            for peer_rpc, snapshots in snapshots_by_peer.items():
-                all_snapshots.extend(snapshots)
+            all_snapshots = _flatten_snapshots_by_peer(snapshots_by_peer)
             
             # Sort by chain_id and height (descending)
             all_snapshots.sort(key=lambda s: (s["chain_id"], -s["checkpoint_height"]))
@@ -342,9 +356,7 @@ def list_snapshots(
                     
                     if snapshots_by_peer:
                         # Flatten all peer snapshots
-                        all_peer_snapshots = []
-                        for peer_rpc, snapshots in snapshots_by_peer.items():
-                            all_peer_snapshots.extend(snapshots)
+                        all_peer_snapshots = _flatten_snapshots_by_peer(snapshots_by_peer)
                         
                         # Find the highest peer snapshot
                         if all_peer_snapshots:
@@ -392,7 +404,7 @@ def list_snapshots(
                 typer.echo("")
                 
                 # Check if peer snapshot is higher than local
-                local_max_height = max((s['checkpoint_height'] for s in local_snapshots)) if local_snapshots else 0
+                local_max_height = max((s['checkpoint_height'] for s in local_snapshots), default=0)
                 if highest_peer_snapshot['checkpoint_height'] > local_max_height:
                     typer.echo("💡 A higher snapshot is available from peers for faster sync!")
                     typer.echo("   The node will automatically use it during sync if ANIMICA_SNAPSHOT_SYNC_ENABLED=true")
@@ -639,9 +651,7 @@ def discover(
             raise typer.Exit(code=1)
         
         # Flatten all snapshots
-        all_snapshots = []
-        for peer_rpc, snapshots in snapshots_by_peer.items():
-            all_snapshots.extend(snapshots)
+        all_snapshots = _flatten_snapshots_by_peer(snapshots_by_peer)
         
         if not all_snapshots:
             typer.echo("\n❌ No snapshots found.")
