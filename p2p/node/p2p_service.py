@@ -7554,15 +7554,16 @@ class P2PService:
                 if self._sync_requested:
                     self._sync_requested = False
                 self._log_sync_cycle()
-                if self._sync_block_stalled_reason is None:
+                # Schedule block requests regardless of stall status
+                # This allows automatic recovery from transient network issues
+                await self._schedule_block_requests()
+                # Continue requesting blocks if we're behind, regardless of inflight status
+                # This ensures sync continues even if some blocks are already being downloaded
+                if (
+                    network_best_height is not None
+                    and best_block_height < int(network_best_height)
+                ):
                     await self._schedule_block_requests()
-                    # Continue requesting blocks if we're behind, regardless of inflight status
-                    # This ensures sync continues even if some blocks are already being downloaded
-                    if (
-                        network_best_height is not None
-                        and best_block_height < int(network_best_height)
-                    ):
-                        await self._schedule_block_requests()
         except asyncio.CancelledError:
             return
 
