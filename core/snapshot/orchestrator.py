@@ -238,7 +238,7 @@ class SnapshotOrchestrator:
         """
         try:
             _log.info(f"Creating snapshot at height {height}")
-            start_time = time.time()
+            start_time = time.perf_counter()
             
             # Import snapshot creation function
             from core.db.snapshot import export_snapshot
@@ -262,7 +262,7 @@ class SnapshotOrchestrator:
                 compress=True,
             )
             
-            elapsed = time.time() - start_time
+            elapsed = time.perf_counter() - start_time
             
             if result.get("success"):
                 _log.info(f"Snapshot created successfully at height {height} (elapsed: {elapsed:.1f}s)")
