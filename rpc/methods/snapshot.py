@@ -526,6 +526,132 @@ def snapshot_status() -> dict:
         return {"success": False, "error": str(e)}
 
 
+@method(
+    "snapshot.discoverFromPeers",
+    desc="Discover snapshots from connected P2P peers",
+)
+def snapshot_discover_from_peers(chain_id: int | None = None) -> dict:
+    """
+    Discover snapshots available from connected P2P peers.
+    
+    This queries all connected P2P peers via the P2P protocol (GET_SNAPSHOTS message)
+    and returns a list of available snapshots with their sources.
+    
+    Args:
+        chain_id: Optional chain ID filter
+        
+    Returns:
+        Dictionary with success status, peer snapshots, and any errors
+    """
+    import asyncio
+    
+    try:
+        ctx = deps.get_ctx()
+        
+        # Get chain ID
+        target_chain_id = int(chain_id) if chain_id is not None else int(deps.get_chain_id())
+        
+        # Check if P2P service is available
+        if not hasattr(ctx, 'p2p_service') or ctx.p2p_service is None:
+            return {
+                "success": False,
+                "error": "P2P service not available",
+                "message": "The node's P2P service is not running. Start the node with P2P enabled.",
+            }
+        
+        p2p_service = ctx.p2p_service
+        
+        # Check if P2P service has snapshot query capability
+        if not hasattr(p2p_service, 'query_peer_snapshots'):
+            return {
+                "success": False,
+                "error": "P2P service does not support snapshot queries",
+                "message": "The P2P service version does not support snapshot discovery.",
+            }
+        
+        # Import the async helper
+        from p2p.sync.snapshot_sync import _query_peers_for_snapshots
+        
+        # Run the async query in the current event loop or create one
+        try:
+            loop = asyncio.get_running_loop()
+            # We're in an async context, but RPC methods are sync
+            # Use run_in_executor to bridge sync/async
+            import concurrent.futures
+            
+            async def _query():
+                return await _query_peers_for_snapshots(p2p_service, target_chain_id)
+            
+            # Create a new thread to run the async query
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future = executor.submit(asyncio.run, _query())
+                snapshots_by_peer = future.result(timeout=30.0)
+        except RuntimeError:
+            # No event loop running, we can use asyncio.run directly
+            async def _query():
+                return await _query_peers_for_snapshots(p2p_service, target_chain_id)
+            
+            snapshots_by_peer = asyncio.run(_query())
+        
+        if not snapshots_by_peer:
+            # Check if we have peers at all
+            peer_count = 0
+            if hasattr(p2p_service, '_peers'):
+                try:
+                    peer_count = len(getattr(p2p_service, '_peers', {}))
+                except Exception:
+                    pass
+            
+            if peer_count == 0:
+                return {
+                    "success": True,
+                    "snapshots": [],
+                    "peer_count": 0,
+                    "message": "No peers connected. Connect to peers first using 'animica peer add <address>'.",
+                }
+            else:
+                return {
+                    "success": True,
+                    "snapshots": [],
+                    "peer_count": peer_count,
+                    "message": f"Connected to {peer_count} peer(s), but none have snapshots available.",
+                }
+        
+        # Flatten snapshots and enrich with source information
+        all_snapshots = []
+        for peer_id, peer_snaps in snapshots_by_peer.items():
+            for snap in peer_snaps:
+                snap_copy = snap.copy()
+                snap_copy["_source"] = peer_id
+                snap_copy["_source_type"] = "p2p"
+                all_snapshots.append(snap_copy)
+        
+        # Sort by height (descending)
+        all_snapshots.sort(key=lambda s: s["checkpoint_height"], reverse=True)
+        
+        return {
+            "success": True,
+            "snapshots": all_snapshots,
+            "peer_count": len(snapshots_by_peer),
+            "snapshot_count": len(all_snapshots),
+            "message": f"Found {len(all_snapshots)} snapshot(s) from {len(snapshots_by_peer)} peer(s)",
+        }
+        
+    except concurrent.futures.TimeoutError:
+        return {
+            "success": False,
+            "error": "Timeout querying peers for snapshots",
+            "message": "The query took too long. This may indicate network issues or slow peers.",
+        }
+    except Exception as e:
+        _log.exception("Error discovering snapshots from peers")
+        return {
+            "success": False,
+            "error": str(e),
+            "message": "An error occurred while querying peers for snapshots.",
+        }
+
+
 __all__ = [
     "snapshot_create",
     "snapshot_list",
@@ -535,4 +661,5 @@ __all__ = [
     "snapshot_delete",
     "snapshot_download_chunk",
     "snapshot_status",
+    "snapshot_discover_from_peers",
 ]
