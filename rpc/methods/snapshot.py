@@ -25,11 +25,21 @@ _log = logging.getLogger("animica.rpc.snapshot")
 def _get_snapshots_dir() -> Path:
     """Get the snapshots directory path."""
     ctx = deps.get_ctx()
-    data_dir = getattr(ctx.cfg, "data_dir", None)
-    if data_dir:
-        base = Path(data_dir)
-    else:
-        base = Path(os.environ.get("ANIMICA_DATA_DIR", "~/.animica")).expanduser()
+    # Use data_root from context which is derived from:
+    # 1. ANIMICA_DATA_DIR if set (used directly)
+    # 2. SQLite DB parent directory
+    # 3. ~/.animica/chain-<id> as fallback
+    #
+    # Since snapshots are named with chain ID (chain-{id}-height-{height}),
+    # they can be stored globally. If data_root is chain-specific
+    # (~/.animica/chain-<id>), use parent directory (~/.animica).
+    # Otherwise use data_root directly.
+    base = ctx.data_root
+    
+    # Check if data_root is chain-specific directory
+    if base.name.startswith("chain-"):
+        # Use parent directory for global snapshots
+        base = base.parent
     
     snapshots_dir = base / "snapshots"
     snapshots_dir.mkdir(parents=True, exist_ok=True)
