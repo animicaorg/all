@@ -1,0 +1,402 @@
+"""Tests for snapshot peer discovery functionality."""
+
+from __future__ import annotations
+
+import asyncio
+import json
+from typing import Any
+from unittest.mock import AsyncMock, patch
+
+import pytest
+from typer.testing import CliRunner
+
+from animica.cli.main import app
+from animica.cli import snapshot as snapshot_cli
+
+runner = CliRunner()
+
+
+class MockRPCResponse:
+    """Mock HTTP response for RPC calls."""
+    
+    def __init__(self, result: Any = None, error: dict[str, Any] | None = None):
+        self.result = result
+        self.error = error
+    
+    def json(self):
+        response = {"jsonrpc": "2.0", "id": 1}
+        if self.error:
+            response["error"] = self.error
+        else:
+            response["result"] = self.result
+        return response
+
+
+class MockAsyncClient:
+    """Mock async HTTP client for testing."""
+    
+    def __init__(self, responses: dict[str, Any]):
+        self.responses = responses
+        self.call_count = 0
+    
+    async def __aenter__(self):
+        return self
+    
+    async def __aexit__(self, *args):
+        pass
+    
+    async def post(self, url: str, json: dict[str, Any], **_kwargs: Any):
+        self.call_count += 1
+        method = json.get("method", "")
+        
+        # Check if we have URL-specific responses
+        url_key = f"{url}:{method}"
+        if url_key in self.responses:
+            return MockRPCResponse(result=self.responses[url_key])
+        
+        # Return configured response for this method
+        if method in self.responses:
+            return MockRPCResponse(result=self.responses[method])
+        
+        # Default error for unknown methods
+        return MockRPCResponse(error={"message": f"Method {method} not found"})
+
+
+@pytest.fixture
+def mock_rpc_with_peers():
+    """Mock RPC responses with connected peers."""
+    return {
+        "net.peers": [
+            {"id": "peer1", "addr": "192.168.1.10:30303"},
+            {"id": "peer2", "addr": "192.168.1.11:30303"},
+        ],
+    }
+
+
+@pytest.fixture
+def mock_peer_snapshots():
+    """Mock snapshot responses from different peers."""
+    return {
+        "http://192.168.1.10:8545/rpc:snapshot.list": {
+            "success": True,
+            "snapshots": [
+                {
+                    "chain_id": 1,
+                    "checkpoint_height": 1000,
+                    "checkpoint_hash": "0xaaa",
+                    "blocks_count": 1001,
+                    "accounts_count": 50,
+                    "size_mb": 10.5,
+                },
+                {
+                    "chain_id": 1,
+                    "checkpoint_height": 2000,
+                    "checkpoint_hash": "0xbbb",
+                    "blocks_count": 2001,
+                    "accounts_count": 100,
+                    "size_mb": 20.3,
+                },
+            ],
+        },
+        "http://192.168.1.11:8545/rpc:snapshot.list": {
+            "success": True,
+            "snapshots": [
+                {
+                    "chain_id": 1,
+                    "checkpoint_height": 1500,
+                    "checkpoint_hash": "0xccc",
+                    "blocks_count": 1501,
+                    "accounts_count": 75,
+                    "size_mb": 15.8,
+                },
+            ],
+        },
+    }
+
+
+def test_get_peers_success(mock_rpc_with_peers):
+    """Test getting list of connected peers."""
+    with patch("httpx.AsyncClient") as mock_client:
+        mock_client.return_value = MockAsyncClient(mock_rpc_with_peers)
+        
+        peers = asyncio.run(
+            snapshot_cli._get_peers("http://127.0.0.1:8545/rpc")
+        )
+        
+        assert len(peers) == 2
+        assert peers[0]["id"] == "peer1"
+        assert peers[1]["addr"] == "192.168.1.11:30303"
+
+
+def test_query_peer_snapshots_success():
+    """Test querying a single peer for snapshots."""
+    responses = {
+        "http://192.168.1.10:8545/rpc:snapshot.list": {
+            "success": True,
+            "snapshots": [
+                {
+                    "chain_id": 1,
+                    "checkpoint_height": 1000,
+                    "checkpoint_hash": "0xaaa",
+                    "blocks_count": 1001,
+                    "accounts_count": 50,
+                    "size_mb": 10.5,
+                },
+            ],
+        },
+    }
+    
+    with patch("httpx.AsyncClient") as mock_client:
+        mock_client.return_value = MockAsyncClient(responses)
+        
+        rpc_url, snapshots = asyncio.run(
+            snapshot_cli._query_peer_snapshots("192.168.1.10:30303", chain_id=1)
+        )
+        
+        assert rpc_url == "http://192.168.1.10:8545/rpc"
+        assert len(snapshots) == 1
+        assert snapshots[0]["checkpoint_height"] == 1000
+        assert snapshots[0]["_source"] == "192.168.1.10:30303"
+        assert snapshots[0]["_source_rpc"] == "http://192.168.1.10:8545/rpc"
+
+
+def test_query_peer_snapshots_no_snapshots():
+    """Test querying a peer with no snapshots."""
+    responses = {
+        "http://192.168.1.10:8545/rpc:snapshot.list": {
+            "success": True,
+            "snapshots": [],
+        },
+    }
+    
+    with patch("httpx.AsyncClient") as mock_client:
+        mock_client.return_value = MockAsyncClient(responses)
+        
+        rpc_url, snapshots = asyncio.run(
+            snapshot_cli._query_peer_snapshots("192.168.1.10:30303")
+        )
+        
+        assert snapshots == []
+
+
+def test_query_peer_snapshots_error():
+    """Test querying a peer that returns an error."""
+    responses = {}  # No responses, will cause error
+    
+    with patch("httpx.AsyncClient") as mock_client:
+        mock_client.return_value = MockAsyncClient(responses)
+        
+        rpc_url, snapshots = asyncio.run(
+            snapshot_cli._query_peer_snapshots("192.168.1.10:30303")
+        )
+        
+        # Should return empty list on error
+        assert snapshots == []
+
+
+def test_query_all_peers_for_snapshots(mock_rpc_with_peers, mock_peer_snapshots):
+    """Test querying all connected peers for snapshots."""
+    responses = {**mock_rpc_with_peers, **mock_peer_snapshots}
+    
+    with patch("httpx.AsyncClient") as mock_client:
+        mock_client.return_value = MockAsyncClient(responses)
+        
+        snapshots_by_peer = asyncio.run(
+            snapshot_cli._query_all_peers_for_snapshots(
+                "http://127.0.0.1:8545/rpc", chain_id=1
+            )
+        )
+        
+        assert len(snapshots_by_peer) == 2
+        assert "http://192.168.1.10:8545/rpc" in snapshots_by_peer
+        assert "http://192.168.1.11:8545/rpc" in snapshots_by_peer
+        
+        # Check peer 1 has 2 snapshots
+        peer1_snapshots = snapshots_by_peer["http://192.168.1.10:8545/rpc"]
+        assert len(peer1_snapshots) == 2
+        assert peer1_snapshots[0]["checkpoint_height"] == 1000
+        assert peer1_snapshots[1]["checkpoint_height"] == 2000
+        
+        # Check peer 2 has 1 snapshot
+        peer2_snapshots = snapshots_by_peer["http://192.168.1.11:8545/rpc"]
+        assert len(peer2_snapshots) == 1
+        assert peer2_snapshots[0]["checkpoint_height"] == 1500
+
+
+def test_query_all_peers_no_peers():
+    """Test querying for snapshots when no peers are connected."""
+    responses = {
+        "net.peers": [],
+    }
+    
+    with patch("httpx.AsyncClient") as mock_client:
+        mock_client.return_value = MockAsyncClient(responses)
+        
+        snapshots_by_peer = asyncio.run(
+            snapshot_cli._query_all_peers_for_snapshots("http://127.0.0.1:8545/rpc")
+        )
+        
+        assert snapshots_by_peer == {}
+
+
+def test_snapshot_list_from_peers(mock_rpc_with_peers, mock_peer_snapshots):
+    """Test snapshot list command with --from-peers flag."""
+    responses = {**mock_rpc_with_peers, **mock_peer_snapshots}
+    
+    with patch("httpx.AsyncClient") as mock_client:
+        mock_client.return_value = MockAsyncClient(responses)
+        
+        result = runner.invoke(app, ["snapshot", "list", "--from-peers"])
+        
+        assert result.exit_code == 0
+        assert "Querying connected peers for snapshots" in result.stdout
+        assert "Found 3 snapshot(s) from 2 peer(s)" in result.stdout
+        assert "Height 1000" in result.stdout
+        assert "Height 1500" in result.stdout
+        assert "Height 2000" in result.stdout
+        assert "192.168.1.10:30303" in result.stdout
+
+
+def test_snapshot_list_from_peers_json(mock_rpc_with_peers, mock_peer_snapshots):
+    """Test snapshot list command with --from-peers and --json."""
+    responses = {**mock_rpc_with_peers, **mock_peer_snapshots}
+    
+    with patch("httpx.AsyncClient") as mock_client:
+        mock_client.return_value = MockAsyncClient(responses)
+        
+        result = runner.invoke(app, ["snapshot", "list", "--from-peers", "--json"])
+        
+        assert result.exit_code == 0
+        
+        # Parse JSON output
+        snapshots = json.loads(result.stdout)
+        assert len(snapshots) == 3
+        assert snapshots[0]["checkpoint_height"] == 2000  # Sorted descending
+        assert snapshots[1]["checkpoint_height"] == 1500
+        assert snapshots[2]["checkpoint_height"] == 1000
+
+
+def test_snapshot_list_from_peers_no_snapshots(mock_rpc_with_peers):
+    """Test snapshot list when peers have no snapshots."""
+    responses = {
+        **mock_rpc_with_peers,
+        "http://192.168.1.10:8545/rpc:snapshot.list": {
+            "success": True,
+            "snapshots": [],
+        },
+        "http://192.168.1.11:8545/rpc:snapshot.list": {
+            "success": True,
+            "snapshots": [],
+        },
+    }
+    
+    with patch("httpx.AsyncClient") as mock_client:
+        mock_client.return_value = MockAsyncClient(responses)
+        
+        result = runner.invoke(app, ["snapshot", "list", "--from-peers"])
+        
+        assert result.exit_code == 0
+        assert "No snapshots found on connected peers" in result.stdout
+        assert "💡 Tips:" in result.stdout
+
+
+def test_snapshot_discover_success(mock_rpc_with_peers, mock_peer_snapshots):
+    """Test snapshot discover command."""
+    responses = {**mock_rpc_with_peers, **mock_peer_snapshots}
+    
+    with patch("httpx.AsyncClient") as mock_client:
+        mock_client.return_value = MockAsyncClient(responses)
+        
+        result = runner.invoke(app, ["snapshot", "discover"])
+        
+        assert result.exit_code == 0
+        assert "Discovering snapshots from connected peers" in result.stdout
+        assert "Found 3 total snapshot(s) from 2 peer(s)" in result.stdout
+        assert "🏆 Best snapshot (highest height):" in result.stdout
+        assert "Height:           2000" in result.stdout
+        assert "Hash:             0xbbb" in result.stdout
+        assert "Source Peer:      192.168.1.10:30303" in result.stdout
+
+
+def test_snapshot_discover_json(mock_rpc_with_peers, mock_peer_snapshots):
+    """Test snapshot discover command with JSON output."""
+    responses = {**mock_rpc_with_peers, **mock_peer_snapshots}
+    
+    with patch("httpx.AsyncClient") as mock_client:
+        mock_client.return_value = MockAsyncClient(responses)
+        
+        result = runner.invoke(app, ["snapshot", "discover", "--json"])
+        
+        assert result.exit_code == 0
+        
+        # Parse JSON output
+        best_snapshot = json.loads(result.stdout)
+        assert best_snapshot["checkpoint_height"] == 2000
+        assert best_snapshot["checkpoint_hash"] == "0xbbb"
+        assert best_snapshot["_source"] == "192.168.1.10:30303"
+
+
+def test_snapshot_discover_no_snapshots():
+    """Test snapshot discover when no snapshots are available."""
+    responses = {
+        "net.peers": [
+            {"id": "peer1", "addr": "192.168.1.10:30303"},
+        ],
+        "http://192.168.1.10:8545/rpc:snapshot.list": {
+            "success": True,
+            "snapshots": [],
+        },
+    }
+    
+    with patch("httpx.AsyncClient") as mock_client:
+        mock_client.return_value = MockAsyncClient(responses)
+        
+        result = runner.invoke(app, ["snapshot", "discover"])
+        
+        assert result.exit_code == 1
+        assert "No snapshots found on connected peers" in result.stdout
+        assert "💡 Troubleshooting:" in result.stdout
+
+
+def test_snapshot_list_local_no_snapshots():
+    """Test snapshot list when local node has no snapshots."""
+    responses = {
+        "snapshot.list": {
+            "success": True,
+            "snapshots": [],
+        },
+    }
+    
+    with patch("httpx.AsyncClient") as mock_client:
+        mock_client.return_value = MockAsyncClient(responses)
+        
+        result = runner.invoke(app, ["snapshot", "list"])
+        
+        assert result.exit_code == 0
+        assert "No snapshots found on local node" in result.stdout
+        assert "💡 Tips:" in result.stdout
+        assert "animica snapshot create" in result.stdout
+        assert "animica snapshot list --from-peers" in result.stdout
+
+
+def test_snapshot_list_help():
+    """Test snapshot list command help."""
+    result = runner.invoke(app, ["snapshot", "list", "--help"])
+    
+    assert result.exit_code == 0
+    assert "List all available snapshots" in result.stdout
+    assert "--from-peers" in result.stdout
+    assert "discover snapshots from all connected peers" in result.stdout
+
+
+def test_snapshot_discover_help():
+    """Test snapshot discover command help."""
+    result = runner.invoke(app, ["snapshot", "discover", "--help"])
+    
+    assert result.exit_code == 0
+    assert "Discover the best available snapshot" in result.stdout
+    assert "highest available snapshot" in result.stdout
+
+
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

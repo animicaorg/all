@@ -1315,6 +1315,38 @@ def sync_status(
     
     # Recommendations
     typer.echo()
+    
+    # Check for available snapshots if node is behind
+    if height is not None and network_height is not None and network_height > height + 100:
+        try:
+            # Query peers for snapshots if significantly behind
+            from animica.cli.snapshot import _query_all_peers_for_snapshots
+            
+            typer.echo("🔍 Checking for available snapshots from peers...")
+            snapshots_by_peer = asyncio.run(_query_all_peers_for_snapshots(url, chain_id))
+            
+            if snapshots_by_peer:
+                all_snapshots = []
+                for peer_snapshots in snapshots_by_peer.values():
+                    all_snapshots.extend(peer_snapshots)
+                
+                if all_snapshots:
+                    best_snapshot = max(all_snapshots, key=lambda s: s["checkpoint_height"])
+                    typer.secho(
+                        f"\n✨ Snapshot available at height {best_snapshot['checkpoint_height']} "
+                        f"from peer {best_snapshot.get('_source', 'unknown')}",
+                        fg=typer.colors.GREEN,
+                        bold=True
+                    )
+                    typer.echo("   Use snapshots for faster sync:")
+                    typer.echo("   - Restart node with ANIMICA_SNAPSHOT_SYNC_ENABLED=true (default)")
+                    typer.echo("   - Or view snapshots: animica snapshot list --from-peers")
+                    typer.echo("   - Or discover best: animica snapshot discover")
+                    typer.echo()
+        except Exception as e:
+            # Don't fail the status command if snapshot discovery fails
+            pass
+    
     if peer_count == 0:
         typer.secho("💡 Tip: Connect to seed nodes to start syncing:", fg=typer.colors.CYAN)
         typer.echo("   animica peer bootstrap")
@@ -1323,11 +1355,15 @@ def sync_status(
     elif sync_state in {"SYNCING_HEADERS", "SYNCING_BLOCKS", "SYNCING", "NEAR_TIP"}:
         typer.secho("💡 Syncing in progress... Check back later or run:", fg=typer.colors.CYAN)
         typer.echo("   animica sync status")
+        if height is not None and height < 1000:
+            typer.echo("   Or check for snapshots: animica snapshot discover")
     elif height == 0 and network_height and network_height > 0:
         typer.secho("⚠ Node is not synced yet. Wait for peers or run sync force.", fg=typer.colors.YELLOW)
+        typer.echo("   Or check for snapshots: animica snapshot discover")
     elif height == 0:
         typer.secho("⚠ Node is at genesis; waiting for sync data.", fg=typer.colors.YELLOW)
         typer.echo("   Try: animica sync force")
+        typer.echo("   Or: animica snapshot discover")
     elif sync_state == "SYNCHRONIZED":
         typer.secho("✓ Node is synchronized with the network", fg=typer.colors.GREEN)
     else:
