@@ -255,20 +255,14 @@ async def _query_peers_for_snapshots(
         # 1. A request/response helper in the P2P service, or
         # 2. Using the router with a temporary response collector
         #
-        # For now, we'll store peer information so snapshots can be downloaded via P2P
-        # when discovered through other means (e.g., manual configuration or future
-        # gossip-based discovery).
+        # For now, we document that the SnapshotHandler is active and ready to serve
+        # snapshot requests from connected peers.
         
-        # Store peers as potential snapshot sources with "peer:" prefix
         for peer in peers:
             if not peer.hello_done.is_set():
                 continue
             
-            # Use "peer:{address}" format to distinguish from RPC URLs
-            peer_key = f"peer:{peer.remote}"
-            
-            # Mark peer as available for P2P snapshot downloads
-            # Actual snapshot discovery will happen when we implement async message handling
+            # Log available peers for future P2P snapshot requests
             _log.debug(f"Peer {peer.remote} is available for P2P snapshot requests")
         
         _log.info(
