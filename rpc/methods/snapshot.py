@@ -458,6 +458,74 @@ def snapshot_download_chunk(
         return {"success": False, "error": str(e)}
 
 
+@method(
+    "snapshot.status",
+    desc="Get snapshot orchestrator status and health information",
+)
+def snapshot_status() -> dict:
+    """
+    Get the current status of the snapshot orchestration system.
+    
+    Returns information about:
+    - Current configuration
+    - Snapshot creation statistics
+    - Health status
+    - Available snapshots
+    - Any errors or warnings
+    """
+    try:
+        ctx = deps.get_ctx()
+        
+        # Try to get orchestrator from context
+        orchestrator = getattr(ctx, 'snapshot_orchestrator', None)
+        
+        if orchestrator is None:
+            # Orchestrator not available, return basic info
+            chain_id = int(deps.get_chain_id())
+            snapshots_dir = _get_snapshots_dir()
+            
+            snapshots = []
+            if snapshots_dir.exists():
+                for item in snapshots_dir.iterdir():
+                    if not item.is_dir():
+                        continue
+                    if not item.name.startswith(f"chain-{chain_id}-height-"):
+                        continue
+                    parts = item.name.split("-")
+                    if len(parts) == 4:
+                        try:
+                            height = int(parts[3])
+                            snapshots.append({"height": height, "path": str(item)})
+                        except ValueError:
+                            pass
+            
+            return {
+                "success": True,
+                "orchestrator_running": False,
+                "config": {
+                    "interval": int(os.getenv("ANIMICA_SNAPSHOT_INTERVAL", "2000")),
+                    "auto_create": os.getenv("ANIMICA_SNAPSHOT_AUTO_CREATE", "true").lower() in ("true", "1", "yes"),
+                },
+                "status": {
+                    "healthy": True,
+                    "total_snapshots": len(snapshots),
+                },
+                "snapshots": sorted(snapshots, key=lambda s: s["height"], reverse=True),
+                "message": "Orchestrator not running (manual mode)",
+            }
+        
+        # Get status from orchestrator
+        status = orchestrator.get_status()
+        status["success"] = True
+        status["orchestrator_running"] = True
+        
+        return status
+        
+    except Exception as e:
+        _log.exception("Error getting snapshot status")
+        return {"success": False, "error": str(e)}
+
+
 __all__ = [
     "snapshot_create",
     "snapshot_list",
@@ -466,4 +534,5 @@ __all__ = [
     "snapshot_import",
     "snapshot_delete",
     "snapshot_download_chunk",
+    "snapshot_status",
 ]

@@ -669,6 +669,7 @@ class RpcContext:
     p2p_enabled: bool = False
     p2p_required: bool = False
     p2p_start_error: str | None = None
+    snapshot_orchestrator: t.Any = None  # Optional snapshot orchestrator for automated management
 
     def get_head(self) -> dict[str, t.Any]:
         return self.head.get()
@@ -1042,6 +1043,33 @@ def build_context(cfg: t.Any | None = None) -> RpcContext:
             )
             core_p2p_service = None
 
+    # Initialize snapshot orchestrator for automated management
+    snapshot_orchestrator = None
+    try:
+        from core.snapshot.orchestrator import SnapshotOrchestrator, SnapshotConfig
+        
+        # Load configuration from environment
+        snapshot_config = SnapshotConfig.from_env()
+        
+        # Only create orchestrator if auto-create is enabled
+        if snapshot_config.auto_create:
+            snapshot_orchestrator = SnapshotOrchestrator(
+                block_db=bundle.block_db,
+                state_db=bundle.state_db,
+                chain_id=cfg_view.chain_id,
+                config=snapshot_config,
+            )
+            log.info(
+                "Snapshot orchestrator initialized",
+                extra={
+                    "interval": snapshot_config.interval,
+                    "auto_create": snapshot_config.auto_create,
+                    "max_keep": snapshot_config.max_snapshots,
+                },
+            )
+    except Exception as e:
+        log.warning(f"Failed to initialize snapshot orchestrator: {e}", exc_info=True)
+
     return RpcContext(
         cfg=cfg_view,
         params=params,
@@ -1060,6 +1088,7 @@ def build_context(cfg: t.Any | None = None) -> RpcContext:
         p2p_enabled=enable_p2p,
         p2p_required=p2p_required,
         p2p_start_error=p2p_start_error,
+        snapshot_orchestrator=snapshot_orchestrator,
     )
 
 
@@ -1247,6 +1276,18 @@ async def startup(cfg: t.Any | None = None) -> RpcContext:
             )
             _CTX.p2p_enabled = False
 
+        # Start snapshot orchestrator if it was initialized
+        if _CTX.snapshot_orchestrator is not None:
+            try:
+                await _CTX.snapshot_orchestrator.start()
+                logging.getLogger("animica.rpc.deps").info(
+                    "Snapshot orchestrator started successfully"
+                )
+            except Exception as e:
+                logging.getLogger("animica.rpc.deps").warning(
+                    f"Failed to start snapshot orchestrator: {e}", exc_info=True
+                )
+
         if _CTX.core_p2p_service is not None:
             try:
                 await _CTX.core_p2p_service.start()
@@ -1326,6 +1367,18 @@ async def shutdown() -> None:
                 except Exception as e:
                     logging.getLogger("animica.rpc.deps").warning(
                         f"Failed to stop PTL service: {e}", exc_info=True
+                    )
+            
+            # Stop snapshot orchestrator if initialized
+            if _CTX.snapshot_orchestrator is not None:
+                try:
+                    await _CTX.snapshot_orchestrator.stop()
+                    logging.getLogger("animica.rpc.deps").info(
+                        "Snapshot orchestrator stopped"
+                    )
+                except Exception as e:
+                    logging.getLogger("animica.rpc.deps").warning(
+                        f"Failed to stop snapshot orchestrator: {e}", exc_info=True
                     )
             
             # Stop P2P service before closing other resources
