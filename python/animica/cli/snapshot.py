@@ -737,20 +737,26 @@ def discover(
         
         if not snapshots:
             message = result.get("message", "No snapshots found")
-            typer.echo(f"\n❌ {message}")
             
-            typer.echo("\n💡 Troubleshooting:")
             if peer_count == 0:
+                # No peers connected - this is an error condition
+                typer.echo(f"\n❌ {message}")
+                typer.echo("\n💡 Troubleshooting:")
                 typer.echo("  1. Check peer connections: animica peer list")
                 typer.echo("  2. Connect to peers: animica peer add <address>")
                 typer.echo("  3. Ensure your node's P2P service is running")
                 typer.echo("  4. Check firewall settings if running your own node")
+                raise typer.Exit(code=1)
             else:
-                typer.echo(f"  1. You're connected to {peer_count} peer(s), but they don't have snapshots")
-                typer.echo("  2. Peers need to create snapshots first (animica snapshot create)")
-                typer.echo("  3. Try connecting to more peers: animica peer add <address>")
-                typer.echo("  4. Wait for peers to sync and create snapshots")
-            raise typer.Exit(code=1)
+                # Peers connected but no snapshots - informational, not an error
+                typer.echo(f"\nℹ️  {message}")
+                typer.echo("\n💡 Tips:")
+                typer.echo(f"  - You're connected to {peer_count} peer(s), but they don't have snapshots yet")
+                typer.echo("  - Peers need to create snapshots first (animica snapshot create)")
+                typer.echo("  - Try connecting to more peers: animica peer add <address>")
+                typer.echo("  - Wait for peers to sync and create snapshots")
+                typer.echo("")
+                return  # Exit with code 0 (success)
         
         # Find the best snapshot (highest height)
         best_snapshot = max(snapshots, key=lambda s: s["checkpoint_height"])
