@@ -63,6 +63,7 @@ async def test_snapshot_bootstrap_called_with_correct_params():
     mock_block_db.get_head.return_value = (100, b"\xaa" * 32)
     
     mock_state_db = MagicMock()
+    mock_p2p_service = MagicMock()
     
     with patch("p2p.sync.snapshot_sync.try_snapshot_bootstrap") as mock_bootstrap:
         mock_bootstrap.return_value = (True, None)
@@ -75,14 +76,16 @@ async def test_snapshot_bootstrap_called_with_correct_params():
             state_db=mock_state_db,
             chain_id=1,
             current_height=100,
+            p2p_service=mock_p2p_service,
         )
         
-        # Verify bootstrap was attempted
+        # Verify bootstrap was attempted with all parameters
         mock_bootstrap.assert_called_once_with(
             block_db=mock_block_db,
             state_db=mock_state_db,
             chain_id=1,
             current_height=100,
+            p2p_service=mock_p2p_service,
         )
 
 
@@ -187,6 +190,102 @@ def test_should_try_snapshot_bootstrap():
     finally:
         os.environ.pop("ANIMICA_SNAPSHOT_SYNC_ENABLED", None)
         os.environ.pop("ANIMICA_SNAPSHOT_MIN_HEIGHT", None)
+
+
+@pytest.mark.asyncio
+async def test_peer_snapshot_discovery():
+    """Test that snapshot bootstrap queries connected peers for snapshots."""
+    
+    from p2p.sync.snapshot_sync import try_snapshot_bootstrap
+    
+    mock_block_db = MagicMock()
+    mock_block_db.get_head.return_value = (0, b"\x00" * 32)
+    
+    mock_state_db = MagicMock()
+    
+    # Mock P2P service with peers
+    mock_p2p_service = MagicMock()
+    mock_peer_registry = MagicMock()
+    
+    # Simulate two connected peers
+    mock_peer_registry.snapshot.return_value = [
+        {"remote": "10.0.0.1:30303", "peer_id": "peer1"},
+        {"remote": "10.0.0.2:30303", "peer_id": "peer2"},
+    ]
+    mock_p2p_service.peer_registry = mock_peer_registry
+    
+    # Mock snapshot queries to peers
+    with patch("httpx.AsyncClient") as mock_client_class:
+        mock_client = mock_client_class.return_value.__aenter__.return_value
+        
+        # Peer 1 has snapshot at height 2000
+        # Peer 2 has snapshot at height 4000 (should be chosen)
+        responses = [
+            # First call: peer1 snapshot.list
+            MagicMock(json=lambda: {
+                "result": {
+                    "success": True,
+                    "snapshots": [
+                        {
+                            "checkpoint_height": 2000,
+                            "checkpoint_hash": "0xabc",
+                            "chain_id": 1,
+                        }
+                    ],
+                }
+            }),
+            # Second call: peer2 snapshot.list
+            MagicMock(json=lambda: {
+                "result": {
+                    "success": True,
+                    "snapshots": [
+                        {
+                            "checkpoint_height": 4000,
+                            "checkpoint_hash": "0xdef",
+                            "chain_id": 1,
+                        }
+                    ],
+                }
+            }),
+            # Third call: snapshot.get for height 4000
+            MagicMock(json=lambda: {
+                "result": {
+                    "success": True,
+                    "manifest": {
+                        "version": 1,
+                        "chain_id": 1,
+                        "checkpoint_height": 4000,
+                        "checkpoint_hash": "0xdef",
+                        "chunks": [],
+                    },
+                    "path": "/nonexistent/path",
+                }
+            }),
+        ]
+        
+        mock_client.post.side_effect = responses
+        
+        # Set environment for snapshot sync
+        os.environ["ANIMICA_SNAPSHOT_SYNC_ENABLED"] = "true"
+        os.environ["ANIMICA_SNAPSHOT_MIN_HEIGHT"] = "1000"
+        
+        try:
+            # Mock import_snapshot to avoid actual import
+            with patch("core.db.snapshot.import_snapshot"):
+                success, error = await try_snapshot_bootstrap(
+                    block_db=mock_block_db,
+                    state_db=mock_state_db,
+                    chain_id=1,
+                    current_height=0,
+                    p2p_service=mock_p2p_service,
+                )
+                
+                # Should query peers and find the highest snapshot
+                assert mock_client.post.call_count >= 2
+                
+        finally:
+            os.environ.pop("ANIMICA_SNAPSHOT_SYNC_ENABLED", None)
+            os.environ.pop("ANIMICA_SNAPSHOT_MIN_HEIGHT", None)
 
 
 if __name__ == "__main__":
