@@ -449,7 +449,6 @@ def test_snapshot_list_local_only_flag():
 
 def test_snapshot_list_mutually_exclusive_flags():
     """Test that --from-peers and --local-only are mutually exclusive."""
-    runner = CliRunner()
     result = runner.invoke(app, ["snapshot", "list", "--from-peers", "--local-only"])
     
     assert result.exit_code == 1
