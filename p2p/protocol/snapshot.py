@@ -24,7 +24,7 @@ class SnapshotHandler:
     Responds to GET_SNAPSHOTS messages by listing locally available snapshots.
     """
     
-    codec: Any  # p2p.wire.encoding.Codec
+    codec: Any = None  # Unused, kept for compatibility
     snapshots_dir: Optional[Path] = None
     
     def __post_init__(self):
@@ -73,9 +73,11 @@ class SnapshotHandler:
         try:
             from p2p.wire.messages import GetSnapshots, Snapshots
             from p2p.wire.message_ids import MsgID
+            from p2p.wire.encoding import decode_payload, encode_payload
             
             # Decode request
-            req = self.codec.decode(frame.payload, GetSnapshots)
+            payload_dict = decode_payload(frame.payload)
+            req = GetSnapshots(**{k: v for k, v in payload_dict.items() if k != 'msg_id'})
             log.debug(f"Received GET_SNAPSHOTS request from {conn.remote_addr}, chain_id={req.chain_id}")
             
             # List available snapshots
@@ -85,7 +87,7 @@ class SnapshotHandler:
             response = Snapshots(snapshots=snapshots)
             
             # Encode and send response
-            response_bytes = self.codec.encode(response)
+            response_bytes = encode_payload(response)
             await conn.send_frame(MsgID.SNAPSHOTS, response_bytes)
             
             log.debug(f"Sent {len(snapshots)} snapshot(s) to {conn.remote_addr}")
@@ -96,8 +98,9 @@ class SnapshotHandler:
             try:
                 from p2p.wire.messages import Snapshots
                 from p2p.wire.message_ids import MsgID
+                from p2p.wire.encoding import encode_payload
                 empty_response = Snapshots(snapshots=[])
-                response_bytes = self.codec.encode(empty_response)
+                response_bytes = encode_payload(empty_response)
                 await conn.send_frame(MsgID.SNAPSHOTS, response_bytes)
             except Exception:
                 pass  # Best effort
@@ -107,9 +110,11 @@ class SnapshotHandler:
         try:
             from p2p.wire.messages import GetSnapshotChunk, SnapshotChunk
             from p2p.wire.message_ids import MsgID
+            from p2p.wire.encoding import decode_payload, encode_payload
             
             # Decode request
-            req = self.codec.decode(frame.payload, GetSnapshotChunk)
+            payload_dict = decode_payload(frame.payload)
+            req = GetSnapshotChunk(**{k: v for k, v in payload_dict.items() if k != 'msg_id'})
             log.debug(
                 f"Received GET_SNAPSHOT_CHUNK request from {conn.remote_addr}: "
                 f"chain_id={req.chain_id}, height={req.checkpoint_height}, chunk={req.chunk_name}"
@@ -130,7 +135,7 @@ class SnapshotHandler:
             )
             
             # Encode and send response
-            response_bytes = self.codec.encode(response)
+            response_bytes = encode_payload(response)
             await conn.send_frame(MsgID.SNAPSHOT_CHUNK, response_bytes)
             
             if found:
@@ -147,6 +152,7 @@ class SnapshotHandler:
             try:
                 from p2p.wire.messages import SnapshotChunk
                 from p2p.wire.message_ids import MsgID
+                from p2p.wire.encoding import encode_payload
                 error_response = SnapshotChunk(
                     chain_id=req.chain_id if 'req' in locals() else 0,
                     checkpoint_height=req.checkpoint_height if 'req' in locals() else 0,
@@ -154,7 +160,7 @@ class SnapshotHandler:
                     data=b"",
                     found=False,
                 )
-                response_bytes = self.codec.encode(error_response)
+                response_bytes = encode_payload(error_response)
                 await conn.send_frame(MsgID.SNAPSHOT_CHUNK, response_bytes)
             except Exception:
                 pass  # Best effort
