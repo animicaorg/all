@@ -331,7 +331,7 @@ def list_snapshots(
             if not snapshots_by_peer:
                 # Distinguish between no peers and no snapshots
                 if peer_count == 0:
-                    typer.echo("No peers connected.")
+                    typer.echo("❌ No peers connected.")
                 else:
                     typer.echo("No snapshots found on connected peers.")
                 
