@@ -323,49 +323,58 @@ def list_snapshots(
     
     try:
         if from_peers:
-            # Query all connected peers for snapshots
-            typer.echo("Querying connected peers for snapshots...")
-            snapshots_by_peer, errors, peer_count = asyncio.run(
-                _query_all_peers_for_snapshots(url, chain_id, timeout)
+            # Query all connected peers for snapshots via P2P
+            typer.echo("Querying connected peers for snapshots via P2P protocol...")
+            
+            params = {}
+            if chain_id is not None:
+                params["chain_id"] = chain_id
+            
+            result = asyncio.run(
+                rpc_call("snapshot.discoverFromPeers", params, rpc_url=url, timeout=timeout)
             )
             
-            if not snapshots_by_peer:
-                # Distinguish between no peers and no snapshots
-                if peer_count == 0:
-                    typer.echo("❌ No peers connected.")
-                else:
-                    typer.echo("No snapshots found on connected peers.")
-                
-                # Show errors if any
-                if errors:
-                    typer.echo(f"\n⚠️  Failed to query {len(errors)} peer(s):")
-                    for err_info in errors[:5]:  # Show first 5 errors
-                        typer.echo(f"  - {err_info['peer']}: {err_info['error']}")
-                    if len(errors) > 5:
-                        typer.echo(f"  ... and {len(errors) - 5} more")
+            if not result.get("success"):
+                error_msg = result.get("error", "Unknown error")
+                message = result.get("message", "")
+                typer.echo(f"❌ Error: {error_msg}")
+                if message:
+                    typer.echo(f"   {message}")
                 
                 typer.echo("\n💡 Tips:")
                 typer.echo("  - Ensure you have peers connected (animica peer list)")
                 typer.echo("  - Peers must have snapshots available")
                 typer.echo("  - Try querying the local node without --from-peers")
-                if errors:
-                    typer.echo("  - Check peer RPC accessibility (peers may not expose RPC)")
-                    typer.echo("  - Enable debug logging: export ANIMICA_LOG_LEVEL=DEBUG")
                 return
             
-            # Flatten all snapshots
-            all_snapshots = _flatten_snapshots_by_peer(snapshots_by_peer)
+            snapshots = result.get("snapshots", [])
+            peer_count = result.get("peer_count", 0)
             
-            # Sort by chain_id and height (descending)
-            all_snapshots.sort(key=lambda s: (s["chain_id"], -s["checkpoint_height"]))
+            if not snapshots:
+                message = result.get("message", "No snapshots found")
+                typer.echo(f"{message}")
+                
+                typer.echo("\n💡 Tips:")
+                typer.echo("  - Ensure you have peers connected (animica peer list)")
+                typer.echo("  - Peers must have snapshots available")
+                typer.echo("  - Try querying the local node without --from-peers")
+                return
+            
+            # Group snapshots by source peer
+            snapshots_by_peer = {}
+            for snap in snapshots:
+                source = snap.get("_source", "unknown")
+                if source not in snapshots_by_peer:
+                    snapshots_by_peer[source] = []
+                snapshots_by_peer[source].append(snap)
             
             if json_output:
-                typer.echo(json.dumps(all_snapshots, indent=2))
+                typer.echo(json.dumps(snapshots, indent=2))
                 return
             
-            typer.echo(f"\nFound {len(all_snapshots)} snapshot(s) from {len(snapshots_by_peer)} peer(s):\n")
+            typer.echo(f"\nFound {len(snapshots)} snapshot(s) from {peer_count} peer(s) via P2P:\n")
             
-            for snap in all_snapshots:
+            for snap in snapshots:
                 typer.echo(f"Chain {snap['chain_id']} - Height {snap['checkpoint_height']}")
                 typer.echo(f"  Hash: {snap['checkpoint_hash']}")
                 typer.echo(f"  Blocks: {snap['blocks_count']}")
@@ -376,9 +385,9 @@ def list_snapshots(
             
             # Show summary by peer
             typer.echo("\nSnapshots by peer:")
-            for peer_rpc, snapshots in snapshots_by_peer.items():
-                heights = [s['checkpoint_height'] for s in snapshots]
-                typer.echo(f"  {peer_rpc}: {len(snapshots)} snapshot(s) at heights {heights}")
+            for peer_id, peer_snapshots in snapshots_by_peer.items():
+                heights = [s['checkpoint_height'] for s in peer_snapshots]
+                typer.echo(f"  {peer_id}: {len(peer_snapshots)} snapshot(s) at heights {heights}")
         else:
             # Query local node first
             params = {}
@@ -397,29 +406,32 @@ def list_snapshots(
             
             # Also query peers for the highest available snapshot (unless --local-only)
             highest_peer_snapshot = None
-            peer_query_errors = []
             peer_count = 0
             
             if not local_only:
                 try:
-                    snapshots_by_peer, peer_query_errors, peer_count = asyncio.run(
-                        _query_all_peers_for_snapshots(url, chain_id, timeout)
+                    # Use the new P2P-based discovery method
+                    params = {}
+                    if chain_id is not None:
+                        params["chain_id"] = chain_id
+                    
+                    peer_result = asyncio.run(
+                        rpc_call("snapshot.discoverFromPeers", params, rpc_url=url, timeout=timeout or 10.0)
                     )
                     
-                    if snapshots_by_peer:
-                        # Flatten all peer snapshots
-                        all_peer_snapshots = _flatten_snapshots_by_peer(snapshots_by_peer)
+                    if peer_result.get("success"):
+                        peer_snapshots = peer_result.get("snapshots", [])
+                        peer_count = peer_result.get("peer_count", 0)
                         
                         # Find the highest peer snapshot
-                        if all_peer_snapshots:
+                        if peer_snapshots:
                             highest_peer_snapshot = max(
-                                all_peer_snapshots, 
+                                peer_snapshots, 
                                 key=lambda s: s["checkpoint_height"]
                             )
                 except Exception as e:
                     # Log the error but continue
                     _log.warning(f"Error querying peers for snapshots: {e}")
-                    peer_query_errors.append({"peer": "all", "error": str(e)})
             
             # Prepare output
             if json_output:
@@ -463,31 +475,19 @@ def list_snapshots(
                     typer.echo("   The node will automatically use it during sync if ANIMICA_SNAPSHOT_SYNC_ENABLED=true")
                     typer.echo("")
             elif not local_only:
-                # Distinguish between no peers and no snapshots
+                # No snapshots found from peers
                 if peer_count == 0:
-                    typer.echo("\n❌ No peers connected.")
+                    typer.echo("\n💡 No peers connected.")
                     typer.echo("   Connect to peers first to discover snapshots from the network.")
                 else:
-                    typer.echo("\n💡 No snapshots found on connected peers.")
-                
-                # Show errors if any
-                if peer_query_errors:
-                    typer.echo(f"\n⚠️  Failed to query {len(peer_query_errors)} peer(s):")
-                    for err_info in peer_query_errors[:3]:  # Show first 3 errors
-                        typer.echo(f"  - {err_info['peer']}: {err_info['error']}")
-                    if len(peer_query_errors) > 3:
-                        typer.echo(f"  ... and {len(peer_query_errors) - 3} more")
-                    typer.echo("\n  Use --from-peers to see detailed peer query results")
-                
+                    typer.echo(f"\n💡 Connected to {peer_count} peer(s), but none have snapshots available.")
+            
             # Show tips if no snapshots at all
             if not local_snapshots and not highest_peer_snapshot:
                 typer.echo("\n💡 Tips:")
                 typer.echo("  - Create snapshots with: animica snapshot create")
                 typer.echo("  - Query all peer snapshots: animica snapshot list --from-peers")
                 typer.echo("  - Connect to more peers: animica peer add <address>")
-                if peer_query_errors:
-                    typer.echo("  - Check peer RPC accessibility (peers may not expose RPC)")
-                    typer.echo("  - Enable debug logging: export ANIMICA_LOG_LEVEL=DEBUG")
         
     except Exception as e:
         typer.echo(f"❌ Error listing snapshots: {e}", err=True)
@@ -697,65 +697,69 @@ def discover(
     ),
 ):
     """
-    Discover the best available snapshot from connected peers.
+    Discover the best available snapshot from connected peers via P2P.
     
-    Queries all connected peers and shows the highest available snapshot,
-    which is the best candidate for fast sync.
+    This command queries the node's P2P service to discover snapshots from
+    all connected peers using the P2P protocol (not RPC), which works
+    automatically without requiring peers to expose RPC endpoints.
     """
     url = _resolve_rpc_url(rpc_url)
     
     try:
-        typer.echo("🔍 Discovering snapshots from connected peers...")
+        typer.echo("🔍 Discovering snapshots from connected peers via P2P protocol...")
         
-        snapshots_by_peer, errors, peer_count = asyncio.run(
-            _query_all_peers_for_snapshots(url, chain_id, timeout)
+        # Call the new RPC method that queries peers via P2P
+        params = {}
+        if chain_id is not None:
+            params["chain_id"] = chain_id
+        
+        result = asyncio.run(
+            rpc_call("snapshot.discoverFromPeers", params, rpc_url=url, timeout=timeout)
         )
         
-        if not snapshots_by_peer:
-            # Distinguish between no peers and no snapshots
+        if not result.get("success"):
+            error_msg = result.get("error", "Unknown error")
+            message = result.get("message", "")
+            typer.echo(f"\n❌ Error: {error_msg}")
+            if message:
+                typer.echo(f"   {message}")
+            
+            typer.echo("\n💡 Troubleshooting:")
+            typer.echo("  1. Check peer connections: animica peer list")
+            typer.echo("  2. Ensure your node's P2P service is running")
+            typer.echo("  3. Connect to peers: animica peer add <address>")
+            typer.echo("  4. Wait for peers to complete handshake (can take a few seconds)")
+            typer.echo("  5. Ensure peers have snapshots available")
+            raise typer.Exit(code=1)
+        
+        snapshots = result.get("snapshots", [])
+        peer_count = result.get("peer_count", 0)
+        
+        if not snapshots:
+            message = result.get("message", "No snapshots found")
+            typer.echo(f"\n❌ {message}")
+            
+            typer.echo("\n💡 Troubleshooting:")
             if peer_count == 0:
-                typer.echo("\n❌ No peers connected.")
-                typer.echo("\n💡 Troubleshooting:")
                 typer.echo("  1. Check peer connections: animica peer list")
                 typer.echo("  2. Connect to peers: animica peer add <address>")
                 typer.echo("  3. Ensure your node's P2P service is running")
                 typer.echo("  4. Check firewall settings if running your own node")
-                raise typer.Exit(code=1)
-            
-            typer.echo("\n❌ No snapshots found on connected peers.")
-            
-            # Show errors if any
-            if errors:
-                typer.echo(f"\n⚠️  Failed to query {len(errors)} peer(s):")
-                for err_info in errors[:5]:  # Show first 5 errors
-                    typer.echo(f"  - {err_info['peer']}: {err_info['error']}")
-                if len(errors) > 5:
-                    typer.echo(f"  ... and {len(errors) - 5} more")
-            
-            typer.echo("\n💡 Troubleshooting:")
-            typer.echo("  1. Check peer connections: animica peer list")
-            typer.echo("  2. Ensure peers have snapshots: they must create them first")
-            typer.echo("  3. Check peer RPC accessibility (peers may not expose RPC)")
-            typer.echo("  4. Try connecting to more peers: animica peer add <address>")
-            if errors:
-                typer.echo("  5. Enable debug logging: export ANIMICA_LOG_LEVEL=DEBUG")
-            raise typer.Exit(code=1)
-        
-        # Flatten all snapshots
-        all_snapshots = _flatten_snapshots_by_peer(snapshots_by_peer)
-        
-        if not all_snapshots:
-            typer.echo("\n❌ No snapshots found.")
+            else:
+                typer.echo(f"  1. You're connected to {peer_count} peer(s), but they don't have snapshots")
+                typer.echo("  2. Peers need to create snapshots first (animica snapshot create)")
+                typer.echo("  3. Try connecting to more peers: animica peer add <address>")
+                typer.echo("  4. Wait for peers to sync and create snapshots")
             raise typer.Exit(code=1)
         
         # Find the best snapshot (highest height)
-        best_snapshot = max(all_snapshots, key=lambda s: s["checkpoint_height"])
+        best_snapshot = max(snapshots, key=lambda s: s["checkpoint_height"])
         
         if json_output:
             typer.echo(json.dumps(best_snapshot, indent=2))
             return
         
-        typer.echo(f"\n✅ Found {len(all_snapshots)} total snapshot(s) from {len(snapshots_by_peer)} peer(s)")
+        typer.echo(f"\n✅ Found {len(snapshots)} snapshot(s) from {peer_count} peer(s) via P2P")
         typer.echo(f"\n🏆 Best snapshot (highest height):")
         typer.echo(f"  Chain ID:         {best_snapshot['chain_id']}")
         typer.echo(f"  Height:           {best_snapshot['checkpoint_height']}")
@@ -764,12 +768,11 @@ def discover(
         typer.echo(f"  Accounts:         {best_snapshot['accounts_count']}")
         typer.echo(f"  Size:             {best_snapshot['size_mb']:.2f} MB")
         typer.echo(f"  Source Peer:      {best_snapshot.get('_source', 'unknown')}")
-        typer.echo(f"  Source RPC:       {best_snapshot.get('_source_rpc', 'unknown')}")
         
         typer.echo("\n💡 To use this snapshot for fast sync:")
         typer.echo("  1. Ensure ANIMICA_SNAPSHOT_SYNC_ENABLED=true (default)")
         typer.echo("  2. Restart your node - it will auto-discover and use this snapshot")
-        typer.echo("  3. Or manually query: animica snapshot get " + str(best_snapshot['checkpoint_height']))
+        typer.echo("  3. The node automatically queries P2P peers during startup")
         
     except Exception as e:
         if isinstance(e, typer.Exit):

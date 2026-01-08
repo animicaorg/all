@@ -22,6 +22,7 @@ def test_snapshot_methods_are_registered():
         "snapshot.import",
         "snapshot.delete",
         "snapshot.downloadChunk",
+        "snapshot.discoverFromPeers",
     ]
     
     for method_name in snapshot_methods:
