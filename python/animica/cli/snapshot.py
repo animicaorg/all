@@ -249,6 +249,9 @@ def list_snapshots(
     from_peers: bool = typer.Option(
         False, "--from-peers", help="Query connected peers for their snapshots"
     ),
+    local_only: bool = typer.Option(
+        False, "--local-only", help="Show only local snapshots without querying peers"
+    ),
     json_output: bool = typer.Option(
         False, "--json", help="Output as JSON"
     ),
@@ -259,8 +262,8 @@ def list_snapshots(
     """
     List all available snapshots.
     
-    By default, lists snapshots from the local node. Use --from-peers to
-    discover snapshots from all connected peers.
+    By default, shows local snapshots AND the highest available snapshot from peers.
+    Use --from-peers to see all peer snapshots, or --local-only to skip peer discovery.
     """
     url = _resolve_rpc_url(rpc_url)
     
@@ -309,7 +312,7 @@ def list_snapshots(
                 heights = [s['checkpoint_height'] for s in snapshots]
                 typer.echo(f"  {peer_rpc}: {len(snapshots)} snapshot(s) at heights {heights}")
         else:
-            # Query local node
+            # Query local node first
             params = {}
             if chain_id is not None:
                 params["chain_id"] = chain_id
@@ -322,29 +325,82 @@ def list_snapshots(
                 typer.echo(f"❌ Error: {result.get('error', 'Unknown error')}", err=True)
                 raise typer.Exit(code=1)
             
-            snapshots = result.get("snapshots", [])
+            local_snapshots = result.get("snapshots", [])
             
+            # Also query peers for the highest available snapshot (unless --local-only)
+            highest_peer_snapshot = None
+            if not local_only:
+                try:
+                    snapshots_by_peer = asyncio.run(
+                        _query_all_peers_for_snapshots(url, chain_id, timeout)
+                    )
+                    
+                    if snapshots_by_peer:
+                        # Flatten all peer snapshots
+                        all_peer_snapshots = []
+                        for peer_rpc, snapshots in snapshots_by_peer.items():
+                            all_peer_snapshots.extend(snapshots)
+                        
+                        # Find the highest peer snapshot
+                        if all_peer_snapshots:
+                            highest_peer_snapshot = max(
+                                all_peer_snapshots, 
+                                key=lambda s: s["checkpoint_height"]
+                            )
+                except Exception:
+                    # Silently ignore peer query errors in default mode
+                    pass
+            
+            # Prepare output
             if json_output:
-                typer.echo(json.dumps(snapshots, indent=2))
+                output_data = {
+                    "local_snapshots": local_snapshots,
+                    "highest_peer_snapshot": highest_peer_snapshot
+                }
+                typer.echo(json.dumps(output_data, indent=2))
                 return
             
-            if not snapshots:
+            # Display local snapshots
+            if not local_snapshots:
                 typer.echo("No snapshots found on local node.")
+            else:
+                typer.echo(f"Found {len(local_snapshots)} local snapshot(s):\n")
+                
+                for snap in local_snapshots:
+                    typer.echo(f"Chain {snap['chain_id']} - Height {snap['checkpoint_height']}")
+                    typer.echo(f"  Hash: {snap['checkpoint_hash']}")
+                    typer.echo(f"  Blocks: {snap['blocks_count']}")
+                    typer.echo(f"  Accounts: {snap['accounts_count']}")
+                    typer.echo(f"  Size: {snap['size_mb']:.2f} MB")
+                    typer.echo(f"  Path: {snap['path']}")
+                    typer.echo("")
+            
+            # Display highest peer snapshot if available
+            if highest_peer_snapshot:
+                typer.echo("🌐 Highest snapshot from connected peers:\n")
+                typer.echo(f"Chain {highest_peer_snapshot['chain_id']} - Height {highest_peer_snapshot['checkpoint_height']}")
+                typer.echo(f"  Hash: {highest_peer_snapshot['checkpoint_hash']}")
+                typer.echo(f"  Blocks: {highest_peer_snapshot['blocks_count']}")
+                typer.echo(f"  Accounts: {highest_peer_snapshot['accounts_count']}")
+                typer.echo(f"  Size: {highest_peer_snapshot['size_mb']:.2f} MB")
+                typer.echo(f"  Source: {highest_peer_snapshot.get('_source', 'unknown')}")
+                typer.echo("")
+                
+                # Check if peer snapshot is higher than local
+                local_max_height = max([s['checkpoint_height'] for s in local_snapshots]) if local_snapshots else 0
+                if highest_peer_snapshot['checkpoint_height'] > local_max_height:
+                    typer.echo("💡 A higher snapshot is available from peers for faster sync!")
+                    typer.echo("   The node will automatically use it during sync if ANIMICA_SNAPSHOT_SYNC_ENABLED=true")
+                    typer.echo("")
+            elif not local_only:
+                typer.echo("\n💡 No snapshots found on connected peers.")
+                
+            # Show tips if no snapshots at all
+            if not local_snapshots and not highest_peer_snapshot:
                 typer.echo("\n💡 Tips:")
                 typer.echo("  - Create snapshots with: animica snapshot create")
-                typer.echo("  - Query peers for snapshots: animica snapshot list --from-peers")
-                return
-            
-            typer.echo(f"Found {len(snapshots)} snapshot(s):\n")
-            
-            for snap in snapshots:
-                typer.echo(f"Chain {snap['chain_id']} - Height {snap['checkpoint_height']}")
-                typer.echo(f"  Hash: {snap['checkpoint_hash']}")
-                typer.echo(f"  Blocks: {snap['blocks_count']}")
-                typer.echo(f"  Accounts: {snap['accounts_count']}")
-                typer.echo(f"  Size: {snap['size_mb']:.2f} MB")
-                typer.echo(f"  Path: {snap['path']}")
-                typer.echo("")
+                typer.echo("  - Query all peer snapshots: animica snapshot list --from-peers")
+                typer.echo("  - Connect to more peers: animica peer add <address>")
         
     except Exception as e:
         typer.echo(f"❌ Error listing snapshots: {e}", err=True)
