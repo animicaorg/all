@@ -1087,6 +1087,108 @@ def ensure_started(cfg: t.Any | None = None) -> RpcContext:
         return _CTX
 
 
+async def _background_snapshot_discovery(
+    p2p_service: t.Any,
+    block_db: t.Any,
+    state_db: t.Any,
+    chain_id: int,
+    max_wait_seconds: int = 30,
+    retry_interval: int = 5,
+) -> None:
+    """
+    Background task to automatically discover and bootstrap from peer snapshots.
+    
+    Waits for P2P service to connect to peers, then attempts snapshot discovery.
+    This runs after P2P service has started, allowing time for peer connections.
+    
+    Args:
+        p2p_service: P2P service instance
+        block_db: Block database instance
+        state_db: State database instance
+        chain_id: Chain ID to sync
+        max_wait_seconds: Maximum time to wait for peers (default: 30s)
+        retry_interval: Seconds between peer checks (default: 5s)
+    """
+    # Local imports to avoid circular dependencies and lazy loading
+    import asyncio
+    from p2p.sync.snapshot_sync import try_snapshot_bootstrap, should_try_snapshot_bootstrap
+    
+    log = logging.getLogger("animica.rpc.deps.snapshot_discovery")
+    
+    # Check if auto-discovery is enabled
+    auto_discover_enabled = os.environ.get("ANIMICA_SNAPSHOT_AUTO_DISCOVER", "true").lower() in {
+        "true", "1", "yes", "on"
+    }
+    if not auto_discover_enabled:
+        log.debug("Automatic snapshot discovery disabled")
+        return
+    
+    try:
+        # Get current chain height
+        current_height = 0
+        head = block_db.get_head()
+        if head:
+            current_height = head[0]
+        
+        # Check if we should attempt snapshot bootstrap
+        if not should_try_snapshot_bootstrap(current_height):
+            log.debug(f"Node at height {current_height}, skipping automatic snapshot discovery")
+            return
+        
+        log.info("Starting automatic snapshot discovery from peers...")
+        
+        # Wait for peers to connect (with timeout)
+        waited = 0
+        peers_found = False
+        
+        while waited < max_wait_seconds:
+            # Check if we have connected peers
+            peer_count = 0
+            try:
+                if hasattr(p2p_service, 'peer_registry'):
+                    peer_snapshots = p2p_service.peer_registry.snapshot()
+                    peer_count = len(peer_snapshots)
+                elif hasattr(p2p_service, 'peers'):
+                    peers_dict = p2p_service.peers
+                    if isinstance(peers_dict, dict):
+                        peer_count = len(peers_dict)
+            except Exception:
+                pass
+            
+            if peer_count > 0:
+                peers_found = True
+                log.info(f"Found {peer_count} connected peer(s), attempting snapshot discovery...")
+                break
+            
+            # Wait before next check
+            log.debug(f"Waiting for peers to connect... ({waited}s/{max_wait_seconds}s)")
+            await asyncio.sleep(retry_interval)
+            waited += retry_interval
+        
+        if not peers_found:
+            log.info("No peers connected within timeout, skipping automatic snapshot discovery")
+            return
+        
+        # Attempt snapshot bootstrap with peer discovery
+        success, error = await try_snapshot_bootstrap(
+            block_db=block_db,
+            state_db=state_db,
+            chain_id=chain_id,
+            current_height=current_height,
+            p2p_service=p2p_service,
+        )
+        
+        if success:
+            log.info("Automatic snapshot discovery and bootstrap completed successfully")
+        elif error:
+            log.debug(f"Automatic snapshot discovery skipped: {error}")
+        else:
+            log.debug("Automatic snapshot discovery completed without finding snapshots")
+            
+    except Exception as e:
+        log.debug(f"Automatic snapshot discovery failed: {e}", exc_info=True)
+
+
 async def startup(cfg: t.Any | None = None) -> RpcContext:
     """Idempotently build and cache the RPC context for the server lifecycle."""
     with _CTX_LOCK:
@@ -1099,39 +1201,6 @@ async def startup(cfg: t.Any | None = None) -> RpcContext:
                     _CTX = None
             _CTX = build_context(cfg)
 
-        # Try snapshot bootstrap before starting P2P sync
-        if _CTX.p2p_service is not None and _CTX.block_db is not None and _CTX.state_db is not None:
-            try:
-                from p2p.sync.snapshot_sync import try_snapshot_bootstrap
-                
-                # Get current chain height
-                current_height = 0
-                head = _CTX.block_db.get_head()
-                if head:
-                    current_height = head[0]
-                
-                # Attempt snapshot bootstrap, passing P2P service for peer queries
-                success, error = await try_snapshot_bootstrap(
-                    block_db=_CTX.block_db,
-                    state_db=_CTX.state_db,
-                    chain_id=_CTX.cfg.chain_id,
-                    current_height=current_height,
-                    p2p_service=_CTX.p2p_service,
-                )
-                
-                if success:
-                    logging.getLogger("animica.rpc.deps").info(
-                        "Snapshot bootstrap completed successfully"
-                    )
-                elif error:
-                    logging.getLogger("animica.rpc.deps").debug(
-                        f"Snapshot bootstrap skipped: {error}"
-                    )
-            except Exception as e:
-                logging.getLogger("animica.rpc.deps").debug(
-                    f"Snapshot bootstrap failed, falling back to P2P sync: {e}"
-                )
-        
         # Start P2P service if it was initialized
         if _CTX.p2p_service is not None:
             try:
@@ -1139,6 +1208,23 @@ async def startup(cfg: t.Any | None = None) -> RpcContext:
                 logging.getLogger("animica.rpc.deps").info(
                     "P2P service started successfully"
                 )
+                
+                # Start background snapshot discovery after P2P is running
+                # This allows time for peers to connect before querying for snapshots
+                if _CTX.block_db is not None and _CTX.state_db is not None:
+                    import asyncio
+                    asyncio.create_task(
+                        _background_snapshot_discovery(
+                            p2p_service=_CTX.p2p_service,
+                            block_db=_CTX.block_db,
+                            state_db=_CTX.state_db,
+                            chain_id=_CTX.cfg.chain_id,
+                        )
+                    )
+                    logging.getLogger("animica.rpc.deps").debug(
+                        "Started automatic snapshot discovery background task"
+                    )
+                    
             except Exception as e:
                 _CTX.p2p_start_error = f"start_failed: {type(e).__name__}: {e}"
                 log = logging.getLogger("animica.rpc.deps")
