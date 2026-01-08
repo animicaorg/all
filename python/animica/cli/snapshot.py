@@ -149,21 +149,22 @@ async def _query_all_peers_for_snapshots(
     rpc_url: str,
     chain_id: Optional[int] = None,
     timeout: Optional[float] = None,
-) -> tuple[dict[str, list[dict[str, Any]]], list[dict[str, str]]]:
+) -> tuple[dict[str, list[dict[str, Any]]], list[dict[str, str]], int]:
     """
     Query all connected peers for their available snapshots.
     
     Returns:
-        Tuple of (snapshots_by_peer, errors)
+        Tuple of (snapshots_by_peer, errors, peer_count)
         - snapshots_by_peer: Dictionary mapping peer RPC URLs to their snapshot lists
         - errors: List of error dictionaries with 'peer' and 'error' keys
+        - peer_count: Number of connected peers found (0 if none)
     """
     # Get list of connected peers
     peers = await _get_peers(rpc_url, timeout=timeout)
     
     if not peers:
         _log.debug("No connected peers found")
-        return {}, []
+        return {}, [], 0
     
     _log.debug(f"Found {len(peers)} connected peer(s)")
     
@@ -177,7 +178,7 @@ async def _query_all_peers_for_snapshots(
     
     if not peer_addresses:
         _log.debug("No valid peer addresses found")
-        return {}, []
+        return {}, [], len(peers)
     
     _log.info(f"Querying {len(peer_addresses)} peer(s) for snapshots")
     
@@ -214,7 +215,7 @@ async def _query_all_peers_for_snapshots(
     
     _log.info(f"Successfully queried {len(snapshots_by_peer)} peer(s), {len(errors)} failed")
     
-    return snapshots_by_peer, errors
+    return snapshots_by_peer, errors, len(peer_addresses)
 
 
 def _flatten_snapshots_by_peer(snapshots_by_peer: dict[str, list[dict[str, Any]]]) -> list[dict[str, Any]]:
@@ -323,12 +324,16 @@ def list_snapshots(
         if from_peers:
             # Query all connected peers for snapshots
             typer.echo("Querying connected peers for snapshots...")
-            snapshots_by_peer, errors = asyncio.run(
+            snapshots_by_peer, errors, peer_count = asyncio.run(
                 _query_all_peers_for_snapshots(url, chain_id, timeout)
             )
             
             if not snapshots_by_peer:
-                typer.echo("No snapshots found on connected peers.")
+                # Distinguish between no peers and no snapshots
+                if peer_count == 0:
+                    typer.echo("❌ No peers connected.")
+                else:
+                    typer.echo("No snapshots found on connected peers.")
                 
                 # Show errors if any
                 if errors:
@@ -392,10 +397,11 @@ def list_snapshots(
             # Also query peers for the highest available snapshot (unless --local-only)
             highest_peer_snapshot = None
             peer_query_errors = []
+            peer_count = 0
             
             if not local_only:
                 try:
-                    snapshots_by_peer, peer_query_errors = asyncio.run(
+                    snapshots_by_peer, peer_query_errors, peer_count = asyncio.run(
                         _query_all_peers_for_snapshots(url, chain_id, timeout)
                     )
                     
@@ -456,7 +462,12 @@ def list_snapshots(
                     typer.echo("   The node will automatically use it during sync if ANIMICA_SNAPSHOT_SYNC_ENABLED=true")
                     typer.echo("")
             elif not local_only:
-                typer.echo("\n💡 No snapshots found on connected peers.")
+                # Distinguish between no peers and no snapshots
+                if peer_count == 0:
+                    typer.echo("\n❌ No peers connected.")
+                    typer.echo("   Connect to peers first to discover snapshots from the network.")
+                else:
+                    typer.echo("\n💡 No snapshots found on connected peers.")
                 
                 # Show errors if any
                 if peer_query_errors:
@@ -695,11 +706,21 @@ def discover(
     try:
         typer.echo("🔍 Discovering snapshots from connected peers...")
         
-        snapshots_by_peer, errors = asyncio.run(
+        snapshots_by_peer, errors, peer_count = asyncio.run(
             _query_all_peers_for_snapshots(url, chain_id, timeout)
         )
         
         if not snapshots_by_peer:
+            # Distinguish between no peers and no snapshots
+            if peer_count == 0:
+                typer.echo("\n❌ No peers connected.")
+                typer.echo("\n💡 Troubleshooting:")
+                typer.echo("  1. Check peer connections: animica peer list")
+                typer.echo("  2. Connect to peers: animica peer add <address>")
+                typer.echo("  3. Ensure your node's P2P service is running")
+                typer.echo("  4. Check firewall settings if running your own node")
+                raise typer.Exit(code=1)
+            
             typer.echo("\n❌ No snapshots found on connected peers.")
             
             # Show errors if any
