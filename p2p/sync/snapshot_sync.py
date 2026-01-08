@@ -30,6 +30,7 @@ SNAPSHOT_MIN_HEIGHT = "ANIMICA_SNAPSHOT_MIN_HEIGHT"
 SNAPSHOT_TIMEOUT = "ANIMICA_SNAPSHOT_TIMEOUT"
 SNAPSHOT_RETRY_INTERVAL = "ANIMICA_SNAPSHOT_RETRY_INTERVAL"
 SNAPSHOT_MAX_RETRIES = "ANIMICA_SNAPSHOT_MAX_RETRIES"
+SNAPSHOT_PEER_OF_PEER_ENABLED = "ANIMICA_SNAPSHOT_PEER_OF_PEER_ENABLED"
 
 # P2P snapshot query timeout in seconds
 P2P_SNAPSHOT_QUERY_TIMEOUT = 10.0
@@ -38,6 +39,12 @@ P2P_SNAPSHOT_QUERY_TIMEOUT = 10.0
 def _is_snapshot_sync_enabled() -> bool:
     """Check if snapshot sync is enabled via environment."""
     enabled = os.environ.get(SNAPSHOT_SYNC_ENABLED, "true").lower()
+    return enabled in ("true", "1", "yes", "on")
+
+
+def _is_peer_of_peer_discovery_enabled() -> bool:
+    """Check if peer-of-peer snapshot discovery is enabled via environment."""
+    enabled = os.environ.get(SNAPSHOT_PEER_OF_PEER_ENABLED, "true").lower()
     return enabled in ("true", "1", "yes", "on")
 
 
@@ -114,7 +121,11 @@ async def try_snapshot_bootstrap(
     
     # Try querying connected peers for snapshots
     if p2p_service is not None:
-        peer_snapshots = await _query_peers_for_snapshots(p2p_service, chain_id)
+        peer_snapshots = await _query_peers_for_snapshots(
+            p2p_service, 
+            chain_id,
+            include_peer_of_peers=_is_peer_of_peer_discovery_enabled()
+        )
         if peer_snapshots:
             snapshots_by_source.update(peer_snapshots)
             _log.info(f"Found snapshots from {len(peer_snapshots)} peer(s)")
@@ -200,16 +211,108 @@ async def try_snapshot_bootstrap(
         return False, str(e)
 
 
+async def _query_peer_of_peers_for_snapshots(
+    p2p_service: Any,
+    chain_id: int,
+    direct_peers: list,
+) -> dict[str, list[dict[str, Any]]]:
+    """
+    Query peers-of-peers (second-degree connections) for their available snapshots.
+    
+    This extends the discovery scope beyond directly connected peers by:
+    1. Asking each direct peer for their known peer addresses
+    2. Attempting to query those indirect peers for snapshots
+    
+    Args:
+        p2p_service: P2P service instance
+        chain_id: Chain ID to query for
+        direct_peers: List of directly connected peer states
+    
+    Returns:
+        Dictionary mapping indirect peer identifiers to their snapshot lists
+    """
+    snapshots_by_peer: dict[str, list[dict[str, Any]]] = {}
+    discovered_indirect_peers: set[str] = set()
+    
+    try:
+        # Query each direct peer for their known peer addresses
+        _log.info(f"Discovering peers-of-peers from {len(direct_peers)} direct peer(s)")
+        
+        for peer in direct_peers:
+            try:
+                # Query peer for their known addresses
+                # Use the _addrman to get peer addresses this peer knows about
+                if hasattr(peer, 'known_addrs'):
+                    indirect_addrs = list(peer.known_addrs.keys())[:20]  # Limit to 20 per peer
+                    for addr in indirect_addrs:
+                        if addr and addr not in discovered_indirect_peers:
+                            discovered_indirect_peers.add(addr)
+                            _log.debug(f"Discovered indirect peer: {addr} via {peer.remote}")
+            except Exception as e:
+                _log.debug(f"Error discovering peers from {peer.remote}: {e}")
+                continue
+        
+        if not discovered_indirect_peers:
+            _log.debug("No indirect peers discovered")
+            return snapshots_by_peer
+        
+        _log.info(f"Discovered {len(discovered_indirect_peers)} indirect peer(s), attempting snapshot queries")
+        
+        # For each discovered indirect peer, attempt to query for snapshots via P2P protocol
+        # Note: We'll attempt to query these peers through the P2P service if they're reachable
+        for indirect_addr in list(discovered_indirect_peers)[:50]:  # Limit total queries
+            try:
+                # Check if we already have this peer connected
+                peer_state = None
+                peers_dict = getattr(p2p_service, '_peers', {})
+                for p in peers_dict.values():
+                    if p.remote == indirect_addr:
+                        peer_state = p
+                        break
+                
+                if peer_state and peer_state.hello_done.is_set():
+                    # Query this indirect peer for snapshots
+                    snapshots = await p2p_service.query_peer_snapshots(
+                        peer_state, 
+                        chain_id, 
+                        timeout=P2P_SNAPSHOT_QUERY_TIMEOUT
+                    )
+                    
+                    if snapshots:
+                        peer_key = f"peer-of-peer:{indirect_addr}"
+                        snapshots_by_peer[peer_key] = snapshots
+                        _log.info(f"Indirect peer {indirect_addr} reported {len(snapshots)} snapshot(s)")
+                else:
+                    _log.debug(f"Indirect peer {indirect_addr} not directly connected, skipping")
+                    
+            except Exception as e:
+                _log.debug(f"Error querying indirect peer {indirect_addr}: {e}")
+                continue
+        
+        if snapshots_by_peer:
+            _log.info(f"Successfully discovered snapshots from {len(snapshots_by_peer)} indirect peer(s)")
+        else:
+            _log.debug("No snapshots discovered from indirect peers")
+        
+    except Exception as e:
+        _log.warning(f"Error querying peers-of-peers for snapshots: {e}", exc_info=True)
+    
+    return snapshots_by_peer
+
+
 async def _query_peers_for_snapshots(
     p2p_service: Any,
     chain_id: int,
+    include_peer_of_peers: bool = True,
 ) -> dict[str, list[dict[str, Any]]]:
     """
     Query all connected peers for their available snapshots via P2P messages.
+    Optionally includes peer-of-peer (second-degree) discovery.
     
     Args:
         p2p_service: P2P service instance with peer information
         chain_id: Chain ID to query for
+        include_peer_of_peers: If True, also query peers-of-peers (default: True)
     
     Returns:
         Dictionary mapping peer identifiers (format: "peer:{address}") to their snapshot lists
@@ -247,9 +350,9 @@ async def _query_peers_for_snapshots(
             _log.debug("No peers with completed handshake available for snapshot query")
             return snapshots_by_peer
         
-        _log.info(f"Querying {len(ready_peers)} peer(s) for available snapshots via P2P")
+        _log.info(f"Querying {len(ready_peers)} direct peer(s) for available snapshots via P2P")
         
-        # Query each peer in parallel
+        # Query each direct peer in parallel
         tasks = []
         for peer in ready_peers:
             task = p2p_service.query_peer_snapshots(peer, chain_id, timeout=P2P_SNAPSHOT_QUERY_TIMEOUT)
@@ -263,17 +366,28 @@ async def _query_peers_for_snapshots(
                     # Use "peer:" prefix to distinguish from RPC URLs
                     peer_key = f"peer:{peer_remote}"
                     snapshots_by_peer[peer_key] = snapshots
-                    _log.info(f"Peer {peer_remote} reported {len(snapshots)} snapshot(s)")
+                    _log.info(f"Direct peer {peer_remote} reported {len(snapshots)} snapshot(s)")
                 else:
-                    _log.debug(f"Peer {peer_remote} has no snapshots available")
+                    _log.debug(f"Direct peer {peer_remote} has no snapshots available")
             except Exception as e:
-                _log.debug(f"Error querying peer {peer_remote}: {e}")
+                _log.debug(f"Error querying direct peer {peer_remote}: {e}")
                 continue
         
         if snapshots_by_peer:
-            _log.info(f"Successfully discovered snapshots from {len(snapshots_by_peer)} peer(s)")
+            _log.info(f"Successfully discovered snapshots from {len(snapshots_by_peer)} direct peer(s)")
         else:
-            _log.debug("No snapshots discovered from any peers")
+            _log.debug("No snapshots discovered from any direct peers")
+        
+        # Also query peers-of-peers if enabled
+        if include_peer_of_peers and ready_peers:
+            _log.info("Attempting peer-of-peer (second-degree) snapshot discovery")
+            indirect_snapshots = await _query_peer_of_peers_for_snapshots(
+                p2p_service, chain_id, ready_peers
+            )
+            snapshots_by_peer.update(indirect_snapshots)
+            
+            if indirect_snapshots:
+                _log.info(f"Peer-of-peer discovery added {len(indirect_snapshots)} additional source(s)")
         
     except Exception as e:
         _log.warning(f"Error querying peers for snapshots: {e}", exc_info=True)
