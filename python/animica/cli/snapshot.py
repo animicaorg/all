@@ -778,5 +778,134 @@ def discover(
         raise typer.Exit(code=1)
 
 
+@app.command("status")
+def status(
+    rpc_url: Optional[str] = typer.Option(
+        None, "--rpc", envvar=RPC_ENV, help="RPC endpoint URL"
+    ),
+    json_output: bool = typer.Option(
+        False, "--json", help="Output as JSON"
+    ),
+    timeout: Optional[float] = typer.Option(
+        None, "--timeout", help="RPC timeout in seconds"
+    ),
+):
+    """
+    Get the status of the snapshot automation system.
+    
+    Shows orchestrator health, configuration, statistics, and available snapshots.
+    """
+    url = _resolve_rpc_url(rpc_url)
+    
+    try:
+        result = asyncio.run(
+            rpc_call("snapshot.status", {}, rpc_url=url, timeout=timeout)
+        )
+        
+        if not result.get("success"):
+            typer.echo(f"❌ Error: {result.get('error', 'Unknown error')}", err=True)
+            raise typer.Exit(code=1)
+        
+        if json_output:
+            typer.echo(json.dumps(result, indent=2))
+            return
+        
+        # Display formatted status
+        orchestrator_running = result.get("orchestrator_running", False)
+        
+        if orchestrator_running:
+            typer.echo("\n🤖 Snapshot Orchestrator Status\n")
+            typer.echo("━" * 60)
+            
+            # Configuration
+            config = result.get("config", {})
+            typer.echo("\n📋 Configuration:")
+            typer.echo(f"  Interval:        {config.get('interval', 'N/A')} blocks")
+            typer.echo(f"  Auto-create:     {config.get('auto_create', 'N/A')}")
+            typer.echo(f"  Max snapshots:   {config.get('max_snapshots', 'N/A')}")
+            typer.echo(f"  Sync enabled:    {config.get('sync_enabled', 'N/A')}")
+            
+            # Status
+            status_info = result.get("status", {})
+            healthy = status_info.get("healthy", False)
+            health_emoji = "✅" if healthy else "❌"
+            typer.echo(f"\n{health_emoji} Health Status:")
+            typer.echo(f"  Status:          {'Healthy' if healthy else 'Unhealthy'}")
+            typer.echo(f"  Total snapshots: {status_info.get('total_snapshots', 0)}")
+            typer.echo(f"  Last snapshot:   height {status_info.get('last_snapshot_height', 'N/A')}")
+            
+            last_health = status_info.get('last_health_check', 0)
+            if last_health > 0:
+                time_since = time.time() - last_health
+                typer.echo(f"  Last health check: {time_since:.0f}s ago")
+            
+            # Statistics
+            stats = result.get("statistics", {})
+            if any(stats.values()):
+                typer.echo("\n📊 Statistics:")
+                typer.echo(f"  Created:   {stats.get('snapshots_created', 0)}")
+                typer.echo(f"  Deleted:   {stats.get('snapshots_deleted', 0)}")
+                typer.echo(f"  Failed:    {stats.get('snapshots_failed', 0)}")
+                if stats.get('sync_attempts', 0) > 0:
+                    typer.echo(f"  Sync attempts:   {stats.get('sync_attempts', 0)}")
+                    typer.echo(f"  Sync successes:  {stats.get('sync_successes', 0)}")
+            
+            # Errors and warnings
+            errors = result.get("errors", [])
+            warnings = result.get("warnings", [])
+            
+            if errors:
+                typer.echo("\n❌ Errors:")
+                for error in errors:
+                    typer.echo(f"  • {error}")
+            
+            if warnings:
+                typer.echo("\n⚠️  Warnings:")
+                for warning in warnings:
+                    typer.echo(f"  • {warning}")
+            
+            # Snapshots
+            snapshots = result.get("snapshots", [])
+            if snapshots:
+                typer.echo(f"\n📦 Available Snapshots ({len(snapshots)}):")
+                for snap in snapshots[:5]:  # Show first 5
+                    size_mb = snap.get('size_mb', 0)
+                    typer.echo(f"  • Height {snap['height']:>6} - {size_mb:>6.1f} MB")
+                if len(snapshots) > 5:
+                    typer.echo(f"  ... and {len(snapshots) - 5} more")
+            
+            typer.echo("\n" + "━" * 60)
+            
+        else:
+            # Orchestrator not running (manual mode)
+            typer.echo("\n⚙️  Manual Mode (Orchestrator not running)\n")
+            typer.echo("━" * 60)
+            
+            config = result.get("config", {})
+            typer.echo("\n📋 Configuration:")
+            typer.echo(f"  Interval:      {config.get('interval', 'N/A')} blocks")
+            typer.echo(f"  Auto-create:   {config.get('auto_create', 'N/A')}")
+            
+            status_info = result.get("status", {})
+            typer.echo(f"\n📦 Snapshots:")
+            typer.echo(f"  Total:   {status_info.get('total_snapshots', 0)}")
+            
+            snapshots = result.get("snapshots", [])
+            if snapshots:
+                typer.echo("\n  Available:")
+                for snap in snapshots:
+                    typer.echo(f"    • Height {snap['height']}")
+            
+            typer.echo("\n💡 Tip: Set ANIMICA_SNAPSHOT_AUTO_CREATE=true to enable automation")
+            typer.echo("━" * 60)
+        
+        typer.echo()
+        
+    except Exception as e:
+        typer.echo(f"❌ Error getting status: {e}", err=True)
+        raise typer.Exit(code=1)
+
+
 if __name__ == "__main__":
     app()
+
