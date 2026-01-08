@@ -165,7 +165,7 @@ def export_snapshot(
                 if header:
                     # Write height-prefixed entry
                     # Format: [entry_cbor_bytes]\n for easy delimiting
-                    entry = {"type": "header", "height": height, "data": header}
+                    entry = {"type": "header", "height": height, "data": header.to_obj()}
                     entry_bytes = cbor_dumps(entry)
                     f.write(entry_bytes)
                     f.write(b"\n")  # Delimiter for easier parsing
@@ -174,7 +174,7 @@ def export_snapshot(
                 # Export block at this height
                 block = block_db.get_block_by_hash(block_hash)
                 if block:
-                    entry = {"type": "block", "height": height, "data": block}
+                    entry = {"type": "block", "height": height, "data": block.to_obj()}
                     entry_bytes = cbor_dumps(entry)
                     f.write(entry_bytes)
                     f.write(b"\n")  # Delimiter
@@ -381,13 +381,17 @@ def _import_blocks_chunk(block_db: BlockDB, chunk_file: Path, compressed: bool):
                 data = entry.get("data")
 
                 if entry_type == "header":
-                    # Store header (data should already be in proper format)
-                    block_hash = block_db.put_header(data)
+                    # Reconstruct header from dict and store
+                    from core.types.header import Header
+                    header_obj = Header.from_obj(data)
+                    block_hash = block_db.put_header(header_obj)
                     # Update height index
                     block_db.set_canonical(height, block_hash)
                 elif entry_type == "block":
-                    # Store block
-                    block_db.put_block(data)
+                    # Reconstruct block from dict and store
+                    from core.types.block import Block
+                    block_obj = Block.from_obj(data)
+                    block_db.put_block(block_obj)
 
                 imported_count += 1
                 if imported_count % 1000 == 0:
