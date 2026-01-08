@@ -118,14 +118,17 @@ animica snapshot import /path/to/snapshot --no-verify
 
 ### Automatic Snapshot Bootstrap
 
-Nodes can automatically download and import snapshots on first sync:
+Nodes now **automatically** discover and download snapshots from connected peers on startup:
 
 ```bash
 # Enable snapshot sync (default: enabled)
 export ANIMICA_SNAPSHOT_SYNC_ENABLED=true
 
+# Enable automatic peer discovery (default: enabled)
+export ANIMICA_SNAPSHOT_AUTO_DISCOVER=true
+
 # Optional: Configure a specific snapshot source RPC
-# If not set, the node will query connected peers for snapshots
+# If not set, the node will automatically query connected peers for snapshots
 export ANIMICA_SNAPSHOT_RPC_URL=http://snapshots.animica.org:8545/rpc
 
 # Minimum height gap to use snapshots (default: 1000)
@@ -134,22 +137,40 @@ export ANIMICA_SNAPSHOT_MIN_HEIGHT=1000
 # Snapshot operation timeout (default: 600 seconds)
 export ANIMICA_SNAPSHOT_TIMEOUT=600
 
-# Start node - will try snapshot bootstrap first
+# Start node - will automatically discover and use snapshots from peers
 animica node up
 ```
 
-**Note:** Snapshot bootstrap is now fully implemented with peer discovery. The node will:
-1. Check if snapshot sync is enabled and configured
-2. **Query all connected peers for their available snapshots**
-3. **Aggregate snapshots and select the highest checkpoint height**
-4. If `ANIMICA_SNAPSHOT_RPC_URL` is configured, also query that endpoint
-5. Download the best snapshot (highest height) to a temporary directory
-6. Verify chunk hashes for integrity
-7. Import the snapshot into local databases
-8. Continue P2P sync from the snapshot checkpoint
-9. Fall back to normal P2P sync if snapshot bootstrap fails
+**How Automatic Discovery Works:**
 
-**Peer Discovery:** The node automatically discovers and queries connected P2P peers for their available snapshots. This eliminates the need to manually configure a snapshot source URL in most cases. Simply ensure the node can connect to peers that have snapshots available.
+1. Node starts and begins P2P service
+2. **Background task waits for peers to connect (up to 30 seconds)**
+3. **Automatically queries all connected peers for their available snapshots**
+4. **Aggregates snapshots and selects the highest checkpoint height**
+5. If `ANIMICA_SNAPSHOT_RPC_URL` is configured, also queries that endpoint
+6. Downloads the best snapshot (highest height) to a temporary directory
+7. Verifies chunk hashes for integrity
+8. Imports the snapshot into local databases
+9. Continues P2P sync from the snapshot checkpoint
+10. Falls back to normal P2P sync if snapshot bootstrap fails
+
+**Benefits:**
+- ✅ **Zero Configuration**: Works automatically when peers are available
+- ✅ **No Manual Commands**: No need to run `animica snapshot discover`
+- ✅ **Resilient**: Falls back to normal sync if no snapshots found
+- ✅ **Non-Blocking**: Runs in background, doesn't delay node startup
+
+**Note:** If you prefer manual control, you can disable automatic discovery:
+```bash
+export ANIMICA_SNAPSHOT_AUTO_DISCOVER=false
+animica node up
+```
+
+Then manually discover and sync:
+```bash
+animica snapshot discover       # Find best snapshot
+animica snapshot list --from-peers   # List all peer snapshots
+```
 
 ## Configuration
 
@@ -158,7 +179,8 @@ animica node up
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `ANIMICA_SNAPSHOT_SYNC_ENABLED` | `true` | Enable automatic snapshot bootstrap |
-| `ANIMICA_SNAPSHOT_RPC_URL` | _(none)_ | Optional RPC endpoint to fetch snapshots from. If not set, queries connected peers. |
+| `ANIMICA_SNAPSHOT_AUTO_DISCOVER` | `true` | Enable automatic peer snapshot discovery on startup |
+| `ANIMICA_SNAPSHOT_RPC_URL` | _(none)_ | Optional RPC endpoint to fetch snapshots from. If not set, queries connected peers automatically. |
 | `ANIMICA_SNAPSHOT_MIN_HEIGHT` | `1000` | Minimum height gap to use snapshots |
 | `ANIMICA_SNAPSHOT_TIMEOUT` | `600` | Timeout for snapshot operations (seconds) |
 
