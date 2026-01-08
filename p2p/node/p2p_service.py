@@ -7554,15 +7554,12 @@ class P2PService:
                 if self._sync_requested:
                     self._sync_requested = False
                 self._log_sync_cycle()
-                if self._sync_block_stalled_reason is None:
-                    await self._schedule_block_requests()
-                    # Continue requesting blocks if we're behind, regardless of inflight status
-                    # This ensures sync continues even if some blocks are already being downloaded
-                    if (
-                        network_best_height is not None
-                        and best_block_height < int(network_best_height)
-                    ):
-                        await self._schedule_block_requests()
+                # Schedule block requests regardless of stall status
+                # This breaks the catch-22 where stall detection prevented recovery
+                # _handle_sync_stall() above still provides peer rotation and diagnostics
+                # Single call is sufficient: _schedule_block_requests() handles all cases
+                # internally (seeding from headers, checking inflight, respecting limits)
+                await self._schedule_block_requests()
         except asyncio.CancelledError:
             return
 
