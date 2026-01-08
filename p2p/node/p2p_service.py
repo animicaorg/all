@@ -7555,7 +7555,8 @@ class P2PService:
                     self._sync_requested = False
                 self._log_sync_cycle()
                 # Schedule block requests regardless of stall status
-                # This allows automatic recovery from transient network issues
+                # This breaks the catch-22 where stall detection prevented recovery
+                # _handle_sync_stall() above still provides peer rotation and diagnostics
                 await self._schedule_block_requests()
         except asyncio.CancelledError:
             return

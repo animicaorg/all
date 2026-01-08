@@ -273,7 +273,7 @@ This fix addresses:
 
 ## Files Modified
 
-- `p2p/node/p2p_service.py` (lines 7557-7566)
+- `p2p/node/p2p_service.py` (lines 7557-7560)
 
 ## Conclusion
 
