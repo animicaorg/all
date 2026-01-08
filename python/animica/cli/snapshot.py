@@ -432,6 +432,15 @@ def list_snapshots(
                 except Exception as e:
                     # Log the error but continue
                     _log.warning(f"Error querying peers for snapshots: {e}")
+                    
+                    # Even if snapshot discovery failed, try to get actual peer count
+                    # so we don't incorrectly report "no peers connected"
+                    try:
+                        peers = asyncio.run(_get_peers(url, timeout=timeout or 10.0))
+                        peer_count = len(peers) if peers else 0
+                    except Exception as peer_err:
+                        _log.debug(f"Error getting peer count: {peer_err}")
+                        # peer_count remains 0
             
             # Prepare output
             if json_output:

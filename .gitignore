@@ -16,6 +16,8 @@ native/target/
 .liboqs/
 .deps/
 test_peer_connectivity.py
+test_snapshot_peer_count_fix.py
+test_snapshot_fix_explanation.py
 *.bak.*
 
 # Compute platform specific
