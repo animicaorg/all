@@ -142,7 +142,7 @@ def _encode_obj(obj: Any) -> bytes:
     if is_dataclass(obj):
         obj = asdict(obj)
     # Objects with to_obj() method can convert themselves to dicts
-    elif hasattr(obj, "to_obj") and callable(obj.to_obj):
+    elif callable(getattr(obj, "to_obj", None)):
         try:
             obj = obj.to_obj()
         except Exception as e:
