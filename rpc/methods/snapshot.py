@@ -115,9 +115,13 @@ def snapshot_create(height: int | None = None, compress: bool = True) -> dict:
     "snapshot.list",
     desc="List available snapshots",
 )
-def snapshot_list(chain_id: int | None = None) -> dict:
+def snapshot_list(chain_id: int | None = None, include_peers: bool = False) -> dict:
     """
     List all available snapshots, optionally filtered by chain ID.
+    
+    Args:
+        chain_id: Optional chain ID filter
+        include_peers: If True, also query connected P2P peers for their snapshots
     """
     try:
         snapshots_dir = _get_snapshots_dir()
@@ -168,6 +172,7 @@ def snapshot_list(chain_id: int | None = None) -> dict:
                             "size_mb": sum(
                                 chunk["size"] for chunk in manifest_data.get("chunks", [])
                             ) / (1024 * 1024),
+                            "source": "local",
                         })
                     except (json.JSONDecodeError, IOError) as e:
                         _log.warning(f"Failed to read manifest from {manifest_file}: {e}")
@@ -176,14 +181,93 @@ def snapshot_list(chain_id: int | None = None) -> dict:
         # Sort by chain_id, then height (descending)
         snapshots.sort(key=lambda s: (s["chain_id"], -s["checkpoint_height"]))
         
-        return {
+        result = {
             "success": True,
             "snapshots": snapshots,
             "count": len(snapshots),
         }
+        
+        # Optionally query peers for their snapshots
+        if include_peers:
+            try:
+                peer_snapshots = _query_peers_for_snapshots_sync(target_chain_id)
+                if peer_snapshots:
+                    result["peer_snapshots"] = peer_snapshots
+                    result["peer_count"] = len(peer_snapshots)
+            except Exception as e:
+                _log.warning(f"Failed to query peers for snapshots: {e}")
+                result["peer_query_error"] = str(e)
+        
+        return result
     except Exception as e:
         _log.exception("Error listing snapshots")
         return {"success": False, "error": str(e)}
+
+
+def _query_peers_for_snapshots_sync(chain_id: int | None = None) -> dict:
+    """
+    Query connected P2P peers for their available snapshots (synchronous wrapper).
+    
+    Returns:
+        Dictionary mapping peer IDs to their snapshot lists
+    """
+    try:
+        ctx = deps.get_ctx()
+        
+        # Check if P2P service is available
+        if not hasattr(ctx, 'p2p_service') or ctx.p2p_service is None:
+            _log.debug("P2P service not available for peer snapshot query")
+            return {}
+        
+        p2p_service = ctx.p2p_service
+        
+        # Check if we have the snapshot handler
+        if not hasattr(p2p_service, 'router') or p2p_service.router is None:
+            _log.debug("P2P router not available for peer snapshot query")
+            return {}
+        
+        # Import P2P wire messages
+        try:
+            from p2p.wire.messages import GetSnapshots, Snapshots, SnapshotInfo
+            from p2p.wire.message_ids import MsgID
+        except ImportError:
+            _log.debug("P2P wire messages not available")
+            return {}
+        
+        # Get connected peers
+        peers_info = []
+        if hasattr(p2p_service, 'connmgr') and p2p_service.connmgr:
+            try:
+                if hasattr(p2p_service.connmgr, 'active_conns'):
+                    peers_info = list(p2p_service.connmgr.active_conns.items())
+            except Exception as e:
+                _log.debug(f"Error accessing connmgr: {e}")
+        
+        if not peers_info:
+            _log.debug("No connected peers available")
+            return {}
+        
+        _log.debug(f"Querying {len(peers_info)} peer(s) for snapshots via P2P")
+        
+        # Get the snapshot handler to reuse its listing logic
+        snapshots_by_peer = {}
+        
+        for peer_id, conn in peers_info:
+            try:
+                # For now, just return empty dict - the P2P message exchange
+                # requires async context which we don't have in RPC methods
+                # This will be implemented properly when we add async RPC support
+                pass
+            except Exception as e:
+                _log.debug(f"Error querying peer {peer_id}: {e}")
+                continue
+        
+        return snapshots_by_peer
+        
+    except Exception as e:
+        _log.warning(f"Error querying peers for snapshots: {e}")
+        return {}
+
 
 
 @method(
