@@ -81,6 +81,9 @@ class Hello:
         default_factory=list
     )  # e.g., ["tx", "blocks", "da", "randomness"]
     timestamp: int = 0  # unix seconds
+    # Network best height: the highest height this peer knows about (including peers-of-peers)
+    # This enables multi-hop height propagation across the network
+    network_best_height: Optional[Height] = None
 
     def __post_init__(self):
         if self.genesis_hash:
