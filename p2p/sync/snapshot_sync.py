@@ -165,13 +165,27 @@ async def try_snapshot_bootstrap(
         )
 
         # Download and import snapshot from the best source
-        success = await _download_and_import_snapshot(
-            rpc_url=source,
-            chain_id=chain_id,
-            checkpoint_height=snapshot_height,
-            block_db=block_db,
-            state_db=state_db,
-        )
+        # Check if source is a P2P peer (format: "peer:address") or RPC URL
+        if p2p_service and source.startswith("peer:"):
+            # Extract peer address from source identifier
+            peer_address = source[5:]  # Remove "peer:" prefix
+            success = await _download_and_import_snapshot_via_p2p(
+                p2p_service=p2p_service,
+                peer_address=peer_address,
+                chain_id=chain_id,
+                checkpoint_height=snapshot_height,
+                block_db=block_db,
+                state_db=state_db,
+            )
+        else:
+            # Use RPC/HTTP download
+            success = await _download_and_import_snapshot(
+                rpc_url=source,
+                chain_id=chain_id,
+                checkpoint_height=snapshot_height,
+                block_db=block_db,
+                state_db=state_db,
+            )
 
         if success:
             _log.info(
@@ -198,7 +212,7 @@ async def _query_peers_for_snapshots(
         chain_id: Chain ID to query for
     
     Returns:
-        Dictionary mapping peer identifiers (peer remote address) to their snapshot lists
+        Dictionary mapping peer identifiers (format: "peer:{address}") to their snapshot lists
     """
     snapshots_by_peer: dict[str, list[dict[str, Any]]] = {}
     
@@ -233,47 +247,34 @@ async def _query_peers_for_snapshots(
         _log.info(f"Querying {len(peers)} peer(s) for available snapshots via P2P")
         
         # Query each peer for snapshots via P2P message
-        # We send GET_SNAPSHOTS and the SnapshotHandler on the peer side will respond with SNAPSHOTS
+        # Note: For now, we log that P2P queries are available but we need synchronous
+        # request/response which requires extending the P2P service API.
+        # 
+        # The SnapshotHandler will respond to GET_SNAPSHOTS messages, but we need a way
+        # to send the request and await the response. This requires either:
+        # 1. A request/response helper in the P2P service, or
+        # 2. Using the router with a temporary response collector
+        #
+        # For now, we'll store peer information so snapshots can be downloaded via P2P
+        # when discovered through other means (e.g., manual configuration or future
+        # gossip-based discovery).
+        
+        # Store peers as potential snapshot sources with "peer:" prefix
         for peer in peers:
-            # Check if peer is ready (hello handshake completed)
             if not peer.hello_done.is_set():
-                _log.debug(f"Skipping peer {peer.remote} - hello not completed")
                 continue
             
-            try:
-                # Create GET_SNAPSHOTS request
-                request = GetSnapshots(chain_id=chain_id)
-                
-                # Send the message using the P2P service's internal _send method
-                # Note: We're relying on the SnapshotHandler to respond, but we don't have
-                # a request/response pattern here. The SnapshotHandler will send a SNAPSHOTS message
-                # back, but we don't wait for it synchronously.
-                # 
-                # Instead, we'll use a different approach: send the request and set up a temporary
-                # response collector, or fall back to RPC queries which are synchronous.
-                #
-                # For now, log that P2P messaging is available but we need synchronous request/response
-                # which isn't implemented in the current P2P stack. Fall back to the SnapshotHandler
-                # approach via RPC.
-                
-                _log.debug(
-                    f"P2P snapshot query would send GET_SNAPSHOTS to {peer.remote}, "
-                    f"but synchronous request/response not implemented - handler will respond async"
-                )
-                
-            except Exception as e:
-                _log.debug(f"Failed to prepare P2P query for peer {peer.remote}: {e}")
-                continue
-        
-        # Since the P2P service doesn't have synchronous request/response for snapshots yet,
-        # we note that the SnapshotHandler will respond to any GET_SNAPSHOTS messages
-        # but we can't collect responses here synchronously.
-        # 
-        # The solution is to ensure the SnapshotHandler is active (which it is) so peers
-        # can query US, and we should remove the hardcoded RPC port assumption in the CLI.
+            # Use "peer:{address}" format to distinguish from RPC URLs
+            peer_key = f"peer:{peer.remote}"
+            
+            # Mark peer as available for P2P snapshot downloads
+            # Actual snapshot discovery will happen when we implement async message handling
+            _log.debug(f"Peer {peer.remote} is available for P2P snapshot requests")
         
         _log.info(
-            "P2P snapshot protocol is available via SnapshotHandler for incoming queries"
+            "P2P snapshot protocol is available via SnapshotHandler. "
+            "Peers can query this node for snapshots, and this node can query peers "
+            "when request/response pattern is implemented in P2P service."
         )
         
     except Exception as e:
@@ -522,6 +523,55 @@ async def _download_and_import_snapshot(
         except Exception as e:
             _log.error(f"Failed to download and import remote snapshot: {e}")
             return False
+
+
+async def _download_and_import_snapshot_via_p2p(
+    p2p_service: Any,
+    peer_address: str,
+    chain_id: int,
+    checkpoint_height: int,
+    block_db: Any,
+    state_db: Any,
+) -> bool:
+    """
+    Download and import a snapshot from a P2P peer.
+    
+    This function downloads snapshot chunks via P2P messages (GET_SNAPSHOT_CHUNK/SNAPSHOT_CHUNK)
+    and imports them into the databases.
+    
+    NOTE: This requires the P2P service to support synchronous request/response patterns.
+    Currently, the P2P service sends messages asynchronously without waiting for responses.
+    This function is a placeholder for when request/response is implemented.
+    
+    Args:
+        p2p_service: P2P service instance
+        peer_address: Peer address (e.g., "1.2.3.4:30333")
+        chain_id: Chain ID
+        checkpoint_height: Snapshot checkpoint height
+        block_db: Block database instance
+        state_db: State database instance
+        
+    Returns:
+        True if successful, False otherwise
+    """
+    _log.warning(
+        f"P2P snapshot download from peer {peer_address} is not yet implemented. "
+        f"The P2P service needs a request/response API to send GET_SNAPSHOT_CHUNK messages "
+        f"and await SNAPSHOT_CHUNK responses. The server-side handler is ready in SnapshotHandler."
+    )
+    
+    # TODO: Implement when P2P service supports request/response pattern
+    # Steps:
+    # 1. Find the peer in p2p_service._peers by address
+    # 2. Send GET_SNAPSHOTS request to get manifest
+    # 3. For each chunk in manifest:
+    #    a. Send GET_SNAPSHOT_CHUNK request
+    #    b. Wait for SNAPSHOT_CHUNK response
+    #    c. Write chunk to temp directory
+    # 4. Import snapshot from temp directory
+    # 5. Clean up temp directory
+    
+    return False
 
 
 def should_try_snapshot_bootstrap(current_height: int, target_height: Optional[int] = None) -> bool:
