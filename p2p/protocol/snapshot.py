@@ -11,11 +11,7 @@ import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional
-
-from p2p.wire.encoding import Codec
-from p2p.wire.message_ids import MsgID
-from p2p.wire.messages import GetSnapshots, Snapshots, SnapshotInfo
+from typing import Any, Iterable, Optional
 
 log = logging.getLogger("animica.p2p.protocol.snapshot")
 
@@ -28,7 +24,7 @@ class SnapshotHandler:
     Responds to GET_SNAPSHOTS messages by listing locally available snapshots.
     """
     
-    codec: Codec
+    codec: Any  # p2p.wire.encoding.Codec
     snapshots_dir: Optional[Path] = None
     
     def __post_init__(self):
@@ -41,32 +37,35 @@ class SnapshotHandler:
                 base = Path(data_dir)
             else:
                 base = Path.home() / ".animica"
+            
+            # Check if base is chain-specific directory
+            if base.name.startswith("chain-"):
+                # Use parent directory for global snapshots
+                base = base.parent
+            
             self.snapshots_dir = base / "snapshots"
             log.debug(f"Using snapshots directory: {self.snapshots_dir}")
     
-    def can_handle(self, msg_id: MsgID) -> bool:
-        """Return True if this handler can handle the given message ID."""
-        return msg_id == MsgID.GET_SNAPSHOTS
+    def msg_ids(self) -> Iterable[int]:
+        """Return message IDs this handler processes."""
+        from p2p.wire.message_ids import MsgID
+        return [MsgID.GET_SNAPSHOTS]
     
-    async def handle(self, msg_id: MsgID, payload: bytes, peer_id: bytes) -> Optional[bytes]:
+    async def handle(self, conn: Any, frame: Any) -> None:
         """
         Handle incoming GET_SNAPSHOTS request.
         
         Args:
-            msg_id: The message ID (should be GET_SNAPSHOTS)
-            payload: Encoded GetSnapshots message
-            peer_id: The requesting peer's ID
-            
-        Returns:
-            Encoded Snapshots response message, or None on error
+            conn: Connection object
+            frame: Frame containing the request
         """
-        if msg_id != MsgID.GET_SNAPSHOTS:
-            return None
-        
         try:
+            from p2p.wire.messages import GetSnapshots, Snapshots
+            from p2p.wire.message_ids import MsgID
+            
             # Decode request
-            req = self.codec.decode(payload, GetSnapshots)
-            log.debug(f"Received GET_SNAPSHOTS request from peer, chain_id={req.chain_id}")
+            req = self.codec.decode(frame.payload, GetSnapshots)
+            log.debug(f"Received GET_SNAPSHOTS request from {conn.remote_addr}, chain_id={req.chain_id}")
             
             # List available snapshots
             snapshots = self._list_snapshots(req.chain_id)
@@ -74,17 +73,25 @@ class SnapshotHandler:
             # Build response
             response = Snapshots(snapshots=snapshots)
             
-            # Encode and return
+            # Encode and send response
             response_bytes = self.codec.encode(response)
-            log.debug(f"Sending {len(snapshots)} snapshot(s) to peer")
-            return response_bytes
+            await conn.send_frame(MsgID.SNAPSHOTS, response_bytes)
+            
+            log.debug(f"Sent {len(snapshots)} snapshot(s) to {conn.remote_addr}")
             
         except Exception as e:
             log.warning(f"Error handling GET_SNAPSHOTS: {e}", exc_info=True)
-            # Return empty response on error
-            return self.codec.encode(Snapshots(snapshots=[]))
+            # Send empty response on error
+            try:
+                from p2p.wire.messages import Snapshots
+                from p2p.wire.message_ids import MsgID
+                empty_response = Snapshots(snapshots=[])
+                response_bytes = self.codec.encode(empty_response)
+                await conn.send_frame(MsgID.SNAPSHOTS, response_bytes)
+            except Exception:
+                pass  # Best effort
     
-    def _list_snapshots(self, chain_id: Optional[int] = None) -> List[SnapshotInfo]:
+    def _list_snapshots(self, chain_id: Optional[int] = None) -> list:
         """
         List available snapshots from the local snapshots directory.
         
@@ -94,6 +101,8 @@ class SnapshotHandler:
         Returns:
             List of SnapshotInfo objects
         """
+        from p2p.wire.messages import SnapshotInfo
+        
         snapshots = []
         
         if not self.snapshots_dir or not self.snapshots_dir.exists():
