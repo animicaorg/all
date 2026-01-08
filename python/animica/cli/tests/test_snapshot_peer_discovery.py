@@ -555,7 +555,8 @@ def test_snapshot_discover_no_peers_connected():
         
         assert result.exit_code == 1
         assert "❌ No peers connected" in result.stdout
-        assert "Connect to peers first" in result.stdout or "animica peer add" in result.stdout
+        assert "Connect to peers:" in result.stdout
+        assert "animica peer add" in result.stdout
         # Should NOT show the "no snapshots found" message
         assert "No snapshots found on connected peers" not in result.stdout
 
