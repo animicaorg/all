@@ -595,5 +595,77 @@ def test_snapshot_list_no_peers_connected():
         assert "No snapshots found on connected peers" not in result.stdout
 
 
+def test_empty_error_message_handling():
+    """Test that empty error messages are handled gracefully."""
+    
+    class EmptyErrorResponse:
+        """Mock response that returns an empty error message."""
+        def json(self):
+            return {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "error": {"message": ""}  # Empty error message
+            }
+    
+    class MockClientEmptyError:
+        """Mock client that returns empty error."""
+        async def __aenter__(self):
+            return self
+        
+        async def __aexit__(self, *args):
+            pass
+        
+        async def post(self, url: str, json: dict[str, Any], **kwargs):
+            return EmptyErrorResponse()
+    
+    with patch("httpx.AsyncClient") as mock_client:
+        mock_client.return_value = MockClientEmptyError()
+        
+        # The command should not show an empty error message
+        result = runner.invoke(app, ["snapshot", "list"])
+        
+        # Should fail but with a meaningful error message
+        assert result.exit_code == 1
+        # Should not have empty error like "Error listing snapshots: "
+        # Should have something like "Error listing snapshots: RPC error without message"
+        assert "Error listing snapshots:" in result.stderr
+        # Make sure the error message isn't just empty after the colon
+        lines = [line for line in result.stderr.split('\n') if 'Error listing snapshots:' in line]
+        if lines:
+            error_line = lines[0]
+            # Extract the part after the colon
+            after_colon = error_line.split('Error listing snapshots:')[1].strip()
+            assert len(after_colon) > 0, "Error message should not be empty"
+            assert "RPC error without message" in after_colon or "Unknown error" in after_colon
+
+
+def test_connection_error_handling():
+    """Test that connection errors provide meaningful messages."""
+    
+    import httpx
+    
+    class MockClientConnectionError:
+        """Mock client that raises a connection error."""
+        async def __aenter__(self):
+            return self
+        
+        async def __aexit__(self, *args):
+            pass
+        
+        async def post(self, url: str, json: dict[str, Any], **kwargs):
+            raise httpx.ConnectError("Connection refused")
+    
+    with patch("httpx.AsyncClient") as mock_client:
+        mock_client.return_value = MockClientConnectionError()
+        
+        result = runner.invoke(app, ["snapshot", "list"])
+        
+        # Should fail with meaningful error message
+        assert result.exit_code == 1
+        assert "Error listing snapshots:" in result.stderr
+        # Should mention connection failure
+        assert "connect" in result.stderr.lower() or "connection" in result.stderr.lower()
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
