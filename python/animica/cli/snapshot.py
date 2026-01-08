@@ -51,16 +51,21 @@ async def rpc_call(
             response = await client.post(rpc_url, json=payload)
             data = response.json()
     except httpx.TimeoutException as e:
-        error_msg = f"RPC timeout connecting to {rpc_url}: {e}"
+        # Ensure we have a meaningful error message
+        error_detail = str(e).strip() if str(e).strip() else "connection timed out"
+        error_msg = f"RPC timeout connecting to {rpc_url}: {error_detail}"
         raise RuntimeError(error_msg) from e
     except httpx.ConnectError as e:
-        error_msg = f"Failed to connect to RPC at {rpc_url}: {e}"
+        error_detail = str(e).strip() if str(e).strip() else "connection refused"
+        error_msg = f"Failed to connect to RPC at {rpc_url}: {error_detail}"
         raise RuntimeError(error_msg) from e
     except httpx.HTTPError as e:
-        error_msg = f"HTTP error calling {rpc_url}: {e}"
+        error_detail = str(e).strip() if str(e).strip() else "unknown HTTP error"
+        error_msg = f"HTTP error calling {rpc_url}: {error_detail}"
         raise RuntimeError(error_msg) from e
     except Exception as e:
-        error_msg = f"Unexpected error calling RPC {method} at {rpc_url}: {e}"
+        error_detail = str(e).strip() if str(e).strip() else f"unexpected error of type {type(e).__name__}"
+        error_msg = f"Unexpected error calling RPC {method} at {rpc_url}: {error_detail}"
         raise RuntimeError(error_msg) from e
     
     if "error" in data:
