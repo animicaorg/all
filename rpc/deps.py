@@ -1106,8 +1106,9 @@ async def _background_snapshot_discovery(
         block_db: Block database instance
         state_db: State database instance
         chain_id: Chain ID to sync
-        max_wait_seconds: Maximum time to wait for peers initially (default: 30s)
-        retry_interval: Seconds between peer checks initially (default: 5s)
+        max_wait_seconds: Maximum time to wait for initial peers (default: 30s)
+        retry_interval: Seconds between peer checks for initial wait (default: 5s)
+                       (Continuous retry interval is configured via env var)
     """
     # Local imports to avoid circular dependencies and lazy loading
     import asyncio
