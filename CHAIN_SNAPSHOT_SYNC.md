@@ -124,7 +124,8 @@ Nodes can automatically download and import snapshots on first sync:
 # Enable snapshot sync (default: enabled)
 export ANIMICA_SNAPSHOT_SYNC_ENABLED=true
 
-# Configure snapshot source RPC
+# Optional: Configure a specific snapshot source RPC
+# If not set, the node will query connected peers for snapshots
 export ANIMICA_SNAPSHOT_RPC_URL=http://snapshots.animica.org:8545/rpc
 
 # Minimum height gap to use snapshots (default: 1000)
@@ -137,14 +138,18 @@ export ANIMICA_SNAPSHOT_TIMEOUT=600
 animica node up
 ```
 
-**Note:** Snapshot bootstrap is now fully implemented with automatic download capability. The node will:
+**Note:** Snapshot bootstrap is now fully implemented with peer discovery. The node will:
 1. Check if snapshot sync is enabled and configured
-2. Query available snapshots from the configured RPC endpoint
-3. Download the best snapshot (highest height) to a temporary directory
-4. Verify chunk hashes for integrity
-5. Import the snapshot into local databases
-6. Continue P2P sync from the snapshot checkpoint
-7. Fall back to normal P2P sync if snapshot bootstrap fails
+2. **Query all connected peers for their available snapshots**
+3. **Aggregate snapshots and select the highest checkpoint height**
+4. If `ANIMICA_SNAPSHOT_RPC_URL` is configured, also query that endpoint
+5. Download the best snapshot (highest height) to a temporary directory
+6. Verify chunk hashes for integrity
+7. Import the snapshot into local databases
+8. Continue P2P sync from the snapshot checkpoint
+9. Fall back to normal P2P sync if snapshot bootstrap fails
+
+**Peer Discovery:** The node automatically discovers and queries connected P2P peers for their available snapshots. This eliminates the need to manually configure a snapshot source URL in most cases. Simply ensure the node can connect to peers that have snapshots available.
 
 ## Configuration
 
@@ -153,7 +158,7 @@ animica node up
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `ANIMICA_SNAPSHOT_SYNC_ENABLED` | `true` | Enable automatic snapshot bootstrap |
-| `ANIMICA_SNAPSHOT_RPC_URL` | _(none)_ | RPC endpoint to fetch snapshots from |
+| `ANIMICA_SNAPSHOT_RPC_URL` | _(none)_ | Optional RPC endpoint to fetch snapshots from. If not set, queries connected peers. |
 | `ANIMICA_SNAPSHOT_MIN_HEIGHT` | `1000` | Minimum height gap to use snapshots |
 | `ANIMICA_SNAPSHOT_TIMEOUT` | `600` | Timeout for snapshot operations (seconds) |
 
@@ -225,15 +230,18 @@ Snapshots require trust in the source:
 ### Sync Flow with Snapshots
 
 ```
-1. Node starts with empty chain
+1. Node starts with empty or low chain height
 2. Check if snapshot bootstrap should be attempted
    - Is snapshot sync enabled?
    - Is current height below threshold?
-   - Is snapshot RPC configured?
-3. If yes, query available snapshots
-4. Download and import best snapshot (highest height)
-5. Continue P2P sync from checkpoint to current head
-6. If snapshot fails, fall back to full P2P sync
+3. If yes, discover snapshots from multiple sources:
+   a. Query all connected P2P peers for their snapshots
+   b. Query static RPC URL if ANIMICA_SNAPSHOT_RPC_URL is configured
+4. Aggregate all discovered snapshots
+5. Select best snapshot (highest checkpoint height)
+6. Download and import best snapshot
+7. Continue P2P sync from checkpoint to current head
+8. If snapshot fails, fall back to full P2P sync from genesis
 ```
 
 ### Checkpoint Integration
@@ -338,9 +346,10 @@ Delete a snapshot.
 
 ### "No snapshots available"
 
-- Ensure `ANIMICA_SNAPSHOT_RPC_URL` is configured
-- Check that snapshot RPC endpoint is reachable
-- Verify snapshots exist for your chain ID
+- Ensure you have at least one connected peer
+- Check that connected peers have snapshots available (they must be at least at snapshot interval heights)
+- Alternatively, configure `ANIMICA_SNAPSHOT_RPC_URL` to point to a trusted snapshot source
+- Verify P2P connectivity with peers using `animica net peers`
 
 ### "Snapshot hash mismatch"
 
