@@ -10,7 +10,7 @@ Height:    6495
 Status:    SYNCING_BLOCKS
 Headers:   6906 | Blocks: 6495
 
-(After sync force)
+(After force sync command)
 
 Height:    6495  
 Status:    SYNCING_HEADERS

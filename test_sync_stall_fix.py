@@ -5,8 +5,9 @@ This tests the key scenarios where sync gets stuck.
 """
 
 # Test constants
-STALL_TIME_SECONDS = 10
+# STALL_TIME_SECONDS must be > STALL_TIMEOUT_SECONDS to trigger stall detection
 STALL_TIMEOUT_SECONDS = 5
+STALL_TIME_SECONDS = STALL_TIMEOUT_SECONDS + 5  # Must exceed timeout to trigger stall
 
 def test_at_tip_clearing_on_force():
     """Test that 'at_tip' error is cleared when force=True"""
