@@ -53,10 +53,15 @@ The node runs an internal sync watchdog that:
 1. Detects lack of progress.
 2. Re-queues headers or blocks.
 3. Refreshes peers and resets the sync pipeline.
-4. Attempts snapshot-based recovery if configured and safe.
+4. Attempts snapshot-based recovery if configured and safe (P2P discovery first).
 
 If snapshots are enabled, the node only applies a snapshot when it is ahead of the local
 head and trusted (manifest signatures or majority peer agreement).
+
+When the block queue is empty while headers are ahead, the node periodically logs a
+diagnostic summary explaining why no block requests are issued (queue, inflight, last
+error, and stall reason). Snapshot recovery attempts are rate-limited with cooldowns
+and per-window caps to avoid endless retry loops.
 
 ## What to report
 
@@ -65,3 +70,4 @@ When reporting stalls, include:
 - Output of `animica debug sync-dump`
 - Peer count and best peer head height/hash
 - Any block validation error or mismatch reason
+- Snapshot recovery status (`snapshot_last_error`, `snapshot_last_attempt_at`)

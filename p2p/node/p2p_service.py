@@ -1189,6 +1189,13 @@ class P2PService:
         self._snapshot_recovery_min_advance_blocks = int(
             os.environ.get("ANIMICA_SNAPSHOT_MIN_ADVANCE_BLOCKS", "500") or 500
         )
+        self._snapshot_recovery_window_sec = float(
+            os.environ.get("ANIMICA_SNAPSHOT_RECOVERY_WINDOW_SECS", "3600") or 3600
+        )
+        self._snapshot_recovery_max_per_window = int(
+            os.environ.get("ANIMICA_SNAPSHOT_RECOVERY_MAX_PER_WINDOW", "2") or 2
+        )
+        self._snapshot_recovery_attempts: deque[float] = deque()
         self._sync_tip_tolerance = int(
             os.environ.get("ANIMICA_P2P_SYNC_TIP_TOLERANCE", "2") or 2
         )
@@ -1206,6 +1213,10 @@ class P2PService:
             os.environ.get("ANIMICA_SYNC_LOG_INTERVAL", "5.0") or 5.0
         )
         self._sync_last_cycle_log_at = 0.0
+        self._sync_block_queue_empty_log_interval = float(
+            os.environ.get("ANIMICA_SYNC_EMPTY_QUEUE_LOG_INTERVAL", "15.0") or 15.0
+        )
+        self._sync_block_queue_empty_log_at = 0.0
         self._sync_cache: Optional[SyncCacheStore] = None
         self._sync_cache_state_interval = float(
             os.environ.get("ANIMICA_SYNC_CACHE_STATE_INTERVAL", "5") or 5
@@ -3445,13 +3456,40 @@ class P2PService:
             < self._snapshot_recovery_cooldown
         ):
             return
+        window = self._snapshot_recovery_window_sec
+        if window > 0:
+            while self._snapshot_recovery_attempts and (
+                now - self._snapshot_recovery_attempts[0] > window
+            ):
+                self._snapshot_recovery_attempts.popleft()
+        if (
+            self._snapshot_recovery_max_per_window > 0
+            and len(self._snapshot_recovery_attempts)
+            >= self._snapshot_recovery_max_per_window
+        ):
+            self._snapshot_recovery_last_error = (
+                f"snapshot recovery rate limited "
+                f"(max {self._snapshot_recovery_max_per_window} per {int(window)}s)"
+            )
+            log.warning(
+                "Snapshot recovery rate limited",
+                extra={
+                    "reason": reason,
+                    "window_s": int(window),
+                    "attempts": len(self._snapshot_recovery_attempts),
+                    "max_attempts": self._snapshot_recovery_max_per_window,
+                },
+            )
+            return
+        self._snapshot_recovery_attempts.append(now)
         self._snapshot_recovery_task = asyncio.create_task(
             self._run_snapshot_recovery(reason=reason), name="p2p.snapshot_recovery"
         )
 
     async def _run_snapshot_recovery(self, *, reason: str) -> None:
         from p2p.deps import P2PDeps
-        from p2p.sync.snapshot_sync import auto_bootstrap_from_manifest
+        from p2p.sync.snapshot_sync import try_snapshot_bootstrap
+        from core.snapshot.inventory import latest_snapshot
 
         now = time.time()
         self._snapshot_recovery_last_attempt_at = now
@@ -3461,6 +3499,8 @@ class P2PService:
         db_uri = getattr(self.deps, "db_uri", None) if self.deps else None
         genesis_path = getattr(self.deps, "genesis_path", None) if self.deps else None
         head_height, _head_hash = self._local_head()
+        block_db = self._block_db()
+        state_db = self._state_db()
 
         log.warning(
             "Snapshot recovery starting",
@@ -3481,23 +3521,25 @@ class P2PService:
         except Exception:
             pass
 
-        success, error, manifest, manifest_url = await asyncio.to_thread(
-            auto_bootstrap_from_manifest,
+        success, error = await try_snapshot_bootstrap(
+            block_db=block_db,
+            state_db=state_db,
             chain_id=self.chain_id,
+            current_height=int(head_height or 0),
+            p2p_service=self,
             db_uri=db_uri,
-            local_height=int(head_height or 0),
             force=True,
         )
 
-        self._snapshot_recovery_last_manifest_height = (
-            manifest.head_height if manifest else None
-        )
-        self._snapshot_recovery_last_manifest_hash = (
-            manifest.head_hash if manifest else None
-        )
-        self._snapshot_recovery_last_manifest_url = manifest_url
-
         if success:
+            latest = latest_snapshot(
+                chain_id=int(self.chain_id),
+                snapshots_dir=self._get_snapshots_dir(),
+            )
+            if latest is not None:
+                self._snapshot_recovery_last_manifest_height = latest.checkpoint_height
+                self._snapshot_recovery_last_manifest_hash = latest.manifest_hash
+                self._snapshot_recovery_last_manifest_url = latest.path
             self._snapshot_recovery_last_success_at = time.time()
             try:
                 self.deps = P2PDeps.open(db_uri, genesis_path)
@@ -5908,6 +5950,8 @@ class P2PService:
                             "accounts_count": getattr(snap_data, 'accounts_count', 0),
                             "size_mb": getattr(snap_data, 'size_mb', 0.0),
                             "timestamp": getattr(snap_data, 'timestamp', 0),
+                            "created_at": getattr(snap_data, 'created_at', ''),
+                            "manifest_hash": getattr(snap_data, 'manifest_hash', ''),
                         }
                         snapshots.append(snapshot_dict)
                     except Exception as e:
@@ -6051,13 +6095,9 @@ class P2PService:
 
     def _get_snapshots_dir(self) -> Path:
         """Get the snapshots directory path."""
-        base = self._chain_data_dir
-        
-        # If data_dir looks like chain-specific (ends with /chain-N), use parent
-        if base.name.startswith("chain-"):
-            base = base.parent
-        
-        return base / "snapshots"
+        from core.snapshot.paths import get_snapshots_dir
+
+        return get_snapshots_dir(self._chain_data_dir)
 
     def _list_local_snapshots(self, chain_id: Optional[int] = None) -> list:
         """
@@ -6069,66 +6109,37 @@ class P2PService:
         Returns:
             List of SnapshotInfo objects
         """
+        from core.snapshot.inventory import rebuild_inventory
         from p2p.wire.messages import SnapshotInfo
-        import json
-        
+
         snapshots = []
         snapshots_dir = self._get_snapshots_dir()
-        
+
         if not snapshots_dir.exists():
             self._log.debug(f"Snapshots directory does not exist: {snapshots_dir}")
             return snapshots
-        
-        # Scan for snapshot directories
-        for item in snapshots_dir.iterdir():
-            if not item.is_dir():
+
+        entries = rebuild_inventory(snapshots_dir)
+        for entry in entries:
+            if chain_id is not None and entry.chain_id != chain_id:
                 continue
-            
-            # Parse directory name: chain-{id}-height-{height}
-            if not item.name.startswith("chain-"):
-                continue
-            
-            parts = item.name.split("-")
-            if len(parts) != 4:
-                continue
-            
-            try:
-                snap_chain_id = int(parts[1])
-                snap_height = int(parts[3])
-            except ValueError:
-                continue
-            
-            # Filter by chain ID if specified
-            if chain_id is not None and snap_chain_id != chain_id:
-                continue
-            
-            # Load manifest if exists
-            manifest_file = item / "manifest.json"
-            if manifest_file.exists():
-                try:
-                    with open(manifest_file) as f:
-                        manifest_data = json.load(f)
-                    
-                    # Create SnapshotInfo
-                    info = SnapshotInfo(
-                        chain_id=snap_chain_id,
-                        checkpoint_height=snap_height,
-                        checkpoint_hash=manifest_data.get("checkpoint_hash", ""),
-                        blocks_count=manifest_data.get("blocks_count", 0),
-                        accounts_count=manifest_data.get("accounts_count", 0),
-                        size_mb=sum(
-                            chunk["size"] for chunk in manifest_data.get("chunks", [])
-                        ) / (1024 * 1024),
-                        timestamp=manifest_data.get("timestamp", 0),
-                    )
-                    snapshots.append(info)
-                except (json.JSONDecodeError, IOError, KeyError) as e:
-                    self._log.debug(f"Failed to read manifest from {manifest_file}: {e}")
-                    continue
-        
-        # Sort by chain_id, then height (descending)
+            size_mb = entry.total_size / (1024 * 1024)
+            snapshots.append(
+                SnapshotInfo(
+                    chain_id=entry.chain_id,
+                    checkpoint_height=entry.checkpoint_height,
+                    checkpoint_hash=entry.checkpoint_hash,
+                    blocks_count=entry.blocks_count,
+                    accounts_count=entry.accounts_count,
+                    size_mb=size_mb,
+                    timestamp=entry.timestamp,
+                    created_at=entry.created_at,
+                    manifest_hash=entry.manifest_hash,
+                )
+            )
+
         snapshots.sort(key=lambda s: (s.chain_id, -s.checkpoint_height))
-        
+
         self._log.debug(f"Found {len(snapshots)} snapshot(s) in {snapshots_dir}")
         return snapshots
 
@@ -6444,6 +6455,57 @@ class P2PService:
             return height, ts
         except Exception:
             return None
+
+    def _snapshot_anchor(self) -> Optional[tuple[int, bytes, str]]:
+        from core.snapshot.inventory import latest_snapshot
+
+        entry = latest_snapshot(
+            chain_id=int(self.chain_id),
+            snapshots_dir=self._get_snapshots_dir(),
+        )
+        if entry is None or not entry.checkpoint_hash:
+            return None
+        hash_bytes = self._parse_hash_bytes(entry.checkpoint_hash)
+        if not hash_bytes:
+            return None
+        return entry.checkpoint_height, hash_bytes, "snapshot_inventory"
+
+    def _anchor_candidates(self) -> dict[bytes, tuple[int, str]]:
+        anchors: dict[bytes, tuple[int, str]] = {}
+        genesis = self._genesis_hash()
+        if genesis:
+            anchors[bytes(genesis)] = (0, "genesis")
+        local_height, local_hash_hex = self._local_head()
+        local_hash = self._parse_hash_bytes(local_hash_hex)
+        if local_hash:
+            anchors[bytes(local_hash)] = (int(local_height or 0), "local_head")
+        if self._sync_best_header is not None:
+            anchors[bytes(self._sync_best_header.hash)] = (
+                int(self._sync_best_header.height),
+                "best_header_tip",
+            )
+        if self._sync_checkpoint_hash is not None and self._sync_checkpoint_height is not None:
+            anchors[bytes(self._sync_checkpoint_hash)] = (
+                int(self._sync_checkpoint_height),
+                "checkpoint",
+            )
+        snapshot_anchor = self._snapshot_anchor()
+        if snapshot_anchor is not None:
+            height, anchor_hash, source = snapshot_anchor
+            anchors[bytes(anchor_hash)] = (int(height), source)
+        return anchors
+
+    def _anchor_candidates_summary(self) -> list[dict[str, Any]]:
+        summary = []
+        for h, (height, source) in self._anchor_candidates().items():
+            summary.append(
+                {
+                    "hash": h.hex(),
+                    "height": height,
+                    "source": source,
+                }
+            )
+        return summary
 
     def _header_from_compact(self, hc: HeaderCompact) -> _SyncHeader:
         return _SyncHeader(
@@ -7006,11 +7068,22 @@ class P2PService:
         anchor_hash = local_hash
         anchor_source = "local_head"
         first_header = self._header_from_compact(headers[0])
+        anchor_candidates = self._anchor_candidates()
         prev_meta = self._header_meta(first_header.parent_hash)
+        anchor_from_candidates = False
+        if prev_meta is None:
+            candidate = anchor_candidates.get(first_header.parent_hash)
+            if candidate is not None:
+                anchor_height, _source = candidate
+                anchor_hash = first_header.parent_hash
+                anchor_source = _source
+                prev_meta = (anchor_height, 0)
+                anchor_from_candidates = True
         if prev_meta is not None:
             anchor_height = int(prev_meta[0])
             anchor_hash = first_header.parent_hash
-            anchor_source = "prev_hash"
+            if not anchor_from_candidates:
+                anchor_source = "prev_hash"
             self._update_matched_ancestor(
                 anchor_height, anchor_hash, source="prev_hash"
             )
@@ -7020,6 +7093,7 @@ class P2PService:
             "anchor_height": anchor_height,
             "anchor_source": anchor_source,
             "prev_hash_known": prev_meta is not None,
+            "anchor_candidates": self._anchor_candidates_summary(),
         }
         prev_known = prev_meta is not None
         if self._should_enforce_checkpoint_anchor() and not self._peer_is_anchored(peer):
@@ -7132,6 +7206,7 @@ class P2PService:
                         self._checkpoint_parent_meta(header.parent_hash) is None
                         and not self._has_header(header.parent_hash)
                         and header.parent_hash not in self._sync_headers
+                        and header.parent_hash not in anchor_candidates
                     ):
                         order, reason = self._note_not_anchored(
                             peer,
@@ -7155,16 +7230,21 @@ class P2PService:
                         else:
                             parent_info = self._header_meta(header.parent_hash)
                             if parent_info is None:
-                                order, reason = self._note_not_anchored(
-                                    peer,
-                                    header=header,
-                                    anchor_height=anchor_height,
-                                    anchor_hash=anchor_hash,
-                                    reason="parent_meta_missing",
-                                    allow_probe=prev_known,
-                                )
-                                return order, reason, {"parent_meta_missing": len(headers)}
-                            parent_height, parent_ts = parent_info
+                                candidate = anchor_candidates.get(header.parent_hash)
+                                if candidate is None:
+                                    order, reason = self._note_not_anchored(
+                                        peer,
+                                        header=header,
+                                        anchor_height=anchor_height,
+                                        anchor_hash=anchor_hash,
+                                        reason="parent_meta_missing",
+                                        allow_probe=prev_known,
+                                    )
+                                    return order, reason, {"parent_meta_missing": len(headers)}
+                                parent_height, _source = candidate
+                                parent_ts = None
+                            else:
+                                parent_height, parent_ts = parent_info
                     if header.height != parent_height + 1:
                         abort_reason = "header_height_mismatch"
                         abort_index = idx
@@ -7396,6 +7476,28 @@ class P2PService:
                             },
                         )
             if not self._sync_block_queue:
+                now = time.time()
+                local_height, _ = self._local_head()
+                if (
+                    self._sync_best_header is not None
+                    and self._sync_best_header.height > int(local_height or 0)
+                    and now - self._sync_block_queue_empty_log_at
+                    >= self._sync_block_queue_empty_log_interval
+                ):
+                    self._sync_block_queue_empty_log_at = now
+                    log.warning(
+                        "Block queue empty while headers ahead",
+                        extra={
+                            "local_height": int(local_height or 0),
+                            "best_header_height": self._sync_best_header.height,
+                            "queued_blocks": len(self._sync_block_queue),
+                            "inflight_blocks": len(self._sync_inflight_blocks),
+                            "headers_buffered": len(self._sync_headers),
+                            "block_buffered": len(self._sync_block_buffer),
+                            "last_block_error": self._sync_last_block_error,
+                            "stall_reason": self._sync_block_stalled_reason,
+                        },
+                    )
                 log.debug(
                     "Skipped block requests: block queue empty",
                     extra={"seeded": seeded},
@@ -9711,6 +9813,9 @@ class P2PService:
                 "anchor_source": (self._sync_last_anchor_check or {}).get("anchor_source"),
                 "prev_hash_known": (self._sync_last_anchor_check or {}).get("prev_hash_known"),
                 "prev_hash": (self._sync_last_anchor_check or {}).get("prev_hash"),
+                "anchor_candidates": (self._sync_last_anchor_check or {}).get(
+                    "anchor_candidates"
+                ),
                 "locator_len": len(locator_info),
                 "locator_start": locator_start,
                 "locator_end": locator_end,
@@ -9734,6 +9839,9 @@ class P2PService:
                 "best_header_height": best_header_height,
                 "best_header_hash": best_header_hash,
                 "locator_summary": self._sync_last_locator_summary,
+                "anchor_candidates": (self._sync_last_anchor_check or {}).get(
+                    "anchor_candidates"
+                ),
                 "first_height": header.height,
                 "first_hash": header.hash.hex(),
                 "first_prev_hash": header.parent_hash.hex(),

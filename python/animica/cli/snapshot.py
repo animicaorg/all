@@ -309,7 +309,9 @@ def create(
         typer.echo(f"  Accounts: {result['accounts_count']}")
         typer.echo(f"  Storage keys: {result['storage_keys_count']}")
         typer.echo(f"  Elapsed: {result['elapsed_seconds']}s")
-        typer.echo(f"  Path: {result['path']}")
+        path_display = result.get("path_display") or result.get("path")
+        if path_display:
+            typer.echo(f"  Path: {path_display}")
         
     except Exception as e:
         error_msg = str(e) if str(e).strip() else f"Unknown error ({type(e).__name__})"
@@ -495,7 +497,9 @@ def list_snapshots(
                     typer.echo(f"  Blocks: {snap['blocks_count']}")
                     typer.echo(f"  Accounts: {snap['accounts_count']}")
                     typer.echo(f"  Size: {snap['size_mb']:.2f} MB")
-                    typer.echo(f"  Path: {snap['path']}")
+                    path_display = snap.get("path_display") or snap.get("path")
+                    if path_display:
+                        typer.echo(f"  Path: {path_display}")
                     typer.echo("")
             
             # Display highest peer snapshot if available
@@ -674,6 +678,9 @@ def import_snapshot(
         typer.echo(f"  Blocks: {result['blocks_count']}")
         typer.echo(f"  Accounts: {result['accounts_count']}")
         typer.echo(f"  Elapsed: {result['elapsed_seconds']}s")
+        path_display = result.get("path_display") or result.get("path")
+        if path_display:
+            typer.echo(f"  Path: {path_display}")
         
     except Exception as e:
         error_msg = str(e) if str(e).strip() else f"Unknown error ({type(e).__name__})"
@@ -780,6 +787,7 @@ def discover(
         
         snapshots = result.get("snapshots", [])
         peer_count = result.get("peer_count", 0)
+        peer_status = result.get("peer_status") or {}
         
         if not snapshots:
             message = result.get("message", "No snapshots found")
@@ -802,6 +810,8 @@ def discover(
                 typer.echo("  - Try connecting to more peers: animica peer add <address>")
                 typer.echo("  - Wait for peers to sync and create snapshots")
                 typer.echo("")
+                if peer_status:
+                    _print_peer_status(peer_status)
                 return  # Exit with code 0 (success)
         
         # Find the best snapshot (highest height)
@@ -811,7 +821,11 @@ def discover(
             typer.echo(json.dumps(best_snapshot, indent=2))
             return
         
-        typer.echo(f"\n✅ Found {len(snapshots)} snapshot(s) from {peer_count} peer(s) via P2P")
+        typer.echo(
+            f"\n✅ Found {len(snapshots)} total snapshot(s) from {peer_count} peer(s) via P2P"
+        )
+        if peer_status:
+            _print_peer_status(peer_status)
         typer.echo(f"\n🏆 Best snapshot (highest height):")
         typer.echo(f"  Chain ID:         {best_snapshot['chain_id']}")
         typer.echo(f"  Height:           {best_snapshot['checkpoint_height']}")
@@ -819,6 +833,10 @@ def discover(
         typer.echo(f"  Blocks:           {best_snapshot['blocks_count']}")
         typer.echo(f"  Accounts:         {best_snapshot['accounts_count']}")
         typer.echo(f"  Size:             {best_snapshot['size_mb']:.2f} MB")
+        if best_snapshot.get("created_at"):
+            typer.echo(f"  Created at:       {best_snapshot['created_at']}")
+        if best_snapshot.get("manifest_hash"):
+            typer.echo(f"  Manifest hash:    {best_snapshot['manifest_hash']}")
         typer.echo(f"  Source Peer:      {best_snapshot.get('_source', 'unknown')}")
         
         typer.echo("\n💡 To use this snapshot for fast sync:")
@@ -832,6 +850,26 @@ def discover(
         error_msg = str(e) if str(e).strip() else f"Unknown error ({type(e).__name__})"
         typer.echo(f"❌ Error discovering snapshots: {error_msg}", err=True)
         raise typer.Exit(code=1)
+
+
+def _print_peer_status(peer_status: dict[str, Any]) -> None:
+    responded = peer_status.get("responded", 0)
+    total = peer_status.get("total_peers")
+    empty = peer_status.get("empty", [])
+    timeouts = peer_status.get("time_out", [])
+    errors = peer_status.get("errors", [])
+    if total is not None:
+        typer.echo(f"\n📡 Peer responses: {responded}/{total} responded")
+    if empty:
+        typer.echo(f"  • Empty inventory: {len(empty)} peer(s)")
+    if timeouts:
+        typer.echo(f"  • Timeouts: {len(timeouts)} peer(s)")
+    if errors:
+        typer.echo("  • Errors:")
+        for err in errors:
+            peer = err.get("peer")
+            reason = err.get("reason")
+            typer.echo(f"    - {peer}: {reason}")
 
 
 @app.command("status")
