@@ -18,6 +18,7 @@ from typing import Any, Awaitable, Deque, Dict, List, Optional, Set, Tuple
 from urllib.parse import urlparse
 from urllib.request import urlopen
 from p2p import version as p2p_version
+from core.config import DEFAULT_DB_FILENAME
 from p2p.crypto import keys as keys_mod
 from p2p.crypto import peer_id as peer_id_mod
 from p2p.peer import peerstore as pstore
@@ -550,6 +551,7 @@ class P2PService:
         # by default in this service implementation.
         _ = (enable_quic, enable_ws, nat)
         apply_umask_from_env()
+        self._log = logging.getLogger("animica.p2p")
 
         self.listen_addrs = listen_addrs or ["/ip4/0.0.0.0/tcp/30333"]
         self._configured_seeds = list(seeds or [])
@@ -3444,6 +3446,27 @@ class P2PService:
             },
         )
 
+    def _resolve_db_uri(self) -> Optional[str]:
+        db_uri = getattr(self.deps, "db_uri", None) if self.deps else None
+        if db_uri:
+            return db_uri
+        env_db_uri = os.environ.get("ANIMICA_DB_URI")
+        if env_db_uri:
+            return env_db_uri
+        chain_dir = self._chain_data_dir
+        if not chain_dir:
+            base_dir = Path(os.environ.get("ANIMICA_DATA_DIR") or "~/.animica").expanduser()
+            chain_dir = base_dir / f"chain-{self.chain_id}"
+        db_path = Path(chain_dir) / DEFAULT_DB_FILENAME
+        return f"sqlite:///{db_path}"
+
+    def __getattr__(self, name: str) -> Any:
+        if name == "_log":
+            logger = logging.getLogger("animica.p2p")
+            object.__setattr__(self, "_log", logger)
+            return logger
+        raise AttributeError(f"{type(self).__name__} has no attribute {name!r}")
+
     def _maybe_trigger_snapshot_recovery(self, *, reason: str) -> None:
         if not self._snapshot_auto_enabled():
             return
@@ -3496,7 +3519,7 @@ class P2PService:
         self._snapshot_recovery_last_error = None
         self._sync_paused = True
 
-        db_uri = getattr(self.deps, "db_uri", None) if self.deps else None
+        db_uri = self._resolve_db_uri()
         genesis_path = getattr(self.deps, "genesis_path", None) if self.deps else None
         head_height, _head_hash = self._local_head()
         block_db = self._block_db()
