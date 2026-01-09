@@ -501,12 +501,12 @@ async def _query_peers_for_snapshots(
             if snapshots is None:
                 status["time_out"].append(peer_remote)
                 continue
+            status["responded"] += 1
             if snapshots:
                 # Use "peer:" prefix to distinguish from RPC URLs
                 peer_key = f"peer:{peer_remote}"
                 snapshots_by_peer[peer_key] = snapshots
                 _log.info(f"Peer {peer_remote} reported {len(snapshots)} snapshot(s)")
-                status["responded"] += 1
             else:
                 _log.debug(f"Peer {peer_remote} has no snapshots available")
                 status["empty"].append(peer_remote)
