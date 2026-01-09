@@ -9818,6 +9818,16 @@ class P2PService:
         ):
             self._sync_checkpoint_validation = "unreachable"
             self._sync_last_checkpoint_action = "checkpoint_unreachable"
+        should_reset = (
+            anchor_height <= self._sync_not_anchored_reset_height
+            and self._sync_not_anchored_attempts
+            >= self._sync_not_anchored_reset_threshold
+            and now - self._sync_last_progress_at > self._sync_stall_timeout
+        )
+        if should_reset and self._reset_chain_to_genesis(reason="not_anchored"):
+            action = "reset_to_genesis"
+            self._sync_last_checkpoint_action = "reset_to_genesis"
+            self._sync_last_recovery_action = "reset_to_genesis"
         self._sync_last_recovery_action = action
         best_header_height = (
             self._sync_best_header.height if self._sync_best_header else anchor_height
