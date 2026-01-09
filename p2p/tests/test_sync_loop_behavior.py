@@ -417,6 +417,79 @@ async def test_no_false_stalled_on_at_tip(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_headers_empty_at_tip_transitions_idle(tmp_path: Path) -> None:
+    deps_sync, deps = _make_deps(tmp_path, "headers-empty-tip")
+    node = P2PService(
+        listen_addrs=[tcp_multiaddr(free_port())],
+        seeds=[],
+        chain_id=deps_sync.chain_id,
+        deps=deps,
+        peerstore_path=str(tmp_path / "headers-empty-tip" / "p2p"),
+    )
+    _register_peer(node, "peer:1005")
+
+    async def _fake_fetch_headers(_peer: _PeerState):
+        return []
+
+    node._fetch_headers = _fake_fetch_headers  # type: ignore[assignment]
+    node._empty_headers_reason = (  # type: ignore[assignment]
+        lambda *_args, **_kwargs: "headers_empty"
+    )
+    node._local_head = lambda: (1, node._genesis_hash().hex())
+
+    await node._sync_once(force=True)
+    snapshot = node.sync_status_snapshot()
+    assert snapshot.phase in {"SYNCED", "IDLE"}
+    assert snapshot.in_flight_headers == 0
+
+
+@pytest.mark.asyncio
+async def test_headers_empty_rotates_peer(tmp_path: Path) -> None:
+    deps_sync, deps = _make_deps(tmp_path, "headers-empty-rotate")
+    node = P2PService(
+        listen_addrs=[tcp_multiaddr(free_port())],
+        seeds=[],
+        chain_id=deps_sync.chain_id,
+        deps=deps,
+        peerstore_path=str(tmp_path / "headers-empty-rotate" / "p2p"),
+    )
+    peer_a = _register_peer(node, "peer:1006")
+    peer_b = _register_peer(node, "peer:1007")
+    peer_a.hello["head_height"] = 2
+    peer_b.hello["head_height"] = 2
+
+    genesis = deps_sync.header_by_number(0)
+    assert genesis is not None
+    child_block = _make_child_block(genesis)
+    child_hash = compute_header_hash(child_block.header)
+    parent_hash = genesis.hash()
+
+    headers = [
+        HeaderCompact(
+            hash=child_hash,
+            height=1,
+            parent=parent_hash,
+            theta_micro=int(getattr(child_block.header, "thetaMicro", 0)),
+            timestamp=int(getattr(child_block.header, "timestamp", 0)),
+        )
+    ]
+
+    async def _fake_fetch_headers(peer: _PeerState):
+        return [] if peer.remote == peer_a.remote else headers
+
+    node._fetch_headers = _fake_fetch_headers  # type: ignore[assignment]
+    node._empty_headers_reason = (  # type: ignore[assignment]
+        lambda *_args, **_kwargs: "headers_empty"
+    )
+
+    await node._sync_once(force=True)
+    assert node._sync_best_header is not None
+    info = node._sync_peer_heads.get(peer_a.remote)
+    assert info is not None
+    assert info.cooldown_until > time.time()
+
+
+@pytest.mark.asyncio
 async def test_block_request_scheduling(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     deps_sync, deps = _make_deps(tmp_path, "block-request-scheduling")
     node = P2PService(
@@ -446,6 +519,40 @@ async def test_block_request_scheduling(tmp_path: Path, monkeypatch: pytest.Monk
     assert requested > 0
     assert node._sync_active_block_peer == peer.remote
     assert node._sync_inflight_blocks
+
+
+@pytest.mark.asyncio
+async def test_block_requests_wait_for_anchor(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    deps_sync, deps = _make_deps(tmp_path, "block-wait-anchor")
+    node = P2PService(
+        listen_addrs=[tcp_multiaddr(free_port())],
+        seeds=[],
+        chain_id=deps_sync.chain_id,
+        deps=deps,
+        peerstore_path=str(tmp_path / "block-wait-anchor" / "p2p"),
+    )
+    peer = _register_peer(node, "peer:1300")
+    peer.anchored = False
+
+    genesis = deps_sync.header_by_number(0)
+    assert genesis is not None
+    child_block = _make_child_block(genesis)
+    child_hash = compute_header_hash(child_block.header)
+    node._sync_headers[child_hash] = node._sync_header_from_db(child_block.header)
+    node._sync_best_header = node._sync_headers[child_hash]
+    node._enqueue_missing_blocks([node._sync_headers[child_hash]])
+
+    sent = []
+
+    async def _fake_send(_peer: _PeerState, _msg_id, _payload) -> None:
+        sent.append(_msg_id)
+
+    monkeypatch.setattr(node, "_send", _fake_send)
+    node._should_enforce_checkpoint_anchor = lambda: True  # type: ignore[assignment]
+
+    requested = await node._schedule_block_requests(peer)
+    assert requested == 0
+    assert not sent
 
 
 @pytest.mark.asyncio
