@@ -50,7 +50,7 @@ from typing import Optional
 import typer
 
 # Import subcommand apps
-from . import chain, da, faucet, gui, key, mempool, mining, network, node, p2p, peer, rpc, script, snapshot, studio, sync, tx, wallet
+from . import chain, da, debug, faucet, gui, key, mempool, mining, network, node, p2p, peer, rpc, script, snapshot, studio, sync, tx, wallet
 
 app = typer.Typer(
     name="animica",
@@ -173,6 +173,7 @@ app.add_typer(mempool.app, name="mempool")
 app.add_typer(sync.app, name="sync")
 app.add_typer(snapshot.app, name="snapshot")
 app.add_typer(gui.app, name="gui")
+app.add_typer(debug.app, name="debug")
 
 
 # ============================================================================
