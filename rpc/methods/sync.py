@@ -152,9 +152,15 @@ async def sync_start() -> dict[str, t.Any]:
 async def sync_get_status(opts: dict[str, t.Any] | str | None = None) -> dict[str, t.Any]:
     svc = _get_p2p_service()
     fatal_error = None
+    chain_head_height = None
+    chain_head_hash = None
     try:
         ctx = deps.get_ctx()
         fatal_error = getattr(ctx, "p2p_start_error", None)
+        head = ctx.get_head()
+        if isinstance(head, dict):
+            chain_head_height = head.get("height")
+            chain_head_hash = head.get("hash")
     except Exception:
         fatal_error = None
     refresh = False
@@ -172,19 +178,38 @@ async def sync_get_status(opts: dict[str, t.Any] | str | None = None) -> dict[st
             payload = snap.to_dict()
             if fatal_error and not payload.get("fatal_error"):
                 payload["fatal_error"] = fatal_error
+            if chain_head_height is not None:
+                payload.setdefault("chain_head_height", chain_head_height)
+                payload.setdefault("chain_head_hash", chain_head_hash)
+                if not payload.get("head_height"):
+                    payload["head_height"] = chain_head_height
+                    payload["head_hash"] = chain_head_hash
+            if "p2p_init_failed" not in payload:
+                payload["p2p_init_failed"] = bool(fatal_error)
+                payload["p2p_init_error"] = fatal_error
             return payload
         if isinstance(snap, dict):
             if fatal_error and not snap.get("fatal_error"):
                 snap["fatal_error"] = fatal_error
+            if chain_head_height is not None:
+                snap.setdefault("chain_head_height", chain_head_height)
+                snap.setdefault("chain_head_hash", chain_head_hash)
+                if not snap.get("head_height"):
+                    snap["head_height"] = chain_head_height
+                    snap["head_hash"] = chain_head_hash
+            if "p2p_init_failed" not in snap:
+                snap["p2p_init_failed"] = bool(fatal_error)
+                snap["p2p_init_error"] = fatal_error
             return snap
+    head_height = int(chain_head_height or 0)
     return {
         "phase": "IDLE",
-        "head_height": 0,
-        "head_hash": None,
+        "head_height": head_height,
+        "head_hash": chain_head_hash,
         "best_header_height": 0,
         "best_header_hash": None,
-        "best_block_height": 0,
-        "best_block_hash": None,
+        "best_block_height": head_height,
+        "best_block_hash": chain_head_hash,
         "network_best_height": None,
         "in_flight": 0,
         "in_flight_headers": 0,
@@ -210,6 +235,8 @@ async def sync_get_status(opts: dict[str, t.Any] | str | None = None) -> dict[st
         "last_header_error_at": None,
         "last_block_error": None,
         "fatal_error": fatal_error,
+        "p2p_init_failed": bool(fatal_error),
+        "p2p_init_error": fatal_error,
         "active_peer_for_headers": None,
         "active_peer_for_blocks": None,
         "active_peers_for_headers": [],
@@ -218,6 +245,8 @@ async def sync_get_status(opts: dict[str, t.Any] | str | None = None) -> dict[st
         "ineligible_peers_for_headers": {},
         "eligible_peers_for_blocks": [],
         "ineligible_peers_for_blocks": {},
+        "chain_head_height": chain_head_height,
+        "chain_head_hash": chain_head_hash,
         "pending_header_batches": 0,
         "checkpoint_height": None,
         "checkpoint_hash": None,

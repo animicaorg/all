@@ -32,6 +32,7 @@ head = ctx.get_head()           # {'height': int, 'hash': '0x..', 'header': <obj
 params = ctx.params             # dict (subset of spec/params.yaml)
 """
 
+import asyncio
 import contextlib
 import json
 import logging
@@ -670,6 +671,9 @@ class RpcContext:
     p2p_required: bool = False
     p2p_start_error: str | None = None
     snapshot_orchestrator: t.Any = None  # Optional snapshot orchestrator for automated management
+    p2p_supervisor_task: asyncio.Task[None] | None = None
+    p2p_last_healthy_at: float = 0.0
+    p2p_restart_backoff_s: float = 1.0
 
     def get_head(self) -> dict[str, t.Any]:
         return self.head.get()
@@ -682,6 +686,8 @@ class RpcContext:
                 close()
         except Exception:
             pass
+        if self.p2p_supervisor_task is not None:
+            self.p2p_supervisor_task.cancel()
 
 
 _CTX: RpcContext | None = None
@@ -704,6 +710,215 @@ def _needs_rebuild(cfg: t.Any | None) -> bool:
         if getattr(current, attr, None) != getattr(cfg_view, attr, None):
             return True
     return False
+
+
+def _init_p2p_service(
+    cfg_view: _ConfigView,
+    data_root: Path,
+    init_error: str | None,
+) -> tuple[t.Any, t.Any, str | None, bool, bool]:
+    log = logging.getLogger("animica.rpc.deps")
+    p2p_service = None
+    p2p_deps_sync = None
+    p2p_start_error = None
+    p2p_required = _bool_env("ANIMICA_P2P_REQUIRED", cfg_view.p2p_required)
+    enable_p2p = _bool_env("ANIMICA_P2P_ENABLE", True)
+    if init_error:
+        p2p_required = False
+        enable_p2p = False
+        p2p_start_error = init_error
+    if not enable_p2p:
+        return p2p_service, p2p_deps_sync, p2p_start_error, p2p_required, enable_p2p
+    try:
+        import p2p
+        from p2p.config import load_config as load_p2p_config
+
+        try:
+            from p2p.node.p2p_service import P2PService
+        except Exception:  # pragma: no cover - legacy fallback
+            from p2p.node.service import P2PServiceLegacy as P2PService
+        import ipaddress
+
+        # Set chain_id in environment so P2P config can auto-select network seeds
+        os.environ.setdefault("ANIMICA_P2P_CHAIN_ID", str(cfg_view.chain_id))
+
+        # Determine peer store path based on network
+        peerstore_path = os.environ.get("ANIMICA_PEER_STORE_PATH")
+        if not peerstore_path:
+            peerstore_path = str((data_root / "p2p").expanduser())
+        os.environ.setdefault("ANIMICA_P2P_DATA_DIR", str(peerstore_path))
+
+        # Load P2P configuration which will automatically select network-specific seeds
+        # based on chain_id (mainnet/testnet/devnet)
+        p2p_config = load_p2p_config()
+
+        # Use the P2P deps adapter (bridges to core DBs for block import + pending pool admission).
+        from p2p.deps import AsyncP2PDeps, P2PDeps
+
+        # Note: this opens its own KV handles (safe for SQLite/RocksDB in this repo).
+        p2p_deps_sync = P2PDeps.open(cfg_view.db_uri, cfg_view.genesis_path)
+        p2p_deps = AsyncP2PDeps(p2p_deps_sync)
+
+        # Use config system for listen addresses and seeds
+        # Allow legacy P2P_LISTEN and P2P_SEEDS env vars for backward compatibility
+        p2p_listen = os.environ.get("P2P_LISTEN", "")
+        p2p_seeds_legacy = os.environ.get("P2P_SEEDS", "")
+
+        def _tcp_multiaddr(host: str, port: int) -> str:
+            try:
+                ip_obj = ipaddress.ip_address(host)
+                ip_tag = "ip6" if ip_obj.version == 6 else "ip4"
+            except ValueError:
+                ip_tag = "dns4"
+            return f"/{ip_tag}/{host}/tcp/{port}"
+
+        # Parse listen address to multiaddr format
+        listen_addrs: list[str] = []
+        if p2p_listen:
+            for entry in [p.strip() for p in p2p_listen.split(",") if p.strip()]:
+                if ":" in entry and not entry.startswith("/"):
+                    host, port = entry.rsplit(":", 1)
+                    try:
+                        listen_addrs.append(_tcp_multiaddr(host, int(port)))
+                    except ValueError:
+                        continue
+                else:
+                    listen_addrs.append(entry)
+
+        if not listen_addrs:
+            host, port = p2p_config.listen_tcp
+            listen_addrs = [_tcp_multiaddr(host, int(port))]
+
+        # Get seeds from config (which auto-loads network-specific seeds based on chain_id)
+        # or from legacy P2P_SEEDS env var for backward compatibility
+        seeds = list(p2p_config.seeds) if p2p_config.seeds else []
+        if not seeds and p2p_seeds_legacy:
+            # Legacy fallback: parse P2P_SEEDS if no seeds from config
+            seeds = [s.strip() for s in p2p_seeds_legacy.split(",") if s.strip()]
+
+        # Initialize P2P service with persistent peer store
+        p2p_kwargs = {
+            "chain_id": cfg_view.chain_id,
+            "deps": p2p_deps,
+            "peerstore_path": peerstore_path,
+        }
+        if listen_addrs is not None:
+            p2p_kwargs["listen_addrs"] = listen_addrs
+        # Always pass seeds - either from config (network-specific) or legacy env var
+        if seeds:
+            p2p_kwargs["seeds"] = seeds
+
+        p2p_service = P2PService(**p2p_kwargs)
+
+        # Register P2P service with global registry so RPC methods can access it
+        p2p.register_service(p2p_service)
+        log_msg = (
+            f"Initialized P2P service: peer_store={peerstore_path}, chain_id={cfg_view.chain_id}"
+        )
+        if listen_addrs:
+            log_msg += f", listen_addrs={listen_addrs}"
+        if seeds:
+            log_msg += f", seeds={len(seeds)} configured"
+        else:
+            log_msg += ", no seeds configured"
+        log.info(log_msg)
+    except Exception as e:
+        p2p_start_error = f"init_failed: {type(e).__name__}: {e}"
+        log.error(f"Failed to initialize P2P service: {p2p_start_error}", exc_info=True)
+        p2p_service = None
+        p2p_deps_sync = None
+        if not p2p_required:
+            log.warning(
+                "P2P unavailable; continuing without P2P",
+                extra={"error": p2p_start_error},
+            )
+        if "GENESIS_MISMATCH" in str(e):
+            if "ANIMICA_P2P_REQUIRED" not in os.environ:
+                p2p_required = False
+            if not p2p_required:
+                enable_p2p = False
+    return p2p_service, p2p_deps_sync, p2p_start_error, p2p_required, enable_p2p
+
+
+def _p2p_is_healthy(ctx: RpcContext) -> bool:
+    svc = ctx.p2p_service
+    if svc is None:
+        return False
+    return bool(getattr(svc, "_running", False))
+
+
+async def _p2p_supervisor(ctx: RpcContext) -> None:
+    log = logging.getLogger("animica.rpc.deps")
+    unhealthy_grace_s = float(os.environ.get("ANIMICA_P2P_SUPERVISOR_GRACE_S", "10"))
+    check_interval_s = float(os.environ.get("ANIMICA_P2P_SUPERVISOR_CHECK_S", "1"))
+    max_backoff_s = float(os.environ.get("ANIMICA_P2P_SUPERVISOR_MAX_BACKOFF_S", "60"))
+    backoff_s = max(1.0, float(ctx.p2p_restart_backoff_s or 1.0))
+    next_attempt_at = 0.0
+    while True:
+        await asyncio.sleep(check_interval_s)
+        if ctx.p2p_enabled is False and ctx.p2p_required is False:
+            return
+        now = time.time()
+        if _p2p_is_healthy(ctx):
+            ctx.p2p_last_healthy_at = now
+            ctx.p2p_restart_backoff_s = 1.0
+            backoff_s = 1.0
+            next_attempt_at = 0.0
+            continue
+        if ctx.p2p_last_healthy_at == 0.0:
+            ctx.p2p_last_healthy_at = now
+        if now - ctx.p2p_last_healthy_at < unhealthy_grace_s:
+            continue
+        if next_attempt_at and now < next_attempt_at:
+            continue
+
+        if ctx.p2p_service is not None:
+            try:
+                await ctx.p2p_service.stop()
+            except Exception as exc:
+                log.debug("P2P stop failed during recovery", exc_info=exc)
+            ctx.p2p_service = None
+
+        (
+            p2p_service,
+            _p2p_deps_sync,
+            p2p_start_error,
+            p2p_required,
+            enable_p2p,
+        ) = _init_p2p_service(ctx.cfg, ctx.data_root, ctx.init_error)
+        ctx.p2p_service = p2p_service
+        ctx.p2p_start_error = p2p_start_error
+        ctx.p2p_required = p2p_required
+        ctx.p2p_enabled = enable_p2p
+        if not enable_p2p:
+            return
+        if p2p_service is None:
+            backoff_s = min(max_backoff_s, backoff_s * 2)
+            ctx.p2p_restart_backoff_s = backoff_s
+            next_attempt_at = now + backoff_s
+            continue
+        try:
+            await p2p_service.start()
+            ctx.p2p_start_error = None
+            ctx.p2p_last_healthy_at = time.time()
+            ctx.p2p_restart_backoff_s = 1.0
+            backoff_s = 1.0
+            next_attempt_at = 0.0
+            log.info("P2P supervisor restarted service successfully")
+        except Exception as exc:
+            ctx.p2p_start_error = f"start_failed: {type(exc).__name__}: {exc}"
+            log.warning("P2P supervisor restart failed", exc_info=exc)
+            backoff_s = min(max_backoff_s, backoff_s * 2)
+            ctx.p2p_restart_backoff_s = backoff_s
+            next_attempt_at = time.time() + backoff_s
+
+
+def _ensure_p2p_supervisor(ctx: RpcContext) -> None:
+    if ctx.p2p_supervisor_task is not None and not ctx.p2p_supervisor_task.done():
+        return
+    ctx.p2p_supervisor_task = asyncio.create_task(
+        _p2p_supervisor(ctx), name="p2p.supervisor"
+    )
 
 
 def build_context(cfg: t.Any | None = None) -> RpcContext:
@@ -897,119 +1112,15 @@ def build_context(cfg: t.Any | None = None) -> RpcContext:
     core_p2p_service = None
     p2p_deps_sync = None
     p2p_start_error = None
-    p2p_required = _bool_env("ANIMICA_P2P_REQUIRED", cfg_view.p2p_required)
-    enable_p2p = _bool_env("ANIMICA_P2P_ENABLE", True)
-    if init_error:
-        p2p_required = False
-        enable_p2p = False
-        p2p_start_error = init_error
-    if enable_p2p:
-        try:
-            import p2p
-            from p2p.config import load_config as load_p2p_config
-            try:
-                from p2p.node.p2p_service import P2PService
-            except Exception:  # pragma: no cover - legacy fallback
-                from p2p.node.service import P2PServiceLegacy as P2PService
-            import ipaddress
-
-            # Set chain_id in environment so P2P config can auto-select network seeds
-            os.environ.setdefault("ANIMICA_P2P_CHAIN_ID", str(cfg_view.chain_id))
-
-            # Determine peer store path based on network
-            peerstore_path = os.environ.get("ANIMICA_PEER_STORE_PATH")
-            if not peerstore_path:
-                peerstore_path = str((data_root / "p2p").expanduser())
-            os.environ.setdefault("ANIMICA_P2P_DATA_DIR", str(peerstore_path))
-
-            # Load P2P configuration which will automatically select network-specific seeds
-            # based on chain_id (mainnet/testnet/devnet)
-            p2p_config = load_p2p_config()
-
-            # Use the P2P deps adapter (bridges to core DBs for block import + pending pool admission).
-            from p2p.deps import AsyncP2PDeps, P2PDeps
-
-            # Note: this opens its own KV handles (safe for SQLite/RocksDB in this repo).
-            p2p_deps_sync = P2PDeps.open(cfg_view.db_uri, cfg_view.genesis_path)
-            p2p_deps = AsyncP2PDeps(p2p_deps_sync)
-
-            # Use config system for listen addresses and seeds
-            # Allow legacy P2P_LISTEN and P2P_SEEDS env vars for backward compatibility
-            p2p_listen = os.environ.get("P2P_LISTEN", "")
-            p2p_seeds_legacy = os.environ.get("P2P_SEEDS", "")
-
-            def _tcp_multiaddr(host: str, port: int) -> str:
-                try:
-                    ip_obj = ipaddress.ip_address(host)
-                    ip_tag = "ip6" if ip_obj.version == 6 else "ip4"
-                except ValueError:
-                    ip_tag = "dns4"
-                return f"/{ip_tag}/{host}/tcp/{port}"
-
-            # Parse listen address to multiaddr format
-            listen_addrs: list[str] = []
-            if p2p_listen:
-                for entry in [p.strip() for p in p2p_listen.split(",") if p.strip()]:
-                    if ":" in entry and not entry.startswith("/"):
-                        host, port = entry.rsplit(":", 1)
-                        try:
-                            listen_addrs.append(_tcp_multiaddr(host, int(port)))
-                        except ValueError:
-                            continue
-                    else:
-                        listen_addrs.append(entry)
-
-            if not listen_addrs:
-                host, port = p2p_config.listen_tcp
-                listen_addrs = [_tcp_multiaddr(host, int(port))]
-
-            # Get seeds from config (which auto-loads network-specific seeds based on chain_id)
-            # or from legacy P2P_SEEDS env var for backward compatibility
-            seeds = list(p2p_config.seeds) if p2p_config.seeds else []
-            if not seeds and p2p_seeds_legacy:
-                # Legacy fallback: parse P2P_SEEDS if no seeds from config
-                seeds = [s.strip() for s in p2p_seeds_legacy.split(",") if s.strip()]
-
-            # Initialize P2P service with persistent peer store
-            p2p_kwargs = {
-                "chain_id": cfg_view.chain_id,
-                "deps": p2p_deps,
-                "peerstore_path": peerstore_path,
-            }
-            if listen_addrs is not None:
-                p2p_kwargs["listen_addrs"] = listen_addrs
-            # Always pass seeds - either from config (network-specific) or legacy env var
-            if seeds:
-                p2p_kwargs["seeds"] = seeds
-
-            p2p_service = P2PService(**p2p_kwargs)
-
-            # Register P2P service with global registry so RPC methods can access it
-            p2p.register_service(p2p_service)
-            log_msg = f"Initialized P2P service: peer_store={peerstore_path}, chain_id={cfg_view.chain_id}"
-            if listen_addrs:
-                log_msg += f", listen_addrs={listen_addrs}"
-            if seeds:
-                log_msg += f", seeds={len(seeds)} configured"
-            else:
-                log_msg += ", no seeds configured"
-            log.info(log_msg)
-        except Exception as e:
-            p2p_start_error = f"init_failed: {type(e).__name__}: {e}"
-            log.error(f"Failed to initialize P2P service: {p2p_start_error}", exc_info=True)
-            p2p_service = None
-            p2p_deps_sync = None
-            if not p2p_required:
-                log.warning(
-                    "P2P unavailable; continuing without P2P",
-                    extra={"error": p2p_start_error},
-                )
-                enable_p2p = False
-            if "GENESIS_MISMATCH" in str(e):
-                if "ANIMICA_P2P_REQUIRED" not in os.environ:
-                    p2p_required = False
-                if not p2p_required:
-                    enable_p2p = False
+    p2p_required = False
+    enable_p2p = False
+    (
+        p2p_service,
+        p2p_deps_sync,
+        p2p_start_error,
+        p2p_required,
+        enable_p2p,
+    ) = _init_p2p_service(cfg_view, data_root, init_error)
 
     enable_core_p2p = _bool_env("ANIMICA_P2P_CORE_ENABLE", True)
     if p2p_start_error and "GENESIS_MISMATCH" in p2p_start_error and not p2p_required:
@@ -1258,11 +1369,12 @@ async def startup(cfg: t.Any | None = None) -> RpcContext:
                 logging.getLogger("animica.rpc.deps").info(
                     "P2P service started successfully"
                 )
+                _CTX.p2p_start_error = None
+                _CTX.p2p_last_healthy_at = time.time()
                 
                 # Start background snapshot discovery after P2P is running
                 # This allows time for peers to connect before querying for snapshots
                 if _CTX.block_db is not None and _CTX.state_db is not None:
-                    import asyncio
                     asyncio.create_task(
                         _background_snapshot_discovery(
                             p2p_service=_CTX.p2p_service,
@@ -1283,8 +1395,6 @@ async def startup(cfg: t.Any | None = None) -> RpcContext:
                         "P2P unavailable; continuing without P2P",
                         exc_info=True,
                     )
-                    _CTX.p2p_service = None
-                    _CTX.p2p_enabled = False
                 else:
                     log.error(
                         f"Failed to start P2P service: {_CTX.p2p_start_error}",
@@ -1302,7 +1412,8 @@ async def startup(cfg: t.Any | None = None) -> RpcContext:
                 "P2P unavailable; continuing without P2P",
                 extra={"error": error},
             )
-            _CTX.p2p_enabled = False
+        if _CTX.p2p_enabled or _CTX.p2p_start_error:
+            _ensure_p2p_supervisor(_CTX)
 
         # Start snapshot orchestrator if it was initialized
         if _CTX.snapshot_orchestrator is not None:
