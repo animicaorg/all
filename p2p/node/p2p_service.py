@@ -7133,6 +7133,12 @@ class P2PService:
             self._sync_last_header_error = "headers_send_failed"
             self._sync_last_header_error_at = time.time()
             self._sync_last_header_error_peer = peer.remote
+            self._penalize_peer(peer, "headers_send_failed", nonfatal=True)
+            self._set_sync_backoff(
+                peer,
+                reason="headers_send_failed",
+                delay=self._sync_no_headers_backoff,
+            )
             self._record_sync_header_event(
                 {
                     "type": "response",
@@ -7143,7 +7149,7 @@ class P2PService:
                     "error": "headers_send_failed",
                 }
             )
-            raise
+            return None
 
         try:
             headers_msg: Optional[Headers] = await asyncio.wait_for(
