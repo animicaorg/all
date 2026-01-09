@@ -4470,6 +4470,20 @@ class P2PService:
         self._txrelay.unregister_peer(self._peer_tx_key(peer))
 
         async with self._peer_lock:
+            if peer.pending_headers is not None and not peer.pending_headers.done():
+                peer.pending_headers.set_result(None)
+            peer.pending_headers = None
+            peer.pending_header_request_id = None
+            inflight_header_keys = [
+                key
+                for key in list(self._sync_inflight_header_requests.keys())
+                if key[0] == peer.remote
+            ]
+            if inflight_header_keys:
+                for key in inflight_header_keys:
+                    self._sync_inflight_header_requests.pop(key, None)
+                self._sync_inflight_headers = len(self._sync_inflight_header_requests)
+                self._sync_wakeup.set()
             self._peers.pop(self._peer_key(peer.remote, peer.direction), None)
             self._peers_by_session.pop(peer.session_id, None)
             self._stats["peers"] = self._peer_registry.peer_count()
@@ -7107,11 +7121,29 @@ class P2PService:
                 "limit": max_headers,
             }
         )
-        await self._send(
-            peer,
-            MsgID.GET_HEADERS,
-            GetHeaders(locator=locator, max_headers=max_headers),
-        )
+        try:
+            await self._send(
+                peer,
+                MsgID.GET_HEADERS,
+                GetHeaders(locator=locator, max_headers=max_headers),
+            )
+        except Exception:
+            peer.pending_headers = None
+            self._clear_header_request(peer)
+            self._sync_last_header_error = "headers_send_failed"
+            self._sync_last_header_error_at = time.time()
+            self._sync_last_header_error_peer = peer.remote
+            self._record_sync_header_event(
+                {
+                    "type": "response",
+                    "peer": peer.remote,
+                    "peer_id": peer.peer_id,
+                    "request_id": request_id,
+                    "count": 0,
+                    "error": "headers_send_failed",
+                }
+            )
+            raise
 
         try:
             headers_msg: Optional[Headers] = await asyncio.wait_for(
