@@ -3453,14 +3453,24 @@ class P2PService:
         if db_uri:
             return db_uri
         env_db_uri = os.environ.get("ANIMICA_DB_URI")
-        if env_db_uri:
-            return env_db_uri
+        if env_db_uri and env_db_uri.strip():
+            return env_db_uri.strip()
         chain_dir = self._chain_data_dir
         if not chain_dir:
             base_dir = Path(os.environ.get("ANIMICA_DATA_DIR") or "~/.animica").expanduser()
             chain_dir = base_dir / f"chain-{self.chain_id}"
         db_path = Path(chain_dir) / DEFAULT_DB_FILENAME
         return f"sqlite:///{db_path}"
+
+    def __getattribute__(self, name: str) -> Any:
+        if name == "_log":
+            try:
+                return object.__getattribute__(self, name)
+            except AttributeError:
+                logger = logging.getLogger("animica.p2p")
+                object.__setattr__(self, "_log", logger)
+                return logger
+        return object.__getattribute__(self, name)
 
     def __getattr__(self, name: str) -> Any:
         if name == "_log":
