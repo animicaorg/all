@@ -410,6 +410,14 @@ class SyncStatusSnapshot:
     stall_reason: Optional[str]
     stall_elapsed_s: float
     peer_anchor_states: Dict[str, dict[str, Any]]
+    snapshot_auto_enabled: bool
+    snapshot_last_attempt_at: float
+    snapshot_last_success_at: float
+    snapshot_last_error: Optional[str]
+    snapshot_cooldown_remaining_s: float
+    snapshot_last_manifest_height: Optional[int]
+    snapshot_last_manifest_hash: Optional[str]
+    snapshot_last_manifest_url: Optional[str]
     cache_interval_ms: int
     cache_age_ms: int
     cache_hits: int
@@ -499,6 +507,14 @@ class SyncStatusSnapshot:
             "stall_reason": self.stall_reason,
             "stall_elapsed_s": self.stall_elapsed_s,
             "peer_anchor_states": dict(self.peer_anchor_states),
+            "snapshot_auto_enabled": self.snapshot_auto_enabled,
+            "snapshot_last_attempt_at": self.snapshot_last_attempt_at,
+            "snapshot_last_success_at": self.snapshot_last_success_at,
+            "snapshot_last_error": self.snapshot_last_error,
+            "snapshot_cooldown_remaining_s": self.snapshot_cooldown_remaining_s,
+            "snapshot_last_manifest_height": self.snapshot_last_manifest_height,
+            "snapshot_last_manifest_hash": self.snapshot_last_manifest_hash,
+            "snapshot_last_manifest_url": self.snapshot_last_manifest_url,
             "cache_interval_ms": self.cache_interval_ms,
             "cache_age_ms": self.cache_age_ms,
             "cache_hits": self.cache_hits,
@@ -1152,6 +1168,26 @@ class P2PService:
                 default="20.0",
             )
             or 20.0
+        )
+        self._sync_watchdog_timeout = float(
+            os.environ.get("ANIMICA_SYNC_WATCHDOG_TIMEOUT_S", "60") or 60
+        )
+        self._sync_watchdog_last_height: int = 0
+        self._sync_watchdog_last_hash: Optional[str] = None
+        self._sync_watchdog_last_progress_at = time.time()
+        self._sync_watchdog_attempts = 0
+        self._snapshot_recovery_task: Optional[asyncio.Task] = None
+        self._snapshot_recovery_last_attempt_at: float = 0.0
+        self._snapshot_recovery_last_success_at: float = 0.0
+        self._snapshot_recovery_last_error: Optional[str] = None
+        self._snapshot_recovery_last_manifest_height: Optional[int] = None
+        self._snapshot_recovery_last_manifest_hash: Optional[str] = None
+        self._snapshot_recovery_last_manifest_url: Optional[str] = None
+        self._snapshot_recovery_cooldown = float(
+            os.environ.get("ANIMICA_SNAPSHOT_COOLDOWN_SECS", "1800") or 1800
+        )
+        self._snapshot_recovery_min_advance_blocks = int(
+            os.environ.get("ANIMICA_SNAPSHOT_MIN_ADVANCE_BLOCKS", "500") or 500
         )
         self._sync_tip_tolerance = int(
             os.environ.get("ANIMICA_P2P_SYNC_TIP_TOLERANCE", "2") or 2
@@ -2751,6 +2787,14 @@ class P2PService:
             "0x" + sync_head_hash.hex() if sync_head_hash is not None else None
         )
         last_ancestor_hash = self._canon_hash0x(self._sync_last_matched_ancestor_hash)
+        snapshot_auto_enabled = self._snapshot_auto_enabled()
+        cooldown_remaining = 0.0
+        if self._snapshot_recovery_last_attempt_at:
+            cooldown_remaining = max(
+                0.0,
+                self._snapshot_recovery_cooldown
+                - (time.time() - self._snapshot_recovery_last_attempt_at),
+            )
         return SyncStatusSnapshot(
             phase=phase,
             head_height=best_block_height,
@@ -2831,6 +2875,14 @@ class P2PService:
             stall_reason=self._sync_block_stalled_reason,
             stall_elapsed_s=stall_elapsed_s,
             peer_anchor_states=peer_anchor_states,
+            snapshot_auto_enabled=snapshot_auto_enabled,
+            snapshot_last_attempt_at=self._snapshot_recovery_last_attempt_at,
+            snapshot_last_success_at=self._snapshot_recovery_last_success_at,
+            snapshot_last_error=self._snapshot_recovery_last_error,
+            snapshot_cooldown_remaining_s=cooldown_remaining,
+            snapshot_last_manifest_height=self._snapshot_recovery_last_manifest_height,
+            snapshot_last_manifest_hash=self._snapshot_recovery_last_manifest_hash,
+            snapshot_last_manifest_url=self._snapshot_recovery_last_manifest_url,
             cache_interval_ms=0,
             cache_age_ms=0,
             cache_hits=int(self._stats.get("cache_hits", 0)),
@@ -3327,6 +3379,139 @@ class P2PService:
                 "eligible_block_peers": [p.remote for p in eligible_block_peers],
             },
         )
+
+    def _force_peer_refresh(self, *, reason: str) -> None:
+        self._seeding_mode = True
+        self._dial_backoff.clear()
+        self._dial_attempts.clear()
+        self._sync_last_recovery_action = reason
+        log.info("Sync peer refresh requested", extra={"reason": reason})
+
+    def _sync_watchdog_check(
+        self, *, now: float, head_height: int, head_hash: Optional[str]
+    ) -> None:
+        if not self._peers:
+            return
+        if head_height > self._sync_watchdog_last_height or (
+            head_hash and head_hash != self._sync_watchdog_last_hash
+        ):
+            self._sync_watchdog_last_height = head_height
+            self._sync_watchdog_last_hash = head_hash
+            self._sync_watchdog_last_progress_at = now
+            self._sync_watchdog_attempts = 0
+            return
+
+        if now - self._sync_watchdog_last_progress_at < self._sync_watchdog_timeout:
+            return
+
+        self._sync_watchdog_attempts += 1
+        action = f"watchdog_attempt_{self._sync_watchdog_attempts}"
+        if self._sync_watchdog_attempts == 1:
+            self._handle_sync_stall(reason="watchdog_no_progress")
+            self._sync_requested = True
+            action = "watchdog_requeue"
+        elif self._sync_watchdog_attempts == 2:
+            self._force_peer_refresh(reason="watchdog_refresh_peers")
+            self._sync_requested = True
+            action = "watchdog_refresh_peers"
+        elif self._sync_watchdog_attempts == 3:
+            self._reset_sync_state(reason="watchdog_reset_pipeline")
+            self._sync_requested = True
+            action = "watchdog_reset_pipeline"
+        else:
+            self._maybe_trigger_snapshot_recovery(reason="watchdog_snapshot_recovery")
+            action = "watchdog_snapshot_recovery"
+
+        self._sync_last_recovery_action = action
+        log.warning(
+            "Sync watchdog recovery triggered",
+            extra={
+                "action": action,
+                "head_height": head_height,
+                "last_progress_at": self._sync_watchdog_last_progress_at,
+                "peers": len(self._peers),
+            },
+        )
+
+    def _maybe_trigger_snapshot_recovery(self, *, reason: str) -> None:
+        if not self._snapshot_auto_enabled():
+            return
+        now = time.time()
+        if self._snapshot_recovery_task and not self._snapshot_recovery_task.done():
+            return
+        if (
+            self._snapshot_recovery_last_attempt_at
+            and now - self._snapshot_recovery_last_attempt_at
+            < self._snapshot_recovery_cooldown
+        ):
+            return
+        self._snapshot_recovery_task = asyncio.create_task(
+            self._run_snapshot_recovery(reason=reason), name="p2p.snapshot_recovery"
+        )
+
+    async def _run_snapshot_recovery(self, *, reason: str) -> None:
+        from p2p.deps import P2PDeps
+        from p2p.sync.snapshot_sync import auto_bootstrap_from_manifest
+
+        now = time.time()
+        self._snapshot_recovery_last_attempt_at = now
+        self._snapshot_recovery_last_error = None
+        self._sync_paused = True
+
+        db_uri = getattr(self.deps, "db_uri", None) if self.deps else None
+        genesis_path = getattr(self.deps, "genesis_path", None) if self.deps else None
+        head_height, _head_hash = self._local_head()
+
+        log.warning(
+            "Snapshot recovery starting",
+            extra={"reason": reason, "head_height": head_height, "db_uri": db_uri},
+        )
+
+        if not db_uri:
+            self._snapshot_recovery_last_error = "missing db_uri"
+            self._sync_paused = False
+            return
+
+        try:
+            if self.deps is not None:
+                kv = getattr(self.deps, "_kv", None)
+                close = getattr(kv, "close", None)
+                if callable(close):
+                    close()
+        except Exception:
+            pass
+
+        success, error, manifest, manifest_url = await asyncio.to_thread(
+            auto_bootstrap_from_manifest,
+            chain_id=self.chain_id,
+            db_uri=db_uri,
+            local_height=int(head_height or 0),
+            force=True,
+        )
+
+        self._snapshot_recovery_last_manifest_height = (
+            manifest.head_height if manifest else None
+        )
+        self._snapshot_recovery_last_manifest_hash = (
+            manifest.head_hash if manifest else None
+        )
+        self._snapshot_recovery_last_manifest_url = manifest_url
+
+        if success:
+            self._snapshot_recovery_last_success_at = time.time()
+            try:
+                self.deps = P2PDeps.open(db_uri, genesis_path)
+            except Exception as exc:  # noqa: BLE001
+                self._snapshot_recovery_last_error = f"reopen failed: {exc}"
+            self._reset_sync_state(reason="snapshot_recovery")
+            self._sync_last_progress_at = time.time()
+            self._sync_watchdog_last_progress_at = time.time()
+            self._sync_watchdog_attempts = 0
+            self._sync_wakeup.set()
+        else:
+            self._snapshot_recovery_last_error = error or "snapshot recovery failed"
+
+        self._sync_paused = False
 
     def _rotate_sync_peer(self) -> None:
         active = (
@@ -7747,6 +7932,9 @@ class P2PService:
                 self._expire_inflight_headers()
                 self._expire_inflight_blocks()
                 self._maybe_mark_block_stalled(now)
+                self._sync_watchdog_check(
+                    now=now, head_height=best_block_height, head_hash=head_hash
+                )
                 network_best_height = self._network_best_height()
                 if (
                     network_best_height is not None
@@ -8273,6 +8461,25 @@ class P2PService:
         if hasattr(self.deps, "_block_db"):
             return getattr(self.deps, "_block_db")
         raise RuntimeError("deps has no block_db")
+
+    def _state_db(self) -> Any:
+        if self.deps is None:
+            raise RuntimeError("P2P deps not set")
+        if hasattr(self.deps, "state_db"):
+            return getattr(self.deps, "state_db")
+        if hasattr(self.deps, "_state_db"):
+            return getattr(self.deps, "_state_db")
+        if hasattr(self.deps, "_sync") and hasattr(self.deps._sync, "_state_db"):
+            return getattr(self.deps._sync, "_state_db")
+        raise RuntimeError("deps has no state_db")
+
+    def _snapshot_auto_enabled(self) -> bool:
+        try:
+            from core.snapshot.policy import SnapshotPolicy
+
+            return SnapshotPolicy.from_env(chain_id=self.chain_id).auto_enabled
+        except Exception:
+            return False
 
     def _local_head(self) -> tuple[int, Optional[str]]:
         header = None

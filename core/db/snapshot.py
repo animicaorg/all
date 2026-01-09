@@ -33,7 +33,6 @@ from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 from ..encoding.cbor import cbor_dumps, cbor_loads
-from ..utils.hash import sha3_256
 from .block_db import (
     BlockDB,
     PFX_BLK,
@@ -49,10 +48,10 @@ from .state_db import StateDB, PFX_ACC, PFX_CODE, PFX_STO
 _log = logging.getLogger("animica.snapshot")
 
 # Snapshot format version
-SNAPSHOT_VERSION = 1
+SNAPSHOT_VERSION = 2
 
-# Chunk size for splitting large exports (in bytes, ~100MB chunks)
-DEFAULT_CHUNK_SIZE = 100 * 1024 * 1024
+# Chunk size for splitting large exports (in bytes, ~128MB chunks)
+DEFAULT_CHUNK_SIZE = 128 * 1024 * 1024
 
 
 @dataclass
@@ -61,14 +60,19 @@ class SnapshotManifest:
 
     version: int
     chain_id: int
+    network: Optional[str]
     checkpoint_height: int
     checkpoint_hash: str
     timestamp: int
+    created_at: str
     blocks_count: int
     headers_count: int
     accounts_count: int
     storage_keys_count: int
     code_contracts_count: int
+    db_engine: Optional[str] = None
+    db_version: Optional[str] = None
+    total_size: int = 0
     state_root: Optional[str] = None
     chunks: List[Dict[str, Any]] = field(default_factory=list)
     compressed: bool = True
@@ -85,8 +89,8 @@ def _unhex(s: str) -> bytes:
 
 
 def _hash_file(path: Path) -> str:
-    """Compute SHA3-256 hash of a file."""
-    h = hashlib.sha3_256()
+    """Compute SHA-256 hash of a file."""
+    h = hashlib.sha256()
     with open(path, "rb") as f:
         while chunk := f.read(65536):
             h.update(chunk)
@@ -136,12 +140,16 @@ def export_snapshot(
         chain_id = 0
 
     # Initialize manifest
+    network = os.environ.get("ANIMICA_NETWORK")
+    created_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     manifest = SnapshotManifest(
         version=SNAPSHOT_VERSION,
         chain_id=chain_id,
+        network=network,
         checkpoint_height=checkpoint_height,
         checkpoint_hash=checkpoint_hash,
         timestamp=int(time.time()),
+        created_at=created_at,
         blocks_count=0,
         headers_count=0,
         accounts_count=0,
@@ -149,109 +157,142 @@ def export_snapshot(
         code_contracts_count=0,
         compressed=compress,
     )
+    manifest.db_engine = type(block_db.kv).__name__ if hasattr(block_db, "kv") else None
+    manifest.db_version = getattr(block_db.kv, "version", None)
+
+    def _chunk_name(prefix: str, index: int, *, compressed: bool) -> str:
+        suffix = ".cbor.gz" if compressed else ".cbor"
+        return f"{prefix}-{index:05d}{suffix}"
+
+    def _open_chunk(prefix: str, index: int):
+        name = _chunk_name(prefix, index, compressed=compress)
+        path = output_dir / name
+        handle = gzip.open(path, "wb") if compress else open(path, "wb")
+        return path, handle
+
+    def _finalize_chunk(path: Path) -> dict[str, Any]:
+        chunk_hash = _hash_file(path)
+        size = path.stat().st_size
+        return {"name": path.name, "size": size, "hash": chunk_hash, "sha256": chunk_hash}
+
+    def _append_chunk(chunk: dict[str, Any], chunk_type: str, index: int) -> None:
+        manifest.chunks.append(
+            {
+                **chunk,
+                "type": chunk_type,
+                "index": index,
+            }
+        )
 
     # Export blocks and headers
     _log.info("Exporting blocks and headers...")
-    blocks_file = output_dir / "blocks.cbor"
-    if compress:
-        blocks_file = output_dir / "blocks.cbor.gz"
+    blocks_index = 0
+    blocks_written = 0
+    blocks_path, blocks_handle = _open_chunk("blocks", blocks_index)
 
-    with gzip.open(blocks_file, "wb") if compress else open(blocks_file, "wb") as f:
-        for height in range(0, checkpoint_height + 1):
-            # Export header at this height
-            block_hash = block_db.get_canonical_hash(height)
-            if block_hash:
-                header = block_db.get_header_by_hash(block_hash)
-                if header:
-                    # Write height-prefixed entry
-                    # Format: [entry_cbor_bytes]\n for easy delimiting
-                    entry = {"type": "header", "height": height, "data": header.to_obj()}
-                    entry_bytes = cbor_dumps(entry)
-                    f.write(entry_bytes)
-                    f.write(b"\n")  # Delimiter for easier parsing
-                    manifest.headers_count += 1
+    def _write_blocks_entry(entry_bytes: bytes) -> None:
+        nonlocal blocks_written, blocks_index, blocks_path, blocks_handle
+        if blocks_written + len(entry_bytes) + 1 > chunk_size:
+            blocks_handle.close()
+            chunk_info = _finalize_chunk(blocks_path)
+            _append_chunk(chunk_info, "blocks", blocks_index)
+            blocks_index += 1
+            blocks_written = 0
+            blocks_path, blocks_handle = _open_chunk("blocks", blocks_index)
+        blocks_handle.write(entry_bytes)
+        blocks_handle.write(b"\n")
+        blocks_written += len(entry_bytes) + 1
 
-                # Export block at this height
-                block = block_db.get_block_by_hash(block_hash)
-                if block:
-                    entry = {"type": "block", "height": height, "data": block.to_obj()}
-                    entry_bytes = cbor_dumps(entry)
-                    f.write(entry_bytes)
-                    f.write(b"\n")  # Delimiter
-                    manifest.blocks_count += 1
+    for height in range(0, checkpoint_height + 1):
+        block_hash = block_db.get_canonical_hash(height)
+        if block_hash:
+            header = block_db.get_header_by_hash(block_hash)
+            if header:
+                entry = {"type": "header", "height": height, "data": header.to_obj()}
+                _write_blocks_entry(cbor_dumps(entry))
+                manifest.headers_count += 1
 
-            if height % 1000 == 0:
-                _log.info(f"Exported {height}/{checkpoint_height} blocks")
+            block = block_db.get_block_by_hash(block_hash)
+            if block:
+                entry = {"type": "block", "height": height, "data": block.to_obj()}
+                _write_blocks_entry(cbor_dumps(entry))
+                manifest.blocks_count += 1
 
-    blocks_hash = _hash_file(blocks_file)
-    manifest.chunks.append(
-        {
-            "name": blocks_file.name,
-            "type": "blocks",
-            "size": blocks_file.stat().st_size,
-            "hash": blocks_hash,
-        }
-    )
+        if height % 1000 == 0:
+            _log.info(f"Exported {height}/{checkpoint_height} blocks")
+
+    blocks_handle.close()
+    if blocks_path.exists():
+        chunk_info = _finalize_chunk(blocks_path)
+        _append_chunk(chunk_info, "blocks", blocks_index)
 
     # Export state (accounts, code, storage)
     _log.info("Exporting state...")
-    state_file = output_dir / "state.cbor"
-    if compress:
-        state_file = output_dir / "state.cbor.gz"
+    state_index = 0
+    state_written = 0
+    state_path, state_handle = _open_chunk("state", state_index)
 
-    with gzip.open(state_file, "wb") if compress else open(state_file, "wb") as f:
-        # Export accounts
-        for key, value in state_db.kv.iter_prefix(PFX_ACC):
-            entry = {"type": "account", "key": key, "value": value}
-            entry_bytes = cbor_dumps(entry)
-            f.write(entry_bytes)
-            f.write(b"\n")  # Delimiter
-            manifest.accounts_count += 1
+    def _write_state_entry(entry_bytes: bytes) -> None:
+        nonlocal state_written, state_index, state_path, state_handle
+        if state_written + len(entry_bytes) + 1 > chunk_size:
+            state_handle.close()
+            chunk_info = _finalize_chunk(state_path)
+            _append_chunk(chunk_info, "state", state_index)
+            state_index += 1
+            state_written = 0
+            state_path, state_handle = _open_chunk("state", state_index)
+        state_handle.write(entry_bytes)
+        state_handle.write(b"\n")
+        state_written += len(entry_bytes) + 1
 
-        # Export code
-        for key, value in state_db.kv.iter_prefix(PFX_CODE):
-            entry = {"type": "code", "key": key, "value": value}
-            entry_bytes = cbor_dumps(entry)
-            f.write(entry_bytes)
-            f.write(b"\n")  # Delimiter
-            manifest.code_contracts_count += 1
+    for key, value in state_db.kv.iter_prefix(PFX_ACC):
+        entry = {"type": "account", "key": key, "value": value}
+        _write_state_entry(cbor_dumps(entry))
+        manifest.accounts_count += 1
 
-        # Export storage
-        for key, value in state_db.kv.iter_prefix(PFX_STO):
-            entry = {"type": "storage", "key": key, "value": value}
-            entry_bytes = cbor_dumps(entry)
-            f.write(entry_bytes)
-            f.write(b"\n")  # Delimiter
-            manifest.storage_keys_count += 1
+    for key, value in state_db.kv.iter_prefix(PFX_CODE):
+        entry = {"type": "code", "key": key, "value": value}
+        _write_state_entry(cbor_dumps(entry))
+        manifest.code_contracts_count += 1
 
-            if manifest.storage_keys_count % 10000 == 0:
-                _log.info(f"Exported {manifest.storage_keys_count} storage keys")
+    for key, value in state_db.kv.iter_prefix(PFX_STO):
+        entry = {"type": "storage", "key": key, "value": value}
+        _write_state_entry(cbor_dumps(entry))
+        manifest.storage_keys_count += 1
 
-    state_hash = _hash_file(state_file)
-    manifest.chunks.append(
-        {
-            "name": state_file.name,
-            "type": "state",
-            "size": state_file.stat().st_size,
-            "hash": state_hash,
-        }
-    )
+        if manifest.storage_keys_count % 10000 == 0:
+            _log.info(f"Exported {manifest.storage_keys_count} storage keys")
+
+    state_handle.close()
+    if state_path.exists():
+        chunk_info = _finalize_chunk(state_path)
+        _append_chunk(chunk_info, "state", state_index)
+
+    manifest.total_size = sum(chunk["size"] for chunk in manifest.chunks)
 
     # Write manifest
     manifest_file = output_dir / "manifest.json"
     with open(manifest_file, "w") as f:
         json.dump(
             {
+                "schema_version": manifest.version,
                 "version": manifest.version,
                 "chain_id": manifest.chain_id,
+                "network": manifest.network,
+                "head_height": manifest.checkpoint_height,
+                "head_hash": manifest.checkpoint_hash,
                 "checkpoint_height": manifest.checkpoint_height,
                 "checkpoint_hash": manifest.checkpoint_hash,
                 "timestamp": manifest.timestamp,
+                "created_at": manifest.created_at,
                 "blocks_count": manifest.blocks_count,
                 "headers_count": manifest.headers_count,
                 "accounts_count": manifest.accounts_count,
                 "storage_keys_count": manifest.storage_keys_count,
                 "code_contracts_count": manifest.code_contracts_count,
+                "db_engine": manifest.db_engine,
+                "db_version": manifest.db_version,
+                "total_size": manifest.total_size,
                 "state_root": manifest.state_root,
                 "compressed": manifest.compressed,
                 "chunks": manifest.chunks,
@@ -274,6 +315,8 @@ def import_snapshot(
     state_db: StateDB,
     snapshot_dir: Path,
     verify_hashes: bool = True,
+    expected_chain_id: Optional[int] = None,
+    expected_network: Optional[str] = None,
 ) -> SnapshotManifest:
     """
     Import a chain snapshot into the databases.
@@ -303,23 +346,36 @@ def import_snapshot(
     manifest = SnapshotManifest(
         version=manifest_data["version"],
         chain_id=manifest_data["chain_id"],
+        network=manifest_data.get("network"),
         checkpoint_height=manifest_data["checkpoint_height"],
         checkpoint_hash=manifest_data["checkpoint_hash"],
         timestamp=manifest_data["timestamp"],
+        created_at=manifest_data.get("created_at", ""),
         blocks_count=manifest_data["blocks_count"],
         headers_count=manifest_data["headers_count"],
         accounts_count=manifest_data["accounts_count"],
         storage_keys_count=manifest_data["storage_keys_count"],
         code_contracts_count=manifest_data["code_contracts_count"],
+        db_engine=manifest_data.get("db_engine"),
+        db_version=manifest_data.get("db_version"),
+        total_size=manifest_data.get("total_size", 0),
         state_root=manifest_data.get("state_root"),
         compressed=manifest_data.get("compressed", True),
         chunks=manifest_data["chunks"],
     )
 
     # Verify version
-    if manifest.version != SNAPSHOT_VERSION:
+    if manifest.version not in (1, SNAPSHOT_VERSION):
         raise ValueError(
             f"Unsupported snapshot version {manifest.version}, expected {SNAPSHOT_VERSION}"
+        )
+    if expected_chain_id is not None and manifest.chain_id != expected_chain_id:
+        raise ValueError(
+            f"Snapshot chain_id mismatch: expected {expected_chain_id}, got {manifest.chain_id}"
+        )
+    if expected_network and manifest.network and manifest.network != expected_network:
+        raise ValueError(
+            f"Snapshot network mismatch: expected {expected_network}, got {manifest.network}"
         )
 
     # Verify and import chunks
@@ -331,7 +387,7 @@ def import_snapshot(
         # Verify hash if requested
         if verify_hashes:
             actual_hash = _hash_file(chunk_file)
-            expected_hash = chunk_info["hash"]
+            expected_hash = chunk_info.get("sha256") or chunk_info.get("hash")
             if actual_hash != expected_hash:
                 raise ValueError(
                     f"Chunk {chunk_info['name']} hash mismatch: "
@@ -468,8 +524,10 @@ def verify_snapshot(snapshot_dir: Path) -> Tuple[bool, List[str]]:
 
     # Verify version
     version = manifest_data.get("version")
-    if version != SNAPSHOT_VERSION:
-        errors.append(f"Unsupported snapshot version {version}, expected {SNAPSHOT_VERSION}")
+    if version not in (1, SNAPSHOT_VERSION):
+        errors.append(
+            f"Unsupported snapshot version {version}, expected {SNAPSHOT_VERSION}"
+        )
 
     # Verify chunks exist and match hashes
     chunks = manifest_data.get("chunks", [])
@@ -481,7 +539,7 @@ def verify_snapshot(snapshot_dir: Path) -> Tuple[bool, List[str]]:
 
         # Verify hash
         actual_hash = _hash_file(chunk_file)
-        expected_hash = chunk_info["hash"]
+        expected_hash = chunk_info.get("sha256") or chunk_info.get("hash")
         if actual_hash != expected_hash:
             errors.append(
                 f"Chunk {chunk_info['name']} hash mismatch: "
