@@ -7,11 +7,13 @@ Handles GET_SNAPSHOTS requests from peers and responds with available snapshot m
 This allows nodes to discover snapshots via P2P without requiring RPC access.
 """
 
-import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Optional
+
+from core.snapshot.inventory import rebuild_inventory
+from core.snapshot.paths import get_snapshots_dir
 
 log = logging.getLogger("animica.p2p.protocol.snapshot")
 
@@ -30,20 +32,7 @@ class SnapshotHandler:
     def __post_init__(self):
         """Set up snapshots directory if not provided."""
         if self.snapshots_dir is None:
-            # Default to ~/.animica/snapshots or ANIMICA_DATA_DIR/snapshots
-            import os
-            data_dir = os.environ.get("ANIMICA_DATA_DIR")
-            if data_dir:
-                base = Path(data_dir)
-            else:
-                base = Path.home() / ".animica"
-            
-            # Check if base is chain-specific directory
-            if base.name.startswith("chain-"):
-                # Use parent directory for global snapshots
-                base = base.parent
-            
-            self.snapshots_dir = base / "snapshots"
+            self.snapshots_dir = get_snapshots_dir()
             log.debug(f"Using snapshots directory: {self.snapshots_dir}")
     
     def msg_ids(self) -> Iterable[int]:
@@ -203,61 +192,32 @@ class SnapshotHandler:
         from p2p.wire.messages import SnapshotInfo
         
         snapshots = []
-        
+
         if not self.snapshots_dir or not self.snapshots_dir.exists():
             log.debug(f"Snapshots directory does not exist: {self.snapshots_dir}")
             return snapshots
-        
-        # Scan for snapshot directories
-        for item in self.snapshots_dir.iterdir():
-            if not item.is_dir():
+
+        entries = rebuild_inventory(self.snapshots_dir)
+        for entry in entries:
+            if chain_id is not None and entry.chain_id != chain_id:
                 continue
-            
-            # Parse directory name: chain-{id}-height-{height}
-            if not item.name.startswith("chain-"):
-                continue
-            
-            parts = item.name.split("-")
-            if len(parts) != 4:
-                continue
-            
-            try:
-                snap_chain_id = int(parts[1])
-                snap_height = int(parts[3])
-            except ValueError:
-                continue
-            
-            # Filter by chain ID if specified
-            if chain_id is not None and snap_chain_id != chain_id:
-                continue
-            
-            # Load manifest if exists
-            manifest_file = item / "manifest.json"
-            if manifest_file.exists():
-                try:
-                    with open(manifest_file) as f:
-                        manifest_data = json.load(f)
-                    
-                    # Create SnapshotInfo
-                    info = SnapshotInfo(
-                        chain_id=snap_chain_id,
-                        checkpoint_height=snap_height,
-                        checkpoint_hash=manifest_data.get("checkpoint_hash", ""),
-                        blocks_count=manifest_data.get("blocks_count", 0),
-                        accounts_count=manifest_data.get("accounts_count", 0),
-                        size_mb=sum(
-                            chunk["size"] for chunk in manifest_data.get("chunks", [])
-                        ) / (1024 * 1024),
-                        timestamp=manifest_data.get("timestamp", 0),
-                    )
-                    snapshots.append(info)
-                except (json.JSONDecodeError, IOError, KeyError) as e:
-                    log.debug(f"Failed to read manifest from {manifest_file}: {e}")
-                    continue
-        
-        # Sort by chain_id, then height (descending)
+            size_mb = entry.total_size / (1024 * 1024)
+            snapshots.append(
+                SnapshotInfo(
+                    chain_id=entry.chain_id,
+                    checkpoint_height=entry.checkpoint_height,
+                    checkpoint_hash=entry.checkpoint_hash,
+                    blocks_count=entry.blocks_count,
+                    accounts_count=entry.accounts_count,
+                    size_mb=size_mb,
+                    timestamp=entry.timestamp,
+                    created_at=entry.created_at,
+                    manifest_hash=entry.manifest_hash,
+                )
+            )
+
         snapshots.sort(key=lambda s: (s.chain_id, -s.checkpoint_height))
-        
+
         log.debug(f"Found {len(snapshots)} snapshot(s) in {self.snapshots_dir}")
         return snapshots
     

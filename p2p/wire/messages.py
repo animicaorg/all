@@ -309,6 +309,8 @@ class SnapshotInfo:
     accounts_count: int
     size_mb: float
     timestamp: int
+    created_at: str = ""
+    manifest_hash: str = ""
 
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON/RPC compatibility."""
@@ -320,6 +322,8 @@ class SnapshotInfo:
             "accounts_count": self.accounts_count,
             "size_mb": self.size_mb,
             "timestamp": self.timestamp,
+            "created_at": self.created_at,
+            "manifest_hash": self.manifest_hash,
         }
 
 

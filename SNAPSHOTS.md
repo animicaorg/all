@@ -19,6 +19,10 @@ During sync, a watchdog monitors progress. If the node stalls with peers connect
 the watchdog escalates recovery actions and can automatically apply a newer snapshot
 when configured and safe.
 
+When snapshots are applied during recovery, the node uses P2P discovery first, then
+falls back to manifest URLs. Snapshot recovery is rate-limited with a cooldown and
+per-window cap to avoid infinite retry loops.
+
 ## Manifest format (summary)
 
 Manifest JSON includes:
@@ -29,6 +33,10 @@ Manifest JSON includes:
 - `head_height`, `head_hash`
 - `chunks[]` with `name`, `size`, `sha256`
 - Optional signature metadata
+
+Each snapshot directory also maintains an `inventory.json` file that lists available
+snapshots (height/hash, created_at, manifest hash, sizes). Snapshot listing and P2P
+advertisement read from this inventory when present.
 
 ## Configuration
 
@@ -43,6 +51,13 @@ Environment variables:
 - `ANIMICA_SNAPSHOT_REQUIRE_SIGNATURE` (fail if signature missing/invalid)
 - `ANIMICA_SNAPSHOT_COOLDOWN_SECS`
 - `ANIMICA_SNAPSHOT_MIN_ADVANCE_BLOCKS`
+- `ANIMICA_SNAPSHOT_RECOVERY_WINDOW_SECS`
+- `ANIMICA_SNAPSHOT_RECOVERY_MAX_PER_WINDOW`
+
+If your node runs in a container and stores snapshots under `/data`, you can map
+paths for CLI output by setting:
+
+- `ANIMICA_SNAPSHOT_HOST_DIR` (host-visible snapshots root)
 
 ## Publishing snapshots (HTTP + P2P)
 

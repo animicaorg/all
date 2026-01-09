@@ -27,6 +27,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
+from core.snapshot.inventory import rebuild_inventory, remove_snapshot, upsert_snapshot
+from core.snapshot.paths import get_snapshots_dir, snapshot_path_display
+
 _log = logging.getLogger("animica.snapshot.orchestrator")
 
 
@@ -139,16 +142,7 @@ class SnapshotOrchestrator:
     
     def get_snapshots_dir(self) -> Path:
         """Get the snapshots directory path."""
-        if self.config.data_dir:
-            base = self.config.data_dir
-        else:
-            base = Path.home() / ".animica"
-        
-        # If data_dir looks like chain-specific (ends with /chain-N), use parent
-        if base.name.startswith("chain-"):
-            base = base.parent
-        
-        return base / "snapshots"
+        return get_snapshots_dir(self.config.data_dir)
     
     def list_snapshots(self) -> list[dict[str, Any]]:
         """
@@ -157,44 +151,23 @@ class SnapshotOrchestrator:
         Returns:
             List of snapshot metadata dictionaries
         """
-        snapshots = []
         snapshots_dir = self.get_snapshots_dir()
-        
-        if not snapshots_dir.exists():
-            return snapshots
-        
-        for item in snapshots_dir.iterdir():
-            if not item.is_dir():
+        entries = rebuild_inventory(snapshots_dir)
+        snapshots = []
+        for entry in entries:
+            if entry.chain_id != self.chain_id:
                 continue
-            
-            # Parse directory name: chain-{id}-height-{height}
-            if not item.name.startswith(f"chain-{self.chain_id}-height-"):
-                continue
-            
-            parts = item.name.split("-")
-            if len(parts) != 4:
-                continue
-            
-            try:
-                height = int(parts[3])
-                manifest_path = item / "manifest.json"
-                
-                if manifest_path.exists():
-                    import json
-                    with open(manifest_path) as f:
-                        manifest = json.load(f)
-                    
-                    snapshots.append({
-                        "height": height,
-                        "path": str(item),
-                        "manifest": manifest,
-                        "timestamp": manifest.get("timestamp", 0),
-                        "size_bytes": sum(f.stat().st_size for f in item.rglob("*") if f.is_file()),
-                    })
-            except (ValueError, OSError, Exception) as e:
-                _log.warning(f"Failed to parse snapshot {item}: {e}")
-        
-        # Sort by height (newest first)
+            snapshots.append(
+                {
+                    "height": entry.checkpoint_height,
+                    "path": entry.path,
+                    "path_display": snapshot_path_display(Path(entry.path)),
+                    "timestamp": entry.timestamp,
+                    "size_bytes": entry.total_size,
+                    "manifest_hash": entry.manifest_hash,
+                    "created_at": entry.created_at,
+                }
+            )
         snapshots.sort(key=lambda s: s["height"], reverse=True)
         return snapshots
     
@@ -286,6 +259,7 @@ class SnapshotOrchestrator:
                 self.status.snapshots_created += 1
                 self.status.last_snapshot_height = height
                 self.status.last_snapshot_time = time.time()
+                upsert_snapshot(snapshot_dir, snapshots_dir=self.get_snapshots_dir())
                 
                 # Verify if configured
                 if self.config.verify_on_create:
@@ -366,6 +340,11 @@ class SnapshotOrchestrator:
                     _log.info(f"Deleted old snapshot at height {snapshot['height']}")
                     deleted += 1
                     self.status.snapshots_deleted += 1
+                    remove_snapshot(
+                        chain_id=self.chain_id,
+                        checkpoint_height=int(snapshot["height"]),
+                        snapshots_dir=self.get_snapshots_dir(),
+                    )
             except Exception as e:
                 _log.warning(f"Failed to delete snapshot {snapshot['path']}: {e}")
         
