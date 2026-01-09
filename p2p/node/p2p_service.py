@@ -858,6 +858,10 @@ class P2PService:
         self._sync_anchor_probe_hash: Optional[bytes] = None
         self._sync_anchor_probe_until = 0.0
         self._sync_anchor_probe_peer: Optional[str] = None
+        self._sync_backtrack_depth = 0  # Track how far we've backtracked
+        self._sync_last_backtrack_at = 0.0
+        self._sync_skip_range_start: Optional[int] = None  # Start of problematic range
+        self._sync_skip_range_end: Optional[int] = None  # End of problematic range
         self._sync_checkpoint_height: Optional[int] = None
         self._sync_checkpoint_hash: Optional[bytes] = None
         self._sync_checkpoint_mode_enabled = False
@@ -7697,6 +7701,26 @@ class P2PService:
 
         async with self._sync_lock:
             self._ensure_sync_cursor_integrity()
+            
+            # Timeout-based recovery: Clear stuck in-flight requests
+            now = time.time()
+            if self._sync_inflight_headers > 0:
+                if self._sync_last_header_request_at:
+                    timeout = self._sync_request_timeout * 3  # Triple timeout before clearing
+                    if now - self._sync_last_header_request_at > timeout:
+                        log.warning(
+                            "Clearing stuck in-flight headers after timeout",
+                            extra={
+                                "inflight_headers": self._sync_inflight_headers,
+                                "timeout_s": timeout,
+                                "elapsed_s": now - self._sync_last_header_request_at,
+                            },
+                        )
+                        self._sync_inflight_headers = 0
+                        self._sync_active_header_peer = None
+                        self._sync_recovery_attempts += 1
+                        self._sync_last_recovery_action = "timeout_clear_inflight_headers"
+            
             local_height, _ = self._local_head()
             result["localHeight"] = local_height
             if (
@@ -9058,7 +9082,9 @@ class P2PService:
         return anchor_height, anchor_hash, head_height, db_head_height, chain_headers
 
     def _build_headers_locator(self, max_entries: int = 32) -> list[bytes]:
-        depth = max_entries + int(self._sync_locator_depth_hint or 0)
+        # Apply backtrack depth to search further back in history
+        backtrack_bonus = self._sync_backtrack_depth * 10  # Each backtrack level adds 10 entries
+        depth = max_entries + int(self._sync_locator_depth_hint or 0) + backtrack_bonus
         locator = self._build_locator(max_entries=depth)
         if locator:
             return locator
@@ -9724,6 +9750,131 @@ class P2PService:
                 self._sync_last_checkpoint_action = "checkpoint_mismatch"
             return
 
+    def _apply_backtrack_recovery(
+        self, header: _SyncHeader, anchor_height: int, anchor_hash: Optional[bytes], reason: str
+    ) -> str:
+        """
+        Stage 1 Recovery: Backtrack deeper in the chain to find a common ancestor.
+        Increases locator depth to search further back in history.
+        """
+        now = time.time()
+        self._sync_backtrack_depth = min(self._sync_backtrack_depth + 1, 10)  # Cap at 10 levels
+        self._sync_last_backtrack_at = now
+        
+        # Clear in-flight headers to allow fresh request with deeper locator
+        if self._sync_inflight_headers > 0:
+            self._sync_inflight_headers = 0
+            log.info(
+                "Backtrack recovery: cleared in-flight headers",
+                extra={
+                    "backtrack_depth": self._sync_backtrack_depth,
+                    "reason": reason,
+                    "anchor_height": anchor_height,
+                },
+            )
+        
+        # Set probe hash to parent of problematic header
+        self._sync_anchor_probe_hash = header.parent_hash
+        self._sync_anchor_probe_until = now + self._sync_request_timeout * 2
+        self._sync_anchor_probe_peer = None
+        
+        log.info(
+            "Stage 1 Recovery: Backtracking to find common ancestor",
+            extra={
+                "backtrack_depth": self._sync_backtrack_depth,
+                "anchor_height": anchor_height,
+                "header_height": header.height,
+                "probe_hash": header.parent_hash.hex(),
+            },
+        )
+        return f"backtrack_depth_{self._sync_backtrack_depth}"
+
+    def _apply_skip_recovery(
+        self, header: _SyncHeader, anchor_height: int, anchor_hash: Optional[bytes]
+    ) -> str:
+        """
+        Stage 2 Recovery: Skip the problematic range and try to sync from a different point.
+        Marks a range to skip and requests blocks from beyond that range.
+        """
+        # Identify the problematic range
+        if self._sync_skip_range_start is None:
+            self._sync_skip_range_start = anchor_height + 1
+        self._sync_skip_range_end = max(self._sync_skip_range_end or 0, header.height + 100)
+        
+        # Clear in-flight to allow fresh request
+        if self._sync_inflight_headers > 0:
+            self._sync_inflight_headers = 0
+        
+        # Clear queued blocks in problematic range
+        to_remove = []
+        for h in list(self._sync_block_queue):
+            height_hint = self._sync_block_queue_heights.get(h)
+            if height_hint and self._sync_skip_range_start <= height_hint <= self._sync_skip_range_end:
+                to_remove.append(h)
+        
+        for h in to_remove:
+            if h in self._sync_block_queue:
+                self._sync_block_queue.remove(h)
+            self._sync_block_queue_set.discard(h)
+            self._sync_block_queue_heights.pop(h, None)
+        
+        log.warning(
+            "Stage 2 Recovery: Skipping problematic block range",
+            extra={
+                "skip_range_start": self._sync_skip_range_start,
+                "skip_range_end": self._sync_skip_range_end,
+                "removed_blocks": len(to_remove),
+                "anchor_height": anchor_height,
+            },
+        )
+        return f"skip_range_{self._sync_skip_range_start}_to_{self._sync_skip_range_end}"
+
+    def _apply_aggressive_recovery(self, reason: str) -> str:
+        """
+        Stage 3 Recovery: Aggressively clear state and try different peers.
+        Clears all in-flight requests, queues, and forces peer rotation.
+        """
+        # Clear all in-flight requests
+        cleared_headers = self._sync_inflight_headers
+        cleared_blocks = len(self._sync_inflight_blocks)
+        
+        self._sync_inflight_headers = 0
+        self._sync_inflight_blocks.clear()
+        self._sync_inflight_peers.clear()
+        
+        # Clear active peers to force rotation
+        self._sync_active_header_peer = None
+        self._sync_active_block_peer = None
+        
+        # Reset backtrack state
+        self._sync_backtrack_depth = 0
+        self._sync_skip_range_start = None
+        self._sync_skip_range_end = None
+        
+        # Clear probe state
+        self._sync_anchor_probe_hash = None
+        self._sync_anchor_probe_until = 0.0
+        self._sync_anchor_probe_peer = None
+        
+        # Penalize all peers that contributed to the stall
+        for peer in list(self._peers.values()):
+            if not peer.anchored:
+                self._set_sync_backoff(
+                    peer,
+                    reason="aggressive_recovery",
+                    delay=self._sync_not_anchored_backoff,
+                )
+        
+        log.warning(
+            "Stage 3 Recovery: Aggressive state cleanup and peer rotation",
+            extra={
+                "cleared_inflight_headers": cleared_headers,
+                "cleared_inflight_blocks": cleared_blocks,
+                "reason": reason,
+            },
+        )
+        return "aggressive_recovery_clear_and_rotate"
+
     def _note_not_anchored(
         self,
         peer: _PeerState,
@@ -9843,11 +9994,24 @@ class P2PService:
         ):
             self._sync_checkpoint_validation = "unreachable"
             self._sync_last_checkpoint_action = "checkpoint_unreachable"
+        
+        # Progressive recovery strategy: retry → backtrack → skip → reset
+        # Determine recovery action based on attempt count and conditions
+        if self._sync_not_anchored_attempts >= 5 and self._sync_not_anchored_attempts < 10:
+            # Stage 1: Backtrack deeper in the chain to find common ancestor
+            action = self._apply_backtrack_recovery(header, anchor_height, anchor_hash, reason)
+        elif self._sync_not_anchored_attempts >= 10 and self._sync_not_anchored_attempts < 20:
+            # Stage 2: Try to skip the problematic range
+            action = self._apply_skip_recovery(header, anchor_height, anchor_hash)
+        elif self._sync_not_anchored_attempts >= 20:
+            # Stage 3: Clear in-flight and try a different peer/approach
+            action = self._apply_aggressive_recovery(reason)
+        
         should_reset = (
             anchor_height <= self._sync_not_anchored_reset_height
             and self._sync_not_anchored_attempts
-            >= self._sync_not_anchored_reset_threshold
-            and now - self._sync_last_progress_at > self._sync_stall_timeout
+            >= self._sync_not_anchored_reset_threshold * 10  # Increased threshold before reset
+            and now - self._sync_last_progress_at > self._sync_stall_timeout * 2  # More patience before reset
         )
         if should_reset and self._reset_chain_to_genesis(reason="not_anchored"):
             action = "reset_to_genesis"
