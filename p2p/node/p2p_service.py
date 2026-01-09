@@ -897,6 +897,11 @@ class P2PService:
         self._sync_duplicate_header_ranges: dict[
             str, tuple[tuple[str, str, int], int]
         ] = {}
+        self._sync_stale_network_best_at = 0.0
+        self._sync_stale_network_best_count = 0
+        self._sync_stale_network_best_cooldown = float(
+            os.environ.get("ANIMICA_P2P_STALE_NETWORK_BEST_COOLDOWN", "30.0") or 30.0
+        )
         self._sync_nonfatal_penalty_window_s = float(
             os.environ.get("ANIMICA_P2P_NONFATAL_PENALTY_WINDOW", "300") or 300
         )
@@ -3875,6 +3880,8 @@ class P2PService:
             self._sync_last_block_fetch_height = int(block_fetch_height)
         if queue_depth is not None:
             self._sync_last_queue_depth = int(queue_depth)
+        self._sync_stale_network_best_at = 0.0
+        self._sync_stale_network_best_count = 0
         log.debug("Sync progress recorded", extra={"reason": reason})
 
     def boost_sync(
@@ -9824,6 +9831,16 @@ class P2PService:
             and max_peer_height is not None
             and max_peer_height <= local_height
         ):
+            now = time.time()
+            if (
+                self._sync_stale_network_best_at
+                and now - self._sync_stale_network_best_at
+                < self._sync_stale_network_best_cooldown
+            ):
+                self._sync_stale_network_best_count += 1
+                return "at_tip"
+            self._sync_stale_network_best_at = now
+            self._sync_stale_network_best_count = 1
             return "stale_network_best"
         if remote_height <= local_height:
             return "peer_behind"
