@@ -8129,6 +8129,17 @@ class P2PService:
                     self._sync_last_headers_discard_reason_counts = discard_reason_counts
 
                     rotate_peer = False
+                    if header_error == "invalid_headers":
+                        self._penalize_peer(
+                            peer, "invalid_headers", nonfatal=True
+                        )
+                        self._set_sync_backoff(
+                            peer,
+                            reason="invalid_headers",
+                            delay=self._sync_no_headers_backoff,
+                        )
+                        tried_peers.add(peer.remote)
+                        rotate_peer = True
                     if accepted_count > 0:
                         self._reset_duplicate_header_range(peer)
                     elif all_known and headers:
