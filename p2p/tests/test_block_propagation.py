@@ -77,6 +77,7 @@ async def test_orphan_block_imports_after_parent(tmp_path: Path) -> None:
         ts = int(getattr(genesis, "timestamp", 0))
         block1 = _build_child_block(genesis, timestamp=ts + 1)
         block2 = _build_child_block(block1.header, timestamp=ts + 2)
+        block2_hash = compute_header_hash(block2.header)
 
         peer = _PeerState(
             session_id="orphan-peer",
@@ -90,11 +91,14 @@ async def test_orphan_block_imports_after_parent(tmp_path: Path) -> None:
 
         payload_child = encode_payload(Blocks(blocks=[block2.to_cbor()]))
         await node._handle_blocks(peer, payload_child)
+        assert block2_hash in node._sync_block_buffer
+        assert node._sync_block_buffer[block2_hash].received_at > 0
 
         payload_parent = encode_payload(Blocks(blocks=[block1.to_cbor()]))
         await node._handle_blocks(peer, payload_parent)
 
         assert await _wait_for_height(deps, 2, timeout=10.0)
+        assert block2_hash not in node._sync_block_buffer
     finally:
         await node.stop()
 
