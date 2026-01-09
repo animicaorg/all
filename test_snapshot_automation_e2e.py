@@ -148,20 +148,23 @@ def test_snapshot_creation_decision():
         )
         
         # Test interval heights
-        assert orchestrator.should_create_snapshot(0) is False
+        assert orchestrator.should_create_snapshot(head_height=0, last_snapshot_height=0) is False
         print("  ✅ No snapshot at height 0")
         
-        assert orchestrator.should_create_snapshot(1000) is False
+        assert orchestrator.should_create_snapshot(head_height=1000, last_snapshot_height=0) is False
         print("  ✅ No snapshot at height 1000 (not interval)")
         
-        assert orchestrator.should_create_snapshot(2000) is True
+        assert orchestrator.should_create_snapshot(head_height=2000, last_snapshot_height=0) is True
         print("  ✅ Snapshot at height 2000 (interval)")
         
-        assert orchestrator.should_create_snapshot(4000) is True
+        assert orchestrator.should_create_snapshot(head_height=4000, last_snapshot_height=0) is True
         print("  ✅ Snapshot at height 4000 (interval)")
         
-        assert orchestrator.should_create_snapshot(4001) is False
-        print("  ✅ No snapshot at height 4001 (not interval)")
+        assert orchestrator.should_create_snapshot(head_height=4001, last_snapshot_height=0) is True
+        print("  ✅ Snapshot at height 4001 (interval target 4000)")
+
+        assert orchestrator.should_create_snapshot(head_height=4001, last_snapshot_height=4000) is False
+        print("  ✅ No snapshot when latest is already at target height")
         
         # Test with auto_create disabled
         config2 = SnapshotConfig(
@@ -176,7 +179,7 @@ def test_snapshot_creation_decision():
             config=config2,
         )
         
-        assert orchestrator2.should_create_snapshot(2000) is False
+        assert orchestrator2.should_create_snapshot(head_height=2000, last_snapshot_height=0) is False
         print("  ✅ No snapshot when auto_create=False")
     
     print()

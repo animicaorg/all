@@ -44,6 +44,19 @@ Environment variables:
 - `ANIMICA_SNAPSHOT_COOLDOWN_SECS`
 - `ANIMICA_SNAPSHOT_MIN_ADVANCE_BLOCKS`
 
+## Publishing snapshots (HTTP + P2P)
+
+Snapshots are written to the local snapshots directory (typically
+`~/.animica/snapshots/chain-<id>-height-<height>/`). To publish them over HTTP:
+
+1. Copy the snapshot directory contents to a web server directory (e.g. `/data/snapshots`).
+2. Serve the directory with nginx or any static file server.
+3. Point nodes at the manifest URL(s) using `ANIMICA_SNAPSHOT_MANIFEST_URLS`.
+
+Nodes also advertise snapshots over P2P for discovery and download. If a manifest
+URL is configured, the node prefers HTTP manifests first and falls back to P2P
+snapshot discovery when manifests are unavailable.
+
 ## CLI
 
 Snapshots can be managed manually with:
