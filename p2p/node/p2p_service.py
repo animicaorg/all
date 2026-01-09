@@ -3332,8 +3332,8 @@ class P2PService:
 
     def _handle_sync_stall(self, *, reason: str) -> None:
         now = time.time()
-        if self._sync_best_header is None:
-            return
+        # Allow stall handling even when _sync_best_header is None or equals local height
+        # This handles the case where headers == blocks and we're stuck
         if self._last_rotation_at and now - self._last_rotation_at < 5.0:
             return
         old_peer = None
@@ -3376,7 +3376,7 @@ class P2PService:
             self._sync_last_recovery_action = "stall_no_peer"
         self._last_rotation_at = now
         local_height, _ = self._local_head()
-        best_header_height = self._sync_best_header.height
+        best_header_height = self._sync_best_header.height if self._sync_best_header else local_height
         eligible_block_peers, _ineligible_block_peers = self._eligible_block_peers()
         log.warning(
             "Block sync stall handled",
@@ -7706,6 +7706,15 @@ class P2PService:
             if force and self._sync_inflight_blocks:
                 self._sync_inflight_blocks.clear()
                 self._sync_inflight_peers.clear()
+            
+            # When forcing sync, clear "at_tip" error to allow re-requesting headers
+            # This helps when the node is stuck because all connected peers are at the same
+            # height, but there are actually higher blocks available on the network
+            if force and self._sync_last_header_error == "at_tip":
+                self._sync_last_header_error = None
+                self._sync_last_header_error_at = None
+                self._sync_last_header_error_peer = None
+                log.info("Cleared 'at_tip' error state due to forced sync")
 
             tried_peers: set[str] = set()
             no_headers_responses = 0
@@ -8072,6 +8081,34 @@ class P2PService:
                     now=now, head_height=best_block_height, head_hash=head_hash
                 )
                 network_best_height = self._network_best_height()
+                
+                # Detect when headers == blocks and we're not making progress
+                # This indicates we're stuck because all connected peers are at the same height
+                # even though the network might have higher blocks available
+                if (
+                    best_header_height == best_block_height
+                    and best_block_height > 0
+                    and not self._sync_inflight_headers
+                    and not self._sync_inflight_blocks
+                    and not self._sync_block_queue
+                    and now - self._sync_last_progress_at > self._sync_stall_timeout
+                    and self._peers  # Have peers but not making progress
+                ):
+                    # Mark as stalled to trigger peer rotation and recovery
+                    if self._sync_block_stalled_reason != "headers_blocks_equal_stall":
+                        log.warning(
+                            "Sync stalled: headers == blocks with no progress",
+                            extra={
+                                "height": best_block_height,
+                                "stall_elapsed_s": max(0.0, now - self._sync_last_progress_at),
+                                "peers": len(self._peers),
+                                "last_header_error": self._sync_last_header_error,
+                            },
+                        )
+                        self._sync_block_stalled_reason = "headers_blocks_equal_stall"
+                        # Force sync on next iteration to try different peers
+                        self._sync_requested = True
+                
                 if (
                     network_best_height is not None
                     and best_block_height < int(network_best_height)
