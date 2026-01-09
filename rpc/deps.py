@@ -819,6 +819,34 @@ def build_context(cfg: t.Any | None = None) -> RpcContext:
 
     head = _HeadAccessor(bundle)
     head_info = head.get()
+    head_height = int(head_info.get("height") or 0) if head_info else 0
+
+    # Automatic snapshot bootstrap for empty/genesis-only DBs
+    if init_error is None and head_height <= 0:
+        try:
+            from p2p.sync.snapshot_sync import auto_bootstrap_from_manifest
+
+            log.info(
+                "Attempting automatic snapshot bootstrap",
+                extra={"head_height": head_height, "chain_id": cfg_view.chain_id},
+            )
+            success, error, _manifest, _manifest_url = auto_bootstrap_from_manifest(
+                chain_id=cfg_view.chain_id,
+                db_uri=cfg_view.db_uri,
+                local_height=head_height,
+            )
+            if success:
+                log.info("Snapshot bootstrap succeeded; reopening DB")
+                _close_if_possible(bundle.kv)
+                kv = _open_kv(cfg_view.db_uri)
+                bundle = _build_db_facades(kv)
+                head = _HeadAccessor(bundle)
+                head_info = head.get()
+                head_height = int(head_info.get("height") or 0) if head_info else 0
+            elif error:
+                log.info(f"Snapshot bootstrap skipped: {error}")
+        except Exception as e:
+            log.warning(f"Snapshot bootstrap failed: {e}", exc_info=True)
     # head_info is a dict with 'height', 'hash', 'header' keys
     if head_info and head_info.get("height") is not None:
         log.info(

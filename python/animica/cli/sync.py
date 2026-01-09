@@ -293,6 +293,14 @@ def _sync_diagnostics_lines(sync_status: Optional[Dict[str, Any]]) -> list[str]:
     last_resp_at = sync_status.get("last_header_response_at")
     last_resp_count = sync_status.get("last_header_response_count")
     last_error = sync_status.get("last_header_error")
+    snapshot_auto = sync_status.get("snapshot_auto_enabled")
+    snapshot_last_attempt = sync_status.get("snapshot_last_attempt_at")
+    snapshot_last_success = sync_status.get("snapshot_last_success_at")
+    snapshot_last_error = sync_status.get("snapshot_last_error")
+    snapshot_cooldown = sync_status.get("snapshot_cooldown_remaining_s")
+    snapshot_manifest_height = sync_status.get("snapshot_last_manifest_height")
+    snapshot_manifest_hash = sync_status.get("snapshot_last_manifest_hash")
+    snapshot_manifest_url = sync_status.get("snapshot_last_manifest_url")
     if eligible:
         lines.append(f"  eligible_peers_for_headers: {eligible}")
     if ineligible:
@@ -328,6 +336,24 @@ def _sync_diagnostics_lines(sync_status: Optional[Dict[str, Any]]) -> list[str]:
         )
     if last_error:
         lines.append(f"  last_header_error: {last_error}")
+    if snapshot_auto is not None:
+        lines.append(f"  snapshot_auto_enabled: {snapshot_auto}")
+    if snapshot_last_attempt:
+        lines.append(f"  snapshot_last_attempt: { _format_sync_age(snapshot_last_attempt) }")
+    if snapshot_last_success:
+        lines.append(f"  snapshot_last_success: { _format_sync_age(snapshot_last_success) }")
+    if snapshot_last_error:
+        lines.append(f"  snapshot_last_error: {snapshot_last_error}")
+    if snapshot_cooldown is not None:
+        lines.append(f"  snapshot_cooldown_remaining_s: {snapshot_cooldown:.0f}")
+    if snapshot_manifest_height or snapshot_manifest_hash:
+        lines.append(
+            "  snapshot_manifest: "
+            f"height={snapshot_manifest_height or 'n/a'} "
+            f"hash={snapshot_manifest_hash or 'n/a'}"
+        )
+    if snapshot_manifest_url:
+        lines.append(f"  snapshot_manifest_url: {snapshot_manifest_url}")
     return lines
 
 
