@@ -6122,6 +6122,12 @@ class P2PService:
 
         return get_snapshots_dir(self._chain_data_dir)
 
+    def _get_snapshots_dirs(self) -> list[Path]:
+        """Get all snapshot directory paths to scan."""
+        from core.snapshot.paths import get_snapshots_dirs
+
+        return get_snapshots_dirs(self._chain_data_dir)
+
     def _list_local_snapshots(self, chain_id: Optional[int] = None) -> list:
         """
         List available snapshots from the local snapshots directory.
@@ -6132,17 +6138,12 @@ class P2PService:
         Returns:
             List of SnapshotInfo objects
         """
-        from core.snapshot.inventory import rebuild_inventory
+        from core.snapshot.inventory import list_snapshots_from_dirs
         from p2p.wire.messages import SnapshotInfo
 
         snapshots = []
-        snapshots_dir = self._get_snapshots_dir()
-
-        if not snapshots_dir.exists():
-            self._log.debug(f"Snapshots directory does not exist: {snapshots_dir}")
-            return snapshots
-
-        entries = rebuild_inventory(snapshots_dir)
+        snapshots_dirs = self._get_snapshots_dirs()
+        entries = list_snapshots_from_dirs(snapshots_dirs)
         for entry in entries:
             if chain_id is not None and entry.chain_id != chain_id:
                 continue
@@ -6163,7 +6164,9 @@ class P2PService:
 
         snapshots.sort(key=lambda s: (s.chain_id, -s.checkpoint_height))
 
-        self._log.debug(f"Found {len(snapshots)} snapshot(s) in {snapshots_dir}")
+        self._log.debug(
+            f"Found {len(snapshots)} snapshot(s) across {len(snapshots_dirs)} directory(ies)"
+        )
         return snapshots
 
     def _read_snapshot_chunk(
@@ -6180,15 +6183,23 @@ class P2PService:
         Returns:
             Tuple of (chunk_data, found)
         """
-        snapshots_dir = self._get_snapshots_dir()
-        
-        if not snapshots_dir.exists():
+        snapshots_dirs = self._get_snapshots_dirs()
+        if not snapshots_dirs:
             return b"", False
         
         # Construct snapshot directory name
-        snapshot_dir = snapshots_dir / f"chain-{chain_id}-height-{checkpoint_height}"
-        if not snapshot_dir.exists() or not snapshot_dir.is_dir():
-            self._log.debug(f"Snapshot directory not found: {snapshot_dir}")
+        snapshot_dir = None
+        for candidate_root in snapshots_dirs:
+            if not candidate_root.exists():
+                continue
+            candidate_dir = candidate_root / f"chain-{chain_id}-height-{checkpoint_height}"
+            if candidate_dir.exists() and candidate_dir.is_dir():
+                snapshot_dir = candidate_dir
+                break
+        if snapshot_dir is None:
+            self._log.debug(
+                f"Snapshot directory not found for chain {chain_id} height {checkpoint_height}"
+            )
             return b"", False
         
         # Read the chunk file
