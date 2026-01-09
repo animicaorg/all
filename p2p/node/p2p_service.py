@@ -7902,9 +7902,26 @@ class P2PService:
                 return result
             eligible_peers, _ = self._eligible_sync_peers()
             if not eligible_peers:
-                self._sync_phase = "IDLE"
-                log.debug("Sync idle: no eligible peers for headers")
-                return result
+                if self._sync_last_header_error == "invalid_headers":
+                    cleared = self._clear_sync_backoff_reason("invalid_headers")
+                    if cleared:
+                        self._sync_last_header_error = None
+                        self._sync_last_header_error_at = None
+                        self._sync_last_header_error_peer = None
+                        log.info(
+                            "Cleared invalid headers backoff to retry sync",
+                            extra={"cleared": cleared},
+                        )
+                        eligible_peers, _ = self._eligible_sync_peers()
+                        if eligible_peers:
+                            log.info(
+                                "Retrying sync after clearing invalid headers backoff",
+                                extra={"eligible_peers": len(eligible_peers)},
+                            )
+                if not eligible_peers:
+                    self._sync_phase = "IDLE"
+                    log.debug("Sync idle: no eligible peers for headers")
+                    return result
 
             self._stats["sync_rounds"] += 1
             self._sync_phase = "HEADERS"
@@ -8560,6 +8577,16 @@ class P2PService:
                 ),
             },
         )
+
+    def _clear_sync_backoff_reason(self, reason: str) -> int:
+        removed = 0
+        for key, current_reason in list(self._sync_peer_backoff_reason.items()):
+            if current_reason != reason:
+                continue
+            self._sync_peer_backoff_reason.pop(key, None)
+            self._sync_peer_backoff.pop(key, None)
+            removed += 1
+        return removed
 
     def _sync_peer_eligibility(
         self,
