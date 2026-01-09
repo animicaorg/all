@@ -6054,6 +6054,25 @@ class P2PService:
         """Handle SNAPSHOTS response from peer."""
         try:
             from p2p.wire.messages import SnapshotInfo
+
+            def _snapshot_from_sequence(seq: list[Any] | tuple[Any, ...]) -> dict[str, Any]:
+                fields = (
+                    "chain_id",
+                    "checkpoint_height",
+                    "checkpoint_hash",
+                    "blocks_count",
+                    "accounts_count",
+                    "size_mb",
+                    "timestamp",
+                    "created_at",
+                    "manifest_hash",
+                )
+                snapshot_dict = {field: value for field, value in zip(fields, seq)}
+                for key in ("checkpoint_hash", "manifest_hash"):
+                    value = snapshot_dict.get(key)
+                    if isinstance(value, (bytes, bytearray)):
+                        snapshot_dict[key] = "0x" + bytes(value).hex()
+                return snapshot_dict
             
             data = self._decode_map(payload)
             raw_snapshots = data.get("snapshots") or []
@@ -6063,6 +6082,8 @@ class P2PService:
             for snap_data in raw_snapshots:
                 if isinstance(snap_data, dict):
                     snapshots.append(snap_data)
+                elif isinstance(snap_data, (list, tuple)):
+                    snapshots.append(_snapshot_from_sequence(snap_data))
                 elif hasattr(snap_data, 'to_dict'):
                     snapshots.append(snap_data.to_dict())
                 else:
