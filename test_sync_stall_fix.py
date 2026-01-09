@@ -4,6 +4,10 @@ Simple test to verify the sync stall fix logic.
 This tests the key scenarios where sync gets stuck.
 """
 
+# Test constants
+STALL_TIME_SECONDS = 10
+STALL_TIMEOUT_SECONDS = 5
+
 def test_at_tip_clearing_on_force():
     """Test that 'at_tip' error is cleared when force=True"""
     # Simulated state
@@ -31,8 +35,8 @@ def test_headers_blocks_equal_detection():
     sync_inflight_headers = 0
     sync_inflight_blocks = {}
     sync_block_queue = []
-    sync_last_progress_at = time.time() - 10  # 10 seconds ago
-    sync_stall_timeout = 5  # 5 seconds timeout
+    sync_last_progress_at = time.time() - STALL_TIME_SECONDS
+    sync_stall_timeout = STALL_TIMEOUT_SECONDS
     peers = {"peer1": {}}
     sync_block_stalled_reason = None
     
@@ -89,8 +93,8 @@ def test_normal_sync_not_affected():
     sync_inflight_headers = 0
     sync_inflight_blocks = {}
     sync_block_queue = []
-    sync_last_progress_at = time.time() - 10
-    sync_stall_timeout = 5
+    sync_last_progress_at = time.time() - STALL_TIME_SECONDS
+    sync_stall_timeout = STALL_TIMEOUT_SECONDS
     peers = {"peer1": {}}
     sync_block_stalled_reason = None
     
