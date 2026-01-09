@@ -8273,27 +8273,27 @@ class P2PService:
                         # This allows us to find the higher height through peer-of-peer connections
                     else:
                         # Check if we still have pending block downloads before marking as synced
-                if (
-                    self._sync_best_header is None
-                    or self._sync_best_header.height <= local_height
-                ) and not self._sync_block_queue and not self._sync_inflight_blocks:
-                    target_height = self._sync_target_height
-                    if target_height is None:
-                        target_height = remote_height
-                    if target_height is not None and local_height >= max(
-                        0, int(target_height) - 1
-                    ):
-                        self._sync_phase = "SYNCED" if local_height > 0 else "IDLE"
-                    log.debug(
-                        "Skipped header request: already at tip",
-                        extra={
-                            "remote": peer.remote,
-                            "local_height": local_height,
+                        if (
+                            self._sync_best_header is None
+                            or self._sync_best_header.height <= local_height
+                        ) and not self._sync_block_queue and not self._sync_inflight_blocks:
+                            target_height = self._sync_target_height
+                            if target_height is None:
+                                target_height = remote_height
+                            if target_height is not None and local_height >= max(
+                                0, int(target_height) - 1
+                            ):
+                                self._sync_phase = "SYNCED" if local_height > 0 else "IDLE"
+                            log.debug(
+                                "Skipped header request: already at tip",
+                                extra={
+                                    "remote": peer.remote,
+                                    "local_height": local_height,
                                     "remote_height": remote_height,
                                 },
                             )
                             return result
-                        elif self._sync_block_queue or self._sync_inflight_blocks:
+                        if self._sync_block_queue or self._sync_inflight_blocks:
                             # We have pending blocks, continue to download them
                             log.debug(
                                 "Continuing sync for pending blocks",
