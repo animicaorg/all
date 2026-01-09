@@ -21,6 +21,12 @@ from urllib.parse import urljoin, urlparse
 
 import httpx
 
+from core.snapshot.apply import apply_snapshot_atomic
+from core.snapshot.download import download_chunks, fetch_manifests
+from core.snapshot.manifest import SnapshotManifest, select_best_manifest
+from core.snapshot.policy import SnapshotPolicy
+from core.snapshot.verify import verify_chunk_hash, verify_manifest_signature
+
 _log = logging.getLogger("animica.p2p.snapshot_sync")
 
 # Environment variables for snapshot sync configuration
@@ -30,6 +36,8 @@ SNAPSHOT_MIN_HEIGHT = "ANIMICA_SNAPSHOT_MIN_HEIGHT"
 SNAPSHOT_TIMEOUT = "ANIMICA_SNAPSHOT_TIMEOUT"
 SNAPSHOT_RETRY_INTERVAL = "ANIMICA_SNAPSHOT_RETRY_INTERVAL"
 SNAPSHOT_MAX_RETRIES = "ANIMICA_SNAPSHOT_MAX_RETRIES"
+SNAPSHOT_COOLDOWN_SECS = "ANIMICA_SNAPSHOT_COOLDOWN_SECS"
+SNAPSHOT_MIN_ADVANCE_BLOCKS = "ANIMICA_SNAPSHOT_MIN_ADVANCE_BLOCKS"
 
 # P2P snapshot query timeout in seconds
 P2P_SNAPSHOT_QUERY_TIMEOUT = 10.0
@@ -70,6 +78,120 @@ def _get_snapshot_max_retries() -> int:
         return 0
 
 
+def _get_snapshot_cooldown_secs() -> int:
+    """Get cooldown between snapshot re-apply attempts."""
+    try:
+        return int(os.environ.get(SNAPSHOT_COOLDOWN_SECS, "1800"))
+    except ValueError:
+        return 1800
+
+
+def _get_snapshot_min_advance() -> int:
+    """Get minimum number of blocks a snapshot must advance by to be applied."""
+    try:
+        return int(os.environ.get(SNAPSHOT_MIN_ADVANCE_BLOCKS, "500"))
+    except ValueError:
+        return 500
+
+
+def _policy_for_chain(chain_id: int) -> SnapshotPolicy:
+    policy = SnapshotPolicy.from_env(chain_id=chain_id)
+    policy.cooldown_secs = _get_snapshot_cooldown_secs()
+    policy.min_advance_blocks = _get_snapshot_min_advance()
+    return policy
+
+
+def _should_apply_snapshot(
+    policy: SnapshotPolicy,
+    *,
+    local_height: int,
+    snapshot_height: int,
+    force: bool,
+) -> bool:
+    if snapshot_height <= 0:
+        return False
+    if force:
+        return True
+    if local_height <= 0:
+        return True
+    return snapshot_height >= local_height + policy.min_advance_blocks
+
+
+def _fetch_best_manifest_sync(
+    policy: SnapshotPolicy,
+) -> tuple[Optional[SnapshotManifest], Optional[str], Optional[str]]:
+    sources = list(policy.manifest_urls) + list(policy.fallback_urls)
+    if not sources:
+        return None, None, "no manifest sources configured"
+
+    best: Optional[SnapshotManifest] = None
+    best_url: Optional[str] = None
+    last_error: Optional[str] = None
+
+    for url in sources:
+        try:
+            manifests = fetch_manifests(url)
+            candidate = select_best_manifest(manifests)
+            if candidate is None:
+                continue
+            if best is None or candidate.head_height > best.head_height:
+                best = candidate
+                best_url = url
+            elif candidate.head_height == best.head_height and candidate.created_at > best.created_at:
+                best = candidate
+                best_url = url
+        except Exception as exc:  # noqa: BLE001
+            last_error = str(exc)
+            _log.debug(f"Failed to fetch manifest from {url}: {exc}")
+
+    if best is None:
+        return None, None, last_error or "no snapshots available"
+    return best, best_url, None
+
+
+def _download_apply_manifest_snapshot_sync(
+    *,
+    manifest: SnapshotManifest,
+    manifest_url: str,
+    db_uri: Optional[str],
+    chain_id: int,
+    force: bool = False,
+) -> Tuple[bool, Optional[str]]:
+    policy = _policy_for_chain(chain_id)
+    if not policy.auto_enabled:
+        return False, "snapshot auto disabled"
+
+    if manifest.chain_id != chain_id:
+        return False, f"snapshot chain_id mismatch: {manifest.chain_id}"
+
+    if not db_uri:
+        return False, "db_uri is required for snapshot apply"
+
+    if policy.require_signature and not policy.trusted_pubkeys:
+        return False, "signature required but no trusted keys configured"
+
+    ok, error = verify_manifest_signature(manifest, policy.trusted_pubkeys)
+    if not ok:
+        if policy.require_signature or policy.trusted_pubkeys:
+            return False, error
+
+    with tempfile.TemporaryDirectory(prefix="animica_snapshot_manifest_") as tmpdir:
+        temp_path = Path(tmpdir)
+        download_chunks(manifest_url, manifest, temp_path)
+        for chunk in manifest.chunks:
+            chunk_path = temp_path / chunk.name
+            valid, err = verify_chunk_hash(chunk_path, chunk.sha256)
+            if not valid:
+                return False, err
+        apply_snapshot_atomic(
+            temp_path,
+            db_uri=db_uri,
+            expected_chain_id=chain_id,
+            expected_network=policy.network,
+        )
+    return True, None
+
+
 async def try_snapshot_bootstrap(
     block_db: Any,
     state_db: Any,
@@ -77,6 +199,8 @@ async def try_snapshot_bootstrap(
     current_height: int = 0,
     min_checkpoint_height: Optional[int] = None,
     p2p_service: Optional[Any] = None,
+    db_uri: Optional[str] = None,
+    force: bool = False,
 ) -> Tuple[bool, Optional[str]]:
     """
     Attempt to bootstrap chain sync using a snapshot.
@@ -96,6 +220,8 @@ async def try_snapshot_bootstrap(
         _log.debug("Snapshot sync disabled")
         return False, "Snapshot sync disabled"
 
+    policy = _policy_for_chain(chain_id)
+
     # Don't use snapshot if already synced to a reasonable height
     min_height_str = os.environ.get(SNAPSHOT_MIN_HEIGHT, "1000")
     try:
@@ -103,11 +229,38 @@ async def try_snapshot_bootstrap(
     except ValueError:
         min_height = 1000
 
-    if current_height >= min_height:
+    if current_height >= min_height and not force:
         _log.debug(
             f"Already at height {current_height}, skipping snapshot bootstrap"
         )
         return False, "Already synced past snapshot threshold"
+
+    # Try manifest-based snapshots first
+    if policy.manifest_urls or policy.fallback_urls:
+        manifest, manifest_url, error = _fetch_best_manifest_sync(policy)
+        if manifest and manifest_url:
+            if min_checkpoint_height and manifest.head_height < min_checkpoint_height:
+                _log.info(
+                    f"Best manifest snapshot at height {manifest.head_height} below minimum {min_checkpoint_height}"
+                )
+            elif _should_apply_snapshot(
+                policy,
+                local_height=current_height,
+                snapshot_height=manifest.head_height,
+                force=force,
+            ):
+                ok, err = _download_apply_manifest_snapshot_sync(
+                    manifest=manifest,
+                    manifest_url=manifest_url,
+                    db_uri=db_uri,
+                    chain_id=chain_id,
+                    force=force,
+                )
+                if ok:
+                    return True, None
+                return False, err
+        elif error:
+            _log.debug(f"Manifest snapshot discovery failed: {error}")
 
     # Strategy: Try peers first, then fall back to static RPC URL
     snapshots_by_source: dict[str, list[dict[str, Any]]] = {}
@@ -176,6 +329,7 @@ async def try_snapshot_bootstrap(
                 checkpoint_height=snapshot_height,
                 block_db=block_db,
                 state_db=state_db,
+                db_uri=db_uri,
             )
         else:
             # Use RPC/HTTP download
@@ -185,6 +339,7 @@ async def try_snapshot_bootstrap(
                 checkpoint_height=snapshot_height,
                 block_db=block_db,
                 state_db=state_db,
+                db_uri=db_uri,
             )
 
         if success:
@@ -365,6 +520,7 @@ async def _download_and_import_snapshot(
     checkpoint_height: int,
     block_db: Any,
     state_db: Any,
+    db_uri: Optional[str] = None,
 ) -> bool:
     """
     Download and import a snapshot from RPC endpoint.
@@ -409,12 +565,19 @@ async def _download_and_import_snapshot(
         # Local snapshot, import directly
         _log.info(f"Importing local snapshot from {source_path}")
         try:
-            import_snapshot(
-                block_db=block_db,
-                state_db=state_db,
-                snapshot_dir=source_path,
-                verify_hashes=True,
-            )
+            if db_uri:
+                apply_snapshot_atomic(
+                    source_path,
+                    db_uri=db_uri,
+                    expected_chain_id=chain_id,
+                )
+            else:
+                import_snapshot(
+                    block_db=block_db,
+                    state_db=state_db,
+                    snapshot_dir=source_path,
+                    verify_hashes=True,
+                )
             return True
         except Exception as e:
             _log.error(f"Failed to import snapshot: {e}")
@@ -507,12 +670,19 @@ async def _download_and_import_snapshot(
                 
                 # Now import the snapshot from temp directory
                 _log.info(f"Importing downloaded snapshot from {temp_dir}")
-                import_snapshot(
-                    block_db=block_db,
-                    state_db=state_db,
-                    snapshot_dir=temp_dir,
-                    verify_hashes=True,
-                )
+                if db_uri:
+                    apply_snapshot_atomic(
+                        temp_dir,
+                        db_uri=db_uri,
+                        expected_chain_id=chain_id,
+                    )
+                else:
+                    import_snapshot(
+                        block_db=block_db,
+                        state_db=state_db,
+                        snapshot_dir=temp_dir,
+                        verify_hashes=True,
+                    )
                 
                 _log.info("Successfully imported downloaded snapshot")
                 return True
@@ -537,6 +707,7 @@ async def _download_and_import_snapshot_via_p2p(
     checkpoint_height: int,
     block_db: Any,
     state_db: Any,
+    db_uri: Optional[str] = None,
 ) -> bool:
     """
     Download and import a snapshot from a P2P peer.
@@ -679,12 +850,19 @@ async def _download_and_import_snapshot_via_p2p(
             
             # Import the snapshot
             _log.info(f"Importing downloaded snapshot from {temp_dir}")
-            import_snapshot(
-                block_db=block_db,
-                state_db=state_db,
-                snapshot_dir=temp_dir,
-                verify_hashes=True,
-            )
+            if db_uri:
+                apply_snapshot_atomic(
+                    temp_dir,
+                    db_uri=db_uri,
+                    expected_chain_id=chain_id,
+                )
+            else:
+                import_snapshot(
+                    block_db=block_db,
+                    state_db=state_db,
+                    snapshot_dir=temp_dir,
+                    verify_hashes=True,
+                )
             
             _log.info("Successfully imported P2P downloaded snapshot")
             return True
@@ -846,8 +1024,39 @@ async def continuous_snapshot_discovery(
     _log.debug("Continuous snapshot discovery ended")
 
 
+def auto_bootstrap_from_manifest(
+    *,
+    chain_id: int,
+    db_uri: Optional[str],
+    local_height: int,
+    force: bool = False,
+) -> Tuple[bool, Optional[str], Optional[SnapshotManifest], Optional[str]]:
+    policy = _policy_for_chain(chain_id)
+    if not policy.auto_enabled:
+        return False, "snapshot auto disabled", None, None
+    manifest, manifest_url, error = _fetch_best_manifest_sync(policy)
+    if not manifest or not manifest_url:
+        return False, error or "no snapshot manifest found", None, None
+    if not _should_apply_snapshot(
+        policy,
+        local_height=local_height,
+        snapshot_height=manifest.head_height,
+        force=force,
+    ):
+        return False, "snapshot not sufficiently ahead", manifest, manifest_url
+    ok, err = _download_apply_manifest_snapshot_sync(
+        manifest=manifest,
+        manifest_url=manifest_url,
+        db_uri=db_uri,
+        chain_id=chain_id,
+        force=force,
+    )
+    return ok, err, manifest, manifest_url
+
+
 __all__ = [
     "try_snapshot_bootstrap",
     "should_try_snapshot_bootstrap",
     "continuous_snapshot_discovery",
+    "auto_bootstrap_from_manifest",
 ]

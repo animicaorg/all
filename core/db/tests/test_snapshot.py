@@ -15,9 +15,11 @@ def test_snapshot_manifest_creation():
     manifest = SnapshotManifest(
         version=1,
         chain_id=1,
+        network="testnet",
         checkpoint_height=1000,
         checkpoint_hash="0x1234",
         timestamp=1234567890,
+        created_at="2024-01-01T00:00:00Z",
         blocks_count=1000,
         headers_count=1000,
         accounts_count=100,
