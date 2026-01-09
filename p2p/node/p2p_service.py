@@ -3293,6 +3293,8 @@ class P2PService:
     def _maybe_mark_block_stalled(self, now: float) -> None:
         if self._sync_best_header is None:
             return
+        if self._sync_inflight_headers or self._sync_header_queue:
+            return
         next_block_height, next_block_hash = self._next_block_needed()
         if next_block_hash is None:
             if self._sync_block_stalled_reason == "blocks stalled":
@@ -8076,7 +8078,9 @@ class P2PService:
                     network_best_height is not None
                     and best_block_height < int(network_best_height)
                     and not self._sync_inflight_blocks
+                    and not self._sync_inflight_headers
                     and not self._sync_block_queue
+                    and not self._sync_header_queue
                     and now - self._sync_last_progress_at > self._sync_stall_timeout
                 ):
                     log.debug(
