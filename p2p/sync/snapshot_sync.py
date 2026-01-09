@@ -245,6 +245,7 @@ async def try_snapshot_bootstrap(
     p2p_service: Optional[Any] = None,
     db_uri: Optional[str] = None,
     force: bool = False,
+    allow_any_height: bool = False,
 ) -> Tuple[bool, Optional[str]]:
     """
     Attempt to bootstrap chain sync using a snapshot.
@@ -273,7 +274,7 @@ async def try_snapshot_bootstrap(
     except ValueError:
         min_height = 1000
 
-    if current_height >= min_height and not force:
+    if current_height >= min_height and not force and not allow_any_height:
         _log.debug(
             f"Already at height {current_height}, skipping snapshot bootstrap"
         )
@@ -972,7 +973,12 @@ async def _download_and_import_snapshot_via_p2p(
         return False
 
 
-def should_try_snapshot_bootstrap(current_height: int, target_height: Optional[int] = None) -> bool:
+def should_try_snapshot_bootstrap(
+    current_height: int,
+    target_height: Optional[int] = None,
+    *,
+    allow_any_height: bool = False,
+) -> bool:
     """
     Determine if snapshot bootstrap should be attempted.
 
@@ -993,13 +999,13 @@ def should_try_snapshot_bootstrap(current_height: int, target_height: Optional[i
     except ValueError:
         min_height = 1000
 
-    if current_height >= min_height:
+    if current_height >= min_height and not allow_any_height:
         return False
 
     # If we know the target height, only use snapshot if gap is large
     if target_height is not None:
         gap = target_height - current_height
-        if gap < min_height:
+        if gap < min_height and not allow_any_height:
             return False
 
     return True
@@ -1062,7 +1068,10 @@ async def continuous_snapshot_discovery(
                 current_height = head[0]
             
             # Check if we still need a snapshot
-            if not should_try_snapshot_bootstrap(current_height):
+            if not should_try_snapshot_bootstrap(
+                current_height,
+                allow_any_height=True,
+            ):
                 _log.info(
                     f"Node at height {current_height}, no longer need snapshot bootstrap"
                 )
@@ -1080,6 +1089,7 @@ async def continuous_snapshot_discovery(
                 chain_id=chain_id,
                 current_height=current_height,
                 p2p_service=p2p_service,
+                allow_any_height=True,
             )
             
             if success:
