@@ -2,6 +2,7 @@
 Tests for snapshot export/import functionality.
 """
 
+import json
 import tempfile
 from pathlib import Path
 
@@ -95,6 +96,56 @@ def test_snapshot_default_chunk_size():
 
     assert isinstance(DEFAULT_CHUNK_SIZE, int)
     assert DEFAULT_CHUNK_SIZE > 0
+
+
+def test_import_snapshot_rejects_corrupted_chunk(tmp_path: Path) -> None:
+    from core.db.block_db import BlockDB
+    from core.db.snapshot import import_snapshot
+    from core.db.sqlite import SQLiteKV
+    from core.db.state_db import StateDB
+
+    kv = SQLiteKV(str(tmp_path / "snapshot.db"))
+    block_db = BlockDB(kv)
+    state_db = StateDB(kv)
+
+    snapshot_dir = tmp_path / "snapshot_corrupt"
+    snapshot_dir.mkdir()
+    chunk_path = snapshot_dir / "blocks-00000.cbor.gz"
+    chunk_path.write_bytes(b"corrupted-data")
+
+    manifest = {
+        "version": 2,
+        "chain_id": 1,
+        "network": "devnet",
+        "checkpoint_height": 0,
+        "checkpoint_hash": "0x" + "00" * 32,
+        "timestamp": 0,
+        "created_at": "1970-01-01T00:00:00Z",
+        "blocks_count": 0,
+        "headers_count": 0,
+        "accounts_count": 0,
+        "storage_keys_count": 0,
+        "code_contracts_count": 0,
+        "compressed": True,
+        "chunks": [
+            {
+                "name": chunk_path.name,
+                "type": "blocks",
+                "size": chunk_path.stat().st_size,
+                "sha256": "0x" + "11" * 32,
+                "index": 0,
+            }
+        ],
+    }
+    (snapshot_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="hash mismatch"):
+        import_snapshot(
+            block_db=block_db,
+            state_db=state_db,
+            snapshot_dir=snapshot_dir,
+            verify_hashes=True,
+        )
 
 
 if __name__ == "__main__":
