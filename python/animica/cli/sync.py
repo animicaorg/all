@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import random
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -36,9 +37,14 @@ from animica.cli.peer import (
 from animica.cli.rpc_guard import guard_bootstrap_rpc
 from animica.seeds import get_seed_nodes
 from animica.cli.rpc_utils import candidate_rpc_urls, is_local_rpc_url, is_method_not_found
+from animica.sync.epoch_pack import parse_index, read_pack_sections
+from animica.sync.pcp import build_proof, hash_payload
+from animica.sync.schemas import EpochPackManifest, SnapshotManifest
+from animica.sync.storage import EpochPackStore, SnapshotStore
 from .timeouts import DEFAULT_RPC_TIMEOUT, RPC_TIMEOUT_ENV, resolve_timeout
 
 app = typer.Typer(help="Manage blockchain synchronization.")
+fastbootstrap_app = typer.Typer(help="FastBootstrap v2 utilities.")
 
 DEFAULT_RPC_URL = load_network_config().rpc_url
 RPC_ENV = "ANIMICA_RPC_URL"
@@ -1741,3 +1747,90 @@ def force_sync(
 
 if __name__ == "__main__":
     app()
+
+
+def _fastbootstrap_paths(data_dir: Optional[str]) -> tuple[SnapshotStore, EpochPackStore]:
+    net_cfg = load_network_config()
+    base = Path(os.path.expanduser(data_dir or net_cfg.data_dir))
+    snapshot_store = SnapshotStore(base / "snapshots_v2")
+    epoch_store = EpochPackStore(base / "epoch_packs")
+    return snapshot_store, epoch_store
+
+
+@fastbootstrap_app.command("snapshot-list")
+def fastbootstrap_snapshot_list(
+    data_dir: Optional[str] = typer.Option(None, "--data-dir", help="Data directory override"),
+    limit: int = typer.Option(20, help="Limit results"),
+) -> None:
+    """List locally stored FastBootstrap v2 snapshots."""
+    snapshot_store, _ = _fastbootstrap_paths(data_dir)
+    manifests = []
+    for path in sorted(snapshot_store.manifests_dir.glob("snapshot_*.json")):
+        manifest = SnapshotManifest.model_validate_json(path.read_text())
+        manifests.append(manifest.model_dump())
+        if len(manifests) >= limit:
+            break
+    typer.echo(json.dumps(manifests, indent=2))
+
+
+@fastbootstrap_app.command("epoch-list")
+def fastbootstrap_epoch_list(
+    kind: str = typer.Option("headers", help="Pack kind: headers/full"),
+    data_dir: Optional[str] = typer.Option(None, "--data-dir", help="Data directory override"),
+    limit: int = typer.Option(20, help="Limit results"),
+) -> None:
+    """List locally stored epoch pack manifests."""
+    _, epoch_store = _fastbootstrap_paths(data_dir)
+    manifests = []
+    for path in sorted(epoch_store.manifests_dir.glob("epoch_*.json")):
+        manifest = EpochPackManifest.model_validate_json(path.read_text())
+        if manifest.kind != kind:
+            continue
+        manifests.append(manifest.model_dump())
+        if len(manifests) >= limit:
+            break
+    typer.echo(json.dumps(manifests, indent=2))
+
+
+@fastbootstrap_app.command("pcp-sample")
+def fastbootstrap_pcp_sample(
+    pack_id: str = typer.Argument(..., help="Epoch pack id"),
+    seed: int = typer.Option(0, help="Seed for sampling"),
+    k: int = typer.Option(3, help="Number of samples"),
+    data_dir: Optional[str] = typer.Option(None, "--data-dir", help="Data directory override"),
+) -> None:
+    """Sample PCP proofs from a local epoch pack."""
+    _, epoch_store = _fastbootstrap_paths(data_dir)
+    pack_path = epoch_store.base_dir / f"epoch_{pack_id}.epk"
+    if not pack_path.exists():
+        raise typer.Exit(code=1)
+    _, index_bytes, payload = read_pack_sections(pack_path)
+    entries = parse_index(index_bytes)
+    if not entries:
+        typer.echo(json.dumps({"pack_id": pack_id, "items": []}, indent=2))
+        return
+    rng = random.Random(seed)
+    sample_entries = rng.sample(entries, min(k, len(entries)))
+    item_hashes = [hash_payload(payload[e.offset : e.offset + e.length]) for e in entries]
+    items = []
+    for entry in sample_entries:
+        idx = entries.index(entry)
+        proof = build_proof(item_hashes, idx)
+        items.append(
+            {
+                "height": entry.height,
+                "payload": payload[entry.offset : entry.offset + entry.length].hex(),
+                "proof": {
+                    "leaf_hash": proof.leaf_hash.hex(),
+                    "root": proof.root.hex(),
+                    "steps": [
+                        {"hash": step.sibling.hex(), "direction": step.direction}
+                        for step in proof.proof
+                    ],
+                },
+            }
+        )
+    typer.echo(json.dumps({"pack_id": pack_id, "items": items}, indent=2))
+
+
+app.add_typer(fastbootstrap_app, name="fastbootstrap")

@@ -361,6 +361,142 @@ class SnapshotChunk:
     found: bool = True  # False if chunk not found
 
 
+@dataclass(frozen=True)
+class SnapshotList:
+    """Request a list of snapshot manifests (FastBootstrap v2)."""
+    msg_id: MsgID = MsgID.SNAPSHOT_LIST
+    limit: int = 20
+    min_height: int = 0
+
+
+@dataclass(frozen=True)
+class SnapshotListResp:
+    msg_id: MsgID = MsgID.SNAPSHOT_LIST_RESP
+    manifests: List[dict] = dc.field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class SnapshotManifestReq:
+    msg_id: MsgID = MsgID.SNAPSHOT_MANIFEST
+    snapshot_id: str = ""
+
+
+@dataclass(frozen=True)
+class SnapshotManifestResp:
+    msg_id: MsgID = MsgID.SNAPSHOT_MANIFEST_RESP
+    manifest: Optional[dict] = None
+    found: bool = True
+
+
+@dataclass(frozen=True)
+class SnapshotChunkV2:
+    msg_id: MsgID = MsgID.SNAPSHOT_CHUNK_V2
+    snapshot_id: str = ""
+    chunk_index: int = 0
+
+
+@dataclass(frozen=True)
+class SnapshotChunkRespV2:
+    msg_id: MsgID = MsgID.SNAPSHOT_CHUNK_RESP_V2
+    snapshot_id: str = ""
+    chunk_index: int = 0
+    data: bytes = b""
+    found: bool = True
+
+
+@dataclass(frozen=True)
+class EpochList:
+    msg_id: MsgID = MsgID.EPOCH_LIST
+    kind: str = ""
+    limit: int = 20
+    min_epoch_id: int = 0
+
+
+@dataclass(frozen=True)
+class EpochListResp:
+    msg_id: MsgID = MsgID.EPOCH_LIST_RESP
+    manifests: List[dict] = dc.field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class EpochManifestReq:
+    msg_id: MsgID = MsgID.EPOCH_MANIFEST
+    pack_id: str = ""
+
+
+@dataclass(frozen=True)
+class EpochManifestResp:
+    msg_id: MsgID = MsgID.EPOCH_MANIFEST_RESP
+    manifest: Optional[dict] = None
+    found: bool = True
+
+
+@dataclass(frozen=True)
+class EpochChunkReq:
+    msg_id: MsgID = MsgID.EPOCH_CHUNK
+    pack_id: str = ""
+    chunk_index: int = 0
+
+
+@dataclass(frozen=True)
+class EpochChunkResp:
+    msg_id: MsgID = MsgID.EPOCH_CHUNK_RESP
+    pack_id: str = ""
+    chunk_index: int = 0
+    data: bytes = b""
+    found: bool = True
+
+
+@dataclass(frozen=True)
+class EpochIndexReq:
+    msg_id: MsgID = MsgID.EPOCH_INDEX
+    pack_id: str = ""
+
+
+@dataclass(frozen=True)
+class EpochIndexResp:
+    msg_id: MsgID = MsgID.EPOCH_INDEX_RESP
+    pack_id: str = ""
+    index: bytes = b""
+    found: bool = True
+
+
+@dataclass(frozen=True)
+class PCPProofReq:
+    msg_id: MsgID = MsgID.PCP_PROOF
+    pack_id: str = ""
+    height: int = 0
+
+
+@dataclass(frozen=True)
+class PCPProofResp:
+    msg_id: MsgID = MsgID.PCP_PROOF_RESP
+    pack_id: str = ""
+    height: int = 0
+    leaf_hash: str = ""
+    root: str = ""
+    steps: List[dict] = dc.field(default_factory=list)
+    found: bool = True
+
+
+@dataclass(frozen=True)
+class PCPSampleReq:
+    msg_id: MsgID = MsgID.PCP_SAMPLE
+    pack_id: str = ""
+    seed: int = 0
+    k: int = 0
+
+
+@dataclass(frozen=True)
+class PCPSampleResp:
+    msg_id: MsgID = MsgID.PCP_SAMPLE_RESP
+    pack_id: str = ""
+    seed: int = 0
+    k: int = 0
+    items: List[dict] = dc.field(default_factory=list)
+    rate_limited: bool = False
+
+
 # ---------------------------
 # 0x04xx — Transactions
 # ---------------------------
@@ -639,6 +775,24 @@ __all__ = [
     "GetSnapshots",
     "Snapshots",
     "SnapshotInfo",
+    "SnapshotList",
+    "SnapshotListResp",
+    "SnapshotManifestReq",
+    "SnapshotManifestResp",
+    "SnapshotChunkV2",
+    "SnapshotChunkRespV2",
+    "EpochList",
+    "EpochListResp",
+    "EpochManifestReq",
+    "EpochManifestResp",
+    "EpochChunkReq",
+    "EpochChunkResp",
+    "EpochIndexReq",
+    "EpochIndexResp",
+    "PCPProofReq",
+    "PCPProofResp",
+    "PCPSampleReq",
+    "PCPSampleResp",
     "Tx",
     "GetTx",
     "TxNotFound",
