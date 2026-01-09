@@ -160,6 +160,33 @@ def rebuild_inventory(snapshots_dir: Optional[Path] = None) -> list[SnapshotEntr
     return entries
 
 
+def list_snapshots_from_dirs(
+    snapshots_dirs: Iterable[Path],
+) -> list[SnapshotEntry]:
+    entries: list[SnapshotEntry] = []
+    seen: set[tuple[int, int, str, str]] = set()
+    for snapshots_dir in snapshots_dirs:
+        if not snapshots_dir.exists():
+            continue
+        try:
+            dir_entries = rebuild_inventory(snapshots_dir)
+        except Exception:
+            dir_entries = []
+        for entry in dir_entries:
+            key = (
+                entry.chain_id,
+                entry.checkpoint_height,
+                entry.checkpoint_hash,
+                entry.path,
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            entries.append(entry)
+    entries.sort(key=lambda entry: (entry.chain_id, -entry.checkpoint_height))
+    return entries
+
+
 def upsert_snapshot(snapshot_dir: Path, snapshots_dir: Optional[Path] = None) -> None:
     entry = _manifest_entry(snapshot_dir, snapshots_dir=snapshots_dir)
     if entry is None:
@@ -220,6 +247,7 @@ __all__ = [
     "read_inventory",
     "write_inventory",
     "rebuild_inventory",
+    "list_snapshots_from_dirs",
     "upsert_snapshot",
     "remove_snapshot",
     "latest_snapshot",
