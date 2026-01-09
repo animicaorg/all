@@ -4342,8 +4342,14 @@ class P2PService:
         if mid == int(MsgID.GETDATA):
             await self._handle_getdata(peer, payload)
             return
+        if mid == int(MsgID.GET_SNAPSHOTS):
+            await self._handle_get_snapshots(peer, payload)
+            return
         if mid == int(MsgID.SNAPSHOTS):
             await self._handle_snapshots(peer, payload)
+            return
+        if mid == int(MsgID.GET_SNAPSHOT_CHUNK):
+            await self._handle_get_snapshot_chunk(peer, payload)
             return
         if mid == int(MsgID.SNAPSHOT_CHUNK):
             await self._handle_snapshot_chunk(peer, payload)
@@ -5760,6 +5766,226 @@ class P2PService:
             fut = peer.pending_snapshot_chunk
             if fut is not None and not fut.done():
                 fut.set_result((b"", False))
+
+    async def _handle_get_snapshots(self, peer: _PeerState, payload: bytes) -> None:
+        """Handle GET_SNAPSHOTS request from peer - respond with local snapshot list."""
+        try:
+            from p2p.wire.messages import GetSnapshots, Snapshots, SnapshotInfo
+            from p2p.wire.message_ids import MsgID
+            
+            # Decode request
+            data = self._decode_map(payload)
+            req = GetSnapshots(**data)
+            
+            self._log.debug(
+                f"Received GET_SNAPSHOTS request from {peer.remote}, chain_id={req.chain_id}"
+            )
+            
+            # List available snapshots
+            snapshots = self._list_local_snapshots(req.chain_id)
+            
+            # Build and send response
+            response = Snapshots(snapshots=snapshots)
+            await self._send(peer, MsgID.SNAPSHOTS, response)
+            
+            self._log.debug(f"Sent {len(snapshots)} snapshot(s) to {peer.remote}")
+            
+        except Exception as e:
+            self._log.warning(f"Error handling GET_SNAPSHOTS from {peer.remote}: {e}", exc_info=True)
+            # Send empty response on error
+            try:
+                from p2p.wire.messages import Snapshots
+                from p2p.wire.message_ids import MsgID
+                empty_response = Snapshots(snapshots=[])
+                await self._send(peer, MsgID.SNAPSHOTS, empty_response)
+            except Exception:
+                pass  # Best effort
+
+    async def _handle_get_snapshot_chunk(self, peer: _PeerState, payload: bytes) -> None:
+        """Handle GET_SNAPSHOT_CHUNK request from peer - respond with chunk data."""
+        # Initialize defaults for error handling
+        req_chain_id = 0
+        req_height = 0
+        req_chunk_name = ""
+        
+        try:
+            from p2p.wire.messages import GetSnapshotChunk, SnapshotChunk
+            from p2p.wire.message_ids import MsgID
+            
+            # Decode request
+            data = self._decode_map(payload)
+            req = GetSnapshotChunk(**data)
+            req_chain_id = req.chain_id
+            req_height = req.checkpoint_height
+            req_chunk_name = req.chunk_name
+            
+            self._log.debug(
+                f"Received GET_SNAPSHOT_CHUNK request from {peer.remote}: "
+                f"chain_id={req.chain_id}, height={req.checkpoint_height}, chunk={req.chunk_name}"
+            )
+            
+            # Read the chunk file
+            chunk_data, found = self._read_snapshot_chunk(
+                req.chain_id, req.checkpoint_height, req.chunk_name
+            )
+            
+            # Build and send response
+            response = SnapshotChunk(
+                chain_id=req.chain_id,
+                checkpoint_height=req.checkpoint_height,
+                chunk_name=req.chunk_name,
+                data=chunk_data,
+                found=found,
+            )
+            await self._send(peer, MsgID.SNAPSHOT_CHUNK, response)
+            
+            if found:
+                self._log.info(
+                    f"Sent snapshot chunk {req.chunk_name} ({len(chunk_data)} bytes) "
+                    f"to {peer.remote}"
+                )
+            else:
+                self._log.debug(f"Snapshot chunk {req.chunk_name} not found for {peer.remote}")
+            
+        except Exception as e:
+            self._log.warning(f"Error handling GET_SNAPSHOT_CHUNK from {peer.remote}: {e}", exc_info=True)
+            # Send not-found response on error using captured values
+            try:
+                from p2p.wire.messages import SnapshotChunk
+                from p2p.wire.message_ids import MsgID
+                error_response = SnapshotChunk(
+                    chain_id=req_chain_id,
+                    checkpoint_height=req_height,
+                    chunk_name=req_chunk_name,
+                    data=b"",
+                    found=False,
+                )
+                await self._send(peer, MsgID.SNAPSHOT_CHUNK, error_response)
+            except Exception:
+                pass  # Best effort
+
+    def _get_snapshots_dir(self) -> Path:
+        """Get the snapshots directory path."""
+        base = self._chain_data_dir
+        
+        # If data_dir looks like chain-specific (ends with /chain-N), use parent
+        if base.name.startswith("chain-"):
+            base = base.parent
+        
+        return base / "snapshots"
+
+    def _list_local_snapshots(self, chain_id: Optional[int] = None) -> list:
+        """
+        List available snapshots from the local snapshots directory.
+        
+        Args:
+            chain_id: Optional chain ID filter
+            
+        Returns:
+            List of SnapshotInfo objects
+        """
+        from p2p.wire.messages import SnapshotInfo
+        import json
+        
+        snapshots = []
+        snapshots_dir = self._get_snapshots_dir()
+        
+        if not snapshots_dir.exists():
+            self._log.debug(f"Snapshots directory does not exist: {snapshots_dir}")
+            return snapshots
+        
+        # Scan for snapshot directories
+        for item in snapshots_dir.iterdir():
+            if not item.is_dir():
+                continue
+            
+            # Parse directory name: chain-{id}-height-{height}
+            if not item.name.startswith("chain-"):
+                continue
+            
+            parts = item.name.split("-")
+            if len(parts) != 4:
+                continue
+            
+            try:
+                snap_chain_id = int(parts[1])
+                snap_height = int(parts[3])
+            except ValueError:
+                continue
+            
+            # Filter by chain ID if specified
+            if chain_id is not None and snap_chain_id != chain_id:
+                continue
+            
+            # Load manifest if exists
+            manifest_file = item / "manifest.json"
+            if manifest_file.exists():
+                try:
+                    with open(manifest_file) as f:
+                        manifest_data = json.load(f)
+                    
+                    # Create SnapshotInfo
+                    info = SnapshotInfo(
+                        chain_id=snap_chain_id,
+                        checkpoint_height=snap_height,
+                        checkpoint_hash=manifest_data.get("checkpoint_hash", ""),
+                        blocks_count=manifest_data.get("blocks_count", 0),
+                        accounts_count=manifest_data.get("accounts_count", 0),
+                        size_mb=sum(
+                            chunk["size"] for chunk in manifest_data.get("chunks", [])
+                        ) / (1024 * 1024),
+                        timestamp=manifest_data.get("timestamp", 0),
+                    )
+                    snapshots.append(info)
+                except (json.JSONDecodeError, IOError, KeyError) as e:
+                    self._log.debug(f"Failed to read manifest from {manifest_file}: {e}")
+                    continue
+        
+        # Sort by chain_id, then height (descending)
+        snapshots.sort(key=lambda s: (s.chain_id, -s.checkpoint_height))
+        
+        self._log.debug(f"Found {len(snapshots)} snapshot(s) in {snapshots_dir}")
+        return snapshots
+
+    def _read_snapshot_chunk(
+        self, chain_id: int, checkpoint_height: int, chunk_name: str
+    ) -> tuple[bytes, bool]:
+        """
+        Read a snapshot chunk file.
+        
+        Args:
+            chain_id: Chain ID
+            checkpoint_height: Snapshot checkpoint height
+            chunk_name: Name of the chunk file (e.g., "blocks.tar.zst")
+            
+        Returns:
+            Tuple of (chunk_data, found)
+        """
+        snapshots_dir = self._get_snapshots_dir()
+        
+        if not snapshots_dir.exists():
+            return b"", False
+        
+        # Construct snapshot directory name
+        snapshot_dir = snapshots_dir / f"chain-{chain_id}-height-{checkpoint_height}"
+        if not snapshot_dir.exists() or not snapshot_dir.is_dir():
+            self._log.debug(f"Snapshot directory not found: {snapshot_dir}")
+            return b"", False
+        
+        # Read the chunk file
+        chunk_path = snapshot_dir / chunk_name
+        if not chunk_path.exists() or not chunk_path.is_file():
+            self._log.debug(f"Chunk file not found: {chunk_path}")
+            return b"", False
+        
+        try:
+            with open(chunk_path, "rb") as f:
+                data = f.read()
+            self._log.debug(f"Read chunk {chunk_name} ({len(data)} bytes) from {snapshot_dir}")
+            return data, True
+        except (IOError, OSError) as e:
+            self._log.warning(f"Failed to read chunk {chunk_path}: {e}")
+            return b"", False
 
     async def _handle_get_blocks(self, peer: _PeerState, payload: bytes) -> None:
         data = self._decode_map(payload)
