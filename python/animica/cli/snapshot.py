@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import sys
+import time
 from pathlib import Path
 from typing import Any, Optional
 
@@ -888,6 +889,22 @@ def status(
             typer.echo(f"  Status:          {'Healthy' if healthy else 'Unhealthy'}")
             typer.echo(f"  Total snapshots: {status_info.get('total_snapshots', 0)}")
             typer.echo(f"  Last snapshot:   height {status_info.get('last_snapshot_height', 'N/A')}")
+
+            head_height = status_info.get("head_height")
+            next_snapshot_height = status_info.get("next_snapshot_height")
+            if head_height is not None:
+                typer.echo(f"  Head height:     {head_height}")
+            if next_snapshot_height is not None:
+                typer.echo(f"  Next snapshot:   height {next_snapshot_height}")
+            if (
+                status_info.get("total_snapshots", 0) == 0
+                and head_height is not None
+                and next_snapshot_height is not None
+                and head_height < next_snapshot_height
+            ):
+                typer.echo(
+                    f"  Note:            No snapshots yet (head below first interval)."
+                )
             
             last_health = status_info.get('last_health_check', 0)
             if last_health > 0:
@@ -964,4 +981,3 @@ def status(
 
 if __name__ == "__main__":
     app()
-

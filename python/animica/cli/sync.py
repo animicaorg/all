@@ -10,8 +10,6 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import subprocess
-import sys
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -356,48 +354,6 @@ def _sync_diagnostics_lines(sync_status: Optional[Dict[str, Any]]) -> list[str]:
         lines.append(f"  snapshot_manifest_url: {snapshot_manifest_url}")
     return lines
 
-
-def _should_force_sync_in_background(sync_status: Optional[Dict[str, Any]]) -> bool:
-    if not isinstance(sync_status, dict):
-        return False
-    stall_elapsed = sync_status.get("stall_elapsed_s")
-    if not isinstance(stall_elapsed, (int, float)):
-        return False
-    stall_timeout = sync_status.get("stall_timeout_s")
-    trigger_after = 5.0
-    if isinstance(stall_timeout, (int, float)) and stall_timeout > 0:
-        trigger_after = min(trigger_after, float(stall_timeout))
-    return stall_elapsed >= trigger_after
-
-
-def _run_force_sync_background(
-    *,
-    rpc_url: str,
-    bootstrap_url: Optional[str],
-    allow_bootstrap_rpc: bool,
-    quiet: bool = False,
-) -> None:
-    cmd = [sys.executable, "-m", "animica.cli", "sync", "force", "--rpc-url", rpc_url, "--no-follow"]
-    if allow_bootstrap_rpc and bootstrap_url:
-        cmd += ["--bootstrap-rpc", bootstrap_url, "--allow-bootstrap-rpc"]
-    try:
-        subprocess.Popen(
-            cmd,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True,
-        )
-        if not quiet:
-            typer.secho(
-                "⏳ Sync appears stalled; launched background 'animica sync force'.",
-                fg=typer.colors.YELLOW,
-            )
-    except Exception as exc:
-        if not quiet:
-            typer.secho(
-                f"⚠ Unable to start background sync force: {exc}",
-                fg=typer.colors.YELLOW,
-            )
 
 
 def _compute_sync_state(
@@ -1151,13 +1107,20 @@ def sync_status(
     elif p2p_status:
         peer_count = p2p_status.get("peers_total")
 
-    if _should_force_sync_in_background(sync_status):
-        _run_force_sync_background(
-            rpc_url=url,
-            bootstrap_url=bootstrap_url,
-            allow_bootstrap_rpc=allow_bootstrap_rpc,
-            quiet=json_output,
-        )
+    stall_elapsed = None
+    stall_timeout = None
+    if isinstance(sync_status, dict):
+        stall_elapsed = sync_status.get("stall_elapsed_s")
+        stall_timeout = sync_status.get("stall_timeout_s")
+    if not json_output and isinstance(stall_elapsed, (int, float)):
+        trigger_after = 5.0
+        if isinstance(stall_timeout, (int, float)) and stall_timeout > 0:
+            trigger_after = min(trigger_after, float(stall_timeout))
+        if stall_elapsed >= trigger_after:
+            typer.secho(
+                "⚠ Sync appears stalled; run 'animica debug sync-dump' for diagnostics.",
+                fg=typer.colors.YELLOW,
+            )
     
     # JSON output
     peer_error_msg = None

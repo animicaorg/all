@@ -198,12 +198,38 @@ class SnapshotOrchestrator:
         snapshots.sort(key=lambda s: s["height"], reverse=True)
         return snapshots
     
-    def should_create_snapshot(self, height: int) -> bool:
+    def _get_current_height(self) -> Optional[int]:
+        try:
+            return int(self.block_db.get_canonical_height())
+        except Exception as exc:
+            _log.warning(f"Failed to read canonical height: {exc}")
+            return None
+
+    def _latest_snapshot_height(self, snapshots: list[dict[str, Any]]) -> int:
+        return snapshots[0]["height"] if snapshots else 0
+
+    def _snapshot_target_height(
+        self,
+        *,
+        head_height: int,
+        last_snapshot_height: int,
+    ) -> Optional[int]:
+        if head_height <= 0 or self.config.interval <= 0:
+            return None
+        if head_height < self.config.interval:
+            return None
+        target_height = head_height - (head_height % self.config.interval)
+        if target_height <= last_snapshot_height:
+            return None
+        return target_height
+
+    def should_create_snapshot(self, *, head_height: int, last_snapshot_height: int) -> bool:
         """
         Determine if a snapshot should be created at the given height.
         
         Args:
-            height: Block height to check
+            head_height: Current canonical head height
+            last_snapshot_height: Latest snapshot height
             
         Returns:
             True if snapshot should be created
@@ -211,20 +237,11 @@ class SnapshotOrchestrator:
         if not self.config.auto_create:
             return False
         
-        if height == 0 or self.config.interval == 0:
-            return False
-        
-        # Create at interval boundaries (2000, 4000, 6000, etc.)
-        if height % self.config.interval != 0:
-            return False
-        
-        # Check if snapshot already exists
-        snapshots = self.list_snapshots()
-        if any(s["height"] == height for s in snapshots):
-            _log.debug(f"Snapshot already exists at height {height}")
-            return False
-        
-        return True
+        target = self._snapshot_target_height(
+            head_height=head_height,
+            last_snapshot_height=last_snapshot_height,
+        )
+        return target is not None
     
     async def create_snapshot(self, height: int) -> tuple[bool, Optional[str]]:
         """
@@ -441,14 +458,45 @@ class SnapshotOrchestrator:
         while self._running:
             try:
                 # Get current chain height
-                current_height = self.block_db.get_canonical_height()
+                current_height = self._get_current_height()
+                if current_height is None:
+                    await asyncio.sleep(10)
+                    continue
+                snapshots = self.list_snapshots()
+                last_snapshot_height = self._latest_snapshot_height(snapshots)
                 
                 # Check if we've advanced to a new snapshot interval
                 if current_height > last_checked_height:
-                    if self.should_create_snapshot(current_height):
+                    target_height = self._snapshot_target_height(
+                        head_height=current_height,
+                        last_snapshot_height=last_snapshot_height,
+                    )
+                    if target_height is None:
+                        if current_height < self.config.interval:
+                            _log.info(
+                                "No snapshots yet; head below interval",
+                                extra={
+                                    "head": current_height,
+                                    "interval": self.config.interval,
+                                    "next_snapshot": self.config.interval,
+                                },
+                            )
+                        else:
+                            _log.debug(
+                                "Snapshot not due yet",
+                                extra={
+                                    "head": current_height,
+                                    "interval": self.config.interval,
+                                    "last_snapshot": last_snapshot_height,
+                                },
+                            )
+                    elif self.should_create_snapshot(
+                        head_height=current_height,
+                        last_snapshot_height=last_snapshot_height,
+                    ):
                         # Try to create with retries
                         for attempt in range(self.config.max_retries):
-                            success, error = await self.create_snapshot(current_height)
+                            success, error = await self.create_snapshot(target_height)
                             if success:
                                 break
                             
@@ -531,6 +579,19 @@ class SnapshotOrchestrator:
             Status dictionary
         """
         snapshots = self.list_snapshots()
+        last_snapshot_height = self._latest_snapshot_height(snapshots)
+        head_height = self._get_current_height()
+        next_snapshot_height: Optional[int] = None
+        if self.config.interval > 0:
+            if head_height is None:
+                next_snapshot_height = None
+            elif head_height < self.config.interval:
+                next_snapshot_height = self.config.interval
+            else:
+                candidate = head_height - (head_height % self.config.interval)
+                if candidate <= last_snapshot_height:
+                    candidate += self.config.interval
+                next_snapshot_height = candidate
         
         return {
             "config": {
@@ -542,9 +603,11 @@ class SnapshotOrchestrator:
             "status": {
                 "healthy": self.status.healthy,
                 "total_snapshots": len(snapshots),
-                "last_snapshot_height": snapshots[0]["height"] if snapshots else 0,
+                "last_snapshot_height": last_snapshot_height,
                 "last_snapshot_time": self.status.last_snapshot_time,
                 "last_health_check": self.status.last_health_check,
+                "head_height": head_height,
+                "next_snapshot_height": next_snapshot_height,
             },
             "statistics": {
                 "snapshots_created": self.status.snapshots_created,
