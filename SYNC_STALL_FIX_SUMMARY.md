@@ -1,311 +1,206 @@
-# Sync Stall Fix Summary
+# Sync Stall Fix - Implementation Summary
 
 ## Problem Statement
-Animica nodes were not syncing entirely to the highest height and would get stuck on random blocks during synchronization.
 
-## Root Cause Analysis
+Nodes experiencing sync stalls where they get stuck alternating between `SYNCING_HEADERS` and `SYNCING_BLOCKS` states without making progress.
 
-### Issue 1: Inflight Block Gating in Sync Loop
-**Location:** `p2p/node/p2p_service.py:7316`
+### Observed Symptoms
+```
+Height:    6495
+Status:    SYNCING_BLOCKS
+Headers:   6906 | Blocks: 6495
 
-**Problem:**
-The sync loop had a restrictive condition that prevented continued block requests when blocks were already in-flight:
+(After sync force)
+
+Height:    6495  
+Status:    SYNCING_HEADERS
+Headers:   6495 | Blocks: 6495
+
+(No progress, loops forever)
+```
+
+### Root Cause Analysis
+
+The stall occurs when:
+1. Local node is at height 6495
+2. Network actually has blocks up to height 6906
+3. But all connected peers only report height 6495
+4. Node marks headers as "at_tip" because connected peers match local height
+5. Block queue can't be seeded because `best_header_height <= local_height`
+6. No peer rotation happens because stall handler requires `_sync_best_header` to exist
+7. Node gets stuck in infinite loop
+
+## Solution
+
+### 1. Clear "at_tip" Error on Force Sync
+
+**File:** `p2p/node/p2p_service.py`  
+**Lines:** 7706-7717
 
 ```python
-if (network_best_height is not None 
-    and best_block_height < int(network_best_height) 
-    and not self._sync_inflight_blocks):  # ❌ This condition caused the issue
-    await self._schedule_block_requests()
+# When forcing sync, clear "at_tip" error to allow re-requesting headers
+if force and self._sync_last_header_error == "at_tip":
+    self._sync_last_header_error = None
+    self._sync_last_header_error_at = None
+    self._sync_last_header_error_peer = None
+    log.info("Cleared 'at_tip' error state due to forced sync")
 ```
 
 **Impact:**
-- Once blocks were requested and added to `_sync_inflight_blocks`, no additional blocks would be requested
-- If those in-flight blocks timed out, failed, or were delayed, the sync would stall indefinitely
-- The node would remain stuck at whatever height it reached before the stall
-- No recovery mechanism existed to restart block downloads
+- Allows headers to be re-requested even if previously marked as "at_tip"
+- Enables retry with different peers
+- User can trigger with `animica sync force`
 
-### Issue 2: Premature Sync Completion
-**Location:** `p2p/node/p2p_service.py:7003`
+### 2. Detect Headers == Blocks Stall
 
-**Problem:**
-The `_sync_once` method could mark synchronization as complete even when there were pending blocks to download:
+**File:** `p2p/node/p2p_service.py`  
+**Lines:** 8085-8108
 
 ```python
-if (self._sync_best_header is None 
-    or self._sync_best_header.height <= local_height):
-    self._sync_phase = "SYNCED" if local_height > 0 else "IDLE"
-    return result  # ❌ Returns without checking for pending blocks
+# Detect when headers == blocks and we're not making progress
+if (
+    best_header_height == best_block_height
+    and best_block_height > 0
+    and not self._sync_inflight_headers
+    and not self._sync_inflight_blocks
+    and not self._sync_block_queue
+    and now - self._sync_last_progress_at > self._sync_stall_timeout
+    and self._peers
+):
+    log.warning("Sync stalled: headers == blocks with no progress")
+    self._sync_block_stalled_reason = "headers_blocks_equal_stall"
+    self._sync_requested = True
 ```
 
 **Impact:**
-- Headers were synced successfully to the network tip
-- Blocks for those headers were queued in `_sync_block_queue`
-- But sync was marked as "SYNCED" and returned early
-- Block downloads never happened, leaving the node at a lower height than the network
+- Automatically detects when stuck in headers == blocks state
+- Triggers stall handling and peer rotation
+- Forces sync on next iteration to try different peers
 
-## Fixes Implemented
+### 3. Allow Stall Handling in Edge Cases
 
-### Fix 1: Remove Inflight Block Gating
+**File:** `p2p/node/p2p_service.py`  
+**Lines:** 3333-3337, 3379
 
-**Change:**
 ```python
-# Before: Would not request more blocks if any were already in-flight
-if (network_best_height is not None 
-    and best_block_height < int(network_best_height) 
-    and not self._sync_inflight_blocks):  # ❌ Removed this check
-    await self._schedule_block_requests()
-
-# After: Continue requesting blocks regardless of inflight status
-if (network_best_height is not None 
-    and best_block_height < int(network_best_height)):  # ✓ No gating
-    await self._schedule_block_requests()
+def _handle_sync_stall(self, *, reason: str) -> None:
+    now = time.time()
+    # Allow stall handling even when _sync_best_header is None or equals local height
+    # (Removed early return when _sync_best_header is None)
+    
+    # Later in the function:
+    best_header_height = self._sync_best_header.height if self._sync_best_header else local_height
 ```
 
-**Benefit:**
-- Sync loop continuously schedules block requests when behind the network
-- Even if some blocks are in-flight, more can be requested (up to max_inflight limit)
-- Timeouts or failures don't permanently stall the sync
-- Natural recovery from transient network issues
+**Impact:**
+- Enables stall handler to work when headers == blocks
+- Allows peer rotation in edge cases
+- Ensures recovery even when `_sync_best_header` is None
 
-### Fix 2: Check Pending Blocks Before Completion
-
-**Change:**
-```python
-# Before: Only checked header height
-if (self._sync_best_header is None 
-    or self._sync_best_header.height <= local_height):
-    self._sync_phase = "SYNCED"
-    return result
-
-# After: Also check for pending blocks
-if ((self._sync_best_header is None 
-     or self._sync_best_header.height <= local_height)
-    and not self._sync_block_queue  # ✓ Check block queue
-    and not self._sync_inflight_blocks):  # ✓ Check inflight blocks
-    self._sync_phase = "SYNCED"
-    return result
-elif self._sync_block_queue or self._sync_inflight_blocks:
-    # Continue to download pending blocks
-    log.debug("Continuing sync for pending blocks", ...)
-    return result  # ✓ Continue sync loop for block downloads
-```
-
-**Benefit:**
-- Nodes only mark sync as complete when truly caught up
-- Pending block queue is drained before sync completion
-- In-flight blocks are allowed to complete before marking as synced
-- Better logging for debugging sync state transitions
-
-## Expected Behavior
-
-### Before the Fix
-
-**Symptoms:**
-```
-Node A: Stuck at height 1,234
-Node B: Stuck at height 5,678  
-Node C: Stuck at height 9,012
-Network: Actually at height 15,000
-```
-
-**Logs:**
-```
-DEBUG: Sync skipped: no eligible blocks to request
-INFO: Sync phase: SYNCED (but actually behind!)
-```
-
-**What Happened:**
-1. Headers synced successfully to tip
-2. Blocks started downloading
-3. Some blocks timed out or got delayed
-4. Sync loop stopped requesting more blocks (gated by inflight check)
-5. OR sync marked as complete despite pending blocks
-6. Node stuck forever at intermediate height
-
-### After the Fix
-
-**Expected Behavior:**
-```
-Node A: Height 15,000 ✓
-Node B: Height 15,000 ✓
-Node C: Height 15,000 ✓
-Network: Height 15,000
-```
-
-**Logs:**
-```
-DEBUG: Continuing sync for pending blocks (block_queue=50, inflight_blocks=10)
-DEBUG: Selected sync peer for blocks
-INFO: Blocks queued (count=50, best_header=15000)
-INFO: Block persisted (hash=0x...)
-INFO: Head advanced (height=15000)
-INFO: Sync phase: SYNCED ✓
-```
-
-**What Happens:**
-1. Headers sync to network tip
-2. Blocks are queued from synced headers
-3. Block downloads begin
-4. Even if some blocks are delayed, sync continues requesting more
-5. Pending blocks are tracked and downloaded
-6. Only when ALL blocks are downloaded does sync mark as complete
-7. Node reaches network height successfully
-
-## Technical Details
-
-### Sync Flow
+## Recovery Flow
 
 ```
-┌─────────────────┐
-│  Sync Loop      │
-│  (continuous)   │
-└────────┬────────┘
-         │
-         ├─> Check if behind network
-         │
-         ├─> _sync_once() 
-         │   ├─> Select peer
-         │   ├─> Fetch headers
-         │   ├─> Process headers → _sync_headers
-         │   └─> Queue blocks → _sync_block_queue
-         │
-         ├─> _ensure_block_queue()
-         │   └─> Populate queue from synced headers
-         │
-         ├─> _schedule_block_requests()  ✓ (Called continuously now)
-         │   ├─> Check queue not empty
-         │   ├─> Select block peer
-         │   └─> Request blocks → _sync_inflight_blocks
-         │
-         └─> Process received blocks
-             ├─> Import block
-             ├─> Remove from inflight
-             └─> Update local height
+1. Node stuck at height 6495
+   ↓
+2. User runs "animica sync force"
+   ↓
+3. Force clears "at_tip" error
+   ↓
+4. Headers requested from current peer (may still return empty)
+   ↓
+5. Still stuck: headers == blocks stall detection triggers
+   ↓
+6. Stall handler rotates to different peer
+   ↓
+7. Headers requested from new peer
+   ↓
+8. New peer has higher height (6906)
+   ↓
+9. Headers downloaded successfully
+   ↓
+10. Block queue seeded from new headers
+    ↓
+11. Blocks downloaded and applied
+    ↓
+12. Progress resumes!
 ```
 
-### Key Data Structures
+## Testing
 
-- `_sync_headers`: Dict[bytes, _SyncHeader] - Headers synced from peers
-- `_sync_block_queue`: Deque[bytes] - Block hashes queued for download
-- `_sync_inflight_blocks`: Dict[bytes, float] - Blocks currently being requested
-- `_sync_best_header`: Optional[_SyncHeader] - Highest header synced
+### Unit Tests
+Created `test_sync_stall_fix.py` with 4 test cases:
+- ✓ "at_tip" error clearing on force
+- ✓ headers == blocks stall detection  
+- ✓ Stall handler with None _sync_best_header
+- ✓ Normal sync not affected
 
-### Sync States
+### Manual Testing
+See `SYNC_STALL_FIX_TESTING_GUIDE.md` for detailed testing procedures.
 
-- **IDLE**: No peers or no work to do
-- **HEADERS**: Fetching headers from peers
-- **SYNCING**: Headers ahead of local blocks, downloading in progress
-- **BLOCKS**: Actively downloading blocks
-- **SYNCED**: Caught up with network (only set when truly complete now)
-- **TARGET_REACHED**: Reached user-specified target height
+## Files Changed
 
-## Testing Validation
-
-### Unit Test Coverage
-The following existing tests validate the fix:
-- `p2p/tests/test_sync_loop_behavior.py` - Sync loop state transitions
-- `p2p/tests/test_block_sync.py` - Block download logic
-- `p2p/tests/test_header_sync.py` - Header sync logic
-- `p2p/tests/test_chain_sync_integration.py` - End-to-end sync
-
-### Manual Testing Checklist
-
-To verify the fix works:
-
-1. **Start multiple fresh nodes:**
-   ```bash
-   # Node 1
-   animica node up --network devnet --data-dir ~/.animica/node1
-   
-   # Node 2
-   animica node up --network devnet --data-dir ~/.animica/node2
-   
-   # Node 3
-   animica node up --network devnet --data-dir ~/.animica/node3
-   ```
-
-2. **Monitor sync progress:**
-   ```bash
-   # Watch each node's height
-   watch -n 1 'animica sync status --json | jq ".height"'
-   ```
-
-3. **Expected outcome:**
-   - All nodes should reach the same height
-   - Logs should show "Continuing sync for pending blocks" when applicable
-   - No nodes should get stuck at intermediate heights
-   - Sync phase should be "SYNCED" only when truly caught up
-
-4. **Look for these log patterns:**
-   ```
-   ✓ "Blocks queued (count=X, best_header=Y)"
-   ✓ "Continuing sync for pending blocks"
-   ✓ "Block persisted (hash=0x...)"
-   ✓ "Head advanced (height=X)"
-   ✗ "Skipped block requests: no eligible blocks" (should be rare)
-   ✗ "Sync phase: SYNCED" (when height < network height)
-   ```
-
-## Performance Impact
-
-### CPU/Memory
-- **Negligible**: Only removes a condition check and adds one
-- No additional data structures or processing
-- Same number of block requests, just better timing
-
-### Network
-- **Slightly increased**: More proactive block requests
-- Better parallelization of block downloads
-- Faster sync completion overall
-
-### Sync Time
-- **Improved**: Nodes should sync faster
-- No stalls waiting for timeout recovery
-- Continuous download progress
-
-## Rollback Plan
-
-If issues arise, the fix can be easily reverted:
-
-```bash
-cd /home/runner/work/all/all
-git revert fe6e26e2  # This commit
-git push origin copilot/fix-node-sync-issues
-```
-
-The changes are minimal (17 lines added, 2 removed) and isolated to the sync logic.
-
-## Monitoring
-
-After deployment, monitor these metrics:
-
-1. **Sync completion rate**: % of nodes reaching network height
-2. **Stuck node count**: Nodes behind network height for > 5 minutes
-3. **Sync time**: Time from genesis to network tip
-4. **Block request rate**: Blocks requested per second during sync
-5. **Log patterns**: Frequency of "Continuing sync" vs "already at tip" messages
-
-## Related Issues
-
-This fix addresses:
-- Nodes stuck at random heights during sync
-- Incomplete blockchain synchronization
-- Sync appearing complete but node behind network
-- Stalls with no automatic recovery
-
-## Files Modified
-
-- `p2p/node/p2p_service.py` (2 locations, 17 lines added, 2 removed)
+1. `p2p/node/p2p_service.py` - Main sync logic fix
+2. `test_sync_stall_fix.py` - Unit tests for the fix
+3. `SYNC_STALL_FIX_TESTING_GUIDE.md` - Manual testing guide
+4. `SYNC_STALL_FIX_SUMMARY.md` - This file
 
 ## Backward Compatibility
 
-✅ Fully backward compatible:
-- No API changes
-- No database schema changes
-- No protocol changes
-- Existing nodes will sync normally
-- Only affects internal sync logic
+✓ No breaking changes  
+✓ Existing sync behavior preserved  
+✓ Only adds recovery paths for stuck states  
+✓ No RPC or protocol changes  
 
-## Conclusion
+## Performance Impact
 
-This fix resolves a critical synchronization issue that prevented Animica nodes from reaching the network height. The changes are minimal, focused, and well-tested, ensuring continuous block downloads until true sync completion.
+- Minimal: Only adds checks when sync is already stalled
+- No impact on normal sync operation
+- Adds one log warning when stall is detected
+- Peer rotation was already part of stall handling
+
+## Future Improvements
+
+Potential enhancements (not in scope for this fix):
+1. More aggressive peer discovery when all peers are at same height
+2. DHT or DNS-based discovery of higher-height peers
+3. Metrics/monitoring for sync stall frequency
+4. Automatic snapshot sync when far behind
+
+## Verification Checklist
+
+- [x] Code changes are minimal and targeted
+- [x] Logic tests pass
+- [x] Syntax check passes
+- [x] Code review completed
+- [x] Documentation created
+- [x] No breaking changes
+- [x] Backward compatible
+
+## How to Use
+
+### For Users
+When sync appears stalled:
+```bash
+# Check current status
+animica sync status
+
+# Force sync to clear errors and retry
+animica sync force
+
+# Monitor logs for recovery
+tail -f ~/.animica/logs/node.log | grep -i sync
+```
+
+### For Developers
+The fix automatically activates when:
+- Force sync is triggered (clears errors)
+- Headers == blocks with no progress for > 5 seconds (auto-detects stall)
+- Stall handling rotates peers and retries
+
+No additional configuration or changes needed.
+
+## References
+
+- Original Issue: Sync stalled with headers == blocks
+- PR: Fix sync stall when headers equals blocks
+- Related: P2P peer rotation, sync stall detection
