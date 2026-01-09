@@ -11,7 +11,7 @@ from core.chain.block_import import _theta_to_target, compute_header_hash
 from core.types.block import Block
 from core.utils.hash import ZERO32
 from p2p.deps import P2PDeps
-from p2p.node.p2p_service import P2PService, _PeerState
+from p2p.node.p2p_service import P2PService, _PeerState, _SyncRequest
 from p2p.tests import free_port, tcp_multiaddr
 from p2p.wire.messages import HeaderCompact
 
@@ -178,6 +178,126 @@ def test_network_best_height_snapshot(tmp_path: Path) -> None:
 
     snapshot = node.sync_status_snapshot()
     assert snapshot.network_best_height == 25
+
+
+def test_inflight_block_expiry_requeues(tmp_path: Path) -> None:
+    deps_sync, deps = _make_deps(tmp_path, "inflight-block-expiry")
+    node = P2PService(
+        listen_addrs=[tcp_multiaddr(free_port())],
+        seeds=[],
+        chain_id=deps_sync.chain_id,
+        deps=deps,
+        peerstore_path=str(tmp_path / "inflight-block-expiry" / "p2p"),
+    )
+    peer = _register_peer(node, "peer:3001")
+    block_hash = b"\x01" * 32
+    started_at = time.time() - 10
+    node._sync_inflight_blocks[block_hash] = started_at
+    node._sync_inflight_peers[block_hash] = peer.remote
+    node._sync_inflight_block_requests[block_hash] = _SyncRequest(
+        request_id="req-1",
+        peer_id=peer.remote,
+        kind="blocks",
+        started_at=started_at,
+        deadline_at=started_at + 1,
+        retry_count=0,
+        item_hash=block_hash,
+    )
+
+    node._expire_inflight_blocks()
+
+    assert block_hash in node._sync_block_queue_set
+    assert node._sync_requested
+    assert peer.sync_timeouts == 1
+
+
+def test_not_anchored_recovery_sets_probe(tmp_path: Path) -> None:
+    deps_sync, deps = _make_deps(tmp_path, "not-anchored-recovery")
+    node = P2PService(
+        listen_addrs=[tcp_multiaddr(free_port())],
+        seeds=[],
+        chain_id=deps_sync.chain_id,
+        deps=deps,
+        peerstore_path=str(tmp_path / "not-anchored-recovery" / "p2p"),
+    )
+    peer = _register_peer(node, "peer:3002")
+    parent_hash = b"\x02" * 32
+    header = node._header_from_compact(
+        HeaderCompact(
+            hash=b"\x03" * 32,
+            height=1,
+            parent=parent_hash,
+            theta_micro=0,
+            timestamp=1,
+        )
+    )
+
+    node._sync_requested = False
+    node._note_not_anchored(
+        peer,
+        header=header,
+        anchor_height=0,
+        anchor_hash=None,
+        reason="parent_unknown",
+        allow_probe=True,
+    )
+
+    assert node._sync_last_header_error == "not_anchored"
+    assert node._sync_anchor_probe_hash == parent_hash
+    assert node._sync_requested
+
+
+@pytest.mark.asyncio
+async def test_watchdog_recovers_when_blocks_stop(tmp_path: Path) -> None:
+    deps_sync, deps = _make_deps(tmp_path, "watchdog-recovery")
+    node = P2PService(
+        listen_addrs=[tcp_multiaddr(free_port())],
+        seeds=[],
+        chain_id=deps_sync.chain_id,
+        deps=deps,
+        peerstore_path=str(tmp_path / "watchdog-recovery" / "p2p"),
+    )
+    peer = _register_peer(node, "peer:3003")
+    peer.anchored = True
+    node._sync_best_header = node._header_from_compact(
+        HeaderCompact(
+            hash=b"\x04" * 32,
+            height=10,
+            parent=b"\x00" * 32,
+            theta_micro=0,
+            timestamp=1,
+        )
+    )
+    block_hash = b"\x05" * 32
+    node._sync_block_queue.append(block_hash)
+    node._sync_block_queue_set.add(block_hash)
+    node._sync_watchdog_timeout = 0.05
+    node._sync_watchdog_last_progress_at = time.time() - 1
+
+    async def _noop_sync_once(*_args, **_kwargs):
+        return {}
+
+    async def _noop_schedule(*_args, **_kwargs):
+        return 0
+
+    node._sync_once = _noop_sync_once  # type: ignore[assignment]
+    node._schedule_block_requests = _noop_schedule  # type: ignore[assignment]
+
+    node._sync_tick_sec = 0.05
+    node._running = True
+    task = asyncio.create_task(node._sync_loop())
+    try:
+        await asyncio.sleep(0.2)
+        assert node._sync_last_recovery_action in {
+            "watchdog_requeue",
+            "retry_blocks_new_peer",
+        }
+        assert node._sync_requested
+    finally:
+        node._running = False
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
 
 
 @pytest.mark.asyncio
