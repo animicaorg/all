@@ -8116,6 +8116,13 @@ class P2PService:
                                         delay=self._sync_no_headers_backoff,
                                     )
                                 tried_peers.add(peer.remote)
+                            elif empty_reason == "stale_network_best":
+                                self._force_peer_refresh(reason="stale_network_best")
+                                self._sync_kick(
+                                    reason="stale_network_best",
+                                    aggressive=True,
+                                )
+                                tried_peers.add(peer.remote)
                             elif empty_reason == "at_tip":
                                 self._note_header_progress(peer, reason="at_tip")
                                 tried_peers.add(peer.remote)
@@ -9793,11 +9800,31 @@ class P2PService:
         genesis_hash = bytes(hello.get("genesis_hash") or b"")
         if genesis_hash and genesis_hash != self._genesis_hash():
             return "genesis_mismatch"
+        max_peer_height: Optional[int] = None
+        for candidate in self._peers.values():
+            if not candidate.hello_done.is_set():
+                continue
+            if not candidate.repo_state_ok:
+                continue
+            try:
+                candidate_height = int((candidate.hello or {}).get("head_height") or 0)
+            except Exception:
+                continue
+            if max_peer_height is None or candidate_height > max_peer_height:
+                max_peer_height = candidate_height
         if (
             remote_height <= local_height
             and (network_best_height is None or network_best_height <= local_height)
         ):
             return "at_tip"
+        if (
+            remote_height <= local_height
+            and network_best_height is not None
+            and network_best_height > local_height
+            and max_peer_height is not None
+            and max_peer_height <= local_height
+        ):
+            return "stale_network_best"
         if remote_height <= local_height:
             return "peer_behind"
         return "headers_empty"
