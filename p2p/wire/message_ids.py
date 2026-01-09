@@ -31,7 +31,7 @@ from typing import Dict, Optional
 
 # Bump when changing payload schemas in incompatible ways.
 # (e.g., adding mandatory fields, renaming fields, or changing semantics)
-WIRE_SCHEMA_VERSION: int = 3
+WIRE_SCHEMA_VERSION: int = 4
 
 
 class MsgID(IntEnum):
@@ -73,6 +73,24 @@ class MsgID(IntEnum):
     SNAPSHOTS = 0x0306  # response with snapshot metadata list
     GET_SNAPSHOT_CHUNK = 0x0307  # request a specific snapshot chunk
     SNAPSHOT_CHUNK = 0x0308  # response with snapshot chunk data
+    SNAPSHOT_LIST = 0x0309  # request detailed snapshot manifests
+    SNAPSHOT_LIST_RESP = 0x030A
+    SNAPSHOT_MANIFEST = 0x030B
+    SNAPSHOT_MANIFEST_RESP = 0x030C
+    SNAPSHOT_CHUNK_V2 = 0x030D
+    SNAPSHOT_CHUNK_RESP_V2 = 0x030E
+    EPOCH_LIST = 0x0310
+    EPOCH_LIST_RESP = 0x0311
+    EPOCH_MANIFEST = 0x0312
+    EPOCH_MANIFEST_RESP = 0x0313
+    EPOCH_CHUNK = 0x0314
+    EPOCH_CHUNK_RESP = 0x0315
+    EPOCH_INDEX = 0x0316
+    EPOCH_INDEX_RESP = 0x0317
+    PCP_PROOF = 0x0318
+    PCP_PROOF_RESP = 0x0319
+    PCP_SAMPLE = 0x031A
+    PCP_SAMPLE_RESP = 0x031B
 
     # ---------------------------
     # 0x04xx — Transactions
@@ -136,6 +154,15 @@ _REQUEST_RESPONSE: Dict[MsgID, MsgID] = {
     MsgID.GET_BLOCKS: MsgID.BLOCKS,
     MsgID.GET_SNAPSHOTS: MsgID.SNAPSHOTS,
     MsgID.GET_SNAPSHOT_CHUNK: MsgID.SNAPSHOT_CHUNK,
+    MsgID.SNAPSHOT_LIST: MsgID.SNAPSHOT_LIST_RESP,
+    MsgID.SNAPSHOT_MANIFEST: MsgID.SNAPSHOT_MANIFEST_RESP,
+    MsgID.SNAPSHOT_CHUNK_V2: MsgID.SNAPSHOT_CHUNK_RESP_V2,
+    MsgID.EPOCH_LIST: MsgID.EPOCH_LIST_RESP,
+    MsgID.EPOCH_MANIFEST: MsgID.EPOCH_MANIFEST_RESP,
+    MsgID.EPOCH_CHUNK: MsgID.EPOCH_CHUNK_RESP,
+    MsgID.EPOCH_INDEX: MsgID.EPOCH_INDEX_RESP,
+    MsgID.PCP_PROOF: MsgID.PCP_PROOF_RESP,
+    MsgID.PCP_SAMPLE: MsgID.PCP_SAMPLE_RESP,
     MsgID.GET_TX: MsgID.TX,
     MsgID.GET_SHARE: MsgID.SHARE,
     MsgID.DA_GET: MsgID.DA_PROOF,
