@@ -374,6 +374,20 @@ class NodeService:
         # Snapshot discovery handler
         self.router.add_handler(proto_snapshot.SnapshotHandler())
 
+        # FastBootstrap v2 handler (snapshots + epoch packs + PCP)
+        from animica.sync.storage import EpochPackStore, SnapshotStore
+        from ..protocol import fastbootstrap as proto_fastbootstrap
+
+        snapshot_store = SnapshotStore(Path(self.cfg.data_dir) / "snapshots_v2")
+        epoch_store = EpochPackStore(Path(self.cfg.data_dir) / "epoch_packs")
+        self.router.add_handler(
+            proto_fastbootstrap.FastBootstrapHandler(
+                snapshot_store=snapshot_store,
+                epoch_store=epoch_store,
+                data_dir=Path(self.cfg.data_dir),
+            )
+        )
+
         # Gossip topics
         self.gossip.register_topic(gossip_topics.BLOCKS)
         self.gossip.register_topic(gossip_topics.HEADERS)
