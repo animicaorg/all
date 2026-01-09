@@ -158,7 +158,13 @@ def sync_dump(
         typer.echo(f"Stall reason:     {dump['stall_reason']}")
         typer.echo(f"Stall elapsed:    {dump['stall_elapsed_s']}s")
     if dump["last_header_error"]:
-        typer.echo(f"Last header error: {dump['last_header_error']}")
+        if dump["last_header_error"] == "at_tip":
+            typer.echo("Last header status: at_tip (no higher headers reported)")
+            typer.echo(
+                "Workaround: run 'animica sync force --boost-seconds 30' to re-scan peers."
+            )
+        else:
+            typer.echo(f"Last header error: {dump['last_header_error']}")
     if dump["last_block_error"]:
         typer.echo(f"Last block error:  {dump['last_block_error']}")
     if dump["last_block_error_peer"]:
