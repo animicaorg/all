@@ -15,6 +15,7 @@ import logging
 import os
 import shutil
 import tempfile
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional, Tuple
 from urllib.parse import urljoin, urlparse
@@ -41,6 +42,49 @@ SNAPSHOT_MIN_ADVANCE_BLOCKS = "ANIMICA_SNAPSHOT_MIN_ADVANCE_BLOCKS"
 
 # P2P snapshot query timeout in seconds
 P2P_SNAPSHOT_QUERY_TIMEOUT = 10.0
+
+
+def _snapshot_created_at(snapshot: dict[str, Any]) -> int:
+    timestamp = snapshot.get("timestamp")
+    if timestamp:
+        try:
+            return int(timestamp)
+        except Exception:
+            pass
+    created_at = snapshot.get("created_at")
+    if created_at:
+        try:
+            cleaned = str(created_at).replace("Z", "+00:00")
+            return int(datetime.fromisoformat(cleaned).timestamp())
+        except Exception:
+            pass
+    return 0
+
+
+def _select_best_snapshot(
+    snapshots: list[dict[str, Any]],
+    *,
+    best_peer_height: Optional[int] = None,
+) -> Optional[dict[str, Any]]:
+    if not snapshots:
+        return None
+    candidates = snapshots
+    if best_peer_height is not None:
+        eligible = [
+            snap
+            for snap in snapshots
+            if int(snap.get("checkpoint_height") or 0) <= best_peer_height
+        ]
+        if eligible:
+            candidates = eligible
+
+    def sort_key(snapshot: dict[str, Any]) -> tuple[int, int, float]:
+        height = int(snapshot.get("checkpoint_height") or 0)
+        created_at = _snapshot_created_at(snapshot)
+        size = float(snapshot.get("size_mb") or 0.0)
+        return (height, created_at, -size)
+
+    return max(candidates, key=sort_key)
 
 
 def _is_snapshot_sync_enabled() -> bool:
@@ -300,8 +344,18 @@ async def try_snapshot_bootstrap(
             _log.info("No snapshots available")
             return False, "No snapshots available"
 
-        # Find best snapshot (highest height)
-        best_snapshot = max(all_snapshots, key=lambda s: s["checkpoint_height"])
+        best_peer_height = None
+        if p2p_service is not None and hasattr(p2p_service, "_network_best_height"):
+            try:
+                best_peer_height = p2p_service._network_best_height()
+            except Exception:
+                best_peer_height = None
+        best_snapshot = _select_best_snapshot(
+            all_snapshots, best_peer_height=best_peer_height
+        )
+        if best_snapshot is None:
+            _log.info("No suitable snapshot available")
+            return False, "No suitable snapshot available"
         snapshot_height = best_snapshot["checkpoint_height"]
         source = best_snapshot.get("_source", "unknown")
 
@@ -358,7 +412,9 @@ async def try_snapshot_bootstrap(
 async def _query_peers_for_snapshots(
     p2p_service: Any,
     chain_id: int,
-) -> dict[str, list[dict[str, Any]]]:
+    *,
+    include_status: bool = False,
+) -> dict[str, list[dict[str, Any]]] | tuple[dict[str, list[dict[str, Any]]], dict[str, Any]]:
     """
     Query all connected peers for their available snapshots via P2P messages.
     
@@ -370,17 +426,29 @@ async def _query_peers_for_snapshots(
         Dictionary mapping peer identifiers (format: "peer:{address}") to their snapshot lists
     """
     snapshots_by_peer: dict[str, list[dict[str, Any]]] = {}
+    status: dict[str, Any] = {
+        "responded": 0,
+        "time_out": [],
+        "errors": [],
+        "empty": [],
+        "skipped": [],
+        "total_peers": 0,
+    }
     
     try:
         # Check if P2P service has the query methods we need
         if not hasattr(p2p_service, 'query_peer_snapshots'):
             _log.debug("P2P service does not support snapshot queries yet")
-            return snapshots_by_peer
+            status["errors"].append(
+                {"peer": "all", "reason": "protocol_not_supported"}
+            )
+            return (snapshots_by_peer, status) if include_status else snapshots_by_peer
         
         # Get list of connected peers from P2P service
         if not hasattr(p2p_service, '_peers'):
             _log.debug("P2P service has no _peers attribute, skipping P2P snapshot discovery")
-            return snapshots_by_peer
+            status["errors"].append({"peer": "all", "reason": "peers_unavailable"})
+            return (snapshots_by_peer, status) if include_status else snapshots_by_peer
         
         peers = []
         try:
@@ -389,19 +457,20 @@ async def _query_peers_for_snapshots(
             peers = list(peers_dict.values())
         except Exception as e:
             _log.debug(f"Error accessing peers: {e}")
-            return snapshots_by_peer
+            return (snapshots_by_peer, status) if include_status else snapshots_by_peer
         
         if not peers:
             _log.debug("No connected peers available for snapshot query")
-            return snapshots_by_peer
+            return (snapshots_by_peer, status) if include_status else snapshots_by_peer
         
         # Filter to peers that have completed handshake
         ready_peers = [peer for peer in peers if peer.hello_done.is_set()]
         
         if not ready_peers:
             _log.debug("No peers with completed handshake available for snapshot query")
-            return snapshots_by_peer
+            return (snapshots_by_peer, status) if include_status else snapshots_by_peer
         
+        status["total_peers"] = len(ready_peers)
         _log.info(f"Querying {len(ready_peers)} peer(s) for available snapshots via P2P")
         
         # Query each peer in parallel
@@ -414,7 +483,7 @@ async def _query_peers_for_snapshots(
                 return (peer.remote, snapshots)
             except Exception as e:
                 _log.debug(f"Error querying peer {peer.remote}: {e}")
-                return (peer.remote, None)
+                return (peer.remote, e)
         
         # Execute all queries concurrently
         results = await asyncio.gather(
@@ -424,13 +493,23 @@ async def _query_peers_for_snapshots(
         
         # Process results
         for peer_remote, snapshots in results:
+            if isinstance(snapshots, Exception):
+                status["errors"].append(
+                    {"peer": peer_remote, "reason": str(snapshots)}
+                )
+                continue
+            if snapshots is None:
+                status["time_out"].append(peer_remote)
+                continue
             if snapshots:
                 # Use "peer:" prefix to distinguish from RPC URLs
                 peer_key = f"peer:{peer_remote}"
                 snapshots_by_peer[peer_key] = snapshots
                 _log.info(f"Peer {peer_remote} reported {len(snapshots)} snapshot(s)")
+                status["responded"] += 1
             else:
                 _log.debug(f"Peer {peer_remote} has no snapshots available")
+                status["empty"].append(peer_remote)
         
         if snapshots_by_peer:
             _log.info(f"Successfully discovered snapshots from {len(snapshots_by_peer)} peer(s)")
@@ -440,7 +519,7 @@ async def _query_peers_for_snapshots(
     except Exception as e:
         _log.warning(f"Error querying peers for snapshots: {e}", exc_info=True)
     
-    return snapshots_by_peer
+    return (snapshots_by_peer, status) if include_status else snapshots_by_peer
 
 
 async def _query_peers_for_snapshots_via_rpc(
@@ -727,6 +806,8 @@ async def _download_and_import_snapshot_via_p2p(
         True if successful, False otherwise
     """
     from core.db.snapshot import import_snapshot
+    from core.snapshot.manifest import SnapshotManifest
+    from core.snapshot.policy import SnapshotPolicy
     from pathlib import Path
     import tempfile
     import shutil
@@ -787,66 +868,77 @@ async def _download_and_import_snapshot_via_p2p(
         _log.info(f"Downloading snapshot to temporary directory: {temp_dir}")
         
         try:
-            # Create manifest with chunks to download
-            # Standard chunk names for snapshots
-            chunk_names = ["blocks.tar.zst", "state.tar.zst"]
-            
-            # Download each chunk
+            manifest_result = await p2p_service.query_peer_snapshot_chunk(
+                peer=peer,
+                chain_id=chain_id,
+                checkpoint_height=checkpoint_height,
+                chunk_name="manifest.json",
+                timeout=10.0,
+            )
+            if manifest_result is None:
+                _log.warning("Timeout downloading snapshot manifest")
+                return False
+            manifest_blob, found = manifest_result
+            if not found or not manifest_blob:
+                _log.warning("Snapshot manifest not found on peer")
+                return False
+            manifest_path = temp_dir / "manifest.json"
+            manifest_path.write_bytes(manifest_blob)
+
+            expected_manifest_hash = target_snapshot.get("manifest_hash")
+            if expected_manifest_hash:
+                valid, err = verify_chunk_hash(manifest_path, expected_manifest_hash)
+                if not valid:
+                    _log.warning(f"Manifest hash mismatch: {err}")
+                    return False
+
+            manifest_data = json.loads(manifest_blob.decode("utf-8"))
+            manifest = SnapshotManifest.from_dict(manifest_data)
+            policy = SnapshotPolicy.from_env(chain_id=chain_id)
+            ok, error = verify_manifest_signature(manifest, policy.trusted_pubkeys)
+            if not ok and (policy.require_signature or policy.trusted_pubkeys):
+                _log.warning(f"Manifest signature invalid: {error}")
+                return False
+
+            chunks = manifest_data.get("chunks") or []
+            if not chunks:
+                _log.warning("No chunks listed in snapshot manifest")
+                return False
+
             downloaded_chunks = []
-            for chunk_name in chunk_names:
+            for chunk_info in chunks:
+                chunk_name = chunk_info.get("name")
+                if not chunk_name:
+                    continue
                 _log.info(f"Downloading chunk: {chunk_name}")
-                
                 result = await p2p_service.query_peer_snapshot_chunk(
                     peer=peer,
                     chain_id=chain_id,
                     checkpoint_height=checkpoint_height,
                     chunk_name=chunk_name,
-                    timeout=60.0,  # Longer timeout for large chunks
+                    timeout=60.0,
                 )
-                
                 if result is None:
                     _log.warning(f"Timeout downloading chunk {chunk_name}")
                     continue
-                
                 chunk_data, found = result
-                
                 if not found or not chunk_data:
                     _log.debug(f"Chunk {chunk_name} not found or empty")
                     continue
-                
-                # Write chunk to temp directory
                 chunk_path = temp_dir / chunk_name
-                with open(chunk_path, "wb") as f:
-                    f.write(chunk_data)
-                
-                downloaded_chunks.append({
-                    "name": chunk_name,
-                    "size": len(chunk_data),
-                })
-                
-                _log.info(
-                    f"Downloaded chunk {chunk_name}: {len(chunk_data)} bytes"
-                )
-            
+                chunk_path.write_bytes(chunk_data)
+                expected_hash = chunk_info.get("sha256") or chunk_info.get("hash")
+                if expected_hash:
+                    valid, err = verify_chunk_hash(chunk_path, expected_hash)
+                    if not valid:
+                        _log.warning(f"Chunk {chunk_name} failed hash check: {err}")
+                        return False
+                downloaded_chunks.append(chunk_name)
+                _log.info(f"Downloaded chunk {chunk_name}: {len(chunk_data)} bytes")
+
             if not downloaded_chunks:
                 _log.warning("No chunks were successfully downloaded")
                 return False
-            
-            # Create manifest file
-            manifest_data = {
-                "chain_id": chain_id,
-                "checkpoint_height": checkpoint_height,
-                "checkpoint_hash": target_snapshot.get("checkpoint_hash", ""),
-                "blocks_count": target_snapshot.get("blocks_count", 0),
-                "accounts_count": target_snapshot.get("accounts_count", 0),
-                "storage_keys_count": 0,  # Not provided in P2P metadata
-                "timestamp": target_snapshot.get("timestamp", 0),
-                "chunks": downloaded_chunks,
-            }
-            
-            manifest_path = temp_dir / "manifest.json"
-            with open(manifest_path, "w") as f:
-                json.dump(manifest_data, f, indent=2)
             
             # Import the snapshot
             _log.info(f"Importing downloaded snapshot from {temp_dir}")

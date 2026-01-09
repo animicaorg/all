@@ -18,6 +18,8 @@ from typing import Any, Dict, List, Optional
 
 from rpc import deps
 from rpc.methods import method
+from core.snapshot.inventory import rebuild_inventory, remove_snapshot, upsert_snapshot
+from core.snapshot.paths import get_snapshot_dir, get_snapshots_dir, snapshot_path_display
 
 _log = logging.getLogger("animica.rpc.snapshot")
 
@@ -25,32 +27,15 @@ _log = logging.getLogger("animica.rpc.snapshot")
 def _get_snapshots_dir() -> Path:
     """Get the snapshots directory path."""
     ctx = deps.get_ctx()
-    # Use data_root from context which is derived from:
-    # 1. ANIMICA_DATA_DIR if set (combined with chain-{id})
-    # 2. SQLite DB parent directory
-    # 3. ~/.animica/chain-<id> as fallback
-    #
-    # Since snapshots are named with chain ID (chain-{id}-height-{height}),
-    # they can be stored globally. If data_root is chain-specific
-    # (~/.animica/chain-<id>), use parent directory (~/.animica).
-    # Otherwise use data_root directly.
-    base = ctx.data_root
-    
-    # Check if data_root is chain-specific directory
-    if base.name.startswith("chain-"):
-        # Use parent directory for global snapshots
-        base = base.parent
-    
-    snapshots_dir = base / "snapshots"
+    snapshots_dir = get_snapshots_dir(ctx.data_root)
     snapshots_dir.mkdir(parents=True, exist_ok=True)
     return snapshots_dir
 
 
 def _get_checkpoint_snapshots_dir(chain_id: int, checkpoint_height: int) -> Path:
     """Get directory for a specific checkpoint snapshot."""
-    snapshots_dir = _get_snapshots_dir()
-    snapshot_dir = snapshots_dir / f"chain-{chain_id}-height-{checkpoint_height}"
-    return snapshot_dir
+    ctx = deps.get_ctx()
+    return get_snapshot_dir(chain_id, checkpoint_height, data_dir=ctx.data_root)
 
 
 @method(
@@ -94,6 +79,7 @@ def snapshot_create(height: int | None = None, compress: bool = True) -> dict:
         )
         elapsed = time.time() - start_time
         
+        upsert_snapshot(snapshot_dir, snapshots_dir=_get_snapshots_dir())
         return {
             "success": True,
             "chain_id": manifest.chain_id,
@@ -105,6 +91,7 @@ def snapshot_create(height: int | None = None, compress: bool = True) -> dict:
             "timestamp": manifest.timestamp,
             "elapsed_seconds": round(elapsed, 2),
             "path": str(snapshot_dir),
+            "path_display": snapshot_path_display(snapshot_dir),
         }
     except Exception as e:
         _log.exception("Error creating snapshot")
@@ -126,57 +113,30 @@ def snapshot_list(chain_id: int | None = None, include_peers: bool = False) -> d
     try:
         snapshots_dir = _get_snapshots_dir()
         snapshots = []
-        
+
         target_chain_id = int(chain_id) if chain_id is not None else None
-        
-        # Scan for snapshot directories
-        if snapshots_dir.exists():
-            for item in snapshots_dir.iterdir():
-                if not item.is_dir():
-                    continue
-                
-                # Parse directory name: chain-{id}-height-{height}
-                if not item.name.startswith("chain-"):
-                    continue
-                
-                parts = item.name.split("-")
-                if len(parts) != 4:
-                    continue
-                
-                try:
-                    snap_chain_id = int(parts[1])
-                    snap_height = int(parts[3])
-                except ValueError:
-                    continue
-                
-                # Filter by chain ID if specified
-                if target_chain_id is not None and snap_chain_id != target_chain_id:
-                    continue
-                
-                # Load manifest if exists
-                manifest_file = item / "manifest.json"
-                if manifest_file.exists():
-                    try:
-                        import json
-                        with open(manifest_file) as f:
-                            manifest_data = json.load(f)
-                        
-                        snapshots.append({
-                            "chain_id": snap_chain_id,
-                            "checkpoint_height": snap_height,
-                            "checkpoint_hash": manifest_data.get("checkpoint_hash"),
-                            "timestamp": manifest_data.get("timestamp"),
-                            "blocks_count": manifest_data.get("blocks_count"),
-                            "accounts_count": manifest_data.get("accounts_count"),
-                            "path": str(item),
-                            "size_mb": sum(
-                                chunk["size"] for chunk in manifest_data.get("chunks", [])
-                            ) / (1024 * 1024),
-                            "source": "local",
-                        })
-                    except (json.JSONDecodeError, IOError) as e:
-                        _log.warning(f"Failed to read manifest from {manifest_file}: {e}")
-                        continue
+
+        entries = rebuild_inventory(snapshots_dir)
+        for entry in entries:
+            if target_chain_id is not None and entry.chain_id != target_chain_id:
+                continue
+            size_mb = entry.total_size / (1024 * 1024)
+            snapshots.append(
+                {
+                    "chain_id": entry.chain_id,
+                    "checkpoint_height": entry.checkpoint_height,
+                    "checkpoint_hash": entry.checkpoint_hash,
+                    "timestamp": entry.timestamp,
+                    "created_at": entry.created_at,
+                    "manifest_hash": entry.manifest_hash,
+                    "blocks_count": entry.blocks_count,
+                    "accounts_count": entry.accounts_count,
+                    "path": entry.path,
+                    "path_display": entry.path_display,
+                    "size_mb": size_mb,
+                    "source": "local",
+                }
+            )
         
         # Sort by chain_id, then height (descending)
         snapshots.sort(key=lambda s: (s["chain_id"], -s["checkpoint_height"]))
@@ -292,6 +252,7 @@ def snapshot_get(height: int, chain_id: int | None = None) -> dict:
             "success": True,
             "manifest": manifest_data,
             "path": str(snapshot_dir),
+            "path_display": snapshot_path_display(snapshot_dir),
         }
     except Exception as e:
         _log.exception("Error getting snapshot")
@@ -327,6 +288,7 @@ def snapshot_verify(height: int, chain_id: int | None = None) -> dict:
             "valid": is_valid,
             "errors": errors,
             "path": str(snapshot_dir),
+            "path_display": snapshot_path_display(snapshot_dir),
         }
     except Exception as e:
         _log.exception("Error verifying snapshot")
@@ -363,6 +325,7 @@ def snapshot_import(path: str, verify_hashes: bool = True) -> dict:
             verify_hashes=verify_hashes,
         )
         elapsed = time.time() - start_time
+        upsert_snapshot(snapshot_dir, snapshots_dir=_get_snapshots_dir())
         
         return {
             "success": True,
@@ -372,6 +335,8 @@ def snapshot_import(path: str, verify_hashes: bool = True) -> dict:
             "blocks_count": manifest.blocks_count,
             "accounts_count": manifest.accounts_count,
             "elapsed_seconds": round(elapsed, 2),
+            "path": str(snapshot_dir),
+            "path_display": snapshot_path_display(snapshot_dir),
         }
     except Exception as e:
         _log.exception("Error importing snapshot")
@@ -402,6 +367,11 @@ def snapshot_delete(height: int, chain_id: int | None = None) -> dict:
         
         # Delete directory
         shutil.rmtree(snapshot_dir)
+        remove_snapshot(
+            chain_id=chain_id,
+            checkpoint_height=height,
+            snapshots_dir=_get_snapshots_dir(),
+        )
         
         return {
             "success": True,
@@ -484,20 +454,17 @@ def snapshot_status() -> dict:
             chain_id = int(deps.get_chain_id())
             snapshots_dir = _get_snapshots_dir()
             
-            snapshots = []
-            if snapshots_dir.exists():
-                for item in snapshots_dir.iterdir():
-                    if not item.is_dir():
-                        continue
-                    if not item.name.startswith(f"chain-{chain_id}-height-"):
-                        continue
-                    parts = item.name.split("-")
-                    if len(parts) == 4:
-                        try:
-                            height = int(parts[3])
-                            snapshots.append({"height": height, "path": str(item)})
-                        except ValueError:
-                            pass
+            entries = rebuild_inventory(snapshots_dir)
+            snapshots = [
+                {
+                    "height": entry.checkpoint_height,
+                    "path": entry.path,
+                    "path_display": entry.path_display,
+                    "manifest_hash": entry.manifest_hash,
+                }
+                for entry in entries
+                if entry.chain_id == chain_id
+            ]
             
             return {
                 "success": True,
@@ -570,7 +537,9 @@ async def snapshot_discover_from_peers(chain_id: int | None = None) -> dict:
             }
         
         # Query peers for snapshots directly (no threading needed - we're already async)
-        snapshots_by_peer = await _query_peers_for_snapshots(p2p_service, target_chain_id)
+        snapshots_by_peer, peer_status = await _query_peers_for_snapshots(
+            p2p_service, target_chain_id, include_status=True
+        )
         
         if not snapshots_by_peer:
             # Check if we have peers at all
@@ -587,6 +556,7 @@ async def snapshot_discover_from_peers(chain_id: int | None = None) -> dict:
                     "snapshots": [],
                     "peer_count": 0,
                     "message": "No peers connected. Connect to peers first using 'animica peer add <address>'.",
+                    "peer_status": peer_status,
                 }
             else:
                 return {
@@ -594,6 +564,7 @@ async def snapshot_discover_from_peers(chain_id: int | None = None) -> dict:
                     "snapshots": [],
                     "peer_count": peer_count,
                     "message": f"Connected to {peer_count} peer(s), but none have snapshots available.",
+                    "peer_status": peer_status,
                 }
         
         # Flatten snapshots and enrich with source information
@@ -614,6 +585,7 @@ async def snapshot_discover_from_peers(chain_id: int | None = None) -> dict:
             "peer_count": len(snapshots_by_peer),
             "snapshot_count": len(all_snapshots),
             "message": f"Found {len(all_snapshots)} snapshot(s) from {len(snapshots_by_peer)} peer(s)",
+            "peer_status": peer_status,
         }
         
     except Exception as e:

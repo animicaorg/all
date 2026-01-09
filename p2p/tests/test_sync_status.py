@@ -1695,3 +1695,65 @@ async def test_peer_ready_triggers_header_request(tmp_path: Path, monkeypatch: p
 
     await node._sync_once()
     assert called is True
+
+
+def test_snapshot_anchor_allows_descendant_headers(tmp_path: Path) -> None:
+    node, _deps = _make_service(tmp_path, "snapshot-anchor")
+    snapshots_dir = node._get_snapshots_dir()
+    snapshots_dir.mkdir(parents=True, exist_ok=True)
+    checkpoint_hash = "0x" + "11" * 32
+    snapshot_dir = snapshots_dir / f"chain-{node.chain_id}-height-5"
+    snapshot_dir.mkdir(parents=True, exist_ok=True)
+    manifest = {
+        "version": 2,
+        "chain_id": node.chain_id,
+        "checkpoint_height": 5,
+        "checkpoint_hash": checkpoint_hash,
+        "timestamp": 123,
+        "created_at": "2024-01-01T00:00:00Z",
+        "blocks_count": 0,
+        "headers_count": 0,
+        "accounts_count": 0,
+        "storage_keys_count": 0,
+        "code_contracts_count": 0,
+        "compressed": True,
+        "chunks": [],
+    }
+    (snapshot_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    peer = _register_peer(node, "peer-snapshot:0")
+    _setup_peer_hello(node, peer, head_height=6, head_hash=b"\x02" * 32)
+
+    header = HeaderCompact(
+        hash=b"\x03" * 32,
+        parent=bytes.fromhex(checkpoint_hash[2:]),
+        height=6,
+        theta_micro=0,
+        timestamp=200,
+    )
+
+    order, reason, _ = node._process_headers(peer, [header])
+
+    assert reason is None
+    assert order == [header.hash]
+
+
+@pytest.mark.asyncio
+async def test_snapshot_recovery_rate_limit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ANIMICA_SNAPSHOT_AUTO", "1")
+    node, _deps = _make_service(tmp_path, "snapshot-rate-limit")
+
+    async def _noop_recovery(*_args, **_kwargs):
+        return None
+
+    node._snapshot_recovery_cooldown = 0.0
+    node._snapshot_recovery_window_sec = 60.0
+    node._snapshot_recovery_max_per_window = 1
+    node._run_snapshot_recovery = _noop_recovery  # type: ignore[assignment]
+
+    node._maybe_trigger_snapshot_recovery(reason="test")
+    await asyncio.sleep(0)
+    node._maybe_trigger_snapshot_recovery(reason="test")
+
+    assert len(node._snapshot_recovery_attempts) == 1
+    assert node._snapshot_recovery_last_error is not None
