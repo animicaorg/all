@@ -55,6 +55,7 @@ def _register_peer(node: P2PService, remote: str) -> _PeerState:
     }
     node._peers[remote] = peer
     node._peers_by_session[peer.session_id] = peer
+    node._update_peer_head_table(peer, height=1, source="test")
     return peer
 
 
@@ -175,6 +176,8 @@ def test_network_best_height_snapshot(tmp_path: Path) -> None:
     peer_b = _register_peer(node, "peer:2002")
     peer_a.hello["head_height"] = 12
     peer_b.hello["head_height"] = 25
+    node._update_peer_head_table(peer_a, height=12, source="test")
+    node._update_peer_head_table(peer_b, height=25, source="test")
 
     snapshot = node.sync_status_snapshot()
     assert snapshot.network_best_height == 25
@@ -211,6 +214,44 @@ def test_inflight_block_expiry_requeues(tmp_path: Path) -> None:
     assert peer.sync_timeouts == 1
 
 
+@pytest.mark.asyncio
+async def test_inflight_header_expiry_requeues(tmp_path: Path) -> None:
+    deps_sync, deps = _make_deps(tmp_path, "inflight-header-expiry")
+    node = P2PService(
+        listen_addrs=[tcp_multiaddr(free_port())],
+        seeds=[],
+        chain_id=deps_sync.chain_id,
+        deps=deps,
+        peerstore_path=str(tmp_path / "inflight-header-expiry" / "p2p"),
+    )
+    peer = _register_peer(node, "peer:3001")
+    started_at = time.monotonic() - 10
+    request_id = "req-headers-1"
+    peer.pending_header_request_id = request_id
+    peer.pending_headers = asyncio.get_event_loop().create_future()
+    node._sync_inflight_header_requests[(peer.remote, request_id)] = _SyncRequest(
+        request_id=request_id,
+        peer_id=peer.remote,
+        kind="headers",
+        started_at=started_at,
+        deadline_at=started_at - 1,
+        retry_count=0,
+        start_height=1,
+        count=10,
+        locator=[node._genesis_hash()],
+        locator_mode="default",
+        anchor_height=0,
+        anchor_hash=node._genesis_hash(),
+    )
+    node._sync_inflight_headers = 1
+
+    node._expire_inflight_headers()
+
+    assert node._sync_header_retry_queue
+    assert node._sync_requested
+    assert node._stats["headers_req_timeout"] == 1
+
+
 def test_not_anchored_recovery_sets_probe(tmp_path: Path) -> None:
     deps_sync, deps = _make_deps(tmp_path, "not-anchored-recovery")
     node = P2PService(
@@ -245,6 +286,57 @@ def test_not_anchored_recovery_sets_probe(tmp_path: Path) -> None:
     assert node._sync_last_header_error == "not_anchored"
     assert node._sync_anchor_probe_hash == parent_hash
     assert node._sync_requested
+
+
+def test_best_peer_head_ignores_stale_and_cooldown(tmp_path: Path) -> None:
+    deps_sync, deps = _make_deps(tmp_path, "best-peer-head")
+    node = P2PService(
+        listen_addrs=[tcp_multiaddr(free_port())],
+        seeds=[],
+        chain_id=deps_sync.chain_id,
+        deps=deps,
+        peerstore_path=str(tmp_path / "best-peer-head" / "p2p"),
+    )
+    peer_stale = _register_peer(node, "peer:4001")
+    peer_cooldown = _register_peer(node, "peer:4002")
+    peer_fresh = _register_peer(node, "peer:4003")
+
+    node._sync_peer_head_stale_sec = 0.01
+    node._update_peer_head_table(peer_stale, height=100, source="test")
+    node._update_peer_head_table(peer_cooldown, height=90, source="test")
+    node._update_peer_head_table(peer_fresh, height=80, source="test")
+
+    now = time.time()
+    node._sync_peer_heads[peer_stale.remote].updated_at = now - 1.0
+    node._sync_peer_heads[peer_cooldown.remote].cooldown_until = now + 60.0
+
+    best_peer, best_height = node._best_peer_head()
+    assert best_peer == peer_fresh
+    assert best_height == 80
+
+
+def test_idle_while_behind_triggers_kick_and_requeue(tmp_path: Path) -> None:
+    deps_sync, deps = _make_deps(tmp_path, "idle-while-behind")
+    node = P2PService(
+        listen_addrs=[tcp_multiaddr(free_port())],
+        seeds=[],
+        chain_id=deps_sync.chain_id,
+        deps=deps,
+        peerstore_path=str(tmp_path / "idle-while-behind" / "p2p"),
+    )
+    peer = _register_peer(node, "peer:4004")
+
+    node._sync_requested = False
+    node._enforce_sync_invariants(
+        now=time.time(),
+        best_block_height=0,
+        best_header_height=0,
+        target_height=10,
+        best_peer=peer,
+    )
+
+    assert node._sync_requested
+    assert node._sync_header_retry_queue
 
 
 @pytest.mark.asyncio
