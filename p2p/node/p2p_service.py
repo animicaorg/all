@@ -7062,6 +7062,18 @@ class P2PService:
         anchor_hash: Optional[bytes],
         request_start_height: int,
     ) -> Optional[List[HeaderCompact]]:
+        max_headers_limit = max(1, int(self._max_headers_per_message or 0))
+        if max_headers > max_headers_limit:
+            log.debug(
+                "Capping header request to message limit",
+                extra={
+                    "remote": peer.remote,
+                    "requested": max_headers,
+                    "limit": max_headers_limit,
+                    "locator_mode": locator_mode,
+                },
+            )
+            max_headers = max_headers_limit
         if self._sync_inflight_headers >= self._sync_max_inflight_headers:
             self._sync_last_header_error = "headers_inflight_maxed"
             self._sync_last_header_error_at = time.time()
