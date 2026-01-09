@@ -18,8 +18,18 @@ from typing import Any, Dict, List, Optional
 
 from rpc import deps
 from rpc.methods import method
-from core.snapshot.inventory import rebuild_inventory, remove_snapshot, upsert_snapshot
-from core.snapshot.paths import get_snapshot_dir, get_snapshots_dir, snapshot_path_display
+from core.snapshot.inventory import (
+    list_snapshots_from_dirs,
+    rebuild_inventory,
+    remove_snapshot,
+    upsert_snapshot,
+)
+from core.snapshot.paths import (
+    get_snapshot_dir,
+    get_snapshots_dir,
+    get_snapshots_dirs,
+    snapshot_path_display,
+)
 
 _log = logging.getLogger("animica.rpc.snapshot")
 
@@ -111,12 +121,12 @@ def snapshot_list(chain_id: int | None = None, include_peers: bool = False) -> d
         include_peers: If True, also query connected P2P peers for their snapshots
     """
     try:
-        snapshots_dir = _get_snapshots_dir()
         snapshots = []
 
         target_chain_id = int(chain_id) if chain_id is not None else None
 
-        entries = rebuild_inventory(snapshots_dir)
+        ctx = deps.get_ctx()
+        entries = list_snapshots_from_dirs(get_snapshots_dirs(ctx.data_root))
         for entry in entries:
             if target_chain_id is not None and entry.chain_id != target_chain_id:
                 continue
