@@ -86,6 +86,16 @@ _MINING_STATE: dict[str, Any] = {
     "last_network_timestamp": None,  # last observed chain head timestamp
 }
 
+
+def _reset_mining_timing_state(*, reset_theta_state: bool = False) -> None:
+    _MINING_STATE["last_block_time"] = None
+    _MINING_STATE["block_times"] = []
+    _MINING_STATE["last_network_height"] = None
+    _MINING_STATE["last_network_timestamp"] = None
+    if reset_theta_state:
+        _MINING_STATE["theta_state"] = None
+        _MINING_STATE["adjustment_enabled"] = True
+
 # Hash tracking map for transactions from adapter and fallback pending cache
 # Maps id(tx_obj) -> (tx_hash_hex, raw_bytes)
 # Used to track original hashes (from _FALLBACK_PENDING dict keys) when evicting from mempool
@@ -4630,7 +4640,9 @@ def miner_get_block_template(*args: Any, **kwargs: Any) -> Dict[str, Any]:
 def miner_start(enable: bool | None = None) -> bool:
     global _AUTO_MINE
     _AUTO_MINE = True if enable is None else bool(enable)
-    _start_auto_task()
+    if _AUTO_MINE:
+        _reset_mining_timing_state(reset_theta_state=True)
+        _start_auto_task()
     return _AUTO_MINE
 
 
@@ -4640,6 +4652,7 @@ def miner_stop() -> bool:
     _AUTO_MINE = False
     if _AUTO_TASK is not None:
         _AUTO_TASK.cancel()
+    _reset_mining_timing_state(reset_theta_state=False)
     return False
 
 
