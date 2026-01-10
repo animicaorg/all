@@ -1214,12 +1214,6 @@ def _mining_gate(
         )
         return False, f"fatal_error:{fatal_error}"
 
-    sync_phase = sync_status.get("phase")
-    if isinstance(sync_phase, str) and sync_phase:
-        phase_normalized = sync_phase.lower()
-        if phase_normalized != "synced":
-            return False, f"sync_phase:{phase_normalized}"
-
     # Disable mining if execution is even one block behind the best known header.
     header_lag = best_header_height - exec_head
     if header_lag > 0:
@@ -1232,6 +1226,21 @@ def _mining_gate(
             },
         )
         return False, f"sync_lag:{header_lag}_blocks"
+
+    sync_phase = sync_status.get("phase")
+    if isinstance(sync_phase, str) and sync_phase:
+        phase_normalized = sync_phase.lower()
+        if phase_normalized == "stalled":
+            return False, f"sync_phase:{phase_normalized}"
+        if phase_normalized != "synced":
+            log.info(
+                "MINER_SYNC_PHASE_OVERRIDE",
+                extra={
+                    "phase": phase_normalized,
+                    "exec_head": exec_head,
+                    "best_header_height": best_header_height,
+                },
+            )
 
     # Mining is allowed: fully synced with no header lag
     return True, None
