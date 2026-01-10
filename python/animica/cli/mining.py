@@ -82,7 +82,12 @@ def _header_from_template(header_view: dict) -> "Header":
     )
 
 
-def _mine_header(header: "Header", target_int: int) -> tuple[int | None, bytes | None]:
+def _mine_header(
+    header: "Header",
+    target_int: int,
+    *,
+    workers: int | None = None,
+) -> tuple[int | None, bytes | None]:
     max_nonce = max(1, int(os.getenv("ANIMICA_MINER_MAX_NONCE", "1000000")))
     retry_windows = max(1, int(os.getenv("ANIMICA_MINER_POW_RETRY_WINDOWS", "4")))
     default_total = max(max_nonce * retry_windows, 5_000_000)
@@ -91,8 +96,29 @@ def _mine_header(header: "Header", target_int: int) -> tuple[int | None, bytes |
         int(os.getenv("ANIMICA_MINER_MAX_TOTAL_NONCE", str(default_total))),
     )
     total_windows = max(retry_windows, math.ceil(max_total_nonce / max_nonce))
+    resolved_workers = 1
+    if workers is not None:
+        from mining.parallel_nonce_search import resolve_worker_count
+
+        resolved_workers = resolve_worker_count(workers)
 
     def _scan_window(start_nonce: int, end_nonce: int) -> tuple[int | None, bytes | None]:
+        if resolved_workers > 1:
+            from mining.parallel_nonce_search import parallel_nonce_search, pow_check_nonce
+
+            result = parallel_nonce_search(
+                pow_check_nonce,
+                (header, target_int),
+                start_nonce,
+                end_nonce - start_nonce,
+                resolved_workers,
+            )
+            if result and isinstance(result.payload, tuple):
+                digest = result.payload[0]
+                if isinstance(digest, (bytes, bytearray)):
+                    return result.nonce, bytes(digest)
+            return None, None
+
         for nonce in range(start_nonce, end_nonce):
             try:
                 candidate = header.__class__(
@@ -731,6 +757,11 @@ def mine_blocks(
         "--address",
         help="Payout address (option, for backward compat): wallet label or Bech32 address",
     ),
+    threads: int = typer.Option(
+        1,
+        "--threads",
+        help="CPU threads for PoW search (0=auto)",
+    ),
     allow_remote_rpc: bool = typer.Option(
         False,
         "--allow-remote-rpc",
@@ -741,6 +772,11 @@ def mine_blocks(
         "--device",
         help="Mining device backend (cpu, cuda, rocm, opencl, metal, auto). Default: auto (auto-detect best device)",
         envvar="ANIMICA_MINER_DEVICE",
+    ),
+    gpu: bool = typer.Option(
+        False,
+        "--gpu",
+        help="Use CUDA GPU backend (alias for --device cuda)",
     ),
     rpc_url: Optional[str] = typer.Option(
         None,
@@ -803,6 +839,11 @@ def mine_blocks(
       handles mining execution and does not receive the device parameter.
       
       Default is 'auto'. Can also be set via ANIMICA_MINER_DEVICE environment variable.
+      The --gpu flag is a shortcut for --device cuda.
+
+    Threads:
+      Use --threads to control the number of CPU workers for PoW search.
+      Set --threads 0 to auto-detect a reasonable default (CPU count minus one).
     
     The mining process:
     1. Selects pending transactions from mempool (nonce-ordered, fee policy enforced)
@@ -847,6 +888,12 @@ def mine_blocks(
         
         # Mine with CUDA backend
         animica miner mine-blocks --address premine --count 5 --device cuda
+
+        # Mine with the CUDA shortcut
+        animica miner mine-blocks --address premine --count 5 --gpu
+
+        # Mine with 4 CPU threads
+        animica miner mine-blocks --address premine --count 5 --threads 4
         
         # Mine with auto device selection
         animica miner mine-blocks --address premine --count 5 --device auto
@@ -884,9 +931,30 @@ def mine_blocks(
                 err=True,
             )
             raise typer.Exit(2)
+    if isinstance(threads, str):
+        try:
+            threads = int(threads)
+        except ValueError:
+            typer.secho(
+                f"Error: threads must be a valid integer, got {threads}",
+                fg=typer.colors.RED,
+                err=True,
+            )
+            raise typer.Exit(2)
+
+    if threads < 0:
+        typer.secho(
+            f"Error: threads must be >= 0, got {threads}",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(2)
     
     # Validate device parameter
-    device_normalized = device.strip().lower() if isinstance(device, str) else "cpu"
+    if gpu:
+        device_normalized = "cuda"
+    else:
+        device_normalized = device.strip().lower() if isinstance(device, str) else "cpu"
     
     if device_normalized not in SUPPORTED_DEVICES:
         typer.secho(
@@ -919,6 +987,10 @@ def mine_blocks(
                 fg=typer.colors.YELLOW,
             )
             device_normalized = "cpu"
+
+    from mining.parallel_nonce_search import resolve_worker_count
+
+    resolved_workers = resolve_worker_count(threads)
     
     # Validate count
     if count <= 0:
@@ -1035,6 +1107,9 @@ def mine_blocks(
     typer.secho(
         f"Using device: {device_normalized}",
         fg=typer.colors.CYAN,
+    )
+    typer.echo(
+        f"Using {resolved_workers} CPU thread(s) for PoW search",
     )
     
     if no_timeout:
@@ -1278,7 +1353,11 @@ def mine_blocks(
                     header = _header_from_template(header_view)
                     target_hex = template.get("target")
                     target_int = int(target_hex, 16) if isinstance(target_hex, str) else int(target_hex or 0)
-                    nonce, digest = _mine_header(header, target_int)
+                    nonce, digest = _mine_header(
+                        header,
+                        target_int,
+                        workers=resolved_workers,
+                    )
                     if nonce is None or digest is None:
                         typer.secho(
                             f"Warning: Block {i + 1}/{count} failed to find PoW",
