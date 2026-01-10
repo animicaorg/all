@@ -17,7 +17,7 @@ def test_devnet_100_percent_to_miner():
             "issuance": {
                 "subsidy": {
                     "start_nANM_per_block": 5000000000,  # 5 ANM
-                    "epoch_length_blocks": 90000000,
+                    "epoch_length_blocks": 1350000,
                     "decay_pct_per_epoch": 50.0,
                     "tail_nANM_per_block": 100000,
                     "max_halvings": 64,
@@ -58,7 +58,7 @@ def test_testnet_100_percent_to_miner():
             "issuance": {
                 "subsidy": {
                     "start_nANM_per_block": 5000000000,  # 5 ANM
-                    "epoch_length_blocks": 90000000,
+                    "epoch_length_blocks": 1350000,
                     "decay_pct_per_epoch": 50.0,
                     "tail_nANM_per_block": 100000,
                     "max_halvings": 64,
@@ -98,7 +98,7 @@ def test_mainnet_100_percent_to_miner():
             "issuance": {
                 "subsidy": {
                     "start_nANM_per_block": 5000000000,  # 5 ANM
-                    "epoch_length_blocks": 90000000,
+                    "epoch_length_blocks": 1350000,
                     "decay_pct_per_epoch": 50.0,
                     "tail_nANM_per_block": 100000,
                     "max_halvings": 64,
@@ -138,7 +138,7 @@ def test_halving_still_100_percent():
             "issuance": {
                 "subsidy": {
                     "start_nANM_per_block": 5000000000,  # 5 ANM
-                    "epoch_length_blocks": 90000000,
+                    "epoch_length_blocks": 1350000,
                     "decay_pct_per_epoch": 50.0,
                     "tail_nANM_per_block": 100000,
                     "max_halvings": 64,
@@ -157,8 +157,8 @@ def test_halving_still_100_percent():
         },
     }
     
-    # Test after first halving (90M blocks)
-    rewards = compute_block_reward(chain_id=1337, height=90000001, params=params)
+    # Test after first halving (1.35M blocks)
+    rewards = compute_block_reward(chain_id=1337, height=1350001, params=params)
     
     assert len(rewards) == 1, f"Expected 1 reward after halving, got {len(rewards)}"
     total = sum(amt for _, amt in rewards)
@@ -168,10 +168,10 @@ def test_halving_still_100_percent():
     assert "coinbase" in miner_addr
     assert miner_amt == 2500000000
     
-    print(f"  ✓ Height 90000001 (after 1st halving): Miner receives 100% ({miner_amt} nANM = {miner_amt / 1e9:.2f} ANM)")
+    print(f"  ✓ Height 1350001 (after 1st halving): Miner receives 100% ({miner_amt} nANM = {miner_amt / 1e9:.2f} ANM)")
     
-    # Test after second halving (180M blocks)
-    rewards = compute_block_reward(chain_id=1337, height=180000001, params=params)
+    # Test after second halving (2.7M blocks)
+    rewards = compute_block_reward(chain_id=1337, height=2700001, params=params)
     
     assert len(rewards) == 1
     total = sum(amt for _, amt in rewards)
@@ -181,7 +181,7 @@ def test_halving_still_100_percent():
     assert "coinbase" in miner_addr
     assert miner_amt == 1250000000
     
-    print(f"  ✓ Height 180000001 (after 2nd halving): Miner receives 100% ({miner_amt} nANM = {miner_amt / 1e9:.2f} ANM)")
+    print(f"  ✓ Height 2700001 (after 2nd halving): Miner receives 100% ({miner_amt} nANM = {miner_amt / 1e9:.2f} ANM)")
     return True
 
 def test_no_aicf_or_treasury_rewards():
@@ -190,9 +190,9 @@ def test_no_aicf_or_treasury_rewards():
     params = {
         "monetary": {
             "issuance": {
-                "subsidy": {
-                    "start_nANM_per_block": 5000000000,
-                    "epoch_length_blocks": 90000000,
+                    "subsidy": {
+                        "start_nANM_per_block": 5000000000,
+                        "epoch_length_blocks": 1350000,
                     "decay_pct_per_epoch": 50.0,
                     "tail_nANM_per_block": 100000,
                     "max_halvings": 64,

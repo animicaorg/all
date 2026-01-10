@@ -375,7 +375,7 @@ def test_compute_block_reward_5_anm_base():
             "issuance": {
                 "subsidy": {
                     "start_nANM_per_block": 5000000000,  # 5 ANM
-                    "epoch_length_blocks": 90000000,     # 90M blocks
+                    "epoch_length_blocks": 1350000,      # 1.35M blocks
                     "decay_pct_per_epoch": 50.0,         # 50% decay (true halving)
                     "tail_nANM_per_block": 100000,
                     "max_halvings": 64,
@@ -411,14 +411,14 @@ def test_compute_block_reward_5_anm_base():
     assert miner_amt == base_reward  # 100% of 5 ANM
 
 
-def test_compute_block_reward_halving_at_90m():
-    """Test that block reward halves at 90M blocks (epoch 1)."""
+def test_compute_block_reward_halving_at_1_35m():
+    """Test that block reward halves at 1.35M blocks (epoch 1)."""
     params = {
         "monetary": {
             "issuance": {
                 "subsidy": {
                     "start_nANM_per_block": 5000000000,  # 5 ANM
-                    "epoch_length_blocks": 90000000,     # 90M blocks
+                    "epoch_length_blocks": 1350000,      # 1.35M blocks
                     "decay_pct_per_epoch": 50.0,         # 50% decay (true halving)
                     "tail_nANM_per_block": 100000,
                     "max_halvings": 64,
@@ -437,8 +437,8 @@ def test_compute_block_reward_halving_at_90m():
         },
     }
     
-    # Test at height 90000001 (first block of epoch 1, after first halving)
-    rewards = compute_block_reward(chain_id=1337, height=90000001, params=params)
+    # Test at height 1_350_001 (first block of epoch 1, after first halving)
+    rewards = compute_block_reward(chain_id=1337, height=1350001, params=params)
     
     # Should return only 1 reward (miner gets 100%)
     assert len(rewards) == 1, f"Expected 1 reward (100% to miner), got {len(rewards)}"
@@ -454,14 +454,14 @@ def test_compute_block_reward_halving_at_90m():
     assert miner_amt == halved_reward  # 100% of 2.5 ANM
 
 
-def test_compute_block_reward_second_halving_at_180m():
-    """Test that block reward halves again at 180M blocks (epoch 2)."""
+def test_compute_block_reward_second_halving_at_2_7m():
+    """Test that block reward halves again at 2.7M blocks (epoch 2)."""
     params = {
         "monetary": {
             "issuance": {
                 "subsidy": {
                     "start_nANM_per_block": 5000000000,  # 5 ANM
-                    "epoch_length_blocks": 90000000,     # 90M blocks
+                    "epoch_length_blocks": 1350000,      # 1.35M blocks
                     "decay_pct_per_epoch": 50.0,         # 50% decay (true halving)
                     "tail_nANM_per_block": 100000,
                     "max_halvings": 64,
@@ -480,8 +480,8 @@ def test_compute_block_reward_second_halving_at_180m():
         },
     }
     
-    # Test at height 180000001 (first block of epoch 2, after second halving)
-    rewards = compute_block_reward(chain_id=1337, height=180000001, params=params)
+    # Test at height 2_700_001 (first block of epoch 2, after second halving)
+    rewards = compute_block_reward(chain_id=1337, height=2700001, params=params)
     
     # Should return only 1 reward (miner gets 100%)
     assert len(rewards) == 1, f"Expected 1 reward (100% to miner), got {len(rewards)}"
@@ -504,7 +504,7 @@ def test_compute_block_reward_mainnet_100_pct_to_miner():
             "issuance": {
                 "subsidy": {
                     "start_nANM_per_block": 300000000000,  # 300 ANM
-                    "epoch_length_blocks": 90000000,     # 90M blocks
+                    "epoch_length_blocks": 1350000,      # 1.35M blocks
                     "decay_pct_per_epoch": 50.0,         # 50% decay (true halving)
                     "tail_nANM_per_block": 100000,
                     "max_halvings": 64,
@@ -536,13 +536,13 @@ def test_compute_block_reward_mainnet_100_pct_to_miner():
 
 
 def test_compute_block_reward_mainnet_100_pct_halving():
-    """Test that mainnet 100% miner split halves correctly at 90M blocks."""
+    """Test that mainnet 100% miner split halves correctly at 1.35M blocks."""
     params = {
         "monetary": {
             "issuance": {
                 "subsidy": {
                     "start_nANM_per_block": 300000000000,  # 300 ANM
-                    "epoch_length_blocks": 90000000,     # 90M blocks
+                    "epoch_length_blocks": 1350000,      # 1.35M blocks
                     "decay_pct_per_epoch": 50.0,         # 50% decay (true halving)
                     "tail_nANM_per_block": 100000,
                     "max_halvings": 64,
@@ -561,8 +561,8 @@ def test_compute_block_reward_mainnet_100_pct_halving():
         },
     }
     
-    # Test at height 90000001 (first block of epoch 1, after first halving)
-    rewards = compute_block_reward(chain_id=1, height=90000001, params=params)
+    # Test at height 1_350_001 (first block of epoch 1, after first halving)
+    rewards = compute_block_reward(chain_id=1, height=1350001, params=params)
     
     # Should return only 1 reward (miner gets 100%)
     assert len(rewards) == 1, f"Expected 1 reward (100% to miner), got {len(rewards)}"
@@ -589,7 +589,7 @@ def test_instant_block_always_returns_zero_rewards():
                 "issuance": {
                     "subsidy": {
                         "start_nANM_per_block": 5000000000,
-                        "epoch_length_blocks": 90000000,
+                        "epoch_length_blocks": 1350000,
                         "decay_pct_per_epoch": 50,
                         "tail_nANM_per_block": 100000000,
                         "max_halvings": 64,
@@ -629,7 +629,7 @@ def test_instant_block_vs_normal_block():
             "issuance": {
                 "subsidy": {
                     "start_nANM_per_block": 5000000000,
-                    "epoch_length_blocks": 90000000,
+                    "epoch_length_blocks": 1350000,
                     "decay_pct_per_epoch": 50,
                     "tail_nANM_per_block": 100000000,
                     "max_halvings": 64,

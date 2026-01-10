@@ -58,7 +58,7 @@ networks:
         # Block subsidy schedule: exponential decay toward a tail emission
         subsidy:
           start_nANM_per_block: 300000000000  # 300 ANM per block base reward
-          epoch_length_blocks: 90000000        # 90M blocks per halving epoch
+          epoch_length_blocks: 1350000         # 1.35M blocks per halving epoch
           decay_pct_per_epoch: 50.0            # 50% decay per epoch (true halving)
           tail_nANM_per_block: 100000          # 0.0001 ANM tail (never below this)
           max_halvings: 64
@@ -165,7 +165,7 @@ networks:
         target_block_interval_ms: 2000
         subsidy:
           start_nANM_per_block: 5000000000    # 5 ANM per block base reward
-          epoch_length_blocks: 90000000        # 90M blocks per halving epoch
+          epoch_length_blocks: 1350000         # 1.35M blocks per halving epoch
           decay_pct_per_epoch: 50.0            # 50% decay per epoch (true halving)
           tail_nANM_per_block: 100000          # 0.0001 ANM tail (never below this)
           max_halvings: 64
@@ -237,7 +237,7 @@ networks:
         target_block_interval_ms: 2000
         subsidy:
           start_nANM_per_block: 5000000000    # 5 ANM per block base reward
-          epoch_length_blocks: 90000000        # 90M blocks per halving epoch
+          epoch_length_blocks: 1350000         # 1.35M blocks per halving epoch
           decay_pct_per_epoch: 50.0            # 50% decay per epoch (true halving)
           tail_nANM_per_block: 100000          # 0.0001 ANM tail (never below this)
           max_halvings: 64

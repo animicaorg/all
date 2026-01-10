@@ -50,8 +50,8 @@ def test_mainnet_params_300_anm_base():
     # 300 ANM = 300_000_000_000 nANM (1 ANM = 10^9 nANM)
     assert subsidy["start_nANM_per_block"] == 300_000_000_000, \
         "Mainnet should have 300 ANM base reward"
-    assert subsidy["epoch_length_blocks"] == 90_000_000, \
-        "Mainnet should halve every 90M blocks"
+    assert subsidy["epoch_length_blocks"] == 1_350_000, \
+        "Mainnet should halve every 1.35M blocks"
     assert subsidy["decay_pct_per_epoch"] == 50.0, \
         "Mainnet should have 50% decay (true halving)"
     assert subsidy["tail_nANM_per_block"] == 100_000, \
@@ -79,12 +79,12 @@ def test_mainnet_block_reward_at_height_1():
         f"Expected coinbase address, got {miner_addr}"
 
 
-def test_mainnet_block_reward_halving_at_90m():
-    """Test that mainnet block reward halves at 90M blocks."""
+def test_mainnet_block_reward_halving_at_1_35m():
+    """Test that mainnet block reward halves at 1.35M blocks."""
     params = load_mainnet_params()
     
-    # Compute block reward at height 90_000_001 (first block of epoch 1)
-    rewards = compute_block_reward(chain_id=1, height=90_000_001, params=params)
+    # Compute block reward at height 1_350_001 (first block of epoch 1)
+    rewards = compute_block_reward(chain_id=1, height=1_350_001, params=params)
     
     # Should return exactly 1 reward entry (100% to miner)
     assert len(rewards) == 1, \
@@ -96,12 +96,12 @@ def test_mainnet_block_reward_halving_at_90m():
         f"Expected 150 ANM (150_000_000_000 nANM) after halving, got {miner_amt}"
 
 
-def test_mainnet_block_reward_second_halving_at_180m():
-    """Test that mainnet block reward halves again at 180M blocks."""
+def test_mainnet_block_reward_second_halving_at_2_7m():
+    """Test that mainnet block reward halves again at 2.7M blocks."""
     params = load_mainnet_params()
     
-    # Compute block reward at height 180_000_001 (first block of epoch 2)
-    rewards = compute_block_reward(chain_id=1, height=180_000_001, params=params)
+    # Compute block reward at height 2_700_001 (first block of epoch 2)
+    rewards = compute_block_reward(chain_id=1, height=2_700_001, params=params)
     
     # Should return exactly 1 reward entry (100% to miner)
     assert len(rewards) == 1, \
@@ -120,7 +120,7 @@ def test_mainnet_emission_schedule_parsing():
     schedule = parse_emission_schedule(params)
     
     assert schedule["start_nANM_per_block"] == 300_000_000_000
-    assert schedule["epoch_length_blocks"] == 90_000_000
+    assert schedule["epoch_length_blocks"] == 1_350_000
     assert schedule["decay_pct_per_epoch"] == 50.0
     assert schedule["tail_nANM_per_block"] == 100_000
     assert schedule["max_halvings"] == 64
@@ -146,12 +146,12 @@ def test_mainnet_subsidy_computation_height_1():
     assert total == 300_000_000_000, f"Expected total 300 ANM, got {total}"
 
 
-def test_mainnet_subsidy_computation_height_90m_plus_1():
+def test_mainnet_subsidy_computation_height_1_35m_plus_1():
     """Test subsidy computation for mainnet after first halving."""
     params = load_mainnet_params()
     schedule = parse_emission_schedule(params)
     
-    miner, aicf, treasury = compute_subsidy_for_height(90_000_001, schedule)
+    miner, aicf, treasury = compute_subsidy_for_height(1_350_001, schedule)
     
     # Verify 100% goes to miner (150 ANM after halving)
     assert miner == 150_000_000_000, f"Expected 150 ANM to miner, got {miner}"
