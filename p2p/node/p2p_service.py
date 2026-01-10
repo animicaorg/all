@@ -4021,7 +4021,7 @@ class P2PService:
         self._sync_requested_at = now
         if aggressive:
             self._sync_boost_until = now + max(1.0, self._sync_request_timeout)
-            self._sync_boost_tick_sec = max(0.1, self._sync_tick_sec / 5)
+            self._sync_boost_tick_sec = max(0.001, self._sync_tick_sec / 5)
         self._sync_wakeup.set()
         log.info(
             "Sync kick requested",
@@ -4065,7 +4065,7 @@ class P2PService:
         if tick_ms is not None:
             self._sync_boost_tick_sec = max(0.05, float(tick_ms) / 1000.0)
         else:
-            self._sync_boost_tick_sec = max(0.1, self._sync_tick_sec / 5)
+            self._sync_boost_tick_sec = max(0.001, self._sync_tick_sec / 5)
         self._sync_wakeup.set()
         return {
             "boosted": True,
@@ -8750,7 +8750,7 @@ class P2PService:
                     tick = (
                         self._sync_boost_tick_sec
                         if self._sync_boost_tick_sec is not None
-                        else max(0.1, self._sync_tick_sec / 5)
+                        else max(0.001, self._sync_tick_sec / 5)
                     )
                 elif self._sync_boost_until and now >= self._sync_boost_until:
                     self._sync_boost_until = None
