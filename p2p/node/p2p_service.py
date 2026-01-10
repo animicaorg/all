@@ -3358,7 +3358,7 @@ class P2PService:
             return False
         if best_header_height > head_height:
             return False
-        if last_block_error:
+        if last_block_error and not self._is_orphan_reason(last_block_error):
             return False
         if last_header_error not in (None, "at_tip", "duplicate_headers"):
             return False
@@ -4050,6 +4050,12 @@ class P2PService:
             self._sync_last_block_fetch_height = int(block_fetch_height)
         if queue_depth is not None:
             self._sync_last_queue_depth = int(queue_depth)
+        if self._sync_last_block_error and self._is_orphan_reason(
+            self._sync_last_block_error
+        ):
+            self._sync_last_block_error = None
+            self._sync_last_block_error_at = None
+            self._sync_last_block_error_peer = None
         self._sync_stale_network_best_at = 0.0
         self._sync_stale_network_best_count = 0
         log.debug("Sync progress recorded", extra={"reason": reason})
