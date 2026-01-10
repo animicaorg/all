@@ -7785,7 +7785,7 @@ class P2PService:
                             anchor_height=anchor_height,
                             anchor_hash=anchor_hash,
                             reason="parent_unknown",
-                            allow_probe=prev_known,
+                            allow_probe=True,
                         )
                         return order, reason, {"parent_unknown": len(headers)}
                     if header.height == 1 and header.parent_hash in {
@@ -7809,7 +7809,7 @@ class P2PService:
                                         anchor_height=anchor_height,
                                         anchor_hash=anchor_hash,
                                         reason="parent_meta_missing",
-                                        allow_probe=prev_known,
+                                        allow_probe=True,
                                     )
                                     return order, reason, {"parent_meta_missing": len(headers)}
                                 parent_height, _source = candidate
