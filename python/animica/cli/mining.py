@@ -769,16 +769,6 @@ def mine_blocks(
         "--include-mempool/--no-include-mempool",
         help="Include pending mempool transactions when mining (default: include).",
     ),
-    allow_offline_mining: bool = typer.Option(
-        False,
-        "--allow-offline-mining",
-        help="Allow mining when offline or unsynced (overrides mainnet safety checks).",
-    ),
-    unsafe_mine_while_syncing: bool = typer.Option(
-        False,
-        "--unsafe-mine-while-syncing",
-        help="Allow mining while the node is behind the network (unsafe on mainnet).",
-    ),
 ) -> None:
     """
     Mine blocks with proof-of-work to a specified payout address.
@@ -960,12 +950,10 @@ def mine_blocks(
     # Resolve RPC URL
     url = rpc_url or os.environ.get("ANIMICA_RPC_URL") or load_network_config().rpc_url
     guard_bootstrap_rpc(url, allow_remote=allow_remote_rpc, method="miner.getBlockTemplate")
-    effective_allow_offline = allow_offline_mining or unsafe_mine_while_syncing
     behind = _warn_if_unsynced(url)
-    if behind and not effective_allow_offline:
+    if behind:
         typer.secho(
-            "Error: refusing to mine while behind the network. "
-            "Use --unsafe-mine-while-syncing to override.",
+            "Error: refusing to mine while behind the network.",
             fg=typer.colors.RED,
             err=True,
         )
@@ -1143,14 +1131,12 @@ def mine_blocks(
                                 err=True,
                             )
 
-                    def get_template_via_local(*, allow_offline_override: bool = False):
+                    def get_template_via_local():
                         if verbose:
                             typer.echo(f"  [Fallback] Fetching block template via local RPC at {url}")
                         payload = {
                             "address": resolved_address,
                             "include_mempool": include_mempool,
-                            "allow_offline_mining": effective_allow_offline
-                            or allow_offline_override,
                         }
                         try:
                             return client.request("miner.getBlockTemplate", payload)
@@ -1170,8 +1156,6 @@ def mine_blocks(
                                 legacy_payload = {
                                     "payout_address": resolved_address,
                                     "include_mempool": include_mempool,
-                                    "allow_offline_mining": effective_allow_offline
-                                    or allow_offline_override,
                                 }
                                 try:
                                     return client.request("miner.getBlockTemplate", legacy_payload)
@@ -1199,7 +1183,6 @@ def mine_blocks(
                             {
                                 "address": resolved_address,
                                 "include_mempool": include_mempool,
-                                "allow_offline_mining": effective_allow_offline,
                             },
                             fallback_handler=get_template_via_local,
                         )
@@ -1221,7 +1204,6 @@ def mine_blocks(
                         if (
                             isinstance(reason, str)
                             and reason.startswith("exec_head_lagging:")
-                            and not effective_allow_offline
                         ):
                             # Extract lag info from reason string (format: "exec_head_lagging:N_blocks")
                             lag_blocks = reason.split(":")[-1].replace("_blocks", "")

@@ -1067,31 +1067,48 @@ def _mining_gate(
     - No fatal errors
     
     Args:
-        allow_offline_mining: Allow mining with no peers (testing/private nets)
-        allow_unsynced: Allow mining even if execution head is lagging behind headers
+        allow_offline_mining: Requested offline override (ignored; unsafe overrides disabled)
+        allow_unsynced: Requested unsynced override (ignored; unsafe overrides disabled)
         
     Returns:
         (allowed: bool, reason: str | None)
         - (True, None) if mining is allowed
         - (False, reason) if mining is blocked
     """
-    # Force flags bypass all checks
+    # Unsafe override flags are disabled; log and ignore if requested.
     if os.getenv("ANIMICA_MINING_FORCE", "").lower() in ("1", "true", "yes", "on"):
-        return True, None
+        log.warning(
+            "Unsafe mining override ANIMICA_MINING_FORCE requested; ignoring.",
+            extra={"override": "ANIMICA_MINING_FORCE"},
+        )
     if allow_offline_mining or os.getenv("ANIMICA_ALLOW_OFFLINE_MINING", "").lower() in (
         "1",
         "true",
         "yes",
         "on",
     ):
-        return True, None
+        log.warning(
+            "Unsafe offline mining override requested; ignoring.",
+            extra={
+                "override": "allow_offline_mining",
+                "requested": bool(allow_offline_mining),
+            },
+        )
     if allow_unsynced or os.getenv("ANIMICA_ALLOW_UNSYNCED_MINING", "").lower() in (
         "1",
         "true",
         "yes",
         "on",
     ):
-        allow_unsynced = True
+        log.warning(
+            "Unsafe unsynced mining override requested; ignoring.",
+            extra={
+                "override": "allow_unsynced_mining",
+                "requested": bool(allow_unsynced),
+            },
+        )
+    allow_offline_mining = False
+    allow_unsynced = False
     
     # Check P2P service availability (optional - graceful degradation)
     try:
@@ -3870,7 +3887,8 @@ def miner_mine(
                  The nonce search space is divided among workers for parallel mining.
         threads: Deprecated alias for workers (for backward compatibility).
         include_mempool: Whether to include pending mempool transactions (default: True).
-        allow_unsynced_mining: Allow mining even when sync_phase is not synced.
+        allow_offline_mining: Requested offline override (ignored; unsafe overrides disabled).
+        allow_unsynced_mining: Requested unsynced override (ignored; unsafe overrides disabled).
         force_empty_template: Force mining without mempool inclusion.
         instant_block: If True, mine instant blocks with zero rewards (default: False).
         
@@ -3894,15 +3912,25 @@ def miner_mine(
     allow_unsynced_flag = bool(allow_unsynced_mining)
     force_empty_flag = bool(force_empty_template)
     if force_empty_flag:
-        allow_unsynced_flag = True
         include_mempool = False
         log.warning(
             "Force empty template enabled; mining without mempool",
             extra={"force_empty_template": True},
         )
 
+    if allow_offline_mining or allow_unsynced_flag:
+        log.warning(
+            "Unsafe mining override requested; ignoring.",
+            extra={
+                "allow_offline_mining": bool(allow_offline_mining),
+                "allow_unsynced_mining": bool(allow_unsynced_flag),
+            },
+        )
+    allow_offline_flag = False
+    allow_unsynced_flag = False
+
     allowed, reason = _mining_gate(
-        allow_offline_mining=bool(allow_offline_mining),
+        allow_offline_mining=allow_offline_flag,
         allow_unsynced=allow_unsynced_flag,
     )
     if not allowed:
@@ -3983,7 +4011,7 @@ def miner_mine(
             payout_address=payout_address_bytes,
             workers=workers,
             include_mempool=include_mempool_flag,
-            allow_offline_mining=bool(allow_offline_mining),
+            allow_offline_mining=allow_offline_flag,
             allow_unsynced_mining=allow_unsynced_flag,
             instant_block=instant_block_flag,
             verbose=bool(verbose),
@@ -4115,6 +4143,17 @@ def miner_get_block_template(*args: Any, **kwargs: Any) -> Dict[str, Any]:
         raise rpc_errors.InvalidParams("address is required")
     payout_address = _validate_payout_address(payout_address)
 
+    if allow_offline_mining or allow_unsynced_mining:
+        log.warning(
+            "Unsafe mining override requested; ignoring.",
+            extra={
+                "allow_offline_mining": bool(allow_offline_mining),
+                "allow_unsynced_mining": bool(allow_unsynced_mining),
+            },
+        )
+    allow_offline_mining = False
+    allow_unsynced_mining = False
+
     log.info(
         "miner.getBlockTemplate request",
         extra={
@@ -4128,7 +4167,6 @@ def miner_get_block_template(*args: Any, **kwargs: Any) -> Dict[str, Any]:
     )
 
     if force_empty_template:
-        allow_unsynced_mining = True
         include_mempool_flag = False
         log.warning(
             "Force empty template enabled; building without mempool",
