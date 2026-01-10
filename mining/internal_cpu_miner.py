@@ -79,9 +79,21 @@ class CpuStratumMiner:
             )
             return
         prefix = bytes.fromhex(sign_hex[2:])
-        theta_micro = self._theta_micro or int(job.get("thetaMicro") or 0)
+        theta_micro = self._theta_micro or int(
+            job.get("thetaMicro")
+            or job.get("thetaTargetMicro")
+            or job.get("theta_micro")
+            or 0
+        )
+        if theta_micro <= 0:
+            log.warning(
+                "[cpu-miner] missing thetaMicro; cannot mine job %s", job.get("jobId")
+            )
+            return
         share_ratio = float(job.get("shareTarget") or self._share_target or 0.0)
-        t_share_micro = max(0, int(theta_micro * share_ratio))
+        if share_ratio <= 0.0:
+            share_ratio = 1.0
+        t_share_micro = max(1, int(theta_micro * share_ratio))
 
         shares = self._scanner.scan_batch(
             prefix,
