@@ -364,9 +364,20 @@ async def scan_forever(
             if prepared is None:
                 prepared = dev.prepare_header(header_bytes, mix_seed)
 
-            theta_micro = int(current_tpl.get("thetaMicro") or 0)
+            theta_micro = int(
+                current_tpl.get("thetaMicro")
+                or current_tpl.get("thetaTargetMicro")
+                or current_tpl.get("theta_micro")
+                or 0
+            )
+            if theta_micro <= 0:
+                await asyncio.sleep(0.05)
+                continue
+
             share_ratio = float(current_tpl.get("shareTarget") or 0.0)
-            t_share_micro = max(0, int(theta_micro * share_ratio))
+            if share_ratio <= 0.0:
+                share_ratio = 1.0
+            t_share_micro = max(1, int(theta_micro * share_ratio))
 
             found = dev.scan(
                 prepared,
