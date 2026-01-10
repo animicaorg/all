@@ -4,7 +4,7 @@ Integration tests for block rewards with params loaded from spec/params.yaml.
 
 These tests verify that:
 1. Mainnet params (chain_id=1) load correctly and produce 100% miner rewards
-2. Reward calculation matches the 5 ANM base with halving schedule
+2. Reward calculation matches the 300 ANM base with halving schedule
 3. Custom payout addresses are correctly handled
 """
 
@@ -15,10 +15,13 @@ import yaml
 from pathlib import Path
 
 from consensus.rewards import (
+    MAINNET_PREMINE_TOTAL,
+    MAX_MONEY,
     compute_block_reward,
     parse_emission_schedule,
     compute_subsidy_for_height,
 )
+from consensus import rewards as rewards_module
 
 
 def load_mainnet_params() -> dict:
@@ -39,14 +42,14 @@ def test_mainnet_params_100_pct_miner():
     assert split["treasury"] == 0, "Mainnet should give 0% to treasury"
 
 
-def test_mainnet_params_5_anm_base():
-    """Test that mainnet params specify 5 ANM base reward."""
+def test_mainnet_params_300_anm_base():
+    """Test that mainnet params specify 300 ANM base reward."""
     params = load_mainnet_params()
     subsidy = params["monetary"]["issuance"]["subsidy"]
     
-    # 5 ANM = 5_000_000_000 nANM (1 ANM = 10^9 nANM)
-    assert subsidy["start_nANM_per_block"] == 5_000_000_000, \
-        "Mainnet should have 5 ANM base reward"
+    # 300 ANM = 300_000_000_000 nANM (1 ANM = 10^9 nANM)
+    assert subsidy["start_nANM_per_block"] == 300_000_000_000, \
+        "Mainnet should have 300 ANM base reward"
     assert subsidy["epoch_length_blocks"] == 90_000_000, \
         "Mainnet should halve every 90M blocks"
     assert subsidy["decay_pct_per_epoch"] == 50.0, \
@@ -58,7 +61,7 @@ def test_mainnet_params_5_anm_base():
 
 
 def test_mainnet_block_reward_at_height_1():
-    """Test that mainnet block reward at height 1 gives full 5 ANM to miner."""
+    """Test that mainnet block reward at height 1 gives full 300 ANM to miner."""
     params = load_mainnet_params()
     
     # Compute block reward for mainnet at height 1
@@ -68,10 +71,10 @@ def test_mainnet_block_reward_at_height_1():
     assert len(rewards) == 1, \
         f"Expected 1 reward entry (100% to miner), got {len(rewards)}"
     
-    # Verify miner gets full 5 ANM (5_000_000_000 nANM)
+    # Verify miner gets full 300 ANM (300_000_000_000 nANM)
     miner_addr, miner_amt = rewards[0]
-    assert miner_amt == 5_000_000_000, \
-        f"Expected 5 ANM (5_000_000_000 nANM), got {miner_amt}"
+    assert miner_amt == 300_000_000_000, \
+        f"Expected 300 ANM (300_000_000_000 nANM), got {miner_amt}"
     assert "coinbase" in miner_addr.lower(), \
         f"Expected coinbase address, got {miner_addr}"
 
@@ -87,10 +90,10 @@ def test_mainnet_block_reward_halving_at_90m():
     assert len(rewards) == 1, \
         f"Expected 1 reward entry (100% to miner), got {len(rewards)}"
     
-    # Verify miner gets 2.5 ANM (half of 5 ANM)
+    # Verify miner gets 150 ANM (half of 300 ANM)
     miner_addr, miner_amt = rewards[0]
-    assert miner_amt == 2_500_000_000, \
-        f"Expected 2.5 ANM (2_500_000_000 nANM) after halving, got {miner_amt}"
+    assert miner_amt == 150_000_000_000, \
+        f"Expected 150 ANM (150_000_000_000 nANM) after halving, got {miner_amt}"
 
 
 def test_mainnet_block_reward_second_halving_at_180m():
@@ -104,10 +107,10 @@ def test_mainnet_block_reward_second_halving_at_180m():
     assert len(rewards) == 1, \
         f"Expected 1 reward entry (100% to miner), got {len(rewards)}"
     
-    # Verify miner gets 1.25 ANM (quarter of 5 ANM)
+    # Verify miner gets 75 ANM (quarter of 300 ANM)
     miner_addr, miner_amt = rewards[0]
-    assert miner_amt == 1_250_000_000, \
-        f"Expected 1.25 ANM (1_250_000_000 nANM) after second halving, got {miner_amt}"
+    assert miner_amt == 75_000_000_000, \
+        f"Expected 75 ANM (75_000_000_000 nANM) after second halving, got {miner_amt}"
 
 
 def test_mainnet_emission_schedule_parsing():
@@ -116,7 +119,7 @@ def test_mainnet_emission_schedule_parsing():
     
     schedule = parse_emission_schedule(params)
     
-    assert schedule["start_nANM_per_block"] == 5_000_000_000
+    assert schedule["start_nANM_per_block"] == 300_000_000_000
     assert schedule["epoch_length_blocks"] == 90_000_000
     assert schedule["decay_pct_per_epoch"] == 50.0
     assert schedule["tail_nANM_per_block"] == 100_000
@@ -134,13 +137,13 @@ def test_mainnet_subsidy_computation_height_1():
     miner, aicf, treasury = compute_subsidy_for_height(1, schedule)
     
     # Verify 100% goes to miner
-    assert miner == 5_000_000_000, f"Expected 5 ANM to miner, got {miner}"
+    assert miner == 300_000_000_000, f"Expected 300 ANM to miner, got {miner}"
     assert aicf == 0, f"Expected 0 to AICF, got {aicf}"
     assert treasury == 0, f"Expected 0 to treasury, got {treasury}"
     
-    # Verify total is 5 ANM
+    # Verify total is 300 ANM
     total = miner + aicf + treasury
-    assert total == 5_000_000_000, f"Expected total 5 ANM, got {total}"
+    assert total == 300_000_000_000, f"Expected total 300 ANM, got {total}"
 
 
 def test_mainnet_subsidy_computation_height_90m_plus_1():
@@ -150,14 +153,30 @@ def test_mainnet_subsidy_computation_height_90m_plus_1():
     
     miner, aicf, treasury = compute_subsidy_for_height(90_000_001, schedule)
     
-    # Verify 100% goes to miner (2.5 ANM after halving)
-    assert miner == 2_500_000_000, f"Expected 2.5 ANM to miner, got {miner}"
+    # Verify 100% goes to miner (150 ANM after halving)
+    assert miner == 150_000_000_000, f"Expected 150 ANM to miner, got {miner}"
     assert aicf == 0, f"Expected 0 to AICF, got {aicf}"
     assert treasury == 0, f"Expected 0 to treasury, got {treasury}"
     
-    # Verify total is 2.5 ANM
+    # Verify total is 150 ANM
     total = miner + aicf + treasury
-    assert total == 2_500_000_000, f"Expected total 2.5 ANM, got {total}"
+    assert total == 150_000_000_000, f"Expected total 150 ANM, got {total}"
+
+
+def test_mainnet_supply_cap_clamps_rewards():
+    """Test that mainnet rewards clamp once total supply cap is reached."""
+    params = load_mainnet_params()
+    schedule = parse_emission_schedule(params)
+    cap = MAX_MONEY - MAINNET_PREMINE_TOTAL
+    height = 10_000_000_000
+    total_before = rewards_module._total_subsidy_through_height(height - 1, schedule)
+
+    assert total_before >= cap, "Height should exceed total subsidy cap for test"
+
+    rewards = compute_block_reward(
+        chain_id=1, height=height, params=params, canonical_height=height
+    )
+    assert rewards == [], "Rewards should be zero once cap is reached"
 
 
 def test_devnet_still_has_split():
