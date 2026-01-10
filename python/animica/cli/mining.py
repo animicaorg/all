@@ -82,6 +82,35 @@ def _header_from_template(header_view: dict) -> "Header":
     )
 
 
+def _resolve_target_block_interval_seconds(params: object) -> float | None:
+    if not isinstance(params, dict):
+        return None
+
+    target_ms = None
+    monetary = params.get("monetary")
+    if isinstance(monetary, dict):
+        issuance = monetary.get("issuance")
+        if isinstance(issuance, dict):
+            target_ms = issuance.get("target_block_interval_ms")
+
+    if target_ms is None:
+        issuance = params.get("issuance")
+        if isinstance(issuance, dict):
+            target_ms = issuance.get("target_block_interval_ms")
+
+    if target_ms is None:
+        target_ms = params.get("target_block_interval_ms")
+
+    try:
+        target_ms_value = float(target_ms)
+        if target_ms_value > 0:
+            return target_ms_value / 1000.0
+    except (TypeError, ValueError):
+        return None
+
+    return None
+
+
 def _mine_header(
     header: "Header",
     target_int: int,
@@ -1146,6 +1175,13 @@ def mine_blocks(
         timeout_value = None if no_timeout else base_timeout
         
         with rpc_client(url, timeout=timeout_value) as client:
+            try:
+                params = client.request("chain.getParams", {})
+                target_interval = _resolve_target_block_interval_seconds(params)
+                if target_interval:
+                    MIN_BLOCK_INTERVAL_SECONDS = target_interval
+            except Exception:
+                pass
             total_mined = 0
             final_height = 0
             total_reward = 0
