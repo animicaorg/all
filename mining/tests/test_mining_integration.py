@@ -1,4 +1,4 @@
-"""Integration tests for mining with theta adjustment and threads flag."""
+"""Integration tests for mining with theta adjustment and workers flag."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ _PYTHONPATH = os.pathsep.join([str(_REPO_ROOT), str(_REPO_ROOT / "python")])
 
 
 def test_cli_mine_blocks_help():
-    """Test that mine-blocks command shows threads flag in help."""
+    """Test that mine-blocks command shows workers flag in help."""
     import subprocess
     
     result = subprocess.run(
@@ -23,8 +23,8 @@ def test_cli_mine_blocks_help():
     )
     
     assert result.returncode == 0
-    assert "--threads" in result.stdout
-    assert "CPU threads" in result.stdout or "threads" in result.stdout
+    assert "--workers" in result.stdout
+    assert "CPU worker" in result.stdout or "workers" in result.stdout
 
 
 def test_cli_start_help():
@@ -108,8 +108,8 @@ def test_theta_adjustment_block_time_tracking():
         assert abs(r - t) < 1e-9  # Nearly equal
 
 
-def test_rpc_method_accepts_threads():
-    """Test that miner.mine RPC method accepts threads parameter."""
+def test_rpc_method_accepts_workers():
+    """Test that miner.mine RPC method accepts workers parameter."""
     from rpc.methods.miner import miner_mine
     from unittest.mock import MagicMock, patch
     
@@ -123,8 +123,8 @@ def test_rpc_method_accepts_threads():
     # Mock _mine_once to avoid actual mining
     with patch("rpc.methods.miner._ctx", return_value=mock_ctx):
         with patch("rpc.methods.miner._mine_once", return_value=(False, 0)):
-            # Call with threads parameter
-            result = miner_mine(count=1, address="anim1test", threads=4)
+            # Call with workers parameter
+            result = miner_mine(count=1, address="anim1test", workers=4)
             
             # Should return valid result structure
             assert isinstance(result, dict)
@@ -147,7 +147,7 @@ if __name__ == "__main__":
     test_theta_adjustment_block_time_tracking()
     print("✓ Theta adjustment block time tracking test passed")
     
-    test_rpc_method_accepts_threads()
-    print("✓ RPC method accepts threads test passed")
+    test_rpc_method_accepts_workers()
+    print("✓ RPC method accepts workers test passed")
     
     print("\n✓ All integration tests passed!")

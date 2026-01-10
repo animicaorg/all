@@ -319,8 +319,8 @@ python -m mining.cli.miner start --threads 4 --device cuda --rpc-url http://127.
 
 # 3) Mine a specific number of blocks (useful for testing)
 # Can omit --rpc-url to use default (http://127.0.0.1:8547), or specify if RPC is on different port
-# Use --threads to control CPU thread utilization (defaults to CPU count)
-python -m mining.cli.miner mine-blocks --address anim1test123 --count 5 --threads 4 --rpc-url http://127.0.0.1:8545
+# Use --workers to control CPU worker utilization (0=auto)
+python -m mining.cli.miner mine-blocks --address anim1test123 --count 5 --workers 4 --rpc-url http://127.0.0.1:8545
 
 # Device auto-detection examples
 python -m mining.cli.miner mine-blocks --address anim1test123 --count 5 --device auto    # Auto-detect
@@ -333,11 +333,12 @@ The `mine-blocks` command mines N blocks via the node's RPC interface. This is u
 - Advancing the chain to a specific height
 - Generating blocks on demand
 
-**Thread Configuration:**
-The `--threads` flag controls CPU thread utilization during mining:
-- Defaults to the total logical CPU count if not specified
-- Accepts any positive integer value
-- Example: `--threads 8` uses 8 CPU threads for mining
+**Worker Configuration:**
+The `--workers` flag controls CPU worker processes used during mining:
+- Defaults to auto (max(1, cpu_count - 1)) when set to 0 or omitted
+- Accepts any non-negative integer value (0=auto)
+- Example: `--workers 8` uses 8 CPU worker processes for mining
+- Set `ANIMICA_MINER_WORKERS` to change the default worker count
 
 **Dynamic Theta Adjustment:**
 During mining, the acceptance threshold Θ (theta) is dynamically adjusted based on:
