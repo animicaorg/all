@@ -107,6 +107,44 @@ def _db_uri_hint(db_uri: str) -> str:
     return db_uri
 
 
+def _data_dir_for_db(db_uri: str) -> Path:
+    path = Path(_db_uri_hint(db_uri)).expanduser()
+    if db_uri.startswith("sqlite:///") and path.suffix:
+        return path.parent
+    return path
+
+
+def _genesis_guard_path(data_dir: Path) -> Path:
+    return data_dir / "genesis.meta.json"
+
+
+def _read_genesis_guard(data_dir: Path) -> Optional[dict]:
+    guard_path = _genesis_guard_path(data_dir)
+    if not guard_path.exists():
+        return None
+    try:
+        return json.loads(guard_path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def _write_genesis_guard(
+    data_dir: Path,
+    *,
+    chain_id: int,
+    genesis_hash: bytes,
+    genesis_version: Optional[str],
+) -> None:
+    data_dir.mkdir(parents=True, exist_ok=True)
+    guard_path = _genesis_guard_path(data_dir)
+    payload = {
+        "chain_id": int(chain_id),
+        "genesis_hash": "0x" + bytes(genesis_hash).hex(),
+        "genesis_version": genesis_version or "",
+    }
+    guard_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+
 def _header_parent_hash(header: Any) -> Optional[bytes]:
     if header is None:
         return None
@@ -298,6 +336,7 @@ def _compute_genesis_identity(
     Optional[int],
     Optional[str],
     Optional[str],
+    Optional[str],
 ]:
     try:
         from core.genesis.loader import compute_genesis_identity
@@ -310,9 +349,24 @@ def _compute_genesis_identity(
             int(identity.fork_id),
             str(identity.consensus_id),
             str(identity.protocol_version),
+            _read_genesis_version(genesis_path),
         )
     except Exception:
-        return None, None, genesis_path, None, None, None
+        return None, None, genesis_path, None, None, None, None
+
+
+def _read_genesis_version(genesis_path: Optional[str]) -> Optional[str]:
+    try:
+        from core.genesis.genesis_loader import get_genesis
+
+        bundle = get_genesis(genesis_path)
+        meta = bundle.genesis.get("meta", {}) if isinstance(bundle.genesis, dict) else {}
+        version = meta.get("genesis_version") or meta.get("version_tag")
+        if version is None:
+            return None
+        return str(version)
+    except Exception:
+        return None
 
 
 def _db_genesis_hash(block_db: Any) -> Optional[bytes]:
@@ -446,6 +500,7 @@ class P2PDeps:
             fork_id,
             consensus_id,
             protocol_version,
+            genesis_version,
         ) = _compute_genesis_identity(genesis_path)
         if resolved_genesis_path:
             genesis_path = resolved_genesis_path
@@ -548,6 +603,49 @@ class P2PDeps:
 
         if expected_genesis_hash is None:
             expected_genesis_hash = db_genesis_hash
+
+        data_dir = _data_dir_for_db(db_uri)
+        guard = _read_genesis_guard(data_dir)
+        current_hash = expected_genesis_hash or db_genesis_hash
+        if guard and current_hash:
+            stored_chain_id = int(guard.get("chain_id") or 0)
+            stored_hash = str(guard.get("genesis_hash") or "")
+            stored_version = str(guard.get("genesis_version") or "")
+            expected_hash_hex = "0x" + bytes(current_hash).hex()
+            expected_version = genesis_version or ""
+            if (
+                stored_chain_id != int(chain_id)
+                or stored_hash.lower() != expected_hash_hex.lower()
+                or stored_version != expected_version
+            ):
+                if allow_reset:
+                    _close_if_possible(kv, block_db, state_db, tx_index)
+                    _wipe_db(db_uri)
+                    with contextlib.suppress(FileNotFoundError):
+                        _genesis_guard_path(data_dir).unlink()
+                    return cls.open(
+                        db_uri,
+                        genesis_path,
+                        allow_genesis_reset=False,
+                    )
+                guidance = _format_genesis_reset_guidance(str(data_dir), chain_id)
+                raise P2PError(
+                    "GENESIS_GUARD_MISMATCH "
+                    f"expected_chain_id={chain_id} stored_chain_id={stored_chain_id} "
+                    f"expected_genesis_hash={expected_hash_hex} stored_genesis_hash={stored_hash or '<missing>'} "
+                    f"expected_genesis_version={expected_version or '<empty>'} "
+                    f"stored_genesis_version={stored_version or '<empty>'}. "
+                    "Refusing to start with mismatched data directory. "
+                    "Reset the data dir for this chain to continue.\n"
+                    f"{guidance}"
+                )
+        if current_hash and guard is None:
+            _write_genesis_guard(
+                data_dir,
+                chain_id=chain_id,
+                genesis_hash=current_hash,
+                genesis_version=genesis_version,
+            )
 
         return cls(
             db_uri=db_uri,

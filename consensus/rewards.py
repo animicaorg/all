@@ -36,7 +36,12 @@ log = logging.getLogger("consensus.rewards")
 # Total: 81,000,000 ANM = 81,000,000,000,000,000 base units (nANM, 10^9 = 1 ANM)
 # ==================================================================================
 
-MAINNET_PREMINE_TOTAL: int = 81_000_000_000_000_000  # 81M ANM in base units
+COIN: int = 1_000_000_000
+INITIAL_BLOCK_REWARD: int = 300 * COIN
+MAX_MONEY: int = 900_000_000 * COIN
+PREMINE_AMOUNT: int = 81_000_000 * COIN
+
+MAINNET_PREMINE_TOTAL: int = PREMINE_AMOUNT  # 81M ANM in base units
 
 # Distribution per core/genesis/genesis.json (mainnet canonical genesis).
 # The entire premine is allocated to a single bech32 address that will be
@@ -52,7 +57,7 @@ MAINNET_PREMINE_TOTAL: int = 81_000_000_000_000_000  # 81M ANM in base units
 
 MAINNET_PREMINE_DISTRIBUTION: List[Tuple[str, int]] = [
     # Single premine address containing the entire 81M ANM allocation
-    ("anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz", 81_000_000_000_000_000),
+    ("anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz", PREMINE_AMOUNT),
 ]
 
 # Sanity check: distribution must sum to total (excluding any zero entries if desired)
@@ -139,7 +144,9 @@ def compute_block_reward(
     # Parse emission schedule and compute subsidy for this height
     try:
         schedule = parse_emission_schedule(params)
-        miner_amount, aicf_amount, treasury_amount = compute_subsidy_for_height(height_for_halving, schedule)
+        miner_amount, aicf_amount, treasury_amount = compute_subsidy_for_height(
+            height_for_halving, schedule
+        )
         
         # If all amounts are zero, no subsidy at this height
         if miner_amount == 0 and aicf_amount == 0 and treasury_amount == 0:
@@ -151,6 +158,21 @@ def compute_block_reward(
         # Collect non-zero rewards
         rewards: List[Tuple[str, int]] = []
         
+        # Enforce total supply cap for mainnet (chain_id == 1).
+        if chain_id == 1:
+            height_for_supply = height_for_halving
+            total_before = _total_subsidy_through_height(
+                max(0, height_for_supply - 1), schedule
+            )
+            remaining = MAX_MONEY - MAINNET_PREMINE_TOTAL - total_before
+            if remaining <= 0:
+                return []
+            current_total = miner_amount + aicf_amount + treasury_amount
+            if current_total > remaining:
+                miner_amount, aicf_amount, treasury_amount = _split_subsidy_total(
+                    remaining, schedule
+                )
+
         # Miner reward (this will be overridden with payout address in RPC layer)
         if miner_amount > 0:
             # Use coinbase_default as placeholder; RPC layer will use actual payout address
@@ -317,26 +339,73 @@ def compute_subsidy_for_height(
     aicf_pct = schedule["aicf_pct"]
     treasury_pct = schedule["treasury_pct"]
 
-    # Compute current epoch (0-indexed)
+    total = _subsidy_total_for_height(height, schedule)
+    return _split_subsidy_total(total, schedule)
+
+
+def _subsidy_total_for_height(height: int, schedule: Dict[str, Any]) -> int:
+    if height == 0:
+        return 0
+
+    start = schedule["start_nANM_per_block"]
+    epoch_length = schedule["epoch_length_blocks"]
+    decay_pct = schedule["decay_pct_per_epoch"]
+    tail = schedule["tail_nANM_per_block"]
+    max_halvings = schedule["max_halvings"]
+
     epoch = (height - 1) // epoch_length
     if epoch >= max_halvings:
-        epoch = max_halvings - 1  # Cap at max_halvings
+        epoch = max_halvings - 1
 
-    # Apply exponential decay: subsidy = start * ((100 - decay_pct) / 100) ** epoch
     decay_factor = (100.0 - decay_pct) / 100.0
     current_subsidy = int(start * (decay_factor**epoch))
-
-    # Apply tail (minimum subsidy)
     if current_subsidy < tail:
         current_subsidy = tail
+    return current_subsidy
 
-    # Split subsidy
-    total = current_subsidy
+
+def _split_subsidy_total(total: int, schedule: Dict[str, Any]) -> Tuple[int, int, int]:
+    miner_pct = schedule["miner_pct"]
+    aicf_pct = schedule["aicf_pct"]
+    treasury_pct = schedule["treasury_pct"]
+
     miner = (total * miner_pct) // 100
     aicf = (total * aicf_pct) // 100
-    treasury = total - miner - aicf  # Ensure no rounding loss
+    treasury = total - miner - aicf
+    if miner_pct + aicf_pct + treasury_pct != 100:
+        treasury = (total * treasury_pct) // 100
+    return miner, aicf, treasury
 
-    return (miner, aicf, treasury)
+
+def _total_subsidy_through_height(height: int, schedule: Dict[str, Any]) -> int:
+    if height <= 0:
+        return 0
+
+    start = schedule["start_nANM_per_block"]
+    epoch_length = schedule["epoch_length_blocks"]
+    decay_pct = schedule["decay_pct_per_epoch"]
+    tail = schedule["tail_nANM_per_block"]
+    max_halvings = schedule["max_halvings"]
+
+    decay_factor = (100.0 - decay_pct) / 100.0
+    max_epoch = max_halvings - 1
+    full_epochs = min((height - 1) // epoch_length, max_epoch)
+
+    total = 0
+    for epoch in range(0, full_epochs):
+        subsidy = int(start * (decay_factor**epoch))
+        if subsidy < tail:
+            subsidy = tail
+        total += subsidy * epoch_length
+
+    remaining = height - (full_epochs * epoch_length)
+    if remaining > 0:
+        subsidy = int(start * (decay_factor**full_epochs))
+        if subsidy < tail:
+            subsidy = tail
+        total += subsidy * remaining
+
+    return total
 
 
 # ==================================================================================
@@ -344,6 +413,10 @@ def compute_subsidy_for_height(
 # ==================================================================================
 
 __all__ = [
+    "COIN",
+    "INITIAL_BLOCK_REWARD",
+    "MAX_MONEY",
+    "PREMINE_AMOUNT",
     "MAINNET_PREMINE_TOTAL",
     "MAINNET_PREMINE_DISTRIBUTION",
     "compute_block_reward",

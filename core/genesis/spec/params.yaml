@@ -6,8 +6,8 @@ chain:
   name: "Animica Mainnet"
 
 genesis:
-  time: "2025-01-01T00:00:00Z"
-  hash: "0x0000000000000000000000000000000000000000000000000000000000000000"
+  time: "2026-01-01T00:00:00Z"
+  hash: "0x27fab3a17fd3a166908cdaa32462511ded2da86724314de45f335b0a59f820d8"
 
 policy_roots:
   alg_policy_root: "0x0000000000000000000000000000000000000000000000000000000000000000"
@@ -25,7 +25,7 @@ consensus:
       max: 2.0
 
 block:
-  target_seconds: 2.0
+  target_seconds: 120.0
   max_bytes: 2000000
   max_gas: 40000000
   tx_max_bytes: 131072
