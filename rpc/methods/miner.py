@@ -1056,15 +1056,13 @@ def _mining_gate(
     *, allow_offline_mining: bool = False, allow_unsynced: bool = False
 ) -> tuple[bool, str | None]:
     """
-    Determine if mining/template generation is allowed based on LOCAL execution state.
+    Determine if mining/template generation is allowed based on sync readiness.
     
-    Key principle: Mining readiness should depend on whether we have an executable chain tip
-    (exec_head with valid state), NOT on whether we're still syncing headers from peers.
-    
-    The node can mine even while sync_phase is "headers" or "blocks", as long as:
-    - We have a valid executed head (height >= 0, state available)
-    - State DB is accessible and consistent
-    - No fatal errors
+    Mining is only allowed when the node is fully synced:
+    - Sync phase is SYNCED (if reported)
+    - Execution head is initialized
+    - No header lag relative to best known headers
+    - No fatal sync errors
     
     Args:
         allow_offline_mining: Requested offline override (ignored; unsafe overrides disabled)
@@ -1146,24 +1144,23 @@ def _mining_gate(
     if not allow_offline_mining and outbound <= 0 and peers_total <= 0:
         return False, "offline_no_outbound_peers"
     
-    # NEW: Execution head readiness check (replaces sync_phase check)
-    # Mining is allowed if we have an executable head with valid state.
-    # The sync_phase (headers/blocks/verifying) reflects P2P state, NOT execution state.
-    # We can mine on exec_head even while headers are still being synced.
-    
+    # Require the node to be fully synced before exposing mining templates.
+    # We only allow mining when the sync phase reports SYNCED (or when phase
+    # is unavailable but header lag is zero).
+
     # Get execution head height (currently same as head_height, but conceptually distinct)
     exec_head_height = int(sync_status.get("head_height") or 0)
     best_header_height = int(sync_status.get("best_header_height") or 0)
     best_block_height = int(sync_status.get("best_block_height") or 0)
-    
+
     # Use best_block_height as proxy for exec_head (blocks we've fully applied)
     # In the future, track exec_head separately from header_head
     exec_head = max(exec_head_height, best_block_height)
-    
+
     # Check if execution head is initialized (height >= 0 means we have genesis or later)
     if exec_head < 0:
         return False, "exec_head_uninitialized"
-    
+
     # Check for fatal sync errors (indicates corrupted state or DB issues)
     fatal_error = sync_status.get("fatal_error")
     if fatal_error:
@@ -1172,63 +1169,27 @@ def _mining_gate(
             extra={"fatal_error": fatal_error, "exec_head": exec_head},
         )
         return False, f"fatal_error:{fatal_error}"
-    
-    # Disable mining completely if we are 100 blocks or more behind the highest known height
-    # This prevents mining on a fork or during initial sync when significantly behind
+
+    sync_phase = sync_status.get("phase")
+    if isinstance(sync_phase, str) and sync_phase:
+        phase_normalized = sync_phase.lower()
+        if phase_normalized != "synced":
+            return False, f"sync_phase:{phase_normalized}"
+
+    # Disable mining if execution is even one block behind the best known header.
     header_lag = best_header_height - exec_head
-    if header_lag >= 100:
+    if header_lag > 0:
         log.info(
-            "MINER_TOO_FAR_BEHIND",
+            "MINER_SYNC_LAG",
             extra={
                 "exec_head": exec_head,
                 "best_header_height": best_header_height,
                 "lag": header_lag,
             },
         )
-        return False, f"too_far_behind:{header_lag}_blocks"
-    
-    # Check execution lag: if exec_head is too far behind best known headers,
-    # we may be in "headers-only" mode (headers synced but blocks not executed yet)
-    max_lag = int(os.getenv("ANIMICA_MINING_MAX_LAG", "10"))  # Increased default from 2 to 10
-    
-    if header_lag > max_lag:
-        # Execution is lagging significantly behind headers
-        if allow_unsynced:
-            log.warning(
-                "MINER_ALLOW_EXEC_LAG",
-                extra={
-                    "exec_head": exec_head,
-                    "best_header_height": best_header_height,
-                    "lag": header_lag,
-                    "max_lag": max_lag,
-                },
-            )
-        else:
-            # Note: This is the ONLY case where we block mining based on sync state.
-            # We're blocking because execution is actually lagging, not because
-            # of the sync_phase value (which we now ignore).
-            log.info(
-                "MINER_EXEC_HEAD_LAGGING",
-                extra={
-                    "exec_head": exec_head,
-                    "best_header_height": best_header_height,
-                    "lag": header_lag,
-                    "max_lag": max_lag,
-                },
-            )
-            return False, f"exec_head_lagging:{header_lag}_blocks"
-    
-    # REMOVED: sync_phase checks (lines 1093-1116 in original)
-    # The sync_phase (idle/syncing/headers/blocks/verifying/synced) reflects
-    # P2P header/block synchronization state, NOT local execution readiness.
-    # We can mine even while phase is "headers" or "blocks", as long as
-    # exec_head is available and not too far behind.
-    #
-    # This fixes the bug where the miner spams:
-    # "sync_phase:headers; waiting for a synced block template"
-    # even though mining is working fine.
-    
-    # Mining is allowed: exec_head is available and execution is not lagging
+        return False, f"sync_lag:{header_lag}_blocks"
+
+    # Mining is allowed: fully synced with no header lag
     return True, None
 
 

@@ -258,7 +258,7 @@ def test_get_work_disabled_when_stalled(monkeypatch: pytest.MonkeyPatch):
 
 
 def test_get_work_disabled_when_100_blocks_behind(monkeypatch: pytest.MonkeyPatch):
-    """Test that mining is disabled when 100 blocks or more behind."""
+    """Test that mining is disabled when any blocks are behind."""
     class _Snap:
         def __init__(self, data):
             self._data = data
@@ -291,12 +291,12 @@ def test_get_work_disabled_when_100_blocks_behind(monkeypatch: pytest.MonkeyPatc
     res = rpc_call(client, "miner.getWork")["result"]
     assert res["disabled"] is True
     assert res["miningEnabled"] is False
-    assert res["reason"].startswith("too_far_behind:")
+    assert res["reason"].startswith("sync_lag:")
     assert "100_blocks" in res["reason"]
 
 
-def test_get_work_enabled_when_99_blocks_behind(monkeypatch: pytest.MonkeyPatch):
-    """Test that mining is still enabled when 99 blocks behind."""
+def test_get_work_disabled_when_99_blocks_behind(monkeypatch: pytest.MonkeyPatch):
+    """Test that mining is disabled when 99 blocks behind."""
     class _Snap:
         def __init__(self, data):
             self._data = data
@@ -310,7 +310,7 @@ def test_get_work_enabled_when_99_blocks_behind(monkeypatch: pytest.MonkeyPatch)
 
         def sync_status_snapshot(self):
             # exec_head is at height 50, but best_header_height is 149
-            # That's 99 blocks behind - should still allow mining (within threshold)
+            # That's 99 blocks behind - should disable mining
             return _Snap(
                 {
                     "head_height": 50,
@@ -323,15 +323,13 @@ def test_get_work_enabled_when_99_blocks_behind(monkeypatch: pytest.MonkeyPatch)
     import p2p
 
     monkeypatch.setenv("ANIMICA_MINING_MIN_PEERS", "1")
-    # Set max_lag high so it doesn't interfere with this test
-    monkeypatch.setenv("ANIMICA_MINING_MAX_LAG", "100")
     monkeypatch.setattr(p2p, "get_service", lambda: _Svc())
 
     client, _, _ = new_test_client()
     res = rpc_call(client, "miner.getWork")["result"]
-    # Should have a job since we're only 99 blocks behind
-    assert "jobId" in res
-    assert res["miningEnabled"] is True
+    assert res["disabled"] is True
+    assert res["miningEnabled"] is False
+    assert res["reason"].startswith("sync_lag:")
 
 
 @pytest.mark.asyncio
