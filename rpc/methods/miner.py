@@ -877,7 +877,40 @@ def _resolve_theta() -> int:
     return _DEFAULT_THETA_MICRO
 
 
-def _adjust_theta_for_mining(dt_seconds: float | None = None) -> int:
+def _resolve_target_block_time_s(params: dict[str, Any] | None) -> float:
+    if not params:
+        return 12.0
+
+    target_ms = None
+    monetary = params.get("monetary")
+    if isinstance(monetary, dict):
+        issuance = monetary.get("issuance")
+        if isinstance(issuance, dict):
+            target_ms = issuance.get("target_block_interval_ms")
+
+    if target_ms is None:
+        issuance = params.get("issuance")
+        if isinstance(issuance, dict):
+            target_ms = issuance.get("target_block_interval_ms")
+
+    if target_ms is None:
+        target_ms = params.get("target_block_interval_ms")
+
+    try:
+        target_ms_value = float(target_ms)
+        if target_ms_value > 0:
+            return target_ms_value / 1000.0
+    except (TypeError, ValueError):
+        pass
+
+    return 12.0
+
+
+def _adjust_theta_for_mining(
+    dt_seconds: float | None = None,
+    *,
+    target_block_time_s: float | None = None,
+) -> int:
     """
     Dynamically adjust theta micro during mining based on observed block times.
     
@@ -893,11 +926,18 @@ def _adjust_theta_for_mining(dt_seconds: float | None = None) -> int:
     
     Args:
         dt_seconds: Time elapsed since last block (seconds). If None, returns current theta.
+        target_block_time_s: Target block time to use for retargeting (seconds).
         
     Returns:
         int: Adjusted theta_micro value for next mining iteration (in micro-nats)
     """
     global _MINING_STATE
+
+    resolved_target_block_time_s = (
+        target_block_time_s
+        if target_block_time_s is not None
+        else _resolve_target_block_time_s(getattr(_ctx(), "params", None))
+    )
     
     # If adjustment is disabled, return baseline theta
     if not _MINING_STATE.get("adjustment_enabled", True):
@@ -906,7 +946,8 @@ def _adjust_theta_for_mining(dt_seconds: float | None = None) -> int:
     # If no dt provided, return current theta (initialization case)
     if dt_seconds is None:
         # Initialize state if needed
-        if _MINING_STATE.get("theta_state") is None:
+        state = _MINING_STATE.get("theta_state")
+        if state is None or state.params.target_block_time_s != resolved_target_block_time_s:
             try:
                 from consensus.difficulty import RetargetParams, init_state
                 
@@ -919,7 +960,7 @@ def _adjust_theta_for_mining(dt_seconds: float | None = None) -> int:
                 # to maintain network stability and prevent runaway values
                 # Stability is ensured by hard cap, step_clamp_micro, and overflow protection
                 params = RetargetParams(
-                    target_block_time_s=12.0,        # Target 12s blocks
+                    target_block_time_s=resolved_target_block_time_s,
                     half_life_blocks=8.0,            # Faster adaptation for mining (vs 24 for consensus)
                     gain_beta=0.9,                   # More aggressive response (vs 0.75 for consensus)
                     step_clamp_micro=2_000_000,      # Allow larger steps (~2.0 nats per update)
@@ -956,9 +997,12 @@ def _adjust_theta_for_mining(dt_seconds: float | None = None) -> int:
         from consensus.difficulty import update_theta
         
         state = _MINING_STATE.get("theta_state")
-        if state is None:
+        if state is None or state.params.target_block_time_s != resolved_target_block_time_s:
             # Initialize state first
-            _adjust_theta_for_mining(dt_seconds=None)
+            _adjust_theta_for_mining(
+                dt_seconds=None,
+                target_block_time_s=resolved_target_block_time_s,
+            )
             state = _MINING_STATE.get("theta_state")
             if state is None:
                 return _resolve_theta()
