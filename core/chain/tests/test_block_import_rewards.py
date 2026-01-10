@@ -26,7 +26,7 @@ def test_load_full_params_dict_devnet():
     # Verify devnet subsidy config
     subsidy = params["monetary"]["issuance"]["subsidy"]
     assert subsidy["start_nANM_per_block"] == 5_000_000_000  # 5 ANM
-    assert subsidy["epoch_length_blocks"] == 90_000_000
+    assert subsidy["epoch_length_blocks"] == 1_350_000
     assert subsidy["decay_pct_per_epoch"] == 50.0
 
 
