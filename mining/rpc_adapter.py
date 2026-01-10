@@ -20,7 +20,7 @@ class RpcTemplateProvider:
     rpc_url: str
     proof_type: str = "sha256d"
     solo_address: Optional[str] = None
-    allow_unsynced_mining: bool = True
+    allow_unsynced_mining: bool = False
     allow_offline_mining: bool = False
     include_mempool: bool = True
     work_timeout_s: float = 12.0
