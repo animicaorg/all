@@ -210,6 +210,85 @@ def test_mine_blocks_success(monkeypatch: Any) -> None:
     assert "3 block(s)" in result.output
 
 
+def test_mine_blocks_threads_option(monkeypatch: Any) -> None:
+    """Test that mine-blocks passes threads to the PoW search."""
+    test_address = "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz"
+    monkeypatch.setattr(mining, "_validate_bech32_address", lambda x: True if x == test_address else False)
+    captured: dict[str, int | None] = {"workers": None}
+
+    def fake_mine_header(
+        header: Any,
+        target_int: int,
+        *,
+        workers: int | None = None,
+    ) -> tuple[int | None, bytes | None]:
+        captured["workers"] = workers
+        return 0, b"\x00" * 32
+
+    monkeypatch.setattr(mining, "_mine_header", fake_mine_header)
+
+    class MockRpcClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def request(self, method: str, params: Any):
+            if method == "miner.getBlockTemplate":
+                return {
+                    "enabled": True,
+                    "header": {
+                        "v": 1,
+                        "chainId": 1337,
+                        "height": 103,
+                        "parentHash": "0x" + "00" * 32,
+                        "timestamp": 0,
+                        "stateRoot": "0x" + "00" * 32,
+                        "txsRoot": "0x" + "00" * 32,
+                        "receiptsRoot": "0x" + "00" * 32,
+                        "proofsRoot": "0x" + "00" * 32,
+                        "daRoot": "0x" + "00" * 32,
+                        "mixSeed": "0x" + "00" * 32,
+                        "poiesPolicyRoot": "0x" + "00" * 32,
+                        "pqAlgPolicyRoot": "0x" + "00" * 32,
+                        "thetaMicro": 1,
+                        "nonce": 0,
+                    },
+                    "target": hex((1 << 256) - 1),
+                    "coinbase": {"amount": 0},
+                    "txs": [],
+                    "mempool": {"pending": 0, "selected": 0, "rejected": {}, "rejectedByHash": {}},
+                }
+            if method == "miner.submitBlock":
+                return {"accepted": True}
+            raise AssertionError(f"Unexpected method {method}")
+
+    mock_module = Mock()
+    mock_module.RpcClient = MockRpcClient
+
+    monkeypatch.setitem(__import__("sys").modules, "omni_sdk.rpc.http", mock_module)
+    monkeypatch.setitem(__import__("sys").modules, "sdk.python.omni_sdk.rpc.http", mock_module)
+
+    result = runner.invoke(
+        mining.app,
+        [
+            "mine-blocks",
+            "--address", test_address,
+            "--count", "1",
+            "--threads", "4",
+            "--rpc-url", "http://127.0.0.1:8545",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert captured["workers"] == 4
+    assert "Using 4 CPU thread(s) for PoW search" in result.output
+
+
 def test_mine_blocks_template_param_fallback(monkeypatch: Any) -> None:
     """Test that mine-blocks retries template request with legacy params."""
     test_address = "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz"
@@ -674,6 +753,28 @@ def test_mine_blocks_with_device_cuda(monkeypatch: Any) -> None:
     
     assert result.exit_code == 0
     # Device should NOT be sent to RPC (it's CLI-only)
+    assert not params_tracker["has_device"], "Device parameter should not be sent to RPC"
+    assert "Using device: cuda" in result.output
+
+
+def test_mine_blocks_with_gpu_flag(monkeypatch: Any) -> None:
+    """Test that mine-blocks accepts --gpu and uses CUDA."""
+    test_address = "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz"
+    params_tracker = _setup_mock_rpc_client(monkeypatch, test_address)
+
+    result = runner.invoke(
+        mining.app,
+        [
+            "mine-blocks",
+            "--address", test_address,
+            "--count", "1",
+            "--gpu",
+            "--rpc-url", "http://127.0.0.1:8545",
+            "--no-proxy",
+        ],
+    )
+
+    assert result.exit_code == 0
     assert not params_tracker["has_device"], "Device parameter should not be sent to RPC"
     assert "Using device: cuda" in result.output
 
