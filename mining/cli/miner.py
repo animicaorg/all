@@ -13,13 +13,13 @@ Usage:
                                    [--metrics :PORT] [--log-level LEVEL]
                                    [--dry-run]
 
-  python -m mining.cli.miner mine-blocks --address ADDR --count N [--threads N]
+  python -m mining.cli.miner mine-blocks --address ADDR --count N [--workers N]
                                           [--rpc-url URL] [--log-level LEVEL]
                                           [--retry-delay SECONDS] [--no-timeout]
   
-  The --threads option controls the number of CPU threads used for parallel nonce search.
-  By default, the miner automatically detects and uses all available CPU cores for 
-  optimal performance. Higher thread counts can significantly speed up mining on 
+  The --workers option controls the number of CPU worker processes used for parallel
+  nonce search. By default (0), the miner auto-detects available CPU cores and uses
+  max(1, cpu_count - 1). Higher worker counts can significantly speed up mining on
   multi-core systems.
 
 Commands:
@@ -35,11 +35,12 @@ RPC operations retry indefinitely on network errors with configurable delay betw
 attempts (default: 1.0 second).
 
 Multi-Core Mining:
-  - By default, mining uses ALL available CPU cores for parallel nonce search
-  - Each thread searches a different range of nonces simultaneously
-  - The miner automatically distributes work across threads for maximum efficiency
-  - You can limit threads with --threads N if needed (e.g., to reduce CPU usage)
-  - Example: --threads 2 uses only 2 cores even if 8 are available
+  - By default, mining uses multiple CPU cores for parallel nonce search
+  - Each worker process searches a different stride of nonces simultaneously
+  - The miner automatically distributes work across workers for maximum efficiency
+  - You can limit workers with --workers N if needed (e.g., to reduce CPU usage)
+  - Example: --workers 2 uses only 2 cores even if 8 are available
+  - Set ANIMICA_MINER_WORKERS to configure the default worker count (0=auto)
 
 Examples:
   # Start the miner (uses all CPU cores by default)
@@ -48,7 +49,7 @@ Examples:
   # Start with explicit thread count
   python -m mining.cli.miner start --threads 4
 
-  # Mine 5 blocks for testing (uses all CPU cores by default)
+  # Mine 5 blocks for testing (uses auto worker count by default)
   python -m mining.cli.miner mine-blocks --address anim1test123 --count 5
   
   # Mine blocks with custom retry delay (2.5 seconds between retries)
@@ -103,6 +104,16 @@ RpcClient = None
 def _env_default(name: str, fallback: Optional[str] = None) -> Optional[str]:
     v = os.environ.get(name)
     return v if v is not None and v != "" else fallback
+
+
+def _env_int(name: str, fallback: int) -> int:
+    value = _env_default(name)
+    if value is None:
+        return fallback
+    try:
+        return int(value)
+    except ValueError:
+        return fallback
 
 
 def _parse_host_port(value: str) -> Tuple[str, int]:
@@ -239,10 +250,16 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help="number of blocks to mine (must be > 0)",
     )
     mine_blocks.add_argument(
-        "--threads",
+        "--workers",
         type=int,
-        default=os.cpu_count() or 1,
-        help="number of CPU threads for mining (default: CPU count)",
+        default=_env_int("ANIMICA_MINER_WORKERS", 0),
+        help="number of CPU worker processes for mining (0=auto)",
+    )
+    mine_blocks.add_argument(
+        "--threads",
+        dest="workers",
+        type=int,
+        help="deprecated alias for --workers",
     )
     mine_blocks.add_argument(
         "--rpc-url",
@@ -267,6 +284,12 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         action="store_true",
         default=False,
         help="disable RPC timeout (wait indefinitely). Useful for high-load or slow network conditions.",
+    )
+    mine_blocks.add_argument(
+        "--verbose",
+        action="store_true",
+        default=False,
+        help="log extra mining details (workers, hashrate, winner)",
     )
     mine_blocks.add_argument(
         "--allow-offline-mining",
@@ -395,6 +418,14 @@ async def _run_mine_blocks(args: argparse.Namespace, log: logging.Logger) -> int
         log.error("retry-delay must be greater than 0, got %.3f", args.retry_delay)
         return 2
 
+    try:
+        from mining.parallel_nonce_search import resolve_worker_count
+
+        workers = resolve_worker_count(args.workers)
+    except ValueError as exc:
+        log.error("workers must be >= 0 (0=auto): %s", exc)
+        return 2
+    
     # Lazy import RpcClient to avoid import errors during test collection
     rpc_client = None
     try:
@@ -419,16 +450,17 @@ async def _run_mine_blocks(args: argparse.Namespace, log: logging.Logger) -> int
     timeout_msg = "no timeout" if args.no_timeout else "30.0s timeout"
     
     log.info(
-        "Mining %d block(s) with payout to address %s via RPC %s (threads=%d, retry_delay=%.1fs, %s, allow_offline=%s, allow_unsynced=%s, force_empty_template=%s)",
+        "Mining %d block(s) with payout to address %s via RPC %s (workers=%d, retry_delay=%.1fs, %s, allow_offline=%s, allow_unsynced=%s, force_empty_template=%s, verbose=%s)",
         args.count,
         args.address,
         args.rpc_url,
-        args.threads,
+        workers,
         args.retry_delay,
         timeout_msg,
         args.allow_offline_mining,
         args.allow_unsynced,
         args.force_empty_template,
+        args.verbose,
     )
 
     # JSON-RPC error code constant for invalid params (JSON-RPC 2.0 spec)
@@ -448,14 +480,15 @@ async def _run_mine_blocks(args: argparse.Namespace, log: logging.Logger) -> int
         attempt += 1
         try:
             with rpc_client(args.rpc_url, timeout=timeout_value) as client:
-                # Call miner.mine RPC method with address and threads parameters
+                # Call miner.mine RPC method with address and worker parameters
                 # For backward compatibility, try with full params first, fall back if not supported
                 try:
                     payload = {
                         "count": args.count,
                         "address": args.address,
-                        "threads": args.threads,
+                        "workers": workers,
                         "allow_offline_mining": bool(args.allow_offline_mining),
+                        "verbose": bool(args.verbose),
                     }
                     if args.allow_unsynced:
                         payload["allow_unsynced_mining"] = True
@@ -463,7 +496,7 @@ async def _run_mine_blocks(args: argparse.Namespace, log: logging.Logger) -> int
                         payload["force_empty_template"] = True
                     result = client.request("miner.mine", payload)
                 except Exception as e:
-                    # If the RPC rejects params (older node), try with just count and address
+                    # If the RPC rejects params (older node), try legacy parameter names
                     # Check for INVALID_PARAMS error code (preferred) or param names in error message (fallback)
                     # String matching is only used as last resort for compatibility with older SDK versions
                     is_param_error = False
@@ -472,17 +505,22 @@ async def _run_mine_blocks(args: argparse.Namespace, log: logging.Logger) -> int
                         is_param_error = (
                             e.code == JsonRpcCode.INVALID_PARAMS if JsonRpcCode else e.code == JSONRPC_INVALID_PARAMS
                         )
-                    elif "threads" in str(e).lower() or "address" in str(e).lower() or "unexpected" in str(e).lower():
+                    elif any(
+                        token in str(e).lower()
+                        for token in ("workers", "threads", "address", "unexpected")
+                    ):
                         # Fallback: String matching for older SDK versions
                         is_param_error = True
                     
                     if is_param_error:
-                        # Try without threads parameter (node doesn't support it yet)
+                        # Try with legacy threads parameter (node doesn't support workers yet)
                         try:
                             fallback_payload = {
                                 "count": args.count,
                                 "address": args.address,
+                                "threads": workers,
                                 "allow_offline_mining": bool(args.allow_offline_mining),
+                                "verbose": bool(args.verbose),
                             }
                             if args.allow_unsynced:
                                 fallback_payload["allow_unsynced_mining"] = True
@@ -490,7 +528,7 @@ async def _run_mine_blocks(args: argparse.Namespace, log: logging.Logger) -> int
                                 fallback_payload["force_empty_template"] = True
                             result = client.request("miner.mine", fallback_payload)
                         except Exception as e2:
-                            # Still failing, try legacy format without address
+                            # Still failing, try legacy format without workers/threads
                             is_param_error2 = False
                             if RpcError is not None and isinstance(e2, RpcError):
                                 is_param_error2 = (
@@ -501,8 +539,8 @@ async def _run_mine_blocks(args: argparse.Namespace, log: logging.Logger) -> int
                             
                             if is_param_error2:
                                 log.warning(
-                                    "Node does not support payout address or threads (older version). "
-                                    "Mining to node's default miner address with default threads."
+                                    "Node does not support payout address or workers (older version). "
+                                    "Mining to node's default miner address with default workers."
                                 )
                                 result = client.request("miner.mine", [args.count])
                             else:
