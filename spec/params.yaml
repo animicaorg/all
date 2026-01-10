@@ -36,25 +36,28 @@ networks:
       coinbase_default: "anim1coinbasexxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
     monetary:
       premine:
-        total_anm: 1250000.0   # ANM (human units)
+        total_anm: 81000000.0   # ANM (human units)
         allocations:
           - address: "anim1foundationxxxxxxxxxxxxxxxxxxxxxxxxxx"
-            amount_anm: 950000.0
+            amount_anm: 45000000.0
             vesting:
               cliff_days: 365
               linear_months: 36
           - address: "anim1treasuryxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-            amount_anm: 250000.0
+            amount_anm: 20000000.0
             vesting: { cliff_days: 0, linear_months: 0 }
           - address: "anim1aicfxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-            amount_anm: 50000.0
+            amount_anm: 7000000.0
+            vesting: { cliff_days: 0, linear_months: 0 }
+          - address: "anim1founderxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+            amount_anm: 9000000.0
             vesting: { cliff_days: 0, linear_months: 0 }
       issuance:
         # Target block time (consensus retarget aims to meet this)
-        target_block_interval_ms: 2000
+        target_block_interval_ms: 120000
         # Block subsidy schedule: exponential decay toward a tail emission
         subsidy:
-          start_nANM_per_block: 5000000000    # 5 ANM per block base reward
+          start_nANM_per_block: 300000000000  # 300 ANM per block base reward
           epoch_length_blocks: 90000000        # 90M blocks per halving epoch
           decay_pct_per_epoch: 50.0            # 50% decay per epoch (true halving)
           tail_nANM_per_block: 100000          # 0.0001 ANM tail (never below this)
@@ -78,7 +81,7 @@ networks:
         theta_min_munats: 8000000
         theta_max_munats: 3000000000           # Hard cap at 3B µ-nats (3,000 nats) for network stability
         retarget:
-          window_blocks: 1800                  # ~1 hour at 2s
+          window_blocks: 1800                  # ~60 hours at 120s
           ema_beta: 0.15                       # fractional step toward target
           clamp_ratio_per_window:
             min: 0.5

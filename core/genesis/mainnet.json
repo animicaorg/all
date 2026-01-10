@@ -1,11 +1,12 @@
 {
   "meta": {
-    "version": 1,
-    "description": "Animica genesis sample (chainId=1337). Premine + system accounts only."
+    "version": 2,
+    "genesis_version": "reset-2026-01",
+    "description": "Animica mainnet reset genesis (chainId=1). Premine + system accounts only."
   },
   "chainId": 1,
   "network": "animica-mainnet",
-  "genesisTime": "2025-01-01T00:00:00Z",
+  "genesisTime": "2026-01-01T00:00:00Z",
 
   "unit": {
     "symbol": "ANM",

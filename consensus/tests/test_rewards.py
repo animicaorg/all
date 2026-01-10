@@ -498,12 +498,12 @@ def test_compute_block_reward_second_halving_at_180m():
 
 
 def test_compute_block_reward_mainnet_100_pct_to_miner():
-    """Test that mainnet params give 100% of reward to miner (5 ANM at height 1)."""
+    """Test that mainnet params give 100% of reward to miner (300 ANM at height 1)."""
     params = {
         "monetary": {
             "issuance": {
                 "subsidy": {
-                    "start_nANM_per_block": 5000000000,  # 5 ANM
+                    "start_nANM_per_block": 300000000000,  # 300 ANM
                     "epoch_length_blocks": 90000000,     # 90M blocks
                     "decay_pct_per_epoch": 50.0,         # 50% decay (true halving)
                     "tail_nANM_per_block": 100000,
@@ -529,10 +529,10 @@ def test_compute_block_reward_mainnet_100_pct_to_miner():
     # Should return only 1 reward (miner gets 100%)
     assert len(rewards) == 1, f"Expected 1 reward (100% to miner), got {len(rewards)}"
     
-    # Verify miner gets full 5 ANM
+    # Verify miner gets full 300 ANM
     miner_addr, miner_amt = rewards[0]
     assert "coinbase" in miner_addr, f"Expected coinbase address, got {miner_addr}"
-    assert miner_amt == 5000000000, f"Expected 5 ANM (5000000000 nANM), got {miner_amt}"
+    assert miner_amt == 300000000000, f"Expected 300 ANM (300000000000 nANM), got {miner_amt}"
 
 
 def test_compute_block_reward_mainnet_100_pct_halving():
@@ -541,7 +541,7 @@ def test_compute_block_reward_mainnet_100_pct_halving():
         "monetary": {
             "issuance": {
                 "subsidy": {
-                    "start_nANM_per_block": 5000000000,  # 5 ANM
+                    "start_nANM_per_block": 300000000000,  # 300 ANM
                     "epoch_length_blocks": 90000000,     # 90M blocks
                     "decay_pct_per_epoch": 50.0,         # 50% decay (true halving)
                     "tail_nANM_per_block": 100000,
@@ -567,10 +567,10 @@ def test_compute_block_reward_mainnet_100_pct_halving():
     # Should return only 1 reward (miner gets 100%)
     assert len(rewards) == 1, f"Expected 1 reward (100% to miner), got {len(rewards)}"
     
-    # Verify miner gets 2.5 ANM (half of 5 ANM)
+    # Verify miner gets 150 ANM (half of 300 ANM)
     miner_addr, miner_amt = rewards[0]
     assert "coinbase" in miner_addr, f"Expected coinbase address, got {miner_addr}"
-    assert miner_amt == 2500000000, f"Expected 2.5 ANM (2500000000 nANM) after halving, got {miner_amt}"
+    assert miner_amt == 150000000000, f"Expected 150 ANM (150000000000 nANM) after halving, got {miner_amt}"
 
 
 def test_instant_block_always_returns_zero_rewards():
