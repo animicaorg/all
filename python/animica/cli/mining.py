@@ -1093,7 +1093,6 @@ def mine_blocks(
             
             # Mine blocks one at a time with delay between them
             for i in range(count):
-                stale_attempts = 0
                 submit_result = None
                 while True:
                     def _rpc_error_details(error: Exception) -> tuple[int | None, str, object | None]:
@@ -1142,6 +1141,22 @@ def mine_blocks(
                                 fg=typer.colors.YELLOW,
                                 err=True,
                             )
+
+                    def _sync_after_stale_template() -> None:
+                        try:
+                            client.request("sync.force", [])
+                            typer.secho(
+                                "  Info: Triggered sync.force after stale template.",
+                                fg=typer.colors.YELLOW,
+                            )
+                        except Exception as exc:
+                            if RpcError is not None and isinstance(exc, RpcError) and exc.code in (-32601,):
+                                return
+                            if verbose:
+                                typer.secho(
+                                    f"  Info: sync.force failed after stale template: {exc}",
+                                    fg=typer.colors.YELLOW,
+                                )
 
                     def get_template_via_local(*, allow_offline_override: bool = False):
                         if verbose:
@@ -1251,7 +1266,6 @@ def mine_blocks(
                                 f"Warning: Block template unavailable ({reason})",
                                 fg=typer.colors.YELLOW,
                             )
-                            stale_attempts = 0
                             break
 
                     mempool_info = template.get("mempool", {}) if isinstance(template, dict) else {}
@@ -1307,7 +1321,6 @@ def mine_blocks(
                             "ANIMICA_MINER_MAX_TOTAL_NONCE for more PoW attempts.",
                             fg=typer.colors.YELLOW,
                         )
-                        stale_attempts = 0
                         break
                     
                     # PoW FOUND - hash meets target
@@ -1408,14 +1421,12 @@ def mine_blocks(
                             fg=typer.colors.RED,
                         )
                         
-                        if is_stale and stale_attempts < 3:
-                            stale_attempts += 1
+                        if is_stale:
                             typer.secho(
-                                f"  Retrying with fresh template (stale attempt {stale_attempts}/3)",
+                                "  Stale template; syncing and moving to next block.",
                                 fg=typer.colors.YELLOW,
                             )
-                            continue
-                        stale_attempts = 0
+                            _sync_after_stale_template()
                         break
 
                     if not submit_result or not submit_result.get("accepted", False):
@@ -1427,14 +1438,12 @@ def mine_blocks(
                             f"  REJECTED: Block {i + 1}/{count} by node (reason: {rejection_reason})",
                             fg=typer.colors.RED,
                         )
-                        if isinstance(rejection_reason, str) and "stale" in rejection_reason and stale_attempts < 3:
-                            stale_attempts += 1
+                        if isinstance(rejection_reason, str) and "stale" in rejection_reason:
                             typer.secho(
-                                f"  Retrying with fresh template (stale attempt {stale_attempts}/3)",
+                                "  Stale template; syncing and moving to next block.",
                                 fg=typer.colors.YELLOW,
                             )
-                            continue
-                        stale_attempts = 0
+                            _sync_after_stale_template()
                         break
                     
                     # ACCEPTED - block fully validated, persisted, and reward credited

@@ -1079,11 +1079,10 @@ def test_mine_blocks_without_no_timeout_uses_default(monkeypatch: Any) -> None:
 
 def test_mine_blocks_continues_after_consecutive_rejections(monkeypatch: Any) -> None:
     """
-    Test that miner continues mining remaining blocks after 3 consecutive stale rejections.
+    Test that miner continues mining remaining blocks after stale template rejection.
     
-    Regression test for issue: "Rejected 3/3 then miner stops"
-    Previously, after exhausting 3 stale retries on one block, the miner would stop
-    completely instead of continuing to mine the remaining blocks.
+    Regression test for issue: "Rejected stale template then miner stops"
+    Previously, the miner retried the same stale block; now it should sync and move on.
     """
     test_address = "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz"
     monkeypatch.setattr(mining, "_validate_bech32_address", lambda x: True if x == test_address else False)
@@ -1096,6 +1095,7 @@ def test_mine_blocks_continues_after_consecutive_rejections(monkeypatch: Any) ->
             self.data = data
 
     block_attempts = {"count": 0, "current_block": 0}
+    sync_forced = {"count": 0}
 
     class MockRpcClient:
         def __init__(self, *args, **kwargs):
@@ -1135,17 +1135,18 @@ def test_mine_blocks_continues_after_consecutive_rejections(monkeypatch: Any) ->
                 }
             if method == "miner.submitBlock":
                 block_attempts["count"] += 1
-                # First block: reject 3 times (stale), then accept on 4th attempt would fail
-                # But we only retry 3 times, so all 3 attempts fail
+                # First block: reject once as stale (should move to next block)
                 if block_attempts["current_block"] == 0:
-                    if block_attempts["count"] <= 3:
-                        # All 3 attempts for first block should be rejected as stale
+                    if block_attempts["count"] == 1:
                         raise FakeRpcError(-32000, "stale template", {"reason": "stale_template"})
                 # Second block: accept immediately (shows miner continued after first block failed)
                 if block_attempts["current_block"] == 1:
                     return {"accepted": True, "new_head": 101, "credited_amount": 1000}
                 # Should not reach here
                 raise AssertionError(f"Unexpected block attempt: block={block_attempts['current_block']}, count={block_attempts['count']}")
+            if method == "sync.force":
+                sync_forced["count"] += 1
+                return {"success": True}
 
     mock_module = Mock()
     mock_module.RpcClient = MockRpcClient
@@ -1178,15 +1179,16 @@ def test_mine_blocks_continues_after_consecutive_rejections(monkeypatch: Any) ->
     )
 
     # The miner should:
-    # 1. Try to mine first block, get rejected 3 times (stale_template)
-    # 2. Give up on first block after 3 attempts
+    # 1. Try to mine first block, get rejected once (stale_template)
+    # 2. Sync and move to the next block
     # 3. Continue to mine second block (NOT stop entirely)
     # 4. Accept second block successfully
     
-    # Should have attempted first block 3 times, then moved to second block
+    # Should have attempted first block once, then moved to second block
     assert "REJECTED" in result.output, "Should show rejection messages"
-    assert "stale attempt" in result.output, "Should show stale retry attempts"
+    assert "Stale template; syncing and moving to next block." in result.output
     assert "Successfully mined 1 block" in result.output, "Should mine the second block after first failed"
+    assert sync_forced["count"] == 1, "Should trigger sync.force after stale template"
     assert block_attempts["current_block"] >= 1, "Should have moved to second block"
     
     # Should NOT exit with error (only warning about partial success)
