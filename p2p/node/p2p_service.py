@@ -4307,14 +4307,19 @@ class P2PService:
                 continue
             if not peer.hello:
                 continue
-            
-            # Update peer's hello with new network best if it's higher
+
+            # Update peer's view with new network best if it's higher
             try:
                 peer_network_best = peer.hello.get("network_best_height")
                 if peer_network_best is None or int(peer_network_best) < network_best_height:
-                    # Store this for future reference, actual propagation happens
-                    # on next Hello exchange or via other sync mechanisms
-                    pass
+                    await self._send_hello(peer)
+                    log.debug(
+                        "Propagated network best height via HELLO",
+                        extra={
+                            "remote": peer.remote,
+                            "network_best_height": network_best_height,
+                        },
+                    )
             except Exception:
                 pass
 
