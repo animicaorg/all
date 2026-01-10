@@ -7,10 +7,8 @@ import hashlib
 import logging
 import math
 import os
-import threading
 import time
 import uuid
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, replace
 from typing import Any, Callable, Dict, Optional, Tuple
 
@@ -20,7 +18,6 @@ from core.types.tx import Tx
 from core.utils.merkle import merkle_root
 from core.utils.tx import TxNormalizationError, normalize_tx, normalize_tx_bytes, normalize_tx_envelope
 from mining.adapters.core_chain import CoreChainAdapter
-from mining.config import auto_detect_thread_count
 import p2p
 from rpc import deps
 from rpc import errors as rpc_errors
@@ -2543,12 +2540,13 @@ def _construct_tx_from_dict(normalized: dict) -> Tx | None:
 
 def _mine_once(
     payout_address: bytes | None = None,
-    threads: int | None = None,
+    workers: int | None = None,
     *,
     include_mempool: bool = True,
     allow_offline_mining: bool = False,
     allow_unsynced_mining: bool = False,
     instant_block: bool = False,
+    verbose: bool = False,
 ) -> tuple[bool, int, dict[str, Any]]:
     """
     Mine a single block with proof-of-work.
@@ -2572,7 +2570,7 @@ def _mine_once(
     
     Args:
         payout_address: Optional 32-byte payout address. If None, uses default miner address.
-        threads: Number of parallel threads to use for nonce search (default: CPU count)
+        workers: Number of parallel worker processes to use for nonce search (default: CPU count)
         
     Returns:
         tuple[bool, int, dict[str, Any]]: (success, reward_amount, selection_summary) where:
@@ -2580,9 +2578,10 @@ def _mine_once(
             - reward_amount: Miner reward in nANM (0 if mining failed or no reward)
             - selection_summary: Dict with mempool selection statistics (pending, selected, rejected, etc.)
     """
-    # Default threads to CPU count for optimal multi-core mining
-    if threads is None:
-        threads = auto_detect_thread_count()
+    # Default workers to CPU count (minus one) for optimal multi-core mining
+    from mining.parallel_nonce_search import resolve_worker_count
+
+    workers = resolve_worker_count(workers)
     allowed, reason = _mining_gate(
         allow_offline_mining=allow_offline_mining,
         allow_unsynced=allow_unsynced_mining,
@@ -3055,12 +3054,12 @@ def _mine_once(
     
     # Log mining configuration
     log.info(
-        f"Starting PoW mining with {threads} thread(s) for parallel nonce search",
+        f"Starting PoW mining with {workers} worker(s) for parallel nonce search",
         extra={
-            "threads": threads,
+            "workers": workers,
             "theta_micro": theta_micro,
             "target_hex": hex(target)[:18] + "...",
-        }
+        },
     )
     
     # Mining loop: iterate through nonces until we find one that meets the target
@@ -3070,100 +3069,50 @@ def _mine_once(
 
     reward_amount = 0
 
-    # Helper function to search a range of nonces in a worker thread
-    # Pass header_template, target, and stop_event as parameters for thread safety
-    def _search_nonce_range(
-        start: int,
-        end: int,
-        template: Header,
-        target_val: int,
-        stop_event: threading.Event,
-    ) -> tuple[int, bytes, int] | None:
-        """Search for valid nonce in the given range. Returns (nonce, hash_bytes, hash_int) if found, None otherwise."""
-        for nonce_val in range(start, end):
-            # Check if another thread found a valid nonce
-            if stop_event.is_set():
-                return None
-
-            # Update header with new nonce
-            try:
-                header = replace(template, nonce=nonce_val)
-            except Exception:
-                # Fallback if replace not available
-                header = Header(
-                    v=template.v,
-                    chainId=template.chainId,
-                    height=template.height,
-                    parentHash=template.parentHash,
-                    timestamp=template.timestamp,
-                    stateRoot=template.stateRoot,
-                    txsRoot=template.txsRoot,
-                    receiptsRoot=template.receiptsRoot,
-                    proofsRoot=template.proofsRoot,
-                    daRoot=template.daRoot,
-                    mixSeed=template.mixSeed,
-                    poiesPolicyRoot=template.poiesPolicyRoot,
-                    pqAlgPolicyRoot=template.pqAlgPolicyRoot,
-                    thetaMicro=template.thetaMicro,
-                    workType=getattr(template, 'workType', 0),
-                    nonce=nonce_val,
-                    extra=template.extra,
-                )
-
-            # Compute block hash
-            block_hash_bytes = header.hash()
-            block_hash_int = int.from_bytes(block_hash_bytes, "big")
-
-            # Check if hash meets target
-            if block_hash_int <= target_val:
-                # Signal other threads to stop
-                stop_event.set()
-                return (nonce_val, block_hash_bytes, block_hash_int)
-
-        return None
-
     def _mine_for_header(
         template: Header,
         target_val: int,
         *,
         start_nonce: int = 0,
     ) -> tuple[int, bytes, int] | None:
-        stop_event = threading.Event()
-        if threads <= 1:
-            return _search_nonce_range(
-                start_nonce, start_nonce + max_nonce, template, target_val, stop_event
-            )
+        from mining.parallel_nonce_search import parallel_nonce_search, pow_check_nonce
 
-        effective_threads = min(threads, max(1, max_nonce))
-        chunk_size = max(1, max_nonce // effective_threads)
-        ranges = []
-        for i in range(effective_threads):
-            start = start_nonce + (i * chunk_size)
-            end = start_nonce + max_nonce if i == effective_threads - 1 else min(
-                start + chunk_size, start_nonce + max_nonce
-            )
-            if start < start_nonce + max_nonce:
-                ranges.append((start, end))
+        timeout_s = None
+        try:
+            timeout_s = float(os.getenv("ANIMICA_MINER_POW_TIMEOUT_S", "0") or 0) or None
+        except ValueError:
+            timeout_s = None
+        max_restarts = int(os.getenv("ANIMICA_MINER_WORKER_RESTARTS", "1") or 1)
 
-        log.info(
-            f"Mining with {effective_threads} threads (requested {threads}) across "
-            f"{len(ranges)} nonce ranges (chunk_size={chunk_size})"
+        result = parallel_nonce_search(
+            pow_check_nonce,
+            (template, target_val),
+            start_nonce=start_nonce,
+            max_nonce=max_nonce,
+            workers=workers,
+            timeout_s=timeout_s,
+            max_restarts=max_restarts,
+            log=log if verbose else None,
         )
+        if result is None:
+            return None
+        hash_bytes, hash_int = result.payload
+        if verbose:
+            elapsed = max(result.elapsed_s, 1e-6)
+            estimated_rate = (result.attempts * max(1, workers)) / elapsed
+            log.info(
+                "Nonce found by worker",
+                extra={
+                    "worker_id": result.worker_id,
+                    "attempts": result.attempts,
+                    "elapsed_s": result.elapsed_s,
+                    "estimated_hashrate_hs": estimated_rate,
+                    "restarts": result.restarts,
+                },
+            )
+        return (result.nonce, hash_bytes, hash_int)
 
-        with ThreadPoolExecutor(max_workers=effective_threads) as executor:
-            futures = {
-                executor.submit(
-                    _search_nonce_range, start, end, template, target_val, stop_event
-                ): (start, end)
-                for start, end in ranges
-            }
-            for future in as_completed(futures):
-                result = future.result()
-                if result is not None:
-                    return result
-        return None
-
-    # Perform nonce search (single-threaded or multi-threaded based on threads parameter)
+    # Perform nonce search (single-worker or multi-worker based on workers parameter)
     valid_nonce = None
     block_hash_bytes = None
     block_hash_int = None
@@ -3902,12 +3851,14 @@ def miner_submit_work(*args: Any, **payload: Any) -> Dict[str, Any]:
 def miner_mine(
     count: int | None = None,
     address: str | None = None,
+    workers: int | None = None,
     threads: int | None = None,
     include_mempool: bool | None = None,
     allow_offline_mining: bool | None = None,
     allow_unsynced_mining: bool | None = None,
     force_empty_template: bool | None = None,
     instant_block: bool | None = None,
+    verbose: bool | None = None,
 ) -> dict[str, int | list[dict[str, int]] | dict[str, Any]]:
     """
     Mine N blocks locally with dynamic theta micro adjustment.
@@ -3915,8 +3866,9 @@ def miner_mine(
     Args:
         count: Number of blocks to mine (default: 1)
         address: Optional payout address (bech32 or hex). If omitted, uses default miner address.
-        threads: Optional number of CPU threads to use for mining (default: CPU count).
-                 The nonce search space is divided among threads for parallel mining.
+        workers: Optional number of CPU worker processes to use for mining (default: auto).
+                 The nonce search space is divided among workers for parallel mining.
+        threads: Deprecated alias for workers (for backward compatibility).
         include_mempool: Whether to include pending mempool transactions (default: True).
         allow_unsynced_mining: Allow mining even when sync_phase is not synced.
         force_empty_template: Force mining without mempool inclusion.
@@ -3965,13 +3917,16 @@ def miner_mine(
     
     include_mempool_flag = True if include_mempool is None else bool(include_mempool)
 
-    # Validate threads parameter
-    if threads is not None:
-        threads = max(1, int(threads))
-        log.info(f"Mining with {threads} thread(s) for parallel nonce search")
-    else:
-        threads = os.cpu_count() or 1
-        log.info(f"Mining with {threads} thread(s) (CPU count) for parallel nonce search")
+    if workers is None and threads is not None:
+        workers = threads
+    from mining.parallel_nonce_search import resolve_worker_count
+
+    workers = resolve_worker_count(workers)
+    log.info(
+        "Mining with %d worker(s) for parallel nonce search",
+        workers,
+        extra={"workers": workers},
+    )
     
     # Parse payout address if provided
     payout_address_bytes: bytes | None = None
@@ -4009,6 +3964,8 @@ def miner_mine(
             "head_hash": head_before.get("hash"),
             "allow_unsynced_mining": allow_unsynced_flag,
             "force_empty_template": force_empty_flag,
+            "workers": workers,
+            "verbose": bool(verbose),
         },
     )
     target = max(1, int(count or 1))
@@ -4024,11 +3981,12 @@ def miner_mine(
     for _ in range(target):
         mine_result = _mine_once(
             payout_address=payout_address_bytes,
-            threads=threads,
+            workers=workers,
             include_mempool=include_mempool_flag,
             allow_offline_mining=bool(allow_offline_mining),
             allow_unsynced_mining=allow_unsynced_flag,
             instant_block=instant_block_flag,
+            verbose=bool(verbose),
         )
         if isinstance(mine_result, tuple) and len(mine_result) == 2:
             success, reward_amount = mine_result
@@ -5269,4 +5227,3 @@ def mining_get_credits(
             "count": 0,
             "error": str(e),
         }
-
