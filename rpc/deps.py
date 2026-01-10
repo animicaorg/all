@@ -1471,7 +1471,6 @@ async def startup(cfg: t.Any | None = None) -> RpcContext:
                 register("ptl_service", ptl_service)
                 
                 # Start maintenance loop in background
-                import asyncio
                 asyncio.create_task(ptl_service.maintenance_loop())
                 
                 logging.getLogger("animica.rpc.deps").info(
