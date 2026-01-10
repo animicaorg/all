@@ -123,7 +123,7 @@ class BlockLimits:
     @classmethod
     def from_mapping(cls, m: Mapping[str, Any]) -> "BlockLimits":
         tgt = float(m["target_seconds"])
-        _require_range("block.target_seconds", tgt, 0.2, 60.0)
+        _require_range("block.target_seconds", tgt, 0.2, 3600.0)
         max_bytes = int(m["max_bytes"])
         max_gas = int(m["max_gas"])
         tx_max_bytes = int(m["tx_max_bytes"])
