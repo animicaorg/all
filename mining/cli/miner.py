@@ -292,22 +292,10 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help="log extra mining details (workers, hashrate, winner)",
     )
     mine_blocks.add_argument(
-        "--allow-offline-mining",
-        action="store_true",
-        default=False,
-        help="allow mining on mainnet without outbound peers or full sync",
-    )
-    mine_blocks.add_argument(
-        "--allow-unsynced",
-        action="store_true",
-        default=False,
-        help="allow mining even when sync phase is not synced",
-    )
-    mine_blocks.add_argument(
         "--force-empty-template",
         action="store_true",
         default=False,
-        help="force mining without mempool inclusion (implies --allow-unsynced)",
+        help="force mining without mempool inclusion",
     )
 
     return p
@@ -450,15 +438,13 @@ async def _run_mine_blocks(args: argparse.Namespace, log: logging.Logger) -> int
     timeout_msg = "no timeout" if args.no_timeout else "30.0s timeout"
     
     log.info(
-        "Mining %d block(s) with payout to address %s via RPC %s (workers=%d, retry_delay=%.1fs, %s, allow_offline=%s, allow_unsynced=%s, force_empty_template=%s, verbose=%s)",
+        "Mining %d block(s) with payout to address %s via RPC %s (workers=%d, retry_delay=%.1fs, %s, force_empty_template=%s, verbose=%s)",
         args.count,
         args.address,
         args.rpc_url,
         workers,
         args.retry_delay,
         timeout_msg,
-        args.allow_offline_mining,
-        args.allow_unsynced,
         args.force_empty_template,
         args.verbose,
     )
@@ -487,11 +473,8 @@ async def _run_mine_blocks(args: argparse.Namespace, log: logging.Logger) -> int
                         "count": args.count,
                         "address": args.address,
                         "workers": workers,
-                        "allow_offline_mining": bool(args.allow_offline_mining),
                         "verbose": bool(args.verbose),
                     }
-                    if args.allow_unsynced:
-                        payload["allow_unsynced_mining"] = True
                     if args.force_empty_template:
                         payload["force_empty_template"] = True
                     result = client.request("miner.mine", payload)
@@ -519,11 +502,8 @@ async def _run_mine_blocks(args: argparse.Namespace, log: logging.Logger) -> int
                                 "count": args.count,
                                 "address": args.address,
                                 "threads": workers,
-                                "allow_offline_mining": bool(args.allow_offline_mining),
                                 "verbose": bool(args.verbose),
                             }
-                            if args.allow_unsynced:
-                                fallback_payload["allow_unsynced_mining"] = True
                             if args.force_empty_template:
                                 fallback_payload["force_empty_template"] = True
                             result = client.request("miner.mine", fallback_payload)

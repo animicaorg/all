@@ -85,8 +85,6 @@ class TestMiningAuditTrail:
                 verbose=False,
                 no_timeout=False,
                 include_mempool=True,
-                allow_offline_mining=False,
-                unsafe_mine_while_syncing=False,
             )
         except SystemExit:
             pass  # Command exits with success
@@ -167,8 +165,6 @@ class TestMiningAuditTrail:
                 verbose=False,
                 no_timeout=False,
                 include_mempool=True,
-                allow_offline_mining=False,
-                unsafe_mine_while_syncing=False,
             )
         except SystemExit:
             pass
