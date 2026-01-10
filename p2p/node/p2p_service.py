@@ -10968,7 +10968,10 @@ class P2PService:
 
     def _has_block(self, block_hash: bytes) -> bool:
         try:
-            return self._block_db().get_block_by_hash(block_hash) is not None
+            block_db = self._block_db()
+            if hasattr(block_db, "has_block_data"):
+                return bool(block_db.has_block_data(block_hash))
+            return block_db.get_block_by_hash(block_hash) is not None
         except Exception:
             return False
 
@@ -10982,7 +10985,11 @@ class P2PService:
 
     def _get_block_raw(self, block_hash: bytes) -> bytes | None:
         try:
-            blk = self._block_db().get_block_by_hash(block_hash)
+            block_db = self._block_db()
+            if hasattr(block_db, "get_block_raw"):
+                raw = block_db.get_block_raw(block_hash)
+                return bytes(raw) if isinstance(raw, (bytes, bytearray)) else None
+            blk = block_db.get_block_by_hash(block_hash)
             if blk is None:
                 return None
             if isinstance(blk, (bytes, bytearray)):

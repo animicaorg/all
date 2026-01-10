@@ -338,6 +338,18 @@ class BlockDB:
                 return None
         return _from_cbor_block(v)
 
+    def has_block_data(self, block_hash: bytes) -> bool:
+        """
+        Return True if the full block payload is stored for the given hash.
+        """
+        return self.kv.get(k_blk(block_hash)) is not None
+
+    def get_block_raw(self, block_hash: bytes) -> Optional[bytes]:
+        """
+        Return raw block bytes if stored, otherwise None.
+        """
+        return self.kv.get(k_blk(block_hash))
+
     def get_header_by_height(self, height: int) -> Optional[Header]:
         hh = self.get_canonical_hash(height)
         return None if hh is None else self.get_header_by_hash(hh)
