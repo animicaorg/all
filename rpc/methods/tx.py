@@ -23,6 +23,7 @@ _PQ_VERIFY_OPTIONAL = os.environ.get("ANIMICA_PQ_VERIFY_OPTIONAL") == "1" or (
 _RPC_DEBUG = os.environ.get("ANIMICA_RPC_DEBUG") == "1"
 _TX_SEND_FORCE_CHAIN = os.environ.get("ANIMICA_TX_SEND_FORCE_CHAIN", "1") == "1"
 _TX_SEND_FORCE_CHAIN_TIMEOUT_S = float(os.environ.get("ANIMICA_TX_SEND_FORCE_CHAIN_TIMEOUT_S", "5") or 5)
+_TX_PENDING_TTL_S = int(os.environ.get("ANIMICA_TX_PENDING_TTL_S", "3600") or 3600)
 
 # ——— Validation failure metrics ———
 try:
@@ -716,12 +717,18 @@ def _validate_sufficient_balance(obj: dict) -> None:
         return
 
 
-def _pending_put(tx_hash_hex: str, raw: bytes) -> None:
+def _pending_put(tx_hash_hex: str, raw: bytes, ttl_s: int | None = None) -> None:
     if _PEND is not None and hasattr(_PEND, "add_raw"):
-        _PEND.add_raw(tx_hash_hex, raw)  # type: ignore[attr-defined]
+        try:
+            _PEND.add_raw(tx_hash_hex, raw, ttl=ttl_s)  # type: ignore[attr-defined]
+        except TypeError:
+            _PEND.add_raw(tx_hash_hex, raw)  # type: ignore[attr-defined]
         return
     if _PEND is not None and hasattr(_PEND, "add"):
-        _PEND.add(tx_hash_hex, raw)  # type: ignore[attr-defined]
+        try:
+            _PEND.add(tx_hash_hex, raw, ttl=ttl_s)  # type: ignore[attr-defined]
+        except TypeError:
+            _PEND.add(tx_hash_hex, raw)  # type: ignore[attr-defined]
         return
     _FALLBACK_PENDING[tx_hash_hex] = raw
     _FALLBACK_PENDING_TS[tx_hash_hex] = time.time()
@@ -748,25 +755,29 @@ def _ensure_tx_persisted_to_chain(tx_hash_hex: str) -> tuple[bool, str | None]:
 
     # Mine a block to persist the transaction
     # Use instant_block=True to ensure zero rewards for tx send blocks
-    try:
-        miner_methods.miner_mine(
-            count=1,
-            include_mempool=True,
-            allow_offline_mining=True,
-            allow_unsynced_mining=True,
-            instant_block=True,
-        )
-    except Exception as exc:
-        return False, str(exc)
-
+    mine_error: str | None = None
     deadline = time.time() + max(0.0, _TX_SEND_FORCE_CHAIN_TIMEOUT_S)
+    next_mine_at = time.time()
     while time.time() <= deadline:
+        if time.time() >= next_mine_at:
+            try:
+                miner_methods.miner_mine(
+                    count=1,
+                    include_mempool=True,
+                    allow_offline_mining=True,
+                    allow_unsynced_mining=True,
+                    instant_block=True,
+                )
+                mine_error = None
+            except Exception as exc:
+                mine_error = str(exc)
+            next_mine_at = time.time() + 0.5
         view, *_ = _lookup_persisted_tx(tx_hash_hex)
         if view is not None:
             return True, None
         time.sleep(0.1)
 
-    return False, None
+    return False, mine_error
 
 
 def _force_sync_before_tx_submit() -> None:
@@ -1623,7 +1634,8 @@ def _tx_send_raw_transaction(rawTx: str) -> t.Any:
 
         # Add to pending cache for tx.getTransactionByHash pending view (best-effort)
         try:
-            _pending_put(tx_hash_hex, raw_canonical)
+            ttl_s = _TX_PENDING_TTL_S if _TX_PENDING_TTL_S > 0 else None
+            _pending_put(tx_hash_hex, raw_canonical, ttl_s=ttl_s)
         except Exception:
             pass
 
