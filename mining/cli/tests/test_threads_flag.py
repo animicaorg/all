@@ -1,72 +1,69 @@
-"""Tests for --threads flag in mine-blocks command."""
+"""Tests for --workers flag in mine-blocks command."""
 
 from __future__ import annotations
 
-import os
-from unittest.mock import MagicMock, patch
 
 
-def test_threads_flag_parsing():
-    """Test that --threads flag is parsed correctly."""
+def test_workers_flag_parsing():
+    """Test that --workers flag is parsed correctly."""
     from mining.cli.miner import _build_arg_parser
     
     parser = _build_arg_parser()
     
-    # Test with explicit threads value
+    # Test with explicit workers value
     args = parser.parse_args([
         "mine-blocks",
         "--address", "anim1test123",
         "--count", "5",
-        "--threads", "8"
+        "--workers", "8"
     ])
     
     assert args.cmd == "mine-blocks"
     assert args.address == "anim1test123"
     assert args.count == 5
-    assert args.threads == 8
+    assert args.workers == 8
 
 
-def test_threads_flag_default():
-    """Test that --threads defaults to CPU count."""
+def test_workers_flag_default():
+    """Test that --workers defaults to auto (0)."""
     from mining.cli.miner import _build_arg_parser
     
     parser = _build_arg_parser()
     
-    # Test without threads flag
+    # Test without workers flag
     args = parser.parse_args([
         "mine-blocks",
         "--address", "anim1test123",
         "--count", "5"
     ])
     
-    # Should default to CPU count
-    expected_default = os.cpu_count() or 1
-    assert args.threads == expected_default
+    # Should default to auto (0)
+    assert args.workers == 0
 
 
-def test_threads_flag_validation():
-    """Test that --threads validates thread count."""
+def test_workers_flag_validation():
+    """Test that --workers validates worker count."""
     from mining.cli.miner import _build_arg_parser
     
     parser = _build_arg_parser()
     
-    # Test with positive thread count
+    # Test with positive worker count
     args = parser.parse_args([
         "mine-blocks",
         "--address", "anim1test123",
         "--count", "5",
-        "--threads", "16"
+        "--workers", "16"
     ])
-    assert args.threads == 16
+    assert args.workers == 16
     
-    # Test with thread count of 1
+    # Test with worker count of 1
     args = parser.parse_args([
         "mine-blocks",
         "--address", "anim1test123",
         "--count", "5",
-        "--threads", "1"
+        "--workers", "1"
     ])
-    assert args.threads == 1
+    assert args.workers == 1
 
 
 def test_threads_in_start_command():
@@ -85,19 +82,19 @@ def test_threads_in_start_command():
     assert args.threads == 4
 
 
-def test_threads_parameter_in_args():
-    """Test that threads parameter is available in parsed arguments for RPC call."""
+def test_workers_parameter_in_args():
+    """Test that workers parameter is available in parsed arguments for RPC call."""
     from mining.cli.miner import _build_arg_parser
     from argparse import Namespace
     
     parser = _build_arg_parser()
     
-    # Parse mine-blocks command with threads
+    # Parse mine-blocks command with workers
     args = parser.parse_args([
         "mine-blocks",
         "--address", "anim1test123",
         "--count", "5",
-        "--threads", "8",
+        "--workers", "8",
         "--rpc-url", "http://127.0.0.1:8547"
     ])
     
@@ -105,43 +102,43 @@ def test_threads_parameter_in_args():
     assert hasattr(args, "cmd")
     assert hasattr(args, "address")
     assert hasattr(args, "count")
-    assert hasattr(args, "threads")
+    assert hasattr(args, "workers")
     assert hasattr(args, "rpc_url")
     
     # Verify values
     assert args.cmd == "mine-blocks"
     assert args.address == "anim1test123"
     assert args.count == 5
-    assert args.threads == 8
+    assert args.workers == 8
     assert args.rpc_url == "http://127.0.0.1:8547"
     
-    # Test that threads can be used to construct RPC params
+    # Test that workers can be used to construct RPC params
     rpc_params = {
         "count": args.count,
         "address": args.address,
-        "threads": args.threads
+        "workers": args.workers
     }
     
-    assert rpc_params["threads"] == 8
+    assert rpc_params["workers"] == 8
     assert rpc_params["count"] == 5
     assert rpc_params["address"] == "anim1test123"
 
 
 if __name__ == "__main__":
     # Run tests directly
-    test_threads_flag_parsing()
-    print("✓ Threads flag parsing test passed")
+    test_workers_flag_parsing()
+    print("✓ Workers flag parsing test passed")
     
-    test_threads_flag_default()
-    print("✓ Threads flag default test passed")
+    test_workers_flag_default()
+    print("✓ Workers flag default test passed")
     
-    test_threads_flag_validation()
-    print("✓ Threads flag validation test passed")
+    test_workers_flag_validation()
+    print("✓ Workers flag validation test passed")
     
     test_threads_in_start_command()
     print("✓ Threads in start command test passed")
     
-    test_threads_parameter_in_args()
-    print("✓ Threads parameter in args test passed")
+    test_workers_parameter_in_args()
+    print("✓ Workers parameter in args test passed")
     
     print("\n✓ All tests passed!")
