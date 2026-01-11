@@ -1757,3 +1757,43 @@ async def test_snapshot_recovery_rate_limit(tmp_path: Path, monkeypatch: pytest.
 
     assert len(node._snapshot_recovery_attempts) == 1
     assert node._snapshot_recovery_last_error is not None
+
+
+def test_select_block_peer_ignores_not_anchored_backoff_on_retry(tmp_path: Path) -> None:
+    """
+    Test that _select_block_peer retries with ignore_backoff_reason="not_anchored"
+    when no eligible peers are found initially. This prevents permanent sync stalls
+    when all peers temporarily fail checkpoint anchor validation.
+    """
+    node, deps_sync = _make_service(tmp_path, "block-peer-not-anchored-retry")
+    _ = deps_sync
+    
+    # Register two peers
+    peer_a = _register_peer(node, "peer-a:0")
+    peer_b = _register_peer(node, "peer-b:0")
+    _setup_peer_hello(node, peer_a, head_height=100)
+    _setup_peer_hello(node, peer_b, head_height=100)
+    
+    # Both peers get not_anchored backoff
+    now = time.time()
+    node._sync_peer_backoff[peer_a.remote] = now + 30.0
+    node._sync_peer_backoff_reason[peer_a.remote] = "not_anchored"
+    node._sync_peer_backoff[peer_b.remote] = now + 30.0
+    node._sync_peer_backoff_reason[peer_b.remote] = "not_anchored"
+    
+    # Verify no eligible peers initially
+    eligible, ineligible = node._eligible_block_peers()
+    assert len(eligible) == 0
+    assert ineligible.get(peer_a.remote) == "not_anchored"
+    assert ineligible.get(peer_b.remote) == "not_anchored"
+    
+    # But _select_block_peer should find a peer by ignoring not_anchored backoff
+    selected_peer = node._select_block_peer(needed_height=50)
+    assert selected_peer is not None
+    assert selected_peer.remote in {peer_a.remote, peer_b.remote}
+    
+    # Verify it used the fallback by checking eligible peers with ignore
+    eligible_with_ignore, _ = node._eligible_block_peers(ignore_backoff_reason="not_anchored")
+    assert len(eligible_with_ignore) == 2
+    assert peer_a in eligible_with_ignore
+    assert peer_b in eligible_with_ignore
