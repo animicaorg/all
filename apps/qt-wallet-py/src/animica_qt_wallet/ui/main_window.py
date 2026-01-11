@@ -29,6 +29,19 @@ from PySide6.QtWidgets import (
 from animica_qt_wallet.core.walletd_manager import WalletdManager
 
 
+# Display constants for address/hash truncation
+_ADDR_PREFIX_LEN = 10
+_ADDR_SUFFIX_LEN = 8
+_ADDR_MIN_LEN_FOR_TRUNCATE = 20
+
+
+def _truncate_address(addr: str, prefix_len: int = _ADDR_PREFIX_LEN, suffix_len: int = _ADDR_SUFFIX_LEN) -> str:
+    """Truncate an address or hash for display (e.g., 'anim1qyfe...xw8z')."""
+    if len(addr) <= prefix_len + suffix_len:
+        return addr
+    return f"{addr[:prefix_len]}...{addr[-suffix_len:]}"
+
+
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
@@ -394,8 +407,8 @@ class MainWindow(QMainWindow):
                 head = await self._walletd_manager.chain_get_head()
                 height = head.get("height", "—")
                 block_hash = head.get("hash", "—")
-                if isinstance(block_hash, str) and len(block_hash) > 20:
-                    block_hash = block_hash[:10] + "..." + block_hash[-8:]
+                if isinstance(block_hash, str):
+                    block_hash = _truncate_address(block_hash)
                 
                 self._chain_height_label.setText(str(height))
                 self._chain_hash_label.setText(str(block_hash))
@@ -427,7 +440,7 @@ class MainWindow(QMainWindow):
             self._balance_value_label.setText("—")
             return
 
-        self._balance_address_label.setText(address[:10] + "..." + address[-8:] if len(address) > 20 else address)
+        self._balance_address_label.setText(_truncate_address(address))
 
         try:
             node_status = await self._walletd_manager.get_node_status()
@@ -437,7 +450,23 @@ class MainWindow(QMainWindow):
 
             balance_hex = await self._walletd_manager.state_get_balance(address)
             # Convert hex balance to decimal (in nANM)
-            balance = int(balance_hex, 16) if balance_hex.startswith("0x") else int(balance_hex)
+            # Handle various formats: "0x123", "123", or invalid
+            try:
+                if isinstance(balance_hex, str):
+                    if balance_hex.startswith("0x"):
+                        balance = int(balance_hex, 16)
+                    elif balance_hex.isdigit():
+                        balance = int(balance_hex)
+                    else:
+                        # Invalid format
+                        self._balance_value_label.setText("Invalid format")
+                        return
+                else:
+                    balance = int(balance_hex)
+            except (ValueError, TypeError):
+                self._balance_value_label.setText("Invalid balance")
+                return
+            
             # Format as ANM (1 ANM = 10^9 nANM)
             balance_anm = balance / 1_000_000_000
             self._balance_value_label.setText(f"{balance_anm:.9f} ANM")

@@ -102,7 +102,12 @@ async def _proxy_to_node(method: str, params: dict[str, Any], node_rpc_url: str 
             data = await response.json()
     
     if "error" in data:
-        raise RuntimeError(data["error"].get("message", "Node RPC error"))
+        error_msg = "Node RPC error"
+        if isinstance(data.get("error"), dict):
+            error_msg = data["error"].get("message", error_msg)
+        elif data.get("error"):
+            error_msg = str(data["error"])
+        raise RuntimeError(error_msg)
     return data.get("result", {})
 
 

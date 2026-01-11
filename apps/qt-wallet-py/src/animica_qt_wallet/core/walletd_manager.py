@@ -176,8 +176,11 @@ class WalletdManager:
 
     async def net_peer_count(self) -> int:
         """Get the count of connected peers from the node."""
-        result = await self._rpc_call("net.peerCount")
-        return int(result) if result is not None else 0
+        try:
+            result = await self._rpc_call("net.peerCount")
+            return int(result) if result is not None else 0
+        except (ValueError, TypeError):
+            return 0
 
     async def _rpc_call(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         payload = {
