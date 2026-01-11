@@ -230,6 +230,7 @@ A: Yes! Try the high-end hardware settings above, or increase values further if 
 ## More Information
 
 - Full documentation: `SYNC_PERFORMANCE_OPTIMIZATION.md`
+- Ultra-fast recovery: `SYNC_ULTRA_FAST_RECOVERY.md` ⭐ NEW
 - Sync troubleshooting: `SYNC_STALL_FIX_SUMMARY.md`
 - CLI commands: `python/animica/cli/README.md`
 
