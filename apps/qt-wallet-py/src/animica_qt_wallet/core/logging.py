@@ -4,18 +4,11 @@ import logging
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-from PySide6.QtCore import QStandardPaths
-
-
-def _resolve_data_dir() -> Path:
-    location = QStandardPaths.writableLocation(QStandardPaths.AppDataLocation)
-    if location:
-        return Path(location)
-    return Path.home() / ".animica-qt-wallet"
+from animica_qt_wallet.core.paths import get_app_data_dir
 
 
 def setup_logging() -> Path:
-    data_dir = _resolve_data_dir()
+    data_dir = get_app_data_dir()
     data_dir.mkdir(parents=True, exist_ok=True)
     log_path = data_dir / "animica-qt-wallet.log"
 
