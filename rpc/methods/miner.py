@@ -4986,6 +4986,15 @@ def miner_submit_block(payload: Any = None, **kwargs: Any) -> Dict[str, Any]:
                         coinbase=payout_bytes if payout_bytes is not None else _get_miner_address(),
                         chain_id=block_obj.header.chainId,
                     )
+                    state_snapshot = None
+                    if ctx.state_db is not None and hasattr(ctx.state_db, "snapshot"):
+                        try:
+                            state_snapshot = ctx.state_db.snapshot()
+                        except Exception as exc:
+                            log.warning(
+                                "Failed to snapshot state before receipt execution",
+                                extra={"err": str(exc)},
+                            )
                     receipts_dict = _execute_transactions(
                         txs=list(block_obj.txs),
                         state_db=ctx.state_db,
@@ -4993,6 +5002,14 @@ def miner_submit_block(payload: Any = None, **kwargs: Any) -> Dict[str, Any]:
                         logger=log,
                     )
                     _convert_receipts_dict_to_objects(receipts_dict)
+                    if state_snapshot is not None and hasattr(ctx.state_db, "revert"):
+                        try:
+                            ctx.state_db.revert(state_snapshot)
+                        except Exception as exc:
+                            log.warning(
+                                "Failed to revert state after receipt execution",
+                                extra={"err": str(exc)},
+                            )
                 except Exception as e:
                     log.warning(
                         "Failed to execute txs for submitted block",
