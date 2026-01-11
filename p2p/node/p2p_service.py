@@ -10840,18 +10840,23 @@ class P2PService:
             self._sync_best_header = hdr
         
         # Clear block queue for heights above the ancestor
-        self._sync_block_queue = deque(
-            [h for h in self._sync_block_queue if self._header_height(h) <= height]
-        )
+        filtered_queue = []
+        for h in self._sync_block_queue:
+            h_height = self._header_height(h)
+            if h_height is not None and h_height <= height:
+                filtered_queue.append(h)
+        self._sync_block_queue = deque(filtered_queue)
+        
         self._sync_block_queue_heights = {
             h for h in self._sync_block_queue_heights if h <= height
         }
         
         # Clear in-flight blocks above the ancestor
-        to_remove = [
-            h for h in self._sync_inflight_blocks.keys()
-            if self._header_height(h) > height
-        ]
+        to_remove = []
+        for h in list(self._sync_inflight_blocks.keys()):
+            h_height = self._header_height(h)
+            if h_height is not None and h_height > height:
+                to_remove.append(h)
         for h in to_remove:
             self._sync_inflight_blocks.pop(h, None)
             self._sync_inflight_peers.pop(h, None)
