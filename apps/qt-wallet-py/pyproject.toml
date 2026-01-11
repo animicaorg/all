@@ -20,6 +20,9 @@ dev = [
   "pytest>=7.4.0",
   "ruff>=0.4.0",
 ]
+qr = [
+  "qrcode[pil]>=7.4.0",
+]
 
 [tool.black]
 line-length = 100
