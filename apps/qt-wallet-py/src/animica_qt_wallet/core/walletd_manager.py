@@ -217,9 +217,12 @@ class WalletdManager:
         """Sign a transaction with a wallet account."""
         return await self._rpc_call("tx.sign", {"tx": tx, "from": from_addr})
 
-    async def tx_send(self, *, signed_tx: str) -> str:
+    async def tx_send(self, *, signed_tx: str, tx_details: dict[str, Any] | None = None) -> str:
         """Send a signed transaction to the node."""
-        result = await self._rpc_call("tx.send", {"signed_tx": signed_tx})
+        params: dict[str, Any] = {"signed_tx": signed_tx}
+        if tx_details:
+            params["tx_details"] = tx_details
+        result = await self._rpc_call("tx.send", params)
         # Handle both direct hash string and dict responses
         if isinstance(result, dict):
             return result.get("hash") or result.get("tx_hash") or str(result)

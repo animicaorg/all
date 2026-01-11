@@ -269,8 +269,19 @@ class SendTab(QWidget):
             self._status_label.setText("Sending transaction...")
             self._status_label.setStyleSheet("color: #666;")
             
-            # Send the transaction
-            result = await self._walletd_manager.tx_send(signed_tx=signed_tx)
+            # Send the transaction with details for history tracking
+            tx_details = {
+                "from": from_addr,
+                "to": tx.get("to"),
+                "value": tx.get("value", 0),
+                "gas_limit": tx.get("gas_limit"),
+                "max_fee": tx.get("max_fee"),
+                "nonce": tx.get("nonce"),
+            }
+            result = await self._walletd_manager.tx_send(
+                signed_tx=signed_tx,
+                tx_details=tx_details,
+            )
             
             # Handle the result - it might be a string or dict
             if isinstance(result, dict):
