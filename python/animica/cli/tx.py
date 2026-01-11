@@ -1092,6 +1092,56 @@ def _maybe_force_sync(rpc: str, *, verbose: bool = False) -> None:
             console.print(f"[dim]sync.force failed: {exc}[/dim]")
 
 
+def _resolve_confirmations(rpc_url: str, *, override: Optional[int]) -> int:
+    if override is not None:
+        return int(override)
+    try:
+        value = _rpc(rpc_url, "chain.getFinalityDepth", [])
+        return int(value)
+    except Exception:
+        return int(os.environ.get("ANIMICA_FINALITY_DEPTH", "12") or 12)
+
+
+def _wait_for_confirmations(
+    rpc_url: str,
+    tx_hash: str,
+    *,
+    confirmations: int,
+    timeout: int,
+    no_reorg_retry: bool,
+    verbose: bool = False,
+) -> dict:
+    start = time.time()
+    last_status = {}
+    while time.time() - start < timeout:
+        try:
+            status = _rpc(rpc_url, "tx.getStatus", [tx_hash])
+        except RpcError as exc:
+            if exc.code in (-32601,):
+                raise RuntimeError("tx.getStatus is not supported by this node") from exc
+            raise
+        if isinstance(status, dict):
+            last_status = status
+            safe_confirmations = status.get("safe_confirmations")
+            head_confirmations = status.get("confirmations")
+            observed = (
+                safe_confirmations
+                if safe_confirmations is not None
+                else head_confirmations
+            )
+            if verbose:
+                console.print(f"[dim]tx status: {status}[/dim]")
+            if status.get("status") == "confirmed":
+                return status
+            if observed is not None and int(observed) >= confirmations:
+                return status
+            if status.get("status") == "reorged_out":
+                if no_reorg_retry:
+                    return status
+        time.sleep(1)
+    return last_status
+
+
 def _ensure_node_ready_for_tx(rpc: str) -> int | None:
     try:
         status = _rpc(rpc, "sync.getStatus", [{"source": "refresh"}])
@@ -1165,6 +1215,16 @@ def send(
     prehash: str = typer.Option(DEFAULT_PREHASH, "--prehash", help="Prehash: sha3-512 | sha3-256"),
     min_peers: Optional[int] = typer.Option(None, "--min-peers", help="Wait for min peer acks (PTL)"),
     wait_timeout: int = typer.Option(30, "--wait-timeout", help="Max wait time for peer acks (seconds)"),
+    wait: bool = typer.Option(False, "--wait", help="Wait for confirmations to reach finality depth"),
+    confirmations: Optional[int] = typer.Option(
+        None, "--confirmations", help="Confirmations required when --wait is set (default: node finality depth)"
+    ),
+    confirm_timeout: int = typer.Option(
+        300, "--confirm-timeout", help="Max wait time for confirmations (seconds)"
+    ),
+    no_reorg_retry: bool = typer.Option(
+        False, "--no-reorg-retry", help="Stop waiting if the transaction is reorged out"
+    ),
     verbose: bool = typer.Option(False, "-v", "--verbose", help="Verbose debug output"),
     debug_signing: bool = typer.Option(False, "--debug-signing", help="Dump canonical sign-bytes debug info"),
     secret_key_hex: Optional[str] = typer.Option(
@@ -1290,6 +1350,7 @@ def send(
     max_attempts = 3 if nonce_value is None else 1
     next_nonce_value: Optional[int] = None
     tx_hash = None
+    send_result = None
     last_body = None
     last_nonce = None
     nonce_lock = _nonce_lock(from_addr) if nonce_value is None else nullcontext()
@@ -1425,6 +1486,26 @@ def send(
                     }
                 )
 
+            try:
+                preflight = _rpc(rpc, "tx.simulateRawTransaction", [raw_hex])
+                if not isinstance(preflight, dict) or not preflight.get("ok"):
+                    console.print(
+                        "[bold red]Preflight simulation failed; transaction not broadcast.[/bold red]"
+                    )
+                    if preflight:
+                        console.print(Pretty(preflight))
+                    raise typer.Exit(code=1)
+                if verbose:
+                    console.print("[dim]Preflight simulation ok[/dim]")
+            except RpcError as exc:
+                if exc.code in (-32601,):
+                    console.print(
+                        "[bold red]Preflight simulation is not supported by this node; aborting send.[/bold red]"
+                    )
+                else:
+                    console.print(f"[bold red]Preflight simulation failed: {exc}[/bold red]")
+                raise typer.Exit(code=1)
+
             # Submit (with one compatibility fallback)
             def _extract_send_hash(result: Any) -> str:
                 if isinstance(result, str):
@@ -1436,6 +1517,7 @@ def send(
                             return value
                 raise ValueError(f"Unexpected tx.sendRawTransaction result: {result!r}")
 
+            send_result = None
             try:
                 send_result = _rpc(rpc, "tx.sendRawTransaction", [raw_hex])
                 tx_hash = _extract_send_hash(send_result)
@@ -1567,18 +1649,19 @@ def send(
     console.print("Transaction Submitted")
     console.print(f"Tx Hash: {tx_hash}")
     console.print("Transaction broadcast successfully")
-    console.print(
-        {
-            "tx_hash": tx_hash,
-            "from": from_addr,
-            "to": to_addr,
-            "value": value_base,
-            "nonce": last_nonce,
-            "chain_id": cid,
-            "rpc_url": rpc,
-            "mempool_state": "pending",
-        }
-    )
+    payload = {
+        "tx_hash": tx_hash,
+        "from": from_addr,
+        "to": to_addr,
+        "value": value_base,
+        "nonce": last_nonce,
+        "chain_id": cid,
+        "rpc_url": rpc,
+        "mempool_state": "pending",
+    }
+    if isinstance(send_result, dict):
+        payload["acceptance"] = send_result
+    console.print(payload)
     
     # Wait for PTL peer acknowledgments if requested
     if min_peers is not None and min_peers > 0:
@@ -1634,6 +1717,28 @@ def send(
             console.print("[yellow]Transaction may still replicate. Use 'animica tx replicate' to check status.[/yellow]")
 
     
+    if wait:
+        required_confirmations = _resolve_confirmations(rpc, override=confirmations)
+        console.print(
+            f"\n[bold]Waiting for {required_confirmations} confirmation(s) (safe depth)...[/bold]"
+        )
+        status = _wait_for_confirmations(
+            rpc,
+            tx_hash,
+            confirmations=required_confirmations,
+            timeout=confirm_timeout,
+            no_reorg_retry=no_reorg_retry,
+            verbose=verbose,
+        )
+        status_state = status.get("status") if isinstance(status, dict) else None
+        if status_state == "confirmed":
+            console.print("[green]✓ Transaction confirmed at safe depth.[/green]")
+        elif status_state == "reorged_out":
+            console.print("[yellow]Transaction was reorged out; still pending.[/yellow]")
+        else:
+            console.print("[yellow]Transaction still pending confirmation.[/yellow]")
+        console.print(Pretty(status))
+
     if verbose:
         console.print("\n[bold]TX BODY[/bold]")
         console.print(Pretty(last_body))

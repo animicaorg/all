@@ -94,7 +94,7 @@ def _svc_balance(addr: str, *, tag: str = "latest") -> int:
     # Preferred: dedicated state_service (handles address parsing)
     try:
         from rpc.state_service import get_balance as state_svc_get_balance
-        return int(state_svc_get_balance(addr))
+        return int(state_svc_get_balance(addr, tag=tag))
     except Exception:
         pass
 
@@ -437,6 +437,90 @@ def _svc_pending_nonce(addr: str) -> int:
     return committed_nonce
 
 
+def _normalize_addr_bytes(addr: t.Any) -> bytes | None:
+    if isinstance(addr, (bytes, bytearray)):
+        return bytes(addr)
+    if isinstance(addr, str):
+        return _to_account_key_bytes(addr)
+    return None
+
+
+def _mempool_delta(addr: str) -> dict[str, t.Any]:
+    try:
+        from rpc.methods import tx as tx_methods
+    except Exception:
+        return {
+            "delta": 0,
+            "debits": 0,
+            "credits": 0,
+            "tx_count": 0,
+            "includes_fee": False,
+        }
+
+    addr_bytes = _to_account_key_bytes(addr)
+    if addr_bytes is None:
+        return {
+            "delta": 0,
+            "debits": 0,
+            "credits": 0,
+            "tx_count": 0,
+            "includes_fee": False,
+        }
+
+    pending_items: list[tuple[str, bytes]] = []
+    svc = getattr(tx_methods, "_get_mempool_service", None)
+    if callable(svc):
+        mempool_service = svc()
+    else:
+        mempool_service = None
+    if mempool_service is not None and hasattr(mempool_service, "snapshot"):
+        snapshot = mempool_service.snapshot(limit=1000)
+        pending_items.extend((entry.hash_hex, entry.raw) for entry in snapshot.entries)
+    else:
+        pend = getattr(tx_methods, "_PEND", None)
+        if pend is not None:
+            if hasattr(pend, "list_raw"):
+                pending_items.extend(pend.list_raw())  # type: ignore[attr-defined]
+            elif hasattr(pend, "items"):
+                pending_items.extend(list(pend.items()))  # type: ignore[attr-defined]
+        fallback = getattr(tx_methods, "_FALLBACK_PENDING", {}) or {}
+        if fallback:
+            pending_items.extend(list(fallback.items()))
+
+    debits = 0
+    credits = 0
+    tx_count = 0
+    includes_fee = False
+
+    for _hash_hex, raw in pending_items:
+        try:
+            tx_like, obj = tx_methods._decode_tx(raw)  # type: ignore[attr-defined]
+            view = tx_methods._tx_view(tx_like, obj, pending=True)  # type: ignore[attr-defined]
+        except Exception:
+            continue
+
+        from_addr = _normalize_addr_bytes(view.get("from"))
+        to_addr = _normalize_addr_bytes(view.get("to"))
+        value = int(view.get("value") or 0)
+        max_fee = int(view.get("maxFee") or 0)
+
+        if from_addr == addr_bytes:
+            debits += value + max_fee
+            includes_fee = includes_fee or max_fee > 0
+            tx_count += 1
+        if to_addr == addr_bytes:
+            credits += value
+            tx_count += 1 if from_addr != addr_bytes else 0
+
+    return {
+        "delta": credits - debits,
+        "debits": debits,
+        "credits": credits,
+        "tx_count": tx_count,
+        "includes_fee": includes_fee,
+    }
+
+
 @method(
     "state.getPendingNonce",
     desc="Return the next usable nonce for an address, accounting for pending mempool transactions.",
@@ -486,4 +570,22 @@ def state_get_account(address: str, tag: str = "latest") -> dict:
     return {
         "address": addr,
         "balance": _to_hex_quantity(balance),
+    }
+
+
+@method(
+    "state.getMempoolDelta",
+    desc="Return pending mempool balance delta for an address (credits - debits).",
+    aliases=("state_getMempoolDelta",),
+)
+def state_get_mempool_delta(address: str) -> dict:
+    addr = _validate_address(address)
+    delta = _mempool_delta(addr)
+    return {
+        "address": addr,
+        "delta": int(delta["delta"]),
+        "debits": int(delta["debits"]),
+        "credits": int(delta["credits"]),
+        "txCount": int(delta["tx_count"]),
+        "includesFee": bool(delta["includes_fee"]),
     }

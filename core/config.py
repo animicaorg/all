@@ -176,6 +176,7 @@ def _env_bool(name: str, default: bool) -> bool:
 class ChainConfig:
     chain_id: int = MAINNET_CHAIN_ID
     network_name: str = "mainnet"  # "mainnet" | "testnet" | "devnet"
+    finality_depth: int = 12
 
     @staticmethod
     def infer_from_env(default: int = MAINNET_CHAIN_ID) -> "ChainConfig":
@@ -185,17 +186,19 @@ class ChainConfig:
             name = {"1": "mainnet", "2": "testnet", "1337": "devnet"}.get(
                 str(cid), f"chain-{cid}"
             )
-            return ChainConfig(chain_id=cid, network_name=name)
+            finality = _env_int("ANIMICA_FINALITY_DEPTH", 12)
+            return ChainConfig(chain_id=cid, network_name=name, finality_depth=finality)
 
         net = (os.environ.get("ANIMICA_NETWORK") or "").strip().lower()
+        finality = _env_int("ANIMICA_FINALITY_DEPTH", 12)
         if net in {"main", "mainnet"}:
-            return ChainConfig(chain_id=MAINNET_CHAIN_ID, network_name="mainnet")
+            return ChainConfig(chain_id=MAINNET_CHAIN_ID, network_name="mainnet", finality_depth=finality)
         if net in {"test", "testnet"}:
-            return ChainConfig(chain_id=TESTNET_CHAIN_ID, network_name="testnet")
+            return ChainConfig(chain_id=TESTNET_CHAIN_ID, network_name="testnet", finality_depth=finality)
         if net in {"dev", "devnet"}:
-            return ChainConfig(chain_id=DEVNET_CHAIN_ID, network_name="devnet")
+            return ChainConfig(chain_id=DEVNET_CHAIN_ID, network_name="devnet", finality_depth=finality)
         # default to mainnet when no network is specified
-        return ChainConfig(chain_id=MAINNET_CHAIN_ID, network_name="mainnet")
+        return ChainConfig(chain_id=MAINNET_CHAIN_ID, network_name="mainnet", finality_depth=finality)
 
 
 @dataclass
@@ -399,6 +402,8 @@ def load(config_file: Optional[str | Path] = None, **overrides: Any) -> Config:
     if "ANIMICA_CHAIN_ID" in os.environ or "ANIMICA_NETWORK" in os.environ:
         chain_env = ChainConfig.infer_from_env(chain.chain_id)
         base = _merge_dict(base, {"chain": asdict(chain_env)})
+    if "ANIMICA_FINALITY_DEPTH" in os.environ:
+        base["chain"]["finality_depth"] = _env_int("ANIMICA_FINALITY_DEPTH", 12)
     # Paths
     if "ANIMICA_DATA_DIR" in os.environ:
         base["paths"]["data_dir"] = str(

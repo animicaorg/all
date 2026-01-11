@@ -249,6 +249,7 @@ class _ConfigView:
     genesis_path: Path | None
     log_level: str
     p2p_required: bool
+    finality_depth: int
 
 
 def _coerce_config(cfg: t.Any) -> _ConfigView:
@@ -283,6 +284,7 @@ def _coerce_config(cfg: t.Any) -> _ConfigView:
         genesis_path=genesis,
         log_level=str(_get("log_level", "INFO")),
         p2p_required=_parse_bool(_get("p2p_required", None), False),
+        finality_depth=int(_get("finality_depth", _get("FINALITY_DEPTH", 12)) or 12),
     )
 
 
@@ -1651,10 +1653,48 @@ def get_chain_id() -> int:
     return int(ensure_started().cfg.chain_id)
 
 
+def get_finality_depth() -> int:
+    """Return the configured finality depth for safe-head queries."""
+
+    try:
+        return int(ensure_started().cfg.finality_depth)
+    except Exception:
+        return int(os.getenv("ANIMICA_FINALITY_DEPTH", "12") or 12)
+
+
 def get_head() -> dict[str, t.Any]:
     """Return the current head snapshot (height/hash/header view)."""
 
     return ensure_started().get_head()
+
+
+def get_safe_head(depth: int | None = None) -> dict[str, t.Any]:
+    """
+    Return a safe head snapshot (height/hash) at a reorg-resistant depth.
+
+    Uses canonical chain height - depth (finality depth by default).
+    """
+    ctx = ensure_started()
+    head = ctx.get_head()
+    if not isinstance(head, dict):
+        return {"height": None, "hash": None}
+    head_height = head.get("height")
+    if head_height is None:
+        return {"height": None, "hash": None}
+    depth_value = int(depth) if depth is not None else get_finality_depth()
+    safe_height = max(0, int(head_height) - depth_value)
+    block_db = ctx.block_db
+    safe_hash = None
+    if hasattr(block_db, "get_canonical_hash"):
+        safe_hash = block_db.get_canonical_hash(safe_height)
+    if safe_hash is None and safe_height == int(head_height):
+        safe_hash = head.get("hash")
+    if isinstance(safe_hash, bytes):
+        safe_hash = "0x" + safe_hash.hex()
+    return {
+        "height": safe_height,
+        "hash": safe_hash,
+    }
 
 
 def get_block_by_height(height: int) -> t.Any | None:

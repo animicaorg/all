@@ -379,24 +379,34 @@ def test_send_aborts_when_local_pq_verification_fails(
 @respx.mock
 def test_send_successful_broadcast(wallet_store: Path) -> None:
     """Test successful transaction broadcast with mocked RPC."""
-    import httpx
     rpc_url = "http://localhost:9999/rpc"
     
-    # Mock chain.getChainId
-    respx.post(rpc_url).mock(side_effect=[
-        # Response for chain.getChainId
-        httpx.Response(200, json={"jsonrpc": "2.0", "id": 1, "result": 1337}),
-        # Response for state.getTransactionCount
-        httpx.Response(200, json={"jsonrpc": "2.0", "id": 2, "result": 5}),
-        # Response for state.suggestGasPrice
-        httpx.Response(200, json={"jsonrpc": "2.0", "id": 3, "result": "1000000000"}),
-        # Response for tx.sendRawTransaction
-        httpx.Response(200, json={
-            "jsonrpc": "2.0",
-            "id": 4,
-            "result": "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
-        })
-    ])
+    def responder(request):
+        req_data = json.loads(request.content.decode())
+        method = req_data.get("method")
+        if method == "sync.getStatus":
+            return httpx.Response(200, json={"jsonrpc": "2.0", "id": req_data["id"], "result": {"synchronized": True}})
+        if method == "chain.getChainIdentity":
+            return httpx.Response(200, json={"jsonrpc": "2.0", "id": req_data["id"], "result": {"chainId": 1337, "forkId": None}})
+        if method == "chain.getChainId":
+            return httpx.Response(200, json={"jsonrpc": "2.0", "id": req_data["id"], "result": 1337})
+        if method in {"state.getNextNonce", "state_getNextNonce", "state.getTransactionCount"}:
+            return httpx.Response(200, json={"jsonrpc": "2.0", "id": req_data["id"], "result": 5})
+        if method in {"tx.gasPrice", "gasPrice", "fee.getGasPrice", "state.suggestGasPrice"}:
+            return httpx.Response(200, json={"jsonrpc": "2.0", "id": req_data["id"], "result": "1000000000"})
+        if method == "tx.simulateRawTransaction":
+            return httpx.Response(200, json={"jsonrpc": "2.0", "id": req_data["id"], "result": {"ok": True, "result": {"status": "success"}}})
+        if method == "tx.sendRawTransaction":
+            return httpx.Response(200, json={
+                "jsonrpc": "2.0",
+                "id": req_data["id"],
+                "result": "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
+            })
+        if method == "mempool.getStatus":
+            return httpx.Response(200, json={"jsonrpc": "2.0", "id": req_data["id"], "result": {"hash": "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef", "known": True, "state": "pending"}})
+        return httpx.Response(200, json={"jsonrpc": "2.0", "id": req_data["id"], "result": None})
+
+    respx.post(rpc_url).mock(side_effect=responder)
     
     _, output = run_tx_cli([
         "send",
@@ -415,20 +425,32 @@ def test_send_successful_broadcast(wallet_store: Path) -> None:
 @respx.mock
 def test_send_with_explicit_params(wallet_store: Path) -> None:
     """Test send with explicit gas, nonce, and chain-id."""
-    import httpx
     rpc_url = "http://localhost:9999/rpc"
     
-    # Need to mock chain.getChainId to validate explicit chain-id
-    respx.post(rpc_url).mock(side_effect=[
-        # Response for chain.getChainId - must match explicit --chain-id 42
-        httpx.Response(200, json={"jsonrpc": "2.0", "id": 1, "result": 42}),
-        # Response for tx.sendRawTransaction (gas, nonce provided explicitly)
-        httpx.Response(200, json={
-            "jsonrpc": "2.0",
-            "id": 2,
-            "result": "0xabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd"
-        })
-    ])
+    def responder(request):
+        req_data = json.loads(request.content.decode())
+        method = req_data.get("method")
+        if method == "sync.getStatus":
+            return httpx.Response(200, json={"jsonrpc": "2.0", "id": req_data["id"], "result": {"synchronized": True}})
+        if method == "chain.getChainIdentity":
+            return httpx.Response(200, json={"jsonrpc": "2.0", "id": req_data["id"], "result": {"chainId": 42, "forkId": None}})
+        if method == "chain.getChainId":
+            return httpx.Response(200, json={"jsonrpc": "2.0", "id": req_data["id"], "result": 42})
+        if method == "tx.simulateRawTransaction":
+            return httpx.Response(200, json={"jsonrpc": "2.0", "id": req_data["id"], "result": {"ok": True, "result": {"status": "success"}}})
+        if method == "tx.sendRawTransaction":
+            return httpx.Response(200, json={
+                "jsonrpc": "2.0",
+                "id": req_data["id"],
+                "result": "0xabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd"
+            })
+        if method == "mempool.getStatus":
+            return httpx.Response(200, json={"jsonrpc": "2.0", "id": req_data["id"], "result": {"hash": "0xabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd", "known": True, "state": "pending"}})
+        if method in {"tx.gasPrice", "gasPrice", "fee.getGasPrice", "state.suggestGasPrice"}:
+            return httpx.Response(200, json={"jsonrpc": "2.0", "id": req_data["id"], "result": "5"})
+        return httpx.Response(200, json={"jsonrpc": "2.0", "id": req_data["id"], "result": None})
+
+    respx.post(rpc_url).mock(side_effect=responder)
     
     _, output = run_tx_cli([
         "send",
@@ -474,27 +496,35 @@ def test_send_rpc_connection_error(wallet_store: Path) -> None:
 @respx.mock
 def test_send_rpc_error_response(wallet_store: Path) -> None:
     """Test handling of RPC error responses."""
-    import httpx
     rpc_url = "http://localhost:9999/rpc"
     
-    # Mock error responses for all RPC calls
-    respx.post(rpc_url).mock(side_effect=[
-        # Chain ID succeeds
-        httpx.Response(200, json={"jsonrpc": "2.0", "id": 1, "result": 1337}),
-        # Nonce succeeds
-        httpx.Response(200, json={"jsonrpc": "2.0", "id": 2, "result": 0}),
-        # Gas price succeeds
-        httpx.Response(200, json={"jsonrpc": "2.0", "id": 3, "result": "1000000000"}),
-        # sendRawTransaction fails
-        httpx.Response(200, json={
-            "jsonrpc": "2.0",
-            "id": 4,
-            "error": {
-                "code": -32000,
-                "message": "insufficient funds"
-            }
-        })
-    ])
+    def responder(request):
+        req_data = json.loads(request.content.decode())
+        method = req_data.get("method")
+        if method == "sync.getStatus":
+            return httpx.Response(200, json={"jsonrpc": "2.0", "id": req_data["id"], "result": {"synchronized": True}})
+        if method == "chain.getChainIdentity":
+            return httpx.Response(200, json={"jsonrpc": "2.0", "id": req_data["id"], "result": {"chainId": 1337, "forkId": None}})
+        if method == "chain.getChainId":
+            return httpx.Response(200, json={"jsonrpc": "2.0", "id": req_data["id"], "result": 1337})
+        if method in {"state.getNextNonce", "state_getNextNonce", "state.getTransactionCount"}:
+            return httpx.Response(200, json={"jsonrpc": "2.0", "id": req_data["id"], "result": 0})
+        if method in {"tx.gasPrice", "gasPrice", "fee.getGasPrice", "state.suggestGasPrice"}:
+            return httpx.Response(200, json={"jsonrpc": "2.0", "id": req_data["id"], "result": "1000000000"})
+        if method == "tx.simulateRawTransaction":
+            return httpx.Response(200, json={"jsonrpc": "2.0", "id": req_data["id"], "result": {"ok": True, "result": {"status": "success"}}})
+        if method == "tx.sendRawTransaction":
+            return httpx.Response(200, json={
+                "jsonrpc": "2.0",
+                "id": req_data["id"],
+                "error": {
+                    "code": -32000,
+                    "message": "insufficient funds"
+                }
+            })
+        return httpx.Response(200, json={"jsonrpc": "2.0", "id": req_data["id"], "result": None})
+
+    respx.post(rpc_url).mock(side_effect=responder)
     
     exit_code, output = run_tx_cli([
         "send",
@@ -1061,6 +1091,10 @@ def test_send_requires_mempool_status_pending(wallet_store: Path) -> None:
     def responder(request):
         req_data = json.loads(request.content.decode())
         method = req_data.get("method")
+        if method == "chain.getChainIdentity":
+            return httpx.Response(200, json={"jsonrpc": "2.0", "id": req_data["id"], "result": {"chainId": 1337, "forkId": None}})
+        if method == "tx.simulateRawTransaction":
+            return httpx.Response(200, json={"jsonrpc": "2.0", "id": req_data["id"], "result": {"ok": True, "result": {"status": "success"}}})
         if method == "chain.getChainId":
             return httpx.Response(200, json={"jsonrpc": "2.0", "id": req_data["id"], "result": 1337})
         if method == "state.getTransactionCount":
@@ -1112,6 +1146,10 @@ def test_send_fails_when_mempool_status_unknown(wallet_store: Path) -> None:
         req_data = json.loads(request.content.decode())
         captured_requests.append(req_data)
         method = req_data.get("method")
+        if method == "chain.getChainIdentity":
+            return httpx.Response(200, json={"jsonrpc": "2.0", "id": req_data["id"], "result": {"chainId": 1337, "forkId": None}})
+        if method == "tx.simulateRawTransaction":
+            return httpx.Response(200, json={"jsonrpc": "2.0", "id": req_data["id"], "result": {"ok": True, "result": {"status": "success"}}})
         if method == "chain.getChainId":
             return httpx.Response(200, json={"jsonrpc": "2.0", "id": req_data["id"], "result": 1337})
         if method == "state.getTransactionCount":

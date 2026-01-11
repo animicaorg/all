@@ -17,10 +17,13 @@ so the RPC surface stays stable even as internals change.
 
 import binascii
 import hashlib
+import logging
 import typing as t
 from dataclasses import dataclass
 
 from .deps import cbor_dumps, cbor_loads, get_ctx
+
+log = logging.getLogger("animica.rpc.state_service")
 
 # -------- Address helpers ----------------------------------------------------
 
@@ -386,13 +389,41 @@ def verify_tx_signature(dt: DecodedTx) -> VerifyResult:
 # -------- State DB (balance) -----------------------------------------------
 
 
-def get_balance(addr_str: str) -> int:
+def get_balance(addr_str: str, *, tag: str = "latest") -> int:
     """
     Returns the integer balance (base units) for the given address.
     """
     ctx = get_ctx()
     addr = parse_address(addr_str)
     sdb = ctx.state_db
+
+    tag = (tag or "latest").lower()
+    if tag in ("safe", "finalized"):
+        try:
+            from core.chain import block_import
+            from rpc import deps
+
+            safe_head = deps.get_safe_head()
+            safe_height = safe_head.get("height")
+            if safe_height is not None:
+                snapshot = block_import.get_state_snapshot(
+                    ctx.block_db,
+                    ctx.state_db,
+                    ctx.tx_index,
+                    genesis_path=str(ctx.cfg.genesis_path) if ctx.cfg.genesis_path else None,
+                    height=int(safe_height),
+                )
+                if snapshot is not None and hasattr(snapshot, "get_balance"):
+                    return int(snapshot.get_balance(addr))
+                log.warning(
+                    "state.getBalance: missing snapshot for safe head",
+                    extra={"safe_height": safe_height},
+                )
+        except Exception as exc:
+            log.warning(
+                "state.getBalance: safe snapshot unavailable, falling back to latest",
+                extra={"error": str(exc)},
+            )
 
     # Try canonical helpers in order of preference
     for name in ("get_balance", "read_balance", "balance_of"):

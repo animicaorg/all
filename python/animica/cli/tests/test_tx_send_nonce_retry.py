@@ -30,6 +30,8 @@ def test_send_retries_on_nonce_too_low(monkeypatch) -> None:
             return 18 if nonce_calls == 1 else 19
         if method in {"tx.gasPrice", "gasPrice", "fee.getGasPrice"}:
             return 1
+        if method == "tx.simulateRawTransaction":
+            return {"ok": True, "result": {"status": "success"}}
         if method == "tx.sendRawTransaction":
             send_calls += 1
             return f"0xhash{send_calls}"
@@ -114,6 +116,8 @@ def test_send_retries_with_advancing_pending_nonce(monkeypatch) -> None:
                 return 65
         if method in {"tx.gasPrice", "gasPrice", "fee.getGasPrice"}:
             return 1
+        if method == "tx.simulateRawTransaction":
+            return {"ok": True, "result": {"status": "success"}}
         if method == "tx.sendRawTransaction":
             send_calls += 1
             nonce_value = nonces[-1] if nonces else -1
@@ -213,6 +217,8 @@ def test_send_no_off_by_one_chase(monkeypatch) -> None:
             return 64
         if method in {"tx.gasPrice", "gasPrice", "fee.getGasPrice"}:
             return 1
+        if method == "tx.simulateRawTransaction":
+            return {"ok": True, "result": {"status": "success"}}
         if method == "tx.sendRawTransaction":
             send_calls += 1
             nonce_value = nonces[-1] if nonces else -1

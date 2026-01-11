@@ -251,12 +251,13 @@ class TestGlobalOptions:
 
         captured: dict[str, str] = {}
 
-        def _fake_get_balance(address: str, rpc_url: str) -> int:
+        def _fake_get_balance(address: str, rpc_url: str, tag: str = "latest") -> int:
             captured["address"] = address
             captured["rpc_url"] = rpc_url
             return 0
 
         monkeypatch.setattr(wallet, "get_balance", _fake_get_balance)
+        monkeypatch.setattr(wallet, "_get_head_info", lambda *_args, **_kwargs: {"height": 0, "hash": "0x" + "a" * 64})
 
         result = runner.invoke(
             app,

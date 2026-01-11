@@ -62,6 +62,11 @@ def test_send_includes_chainid_in_body(wallet_store: Path) -> None:
         req_data = json.loads(req_json)
         
         # If this is tx.sendRawTransaction, capture and decode the payload
+        if req_data.get("method") == "tx.simulateRawTransaction":
+            return httpx.Response(
+                200,
+                json={"jsonrpc": "2.0", "id": req_data["id"], "result": {"ok": True, "result": {"status": "success"}}},
+            )
         if req_data.get("method") == "tx.sendRawTransaction":
             raw_hex = req_data["params"][0]
             # Strip 0x prefix if present
@@ -89,6 +94,11 @@ def test_send_includes_chainid_in_body(wallet_store: Path) -> None:
                     "id": req_data["id"],
                     "result": {"synchronized": True, "head_height": 100},
                 },
+            )
+        if method == "chain.getChainIdentity":
+            return httpx.Response(
+                200,
+                json={"jsonrpc": "2.0", "id": req_data["id"], "result": {"chainId": 1, "forkId": None}},
             )
         if method == "chain.getChainId":
             return httpx.Response(

@@ -370,6 +370,16 @@ class StateSnapshot:
     def iter_accounts(self) -> Iterator[Tuple[bytes, Account]]:
         yield from self._acc
 
+    def get_account(self, addr: bytes) -> Optional[Account]:
+        for a, acc in self._acc:
+            if a == addr:
+                return acc
+        return None
+
+    def get_balance(self, addr: bytes) -> int:
+        acc = self.get_account(addr)
+        return 0 if acc is None else acc.balance
+
     def iter_storage(
         self, addr: Optional[bytes] = None
     ) -> Iterator[Tuple[bytes, bytes, bytes]]:

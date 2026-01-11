@@ -61,7 +61,8 @@ def test_wallet_show_outputs_clean_json(wallet_with_entry, monkeypatch):
     monkeypatch.setattr(wallet, "_resolve_rpc_url", lambda x: "http://127.0.0.1:8545")
     
     # Mock get_balance to return a test balance
-    monkeypatch.setattr(wallet, "get_balance", lambda addr, url: 1000000000)
+    monkeypatch.setattr(wallet, "get_balance", lambda addr, url, tag="latest": 1000000000)
+    monkeypatch.setattr(wallet, "_get_head_info", lambda *_args, **_kwargs: {"height": 0, "hash": "0x" + "a" * 64})
     
     # Run wallet show command
     result = runner.invoke(
@@ -91,9 +92,9 @@ def test_wallet_show_outputs_clean_json(wallet_with_entry, monkeypatch):
     # NOTE: secret_key_hex should NOT be present by default (security fix)
     assert "secret_key_hex" not in output_data, "secret_key_hex should not be shown by default"
     
-    # Verify all values are valid JSON types (strings, ints, etc.)
+    # Verify all values are valid JSON types (strings, ints, dicts, etc.)
     for key, value in output_data.items():
-        assert isinstance(value, (str, int, float, bool, type(None))), \
+        assert isinstance(value, (str, int, float, bool, dict, list, type(None))), \
             f"Field {key} has invalid type: {type(value)}"
     
     # Verify hex fields are valid hex strings
@@ -116,7 +117,8 @@ def test_wallet_show_with_address_arg_outputs_clean_json(wallet_with_entry, monk
     monkeypatch.setattr(wallet, "_resolve_rpc_url", lambda x: "http://127.0.0.1:8545")
     
     # Mock get_balance to return a test balance
-    monkeypatch.setattr(wallet, "get_balance", lambda addr, url: 1000000000)
+    monkeypatch.setattr(wallet, "get_balance", lambda addr, url, tag="latest": 1000000000)
+    monkeypatch.setattr(wallet, "_get_head_info", lambda *_args, **_kwargs: {"height": 0, "hash": "0x" + "a" * 64})
     
     # Run wallet show command with address
     result = runner.invoke(
@@ -152,7 +154,8 @@ def test_wallet_show_balance_none_is_json_null(wallet_with_entry, monkeypatch):
     monkeypatch.setattr(wallet, "_resolve_rpc_url", lambda x: "http://127.0.0.1:8545")
     
     # Mock get_balance to raise an error (RPC failure)
-    monkeypatch.setattr(wallet, "get_balance", lambda addr, url: (_ for _ in ()).throw(RuntimeError("rpc")))
+    monkeypatch.setattr(wallet, "get_balance", lambda addr, url, tag="latest": (_ for _ in ()).throw(RuntimeError("rpc")))
+    monkeypatch.setattr(wallet, "_get_head_info", lambda *_args, **_kwargs: {"height": 0, "hash": "0x" + "a" * 64})
     
     # Run wallet show command
     result = runner.invoke(
