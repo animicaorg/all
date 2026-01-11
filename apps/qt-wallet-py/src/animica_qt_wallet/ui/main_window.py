@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
 from animica_qt_wallet.core.walletd_manager import WalletdManager
 from animica_qt_wallet.ui.send_tab import SendTab
 from animica_qt_wallet.ui.receive_tab import ReceiveTab
+from animica_qt_wallet.ui.transactions_tab import TransactionsTab
 
 
 # Display constants for address/hash truncation
@@ -108,11 +109,13 @@ class MainWindow(QMainWindow):
         tabs = QTabWidget(self)
         tabs.addTab(self._build_overview_tab(), "Overview")
         
-        # Create Send and Receive tabs
+        # Create Send, Receive, and Transactions tabs
         self._send_tab = SendTab(self._walletd_manager, self)
         self._receive_tab = ReceiveTab(self)
+        self._transactions_tab = TransactionsTab(self._walletd_manager, self)
         tabs.addTab(self._send_tab, "Send")
         tabs.addTab(self._receive_tab, "Receive")
+        tabs.addTab(self._transactions_tab, "Transactions")
         tabs.addTab(self._build_node_tab(), "Node")
 
         layout.addWidget(title)
@@ -297,6 +300,8 @@ class MainWindow(QMainWindow):
         if accounts and self._selected_account is None:
             self._accounts_table.selectRow(0)
             self._selected_account = accounts[0].get("address")
+            # Update transactions tab with selected address
+            self._transactions_tab.set_current_address(self._selected_account)
             asyncio.create_task(self._refresh_selected_balance())
 
     def _set_wallet_controls_locked(self, locked: bool) -> None:
@@ -312,6 +317,8 @@ class MainWindow(QMainWindow):
         address = self._selected_account_address()
         if address:
             self._selected_account = address
+            # Update transactions tab with new address
+            self._transactions_tab.set_current_address(address)
             asyncio.create_task(self._refresh_selected_balance())
 
     def _handle_unlock_wallet(self) -> None:

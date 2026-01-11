@@ -17,11 +17,13 @@ from animica_qt_wallet.walletd.config import (
     resolve_data_dir,
     resolve_log_path,
     resolve_wallet_path,
+    resolve_tx_history_path,
     resolve_node_log_path,
     resolve_port,
 )
 from animica_qt_wallet.walletd.node_manager import NodeManager, NodeStatus
 from animica_qt_wallet.walletd.wallet_store import WalletStore
+from animica_qt_wallet.walletd.tx_history import TxHistory
 
 # Import for transaction hash computation
 import hashlib
@@ -34,6 +36,7 @@ class WalletdState:
     log_path: Path
     node_manager: NodeManager
     wallet_store: WalletStore
+    tx_history: TxHistory
     node_network: str = "mainnet"
     last_error: str | None = None
 
@@ -213,6 +216,108 @@ async def dispatch(method: str | None, params: dict[str, Any], state: WalletdSta
             raise ValueError("address must be a string")
         return state.wallet_store.export_account(address)
     
+    # Transaction history methods
+    if method == "wallet.txs.list":
+        address = params.get("address")
+        limit = int(params.get("limit", 100))
+        cursor = int(params.get("cursor", 0))
+        status_filter = params.get("status")
+        
+        entries = state.tx_history.list(
+            address=address,
+            limit=limit,
+            offset=cursor,
+            status_filter=status_filter,
+        )
+        
+        return {
+            "transactions": [entry.to_dict() for entry in entries],
+            "next_cursor": cursor + len(entries) if len(entries) == limit else None,
+        }
+    
+    if method == "wallet.txs.lookup":
+        tx_hash = params.get("hash")
+        if not isinstance(tx_hash, str):
+            raise ValueError("hash must be a string")
+        
+        # First check local history
+        entry = state.tx_history.get(tx_hash)
+        if entry:
+            return entry.to_dict()
+        
+        # Then check node
+        node_status = state.node_manager.status()
+        if node_status.running and node_status.rpc_url:
+            try:
+                result = await _proxy_to_node("tx.getTransactionByHash", {"txHash": tx_hash}, node_status.rpc_url)
+                if result:
+                    # Store in history if found on chain
+                    if result.get("from"):
+                        state.tx_history.add_pending(
+                            tx_hash=tx_hash,
+                            from_addr=result["from"],
+                            to_addr=result.get("to"),
+                            value=int(result.get("value", 0)),
+                            gas_limit=result.get("gasLimit"),
+                            max_fee=result.get("maxFee"),
+                            nonce=result.get("nonce"),
+                        )
+                        # Update status if confirmed
+                        if result.get("blockNumber") is not None:
+                            state.tx_history.update_status(
+                                tx_hash,
+                                "confirmed",
+                                block_number=result["blockNumber"],
+                            )
+                    return result
+            except Exception:
+                pass
+        
+        return None
+    
+    if method == "wallet.txs.resync":
+        address = params.get("address")
+        if not isinstance(address, str):
+            raise ValueError("address must be a string")
+        
+        # Get current height
+        node_status = state.node_manager.status()
+        if not node_status.running or not node_status.rpc_url:
+            raise RuntimeError("Node is not running")
+        
+        try:
+            head = await _proxy_to_node("chain.getHead", {}, node_status.rpc_url)
+            current_height = int(head.get("height", 0))
+        except Exception:
+            current_height = 0
+        
+        # Scan recent blocks (default: last 1000 blocks)
+        scan_window = int(params.get("window", 1000))
+        start_height = max(0, current_height - scan_window)
+        
+        found_count = 0
+        # Note: This is a simplified implementation. In production, you would
+        # iterate through blocks and check transactions against the address.
+        # For now, we'll just update any pending transactions in history.
+        for entry in state.tx_history.list(address=address, limit=1000, status_filter="pending"):
+            try:
+                result = await _proxy_to_node("tx.getTransactionByHash", {"txHash": entry.tx_hash}, node_status.rpc_url)
+                if result and result.get("blockNumber") is not None:
+                    state.tx_history.update_status(
+                        entry.tx_hash,
+                        "confirmed",
+                        block_number=result["blockNumber"],
+                    )
+                    found_count += 1
+            except Exception:
+                continue
+        
+        return {
+            "scanned_from": start_height,
+            "scanned_to": current_height,
+            "updated": found_count,
+        }
+    
     # Transaction methods
     if method == "tx.estimateFees":
         node_status = state.node_manager.status()
@@ -348,11 +453,29 @@ async def dispatch(method: str | None, params: dict[str, Any], state: WalletdSta
         if not isinstance(signed_tx, str):
             raise ValueError("signed_tx must be a hex string")
         
+        # Get tx details if provided (for history tracking)
+        tx_details = params.get("tx_details")
+        
         node_status = state.node_manager.status()
         if not node_status.running or not node_status.rpc_url:
             raise RuntimeError("Node is not running")
         
         result = await _proxy_to_node("tx.sendRawTransaction", {"rawTx": signed_tx}, node_status.rpc_url)
+        
+        # Track transaction in history if we have details
+        if tx_details and isinstance(result, (str, dict)):
+            tx_hash = result if isinstance(result, str) else result.get("tx_hash", result.get("hash"))
+            if tx_hash:
+                state.tx_history.add_pending(
+                    tx_hash=tx_hash,
+                    from_addr=tx_details.get("from", ""),
+                    to_addr=tx_details.get("to"),
+                    value=int(tx_details.get("value", 0)),
+                    gas_limit=tx_details.get("gas_limit"),
+                    max_fee=tx_details.get("max_fee"),
+                    nonce=tx_details.get("nonce"),
+                )
+        
         return result
     
     if method == "tx.get":
@@ -430,6 +553,7 @@ def main() -> int:
         log_path=log_path,
         node_manager=NodeManager(data_dir),
         wallet_store=WalletStore(resolve_wallet_path(data_dir)),
+        tx_history=TxHistory(resolve_tx_history_path(data_dir)),
     )
     app = create_app(state)
     web.run_app(app, host="127.0.0.1", port=port)

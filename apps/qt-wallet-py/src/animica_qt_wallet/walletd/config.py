@@ -10,6 +10,7 @@ DEFAULT_PORT = 17834
 TOKEN_FILE_NAME = "walletd.token"
 LOG_FILE_NAME = "walletd.log"
 WALLET_FILE_NAME = "walletd.wallet"
+TX_HISTORY_FILE_NAME = "tx_history.json"
 NODE_DIR_NAME = "node"
 NODE_LOG_FILE_NAME = "node.log"
 
@@ -40,6 +41,10 @@ def resolve_log_path(data_dir: Path) -> Path:
 
 def resolve_wallet_path(data_dir: Path) -> Path:
     return data_dir / WALLET_FILE_NAME
+
+
+def resolve_tx_history_path(data_dir: Path) -> Path:
+    return data_dir / TX_HISTORY_FILE_NAME
 
 
 def resolve_node_data_dir(data_dir: Path, network: str) -> Path:
