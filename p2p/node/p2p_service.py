@@ -76,6 +76,7 @@ log = logging.getLogger("animica.p2p.service")
 
 # Sync performance tuning constants
 MIN_SYNC_TICK_SEC: float = 0.001  # Minimum sync tick interval (1ms) - ultra aggressive for maximum sync speed
+LOCATOR_PARENT_CHAIN_VALIDATION_DEPTH: int = 3  # Number of parent hashes to walk back when validating locator start point
 
 DEFAULT_BOOTSTRAP_SEEDS = [
     "/dns4/mainnet.animica.org/tcp/30333",
@@ -10606,19 +10607,16 @@ class P2PService:
         # Try to use sync_best_header if it's ahead of canonical head
         # But first validate we can actually walk back from it
         if self._sync_best_header and self._sync_best_header.height > head_height:
-            # Check if we can walk back at least a few steps from sync_best_header
+            # Check if we can walk back at least LOCATOR_PARENT_CHAIN_VALIDATION_DEPTH steps from sync_best_header
             # If not, it means we have an incomplete parent chain and should use canonical head
             can_walk_back = True
             test_hash = self._sync_best_header.hash
-            for _ in range(min(3, self._sync_best_header.height)):
+            for _ in range(min(LOCATOR_PARENT_CHAIN_VALIDATION_DEPTH, self._sync_best_header.height)):
                 hdr = self._sync_header_by_hash(test_hash)
                 if hdr is None:
                     can_walk_back = False
                     break
                 test_hash = hdr.parent_hash
-                if test_hash is None:
-                    can_walk_back = False
-                    break
             
             if can_walk_back:
                 start_hash = self._sync_best_header.hash
