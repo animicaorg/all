@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QStatusBar,
     QTableWidget,
     QTableWidgetItem,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -48,7 +49,11 @@ class MainWindow(QMainWindow):
         self._accounts_timer = QTimer(self)
         self._accounts_timer.setInterval(5_000)
         self._accounts_timer.timeout.connect(self._refresh_accounts)
+        self._chain_info_timer = QTimer(self)
+        self._chain_info_timer.setInterval(3_000)
+        self._chain_info_timer.timeout.connect(self._refresh_chain_info)
         self._wallet_locked = True
+        self._selected_account = None
 
         self._build_menu()
         self._build_status_bar()
@@ -79,13 +84,81 @@ class MainWindow(QMainWindow):
         central = QWidget(self)
         layout = QVBoxLayout(central)
 
-        title = QLabel("Welcome / Setup", self)
+        title = QLabel("Animica Wallet", self)
         title.setStyleSheet("font-size: 20px; font-weight: 600;")
 
-        subtitle = QLabel("Prepare your wallet and connect to a node.", self)
-        subtitle.setStyleSheet("color: #6b6b6b;")
-
         accounts_panel = self._build_accounts_panel()
+
+        # Create tab widget
+        tabs = QTabWidget(self)
+        tabs.addTab(self._build_overview_tab(), "Overview")
+        tabs.addTab(self._build_node_tab(), "Node")
+
+        layout.addWidget(title)
+        layout.addWidget(accounts_panel)
+        layout.addWidget(tabs, stretch=1)
+
+        self.setCentralWidget(central)
+
+    def _build_overview_tab(self) -> QWidget:
+        """Build the Overview tab showing chain status."""
+        widget = QWidget(self)
+        layout = QVBoxLayout(widget)
+
+        # Chain status group
+        chain_group = QGroupBox("Chain Status", self)
+        chain_layout = QFormLayout(chain_group)
+
+        self._chain_height_label = QLabel("—", self)
+        self._chain_hash_label = QLabel("—", self)
+        self._sync_status_label = QLabel("—", self)
+        self._peer_count_label = QLabel("—", self)
+
+        chain_layout.addRow("Height:", self._chain_height_label)
+        chain_layout.addRow("Best Hash:", self._chain_hash_label)
+        chain_layout.addRow("Sync Status:", self._sync_status_label)
+        chain_layout.addRow("Peers:", self._peer_count_label)
+
+        # Balance group
+        balance_group = QGroupBox("Selected Account Balance", self)
+        balance_layout = QVBoxLayout(balance_group)
+
+        balance_row = QHBoxLayout()
+        balance_row.addWidget(QLabel("Address:", self))
+        self._balance_address_label = QLabel("—", self)
+        self._balance_address_label.setStyleSheet("font-family: monospace;")
+        balance_row.addWidget(self._balance_address_label)
+        balance_row.addStretch(1)
+
+        balance_value_row = QHBoxLayout()
+        balance_value_row.addWidget(QLabel("Balance:", self))
+        self._balance_value_label = QLabel("—", self)
+        self._balance_value_label.setStyleSheet("font-size: 18px; font-weight: 600;")
+        balance_value_row.addWidget(self._balance_value_label)
+        balance_value_row.addStretch(1)
+
+        balance_layout.addLayout(balance_row)
+        balance_layout.addLayout(balance_value_row)
+
+        # Status message
+        self._chain_status_message = QLabel("", self)
+        self._chain_status_message.setWordWrap(True)
+        self._chain_status_message.setStyleSheet("color: #666;")
+
+        layout.addWidget(chain_group)
+        layout.addWidget(balance_group)
+        layout.addWidget(self._chain_status_message)
+        layout.addStretch(1)
+
+        return widget
+
+    def _build_node_tab(self) -> QWidget:
+        """Build the Node tab with node controls and logs."""
+        widget = QWidget(self)
+        layout = QVBoxLayout(widget)
+
+        subtitle = QLabel("Control your local node.", self)
+        subtitle.setStyleSheet("color: #6b6b6b;")
 
         controls = QHBoxLayout()
         self._network_selector = QComboBox(self)
@@ -104,16 +177,12 @@ class MainWindow(QMainWindow):
         self._logs_view.setReadOnly(True)
         self._logs_view.setPlaceholderText("Node logs will appear here once the node starts.")
 
-        layout.addStretch(1)
-        layout.addWidget(title)
         layout.addWidget(subtitle)
-        layout.addWidget(accounts_panel)
         layout.addLayout(controls)
         layout.addWidget(QLabel("Node Logs", self))
         layout.addWidget(self._logs_view, stretch=2)
-        layout.addStretch(1)
 
-        self.setCentralWidget(central)
+        return widget
 
     async def _start_walletd(self) -> None:
         status = await self._walletd_manager.ensure_running()
@@ -123,6 +192,7 @@ class MainWindow(QMainWindow):
             self._node_status_timer.start()
             self._node_logs_timer.start()
             self._accounts_timer.start()
+            self._chain_info_timer.start()
             await self._update_accounts()
         else:
             self._walletd_status.setText("Walletd: unavailable")
@@ -197,6 +267,11 @@ class MainWindow(QMainWindow):
             address_item.setFlags(address_item.flags() ^ Qt.ItemIsEditable)
             self._accounts_table.setItem(row, 0, label_item)
             self._accounts_table.setItem(row, 1, address_item)
+        # Auto-select first account if available
+        if accounts and self._selected_account is None:
+            self._accounts_table.selectRow(0)
+            self._selected_account = accounts[0].get("address")
+            asyncio.create_task(self._refresh_selected_balance())
 
     def _set_wallet_controls_locked(self, locked: bool) -> None:
         self._unlock_button.setEnabled(locked)
@@ -205,6 +280,13 @@ class MainWindow(QMainWindow):
         self._import_account_button.setEnabled(not locked)
         self._show_secret_button.setEnabled(not locked)
         self._wallet_lock_status.setText("Locked" if locked else "Unlocked")
+
+    def _handle_account_selection(self) -> None:
+        """Handle account selection change."""
+        address = self._selected_account_address()
+        if address:
+            self._selected_account = address
+            asyncio.create_task(self._refresh_selected_balance())
 
     def _handle_unlock_wallet(self) -> None:
         dialog = UnlockDialog(self)
@@ -292,6 +374,76 @@ class MainWindow(QMainWindow):
             return None
         return item.text().strip() or None
 
+    def _refresh_chain_info(self) -> None:
+        asyncio.create_task(self._update_chain_info())
+
+    async def _update_chain_info(self) -> None:
+        """Update chain status information."""
+        try:
+            node_status = await self._walletd_manager.get_node_status()
+            if not node_status.running:
+                self._chain_status_message.setText("Node is not running. Start the node to see chain status.")
+                self._chain_height_label.setText("—")
+                self._chain_hash_label.setText("—")
+                self._sync_status_label.setText("Not connected")
+                self._peer_count_label.setText("—")
+                return
+
+            # Get chain head
+            try:
+                head = await self._walletd_manager.chain_get_head()
+                height = head.get("height", "—")
+                block_hash = head.get("hash", "—")
+                if isinstance(block_hash, str) and len(block_hash) > 20:
+                    block_hash = block_hash[:10] + "..." + block_hash[-8:]
+                
+                self._chain_height_label.setText(str(height))
+                self._chain_hash_label.setText(str(block_hash))
+                self._sync_status_label.setText("Synced")
+            except Exception as exc:
+                self._chain_height_label.setText("—")
+                self._chain_hash_label.setText("—")
+                self._sync_status_label.setText("Error")
+                self._chain_status_message.setText(f"Chain RPC error: {exc}")
+
+            # Get peer count
+            try:
+                peer_count = await self._walletd_manager.net_peer_count()
+                self._peer_count_label.setText(str(peer_count))
+            except Exception:
+                self._peer_count_label.setText("—")
+
+            # Update balance for selected account
+            await self._refresh_selected_balance()
+
+        except Exception as exc:
+            self._chain_status_message.setText(f"Failed to update chain info: {exc}")
+
+    async def _refresh_selected_balance(self) -> None:
+        """Update the balance for the currently selected account."""
+        address = self._selected_account or self._selected_account_address()
+        if not address:
+            self._balance_address_label.setText("—")
+            self._balance_value_label.setText("—")
+            return
+
+        self._balance_address_label.setText(address[:10] + "..." + address[-8:] if len(address) > 20 else address)
+
+        try:
+            node_status = await self._walletd_manager.get_node_status()
+            if not node_status.running:
+                self._balance_value_label.setText("—")
+                return
+
+            balance_hex = await self._walletd_manager.state_get_balance(address)
+            # Convert hex balance to decimal (in nANM)
+            balance = int(balance_hex, 16) if balance_hex.startswith("0x") else int(balance_hex)
+            # Format as ANM (1 ANM = 10^9 nANM)
+            balance_anm = balance / 1_000_000_000
+            self._balance_value_label.setText(f"{balance_anm:.9f} ANM")
+        except Exception as exc:
+            self._balance_value_label.setText(f"Error: {exc}")
+
     def _build_accounts_panel(self) -> QGroupBox:
         group = QGroupBox("Accounts", self)
         layout = QVBoxLayout(group)
@@ -316,6 +468,7 @@ class MainWindow(QMainWindow):
         self._accounts_table.verticalHeader().setVisible(False)
         self._accounts_table.setSelectionBehavior(QTableWidget.SelectRows)
         self._accounts_table.setSelectionMode(QTableWidget.SingleSelection)
+        self._accounts_table.itemSelectionChanged.connect(self._handle_account_selection)
 
         action_row = QHBoxLayout()
         self._create_account_button = QPushButton("Create Account", self)

@@ -160,6 +160,25 @@ class WalletdManager:
     async def wallet_export_account(self, address: str) -> dict[str, Any]:
         return await self._rpc_call("wallet.exportAccount", {"address": address})
 
+    async def chain_get_head(self) -> dict[str, Any]:
+        """Get the current chain head from the node."""
+        return await self._rpc_call("chain.getHead")
+
+    async def state_get_balance(self, address: str) -> str:
+        """Get the balance for an address from the node."""
+        result = await self._rpc_call("state.getBalance", {"address": address, "tag": "latest"})
+        return result if isinstance(result, str) else str(result)
+
+    async def net_peers(self) -> list[dict[str, Any]]:
+        """Get the list of connected peers from the node."""
+        result = await self._rpc_call("net.peers")
+        return result if isinstance(result, list) else []
+
+    async def net_peer_count(self) -> int:
+        """Get the count of connected peers from the node."""
+        result = await self._rpc_call("net.peerCount")
+        return int(result) if result is not None else 0
+
     async def _rpc_call(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         payload = {
             "jsonrpc": "2.0",

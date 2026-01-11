@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import aiohttp
 from aiohttp import web
 
 from animica_qt_wallet.walletd.config import (
@@ -81,6 +82,30 @@ def _extract_token(request: web.Request) -> str:
     return request.headers.get("X-Auth-Token", "")
 
 
+async def _proxy_to_node(method: str, params: dict[str, Any], node_rpc_url: str | None) -> Any:
+    """Proxy a method call to the node RPC endpoint."""
+    if not node_rpc_url:
+        raise RuntimeError("Node RPC URL not available")
+    
+    payload = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": method,
+        "params": params or {},
+    }
+    
+    timeout = aiohttp.ClientTimeout(total=5)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        async with session.post(node_rpc_url, json=payload) as response:
+            if response.status != 200:
+                raise RuntimeError(f"Node RPC error: {response.status}")
+            data = await response.json()
+    
+    if "error" in data:
+        raise RuntimeError(data["error"].get("message", "Node RPC error"))
+    return data.get("result", {})
+
+
 async def dispatch(method: str | None, params: dict[str, Any], state: WalletdState) -> Any:
     if method == "walletd.health":
         return {"status": "ok"}
@@ -126,6 +151,19 @@ async def dispatch(method: str | None, params: dict[str, Any], state: WalletdSta
             "rpc_url": status.rpc_url,
             "network": status.network,
         }
+    # Proxy safe read calls to node RPC
+    if method == "chain.getHead":
+        node_status = state.node_manager.status()
+        return await _proxy_to_node(method, params, node_status.rpc_url)
+    if method == "state.getBalance":
+        node_status = state.node_manager.status()
+        return await _proxy_to_node(method, params, node_status.rpc_url)
+    if method == "net.peers":
+        node_status = state.node_manager.status()
+        return await _proxy_to_node(method, params, node_status.rpc_url)
+    if method == "net.peerCount":
+        node_status = state.node_manager.status()
+        return await _proxy_to_node(method, params, node_status.rpc_url)
     if method == "wallet.lock":
         state.wallet_store.lock()
         return {"locked": True}
