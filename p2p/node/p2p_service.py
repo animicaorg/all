@@ -3857,6 +3857,10 @@ class P2PService:
         if peer.hello is None:
             peer.hello = {}
             peer.hello_received_at = time.time()  # Initialize timestamp if creating new hello dict
+        # Update hello_received_at whenever we update peer head info
+        # This ensures staleness tracking stays accurate even for existing hello dicts
+        if peer.hello_received_at == 0.0:
+            peer.hello_received_at = time.time()
         try:
             current = int(peer.hello.get("head_height") or 0)
         except Exception:
@@ -9650,7 +9654,19 @@ class P2PService:
                 # Add peer's view of network best height (peers-of-peers)
                 # But only if the hello message is recent (not stale)
                 hello_age = now - peer.hello_received_at if peer.hello_received_at else float('inf')
-                if hello_age <= self._sync_network_best_cache_timeout:
+                if hello_age > self._sync_network_best_cache_timeout:
+                    # Log warning if we're filtering out a value due to staleness
+                    if (peer.hello or {}).get("network_best_height"):
+                        log.debug(
+                            "Filtering stale network_best_height from peer",
+                            extra={
+                                "peer": peer.remote,
+                                "hello_age": hello_age,
+                                "timeout": self._sync_network_best_cache_timeout,
+                                "cached_height": (peer.hello or {}).get("network_best_height"),
+                            },
+                        )
+                elif hello_age <= self._sync_network_best_cache_timeout:
                     network_height = (peer.hello or {}).get("network_best_height")
                     if network_height is not None:
                         network_height = int(network_height)
