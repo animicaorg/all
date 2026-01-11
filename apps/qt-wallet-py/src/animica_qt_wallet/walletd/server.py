@@ -20,10 +20,15 @@ from animica_qt_wallet.walletd.config import (
     resolve_tx_history_path,
     resolve_node_log_path,
     resolve_port,
+    resolve_approval_queue_path,
+    resolve_app_allowlist_path,
 )
 from animica_qt_wallet.walletd.node_manager import NodeManager, NodeStatus
 from animica_qt_wallet.walletd.wallet_store import WalletStore
 from animica_qt_wallet.walletd.tx_history import TxHistory
+from animica_qt_wallet.walletd.approval_queue import ApprovalQueue
+from animica_qt_wallet.walletd.app_allowlist import AppAllowlist
+from animica_qt_wallet.walletd.rate_limiter import RateLimiter
 
 # Import for transaction hash computation
 import hashlib
@@ -37,6 +42,9 @@ class WalletdState:
     node_manager: NodeManager
     wallet_store: WalletStore
     tx_history: TxHistory
+    approval_queue: ApprovalQueue
+    app_allowlist: AppAllowlist
+    rate_limiter: RateLimiter
     node_network: str = "mainnet"
     last_error: str | None = None
 
@@ -81,11 +89,88 @@ async def handle_rpc(request: web.Request) -> web.Response:
     return web.json_response(response)
 
 
+async def handle_external_rpc(request: web.Request) -> web.Response:
+    """Handle external RPC calls from other local applications."""
+    state: WalletdState = request.app["state"]
+    
+    # Verify localhost only
+    peername = request.transport.get_extra_info("peername") if request.transport else None
+    remote_addr = peername[0] if peername else ""
+    if remote_addr not in ("127.0.0.1", "::1"):
+        return web.json_response(
+            {"error": {"code": 403, "message": "Only localhost connections allowed"}},
+            status=403,
+        )
+    
+    # Verify token
+    token = _extract_token(request)
+    if token != state.token:
+        return web.json_response({"error": {"code": 401, "message": "Unauthorized"}}, status=401)
+    
+    try:
+        payload = await request.json()
+    except json.JSONDecodeError:
+        return web.json_response({"error": {"code": 400, "message": "Invalid JSON"}}, status=400)
+    
+    method = payload.get("method")
+    params = payload.get("params") or {}
+    request_id = payload.get("id")
+    
+    try:
+        result = await dispatch_external(method, params, state, request)
+        response = {"jsonrpc": "2.0", "result": result, "id": request_id}
+    except Exception as exc:  # noqa: BLE001
+        response = {
+            "jsonrpc": "2.0",
+            "error": {"code": 500, "message": str(exc)},
+            "id": request_id,
+        }
+    return web.json_response(response)
+
+
 def _extract_token(request: web.Request) -> str:
     auth_header = request.headers.get("Authorization", "")
     if auth_header.startswith("Bearer "):
         return auth_header.removeprefix("Bearer ").strip()
     return request.headers.get("X-Auth-Token", "")
+
+
+def _get_requester_info(request: web.Request) -> dict[str, Any]:
+    """Extract information about the requester for approval dialogs."""
+    import psutil
+    
+    # Get peer info
+    peername = request.transport.get_extra_info("peername") if request.transport else None
+    remote_addr = peername[0] if peername else "unknown"
+    remote_port = peername[1] if peername else 0
+    
+    # Try to identify the process
+    process_name = "unknown"
+    pid = None
+    
+    # For localhost connections, try to find the connecting process
+    if remote_addr in ("127.0.0.1", "::1", "localhost"):
+        try:
+            # Find connections matching the remote port
+            for conn in psutil.net_connections(kind="inet"):
+                if conn.laddr.port == remote_port and conn.status == "ESTABLISHED":
+                    try:
+                        proc = psutil.Process(conn.pid)
+                        process_name = proc.name()
+                        pid = conn.pid
+                        break
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        pass
+        except Exception:  # noqa: BLE001
+            pass
+    
+    return {
+        "remote_addr": remote_addr,
+        "remote_port": remote_port,
+        "process_name": process_name,
+        "pid": pid,
+        "user_agent": request.headers.get("User-Agent", ""),
+    }
 
 
 def _compute_tx_hash(raw_tx: bytes) -> bytes:
@@ -120,6 +205,219 @@ async def _proxy_to_node(method: str, params: dict[str, Any], node_rpc_url: str 
             error_msg = str(data["error"])
         raise RuntimeError(error_msg)
     return data.get("result", {})
+
+
+async def dispatch_external(method: str | None, params: dict[str, Any], state: WalletdState, request: web.Request) -> Any:
+    """Dispatch external RPC calls with approval requirement."""
+    import asyncio
+    
+    requester_info = _get_requester_info(request)
+    app_id = requester_info.get("process_name", "unknown")
+    
+    # Check allowlist
+    if not state.app_allowlist.is_allowed(app_id):
+        raise RuntimeError(f"Application '{app_id}' is not allowed to access wallet")
+    
+    # Check rate limit
+    client_id = f"{requester_info['remote_addr']}:{requester_info.get('pid', 'unknown')}"
+    allowed, reason = state.rate_limiter.check_rate_limit(client_id)
+    if not allowed:
+        raise RuntimeError(reason)
+    
+    # Handle approval methods
+    if method == "approval.list":
+        # List pending approval requests
+        requests = state.approval_queue.list_pending()
+        return {
+            "requests": [
+                {
+                    "request_id": req.request_id,
+                    "method": req.method,
+                    "params": req.params,
+                    "requester_info": req.requester_info,
+                    "created_at": req.created_at,
+                }
+                for req in requests
+            ]
+        }
+    
+    if method == "approval.respond":
+        # Respond to an approval request
+        request_id = params.get("request_id")
+        approved = params.get("approved", False)
+        reason = params.get("reason", "")
+        
+        if not isinstance(request_id, str):
+            raise ValueError("request_id must be a string")
+        
+        if approved:
+            # Execute the approved request
+            approval_req = state.approval_queue.get_request(request_id)
+            if not approval_req:
+                raise ValueError(f"Request {request_id} not found")
+            
+            try:
+                # Execute the original method
+                result = await _execute_wallet_method(approval_req.method, approval_req.params, state)
+                state.approval_queue.approve(request_id, result)
+                return {"request_id": request_id, "approved": True, "result": result}
+            except Exception as exc:  # noqa: BLE001
+                state.approval_queue.deny(request_id, str(exc))
+                raise
+        else:
+            state.approval_queue.deny(request_id, reason or "User denied")
+            return {"request_id": request_id, "approved": False}
+    
+    # Methods that require approval
+    if method in ("wallet_requestAccounts", "wallet_signTransaction", "wallet_sendTransaction"):
+        # Check if auto-approve is enabled for this app
+        if state.app_allowlist.should_auto_approve(app_id):
+            # Auto-approve - execute directly
+            return await _execute_wallet_method(method, params, state)
+        
+        # Create approval request
+        request_id = state.approval_queue.create_request(method, params, requester_info)
+        
+        # Wait for approval (with timeout)
+        timeout = params.get("_timeout", 120)  # 2 minute default
+        start_time = asyncio.get_event_loop().time()
+        
+        while asyncio.get_event_loop().time() - start_time < timeout:
+            approval_req = state.approval_queue.get_request(request_id)
+            if approval_req.status == "approved":
+                return approval_req.response
+            elif approval_req.status == "denied":
+                raise RuntimeError(f"Request denied: {approval_req.error}")
+            elif approval_req.status == "expired":
+                raise RuntimeError("Request expired")
+            
+            await asyncio.sleep(0.5)
+        
+        # Timeout
+        state.approval_queue.deny(request_id, "Timeout waiting for approval")
+        raise RuntimeError("Request timed out waiting for approval")
+    
+    # Non-approval methods
+    if method == "wallet_getChainId":
+        node_status = state.node_manager.status()
+        if not node_status.running or not node_status.rpc_url:
+            raise RuntimeError("Node is not running")
+        
+        try:
+            chain_id_result = await _proxy_to_node("chain.getChainId", {}, node_status.rpc_url)
+            return int(chain_id_result) if chain_id_result else 1
+        except Exception:
+            return 1  # Default to mainnet
+    
+    raise ValueError(f"Unknown external method: {method}")
+
+
+async def _execute_wallet_method(method: str, params: dict[str, Any], state: WalletdState) -> Any:
+    """Execute a wallet method that has been approved."""
+    if method == "wallet_requestAccounts":
+        if state.wallet_store.is_locked:
+            raise RuntimeError("Wallet is locked")
+        accounts = state.wallet_store.list_accounts()
+        return [acc["address"] for acc in accounts]
+    
+    if method == "wallet_signTransaction":
+        if state.wallet_store.is_locked:
+            raise RuntimeError("Wallet is locked")
+        
+        tx = params.get("transaction")
+        from_addr = params.get("from")
+        
+        if not isinstance(tx, dict):
+            raise ValueError("transaction must be a transaction object")
+        if not isinstance(from_addr, str):
+            raise ValueError("from must be a string address")
+        
+        # Sign the transaction
+        node_status = state.node_manager.status()
+        if not node_status.running or not node_status.rpc_url:
+            raise RuntimeError("Node is not running")
+        
+        # Build unsigned tx if needed
+        if "nonce" not in tx:
+            nonce_result = await _proxy_to_node("state.getNonce", {"address": from_addr, "tag": "pending"}, node_status.rpc_url)
+            tx["nonce"] = int(nonce_result) if nonce_result is not None else 0
+        
+        if "chain_id" not in tx:
+            try:
+                chain_id_result = await _proxy_to_node("chain.getChainId", {}, node_status.rpc_url)
+                tx["chain_id"] = int(chain_id_result) if chain_id_result else 1
+            except Exception:
+                tx["chain_id"] = 1
+        
+        # Sign
+        from omni_sdk.tx.build import make_tx
+        from omni_sdk.tx.encode import sign_bytes, pack_signed
+        from omni_sdk.wallet.signer import create_signer_from_keypair
+        
+        account = state.wallet_store.export_account(from_addr)
+        secret_key = bytes.fromhex(account["secret_key_hex"])
+        public_key = bytes.fromhex(account["public_key_hex"])
+        alg_name = account["alg_name"]
+        signer = create_signer_from_keypair(alg_name, secret_key, public_key)
+        
+        tx_obj = make_tx(
+            from_addr=tx["from"],
+            to=tx.get("to"),
+            nonce=int(tx["nonce"]),
+            value=int(tx.get("value", 0)),
+            data=bytes.fromhex(tx.get("data", "").replace("0x", "")),
+            gas_limit=int(tx["gas_limit"]),
+            max_fee=int(tx["max_fee"]),
+            chain_id=int(tx["chain_id"]),
+        )
+        
+        sign_bytes_data = sign_bytes(tx_obj)
+        signature = signer.sign(sign_bytes_data)
+        
+        raw_tx = pack_signed(
+            tx_obj,
+            signature=signature,
+            alg_id=signer.alg_id,
+            public_key=signer.public_key,
+        )
+        
+        return {
+            "signed_tx": "0x" + raw_tx.hex(),
+            "tx_hash": "0x" + _compute_tx_hash(raw_tx).hex(),
+        }
+    
+    if method == "wallet_sendTransaction":
+        if state.wallet_store.is_locked:
+            raise RuntimeError("Wallet is locked")
+        
+        tx = params.get("transaction")
+        from_addr = params.get("from")
+        
+        # Sign first
+        sign_result = await _execute_wallet_method("wallet_signTransaction", {"transaction": tx, "from": from_addr}, state)
+        
+        # Then send
+        node_status = state.node_manager.status()
+        if not node_status.running or not node_status.rpc_url:
+            raise RuntimeError("Node is not running")
+        
+        result = await _proxy_to_node("tx.sendRawTransaction", {"rawTx": sign_result["signed_tx"]}, node_status.rpc_url)
+        
+        # Track in history
+        tx_hash = sign_result["tx_hash"]
+        state.tx_history.add_pending(
+            tx_hash=tx_hash,
+            from_addr=from_addr,
+            to_addr=tx.get("to"),
+            value=int(tx.get("value", 0)),
+            gas_limit=tx.get("gas_limit"),
+            max_fee=tx.get("max_fee"),
+            nonce=tx.get("nonce"),
+        )
+        
+        return tx_hash
+    
+    raise ValueError(f"Cannot execute method: {method}")
 
 
 async def dispatch(method: str | None, params: dict[str, Any], state: WalletdState) -> Any:
@@ -513,6 +811,7 @@ def create_app(state: WalletdState) -> web.Application:
     app = web.Application()
     app["state"] = state
     app.router.add_post("/", handle_rpc)
+    app.router.add_post("/external", handle_external_rpc)
     return app
 
 
@@ -554,6 +853,9 @@ def main() -> int:
         node_manager=NodeManager(data_dir),
         wallet_store=WalletStore(resolve_wallet_path(data_dir)),
         tx_history=TxHistory(resolve_tx_history_path(data_dir)),
+        approval_queue=ApprovalQueue(resolve_approval_queue_path(data_dir)),
+        app_allowlist=AppAllowlist(resolve_app_allowlist_path(data_dir)),
+        rate_limiter=RateLimiter(requests_per_minute=10, burst_size=5),
     )
     app = create_app(state)
     web.run_app(app, host="127.0.0.1", port=port)

@@ -12,6 +12,7 @@ dependencies = [
   "omni-sdk>=0.1.0",
   "PySide6>=6.6",
   "qasync>=0.27",
+  "psutil>=5.9.0",
 ]
 
 [project.optional-dependencies]

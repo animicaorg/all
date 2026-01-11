@@ -47,6 +47,14 @@ def resolve_tx_history_path(data_dir: Path) -> Path:
     return data_dir / TX_HISTORY_FILE_NAME
 
 
+def resolve_approval_queue_path(data_dir: Path) -> Path:
+    return data_dir / "approval-queue.json"
+
+
+def resolve_app_allowlist_path(data_dir: Path) -> Path:
+    return data_dir / "app-allowlist.json"
+
+
 def resolve_node_data_dir(data_dir: Path, network: str) -> Path:
     return data_dir / NODE_DIR_NAME / network
 
