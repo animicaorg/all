@@ -68,8 +68,12 @@ class MainWindow(QMainWindow):
         self._chain_info_timer = QTimer(self)
         self._chain_info_timer.setInterval(3_000)
         self._chain_info_timer.timeout.connect(self._refresh_chain_info)
+        self._approval_timer = QTimer(self)
+        self._approval_timer.setInterval(1_000)  # Check for approvals every second
+        self._approval_timer.timeout.connect(self._check_pending_approvals)
         self._wallet_locked = True
         self._selected_account = None
+        self._pending_approvals: set[str] = set()  # Track shown approval requests
 
         self._build_menu()
         self._build_status_bar()
@@ -217,6 +221,7 @@ class MainWindow(QMainWindow):
             self._node_logs_timer.start()
             self._accounts_timer.start()
             self._chain_info_timer.start()
+            self._approval_timer.start()  # Start approval polling
             await self._update_accounts()
         else:
             self._walletd_status.setText("Walletd: unavailable")
@@ -537,6 +542,62 @@ class MainWindow(QMainWindow):
 
         self._set_wallet_controls_locked(True)
         return group
+    
+    def _check_pending_approvals(self) -> None:
+        """Check for and show pending approval requests."""
+        asyncio.create_task(self._process_pending_approvals())
+    
+    async def _process_pending_approvals(self) -> None:
+        """Process pending approval requests from external RPC."""
+        try:
+            # List pending approval requests
+            result = await self._walletd_manager._rpc_call("approval.list")
+            requests = result.get("requests", [])
+            
+            for req in requests:
+                request_id = req["request_id"]
+                
+                # Skip if already shown
+                if request_id in self._pending_approvals:
+                    continue
+                
+                # Mark as shown
+                self._pending_approvals.add(request_id)
+                
+                # Show approval dialog
+                from animica_qt_wallet.ui.approval_dialog import ApprovalDialog
+                dialog = ApprovalDialog(req, self)
+                approved = dialog.exec() == QDialog.DialogCode.Accepted
+                
+                # Send response
+                try:
+                    await self._walletd_manager._rpc_call(
+                        "approval.respond",
+                        {
+                            "request_id": request_id,
+                            "approved": approved,
+                            "reason": "User denied" if not approved else "",
+                        }
+                    )
+                    
+                    if approved:
+                        QMessageBox.information(
+                            self,
+                            "Request Approved",
+                            f"External request {req['method']} was approved."
+                        )
+                    
+                    # Remove from tracking
+                    self._pending_approvals.discard(request_id)
+                except Exception as exc:  # noqa: BLE001
+                    QMessageBox.warning(
+                        self,
+                        "Error",
+                        f"Failed to respond to approval request: {exc}"
+                    )
+        except Exception:  # noqa: BLE001
+            # Silently ignore errors to avoid spamming the UI
+            pass
 
     def closeEvent(self, event) -> None:  # noqa: N802
         if self._walletd_task:
