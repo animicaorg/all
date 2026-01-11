@@ -1795,3 +1795,50 @@ def test_select_block_peer_ignores_not_anchored_backoff_on_retry(tmp_path: Path)
     assert len(eligible_with_ignore) == 2
     assert peer_a in eligible_with_ignore
     assert peer_b in eligible_with_ignore
+
+
+def test_handle_sync_stall_clears_not_anchored_errors_on_recovery(tmp_path: Path) -> None:
+    """
+    Test that _handle_sync_stall clears not_anchored error states when
+    a new peer is successfully selected during recovery. This prevents
+    stale errors from being displayed in debug diagnostics.
+    """
+    node, _ = _make_service(tmp_path, "stall-error-clearing")
+    
+    # Register two peers
+    peer_a = _register_peer(node, "peer-a:0")
+    peer_b = _register_peer(node, "peer-b:0")
+    _setup_peer_hello(node, peer_a, head_height=100)
+    _setup_peer_hello(node, peer_b, head_height=100)
+    
+    # Set up active peer and simulate not_anchored errors
+    node._sync_active_block_peer = peer_a.remote
+    node._sync_last_header_error = "not_anchored"
+    node._sync_last_header_error_at = time.time()
+    node._sync_last_header_error_peer = peer_a.remote
+    node._sync_last_block_error = "not_anchored"
+    node._sync_last_block_error_at = time.time()
+    node._sync_last_block_error_peer = peer_a.remote
+    node._sync_block_stalled_reason = "not_anchored"
+    
+    # Give peer_a a not_anchored backoff (simulating failed checkpoint)
+    now = time.time()
+    node._sync_peer_backoff[peer_a.remote] = now + 30.0
+    node._sync_peer_backoff_reason[peer_a.remote] = "not_anchored"
+    
+    # Peer_b is eligible and should be selected during stall recovery
+    # Trigger stall handler
+    node._handle_sync_stall(reason="test_stall")
+    
+    # Verify errors were cleared because a new peer was successfully selected
+    assert node._sync_last_header_error is None
+    assert node._sync_last_header_error_at is None
+    assert node._sync_last_header_error_peer is None
+    assert node._sync_last_block_error is None
+    assert node._sync_last_block_error_at is None
+    assert node._sync_last_block_error_peer is None
+    assert node._sync_block_stalled_reason is None
+    
+    # Verify a new peer was selected
+    assert node._sync_active_block_peer == peer_b.remote
+    assert node._sync_last_recovery_action == "retry_blocks_new_peer"
