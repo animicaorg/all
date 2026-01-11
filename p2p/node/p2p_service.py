@@ -10798,6 +10798,82 @@ class P2PService:
         )
         return True
 
+    def _reset_chain_to_ancestor(self, *, height: int, reason: str) -> bool:
+        """
+        Reset chain to a specific ancestor height to resolve forks.
+        This is less drastic than resetting to genesis.
+        """
+        bdb = self._block_db()
+        ancestor_hash = bdb.get_canonical_hash(height)
+        if not ancestor_hash:
+            log.warning(
+                "Unable to reset chain to ancestor: hash not found",
+                extra={"height": height, "reason": reason},
+            )
+            return False
+        
+        log.warning(
+            "Resetting chain to ancestor to resolve fork",
+            extra={
+                "height": height,
+                "hash": ancestor_hash.hex(),
+                "reason": reason,
+                "matched_ancestor": self._sync_last_matched_ancestor_height,
+            },
+        )
+        
+        batch_fn = getattr(bdb.kv, "batch", None)
+        if callable(batch_fn):
+            with bdb.kv.batch() as batch:
+                bdb.set_canonical_head(height, bytes(ancestor_hash), batch=batch)
+                self._prune_canonical_heights(bdb, above_height=height, batch=batch)
+        else:
+            bdb.set_canonical_head(height, bytes(ancestor_hash))
+            self._prune_canonical_heights(bdb, above_height=height, batch=None)
+        
+        # Reset sync state but preserve what we can
+        # Clear headers and header sources since they may be on the wrong fork
+        self._sync_headers.clear()
+        self._sync_header_sources.clear()
+        self._sync_best_header = None
+        hdr = self._sync_header_by_hash(bytes(ancestor_hash))
+        if hdr is not None:
+            self._sync_best_header = hdr
+        
+        # Clear block queue for heights above the ancestor
+        self._sync_block_queue = deque(
+            h for h in self._sync_block_queue 
+            if (h_height := self._header_height(h)) is not None and h_height <= height
+        )
+        
+        # Clear block queue heights dict for heights above the ancestor
+        self._sync_block_queue_heights = {
+            h: ht for h, ht in self._sync_block_queue_heights.items() if ht <= height
+        }
+        
+        # Clear in-flight blocks above the ancestor
+        to_remove = [
+            h for h in self._sync_inflight_blocks.keys()
+            if (h_height := self._header_height(h)) is not None and h_height > height
+        ]
+        for h in to_remove:
+            self._sync_inflight_blocks.pop(h, None)
+            self._sync_inflight_peers.pop(h, None)
+        
+        # Reset progress tracking to trigger immediate sync
+        self._sync_last_progress_at = time.time()
+        self._sync_not_anchored_attempts = 0
+        self._sync_kick(reason="fork_resolved", aggressive=True)
+        
+        log.warning(
+            "Chain reset to ancestor complete",
+            extra={
+                "new_head_height": height,
+                "new_head_hash": ancestor_hash.hex(),
+            },
+        )
+        return True
+
     def _prune_canonical_heights(
         self,
         bdb: Any,
@@ -10975,10 +11051,25 @@ class P2PService:
             >= self._sync_not_anchored_reset_threshold
             and now - self._sync_last_progress_at > self._sync_stall_timeout
         )
+        # Also check if we should reset to a matched ancestor for longer forks
+        should_reset_to_ancestor = (
+            self._sync_not_anchored_attempts
+            >= self._sync_not_anchored_reset_threshold
+            and now - self._sync_last_progress_at > self._sync_stall_timeout
+            and self._sync_last_matched_ancestor_height is not None
+            and self._sync_last_matched_ancestor_height < anchor_height
+        )
+        
         if should_reset and self._reset_chain_to_genesis(reason="not_anchored"):
             action = "reset_to_genesis"
             self._sync_last_checkpoint_action = "reset_to_genesis"
             self._sync_last_recovery_action = "reset_to_genesis"
+        elif should_reset_to_ancestor and self._reset_chain_to_ancestor(
+            height=self._sync_last_matched_ancestor_height,
+            reason="fork_resolution",
+        ):
+            action = "reset_to_ancestor"
+            self._sync_last_recovery_action = "reset_to_ancestor"
         if action in {"fork_discovery", "retry_locator", "retry_genesis_locator"}:
             self._sync_active_header_peer = None
             self._sync_kick(reason="not_anchored_recover", aggressive=True)
@@ -11070,6 +11161,13 @@ class P2PService:
             return self._block_db().get_header_by_hash(block_hash) is not None
         except Exception:
             return False
+
+    def _header_height(self, block_hash: bytes) -> Optional[int]:
+        """Get the height of a header by its hash."""
+        hdr = self._sync_header_by_hash(block_hash)
+        if hdr:
+            return hdr.height
+        return None
 
     def _get_block_raw(self, block_hash: bytes) -> bytes | None:
         try:
