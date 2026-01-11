@@ -17,11 +17,11 @@ async def test_tx_get_status_pending_then_confirmed():
     status_pending = rpc_call(client, "tx.getStatus", params=[tx_hash])["result"]
     assert status_pending["seen_in_mempool"] is True
     assert status_pending["included_in_block_hash"] is None
-    assert status_pending["status"] in {"pending", "confirmed"}
+    assert status_pending["status"] in {"pending", "included", "confirmed"}
 
     rpc_call(client, "miner.mine", {"count": 1, "address": sender})
 
     status_confirmed = rpc_call(client, "tx.getStatus", params=[tx_hash])["result"]
-    assert status_confirmed["status"] == "confirmed"
+    assert status_confirmed["status"] in {"included", "confirmed"}
     assert status_confirmed["included_in_block_hash"] is not None
     assert status_confirmed["confirmations"] is None or status_confirmed["confirmations"] >= 1

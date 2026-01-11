@@ -72,6 +72,7 @@ from core.utils.hash import sha3_256
 from core.utils.pow import micro_threshold_to_target256
 from execution.runtime.env import make_block_env
 from execution.runtime.executor import apply_block
+from rpc.metrics import REORG_COUNT, REORG_DEPTH
 
 # Import difficulty adjustment functions
 try:
@@ -1154,6 +1155,9 @@ class BlockImporter:
                     "new_height": best.height,
                 },
             )
+            REORG_COUNT.inc()
+            if detached_list:
+                REORG_DEPTH.observe(len(detached_list))
 
         # Reset difficulty anchor to the LCA timestamp if possible.
         if attached_list:
@@ -1477,6 +1481,9 @@ class BlockImporter:
             self._prune_state_snapshots()
         except Exception:
             return
+
+    def get_state_snapshot(self, height: int) -> Any | None:
+        return self._state_snapshots.get(int(height))
 
     def _prune_state_snapshots(self) -> None:
         if self._state_snapshot_limit <= 0:
@@ -1975,6 +1982,34 @@ def _get_importer(
     )
     _IMPORTER_CACHE[id(block_db)] = importer
     return importer
+
+
+def get_importer(
+    block_db,
+    state_db,
+    tx_index,
+    *,
+    genesis_path: Optional[str] = None,
+) -> BlockImporter:
+    params = _load_chain_params_for_import(genesis_path)
+    return _get_importer(block_db, state_db, tx_index, params)
+
+
+def get_state_snapshot(
+    block_db,
+    state_db,
+    tx_index,
+    *,
+    genesis_path: Optional[str] = None,
+    height: int,
+) -> Any | None:
+    importer = get_importer(
+        block_db,
+        state_db,
+        tx_index,
+        genesis_path=genesis_path,
+    )
+    return importer.get_state_snapshot(height)
 
 
 def import_block(

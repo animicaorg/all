@@ -211,13 +211,17 @@ def _parse_balance(result: Any) -> int:
     raise BalanceQueryError(f"Unexpected balance response type: {type(result)}")
 
 
-def get_balance(address: str, rpc_url: str) -> int:
+def get_balance(address: str, rpc_url: str, *, tag: str = "latest") -> int:
     """Fetch balance for an address using available RPC methods."""
 
     errors: List[str] = []
     for method in BALANCE_METHODS:
         try:
-            result = _request_rpc(method, [address], rpc_url)
+            params = [address, tag] if tag else [address]
+            try:
+                result = _request_rpc(method, params, rpc_url)
+            except Exception:
+                result = _request_rpc(method, [address], rpc_url)
             if result is None:
                 raise BalanceQueryError("Empty balance response")
             return _parse_balance(result)
@@ -225,6 +229,19 @@ def get_balance(address: str, rpc_url: str) -> int:
             errors.append(f"{method}: {exc}")
             continue
     raise BalanceQueryError("; ".join(errors) or "Balance RPC failed")
+
+
+def _get_head_info(rpc_url: str, method: str) -> Optional[Dict[str, Any]]:
+    try:
+        head_result = _request_rpc(method, [], rpc_url)
+        if head_result and isinstance(head_result, dict):
+            return {
+                "height": head_result.get("height") or head_result.get("number"),
+                "hash": head_result.get("hash"),
+            }
+    except Exception:
+        return None
+    return None
 
 
 def _is_dilithium3_alg(alg_name: str) -> bool:
@@ -542,6 +559,16 @@ def show(
         help="Balance source: chain (default, query via RPC) or cached (from wallet file)",
         case_sensitive=False,
     ),
+    include_tip: bool = typer.Option(
+        False,
+        "--include-tip",
+        help="Include unsafe tip balance (latest head).",
+    ),
+    include_mempool: bool = typer.Option(
+        False,
+        "--include-mempool",
+        help="Include mempool delta for the address (pending transactions).",
+    ),
     show_secret: bool = typer.Option(False, "--show-secret", help="Include secret key in output (WARNING: sensitive)"),
     i_know_what_im_doing: bool = typer.Option(
         False,
@@ -566,34 +593,47 @@ def show(
         raise typer.Exit(code=1)
 
     balance_confirmed: Optional[int] = None
+    balance_tip: Optional[int] = None
+    mempool_delta: Optional[Dict[str, Any]] = None
     balance_source = source_choice
-    head_info: Optional[Dict[str, Any]] = None
+    balance_warning: Optional[str] = None
+    safe_head_info: Optional[Dict[str, Any]] = None
+    tip_head_info: Optional[Dict[str, Any]] = None
     queried_at: Optional[str] = None
 
     # Query chain for balance and head info
     if source_choice == "chain":
         rpc_endpoint = _resolve_rpc_url(rpc_url)
         guard_bootstrap_rpc(rpc_endpoint, allow_remote=allow_remote_rpc, method="state.getBalance")
-        
-        # Get head info
+
+        safe_head_info = _get_head_info(rpc_endpoint, "chain.getSafeHead")
+        if safe_head_info is None:
+            safe_head_info = _get_head_info(rpc_endpoint, "chain.getHead")
+        if include_tip or safe_head_info is None:
+            tip_head_info = _get_head_info(rpc_endpoint, "chain.getHead")
+
+        if safe_head_info is not None:
+            safe_head_info["rpc_url"] = rpc_endpoint
+        if tip_head_info is not None:
+            tip_head_info["rpc_url"] = rpc_endpoint
+        queried_at = datetime.now(timezone.utc).isoformat()
+
+        # Get balance with tag="safe"
         try:
-            head_result = _request_rpc("chain.getHead", [], rpc_endpoint)
-            if head_result and isinstance(head_result, dict):
-                head_info = {
-                    "height": head_result.get("height"),
-                    "hash": head_result.get("hash"),
-                    "rpc_url": rpc_endpoint,
-                }
-            queried_at = datetime.now(timezone.utc).isoformat()
+            balance_confirmed = get_balance(entry.address, rpc_endpoint, tag="safe")
+            if include_tip:
+                balance_tip = get_balance(entry.address, rpc_endpoint, tag="latest")
+            if include_mempool:
+                mempool_delta = _request_rpc("state.getMempoolDelta", [entry.address], rpc_endpoint)
         except Exception as exc:
-            typer.echo(f"Warning: Failed to fetch head info: {exc}", err=True)
-        
-        # Get balance with tag="head"
-        try:
-            balance_confirmed = get_balance(entry.address, rpc_endpoint)
-        except Exception as exc:
-            typer.echo(f"Error: Failed to fetch balance from chain: {exc}", err=True)
-            raise typer.Exit(code=1)
+            balance_warning = f"Failed to fetch balance from chain: {exc}"
+            typer.echo(f"Warning: {balance_warning}", err=True)
+            cached_balance = raw_entry.get("balance")
+            try:
+                balance_confirmed = int(cached_balance) if cached_balance is not None else None
+                balance_source = "cached"
+            except Exception:
+                balance_confirmed = None
     else:
         # Cached balance from wallet file
         cached_balance = raw_entry.get("balance")
@@ -622,11 +662,24 @@ def show(
     output["balance_confirmed_formatted"] = (
         format_amount(balance_confirmed) if balance_confirmed is not None else None
     )
+    if balance_tip is not None:
+        output["balance_tip"] = balance_tip
+        output["balance_tip_formatted"] = format_amount(balance_tip)
+    if mempool_delta is not None:
+        output["balance_mempool_delta"] = mempool_delta.get("delta")
+        output["balance_mempool_delta_formatted"] = (
+            format_amount(mempool_delta.get("delta")) if mempool_delta.get("delta") is not None else None
+        )
+        output["mempool_delta"] = mempool_delta
     output["balance_source"] = balance_source
+    if balance_warning:
+        output["balance_warning"] = balance_warning
     
     # Add head info if available
-    if head_info is not None:
-        output["head"] = head_info
+    if safe_head_info is not None:
+        output["safe_head"] = safe_head_info
+    if tip_head_info is not None:
+        output["head"] = tip_head_info
     if queried_at is not None:
         output["queried_at"] = queried_at
     

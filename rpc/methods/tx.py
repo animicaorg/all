@@ -27,7 +27,7 @@ _TX_PENDING_TTL_S = int(os.environ.get("ANIMICA_TX_PENDING_TTL_S", "3600") or 36
 
 # ——— Validation failure metrics ———
 try:
-    from rpc.metrics import TX_VALIDATION_FAILURES
+    from rpc.metrics import TX_CONFIRMED, TX_MEMPOOL_ACCEPT, TX_VALIDATION_FAILURES
 except Exception:  # pragma: no cover
     class _Counter:
         def labels(self, **kwargs):
@@ -37,6 +37,8 @@ except Exception:  # pragma: no cover
             pass
 
     TX_VALIDATION_FAILURES = _Counter()  # type: ignore[assignment]
+    TX_MEMPOOL_ACCEPT = _Counter()  # type: ignore[assignment]
+    TX_CONFIRMED = _Counter()  # type: ignore[assignment]
 
 # ——— Optional deps (be tolerant during early bring-up) ———
 
@@ -1294,6 +1296,50 @@ def tx_send_raw_transaction(rawTx: str) -> t.Any:
         ) from e
 
 
+def _simulate_preflight(tx_like: t.Any, obj: dict) -> dict[str, t.Any]:
+    ctx = deps.get_ctx()
+    state_db = ctx.state_db
+    snapshot = getattr(state_db, "snapshot", None)
+    revert = getattr(state_db, "revert", None)
+    if not callable(snapshot) or not callable(revert):
+        raise rpc_errors.InternalError(
+            "State snapshot/revert not available for preflight simulation"
+        )
+
+    snap = snapshot()
+    try:
+        from core.chain import block_import
+        from execution.runtime.env import make_block_env
+        from execution.runtime.executor import apply_tx
+
+        importer = block_import.get_importer(
+            ctx.block_db,
+            ctx.state_db,
+            ctx.tx_index,
+            genesis_path=str(ctx.cfg.genesis_path) if ctx.cfg.genesis_path else None,
+        )
+        params = importer.params
+
+        head = deps.get_head()
+        header_obj = None
+        if isinstance(head, dict):
+            head_hash = head.get("hash")
+            if head_hash and hasattr(ctx.block_db, "get_header_by_hash"):
+                head_hash_str = head_hash[2:] if isinstance(head_hash, str) and head_hash.startswith("0x") else head_hash
+                try:
+                    head_hash_bytes = bytes.fromhex(head_hash_str) if isinstance(head_hash_str, str) else head_hash_str
+                except Exception:
+                    head_hash_bytes = None
+                if head_hash_bytes is not None:
+                    header_obj = ctx.block_db.get_header_by_hash(head_hash_bytes)
+        block_env = make_block_env(header_obj or head or {}, params)
+
+        result = apply_tx(tx_like, state_db, block_env, params=params)
+        return {"ok": bool(getattr(result, "is_success", False)), "result": result.to_dict()}
+    finally:
+        revert(snap)
+
+
 def _tx_send_raw_transaction(rawTx: str) -> t.Any:
     start_s = time.time()
     tx_hash_hex = ""
@@ -1320,6 +1366,10 @@ def _tx_send_raw_transaction(rawTx: str) -> t.Any:
                 "latency_ms": latency_ms,
             },
         )
+        if decision == "accepted":
+            TX_MEMPOOL_ACCEPT.labels(reason="accepted").inc()
+        else:
+            TX_MEMPOOL_ACCEPT.labels(reason=_tx_reject_category(reason_value)).inc()
     def _format_send_result(
         *,
         tx_hash: str,
@@ -1359,6 +1409,8 @@ def _tx_send_raw_transaction(rawTx: str) -> t.Any:
             return _tx_hash_hex(raw_bytes)
         except Exception:
             return _hex(_sha3_256(raw_bytes)) or ""
+
+    # _simulate_preflight defined at module scope
 
     if not isinstance(rawTx, str):
         raise rpc_errors.InvalidParams("rawTx must be a hex string")
@@ -1442,6 +1494,16 @@ def _tx_send_raw_transaction(rawTx: str) -> t.Any:
 
         # optional balance check
         _validate_sufficient_balance(obj)
+
+        preflight = _simulate_preflight(tx_like, obj if isinstance(obj, dict) else {})
+        if not preflight.get("ok"):
+            raise rpc_errors.InvalidTx(
+                "Preflight simulation failed",
+                data={
+                    "tx_hash": tx_hash_hex,
+                    "simulation": preflight.get("result"),
+                },
+            )
 
         # duplicates: if already pending or persisted, return (idempotent)
         svc = _get_mempool_service()
@@ -1676,6 +1738,29 @@ def _tx_send_raw_transaction(rawTx: str) -> t.Any:
 
 
 @method(
+    "tx.simulateRawTransaction",
+    desc="Simulate a raw transaction against the current head state without admitting it.",
+    aliases=("tx_simulateRawTransaction",),
+)
+def tx_simulate_raw_transaction(rawTx: str) -> dict:
+    if not isinstance(rawTx, str):
+        raise rpc_errors.InvalidParams("rawTx must be a hex string")
+    if rawTx.startswith("0b:"):
+        raise rpc_errors.InvalidParams("base64 not supported yet; send hex (0x…)")
+
+    raw = _b(rawTx)
+    tx_like, obj = _decode_tx(raw)
+    try:
+        result = _simulate_preflight(tx_like, obj if isinstance(obj, dict) else {})
+    except Exception as exc:
+        raise rpc_errors.InvalidTx(
+            "Preflight simulation failed",
+            data={"error": str(exc)},
+        ) from exc
+    return result
+
+
+@method(
     "tx.decodeRawTransaction",
     desc="Decode a raw CBOR-encoded transaction without signature verification.",
     aliases=("tx_decodeRawTransaction",),
@@ -1881,6 +1966,14 @@ def tx_get_status(txHash: str) -> dict:
     except Exception:
         head_height = None
 
+    safe_head = None
+    safe_head_height = None
+    try:
+        safe_head = deps.get_safe_head()
+        safe_head_height = int(safe_head.get("height")) if safe_head.get("height") is not None else None
+    except Exception:
+        safe_head_height = None
+
     confirmations = None
     if included_height is not None and head_height is not None:
         if head_height >= included_height:
@@ -1888,15 +1981,26 @@ def tx_get_status(txHash: str) -> dict:
         else:
             confirmations = 0
 
-    finality = int(os.environ.get("ANIMICA_TX_FINALITY_CONFIRMATIONS", "12") or 12)
-    finalized = bool(confirmations is not None and confirmations >= finality)
+    finality = int(os.environ.get("ANIMICA_TX_FINALITY_CONFIRMATIONS", deps.get_finality_depth()) or deps.get_finality_depth())
+    safe_confirmations = None
+    if included_height is not None and safe_head_height is not None:
+        if safe_head_height >= included_height:
+            safe_confirmations = int(safe_head_height - included_height + 1)
+        else:
+            safe_confirmations = 0
+    finalized = bool(
+        safe_confirmations is not None and safe_confirmations >= 1
+    ) or bool(confirmations is not None and confirmations >= finality)
 
     reorged_out = False
     if included_hash is None and tx_hash_hex in _REORGED_TXS:
         reorged_out = True
 
-    if included_hash is not None:
+    if included_hash is not None and finalized:
         status = "confirmed"
+        TX_CONFIRMED.inc()
+    elif included_hash is not None:
+        status = "included"
     elif reorged_out:
         status = "reorged_out"
     elif seen_in_mempool:
@@ -1911,7 +2015,10 @@ def tx_get_status(txHash: str) -> dict:
         "included_in_block_hash": included_hash,
         "included_height": included_height,
         "confirmations": confirmations,
+        "safe_confirmations": safe_confirmations,
+        "safe_head": safe_head,
         "finalized": finalized,
+        "finality_depth": finality,
         "reorged_out": reorged_out,
     }
 

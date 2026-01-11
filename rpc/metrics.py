@@ -132,6 +132,39 @@ TX_VALIDATION_FAILURES = Counter(
     registry=REG,
 )
 
+# Reorg tracking
+REORG_COUNT = Counter(
+    "animica_chain_reorg_total",
+    "Total number of detected chain reorgs.",
+    registry=REG,
+)
+REORG_DEPTH = Histogram(
+    "animica_chain_reorg_depth",
+    "Depth of detected chain reorgs.",
+    buckets=(1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 144),
+    registry=REG,
+)
+
+# Safe head / finality
+SAFE_HEAD_LAG = Gauge(
+    "animica_chain_safe_head_lag",
+    "Lag between canonical head and safe head in blocks.",
+    registry=REG,
+)
+
+# Transaction lifecycle
+TX_MEMPOOL_ACCEPT = Counter(
+    "animica_tx_mempool_accept_total",
+    "Transactions accepted/rejected by mempool with reason label.",
+    ["reason"],
+    registry=REG,
+)
+TX_CONFIRMED = Counter(
+    "animica_tx_confirmed_total",
+    "Transactions reported as confirmed/finalized.",
+    registry=REG,
+)
+
 # Head / chain (optional helpers)
 CHAIN_HEIGHT = Gauge(
     "animica_chain_height",

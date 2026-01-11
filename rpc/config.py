@@ -311,6 +311,7 @@ class RpcConfig:
     metrics_port: int
     openrpc_enabled: bool
     access: AccessControlConfig
+    finality_depth: int
     genesis_path: Path | None = None
 
     @property
@@ -424,6 +425,7 @@ def load() -> RpcConfig:
     metrics_enabled = _env_bool("ANIMICA_METRICS_ENABLED", True)
     metrics_port = _env_int("ANIMICA_METRICS_PORT", 9100)
     openrpc_enabled = _env_bool("ANIMICA_OPENRPC_ENABLED", True)
+    finality_depth = _env_int("ANIMICA_FINALITY_DEPTH", 12)
 
     return RpcConfig(
         host=host,
@@ -438,6 +440,7 @@ def load() -> RpcConfig:
         metrics_port=metrics_port,
         openrpc_enabled=openrpc_enabled,
         access=access,
+        finality_depth=finality_depth,
         genesis_path=genesis_path,
     )
 
@@ -488,6 +491,7 @@ class Config:
     admin_allowlist: list[str] = field(default_factory=list)
     bootstrap_rate_limit: int = 0
     bootstrap_node: bool = False
+    finality_depth: int = 12
 
 
 def load_config() -> Config:
@@ -507,6 +511,7 @@ def load_config() -> Config:
         admin_allowlist=list(cfg.access.admin_allowlist),
         bootstrap_rate_limit=cfg.access.bootstrap_rate_limit,
         bootstrap_node=cfg.access.bootstrap_node,
+        finality_depth=cfg.finality_depth,
     )
 
 

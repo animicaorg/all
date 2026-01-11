@@ -6,6 +6,7 @@ import time
 import typing as t
 
 from rpc import deps
+from rpc.metrics import SAFE_HEAD_LAG
 from rpc.hashrate import difficulty_to_work, work_to_hashshare_rate
 from rpc.methods import method
 from rpc.methods.block import (_block_view, _fallback_block,
@@ -405,6 +406,59 @@ def chain_get_head() -> dict:
     except Exception:
         pass
     return view
+
+
+@method(
+    "chain.getSafeHead",
+    desc="Return the reorg-resistant safe head (height + header view).",
+    aliases=("chain_getSafeHead",),
+)
+def chain_get_safe_head() -> dict:
+    safe = deps.get_safe_head()
+    safe_height = safe.get("height")
+    safe_hash = safe.get("hash")
+    if safe_height is None:
+        return {}
+
+    ctx = deps.get_ctx()
+    block_db = ctx.block_db
+    header = None
+    if hasattr(block_db, "get_header_by_height"):
+        header = block_db.get_header_by_height(int(safe_height))
+    if header is None and safe_hash is not None and hasattr(block_db, "get_header_by_hash"):
+        lookup_hash = safe_hash
+        if isinstance(lookup_hash, str):
+            lookup_hash = lookup_hash[2:] if lookup_hash.startswith("0x") else lookup_hash
+            try:
+                lookup_hash = bytes.fromhex(lookup_hash)
+            except Exception:
+                lookup_hash = None
+        if lookup_hash is not None:
+            header = block_db.get_header_by_hash(lookup_hash)
+
+    chain_id_val = int(deps.get_chain_id())
+    view = _header_view(int(safe_height), header, chain_id_fallback=chain_id_val)
+    view["hash"] = safe_hash or view.get("hash")
+
+    head = deps.get_head()
+    head_height = head.get("height") if isinstance(head, dict) else None
+    if head_height is not None:
+        SAFE_HEAD_LAG.set(max(0, int(head_height) - int(safe_height)))
+    _log.debug(
+        "safe_head",
+        extra={"height": safe_height, "hash": safe_hash, "head_height": head_height},
+    )
+
+    return view
+
+
+@method(
+    "chain.getFinalityDepth",
+    desc="Return the configured finality depth for safe-head reads.",
+    aliases=("chain_getFinalityDepth",),
+)
+def chain_get_finality_depth() -> int:
+    return int(deps.get_finality_depth())
 
 
 def _network_hashrate_unknown(

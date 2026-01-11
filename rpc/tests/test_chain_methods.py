@@ -134,3 +134,14 @@ def test_eth_aliases_resolve():
     )
     blk = blk_res["result"]
     assert blk["header"]["number"] == 0
+
+
+def test_get_safe_head_and_finality_depth():
+    client, _, _ = new_test_client()
+    safe_head = rpc_call(client, "chain.getSafeHead")["result"]
+    assert safe_head["number"] == 0
+    assert isinstance(safe_head["hash"], str) and safe_head["hash"].startswith("0x")
+
+    depth = rpc_call(client, "chain.getFinalityDepth")["result"]
+    assert isinstance(depth, int)
+    assert depth >= 0
