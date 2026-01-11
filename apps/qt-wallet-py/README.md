@@ -9,6 +9,11 @@ Minimal PySide6 + qasync scaffold for the Animica wallet.
 - **Receive Tokens**: View addresses and QR codes for receiving payments
 - **Node Integration**: Embedded node management with automatic sync
 - **Chain Overview**: View balance, chain status, and peer connections
+- **External RPC Interface**: Secure API for dApps and tools to request wallet actions
+  - User approval required for all signing/sending operations
+  - Localhost-only with token authentication
+  - Rate limiting and app allowlist support
+  - See [External RPC API docs](docs/EXTERNAL_RPC_API.md) for details
 
 ## Requirements
 
@@ -47,6 +52,27 @@ black --check .
 pytest
 python test_send_receive.py  # Validate send/receive implementation
 ```
+
+## External RPC Interface
+
+The wallet provides a secure external RPC interface for dApps and tools. See [External RPC API docs](docs/EXTERNAL_RPC_API.md) for full documentation.
+
+### Quick Example
+
+```bash
+# Ensure wallet is running
+./run.sh
+
+# In another terminal, run the example client
+python example_external_rpc.py
+```
+
+The example demonstrates:
+1. Getting chain ID (no approval required)
+2. Requesting wallet accounts (requires approval)
+3. Sending a transaction (requires approval)
+
+All signing/sending operations will trigger an approval dialog in the wallet UI.
 
 ## Windows
 
