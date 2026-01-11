@@ -75,7 +75,7 @@ from p2p.sync.cache_store import SyncCacheConfig, SyncCacheState, SyncCacheStore
 log = logging.getLogger("animica.p2p.service")
 
 # Sync performance tuning constants
-MIN_SYNC_TICK_SEC: float = 0.005  # Minimum sync tick interval (5ms) - massively reduced for ultra-fast sync
+MIN_SYNC_TICK_SEC: float = 0.001  # Minimum sync tick interval (1ms) - ultra aggressive for maximum sync speed
 
 DEFAULT_BOOTSTRAP_SEEDS = [
     "/dns4/mainnet.animica.org/tcp/30333",
@@ -112,6 +112,7 @@ class _PeerState:
     write_lock: asyncio.Lock
     peer_id: Optional[str] = None  # hex string
     hello: Optional[dict] = None
+    hello_received_at: float = 0.0  # Track when hello was received for staleness checking
     hello_done: asyncio.Event = field(default_factory=asyncio.Event)
     pending_headers: Optional[asyncio.Future] = None
     pending_header_request_id: Optional[str] = None
@@ -916,7 +917,10 @@ class P2PService:
         self._sync_stale_network_best_at = 0.0
         self._sync_stale_network_best_count = 0
         self._sync_stale_network_best_cooldown = float(
-            os.environ.get("ANIMICA_P2P_STALE_NETWORK_BEST_COOLDOWN", "30.0") or 30.0
+            os.environ.get("ANIMICA_P2P_STALE_NETWORK_BEST_COOLDOWN", "5.0") or 5.0
+        )
+        self._sync_network_best_cache_timeout = float(
+            os.environ.get("ANIMICA_P2P_NETWORK_BEST_CACHE_TIMEOUT", "60.0") or 60.0
         )
         self._sync_peer_head_stale_sec = float(
             os.environ.get("ANIMICA_P2P_PEER_HEAD_STALE_SEC", "60.0") or 60.0
@@ -1193,7 +1197,7 @@ class P2PService:
         self._sync_enabled = _env_flag("SYNC_ENABLED", "ANIMICA_SYNC_ENABLED", default=True)
         self._sync_requested = False
         self._sync_requested_at: Optional[float] = None
-        tick_ms = float(_env_value("SYNC_TICK_MS", "ANIMICA_SYNC_TICK_MS", default="5") or 5)  # Massively reduced from 25ms to 5ms for ultra-fast sync (hundreds-to-thousands blocks/sec)
+        tick_ms = float(_env_value("SYNC_TICK_MS", "ANIMICA_SYNC_TICK_MS", default="1") or 1)  # Ultra-aggressive 1ms default for maximum sync speed (reduces from 5ms)
         self._sync_tick_sec = max(MIN_SYNC_TICK_SEC, tick_ms / 1000.0)  # Use named constant for minimum
         self._sync_boost_until: Optional[float] = None
         self._sync_boost_tick_sec: Optional[float] = None
@@ -3852,6 +3856,7 @@ class P2PService:
             return
         if peer.hello is None:
             peer.hello = {}
+            peer.hello_received_at = time.time()  # Initialize timestamp if creating new hello dict
         try:
             current = int(peer.hello.get("head_height") or 0)
         except Exception:
@@ -5410,6 +5415,7 @@ class P2PService:
             getattr(hello, "network_params_hash", b"")
         ) or data.get("network_params_hash") or data.get("networkParamsHash")
         peer.hello = normalized
+        peer.hello_received_at = time.time()  # Track when hello was received
         peer.hello_done.set()
         if normalized.get("head_height"):
             self._update_peer_head_table(
@@ -9624,6 +9630,9 @@ class P2PService:
         
         This fixes the issue where nodes only see their direct peers' heights,
         causing premature sync stopping and network-wide forks.
+        
+        Note: We now check for staleness in cached network_best_height values
+        to prevent getting stuck on outdated values.
         """
         heights: list[int] = []
         now = time.time()
@@ -9639,11 +9648,14 @@ class P2PService:
                         heights.append(int(info.height))
             try:
                 # Add peer's view of network best height (peers-of-peers)
-                network_height = (peer.hello or {}).get("network_best_height")
-                if network_height is not None:
-                    network_height = int(network_height)
-                    if network_height > 0:
-                        heights.append(network_height)
+                # But only if the hello message is recent (not stale)
+                hello_age = now - peer.hello_received_at if peer.hello_received_at else float('inf')
+                if hello_age <= self._sync_network_best_cache_timeout:
+                    network_height = (peer.hello or {}).get("network_best_height")
+                    if network_height is not None:
+                        network_height = int(network_height)
+                        if network_height > 0:
+                            heights.append(network_height)
             except Exception:
                 continue
         if not heights:
@@ -10484,12 +10496,37 @@ class P2PService:
             and max_peer_height <= local_height
         ):
             now = time.time()
+            # Log diagnostic info when detecting stale network best
+            log.info(
+                "Detected stale_network_best condition",
+                extra={
+                    "local_height": local_height,
+                    "remote_height": remote_height,
+                    "network_best_height": network_best_height,
+                    "max_peer_height": max_peer_height,
+                    "cooldown_remaining": (
+                        self._sync_stale_network_best_cooldown
+                        - (now - self._sync_stale_network_best_at)
+                        if self._sync_stale_network_best_at
+                        else 0
+                    ),
+                },
+            )
             if (
                 self._sync_stale_network_best_at
                 and now - self._sync_stale_network_best_at
                 < self._sync_stale_network_best_cooldown
             ):
                 self._sync_stale_network_best_count += 1
+                # If we've seen this many times, we're likely truly at tip
+                if self._sync_stale_network_best_count >= 3:
+                    log.info(
+                        "Stale network_best detected multiple times, treating as at_tip",
+                        extra={
+                            "count": self._sync_stale_network_best_count,
+                            "local_height": local_height,
+                        },
+                    )
                 return "at_tip"
             self._sync_stale_network_best_at = now
             self._sync_stale_network_best_count = 1
