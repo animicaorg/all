@@ -9,6 +9,8 @@ from animica_qt_wallet.core.paths import get_app_data_dir
 DEFAULT_PORT = 17834
 TOKEN_FILE_NAME = "walletd.token"
 LOG_FILE_NAME = "walletd.log"
+NODE_DIR_NAME = "node"
+NODE_LOG_FILE_NAME = "node.log"
 
 
 def resolve_port(override: int | None = None) -> int:
@@ -33,6 +35,14 @@ def resolve_token_path(data_dir: Path) -> Path:
 
 def resolve_log_path(data_dir: Path) -> Path:
     return data_dir / LOG_FILE_NAME
+
+
+def resolve_node_data_dir(data_dir: Path, network: str) -> Path:
+    return data_dir / NODE_DIR_NAME / network
+
+
+def resolve_node_log_path(data_dir: Path, network: str) -> Path:
+    return resolve_node_data_dir(data_dir, network) / NODE_LOG_FILE_NAME
 
 
 def load_or_create_token(data_dir: Path) -> str:

@@ -15,8 +15,10 @@ from animica_qt_wallet.walletd.config import (
     load_or_create_token,
     resolve_data_dir,
     resolve_log_path,
+    resolve_node_log_path,
     resolve_port,
 )
+from animica_qt_wallet.walletd.node_manager import NodeManager, NodeStatus
 
 
 @dataclass
@@ -24,6 +26,8 @@ class WalletdState:
     token: str
     rpc_url: str
     log_path: Path
+    node_manager: NodeManager
+    node_network: str = "mainnet"
     last_error: str | None = None
 
 
@@ -80,15 +84,43 @@ async def dispatch(method: str | None, params: dict[str, Any], state: WalletdSta
     if method == "walletd.version":
         return {"version": _resolve_version()}
     if method == "walletd.getStatus":
+        node_status = state.node_manager.status()
         return {
-            "node_running": False,
+            "node_running": node_status.running,
             "pid": os.getpid(),
             "rpc_url": state.rpc_url,
+            "node_rpc_url": node_status.rpc_url,
+            "node_network": node_status.network,
             "last_error": state.last_error,
         }
     if method == "walletd.getLogsTail":
         lines = int(params.get("lines", 200))
         return {"lines": _tail_log(state.log_path, max(1, min(lines, 1000)))}
+    if method == "node.start":
+        network = params.get("network", state.node_network)
+        extra_args = params.get("extra_args", [])
+        if network not in {"mainnet", "testnet"}:
+            raise ValueError("Unsupported network (expected mainnet or testnet)")
+        if not isinstance(extra_args, list) or not all(isinstance(arg, str) for arg in extra_args):
+            raise ValueError("extra_args must be a list of strings")
+        state.node_network = network
+        status = await state.node_manager.start(network, extra_args=extra_args)
+        return _node_status_payload(status)
+    if method == "node.stop":
+        await state.node_manager.stop()
+        return {"stopped": True}
+    if method == "node.status":
+        return _node_status_payload(state.node_manager.status())
+    if method == "node.logsTail":
+        lines = int(params.get("lines", 200))
+        log_path = resolve_node_log_path(state.node_manager.data_dir, state.node_network)
+        return {"lines": _tail_log(log_path, max(1, min(lines, 2000)))}
+    if method == "node.rpcInfo":
+        status = state.node_manager.status()
+        return {
+            "rpc_url": status.rpc_url,
+            "network": status.network,
+        }
     raise ValueError(f"Unknown method: {method}")
 
 
@@ -115,6 +147,20 @@ def create_app(state: WalletdState) -> web.Application:
     return app
 
 
+def _node_status_payload(status: NodeStatus) -> dict[str, Any]:
+    return {
+        "running": status.running,
+        "pid": status.pid,
+        "network": status.network,
+        "rpc_url": status.rpc_url,
+        "restarting": status.restarting,
+        "last_exit_code": status.last_exit_code,
+        "last_error": status.last_error,
+        "backoff_seconds": status.backoff_seconds,
+        "started_at": status.started_at,
+    }
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Animica walletd service")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
@@ -132,7 +178,12 @@ def main() -> int:
     _setup_logging(log_path)
     logging.getLogger(__name__).info("Starting walletd on %s", rpc_url)
 
-    state = WalletdState(token=token, rpc_url=rpc_url, log_path=log_path)
+    state = WalletdState(
+        token=token,
+        rpc_url=rpc_url,
+        log_path=log_path,
+        node_manager=NodeManager(data_dir),
+    )
     app = create_app(state)
     web.run_app(app, host="127.0.0.1", port=port)
     return 0
