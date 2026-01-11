@@ -328,7 +328,7 @@ animica sync status --json | jq '{phase, height, network_best_height, stall_reas
 
 If issues arise, revert with:
 ```bash
-git revert f95f607c
+git revert <commit-hash>
 ```
 
 The change is minimal (13 lines) and isolated to block peer selection logic.

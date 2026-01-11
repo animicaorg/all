@@ -1765,9 +1765,7 @@ def test_select_block_peer_ignores_not_anchored_backoff_on_retry(tmp_path: Path)
     when no eligible peers are found initially. This prevents permanent sync stalls
     when all peers temporarily fail checkpoint anchor validation.
     """
-    node, deps_sync = _make_service(tmp_path, "block-peer-not-anchored-retry")
-    _ = deps_sync
-    
+    node, _ = _make_service(tmp_path, "block-peer-not-anchored-retry")
     # Register two peers
     peer_a = _register_peer(node, "peer-a:0")
     peer_b = _register_peer(node, "peer-b:0")
