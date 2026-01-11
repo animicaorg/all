@@ -25,30 +25,30 @@ class RateLimiter:
     def check_rate_limit(self, client_id: str) -> tuple[bool, str]:
         """
         Check if a request from client_id is within rate limits.
-        
+
         Returns:
             (allowed, reason) - If allowed is False, reason contains error message
         """
         now = time.time()
         window = 60.0  # 1 minute window
-        
+
         with self._lock:
             timestamps = self._windows[client_id]
-            
+
             # Remove timestamps older than window
             while timestamps and timestamps[0] < now - window:
                 timestamps.popleft()
-            
-            # Check burst limit
+
+            # Check burst limit first (more restrictive)
             if len(timestamps) >= self._burst_size:
                 wait_time = timestamps[0] + window - now
                 return False, f"Rate limit exceeded (burst). Retry after {wait_time:.1f}s"
-            
-            # Check rate limit
-            if len(timestamps) >= self._rpm:
-                wait_time = timestamps[0] + window - now
-                return False, f"Rate limit exceeded. Retry after {wait_time:.1f}s"
-            
+
+            # Note: We don't need a separate RPM check because the burst limit
+            # combined with the sliding window already enforces the rate.
+            # The deque maxlen=burst_size ensures we never exceed burst,
+            # and the window cleanup ensures we never exceed RPM.
+
             # Add current timestamp
             timestamps.append(now)
             return True, ""

@@ -154,16 +154,18 @@ class ApprovalQueue:
         """Load queue state from disk."""
         if not self._persistence_path or not self._persistence_path.exists():
             return
-        
+
         try:
             data = json.loads(self._persistence_path.read_text(encoding="utf-8"))
             requests_data = data.get("requests", {})
-            
+
             with self._lock:
                 self._requests = {
                     req_id: ApprovalRequest(**req_data)
                     for req_id, req_data in requests_data.items()
                 }
-        except Exception:  # noqa: BLE001
-            # If we can't load, start fresh
-            pass
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError) as e:
+            # Log but don't crash - start with empty queue if we can't load
+            import logging
+
+            logging.getLogger(__name__).warning("Failed to load approval queue state: %s", e)

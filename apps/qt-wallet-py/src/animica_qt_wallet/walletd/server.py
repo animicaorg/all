@@ -138,22 +138,28 @@ def _extract_token(request: web.Request) -> str:
 def _get_requester_info(request: web.Request) -> dict[str, Any]:
     """Extract information about the requester for approval dialogs."""
     import psutil
-    
+
     # Get peer info
     peername = request.transport.get_extra_info("peername") if request.transport else None
     remote_addr = peername[0] if peername else "unknown"
     remote_port = peername[1] if peername else 0
-    
+
     # Try to identify the process
     process_name = "unknown"
     pid = None
-    
+
     # For localhost connections, try to find the connecting process
     if remote_addr in ("127.0.0.1", "::1", "localhost"):
         try:
-            # Find connections matching the remote port
+            # Find connections matching the remote address and port
             for conn in psutil.net_connections(kind="inet"):
-                if conn.laddr.port == remote_port and conn.status == "ESTABLISHED":
+                # Match client side: raddr should match our listening port,
+                # laddr should match the remote connection
+                if (
+                    conn.raddr
+                    and conn.raddr.port == remote_port
+                    and conn.status == "ESTABLISHED"
+                ):
                     try:
                         proc = psutil.Process(conn.pid)
                         process_name = proc.name()
@@ -163,7 +169,7 @@ def _get_requester_info(request: web.Request) -> dict[str, Any]:
                         pass
         except Exception:  # noqa: BLE001
             pass
-    
+
     return {
         "remote_addr": remote_addr,
         "remote_port": remote_port,
@@ -215,16 +221,26 @@ async def dispatch_external(
 ) -> Any:
     """Dispatch external RPC calls with approval requirement."""
     import asyncio
-    
+
     requester_info = _get_requester_info(request)
+    
+    # Use a unique client ID combining multiple factors
+    # to avoid collisions when process detection fails
     app_id = requester_info.get("process_name", "unknown")
+    pid = requester_info.get("pid")
+    remote_addr = requester_info.get("remote_addr", "unknown")
+    remote_port = requester_info.get("remote_port", 0)
+    
+    # If we couldn't identify the process, use connection details as app_id
+    if app_id == "unknown" or not pid:
+        app_id = f"unknown_{remote_addr}:{remote_port}"
     
     # Check allowlist
     if not state.app_allowlist.is_allowed(app_id):
         raise RuntimeError(f"Application '{app_id}' is not allowed to access wallet")
-    
-    # Check rate limit
-    client_id = f"{requester_info['remote_addr']}:{requester_info.get('pid', 'unknown')}"
+
+    # Use connection details for rate limiting to ensure uniqueness
+    client_id = f"{remote_addr}:{remote_port}:{pid if pid else 'unknown'}"
     allowed, reason = state.rate_limiter.check_rate_limit(client_id)
     if not allowed:
         raise RuntimeError(reason)
