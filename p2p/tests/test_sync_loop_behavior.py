@@ -252,6 +252,59 @@ async def test_inflight_header_expiry_requeues(tmp_path: Path) -> None:
     assert node._stats["headers_req_timeout"] == 1
 
 
+def test_inflight_header_expiry_at_tip(tmp_path: Path) -> None:
+    """Test that inflight header expiry works even when at tip (no recent progress)."""
+    deps_sync, deps = _make_deps(tmp_path, "inflight-header-expiry-at-tip")
+    node = P2PService(
+        listen_addrs=[tcp_multiaddr(free_port())],
+        seeds=[],
+        chain_id=deps_sync.chain_id,
+        deps=deps,
+        peerstore_path=str(tmp_path / "inflight-header-expiry-at-tip" / "p2p"),
+    )
+    peer = _register_peer(node, "peer:3002")
+    # Simulate being at tip: last progress was recent (within timeout)
+    node._sync_last_progress_at = time.time() - 0.5
+    node._sync_request_timeout = 10.0
+    
+    # But the header request itself is expired (deadline passed long ago)
+    started_at = time.monotonic() - 20
+    request_id = "req-headers-expired"
+    peer.pending_header_request_id = request_id
+    peer.pending_headers = asyncio.get_event_loop().create_future()
+    node._sync_inflight_header_requests[(peer.remote, request_id)] = _SyncRequest(
+        request_id=request_id,
+        peer_id=peer.remote,
+        kind="headers",
+        started_at=started_at,
+        deadline_at=started_at + 5,  # Expired 15 seconds ago
+        retry_count=0,
+        start_height=1,
+        count=10,
+        locator=[node._genesis_hash()],
+        locator_mode="default",
+        anchor_height=0,
+        anchor_hash=node._genesis_hash(),
+    )
+    node._sync_inflight_headers = 1
+    
+    # Call _enforce_sync_invariants which should trigger expiry
+    # even though we had recent progress (at tip scenario)
+    node._enforce_sync_invariants(
+        now=time.time(),
+        best_block_height=100,
+        best_header_height=100,
+        target_height=100,
+        best_peer=peer,
+    )
+    
+    # The expired request should have been cleared
+    assert node._sync_inflight_headers == 0
+    assert len(node._sync_inflight_header_requests) == 0
+    assert node._sync_header_retry_queue  # Request should be requeued
+    assert peer.sync_timeouts == 1  # Peer should be penalized
+
+
 def test_not_anchored_recovery_sets_probe(tmp_path: Path) -> None:
     deps_sync, deps = _make_deps(tmp_path, "not-anchored-recovery")
     node = P2PService(
