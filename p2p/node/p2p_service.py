@@ -9214,10 +9214,16 @@ class P2PService:
         return True, "eligible"
 
     def _block_peer_eligibility(
-        self, peer: _PeerState, *, now: Optional[float] = None
+        self,
+        peer: _PeerState,
+        *,
+        now: Optional[float] = None,
+        ignore_backoff_reason: Optional[str] = None,
     ) -> tuple[bool, str]:
         now = time.time() if now is None else now
-        ok, reason = self._sync_peer_eligibility(peer, now=now)
+        ok, reason = self._sync_peer_eligibility(
+            peer, now=now, ignore_backoff_reason=ignore_backoff_reason
+        )
         if not ok:
             return False, reason
         backoff_key = self._peer_backoff_key(peer)
@@ -9229,12 +9235,16 @@ class P2PService:
             return False, reason
         return True, "eligible"
 
-    def _eligible_block_peers(self) -> tuple[list[_PeerState], dict[str, str]]:
+    def _eligible_block_peers(
+        self, *, ignore_backoff_reason: Optional[str] = None
+    ) -> tuple[list[_PeerState], dict[str, str]]:
         eligible: list[_PeerState] = []
         ineligible: dict[str, str] = {}
         now = time.time()
         for peer in self._peers.values():
-            ok, reason = self._block_peer_eligibility(peer, now=now)
+            ok, reason = self._block_peer_eligibility(
+                peer, now=now, ignore_backoff_reason=ignore_backoff_reason
+            )
             if ok:
                 eligible.append(peer)
             else:
@@ -9432,6 +9442,10 @@ class P2PService:
         require_anchored: bool = False,
     ) -> Optional[_PeerState]:
         eligible, _ = self._eligible_block_peers()
+        # Fallback: if no peers are eligible due to not_anchored backoff, retry ignoring it
+        # This prevents permanent stalls when all peers temporarily fail checkpoint anchor validation
+        if not eligible:
+            eligible, _ = self._eligible_block_peers(ignore_backoff_reason="not_anchored")
         if require_anchored:
             anchored = [peer for peer in eligible if self._peer_is_anchored(peer)]
             if anchored:
