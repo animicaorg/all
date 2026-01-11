@@ -8537,6 +8537,7 @@ class P2PService:
                                 no_headers_responses += 1
                             elif empty_reason == "stale_network_best":
                                 self._force_peer_refresh(reason="stale_network_best")
+                                self._reset_sync_state(reason="stale_network_best")
                                 self._sync_kick(
                                     reason="stale_network_best",
                                     aggressive=True,
