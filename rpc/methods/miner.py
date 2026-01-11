@@ -1515,12 +1515,28 @@ def _build_coinbase_transactions(ctx: Any, height: int, payout_address: bytes | 
         chain_id = ctx.cfg.chain_id
         params = getattr(ctx, "params", None) or {}
         
-        rewards = compute_block_reward(chain_id=chain_id, height=height, params=params, instant_block=instant_block)
+        canonical_height = None
+        try:
+            block_db = getattr(ctx, "block_db", None)
+            if block_db is not None and hasattr(block_db, "get_canonical_height"):
+                current_canonical = block_db.get_canonical_height()
+                if current_canonical is not None:
+                    canonical_height = current_canonical + (0 if instant_block else 1)
+        except Exception:
+            pass
+
+        rewards = compute_block_reward(
+            chain_id=chain_id,
+            height=height,
+            params=params,
+            instant_block=instant_block,
+            canonical_height=canonical_height,
+        )
         
         # Log warning if rewards are empty when they shouldn't be (height >= 1 and not instant block)
         if not rewards and height >= 1 and not instant_block:
             log.warning(
-                f"Block reward at height {height} is empty. "
+                f"Block reward at height {height} (canonical_height={canonical_height}) is empty. "
                 f"This may indicate missing/invalid consensus params. "
                 f"Check that spec/params.yaml defines proper emission schedule for chain_id={chain_id}."
             )
