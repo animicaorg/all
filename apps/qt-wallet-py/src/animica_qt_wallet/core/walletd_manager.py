@@ -182,6 +182,54 @@ class WalletdManager:
         except (ValueError, TypeError):
             return 0
 
+    async def tx_estimate_fees(self, *, gas_limit: int = 21000, base_fee: int | None = None, tip: int = 0) -> dict[str, Any]:
+        """Estimate fees for a transaction."""
+        params: dict[str, Any] = {"gas_limit": gas_limit, "tip": tip}
+        if base_fee is not None:
+            params["base_fee"] = base_fee
+        return await self._rpc_call("tx.estimateFees", params)
+
+    async def tx_build(
+        self,
+        *,
+        from_addr: str,
+        to: str | None,
+        value: int,
+        gas_limit: int,
+        max_fee: int,
+        nonce: int | None = None,
+        data: str = "",
+    ) -> dict[str, Any]:
+        """Build an unsigned transaction."""
+        params: dict[str, Any] = {
+            "from": from_addr,
+            "to": to,
+            "value": value,
+            "gas_limit": gas_limit,
+            "max_fee": max_fee,
+            "data": data,
+        }
+        if nonce is not None:
+            params["nonce"] = nonce
+        return await self._rpc_call("tx.build", params)
+
+    async def tx_sign(self, *, tx: dict[str, Any], from_addr: str) -> dict[str, Any]:
+        """Sign a transaction with a wallet account."""
+        return await self._rpc_call("tx.sign", {"tx": tx, "from": from_addr})
+
+    async def tx_send(self, *, signed_tx: str) -> str:
+        """Send a signed transaction to the node."""
+        result = await self._rpc_call("tx.send", {"signed_tx": signed_tx})
+        # Handle both direct hash string and dict responses
+        if isinstance(result, dict):
+            return result.get("hash") or result.get("tx_hash") or str(result)
+        return str(result)
+
+    async def tx_get(self, *, tx_hash: str) -> dict[str, Any]:
+        """Get transaction by hash."""
+        result = await self._rpc_call("tx.get", {"hash": tx_hash})
+        return result if isinstance(result, dict) else {}
+
     async def _rpc_call(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         payload = {
             "jsonrpc": "2.0",
