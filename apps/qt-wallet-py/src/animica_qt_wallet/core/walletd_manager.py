@@ -22,6 +22,19 @@ class WalletdStatus:
     last_error: str | None
 
 
+@dataclass
+class NodeStatus:
+    running: bool
+    pid: int | None
+    network: str | None
+    rpc_url: str | None
+    restarting: bool
+    last_exit_code: int | None
+    last_error: str | None
+    backoff_seconds: float
+    started_at: float | None
+
+
 class WalletdManager:
     def __init__(self, port: int | None = None) -> None:
         self._data_dir = get_app_data_dir()
@@ -104,6 +117,27 @@ class WalletdManager:
             await asyncio.sleep(0.25)
         return await self._get_status()
 
+    async def start_node(self, network: str = "mainnet", extra_args: list[str] | None = None) -> NodeStatus:
+        result = await self._rpc_call(
+            "node.start",
+            {"network": network, "extra_args": extra_args or []},
+        )
+        return self._to_node_status(result)
+
+    async def stop_node(self) -> None:
+        await self._rpc_call("node.stop")
+
+    async def get_node_status(self) -> NodeStatus:
+        result = await self._rpc_call("node.status")
+        return self._to_node_status(result)
+
+    async def get_node_logs_tail(self, lines: int = 200) -> list[str]:
+        result = await self._rpc_call("node.logsTail", {"lines": lines})
+        return result.get("lines", [])
+
+    async def get_node_rpc_info(self) -> dict[str, Any]:
+        return await self._rpc_call("node.rpcInfo")
+
     async def _rpc_call(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         payload = {
             "jsonrpc": "2.0",
@@ -121,3 +155,16 @@ class WalletdManager:
         if "error" in data:
             raise RuntimeError(data["error"].get("message", "walletd error"))
         return data.get("result", {})
+
+    def _to_node_status(self, payload: dict[str, Any]) -> NodeStatus:
+        return NodeStatus(
+            running=bool(payload.get("running")),
+            pid=payload.get("pid"),
+            network=payload.get("network"),
+            rpc_url=payload.get("rpc_url"),
+            restarting=bool(payload.get("restarting")),
+            last_exit_code=payload.get("last_exit_code"),
+            last_error=payload.get("last_error"),
+            backoff_seconds=float(payload.get("backoff_seconds") or 0.0),
+            started_at=payload.get("started_at"),
+        )
