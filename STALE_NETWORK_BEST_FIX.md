@@ -19,7 +19,7 @@ When the `stale_network_best` condition was detected (all connected peers report
 1. Call `_force_peer_refresh` to enable seeding mode and find new peers
 2. Call `_sync_kick` with aggressive=True to boost sync
 
-**BUT** - it did not clear the stale inflight header request that was blocking new requests.
+**However** - it did not clear the stale inflight header request that was blocking new requests.
 
 The stale request remained in `_sync_inflight_header_requests`, causing:
 - `_sync_inflight_headers = 1` (blocking new requests)

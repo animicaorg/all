@@ -25,7 +25,7 @@ def simulate_stuck_state():
         "local_head_height": 5394,
         "local_head_hash": "0x10f989e5b40e0ba9c88194685e07175647537f6b47a017df228ca2e262182744",
         "best_peer_height": 5394,
-        "best_peer_hash": "10f989e5b40e0ba9c88194685e07175647537f6b47a017df228ca2e262182744",
+        "best_peer_hash": "0x10f989e5b40e0ba9c88194685e07175647537f6b47a017df228ca2e262182744",
         "sync_phase": "HEADERS",
         "in_flight_headers": 1,
         "in_flight_blocks": 0,
@@ -107,6 +107,13 @@ def test_new_behavior_recovers():
 
 def test_recovery_timeline():
     """Estimate recovery timeline with the fix."""
+    # Performance constants (based on current implementation)
+    SYNC_TICK_BOOSTED_MS = 1
+    HEADER_BATCH_SIZE = 16384
+    NETWORK_LATENCY_BEST_MS = 200
+    NETWORK_LATENCY_TYPICAL_MS = 500
+    NETWORK_LATENCY_CONSERVATIVE_MS = 1000
+    
     # Initial state
     state = simulate_stuck_state()
     
@@ -121,18 +128,23 @@ def test_recovery_timeline():
     print(f"    ✓ in_flight_headers={state['in_flight_headers']} (CLEARED)")
     print(f"    ✓ seeding_mode={state.get('seeding_mode')} (finding new peers)")
     print(f"    ✓ sync_boost_active={state.get('sync_boost_active')} (ultra-fast mode)")
-    print(f"    ✓ sync_boost_tick_ms={state.get('sync_boost_tick_ms')}ms (1ms tick)")
+    print(f"    ✓ sync_boost_tick_ms={state.get('sync_boost_tick_ms')}ms ({SYNC_TICK_BOOSTED_MS}ms tick)")
     
     # Estimate sync speed
     print(f"\n  Expected sync performance:")
-    print(f"    - Tick interval: 1ms (boosted)")
-    print(f"    - Batch size: 16384 headers per request")
+    print(f"    - Tick interval: {SYNC_TICK_BOOSTED_MS}ms (boosted)")
+    print(f"    - Batch size: {HEADER_BATCH_SIZE} headers per request")
     print(f"    - Can request multiple batches in parallel")
-    print(f"    - Network latency: ~50-200ms per round trip")
+    print(f"    - Network latency: ~{NETWORK_LATENCY_BEST_MS}-{NETWORK_LATENCY_TYPICAL_MS}ms per round trip")
+    
+    best_speed = (HEADER_BATCH_SIZE * 1000) // NETWORK_LATENCY_BEST_MS
+    typical_speed = (HEADER_BATCH_SIZE * 1000) // NETWORK_LATENCY_TYPICAL_MS
+    conservative_speed = (HEADER_BATCH_SIZE * 1000) // NETWORK_LATENCY_CONSERVATIVE_MS
+    
     print(f"\n  Estimated sync speed:")
-    print(f"    - Best case: ~16k blocks/200ms = 80k blocks/sec")
-    print(f"    - Typical: ~16k blocks/500ms = 32k blocks/sec")
-    print(f"    - Conservative: ~16k blocks/1s = 16k blocks/sec")
+    print(f"    - Best case: ~{HEADER_BATCH_SIZE//1000}k blocks/{NETWORK_LATENCY_BEST_MS}ms = {best_speed//1000}k blocks/sec")
+    print(f"    - Typical: ~{HEADER_BATCH_SIZE//1000}k blocks/{NETWORK_LATENCY_TYPICAL_MS}ms = {typical_speed//1000}k blocks/sec")
+    print(f"    - Conservative: ~{HEADER_BATCH_SIZE//1000}k blocks/{NETWORK_LATENCY_CONSERVATIVE_MS}ms = {conservative_speed//1000}k blocks/sec")
     print(f"\n  For catching up 100 blocks:")
     print(f"    - Single batch request: <1 second")
     print(f"  For catching up 1000 blocks:")
