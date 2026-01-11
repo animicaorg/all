@@ -3468,6 +3468,15 @@ class P2PService:
             self._sync_active_block_peer = new_peer.remote
             self._sync_last_recovery_action = "retry_blocks_new_peer"
             self._sync_block_stalled_reason = None
+            # Clear stale error states on successful recovery to prevent confusing diagnostics
+            if self._sync_last_header_error == "not_anchored":
+                self._sync_last_header_error = None
+                self._sync_last_header_error_at = None
+                self._sync_last_header_error_peer = None
+            if self._sync_last_block_error == "not_anchored":
+                self._sync_last_block_error = None
+                self._sync_last_block_error_at = None
+                self._sync_last_block_error_peer = None
             self._stats["stall_recoveries"] += 1
             self._sync_wakeup.set()
         else:
