@@ -207,7 +207,12 @@ async def _proxy_to_node(method: str, params: dict[str, Any], node_rpc_url: str 
     return data.get("result", {})
 
 
-async def dispatch_external(method: str | None, params: dict[str, Any], state: WalletdState, request: web.Request) -> Any:
+async def dispatch_external(
+    method: str | None,
+    params: dict[str, Any],
+    state: WalletdState,
+    request: web.Request,
+) -> Any:
     """Dispatch external RPC calls with approval requirement."""
     import asyncio
     
@@ -400,8 +405,12 @@ async def _execute_wallet_method(method: str, params: dict[str, Any], state: Wal
         node_status = state.node_manager.status()
         if not node_status.running or not node_status.rpc_url:
             raise RuntimeError("Node is not running")
-        
-        result = await _proxy_to_node("tx.sendRawTransaction", {"rawTx": sign_result["signed_tx"]}, node_status.rpc_url)
+
+        await _proxy_to_node(
+            "tx.sendRawTransaction",
+            {"rawTx": sign_result["signed_tx"]},
+            node_status.rpc_url,
+        )
         
         # Track in history
         tx_hash = sign_result["tx_hash"]

@@ -20,8 +20,12 @@ class AllowlistEntry:
 
 class AppAllowlist:
     """Manage which external applications can access wallet RPC."""
-    
-    def __init__(self, persistence_path: Path | None = None, default_policy: Literal["allow", "deny"] = "deny"):
+
+    def __init__(
+        self,
+        persistence_path: Path | None = None,
+        default_policy: Literal["allow", "deny"] = "deny",
+    ):
         """
         Initialize allowlist.
         
