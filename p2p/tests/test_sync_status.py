@@ -1821,7 +1821,7 @@ def test_handle_sync_stall_clears_not_anchored_errors_on_recovery(tmp_path: Path
     node._sync_last_block_error_peer = peer_a.remote
     node._sync_block_stalled_reason = "not_anchored"
     
-    # Give peer_a a not_anchored backoff (simulating failed checkpoint)
+    # Give peer_a a not_anchored backoff (simulating failed anchor validation)
     now = time.time()
     node._sync_peer_backoff[peer_a.remote] = now + 30.0
     node._sync_peer_backoff_reason[peer_a.remote] = "not_anchored"
