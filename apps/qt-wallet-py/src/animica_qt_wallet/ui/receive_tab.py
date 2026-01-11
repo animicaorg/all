@@ -195,17 +195,20 @@ class ReceiveTab(QWidget):
         if clipboard:
             clipboard.setText(str(address))
             # Show temporary feedback
-            original_text = self._copy_btn.text()
-            self._copy_btn.setText("✓ Copied!")
-            self._copy_btn.setEnabled(False)
+            self._show_copy_feedback()
 
-            # Reset after 2 seconds
-            from PySide6.QtCore import QTimer
+    def _show_copy_feedback(self) -> None:
+        """Show temporary feedback that address was copied."""
+        original_text = self._copy_btn.text()
+        self._copy_btn.setText("✓ Copied!")
+        self._copy_btn.setEnabled(False)
 
-            QTimer.singleShot(
-                2000,
-                lambda: (
-                    self._copy_btn.setText(original_text),
-                    self._copy_btn.setEnabled(True),
-                ),
-            )
+        # Reset after 2 seconds
+        from PySide6.QtCore import QTimer
+
+        QTimer.singleShot(2000, self._reset_copy_button)
+
+    def _reset_copy_button(self) -> None:
+        """Reset copy button to original state."""
+        self._copy_btn.setText("Copy Address")
+        self._copy_btn.setEnabled(True)

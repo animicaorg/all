@@ -212,6 +212,8 @@ class SendTab(QWidget):
             if not from_addr or not to_addr:
                 raise ValueError("From and To addresses are required")
             
+            # TODO: Make address prefix configurable based on chain/network
+            # Currently hardcoded to 'anim1' but should support different networks
             if not to_addr.startswith("anim1"):
                 raise ValueError("To address must start with 'anim1'")
             
@@ -362,7 +364,12 @@ class SendConfirmDialog(QDialog):
         
         details_layout.addRow("Gas Limit:", QLabel(str(gas_limit)))
         details_layout.addRow("Max Fee:", QLabel(f"{max_fee} nANM/gas"))
-        details_layout.addRow("Max Total Cost:", QLabel(f"{max_cost_anm:.9f} ANM"))
+        
+        # Note: Max cost is the worst-case scenario; actual cost will likely be lower
+        max_cost_label = QLabel(f"{max_cost_anm:.9f} ANM")
+        max_cost_label.setToolTip("Maximum possible cost including transfer and gas. Actual cost will likely be lower.")
+        details_layout.addRow("Max Total Cost:", max_cost_label)
+        
         details_layout.addRow("Nonce:", QLabel(str(tx.get("nonce", ""))))
         details_layout.addRow("Chain ID:", QLabel(str(tx.get("chain_id", ""))))
         

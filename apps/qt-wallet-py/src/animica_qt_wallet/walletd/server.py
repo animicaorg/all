@@ -220,7 +220,8 @@ async def dispatch(method: str | None, params: dict[str, Any], state: WalletdSta
             raise RuntimeError("Node is not running")
         
         # Simple heuristic: use default gas price from chain
-        # In a production system, this would query current network conditions
+        # TODO: In production, query current network conditions from recent blocks
+        # for more accurate fee estimation based on network congestion
         base_fee = int(params.get("base_fee", 1_000_000_000))  # 1 gwei default
         tip = int(params.get("tip", 0))
         
