@@ -10831,7 +10831,8 @@ class P2PService:
             bdb.set_canonical_head(height, bytes(ancestor_hash))
             self._prune_canonical_heights(bdb, above_height=height, batch=None)
         
-        # Reset sync state but don't clear everything
+        # Reset sync state but preserve what we can
+        # Clear headers and header sources since they may be on the wrong fork
         self._sync_headers.clear()
         self._sync_header_sources.clear()
         self._sync_best_header = None
@@ -10840,23 +10841,21 @@ class P2PService:
             self._sync_best_header = hdr
         
         # Clear block queue for heights above the ancestor
-        filtered_queue = []
-        for h in self._sync_block_queue:
-            h_height = self._header_height(h)
-            if h_height is not None and h_height <= height:
-                filtered_queue.append(h)
-        self._sync_block_queue = deque(filtered_queue)
+        self._sync_block_queue = deque(
+            h for h in self._sync_block_queue 
+            if (h_height := self._header_height(h)) is not None and h_height <= height
+        )
         
+        # Clear block queue heights dict for heights above the ancestor
         self._sync_block_queue_heights = {
-            h for h in self._sync_block_queue_heights if h <= height
+            h: ht for h, ht in self._sync_block_queue_heights.items() if ht <= height
         }
         
         # Clear in-flight blocks above the ancestor
-        to_remove = []
-        for h in list(self._sync_inflight_blocks.keys()):
-            h_height = self._header_height(h)
-            if h_height is not None and h_height > height:
-                to_remove.append(h)
+        to_remove = [
+            h for h in self._sync_inflight_blocks.keys()
+            if (h_height := self._header_height(h)) is not None and h_height > height
+        ]
         for h in to_remove:
             self._sync_inflight_blocks.pop(h, None)
             self._sync_inflight_peers.pop(h, None)
