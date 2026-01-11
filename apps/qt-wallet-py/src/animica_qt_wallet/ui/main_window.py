@@ -3,17 +3,26 @@ from __future__ import annotations
 import asyncio
 
 from PySide6.QtCore import QTimer
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QComboBox,
+    QDialog,
+    QDialogButtonBox,
+    QFormLayout,
+    QGroupBox,
+    QHBoxLayout,
     QLabel,
+    QLineEdit,
     QMainWindow,
     QMenu,
-    QStatusBar,
-    QWidget,
-    QPushButton,
-    QVBoxLayout,
-    QHBoxLayout,
-    QComboBox,
+    QMessageBox,
     QPlainTextEdit,
+    QPushButton,
+    QStatusBar,
+    QTableWidget,
+    QTableWidgetItem,
+    QVBoxLayout,
+    QWidget,
 )
 
 from animica_qt_wallet.core.walletd_manager import WalletdManager
@@ -36,6 +45,10 @@ class MainWindow(QMainWindow):
         self._node_logs_timer = QTimer(self)
         self._node_logs_timer.setInterval(2_000)
         self._node_logs_timer.timeout.connect(self._refresh_node_logs)
+        self._accounts_timer = QTimer(self)
+        self._accounts_timer.setInterval(5_000)
+        self._accounts_timer.timeout.connect(self._refresh_accounts)
+        self._wallet_locked = True
 
         self._build_menu()
         self._build_status_bar()
@@ -72,6 +85,8 @@ class MainWindow(QMainWindow):
         subtitle = QLabel("Prepare your wallet and connect to a node.", self)
         subtitle.setStyleSheet("color: #6b6b6b;")
 
+        accounts_panel = self._build_accounts_panel()
+
         controls = QHBoxLayout()
         self._network_selector = QComboBox(self)
         self._network_selector.addItems(["mainnet", "testnet"])
@@ -92,6 +107,7 @@ class MainWindow(QMainWindow):
         layout.addStretch(1)
         layout.addWidget(title)
         layout.addWidget(subtitle)
+        layout.addWidget(accounts_panel)
         layout.addLayout(controls)
         layout.addWidget(QLabel("Node Logs", self))
         layout.addWidget(self._logs_view, stretch=2)
@@ -106,6 +122,8 @@ class MainWindow(QMainWindow):
             self._walletd_status_timer.start()
             self._node_status_timer.start()
             self._node_logs_timer.start()
+            self._accounts_timer.start()
+            await self._update_accounts()
         else:
             self._walletd_status.setText("Walletd: unavailable")
 
@@ -154,8 +172,328 @@ class MainWindow(QMainWindow):
     def _handle_stop_node(self) -> None:
         asyncio.create_task(self._walletd_manager.stop_node())
 
+    def _refresh_accounts(self) -> None:
+        asyncio.create_task(self._update_accounts())
+
+    async def _update_accounts(self) -> None:
+        try:
+            accounts = await self._walletd_manager.wallet_list_accounts()
+        except Exception:
+            self._wallet_locked = True
+            self._set_accounts([])
+            self._set_wallet_controls_locked(True)
+            return
+        self._wallet_locked = False
+        self._set_accounts(accounts)
+        self._set_wallet_controls_locked(False)
+
+    def _set_accounts(self, accounts: list[dict[str, str]]) -> None:
+        self._accounts_table.setRowCount(0)
+        for row, acct in enumerate(accounts):
+            self._accounts_table.insertRow(row)
+            label_item = QTableWidgetItem(acct.get("label", ""))
+            address_item = QTableWidgetItem(acct.get("address", ""))
+            label_item.setFlags(label_item.flags() ^ Qt.ItemIsEditable)
+            address_item.setFlags(address_item.flags() ^ Qt.ItemIsEditable)
+            self._accounts_table.setItem(row, 0, label_item)
+            self._accounts_table.setItem(row, 1, address_item)
+
+    def _set_wallet_controls_locked(self, locked: bool) -> None:
+        self._unlock_button.setEnabled(locked)
+        self._lock_button.setEnabled(not locked)
+        self._create_account_button.setEnabled(not locked)
+        self._import_account_button.setEnabled(not locked)
+        self._show_secret_button.setEnabled(not locked)
+        self._wallet_lock_status.setText("Locked" if locked else "Unlocked")
+
+    def _handle_unlock_wallet(self) -> None:
+        dialog = UnlockDialog(self)
+        if dialog.exec() != QDialog.Accepted:
+            return
+        password = dialog.password
+        asyncio.create_task(self._unlock_wallet(password))
+
+    async def _unlock_wallet(self, password: str) -> None:
+        try:
+            await self._walletd_manager.wallet_unlock(password)
+        except Exception as exc:
+            QMessageBox.warning(self, "Unlock failed", str(exc))
+            return
+        await self._update_accounts()
+
+    def _handle_lock_wallet(self) -> None:
+        asyncio.create_task(self._lock_wallet())
+
+    async def _lock_wallet(self) -> None:
+        try:
+            await self._walletd_manager.wallet_lock()
+        except Exception as exc:
+            QMessageBox.warning(self, "Lock failed", str(exc))
+            return
+        self._wallet_locked = True
+        self._set_accounts([])
+        self._set_wallet_controls_locked(True)
+
+    def _handle_create_account(self) -> None:
+        dialog = CreateAccountDialog(self)
+        if dialog.exec() != QDialog.Accepted:
+            return
+        asyncio.create_task(self._create_account(dialog.label))
+
+    async def _create_account(self, label: str | None) -> None:
+        try:
+            await self._walletd_manager.wallet_create_account(label)
+        except Exception as exc:
+            QMessageBox.warning(self, "Create account failed", str(exc))
+            return
+        await self._update_accounts()
+
+    def _handle_import_account(self) -> None:
+        dialog = ImportAccountDialog(self)
+        if dialog.exec() != QDialog.Accepted:
+            return
+        asyncio.create_task(self._import_account(dialog.label, dialog.secret))
+
+    async def _import_account(self, label: str | None, secret: str) -> None:
+        try:
+            await self._walletd_manager.wallet_import_account(label, secret)
+        except Exception as exc:
+            QMessageBox.warning(self, "Import failed", str(exc))
+            return
+        await self._update_accounts()
+
+    def _handle_show_secret(self) -> None:
+        address = self._selected_account_address()
+        if not address:
+            QMessageBox.information(self, "Show secret", "Select an account first.")
+            return
+        dialog = ShowSecretConfirmDialog(self)
+        if dialog.exec() != QDialog.Accepted:
+            return
+        asyncio.create_task(self._show_secret(address, dialog.password))
+
+    async def _show_secret(self, address: str, password: str) -> None:
+        try:
+            await self._walletd_manager.wallet_unlock(password)
+            account = await self._walletd_manager.wallet_export_account(address)
+        except Exception as exc:
+            QMessageBox.warning(self, "Show secret failed", str(exc))
+            return
+        secret = account.get("secret_key_hex", "")
+        dialog = SecretRevealDialog(secret, self)
+        dialog.exec()
+
+    def _selected_account_address(self) -> str | None:
+        row = self._accounts_table.currentRow()
+        if row < 0:
+            return None
+        item = self._accounts_table.item(row, 1)
+        if not item:
+            return None
+        return item.text().strip() or None
+
+    def _build_accounts_panel(self) -> QGroupBox:
+        group = QGroupBox("Accounts", self)
+        layout = QVBoxLayout(group)
+
+        status_row = QHBoxLayout()
+        self._wallet_lock_status = QLabel("Locked", self)
+        self._wallet_lock_status.setStyleSheet("font-weight: 600;")
+        status_row.addWidget(QLabel("Wallet:", self))
+        status_row.addWidget(self._wallet_lock_status)
+        status_row.addStretch(1)
+        self._unlock_button = QPushButton("Unlock", self)
+        self._lock_button = QPushButton("Lock", self)
+        self._unlock_button.clicked.connect(self._handle_unlock_wallet)
+        self._lock_button.clicked.connect(self._handle_lock_wallet)
+        status_row.addWidget(self._unlock_button)
+        status_row.addWidget(self._lock_button)
+
+        self._accounts_table = QTableWidget(0, 2, self)
+        self._accounts_table.setHorizontalHeaderLabels(["Label", "Address"])
+        header = self._accounts_table.horizontalHeader()
+        header.setStretchLastSection(True)
+        self._accounts_table.verticalHeader().setVisible(False)
+        self._accounts_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self._accounts_table.setSelectionMode(QTableWidget.SingleSelection)
+
+        action_row = QHBoxLayout()
+        self._create_account_button = QPushButton("Create Account", self)
+        self._import_account_button = QPushButton("Import Account", self)
+        self._show_secret_button = QPushButton("Show Secret", self)
+        self._create_account_button.clicked.connect(self._handle_create_account)
+        self._import_account_button.clicked.connect(self._handle_import_account)
+        self._show_secret_button.clicked.connect(self._handle_show_secret)
+        action_row.addWidget(self._create_account_button)
+        action_row.addWidget(self._import_account_button)
+        action_row.addStretch(1)
+        action_row.addWidget(self._show_secret_button)
+
+        layout.addLayout(status_row)
+        layout.addWidget(self._accounts_table)
+        layout.addLayout(action_row)
+
+        self._set_wallet_controls_locked(True)
+        return group
+
     def closeEvent(self, event) -> None:  # noqa: N802
         if self._walletd_task:
             self._walletd_task.cancel()
         asyncio.create_task(self._walletd_manager.shutdown())
         super().closeEvent(event)
+
+
+class UnlockDialog(QDialog):
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Unlock Wallet")
+        self.password = ""
+
+        layout = QVBoxLayout(self)
+        form = QFormLayout()
+        self._password_input = QLineEdit(self)
+        self._password_input.setEchoMode(QLineEdit.Password)
+        form.addRow("Password", self._password_input)
+        layout.addLayout(form)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, self)
+        buttons.accepted.connect(self._accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def _accept(self) -> None:
+        self.password = self._password_input.text()
+        if not self.password:
+            QMessageBox.warning(self, "Missing password", "Enter your wallet password.")
+            return
+        self.accept()
+
+
+class CreateAccountDialog(QDialog):
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Create Account")
+        self.label = ""
+
+        layout = QVBoxLayout(self)
+        form = QFormLayout()
+        self._label_input = QLineEdit(self)
+        form.addRow("Label", self._label_input)
+        layout.addLayout(form)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, self)
+        buttons.accepted.connect(self._accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def _accept(self) -> None:
+        self.label = self._label_input.text().strip()
+        self.accept()
+
+
+class ImportAccountDialog(QDialog):
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Import Account")
+        self.label = ""
+        self.secret = ""
+
+        layout = QVBoxLayout(self)
+        form = QFormLayout()
+        self._label_input = QLineEdit(self)
+        form.addRow("Label", self._label_input)
+        layout.addLayout(form)
+
+        instructions = QLabel(
+            "Paste exported JSON or secret_key_hex:public_key_hex[:alg].", self
+        )
+        instructions.setWordWrap(True)
+        layout.addWidget(instructions)
+
+        self._secret_input = QPlainTextEdit(self)
+        self._secret_input.setPlaceholderText("Secret (never logged)")
+        layout.addWidget(self._secret_input)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, self)
+        buttons.accepted.connect(self._accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def _accept(self) -> None:
+        self.label = self._label_input.text().strip()
+        self.secret = self._secret_input.toPlainText().strip()
+        if not self.secret:
+            QMessageBox.warning(self, "Missing secret", "Provide a secret to import.")
+            return
+        self.accept()
+
+
+class ShowSecretConfirmDialog(QDialog):
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Show Secret")
+        self.password = ""
+
+        layout = QVBoxLayout(self)
+        warning = QLabel(
+            "Warning: Revealing this secret grants full control of the account.\n"
+            "Do not share it and close this window immediately after copying.",
+            self,
+        )
+        warning.setStyleSheet("color: #b00020; font-weight: 600;")
+        warning.setWordWrap(True)
+        layout.addWidget(warning)
+
+        form = QFormLayout()
+        self._password_input = QLineEdit(self)
+        self._password_input.setEchoMode(QLineEdit.Password)
+        form.addRow("Re-enter password", self._password_input)
+        layout.addLayout(form)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, self)
+        buttons.accepted.connect(self._accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def _accept(self) -> None:
+        self.password = self._password_input.text()
+        if not self.password:
+            QMessageBox.warning(self, "Missing password", "Re-enter your password.")
+            return
+        self.accept()
+
+
+class SecretRevealDialog(QDialog):
+    def __init__(self, secret: str, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Secret Key")
+        self._seconds_left = 30
+
+        layout = QVBoxLayout(self)
+        self._countdown = QLabel("Secret will hide in 30s.", self)
+        self._countdown.setStyleSheet("color: #b00020; font-weight: 600;")
+        layout.addWidget(self._countdown)
+
+        self._secret_view = QPlainTextEdit(self)
+        self._secret_view.setReadOnly(True)
+        self._secret_view.setPlainText(secret)
+        layout.addWidget(self._secret_view)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Close, self)
+        buttons.rejected.connect(self.reject)
+        buttons.accepted.connect(self.accept)
+        layout.addWidget(buttons)
+
+        self._timer = QTimer(self)
+        self._timer.setInterval(1_000)
+        self._timer.timeout.connect(self._tick)
+        self._timer.start()
+
+    def _tick(self) -> None:
+        self._seconds_left -= 1
+        if self._seconds_left <= 0:
+            self._secret_view.setPlainText("")
+            self._countdown.setText("Secret hidden.")
+            self._timer.stop()
+            return
+        self._countdown.setText(f"Secret will hide in {self._seconds_left}s.")
