@@ -10609,14 +10609,17 @@ class P2PService:
         if self._sync_best_header and self._sync_best_header.height > head_height:
             # Check if we can walk back at least LOCATOR_PARENT_CHAIN_VALIDATION_DEPTH steps from sync_best_header
             # If not, it means we have an incomplete parent chain and should use canonical head
-            can_walk_back = True
             
-            # Don't validate if sync_best_header is at genesis (height 0)
-            if self._sync_best_header.height > 0:
+            # Skip validation if sync_best_header is at genesis (height 0) - always use canonical head instead
+            if self._sync_best_header.height == 0:
+                can_walk_back = False
+            else:
+                can_walk_back = True
                 test_hash = self._sync_best_header.hash
-                for _ in range(min(LOCATOR_PARENT_CHAIN_VALIDATION_DEPTH, self._sync_best_header.height)):
+                validation_steps = min(LOCATOR_PARENT_CHAIN_VALIDATION_DEPTH, self._sync_best_header.height)
+                for _ in range(validation_steps):
                     hdr = self._sync_header_by_hash(test_hash)
-                    if hdr is None or hdr.parent_hash is None:
+                    if hdr is None:
                         can_walk_back = False
                         break
                     test_hash = hdr.parent_hash
