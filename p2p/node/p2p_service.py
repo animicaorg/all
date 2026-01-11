@@ -869,7 +869,7 @@ class P2PService:
             os.environ.get("ANIMICA_P2P_NO_HEADERS_THRESHOLD", "3") or 3
         )
         self._sync_no_headers_backoff = float(
-            os.environ.get("ANIMICA_P2P_NO_HEADERS_BACKOFF", "15.0") or 15.0
+            os.environ.get("ANIMICA_P2P_NO_HEADERS_BACKOFF", "5.0") or 5.0  # Reduced from 15s for faster recovery when at tip
         )
         self._sync_not_anchored_backoff = float(
             os.environ.get("ANIMICA_P2P_NOT_ANCHORED_BACKOFF", "1.0") or 1.0
