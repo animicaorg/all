@@ -27,6 +27,8 @@ from PySide6.QtWidgets import (
 )
 
 from animica_qt_wallet.core.walletd_manager import WalletdManager
+from animica_qt_wallet.ui.send_tab import SendTab
+from animica_qt_wallet.ui.receive_tab import ReceiveTab
 
 
 # Display constants for address/hash truncation
@@ -105,6 +107,12 @@ class MainWindow(QMainWindow):
         # Create tab widget
         tabs = QTabWidget(self)
         tabs.addTab(self._build_overview_tab(), "Overview")
+        
+        # Create Send and Receive tabs
+        self._send_tab = SendTab(self._walletd_manager, self)
+        self._receive_tab = ReceiveTab(self)
+        tabs.addTab(self._send_tab, "Send")
+        tabs.addTab(self._receive_tab, "Receive")
         tabs.addTab(self._build_node_tab(), "Node")
 
         layout.addWidget(title)
@@ -280,6 +288,11 @@ class MainWindow(QMainWindow):
             address_item.setFlags(address_item.flags() ^ Qt.ItemIsEditable)
             self._accounts_table.setItem(row, 0, label_item)
             self._accounts_table.setItem(row, 1, address_item)
+        
+        # Update Send and Receive tabs
+        self._send_tab.refresh_accounts(accounts)
+        self._receive_tab.refresh_accounts(accounts)
+        
         # Auto-select first account if available
         if accounts and self._selected_account is None:
             self._accounts_table.selectRow(0)

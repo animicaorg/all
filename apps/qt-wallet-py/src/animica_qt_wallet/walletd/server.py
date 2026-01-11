@@ -23,6 +23,9 @@ from animica_qt_wallet.walletd.config import (
 from animica_qt_wallet.walletd.node_manager import NodeManager, NodeStatus
 from animica_qt_wallet.walletd.wallet_store import WalletStore
 
+# Import for transaction hash computation
+import hashlib
+
 
 @dataclass
 class WalletdState:
@@ -80,6 +83,11 @@ def _extract_token(request: web.Request) -> str:
     if auth_header.startswith("Bearer "):
         return auth_header.removeprefix("Bearer ").strip()
     return request.headers.get("X-Auth-Token", "")
+
+
+def _compute_tx_hash(raw_tx: bytes) -> bytes:
+    """Compute SHA3-256 hash of a transaction."""
+    return hashlib.sha3_256(raw_tx).digest()
 
 
 async def _proxy_to_node(method: str, params: dict[str, Any], node_rpc_url: str | None) -> Any:
@@ -204,6 +212,160 @@ async def dispatch(method: str | None, params: dict[str, Any], state: WalletdSta
         if not isinstance(address, str):
             raise ValueError("address must be a string")
         return state.wallet_store.export_account(address)
+    
+    # Transaction methods
+    if method == "tx.estimateFees":
+        node_status = state.node_manager.status()
+        if not node_status.running or not node_status.rpc_url:
+            raise RuntimeError("Node is not running")
+        
+        # Simple heuristic: use default gas price from chain
+        # In a production system, this would query current network conditions
+        base_fee = int(params.get("base_fee", 1_000_000_000))  # 1 gwei default
+        tip = int(params.get("tip", 0))
+        
+        return {
+            "base_fee": base_fee,
+            "tip": tip,
+            "max_fee": base_fee + tip,
+            "estimated_total": (base_fee + tip) * int(params.get("gas_limit", 21000)),
+        }
+    
+    if method == "tx.build":
+        # Build an unsigned transaction
+        from_addr = params.get("from")
+        to_addr = params.get("to")
+        value = int(params.get("value", 0))
+        gas_limit = params.get("gas_limit")
+        max_fee = params.get("max_fee")
+        nonce = params.get("nonce")
+        data = params.get("data", "")
+        
+        if not isinstance(from_addr, str):
+            raise ValueError("from must be a string address")
+        if to_addr is not None and not isinstance(to_addr, str):
+            raise ValueError("to must be a string address or null")
+        if gas_limit is None:
+            raise ValueError("gas_limit is required")
+        if max_fee is None:
+            raise ValueError("max_fee is required")
+        
+        # Get nonce from node if not provided
+        node_status = state.node_manager.status()
+        if not node_status.running or not node_status.rpc_url:
+            raise RuntimeError("Node is not running")
+        
+        if nonce is None:
+            nonce_result = await _proxy_to_node("state.getNonce", {"address": from_addr, "tag": "pending"}, node_status.rpc_url)
+            nonce = int(nonce_result) if nonce_result is not None else 0
+        
+        # Get chain_id from node
+        try:
+            chain_id_result = await _proxy_to_node("chain.getChainId", {}, node_status.rpc_url)
+            chain_id = int(chain_id_result) if chain_id_result else 1
+        except Exception:
+            chain_id = 1  # Default to mainnet
+        
+        tx = {
+            "from": from_addr,
+            "to": to_addr,
+            "value": value,
+            "gas_limit": int(gas_limit),
+            "max_fee": int(max_fee),
+            "nonce": int(nonce),
+            "chain_id": chain_id,
+            "data": data,
+        }
+        return tx
+    
+    if method == "tx.sign":
+        # Sign a transaction with a wallet account
+        if state.wallet_store.is_locked:
+            raise ValueError("Wallet is locked")
+        
+        tx = params.get("tx")
+        from_addr = params.get("from")
+        
+        if not isinstance(tx, dict):
+            raise ValueError("tx must be a transaction object")
+        if not isinstance(from_addr, str):
+            raise ValueError("from must be a string address")
+        
+        # Find the account
+        account = None
+        for acct_dict in state.wallet_store.list_accounts():
+            if acct_dict.get("address") == from_addr:
+                account = state.wallet_store.export_account(from_addr)
+                break
+        
+        if account is None:
+            raise ValueError(f"Account {from_addr} not found in wallet")
+        
+        # Use omni_sdk to build and sign the transaction
+        from omni_sdk.tx.build import make_tx
+        from omni_sdk.tx.encode import sign_bytes, pack_signed
+        from omni_sdk.wallet.signer import create_signer_from_keypair
+        
+        # Create signer from account
+        secret_key = bytes.fromhex(account["secret_key_hex"])
+        public_key = bytes.fromhex(account["public_key_hex"])
+        alg_name = account["alg_name"]
+        signer = create_signer_from_keypair(alg_name, secret_key, public_key)
+        
+        # Build tx object
+        tx_obj = make_tx(
+            from_addr=tx["from"],
+            to=tx.get("to"),
+            nonce=int(tx["nonce"]),
+            value=int(tx.get("value", 0)),
+            data=bytes.fromhex(tx.get("data", "").replace("0x", "")),
+            gas_limit=int(tx["gas_limit"]),
+            max_fee=int(tx["max_fee"]),
+            chain_id=int(tx["chain_id"]),
+        )
+        
+        # Sign
+        sign_bytes_data = sign_bytes(tx_obj)
+        signature = signer.sign(sign_bytes_data)
+        
+        # Pack into signed CBOR
+        raw_tx = pack_signed(
+            tx_obj,
+            signature=signature,
+            alg_id=signer.alg_id,
+            public_key=signer.public_key,
+        )
+        
+        return {
+            "signed_tx": "0x" + raw_tx.hex(),
+            "tx_hash": "0x" + _compute_tx_hash(raw_tx).hex(),
+        }
+    
+    if method == "tx.send":
+        # Send a signed transaction to the node
+        signed_tx = params.get("signed_tx")
+        if not isinstance(signed_tx, str):
+            raise ValueError("signed_tx must be a hex string")
+        
+        node_status = state.node_manager.status()
+        if not node_status.running or not node_status.rpc_url:
+            raise RuntimeError("Node is not running")
+        
+        result = await _proxy_to_node("tx.sendRawTransaction", {"rawTx": signed_tx}, node_status.rpc_url)
+        return result
+    
+    if method == "tx.get":
+        # Get transaction by hash (proxy to node)
+        tx_hash = params.get("hash")
+        if not isinstance(tx_hash, str):
+            raise ValueError("hash must be a string")
+        
+        node_status = state.node_manager.status()
+        if not node_status.running or not node_status.rpc_url:
+            raise RuntimeError("Node is not running")
+        
+        return await _proxy_to_node("tx.getTransactionByHash", {"txHash": tx_hash}, node_status.rpc_url)
+    
     raise ValueError(f"Unknown method: {method}")
 
 
