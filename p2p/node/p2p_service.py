@@ -3553,8 +3553,10 @@ class P2PService:
         target_height: Optional[int],
         best_peer: Optional[_PeerState],
     ) -> None:
-        # Always check for expired inflight headers, regardless of progress
-        # The function itself checks deadlines internally
+        # Always check for expired inflight headers, regardless of progress.
+        # This fixes the 'at tip' scenario where recent progress (e.g., blocks advancing)
+        # would prevent expiry checks, causing stuck header requests to block sync forever.
+        # The function itself checks deadlines internally using time.monotonic().
         if self._sync_inflight_headers:
             self._expire_inflight_headers()
 

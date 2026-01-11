@@ -263,13 +263,12 @@ def test_inflight_header_expiry_at_tip(tmp_path: Path) -> None:
         peerstore_path=str(tmp_path / "inflight-header-expiry-at-tip" / "p2p"),
     )
     peer = _register_peer(node, "peer:3002")
-    
     # Simulate being at tip: last progress was recent (within timeout)
     node._sync_last_progress_at = time.time() - 0.5
     node._sync_request_timeout = 10.0
     
-    # But the header request itself is expired (deadline passed)
-    started_at = time.monotonic() - 10
+    # But the header request itself is expired (deadline passed long ago)
+    started_at = time.monotonic() - 20
     request_id = "req-headers-expired"
     peer.pending_header_request_id = request_id
     peer.pending_headers = asyncio.get_event_loop().create_future()
@@ -278,7 +277,7 @@ def test_inflight_header_expiry_at_tip(tmp_path: Path) -> None:
         peer_id=peer.remote,
         kind="headers",
         started_at=started_at,
-        deadline_at=started_at - 1,  # Already expired
+        deadline_at=started_at + 5,  # Expired 15 seconds ago
         retry_count=0,
         start_height=1,
         count=10,
