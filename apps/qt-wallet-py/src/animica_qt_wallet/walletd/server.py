@@ -15,10 +15,12 @@ from animica_qt_wallet.walletd.config import (
     load_or_create_token,
     resolve_data_dir,
     resolve_log_path,
+    resolve_wallet_path,
     resolve_node_log_path,
     resolve_port,
 )
 from animica_qt_wallet.walletd.node_manager import NodeManager, NodeStatus
+from animica_qt_wallet.walletd.wallet_store import WalletStore
 
 
 @dataclass
@@ -27,6 +29,7 @@ class WalletdState:
     rpc_url: str
     log_path: Path
     node_manager: NodeManager
+    wallet_store: WalletStore
     node_network: str = "mainnet"
     last_error: str | None = None
 
@@ -92,6 +95,8 @@ async def dispatch(method: str | None, params: dict[str, Any], state: WalletdSta
             "node_rpc_url": node_status.rpc_url,
             "node_network": node_status.network,
             "last_error": state.last_error,
+            "wallet_locked": state.wallet_store.is_locked,
+            "wallet_initialized": state.wallet_store.is_initialized,
         }
     if method == "walletd.getLogsTail":
         lines = int(params.get("lines", 200))
@@ -121,6 +126,41 @@ async def dispatch(method: str | None, params: dict[str, Any], state: WalletdSta
             "rpc_url": status.rpc_url,
             "network": status.network,
         }
+    if method == "wallet.lock":
+        state.wallet_store.lock()
+        return {"locked": True}
+    if method == "wallet.unlock":
+        password = params.get("password")
+        if not isinstance(password, str):
+            raise ValueError("password must be a string")
+        result = state.wallet_store.unlock(password)
+        return {
+            "unlocked": True,
+            "initialized": result.get("initialized", False),
+            "accounts": len(state.wallet_store.list_accounts())
+            if not state.wallet_store.is_locked
+            else 0,
+        }
+    if method == "wallet.listAccounts":
+        return {"accounts": state.wallet_store.list_accounts()}
+    if method == "wallet.createAccount":
+        label = params.get("label")
+        if label is not None and not isinstance(label, str):
+            raise ValueError("label must be a string")
+        return state.wallet_store.create_account(label)
+    if method == "wallet.importAccount":
+        label = params.get("label")
+        if label is not None and not isinstance(label, str):
+            raise ValueError("label must be a string")
+        secret = params.get("secret")
+        if not isinstance(secret, str):
+            raise ValueError("secret must be a string")
+        return state.wallet_store.import_account(label, secret)
+    if method == "wallet.exportAccount":
+        address = params.get("address")
+        if not isinstance(address, str):
+            raise ValueError("address must be a string")
+        return state.wallet_store.export_account(address)
     raise ValueError(f"Unknown method: {method}")
 
 
@@ -183,6 +223,7 @@ def main() -> int:
         rpc_url=rpc_url,
         log_path=log_path,
         node_manager=NodeManager(data_dir),
+        wallet_store=WalletStore(resolve_wallet_path(data_dir)),
     )
     app = create_app(state)
     web.run_app(app, host="127.0.0.1", port=port)

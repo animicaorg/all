@@ -138,6 +138,28 @@ class WalletdManager:
     async def get_node_rpc_info(self) -> dict[str, Any]:
         return await self._rpc_call("node.rpcInfo")
 
+    async def wallet_unlock(self, password: str) -> dict[str, Any]:
+        return await self._rpc_call("wallet.unlock", {"password": password})
+
+    async def wallet_lock(self) -> dict[str, Any]:
+        return await self._rpc_call("wallet.lock")
+
+    async def wallet_list_accounts(self) -> list[dict[str, Any]]:
+        result = await self._rpc_call("wallet.listAccounts")
+        return result.get("accounts", [])
+
+    async def wallet_create_account(self, label: str | None = None) -> dict[str, Any]:
+        return await self._rpc_call("wallet.createAccount", {"label": label} if label else {})
+
+    async def wallet_import_account(self, label: str | None, secret: str) -> dict[str, Any]:
+        params = {"secret": secret}
+        if label:
+            params["label"] = label
+        return await self._rpc_call("wallet.importAccount", params)
+
+    async def wallet_export_account(self, address: str) -> dict[str, Any]:
+        return await self._rpc_call("wallet.exportAccount", {"address": address})
+
     async def _rpc_call(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         payload = {
             "jsonrpc": "2.0",
