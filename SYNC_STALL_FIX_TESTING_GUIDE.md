@@ -129,4 +129,5 @@ Headers:   6520 | Blocks: 6510
 - The stall timeout is typically 5 seconds
 - Peer rotation happens every 5 seconds after stall detection
 - Force sync can be triggered manually with `animica sync force`
-- The watchdog will also trigger recovery after 30 seconds of no progress
+- The watchdog will also trigger recovery after 60 seconds of no progress
+- Recovery from "not anchored" errors now happens after 1 second (reduced from 30 seconds)
