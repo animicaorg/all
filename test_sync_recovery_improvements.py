@@ -116,12 +116,12 @@ def test_few_headers_diagnostic_logging():
     # Simulated state
     local_height = 100
     best_header_height = 200
-    available_headers = 3
+    available_headers_count = 3
     
     gap = best_header_height - local_height
     
     # Should log warning if few headers despite large gap
-    should_warn = len([1, 2, 3]) < min(10, gap) and gap > 5
+    should_warn = available_headers_count < min(10, gap) and gap > 5
     
     assert should_warn, "Should warn when few headers available despite large gap"
     print("✓ Test 5 PASSED: Diagnostic logging for header gaps")

@@ -7024,6 +7024,7 @@ class P2PService:
         if not headers:
             return 0
         local_height, _ = self._local_head()
+        local_height_int = int(local_height or 0)
         added = 0
         skipped_no_parent = 0
         
@@ -7031,7 +7032,7 @@ class P2PService:
         sorted_headers = sorted(headers, key=lambda h: h.height)
         
         for hdr in sorted_headers:
-            if hdr.height <= int(local_height or 0):
+            if hdr.height <= local_height_int:
                 continue
             if self._has_block(hdr.hash):
                 continue
@@ -7080,7 +7081,7 @@ class P2PService:
                     else:
                         # Parent header not available - enqueue anyway if we're far behind
                         # This prevents stalls when there are header gaps
-                        gap_size = hdr.height - int(local_height or 0)
+                        gap_size = hdr.height - local_height_int
                         if gap_size > 10:
                             log.warning(
                                 "Enqueuing block despite missing parent due to large gap",
