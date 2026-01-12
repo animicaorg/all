@@ -49,9 +49,21 @@ export default function BlockDetailPage() {
                 Instant Block
               </span>
             )}
+            {block.orphaned && (
+              <span className="ml-3 inline-flex items-center rounded-full bg-red-100 px-3 py-1 text-xs font-medium text-red-800 dark:bg-red-900/30 dark:text-red-300">
+                ⚠️ ORPHANED
+              </span>
+            )}
           </h1>
           <CopyButton value={block.hash} />
         </div>
+        
+        {block.orphaned && (
+          <div className="mt-4 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-800 dark:border-red-900/40 dark:bg-red-900/10 dark:text-red-100">
+            <strong className="font-semibold">⚠️ Orphaned Block:</strong> This block was mined but is not part of the canonical chain. 
+            The miner did not receive rewards for this block because it lost a fork race to another block at the same height.
+          </div>
+        )}
         
         <div className="mt-6 grid gap-6 sm:grid-cols-2">
           <div>

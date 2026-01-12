@@ -16,6 +16,7 @@ export interface BlockSummary {
   time: number
   txCount: number
   miner?: Address | null
+  orphaned?: boolean
 }
 
 export interface BlockDetail {
@@ -27,6 +28,7 @@ export interface BlockDetail {
   chainId?: number
   difficulty?: string | number | null
   nonce?: number
+  orphaned?: boolean
   txs: TxSummary[]
   raw: unknown
 }

@@ -16,6 +16,7 @@ export type BlockRow = {
   gasUsed?: number;
   gas?: number;
   proposer?: string;
+  orphaned?: boolean;
 };
 
 export interface BlocksTableProps {
@@ -85,7 +86,7 @@ export default function BlocksTable({
                 const row = (
                   <tr
                     key={b.hash}
-                    className={cn("ow-row", onRowClick && "ow-row--click")}
+                    className={cn("ow-row", onRowClick && "ow-row--click", b.orphaned && "ow-row--orphaned")}
                     onClick={onRowClick ? () => onRowClick(b) : undefined}
                     tabIndex={onRowClick ? 0 : -1}
                     onKeyDown={(e) => {
@@ -100,6 +101,11 @@ export default function BlocksTable({
                       <a href={href} className="ow-link">
                         {formatNumber(b.height)}
                       </a>
+                      {b.orphaned && (
+                        <span className="ow-orphan-badge" title="Orphaned block - not in canonical chain">
+                          {" "}⚠️
+                        </span>
+                      )}
                     </td>
                     <td data-label="Hash">
                       <code className="ow-mono">{shortHash(b.hash, 6)}</code>
@@ -285,6 +291,22 @@ const styles = `
 }
 .ow-row--click:hover {
   background: rgba(255,255,255,.03);
+}
+
+.ow-row--orphaned {
+  background: rgba(220, 38, 38, 0.08);
+  border-left: 3px solid #dc2626;
+}
+.ow-row--orphaned:hover {
+  background: rgba(220, 38, 38, 0.12);
+}
+
+.ow-orphan-badge {
+  display: inline-block;
+  margin-left: 6px;
+  font-size: 14px;
+  vertical-align: middle;
+  opacity: 0.9;
 }
 
 .ow-empty {
