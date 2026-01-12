@@ -3221,13 +3221,16 @@ def _mine_once(
             latest_hash_bytes = start_head_hash_bytes
 
         if latest_height != start_head_height or latest_hash_bytes != start_head_hash_bytes:
-            log.info(
-                "Discarding mined block due to head update during mining",
+            log.warning(
+                "⚠️ ORPHANED: Discarding mined block that would have been orphaned "
+                "due to head update during mining (fork race). Another block was accepted "
+                "at this height while we were mining, so this block would not receive rewards.",
                 extra={
                     "start_height": start_head_height,
                     "start_hash": start_head_hash_bytes.hex(),
                     "current_height": latest_height,
                     "current_hash": latest_hash_bytes.hex(),
+                    "reason": "fork_race_orphaned",
                 },
             )
             _cleanup_tracked_txs(txs)
@@ -3516,23 +3519,26 @@ def _mine_once(
                 # But we CAN verify that reward_amount > 0 implies final_balance > 0
                 if reward_amount > 0 and final_balance == 0:
                     # CRITICAL: Reward was supposed to be credited but balance is zero
-                    # This should NEVER happen
+                    # This could indicate the block became orphaned after mining
                     log.error(
-                        f"INVARIANT VIOLATION: Block reward not credited! "
+                        f"⚠️ ORPHANED?: Block reward not credited! "
                         f"height={header.height}, reward={reward_amount}, balance={final_balance}, "
-                        f"coinbase={payout_addr_bytes.hex()[:16]}..., hash={block_hash_hex}",
+                        f"coinbase={payout_addr_bytes.hex()[:16]}..., hash={block_hash_hex}. "
+                        f"This may indicate the block was orphaned (not part of canonical chain) "
+                        f"and lost a fork race. Check if another block exists at this height.",
                         extra={
                             "height": header.height,
                             "expected_reward": reward_amount,
                             "actual_balance": final_balance,
                             "coinbase": payout_addr_bytes.hex(),
                             "block_hash": block_hash_hex,
+                            "possible_orphaned": True,
                         }
                     )
                     # Don't fail mining, but log prominently so this is caught
                 
                 log.info(
-                    f"ACCEPTED: Block mined and reward credited | "
+                    f"✓ ACCEPTED: Block mined and reward credited | "
                     f"height={header.height} | "
                     f"hash={block_hash_hex} | "
                     f"coinbase={payout_addr_bytes.hex()[:16]}... | "

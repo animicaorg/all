@@ -54,6 +54,7 @@ export type BlockRow = {
   found_by_pool: boolean;
   reward: string;
   tx_count?: number;
+  orphaned?: boolean;
 };
 
 const API_URL =
