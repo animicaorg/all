@@ -892,7 +892,10 @@ def test_up_devnet_no_profiles(monkeypatch: Any) -> None:
             if "--profile" in cmd:
                 profile_idx = cmd.index("--profile")
                 # If profile exists, fail the test
-                pytest.fail(f"devnet should not use profiles, but found: --profile {cmd[profile_idx + 1]}")
+                if profile_idx + 1 < len(cmd):
+                    pytest.fail(f"devnet should not use profiles, but found: --profile {cmd[profile_idx + 1]}")
+                else:
+                    pytest.fail(f"devnet should not use profiles, but found: --profile with no value")
 
 
 def test_up_local_devnet_uses_dev_profile(monkeypatch: Any) -> None:
@@ -922,6 +925,7 @@ def test_up_local_devnet_uses_dev_profile(monkeypatch: Any) -> None:
             cmd = call_args[0][0]
             assert "--profile" in cmd
             profile_idx = cmd.index("--profile")
+            assert profile_idx + 1 < len(cmd), "Expected --profile to be followed by profile name"
             assert cmd[profile_idx + 1] == "dev"
 
 
