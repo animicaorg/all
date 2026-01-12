@@ -1144,6 +1144,14 @@ class P2PService:
         self._orphan_parent_backfill_enabled = _env_flag(
             "ANIMICA_P2P_ORPHAN_PARENT_BACKFILL", default=True
         )
+        
+        # Block failure tracking for skip-on-stuck logic
+        self._block_import_failures: Dict[bytes, int] = {}  # block_hash -> failure_count
+        self._block_import_failure_threshold = int(
+            os.environ.get("ANIMICA_P2P_BLOCK_FAILURE_SKIP_THRESHOLD", "3") or 3
+        )
+        self._skipped_blocks_queue: Deque[bytes] = deque()  # Blocks skipped due to repeated failures
+        self._skipped_blocks_set: set[bytes] = set()
 
         self._sync_lock = asyncio.Lock()
         self._sync_wakeup = asyncio.Event()
@@ -6735,6 +6743,9 @@ class P2PService:
                 self._sync_inflight_blocks.pop(sync_block.hash, None)
                 self._sync_inflight_peers.pop(sync_block.hash, None)
                 self._sync_inflight_block_requests.pop(sync_block.hash, None)
+                # Clear failure tracking on successful import
+                self._block_import_failures.pop(sync_block.hash, None)
+                self._skipped_blocks_set.discard(sync_block.hash)
                 self._sync_last_block_at = time.time()
                 self._sync_last_progress_at = self._sync_last_block_at
                 peer.last_progress_at = self._sync_last_block_at
@@ -6802,6 +6813,54 @@ class P2PService:
                                 quarantine_s=300.0,
                             )
                     else:
+                        # Track block import failures
+                        self._block_import_failures[sync_block.hash] = (
+                            self._block_import_failures.get(sync_block.hash, 0) + 1
+                        )
+                        failure_count = self._block_import_failures[sync_block.hash]
+                        
+                        # If block has failed too many times, skip it and move on
+                        if failure_count >= self._block_import_failure_threshold:
+                            # Prune tracking dict to prevent unbounded growth
+                            while len(self._block_import_failures) > 1000:
+                                self._block_import_failures.pop(next(iter(self._block_import_failures)))
+                            
+                            # Add to skipped queue for later retry with different peer
+                            if sync_block.hash not in self._skipped_blocks_set:
+                                self._skipped_blocks_queue.append(sync_block.hash)
+                                self._skipped_blocks_set.add(sync_block.hash)
+                                # Limit skipped queue size
+                                while len(self._skipped_blocks_queue) > 100:
+                                    old_hash = self._skipped_blocks_queue.popleft()
+                                    self._skipped_blocks_set.discard(old_hash)
+                            
+                            log.warning(
+                                "Skipping stuck block after repeated failures - will retry later with different peer",
+                                extra={
+                                    "remote": peer.remote,
+                                    "block_hash": sync_block.hash.hex(),
+                                    "failure_count": failure_count,
+                                    "reason": reject_reason,
+                                    "height_hint": self._block_height_hint(sync_block.hash),
+                                },
+                            )
+                        else:
+                            # Re-queue for retry with same or different peer
+                            if sync_block.hash not in self._sync_block_queue_set:
+                                self._sync_block_queue.append(sync_block.hash)
+                                self._sync_block_queue_set.add(sync_block.hash)
+                            
+                            log.debug(
+                                "Re-queuing failed block for retry",
+                                extra={
+                                    "remote": peer.remote,
+                                    "block_hash": sync_block.hash.hex(),
+                                    "failure_count": failure_count,
+                                    "threshold": self._block_import_failure_threshold,
+                                    "reason": reject_reason,
+                                },
+                            )
+                        
                         self._set_block_backoff(peer, reason="bad_block", delay=60.0)
                         self._penalize_peer(
                             peer,
@@ -7570,6 +7629,47 @@ class P2PService:
                     "Re-queued expired blocks for retry",
                     extra={"count": requeued_count, "total_expired": len(expired)},
                 )
+
+    def _retry_skipped_blocks(self) -> None:
+        """
+        Periodically retry blocks that were skipped due to repeated failures.
+        This gives them another chance with potentially different peers.
+        """
+        if not self._skipped_blocks_queue:
+            return
+        
+        # Only retry if we have few blocks in the main queue to avoid overwhelming it
+        if len(self._sync_block_queue) > 10:
+            return
+        
+        # Try to retry a few skipped blocks
+        retry_count = 0
+        max_retry_per_cycle = 5
+        
+        for _ in range(min(len(self._skipped_blocks_queue), max_retry_per_cycle)):
+            block_hash = self._skipped_blocks_queue.popleft()
+            self._skipped_blocks_set.discard(block_hash)
+            
+            # Only retry if we still don't have the block
+            if not self._has_block(block_hash):
+                # Reset failure count to give it a fresh chance
+                self._block_import_failures.pop(block_hash, None)
+                
+                # Add back to main queue for retry
+                if block_hash not in self._sync_block_queue_set:
+                    self._sync_block_queue.append(block_hash)
+                    self._sync_block_queue_set.add(block_hash)
+                    retry_count += 1
+        
+        if retry_count > 0:
+            log.info(
+                "Retrying previously skipped blocks with fresh peers",
+                extra={
+                    "retry_count": retry_count,
+                    "remaining_skipped": len(self._skipped_blocks_queue),
+                },
+            )
+            self._sync_wakeup.set()
 
     def _handle_reorg(self, new_height: int, new_hash: Optional[str]) -> None:
         self._sync_last_reorg_at = time.time()
@@ -9183,6 +9283,7 @@ class P2PService:
                 self._expire_inflight_headers()
                 self._expire_inflight_blocks()
                 self._prune_orphan_buffer()
+                self._retry_skipped_blocks()
                 self._maybe_mark_block_stalled(now)
                 self._sync_watchdog_check(
                     now=now, head_height=best_block_height, head_hash=head_hash
