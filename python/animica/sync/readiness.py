@@ -131,16 +131,18 @@ def assess_tx_submission_readiness(
     if phase in {"SYNCED", "IDLE", "TARGET_REACHED"}:
         return True, info
 
-    # If heights are at tip and no work in progress, allow
+    # If heights are at tip and no critical work in progress, allow
+    # Note: pending_header_batches may be stale/for already-synced heights,
+    # so we don't require it to be 0 if we're already at tip
     empty_inflight = (
-        pending_header_batches == 0
-        and in_flight_headers == 0
+        in_flight_headers == 0
         and in_flight_blocks == 0
         and queued_blocks_count == 0
     )
 
     if head_height is not None and best_header_height is not None:
         if head_height >= best_header_height and empty_inflight:
+            # At tip with no active sync work - allow transactions
             return True, info
 
     if (
