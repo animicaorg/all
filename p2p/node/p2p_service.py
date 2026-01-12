@@ -7025,6 +7025,7 @@ class P2PService:
             return 0
         local_height, _ = self._local_head()
         added = 0
+        skipped_no_parent = 0
         
         # Sort headers by height to ensure ancestor→descendant ordering
         sorted_headers = sorted(headers, key=lambda h: h.height)
@@ -7077,16 +7078,38 @@ class P2PService:
                                 },
                             )
                     else:
-                        # Parent header not available - skip this block for now
-                        log.debug(
-                            "Skipping block enqueue: parent not available",
-                            extra={
-                                "block_hash": hdr.hash.hex(),
-                                "block_height": hdr.height,
-                                "parent_hash": hdr.parent_hash.hex() if hdr.parent_hash else None,
-                            },
-                        )
-                        continue
+                        # Parent header not available - enqueue anyway if we're far behind
+                        # This prevents stalls when there are header gaps
+                        gap_size = hdr.height - int(local_height or 0)
+                        if gap_size > 10:
+                            log.warning(
+                                "Enqueuing block despite missing parent due to large gap",
+                                extra={
+                                    "block_hash": hdr.hash.hex(),
+                                    "block_height": hdr.height,
+                                    "parent_hash": hdr.parent_hash.hex() if hdr.parent_hash else None,
+                                    "local_height": local_height,
+                                    "gap_size": gap_size,
+                                },
+                            )
+                            # Enqueue anyway - the block download will fail and trigger parent fetch
+                            self._sync_block_queue.append(hdr.hash)
+                            self._sync_block_queue_set.add(hdr.hash)
+                            self._sync_block_queue_heights[hdr.hash] = hdr.height
+                            added += 1
+                            continue
+                        else:
+                            # Small gap - skip for now to maintain ordering
+                            skipped_no_parent += 1
+                            log.debug(
+                                "Skipping block enqueue: parent not available",
+                                extra={
+                                    "block_hash": hdr.hash.hex(),
+                                    "block_height": hdr.height,
+                                    "parent_hash": hdr.parent_hash.hex() if hdr.parent_hash else None,
+                                },
+                            )
+                            continue
             
             # Enqueue the block
             self._sync_block_queue.append(hdr.hash)
@@ -7096,6 +7119,19 @@ class P2PService:
         
         if added:
             self._sync_wakeup.set()
+        
+        # Log if we skipped many blocks due to missing parents - indicates header gaps
+        if skipped_no_parent > 5:
+            log.warning(
+                "Skipped many blocks due to missing parents - may need to request more headers",
+                extra={
+                    "skipped": skipped_no_parent,
+                    "added": added,
+                    "total_headers": len(headers),
+                    "local_height": local_height,
+                },
+            )
+        
         return added
 
     def _drop_from_block_queue(self, block_hash: bytes) -> None:
@@ -7172,17 +7208,38 @@ class P2PService:
         return False
 
     def _ensure_block_queue(self) -> int:
+        """
+        Ensure the block queue is populated from available headers.
+        Returns the number of blocks added to the queue.
+        """
         if self._sync_best_header is None:
             return 0
         local_height, _ = self._local_head()
         if self._sync_best_header.height <= int(local_height or 0):
             return 0
+        
+        # Get all headers ahead of local height
         headers = [
             h
             for h in self._sync_headers.values()
             if h.height > int(local_height or 0)
         ]
         headers.sort(key=lambda h: h.height)
+        
+        # If we have very few headers but are far behind, log a warning
+        # This indicates we need to request more headers
+        gap = self._sync_best_header.height - int(local_height or 0)
+        if len(headers) < min(10, gap) and gap > 5:
+            log.warning(
+                "Few headers available despite being behind - may need more header requests",
+                extra={
+                    "local_height": local_height,
+                    "best_header_height": self._sync_best_header.height,
+                    "gap": gap,
+                    "available_headers": len(headers),
+                },
+            )
+        
         return self._enqueue_missing_blocks(headers)
 
     def _queued_blocks_count(self, best_block_height: Optional[int] = None) -> int:
@@ -7444,16 +7501,26 @@ class P2PService:
                     continue
                 if now - started >= timeout:
                     expired.append(h)
+        requeued_count = 0
         for h in expired:
             self._sync_inflight_blocks.pop(h, None)
             peer_remote = self._sync_inflight_peers.pop(h, None)
             request = self._sync_inflight_block_requests.pop(h, None)
+            # Always re-queue blocks that haven't been imported yet
+            # This ensures we don't lose track of blocks that failed to download
             if not self._has_block(h):
                 if h not in self._sync_block_queue_set:
                     self._sync_block_queue.appendleft(h)
                     self._sync_block_queue_set.add(h)
+                    requeued_count += 1
+                    # Try to restore height hint if available
                     if h not in self._sync_block_queue_heights:
-                        self._sync_block_queue_heights[h] = -1
+                        if h in self._sync_headers:
+                            self._sync_block_queue_heights[h] = self._sync_headers[h].height
+                        elif request and request.start_height is not None:
+                            self._sync_block_queue_heights[h] = request.start_height
+                        else:
+                            self._sync_block_queue_heights[h] = -1
             if peer_remote:
                 peer = self._peer_by_remote(peer_remote)
                 if peer is not None:
@@ -7481,6 +7548,11 @@ class P2PService:
         if expired:
             self._sync_wakeup.set()
             self._sync_kick(reason="block_timeout", aggressive=False)
+            if requeued_count > 0:
+                log.info(
+                    "Re-queued expired blocks for retry",
+                    extra={"count": requeued_count, "total_expired": len(expired)},
+                )
 
     def _handle_reorg(self, new_height: int, new_hash: Optional[str]) -> None:
         self._sync_last_reorg_at = time.time()
@@ -9175,11 +9247,23 @@ class P2PService:
                                 "stall_elapsed_s": max(0.0, now - self._sync_last_progress_at),
                                 "peers": len(self._peers),
                                 "last_header_error": self._sync_last_header_error,
+                                "network_best_height": network_best_height,
                             },
                         )
                         self._sync_block_stalled_reason = "headers_blocks_equal_stall"
                         # Force sync on next iteration to try different peers
                         self._sync_requested = True
+                        # Clear error states that might be blocking progress
+                        if self._sync_last_header_error in ("at_tip", "invalid_headers"):
+                            log.info(
+                                "Clearing header error state to retry sync",
+                                extra={"error": self._sync_last_header_error},
+                            )
+                            self._sync_last_header_error = None
+                            self._sync_last_header_error_at = None
+                            self._sync_last_header_error_peer = None
+                        # Trigger aggressive peer rotation
+                        self._sync_kick(reason="headers_blocks_equal_stall", aggressive=True)
                 
                 if (
                     network_best_height is not None
