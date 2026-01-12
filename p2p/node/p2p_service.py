@@ -7015,11 +7015,21 @@ class P2PService:
             self._sync_best_header = header
 
     def _enqueue_missing_blocks(self, headers: list[_SyncHeader]) -> int:
+        """
+        Enqueue missing blocks for download, ensuring parent chain continuity.
+        
+        Enhanced to verify that blocks are added in ancestor→descendant order
+        and that parent blocks are either already present or queued first.
+        """
         if not headers:
             return 0
         local_height, _ = self._local_head()
         added = 0
-        for hdr in sorted(headers, key=lambda h: h.height):
+        
+        # Sort headers by height to ensure ancestor→descendant ordering
+        sorted_headers = sorted(headers, key=lambda h: h.height)
+        
+        for hdr in sorted_headers:
             if hdr.height <= int(local_height or 0):
                 continue
             if self._has_block(hdr.hash):
@@ -7030,10 +7040,60 @@ class P2PService:
                 or hdr.hash in self._sync_block_queue_set
             ):
                 continue
+            
+            # Parent availability check: ensure parent is either in db, in queue, or in-flight
+            # This prevents requesting blocks whose parents are unknown
+            if hdr.parent_hash:
+                parent_available = (
+                    self._has_block(hdr.parent_hash)
+                    or hdr.parent_hash in self._sync_block_queue_set
+                    or hdr.parent_hash in self._sync_inflight_blocks
+                    or hdr.parent_hash in self._sync_block_buffer
+                )
+                
+                if not parent_available:
+                    # Parent not available - check if we have the parent header
+                    # If we do, we can enqueue both parent and child
+                    parent_header_available = (
+                        self._has_header(hdr.parent_hash)
+                        or hdr.parent_hash in self._sync_headers
+                    )
+                    
+                    if parent_header_available:
+                        # Enqueue parent first if it's not already queued
+                        parent_hdr = self._sync_headers.get(hdr.parent_hash)
+                        if parent_hdr and hdr.parent_hash not in self._sync_block_queue_set:
+                            self._sync_block_queue.append(hdr.parent_hash)
+                            self._sync_block_queue_set.add(hdr.parent_hash)
+                            self._sync_block_queue_heights[hdr.parent_hash] = parent_hdr.height
+                            added += 1
+                            log.debug(
+                                "Auto-enqueued parent block",
+                                extra={
+                                    "parent_hash": hdr.parent_hash.hex(),
+                                    "parent_height": parent_hdr.height,
+                                    "child_hash": hdr.hash.hex(),
+                                    "child_height": hdr.height,
+                                },
+                            )
+                    else:
+                        # Parent header not available - skip this block for now
+                        log.debug(
+                            "Skipping block enqueue: parent not available",
+                            extra={
+                                "block_hash": hdr.hash.hex(),
+                                "block_height": hdr.height,
+                                "parent_hash": hdr.parent_hash.hex() if hdr.parent_hash else None,
+                            },
+                        )
+                        continue
+            
+            # Enqueue the block
             self._sync_block_queue.append(hdr.hash)
             self._sync_block_queue_set.add(hdr.hash)
             self._sync_block_queue_heights[hdr.hash] = hdr.height
             added += 1
+        
         if added:
             self._sync_wakeup.set()
         return added
