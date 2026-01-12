@@ -509,9 +509,11 @@ def test_wallet_show_rpc_success(premine_wallet_store: Path) -> None:
     """Test wallet show with successful RPC balance fetch."""
     rpc_url = "http://localhost:9999/rpc"
     # Mock RPC to return 1.5 ANM (1,500,000,000 base units)
+    # Now needs 3 responses: getSafeHead, getHead, getBalance
     respx.post(rpc_url).mock(side_effect=[
-        httpx.Response(200, json={"jsonrpc": "2.0", "id": 1, "result": {"height": 0, "hash": "0x" + "a" * 64}}),
-        httpx.Response(200, json={"jsonrpc": "2.0", "id": 2, "result": 1_500_000_000}),
+        httpx.Response(200, json={"jsonrpc": "2.0", "id": 1, "result": {"height": 145, "hash": "0x" + "a" * 64}}),  # getSafeHead
+        httpx.Response(200, json={"jsonrpc": "2.0", "id": 2, "result": {"height": 150, "hash": "0x" + "b" * 64}}),  # getHead
+        httpx.Response(200, json={"jsonrpc": "2.0", "id": 3, "result": 1_500_000_000}),  # getBalance
     ])
     
     output = run_cli(["show", "premine", "--rpc-url", rpc_url], premine_wallet_store)
@@ -523,20 +525,33 @@ def test_wallet_show_rpc_success(premine_wallet_store: Path) -> None:
     assert "1.500000000 ANM" in data["balance_confirmed_formatted"]
     assert data.get("balance_warning") is None
     assert data["balance_source"] == "chain"
+    
+    # Verify height information is present
+    assert "balance_confirmed_height" in data
+    assert data["balance_confirmed_height"] == 145  # From getSafeHead
 
 
 @respx.mock
 def test_wallet_show_rpc_failure(premine_wallet_store: Path) -> None:
     """Test wallet show handles RPC failure gracefully."""
     rpc_url = "http://localhost:9999/rpc"
-    # Mock RPC to return error
+    # Mock RPC to return error - now needs 3 responses
     respx.post(rpc_url).mock(side_effect=[
-        httpx.Response(200, json={"jsonrpc": "2.0", "id": 1, "result": {"height": 0, "hash": "0x" + "a" * 64}}),
-        httpx.Response(200, json={"jsonrpc": "2.0", "id": 2, "error": {"code": -32000, "message": "Node unreachable"}}),
+        httpx.Response(200, json={"jsonrpc": "2.0", "id": 1, "result": {"height": 100, "hash": "0x" + "a" * 64}}),  # getSafeHead
+        httpx.Response(200, json={"jsonrpc": "2.0", "id": 2, "result": {"height": 105, "hash": "0x" + "b" * 64}}),  # getHead
+        httpx.Response(200, json={"jsonrpc": "2.0", "id": 3, "error": {"code": -32000, "message": "Node unreachable"}}),  # getBalance error
     ])
     
     output = run_cli(["show", "premine", "--rpc-url", rpc_url], premine_wallet_store)
-    data = json.loads(output)
+    # Handle warning output
+    lines = output.strip().split('\n')
+    json_start = 0
+    for i, line in enumerate(lines):
+        if line.strip().startswith('{'):
+            json_start = i
+            break
+    json_output = '\n'.join(lines[json_start:])
+    data = json.loads(json_output)
 
     # Verify balance falls back to cached and warning is present
     assert data["balance_confirmed"] is None, "Balance should be null on RPC error"
@@ -550,15 +565,24 @@ def test_wallet_show_rpc_failure(premine_wallet_store: Path) -> None:
 def test_wallet_show_rpc_network_timeout(premine_wallet_store: Path) -> None:
     """Test wallet show handles network timeout gracefully."""
     rpc_url = "http://localhost:9999/rpc"
-    # Mock RPC to timeout
+    # Mock RPC to timeout - now needs 3 responses
     import httpx
     respx.post(rpc_url).mock(side_effect=[
-        httpx.Response(200, json={"jsonrpc": "2.0", "id": 1, "result": {"height": 0, "hash": "0x" + "a" * 64}}),
-        httpx.TimeoutException("Connection timeout"),
+        httpx.Response(200, json={"jsonrpc": "2.0", "id": 1, "result": {"height": 100, "hash": "0x" + "a" * 64}}),  # getSafeHead
+        httpx.Response(200, json={"jsonrpc": "2.0", "id": 2, "result": {"height": 105, "hash": "0x" + "b" * 64}}),  # getHead
+        httpx.TimeoutException("Connection timeout"),  # getBalance timeout
     ])
     
     output = run_cli(["show", "premine", "--rpc-url", rpc_url], premine_wallet_store)
-    data = json.loads(output)
+    # Handle warning output
+    lines = output.strip().split('\n')
+    json_start = 0
+    for i, line in enumerate(lines):
+        if line.strip().startswith('{'):
+            json_start = i
+            break
+    json_output = '\n'.join(lines[json_start:])
+    data = json.loads(json_output)
 
     # Verify balance is null and warning is reported
     assert data["balance_confirmed"] is None
@@ -572,8 +596,9 @@ def test_wallet_show_chain_source_errors_on_failure(premine_wallet_store: Path) 
 
     rpc_url = "http://localhost:9999/rpc"
     respx.post(rpc_url).mock(side_effect=[
-        httpx.Response(200, json={"jsonrpc": "2.0", "id": 1, "result": {"height": 0, "hash": "0x" + "a" * 64}}),
-        httpx.Response(200, json={"jsonrpc": "2.0", "id": 2, "error": {"code": -32000}}),
+        httpx.Response(200, json={"jsonrpc": "2.0", "id": 1, "result": {"height": 100, "hash": "0x" + "a" * 64}}),  # getSafeHead
+        httpx.Response(200, json={"jsonrpc": "2.0", "id": 2, "result": {"height": 105, "hash": "0x" + "b" * 64}}),  # getHead
+        httpx.Response(200, json={"jsonrpc": "2.0", "id": 3, "error": {"code": -32000}}),  # getBalance error
     ])
 
     result = runner.invoke(

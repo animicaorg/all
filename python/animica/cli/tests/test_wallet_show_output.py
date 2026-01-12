@@ -166,8 +166,15 @@ def test_wallet_show_balance_none_is_json_null(wallet_with_entry, monkeypatch):
     # Check exit code
     assert result.exit_code == 0, f"Command failed: {result.output}"
     
-    # Verify output is valid JSON
-    output_data = json.loads(result.output)
+    # Parse the JSON output (skip warning lines that may be printed to stderr)
+    output_lines = result.output.strip().split('\n')
+    json_start = 0
+    for i, line in enumerate(output_lines):
+        if line.strip().startswith('{'):
+            json_start = i
+            break
+    json_output = '\n'.join(output_lines[json_start:])
+    output_data = json.loads(json_output)
     
     # Verify balance is JSON null (None in Python)
     assert output_data["balance_confirmed"] is None, "Balance should be null when RPC fails"
