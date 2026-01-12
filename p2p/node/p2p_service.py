@@ -85,6 +85,12 @@ FEW_HEADERS_WARNING_COUNT: int = 10  # Warn if fewer headers available than this
 EXTENDED_STALL_SNAPSHOT_TRIGGER_SEC: float = 90.0  # Trigger snapshot recovery after this many seconds of extended stall
 EXTENDED_STALL_WATCHDOG_MULTIPLIER: float = 1.5  # Multiplier for watchdog timeout to determine extended stall
 
+# Skip stuck blocks constants
+MAX_BLOCK_FAILURE_TRACKING_ENTRIES: int = 1000  # Maximum entries in block failure tracking dict
+MAX_SKIPPED_BLOCKS_QUEUE_SIZE: int = 100  # Maximum size of skipped blocks queue
+SKIPPED_BLOCKS_RETRY_QUEUE_THRESHOLD: int = 10  # Only retry skipped blocks when main queue < this
+MAX_SKIPPED_BLOCKS_RETRY_PER_CYCLE: int = 5  # Maximum skipped blocks to retry per cycle
+
 DEFAULT_BOOTSTRAP_SEEDS = [
     "/dns4/mainnet.animica.org/tcp/30333",
     "/ip4/144.126.133.21/tcp/30333",
@@ -1148,7 +1154,7 @@ class P2PService:
         # Block failure tracking for skip-on-stuck logic
         self._block_import_failures: Dict[bytes, int] = {}  # block_hash -> failure_count
         self._block_import_failure_threshold = int(
-            os.environ.get("ANIMICA_P2P_BLOCK_FAILURE_SKIP_THRESHOLD", "3") or 3
+            os.environ.get("ANIMICA_P2P_BLOCK_FAILURE_SKIP_THRESHOLD", "3")
         )
         self._skipped_blocks_queue: Deque[bytes] = deque()  # Blocks skipped due to repeated failures
         self._skipped_blocks_set: set[bytes] = set()
@@ -6822,7 +6828,7 @@ class P2PService:
                         # If block has failed too many times, skip it and move on
                         if failure_count >= self._block_import_failure_threshold:
                             # Prune tracking dict to prevent unbounded growth
-                            while len(self._block_import_failures) > 1000:
+                            while len(self._block_import_failures) > MAX_BLOCK_FAILURE_TRACKING_ENTRIES:
                                 self._block_import_failures.pop(next(iter(self._block_import_failures)))
                             
                             # Add to skipped queue for later retry with different peer
@@ -6830,7 +6836,7 @@ class P2PService:
                                 self._skipped_blocks_queue.append(sync_block.hash)
                                 self._skipped_blocks_set.add(sync_block.hash)
                                 # Limit skipped queue size
-                                while len(self._skipped_blocks_queue) > 100:
+                                while len(self._skipped_blocks_queue) > MAX_SKIPPED_BLOCKS_QUEUE_SIZE:
                                     old_hash = self._skipped_blocks_queue.popleft()
                                     self._skipped_blocks_set.discard(old_hash)
                             
@@ -7639,14 +7645,13 @@ class P2PService:
             return
         
         # Only retry if we have few blocks in the main queue to avoid overwhelming it
-        if len(self._sync_block_queue) > 10:
+        if len(self._sync_block_queue) > SKIPPED_BLOCKS_RETRY_QUEUE_THRESHOLD:
             return
         
         # Try to retry a few skipped blocks
         retry_count = 0
-        max_retry_per_cycle = 5
         
-        for _ in range(min(len(self._skipped_blocks_queue), max_retry_per_cycle)):
+        for _ in range(min(len(self._skipped_blocks_queue), MAX_SKIPPED_BLOCKS_RETRY_PER_CYCLE)):
             block_hash = self._skipped_blocks_queue.popleft()
             self._skipped_blocks_set.discard(block_hash)
             
