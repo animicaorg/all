@@ -9264,6 +9264,21 @@ class P2PService:
                             self._sync_last_header_error_peer = None
                         # Trigger aggressive peer rotation
                         self._sync_kick(reason="headers_blocks_equal_stall", aggressive=True)
+                    
+                    # If stalled for a long time with headers==blocks, consider snapshot recovery
+                    stall_duration = now - self._sync_last_progress_at
+                    if stall_duration >= max(90.0, self._sync_watchdog_timeout * 1.5):
+                        log.warning(
+                            "Extended headers==blocks stall - considering snapshot recovery",
+                            extra={
+                                "stall_duration_s": round(stall_duration, 1),
+                                "height": best_block_height,
+                                "network_best": network_best_height,
+                            },
+                        )
+                        self._maybe_trigger_snapshot_recovery(
+                            reason="extended_headers_blocks_stall"
+                        )
                 
                 if (
                     network_best_height is not None
