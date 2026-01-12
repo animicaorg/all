@@ -163,3 +163,59 @@ def test_blocks_behind_with_at_tip_error():
     }
     allowed, info = assess_tx_submission_readiness(status)
     assert not allowed
+
+
+def test_allows_when_at_tip_with_stale_syncing_headers_phase():
+    """
+    When node is at tip (head == best_header) with no in-flight work,
+    allow transactions even if phase is stale 'SYNCING_HEADERS'.
+    
+    This fixes the issue where node reports SYNCING_HEADERS phase but
+    is actually at network tip (headers: 5458, blocks: 5458).
+    """
+    status = {
+        "phase": "SYNCING_HEADERS",
+        "head_height": 5458,
+        "best_header_height": 5458,
+        "best_block_height": 5458,
+        "synchronized": False,  # May not be properly set
+        "syncing": True,  # May still show as syncing
+        "in_flight_headers": 0,
+        "in_flight_blocks": 0,
+        "queued_blocks_count": 0,
+        "pending_header_batches": 0,
+    }
+    allowed, info = assess_tx_submission_readiness(status)
+    assert allowed, "Should allow transactions when at tip with no in-flight work"
+    assert info["head_height"] == 5458
+    assert info["best_header_height"] == 5458
+
+
+def test_allows_when_at_tip_with_stale_pending_header_batches():
+    """
+    When node is at tip with stale pending_header_batches but no active sync work,
+    allow transactions. The pending batches may be for heights we already have.
+    
+    This is the exact scenario from the issue: stuck at SYNCING_HEADERS with
+    headers==blocks but pending_header_batches preventing tx submission.
+    """
+    status = {
+        "phase": "SYNCING_HEADERS",
+        "head_height": 5458,
+        "best_header_height": 5458,
+        "best_block_height": 5458,
+        "synchronized": False,
+        "syncing": True,
+        "in_flight_headers": 0,  # No active header requests
+        "in_flight_blocks": 0,  # No active block requests
+        "queued_blocks_count": 0,  # No queued blocks
+        "pending_header_batches": 3,  # Stale pending batches for already-synced heights
+    }
+    allowed, info = assess_tx_submission_readiness(status)
+    assert allowed, (
+        "Should allow transactions when at tip even with stale pending_header_batches, "
+        "as long as no active sync work is in progress"
+    )
+    assert info["head_height"] == 5458
+    assert info["best_header_height"] == 5458
+    assert info["pending_header_batches"] == 3
