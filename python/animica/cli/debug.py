@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+from datetime import datetime
 from typing import Any, Dict, Optional
 
 import httpx
@@ -82,7 +83,6 @@ def _format_timestamp(ts: Optional[float]) -> str:
     if ts is None:
         return "N/A"
     try:
-        from datetime import datetime
         dt = datetime.fromtimestamp(ts)
         return dt.strftime("%Y-%m-%d %H:%M:%S")
     except Exception:

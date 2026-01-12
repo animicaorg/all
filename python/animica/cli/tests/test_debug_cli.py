@@ -1,20 +1,26 @@
-"""Tests for the debug CLI command timestamp formatting."""
+"""Tests for the debug CLI command timestamp formatting.
+
+Note: The _format_timestamp function is duplicated here rather than imported
+from animica.cli.debug to avoid pulling in heavy CLI dependencies during testing.
+The implementation should be kept in sync with the original.
+"""
 
 from __future__ import annotations
 
 import time
 from typing import Optional
+from datetime import datetime
 
 
 def _format_timestamp(ts: Optional[float]) -> str:
     """Format a Unix timestamp as human-readable string.
     
     This is a copy of the function from animica.cli.debug for testing purposes.
+    Implementation should match the original in debug.py.
     """
     if ts is None:
         return "N/A"
     try:
-        from datetime import datetime
         dt = datetime.fromtimestamp(ts)
         return dt.strftime("%Y-%m-%d %H:%M:%S")
     except Exception:
