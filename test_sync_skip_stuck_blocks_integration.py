@@ -20,7 +20,6 @@ def test_skip_stuck_blocks_integration():
     
     # Import the actual module
     from p2p.node.p2p_service import _env_flag
-    import os
     
     # Test environment variable parsing
     os.environ['ANIMICA_P2P_BLOCK_FAILURE_SKIP_THRESHOLD'] = '5'

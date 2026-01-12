@@ -1152,12 +1152,12 @@ class P2PService:
         )
         
         # Block failure tracking for skip-on-stuck logic
-        self._block_import_failures: Dict[bytes, int] = {}  # block_hash -> failure_count
+        self._block_import_failures: "OrderedDict[bytes, int]" = OrderedDict()  # block_hash -> failure_count (FIFO eviction)
         self._block_import_failure_threshold = int(
             os.environ.get("ANIMICA_P2P_BLOCK_FAILURE_SKIP_THRESHOLD", "3")
         )
         self._skipped_blocks_queue: Deque[bytes] = deque()  # Blocks skipped due to repeated failures
-        self._skipped_blocks_set: set[bytes] = set()
+        self._skipped_blocks_set: Set[bytes] = set()
 
         self._sync_lock = asyncio.Lock()
         self._sync_wakeup = asyncio.Event()
