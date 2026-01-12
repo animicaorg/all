@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+from copy import deepcopy
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -612,7 +613,7 @@ def show(
         
         # If getSafeHead is not available, treat tip as safe for backward compatibility
         if safe_head_info is None and tip_head_info is not None:
-            safe_head_info = tip_head_info.copy()
+            safe_head_info = deepcopy(tip_head_info)
 
         if safe_head_info is not None:
             safe_head_info["rpc_url"] = rpc_endpoint

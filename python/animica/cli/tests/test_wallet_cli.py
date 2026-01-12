@@ -11,6 +11,26 @@ from typer.testing import CliRunner
 runner = CliRunner()
 
 
+def parse_cli_json_output(output: str) -> dict:
+    """
+    Parse JSON from CLI output that may contain warning messages before the JSON.
+    
+    Args:
+        output: CLI output string that may have warnings before JSON
+        
+    Returns:
+        Parsed JSON dict
+    """
+    lines = output.strip().split('\n')
+    json_start = 0
+    for i, line in enumerate(lines):
+        if line.strip().startswith('{'):
+            json_start = i
+            break
+    json_output = '\n'.join(lines[json_start:])
+    return json.loads(json_output)
+
+
 def run_cli(
     args: list[str],
     wallet_file: Optional[Path] = None,
@@ -446,14 +466,7 @@ def test_wallet_show_with_show_secret_flag(
     assert "WARNING" in result.output, "Warning should be displayed when showing secrets"
 
     # Parse the JSON output (skip warning lines)
-    output_lines = result.output.strip().split('\n')
-    json_start = 0
-    for i, line in enumerate(output_lines):
-        if line.strip().startswith('{'):
-            json_start = i
-            break
-    json_output = '\n'.join(output_lines[json_start:])
-    data = json.loads(json_output)
+    data = parse_cli_json_output(result.output)
 
     # Verify secret_key_hex IS in output
     assert "secret_key_hex" in data, "secret_key_hex should be present with --show-secret"
@@ -543,15 +556,7 @@ def test_wallet_show_rpc_failure(premine_wallet_store: Path) -> None:
     ])
     
     output = run_cli(["show", "premine", "--rpc-url", rpc_url], premine_wallet_store)
-    # Handle warning output
-    lines = output.strip().split('\n')
-    json_start = 0
-    for i, line in enumerate(lines):
-        if line.strip().startswith('{'):
-            json_start = i
-            break
-    json_output = '\n'.join(lines[json_start:])
-    data = json.loads(json_output)
+    data = parse_cli_json_output(output)
 
     # Verify balance falls back to cached and warning is present
     assert data["balance_confirmed"] is None, "Balance should be null on RPC error"
@@ -574,15 +579,7 @@ def test_wallet_show_rpc_network_timeout(premine_wallet_store: Path) -> None:
     ])
     
     output = run_cli(["show", "premine", "--rpc-url", rpc_url], premine_wallet_store)
-    # Handle warning output
-    lines = output.strip().split('\n')
-    json_start = 0
-    for i, line in enumerate(lines):
-        if line.strip().startswith('{'):
-            json_start = i
-            break
-    json_output = '\n'.join(lines[json_start:])
-    data = json.loads(json_output)
+    data = parse_cli_json_output(output)
 
     # Verify balance is null and warning is reported
     assert data["balance_confirmed"] is None
