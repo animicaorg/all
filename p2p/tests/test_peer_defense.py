@@ -316,3 +316,101 @@ async def test_network_params_mismatch_rejects_peer(tmp_path: Path) -> None:
         await node._handle_hello(peer, encode_payload(hello))
 
     assert "network_params_mismatch" in str(excinfo.value)
+
+
+@pytest.mark.asyncio
+async def test_ban_peer_cancels_inflight_blocks(tmp_path: Path) -> None:
+    """Test that banning a peer cancels all their inflight block requests."""
+    node = _make_service(tmp_path, "ban-cancels-blocks")
+    node._ban_enabled = True
+    
+    peer = _register_peer(node, "203.0.113.100:30333", direction="outbound")
+    peer.peer_id = "peer-ban-test"
+    
+    # Add some inflight block requests from this peer
+    block_hash_1 = b"\x01" * 32
+    block_hash_2 = b"\x02" * 32
+    block_hash_3 = b"\x03" * 32
+    
+    now = time.time()
+    node._sync_inflight_blocks[block_hash_1] = now
+    node._sync_inflight_blocks[block_hash_2] = now
+    node._sync_inflight_blocks[block_hash_3] = now
+    
+    node._sync_inflight_peers[block_hash_1] = peer.remote
+    node._sync_inflight_peers[block_hash_2] = peer.remote
+    node._sync_inflight_peers[block_hash_3] = peer.remote
+    
+    # Mock the request objects
+    node._sync_inflight_block_requests[block_hash_1] = types.SimpleNamespace(
+        item_hash=block_hash_1, started_at=now
+    )
+    node._sync_inflight_block_requests[block_hash_2] = types.SimpleNamespace(
+        item_hash=block_hash_2, started_at=now
+    )
+    node._sync_inflight_block_requests[block_hash_3] = types.SimpleNamespace(
+        item_hash=block_hash_3, started_at=now
+    )
+    
+    # Mock _create_child_task to prevent actual async task creation
+    node._create_child_task = lambda coro, **_kwargs: coro.close()
+    
+    # Verify blocks are inflight before ban
+    assert len(node._sync_inflight_blocks) == 3
+    assert len(node._sync_inflight_peers) == 3
+    assert len(node._sync_inflight_block_requests) == 3
+    
+    # Ban the peer
+    node._ban_peer(peer, ban_ttl=60.0, reason="test_misbehavior")
+    
+    # Verify all inflight blocks from this peer are cancelled
+    assert len(node._sync_inflight_blocks) == 0
+    assert len(node._sync_inflight_peers) == 0
+    assert len(node._sync_inflight_block_requests) == 0
+    
+    # Verify the blocks were re-queued for requesting from other peers
+    assert block_hash_1 in node._sync_block_queue_set
+    assert block_hash_2 in node._sync_block_queue_set
+    assert block_hash_3 in node._sync_block_queue_set
+
+
+@pytest.mark.asyncio
+async def test_drop_peer_cancels_inflight_blocks(tmp_path: Path) -> None:
+    """Test that dropping a peer (disconnect) cancels all their inflight block requests."""
+    node = _make_service(tmp_path, "drop-cancels-blocks")
+    
+    peer = _register_peer(node, "203.0.113.101:30333", direction="outbound")
+    peer.peer_id = "peer-drop-test"
+    
+    # Add some inflight block requests from this peer
+    block_hash_1 = b"\x11" * 32
+    block_hash_2 = b"\x22" * 32
+    
+    now = time.time()
+    node._sync_inflight_blocks[block_hash_1] = now
+    node._sync_inflight_blocks[block_hash_2] = now
+    
+    node._sync_inflight_peers[block_hash_1] = peer.remote
+    node._sync_inflight_peers[block_hash_2] = peer.remote
+    
+    node._sync_inflight_block_requests[block_hash_1] = types.SimpleNamespace(
+        item_hash=block_hash_1, started_at=now
+    )
+    node._sync_inflight_block_requests[block_hash_2] = types.SimpleNamespace(
+        item_hash=block_hash_2, started_at=now
+    )
+    
+    # Verify blocks are inflight before drop
+    assert len(node._sync_inflight_blocks) == 2
+    
+    # Drop the peer
+    await node._drop_peer(peer, reason="test_disconnect")
+    
+    # Verify all inflight blocks from this peer are cancelled
+    assert len(node._sync_inflight_blocks) == 0
+    assert len(node._sync_inflight_peers) == 0
+    assert len(node._sync_inflight_block_requests) == 0
+    
+    # Verify the blocks were re-queued
+    assert block_hash_1 in node._sync_block_queue_set
+    assert block_hash_2 in node._sync_block_queue_set

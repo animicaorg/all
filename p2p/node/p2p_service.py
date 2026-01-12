@@ -4757,6 +4757,12 @@ class P2PService:
                     self._sync_inflight_header_requests.pop(key, None)
                 self._sync_inflight_headers = len(self._sync_inflight_header_requests)
                 self._sync_wakeup.set()
+            
+            # Cancel inflight block requests from this peer
+            cancelled_block_count = self._cancel_inflight_blocks_from_peer(peer.remote)
+            if cancelled_block_count > 0:
+                self._sync_wakeup.set()
+            
             self._peers.pop(self._peer_key(peer.remote, peer.direction), None)
             self._peers_by_session.pop(peer.session_id, None)
             self._stats["peers"] = self._peer_registry.peer_count()
@@ -11745,6 +11751,40 @@ class P2PService:
                 ttl = ttl_s
         return ttl
 
+    def _cancel_inflight_blocks_from_peer(self, peer_remote: str) -> int:
+        """
+        Cancel all inflight block requests from a specific peer.
+        Returns the number of cancelled blocks.
+        """
+        cancelled_hashes = []
+        
+        # Find all blocks that were requested from this peer
+        for block_hash, peer_addr in list(self._sync_inflight_peers.items()):
+            if peer_addr == peer_remote:
+                cancelled_hashes.append(block_hash)
+        
+        # Remove them from all tracking structures
+        for block_hash in cancelled_hashes:
+            self._sync_inflight_blocks.pop(block_hash, None)
+            self._sync_inflight_peers.pop(block_hash, None)
+            self._sync_inflight_block_requests.pop(block_hash, None)
+            # Re-queue the block so it can be requested from another peer
+            if block_hash not in self._sync_block_queue_set:
+                self._sync_block_queue.append(block_hash)
+                self._sync_block_queue_set.add(block_hash)
+        
+        if cancelled_hashes:
+            log.info(
+                "Cancelled inflight blocks from peer",
+                extra={
+                    "remote": peer_remote,
+                    "cancelled_count": len(cancelled_hashes),
+                    "block_hashes": [h.hex()[:16] for h in cancelled_hashes[:5]],
+                },
+            )
+        
+        return len(cancelled_hashes)
+
     def _ban_peer(self, peer: _PeerState, *, ban_ttl: float, reason: str) -> None:
         if not self._ban_enabled:
             return
@@ -11769,6 +11809,19 @@ class P2PService:
                 "score": peer.misbehavior_score,
             }
         self._banlist_event.set()
+        
+        # Cancel all inflight block requests from this peer
+        cancelled_count = self._cancel_inflight_blocks_from_peer(peer.remote)
+        if cancelled_count > 0:
+            log.info(
+                "Peer banned: cancelled inflight blocks",
+                extra={
+                    "remote": peer.remote,
+                    "reason": reason,
+                    "cancelled_blocks": cancelled_count,
+                },
+            )
+        
         self._create_child_task(
             self._drop_peer(peer, reason=f"banned:{reason}"),
             name=f"p2p.drop_peer@{peer.remote}",
