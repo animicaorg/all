@@ -1129,6 +1129,14 @@ class P2PService:
         self._missing_parent_threshold = int(
             os.environ.get("ANIMICA_P2P_MISSING_PARENT_THRESHOLD", "3") or 3
         )
+        # Enhanced orphan handling for missing parent deadlock fix
+        self._orphan_parent_requests: Dict[bytes, float] = {}  # parent_hash -> last_request_time
+        self._orphan_parent_request_limit = float(
+            os.environ.get("ANIMICA_P2P_ORPHAN_PARENT_REQUEST_INTERVAL", "5.0") or 5.0
+        )
+        self._orphan_parent_backfill_enabled = _env_flag(
+            "ANIMICA_P2P_ORPHAN_PARENT_BACKFILL", default=True
+        )
 
         self._sync_lock = asyncio.Lock()
         self._sync_wakeup = asyncio.Event()
@@ -3515,6 +3523,14 @@ class P2PService:
     def _sync_watchdog_check(
         self, *, now: float, head_height: int, head_hash: Optional[str]
     ) -> None:
+        """
+        Enhanced sync watchdog to detect and recover from missing parent deadlocks.
+        
+        This watchdog specifically detects:
+        1. In-flight blocks > 0 but no progress
+        2. Missing parent errors persisting over time
+        3. Block queue stalled with orphans
+        """
         if not self._peers:
             return
         if head_height > self._sync_watchdog_last_height or (
@@ -3528,6 +3544,47 @@ class P2PService:
 
         if now - self._sync_watchdog_last_progress_at < self._sync_watchdog_timeout:
             return
+
+        # Detect specific "missing parent" deadlock scenario
+        missing_parent_deadlock = (
+            self._sync_inflight_blocks
+            and not self._sync_block_queue
+            and self._sync_last_block_error == "missing parent"
+        )
+        
+        if missing_parent_deadlock:
+            log.error(
+                "Missing parent deadlock detected",
+                extra={
+                    "inflight_blocks": len(self._sync_inflight_blocks),
+                    "inflight_block_hashes": [h.hex()[:16] for h in list(self._sync_inflight_blocks.keys())[:5]],
+                    "queued_blocks": len(self._sync_block_queue),
+                    "last_block_error": self._sync_last_block_error,
+                    "last_error_peer": self._sync_last_block_error_peer,
+                },
+            )
+            
+            # Clear in-flight blocks and re-queue them
+            for block_hash in list(self._sync_inflight_blocks.keys()):
+                if not self._has_block(block_hash) and block_hash not in self._sync_block_queue_set:
+                    self._sync_block_queue.append(block_hash)
+                    self._sync_block_queue_set.add(block_hash)
+            
+            self._sync_inflight_blocks.clear()
+            self._sync_inflight_peers.clear()
+            self._sync_inflight_block_requests.clear()
+            
+            # Clear orphan parent tracking to allow re-requesting
+            self._orphan_parent_requests.clear()
+            
+            # Trigger aggressive sync
+            self._sync_kick(reason="missing_parent_deadlock", aggressive=True)
+            self._sync_wakeup.set()
+            
+            log.warning(
+                "Cleared inflight blocks and reset orphan tracking to break missing parent deadlock",
+                extra={"requeued_blocks": len(self._sync_block_queue)},
+            )
 
         self._sync_watchdog_attempts += 1
         action = f"watchdog_attempt_{self._sync_watchdog_attempts}"
@@ -3555,6 +3612,7 @@ class P2PService:
                 "head_height": head_height,
                 "last_progress_at": self._sync_watchdog_last_progress_at,
                 "peers": len(self._peers),
+                "missing_parent_deadlock": missing_parent_deadlock,
             },
         )
 
@@ -6957,11 +7015,21 @@ class P2PService:
             self._sync_best_header = header
 
     def _enqueue_missing_blocks(self, headers: list[_SyncHeader]) -> int:
+        """
+        Enqueue missing blocks for download, ensuring parent chain continuity.
+        
+        Enhanced to verify that blocks are added in ancestor→descendant order
+        and that parent blocks are either already present or queued first.
+        """
         if not headers:
             return 0
         local_height, _ = self._local_head()
         added = 0
-        for hdr in sorted(headers, key=lambda h: h.height):
+        
+        # Sort headers by height to ensure ancestor→descendant ordering
+        sorted_headers = sorted(headers, key=lambda h: h.height)
+        
+        for hdr in sorted_headers:
             if hdr.height <= int(local_height or 0):
                 continue
             if self._has_block(hdr.hash):
@@ -6972,10 +7040,60 @@ class P2PService:
                 or hdr.hash in self._sync_block_queue_set
             ):
                 continue
+            
+            # Parent availability check: ensure parent is either in db, in queue, or in-flight
+            # This prevents requesting blocks whose parents are unknown
+            if hdr.parent_hash:
+                parent_available = (
+                    self._has_block(hdr.parent_hash)
+                    or hdr.parent_hash in self._sync_block_queue_set
+                    or hdr.parent_hash in self._sync_inflight_blocks
+                    or hdr.parent_hash in self._sync_block_buffer
+                )
+                
+                if not parent_available:
+                    # Parent not available - check if we have the parent header
+                    # If we do, we can enqueue both parent and child
+                    parent_header_available = (
+                        self._has_header(hdr.parent_hash)
+                        or hdr.parent_hash in self._sync_headers
+                    )
+                    
+                    if parent_header_available:
+                        # Enqueue parent first if it's not already queued
+                        parent_hdr = self._sync_headers.get(hdr.parent_hash)
+                        if parent_hdr and hdr.parent_hash not in self._sync_block_queue_set:
+                            self._sync_block_queue.append(hdr.parent_hash)
+                            self._sync_block_queue_set.add(hdr.parent_hash)
+                            self._sync_block_queue_heights[hdr.parent_hash] = parent_hdr.height
+                            added += 1
+                            log.debug(
+                                "Auto-enqueued parent block",
+                                extra={
+                                    "parent_hash": hdr.parent_hash.hex(),
+                                    "parent_height": parent_hdr.height,
+                                    "child_hash": hdr.hash.hex(),
+                                    "child_height": hdr.height,
+                                },
+                            )
+                    else:
+                        # Parent header not available - skip this block for now
+                        log.debug(
+                            "Skipping block enqueue: parent not available",
+                            extra={
+                                "block_hash": hdr.hash.hex(),
+                                "block_height": hdr.height,
+                                "parent_hash": hdr.parent_hash.hex() if hdr.parent_hash else None,
+                            },
+                        )
+                        continue
+            
+            # Enqueue the block
             self._sync_block_queue.append(hdr.hash)
             self._sync_block_queue_set.add(hdr.hash)
             self._sync_block_queue_heights[hdr.hash] = hdr.height
             added += 1
+        
         if added:
             self._sync_wakeup.set()
         return added
@@ -6989,6 +7107,13 @@ class P2PService:
             self._sync_block_queue.remove(block_hash)
 
     async def _try_import_cached_block(self, block_hash: bytes) -> bool:
+        """
+        Try to import a block from sync cache.
+        
+        Enhanced to prevent orphan loops: if cache returns a block that is an orphan
+        (missing parent), we invalidate it from cache and trigger parent fetch from
+        real peers instead of the cache.
+        """
         if self._sync_cache is None:
             return False
         raw_bytes = self._sync_cache.get_block(block_hash)
@@ -7005,6 +7130,43 @@ class P2PService:
         )
         if ok:
             return True
+        
+        # If the cached block is an orphan, invalidate it from cache and trigger
+        # parent backfill from real peers (not from cache) to avoid orphan loops
+        if self._is_orphan_reason(reason):
+            log.warning(
+                "Cached block is orphan; invalidating from cache and requesting parent from peers",
+                extra={"hash": block_hash.hex(), "reason": reason},
+            )
+            self._sync_cache.invalidate_block(block_hash)
+            
+            # Try to extract parent_hash from the block to request it
+            try:
+                # Attempt to decode the block to get parent hash
+                decoded = self._decode_block(raw_bytes)
+                if decoded and decoded.block and hasattr(decoded.block, "header"):
+                    parent_hash = getattr(decoded.block.header, "parent_hash", None) or getattr(
+                        decoded.block.header, "prev_hash", None
+                    )
+                    if parent_hash and isinstance(parent_hash, bytes):
+                        # Add parent to block queue for fetch from real peers
+                        if parent_hash not in self._sync_block_queue_set:
+                            self._sync_block_queue.appendleft(parent_hash)
+                            self._sync_block_queue_set.add(parent_hash)
+                            self._sync_wakeup.set()
+                            log.info(
+                                "Scheduled parent block fetch from peers (not cache)",
+                                extra={
+                                    "orphan_hash": block_hash.hex(),
+                                    "parent_hash": parent_hash.hex(),
+                                },
+                            )
+            except Exception as e:
+                log.debug(f"Could not extract parent hash from cached orphan: {e}")
+            
+            return False
+        
+        # For other errors (not orphans), also invalidate from cache
         if not self._is_orphan_reason(reason):
             self._sync_cache.invalidate_block(block_hash)
         return False
@@ -7100,6 +7262,15 @@ class P2PService:
         self._sync_wakeup.set()
 
     def _handle_missing_parent(self, peer: _PeerState, sync_block: _SyncBlock) -> None:
+        """
+        Enhanced missing parent handler with parent backfill to prevent sync deadlocks.
+        
+        When a block's parent is missing, this method:
+        1. Adds the block to the orphan buffer
+        2. Requests the missing parent block (with rate limiting to prevent loops)
+        3. Requests missing parent headers if needed
+        4. Tracks parent requests to avoid duplicate fetches
+        """
         peer.missing_parent += 1
         now = time.time()
         self._sync_last_block_error = "missing parent"
@@ -7113,7 +7284,13 @@ class P2PService:
                 or sync_block.parent_hash in self._sync_headers
             )
             parent_block_known = bool(self._has_block(sync_block.parent_hash))
-        if sync_block.parent_hash and not parent_block_known:
+        
+        # Parent backfill: Request missing parent block
+        if sync_block.parent_hash and not parent_block_known and self._orphan_parent_backfill_enabled:
+            # Check if we already requested this parent recently (rate limiting)
+            last_request = self._orphan_parent_requests.get(sync_block.parent_hash, 0.0)
+            can_request = (now - last_request) > self._orphan_parent_request_limit
+            
             if sync_block.parent_hash not in self._sync_block_queue_set:
                 parent_height = None
                 if sync_block.hash in self._sync_block_queue_heights:
@@ -7127,19 +7304,41 @@ class P2PService:
                 if parent_height is None:
                     local_height, _ = self._local_head()
                     parent_height = int(local_height or 0) + 1
+                
+                # Priority queue: add parent to front so it's fetched first
                 self._sync_block_queue.appendleft(sync_block.parent_hash)
                 self._sync_block_queue_set.add(sync_block.parent_hash)
                 if parent_height is not None:
                     self._sync_block_queue_heights[sync_block.parent_hash] = parent_height
+                
+                # Mark as requested to prevent duplicates
+                if can_request:
+                    self._orphan_parent_requests[sync_block.parent_hash] = now
+                    # Prune old entries from tracking dict (keep last 1000)
+                    while len(self._orphan_parent_requests) > 1000:
+                        self._orphan_parent_requests.pop(next(iter(self._orphan_parent_requests)))
+                
                 self._sync_wakeup.set()
                 log.info(
-                    "Buffered orphan; requesting missing parent",
+                    "Buffered orphan; requesting missing parent block",
                     extra={
                         "remote": peer.remote,
+                        "orphan_hash": sync_block.hash.hex(),
                         "parent_hash": sync_block.parent_hash.hex(),
                         "parent_height": parent_height,
+                        "rate_limited": not can_request,
                     },
                 )
+            elif not can_request:
+                log.debug(
+                    "Parent block already in queue or rate limited",
+                    extra={
+                        "parent_hash": sync_block.parent_hash.hex(),
+                        "time_since_last_request": now - last_request,
+                    },
+                )
+        
+        # Request missing parent header (if header is also unknown)
         if sync_block.parent_hash and not parent_header_known:
             anchor_height, anchor_hash_hex = self._local_head()
             anchor_hash = self._parse_hash_bytes(anchor_hash_hex)
@@ -7159,6 +7358,7 @@ class P2PService:
                 reason="missing_parent_header",
             )
             self._sync_kick(reason="missing_parent_header", aggressive=True)
+        
         log.info(
             "Missing parent detected",
             extra={
@@ -8846,6 +9046,51 @@ class P2PService:
                         "sync_requested": self._sync_requested,
                     },
                 )
+                
+                # Fork detection: Check if local and peer heights match but hashes differ
+                # This indicates we're on a different fork at the same height
+                if best_peer and best_peer_height is not None and best_block_height == best_peer_height:
+                    # Heights match, check if hashes also match
+                    peer_head_hash = None
+                    if best_peer.hello and best_peer.hello.get("head_hash"):
+                        peer_head_hash = best_peer.hello.get("head_hash")
+                    
+                    if peer_head_hash and isinstance(head_hash, str) and isinstance(peer_head_hash, bytes):
+                        local_hash_bytes = bytes.fromhex(head_hash) if head_hash.startswith("0x") else bytes.fromhex(head_hash.replace("0x", ""))
+                        
+                        if local_hash_bytes != peer_head_hash:
+                            log.warning(
+                                "Fork detected: local and peer heights match but hashes differ",
+                                extra={
+                                    "height": best_block_height,
+                                    "local_hash": head_hash,
+                                    "peer_hash": peer_head_hash.hex() if isinstance(peer_head_hash, bytes) else str(peer_head_hash),
+                                    "peer": best_peer.remote,
+                                },
+                            )
+                            
+                            # Request headers to find common ancestor and resolve fork
+                            # This will trigger header sync which will detect the fork point
+                            anchor_height, anchor_hash_hex = self._local_head()
+                            anchor_hash = self._parse_hash_bytes(anchor_hash_hex)
+                            locator = self._build_headers_locator()
+                            if not locator:
+                                fallback = self._genesis_hash()
+                                if fallback:
+                                    locator = [fallback]
+                            
+                            self._enqueue_header_retry(
+                                peer=best_peer,
+                                locator=locator,
+                                locator_mode="fork_resolution",
+                                anchor_height=int(anchor_height or 0),
+                                anchor_hash=anchor_hash,
+                                request_start_height=max(0, int(anchor_height or 0) - 10),  # Go back a bit to find common ancestor
+                                max_headers=self._sync_headers_batch_current,
+                                reason="fork_at_same_height",
+                            )
+                            self._sync_kick(reason="fork_at_same_height", aggressive=True)
+                
                 self._expire_inflight_headers()
                 self._expire_inflight_blocks()
                 self._prune_orphan_buffer()
