@@ -794,7 +794,8 @@ def _compose_base_cmd(compose_file: Path, network: str) -> list[str]:
         "-f",
         str(compose_file),
     ])
-    if network in DEV_NETWORKS:
+    # Only local-devnet uses the 'dev' profile; devnet includes all services by default
+    if network == "local-devnet":
         cmd.extend(["--profile", "dev"])
     return cmd
 
@@ -2347,7 +2348,9 @@ def _up_impl(
     typer.echo(f"Data directory: {data_dir}")
     
     # Build docker-compose command
-    # For devnet, we need to use profiles; for mainnet/testnet, services run by default
+    # - devnet: all services (including miner) run by default, no profiles needed
+    # - local-devnet: uses 'dev' profile (added in _compose_base_cmd)
+    # - mainnet/testnet: node runs by default, miner needs '--profile miner'
     cmd = _compose_base_cmd(compose_file, network)
     
     if with_miner and network not in DEV_NETWORKS:

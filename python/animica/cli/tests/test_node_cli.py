@@ -862,6 +862,73 @@ def test_up_with_miner_flag(monkeypatch: Any) -> None:
             assert "miner" in cmd
 
 
+def test_up_devnet_no_profiles(monkeypatch: Any) -> None:
+    """Test 'node up' for devnet doesn't add dev profile (which doesn't exist in ops/docker/docker-compose.devnet.yml)."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state_file = Path(tmpdir) / "state.json"
+        state = CLIState(state_file)
+        state.set("active_network", "devnet")
+        monkeypatch.setattr("animica.cli.node.get_cli_state", lambda: CLIState(state_file))
+        
+        # Mock the compose file check
+        mock_compose_file = Path(tmpdir) / "docker-compose.yml"
+        mock_compose_file.write_text("version: '3'\nservices:\n  node:\n    image: test\n  miner:\n    image: test\n")
+        monkeypatch.setattr("animica.cli.node._get_compose_file", lambda network: mock_compose_file)
+        
+        # Mock subprocess.run
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        with patch("animica.cli.node.subprocess.run", return_value=mock_result) as mock_run:
+            result = runner.invoke(node.app, ["up", "--with-miner", "--no-wait-sync"])
+            
+            assert result.exit_code == 0
+            assert "Starting node for network: devnet" in result.output
+            
+            # Verify NO profiles were added for devnet
+            # devnet compose file includes all services by default
+            call_args = mock_run.call_args
+            cmd = call_args[0][0]
+            # The command should not contain --profile at all
+            if "--profile" in cmd:
+                profile_idx = cmd.index("--profile")
+                # If profile exists, fail the test
+                if profile_idx + 1 < len(cmd):
+                    pytest.fail(f"devnet should not use profiles, but found: --profile {cmd[profile_idx + 1]}")
+                else:
+                    pytest.fail(f"devnet should not use profiles, but found: --profile with no value")
+
+
+def test_up_local_devnet_uses_dev_profile(monkeypatch: Any) -> None:
+    """Test 'node up' for local-devnet uses dev profile."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state_file = Path(tmpdir) / "state.json"
+        state = CLIState(state_file)
+        state.set("active_network", "local-devnet")
+        monkeypatch.setattr("animica.cli.node.get_cli_state", lambda: CLIState(state_file))
+        
+        # Mock the compose file check
+        mock_compose_file = Path(tmpdir) / "docker-compose.yml"
+        mock_compose_file.write_text("version: '3'\nservices:\n  node:\n    image: test\n    profiles: [dev]\n")
+        monkeypatch.setattr("animica.cli.node._get_compose_file", lambda network: mock_compose_file)
+        
+        # Mock subprocess.run
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        with patch("animica.cli.node.subprocess.run", return_value=mock_result) as mock_run:
+            result = runner.invoke(node.app, ["up", "--no-wait-sync"])
+            
+            assert result.exit_code == 0
+            assert "Starting node for network: local-devnet" in result.output
+            
+            # Verify dev profile was passed to docker-compose for local-devnet
+            call_args = mock_run.call_args
+            cmd = call_args[0][0]
+            assert "--profile" in cmd
+            profile_idx = cmd.index("--profile")
+            assert profile_idx + 1 < len(cmd), "Expected --profile to be followed by profile name"
+            assert cmd[profile_idx + 1] == "dev"
+
+
 def test_up_docker_not_found(monkeypatch: Any) -> None:
     """Test 'node up' handles docker not being installed."""
     with tempfile.TemporaryDirectory() as tmpdir:
