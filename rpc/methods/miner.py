@@ -133,6 +133,7 @@ _MEMPOOL_BINDINGS_LOGGED: set[str] = set()
 # Mining audit trail (in-memory)
 # Tracks blocks mined locally for debugging and verification
 # Structure: list of {height, hash, parent_hash, miner_address, expected_reward, credited_reward, state_root, timestamp}
+# Note: credited_reward is the incremental reward for THAT block, not the total balance
 _MINING_AUDIT_TRAIL: list[dict[str, Any]] = []
 _MINING_AUDIT_MAX_SIZE = int(os.getenv("ANIMICA_MINING_AUDIT_MAX_SIZE", "1000"))
 
@@ -155,7 +156,7 @@ def _record_mining_audit(
         parent_hash: Parent block hash
         miner_address: Miner/coinbase address
         expected_reward: Expected reward amount (from consensus rules)
-        credited_reward: Actual credited amount (from state query)
+        credited_reward: Actual reward amount credited for THIS specific block (not total balance)
         state_root: State root after block application
     """
     global _MINING_AUDIT_TRAIL
@@ -3501,13 +3502,17 @@ def _mine_once(
                 block_hash_hex = "0x" + block_hash_bytes.hex()
                 
                 # Record in mining audit trail
+                # IMPORTANT: credited_reward is the actual reward amount credited for THIS block,
+                # not the total balance. This ensures miners see consistent reward tracking
+                # even if blocks get reorged or orphaned (which would change total balance).
+                # FIXED: Use incremental reward not total balance to prevent false decrease display.
                 _record_mining_audit(
                     height=header.height,
                     block_hash=block_hash_bytes,
                     parent_hash=header.parentHash,
                     miner_address=payout_addr_bytes,
                     expected_reward=reward_amount,
-                    credited_reward=final_balance,  # Note: this is total balance, not delta
+                    credited_reward=reward_amount,  # Use reward_amount, not final_balance
                     state_root=header.stateRoot,
                 )
                 
@@ -5282,8 +5287,8 @@ def mining_get_credits(
                 "hash": str,
                 "parent_hash": str,
                 "miner_address": str,
-                "expected_reward": int,  # in nANM
-                "credited_reward": int,  # in nANM (total balance after block)
+                "expected_reward": int,  # in nANM (reward for THIS specific block)
+                "credited_reward": int,  # in nANM (actual reward credited for THIS specific block)
                 "state_root": str,
                 "timestamp": int,  # unix timestamp
             },

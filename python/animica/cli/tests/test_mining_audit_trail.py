@@ -197,7 +197,7 @@ class TestMiningAuditTrail:
                     "parent_hash": "0xabc123",
                     "miner_address": "0x1234567890abcdef",
                     "expected_reward": 5000000000,
-                    "credited_reward": 10000000000,  # Balance after 2 blocks
+                    "credited_reward": 5000000000,  # Incremental reward for this block (not cumulative)
                     "state_root": "0x333444",
                     "timestamp": 1234567900,
                 },
