@@ -2929,11 +2929,22 @@ def reset(
         "--up/--no-up",
         help="Start the node again after reset completes",
     ),
+    backup_balances: bool = typer.Option(
+        True,
+        "--backup-balances/--no-backup-balances",
+        help="Export wallet balances before reset (recommended)",
+    ),
 ) -> None:
     """
     Stop the node and wipe network data (docker volumes and/or host directories).
 
     Defaults to wiping both docker volumes and host data for the selected network.
+    
+    IMPORTANT: This will delete all blockchain data including balances and mining rewards.
+    Wallet addresses are preserved, but their balances are lost unless backed up.
+    
+    Use --backup-balances (default) to export balances before reset. The backup file
+    can be used to manually restore balances or verify what was lost.
     """
     resolved_network = network or _ensure_network_set()
     compose_file = _get_compose_file(resolved_network)
@@ -2948,16 +2959,83 @@ def reset(
     if not targets:
         typer.secho("Nothing to reset: both volumes and host cleanup are disabled.", fg=typer.colors.YELLOW)
         raise typer.Exit(code=0)
-
+    
+    # Check if node is running to enable balance backup
+    rpc_url = f"http://127.0.0.1:{_resolve_host_port('HOST_RPC_PORT', get_network_defaults(resolved_network)['rpc_port'])}/rpc"
+    node_running = False
+    balance_backup_file: Optional[Path] = None
+    
+    if backup_balances:
+        # Try to check if node is accessible for balance export
+        try:
+            import httpx
+            response = httpx.get(
+                f"http://127.0.0.1:{_resolve_host_port('HOST_RPC_PORT', get_network_defaults(resolved_network)['rpc_port'])}/healthz",
+                timeout=2.0
+            )
+            node_running = response.status_code == 200
+        except Exception:
+            node_running = False
+    
+    # Warn about data loss
+    typer.secho("\n⚠ WARNING: This will delete all blockchain data!", fg=typer.colors.YELLOW, bold=True)
+    typer.echo(f"The following will be removed: {', '.join(targets)}")
+    typer.echo("\nConsequences:")
+    typer.echo("  • All mining rewards and balances will be lost")
+    typer.echo("  • Transaction history will be deleted")
+    typer.echo("  • The chain will restart from genesis")
+    typer.echo("  • Wallet addresses are preserved (but balances are not)")
+    
+    if backup_balances and node_running:
+        typer.echo("\n✓ Node is running - wallet balances will be backed up before reset")
+    elif backup_balances and not node_running:
+        typer.secho(
+            "\n⚠ Node is not running - cannot backup balances automatically",
+            fg=typer.colors.YELLOW
+        )
+        typer.echo("  Start the node first if you want to export balances before reset")
+    
     if not yes:
         confirm = typer.confirm(
-            f"Reset {resolved_network} data? This will remove {', '.join(targets)}."
+            f"\nProceed with reset of {resolved_network} data?"
         )
         if not confirm:
             typer.echo("Reset cancelled.")
             raise typer.Exit(code=0)
+    
+    # Export wallet balances if node is running
+    if backup_balances and node_running:
+        typer.secho("\nExporting wallet balances...", fg=typer.colors.CYAN)
+        try:
+            from animica.cli.wallet_balances import export_wallet_balances_sync
+            
+            wallet_path = Path.home() / ".animica" / "wallets.json"
+            backup_file, total_addrs, non_zero = export_wallet_balances_sync(
+                wallet_path=wallet_path,
+                data_dir=data_dir,
+                rpc_url=rpc_url,
+                timeout=10.0,
+                quiet=False,
+            )
+            balance_backup_file = backup_file
+            
+            if non_zero > 0:
+                typer.secho(
+                    f"✓ Backed up balances for {non_zero} addresses to: {backup_file}",
+                    fg=typer.colors.GREEN
+                )
+            else:
+                typer.echo(f"No non-zero balances found (checked {total_addrs} addresses)")
+        
+        except Exception as e:
+            typer.secho(
+                f"⚠ Warning: Failed to export balances: {e}",
+                fg=typer.colors.YELLOW,
+                err=True
+            )
+            typer.echo("Continuing with reset...")
 
-    typer.secho(f"Resetting node data for network: {resolved_network}", fg=typer.colors.CYAN, bold=True)
+    typer.secho(f"\nResetting node data for network: {resolved_network}", fg=typer.colors.CYAN, bold=True)
     typer.echo(f"Using compose file: {compose_file}")
 
     cmd = _compose_down_cmd(compose_file, resolved_network, volumes=volumes)
@@ -3039,6 +3117,15 @@ def reset(
             )
 
     typer.secho("✓ Reset complete.", fg=typer.colors.GREEN, bold=True)
+    
+    # Show information about the balance backup if one was created
+    if balance_backup_file and balance_backup_file.exists():
+        typer.echo(f"\n📋 Balance backup saved to: {balance_backup_file}")
+        typer.echo("This file contains the balances that were lost during reset.")
+        typer.echo("\nTo view the backup:")
+        typer.echo(f"  cat {balance_backup_file}")
+        typer.echo("\nNote: Automatic balance restoration is not yet implemented.")
+        typer.echo("You can manually re-credit balances by mining to these addresses again.")
 
     if up_node:
         os.environ["ANIMICA_NETWORK"] = resolved_network

@@ -5,6 +5,7 @@ A comprehensive command-line interface for:
   - Node lifecycle management (run, status, logs)
   - Studio Services management (deploy/verify API, up, down, status, logs) - OPTIONAL
   - Wallet & key management (create, import, list, export)
+  - Balance management (export, show backups)
   - Transaction building, signing, and broadcasting
   - Chain queries (heads, blocks, transactions, accounts, events)
   - RPC method calls
@@ -29,6 +30,7 @@ Examples:
   animica studio up           # Optional: start studio services separately
   animica studio status
   animica wallet new
+  animica balance export      # Export wallet balances before node reset
   animica key list
   animica tx send --from 0 --to anim1... --value 1.5
   animica chain head
@@ -50,7 +52,7 @@ from typing import Optional
 import typer
 
 # Import subcommand apps
-from . import chain, da, debug, faucet, gui, key, mempool, mining, network, node, p2p, peer, rpc, script, snapshot, studio, sync, tx, wallet
+from . import balance, chain, da, debug, faucet, gui, key, mempool, mining, network, node, p2p, peer, rpc, script, snapshot, studio, sync, tx, wallet
 
 app = typer.Typer(
     name="animica",
@@ -157,6 +159,7 @@ def main_callback(
 # Register subcommand groups
 app.add_typer(node.app, name="node")
 app.add_typer(wallet.app, name="wallet")
+app.add_typer(balance.app, name="balance")
 app.add_typer(mining.app, name="miner")
 app.add_typer(key.app, name="key")
 app.add_typer(tx.app, name="tx")
