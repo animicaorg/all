@@ -179,10 +179,28 @@ export default function BlockDetailPage(): JSX.Element {
             )}
           </p>
         </div>
-        {chainId ? (
-          <div className="chip">Chain {chainId}</div>
-        ) : null}
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+          {block?.orphaned && (
+            <div className="chip" style={{ background: '#dc2626', color: 'white' }}>
+              ⚠️ ORPHANED
+            </div>
+          )}
+          {chainId ? (
+            <div className="chip">Chain {chainId}</div>
+          ) : null}
+        </div>
       </header>
+
+      {block?.orphaned && (
+        <section className="card" style={{ borderLeft: '4px solid #dc2626', background: 'rgba(220, 38, 38, 0.05)' }}>
+          <div className="card-body">
+            <p style={{ color: '#dc2626', fontWeight: '600' }}>
+              ⚠️ <strong>Orphaned Block:</strong> This block was mined but is not part of the canonical chain. 
+              The miner did not receive rewards for this block because it lost a fork race to another block at the same height.
+            </p>
+          </div>
+        </section>
+      )}
 
       {error ? (
         <section className="card error">

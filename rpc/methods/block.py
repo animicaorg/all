@@ -238,6 +238,68 @@ def _header_roots_view(roots: t.Any) -> dict[str, t.Any] | None:
     return None
 
 
+def _is_block_orphaned(block_hash: str | None, height: int | None) -> bool:
+    """
+    Check if a block is orphaned (not part of the canonical chain).
+    
+    A block is orphaned if it exists in the database but is not the canonical
+    block at its height. This happens when the block was mined but lost a fork
+    race and is not part of the main chain.
+    
+    Args:
+        block_hash: The block's hash (hex string with 0x prefix)
+        height: The block's height
+        
+    Returns:
+        True if the block is confirmed to be orphaned (exists but not canonical).
+        False if the block is canonical, or if orphan status cannot be determined
+        (e.g., missing dependencies, errors, or insufficient data).
+    """
+    # Can't determine orphan status without both hash and height
+    if block_hash is None or height is None:
+        return False
+    
+    try:
+        # Normalize hash for comparison (ensure lowercase with 0x prefix)
+        def _normalize_hash(h: str) -> str:
+            return (h.lower() if h.startswith("0x") else "0x" + h.lower())
+        
+        # Get the canonical block hash at this height
+        if hasattr(deps, "get_canonical_hash"):
+            canonical_hash_bytes = deps.get_canonical_hash(height)  # type: ignore
+            if canonical_hash_bytes is None:
+                # No canonical block at this height yet (shouldn't happen for existing blocks)
+                return False
+            
+            canonical_hash = _hex(canonical_hash_bytes)
+            block_hash_normalized = _normalize_hash(block_hash)
+            canonical_hash_normalized = _normalize_hash(canonical_hash) if canonical_hash else None
+            
+            # If hashes don't match, this block is orphaned
+            if canonical_hash_normalized and block_hash_normalized != canonical_hash_normalized:
+                return True
+                
+        # Try via block_db if available
+        elif hasattr(deps, "block_db"):
+            block_db = deps.block_db  # type: ignore
+            if hasattr(block_db, "get_canonical_hash"):
+                canonical_hash_bytes = block_db.get_canonical_hash(height)
+                if canonical_hash_bytes is None:
+                    return False
+                
+                canonical_hash = _hex(canonical_hash_bytes)
+                block_hash_normalized = _normalize_hash(block_hash)
+                canonical_hash_normalized = _normalize_hash(canonical_hash) if canonical_hash else None
+                
+                if canonical_hash_normalized and block_hash_normalized != canonical_hash_normalized:
+                    return True
+    except Exception as e:
+        # Log the error but don't fail the request
+        log.debug(f"Failed to check if block is orphaned: {e}")
+    
+    return False
+
+
 def _block_view(
     block: t.Any,
     height: int | None,
@@ -354,6 +416,15 @@ def _block_view(
         "roots": v.get("roots"),
     }
     v["header"] = {k: val for k, val in header_view.items() if val is not None}
+
+    # Check if block is orphaned (not part of canonical chain)
+    # Orphaned blocks are those that were mined but lost a fork race
+    # and don't receive rewards since they're not in the main chain
+    is_orphaned = _is_block_orphaned(computed_hash, height)
+    if is_orphaned:
+        v["orphaned"] = True
+        # Use debug level to avoid excessive logging for orphaned block queries
+        log.debug(f"Block {computed_hash} at height {height} is orphaned (not canonical)")
 
     # drop None keys
     return {k: val for k, val in v.items() if val is not None}

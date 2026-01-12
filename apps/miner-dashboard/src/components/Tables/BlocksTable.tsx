@@ -17,7 +17,10 @@ const BlocksTable = ({ blocks }: BlocksTableProps) => (
         {/* Mobile: Stacked card view */}
         <div className="sm:hidden space-y-3">
           {blocks.map((block) => (
-            <div key={`${block.height}-${block.hash}`} className="border border-white/5 rounded-lg p-3 space-y-2">
+            <div key={`${block.height}-${block.hash}`} className={`border rounded-lg p-3 space-y-2 ${block.orphaned ? 'border-red-500/50 bg-red-500/10' : 'border-white/5'}`}>
+              {block.orphaned && (
+                <div className="text-xs text-red-400 font-semibold mb-2">⚠️ ORPHANED - No Reward</div>
+              )}
               <div className="flex justify-between items-center">
                 <span className="text-white/60 text-xs">Height</span>
                 <span className="text-white font-semibold">{block.height}</span>
@@ -36,7 +39,7 @@ const BlocksTable = ({ blocks }: BlocksTableProps) => (
               </div>
               <div className="flex justify-between items-center">
                 <span className="text-white/60 text-xs">Reward</span>
-                <span className="text-white">{block.reward}</span>
+                <span className={block.orphaned ? 'text-red-400 line-through' : 'text-white'}>{block.reward}</span>
               </div>
             </div>
           ))}
@@ -56,12 +59,18 @@ const BlocksTable = ({ blocks }: BlocksTableProps) => (
             </thead>
             <tbody>
               {blocks.map((block) => (
-                <tr key={`${block.height}-${block.hash}`} className="border-t border-white/5">
-                  <td className="py-3">{block.height}</td>
+                <tr key={`${block.height}-${block.hash}`} className={`border-t ${block.orphaned ? 'border-red-500/30 bg-red-500/5' : 'border-white/5'}`}>
+                  <td className="py-3">
+                    {block.height}
+                    {block.orphaned && <span className="ml-2 text-red-400 text-xs">⚠️</span>}
+                  </td>
                   <td className="py-3 font-mono text-xs">{block.hash?.slice(0, 16)}...</td>
                   <td className="py-3 text-white/70 whitespace-nowrap">{new Date(block.timestamp).toLocaleString()}</td>
                   <td className="py-3">{block.found_by_pool ? 'Yes' : 'No'}</td>
-                  <td className="py-3">{block.reward}</td>
+                  <td className={`py-3 ${block.orphaned ? 'text-red-400 line-through' : ''}`}>
+                    {block.reward}
+                    {block.orphaned && <span className="ml-2 text-xs text-red-400">(orphaned)</span>}
+                  </td>
                 </tr>
               ))}
             </tbody>
