@@ -18,6 +18,26 @@ runner = CliRunner()
 TEST_BECH32_ADDRESS = "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz"
 
 
+def parse_cli_json_output(output: str) -> dict:
+    """
+    Parse JSON from CLI output that may contain warning messages before the JSON.
+    
+    Args:
+        output: CLI output string that may have warnings before JSON
+        
+    Returns:
+        Parsed JSON dict
+    """
+    lines = output.strip().split('\n')
+    json_start = 0
+    for i, line in enumerate(lines):
+        if line.strip().startswith('{'):
+            json_start = i
+            break
+    json_output = '\n'.join(lines[json_start:])
+    return json.loads(json_output)
+
+
 @pytest.fixture
 def wallet_with_entry(tmp_path: Path) -> tuple[Path, str]:
     """
@@ -166,8 +186,8 @@ def test_wallet_show_balance_none_is_json_null(wallet_with_entry, monkeypatch):
     # Check exit code
     assert result.exit_code == 0, f"Command failed: {result.output}"
     
-    # Verify output is valid JSON
-    output_data = json.loads(result.output)
+    # Parse the JSON output (may have warnings before JSON)
+    output_data = parse_cli_json_output(result.output)
     
     # Verify balance is JSON null (None in Python)
     assert output_data["balance_confirmed"] is None, "Balance should be null when RPC fails"

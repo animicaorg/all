@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+from copy import deepcopy
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -606,11 +607,13 @@ def show(
         rpc_endpoint = _resolve_rpc_url(rpc_url)
         guard_bootstrap_rpc(rpc_endpoint, allow_remote=allow_remote_rpc, method="state.getBalance")
 
+        # Always fetch safe head for balance context, and tip head for completeness
         safe_head_info = _get_head_info(rpc_endpoint, "chain.getSafeHead")
-        if safe_head_info is None:
-            safe_head_info = _get_head_info(rpc_endpoint, "chain.getHead")
-        if include_tip or safe_head_info is None:
-            tip_head_info = _get_head_info(rpc_endpoint, "chain.getHead")
+        tip_head_info = _get_head_info(rpc_endpoint, "chain.getHead")
+        
+        # If getSafeHead is not available, treat tip as safe for backward compatibility
+        if safe_head_info is None and tip_head_info is not None:
+            safe_head_info = deepcopy(tip_head_info)
 
         if safe_head_info is not None:
             safe_head_info["rpc_url"] = rpc_endpoint
@@ -662,9 +665,15 @@ def show(
     output["balance_confirmed_formatted"] = (
         format_amount(balance_confirmed) if balance_confirmed is not None else None
     )
+    # Indicate the height at which balance_confirmed was queried (safe/finalized)
+    if balance_confirmed is not None and safe_head_info is not None:
+        output["balance_confirmed_height"] = safe_head_info.get("height")
     if balance_tip is not None:
         output["balance_tip"] = balance_tip
         output["balance_tip_formatted"] = format_amount(balance_tip)
+        # Indicate the height at which balance_tip was queried (latest/tip)
+        if tip_head_info is not None:
+            output["balance_tip_height"] = tip_head_info.get("height")
     if mempool_delta is not None:
         output["balance_mempool_delta"] = mempool_delta.get("delta")
         output["balance_mempool_delta_formatted"] = (
