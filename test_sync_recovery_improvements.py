@@ -6,6 +6,12 @@ Tests the key scenarios where sync was getting stuck.
 import time
 
 
+# Constants from p2p_service.py
+LARGE_GAP_THRESHOLD = 10
+EXTENDED_STALL_SNAPSHOT_TRIGGER_SEC = 90.0
+EXTENDED_STALL_WATCHDOG_MULTIPLIER = 1.5
+
+
 def test_block_enqueue_with_large_gap():
     """
     Test that blocks are enqueued even when parent is missing if gap is large.
@@ -19,11 +25,11 @@ def test_block_enqueue_with_large_gap():
     # Calculate gap
     gap_size = block_height - local_height
     
-    # With the fix, blocks should be enqueued if gap > 10
-    should_enqueue = gap_size > 10
+    # With the fix, blocks should be enqueued if gap > LARGE_GAP_THRESHOLD
+    should_enqueue = gap_size > LARGE_GAP_THRESHOLD
     
-    assert should_enqueue, "Should enqueue block when gap > 10 even without parent header"
-    print("✓ Test 1 PASSED: Large gap allows block enqueue without parent")
+    assert should_enqueue, f"Should enqueue block when gap > {LARGE_GAP_THRESHOLD} even without parent header"
+    print(f"✓ Test 1 PASSED: Large gap ({gap_size}) allows block enqueue without parent (threshold: {LARGE_GAP_THRESHOLD})")
     return True
 
 
@@ -41,10 +47,10 @@ def test_small_gap_respects_parent_check():
     gap_size = block_height - local_height
     
     # With small gap, should NOT enqueue without parent
-    should_enqueue = gap_size > 10
+    should_enqueue = gap_size > LARGE_GAP_THRESHOLD
     
-    assert not should_enqueue, "Should NOT enqueue block when gap <= 10 without parent header"
-    print("✓ Test 2 PASSED: Small gap respects parent availability check")
+    assert not should_enqueue, f"Should NOT enqueue block when gap <= {LARGE_GAP_THRESHOLD} without parent header"
+    print(f"✓ Test 2 PASSED: Small gap ({gap_size}) respects parent availability check (threshold: {LARGE_GAP_THRESHOLD})")
     return True
 
 
@@ -139,11 +145,15 @@ def test_snapshot_recovery_on_extended_stall():
     now = time.time()
     stall_duration = now - sync_last_progress_at
     
-    # Should trigger snapshot recovery after 90s or 1.5x watchdog timeout
-    should_trigger = stall_duration >= max(90.0, sync_watchdog_timeout * 1.5)
+    # Should trigger snapshot recovery based on max of constants
+    threshold = max(
+        EXTENDED_STALL_SNAPSHOT_TRIGGER_SEC,
+        sync_watchdog_timeout * EXTENDED_STALL_WATCHDOG_MULTIPLIER
+    )
+    should_trigger = stall_duration >= threshold
     
-    assert should_trigger, "Should trigger snapshot recovery on extended stall"
-    print("✓ Test 6 PASSED: Snapshot recovery triggers on extended stall")
+    assert should_trigger, f"Should trigger snapshot recovery on extended stall (duration: {stall_duration:.1f}s, threshold: {threshold:.1f}s)"
+    print(f"✓ Test 6 PASSED: Snapshot recovery triggers on extended stall (duration: {stall_duration:.1f}s >= threshold: {threshold:.1f}s)")
     return True
 
 

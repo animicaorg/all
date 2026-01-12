@@ -78,6 +78,13 @@ log = logging.getLogger("animica.p2p.service")
 MIN_SYNC_TICK_SEC: float = 0.001  # Minimum sync tick interval (1ms) - ultra aggressive for maximum sync speed
 LOCATOR_PARENT_CHAIN_VALIDATION_DEPTH: int = 3  # Number of parent hashes to walk back when validating locator start point
 
+# Sync recovery constants
+LARGE_GAP_THRESHOLD: int = 10  # Blocks: enqueue blocks even with missing parents if gap > this
+SKIPPED_BLOCKS_WARNING_THRESHOLD: int = 5  # Warn if this many blocks skipped due to missing parents
+FEW_HEADERS_WARNING_COUNT: int = 10  # Warn if fewer headers available than this when gap > 5
+EXTENDED_STALL_SNAPSHOT_TRIGGER_SEC: float = 90.0  # Trigger snapshot recovery after this many seconds of extended stall
+EXTENDED_STALL_WATCHDOG_MULTIPLIER: float = 1.5  # Multiplier for watchdog timeout to determine extended stall
+
 DEFAULT_BOOTSTRAP_SEEDS = [
     "/dns4/mainnet.animica.org/tcp/30333",
     "/ip4/144.126.133.21/tcp/30333",
@@ -7082,7 +7089,7 @@ class P2PService:
                         # Parent header not available - enqueue anyway if we're far behind
                         # This prevents stalls when there are header gaps
                         gap_size = hdr.height - local_height_int
-                        if gap_size > 10:
+                        if gap_size > LARGE_GAP_THRESHOLD:
                             log.warning(
                                 "Enqueuing block despite missing parent due to large gap",
                                 extra={
@@ -7091,6 +7098,7 @@ class P2PService:
                                     "parent_hash": hdr.parent_hash.hex() if hdr.parent_hash else None,
                                     "local_height": local_height,
                                     "gap_size": gap_size,
+                                    "threshold": LARGE_GAP_THRESHOLD,
                                 },
                             )
                             # Enqueue anyway - the block download will fail and trigger parent fetch
@@ -7122,7 +7130,7 @@ class P2PService:
             self._sync_wakeup.set()
         
         # Log if we skipped many blocks due to missing parents - indicates header gaps
-        if skipped_no_parent > 5:
+        if skipped_no_parent > SKIPPED_BLOCKS_WARNING_THRESHOLD:
             log.warning(
                 "Skipped many blocks due to missing parents - may need to request more headers",
                 extra={
@@ -7130,6 +7138,7 @@ class P2PService:
                     "added": added,
                     "total_headers": len(headers),
                     "local_height": local_height,
+                    "threshold": SKIPPED_BLOCKS_WARNING_THRESHOLD,
                 },
             )
         
@@ -7230,7 +7239,7 @@ class P2PService:
         # If we have very few headers but are far behind, log a warning
         # This indicates we need to request more headers
         gap = self._sync_best_header.height - int(local_height or 0)
-        if len(headers) < min(10, gap) and gap > 5:
+        if len(headers) < min(FEW_HEADERS_WARNING_COUNT, gap) and gap > 5:
             log.warning(
                 "Few headers available despite being behind - may need more header requests",
                 extra={
@@ -7238,6 +7247,7 @@ class P2PService:
                     "best_header_height": self._sync_best_header.height,
                     "gap": gap,
                     "available_headers": len(headers),
+                    "threshold": FEW_HEADERS_WARNING_COUNT,
                 },
             )
         
@@ -9268,11 +9278,16 @@ class P2PService:
                     
                     # If stalled for a long time with headers==blocks, consider snapshot recovery
                     stall_duration = now - self._sync_last_progress_at
-                    if stall_duration >= max(90.0, self._sync_watchdog_timeout * 1.5):
+                    threshold = max(
+                        EXTENDED_STALL_SNAPSHOT_TRIGGER_SEC,
+                        self._sync_watchdog_timeout * EXTENDED_STALL_WATCHDOG_MULTIPLIER
+                    )
+                    if stall_duration >= threshold:
                         log.warning(
                             "Extended headers==blocks stall - considering snapshot recovery",
                             extra={
                                 "stall_duration_s": round(stall_duration, 1),
+                                "threshold_s": round(threshold, 1),
                                 "height": best_block_height,
                                 "network_best": network_best_height,
                             },
