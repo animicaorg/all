@@ -64,7 +64,8 @@ def test_mining_balance_display():
     for block in blocks:
         block_hash = block["height"].to_bytes(32, "big")
         
-        # Record mining audit (this is what happens during actual mining)
+        # Record mining audit (this simulates what happens during actual mining)
+        # After the fix, we record the incremental reward for this specific block.
         _record_mining_audit(
             height=block["height"],
             block_hash=block_hash,

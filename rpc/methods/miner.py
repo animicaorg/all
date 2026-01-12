@@ -3505,6 +3505,7 @@ def _mine_once(
                 # IMPORTANT: credited_reward is the actual reward amount credited for THIS block,
                 # not the total balance. This ensures miners see consistent reward tracking
                 # even if blocks get reorged or orphaned (which would change total balance).
+                # FIXED: Use incremental reward not total balance to prevent false decrease display.
                 _record_mining_audit(
                     height=header.height,
                     block_hash=block_hash_bytes,
