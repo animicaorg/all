@@ -251,13 +251,19 @@ def _is_block_orphaned(block_hash: str | None, height: int | None) -> bool:
         height: The block's height
         
     Returns:
-        True if the block is orphaned, False if it's canonical or unknown
+        True if the block is confirmed to be orphaned (exists but not canonical).
+        False if the block is canonical, or if orphan status cannot be determined
+        (e.g., missing dependencies, errors, or insufficient data).
     """
     # Can't determine orphan status without both hash and height
     if block_hash is None or height is None:
         return False
     
     try:
+        # Normalize hash for comparison (ensure lowercase with 0x prefix)
+        def _normalize_hash(h: str) -> str:
+            return (h.lower() if h.startswith("0x") else "0x" + h.lower())
+        
         # Get the canonical block hash at this height
         if hasattr(deps, "get_canonical_hash"):
             canonical_hash_bytes = deps.get_canonical_hash(height)  # type: ignore
@@ -266,9 +272,8 @@ def _is_block_orphaned(block_hash: str | None, height: int | None) -> bool:
                 return False
             
             canonical_hash = _hex(canonical_hash_bytes)
-            # Normalize for comparison (both should have 0x prefix)
-            block_hash_normalized = block_hash.lower() if block_hash.startswith("0x") else "0x" + block_hash.lower()
-            canonical_hash_normalized = canonical_hash.lower() if canonical_hash else None
+            block_hash_normalized = _normalize_hash(block_hash)
+            canonical_hash_normalized = _normalize_hash(canonical_hash) if canonical_hash else None
             
             # If hashes don't match, this block is orphaned
             if canonical_hash_normalized and block_hash_normalized != canonical_hash_normalized:
@@ -283,8 +288,8 @@ def _is_block_orphaned(block_hash: str | None, height: int | None) -> bool:
                     return False
                 
                 canonical_hash = _hex(canonical_hash_bytes)
-                block_hash_normalized = block_hash.lower() if block_hash.startswith("0x") else "0x" + block_hash.lower()
-                canonical_hash_normalized = canonical_hash.lower() if canonical_hash else None
+                block_hash_normalized = _normalize_hash(block_hash)
+                canonical_hash_normalized = _normalize_hash(canonical_hash) if canonical_hash else None
                 
                 if canonical_hash_normalized and block_hash_normalized != canonical_hash_normalized:
                     return True
@@ -418,7 +423,8 @@ def _block_view(
     is_orphaned = _is_block_orphaned(computed_hash, height)
     if is_orphaned:
         v["orphaned"] = True
-        log.info(f"Block {computed_hash} at height {height} is orphaned (not canonical)")
+        # Use debug level to avoid excessive logging for orphaned block queries
+        log.debug(f"Block {computed_hash} at height {height} is orphaned (not canonical)")
 
     # drop None keys
     return {k: val for k, val in v.items() if val is not None}
