@@ -77,6 +77,18 @@ def _best_peer_head(peers: list[dict[str, Any]]) -> tuple[Optional[int], Optiona
     return best_height, best_hash, best_peer
 
 
+def _format_timestamp(ts: Optional[float]) -> str:
+    """Format a Unix timestamp as human-readable string."""
+    if ts is None:
+        return "N/A"
+    try:
+        from datetime import datetime
+        dt = datetime.fromtimestamp(ts)
+        return dt.strftime("%Y-%m-%d %H:%M:%S")
+    except Exception:
+        return f"{ts}"
+
+
 @app.command("sync-dump")
 def sync_dump(
     rpc_url: Optional[str] = typer.Option(
@@ -153,7 +165,7 @@ def sync_dump(
         "Queues:           "
         f"pending_headers={dump['pending_header_batches']} queued_blocks={dump['queued_blocks_count']}"
     )
-    typer.echo(f"Last progress:    {dump['last_progress_at']}")
+    typer.echo(f"Last progress:    {_format_timestamp(dump['last_progress_at'])}")
     if dump["stall_reason"]:
         typer.echo(f"Stall reason:     {dump['stall_reason']}")
         typer.echo(f"Stall elapsed:    {dump['stall_elapsed_s']}s")
