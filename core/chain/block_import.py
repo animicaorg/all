@@ -692,6 +692,15 @@ class BlockImporter:
                             self.block_db.set_head(height, h)
                         else:
                             self.block_db.set_canonical_head(height, h)
+                        
+                        # Update canonical height if this is not an instant block
+                        # This tracks mining blocks for halving schedule
+                        if not _is_instant_block(header):
+                            # Get current canonical height
+                            canonical_height = self.block_db.get_canonical_height()
+                            if canonical_height is None or height > canonical_height:
+                                self.block_db.set_canonical_height(height)
+                        
                         log.info(
                             "duplicate block became best; updated head pointer only (no state re-application)",
                             extra={
