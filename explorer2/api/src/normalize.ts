@@ -121,3 +121,17 @@ export function normalizeTxDetail(tx: any, receipt: any | null): TxDetail {
 export function isHexLike(value: string): boolean {
   return HEX_PREFIX.test(value)
 }
+
+export function normalizeRichList(data: any): any {
+  const entries = Array.isArray(data?.entries) ? data.entries : []
+  return {
+    entries: entries.map((entry: any) => ({
+      address: entry?.address ?? '0x0',
+      balance: entry?.balance ?? '0x0',
+      percentage: typeof entry?.percentage === 'number' ? entry.percentage : 0
+    })),
+    totalSupply: data?.totalSupply ?? '0x0',
+    totalAccounts: toNumber(data?.totalAccounts) ?? 0,
+    hasMore: Boolean(data?.hasMore)
+  }
+}

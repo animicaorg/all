@@ -4,7 +4,8 @@ import type {
   BlockSummary,
   HeadView,
   MempoolView,
-  TxDetail
+  TxDetail,
+  RichListView
 } from '@animica/explorer2-shared'
 
 interface HeadResponse {
@@ -39,5 +40,7 @@ export const api = {
   getAddress: (address: string, limit = 20, cursor?: string) =>
     apiGet<AddressSummary>(`/api/address/${address}?limit=${limit}${cursor ? `&cursor=${cursor}` : ''}`),
   getMempool: (limit = 50, cursor?: string) =>
-    apiGet<MempoolView>(`/api/mempool?limit=${limit}${cursor ? `&cursor=${cursor}` : ''}`)
+    apiGet<MempoolView>(`/api/mempool?limit=${limit}${cursor ? `&cursor=${cursor}` : ''}`),
+  getRichList: (limit = 100, offset = 0) =>
+    apiGet<RichListView>(`/api/richlist?limit=${limit}&offset=${offset}`)
 }

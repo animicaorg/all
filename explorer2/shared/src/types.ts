@@ -88,3 +88,16 @@ export interface ApiError {
   message: string
   detail?: string
 }
+
+export interface RichListEntry {
+  address: Address
+  balance: string
+  percentage?: number
+}
+
+export interface RichListView {
+  entries: RichListEntry[]
+  totalSupply: string
+  totalAccounts: number
+  nextCursor?: string | null
+}

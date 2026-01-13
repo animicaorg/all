@@ -5,6 +5,7 @@ import BlockDetailPage from './pages/BlockDetailPage'
 import TxDetailPage from './pages/TxDetailPage'
 import AddressPage from './pages/AddressPage'
 import DiagnosticsPage from './pages/DiagnosticsPage'
+import RichListPage from './pages/RichListPage'
 import SearchBar from './components/SearchBar'
 import ThemeToggle from './components/ThemeToggle'
 
@@ -26,6 +27,9 @@ export default function App() {
                 <Link className="hover:text-animica-600 dark:hover:text-animica-400" to="/blocks">
                   Blocks
                 </Link>
+                <Link className="hover:text-animica-600 dark:hover:text-animica-400" to="/richlist">
+                  Rich List
+                </Link>
                 <Link className="hover:text-animica-600 dark:hover:text-animica-400" to="/diagnostics">
                   Diagnostics
                 </Link>
@@ -44,6 +48,7 @@ export default function App() {
           <Route path="/block/:hashOrHeight" element={<BlockDetailPage />} />
           <Route path="/tx/:hash" element={<TxDetailPage />} />
           <Route path="/address/:address" element={<AddressPage />} />
+          <Route path="/richlist" element={<RichListPage />} />
           <Route path="/diagnostics" element={<DiagnosticsPage />} />
           <Route
             path="*"

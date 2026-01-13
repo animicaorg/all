@@ -149,6 +149,17 @@ export function createServer(service: ExplorerService, corsOrigin: string, logLe
     }
   })
 
+  app.get('/api/richlist', async (req, res, next) => {
+    try {
+      const limit = Number(req.query.limit || 100)
+      const offset = Number(req.query.offset || 0)
+      const payload = await service.getRichList(limit, offset)
+      res.json(payload)
+    } catch (err) {
+      next(err)
+    }
+  })
+
   app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
     if (err instanceof HttpError) {
       const body: ApiError = { error: 'request_failed', message: err.message, detail: err.detail }

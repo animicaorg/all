@@ -589,3 +589,103 @@ def state_get_mempool_delta(address: str) -> dict:
         "txCount": int(delta["tx_count"]),
         "includesFee": bool(delta["includes_fee"]),
     }
+
+
+@method(
+    "state.getRichList",
+    desc="Return a list of addresses sorted by balance (rich list). Supports pagination.",
+    aliases=("state_getRichList",),
+)
+def state_get_rich_list(limit: int = 100, offset: int = 0) -> dict:
+    """
+    Get a list of addresses sorted by balance descending (rich list).
+    
+    Args:
+        limit: Maximum number of entries to return (default: 100, max: 1000)
+        offset: Number of entries to skip for pagination (default: 0)
+        
+    Returns:
+        dict: {
+            "entries": [{"address": str, "balance": str, "percentage": float}, ...],
+            "totalSupply": str,     # Total supply in hex (e.g., "0x...")
+            "totalAccounts": int,   # Total number of accounts with non-zero balance
+            "hasMore": bool,        # Whether there are more entries to fetch
+        }
+    """
+    # Clamp limit to avoid excessive load
+    limit = max(1, min(int(limit), 1000))
+    offset = max(0, int(offset))
+    
+    try:
+        ctx = deps.get_ctx()
+        sdb = ctx.state_db
+    except Exception as e:
+        log.error(f"state.getRichList: failed to get state DB: {e}")
+        raise rpc_errors.InternalError("Failed to access state database")
+    
+    # Import bech32 encoder for address formatting
+    try:
+        from pq.py.utils import bech32 as _bech32_mod
+        from pq.py.address import encode_address
+    except Exception:
+        _bech32_mod = None
+        encode_address = None
+    
+    # Collect all accounts with their balances
+    accounts: list[tuple[bytes, int]] = []
+    total_supply = 0
+    
+    try:
+        # Iterate over all accounts in StateDB
+        for addr_bytes, account in sdb.iter_accounts():
+            balance = account.balance
+            if balance > 0:  # Only include accounts with positive balance
+                accounts.append((addr_bytes, balance))
+                total_supply += balance
+    except Exception as e:
+        log.error(f"state.getRichList: error iterating accounts: {e}")
+        raise rpc_errors.InternalError("Failed to scan account balances")
+    
+    # Sort by balance descending
+    accounts.sort(key=lambda x: x[1], reverse=True)
+    
+    # Paginate
+    paginated = accounts[offset:offset + limit]
+    has_more = offset + limit < len(accounts)
+    
+    # Format entries
+    entries = []
+    for addr_bytes, balance in paginated:
+        # Try to encode as bech32m address (anim1...)
+        addr_str = None
+        if encode_address is not None:
+            try:
+                # Reconstruct address record for encoding
+                # CRITICAL: StateDB stores 32-byte digest, but bech32 needs alg_id + digest
+                # For now, use a default algorithm ID (1 = Dilithium3)
+                # This may need adjustment if we need to recover the actual alg_id
+                from pq.py.address import AddressRecord
+                addr_rec = AddressRecord(alg_id=1, digest=addr_bytes)
+                addr_str = encode_address(addr_rec, hrp="anim")
+            except Exception:
+                pass
+        
+        # Fallback to hex if bech32 encoding fails
+        if addr_str is None:
+            addr_str = "0x" + addr_bytes.hex()
+        
+        # Calculate percentage of total supply
+        percentage = (balance / total_supply * 100.0) if total_supply > 0 else 0.0
+        
+        entries.append({
+            "address": addr_str,
+            "balance": _to_hex_quantity(balance),
+            "percentage": round(percentage, 4)
+        })
+    
+    return {
+        "entries": entries,
+        "totalSupply": _to_hex_quantity(total_supply),
+        "totalAccounts": len(accounts),
+        "hasMore": has_more
+    }

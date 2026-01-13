@@ -371,6 +371,89 @@ export class HybridChainClient {
   async getPeers(): Promise<unknown[]> {
     return []
   }
+
+  async getRichList(limit: number, offset: number): Promise<unknown> {
+    // Scan accounts from local StateDB
+    const accounts: Array<{ addr: Buffer; balance: bigint }> = []
+    let totalSupply = 0n
+    
+    try {
+      // Iterate over all accounts in the local database
+      const prefix = PFX_ACC
+      const stmt = this.local['db'].prepare('SELECT key, value FROM kv WHERE key >= ? AND key < ? ORDER BY key')
+      const upperBound = Buffer.concat([PFX_ACC, Buffer.from([0x02])])
+      
+      for (const row of stmt.iterate(prefix, upperBound) as IterableIterator<{ key: Buffer; value: Buffer }>) {
+        try {
+          const account = decodeCbor(row.value) as { balance?: number | bigint }
+          const balance = account.balance ?? 0
+          const balanceBig = typeof balance === 'bigint' ? balance : BigInt(balance)
+          
+          if (balanceBig > 0n) {
+            // Extract address from key (skip prefix byte + length byte)
+            const addrLen = row.key[1]
+            const addr = row.key.slice(2, 2 + addrLen)
+            accounts.push({ addr, balance: balanceBig })
+            totalSupply += balanceBig
+          }
+        } catch (err) {
+          // Skip accounts we can't decode
+          continue
+        }
+      }
+    } catch (err) {
+      // Return empty result on error
+      return {
+        entries: [],
+        totalSupply: '0x0',
+        totalAccounts: 0,
+        hasMore: false
+      }
+    }
+    
+    // Sort by balance descending
+    accounts.sort((a, b) => {
+      if (a.balance > b.balance) return -1
+      if (a.balance < b.balance) return 1
+      return 0
+    })
+    
+    // Paginate
+    const paginated = accounts.slice(offset, offset + limit)
+    const hasMore = offset + limit < accounts.length
+    
+    // Format entries
+    const entries = paginated.map(({ addr, balance }) => {
+      // Try to encode as bech32m
+      let address = `0x${addr.toString('hex')}`
+      try {
+        // Bech32m encoding (anim1...)
+        // Note: StateDB stores 32-byte digest, need to prepend algorithm ID for full address
+        // Using default alg_id = 1 (Dilithium3)
+        const algId = Buffer.from([0x00, 0x01]) // 2 bytes for alg_id
+        const payload = Buffer.concat([algId, addr])
+        const words = bech32m.toWords(payload)
+        address = bech32m.encode('anim', words)
+      } catch {
+        // Keep hex format on error
+      }
+      
+      const percentage = totalSupply > 0n ? Number((balance * 10000n) / totalSupply) / 100 : 0
+      
+      return {
+        address,
+        balance: `0x${balance.toString(16)}`,
+        percentage: Math.round(percentage * 10000) / 10000
+      }
+    })
+    
+    return {
+      entries,
+      totalSupply: `0x${totalSupply.toString(16)}`,
+      totalAccounts: accounts.length,
+      hasMore
+    }
+  }
 }
 
 export function defaultChainDbPath(chainId: number, dataRoot = path.join(homedir(), '.animica')): string {
