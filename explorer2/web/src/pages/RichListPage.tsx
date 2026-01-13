@@ -154,7 +154,7 @@ export default function RichListPage() {
                       </p>
                     </td>
                     <td className="px-6 py-4 text-right font-mono text-sm text-gray-700 dark:text-slate-300">
-                      {entry.percentage?.toFixed(4)}%
+                      {(entry.percentage ?? 0).toFixed(4)}%
                     </td>
                   </tr>
                 ))}

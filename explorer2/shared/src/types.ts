@@ -99,5 +99,5 @@ export interface RichListView {
   entries: RichListEntry[]
   totalSupply: string
   totalAccounts: number
-  nextCursor?: string | null
+  hasMore: boolean
 }

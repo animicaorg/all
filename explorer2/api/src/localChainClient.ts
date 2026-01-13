@@ -373,6 +373,12 @@ export class HybridChainClient {
   }
 
   async getRichList(limit: number, offset: number): Promise<unknown> {
+    // CRITICAL: Default algorithm ID for bech32m address reconstruction
+    // StateDB stores only 32-byte digest, but bech32m requires alg_id + digest
+    // Using 1 (Dilithium3) as default since it's the most common PQ signature algorithm
+    // The digest is the canonical identifier; algorithm ID is for display purposes only
+    const DEFAULT_ALG_ID = 1 // Dilithium3
+    
     // Scan accounts from local StateDB
     const accounts: Array<{ addr: Buffer; balance: bigint }> = []
     let totalSupply = 0n
@@ -429,8 +435,8 @@ export class HybridChainClient {
       try {
         // Bech32m encoding (anim1...)
         // Note: StateDB stores 32-byte digest, need to prepend algorithm ID for full address
-        // Using default alg_id = 1 (Dilithium3)
-        const algId = Buffer.from([0x00, 0x01]) // 2 bytes for alg_id
+        // Using DEFAULT_ALG_ID since the actual algorithm is not stored with the account
+        const algId = Buffer.from([0x00, DEFAULT_ALG_ID]) // 2 bytes: big-endian alg_id
         const payload = Buffer.concat([algId, addr])
         const words = bech32m.toWords(payload)
         address = bech32m.encode('anim', words)

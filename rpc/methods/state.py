@@ -631,6 +631,13 @@ def state_get_rich_list(limit: int = 100, offset: int = 0) -> dict:
         _bech32_mod = None
         encode_address = None
     
+    # CRITICAL: Default algorithm ID for address reconstruction
+    # StateDB stores only the 32-byte digest, but bech32m addresses require alg_id + digest
+    # We use 1 (Dilithium3) as the default since it's the most common PQ signature algorithm
+    # This may not match the actual algorithm used to create the address, but the digest
+    # remains the canonical identifier for account lookups.
+    DEFAULT_ALG_ID = 1  # Dilithium3
+    
     # Collect all accounts with their balances
     accounts: list[tuple[bytes, int]] = []
     total_supply = 0
@@ -662,10 +669,10 @@ def state_get_rich_list(limit: int = 100, offset: int = 0) -> dict:
             try:
                 # Reconstruct address record for encoding
                 # CRITICAL: StateDB stores 32-byte digest, but bech32 needs alg_id + digest
-                # For now, use a default algorithm ID (1 = Dilithium3)
-                # This may need adjustment if we need to recover the actual alg_id
+                # Using DEFAULT_ALG_ID (Dilithium3) since the actual algorithm ID is not stored
+                # The digest is the canonical identifier, algorithm ID is for display only
                 from pq.py.address import AddressRecord
-                addr_rec = AddressRecord(alg_id=1, digest=addr_bytes)
+                addr_rec = AddressRecord(alg_id=DEFAULT_ALG_ID, digest=addr_bytes)
                 addr_str = encode_address(addr_rec, hrp="anim")
             except Exception:
                 pass
