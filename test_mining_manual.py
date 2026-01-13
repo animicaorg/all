@@ -149,13 +149,13 @@ def test_max_nonce_env_variable():
     
     # Test default value
     os.environ.pop("ANIMICA_MINER_MAX_NONCE", None)
-    default_max = int(os.getenv("ANIMICA_MINER_MAX_NONCE", "100000"))
+    default_max = int(os.getenv("ANIMICA_MINER_MAX_NONCE", "10000000"))
     print(f"  Default max nonce: {default_max}")
-    assert default_max == 100000, "Default should be 100000"
+    assert default_max == 10000000, "Default should be 10000000"
     
     # Test custom value
     os.environ["ANIMICA_MINER_MAX_NONCE"] = "50000"
-    custom_max = int(os.getenv("ANIMICA_MINER_MAX_NONCE", "100000"))
+    custom_max = int(os.getenv("ANIMICA_MINER_MAX_NONCE", "10000000"))
     print(f"  Custom max nonce: {custom_max}")
     assert custom_max == 50000, "Should respect env variable"
     

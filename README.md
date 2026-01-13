@@ -596,7 +596,8 @@ Environment variables:
 
 ```bash
 export ANIMICA_MINER_ADDRESS=anim1...      # Default payout address
-export ANIMICA_MINER_MAX_NONCE=100000      # Max nonce iterations
+export ANIMICA_MINER_MAX_NONCE=10000000    # Max nonce iterations per window (default: 10M)
+export ANIMICA_MINER_MAX_TOTAL_NONCE=50000000  # Max total nonce attempts (default: 50M)
 export ANIMICA_MINER_THREADS=4             # CPU mining threads
 ```
 
@@ -900,7 +901,8 @@ python -m mining.cli.miner start \
 | Variable | Description | Default | Example |
 |----------|-------------|---------|---------|
 | `ANIMICA_MINER_ADDRESS` | Default miner payout address | None | `anim1abc...` |
-| `ANIMICA_MINER_MAX_NONCE` | Max nonce iterations per block | `100000` | `1000000` |
+| `ANIMICA_MINER_MAX_NONCE` | Max nonce iterations per window | `10000000` | `50000000` |
+| `ANIMICA_MINER_MAX_TOTAL_NONCE` | Max total nonce attempts across all windows | `50000000` | `100000000` |
 | `MINER_DEVICE` | Mining device | `cpu` | `cuda`, `opencl` |
 | `MINER_THREADS` | CPU mining threads | Auto | `4` |
 | `MINER_LOG_LEVEL` | Miner log level | `INFO` | `DEBUG` |
