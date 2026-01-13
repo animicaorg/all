@@ -669,20 +669,46 @@ class BlockImporter:
 
             # Duplicate?
             if self.block_db.get_header_by_hash(h) is not None:
-                # already persisted
+                # already persisted - this block has already been imported and its state applied
                 parent_hash = _parent_hash_of(header, hdr_map)
                 self._ensure_fork_choice_parent(parent_hash)
                 if self.fork_choice is None:
                     self._init_fork_choice_from_db()
                 if self.fork_choice is not None and not self.fork_choice.has(h):
+                    # Add to fork choice for weight tracking only
                     result = self.fork_choice.add_block(
                         h=h,
                         parent=parent_hash,
                         height=_height_of(header, hdr_map),
                         weight_micro=_weight_micro_of(header, hdr_map, self.params),
                     )
+                    # If this duplicate becomes best, update canonical pointers but DON'T re-apply state
+                    # The block's state (including rewards) was already applied during first import
+                    # Re-applying would cause double-crediting of rewards
                     if result.became_best:
-                        self._apply_reorg(result.detached, result.attached, result.best)
+                        # Update canonical head pointer only (no state application)
+                        height = _height_of(header, hdr_map)
+                        if hasattr(self.block_db, "set_head"):
+                            self.block_db.set_head(height, h)
+                        else:
+                            self.block_db.set_canonical_head(height, h)
+                        
+                        # Update canonical height if this is not an instant block
+                        # This tracks mining blocks for halving schedule
+                        if not _is_instant_block(header):
+                            # Get current canonical height
+                            canonical_height = self.block_db.get_canonical_height()
+                            if canonical_height is None or height > canonical_height:
+                                self.block_db.set_canonical_height(height)
+                        
+                        log.info(
+                            "duplicate block became best; updated head pointer only (no state re-application)",
+                            extra={
+                                "height": height,
+                                "hash": h.hex(),
+                                "weight_micro": _weight_micro_of(header, hdr_map, self.params),
+                            },
+                        )
                 return ImportResult(
                     ImportErrorCode.DUPLICATE,
                     _height_of(header, hdr_map),
