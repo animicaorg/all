@@ -405,6 +405,7 @@ class BlockImporter:
         "_created_snapshots",
         "_pending_snapshots",
         "_data_dir",
+        "_rewarded_canonical_blocks",
     )
 
     def __init__(
@@ -478,6 +479,11 @@ class BlockImporter:
         self._snapshot_auto_create = SNAPSHOT_AUTO_CREATE
         self._created_snapshots: set[int] = set()  # Track which snapshots we've created
         self._pending_snapshots: set[int] = set()  # Track snapshots in progress
+        
+        # Track which blocks at each height have been rewarded to prevent double-rewarding
+        # Maps height → block_hash of the block that was rewarded at that height
+        # This ensures that even during reorgs, we only reward once per canonical height
+        self._rewarded_canonical_blocks: Dict[int, bytes] = {}
         
         self._init_fork_choice_from_db()
 
@@ -1287,6 +1293,19 @@ class BlockImporter:
             self._rebuild_state_from_canonical(best.height)
             return
 
+        # Clear reward tracking for heights that will be re-applied
+        # This allows rewards to be applied again for the new canonical blocks
+        for h in detached:
+            header = self.block_db.get_header_by_hash(h)
+            if header is not None:
+                height = _height_of(header)
+                if height in self._rewarded_canonical_blocks:
+                    del self._rewarded_canonical_blocks[height]
+                    log.debug(
+                        "Cleared reward tracking for detached block",
+                        extra={"height": height, "hash": h.hex()[:16]},
+                    )
+
         applied = 0
         for h in sorted(attached, key=self._block_height_for_hash):
             block = self.block_db.get_block_by_hash(h)
@@ -1392,6 +1411,11 @@ class BlockImporter:
         This method is called during block state application to ensure rewards
         are included in state snapshots and survive state rebuilds/reorgs.
         
+        Prevents double-rewarding by tracking which block hash has been rewarded
+        at each canonical height. During reorgs, if a different block becomes
+        canonical at the same height, state revert will remove the old reward
+        and this method will apply the new reward.
+        
         Args:
             block: The block being imported
             
@@ -1415,6 +1439,32 @@ class BlockImporter:
         # Get block info
         height = int(getattr(block.header, "height", 0))
         chain_id = int(getattr(block.header, "chainId", self.params.chain_id))
+        block_hash = block.header.hash()
+        
+        # Check if we've already rewarded a block at this height
+        # This prevents double-rewarding when:
+        # 1. Multiple blocks at the same height are submitted by different miners
+        # 2. The same block height is re-applied during rebuild or reorg recovery
+        previously_rewarded_hash = self._rewarded_canonical_blocks.get(height)
+        if previously_rewarded_hash is not None:
+            if previously_rewarded_hash == block_hash:
+                # Same block at same height - already rewarded, skip
+                log.debug(
+                    "Block reward already applied for this block; skipping duplicate reward",
+                    extra={"height": height, "hash": block_hash.hex()[:16]},
+                )
+                return
+            else:
+                # Different block at same height - this is a reorg situation
+                # The state revert should have removed the old reward, so we can apply new reward
+                log.info(
+                    "Applying reward for new canonical block at height (replacing previous block)",
+                    extra={
+                        "height": height,
+                        "new_hash": block_hash.hex()[:16],
+                        "old_hash": previously_rewarded_hash.hex()[:16],
+                    },
+                )
         
         # Get coinbase address from block header
         # The coinbase is stored in BlockEnv but we reconstruct it here
@@ -1512,6 +1562,15 @@ class BlockImporter:
                     },
                 )
                 raise
+        
+        # Mark this block as rewarded at this height
+        # This prevents double-rewarding if this block is re-applied or if another
+        # block at the same height tries to get rewarded before a reorg happens
+        self._rewarded_canonical_blocks[height] = block_hash
+        log.debug(
+            "Recorded reward application for canonical block",
+            extra={"height": height, "hash": block_hash.hex()[:16]},
+        )
 
     def _capture_state_snapshot(self, height: int) -> None:
         if self.state_db is None:
