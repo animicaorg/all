@@ -117,9 +117,9 @@ def _mine_header(
     *,
     workers: int | None = None,
 ) -> tuple[int | None, bytes | None]:
-    max_nonce = max(1, int(os.getenv("ANIMICA_MINER_MAX_NONCE", "1000000")))
+    max_nonce = max(1, int(os.getenv("ANIMICA_MINER_MAX_NONCE", "10000000")))
     retry_windows = max(1, int(os.getenv("ANIMICA_MINER_POW_RETRY_WINDOWS", "4")))
-    default_total = max(max_nonce * retry_windows, 5_000_000)
+    default_total = max(max_nonce * retry_windows, 50_000_000)
     max_total_nonce = max(
         1,
         int(os.getenv("ANIMICA_MINER_MAX_TOTAL_NONCE", str(default_total))),
@@ -899,7 +899,8 @@ def mine_blocks(
     
     Difficulty:
       - Target is calculated from the network's theta (acceptance threshold)
-      - Set ANIMICA_MINER_MAX_NONCE to limit nonce iterations (default: 100000)
+      - Set ANIMICA_MINER_MAX_NONCE to limit nonce iterations per window (default: 10,000,000)
+      - Set ANIMICA_MINER_MAX_TOTAL_NONCE to limit total attempts (default: 50,000,000)
       - Higher theta means harder mining (lower target)
     
     Examples:
@@ -937,7 +938,9 @@ def mine_blocks(
         ANIMICA_RPC_URL             - Node RPC endpoint (default: http://127.0.0.1:8545/rpc)
         ANIMICA_MINER_ADDRESS       - Default payout address if --address not specified
         ANIMICA_MINER_DEVICE        - Default mining device (default: cpu)
-        ANIMICA_MINER_MAX_NONCE     - Max nonce iterations per block (default: 100000)
+        ANIMICA_MINER_MAX_NONCE     - Max nonce iterations per window (default: 10,000,000)
+        ANIMICA_MINER_MAX_TOTAL_NONCE - Max total nonce attempts (default: 50,000,000)
+        ANIMICA_MINER_POW_RETRY_WINDOWS - Number of retry windows (default: 4)
         ANIMICA_TRUSTED_RPC_URL     - (DEPRECATED) External proxy endpoint (only for --use-proxy)
         ANIMICA_PROXY_MAX_RETRIES   - (DEPRECATED) Max proxy retries (default: 3)
         ANIMICA_PROXY_RETRY_DELAY_MS - (DEPRECATED) Delay between retries in ms (default: 1000)

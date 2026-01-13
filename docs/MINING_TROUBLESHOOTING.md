@@ -481,7 +481,10 @@ export ANIMICA_MINER_ADDRESS="anim1..."
 export ANIMICA_MINER_DEVICE="auto"
 
 # Max nonce iterations per block
-export ANIMICA_MINER_MAX_NONCE="100000"
+export ANIMICA_MINER_MAX_NONCE="10000000"
+
+# Max total nonce attempts (default: MAX_NONCE * retry_windows, minimum 50M)
+export ANIMICA_MINER_MAX_TOTAL_NONCE="50000000"
 
 # Proxy configuration
 export ANIMICA_PROXY_MAX_RETRIES="3"
