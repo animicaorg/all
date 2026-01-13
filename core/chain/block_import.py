@@ -1348,9 +1348,9 @@ class BlockImporter:
             # Check if block contains coinbase transactions
             # If it does, rewards were already applied via transaction execution
             # If it doesn't, we need to apply rewards separately
-            from core.types.tx import TxKind
+            # Note: Using getattr for robustness in case tx.unsigned or kind attribute is missing
             has_coinbase_tx = any(
-                getattr(tx.unsigned, "kind", None) == TxKind.COINBASE
+                getattr(getattr(tx, "unsigned", None), "kind", None) == TxKind.COINBASE
                 for tx in block.txs
             )
             

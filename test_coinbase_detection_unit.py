@@ -10,8 +10,10 @@ def test_has_coinbase_detection():
     """Test that we can detect coinbase transactions in a block."""
     
     # Simulate the detection logic from our fix
+    # Note: TxKind.COINBASE = 3 (from core/types/tx.py)
+    # We use a mock here to avoid dependencies
     class MockTxKind:
-        COINBASE = 3
+        COINBASE = 3  # Must match actual TxKind.COINBASE value
         TRANSFER = 0
     
     class MockUnsignedTx:
