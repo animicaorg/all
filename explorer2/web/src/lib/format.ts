@@ -37,7 +37,10 @@ export function formatBalance(balance?: string | null): {
   nanm: string;     // Balance in nANM (raw native units)
   hex: string;      // Hexadecimal representation
 } {
-  if (!balance) return { anm: '—', nanm: '—', hex: '—' }
+  // Handle null, undefined, or empty string
+  if (!balance || balance === 'null' || balance === 'undefined') {
+    return { anm: '—', nanm: '—', hex: '—' }
+  }
   
   try {
     // Handle hex format (e.g., "0x5") or plain number string

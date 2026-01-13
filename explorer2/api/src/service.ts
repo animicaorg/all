@@ -1,7 +1,7 @@
-import type { AddressSummary, BlockDetail, BlockSummary, HeadView, MempoolView, TxDetail } from '@animica/explorer2-shared'
+import type { AddressSummary, BlockDetail, BlockSummary, HeadView, MempoolView, TxDetail, RichListView } from '@animica/explorer2-shared'
 import { RequestCoalescer } from './cache.js'
 import { HttpError } from './errors.js'
-import { normalizeBlockDetail, normalizeBlockSummary, normalizeHead, normalizeTxDetail, normalizeTxSummary } from './normalize.js'
+import { normalizeBlockDetail, normalizeBlockSummary, normalizeHead, normalizeTxDetail, normalizeTxSummary, normalizeRichList } from './normalize.js'
 import { clampLimit, nextCursorForHeight, parseCursor } from './pagination.js'
 export interface ChainClient {
   getHead: () => Promise<unknown>
@@ -13,6 +13,7 @@ export interface ChainClient {
   getMempoolStats: () => Promise<{ count: number; totalBytes: number; oldestAgeSec: number | null }>
   getPeers: () => Promise<unknown[]>
   getBalance: (address: string, tag?: 'latest' | 'pending') => Promise<string>
+  getRichList: (limit: number, offset: number) => Promise<unknown>
 }
 
 const RECENT_BLOCK_WINDOW = 20
@@ -142,6 +143,16 @@ export class ExplorerService {
       nextCursor,
       stats: stats ?? undefined
     }
+  }
+
+  async getRichList(limitInput: number, offsetInput?: number) {
+    const limit = clampLimit(limitInput, 1000)
+    const offset = Math.max(0, offsetInput ?? 0)
+    
+    return this.coalescer.run(`richlist:${limit}:${offset}`, async () => {
+      const raw = await this.safeRpc(() => this.rpc.getRichList(limit, offset))
+      return normalizeRichList(raw)
+    })
   }
 
   private async getRecentBlocks(headHeight: number): Promise<BlockSummary[]> {
