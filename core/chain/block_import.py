@@ -1345,20 +1345,37 @@ class BlockImporter:
             block_env = make_block_env(block.header, self.params)
             apply_block(block.txs, self.state_db, block_env, params=self.params)
             
-            # Apply block rewards to state after applying transactions
-            # This ensures rewards are included in state snapshots and survive rebuilds
-            try:
-                self._apply_block_reward(block)
-            except Exception as reward_exc:
-                log.warning(
-                    "state: block reward application failed (non-fatal)",
-                    extra={
-                        "error": str(reward_exc),
-                        "height": getattr(block.header, "height", None),
-                    },
+            # Check if block contains coinbase transactions
+            # If it does, rewards were already applied via transaction execution
+            # If it doesn't, we need to apply rewards separately
+            from core.types.tx import TxKind
+            has_coinbase_tx = any(
+                getattr(tx.unsigned, "kind", None) == TxKind.COINBASE
+                for tx in block.txs
+            )
+            
+            if has_coinbase_tx:
+                # Block contains coinbase transactions - rewards already applied via tx execution
+                # Skip _apply_block_reward to prevent double-crediting
+                log.debug(
+                    "state: block contains coinbase transactions; skipping separate reward application",
+                    extra={"height": getattr(block.header, "height", None)},
                 )
-                # Don't fail the entire block import if reward application fails
-                # This maintains backward compatibility with blocks that may not have rewards
+            else:
+                # Block does not contain coinbase transactions - apply rewards separately
+                # This ensures rewards are included in state snapshots and survive rebuilds
+                try:
+                    self._apply_block_reward(block)
+                except Exception as reward_exc:
+                    log.warning(
+                        "state: block reward application failed (non-fatal)",
+                        extra={
+                            "error": str(reward_exc),
+                            "height": getattr(block.header, "height", None),
+                        },
+                    )
+                    # Don't fail the entire block import if reward application fails
+                    # This maintains backward compatibility with blocks that may not have rewards
             
             return True
         except Exception as exc:
