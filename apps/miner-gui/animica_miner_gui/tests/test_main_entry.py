@@ -6,8 +6,13 @@ import pytest
 from pathlib import Path
 
 
-def test_freeze_support_in_main_guard():
-    """Test that freeze_support is called in if __name__ == '__main__' block, not in main()."""
+def test_freeze_support_at_module_level():
+    """Test that freeze_support is called at module level, not inside main() or if __name__ guard.
+    
+    This is critical for PyInstaller on macOS to prevent infinite spawning when the
+    .app bundle is opened. The freeze_support() must be at module level (top-level)
+    to work correctly with macOS app bundles.
+    """
     # Read the main.py file
     main_py_path = Path(__file__).parent.parent / "main.py"
     with open(main_py_path, "r") as f:
@@ -40,31 +45,24 @@ def test_freeze_support_in_main_guard():
     assert "freeze_support" not in main_func_code, \
         "freeze_support() should NOT be called inside main() function"
     
-    # Check that freeze_support IS called in the if __name__ guard
+    # Check that freeze_support is NOT called in the if __name__ guard
     main_guard_code = ast.unparse(main_guard)
-    assert "freeze_support" in main_guard_code, \
-        "freeze_support() MUST be called in if __name__ == '__main__' block"
+    assert "freeze_support" not in main_guard_code, \
+        "freeze_support() should NOT be called in if __name__ == '__main__' block (must be at module level)"
     
-    # Verify it's called BEFORE main()
-    # Get the first statement in the if __name__ block (after any comments)
-    first_statements = []
-    for stmt in main_guard.body:
-        if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Call):
-            # This is a function call expression
-            if isinstance(stmt.value.func, ast.Attribute):
-                # Method call like multiprocessing.freeze_support()
-                if (isinstance(stmt.value.func.value, ast.Name) and
-                    stmt.value.func.value.id == "multiprocessing" and
-                    stmt.value.func.attr == "freeze_support"):
-                    first_statements.append("freeze_support")
-                elif hasattr(stmt.value.func, 'attr'):
-                    first_statements.append(stmt.value.func.attr)
-            elif hasattr(stmt.value.func, 'id'):
-                # Simple function call like main()
-                first_statements.append(stmt.value.func.id)
+    # Check that freeze_support IS called at module level (top-level)
+    module_level_freeze_support = False
+    for node in tree.body:
+        if isinstance(node, ast.Expr) and isinstance(node.value, ast.Call):
+            if isinstance(node.value.func, ast.Attribute):
+                if (isinstance(node.value.func.value, ast.Name) and
+                    node.value.func.value.id == "multiprocessing" and
+                    node.value.func.attr == "freeze_support"):
+                    module_level_freeze_support = True
+                    break
     
-    # The first executable statement should involve freeze_support
-    assert len(first_statements) > 0, "No statements found in if __name__ block"
+    assert module_level_freeze_support, \
+        "freeze_support() MUST be called at module level (top-level) for PyInstaller macOS compatibility"
     
 
 def test_main_function_signature():
@@ -118,10 +116,11 @@ def test_main_has_proper_guard():
     with open(main_py_path, "r") as f:
         lines = f.readlines()
     
-    # Find the if __name__ == "__main__" line
+    # Find the actual if __name__ == "__main__" line (not in comments)
     guard_line = None
     for i, line in enumerate(lines):
-        if 'if __name__ == "__main__"' in line:
+        stripped = line.strip()
+        if stripped.startswith('if __name__ == "__main__"') or stripped.startswith("if __name__ == '__main__'"):
             guard_line = i
             break
     
@@ -131,5 +130,8 @@ def test_main_has_proper_guard():
     remaining_lines = "".join(lines[guard_line:])
     assert "sys.exit(main())" in remaining_lines, \
         "sys.exit(main()) should be called in the guard block"
-    assert "freeze_support()" in remaining_lines, \
-        "freeze_support() should be called in the guard block"
+    
+    # Check that freeze_support() is called BEFORE the guard (at module level)
+    before_guard_lines = "".join(lines[:guard_line])
+    assert "freeze_support()" in before_guard_lines, \
+        "freeze_support() should be called at module level, before the if __name__ guard"
