@@ -1418,6 +1418,18 @@ class BlockImporter:
                     # Don't fail the entire block import if reward application fails
                     # This maintains backward compatibility with blocks that may not have rewards
             
+            # Record that we've successfully applied this block to state
+            # This helps prevent unnecessary state rebuilds
+            height = getattr(block.header, "height", None)
+            if height is not None and hasattr(self.state_db, "set_state_height"):
+                try:
+                    self.state_db.set_state_height(int(height))
+                except Exception as e:
+                    log.debug(
+                        "Failed to record state height (non-fatal)",
+                        extra={"height": height, "error": str(e)},
+                    )
+            
             return True
         except Exception as exc:
             log.error(
@@ -1843,6 +1855,26 @@ class BlockImporter:
         """
         if self.state_db is None:
             return
+        
+        # CRITICAL: Check if state is already at the target height
+        # If so, skip rebuild to prevent re-applying rewards
+        if hasattr(self.state_db, "get_state_height"):
+            try:
+                current_height = self.state_db.get_state_height()
+                if current_height is not None and current_height >= target_height:
+                    log.info(
+                        "state: SKIPPING rebuild - state already at target height",
+                        extra={
+                            "current_height": current_height,
+                            "target_height": target_height,
+                        },
+                    )
+                    return
+            except Exception as e:
+                log.debug(
+                    "Failed to check state height (proceeding with rebuild)",
+                    extra={"error": str(e)},
+                )
         
         log.warning(
             "state: REBUILDING state from canonical chain - this will re-execute all transactions!",

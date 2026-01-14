@@ -49,6 +49,10 @@ from .kv import KV, Batch, ReadOnlyKV
 PFX_ACC = b"\x01"
 PFX_CODE = b"\x02"
 PFX_STO = b"\x03"
+PFX_META = b"\xFF"  # Metadata prefix for internal state tracking
+
+# Metadata keys
+META_STATE_HEIGHT = PFX_META + b"state_height"  # Highest block height applied to state
 
 
 def _u8(n: int) -> bytes:
@@ -347,6 +351,32 @@ class StateDB:
                 batch.put(_k_sto(addr, skey), bytes(val))
             for addr, code in snap.iter_code():
                 batch.put(_k_code(addr), bytes(code))
+
+    # --- Metadata: State Height Tracking ---
+
+    def get_state_height(self) -> Optional[int]:
+        """
+        Get the highest block height that has been applied to this state.
+        Returns None if no height has been recorded (e.g., fresh genesis state).
+        """
+        val = self.kv.get(META_STATE_HEIGHT)
+        if val is None:
+            return None
+        try:
+            return int.from_bytes(val, "big")
+        except Exception:
+            return None
+
+    def set_state_height(self, height: int, batch: Optional[Batch] = None) -> None:
+        """
+        Record the highest block height that has been applied to this state.
+        This helps prevent unnecessary state rebuilds.
+        """
+        val = height.to_bytes(8, "big")
+        if batch is None:
+            self.kv.put(META_STATE_HEIGHT, val)
+        else:
+            batch.put(META_STATE_HEIGHT, val)
 
 
 class StateSnapshot:
