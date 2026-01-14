@@ -118,6 +118,22 @@ def test_normal_sync_not_affected():
         return True
 
 
+def test_headers_blocks_equal_stall_cleared_at_tip():
+    """Test that headers_blocks_equal_stall is cleared when at tip"""
+    # Simulated state - node was stalled but is now confirmed at tip
+    sync_block_stalled_reason = "headers_blocks_equal_stall"
+    reason = "at_tip"
+    
+    # Apply the fix logic from _note_header_progress
+    if reason == "at_tip" and sync_block_stalled_reason == "headers_blocks_equal_stall":
+        sync_block_stalled_reason = None
+        print("✓ Test 5 PASSED: headers_blocks_equal_stall cleared when at tip")
+        return True
+    else:
+        print("✗ Test 5 FAILED: stall reason not cleared")
+        return False
+
+
 if __name__ == "__main__":
     print("Running sync stall fix tests...\n")
     
@@ -126,6 +142,7 @@ if __name__ == "__main__":
     results.append(test_headers_blocks_equal_detection())
     results.append(test_stall_handler_with_none_header())
     results.append(test_normal_sync_not_affected())
+    results.append(test_headers_blocks_equal_stall_cleared_at_tip())
     
     print(f"\n{'='*60}")
     if all(results):

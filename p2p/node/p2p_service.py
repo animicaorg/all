@@ -8359,6 +8359,10 @@ class P2PService:
             self._sync_block_stalled_reason = None
             self._sync_last_block_error = None
             self._sync_last_block_error_at = None
+        # Clear headers_blocks_equal_stall when we're confirmed at tip
+        # This prevents the node from staying in permanent stall state after full sync
+        if reason == "at_tip" and self._sync_block_stalled_reason == "headers_blocks_equal_stall":
+            self._sync_block_stalled_reason = None
         log.debug(
             "Header progress noted",
             extra={"remote": peer.remote, "reason": reason},
