@@ -747,7 +747,8 @@ def _pending_get(tx_hash_hex: str) -> bytes | None:
     return _mempool_get_raw(tx_hash_hex)
 
 
-def _ensure_tx_persisted_to_chain(tx_hash_hex: str) -> tuple[bool, str | None]:
+async def _ensure_tx_persisted_to_chain_async(tx_hash_hex: str) -> tuple[bool, str | None]:
+    """Async version that doesn't block sync operations."""
     if not _TX_SEND_FORCE_CHAIN:
         return False, None
 
@@ -755,7 +756,7 @@ def _ensure_tx_persisted_to_chain(tx_hash_hex: str) -> tuple[bool, str | None]:
     if view is not None:
         return True, None
 
-    # Mine a block to persist the transaction
+    # Mine a block to persist the transaction asynchronously
     # Use instant_block=True to ensure zero rewards for tx send blocks
     mine_error: str | None = None
     deadline = time.time() + max(0.0, _TX_SEND_FORCE_CHAIN_TIMEOUT_S)
@@ -763,12 +764,17 @@ def _ensure_tx_persisted_to_chain(tx_hash_hex: str) -> tuple[bool, str | None]:
     while time.time() <= deadline:
         if time.time() >= next_mine_at:
             try:
-                miner_methods.miner_mine(
-                    count=1,
-                    include_mempool=True,
-                    allow_offline_mining=True,
-                    allow_unsynced_mining=True,
-                    instant_block=True,
+                # Mine in executor to avoid blocking event loop
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(
+                    None,
+                    lambda: miner_methods.miner_mine(
+                        count=1,
+                        include_mempool=True,
+                        allow_offline_mining=True,
+                        allow_unsynced_mining=True,
+                        instant_block=True,
+                    )
                 )
                 mine_error = None
             except Exception as exc:
@@ -777,9 +783,42 @@ def _ensure_tx_persisted_to_chain(tx_hash_hex: str) -> tuple[bool, str | None]:
         view, *_ = _lookup_persisted_tx(tx_hash_hex)
         if view is not None:
             return True, None
-        time.sleep(0.1)
+        await asyncio.sleep(0.1)  # Use async sleep instead of blocking
 
     return False, mine_error
+
+
+def _handle_mining_task_exception(task: asyncio.Task) -> None:
+    """Handle exceptions from background instant block mining tasks."""
+    try:
+        task.result()
+    except Exception as e:
+        log.error(f"Background instant block mining failed: {e}")
+
+
+def _ensure_tx_persisted_to_chain(tx_hash_hex: str) -> tuple[bool, str | None]:
+    """Synchronous wrapper for backward compatibility."""
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            # If loop is already running, schedule async version
+            # This avoids blocking the event loop
+            task = asyncio.create_task(_ensure_tx_persisted_to_chain_async(tx_hash_hex))
+            # Add exception handler to catch any errors
+            task.add_done_callback(_handle_mining_task_exception)
+            # Don't wait here - return immediately to avoid blocking
+            # The transaction will be persisted in the background
+            return False, "mining_in_progress"
+        else:
+            # No loop running, use sync version
+            return loop.run_until_complete(_ensure_tx_persisted_to_chain_async(tx_hash_hex))
+    except RuntimeError:
+        # Fallback to creating new event loop
+        loop = asyncio.new_event_loop()
+        try:
+            return loop.run_until_complete(_ensure_tx_persisted_to_chain_async(tx_hash_hex))
+        finally:
+            loop.close()
 
 
 def _force_sync_before_tx_submit() -> None:
