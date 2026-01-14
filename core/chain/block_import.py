@@ -1830,8 +1830,28 @@ class BlockImporter:
                 self._create_disk_snapshot(height)
 
     def _rebuild_state_from_canonical(self, target_height: int) -> None:
+        """
+        Rebuild state by replaying all canonical blocks from genesis to target_height.
+        
+        WARNING: This re-executes ALL transactions including coinbase transactions,
+        which will RE-APPLY rewards! This should only be called when absolutely necessary:
+        - State is corrupted or missing
+        - Snapshot is missing for a required reorg
+        - State DB has been reset
+        
+        This function should NOT be called routinely as it will cause balance inflation!
+        """
         if self.state_db is None:
             return
+        
+        log.warning(
+            "state: REBUILDING state from canonical chain - this will re-execute all transactions!",
+            extra={
+                "target_height": target_height,
+                "reason": "state_corrupted_or_missing_snapshot",
+            },
+        )
+        
         genesis_snap = self._state_snapshots.get(0)
         if genesis_snap is not None:
             try:
