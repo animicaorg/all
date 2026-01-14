@@ -8563,9 +8563,7 @@ class P2PService:
                 # to allow retry - this prevents permanent stalls
                 # Only trigger this recovery if ALL peers have backoff-related reasons
                 backoff_related_reasons = {"backoff", "not_anchored", "block_backoff"}
-                if ineligible_peers and all(
-                    reason in backoff_related_reasons for reason in ineligible_peers.values()
-                ):
+                if ineligible_peers and set(ineligible_peers.values()).issubset(backoff_related_reasons):
                     # Identify which specific backoff reasons are present
                     # Use set intersection for exact matching (not substring)
                     reasons_to_clear = set(ineligible_peers.values()) & backoff_related_reasons
@@ -8573,7 +8571,7 @@ class P2PService:
                     # Try to clear backoff for the specific reasons present
                     for backoff_reason in reasons_to_clear:
                         cleared = self._clear_sync_backoff_reason(backoff_reason)
-                        if cleared:
+                        if cleared > 0:
                             log.info(
                                 "Cleared peer backoff to retry block sync",
                                 extra={"reason": backoff_reason, "cleared_count": cleared},
