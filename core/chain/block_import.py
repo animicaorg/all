@@ -988,7 +988,14 @@ class BlockImporter:
     ) -> Optional[str]:
         """
         Lightweight PoW threshold check aligned with miner target rules.
+        
+        For instant blocks (created during tx submission), skip expensive PoW validation
+        since they are created by the node itself and don't require consensus verification.
         """
+        # Skip PoW validation for instant blocks (fast-path optimization)
+        if _is_instant_block(header, payload):
+            return None
+        
         # Normal block PoW validation
         try:
             theta_micro = _weight_micro_of(header, payload, self.params)
