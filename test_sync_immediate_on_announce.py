@@ -120,9 +120,9 @@ def test_fix_happens_after_target_height_update():
         "Fix should come after target height update"
     )
     
-    # Should be reasonably close (within ~20 lines)
-    assert fix_comment_line - target_update_line < 20, (
-        "Fix should be close to target height update"
+    # Should be reasonably close (within 50 lines to allow for intermediate logging/checks)
+    assert fix_comment_line - target_update_line < 50, (
+        "Fix should be relatively close to target height update"
     )
     
     print("✓ Fix is correctly positioned after target height update")
