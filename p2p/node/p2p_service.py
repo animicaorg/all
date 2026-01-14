@@ -8922,16 +8922,20 @@ class P2PService:
                             target_height = self._sync_target_height
                             if target_height is None:
                                 target_height = remote_height
+                            # Ensure target_height is an int if set
+                            if target_height is not None:
+                                target_height = int(target_height)
                             # Also check network_best_height to avoid premature SYNCED phase
                             # when peers haven't updated their heights yet
                             network_best = self._network_best_height()
                             if network_best is not None:
+                                network_best = int(network_best)
                                 if target_height is None:
                                     target_height = network_best
                                 else:
-                                    target_height = max(int(target_height), int(network_best))
+                                    target_height = max(target_height, network_best)
                             if target_height is not None and local_height >= max(
-                                0, int(target_height) - 1
+                                0, target_height - 1
                             ):
                                 self._sync_phase = "SYNCED" if local_height > 0 else "IDLE"
                             log.debug(
