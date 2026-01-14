@@ -59,7 +59,7 @@ log "Installing qt-wallet dependencies..."
 "$PY" -m pip install -e "$APP_DIR"
 
 # ---- Resolve version (robust) ----
-VERSION="$("$PY" -c "import tomllib; print(tomllib.load(open(r'$APP_DIR/pyproject.toml','rb'))['project']['version'])" 2>/dev/null || echo "0.1.0")"
+VERSION="$("$PY" -c "import tomllib; print(tomllib.load(open('$APP_DIR/pyproject.toml','rb'))['project']['version'])" 2>/dev/null || echo "0.1.0")"
 log "Building version: $VERSION"
 
 # ---- Determine entry script robustly ----
@@ -116,9 +116,9 @@ from pathlib import Path
 
 # PyInstaller does NOT guarantee __file__ exists in the spec exec namespace.
 # Use absolute paths injected by the build script instead.
-SPEC_DIR = Path(r"${BUILD_DIR}").resolve()
-APP_DIR  = Path(r"${APP_DIR}").resolve()
-ENTRY    = Path(r"${ENTRY}").resolve()
+SPEC_DIR = Path("${BUILD_DIR}").resolve()
+APP_DIR  = Path("${APP_DIR}").resolve()
+ENTRY    = Path("${ENTRY}").resolve()
 
 block_cipher = None
 

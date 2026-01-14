@@ -119,7 +119,6 @@ class NodeManager:
         
         # Use Python module invocation instead of binary wrapper for better compatibility
         # with frozen/packaged applications (PyInstaller, etc.)
-        import sys
         cmd = [
             sys.executable,
             "-m",
