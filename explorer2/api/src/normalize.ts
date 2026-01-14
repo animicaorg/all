@@ -1,5 +1,6 @@
 import type { Address, BlockDetail, BlockSummary, HeadView, TxDetail, TxSummary } from '@animica/explorer2-shared'
 import { addressToBech32 } from './utils/bech32.js'
+import * as cbor from 'cbor'
 
 const HEX_PREFIX = /^0x/i
 
@@ -42,6 +43,56 @@ function getHeader(block: any): any {
   return block.header ?? block
 }
 
+/**
+ * Expected structure of the CBOR-encoded extra field in block headers.
+ */
+interface CborExtra {
+  coinbase?: Uint8Array | Buffer
+  instant_block?: boolean
+}
+
+/**
+ * Extract miner address from block header's extra field.
+ * The extra field is CBOR-encoded and may contain {coinbase: bytes, instant_block: bool}
+ */
+function extractMinerFromExtra(header: any): Address | undefined {
+  try {
+    const extra = header?.extra
+    if (!extra) return undefined
+    
+    // Convert extra to Buffer if needed
+    let extraBuffer: Buffer
+    if (Buffer.isBuffer(extra)) {
+      extraBuffer = extra
+    } else if (extra instanceof Uint8Array) {
+      extraBuffer = Buffer.from(extra)
+    } else if (typeof extra === 'string') {
+      // Handle hex string
+      const hexStr = extra.startsWith('0x') ? extra.slice(2) : extra
+      extraBuffer = Buffer.from(hexStr, 'hex')
+    } else {
+      return undefined
+    }
+    
+    // Skip empty extra field
+    if (extraBuffer.length === 0) return undefined
+    
+    // Decode CBOR
+    const decoded = cbor.decode(extraBuffer) as CborExtra
+    if (decoded && decoded.coinbase) {
+      // Coinbase is the miner address
+      return normalizeAddress(decoded.coinbase)
+    }
+    
+    return undefined
+  } catch (error) {
+    // Gracefully handle CBOR decoding errors to prevent API crashes
+    // In production, this could be logged for debugging if needed
+    // console.error('[normalize] Failed to decode extra field:', error)
+    return undefined
+  }
+}
+
 export function normalizeHead(head: any): HeadView {
   return {
     height: toNumber(head?.height ?? head?.number) ?? 0,
@@ -59,13 +110,17 @@ export function normalizeBlockSummary(block: any): BlockSummary {
   const hash = header?.hash ?? header?.headerHash ?? block?.hash ?? '0x0'
   const time = toNumber(header?.time ?? header?.timestamp ?? block?.time) ?? 0
   const txs = Array.isArray(block?.txs) ? block.txs : Array.isArray(block?.transactions) ? block.transactions : []
+  
+  // Try to get miner from header.miner first, then from extra field
+  const miner = normalizeAddress(header?.miner) ?? extractMinerFromExtra(header)
+  
   return {
     height,
     canonicalHeight,
     hash,
     time,
     txCount: txs.length,
-    miner: normalizeAddress(header?.miner),
+    miner,
     orphaned: block?.orphaned ?? header?.orphaned
   }
 }
