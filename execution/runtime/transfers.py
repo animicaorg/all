@@ -606,8 +606,9 @@ def apply_transfer(
                 _credit_balance(state, t_addr, base_fee_part)
             # Else burned (no credit)
 
-        # Value transfer (skip if sending to self; fees already debited)
-        if sender != to and amount > 0:
+        # Value transfer
+        # Always debit and credit the amount, even for self-sends (they cancel out)
+        if amount > 0:
             _debit_balance(state, sender, amount)
             _credit_balance(state, to, amount)
     else:
@@ -636,7 +637,8 @@ def apply_transfer(
         coinbase_delta = post_coinbase_balance - pre_coinbase_balance
         treasury_delta = post_treasury_balance - pre_treasury_balance
 
-        expected_sender_delta = -(amount + total_fee)
+        # For self-sends, amount debits and credits cancel out, so sender only loses fees
+        expected_sender_delta = -total_fee if sender == to else -(amount + total_fee)
         expected_recipient_delta = amount if sender != to else 0
         expected_coinbase_delta = tip_fee_part if tip_fee_part > 0 and any(coinbase) else 0
         expected_treasury_delta = base_fee_part if base_fee_part > 0 and any(t_addr) else 0
