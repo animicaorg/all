@@ -6917,6 +6917,23 @@ class P2PService:
                 self._sync_block_queue_heights[announce.header_hash] = int(
                     announce.height
                 )
+            
+            # Update sync target height if announced block is higher than current target
+            # This ensures blocks announced after reaching previous target height are not deferred
+            announced_height = int(announce.height)
+            if (
+                self._sync_target_height is None
+                or announced_height > self._sync_target_height
+            ):
+                self._sync_target_height = announced_height
+                log.debug(
+                    "Updated sync target height from block announcement",
+                    extra={
+                        "new_target": announced_height,
+                        "block_hash": announce.header_hash.hex(),
+                    },
+                )
+            
             log.info(
                 "Block announced",
                 extra={
