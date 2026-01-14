@@ -8922,6 +8922,14 @@ class P2PService:
                             target_height = self._sync_target_height
                             if target_height is None:
                                 target_height = remote_height
+                            # Also check network_best_height to avoid premature SYNCED phase
+                            # when peers haven't updated their heights yet
+                            network_best = self._network_best_height()
+                            if network_best is not None:
+                                if target_height is None:
+                                    target_height = network_best
+                                else:
+                                    target_height = max(int(target_height), int(network_best))
                             if target_height is not None and local_height >= max(
                                 0, int(target_height) - 1
                             ):
@@ -8932,6 +8940,8 @@ class P2PService:
                                     "remote": peer.remote,
                                     "local_height": local_height,
                                     "remote_height": remote_height,
+                                    "target_height": target_height,
+                                    "network_best": network_best,
                                 },
                             )
                             return result
@@ -9427,6 +9437,30 @@ class P2PService:
                     and (previous_target is None or target_height > int(previous_target))
                 ):
                     self._sync_kick(reason="peer_target_advance", aggressive=False)
+                
+                # Fix: If node is in SYNCED phase but is behind best peer or network height,
+                # force sync to resume. This handles the case where the node was marked SYNCED
+                # based on stale target_height, but new blocks are now available.
+                if (
+                    self._sync_phase == "SYNCED"
+                    and target_height is not None
+                    and best_block_height < int(target_height)
+                    and not self._sync_inflight_headers
+                    and not self._sync_inflight_blocks
+                ):
+                    gap = int(target_height) - best_block_height
+                    log.info(
+                        "Node in SYNCED phase but behind target - resuming sync",
+                        extra={
+                            "local_height": best_block_height,
+                            "target_height": target_height,
+                            "gap": gap,
+                            "best_peer": best_peer.remote if best_peer else None,
+                        },
+                    )
+                    # Change phase to trigger sync resumption
+                    self._sync_phase = "SYNCING"
+                    self._sync_kick(reason="synced_but_behind", aggressive=True)
 
                 self._enforce_sync_invariants(
                     now=now,
