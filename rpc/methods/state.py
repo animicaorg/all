@@ -627,7 +627,7 @@ def state_get_rich_list(limit: int = 100, offset: int = 0) -> dict:
     try:
         from pq.py.address import AddressRecord
         _can_encode_bech32 = True
-    except Exception:
+    except (ImportError, ModuleNotFoundError):
         AddressRecord = None
         _can_encode_bech32 = False
     
@@ -673,7 +673,8 @@ def state_get_rich_list(limit: int = 100, offset: int = 0) -> dict:
                 # The digest is the canonical identifier, algorithm ID is for display only
                 addr_rec = AddressRecord(hrp="anim", alg_id=DEFAULT_ALG_ID, digest=addr_bytes)
                 addr_str = addr_rec.to_string()
-            except Exception as e:
+            except (ValueError, TypeError) as e:
+                # Handle address encoding errors gracefully, fall back to hex
                 log.debug(f"state.getRichList: failed to encode address as bech32: {e}")
                 pass
         
@@ -812,7 +813,7 @@ def state_detect_balance_inflation(limit: int = 100) -> dict:
                         # Reconstruct address with default algorithm ID (Dilithium3)
                         addr_rec = AddressRecord(hrp="anim", alg_id=1, digest=addr_bytes)
                         addr_str = addr_rec.to_string()
-                    except Exception:
+                    except (ImportError, ModuleNotFoundError, ValueError, TypeError):
                         pass
                     
                     # Fallback to hex
@@ -939,7 +940,7 @@ def state_correct_balance_inflation(
                     from pq.py.address import AddressRecord
                     addr_rec = AddressRecord(hrp="anim", alg_id=1, digest=addr_bytes)
                     addr_str = addr_rec.to_string()
-                except Exception:
+                except (ImportError, ModuleNotFoundError, ValueError, TypeError):
                     pass
                 
                 # Fallback to hex

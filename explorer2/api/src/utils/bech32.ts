@@ -55,12 +55,22 @@ export function hexToBech32(hexAddress: string): string {
     // Remove 0x prefix if present
     const hex = hexAddress.toLowerCase().replace(/^0x/, '')
     
+    // Validate hex format
+    if (!/^[0-9a-f]*$/.test(hex)) {
+      // Not valid hex, return original
+      return hexAddress
+    }
+    
     // Convert hex to bytes
     const bytes = Buffer.from(hex, 'hex')
     
     // Use addressToBech32 for conversion
     return addressToBech32(bytes)
-  } catch {
+  } catch (err) {
+    // Log conversion failures for debugging
+    if (err instanceof Error) {
+      console.warn(`Failed to convert hex to bech32: ${err.message}`)
+    }
     // Return original on error
     return hexAddress
   }
