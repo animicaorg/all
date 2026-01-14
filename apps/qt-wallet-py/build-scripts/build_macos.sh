@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build macOS executable for Animica Miner GUI
+# Build macOS executable for Animica Qt Wallet
 # Creates a standalone .app bundle and DMG installer
 #
 # Usage:
@@ -14,11 +14,11 @@ die()  { err "$*"; exit 1; }
 
 # ---- Paths ----
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-APP_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"          # apps/miner-gui
+APP_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"          # apps/qt-wallet-py
 REPO_ROOT="$(cd "$APP_DIR/../.." && pwd)"        # repo root
 DIST_DIR="$APP_DIR/dist"
 BUILD_DIR="$APP_DIR/build"
-SPEC_FILE="$BUILD_DIR/animica-miner-gui-macos.spec"
+SPEC_FILE="$BUILD_DIR/animica-qt-wallet-macos.spec"
 PYI_WORK="$BUILD_DIR/pyinstaller-work"
 RUNTIME_HOOK="$BUILD_DIR/qt_runtime_hook.py"
 
@@ -54,8 +54,8 @@ log "Installing PyInstaller tooling..."
 "$PY" -m pip install --upgrade pip setuptools wheel
 "$PY" -m pip install --upgrade pyinstaller pyinstaller-hooks-contrib
 
-# ---- Install miner-gui deps ----
-log "Installing miner-gui dependencies..."
+# ---- Install qt-wallet deps ----
+log "Installing qt-wallet dependencies..."
 "$PY" -m pip install -e "$APP_DIR"
 
 # ---- Resolve version (robust) ----
@@ -65,17 +65,15 @@ log "Building version: $VERSION"
 # ---- Determine entry script robustly ----
 ENTRY=""
 for c in \
-  "$APP_DIR/animica_miner_gui/main.py" \
-  "$APP_DIR/animica_miner_gui/__main__.py" \
-  "$APP_DIR/animica_miner_gui/app.py"
+  "$APP_DIR/src/animica_qt_wallet/main.py" \
+  "$APP_DIR/src/animica_qt_wallet/__main__.py"
 do
   if [[ -f "$c" ]]; then ENTRY="$c"; break; fi
 done
 if [[ -z "$ENTRY" ]]; then
   die "Could not find an entry script. Expected one of:
-  - $APP_DIR/animica_miner_gui/main.py
-  - $APP_DIR/animica_miner_gui/__main__.py
-  - $APP_DIR/animica_miner_gui/app.py"
+  - $APP_DIR/src/animica_qt_wallet/main.py
+  - $APP_DIR/src/animica_qt_wallet/__main__.py"
 fi
 log "Entry script: $ENTRY"
 
@@ -124,30 +122,25 @@ ENTRY    = Path(r"${ENTRY}").resolve()
 
 block_cipher = None
 
-logo = APP_DIR / "logo.png"
 datas = []
-if logo.exists():
-    datas.append((str(logo), "."))
 
 hiddenimports = [
     "PySide6.QtCore",
     "PySide6.QtGui",
     "PySide6.QtWidgets",
     "shiboken6",
-    "matplotlib",
-    "matplotlib.backends.backend_qtagg",
-    "matplotlib.backends.backend_qt5agg",
-    "pydantic",
-    "httpx",
+    "qasync",
+    "aiohttp",
+    "psutil",
     # Animica CLI and dependencies for embedded node support
     "animica",
     "animica.cli",
     "animica.cli.main",
     "animica.cli.node",
     "animica.config",
-    "mining",
-    "mining.cli",
-    "mining.cli.miner",
+    "animica.bootstrap",
+    "animica.bootstrap.state",
+    "animica.seeds",
 ]
 
 a = Analysis(
@@ -171,7 +164,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name="Animica Miner GUI",
+    name="Animica Qt Wallet",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -188,18 +181,18 @@ coll = COLLECT(
     a.datas,
     strip=False,
     upx=${UPX_ENABLED},
-    name="Animica Miner GUI",
+    name="Animica Qt Wallet",
 )
 
 app = BUNDLE(
     coll,
-    name="Animica Miner GUI.app",
+    name="Animica Qt Wallet.app",
     icon=None,
-    bundle_identifier="org.animica.miner-gui",
+    bundle_identifier="org.animica.qt-wallet",
     version="${VERSION}",
     info_plist={
-        "CFBundleName": "Animica Miner GUI",
-        "CFBundleDisplayName": "Animica Miner GUI",
+        "CFBundleName": "Animica Qt Wallet",
+        "CFBundleDisplayName": "Animica Qt Wallet",
         "CFBundleShortVersionString": "${VERSION}",
         "CFBundleVersion": "${VERSION}",
         "NSHighResolutionCapable": True,
@@ -218,9 +211,9 @@ log "Running PyInstaller..."
   --workpath "$PYI_WORK" \
   "$SPEC_FILE"
 
-APP_BUNDLE="$DIST_DIR/Animica Miner GUI.app"
+APP_BUNDLE="$DIST_DIR/Animica Qt Wallet.app"
 if [[ ! -d "$APP_BUNDLE" ]]; then
-  FOUND="$(find "$DIST_DIR" -maxdepth 3 -name "Animica Miner GUI.app" -type d -print -quit || true)"
+  FOUND="$(find "$DIST_DIR" -maxdepth 3 -name "Animica Qt Wallet.app" -type d -print -quit || true)"
   if [[ -n "$FOUND" ]]; then
     APP_BUNDLE="$FOUND"
   else
@@ -231,11 +224,11 @@ fi
 log "App bundle created successfully at: $APP_BUNDLE"
 
 # ---- Create DMG ----
-DMG_NAME="Animica-Miner-GUI-${VERSION}-macOS-$(uname -m).dmg"
+DMG_NAME="Animica-Qt-Wallet-${VERSION}-macOS-$(uname -m).dmg"
 DMG_PATH="$DIST_DIR/$DMG_NAME"
 
 log "Creating DMG installer..."
-hdiutil create -volname "Animica Miner GUI" \
+hdiutil create -volname "Animica Qt Wallet" \
   -srcfolder "$APP_BUNDLE" \
   -ov -format UDZO \
   "$DMG_PATH"
