@@ -8,6 +8,11 @@ from pathlib import Path
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
+# Required for PyInstaller frozen executables on macOS/Windows to prevent
+# infinite process spawning when using multiprocessing module.
+# MUST be called at module level, not inside if __name__ == "__main__".
+multiprocessing.freeze_support()
+
 # Set up logging
 logging.basicConfig(
     level=logging.INFO,
@@ -64,8 +69,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    # Required for PyInstaller frozen executables on macOS/Windows to prevent
-    # infinite process spawning when using multiprocessing module.
-    # MUST be called before main() to work correctly.
-    multiprocessing.freeze_support()
     sys.exit(main())
