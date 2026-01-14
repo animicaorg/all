@@ -8541,11 +8541,71 @@ class P2PService:
                 require_anchored=self._should_enforce_checkpoint_anchor(),
             )
         if peer is None or not peer.hello_done.is_set():
-            log.debug(
-                "Skipped block requests: no eligible block peer",
-                extra={"reason": "no_peer" if peer is None else "handshake_pending"},
-            )
-            return 0
+            # Get detailed eligibility info to diagnose why no peer is available
+            eligible_peers, ineligible_peers = self._eligible_block_peers()
+            queue_size = len(self._sync_block_queue)
+            
+            # If we have blocks queued but no eligible peers, this is a problem that needs attention
+            if queue_size > 0:
+                log.warning(
+                    "Cannot schedule block requests: no eligible peer but blocks queued",
+                    extra={
+                        "queued_blocks": queue_size,
+                        "total_peers": len(self._peers),
+                        "eligible_peers": len(eligible_peers),
+                        "ineligible_reasons": ineligible_peers,
+                        "next_block_height": next_block_height,
+                        "require_anchored": self._should_enforce_checkpoint_anchor(),
+                    },
+                )
+                
+                # If all peers are ineligible due to backoff, try clearing the backoff
+                # to allow retry - this prevents permanent stalls
+                if ineligible_peers and all(
+                    "backoff" in reason or "not_anchored" in reason
+                    for reason in ineligible_peers.values()
+                ):
+                    # Try to clear backoff for all peers to allow retries
+                    for backoff_reason in {"backoff", "not_anchored", "block_backoff"}:
+                        cleared = self._clear_sync_backoff_reason(backoff_reason)
+                        if cleared:
+                            log.info(
+                                "Cleared peer backoff to retry block sync",
+                                extra={"reason": backoff_reason, "cleared_count": cleared},
+                            )
+                    
+                    # Also clear block-specific backoff
+                    if self._sync_block_peer_backoff:
+                        cleared_count = len(self._sync_block_peer_backoff)
+                        self._sync_block_peer_backoff.clear()
+                        self._sync_block_peer_backoff_reason.clear()
+                        log.info(
+                            "Cleared block peer backoff to retry",
+                            extra={"cleared_count": cleared_count},
+                        )
+                    
+                    # Retry peer selection after clearing backoff
+                    peer = self._select_block_peer(
+                        needed_height=next_block_height,
+                        require_anchored=False,  # Relax anchor requirement on retry
+                    )
+                    if peer and peer.hello_done.is_set():
+                        log.info(
+                            "Retrying block requests after clearing backoff",
+                            extra={"peer": peer.remote},
+                        )
+                        # Continue with the peer we found
+                    else:
+                        return 0
+                else:
+                    return 0
+            else:
+                # No blocks queued - this is expected, just debug log
+                log.debug(
+                    "Skipped block requests: no eligible block peer",
+                    extra={"reason": "no_peer" if peer is None else "handshake_pending"},
+                )
+                return 0
         self._sync_active_block_peer = peer.remote
         log.debug(
             "Selected sync peer for blocks",
