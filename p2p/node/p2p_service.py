@@ -9448,11 +9448,11 @@ class P2PService:
                 if (
                     self._sync_phase == "SYNCED"
                     and target_height is not None
-                    and best_block_height < int(target_height)
+                    and best_block_height < target_height
                     and not self._sync_inflight_headers
                     and not self._sync_inflight_blocks
                 ):
-                    gap = int(target_height) - best_block_height
+                    gap = target_height - best_block_height
                     log.info(
                         "Node in SYNCED phase but behind target - resuming sync",
                         extra={
