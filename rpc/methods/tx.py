@@ -795,7 +795,14 @@ def _ensure_tx_persisted_to_chain(tx_hash_hex: str) -> tuple[bool, str | None]:
         if loop.is_running():
             # If loop is already running, schedule async version
             # This avoids blocking the event loop
-            future = asyncio.ensure_future(_ensure_tx_persisted_to_chain_async(tx_hash_hex))
+            task = asyncio.create_task(_ensure_tx_persisted_to_chain_async(tx_hash_hex))
+            # Add exception handler to catch any errors
+            def _handle_task_exception(t):
+                try:
+                    t.result()
+                except Exception as e:
+                    log.error(f"Background instant block mining failed: {e}")
+            task.add_done_callback(_handle_task_exception)
             # Don't wait here - return immediately to avoid blocking
             # The transaction will be persisted in the background
             return False, "mining_in_progress"

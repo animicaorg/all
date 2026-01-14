@@ -120,9 +120,12 @@ class Mempool:
                         if isinstance(sender, bytes):
                             return sender
                         elif isinstance(sender, str):
-                            # Try hex decode
-                            sender_hex = sender[2:] if sender.startswith("0x") else sender
-                            return bytes.fromhex(sender_hex)
+                            # Try hex decode with error handling
+                            try:
+                                sender_hex = sender[2:] if sender.startswith("0x") else sender
+                                return bytes.fromhex(sender_hex)
+                            except (ValueError, TypeError) as e:
+                                log.debug(f"Failed to decode sender hex: {e}")
         except Exception as e:
             log.debug("Failed to extract sender from tx", extra={"error": str(e)})
         

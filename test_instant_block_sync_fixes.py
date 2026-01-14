@@ -35,14 +35,14 @@ def test_instant_block_detection_logic():
     
     # Test with instant block marker
     instant_extra = b"instant_block_marker"
-    assert check_instant_block(instant_extra) == True
+    assert check_instant_block(instant_extra)
     
     # Test without marker
     normal_extra = b"normal_extra_data"
-    assert check_instant_block(normal_extra) == False
+    assert not check_instant_block(normal_extra)
     
     # Test with None
-    assert check_instant_block(None) == False
+    assert not check_instant_block(None)
     
     print("✓ Test 1 PASSED: Instant block detection logic works")
 
@@ -73,16 +73,16 @@ def test_mempool_basic_operations():
     # Add transaction
     tx = b"test_tx"
     txid = mp.add_tx(tx, "test")
-    assert mp.has(txid) == True
+    assert mp.has(txid)
     
     # Drop transaction
     dropped = mp.drop_tx(txid)
-    assert dropped == True
-    assert mp.has(txid) == False
+    assert dropped
+    assert not mp.has(txid)
     
     # Try drop again
     dropped_again = mp.drop_tx(txid)
-    assert dropped_again == False
+    assert not dropped_again
     
     print("✓ Test 2 PASSED: Basic mempool operations work")
 
