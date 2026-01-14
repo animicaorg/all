@@ -18,6 +18,7 @@ interface HeadResponse {
     tps?: number | null
     avgBlockTime?: number | null
   }
+  recentBlocks: BlockSummary[]
 }
 
 async function apiGet<T>(path: string): Promise<T> {

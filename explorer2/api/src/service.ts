@@ -26,7 +26,7 @@ export class ExplorerService {
     private rpc: ChainClient
   ) {}
 
-  async getHead(): Promise<{ head: HeadView; stats: any }> {
+  async getHead(): Promise<{ head: HeadView; stats: any; recentBlocks: BlockSummary[] }> {
     return this.coalescer.run('head', async () => {
       const headRaw = await this.safeRpc(() => this.rpc.getHead())
       const head = normalizeHead(headRaw)
@@ -38,7 +38,7 @@ export class ExplorerService {
       ])
 
       const stats = buildNetworkStats(blocks, mempool, peers)
-      return { head, stats }
+      return { head, stats, recentBlocks: blocks }
     })
   }
 
