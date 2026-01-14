@@ -9487,7 +9487,7 @@ class P2PService:
                             self._sync_last_header_error_peer = None
                         # Clear peer backoffs that might be preventing header requests
                         # This is critical: even though we detect the stall, if all peers are
-                        # in backoff due to "headers_empty" or "at_tip", no headers will be requested
+                        # in backoff due to "headers_empty" or "peer_behind", no headers will be requested
                         cleared_backoff = self._clear_sync_backoff_reason("headers_empty")
                         cleared_backoff += self._clear_sync_backoff_reason("peer_behind")
                         if cleared_backoff > 0:
