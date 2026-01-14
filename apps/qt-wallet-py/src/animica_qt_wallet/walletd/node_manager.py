@@ -3,8 +3,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import shutil
 import subprocess
+import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -116,8 +116,13 @@ class NodeManager:
         log_path.parent.mkdir(parents=True, exist_ok=True)
         self._rotate_logs(log_path)
         self._log_handle = log_path.open("a", encoding="utf-8")
+        
+        # Use Python module invocation instead of binary wrapper for better compatibility
+        # with frozen/packaged applications (PyInstaller, etc.)
         cmd = [
-            self._resolve_animica_binary(),
+            sys.executable,
+            "-m",
+            "animica.cli.main",
             "--network",
             network,
             "node",
@@ -229,12 +234,7 @@ class NodeManager:
             rpc_url=rpc_url,
         )
 
-    def _resolve_animica_binary(self) -> str:
-        repo_root = Path(__file__).resolve().parents[5]
-        wrapper = repo_root / "animica"
-        if wrapper.exists():
-            return str(wrapper)
-        return shutil.which("animica") or "animica"
+
 
     def _rotate_logs(self, log_path: Path, keep: int = 5) -> None:
         if log_path.exists():
