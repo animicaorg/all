@@ -2,12 +2,12 @@
  * Addressing (bech32m, anim1...)
  *
  * Format (payload bytes, then converted to 5-bit words and encoded with bech32m):
- *   payload = alg_id (1 byte) || sha3_256(pubkey_bytes) (32 bytes)
+ *   payload = alg_id (2 bytes, big-endian) || sha3_256(pubkey_bytes) (32 bytes)
  *   address = bech32m_encode(hrp="anim", payload)
  *
  * Notes
  * - We use SHA3-256 over the raw PQ public key bytes.
- * - alg_id distinguishes the signing scheme used by the account.
+ * - alg_id (2 bytes) distinguishes the signing scheme used by the account.
  * - HRP can be overridden by network config (e.g., "animt" for testnets).
  *
  * This module intentionally avoids storing any secret material.
@@ -20,10 +20,10 @@ import { sha3_256 as sha3Fast } from '../../polyfills/noble/sha3.ts';
 /** Default human-readable part (HRP) for addresses. */
 export const DEFAULT_HRP = 'anim';
 
-/** Numeric identifiers for supported algorithms (stable on-chain). */
+/** Numeric identifiers for supported algorithms (stable on-chain, 2-byte big-endian). */
 export const ALGO_IDS: Record<KeyAlgo, number> = {
-  'dilithium3': 0x01,
-  'sphincs_shake_128s': 0x02,
+  'dilithium3': 0x1001,
+  'sphincs_shake_128s': 0x1002,
 } as const;
 
 const ID_TO_ALGO: Record<number, KeyAlgo> = Object.fromEntries(
@@ -51,11 +51,13 @@ export async function encodeAddress(
   if (!(pubkey instanceof Uint8Array) || pubkey.length === 0) {
     throw new Error('pubkey must be non-empty Uint8Array');
   }
-  const id = ALGO_IDS[algo] & 0xff;
+  const id = ALGO_IDS[algo];
   const hash = await sha3_256(pubkey); // 32 bytes
-  const payload = new Uint8Array(1 + hash.length);
-  payload[0] = id;
-  payload.set(hash, 1);
+  const payload = new Uint8Array(2 + hash.length);
+  // Encode alg_id as 2-byte big-endian
+  payload[0] = (id >> 8) & 0xff;
+  payload[1] = id & 0xff;
+  payload.set(hash, 2);
 
   const words = toWords(payload); // 8-bit → 5-bit
   return encodeBech32m(hrp, words);
@@ -69,14 +71,15 @@ export function decodeAddress(addr: string): { hrp: string; algo: KeyAlgo; hash:
   const { hrp, words } = decodeBech32m(addr);
   const payload = fromWords(words); // 5-bit → 8-bit
 
-  if (payload.length !== 33) {
-    throw new Error(`Invalid address payload length: ${payload.length}, expected 33`);
+  if (payload.length !== 34) {
+    throw new Error(`Invalid address payload length: ${payload.length}, expected 34`);
   }
-  const id = payload[0];
+  // Decode 2-byte big-endian alg_id
+  const id = (payload[0] << 8) | payload[1];
   const algo = ID_TO_ALGO[id];
-  if (!algo) throw new Error(`Unknown algorithm id in address: 0x${id.toString(16)}`);
+  if (!algo) throw new Error(`Unknown algorithm id in address: 0x${id.toString(16).padStart(4, '0')}`);
 
-  const hash = payload.slice(1);
+  const hash = payload.slice(2);
   return { hrp, algo, hash };
 }
 

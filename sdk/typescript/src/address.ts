@@ -3,7 +3,7 @@
  *
  * Address format (bech32m, lowercase):
  *    hrp = 'anim' (default) or network-specific (e.g., 'animt' for testnet)
- *    data = convertBits( [ alg_id (1 byte) || sha3_256(pubkey) (32 bytes) ], 8 -> 5, pad=true )
+ *    data = convertBits( [ alg_id (2 bytes, big-endian) || sha3_256(pubkey) (32 bytes) ], 8 -> 5, pad=true )
  *
  * Encoding:
  *    address = bech32mEncode(hrp, dataWords)
@@ -11,12 +11,12 @@
  * Decoding:
  *    {hrp, words} = bech32mDecode(address)
  *    payload = convertBits(words, 5 -> 8, pad=false)
- *    alg_id = payload[0]
- *    pk_hash = payload[1:33]
+ *    alg_id = (payload[0] << 8) | payload[1]  // 2-byte big-endian
+ *    pk_hash = payload[2:34]
  *
  * Supported algorithms (alg_id):
- *   - dilithium3           => 0x01
- *   - sphincs_shake_128s   => 0x02
+ *   - dilithium3           => 0x0030
+ *   - sphincs_shake_128s   => 0x0031
  */
 
 import { sha3_256 } from './utils/hash'
@@ -28,19 +28,19 @@ export type Address = string
 
 export const DEFAULT_HRP = 'anim' as const
 
-/** Canonical numeric ids for PQ signature algorithms used in addresses. */
+/** Canonical numeric ids for PQ signature algorithms used in addresses (2-byte big-endian). */
 export const ALG_ID: Record<AlgorithmId, number> = {
-  dilithium3: 0x01,
-  sphincs_shake_128s: 0x02
+  dilithium3: 0x1001,
+  sphincs_shake_128s: 0x1002
 }
 
 /** Reverse mapping: numeric id -> AlgorithmId (throws on unknown). */
 export function algIdToName(id: number): AlgorithmId {
   switch (id) {
-    case 0x01: return 'dilithium3'
-    case 0x02: return 'sphincs_shake_128s'
+    case 0x1001: return 'dilithium3'
+    case 0x1002: return 'sphincs_shake_128s'
     default:
-      throw new Error(`Unknown algorithm id: 0x${id.toString(16).padStart(2, '0')}`)
+      throw new Error(`Unknown algorithm id: 0x${id.toString(16).padStart(4, '0')}`)
   }
 }
 
@@ -48,7 +48,7 @@ export function algIdToName(id: number): AlgorithmId {
  * Derive a bech32m address from a raw public key and algorithm.
  *
  * The public key must be the canonical byte representation for the algorithm.
- * The address payload is: alg_id(1) || sha3_256(pubkey)(32).
+ * The address payload is: alg_id(2 bytes, big-endian) || sha3_256(pubkey)(32).
  */
 export function addressFromPublicKey(
   publicKey: Uint8Array,
@@ -57,30 +57,34 @@ export function addressFromPublicKey(
 ): Address {
   assertBytes('publicKey', publicKey)
   assertHrp(hrp)
-  const algByte = ALG_ID[alg]
-  if (algByte === undefined) throw new Error(`Unsupported algorithm: ${alg}`)
+  const algId = ALG_ID[alg]
+  if (algId === undefined) throw new Error(`Unsupported algorithm: ${alg}`)
 
   const pkHash = sha3_256(publicKey)
-  const payload = new Uint8Array(1 + pkHash.length)
-  payload[0] = algByte
-  payload.set(pkHash, 1)
+  const payload = new Uint8Array(2 + pkHash.length)
+  // Encode alg_id as 2-byte big-endian
+  payload[0] = (algId >> 8) & 0xff
+  payload[1] = algId & 0xff
+  payload.set(pkHash, 2)
 
   const words = toWords(payload) // 8->5 bits
   return bech32mEncode(hrp, words)
 }
 
-/** Build raw address payload bytes (alg_id || sha3_256(pubkey)). */
+/** Build raw address payload bytes (alg_id (2 bytes, big-endian) || sha3_256(pubkey)). */
 export function payloadFromPublicKey(
   publicKey: Uint8Array,
   alg: AlgorithmId
 ): Uint8Array {
   assertBytes('publicKey', publicKey)
-  const algByte = ALG_ID[alg]
-  if (algByte === undefined) throw new Error(`Unsupported algorithm: ${alg}`)
+  const algId = ALG_ID[alg]
+  if (algId === undefined) throw new Error(`Unsupported algorithm: ${alg}`)
   const pkHash = sha3_256(publicKey)
-  const payload = new Uint8Array(1 + pkHash.length)
-  payload[0] = algByte
-  payload.set(pkHash, 1)
+  const payload = new Uint8Array(2 + pkHash.length)
+  // Encode alg_id as 2-byte big-endian
+  payload[0] = (algId >> 8) & 0xff
+  payload[1] = algId & 0xff
+  payload.set(pkHash, 2)
   return payload
 }
 
@@ -88,7 +92,7 @@ export interface DecodedAddress {
   hrp: string
   alg: AlgorithmId
   algId: number
-  payload: Uint8Array        // 33 bytes: [alg_id || pk_hash]
+  payload: Uint8Array        // 34 bytes: [alg_id (2 bytes) || pk_hash (32 bytes)]
   pubkeyHash: Uint8Array     // 32 bytes
 }
 
@@ -100,12 +104,13 @@ export function decodeAddress(addr: Address): DecodedAddress {
   const { hrp, words, spec } = bech32mDecode(addr)
   if (spec !== 'bech32m') throw new Error('Address must be bech32m encoded')
   const payload = fromWords(words) // 5->8 bits
-  if (payload.length !== 33) {
-    throw new Error(`Invalid address payload length: ${payload.length} (expected 33)`)
+  if (payload.length !== 34) {
+    throw new Error(`Invalid address payload length: ${payload.length} (expected 34)`)
   }
-  const algId = payload[0]
+  // Decode 2-byte big-endian alg_id
+  const algId = (payload[0] << 8) | payload[1]
   const alg = algIdToName(algId)
-  const pubkeyHash = payload.slice(1)
+  const pubkeyHash = payload.slice(2)
   return { hrp, alg, algId, payload, pubkeyHash }
 }
 
@@ -151,7 +156,7 @@ export function shortAddress(addr: Address, left: number = 6, right: number = 4)
   return `${prefix}1${mid}`
 }
 
-/** Return hex string of the 33-byte payload. */
+/** Return hex string of the 34-byte payload. */
 export function addressPayloadHex(addr: Address): string {
   const { payload } = decodeAddress(addr)
   return bytesToHex(payload)

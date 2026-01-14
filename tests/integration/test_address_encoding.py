@@ -36,11 +36,14 @@ class TestAddressToBytes:
         assert result_lower == result_mixed == b"system:treasury"
 
     def test_bech32_address(self):
-        """Bech32 addresses are decoded to payload bytes."""
+        """Bech32 addresses are decoded to digest bytes (32 bytes)."""
         addr = "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz"
         result = address_to_bytes(addr)
-        # Payload is alg_id (2 bytes) + digest (32 bytes) = 34 bytes
-        assert len(result) == 34
+        # CRITICAL: address_to_bytes returns the 32-byte digest only (NOT alg_id + digest)
+        # This is because StateDB stores accounts by digest alone.
+        # The full Bech32 payload is alg_id (2 bytes) + digest (32 bytes) = 34 bytes,
+        # but address_to_bytes extracts and returns only the 32-byte digest.
+        assert len(result) == 32
         assert isinstance(result, bytes)
 
     def test_bech32_address_case_insensitive(self):
@@ -50,20 +53,23 @@ class TestAddressToBytes:
         # Bech32 has checksums so exact uppercase may not be valid,
         # but the lowercased version should work
         result = address_to_bytes(addr_lower)
-        assert len(result) == 34
+        assert len(result) == 32
 
     def test_hex_address(self):
-        """Hex addresses are decoded to raw bytes."""
+        """Hex addresses are decoded and normalized to 32 bytes."""
         addr = "0x1234567890abcdef"
         result = address_to_bytes(addr)
-        assert result == bytes.fromhex("1234567890abcdef")
-        assert len(result) == 8
+        # Hex addresses are normalized to 32 bytes (left-padded with zeros)
+        expected = bytes.fromhex("1234567890abcdef").rjust(32, b"\x00")
+        assert result == expected
+        assert len(result) == 32
 
     def test_hex_address_without_prefix(self):
-        """Hex addresses work without 0x prefix."""
+        """Hex addresses work without 0x prefix and are normalized to 32 bytes."""
         addr = "1234567890abcdef"
         result = address_to_bytes(addr)
-        assert result == bytes.fromhex("1234567890abcdef")
+        expected = bytes.fromhex("1234567890abcdef").rjust(32, b"\x00")
+        assert result == expected
 
     def test_invalid_address(self):
         """Invalid addresses raise AddressError."""
@@ -137,11 +143,10 @@ class TestAddressEncodingConsistency:
         # This is a valid test address from the codebase
         bytes1 = address_to_bytes(addr1)
         # Just verify the structure is correct
-        assert len(bytes1) == 34
-        # Verify alg_id is in first 2 bytes and digest in next 32
-        alg_id = int.from_bytes(bytes1[:2], "big")
-        digest = bytes1[2:]
-        assert len(digest) == 32
+        assert len(bytes1) == 32
+        # This is the 32-byte digest extracted from the full bech32 payload
+        # The full payload would be alg_id (2 bytes) + digest (32 bytes) = 34 bytes,
+        # but address_to_bytes returns only the digest for StateDB compatibility.
 
     def test_mixed_address_types_different(self):
         """Different address types produce different byte representations."""
