@@ -487,6 +487,25 @@ class BlockImporter:
         
         self._init_fork_choice_from_db()
 
+    # --- Helper Functions ---
+    
+    @staticmethod
+    def _is_coinbase_tx(tx) -> bool:
+        """
+        Check if a transaction is a coinbase transaction.
+        
+        Uses multiple comparison methods to ensure compatibility across
+        serialization/deserialization and different enum representations.
+        """
+        unsigned = getattr(tx, "unsigned", None)
+        if unsigned is None:
+            return False
+        kind = getattr(unsigned, "kind", None)
+        if kind is None:
+            return False
+        # Compare both as enum and as integer (TxKind.COINBASE = 3)
+        return kind == TxKind.COINBASE or kind == 3 or int(kind) == 3
+
     # --- Basics -------------------------------------------------------------
 
     def head(self) -> Optional[Tuple[int, bytes]]:
@@ -1367,24 +1386,12 @@ class BlockImporter:
             # Check if block contains coinbase transactions
             # If it does, rewards were already applied via transaction execution
             # If it doesn't, we need to apply rewards separately
-            # Note: Using getattr for robustness in case tx.unsigned or kind attribute is missing
-            # Check both enum and integer value (3) for maximum compatibility
-            def is_coinbase_tx(tx) -> bool:
-                unsigned = getattr(tx, "unsigned", None)
-                if unsigned is None:
-                    return False
-                kind = getattr(unsigned, "kind", None)
-                if kind is None:
-                    return False
-                # Compare both as enum and as integer (TxKind.COINBASE = 3)
-                return kind == TxKind.COINBASE or kind == 3 or int(kind) == 3
-            
-            has_coinbase_tx = any(is_coinbase_tx(tx) for tx in block.txs)
+            has_coinbase_tx = any(self._is_coinbase_tx(tx) for tx in block.txs)
             
             if has_coinbase_tx:
                 # Block contains coinbase transactions - rewards already applied via tx execution
                 # Skip _apply_block_reward to prevent double-crediting
-                coinbase_count = sum(1 for tx in block.txs if is_coinbase_tx(tx))
+                coinbase_count = sum(1 for tx in block.txs if self._is_coinbase_tx(tx))
                 log.info(
                     "state: block contains %d coinbase transaction(s); skipping separate reward application",
                     coinbase_count,
@@ -1420,15 +1427,15 @@ class BlockImporter:
             
             # Record that we've successfully applied this block to state
             # This helps prevent unnecessary state rebuilds
-            height = getattr(block.header, "height", None)
-            if height is not None and hasattr(self.state_db, "set_state_height"):
-                try:
-                    self.state_db.set_state_height(int(height))
-                except Exception as e:
-                    log.debug(
-                        "Failed to record state height (non-fatal)",
-                        extra={"height": height, "error": str(e)},
-                    )
+            try:
+                height = int(getattr(block.header, "height", 0))
+                if height > 0 and hasattr(self.state_db, "set_state_height"):
+                    self.state_db.set_state_height(height)
+            except (ValueError, TypeError) as e:
+                log.debug(
+                    "Failed to record state height (non-fatal)",
+                    extra={"error": str(e)},
+                )
             
             return True
         except Exception as exc:
@@ -1463,22 +1470,13 @@ class BlockImporter:
         # Coinbase transactions already applied rewards during transaction execution
         # This is a defense-in-depth check that should never be needed (caller should check)
         # but protects against bugs in the caller or serialization issues
-        def is_coinbase(tx) -> bool:
-            unsigned = getattr(tx, "unsigned", None)
-            if unsigned is None:
-                return False
-            kind = getattr(unsigned, "kind", None)
-            if kind is None:
-                return False
-            return kind == TxKind.COINBASE or kind == 3 or int(kind) == 3
-        
-        if any(is_coinbase(tx) for tx in block.txs):
+        if any(self._is_coinbase_tx(tx) for tx in block.txs):
             log.error(
                 "CRITICAL: _apply_block_reward called for block WITH coinbase transactions! "
                 "This would cause double-rewarding. Skipping to prevent balance corruption.",
                 extra={
                     "height": getattr(block.header, "height", None),
-                    "coinbase_count": sum(1 for tx in block.txs if is_coinbase(tx)),
+                    "coinbase_count": sum(1 for tx in block.txs if self._is_coinbase_tx(tx)),
                     "total_txs": len(block.txs),
                 },
             )

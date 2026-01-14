@@ -372,6 +372,9 @@ class StateDB:
         Record the highest block height that has been applied to this state.
         This helps prevent unnecessary state rebuilds.
         """
+        # Validate height fits in 8 bytes (0 <= height < 2^64)
+        if not (0 <= height < 2**64):
+            raise ValueError(f"Height {height} out of range for 8-byte storage")
         val = height.to_bytes(8, "big")
         if batch is None:
             self.kv.put(META_STATE_HEIGHT, val)

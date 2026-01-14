@@ -85,14 +85,14 @@ def detect_inflation_factor(balance: int) -> Tuple[Optional[int], str]:
     
     # Check each factor
     for factor in factors:
-        test_balance = balance / factor
+        test_balance = balance // factor  # Use integer division
         if test_balance % BLOCK_REWARD == 0:
             # This factor makes sense
-            blocks_mined = test_balance / BLOCK_REWARD
+            blocks_mined = test_balance // BLOCK_REWARD  # Use integer division
             return factor, explanations.get(factor, f"Balance appears to be {factor}x inflated") + f" | Estimated blocks mined: {int(blocks_mined)}"
     
     # No clean factor found
-    blocks_mined = balance / BLOCK_REWARD
+    blocks_mined = balance // BLOCK_REWARD  # Use integer division
     return None, f"Balance appears normal | Estimated blocks mined: {int(blocks_mined)}"
 
 
