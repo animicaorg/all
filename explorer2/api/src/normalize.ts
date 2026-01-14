@@ -1,6 +1,6 @@
 import type { Address, BlockDetail, BlockSummary, HeadView, TxDetail, TxSummary } from '@animica/explorer2-shared'
 import { addressToBech32 } from './utils/bech32.js'
-import { decode as cborDecode } from 'cbor'
+import * as cbor from 'cbor'
 
 const HEX_PREFIX = /^0x/i
 
@@ -70,7 +70,7 @@ function extractMinerFromExtra(header: any): Address | undefined {
     if (extraBuffer.length === 0) return undefined
     
     // Decode CBOR
-    const decoded = cborDecode(extraBuffer) as any
+    const decoded = cbor.decode(extraBuffer) as any
     if (decoded && decoded.coinbase) {
       // Coinbase is the miner address
       return normalizeAddress(decoded.coinbase)
