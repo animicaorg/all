@@ -207,6 +207,7 @@ def _svc_nonce(addr: str, *, tag: str = "latest") -> int:
 @method(
     "state.getBalance",
     desc="Return the account balance for an address at a given block tag. Returns a hex quantity string (e.g. 0x0).",
+    aliases=("state_getBalance", "animica_getBalance", "eth_getBalance"),
 )
 def state_get_balance(address: str, tag: str = "latest") -> str:
     addr = _validate_address(address)
