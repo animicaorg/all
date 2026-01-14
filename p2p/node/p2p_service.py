@@ -8567,10 +8567,8 @@ class P2PService:
                     reason in backoff_related_reasons for reason in ineligible_peers.values()
                 ):
                     # Identify which specific backoff reasons are present
-                    reasons_to_clear = {
-                        reason for reason in backoff_related_reasons
-                        if any(reason in peer_reason for peer_reason in ineligible_peers.values())
-                    }
+                    # Use set intersection for exact matching (not substring)
+                    reasons_to_clear = set(ineligible_peers.values()) & backoff_related_reasons
                     
                     # Try to clear backoff for the specific reasons present
                     for backoff_reason in reasons_to_clear:
