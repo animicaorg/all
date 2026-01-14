@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { api } from '../lib/api'
 import { formatNumber, formatTimestamp, shorten, timeAgo } from '../lib/format'
 import StatCard from '../components/StatCard'
@@ -107,6 +108,70 @@ export default function HomePage() {
             Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-20" />)
           )}
         </div>
+      </section>
+
+      <section className="rounded-xl border border-day-200 bg-white p-6 shadow-sm dark:border-night-800 dark:bg-night-900">
+        <div className="mb-4 flex items-center justify-between">
+          <h2 className="text-lg font-semibold text-gray-900 dark:text-slate-100">Recent Blocks</h2>
+          <Link 
+            to="/blocks" 
+            className="text-sm font-medium text-animica-600 hover:underline dark:text-animica-400"
+          >
+            View all →
+          </Link>
+        </div>
+        {data && data.recentBlocks && data.recentBlocks.length > 0 ? (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm">
+              <thead className="border-b border-day-200 text-xs font-semibold uppercase tracking-wider text-gray-600 dark:border-night-700 dark:text-slate-400">
+                <tr>
+                  <th className="px-2 py-2">Height</th>
+                  <th className="hidden px-2 py-2 sm:table-cell">Hash</th>
+                  <th className="px-2 py-2">Miner</th>
+                  <th className="hidden px-2 py-2 lg:table-cell">Time</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-day-200 dark:divide-night-700">
+                {data.recentBlocks.slice(0, 10).map((block) => (
+                  <tr key={block.hash} className="hover:bg-day-50 dark:hover:bg-night-800/50">
+                    <td className="whitespace-nowrap px-2 py-2">
+                      <Link 
+                        className="font-mono text-animica-600 hover:underline dark:text-animica-400" 
+                        to={`/block/${block.height}`}
+                      >
+                        #{formatNumber(block.height)}
+                      </Link>
+                    </td>
+                    <td className="hidden px-2 py-2 font-mono text-xs text-gray-600 dark:text-slate-300 sm:table-cell">
+                      {shorten(block.hash, 8, 6)}
+                    </td>
+                    <td className="px-2 py-2">
+                      {block.miner ? (
+                        <Link 
+                          to={`/address/${block.miner}`}
+                          className="font-mono text-xs text-animica-600 hover:underline dark:text-animica-400"
+                        >
+                          {shorten(block.miner, 8, 6)}
+                        </Link>
+                      ) : (
+                        <span className="text-xs text-gray-400 dark:text-slate-500">—</span>
+                      )}
+                    </td>
+                    <td className="hidden px-2 py-2 text-xs text-gray-500 dark:text-slate-400 lg:table-cell">
+                      {timeAgo(block.time)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {Array.from({ length: 5 }).map((_, i) => (
+              <Skeleton key={i} className="h-8 w-full" />
+            ))}
+          </div>
+        )}
       </section>
 
       <section className="rounded-xl border border-day-200 bg-white p-6 shadow-sm dark:border-night-800 dark:bg-night-900">
