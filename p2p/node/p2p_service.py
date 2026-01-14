@@ -8870,6 +8870,30 @@ class P2PService:
                         # This allows us to find the higher height through peer-of-peer connections
                     else:
                         # Check if we still have pending block downloads before marking as synced
+                        best_header_height = (
+                            self._sync_best_header.height if self._sync_best_header else 0
+                        )
+                        
+                        # When headers == blocks, try other peers to check for new blocks
+                        # This prevents getting stuck when all connected peers haven't updated their heights yet
+                        if (
+                            best_header_height == local_height
+                            and len(tried_peers) < min(eligible_count, 3)
+                            and eligible_count > 1
+                        ):
+                            log.debug(
+                                "Headers == blocks; trying another peer to check for new blocks",
+                                extra={
+                                    "remote": peer.remote,
+                                    "local_height": local_height,
+                                    "best_header_height": best_header_height,
+                                    "tried_peers": len(tried_peers),
+                                    "eligible_peers": eligible_count,
+                                },
+                            )
+                            tried_peers.add(peer.remote)
+                            continue  # Try another peer
+                        
                         if (
                             self._sync_best_header is None
                             or self._sync_best_header.height <= local_height
@@ -9426,13 +9450,15 @@ class P2PService:
                 # Detect when headers == blocks and we're not making progress
                 # This indicates we're stuck because all connected peers are at the same height
                 # even though the network might have higher blocks available
+                # Use a reduced timeout (half of stall timeout) to detect this condition faster
+                reduced_timeout = self._sync_stall_timeout / 2.0
                 if (
                     best_header_height == best_block_height
                     and best_block_height > 0
                     and not self._sync_inflight_headers
                     and not self._sync_inflight_blocks
                     and not self._sync_block_queue
-                    and now - self._sync_last_progress_at > self._sync_stall_timeout
+                    and now - self._sync_last_progress_at > reduced_timeout
                     and self._peers  # Have peers but not making progress
                 ):
                     # Mark as stalled to trigger peer rotation and recovery
