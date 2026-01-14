@@ -8652,6 +8652,9 @@ class P2PService:
         for h in ordered:
             height_hint = self._sync_block_queue_heights.get(h)
             if await self._try_import_cached_block(h):
+                # Update expected_height when skipping cached blocks at the expected height
+                if height_hint is not None and height_hint == expected_height:
+                    expected_height += 1
                 self._sync_block_queue_set.discard(h)
                 self._sync_block_queue_heights.pop(h, None)
                 continue
@@ -8675,6 +8678,10 @@ class P2PService:
             ):
                 self._sync_block_queue_set.discard(h)
                 self._sync_block_queue_heights.pop(h, None)
+                # Update expected_height when skipping blocks that are at the expected height
+                # This ensures subsequent sequential blocks are not incorrectly deferred
+                if height_hint is not None and height_hint == expected_height:
+                    expected_height += 1
                 continue
             if not (self._has_header(h) or h in self._sync_headers):
                 if h in parent_requests:
