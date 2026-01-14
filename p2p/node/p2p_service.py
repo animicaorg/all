@@ -6934,6 +6934,27 @@ class P2PService:
                     },
                 )
             
+            # FIX: If node is in SYNCED/TARGET_REACHED phase but announced block is higher than local height,
+            # immediately switch to SYNCING phase. This ensures nodes sync on every new block announcement
+            # instead of waiting for the next periodic sync loop tick (which can cause 5-8 block delays).
+            local_height, _ = self._local_head()
+            if (
+                self._sync_phase in ("SYNCED", "TARGET_REACHED")
+                and announced_height > int(local_height or 0)
+            ):
+                log.info(
+                    "New block announced while at tip - resuming sync immediately",
+                    extra={
+                        "phase": self._sync_phase,
+                        "local_height": int(local_height or 0),
+                        "announced_height": announced_height,
+                        "gap": announced_height - int(local_height or 0),
+                    },
+                )
+                self._sync_phase = "SYNCING"
+                # Trigger aggressive sync kick to ensure immediate processing
+                self._sync_kick(reason="new_block_announced", aggressive=True)
+            
             log.info(
                 "Block announced",
                 extra={
