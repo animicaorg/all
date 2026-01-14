@@ -9477,7 +9477,7 @@ class P2PService:
                         # Force sync on next iteration to try different peers
                         self._sync_requested = True
                         # Clear error states that might be blocking progress
-                        if self._sync_last_header_error in ("at_tip", "invalid_headers"):
+                        if self._sync_last_header_error in ("at_tip", "invalid_headers", "headers_empty"):
                             log.info(
                                 "Clearing header error state to retry sync",
                                 extra={"error": self._sync_last_header_error},
@@ -9485,6 +9485,16 @@ class P2PService:
                             self._sync_last_header_error = None
                             self._sync_last_header_error_at = None
                             self._sync_last_header_error_peer = None
+                        # Clear peer backoffs that might be preventing header requests
+                        # This is critical: even though we detect the stall, if all peers are
+                        # in backoff due to "headers_empty" or "peer_behind", no headers will be requested
+                        cleared_backoff = self._clear_sync_backoff_reason("headers_empty")
+                        cleared_backoff += self._clear_sync_backoff_reason("peer_behind")
+                        if cleared_backoff > 0:
+                            log.info(
+                                "Cleared peer backoffs to retry sync",
+                                extra={"cleared_peers": cleared_backoff},
+                            )
                         # Trigger aggressive peer rotation
                         self._sync_kick(reason="headers_blocks_equal_stall", aggressive=True)
                     
@@ -9526,6 +9536,14 @@ class P2PService:
                         },
                     )
                     self._sync_block_stalled_reason = "blocks stalled"
+                    # Clear peer backoffs to allow retrying headers from all peers
+                    cleared = self._clear_sync_backoff_reason("headers_empty")
+                    cleared += self._clear_sync_backoff_reason("peer_behind")
+                    if cleared > 0:
+                        log.info(
+                            "Cleared peer backoffs for behind-network recovery",
+                            extra={"cleared_peers": cleared},
+                        )
                     self._ensure_block_queue()
                     self._sync_kick(reason="behind_network_empty_queue", aggressive=True)
                 stalled = self._sync_block_stalled_reason is not None
