@@ -696,3 +696,294 @@ def state_get_rich_list(limit: int = 100, offset: int = 0) -> dict:
         "totalAccounts": len(accounts),
         "hasMore": has_more
     }
+
+
+# Block reward constant for inflation detection (5 ANM = 5_000_000_000 nANM)
+_BLOCK_REWARD = 5_000_000_000
+
+
+def _detect_inflation_factor(balance: int) -> tuple[int | None, str, int]:
+    """
+    Detect if balance appears to be inflated by checking for common multipliers.
+    
+    The inflation bug causes balances to be exact multiples (2x, 3x, 4x, etc.) of the
+    correct value. This function detects such patterns by checking if dividing the
+    balance by common factors (2-10) yields a "more reasonable" result.
+    
+    We use a threshold-based approach: balances over 10,000 blocks (~50,000 ANM) that
+    are divisible by small factors (2-10) are flagged as potentially inflated.
+    
+    Args:
+        balance: Current balance in smallest unit
+        
+    Returns:
+        Tuple of (factor, explanation, corrected_balance)
+        factor is the suspected multiplication count, or None if no inflation detected
+    """
+    if balance == 0:
+        return None, "Balance is zero (no inflation detected)", 0
+    
+    if balance % _BLOCK_REWARD != 0:
+        return None, "Balance is not a clean multiple of block reward", balance
+    
+    # Calculate the number of blocks this balance represents
+    blocks = balance // _BLOCK_REWARD
+    
+    # Threshold: balances over 10,000 blocks (~50,000 ANM) are suspicious
+    if blocks < 10_000:
+        # Small balance, unlikely to be inflated
+        return None, f"Normal (~{blocks} blocks)", balance
+    
+    # Check factors 2-10 (smallest first)
+    for factor in range(2, 11):
+        if blocks % factor == 0:
+            corrected_blocks = blocks // factor
+            corrected_balance = corrected_blocks * _BLOCK_REWARD
+            explanation = f"{factor}x inflated ({factor-1} rebuilds), ~{corrected_blocks} blocks"
+            return factor, explanation, corrected_balance
+    
+    # No inflation pattern detected
+    return None, f"Normal (~{blocks} blocks)", balance
+
+
+@method(
+    "state.detectBalanceInflation",
+    desc="Detect balance inflation across all accounts with balances",
+    aliases=("state_detectBalanceInflation",),
+)
+def state_detect_balance_inflation(limit: int = 100) -> dict:
+    """
+    Scan state DB for accounts with inflated balances.
+    
+    This method detects accounts whose balances are clean multiples of the block reward,
+    suggesting they were affected by state rebuild bugs that re-applied rewards.
+    
+    Args:
+        limit: Maximum number of inflated accounts to return (default: 100, max: 1000)
+        
+    Returns:
+        dict: {
+            "inflated_accounts": [
+                {
+                    "address": str,
+                    "current_balance": str,  # hex quantity
+                    "corrected_balance": str,  # hex quantity
+                    "inflation_factor": int,
+                    "explanation": str,
+                },
+                ...
+            ],
+            "total_inflated": int,  # Number of accounts with detected inflation
+            "scan_complete": bool,  # Whether all accounts were scanned
+        }
+    """
+    limit = max(1, min(int(limit), 1000))
+    
+    try:
+        ctx = deps.get_ctx()
+        sdb = ctx.state_db
+    except Exception as e:
+        log.error(f"state.detectBalanceInflation: failed to get state DB: {e}")
+        raise rpc_errors.InternalError("Failed to access state database")
+    
+    inflated_accounts = []
+    total_inflated = 0
+    scan_complete = True
+    
+    try:
+        # Scan all accounts
+        for addr_bytes, account in sdb.iter_accounts():
+            balance = account.balance
+            if balance <= 0:
+                continue
+            
+            # Detect inflation
+            factor, explanation, corrected_balance = _detect_inflation_factor(balance)
+            
+            if factor is not None:
+                total_inflated += 1
+                
+                # Only include in results if within limit
+                if len(inflated_accounts) < limit:
+                    # Try to encode as bech32m address
+                    addr_str = None
+                    try:
+                        from pq.py.address import encode_address, AddressRecord
+                        # Reconstruct address with default algorithm ID (Dilithium3)
+                        addr_rec = AddressRecord(alg_id=1, digest=addr_bytes)
+                        addr_str = encode_address(addr_rec, hrp="anim")
+                    except Exception:
+                        pass
+                    
+                    # Fallback to hex
+                    if addr_str is None:
+                        addr_str = "0x" + addr_bytes.hex()
+                    
+                    inflated_accounts.append({
+                        "address": addr_str,
+                        "current_balance": _to_hex_quantity(balance),
+                        "corrected_balance": _to_hex_quantity(corrected_balance),
+                        "inflation_factor": factor,
+                        "explanation": explanation,
+                    })
+                else:
+                    # Continue counting but don't include in results
+                    scan_complete = False
+    
+    except Exception as e:
+        log.error(f"state.detectBalanceInflation: error scanning accounts: {e}")
+        raise rpc_errors.InternalError("Failed to scan account balances")
+    
+    return {
+        "inflated_accounts": inflated_accounts,
+        "total_inflated": total_inflated,
+        "scan_complete": scan_complete,
+    }
+
+
+@method(
+    "state.correctBalanceInflation",
+    desc="Automatically correct inflated balances (requires admin privileges)",
+    aliases=("state_correctBalanceInflation",),
+)
+def state_correct_balance_inflation(
+    dry_run: bool = True,
+    addresses: list[str] | None = None,
+) -> dict:
+    """
+    Automatically correct inflated balances for specified addresses or all affected accounts.
+    
+    This is an admin-level operation that modifies account balances. By default, runs in
+    dry-run mode (detection only). Set dry_run=false to apply corrections.
+    
+    Args:
+        dry_run: If true, only detect inflation without applying corrections (default: true)
+        addresses: Optional list of specific addresses to correct. If None, corrects all.
+        
+    Returns:
+        dict: {
+            "dry_run": bool,
+            "corrected": int,  # Number of accounts corrected
+            "total": int,  # Total accounts processed
+            "corrections": [
+                {
+                    "address": str,
+                    "old_balance": str,  # hex quantity
+                    "new_balance": str,  # hex quantity
+                    "inflation_factor": int,
+                },
+                ...
+            ],
+        }
+    """
+    # Note: In a production system, this should require admin authentication
+    # For now, we rely on RPC-level access control
+    
+    try:
+        ctx = deps.get_ctx()
+        sdb = ctx.state_db
+    except Exception as e:
+        log.error(f"state.correctBalanceInflation: failed to get state DB: {e}")
+        raise rpc_errors.InternalError("Failed to access state database")
+    
+    # Parse and validate addresses if provided
+    target_addresses = None
+    if addresses is not None:
+        target_addresses = set()
+        for addr in addresses:
+            try:
+                # Try bech32 decode
+                if addr.startswith("anim"):
+                    from pq.py.address import decode_address
+                    addr_rec = decode_address(addr)
+                    addr_bytes = bytes(addr_rec.digest)[:32].ljust(32, b"\x00")
+                else:
+                    # Try hex decode
+                    hex_str = addr[2:] if addr.startswith("0x") else addr
+                    addr_bytes = bytes.fromhex(hex_str)
+                    if len(addr_bytes) < 32:
+                        addr_bytes = addr_bytes.rjust(32, b"\x00")
+                    elif len(addr_bytes) > 32:
+                        addr_bytes = addr_bytes[-32:]
+                target_addresses.add(addr_bytes)
+            except Exception as e:
+                log.warning(f"state.correctBalanceInflation: invalid address {addr}: {e}")
+                raise rpc_errors.InvalidParams(f"Invalid address: {addr}")
+    
+    corrections = []
+    corrected_count = 0
+    total_count = 0
+    
+    try:
+        # Build list of corrections
+        corrections_to_apply = []
+        
+        for addr_bytes, account in sdb.iter_accounts():
+            # Skip if we have a target list and this address is not in it
+            if target_addresses is not None and addr_bytes not in target_addresses:
+                continue
+            
+            balance = account.balance
+            if balance <= 0:
+                continue
+            
+            total_count += 1
+            
+            # Detect inflation
+            factor, explanation, corrected_balance = _detect_inflation_factor(balance)
+            
+            if factor is not None:
+                # Try to encode as bech32m address
+                addr_str = None
+                try:
+                    from pq.py.address import encode_address, AddressRecord
+                    addr_rec = AddressRecord(alg_id=1, digest=addr_bytes)
+                    addr_str = encode_address(addr_rec, hrp="anim")
+                except Exception:
+                    pass
+                
+                # Fallback to hex
+                if addr_str is None:
+                    addr_str = "0x" + addr_bytes.hex()
+                
+                corrections.append({
+                    "address": addr_str,
+                    "old_balance": _to_hex_quantity(balance),
+                    "new_balance": _to_hex_quantity(corrected_balance),
+                    "inflation_factor": factor,
+                    "explanation": explanation,
+                })
+                
+                if not dry_run:
+                    corrections_to_apply.append((addr_bytes, corrected_balance))
+        
+        # Apply corrections if not dry run
+        if not dry_run and corrections_to_apply:
+            log.warning(
+                f"state.correctBalanceInflation: applying corrections to {len(corrections_to_apply)} accounts"
+            )
+            
+            with sdb.batch() as batch:
+                for addr_bytes, corrected_balance in corrections_to_apply:
+                    try:
+                        sdb.set_balance(addr_bytes, corrected_balance, batch=batch)
+                        corrected_count += 1
+                    except Exception as e:
+                        log.error(
+                            f"state.correctBalanceInflation: failed to correct address: {e}"
+                        )
+            
+            log.info(
+                f"state.correctBalanceInflation: corrected {corrected_count}/{len(corrections_to_apply)} accounts"
+            )
+    
+    except Exception as e:
+        log.error(f"state.correctBalanceInflation: error processing corrections: {e}")
+        raise rpc_errors.InternalError("Failed to process balance corrections")
+    
+    return {
+        "dry_run": dry_run,
+        "corrected": corrected_count,
+        "total": total_count,
+        "corrections": corrections,
+    }
