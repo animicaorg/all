@@ -65,7 +65,8 @@ export function normalizeBlockSummary(block: any): BlockSummary {
     hash,
     time,
     txCount: txs.length,
-    miner: normalizeAddress(header?.miner)
+    miner: normalizeAddress(header?.miner),
+    orphaned: block?.orphaned ?? header?.orphaned
   }
 }
 
@@ -94,6 +95,7 @@ export function normalizeBlockDetail(block: any): BlockDetail {
     chainId: toNumber(header?.chainId),
     difficulty: header?.difficulty ?? header?.target ?? header?.thetaMicro ?? null,
     nonce: toNumber(header?.nonce),
+    orphaned: block?.orphaned ?? header?.orphaned,
     txs: txs.map(normalizeTxSummary),
     raw: block
   }
@@ -127,7 +129,7 @@ export function normalizeRichList(data: any): any {
   const entries = Array.isArray(data?.entries) ? data.entries : []
   return {
     entries: entries.map((entry: any) => ({
-      address: entry?.address ?? '0x0',
+      address: normalizeAddress(entry?.address) ?? '0x0',
       balance: entry?.balance ?? '0x0',
       percentage: typeof entry?.percentage === 'number' ? entry.percentage : 0
     })),
