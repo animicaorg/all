@@ -625,11 +625,11 @@ def state_get_rich_list(limit: int = 100, offset: int = 0) -> dict:
     
     # Import bech32 encoder for address formatting
     try:
-        from pq.py.utils import bech32 as _bech32_mod
-        from pq.py.address import encode_address
+        from pq.py.address import AddressRecord
+        _can_encode_bech32 = True
     except Exception:
-        _bech32_mod = None
-        encode_address = None
+        AddressRecord = None
+        _can_encode_bech32 = False
     
     # CRITICAL: Default algorithm ID for address reconstruction
     # StateDB stores only the 32-byte digest, but bech32m addresses require alg_id + digest
@@ -665,16 +665,16 @@ def state_get_rich_list(limit: int = 100, offset: int = 0) -> dict:
     for addr_bytes, balance in paginated:
         # Try to encode as bech32m address (anim1...)
         addr_str = None
-        if encode_address is not None:
+        if _can_encode_bech32 and AddressRecord is not None:
             try:
                 # Reconstruct address record for encoding
                 # CRITICAL: StateDB stores 32-byte digest, but bech32 needs alg_id + digest
                 # Using DEFAULT_ALG_ID (Dilithium3) since the actual algorithm ID is not stored
                 # The digest is the canonical identifier, algorithm ID is for display only
-                from pq.py.address import AddressRecord
-                addr_rec = AddressRecord(alg_id=DEFAULT_ALG_ID, digest=addr_bytes)
-                addr_str = encode_address(addr_rec, hrp="anim")
-            except Exception:
+                addr_rec = AddressRecord(hrp="anim", alg_id=DEFAULT_ALG_ID, digest=addr_bytes)
+                addr_str = addr_rec.to_string()
+            except Exception as e:
+                log.debug(f"state.getRichList: failed to encode address as bech32: {e}")
                 pass
         
         # Fallback to hex if bech32 encoding fails
@@ -808,10 +808,10 @@ def state_detect_balance_inflation(limit: int = 100) -> dict:
                     # Try to encode as bech32m address
                     addr_str = None
                     try:
-                        from pq.py.address import encode_address, AddressRecord
+                        from pq.py.address import AddressRecord
                         # Reconstruct address with default algorithm ID (Dilithium3)
-                        addr_rec = AddressRecord(alg_id=1, digest=addr_bytes)
-                        addr_str = encode_address(addr_rec, hrp="anim")
+                        addr_rec = AddressRecord(hrp="anim", alg_id=1, digest=addr_bytes)
+                        addr_str = addr_rec.to_string()
                     except Exception:
                         pass
                     
@@ -936,9 +936,9 @@ def state_correct_balance_inflation(
                 # Try to encode as bech32m address
                 addr_str = None
                 try:
-                    from pq.py.address import encode_address, AddressRecord
-                    addr_rec = AddressRecord(alg_id=1, digest=addr_bytes)
-                    addr_str = encode_address(addr_rec, hrp="anim")
+                    from pq.py.address import AddressRecord
+                    addr_rec = AddressRecord(hrp="anim", alg_id=1, digest=addr_bytes)
+                    addr_str = addr_rec.to_string()
                 except Exception:
                     pass
                 
