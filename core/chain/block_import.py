@@ -487,6 +487,25 @@ class BlockImporter:
         
         self._init_fork_choice_from_db()
 
+    # --- Helper Functions ---
+    
+    @staticmethod
+    def _is_coinbase_tx(tx) -> bool:
+        """
+        Check if a transaction is a coinbase transaction.
+        
+        Uses multiple comparison methods to ensure compatibility across
+        serialization/deserialization and different enum representations.
+        """
+        unsigned = getattr(tx, "unsigned", None)
+        if unsigned is None:
+            return False
+        kind = getattr(unsigned, "kind", None)
+        if kind is None:
+            return False
+        # Compare both as enum and as integer (TxKind.COINBASE = 3)
+        return kind == TxKind.COINBASE or kind == 3 or int(kind) == 3
+
     # --- Basics -------------------------------------------------------------
 
     def head(self) -> Optional[Tuple[int, bytes]]:
@@ -1367,22 +1386,32 @@ class BlockImporter:
             # Check if block contains coinbase transactions
             # If it does, rewards were already applied via transaction execution
             # If it doesn't, we need to apply rewards separately
-            # Note: Using getattr for robustness in case tx.unsigned or kind attribute is missing
-            has_coinbase_tx = any(
-                getattr(getattr(tx, "unsigned", None), "kind", None) == TxKind.COINBASE
-                for tx in block.txs
-            )
+            has_coinbase_tx = any(self._is_coinbase_tx(tx) for tx in block.txs)
             
             if has_coinbase_tx:
                 # Block contains coinbase transactions - rewards already applied via tx execution
                 # Skip _apply_block_reward to prevent double-crediting
-                log.debug(
-                    "state: block contains coinbase transactions; skipping separate reward application",
-                    extra={"height": getattr(block.header, "height", None)},
+                coinbase_count = sum(1 for tx in block.txs if self._is_coinbase_tx(tx))
+                log.info(
+                    "state: block contains %d coinbase transaction(s); skipping separate reward application",
+                    coinbase_count,
+                    extra={
+                        "height": getattr(block.header, "height", None),
+                        "coinbase_count": coinbase_count,
+                        "total_txs": len(block.txs),
+                    },
                 )
             else:
                 # Block does not contain coinbase transactions - apply rewards separately
                 # This ensures rewards are included in state snapshots and survive rebuilds
+                log.warning(
+                    "state: block does NOT contain coinbase transactions; applying rewards separately",
+                    extra={
+                        "height": getattr(block.header, "height", None),
+                        "total_txs": len(block.txs),
+                        "tx_kinds": [getattr(getattr(tx, "unsigned", None), "kind", "unknown") for tx in block.txs[:5]],
+                    },
+                )
                 try:
                     self._apply_block_reward(block)
                 except Exception as reward_exc:
@@ -1395,6 +1424,18 @@ class BlockImporter:
                     )
                     # Don't fail the entire block import if reward application fails
                     # This maintains backward compatibility with blocks that may not have rewards
+            
+            # Record that we've successfully applied this block to state
+            # This helps prevent unnecessary state rebuilds
+            try:
+                height = int(getattr(block.header, "height", 0))
+                if height > 0 and hasattr(self.state_db, "set_state_height"):
+                    self.state_db.set_state_height(height)
+            except (ValueError, TypeError) as e:
+                log.debug(
+                    "Failed to record state height (non-fatal)",
+                    extra={"error": str(e)},
+                )
             
             return True
         except Exception as exc:
@@ -1423,6 +1464,22 @@ class BlockImporter:
             Exception: If reward computation or application fails
         """
         if self.state_db is None:
+            return
+        
+        # CRITICAL SAFETY CHECK: Never apply rewards if block already contains coinbase transactions
+        # Coinbase transactions already applied rewards during transaction execution
+        # This is a defense-in-depth check that should never be needed (caller should check)
+        # but protects against bugs in the caller or serialization issues
+        if any(self._is_coinbase_tx(tx) for tx in block.txs):
+            log.error(
+                "CRITICAL: _apply_block_reward called for block WITH coinbase transactions! "
+                "This would cause double-rewarding. Skipping to prevent balance corruption.",
+                extra={
+                    "height": getattr(block.header, "height", None),
+                    "coinbase_count": sum(1 for tx in block.txs if self._is_coinbase_tx(tx)),
+                    "total_txs": len(block.txs),
+                },
+            )
             return
         
         try:
@@ -1783,8 +1840,48 @@ class BlockImporter:
                 self._create_disk_snapshot(height)
 
     def _rebuild_state_from_canonical(self, target_height: int) -> None:
+        """
+        Rebuild state by replaying all canonical blocks from genesis to target_height.
+        
+        WARNING: This re-executes ALL transactions including coinbase transactions,
+        which will RE-APPLY rewards! This should only be called when absolutely necessary:
+        - State is corrupted or missing
+        - Snapshot is missing for a required reorg
+        - State DB has been reset
+        
+        This function should NOT be called routinely as it will cause balance inflation!
+        """
         if self.state_db is None:
             return
+        
+        # CRITICAL: Check if state is already at the target height
+        # If so, skip rebuild to prevent re-applying rewards
+        if hasattr(self.state_db, "get_state_height"):
+            try:
+                current_height = self.state_db.get_state_height()
+                if current_height is not None and current_height >= target_height:
+                    log.info(
+                        "state: SKIPPING rebuild - state already at target height",
+                        extra={
+                            "current_height": current_height,
+                            "target_height": target_height,
+                        },
+                    )
+                    return
+            except Exception as e:
+                log.debug(
+                    "Failed to check state height (proceeding with rebuild)",
+                    extra={"error": str(e)},
+                )
+        
+        log.warning(
+            "state: REBUILDING state from canonical chain - this will re-execute all transactions!",
+            extra={
+                "target_height": target_height,
+                "reason": "state_corrupted_or_missing_snapshot",
+            },
+        )
+        
         genesis_snap = self._state_snapshots.get(0)
         if genesis_snap is not None:
             try:
