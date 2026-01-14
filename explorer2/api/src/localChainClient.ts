@@ -92,6 +92,36 @@ function toHex(buffer: Buffer | Uint8Array): string {
   return `0x${Buffer.from(buffer).toString('hex')}`
 }
 
+/**
+ * Convert raw address bytes to bech32m format (anim1...).
+ * If the address is 32 bytes (digest only), prepends default algorithm ID.
+ * Returns hex format as fallback on error.
+ */
+function addressToBech32(addressBytes: Buffer): string {
+  try {
+    const DEFAULT_ALG_ID = 1 // Dilithium3
+    let payload: Buffer
+    
+    if (addressBytes.length === 32) {
+      // StateDB stores only 32-byte digest, prepend algorithm ID
+      const algId = Buffer.from([0x00, DEFAULT_ALG_ID]) // 2 bytes: big-endian alg_id
+      payload = Buffer.concat([algId, addressBytes])
+    } else if (addressBytes.length === 34) {
+      // Already has algorithm ID
+      payload = addressBytes
+    } else {
+      // Unexpected length, return hex
+      return toHex(addressBytes)
+    }
+    
+    const words = bech32m.toWords(payload)
+    return bech32m.encode('anim', words)
+  } catch {
+    // Fallback to hex on any error
+    return toHex(addressBytes)
+  }
+}
+
 function normalizeJson(value: unknown): unknown {
   if (typeof value === 'bigint') return value.toString()
   if (Buffer.isBuffer(value)) return toHex(value)
@@ -156,8 +186,8 @@ function formatTxView(
 
   return {
     hash: txHashHex ?? txHashFromObject(txObject),
-    from: fromRaw ? (Buffer.isBuffer(fromRaw) ? toHex(fromRaw) : normalizeJson(fromRaw)) : undefined,
-    to: toRaw ? (Buffer.isBuffer(toRaw) ? toHex(toRaw) : normalizeJson(toRaw)) : undefined,
+    from: fromRaw ? (Buffer.isBuffer(fromRaw) ? addressToBech32(fromRaw) : normalizeJson(fromRaw)) : undefined,
+    to: toRaw ? (Buffer.isBuffer(toRaw) ? addressToBech32(toRaw) : normalizeJson(toRaw)) : undefined,
     nonce: formatTxValue(txBody.nonce),
     gas: formatTxValue(gas),
     gasLimit: gas === undefined ? undefined : formatTxValue(gas),
