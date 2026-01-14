@@ -31,7 +31,7 @@
  *   {
  *     body: <the same inner body map as above>,
  *     sig:  {
- *       algId: uint,               // canonical PQ alg id (e.g., 0x01 dilithium3)
+ *       algId: uint,               // canonical PQ alg id (e.g., 0x1001 dilithium3)
  *       publicKey: bstr,
  *       signature: bstr
  *     }

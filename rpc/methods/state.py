@@ -625,18 +625,16 @@ def state_get_rich_list(limit: int = 100, offset: int = 0) -> dict:
     
     # Import bech32 encoder for address formatting
     try:
-        from pq.py.utils import bech32 as _bech32_mod
-        from pq.py.address import encode_address
+        from pq.py.address import AddressRecord
     except Exception:
-        _bech32_mod = None
-        encode_address = None
+        AddressRecord = None
     
     # CRITICAL: Default algorithm ID for address reconstruction
     # StateDB stores only the 32-byte digest, but bech32m addresses require alg_id + digest
-    # We use 1 (Dilithium3) as the default since it's the most common PQ signature algorithm
+    # We use 0x1001 (Dilithium3) as the default since it's the most common PQ signature algorithm
     # This may not match the actual algorithm used to create the address, but the digest
     # remains the canonical identifier for account lookups.
-    DEFAULT_ALG_ID = 1  # Dilithium3
+    DEFAULT_ALG_ID = 0x1001  # Dilithium3 (per pq/alg_ids.yaml)
     
     # Collect all accounts with their balances
     accounts: list[tuple[bytes, int]] = []
@@ -665,15 +663,14 @@ def state_get_rich_list(limit: int = 100, offset: int = 0) -> dict:
     for addr_bytes, balance in paginated:
         # Try to encode as bech32m address (anim1...)
         addr_str = None
-        if encode_address is not None:
+        if AddressRecord is not None:
             try:
                 # Reconstruct address record for encoding
                 # CRITICAL: StateDB stores 32-byte digest, but bech32 needs alg_id + digest
                 # Using DEFAULT_ALG_ID (Dilithium3) since the actual algorithm ID is not stored
                 # The digest is the canonical identifier, algorithm ID is for display only
-                from pq.py.address import AddressRecord
-                addr_rec = AddressRecord(alg_id=DEFAULT_ALG_ID, digest=addr_bytes)
-                addr_str = encode_address(addr_rec, hrp="anim")
+                addr_rec = AddressRecord(hrp="anim", alg_id=DEFAULT_ALG_ID, digest=addr_bytes)
+                addr_str = addr_rec.to_string()
             except Exception:
                 pass
         
@@ -808,27 +805,26 @@ def state_detect_balance_inflation(limit: int = 100) -> dict:
                     # Try to encode as bech32m address
                     addr_str = None
                     try:
-                        from pq.py.address import encode_address, AddressRecord
-                        # Reconstruct address with default algorithm ID (Dilithium3)
-                        addr_rec = AddressRecord(alg_id=1, digest=addr_bytes)
-                        addr_str = encode_address(addr_rec, hrp="anim")
+                        from pq.py.address import AddressRecord
+                        # Reconstruct address with default algorithm ID (Dilithium3 = 0x1001)
+                        addr_rec = AddressRecord(hrp="anim", alg_id=0x1001, digest=addr_bytes)
+                        addr_str = addr_rec.to_string()
                     except Exception:
                         pass
-                    
-                    # Fallback to hex
-                    if addr_str is None:
-                        addr_str = "0x" + addr_bytes.hex()
-                    
-                    inflated_accounts.append({
-                        "address": addr_str,
-                        "current_balance": _to_hex_quantity(balance),
-                        "corrected_balance": _to_hex_quantity(corrected_balance),
-                        "inflation_factor": factor,
-                        "explanation": explanation,
-                    })
-                else:
-                    # Continue counting but don't include in results
-                    scan_complete = False
+                # Fallback to hex
+                if addr_str is None:
+                    addr_str = "0x" + addr_bytes.hex()
+                
+                inflated_accounts.append({
+                    "address": addr_str,
+                    "current_balance": _to_hex_quantity(balance),
+                    "corrected_balance": _to_hex_quantity(corrected_balance),
+                    "inflation_factor": factor,
+                    "explanation": explanation,
+                })
+            else:
+                # Continue counting but don't include in results
+                scan_complete = False
     
     except Exception as e:
         log.error(f"state.detectBalanceInflation: error scanning accounts: {e}")
@@ -936,12 +932,11 @@ def state_correct_balance_inflation(
                 # Try to encode as bech32m address
                 addr_str = None
                 try:
-                    from pq.py.address import encode_address, AddressRecord
-                    addr_rec = AddressRecord(alg_id=1, digest=addr_bytes)
-                    addr_str = encode_address(addr_rec, hrp="anim")
+                    from pq.py.address import AddressRecord
+                    addr_rec = AddressRecord(hrp="anim", alg_id=0x1001, digest=addr_bytes)
+                    addr_str = addr_rec.to_string()
                 except Exception:
                     pass
-                
                 # Fallback to hex
                 if addr_str is None:
                     addr_str = "0x" + addr_bytes.hex()
