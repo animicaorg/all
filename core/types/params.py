@@ -168,6 +168,9 @@ class ChainParams:
 
     # Block-level limits
     block: BlockLimits
+    
+    # Checkpoints: hardcoded block hashes at specific heights to prevent forks
+    checkpoints: dict[int, Bytes32]
 
     # ------ factories / helpers ------
 
@@ -194,6 +197,25 @@ class ChainParams:
         if gamma_total_cap <= 0:
             raise ValueError("consensus.gamma_total_cap must be > 0")
 
+        # Parse checkpoints (optional, defaults to empty dict)
+        checkpoints_raw = m.get("checkpoints", {})
+        checkpoints: dict[int, Bytes32] = {}
+        if isinstance(checkpoints_raw, Mapping):
+            for height_key, hash_value in checkpoints_raw.items():
+                try:
+                    height = int(height_key)
+                    if height > 0:
+                        checkpoint_hash = _hex_to_bytes32(
+                            str(hash_value), field=f"checkpoints.{height}"
+                        )
+                        checkpoints[height] = checkpoint_hash
+                except (ValueError, TypeError) as e:
+                    # Skip invalid checkpoints with a warning
+                    import logging
+                    logging.warning(
+                        f"Skipping invalid checkpoint at {height_key}: {e}"
+                    )
+
         return cls(
             chain_id=chain_id,
             chain_name=chain_name,
@@ -209,6 +231,7 @@ class ChainParams:
             gamma_total_cap=gamma_total_cap,
             retarget=RetargetParams.from_mapping(cons["retarget"]),
             block=BlockLimits.from_mapping(block),
+            checkpoints=checkpoints,
         )
 
     @classmethod
@@ -333,6 +356,25 @@ class ChainParams:
             min_gas_price=int(blocks_cfg.get("min_gas_price", 0)),
         )
 
+        # Parse checkpoints (optional, defaults to empty dict)
+        checkpoints_raw = net.get("checkpoints", {})
+        checkpoints: dict[int, Bytes32] = {}
+        if isinstance(checkpoints_raw, Mapping):
+            for height_key, hash_value in checkpoints_raw.items():
+                try:
+                    height = int(height_key)
+                    if height > 0:
+                        checkpoint_hash = _hex_to_bytes32(
+                            str(hash_value), field=f"checkpoints.{height}"
+                        )
+                        checkpoints[height] = checkpoint_hash
+                except (ValueError, TypeError) as e:
+                    # Skip invalid checkpoints with a warning
+                    import logging
+                    logging.warning(
+                        f"Skipping invalid checkpoint at {height_key}: {e}"
+                    )
+
         return cls(
             chain_id=chain_id,
             chain_name=chain_name,
@@ -344,6 +386,7 @@ class ChainParams:
             gamma_total_cap=gamma_total_cap,
             retarget=retarget,
             block=block_limits,
+            checkpoints=checkpoints,
         )
 
     @classmethod

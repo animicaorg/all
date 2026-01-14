@@ -139,6 +139,11 @@ networks:
         ws: 36202
       max_peers: 64
       gossip_target_degree: 8
+    checkpoints:
+      # Hardcoded checkpoints to prevent forks at specific heights
+      # Format: height -> block_hash (hex)
+      # Once blockchain reaches height 12,000, all nodes must agree on this hash
+      12000: "0x0000000000000000000000000000000000000000000000000000000000000000"  # Placeholder - will be updated with actual hash when height 12,000 is reached
 
   # ----------------------------- TESTNET --------------------------------------
   "animica:2":
@@ -211,6 +216,9 @@ networks:
       default_ports: { tcp: 37200, quic: 37201, ws: 37202 }
       max_peers: 96
       gossip_target_degree: 10
+    checkpoints:
+      # Hardcoded checkpoints to prevent forks at specific heights
+      12000: "0x0000000000000000000000000000000000000000000000000000000000000000"  # Placeholder - will be updated with actual hash
 
   # ----------------------------- DEVNET ---------------------------------------
   "animica:1337":
@@ -283,6 +291,9 @@ networks:
       default_ports: { tcp: 38200, quic: 38201, ws: 38202 }
       max_peers: 32
       gossip_target_degree: 6
+    checkpoints:
+      # Hardcoded checkpoints to prevent forks at specific heights
+      12000: "0x0000000000000000000000000000000000000000000000000000000000000000"  # Placeholder - will be updated with actual hash
 
 ################################################################################
 # GLOBAL DEFAULTS (used where a network omits a field)

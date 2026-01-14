@@ -815,6 +815,11 @@ class BlockImporter:
             if theta_error is not None:
                 return ImportResult(ImportErrorCode.INVALID, height, h, False, theta_error)
 
+            # Checkpoint validation: if this height has a checkpoint, verify hash matches
+            checkpoint_error = self._checkpoint_sanity(height, h)
+            if checkpoint_error is not None:
+                return ImportResult(ImportErrorCode.INVALID, height, h, False, checkpoint_error)
+
             # Basic header sanity
             self._sanity_header(header)
 
@@ -2082,6 +2087,66 @@ class BlockImporter:
                 "theta mismatch"
                 f": got {int(claimed_theta)}, expected {int(expected_theta)}"
             )
+        return None
+
+    def _checkpoint_sanity(self, height: int, block_hash: bytes) -> Optional[str]:
+        """
+        Validate that the block hash matches the checkpoint at this height, if any.
+        
+        Checkpoints are hardcoded block hashes at specific heights that prevent forks.
+        Once the blockchain reaches a checkpoint height, all nodes must agree on the
+        same block hash to remain on the canonical chain.
+        
+        Args:
+            height: Block height to check
+            block_hash: Hash of the block being imported
+            
+        Returns:
+            Error string if checkpoint validation fails, None if passes or no checkpoint
+        """
+        if not hasattr(self.params, "checkpoints"):
+            return None
+        
+        checkpoints = getattr(self.params, "checkpoints", {})
+        if not checkpoints or height not in checkpoints:
+            return None
+        
+        expected_hash = checkpoints[height]
+        
+        # Allow all-zero hash as placeholder (not yet set)
+        if expected_hash == b"\x00" * 32:
+            log.info(
+                "Checkpoint at height %d not yet finalized (placeholder hash); accepting block",
+                height,
+                extra={
+                    "height": height,
+                    "block_hash": block_hash.hex(),
+                },
+            )
+            return None
+        
+        if block_hash != expected_hash:
+            log.error(
+                "Checkpoint validation failed: block hash mismatch",
+                extra={
+                    "height": height,
+                    "expected_hash": expected_hash.hex(),
+                    "actual_hash": block_hash.hex(),
+                },
+            )
+            return (
+                f"checkpoint violation at height {height}: "
+                f"expected {expected_hash.hex()}, got {block_hash.hex()}"
+            )
+        
+        log.info(
+            "Checkpoint validated successfully at height %d",
+            height,
+            extra={
+                "height": height,
+                "block_hash": block_hash.hex(),
+            },
+        )
         return None
 
 
