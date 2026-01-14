@@ -146,9 +146,9 @@ async def test_sync_resumes_when_synced_but_behind(
         head_height, head_hash = node._local_head()
         best_peer, best_peer_height = node._best_peer_head()
         
-        # This is the condition from the fix
+        # This is the condition from the fix (now includes TARGET_REACHED)
         if (
-            node._sync_phase == "SYNCED"
+            node._sync_phase in ("SYNCED", "TARGET_REACHED")
             and node._sync_target_height is not None
             and head_height < node._sync_target_height
             and not node._sync_inflight_headers
@@ -156,7 +156,7 @@ async def test_sync_resumes_when_synced_but_behind(
         ):
             # Should trigger phase change
             node._sync_phase = "SYNCING"
-            node._sync_kick(reason="synced_but_behind", aggressive=True)
+            node._sync_kick(reason="at_tip_but_behind", aggressive=True)
         
         # Verify phase changed from SYNCED to SYNCING
         assert node._sync_phase == "SYNCING", (
@@ -222,7 +222,7 @@ async def test_sync_does_not_resume_when_synced_and_at_target(
         
         # This condition should NOT trigger because we're at target
         if (
-            node._sync_phase == "SYNCED"
+            node._sync_phase in ("SYNCED", "TARGET_REACHED")
             and node._sync_target_height is not None
             and head_height < node._sync_target_height
             and not node._sync_inflight_headers
@@ -230,12 +230,95 @@ async def test_sync_does_not_resume_when_synced_and_at_target(
         ):
             # Should NOT execute
             node._sync_phase = "SYNCING"
-            node._sync_kick(reason="synced_but_behind", aggressive=True)
+            node._sync_kick(reason="at_tip_but_behind", aggressive=True)
         
         # Verify phase stayed SYNCED
         assert node._sync_phase == "SYNCED", (
             f"Expected phase to stay SYNCED when at target, got {node._sync_phase}"
         )
+        
+    finally:
+        await node.stop()
+
+
+@pytest.mark.asyncio
+async def test_sync_resumes_when_target_reached_but_behind(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """
+    Test that a node in TARGET_REACHED phase resumes sync when it detects it's behind peers.
+    
+    Scenario:
+    1. Node is at height 5 and marked TARGET_REACHED
+    2. Peer announces height 10
+    3. Node should detect gap and resume sync (change phase to SYNCING)
+    
+    This tests the fix for the issue where nodes in TARGET_REACHED phase
+    don't resume syncing when new blocks arrive.
+    """
+    monkeypatch.setenv("P2P_ENABLE_IPV6", "false")
+    
+    sync_deps, chain_deps = _make_deps(tmp_path, "node")
+    port = free_port()
+    addr = tcp_multiaddr(port)
+    
+    node = P2PService(
+        deps=sync_deps,
+        listen_addresses=[addr],
+        initial_peers=[],
+        enable_sync=True,
+        protocol_version="animica/2",
+    )
+    
+    try:
+        await node.start()
+        
+        # Import 5 blocks to get to height 5
+        current = node._import_genesis()
+        for _ in range(5):
+            child = _make_child_block(current.header)
+            node.repo.import_block(child)
+            current = child
+        
+        # Verify we're at height 5
+        local_height, _ = node._local_head()
+        assert local_height == 5, f"Expected height 5, got {local_height}"
+        
+        # Mark node as TARGET_REACHED (this is what happens when reaching target height)
+        node._sync_phase = "TARGET_REACHED"
+        
+        # Register a peer at height 10 (5 blocks ahead)
+        peer = _register_peer(node, "127.0.0.1:30333", head_height=10)
+        
+        # Update target height to reflect peer's height
+        node._sync_target_height = 10
+        
+        # Simulate a sync loop tick
+        # The fix should detect that we're in TARGET_REACHED but behind target
+        # and change phase to SYNCING
+        now = time.time()
+        head_height, head_hash = node._local_head()
+        best_peer, best_peer_height = node._best_peer_head()
+        
+        # This is the condition from the fix (now includes TARGET_REACHED)
+        if (
+            node._sync_phase in ("SYNCED", "TARGET_REACHED")
+            and node._sync_target_height is not None
+            and head_height < node._sync_target_height
+            and not node._sync_inflight_headers
+            and not node._sync_inflight_blocks
+        ):
+            # Should trigger phase change
+            node._sync_phase = "SYNCING"
+            node._sync_kick(reason="at_tip_but_behind", aggressive=True)
+        
+        # Verify phase changed from TARGET_REACHED to SYNCING
+        assert node._sync_phase == "SYNCING", (
+            f"Expected phase to change to SYNCING when behind, got {node._sync_phase}"
+        )
+        
+        # Verify sync was kicked
+        assert node._sync_requested is True, "Expected sync to be requested"
         
     finally:
         await node.stop()

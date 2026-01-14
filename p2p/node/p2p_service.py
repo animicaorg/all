@@ -9442,11 +9442,11 @@ class P2PService:
                 ):
                     self._sync_kick(reason="peer_target_advance", aggressive=False)
                 
-                # Fix: If node is in SYNCED phase but is behind best peer or network height,
-                # force sync to resume. This handles the case where the node was marked SYNCED
+                # Fix: If node is in SYNCED or TARGET_REACHED phase but is behind best peer or network height,
+                # force sync to resume. This handles the case where the node was marked SYNCED/TARGET_REACHED
                 # based on stale target_height, but new blocks are now available.
                 if (
-                    self._sync_phase == "SYNCED"
+                    self._sync_phase in ("SYNCED", "TARGET_REACHED")
                     and target_height is not None
                     and best_block_height < target_height
                     and not self._sync_inflight_headers
@@ -9454,8 +9454,9 @@ class P2PService:
                 ):
                     gap = target_height - best_block_height
                     log.info(
-                        "Node in SYNCED phase but behind target - resuming sync",
+                        "Node at tip but behind target - resuming sync",
                         extra={
+                            "phase": self._sync_phase,
                             "local_height": best_block_height,
                             "target_height": target_height,
                             "gap": gap,
@@ -9464,7 +9465,7 @@ class P2PService:
                     )
                     # Change phase to trigger sync resumption
                     self._sync_phase = "SYNCING"
-                    self._sync_kick(reason="synced_but_behind", aggressive=True)
+                    self._sync_kick(reason="at_tip_but_behind", aggressive=True)
 
                 self._enforce_sync_invariants(
                     now=now,
