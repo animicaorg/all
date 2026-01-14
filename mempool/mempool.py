@@ -7,6 +7,13 @@ from typing import Dict, List, Optional, Callable
 
 from mempool.tx_hash import normalized_tx_bytes, tx_hash_bytes
 
+# Import cbor2 at module level for better performance
+try:
+    import cbor2
+    CBOR2_AVAILABLE = True
+except ImportError:
+    CBOR2_AVAILABLE = False
+
 log = logging.getLogger(__name__)
 
 
@@ -105,9 +112,11 @@ class Mempool:
         Returns:
             Sender address bytes, or None if cannot extract
         """
+        if not CBOR2_AVAILABLE:
+            return None
+            
         try:
             # Try to decode CBOR transaction
-            import cbor2
             tx_obj = cbor2.loads(tx_bytes)
             
             # Handle different transaction envelope formats
