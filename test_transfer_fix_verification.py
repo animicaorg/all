@@ -10,6 +10,46 @@ This test verifies that:
 """
 
 import sys
+from dataclasses import dataclass
+
+
+# Common test infrastructure
+@dataclass
+class Account:
+    nonce: int = 0
+    balance: int = 0
+    code_hash: bytes = b"\x00" * 32
+
+
+class MockState:
+    def __init__(self):
+        self.accounts = {}
+    
+    def ensure_account(self, addr: bytes):
+        if addr not in self.accounts:
+            self.accounts[addr] = Account()
+    
+    def get_balance(self, addr: bytes) -> int:
+        if addr not in self.accounts:
+            return 0
+        return self.accounts[addr].balance
+    
+    def set_balance(self, addr: bytes, value: int):
+        self.ensure_account(addr)
+        self.accounts[addr].balance = value
+    
+    def get_nonce(self, addr: bytes) -> int:
+        if addr not in self.accounts:
+            return 0
+        return self.accounts[addr].nonce
+    
+    def set_nonce(self, addr: bytes, value: int):
+        self.ensure_account(addr)
+        self.accounts[addr].nonce = value
+    
+    def increment_nonce(self, addr: bytes):
+        self.ensure_account(addr)
+        self.accounts[addr].nonce += 1
 
 
 def test_normal_transfer():
@@ -18,51 +58,12 @@ def test_normal_transfer():
     print("TEST 1: Normal Transfer (Alice → Bob)")
     print("="*70)
     
-    # Import required modules
     try:
         from execution.runtime.transfers import apply_transfer
         from execution.runtime.env import BlockEnv, TxEnv
-        from dataclasses import dataclass
     except ImportError as e:
         print(f"SKIP: Missing dependencies: {e}")
         return True
-    
-    # Mock state
-    @dataclass
-    class Account:
-        nonce: int = 0
-        balance: int = 0
-        code_hash: bytes = b"\x00" * 32
-    
-    class MockState:
-        def __init__(self):
-            self.accounts = {}
-        
-        def ensure_account(self, addr: bytes):
-            if addr not in self.accounts:
-                self.accounts[addr] = Account()
-        
-        def get_balance(self, addr: bytes) -> int:
-            if addr not in self.accounts:
-                return 0
-            return self.accounts[addr].balance
-        
-        def set_balance(self, addr: bytes, value: int):
-            self.ensure_account(addr)
-            self.accounts[addr].balance = value
-        
-        def get_nonce(self, addr: bytes) -> int:
-            if addr not in self.accounts:
-                return 0
-            return self.accounts[addr].nonce
-        
-        def set_nonce(self, addr: bytes, value: int):
-            self.ensure_account(addr)
-            self.accounts[addr].nonce = value
-        
-        def increment_nonce(self, addr: bytes):
-            self.ensure_account(addr)
-            self.accounts[addr].nonce += 1
     
     state = MockState()
     
@@ -85,7 +86,6 @@ def test_normal_transfer():
     tx_env = TxEnv(
         sender=alice,
         chain_id=1,
-        
         gas_price=1,
     )
     
@@ -142,51 +142,12 @@ def test_self_send():
     print("TEST 2: Self-Send (Alice → Alice)")
     print("="*70)
     
-    # Import required modules
     try:
         from execution.runtime.transfers import apply_transfer
         from execution.runtime.env import BlockEnv, TxEnv
-        from dataclasses import dataclass
     except ImportError as e:
         print(f"SKIP: Missing dependencies: {e}")
         return True
-    
-    # Mock state (same as above)
-    @dataclass
-    class Account:
-        nonce: int = 0
-        balance: int = 0
-        code_hash: bytes = b"\x00" * 32
-    
-    class MockState:
-        def __init__(self):
-            self.accounts = {}
-        
-        def ensure_account(self, addr: bytes):
-            if addr not in self.accounts:
-                self.accounts[addr] = Account()
-        
-        def get_balance(self, addr: bytes) -> int:
-            if addr not in self.accounts:
-                return 0
-            return self.accounts[addr].balance
-        
-        def set_balance(self, addr: bytes, value: int):
-            self.ensure_account(addr)
-            self.accounts[addr].balance = value
-        
-        def get_nonce(self, addr: bytes) -> int:
-            if addr not in self.accounts:
-                return 0
-            return self.accounts[addr].nonce
-        
-        def set_nonce(self, addr: bytes, value: int):
-            self.ensure_account(addr)
-            self.accounts[addr].nonce = value
-        
-        def increment_nonce(self, addr: bytes):
-            self.ensure_account(addr)
-            self.accounts[addr].nonce += 1
     
     state = MockState()
     
@@ -208,7 +169,6 @@ def test_self_send():
     tx_env = TxEnv(
         sender=alice,
         chain_id=1,
-        
         gas_price=1,
     )
     
