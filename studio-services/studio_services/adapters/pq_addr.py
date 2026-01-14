@@ -11,9 +11,9 @@ internal, standards-compliant bech32m decoder (BIP-350).
 Addresses are bech32m-encoded with HRP "anim" (mainnet) and variants
 (e.g., "animt" testnet, "animd" devnet). The payload is:
 
-    payload = alg_id (1 byte) || sha3_256(pubkey) (32 bytes)
+    payload = alg_id (2 bytes, big-endian) || sha3_256(pubkey) (32 bytes)
 
-so 33 bytes total prior to bech32m 5-bit conversion and checksum.
+so 34 bytes total prior to bech32m 5-bit conversion and checksum.
 
 Public helpers:
 - `is_valid_address(addr: str, *, hrp: str | None = None) -> bool`
@@ -232,20 +232,24 @@ def parse_address(addr: str) -> ParsedAddress:
                 # heuristic: pq impl may already strip; only strip when checksum verified above on full data
                 pass
             raw = _convertbits(data, 5, 8, False)
-            if len(raw) != 33:
+            if len(raw) != 34:
                 raise ValueError(
-                    "address payload must be 33 bytes (alg_id + sha3-256 digest)"
+                    "address payload must be 34 bytes (2-byte alg_id + 32-byte sha3-256 digest)"
                 )
-            return ParsedAddress(hrp=hrp, alg_id=raw[0], digest=raw[1:])
+            # Decode 2-byte big-endian alg_id
+            alg_id = int.from_bytes(raw[0:2], 'big')
+            return ParsedAddress(hrp=hrp, alg_id=alg_id, digest=raw[2:])
         except Exception as e:
             raise ValueError(f"invalid address: {e}") from e
 
     # Internal bech32m path
     hrp, data5 = _bech32_decode(addr)
     raw = _convertbits(data5, 5, 8, False)
-    if len(raw) != 33:
-        raise ValueError("address payload must be 33 bytes (alg_id + sha3-256 digest)")
-    return ParsedAddress(hrp=hrp, alg_id=raw[0], digest=raw[1:])
+    if len(raw) != 34:
+        raise ValueError("address payload must be 34 bytes (2-byte alg_id + 32-byte sha3-256 digest)")
+    # Decode 2-byte big-endian alg_id
+    alg_id = int.from_bytes(raw[0:2], 'big')
+    return ParsedAddress(hrp=hrp, alg_id=alg_id, digest=raw[2:])
 
 
 def is_valid_address(addr: str, *, hrp: Optional[str] = None) -> bool:

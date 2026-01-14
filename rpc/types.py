@@ -4,7 +4,7 @@ Animica RPC type helpers.
 - Lightweight "newtypes" for Hex strings, Hash (32-byte) hex strings, and bech32m Addresses.
 - Strict hex parsing/formatting helpers (0x-prefixed, even-length).
 - Bech32m encode/decode for addresses using the payload layout:
-      payload = alg_id(1 byte) || sha3_256(pubkey)(32 bytes)
+      payload = alg_id(2 bytes, big-endian) || sha3_256(pubkey)(32 bytes)
   The human-readable-part (hrp) is network-specific (e.g., "anim").
 - Zero business logic: this module does *not* reach into the DB; it only validates/normalizes.
 
@@ -154,7 +154,9 @@ class AddressParts:
 
 
 def _payload_from_parts(parts: AddressParts) -> bytes:
-    return bytes([parts.alg_id]) + bytes(parts.pubkey_hash)
+    # Encode alg_id as 2-byte big-endian
+    alg_id_bytes = parts.alg_id.to_bytes(2, 'big') if isinstance(parts.alg_id, int) else bytes([parts.alg_id, 0])
+    return alg_id_bytes + bytes(parts.pubkey_hash)
 
 
 def _is_bech32m(enc: object) -> bool:
@@ -165,9 +167,11 @@ def _is_bech32m(enc: object) -> bool:
 
 
 def _parts_from_payload(hrp: str, payload: bytes) -> AddressParts:
-    if len(payload) != 33:
-        raise ValueError("address payload must be 33 bytes (1 alg_id + 32 pubkey_hash)")
-    return AddressParts(hrp=hrp, alg_id=payload[0], pubkey_hash=payload[1:33])
+    if len(payload) != 34:
+        raise ValueError("address payload must be 34 bytes (2 alg_id + 32 pubkey_hash)")
+    # Decode 2-byte big-endian alg_id
+    alg_id = int.from_bytes(payload[0:2], 'big')
+    return AddressParts(hrp=hrp, alg_id=alg_id, pubkey_hash=payload[2:34])
 
 
 def encode_address(parts: AddressParts) -> Address:
