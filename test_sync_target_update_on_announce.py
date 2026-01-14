@@ -10,7 +10,7 @@ because announced blocks are deferred due to exceeding the stale target height.
 
 def test_sync_target_updates_on_announce():
     """
-    Test that _sync_target_height is updated when a higher block is announced.
+    Test that `_sync_target_height` is updated when a higher block is announced.
     
     Scenario:
     1. Node syncs to height 100 (_sync_target_height = 100)
@@ -35,7 +35,7 @@ def test_sync_target_updates_on_announce():
 
 def test_sync_target_not_decreased():
     """
-    Test that _sync_target_height is not decreased by lower announcements.
+    Test that `_sync_target_height` is not decreased by lower announcements.
     
     This ensures we don't regress when peers announce stale blocks.
     """
@@ -125,9 +125,7 @@ def test_continuous_syncing():
 
 
 def test_none_target_height_initialization():
-    """
-    Test that initial None target height is properly handled.
-    """
+    """Test that initial None target height is properly handled."""
     sync_target_height = None
     announced_height = 50
     
