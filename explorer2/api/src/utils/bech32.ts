@@ -43,3 +43,35 @@ export function addressToBech32(addressBytes: Buffer | Uint8Array): string {
     return `0x${Buffer.from(addressBytes).toString('hex')}`
   }
 }
+
+/**
+ * Convert hex address string to bech32m format.
+ * 
+ * @param hexAddress - Hex address string (0x... or without prefix)
+ * @returns Bech32m encoded address (anim1...) or original hex if conversion fails
+ */
+export function hexToBech32(hexAddress: string): string {
+  try {
+    // Remove 0x prefix if present
+    const hex = hexAddress.toLowerCase().replace(/^0x/, '')
+    
+    // Validate hex format
+    if (!/^[0-9a-f]*$/.test(hex)) {
+      // Not valid hex, return original
+      return hexAddress
+    }
+    
+    // Convert hex to bytes
+    const bytes = Buffer.from(hex, 'hex')
+    
+    // Use addressToBech32 for conversion
+    return addressToBech32(bytes)
+  } catch (err) {
+    // Log conversion failures for debugging
+    if (err instanceof Error) {
+      console.warn(`Failed to convert hex to bech32: ${err.message}`)
+    }
+    // Return original on error
+    return hexAddress
+  }
+}

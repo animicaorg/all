@@ -1,5 +1,5 @@
 import type { Address, BlockDetail, BlockSummary, HeadView, TxDetail, TxSummary } from '@animica/explorer2-shared'
-import { addressToBech32 } from './utils/bech32.js'
+import { addressToBech32, hexToBech32 } from './utils/bech32.js'
 import * as cbor from 'cbor'
 
 const HEX_PREFIX = /^0x/i
@@ -31,10 +31,33 @@ function toHex(value: Uint8Array): string {
 
 function normalizeAddress(value: unknown): Address | undefined {
   if (value === undefined || value === null) return undefined
-  if (typeof value === 'string') return value
-  if (typeof value === 'number') return `0x${value.toString(16)}`
-  if (typeof value === 'bigint') return `0x${value.toString(16)}`
-  if (value instanceof Uint8Array) return addressToBech32(value)
+  
+  // Handle string addresses - convert hex to bech32
+  if (typeof value === 'string') {
+    // Check if it's a hex address (0x... format)
+    if (HEX_PREFIX.test(value)) {
+      return hexToBech32(value)
+    }
+    // Already bech32 or other format, return as-is
+    return value
+  }
+  
+  // Convert numeric values to hex first, then to bech32
+  if (typeof value === 'number') {
+    const hex = `0x${value.toString(16)}`
+    return hexToBech32(hex)
+  }
+  
+  if (typeof value === 'bigint') {
+    const hex = `0x${value.toString(16)}`
+    return hexToBech32(hex)
+  }
+  
+  // Convert Uint8Array directly to bech32
+  if (value instanceof Uint8Array) {
+    return addressToBech32(value)
+  }
+  
   return undefined
 }
 
