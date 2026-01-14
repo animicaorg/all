@@ -1,5 +1,5 @@
 import type { Address, BlockDetail, BlockSummary, HeadView, TxDetail, TxSummary } from '@animica/explorer2-shared'
-import { bech32m } from 'bech32'
+import { addressToBech32 } from './utils/bech32.js'
 
 const HEX_PREFIX = /^0x/i
 
@@ -26,37 +26,6 @@ function toStringValue(value: unknown): string | undefined {
 
 function toHex(value: Uint8Array): string {
   return `0x${Buffer.from(value).toString('hex')}`
-}
-
-/**
- * Convert address bytes to bech32m format (anim1...).
- * If the address is 32 bytes (digest only), prepends default algorithm ID.
- * Returns hex format as fallback on error.
- */
-function addressToBech32(addressBytes: Uint8Array): string {
-  try {
-    const DEFAULT_ALG_ID = 1 // Dilithium3
-    const buffer = Buffer.from(addressBytes)
-    let payload: Buffer
-    
-    if (buffer.length === 32) {
-      // StateDB stores only 32-byte digest, prepend algorithm ID
-      const algId = Buffer.from([0x00, DEFAULT_ALG_ID]) // 2 bytes: big-endian alg_id
-      payload = Buffer.concat([algId, buffer])
-    } else if (buffer.length === 34) {
-      // Already has algorithm ID
-      payload = buffer
-    } else {
-      // Unexpected length, return hex
-      return toHex(addressBytes)
-    }
-    
-    const words = bech32m.toWords(payload)
-    return bech32m.encode('anim', words)
-  } catch {
-    // Fallback to hex on any error
-    return toHex(addressBytes)
-  }
 }
 
 function normalizeAddress(value: unknown): Address | undefined {
