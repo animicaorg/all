@@ -8561,12 +8561,19 @@ class P2PService:
                 
                 # If all peers are ineligible due to backoff, try clearing the backoff
                 # to allow retry - this prevents permanent stalls
+                # Only trigger this recovery if ALL peers have backoff-related reasons
+                backoff_related_reasons = {"backoff", "not_anchored", "block_backoff"}
                 if ineligible_peers and all(
-                    "backoff" in reason or "not_anchored" in reason
-                    for reason in ineligible_peers.values()
+                    reason in backoff_related_reasons for reason in ineligible_peers.values()
                 ):
-                    # Try to clear backoff for all peers to allow retries
-                    for backoff_reason in {"backoff", "not_anchored", "block_backoff"}:
+                    # Identify which specific backoff reasons are present
+                    reasons_to_clear = {
+                        reason for reason in backoff_related_reasons
+                        if any(reason in peer_reason for peer_reason in ineligible_peers.values())
+                    }
+                    
+                    # Try to clear backoff for the specific reasons present
+                    for backoff_reason in reasons_to_clear:
                         cleared = self._clear_sync_backoff_reason(backoff_reason)
                         if cleared:
                             log.info(
@@ -8585,9 +8592,13 @@ class P2PService:
                         )
                     
                     # Retry peer selection after clearing backoff
+                    # Temporarily relax anchor requirement during recovery to allow progress
+                    # This is safe because: (1) only triggered when ALL peers are backed off,
+                    # indicating a systemic issue not malicious peers, (2) anchor validation
+                    # still occurs during block import, (3) prevents permanent stall
                     peer = self._select_block_peer(
                         needed_height=next_block_height,
-                        require_anchored=False,  # Relax anchor requirement on retry
+                        require_anchored=False,  # Relax during recovery
                     )
                     if peer and peer.hello_done.is_set():
                         log.info(
