@@ -1368,21 +1368,43 @@ class BlockImporter:
             # If it does, rewards were already applied via transaction execution
             # If it doesn't, we need to apply rewards separately
             # Note: Using getattr for robustness in case tx.unsigned or kind attribute is missing
-            has_coinbase_tx = any(
-                getattr(getattr(tx, "unsigned", None), "kind", None) == TxKind.COINBASE
-                for tx in block.txs
-            )
+            # Check both enum and integer value (3) for maximum compatibility
+            def is_coinbase_tx(tx) -> bool:
+                unsigned = getattr(tx, "unsigned", None)
+                if unsigned is None:
+                    return False
+                kind = getattr(unsigned, "kind", None)
+                if kind is None:
+                    return False
+                # Compare both as enum and as integer (TxKind.COINBASE = 3)
+                return kind == TxKind.COINBASE or kind == 3 or int(kind) == 3
+            
+            has_coinbase_tx = any(is_coinbase_tx(tx) for tx in block.txs)
             
             if has_coinbase_tx:
                 # Block contains coinbase transactions - rewards already applied via tx execution
                 # Skip _apply_block_reward to prevent double-crediting
-                log.debug(
-                    "state: block contains coinbase transactions; skipping separate reward application",
-                    extra={"height": getattr(block.header, "height", None)},
+                coinbase_count = sum(1 for tx in block.txs if is_coinbase_tx(tx))
+                log.info(
+                    "state: block contains %d coinbase transaction(s); skipping separate reward application",
+                    coinbase_count,
+                    extra={
+                        "height": getattr(block.header, "height", None),
+                        "coinbase_count": coinbase_count,
+                        "total_txs": len(block.txs),
+                    },
                 )
             else:
                 # Block does not contain coinbase transactions - apply rewards separately
                 # This ensures rewards are included in state snapshots and survive rebuilds
+                log.warning(
+                    "state: block does NOT contain coinbase transactions; applying rewards separately",
+                    extra={
+                        "height": getattr(block.header, "height", None),
+                        "total_txs": len(block.txs),
+                        "tx_kinds": [getattr(getattr(tx, "unsigned", None), "kind", "unknown") for tx in block.txs[:5]],
+                    },
+                )
                 try:
                     self._apply_block_reward(block)
                 except Exception as reward_exc:
@@ -1423,6 +1445,31 @@ class BlockImporter:
             Exception: If reward computation or application fails
         """
         if self.state_db is None:
+            return
+        
+        # CRITICAL SAFETY CHECK: Never apply rewards if block already contains coinbase transactions
+        # Coinbase transactions already applied rewards during transaction execution
+        # This is a defense-in-depth check that should never be needed (caller should check)
+        # but protects against bugs in the caller or serialization issues
+        def is_coinbase(tx) -> bool:
+            unsigned = getattr(tx, "unsigned", None)
+            if unsigned is None:
+                return False
+            kind = getattr(unsigned, "kind", None)
+            if kind is None:
+                return False
+            return kind == TxKind.COINBASE or kind == 3 or int(kind) == 3
+        
+        if any(is_coinbase(tx) for tx in block.txs):
+            log.error(
+                "CRITICAL: _apply_block_reward called for block WITH coinbase transactions! "
+                "This would cause double-rewarding. Skipping to prevent balance corruption.",
+                extra={
+                    "height": getattr(block.header, "height", None),
+                    "coinbase_count": sum(1 for tx in block.txs if is_coinbase(tx)),
+                    "total_txs": len(block.txs),
+                },
+            )
             return
         
         try:
