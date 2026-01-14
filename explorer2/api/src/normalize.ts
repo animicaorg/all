@@ -44,8 +44,16 @@ function getHeader(block: any): any {
 }
 
 /**
+ * Expected structure of the CBOR-encoded extra field in block headers.
+ */
+interface CborExtra {
+  coinbase?: Uint8Array | Buffer
+  instant_block?: boolean
+}
+
+/**
  * Extract miner address from block header's extra field.
- * The extra field is CBOR-encoded and may contain {coinbase: bytes, ...}
+ * The extra field is CBOR-encoded and may contain {coinbase: bytes, instant_block: bool}
  */
 function extractMinerFromExtra(header: any): Address | undefined {
   try {
@@ -70,7 +78,7 @@ function extractMinerFromExtra(header: any): Address | undefined {
     if (extraBuffer.length === 0) return undefined
     
     // Decode CBOR
-    const decoded = cbor.decode(extraBuffer) as any
+    const decoded = cbor.decode(extraBuffer) as CborExtra
     if (decoded && decoded.coinbase) {
       // Coinbase is the miner address
       return normalizeAddress(decoded.coinbase)
@@ -78,7 +86,9 @@ function extractMinerFromExtra(header: any): Address | undefined {
     
     return undefined
   } catch (error) {
-    // Silently fail if extra field cannot be decoded
+    // Gracefully handle CBOR decoding errors to prevent API crashes
+    // In production, this could be logged for debugging if needed
+    // console.error('[normalize] Failed to decode extra field:', error)
     return undefined
   }
 }
