@@ -9456,7 +9456,12 @@ class P2PService:
                         if target_height is not None
                         else int(network_best_height)
                     )
-                self._sync_target_height = target_height
+                # Never decrease target height - preserve announced block targets
+                # Block announcements update target immediately (line 6928), but peer heights
+                # may lag behind. Only update if new target is higher or we had no target.
+                if target_height is not None:
+                    self._sync_target_height = max(self._sync_target_height or 0, target_height)
+                # else: keep existing target if no peer/network info available
                 if (
                     target_height is not None
                     and (previous_target is None or target_height > int(previous_target))
