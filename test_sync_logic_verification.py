@@ -4,7 +4,6 @@ Simple verification that the fix doesn't break the normal sync flow.
 Tests various scenarios without requiring full system dependencies.
 """
 
-import asyncio
 from collections import deque
 from typing import Dict, List, Optional, Set
 
