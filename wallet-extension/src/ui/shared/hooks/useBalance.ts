@@ -28,7 +28,7 @@ export type UseBalanceState = {
 };
 
 /** Format bigint in chain units into decimal string with given decimals. */
-function formatUnits(value: bigint, decimals = 18): string {
+function formatUnits(value: bigint, decimals = 9): string {
   const neg = value < 0n;
   const v = neg ? -value : value;
 
@@ -49,7 +49,7 @@ function formatUnits(value: bigint, decimals = 18): string {
  *     - balance via `animica_getBalance` with params [address, "latest"]
  * - Re-fetches when: address/chain changes, or on each `newHeads` event.
  */
-export function useBalance(address: string | undefined, decimals = 18): UseBalanceState {
+export function useBalance(address: string | undefined, decimals = 9): UseBalanceState {
   const [value, setValue] = useState<bigint | null>(null);
   const [loading, setLoading] = useState<boolean>(!!address);
   const [error, setError] = useState<string | null>(null);

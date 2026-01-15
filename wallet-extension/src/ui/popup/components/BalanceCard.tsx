@@ -15,7 +15,7 @@ function shortAddr(addr: string) {
   return `${addr.slice(0, 6)}…${addr.slice(-6)}`;
 }
 
-function formatAmount(amount: bigint | number, decimals = 18, maxFrac = 6) {
+function formatAmount(amount: bigint | number, decimals = 9, maxFrac = 6) {
   try {
     const n = typeof amount === "number" ? BigInt(Math.trunc(amount)) : amount;
     const neg = n < 0n;
@@ -67,7 +67,7 @@ export default function BalanceCard({ address: addressOverride, compact }: Props
           ) : (
             <>
               <span className="ami-balance-value">
-                {formatAmount(balance ?? 0n, decimals ?? 18)}
+                {formatAmount(balance ?? 0n, decimals ?? 9)}
               </span>
               <span className="ami-balance-symbol">{symbol || "ANIM"}</span>
             </>
