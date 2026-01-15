@@ -9085,22 +9085,38 @@ class P2PService:
                     and not probe_headers
                 ):
                     network_best_height = self._network_best_height()
-                    if (
-                        network_best_height is not None
-                        and int(network_best_height) > int(local_height or 0)
-                    ):
+                    target_height = self._sync_target_height
+                    
+                    # Check if we should continue syncing based on network_best or target_height
+                    should_continue_sync = False
+                    continue_reason = ""
+                    
+                    if network_best_height is not None and int(network_best_height) > int(local_height or 0):
+                        should_continue_sync = True
+                        continue_reason = "network_best_height"
+                    elif target_height is not None and int(target_height) > int(local_height or 0):
+                        should_continue_sync = True
+                        continue_reason = "target_height"
+                    
+                    if should_continue_sync:
                         log.info(
-                            "Local head behind network; continuing header sync (multi-hop height propagation)",
+                            "Local head behind target; continuing header sync even though peer height <= local",
                             extra={
                                 "remote": peer.remote,
                                 "local_height": local_height,
                                 "remote_height": remote_height,
                                 "network_best_height": network_best_height,
-                                "height_gap": int(network_best_height) - int(local_height or 0),
+                                "target_height": target_height,
+                                "continue_reason": continue_reason,
+                                "height_gap": max(
+                                    int(network_best_height or 0) - int(local_height or 0),
+                                    int(target_height or 0) - int(local_height or 0),
+                                ),
                             },
                         )
                         # Continue syncing - don't stop here even if peer's own height is lower
                         # This allows us to find the higher height through peer-of-peer connections
+                        # or to sync to the announced target_height
                     else:
                         # Check if we still have pending block downloads before marking as synced
                         best_header_height = (
