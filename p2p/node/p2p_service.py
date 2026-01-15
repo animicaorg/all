@@ -480,7 +480,8 @@ class SyncStatusSnapshot:
     block_error_summary: Dict[str, dict[str, Any]]
     next_block_needed_height: Optional[int]
     next_block_needed_hash: Optional[str]
-    orphan_pool_size: int  # Number of blocks in orphan buffer waiting for parents
+    orphan_pool_size: int
+    """Number of blocks in orphan buffer waiting for parents."""
     stall_timeout_s: float
     stall_reason: Optional[str]
     stall_elapsed_s: float
@@ -7356,9 +7357,9 @@ class P2PService:
                 parent_available = (
                     is_genesis_child
                     or self._has_block(hdr.parent_hash)
-                    or hdr.parent_hash in self._sync_block_queue_set
-                    or hdr.parent_hash in self._sync_inflight_blocks
-                    or hdr.parent_hash in self._sync_block_buffer
+                    or (hdr.parent_hash in self._sync_block_queue_set)
+                    or (hdr.parent_hash in self._sync_inflight_blocks)
+                    or (hdr.parent_hash in self._sync_block_buffer)
                 )
                 
                 if not parent_available:

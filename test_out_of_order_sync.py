@@ -32,8 +32,8 @@ class TestOutOfOrderBlockSync:
     def __init__(self):
         self.imported_blocks = []
         self.genesis_hash = b"\x00" * 32
-        self.blocks_db = {self.genesis_hash: True}  # Genesis is always available
-        self.headers_db = {self.genesis_hash: True}
+        self.blocks_db = {self.genesis_hash}  # Use set for membership checking
+        self.headers_db = {self.genesis_hash}
         self.current_height = 0
         
     def has_block(self, block_hash: bytes) -> bool:
@@ -49,16 +49,20 @@ class TestOutOfOrderBlockSync:
         Mock block import that checks parent availability.
         Returns (success, reason).
         """
+        # Special case for height 1 with genesis parent at genesis height
+        if height == 1 and parent_hash == self.genesis_hash and self.current_height == 0:
+            # Genesis is always available as parent for height 1
+            self.blocks_db.add(block_hash)
+            self.imported_blocks.append(height)
+            self.current_height = max(self.current_height, height)
+            return True, None
+        
+        # General case: parent must be available
         if not self.has_block(parent_hash):
-            # Special case for height 1 with genesis parent
-            if height == 1 and parent_hash == self.genesis_hash and self.current_height == 0:
-                # Genesis is always available as parent for height 1
-                pass
-            else:
-                return False, "missing parent"
+            return False, "missing parent"
         
         # Import succeeds
-        self.blocks_db[block_hash] = True
+        self.blocks_db.add(block_hash)
         self.imported_blocks.append(height)
         self.current_height = max(self.current_height, height)
         return True, None
@@ -98,7 +102,7 @@ class TestOutOfOrderBlockSync:
                 parent_hash=prev_hash
             )
             headers.append(header)
-            self.headers_db[header.hash] = True
+            self.headers_db.add(header.hash)
             service._sync_headers[header.hash] = header
         
         print(f"Created {len(headers)} headers (heights 1-5)")
