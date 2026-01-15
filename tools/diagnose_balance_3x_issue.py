@@ -48,8 +48,12 @@ def hex_to_anm(hex_value: str) -> float:
 
 
 def detect_inflation(balance_nANM: int) -> tuple:
-    """Detect if balance is inflated."""
-    BLOCK_REWARD = 5_000_000_000  # 5 ANM per block
+    """Detect if balance is inflated.
+    
+    Note: This assumes a block reward of 5 ANM (5,000,000,000 nANM) which is
+    the default for Animica mainnet. Different networks may use different rewards.
+    """
+    BLOCK_REWARD = 5_000_000_000  # 5 ANM per block (mainnet default)
     
     if balance_nANM == 0:
         return None, "Zero balance"
@@ -59,7 +63,12 @@ def detect_inflation(balance_nANM: int) -> tuple:
     
     blocks = balance_nANM // BLOCK_REWARD
     
-    if blocks < 10_000:
+    # Threshold for inflation detection: 10,000 blocks (~50,000 ANM)
+    # Balances above this that are divisible by small factors (2-10) are flagged.
+    # This threshold assumes early-stage chains; adjust for mature networks.
+    INFLATION_THRESHOLD_BLOCKS = 10_000
+    
+    if blocks < INFLATION_THRESHOLD_BLOCKS:
         return None, f"Normal (~{blocks} blocks mined)"
     
     # Check for inflation factors 2-10
