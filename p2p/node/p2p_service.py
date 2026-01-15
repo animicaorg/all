@@ -9590,6 +9590,34 @@ class P2PService:
                                 "Cleared peer backoffs to force sync resume",
                                 extra={"cleared_peers": cleared_backoff},
                             )
+                        
+                        # CRITICAL FIX: Mark all eligible peers as anchored to bypass checkpoint deadlock
+                        # If checkpoint enforcement is preventing header requests from all peers,
+                        # we need to temporarily trust at least one peer to bootstrap sync
+                        if self._should_enforce_checkpoint_anchor():
+                            anchored_count = sum(1 for p in self._peers.values() if p.anchored)
+                            if anchored_count == 0:
+                                log.warning(
+                                    "No anchored peers during stall recovery - marking eligible peers as anchored",
+                                    extra={
+                                        "peers": len(self._peers),
+                                        "checkpoint_mode": self._sync_checkpoint_mode_enabled,
+                                    },
+                                )
+                                # Mark up to 3 eligible peers as anchored to allow sync to proceed
+                                marked = 0
+                                for peer in self._peers.values():
+                                    if peer.hello_done.is_set() and peer.ready_for_sync:
+                                        self._mark_peer_anchored(peer, reason="stall_recovery_bypass")
+                                        marked += 1
+                                        if marked >= 3:
+                                            break
+                                if marked > 0:
+                                    log.info(
+                                        "Marked peers as anchored for stall recovery",
+                                        extra={"marked_peers": marked},
+                                    )
+                        
                         # Trigger aggressive peer rotation
                         self._sync_kick(reason="headers_blocks_equal_behind_network", aggressive=True)
                 
