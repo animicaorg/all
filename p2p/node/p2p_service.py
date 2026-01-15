@@ -86,6 +86,12 @@ EXTENDED_STALL_SNAPSHOT_TRIGGER_SEC: float = 30.0  # Reduced from 90.0 to 30.0 f
 EXTENDED_STALL_WATCHDOG_MULTIPLIER: float = 1.5  # Multiplier for watchdog timeout to determine extended stall
 PERIODIC_HEALTH_CHECK_INTERVAL_SEC: float = 30.0  # Interval for periodic sync health check when idle at tip
 
+# Fork detection and recovery constants
+FORK_DETECTION_GAP_THRESHOLD: int = 100  # Blocks: if matched ancestor gap > this, consider it a fork
+FORK_RECOVERY_GAP_THRESHOLD: int = 50  # Blocks: if gap > this in watchdog, trigger recovery
+STALE_ANCHOR_TIMEOUT_SEC: float = 30.0  # Seconds: clear "headers_duplicate" anchor after this time
+INFLIGHT_RECENT_RESPONSE_SEC: float = 5.0  # Seconds: consider response recent if within this time
+
 # Predictive stall detection constants
 PREDICTIVE_STALL_CHECK_INTERVAL_SEC: float = 10.0  # Check for slow progress every 10 seconds
 PREDICTIVE_STALL_MIN_SYNC_RATE: float = 0.1  # Minimum acceptable sync rate (blocks/sec) - less triggers warning
@@ -9102,12 +9108,12 @@ class P2PService:
                     self._sync_inflight_headers
                     and self._sync_last_headers_accepted_count == 0
                     and self._sync_last_header_response_at > 0
-                    and time.time() - self._sync_last_header_response_at < 5.0  # Recent response
+                    and time.time() - self._sync_last_header_response_at < INFLIGHT_RECENT_RESPONSE_SEC
                 ):
                     network_best = self._network_best_height()
                     gap = (network_best or 0) - int(local_height or 0)
                     
-                    if gap > 50:  # Significantly behind
+                    if gap > FORK_RECOVERY_GAP_THRESHOLD:  # Significantly behind
                         log.warning(
                             "DEFENSIVE: In-flight headers but accepting nothing while behind network",
                             extra={
@@ -9130,7 +9136,7 @@ class P2PService:
                         if (
                             self._sync_last_matched_ancestor_height is not None
                             and self._sync_last_matched_ancestor_height < local_height
-                            and gap > 100
+                            and gap > FORK_DETECTION_GAP_THRESHOLD
                         ):
                             log.warning(
                                 "DEFENSIVE: Resetting to matched ancestor to resolve fork",
@@ -9384,7 +9390,7 @@ class P2PService:
                         gap = (network_best or 0) - int(local_height or 0)
                         
                         # If we're significantly behind network but getting duplicates, force aggressive recovery
-                        if gap > 100 and duplicate_count >= 1:
+                        if gap > FORK_DETECTION_GAP_THRESHOLD and duplicate_count >= 1:
                             log.warning(
                                 "Stuck on duplicates while behind network - forcing recovery",
                                 extra={
@@ -9846,7 +9852,7 @@ class P2PService:
                             if (
                                 peer.anchored
                                 and peer.anchor_reason == "headers_duplicate"
-                                and now - peer.last_anchor_at > 30.0  # Stale after 30 seconds
+                                and now - peer.last_anchor_at > STALE_ANCHOR_TIMEOUT_SEC
                             ):
                                 log.info(
                                     "Clearing stale headers_duplicate anchor status",

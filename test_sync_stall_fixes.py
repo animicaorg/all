@@ -52,9 +52,10 @@ def check_constants_used(filepath):
     print(f"\nChecking defensive timeout constants...")
     
     checks = [
-        ("gap > 100", "Fork detection threshold"),
-        ("gap > 50", "In-flight watchdog threshold"),
-        ("> 30.0", "Stale anchor timeout"),
+        ("FORK_DETECTION_GAP_THRESHOLD", "Fork detection threshold constant"),
+        ("FORK_RECOVERY_GAP_THRESHOLD", "Fork recovery threshold constant"),
+        ("STALE_ANCHOR_TIMEOUT_SEC", "Stale anchor timeout constant"),
+        ("INFLIGHT_RECENT_RESPONSE_SEC", "In-flight recent response constant"),
     ]
     
     with open(filepath, 'r') as f:
@@ -71,7 +72,9 @@ def check_constants_used(filepath):
     return found_all
 
 def main():
-    filepath = "/home/runner/work/all/all/p2p/node/p2p_service.py"
+    # Use relative path from script location
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    filepath = os.path.join(script_dir, "p2p", "node", "p2p_service.py")
     
     if not os.path.exists(filepath):
         print(f"Error: {filepath} not found")
