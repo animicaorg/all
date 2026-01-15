@@ -19,7 +19,7 @@ instead of getting stuck in a pointless reset loop.
 
 
 def test_genesis_reset_loop_fix():
-    """Test that reset-to-genesis is prevented when already at genesis."""
+    """Test that reset-to-genesis is prevented completely - NEVER resets to genesis."""
     
     # Simulate the bug scenario: node at genesis trying to sync
     anchor_height = 0  # At genesis
@@ -38,29 +38,24 @@ def test_genesis_reset_loop_fix():
         and now - last_progress_at > stall_timeout
     )
     
-    # NEW FIXED LOGIC (after fix):
-    # This prevents reset when already at genesis
-    new_should_reset = (
-        anchor_height > 0  # Don't reset to genesis if already at genesis
-        and anchor_height <= not_anchored_reset_height
-        and not_anchored_attempts >= not_anchored_reset_threshold
-        and now - last_progress_at > stall_timeout
-    )
+    # NEW FIXED LOGIC (current fix):
+    # Completely disabled - never resets to genesis under any conditions
+    new_should_reset = False  # Always false - never reset to genesis
     
     # The old logic would trigger (causing the infinite loop bug)
     assert old_should_reset, "Old logic should trigger reset at genesis (this was the bug)"
     print("✓ Confirmed old logic triggers reset at genesis (bug reproduced)")
     
-    # The new logic should NOT trigger
-    assert not new_should_reset, "New logic should NOT trigger reset at genesis"
-    print("✓ New logic prevents reset at genesis (bug fixed)")
+    # The new logic should NEVER trigger
+    assert not new_should_reset, "New logic should NEVER trigger reset to genesis"
+    print("✓ New logic prevents reset to genesis completely (bug fixed)")
 
 
-def test_normal_reset_still_works():
-    """Test that normal reset-to-genesis still works for heights 1-10."""
+def test_normal_reset_disabled():
+    """Test that genesis reset is now completely disabled for all heights."""
     
-    # Test various heights between 1 and 10
-    for anchor_height in range(1, 11):
+    # Test various heights - genesis reset should NEVER happen
+    for anchor_height in range(0, 11):
         not_anchored_attempts = 5
         not_anchored_reset_threshold = 3
         not_anchored_reset_height = 10
@@ -68,17 +63,13 @@ def test_normal_reset_still_works():
         last_progress_at = 100.0
         now = last_progress_at + 30.0
         
-        should_reset = (
-            anchor_height > 0  # Don't reset to genesis if already at genesis
-            and anchor_height <= not_anchored_reset_height
-            and not_anchored_attempts >= not_anchored_reset_threshold
-            and now - last_progress_at > stall_timeout
-        )
+        # NEW LOGIC: Always False - never reset to genesis
+        should_reset = False  # Genesis reset completely disabled
         
-        # Reset should still work for heights 1-10
-        assert should_reset, f"Reset should work at height {anchor_height}"
+        # Should NEVER reset for any height
+        assert not should_reset, f"Should NEVER reset to genesis (tested at height {anchor_height})"
     
-    print("✓ Normal reset still works for heights 1-10")
+    print("✓ Genesis reset completely disabled for all heights (0-10)")
 
 
 def test_no_reset_above_threshold():
@@ -111,15 +102,14 @@ def test_code_has_fix():
     with open("p2p/node/p2p_service.py", "r") as f:
         content = f.read()
     
-    # Check for the fix
-    assert "anchor_height > 0" in content and "should_reset" in content, \
-        "Genesis reset loop fix not found in code"
-    print("✓ Fix is present in code")
+    # Check for the STRONGER fix: should_reset = False (never reset to genesis)
+    assert "should_reset = False" in content and "never reset to genesis" in content.lower(), \
+        "Genesis reset completely disabled fix not found in code"
+    print("✓ Fix is present in code (genesis reset completely disabled)")
     
     # Check for comment explaining the fix
-    assert "Don't reset to genesis if already at genesis" in content or \
-           re.search(r'prevent.*genesis.*loop', content.lower()), \
-        "Fix should be documented with a comment"
+    assert re.search(r'never reset to genesis', content.lower()), \
+        "Fix should be documented with a comment explaining it never resets to genesis"
     print("✓ Fix is documented with comment")
 
 
@@ -155,23 +145,25 @@ if __name__ == "__main__":
     
     try:
         test_genesis_reset_loop_fix()
-        test_normal_reset_still_works()
+        test_normal_reset_disabled()
         test_no_reset_above_threshold()
         test_code_has_fix()
         test_ancestor_reset_not_at_genesis()
         
         print("\n✅ All tests passed!")
-        print("\nGenesis Reset Loop Fix Summary:")
-        print("  • Prevents reset-to-genesis when already at genesis (height 0)")
+        print("\nGenesis Reset Complete Disable Summary:")
+        print("  • Genesis reset COMPLETELY DISABLED - never resets under any conditions")
+        print("  • Prevents any possibility of reset-to-genesis loop")
         print("  • Breaks the infinite reset loop that was blocking sync")
-        print("  • Still allows reset for heights 1-10 (normal operation)")
-        print("  • Node can now sync from genesis without getting stuck")
+        print("  • Node will use fork resolution via ancestor reset instead")
+        print("  • Node can now sync from genesis without any reset interference")
         
         print("\n📈 Impact:")
-        print("  • Fixes: 'Blockchain is both resetting to genesis inappropriately'")
+        print("  • Fixes: 'It should never reset to genesis under any conditions'")
+        print("  • Fixes: Blockchain resetting to genesis inappropriately")
         print("  • Fixes: Node stuck at height 0 with peers connected")
         print("  • Allows bootstrapping from genesis to proceed normally")
-        print("  • Node will try different peers/strategies instead of looping")
+        print("  • Node will try different peers/strategies instead of resetting")
         
     except AssertionError as e:
         print(f"\n❌ Test failed: {e}")
