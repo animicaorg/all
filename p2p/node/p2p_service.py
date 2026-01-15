@@ -12430,6 +12430,11 @@ class P2PService:
             and self._sync_last_matched_ancestor_height < anchor_height
         )
         
+        # NOTE: This code block is intentionally kept but will never execute
+        # since should_reset is hardcoded to False above. This preserves the
+        # logic structure in case emergency manual genesis reset is needed via
+        # direct method call (e.g., from RPC/CLI). The actual genesis reset
+        # mechanism is disabled to prevent automatic resets under any conditions.
         if should_reset and self._reset_chain_to_genesis(reason="not_anchored"):
             action = "reset_to_genesis"
             self._sync_last_checkpoint_action = "reset_to_genesis"
