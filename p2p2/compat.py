@@ -237,3 +237,53 @@ class P2PService:
         except Exception as e:
             logger.error(f"Failed to disconnect peer {peer_id}: {e}")
             return False
+    
+    def peer_count(self) -> int:
+        """Alias for get_peer_count for compatibility."""
+        return self.get_peer_count()
+    
+    def status(self) -> dict:
+        """Get P2P status for compatibility with RPC methods."""
+        return {
+            "running": self._running,
+            "peers_total": self.get_peer_count(),
+            "peers_inbound": 0,  # TODO: Track inbound/outbound separately
+            "peers_outbound": self.get_peer_count(),
+        }
+    
+    def status_snapshot(self) -> dict:
+        """Get status snapshot for compatibility."""
+        return self.status()
+    
+    @property
+    def peers(self) -> dict:
+        """Get peers dict for compatibility."""
+        peers_dict = {}
+        for peer in self.get_peers():
+            peer_id = peer.get("id", "unknown")
+            peers_dict[peer_id] = peer
+        return peers_dict
+    
+    def sync_debug_snapshot(self) -> dict:
+        """Get sync debug info for compatibility."""
+        if not self._running or not self._core_service:
+            return {"available": False}
+        
+        sync_mgr = self._core_service.sync_manager
+        return {
+            "available": True,
+            "sync_running": sync_mgr is not None,
+            # TODO: Add more sync details from P2P2
+        }
+    
+    async def debug_status(self) -> dict:
+        """Get debug status for compatibility."""
+        return {
+            "running": self._running,
+            "peer_count": self.get_peer_count(),
+            "peers": self.get_peers(),
+        }
+    
+    async def dial(self, address: str) -> bool:
+        """Dial a peer address (compatibility wrapper for connect_peer)."""
+        return await self.connect_peer(address)
