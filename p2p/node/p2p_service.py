@@ -86,6 +86,12 @@ EXTENDED_STALL_SNAPSHOT_TRIGGER_SEC: float = 30.0  # Reduced from 90.0 to 30.0 f
 EXTENDED_STALL_WATCHDOG_MULTIPLIER: float = 1.5  # Multiplier for watchdog timeout to determine extended stall
 PERIODIC_HEALTH_CHECK_INTERVAL_SEC: float = 30.0  # Interval for periodic sync health check when idle at tip
 
+# Fork detection and recovery constants
+FORK_DETECTION_GAP_THRESHOLD: int = 100  # Blocks: if matched ancestor gap > this, consider it a fork
+FORK_RECOVERY_GAP_THRESHOLD: int = 50  # Blocks: if gap > this in watchdog, trigger recovery
+STALE_ANCHOR_TIMEOUT_SEC: float = 30.0  # Seconds: clear "headers_duplicate" anchor after this time
+INFLIGHT_RECENT_RESPONSE_SEC: float = 5.0  # Seconds: consider response recent if within this time
+
 # Predictive stall detection constants
 PREDICTIVE_STALL_CHECK_INTERVAL_SEC: float = 10.0  # Check for slow progress every 10 seconds
 PREDICTIVE_STALL_MIN_SYNC_RATE: float = 0.1  # Minimum acceptable sync rate (blocks/sec) - less triggers warning
@@ -8524,6 +8530,24 @@ class P2PService:
             )
             return
         previous_height = self._sync_last_matched_ancestor_height
+        
+        # DEFENSIVE: Detect potential fork scenario
+        gap = head_height_int - height
+        if gap > 100:
+            network_best = self._network_best_height()
+            log.warning(
+                "Large gap between matched ancestor and local head - potential fork",
+                extra={
+                    "anchor_height": height,
+                    "anchor_hash": self._canon_hash0x(anchor_hash),
+                    "head_height": head_height_int,
+                    "gap": gap,
+                    "network_best": network_best,
+                    "network_ahead_by": (network_best or 0) - head_height_int,
+                    "source": source,
+                },
+            )
+        
         if (
             previous_height is not None
             and height < previous_height - self._sync_locator_backtrack_threshold
@@ -9077,6 +9101,59 @@ class P2PService:
                             # Skip header sync but continue with block downloads
                             return result
 
+                # DEFENSIVE CHECK: Detect if we're stuck with in-flight headers but not accepting any
+                # This handles the case where we have in_flight_headers > 0 but last_headers_accepted_count = 0
+                # which indicates we're receiving duplicate headers repeatedly
+                if (
+                    self._sync_inflight_headers
+                    and self._sync_last_headers_accepted_count == 0
+                    and self._sync_last_header_response_at > 0
+                    and time.time() - self._sync_last_header_response_at < INFLIGHT_RECENT_RESPONSE_SEC
+                ):
+                    network_best = self._network_best_height()
+                    gap = (network_best or 0) - int(local_height or 0)
+                    
+                    if gap > FORK_RECOVERY_GAP_THRESHOLD:  # Significantly behind
+                        log.warning(
+                            "DEFENSIVE: In-flight headers but accepting nothing while behind network",
+                            extra={
+                                "local_height": local_height,
+                                "network_best": network_best,
+                                "gap": gap,
+                                "in_flight_headers": len(self._sync_inflight_headers),
+                                "last_accepted": self._sync_last_headers_accepted_count,
+                                "matched_ancestor": self._sync_last_matched_ancestor_height,
+                            },
+                        )
+                        
+                        # Clear in-flight to allow retry
+                        self._sync_inflight_headers.clear()
+                        
+                        # Force peer rotation
+                        tried_peers.add(peer.remote)
+                        
+                        # If we have a matched ancestor that's behind our current head, reset to it
+                        if (
+                            self._sync_last_matched_ancestor_height is not None
+                            and self._sync_last_matched_ancestor_height < local_height
+                            and gap > FORK_DETECTION_GAP_THRESHOLD
+                        ):
+                            log.warning(
+                                "DEFENSIVE: Resetting to matched ancestor to resolve fork",
+                                extra={
+                                    "current_height": local_height,
+                                    "ancestor_height": self._sync_last_matched_ancestor_height,
+                                },
+                            )
+                            self._reset_chain_to_ancestor(
+                                height=self._sync_last_matched_ancestor_height,
+                                reason="inflight_no_accept_fork",
+                            )
+                            return result
+                        
+                        # Try next peer
+                        continue
+                
                 saw_headers = False
                 while True:
                     headers: Optional[List[HeaderCompact]] = None
@@ -9306,6 +9383,57 @@ class P2PService:
                         if not peer.anchored:
                             self._mark_peer_anchored(peer, reason="headers_duplicate")
                         duplicate_count = self._track_duplicate_header_range(peer, headers)
+                        
+                        # DEFENSIVE FIX: Check if we're stuck receiving duplicates despite being behind network
+                        network_best = self._network_best_height()
+                        local_height, _ = self._local_head()
+                        gap = (network_best or 0) - int(local_height or 0)
+                        
+                        # If we're significantly behind network but getting duplicates, force aggressive recovery
+                        if gap > FORK_DETECTION_GAP_THRESHOLD and duplicate_count >= 1:
+                            log.warning(
+                                "Stuck on duplicates while behind network - forcing recovery",
+                                extra={
+                                    "remote": peer.remote,
+                                    "local_height": local_height,
+                                    "network_best": network_best,
+                                    "gap": gap,
+                                    "duplicate_count": duplicate_count,
+                                    "matched_ancestor": self._sync_last_matched_ancestor_height,
+                                },
+                            )
+                            
+                            # Try to use matched ancestor as starting point if available
+                            if (
+                                self._sync_last_matched_ancestor_height is not None
+                                and self._sync_last_matched_ancestor_height < local_height
+                            ):
+                                # Reset to matched ancestor to force proper fork resolution
+                                log.warning(
+                                    "Resetting to matched ancestor to resolve potential fork",
+                                    extra={
+                                        "current_height": local_height,
+                                        "ancestor_height": self._sync_last_matched_ancestor_height,
+                                    },
+                                )
+                                self._reset_chain_to_ancestor(
+                                    height=self._sync_last_matched_ancestor_height,
+                                    reason="duplicate_headers_fork",
+                                )
+                                # Clear all peer states to force fresh sync
+                                self._sync_locator_depth_hint = 0
+                                self._sync_duplicate_header_ranges.clear()
+                                for p in self._peers.values():
+                                    p.anchored = False
+                                    p.anchor_reason = None
+                                self._sync_kick(reason="fork_recovery", aggressive=True)
+                                return
+                            else:
+                                # No matched ancestor or it's the same as current head - increase depth significantly
+                                self._sync_locator_depth_hint = min(
+                                    self._sync_locator_depth_hint + 32, 128
+                                )
+                        
                         if duplicate_count >= self._sync_duplicate_headers_threshold:
                             self._sync_locator_depth_hint = min(
                                 self._sync_locator_depth_hint + 8, 64
@@ -9716,6 +9844,26 @@ class P2PService:
                                         "Marked peers as anchored for stall recovery",
                                         extra={"marked_peers": marked},
                                     )
+                        
+                        # DEFENSIVE: Clear "headers_duplicate" anchored status if it's stale
+                        # This prevents permanent stalls when peers were anchored due to duplicates
+                        # but the situation has changed (e.g., fork was resolved)
+                        for peer in self._peers.values():
+                            if (
+                                peer.anchored
+                                and peer.anchor_reason == "headers_duplicate"
+                                and now - peer.last_anchor_at > STALE_ANCHOR_TIMEOUT_SEC
+                            ):
+                                log.info(
+                                    "Clearing stale headers_duplicate anchor status",
+                                    extra={
+                                        "remote": peer.remote,
+                                        "anchored_at": peer.last_anchor_at,
+                                        "age_s": now - peer.last_anchor_at,
+                                    },
+                                )
+                                peer.anchored = False
+                                peer.anchor_reason = None
                         
                         # Trigger aggressive peer rotation
                         self._sync_kick(reason="headers_blocks_equal_behind_network", aggressive=True)
