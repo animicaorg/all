@@ -8,7 +8,6 @@ This test validates:
 3. Block backoff clearing as well
 4. Checkpoint anchor deadlock bypass by marking peers as anchored during recovery
 """
-import os
 import sys
 
 
