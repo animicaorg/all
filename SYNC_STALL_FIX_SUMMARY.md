@@ -1,206 +1,189 @@
 # Sync Stall Fix - Implementation Summary
 
-## Problem Statement
+## Problem Analysis
 
-Nodes experiencing sync stalls where they get stuck alternating between `SYNCING_HEADERS` and `SYNCING_BLOCKS` states without making progress.
+From the node status output, the sync was stuck with the following symptoms:
+- Local head: height 11169
+- Network best: height 11780+ (611 blocks behind)
+- Matched ancestor: height 11033 (136 blocks behind local head)
+- Phase: HEADERS (stuck in header sync)
+- `in_flight_headers: 1` (request pending)
+- `last_headers_accepted_count: 0` (no headers being accepted)
+- `last_header_response_count: 512` (receiving headers but rejecting them)
+- One peer anchored with reason: `headers_duplicate`
 
-### Observed Symptoms
-```
-Height:    6495
-Status:    SYNCING_BLOCKS
-Headers:   6906 | Blocks: 6495
+### Root Cause
 
-(After force sync command)
+The node was stuck in a fork scenario where:
+1. Local chain diverged from network chain around height 11033
+2. Node continued to height 11169 on wrong fork
+3. Network progressed to 11780+ on correct fork
+4. When requesting headers, peers return headers from the correct chain
+5. Node rejects these as "not anchored" or finds them to be duplicates
+6. Peer gets marked as "anchored" with `headers_duplicate` reason
+7. Sync continues requesting from same locator position, getting same duplicates
+8. No mechanism to detect and recover from this fork scenario
 
-Height:    6495  
-Status:    SYNCING_HEADERS
-Headers:   6495 | Blocks: 6495
+## Implemented Fixes
 
-(No progress, loops forever)
-```
+### 1. Fork Detection and Aggressive Recovery (lines ~9303-9415)
 
-### Root Cause Analysis
+**Problem:** Node receives duplicate headers while significantly behind network, indicating a fork.
 
-The stall occurs when:
-1. Local node is at height 6495
-2. Network actually has blocks up to height 6906
-3. But all connected peers only report height 6495
-4. Node marks headers as "at_tip" because connected peers match local height
-5. Block queue can't be seeded because `best_header_height <= local_height`
-6. No peer rotation happens because stall handler requires `_sync_best_header` to exist
-7. Node gets stuck in infinite loop
-
-## Solution
-
-### 1. Clear "at_tip" Error on Force Sync
-
-**File:** `p2p/node/p2p_service.py`  
-**Lines:** 7706-7717
-
-```python
-# When forcing sync, clear "at_tip" error to allow re-requesting headers
-if force and self._sync_last_header_error == "at_tip":
-    self._sync_last_header_error = None
-    self._sync_last_header_error_at = None
-    self._sync_last_header_error_peer = None
-    log.info("Cleared 'at_tip' error state due to forced sync")
-```
-
-**Impact:**
-- Allows headers to be re-requested even if previously marked as "at_tip"
-- Enables retry with different peers
-- User can trigger with `animica sync force`
-
-### 2. Detect Headers == Blocks Stall
-
-**File:** `p2p/node/p2p_service.py`  
-**Lines:** 8085-8108
+**Solution:**
+- When receiving all duplicate headers (`all_known = True`)
+- AND local node is significantly behind network (gap > 100 blocks)
+- AND matched ancestor exists and is behind current head
+- **Immediately reset chain to matched ancestor** to force proper fork resolution
+- Clear all peer states and locator hints for fresh start
 
 ```python
-# Detect when headers == blocks and we're not making progress
-if (
-    best_header_height == best_block_height
-    and best_block_height > 0
-    and not self._sync_inflight_headers
-    and not self._sync_inflight_blocks
-    and not self._sync_block_queue
-    and now - self._sync_last_progress_at > self._sync_stall_timeout
-    and self._peers
-):
-    log.warning("Sync stalled: headers == blocks with no progress")
-    self._sync_block_stalled_reason = "headers_blocks_equal_stall"
-    self._sync_requested = True
+if gap > 100 and duplicate_count >= 1:
+    if matched_ancestor_height < local_height:
+        self._reset_chain_to_ancestor(
+            height=matched_ancestor_height,
+            reason="duplicate_headers_fork"
+        )
 ```
 
-**Impact:**
-- Automatically detects when stuck in headers == blocks state
-- Triggers stall handling and peer rotation
-- Forces sync on next iteration to try different peers
+**Why it works:** By resetting to the common ancestor, the node can then properly accept the headers on the correct fork.
 
-### 3. Allow Stall Handling in Edge Cases
+### 2. In-Flight Header Watchdog (lines ~9080-9145)
 
-**File:** `p2p/node/p2p_service.py`  
-**Lines:** 3333-3337, 3379
+**Problem:** Node has in-flight header request but `last_headers_accepted_count = 0`, meaning it's receiving responses but not making progress.
 
-```python
-def _handle_sync_stall(self, *, reason: str) -> None:
-    now = time.time()
-    # Allow stall handling even when _sync_best_header is None or equals local height
-    # (Removed early return when _sync_best_header is None)
-    
-    # Later in the function:
-    best_header_height = self._sync_best_header.height if self._sync_best_header else local_height
+**Solution:**
+- Detect when `in_flight_headers > 0` AND `last_headers_accepted_count = 0`
+- AND recent response (< 5 seconds ago)
+- AND significantly behind network (gap > 50 blocks)
+- Clear in-flight state to allow retry
+- Force peer rotation
+- If gap > 100, reset to matched ancestor
+
+**Why it works:** Breaks the deadlock where the same request keeps getting retried with same result.
+
+### 3. Stale Anchor Status Clearing (lines ~9823-9843)
+
+**Problem:** Peers anchored with `headers_duplicate` reason remain anchored indefinitely, preventing retry even after situation changes.
+
+**Solution:**
+- Periodically scan all peers during stall recovery
+- Clear `headers_duplicate` anchor status if age > 30 seconds
+- Allows re-attempting sync with same peer after temporary duplicate situation
+
+**Why it works:** Recognizes that "duplicate headers" is often a transient state, especially during fork resolution.
+
+### 4. Enhanced Fork Detection Logging (lines ~8520-8545)
+
+**Problem:** Difficult to diagnose fork scenarios from logs.
+
+**Solution:**
+- Log warning when matched ancestor gap > 100 blocks
+- Include network best height, local head, and gap calculations
+- Provides visibility into potential fork scenarios
+
+**Why it works:** Better diagnostics help identify fork situations earlier.
+
+### 5. Progressive Escalation Strategy
+
+**Implementation across multiple functions:**
+
+1. **First attempt:** Increase locator depth hint by 8 blocks (existing)
+2. **Second attempt:** If still getting duplicates and gap > 100, increase by 32 blocks
+3. **Third attempt:** Reset to matched ancestor if fork detected
+4. **Continuous:** Clear stale anchors every stall cycle
+
+**Why it works:** Multiple recovery mechanisms ensure that if one doesn't work, another will.
+
+## Defense-in-Depth Strategy
+
+The fixes implement multiple layers of protection:
+
+```
+Layer 1: Early Detection
+├─ In-flight watchdog catches stuck requests
+└─ Fork detection identifies divergence
+
+Layer 2: Progressive Recovery
+├─ Increase locator depth (8 → 32 blocks)
+├─ Rotate peers to find better chain view
+└─ Clear stale anchor states
+
+Layer 3: Aggressive Recovery  
+├─ Reset chain to matched ancestor
+├─ Clear all peer states
+└─ Force fresh sync start
+
+Layer 4: Continuous Monitoring
+├─ Stall detection every sync cycle
+├─ Periodic anchor status review
+└─ Comprehensive backoff clearing
 ```
 
-**Impact:**
-- Enables stall handler to work when headers == blocks
-- Allows peer rotation in edge cases
-- Ensures recovery even when `_sync_best_header` is None
+## Testing and Validation
 
-## Recovery Flow
+### Syntax Validation
+✓ Python syntax validated with `ast.parse()`
+✓ No compilation errors
 
-```
-1. Node stuck at height 6495
-   ↓
-2. User runs "animica sync force"
-   ↓
-3. Force clears "at_tip" error
-   ↓
-4. Headers requested from current peer (may still return empty)
-   ↓
-5. Still stuck: headers == blocks stall detection triggers
-   ↓
-6. Stall handler rotates to different peer
-   ↓
-7. Headers requested from new peer
-   ↓
-8. New peer has higher height (6906)
-   ↓
-9. Headers downloaded successfully
-   ↓
-10. Block queue seeded from new headers
-    ↓
-11. Blocks downloaded and applied
-    ↓
-12. Progress resumes!
-```
+### Pattern Validation
+✓ Fork recovery pattern present (`duplicate_headers_fork`)
+✓ In-flight watchdog present (`In-flight headers but accepting nothing`)
+✓ Stale anchor clearing present (`Clearing stale headers_duplicate anchor`)
+✓ Fork detection logging present (`Large gap between matched ancestor`)
+✓ Inflight fork recovery present (`inflight_no_accept_fork`)
 
-## Testing
+### Threshold Validation
+✓ Fork detection threshold: gap > 100 blocks
+✓ In-flight watchdog threshold: gap > 50 blocks  
+✓ Stale anchor timeout: > 30.0 seconds
 
-### Unit Tests
-Created `test_sync_stall_fix.py` with 4 test cases:
-- ✓ "at_tip" error clearing on force
-- ✓ headers == blocks stall detection  
-- ✓ Stall handler with None _sync_best_header
-- ✓ Normal sync not affected
+## Expected Behavior
 
-### Manual Testing
-See `SYNC_STALL_FIX_TESTING_GUIDE.md` for detailed testing procedures.
+With these fixes, the stuck node should:
 
-## Files Changed
+1. **Detect** the fork scenario via in-flight watchdog or duplicate header detection
+2. **Log** warning about large gap between matched ancestor and local head
+3. **Reset** chain to matched ancestor (height 11033)
+4. **Accept** headers from network's correct fork starting from 11033
+5. **Progress** to catch up to network height (11780+)
 
-1. `p2p/node/p2p_service.py` - Main sync logic fix
-2. `test_sync_stall_fix.py` - Unit tests for the fix
-3. `SYNC_STALL_FIX_TESTING_GUIDE.md` - Manual testing guide
-4. `SYNC_STALL_FIX_SUMMARY.md` - This file
+The recovery should happen within:
+- **Immediate (< 5s):** In-flight watchdog triggers on next sync cycle
+- **Fast (< 30s):** Duplicate detection with reset to ancestor
+- **Fallback (< 60s):** Stale anchor clearing allows retry
 
-## Backward Compatibility
+## Files Modified
 
-✓ No breaking changes  
-✓ Existing sync behavior preserved  
-✓ Only adds recovery paths for stuck states  
-✓ No RPC or protocol changes  
+- `p2p/node/p2p_service.py`:
+  - Line ~9303-9363: Duplicate header fork detection and recovery
+  - Line ~9080-9145: In-flight header watchdog
+  - Line ~9823-9843: Stale anchor status clearing
+  - Line ~8502-8560: Enhanced matched ancestor logging
 
-## Performance Impact
+## Backwards Compatibility
 
-- Minimal: Only adds checks when sync is already stalled
-- No impact on normal sync operation
-- Adds one log warning when stall is detected
-- Peer rotation was already part of stall handling
+✓ All changes are defensive additions
+✓ No breaking changes to existing sync logic
+✓ New recovery mechanisms only activate on specific stall conditions
+✓ Existing behavior preserved when sync is working normally
 
 ## Future Improvements
 
-Potential enhancements (not in scope for this fix):
-1. More aggressive peer discovery when all peers are at same height
-2. DHT or DNS-based discovery of higher-height peers
-3. Metrics/monitoring for sync stall frequency
-4. Automatic snapshot sync when far behind
+Potential enhancements (not in this PR):
+1. Configurable fork detection thresholds via environment variables
+2. Metrics/telemetry for fork detection events
+3. Automatic fork alerts to monitoring systems
+4. Peer reputation scoring based on fork resolution success
+5. Snapshot-based fast fork recovery for very large divergences
 
-## Verification Checklist
+## Summary
 
-- [x] Code changes are minimal and targeted
-- [x] Logic tests pass
-- [x] Syntax check passes
-- [x] Code review completed
-- [x] Documentation created
-- [x] No breaking changes
-- [x] Backward compatible
+This comprehensive fix addresses the sync stall issue with multiple defensive mechanisms working together:
 
-## How to Use
+- **Detects** fork scenarios through multiple signals
+- **Recovers** aggressively when detected
+- **Prevents** permanent stalls through continuous monitoring
+- **Logs** diagnostic information for troubleshooting
 
-### For Users
-When sync appears stalled:
-```bash
-# Check current status
-animica sync status
-
-# Force sync to clear errors and retry
-animica sync force
-
-# Monitor logs for recovery
-tail -f ~/.animica/logs/node.log | grep -i sync
-```
-
-### For Developers
-The fix automatically activates when:
-- Force sync is triggered (clears errors)
-- Headers == blocks with no progress for > 5 seconds (auto-detects stall)
-- Stall handling rotates peers and retries
-
-No additional configuration or changes needed.
-
-## References
-
-- Original Issue: Sync stalled with headers == blocks
-- PR: Fix sync stall when headers equals blocks
-- Related: P2P peer rotation, sync stall detection
+The multi-layered approach ensures that no single failure point can cause a permanent stall, making the sync process robust against fork-related issues.
