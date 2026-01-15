@@ -198,6 +198,12 @@ class HeaderSync:
                     
             except asyncio.CancelledError:
                 raise
+            except (ConnectionError, OSError, asyncio.TimeoutError) as e:
+                # Transient network errors - short backoff
+                self._log.warning(f"Network error in header sync: {e.__class__.__name__}: {e}")
+                self.stats.errors += 1
+                # Fast retry for network issues (2ms)
+                await asyncio.sleep(0.002)
             except (
                 Exception
             ) as e:  # noqa: BLE001 - we want to keep syncing unless fatal
