@@ -84,6 +84,7 @@ SKIPPED_BLOCKS_WARNING_THRESHOLD: int = 5  # Warn if this many blocks skipped du
 FEW_HEADERS_WARNING_COUNT: int = 10  # Warn if fewer headers available than this when gap > 5
 EXTENDED_STALL_SNAPSHOT_TRIGGER_SEC: float = 90.0  # Trigger snapshot recovery after this many seconds of extended stall
 EXTENDED_STALL_WATCHDOG_MULTIPLIER: float = 1.5  # Multiplier for watchdog timeout to determine extended stall
+PERIODIC_HEALTH_CHECK_INTERVAL_SEC: float = 30.0  # Interval for periodic sync health check when idle at tip
 
 # Skip stuck blocks constants
 MAX_BLOCK_FAILURE_TRACKING_ENTRIES: int = 1000  # Maximum entries in block failure tracking dict
@@ -9738,12 +9739,12 @@ class P2PService:
                 
                 # Periodic health check: Periodically force a sync attempt even when at tip
                 # to ensure we don't miss new blocks due to stale peer information or missed announcements.
-                # This check runs every 30 seconds when the node is in SYNCED/TARGET_REACHED phase
-                # and hasn't made progress recently.
+                # This check runs every PERIODIC_HEALTH_CHECK_INTERVAL_SEC seconds when the node is in
+                # SYNCED/TARGET_REACHED/IDLE phase and hasn't made progress recently.
                 periodic_health_check = False
                 if (
                     self._sync_phase in ("SYNCED", "TARGET_REACHED", "IDLE")
-                    and now - self._sync_last_progress_at > 30.0  # No progress for 30s
+                    and now - self._sync_last_progress_at > PERIODIC_HEALTH_CHECK_INTERVAL_SEC
                     and not self._sync_inflight_headers
                     and not self._sync_inflight_blocks
                     and self._peers  # Have peers to query

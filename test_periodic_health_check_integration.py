@@ -42,11 +42,15 @@ class SimulatedNode:
         print(f"   Phase: {self.phase}")
         
     def simulate_new_blocks_available(self, new_height):
-        """Simulate network producing new blocks."""
+        """Simulate network producing new blocks.
+        
+        In the bug scenario, target_height doesn't update if block announcements
+        are missed or not processed. This simulates that condition.
+        """
         print(f"\n2. Network produces new blocks (height now {new_height})...")
-        # In the bug scenario, target_height doesn't update if announcements are missed
-        # self.target_height = new_height  # This might NOT happen!
-        print(f"   Target height: {self.target_height} (may be stale!)")
+        # Intentionally NOT updating target_height to simulate missed announcements
+        # (In real scenario, block announcements might not be received/processed)
+        print(f"   Target height: {self.target_height} (stale - announcements missed!)")
         
     def check_periodic_health_check(self, elapsed_time):
         """Check if periodic health check would trigger."""

@@ -71,7 +71,7 @@ def test_periodic_health_check_conditions():
     
     print(f"  Phase: {sync_phase}")
     print(f"  Time since progress: {now - last_progress:.1f}s")
-    print(f"  Result: {'TRIGGERED ✗' if periodic_health_check else 'NOT TRIGGERED ✓'}")
+    print(f"  Result: {'NOT TRIGGERED ✓' if not periodic_health_check else 'TRIGGERED ✗'}")
     assert not periodic_health_check, "Should NOT trigger with recent progress"
     
     # Test case 4: Node in SYNCING phase (should NOT trigger)
