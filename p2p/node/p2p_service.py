@@ -3569,12 +3569,14 @@ class P2PService:
         self, *, now: float, head_height: int, head_hash: Optional[str]
     ) -> None:
         """
-        Enhanced sync watchdog to detect and recover from missing parent deadlocks.
+        Enhanced sync watchdog to detect and recover from missing parent deadlocks
+        and genesis sync stalls.
         
         This watchdog specifically detects:
         1. In-flight blocks > 0 but no progress
         2. Missing parent errors persisting over time
         3. Block queue stalled with orphans
+        4. Genesis sync stalls (stuck at height 0 with in-flight requests)
         """
         if not self._peers:
             return
@@ -3587,7 +3589,11 @@ class P2PService:
             self._sync_watchdog_attempts = 0
             return
 
-        if now - self._sync_watchdog_last_progress_at < self._sync_watchdog_timeout:
+        # Genesis sync gets shorter timeout for faster recovery
+        at_genesis = head_height == 0
+        watchdog_timeout = self._sync_watchdog_timeout / 2 if at_genesis else self._sync_watchdog_timeout
+        
+        if now - self._sync_watchdog_last_progress_at < watchdog_timeout:
             return
 
         # Detect specific "missing parent" deadlock scenario
@@ -3595,6 +3601,12 @@ class P2PService:
             self._sync_inflight_blocks
             and not self._sync_block_queue
             and self._sync_last_block_error == "missing parent"
+        )
+        
+        # Detect genesis sync stall (stuck at height 0 with any in-flight activity but no progress)
+        genesis_sync_stall = (
+            at_genesis
+            and (self._sync_inflight_headers > 0 or len(self._sync_inflight_blocks) > 0)
         )
         
         if missing_parent_deadlock:
@@ -3630,24 +3642,66 @@ class P2PService:
                 "Cleared inflight blocks and reset orphan tracking to break missing parent deadlock",
                 extra={"requeued_blocks": len(self._sync_block_queue)},
             )
+        
+        if genesis_sync_stall:
+            log.error(
+                "Genesis sync stall detected",
+                extra={
+                    "head_height": head_height,
+                    "inflight_headers": self._sync_inflight_headers,
+                    "inflight_blocks": len(self._sync_inflight_blocks),
+                    "watchdog_attempts": self._sync_watchdog_attempts,
+                },
+            )
 
         self._sync_watchdog_attempts += 1
         action = f"watchdog_attempt_{self._sync_watchdog_attempts}"
-        if self._sync_watchdog_attempts == 1:
-            self._handle_sync_stall(reason="watchdog_no_progress")
-            self._sync_kick(reason="watchdog_requeue", aggressive=False)
-            action = "watchdog_requeue"
-        elif self._sync_watchdog_attempts == 2:
-            self._force_peer_refresh(reason="watchdog_refresh_peers")
-            self._sync_kick(reason="watchdog_refresh_peers", aggressive=True)
-            action = "watchdog_refresh_peers"
-        elif self._sync_watchdog_attempts == 3:
-            self._reset_sync_state(reason="watchdog_reset_pipeline")
-            self._sync_kick(reason="watchdog_reset_pipeline", aggressive=True)
-            action = "watchdog_reset_pipeline"
+        
+        # For genesis sync, be more aggressive with recovery
+        if at_genesis or genesis_sync_stall:
+            if self._sync_watchdog_attempts == 1:
+                # Immediately clear all in-flight state and force fresh start
+                self._reset_sync_state(reason="genesis_watchdog_clear_state")
+                self._force_peer_refresh(reason="genesis_watchdog_rotate_peers")
+                self._sync_kick(reason="genesis_watchdog_fresh_start", aggressive=True)
+                action = "genesis_watchdog_clear_and_refresh"
+            elif self._sync_watchdog_attempts == 2:
+                # Try different peer selection strategy
+                self._force_peer_refresh(reason="genesis_watchdog_retry_peers")
+                self._reset_sync_state(reason="genesis_watchdog_retry")
+                self._sync_kick(reason="genesis_watchdog_retry", aggressive=True)
+                action = "genesis_watchdog_retry"
+            else:
+                # Skip snapshot recovery for genesis - it doesn't help
+                # Just keep trying with aggressive state clearing
+                log.warning(
+                    "Genesis sync still stalled after multiple attempts - continuing to retry",
+                    extra={
+                        "attempts": self._sync_watchdog_attempts,
+                        "peers": len(self._peers),
+                    },
+                )
+                self._reset_sync_state(reason="genesis_watchdog_persistent_retry")
+                self._force_peer_refresh(reason="genesis_watchdog_persistent_retry")
+                self._sync_kick(reason="genesis_watchdog_persistent_retry", aggressive=True)
+                action = "genesis_watchdog_persistent_retry"
         else:
-            self._maybe_trigger_snapshot_recovery(reason="watchdog_snapshot_recovery")
-            action = "watchdog_snapshot_recovery"
+            # Normal (non-genesis) watchdog recovery
+            if self._sync_watchdog_attempts == 1:
+                self._handle_sync_stall(reason="watchdog_no_progress")
+                self._sync_kick(reason="watchdog_requeue", aggressive=False)
+                action = "watchdog_requeue"
+            elif self._sync_watchdog_attempts == 2:
+                self._force_peer_refresh(reason="watchdog_refresh_peers")
+                self._sync_kick(reason="watchdog_refresh_peers", aggressive=True)
+                action = "watchdog_refresh_peers"
+            elif self._sync_watchdog_attempts == 3:
+                self._reset_sync_state(reason="watchdog_reset_pipeline")
+                self._sync_kick(reason="watchdog_reset_pipeline", aggressive=True)
+                action = "watchdog_reset_pipeline"
+            else:
+                self._maybe_trigger_snapshot_recovery(reason="watchdog_snapshot_recovery")
+                action = "watchdog_snapshot_recovery"
 
         self._sync_last_recovery_action = action
         log.warning(
@@ -3655,6 +3709,8 @@ class P2PService:
             extra={
                 "action": action,
                 "head_height": head_height,
+                "at_genesis": at_genesis,
+                "genesis_sync_stall": genesis_sync_stall,
                 "last_progress_at": self._sync_watchdog_last_progress_at,
                 "peers": len(self._peers),
                 "missing_parent_deadlock": missing_parent_deadlock,
@@ -8129,11 +8185,28 @@ class P2PService:
             return None
         if self._sync_header_retry_queue:
             retry = self._sync_header_retry_queue.popleft()
-            target_peer = self._peer_by_remote(retry.peer_id) or peer
-            if not target_peer.hello_done.is_set():
-                target_peer = peer
+            
+            # If peer_id is None, force peer rotation by selecting best available peer
+            if not retry.peer_id or retry.peer_id == "":
+                target_peer = peer  # Use the peer passed to this function (already selected)
+                log.info(
+                    "Retry forced peer rotation (no specific peer)",
+                    extra={
+                        "new_peer": target_peer.remote,
+                        "request_id": retry.request_id,
+                        "retry_count": retry.retry_count,
+                    },
+                )
+            else:
+                target_peer = self._peer_by_remote(retry.peer_id) or peer
+                if not target_peer.hello_done.is_set():
+                    target_peer = peer
+            
             if not self._peer_is_sync_eligible(target_peer):
                 retry.retry_count += 1
+                # On eligibility failure, clear peer_id to try different peer next time
+                if retry.retry_count > 2:
+                    retry.peer_id = None
                 self._sync_header_retry_queue.append(retry)
             else:
                 retry_locator = retry.locator or []
@@ -8150,6 +8223,7 @@ class P2PService:
                         "start_height": retry.start_height,
                         "count": retry.count,
                         "locator_mode": retry.locator_mode,
+                        "peer_rotated": not retry.peer_id,
                     },
                 )
                 return await self._request_headers_with_locator(
@@ -9545,7 +9619,16 @@ class P2PService:
                 if self._sync_paused:
                     await asyncio.sleep(self._sync_tick_sec)
                     continue
+                
+                # Genesis sync gets faster ticks for more responsive recovery
+                head_height, _ = self._local_head()
+                at_genesis = (head_height or 0) == 0
+                
                 tick = self._sync_tick_sec
+                if at_genesis:
+                    # At genesis, use much faster tick (1/4 of normal) for aggressive sync attempts
+                    tick = max(0.001, self._sync_tick_sec / 4)
+                
                 now = time.time()
                 if self._sync_boost_until and now < self._sync_boost_until:
                     tick = (
@@ -9613,6 +9696,7 @@ class P2PService:
                             max(0.0, now - self._sync_last_progress_at), 3
                         ),
                         "sync_requested": self._sync_requested,
+                        "at_genesis": at_genesis,
                     },
                 )
                 
@@ -10907,6 +10991,12 @@ class P2PService:
             for key, request in list(self._sync_inflight_header_requests.items())
             if now >= request.deadline_at
         ]
+        
+        # Genesis sync special case: if we're at genesis and have expired requests,
+        # be more aggressive about clearing state and rotating peers
+        local_height, _ = self._local_head()
+        at_genesis = (local_height or 0) == 0
+        
         for remote, request_id in expired:
             request = self._sync_inflight_header_requests.pop((remote, request_id), None)
             peer = self._peer_by_remote(remote)
@@ -10918,10 +11008,35 @@ class P2PService:
                     fut.set_result(None)
                 self._penalize_peer(peer, "headers_timeout", nonfatal=True)
                 peer.sync_timeouts += 1
-                self._set_sync_backoff(peer, reason="headers_timeout", delay=5.0)
+                
+                # Longer backoff at genesis to force peer rotation
+                # The increased delay keeps failed peers unavailable longer,
+                # pushing sync to try different peers instead of retrying the same one
+                backoff_delay = 10.0 if at_genesis else 5.0
+                self._set_sync_backoff(peer, reason="headers_timeout", delay=backoff_delay)
+                
                 if request is not None:
                     request.retry_count += 1
-                    self._sync_header_retry_queue.append(request)
+                    
+                    # At genesis, limit retries and force peer rotation
+                    max_retries = 2 if at_genesis else 5
+                    if request.retry_count <= max_retries:
+                        # Mark to try different peer by clearing peer_id
+                        if at_genesis and request.retry_count > 1:
+                            request.peer_id = None  # Force peer rotation
+                        self._sync_header_retry_queue.append(request)
+                    else:
+                        log.warning(
+                            "Header request abandoned after max retries",
+                            extra={
+                                "request_id": request.request_id,
+                                "peer": request.peer_id,
+                                "retry_count": request.retry_count,
+                                "max_retries": max_retries,
+                                "at_genesis": at_genesis,
+                            },
+                        )
+                    
                     self._stats["headers_req_timeout"] += 1
                     self._mark_peer_head_issue(peer, reason="headers_timeout")
                     log.warning(
@@ -10935,15 +11050,28 @@ class P2PService:
                             "start_height": request.start_height,
                             "count": request.count,
                             "locator_mode": request.locator_mode,
+                            "at_genesis": at_genesis,
                         },
                     )
+        
         if expired:
+            # Force update inflight counter
             self._sync_inflight_headers = len(self._sync_inflight_header_requests)
             log.info(
                 "Expired in-flight header requests",
-                extra={"count": len(expired)},
+                extra={
+                    "count": len(expired),
+                    "remaining_inflight": self._sync_inflight_headers,
+                    "at_genesis": at_genesis,
+                },
             )
-            self._sync_kick(reason="headers_timeout", aggressive=False)
+            
+            # At genesis, be more aggressive with sync kick and peer rotation
+            if at_genesis:
+                self._force_peer_refresh(reason="genesis_headers_timeout")
+                self._sync_kick(reason="headers_timeout_genesis", aggressive=True)
+            else:
+                self._sync_kick(reason="headers_timeout", aggressive=False)
 
     def _ensure_sync_cursor_integrity(self) -> None:
         head_height, head_hash = self._local_head()

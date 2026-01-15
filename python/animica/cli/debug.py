@@ -107,10 +107,14 @@ def sync_dump(
     peers = p2p_debug.get("connected_peers", []) if isinstance(p2p_debug, dict) else []
     best_peer_height, best_peer_hash, best_peer = _best_peer_head(peers)
 
+    local_head_height = sync_status.get("head_height")
+    at_genesis = local_head_height is not None and int(local_head_height) == 0
+    
     dump = {
         "rpc_url": url,
-        "local_head_height": sync_status.get("head_height"),
+        "local_head_height": local_head_height,
         "local_head_hash": sync_status.get("head_hash"),
+        "at_genesis": at_genesis,
         "best_peer_height": best_peer_height,
         "best_peer_hash": best_peer_hash,
         "best_peer": best_peer,
@@ -143,20 +147,54 @@ def sync_dump(
     typer.echo("━" * 60)
     typer.echo(f"RPC URL:          {url}")
     typer.echo(f"Local head:       {dump['local_head_height']} ({dump['local_head_hash']})")
+    
+    if at_genesis:
+        typer.secho(
+            "⚠️  AT GENESIS - Node is at height 0",
+            fg=typer.colors.YELLOW,
+            bold=True,
+        )
+        typer.echo("   This is a special case requiring aggressive sync recovery.")
+    
     typer.echo(f"Best peer head:   {best_peer_height} ({best_peer_hash}) from {best_peer}")
+    
+    if best_peer_height and local_head_height is not None:
+        gap = best_peer_height - int(local_head_height)
+        if gap > 0:
+            typer.secho(
+                f"   Gap: {gap} blocks behind",
+                fg=typer.colors.YELLOW if gap < 100 else typer.colors.RED,
+            )
+    
     typer.echo(f"Sync phase:       {dump['sync_phase']}")
     typer.echo(
         "In-flight:        "
         f"headers={dump['in_flight_headers']} blocks={dump['in_flight_blocks']}"
     )
+    
+    # Highlight stuck in-flight requests
+    if dump['in_flight_headers'] and dump['in_flight_headers'] > 0:
+        typer.secho(
+            f"   ⚠️  {dump['in_flight_headers']} header request(s) in-flight",
+            fg=typer.colors.YELLOW,
+        )
+        if at_genesis:
+            typer.echo("   Genesis sync should clear these aggressively after 15s")
+    
     typer.echo(
         "Queues:           "
         f"pending_headers={dump['pending_header_batches']} queued_blocks={dump['queued_blocks_count']}"
     )
-    typer.echo(f"Last progress:    {dump['last_progress_at']}")
+    
+    if dump["last_progress_at"]:
+        typer.echo(f"Last progress:    {dump['last_progress_at']}")
+    else:
+        typer.secho("Last progress:    Never", fg=typer.colors.RED)
+    
     if dump["stall_reason"]:
         typer.echo(f"Stall reason:     {dump['stall_reason']}")
         typer.echo(f"Stall elapsed:    {dump['stall_elapsed_s']}s")
+    
     if dump["last_header_error"]:
         if dump["last_header_error"] == "at_tip":
             typer.echo("Last header status: at_tip (no higher headers reported)")
@@ -165,13 +203,33 @@ def sync_dump(
             )
         else:
             typer.echo(f"Last header error: {dump['last_header_error']}")
+    
     if dump["last_block_error"]:
         typer.echo(f"Last block error:  {dump['last_block_error']}")
+    
     if dump["last_block_error_peer"]:
         typer.echo(f"Block error peer:  {dump['last_block_error_peer']}")
+    
     if dump["sync_recovery"]["last_action"]:
         typer.echo(
             f"Last recovery:    {dump['sync_recovery']['last_action']} "
             f"(attempt {dump['sync_recovery']['attempts']})"
         )
+    
     typer.echo("━" * 60)
+    
+    # Add diagnostic recommendations
+    if at_genesis:
+        typer.echo()
+        typer.secho("💡 Genesis Sync Diagnostics:", fg=typer.colors.CYAN, bold=True)
+        typer.echo("   1. Check peer connections: animica peer list")
+        typer.echo("   2. Verify peers have blocks: look for best_peer_height > 0")
+        typer.echo("   3. Force sync restart: animica sync force --clear-cache")
+        typer.echo("   4. If still stuck, check node logs for errors")
+        typer.echo("   5. Watchdog will auto-recover after 15s of no progress")
+    elif dump['in_flight_headers'] and dump['in_flight_headers'] > 0:
+        typer.echo()
+        typer.secho("💡 In-Flight Headers Detected:", fg=typer.colors.CYAN, bold=True)
+        typer.echo("   Requests should timeout after 15-20s and retry")
+        typer.echo("   If stuck > 30s, watchdog will force recovery")
+        typer.echo("   You can manually force: animica sync force --clear-cache")
