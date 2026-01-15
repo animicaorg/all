@@ -201,13 +201,17 @@ class TCPTransport:
             remote_addr = f"{host}:{port}"
             
             # Create connection (callbacks will be set by caller)
+            async def _noop_callback(*args, **kwargs):
+                """Placeholder callback to be replaced by caller."""
+                pass
+            
             conn = Connection(
                 reader=reader,
                 writer=writer,
                 remote_addr=remote_addr,
                 config=self.config,
-                on_message=lambda msg: asyncio.sleep(0),  # Placeholder
-                on_disconnect=lambda: asyncio.sleep(0),  # Placeholder
+                on_message=_noop_callback,
+                on_disconnect=_noop_callback,
             )
             
             self._connections.add(conn)
@@ -229,13 +233,17 @@ class TCPTransport:
         logger.info(f"Accepted connection from {remote_addr}")
         
         # Create connection (callbacks will be set by caller via on_connection)
+        async def _noop_callback(*args, **kwargs):
+            """Placeholder callback to be replaced by caller."""
+            pass
+        
         conn = Connection(
             reader=reader,
             writer=writer,
             remote_addr=remote_addr,
             config=self.config,
-            on_message=lambda msg: asyncio.sleep(0),  # Placeholder
-            on_disconnect=lambda: asyncio.sleep(0),  # Placeholder
+            on_message=_noop_callback,
+            on_disconnect=_noop_callback,
         )
         
         self._connections.add(conn)

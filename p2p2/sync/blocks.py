@@ -11,7 +11,7 @@ import logging
 import time
 from collections import OrderedDict
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Protocol, Set
+from typing import Dict, List, Optional, Protocol, Set, Tuple
 
 from p2p2.protocol import Message, MsgType, InvItem, create_getdata
 
@@ -211,7 +211,7 @@ class BlocksSync:
         )
         
         # Inflight tracking (hash -> (peer_id, requested_at))
-        self.inflight: Dict[str, tuple[str, float]] = {}
+        self.inflight: Dict[str, Tuple[str, float]] = {}
         
         # Parent backfill tracking (parent_hash -> last_request_time)
         self.parent_requests: Dict[str, float] = {}

@@ -104,8 +104,8 @@ def test_large_message_limit():
     """Test message size limit."""
     from p2p2.protocol import MAX_MESSAGE_SIZE
     
-    # Create huge payload
-    huge_payload = {"data": "x" * (MAX_MESSAGE_SIZE + 1000)}
+    # Create payload that exceeds limit by a small amount
+    huge_payload = {"data": "x" * (MAX_MESSAGE_SIZE + 1024)}
     msg = Message(type=MsgType.BLOCK, payload=huge_payload)
     
     with pytest.raises(ValueError, match="too large"):
