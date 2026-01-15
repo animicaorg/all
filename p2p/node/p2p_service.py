@@ -13643,8 +13643,7 @@ class P2PService:
     ) -> None:
         """Prune expired items and enforce cap limit without creating temporary list copies."""
         now = time.time()
-        # Remove expired items in-place by iterating once
-        # Using keys() to iterate safely while modifying
+        # Remove expired items in-place by collecting keys first (safe iteration)
         expired_keys = []
         for k, exp in table.items():
             if exp <= now:
@@ -13652,6 +13651,7 @@ class P2PService:
             else:
                 # OrderedDict maintains insertion order; once we hit non-expired, stop
                 break
+        # Now safe to modify - we've finished iterating
         for k in expired_keys:
             table.pop(k, None)
         # Enforce cap by removing oldest items
@@ -13661,7 +13661,7 @@ class P2PService:
     def _prune_requested(self) -> None:
         """Prune expired transaction requests without creating temporary list copies."""
         now = time.time()
-        # Remove expired items in-place
+        # Remove expired items in-place by collecting keys first (safe iteration)
         expired_keys = []
         for k, (exp, _peer) in self._tx_requested.items():
             if exp <= now:
@@ -13669,6 +13669,7 @@ class P2PService:
             else:
                 # OrderedDict maintains insertion order; once we hit non-expired, stop
                 break
+        # Now safe to modify - we've finished iterating
         for k in expired_keys:
             self._tx_requested.pop(k, None)
         # Enforce cap by removing oldest items

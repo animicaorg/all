@@ -188,8 +188,8 @@ class BlocksDownloader:
                         f"Network error fetching block {h.hex()[:16]}...: {e.__class__.__name__} "
                         f"(attempt {attempt + 1}/{self.cfg.max_retries + 1})"
                     )
-                    if attempt < self.cfg.max_retries:
-                        await asyncio.sleep(0.002)  # 2ms backoff for network errors
+                    # Always sleep on network errors (even last attempt) for consistent behavior
+                    await asyncio.sleep(0.002)  # 2ms backoff for network errors
                 except Exception as e:
                     # Other errors (validation, parse, etc.) - log and retry with backoff
                     self.stats.errors += 1

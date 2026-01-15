@@ -130,7 +130,9 @@ def main():
     
     print("\n" + "=" * 70)
     print("Summary: All improvements verified!")
-    print("  ✅ Pruning: ~{:.0f}x faster".format(old_time/new_time if new_time > 0 else 1))
+    # Use small epsilon to avoid division by zero
+    speedup = old_time / max(new_time, 0.000001) if new_time >= 0 else 1.0
+    print("  ✅ Pruning: ~{:.0f}x faster".format(speedup))
     print("  ✅ Error recovery: 10-2500x faster")
     print("  ✅ Bootstrap: 3.3x more aggressive")
     print("  ✅ Idle CPU: 90% reduction")
