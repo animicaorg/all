@@ -480,6 +480,7 @@ class SyncStatusSnapshot:
     block_error_summary: Dict[str, dict[str, Any]]
     next_block_needed_height: Optional[int]
     next_block_needed_hash: Optional[str]
+    orphan_pool_size: int  # Number of blocks in orphan buffer waiting for parents
     stall_timeout_s: float
     stall_reason: Optional[str]
     stall_elapsed_s: float
@@ -581,6 +582,7 @@ class SyncStatusSnapshot:
             "block_error_summary": dict(self.block_error_summary),
             "next_block_needed_height": self.next_block_needed_height,
             "next_block_needed_hash": self.next_block_needed_hash,
+            "orphan_pool_size": self.orphan_pool_size,
             "stall_timeout_s": self.stall_timeout_s,
             "stall_reason": self.stall_reason,
             "stall_elapsed_s": self.stall_elapsed_s,
@@ -3034,6 +3036,7 @@ class P2PService:
             block_error_summary=dict(self._sync_block_error_summary),
             next_block_needed_height=next_block_height,
             next_block_needed_hash=next_block_hash_hex,
+            orphan_pool_size=len(self._sync_block_buffer),
             stall_timeout_s=float(self._sync_stall_timeout),
             stall_reason=self._sync_block_stalled_reason,
             stall_elapsed_s=stall_elapsed_s,
@@ -6870,7 +6873,29 @@ class P2PService:
                     height=height_hint,
                     source_peer=peer.remote,
                 )
-            if sync_block.parent_hash and not self._has_block(sync_block.parent_hash):
+            
+            # Check if parent is missing
+            # Special case: height 1 blocks with genesis parent are not orphans
+            parent_missing = False
+            if sync_block.parent_hash:
+                parent_missing = not self._has_block(sync_block.parent_hash)
+                
+                # If at genesis and this looks like height 1 with genesis parent, parent is not missing
+                if parent_missing:
+                    local_height, _ = self._local_head()
+                    genesis_hash = self._genesis_hash()
+                    if int(local_height or 0) == 0 and sync_block.parent_hash == genesis_hash:
+                        parent_missing = False
+                        log.debug(
+                            "Height 1 block with genesis parent - not treating as orphan",
+                            extra={
+                                "block_hash": sync_block.hash.hex(),
+                                "parent_hash": sync_block.parent_hash.hex(),
+                                "genesis_hash": genesis_hash.hex() if genesis_hash else None,
+                            },
+                        )
+            
+            if parent_missing:
                 sync_block.origin_peer = peer.remote
                 self._buffer_orphan_block(sync_block)
                 self._handle_missing_parent(peer, sync_block)
@@ -7288,6 +7313,9 @@ class P2PService:
         
         Enhanced to verify that blocks are added in ancestor→descendant order
         and that parent blocks are either already present or queued first.
+        
+        Special handling for genesis transition: height 1 blocks whose parent is
+        genesis are always allowed since genesis is the implicit starting point.
         """
         if not headers:
             return 0
@@ -7295,6 +7323,9 @@ class P2PService:
         local_height_int = int(local_height or 0)
         added = 0
         skipped_no_parent = 0
+        
+        # Get genesis hash for special handling of height 1 blocks
+        genesis_hash = self._genesis_hash()
         
         # Sort headers by height to ensure ancestor→descendant ordering
         sorted_headers = sorted(headers, key=lambda h: h.height)
@@ -7314,8 +7345,17 @@ class P2PService:
             # Parent availability check: ensure parent is either in db, in queue, or in-flight
             # This prevents requesting blocks whose parents are unknown
             if hdr.parent_hash:
+                # Special case: if we're at genesis (height 0) and this is height 1,
+                # the parent should be genesis, which is always available
+                is_genesis_child = (
+                    local_height_int == 0
+                    and hdr.height == 1
+                    and hdr.parent_hash == genesis_hash
+                )
+                
                 parent_available = (
-                    self._has_block(hdr.parent_hash)
+                    is_genesis_child
+                    or self._has_block(hdr.parent_hash)
                     or hdr.parent_hash in self._sync_block_queue_set
                     or hdr.parent_hash in self._sync_inflight_blocks
                     or hdr.parent_hash in self._sync_block_buffer
@@ -7386,6 +7426,19 @@ class P2PService:
             self._sync_block_queue_set.add(hdr.hash)
             self._sync_block_queue_heights[hdr.hash] = hdr.height
             added += 1
+            
+            # Log genesis → height 1 transition for debugging
+            if hdr.height == 1 and local_height_int == 0:
+                log.info(
+                    "Enqueued first block after genesis",
+                    extra={
+                        "block_hash": hdr.hash.hex(),
+                        "block_height": hdr.height,
+                        "parent_hash": hdr.parent_hash.hex() if hdr.parent_hash else None,
+                        "genesis_hash": genesis_hash.hex() if genesis_hash else None,
+                        "parent_is_genesis": hdr.parent_hash == genesis_hash if hdr.parent_hash and genesis_hash else False,
+                    },
+                )
         
         if added:
             self._sync_wakeup.set()
@@ -7730,13 +7783,41 @@ class P2PService:
         return any(token in lowered for token in markers)
 
     async def _drain_block_buffer(self) -> None:
+        """
+        Cascade import orphaned blocks whose parents have now become available.
+        
+        Special handling: height 1 blocks whose parent is genesis are always
+        eligible for import since genesis is the implicit starting point.
+        """
         if not self._sync_block_buffer:
             return
+        
+        genesis_hash = self._genesis_hash()
+        local_height, _ = self._local_head()
+        local_height_int = int(local_height or 0)
+        
         progressed = True
         while progressed:
             progressed = False
             for h, blk in list(self._sync_block_buffer.items()):
-                if not self._has_block(blk.parent_hash):
+                # Check if parent is available
+                # Special case: if we're at genesis and this is height 1 with genesis parent, allow it
+                parent_available = self._has_block(blk.parent_hash)
+                
+                if not parent_available and blk.parent_hash:
+                    # Special handling for genesis transition
+                    if local_height_int == 0 and blk.parent_hash == genesis_hash:
+                        parent_available = True
+                        log.info(
+                            "Draining orphan buffer: height 1 block with genesis parent",
+                            extra={
+                                "block_hash": h.hex(),
+                                "parent_hash": blk.parent_hash.hex(),
+                                "genesis_hash": genesis_hash.hex() if genesis_hash else None,
+                            },
+                        )
+                
+                if not parent_available:
                     continue
                 ok, reason = await self._import_block_payload(
                     blk.block, origin_remote=blk.origin_peer
