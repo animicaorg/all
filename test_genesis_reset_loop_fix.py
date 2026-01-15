@@ -107,6 +107,7 @@ def test_no_reset_above_threshold():
 
 def test_code_has_fix():
     """Verify the fix is present in the actual code."""
+    import re
     with open("p2p/node/p2p_service.py", "r") as f:
         content = f.read()
     
@@ -117,16 +118,16 @@ def test_code_has_fix():
     
     # Check for comment explaining the fix
     assert "Don't reset to genesis if already at genesis" in content or \
-           "prevent.*genesis.*loop" in content.lower(), \
+           re.search(r'prevent.*genesis.*loop', content.lower()), \
         "Fix should be documented with a comment"
     print("✓ Fix is documented with comment")
 
 
-def test_ancestor_reset_works_at_genesis():
-    """Test that ancestor reset can work even when anchor_height is 0."""
+def test_ancestor_reset_not_at_genesis():
+    """Test that ancestor reset requires a valid ancestor below current height."""
     
-    # Scenario: Node at genesis but has a matched ancestor
-    # This shouldn't happen in practice, but let's be safe
+    # Scenario: Node at genesis - ancestor reset should not apply
+    # (This validates that the ancestor reset logic correctly handles edge cases)
     anchor_height = 0
     matched_ancestor_height = None  # Can't have ancestor below genesis
     not_anchored_attempts = 5
@@ -157,7 +158,7 @@ if __name__ == "__main__":
         test_normal_reset_still_works()
         test_no_reset_above_threshold()
         test_code_has_fix()
-        test_ancestor_reset_works_at_genesis()
+        test_ancestor_reset_not_at_genesis()
         
         print("\n✅ All tests passed!")
         print("\nGenesis Reset Loop Fix Summary:")
