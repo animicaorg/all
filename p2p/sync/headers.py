@@ -204,7 +204,8 @@ class HeaderSync:
                 # Enhanced error logging for P2P rewrite
                 self._log.error(f"Header sync step error: {e.__class__.__name__}: {e}", exc_info=True)
                 self.stats.errors += 1
-                await asyncio.sleep(min(2 * self.cfg.idle_backoff_sec, 5.0))
+                # Reduced from 5.0s to 1.0s cap for faster error recovery
+                await asyncio.sleep(min(2 * self.cfg.idle_backoff_sec, 1.0))
 
     # ---------------------------
     # Core logic

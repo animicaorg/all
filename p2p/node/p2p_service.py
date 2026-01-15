@@ -748,8 +748,9 @@ class P2PService:
         self._dial_attempt_total: int = 0
         self._dial_success_total: int = 0
         self._dial_last_error: Optional[dict[str, Any]] = None
+        # Increased from 6 to 20 per 5min window for faster bootstrap peer discovery
         self._bootstrap_seed_rate_limit = int(
-            os.environ.get("ANIMICA_P2P_SEED_RATE_LIMIT", "6") or 6
+            os.environ.get("ANIMICA_P2P_SEED_RATE_LIMIT", "20") or 20
         )
         self._bootstrap_seed_rate_window = float(
             os.environ.get("ANIMICA_P2P_SEED_RATE_WINDOW", "300") or 300
@@ -1288,13 +1289,10 @@ class P2PService:
         self._sync_headers_batch_max = int(
             os.environ.get("ANIMICA_P2P_SYNC_HEADERS_BATCH_MAX", "16384") or 16384
         )
-        if self._sync_headers_batch_max < self._sync_headers_batch:
-            self._sync_headers_batch_max = self._sync_headers_batch
-        if self._sync_headers_batch_min > self._sync_headers_batch_max:
-            self._sync_headers_batch_min = self._sync_headers_batch_max
-        self._sync_headers_batch_current = min(
-            max(self._sync_headers_batch, self._sync_headers_batch_min),
-            self._sync_headers_batch_max,
+        # Simplified validation: clamp batch size to min/max range
+        self._sync_headers_batch_current = max(
+            self._sync_headers_batch_min,
+            min(self._sync_headers_batch, self._sync_headers_batch_max)
         )
         self._sync_request_timeout = float(
             os.environ.get("ANIMICA_P2P_SYNC_TIMEOUT", "15.0") or 15.0  # Increased from 10.0 for much larger batches
@@ -9716,10 +9714,12 @@ class P2PService:
         try:
             while self._running:
                 if not self._sync_enabled:
-                    await asyncio.sleep(self._sync_tick_sec)
+                    # Adaptive backoff when disabled - reduced CPU usage
+                    await asyncio.sleep(min(self._sync_tick_sec * 10, 0.1))
                     continue
                 if self._sync_paused:
-                    await asyncio.sleep(self._sync_tick_sec)
+                    # Adaptive backoff when paused - reduced CPU usage
+                    await asyncio.sleep(min(self._sync_tick_sec * 10, 0.1))
                     continue
                 
                 # Genesis sync gets faster ticks for more responsive recovery
@@ -13641,22 +13641,37 @@ class P2PService:
     def _prune_ttl(
         self, table: "OrderedDict[bytes, float]", *, cap: int
     ) -> None:
+        """Prune expired items and enforce cap limit without creating temporary list copies."""
         now = time.time()
-        for k, exp in list(table.items()):
+        # Remove expired items in-place by iterating once
+        # Using keys() to iterate safely while modifying
+        expired_keys = []
+        for k, exp in table.items():
             if exp <= now:
-                table.pop(k, None)
+                expired_keys.append(k)
             else:
+                # OrderedDict maintains insertion order; once we hit non-expired, stop
                 break
+        for k in expired_keys:
+            table.pop(k, None)
+        # Enforce cap by removing oldest items
         while len(table) > cap:
             table.popitem(last=False)
 
     def _prune_requested(self) -> None:
+        """Prune expired transaction requests without creating temporary list copies."""
         now = time.time()
-        for k, (exp, _peer) in list(self._tx_requested.items()):
+        # Remove expired items in-place
+        expired_keys = []
+        for k, (exp, _peer) in self._tx_requested.items():
             if exp <= now:
-                self._tx_requested.pop(k, None)
+                expired_keys.append(k)
             else:
+                # OrderedDict maintains insertion order; once we hit non-expired, stop
                 break
+        for k in expired_keys:
+            self._tx_requested.pop(k, None)
+        # Enforce cap by removing oldest items
         while len(self._tx_requested) > self._tx_requested_cap:
             self._tx_requested.popitem(last=False)
 
