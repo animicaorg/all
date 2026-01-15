@@ -736,9 +736,15 @@ def _init_p2p_service(
         from p2p.config import load_config as load_p2p_config
 
         try:
-            from p2p.node.p2p_service import P2PService
-        except Exception:  # pragma: no cover - legacy fallback
-            from p2p.node.service import P2PServiceLegacy as P2PService
+            # Use P2P2 (new implementation) via compatibility wrapper
+            from p2p2.compat import P2PService
+            log.info("Using P2P2 (new implementation)")
+        except Exception as p2p2_import_error:  # pragma: no cover - fallback to old P2P
+            log.warning(f"P2P2 not available ({p2p2_import_error}), falling back to old P2P")
+            try:
+                from p2p.node.p2p_service import P2PService
+            except Exception:  # pragma: no cover - legacy fallback
+                from p2p.node.service import P2PServiceLegacy as P2PService
         import ipaddress
 
         # Set chain_id in environment so P2P config can auto-select network seeds
