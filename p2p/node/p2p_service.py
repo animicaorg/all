@@ -8524,6 +8524,24 @@ class P2PService:
             )
             return
         previous_height = self._sync_last_matched_ancestor_height
+        
+        # DEFENSIVE: Detect potential fork scenario
+        gap = head_height_int - height
+        if gap > 100:
+            network_best = self._network_best_height()
+            log.warning(
+                "Large gap between matched ancestor and local head - potential fork",
+                extra={
+                    "anchor_height": height,
+                    "anchor_hash": self._canon_hash0x(anchor_hash),
+                    "head_height": head_height_int,
+                    "gap": gap,
+                    "network_best": network_best,
+                    "network_ahead_by": (network_best or 0) - head_height_int,
+                    "source": source,
+                },
+            )
+        
         if (
             previous_height is not None
             and height < previous_height - self._sync_locator_backtrack_threshold
