@@ -12182,7 +12182,8 @@ class P2PService:
             self._sync_checkpoint_validation = "unreachable"
             self._sync_last_checkpoint_action = "checkpoint_unreachable"
         should_reset = (
-            anchor_height <= self._sync_not_anchored_reset_height
+            anchor_height > 0  # Don't reset to genesis if already at genesis
+            and anchor_height <= self._sync_not_anchored_reset_height
             and self._sync_not_anchored_attempts
             >= self._sync_not_anchored_reset_threshold
             and now - self._sync_last_progress_at > self._sync_stall_timeout
