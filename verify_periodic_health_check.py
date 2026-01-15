@@ -3,7 +3,20 @@
 Verification script for periodic health check fix.
 
 This script verifies that the periodic health check logic works correctly
-to prevent nodes from stopping sync after a short while.
+to prevent nodes from stopping sync after a short while on startup.
+
+Test Cases:
+1. SYNCED phase, stale (>30s) - should trigger
+2. TARGET_REACHED phase, stale - should trigger
+3. SYNCED phase, recent progress - should NOT trigger
+4. SYNCING phase - should NOT trigger
+5. SYNCED with inflight headers - should NOT trigger
+6. IDLE phase, stale - should trigger
+7. No peers - should NOT trigger
+
+Passing Criteria:
+- All 7 test cases pass their assertions
+- Force sync flag integrates correctly with periodic_health_check
 """
 
 import time

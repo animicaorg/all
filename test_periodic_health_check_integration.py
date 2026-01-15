@@ -5,6 +5,18 @@ Integration test for periodic health check fix.
 This simulates the actual problem: a node syncs on startup, reaches a state
 where it thinks it's synced, then stops making sync requests even though
 new blocks are available.
+
+Test Scenarios:
+1. Bug scenario (without fix) - Node gets stuck at height 100 when network is at 150
+2. Fix scenario (with periodic check) - Node recovers and syncs to network height
+3. No false positives - Recent progress doesn't trigger unnecessary checks
+4. Respects inflight - Doesn't interfere with ongoing sync operations
+
+Expected Outcomes:
+- Bug scenario: Node remains stuck (demonstrates the problem)
+- Fix scenario: Periodic check triggers and sync resumes (fix works)
+- No false positives: Check only triggers when truly idle (safe)
+- Respects inflight: Check respects existing requests (avoids duplicate work)
 """
 
 import time
