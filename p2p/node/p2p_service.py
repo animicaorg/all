@@ -9714,12 +9714,12 @@ class P2PService:
         try:
             while self._running:
                 if not self._sync_enabled:
-                    # Adaptive backoff when disabled - reduced CPU usage
-                    await asyncio.sleep(min(self._sync_tick_sec * 10, 0.1))
+                    # Adaptive backoff when disabled - reduced CPU usage (10x longer tick = 90% less CPU)
+                    await asyncio.sleep(0.1 if self._sync_tick_sec >= 0.01 else self._sync_tick_sec * 10)
                     continue
                 if self._sync_paused:
-                    # Adaptive backoff when paused - reduced CPU usage
-                    await asyncio.sleep(min(self._sync_tick_sec * 10, 0.1))
+                    # Adaptive backoff when paused - reduced CPU usage (10x longer tick = 90% less CPU)
+                    await asyncio.sleep(0.1 if self._sync_tick_sec >= 0.01 else self._sync_tick_sec * 10)
                     continue
                 
                 # Genesis sync gets faster ticks for more responsive recovery
@@ -13641,7 +13641,12 @@ class P2PService:
     def _prune_ttl(
         self, table: "OrderedDict[bytes, float]", *, cap: int
     ) -> None:
-        """Prune expired items and enforce cap limit without creating temporary list copies."""
+        """Prune expired items and enforce cap limit without creating temporary list copies.
+        
+        Note: This assumes items are inserted in chronological order, so expiration times
+        are monotonically increasing. The break statement is safe because once we hit a
+        non-expired item, all subsequent items are also non-expired.
+        """
         now = time.time()
         # Remove expired items in-place by collecting keys first (safe iteration)
         expired_keys = []
@@ -13649,7 +13654,7 @@ class P2PService:
             if exp <= now:
                 expired_keys.append(k)
             else:
-                # OrderedDict maintains insertion order; once we hit non-expired, stop
+                # OrderedDict maintains insertion order; items are added with monotonic expiration
                 break
         # Now safe to modify - we've finished iterating
         for k in expired_keys:
