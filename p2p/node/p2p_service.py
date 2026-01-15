@@ -9535,6 +9535,8 @@ class P2PService:
                 self._expire_inflight_headers()
                 self._expire_inflight_blocks()
                 self._prune_orphan_buffer()
+                # Periodically attempt to drain orphan buffer to prevent VERIFYING deadlock
+                await self._drain_block_buffer()
                 self._retry_skipped_blocks()
                 self._maybe_mark_block_stalled(now)
                 # Predictive stall check (early detection before full stall)
