@@ -9735,7 +9735,18 @@ class P2PService:
                 ):
                     self._rotate_sync_peer()
                     self._last_rotation_at = now
-                force_sync = stalled or self._sync_force_always or self._sync_requested
+                
+                # Check if node is at tip but behind - this needs to force sync
+                # to bypass the early return in _sync_once() when best_block_height < target_height
+                at_tip_but_behind = (
+                    self._sync_phase in ("SYNCED", "TARGET_REACHED")
+                    and target_height is not None
+                    and best_block_height < target_height
+                    and not self._sync_inflight_headers
+                    and not self._sync_inflight_blocks
+                )
+                
+                force_sync = stalled or self._sync_force_always or self._sync_requested or at_tip_but_behind
                 await self._sync_once(force=force_sync)
                 if self._sync_requested:
                     self._sync_requested = False
