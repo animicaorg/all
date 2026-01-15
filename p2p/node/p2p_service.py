@@ -84,6 +84,7 @@ SKIPPED_BLOCKS_WARNING_THRESHOLD: int = 5  # Warn if this many blocks skipped du
 FEW_HEADERS_WARNING_COUNT: int = 10  # Warn if fewer headers available than this when gap > 5
 EXTENDED_STALL_SNAPSHOT_TRIGGER_SEC: float = 90.0  # Trigger snapshot recovery after this many seconds of extended stall
 EXTENDED_STALL_WATCHDOG_MULTIPLIER: float = 1.5  # Multiplier for watchdog timeout to determine extended stall
+PERIODIC_HEALTH_CHECK_INTERVAL_SEC: float = 30.0  # Interval for periodic sync health check when idle at tip
 
 # Skip stuck blocks constants
 MAX_BLOCK_FAILURE_TRACKING_ENTRIES: int = 1000  # Maximum entries in block failure tracking dict
@@ -9736,6 +9737,39 @@ class P2PService:
                     self._rotate_sync_peer()
                     self._last_rotation_at = now
                 
+                # Periodic health check: Periodically force a sync attempt even when at tip
+                # to ensure we don't miss new blocks due to stale peer information or missed announcements.
+                # This check runs every PERIODIC_HEALTH_CHECK_INTERVAL_SEC seconds when the node is in
+                # SYNCED/TARGET_REACHED/IDLE phase and hasn't made progress recently.
+                periodic_health_check = False
+                if (
+                    self._sync_phase in ("SYNCED", "TARGET_REACHED", "IDLE")
+                    and now - self._sync_last_progress_at > PERIODIC_HEALTH_CHECK_INTERVAL_SEC
+                    and not self._sync_inflight_headers
+                    and not self._sync_inflight_blocks
+                    and self._peers  # Have peers to query
+                ):
+                    # Periodic check: request headers to verify we're truly synced
+                    periodic_health_check = True
+                    log.info(
+                        "Periodic sync health check triggered",
+                        extra={
+                            "phase": self._sync_phase,
+                            "local_height": best_block_height,
+                            "time_since_progress": now - self._sync_last_progress_at,
+                            "peers": len(self._peers),
+                        },
+                    )
+                    # Clear backoffs that might be preventing us from requesting headers
+                    cleared = self._clear_sync_backoff_reason("headers_empty")
+                    cleared += self._clear_sync_backoff_reason("peer_behind")
+                    cleared += self._clear_sync_backoff_reason("at_tip")
+                    if cleared > 0:
+                        log.info(
+                            "Cleared peer backoffs for periodic health check",
+                            extra={"cleared_peers": cleared},
+                        )
+                
                 # Check if node is at tip but behind - this needs to force sync
                 # to bypass the early return in _sync_once() when best_block_height < target_height
                 at_tip_but_behind = (
@@ -9746,7 +9780,7 @@ class P2PService:
                     and not self._sync_inflight_blocks
                 )
                 
-                force_sync = stalled or self._sync_force_always or self._sync_requested or at_tip_but_behind
+                force_sync = stalled or self._sync_force_always or self._sync_requested or at_tip_but_behind or periodic_health_check
                 await self._sync_once(force=force_sync)
                 if self._sync_requested:
                     self._sync_requested = False
