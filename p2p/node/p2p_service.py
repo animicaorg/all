@@ -11009,7 +11009,9 @@ class P2PService:
                 self._penalize_peer(peer, "headers_timeout", nonfatal=True)
                 peer.sync_timeouts += 1
                 
-                # More aggressive backoff for genesis sync to force peer rotation
+                # Longer backoff at genesis to force peer rotation
+                # The increased delay keeps failed peers unavailable longer,
+                # pushing sync to try different peers instead of retrying the same one
                 backoff_delay = 10.0 if at_genesis else 5.0
                 self._set_sync_backoff(peer, reason="headers_timeout", delay=backoff_delay)
                 

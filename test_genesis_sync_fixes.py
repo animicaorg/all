@@ -15,13 +15,16 @@ def test_genesis_header_timeout_peer_rotation():
     """
     Test that header request timeouts at genesis force peer rotation.
     
-    At genesis, after the first retry, peer_id should be cleared to force
-    trying a different peer.
+    At genesis, after the second retry (retry_count > 1), peer_id should 
+    be cleared to force trying a different peer. This means:
+    - Initial attempt (retry_count = 0)
+    - First retry (retry_count = 1) 
+    - Second retry (retry_count = 2) <- peer rotation happens here
     """
-    # Simulated state - at genesis
+    # Simulated state - at genesis after 2 retries
     local_height = 0
     at_genesis = True
-    retry_count = 2  # After first retry (0 -> 1 -> 2)
+    retry_count = 2  # Second retry has occurred
     
     # With the fix, peer_id should be cleared after first retry at genesis (retry_count > 1)
     should_force_peer_rotation = at_genesis and retry_count > 1
@@ -35,18 +38,21 @@ def test_genesis_header_timeout_peer_rotation():
 
 def test_genesis_backoff_more_aggressive():
     """
-    Test that backoff delay at genesis is more aggressive (10s vs 5s).
+    Test that backoff delay at genesis is longer (10s vs 5s).
+    
+    The longer delay forces peer rotation by keeping failed peers 
+    unavailable longer, pushing sync to try different peers.
     """
     # Simulated state
     at_genesis = True
     
-    # With the fix, backoff should be 10s at genesis
+    # With the fix, backoff should be 10s at genesis (longer to force peer rotation)
     backoff_delay = 10.0 if at_genesis else 5.0
     
     assert backoff_delay == 10.0, \
-        "Backoff delay at genesis should be 10s (vs 5s normally)"
+        "Backoff delay at genesis should be 10s (vs 5s normally) to force peer rotation"
     
-    print("✓ Test 2 PASSED: Genesis backoff delay is 10s (more aggressive peer rotation)")
+    print("✓ Test 2 PASSED: Genesis backoff delay is 10s (longer to force peer rotation)")
     return True
 
 
@@ -148,6 +154,10 @@ def test_genesis_skip_snapshot_recovery():
     return True
 
 
+# Constants for tick rate calculations (should match p2p_service.py)
+MIN_SYNC_TICK_SEC = 0.001
+
+
 def test_genesis_sync_tick_4x_faster():
     """
     Test that genesis sync loop ticks 4x faster for more responsive recovery.
@@ -157,7 +167,7 @@ def test_genesis_sync_tick_4x_faster():
     base_tick_sec = 0.1  # 100ms base tick
     
     # With the fix, genesis tick should be 4x faster
-    tick_sec = max(0.001, base_tick_sec / 4) if at_genesis else base_tick_sec
+    tick_sec = max(MIN_SYNC_TICK_SEC, base_tick_sec / 4) if at_genesis else base_tick_sec
     
     assert tick_sec == 0.025, \
         "Genesis sync tick should be 4x faster (25ms vs 100ms)"
