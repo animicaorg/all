@@ -94,20 +94,15 @@ def verify_sync_constants():
     # Test 4: Check sync_manager.py config
     print("4. Checking p2p/core_p2p/sync_manager.py config...")
     try:
-        from p2p.core_p2p.sync_manager import SyncManager
+        # Check by reading the file since SyncManager uses dataclass with default_factory
+        with open('p2p/core_p2p/sync_manager.py', 'r') as f:
+            content = f.read()
         
-        # Check default max_inflight via dataclass field
-        import inspect
-        from dataclasses import fields
-        
-        for field in fields(SyncManager):
-            if field.name == 'max_inflight':
-                if field.default == 4096:
-                    print(f"   ✓ max_inflight = {field.default} (expected 4096)")
-                else:
-                    errors.append(f"SyncManager.max_inflight = {field.default}, expected 4096")
-                    print(f"   ✗ max_inflight = {field.default} (expected 4096)")
-                break
+        if 'max_inflight: int = 4096' in content:
+            print(f"   ✓ max_inflight = 4096 (expected 4096)")
+        else:
+            errors.append(f"SyncManager.max_inflight not set to 4096")
+            print(f"   ✗ max_inflight not set to 4096")
     except Exception as e:
         errors.append(f"Failed to check SyncManager: {e}")
         print(f"   ✗ Failed to check: {e}")

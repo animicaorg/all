@@ -86,6 +86,17 @@ EXTENDED_STALL_SNAPSHOT_TRIGGER_SEC: float = 30.0  # Reduced from 90.0 to 30.0 f
 EXTENDED_STALL_WATCHDOG_MULTIPLIER: float = 1.5  # Multiplier for watchdog timeout to determine extended stall
 PERIODIC_HEALTH_CHECK_INTERVAL_SEC: float = 30.0  # Interval for periodic sync health check when idle at tip
 
+# Predictive stall detection constants
+PREDICTIVE_STALL_CHECK_INTERVAL_SEC: float = 10.0  # Check for slow progress every 10 seconds
+PREDICTIVE_STALL_MIN_SYNC_RATE: float = 0.1  # Minimum acceptable sync rate (blocks/sec) - less triggers warning
+PREDICTIVE_STALL_MIN_BLOCKS_SYNCED: int = 5  # Minimum blocks synced in interval to avoid triggering
+PREDICTIVE_STALL_HIGH_INFLIGHT_THRESHOLD: int = 100  # Consider high inflight if > this many blocks
+
+# Peer throughput tracking constants
+THROUGHPUT_HEADER_WEIGHT: float = 0.1  # Weight factor for headers vs blocks (blocks more valuable)
+THROUGHPUT_EWMA_ALPHA: float = 0.3  # EWMA smoothing factor (0-1, higher = more responsive)
+THROUGHPUT_MIN_UPDATE_INTERVAL_SEC: float = 1.0  # Minimum time between throughput updates
+
 # Skip stuck blocks constants
 MAX_BLOCK_FAILURE_TRACKING_ENTRIES: int = 1000  # Maximum entries in block failure tracking dict
 MAX_SKIPPED_BLOCKS_QUEUE_SIZE: int = 100  # Maximum size of skipped blocks queue
@@ -3651,8 +3662,8 @@ class P2PService:
         Predictive stall detection - catches slow progress before full stall occurs.
         
         Detects:
-        1. Progress rate below threshold (< 1 block per 10 seconds)
-        2. High in-flight count with low completion rate
+        1. Progress rate below threshold (< PREDICTIVE_STALL_MIN_SYNC_RATE blocks/sec)
+        2. High in-flight count with low completion rate (> PREDICTIVE_STALL_HIGH_INFLIGHT_THRESHOLD blocks stuck)
         3. Peer count dropping while syncing
         4. Repeated errors from same peer
         """
@@ -3665,8 +3676,8 @@ class P2PService:
         
         time_elapsed = now - self._predictive_check_last_time
         
-        # Check every 10 seconds
-        if time_elapsed < 10.0:
+        # Check every PREDICTIVE_STALL_CHECK_INTERVAL_SEC seconds
+        if time_elapsed < PREDICTIVE_STALL_CHECK_INTERVAL_SEC:
             return
         
         blocks_synced = head_height - self._predictive_check_last_height
@@ -3676,12 +3687,12 @@ class P2PService:
         self._predictive_check_last_height = head_height
         self._predictive_check_last_time = now
         
-        # Detect slow progress (< 0.1 blocks/sec = 1 block per 10 seconds)
-        slow_progress = sync_rate < 0.1 and blocks_synced < 5
+        # Detect slow progress (< PREDICTIVE_STALL_MIN_SYNC_RATE blocks/sec)
+        slow_progress = sync_rate < PREDICTIVE_STALL_MIN_SYNC_RATE and blocks_synced < PREDICTIVE_STALL_MIN_BLOCKS_SYNCED
         
         # Detect high in-flight with no progress
         high_inflight_no_progress = (
-            len(self._sync_inflight_blocks) > 100 and blocks_synced == 0
+            len(self._sync_inflight_blocks) > PREDICTIVE_STALL_HIGH_INFLIGHT_THRESHOLD and blocks_synced == 0
         )
         
         # Detect dropping peer count while syncing
@@ -10312,24 +10323,23 @@ class P2PService:
         now = time.time()
         time_delta = now - peer.last_throughput_update
         
-        # Only update if enough time has passed (at least 1 second)
-        if time_delta < 1.0:
+        # Only update if enough time has passed (THROUGHPUT_MIN_UPDATE_INTERVAL_SEC)
+        if time_delta < THROUGHPUT_MIN_UPDATE_INTERVAL_SEC:
             # Accumulate counts
             peer.blocks_delivered += blocks_count
             peer.headers_delivered += headers_count
             return
         
         # Calculate instantaneous throughput (blocks + headers per second)
-        # Weight blocks higher than headers (blocks are more valuable)
-        total_items = peer.blocks_delivered + blocks_count + (peer.headers_delivered + headers_count) * 0.1
+        # Weight blocks higher than headers (blocks are more valuable) using THROUGHPUT_HEADER_WEIGHT
+        total_items = peer.blocks_delivered + blocks_count + (peer.headers_delivered + headers_count) * THROUGHPUT_HEADER_WEIGHT
         instantaneous_throughput = total_items / time_delta if time_delta > 0 else 0.0
         
-        # Update EWMA (alpha = 0.3 for balance between responsiveness and stability)
+        # Update EWMA using THROUGHPUT_EWMA_ALPHA (balance between responsiveness and stability)
         if peer.throughput_ewma is None:
             peer.throughput_ewma = instantaneous_throughput
         else:
-            alpha = 0.3
-            peer.throughput_ewma = alpha * instantaneous_throughput + (1 - alpha) * peer.throughput_ewma
+            peer.throughput_ewma = THROUGHPUT_EWMA_ALPHA * instantaneous_throughput + (1 - THROUGHPUT_EWMA_ALPHA) * peer.throughput_ewma
         
         # Reset counters
         peer.blocks_delivered = 0
