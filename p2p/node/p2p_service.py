@@ -12421,9 +12421,40 @@ class P2PService:
         # Resetting to genesis can cause sync loops and loss of valid chain state
         # Instead, rely on fork resolution via _reset_chain_to_ancestor
         should_reset = False  # Completely disabled - never reset to genesis
-        # Also check if we should reset to a matched ancestor for longer forks
+        
+        # Special handling for genesis: if we're at genesis and can't anchor,
+        # we can't reset (already at genesis) and can't use ancestor reset (no ancestor exists).
+        # In this case, rely on the genesis sync recovery mechanisms:
+        # - Genesis watchdog (15s timeout, immediate aggressive recovery)
+        # - Aggressive peer rotation
+        # - Faster tick rates (4x)
+        # - Force peer refresh
+        at_genesis = anchor_height == 0
+        if at_genesis and self._sync_not_anchored_attempts >= self._sync_not_anchored_reset_threshold:
+            # At genesis with repeated anchor failures: trigger aggressive recovery
+            # without attempting any reset (which would be pointless)
+            log.warning(
+                "Genesis sync: cannot anchor headers after multiple attempts",
+                extra={
+                    "attempts": self._sync_not_anchored_attempts,
+                    "threshold": self._sync_not_anchored_reset_threshold,
+                    "action": "aggressive_peer_rotation",
+                },
+            )
+            # Force peer refresh to try different peers
+            self._force_peer_refresh(reason="genesis_not_anchored")
+            # Reset attempt counter to prevent infinite escalation
+            self._sync_not_anchored_attempts = 0
+            # Clear in-flight state to start fresh
+            self._reset_sync_state(reason="genesis_not_anchored_recovery")
+            # Trigger aggressive sync
+            self._sync_kick(reason="genesis_not_anchored_recovery", aggressive=True)
+            action = "genesis_peer_rotation"
+        
+        # Also check if we should reset to a matched ancestor for longer forks (heights > 0 only)
         should_reset_to_ancestor = (
-            self._sync_not_anchored_attempts
+            not at_genesis  # Ancestor reset only makes sense for heights > 0
+            and self._sync_not_anchored_attempts
             >= self._sync_not_anchored_reset_threshold
             and now - self._sync_last_progress_at > self._sync_stall_timeout
             and self._sync_last_matched_ancestor_height is not None
