@@ -4,11 +4,15 @@
 
 Users report that explorer2 is showing exactly 3 times as much balance as what they see in their wallets.
 
-## Root Cause
+## Root Causes
 
-The issue is **NOT a bug in explorer2**. Explorer2 is correctly displaying the balances stored in the state database. The actual problem is that the state database contains **inflated balances** due to the state rebuild bug.
+There are TWO separate issues that can cause balance discrepancies:
 
-### State Rebuild Bug
+### Issue #1: State Database Inflation (Primary Issue)
+
+The state database contains **inflated balances** due to the state rebuild bug, causing balances to be 2x, 3x, 4x, or more of the correct value.
+
+#### State Rebuild Bug
 
 When the node experiences certain conditions that require rebuilding state from genesis:
 1. Node mines blocks and credits rewards to addresses → balances are correct ✅
@@ -22,7 +26,19 @@ If a user's node has rebuilt state 2 times:
 - Rebuild #1: +1x rewards (total 2x) ❌
 - Rebuild #2: +1x rewards (total 3x) ❌
 
+### Issue #2: Wallet Extension Decimal Misconfiguration
+
+The wallet extension was configured to use **18 decimals** (like Ethereum) instead of **9 decimals** (actual ANM).
+
+- **ANM uses**: 1 ANM = 1,000,000,000 nANM (10^9 = 9 decimals)
+- **Wallet was using**: 10^18 decimals (Ethereum standard)
+- **Effect**: If wallet JS code uses this decimal config, it would display balances 10^9 times smaller than correct
+
+**Note**: This has been fixed in this PR by changing `currencyDecimals` from 18 to 9 in `wallet-extension/src/background/network/networks.ts`.
+
 ### Why Explorer2 Shows Higher Values
+
+The most likely scenario for the "3x" issue:
 
 - **State DB**: Contains 3x inflated balances (due to 2 rebuilds)
 - **Explorer2**: Queries `state.getBalance` RPC → displays 3x (correct read of wrong data)
@@ -33,9 +49,18 @@ If a user's node has rebuilt state 2 times:
 
 ## Solution
 
-The fix is **NOT to modify explorer2 code**, but to **correct the inflated balances in the state database**.
+The fix involves TWO steps:
 
-### Step 1: Diagnose the Issue
+### Step 0: Fix Wallet Decimal Configuration (Done in this PR)
+
+Changed `currencyDecimals` from 18 to 9 in:
+- `wallet-extension/src/background/network/networks.ts`
+
+This ensures the wallet extension displays balances correctly. Users will need to:
+1. Reload the extension
+2. Refresh their balance
+
+### Step 1: Diagnose the State DB Inflation
 
 Run the diagnostic script to confirm the 3x inflation:
 

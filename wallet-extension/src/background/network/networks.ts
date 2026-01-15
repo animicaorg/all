@@ -55,7 +55,7 @@ const BUILTIN: Record<Exclude<NetworkId, "custom-env">, Network> = {
     explorer: "https://explorer.animica.example",
     bech32Prefix: "anim",
     currencySymbol: "ANM",
-    currencyDecimals: 18,
+    currencyDecimals: 9, // 1 ANM = 10^9 nANM (NOT 10^18 like Ethereum)
     features: { da: true, aicf: true, randomness: true, zkVerify: true, blobs: true },
   },
   "animica-testnet": {
@@ -67,7 +67,7 @@ const BUILTIN: Record<Exclude<NetworkId, "custom-env">, Network> = {
     explorer: "https://explorer.testnet.animica.example",
     bech32Prefix: "anim",
     currencySymbol: "ANMT",
-    currencyDecimals: 18,
+    currencyDecimals: 9, // 1 ANM = 10^9 nANM (NOT 10^18 like Ethereum)
     features: { da: true, aicf: true, randomness: true, zkVerify: true, blobs: true },
   },
   "animica-devnet": {
@@ -80,7 +80,7 @@ const BUILTIN: Record<Exclude<NetworkId, "custom-env">, Network> = {
     explorer: "http://localhost:8080",
     bech32Prefix: "anim",
     currencySymbol: "ANMD",
-    currencyDecimals: 18,
+    currencyDecimals: 9, // 1 ANM = 10^9 nANM (NOT 10^18 like Ethereum)
     features: { da: true, aicf: true, randomness: true, zkVerify: true, blobs: true },
   },
 };
@@ -104,7 +104,7 @@ const CUSTOM_ENV: Network | undefined =
         explorer: undefined,
         bech32Prefix: "anim",
         currencySymbol: "ANM",
-        currencyDecimals: 18,
+        currencyDecimals: 9, // 1 ANM = 10^9 nANM (NOT 10^18 like Ethereum)
         features: { da: true, aicf: true, randomness: true, zkVerify: true, blobs: true },
       }
     : undefined;
