@@ -15,9 +15,9 @@ from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Dict, List, Optional, Set
 
-from . import Peer, PeerState
-from ..transport import Connection, TCPTransport
-from ..protocol import Message, MsgType, create_hello, create_disconnect
+from p2p2.peer import Peer, PeerState
+from p2p2.transport import Connection, TCPTransport
+from p2p2.protocol import Message, MsgType, create_hello, create_disconnect
 
 logger = logging.getLogger(__name__)
 

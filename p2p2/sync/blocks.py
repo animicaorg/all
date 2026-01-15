@@ -13,7 +13,7 @@ from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Protocol, Set
 
-from ..protocol import Message, MsgType, InvItem, create_getdata
+from p2p2.protocol import Message, MsgType, InvItem, create_getdata
 
 logger = logging.getLogger(__name__)
 

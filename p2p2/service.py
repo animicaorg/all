@@ -9,15 +9,15 @@ import logging
 from pathlib import Path
 from typing import Optional
 
-from .transport import TCPTransport, TransportConfig
-from .peermanager import PeerManager, PeerManagerConfig
-from .gossip import GossipEngine
-from .sync import SyncManager, SyncManagerConfig, HeadersSyncConfig, BlocksSyncConfig
-from .store import ChainStoreAdapter
-from .metrics import P2PMetrics
-from .api import P2PAPI
-from .protocol import MsgType, HelloPayload, create_hello, create_pong
-from .peer import PeerState
+from p2p2.transport import TCPTransport, TransportConfig
+from p2p2.peermanager import PeerManager, PeerManagerConfig
+from p2p2.gossip import GossipEngine
+from p2p2.sync import SyncManager, SyncManagerConfig, HeadersSyncConfig, BlocksSyncConfig
+from p2p2.store import ChainStoreAdapter
+from p2p2.metrics import P2PMetrics
+from p2p2.api import P2PAPI
+from p2p2.protocol import MsgType, HelloPayload, create_hello, create_pong
+from p2p2.peer import PeerState
 
 logger = logging.getLogger(__name__)
 

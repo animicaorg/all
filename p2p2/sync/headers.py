@@ -12,7 +12,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Protocol, Tuple
 
-from ..protocol import Message, MsgType, create_getheaders
+from p2p2.protocol import Message, MsgType, create_getheaders
 
 logger = logging.getLogger(__name__)
 

@@ -12,8 +12,8 @@ import time
 from collections import OrderedDict
 from typing import Dict, List, Optional, Set, Callable, Awaitable
 
-from ..protocol import Message, MsgType, InvItem, create_inv, create_getdata
-from ..peer import Peer
+from p2p2.protocol import Message, MsgType, InvItem, create_inv, create_getdata
+from p2p2.peer import Peer
 
 logger = logging.getLogger(__name__)
 
