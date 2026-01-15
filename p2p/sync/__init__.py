@@ -28,8 +28,8 @@ from typing import Optional, Tuple
 Hash = bytes
 Height = int
 
-DEFAULT_MAX_IN_FLIGHT: int = 8192  # Massively increased from 1024 for hundreds-to-thousands blocks/sec throughput
-DEFAULT_REQUEST_TIMEOUT_SEC: float = 15.0  # Increased from 10.0 to handle much larger batch sizes
+DEFAULT_MAX_IN_FLIGHT: int = 16384  # Further increased from 8192 for ultra-fast sync (thousands of blocks/sec)
+DEFAULT_REQUEST_TIMEOUT_SEC: float = 20.0  # Increased from 15.0 to handle even larger batch sizes without premature timeouts
 DEFAULT_MAX_REORG_DEPTH: int = 96
 
 

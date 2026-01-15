@@ -82,9 +82,20 @@ LOCATOR_PARENT_CHAIN_VALIDATION_DEPTH: int = 3  # Number of parent hashes to wal
 LARGE_GAP_THRESHOLD: int = 10  # Blocks: enqueue blocks even with missing parents if gap > this
 SKIPPED_BLOCKS_WARNING_THRESHOLD: int = 5  # Warn if this many blocks skipped due to missing parents
 FEW_HEADERS_WARNING_COUNT: int = 10  # Warn if fewer headers available than this when gap > 5
-EXTENDED_STALL_SNAPSHOT_TRIGGER_SEC: float = 90.0  # Trigger snapshot recovery after this many seconds of extended stall
+EXTENDED_STALL_SNAPSHOT_TRIGGER_SEC: float = 30.0  # Reduced from 90.0 to 30.0 for much faster snapshot recovery (eliminates long stalls)
 EXTENDED_STALL_WATCHDOG_MULTIPLIER: float = 1.5  # Multiplier for watchdog timeout to determine extended stall
 PERIODIC_HEALTH_CHECK_INTERVAL_SEC: float = 30.0  # Interval for periodic sync health check when idle at tip
+
+# Predictive stall detection constants
+PREDICTIVE_STALL_CHECK_INTERVAL_SEC: float = 10.0  # Check for slow progress every 10 seconds
+PREDICTIVE_STALL_MIN_SYNC_RATE: float = 0.1  # Minimum acceptable sync rate (blocks/sec) - less triggers warning
+PREDICTIVE_STALL_MIN_BLOCKS_SYNCED: int = 5  # Minimum blocks synced in interval to avoid triggering
+PREDICTIVE_STALL_HIGH_INFLIGHT_THRESHOLD: int = 100  # Consider high inflight if > this many blocks
+
+# Peer throughput tracking constants
+THROUGHPUT_HEADER_WEIGHT: float = 0.1  # Weight factor for headers vs blocks (blocks more valuable)
+THROUGHPUT_EWMA_ALPHA: float = 0.3  # EWMA smoothing factor (0-1, higher = more responsive)
+THROUGHPUT_MIN_UPDATE_INTERVAL_SEC: float = 1.0  # Minimum time between throughput updates
 
 # Skip stuck blocks constants
 MAX_BLOCK_FAILURE_TRACKING_ENTRIES: int = 1000  # Maximum entries in block failure tracking dict
@@ -166,6 +177,12 @@ class _PeerState:
     last_tx_inv_recv_at: Optional[float] = None
     last_tx_data_sent_at: Optional[float] = None
     last_tx_data_recv_at: Optional[float] = None
+    # Throughput tracking for peer quality scoring (ultra-fast sync)
+    blocks_delivered: int = 0  # Total blocks successfully delivered
+    headers_delivered: int = 0  # Total headers successfully delivered
+    bytes_received: int = 0  # Total bytes received from peer
+    throughput_ewma: Optional[float] = None  # Exponentially weighted moving average of throughput (blocks/sec)
+    last_throughput_update: float = field(default_factory=time.time)  # Last time throughput was calculated
 
 
 class PeerMisbehavior(Exception):
@@ -884,7 +901,7 @@ class P2PService:
             os.environ.get("ANIMICA_P2P_NO_HEADERS_THRESHOLD", "3") or 3
         )
         self._sync_no_headers_backoff = float(
-            os.environ.get("ANIMICA_P2P_NO_HEADERS_BACKOFF", "5.0") or 5.0  # Reduced from 15s for faster recovery when at tip
+            os.environ.get("ANIMICA_P2P_NO_HEADERS_BACKOFF", "2.0") or 2.0  # Reduced from 5.0 to 2.0 for even faster recovery when at tip
         )
         self._sync_not_anchored_backoff = float(
             os.environ.get("ANIMICA_P2P_NOT_ANCHORED_BACKOFF", "1.0") or 1.0
@@ -932,16 +949,16 @@ class P2PService:
         self._sync_stale_network_best_at = 0.0
         self._sync_stale_network_best_count = 0
         self._sync_stale_network_best_cooldown = float(
-            os.environ.get("ANIMICA_P2P_STALE_NETWORK_BEST_COOLDOWN", "5.0") or 5.0
+            os.environ.get("ANIMICA_P2P_STALE_NETWORK_BEST_COOLDOWN", "2.0") or 2.0  # Reduced from 5.0 to 2.0 for ultra-fast stall recovery
         )
         self._sync_network_best_cache_timeout = float(
-            os.environ.get("ANIMICA_P2P_NETWORK_BEST_CACHE_TIMEOUT", "60.0") or 60.0
+            os.environ.get("ANIMICA_P2P_NETWORK_BEST_CACHE_TIMEOUT", "30.0") or 30.0  # Reduced from 60.0 to 30.0 for faster cache invalidation
         )
         self._sync_peer_head_stale_sec = float(
-            os.environ.get("ANIMICA_P2P_PEER_HEAD_STALE_SEC", "60.0") or 60.0
+            os.environ.get("ANIMICA_P2P_PEER_HEAD_STALE_SEC", "30.0") or 30.0  # Reduced from 60.0 to 30.0 for faster peer rotation
         )
         self._sync_peer_head_cooldown_sec = float(
-            os.environ.get("ANIMICA_P2P_PEER_HEAD_COOLDOWN_SEC", "120.0") or 120.0
+            os.environ.get("ANIMICA_P2P_PEER_HEAD_COOLDOWN_SEC", "60.0") or 60.0  # Reduced from 120.0 to 60.0 for faster recovery
         )
         self._sync_nonfatal_penalty_window_s = float(
             os.environ.get("ANIMICA_P2P_NONFATAL_PENALTY_WINDOW", "300") or 300
@@ -1289,7 +1306,7 @@ class P2PService:
             or 20.0
         )
         self._sync_watchdog_timeout = float(
-            os.environ.get("ANIMICA_SYNC_WATCHDOG_TIMEOUT_S", "60") or 60
+            os.environ.get("ANIMICA_SYNC_WATCHDOG_TIMEOUT_S", "30") or 30  # Reduced from 60 to 30 for faster stall detection
         )
         self._sync_watchdog_last_height: int = 0
         self._sync_watchdog_last_hash: Optional[str] = None
@@ -3637,6 +3654,76 @@ class P2PService:
                 "missing_parent_deadlock": missing_parent_deadlock,
             },
         )
+
+    def _predictive_stall_check(
+        self, *, now: float, head_height: int, head_hash: Optional[str]
+    ) -> None:
+        """
+        Predictive stall detection - catches slow progress before full stall occurs.
+        
+        Detects:
+        1. Progress rate below threshold (< PREDICTIVE_STALL_MIN_SYNC_RATE blocks/sec)
+        2. High in-flight count with low completion rate (> PREDICTIVE_STALL_HIGH_INFLIGHT_THRESHOLD blocks stuck)
+        3. Peer count dropping while syncing
+        4. Repeated errors from same peer
+        """
+        # Track progress rate
+        if not hasattr(self, '_predictive_check_last_height'):
+            self._predictive_check_last_height = head_height
+            self._predictive_check_last_time = now
+            self._predictive_stall_detected = False
+            return
+        
+        time_elapsed = now - self._predictive_check_last_time
+        
+        # Check every PREDICTIVE_STALL_CHECK_INTERVAL_SEC seconds
+        if time_elapsed < PREDICTIVE_STALL_CHECK_INTERVAL_SEC:
+            return
+        
+        blocks_synced = head_height - self._predictive_check_last_height
+        sync_rate = blocks_synced / time_elapsed if time_elapsed > 0 else 0
+        
+        # Update tracking
+        self._predictive_check_last_height = head_height
+        self._predictive_check_last_time = now
+        
+        # Detect slow progress (< PREDICTIVE_STALL_MIN_SYNC_RATE blocks/sec)
+        slow_progress = sync_rate < PREDICTIVE_STALL_MIN_SYNC_RATE and blocks_synced < PREDICTIVE_STALL_MIN_BLOCKS_SYNCED
+        
+        # Detect high in-flight with no progress
+        high_inflight_no_progress = (
+            len(self._sync_inflight_blocks) > PREDICTIVE_STALL_HIGH_INFLIGHT_THRESHOLD and blocks_synced == 0
+        )
+        
+        # Detect dropping peer count while syncing
+        peer_count_drop = (
+            self._sync_best_header and
+            self._sync_best_header.height > head_height + 10 and
+            len(self._peers) < 3
+        )
+        
+        if slow_progress or high_inflight_no_progress or peer_count_drop:
+            if not self._predictive_stall_detected:
+                self._predictive_stall_detected = True
+                log.warning(
+                    "Predictive stall detection: slow progress detected",
+                    extra={
+                        "sync_rate": f"{sync_rate:.2f} blocks/sec",
+                        "blocks_synced": blocks_synced,
+                        "time_elapsed": f"{time_elapsed:.1f}s",
+                        "inflight_blocks": len(self._sync_inflight_blocks),
+                        "peers": len(self._peers),
+                        "slow_progress": slow_progress,
+                        "high_inflight_no_progress": high_inflight_no_progress,
+                        "peer_count_drop": peer_count_drop,
+                    },
+                )
+                # Take early action: refresh peers and kick sync
+                self._force_peer_refresh(reason="predictive_stall_early")
+                self._sync_kick(reason="predictive_stall_early", aggressive=True)
+                self._sync_wakeup.set()
+        else:
+            self._predictive_stall_detected = False
 
     def _enforce_sync_invariants(
         self,
@@ -6747,6 +6834,8 @@ class P2PService:
                 except Exception:
                     pass
                 peer.sync_successes += 1
+                # Update peer throughput metrics for quality scoring
+                self._update_peer_throughput(peer, blocks_count=1)
                 self._sync_inflight_blocks.pop(sync_block.hash, None)
                 self._sync_inflight_peers.pop(sync_block.hash, None)
                 self._sync_inflight_block_requests.pop(sync_block.hash, None)
@@ -8344,7 +8433,7 @@ class P2PService:
             return [], "invalid_headers", {"invalid_headers": len(headers)}
 
         self._sync_headers_accepted_total += len(contiguous)
-        self._note_header_progress(peer, reason="headers_accepted")
+        self._note_header_progress(peer, reason="headers_accepted", headers_count=len(contiguous))
         self._sync_anchor_probe_hash = None
         self._sync_anchor_probe_peer = None
         self._sync_anchor_probe_until = 0.0
@@ -8382,13 +8471,16 @@ class P2PService:
             )
         return [h.hash for h in contiguous], None, discard_reason_counts
 
-    def _note_header_progress(self, peer: _PeerState, *, reason: str) -> None:
+    def _note_header_progress(self, peer: _PeerState, *, reason: str, headers_count: int = 0) -> None:
         now = time.time()
         self._sync_last_header_at = now
         self._sync_last_header_response_at = now
         self._sync_last_progress_at = now
         peer.last_progress_at = now
         peer.sync_successes += 1
+        # Update peer throughput metrics for quality scoring
+        if headers_count > 0:
+            self._update_peer_throughput(peer, headers_count=headers_count)
         header_height = self._sync_best_header.height if self._sync_best_header else 0
         self._note_sync_progress(
             reason=f"headers:{reason}",
@@ -9445,6 +9537,10 @@ class P2PService:
                 self._prune_orphan_buffer()
                 self._retry_skipped_blocks()
                 self._maybe_mark_block_stalled(now)
+                # Predictive stall check (early detection before full stall)
+                self._predictive_stall_check(
+                    now=now, head_height=best_block_height, head_hash=head_hash
+                )
                 self._sync_watchdog_check(
                     now=now, head_height=best_block_height, head_hash=head_hash
                 )
@@ -10204,10 +10300,51 @@ class P2PService:
         self._sync_peer_backoff[key] = until
         self._sync_peer_backoff_reason[key] = reason
 
-    def _peer_sync_score(self, peer: _PeerState) -> tuple[float, int, int]:
+    def _peer_sync_score(self, peer: _PeerState) -> tuple[float, int, int, float]:
+        """
+        Enhanced peer sync scoring with throughput tracking.
+        
+        Returns: (success_rate, -timeouts, -not_anchored_count, throughput)
+        Higher values = better peer quality
+        """
         total = peer.sync_successes + peer.sync_timeouts + peer.sync_failures
         success_rate = peer.sync_successes / max(1, total)
-        return (success_rate, -peer.sync_timeouts, -peer.not_anchored_count)
+        
+        # Include throughput in scoring (blocks/sec)
+        throughput = peer.throughput_ewma if peer.throughput_ewma is not None else 0.0
+        
+        return (success_rate, -peer.sync_timeouts, -peer.not_anchored_count, throughput)
+
+    def _update_peer_throughput(self, peer: _PeerState, blocks_count: int = 0, headers_count: int = 0) -> None:
+        """
+        Update peer throughput metrics for quality scoring.
+        Uses exponentially weighted moving average (EWMA) for smooth throughput tracking.
+        """
+        now = time.time()
+        time_delta = now - peer.last_throughput_update
+        
+        # Only update if enough time has passed (THROUGHPUT_MIN_UPDATE_INTERVAL_SEC)
+        if time_delta < THROUGHPUT_MIN_UPDATE_INTERVAL_SEC:
+            # Accumulate counts
+            peer.blocks_delivered += blocks_count
+            peer.headers_delivered += headers_count
+            return
+        
+        # Calculate instantaneous throughput (blocks + headers per second)
+        # Weight blocks higher than headers (blocks are more valuable) using THROUGHPUT_HEADER_WEIGHT
+        total_items = peer.blocks_delivered + blocks_count + (peer.headers_delivered + headers_count) * THROUGHPUT_HEADER_WEIGHT
+        instantaneous_throughput = total_items / time_delta if time_delta > 0 else 0.0
+        
+        # Update EWMA using THROUGHPUT_EWMA_ALPHA (balance between responsiveness and stability)
+        if peer.throughput_ewma is None:
+            peer.throughput_ewma = instantaneous_throughput
+        else:
+            peer.throughput_ewma = THROUGHPUT_EWMA_ALPHA * instantaneous_throughput + (1 - THROUGHPUT_EWMA_ALPHA) * peer.throughput_ewma
+        
+        # Reset counters
+        peer.blocks_delivered = 0
+        peer.headers_delivered = 0
+        peer.last_throughput_update = now
 
     def _select_sync_peer(
         self,

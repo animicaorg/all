@@ -67,11 +67,11 @@ class BlockFetcher(Protocol):
 
 @dataclass(slots=True)
 class BlocksSyncConfig:
-    max_parallel: int = 2048  # Massively increased from 256 to 2048 for hundreds-to-thousands blocks/sec sync
+    max_parallel: int = 4096  # Ultra-increased from 2048 to 4096 for extreme parallel sync (thousands of blocks/sec)
     request_timeout_sec: float = DEFAULT_REQUEST_TIMEOUT_SEC
     max_retries: int = 3
     jitter_frac: float = 0.15
-    idle_backoff_sec: float = 0.01  # Reduced from 0.05 to 0.01 for minimal latency
+    idle_backoff_sec: float = 0.001  # Further reduced from 0.01 to 0.001 for instant response (1ms)
     sanity_parent_required: bool = (
         True  # reassembly requires known parent for the first commit
     )
