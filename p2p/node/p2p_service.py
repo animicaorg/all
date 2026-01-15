@@ -9737,7 +9737,7 @@ class P2PService:
                     self._last_rotation_at = now
                 
                 # Check if node is at tip but behind - this needs to force sync
-                # to bypass the early return in _sync_once() when local_height >= target_height
+                # to bypass the early return in _sync_once() when best_block_height < target_height
                 at_tip_but_behind = (
                     self._sync_phase in ("SYNCED", "TARGET_REACHED")
                     and target_height is not None
