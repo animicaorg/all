@@ -82,7 +82,7 @@ LOCATOR_PARENT_CHAIN_VALIDATION_DEPTH: int = 3  # Number of parent hashes to wal
 LARGE_GAP_THRESHOLD: int = 10  # Blocks: enqueue blocks even with missing parents if gap > this
 SKIPPED_BLOCKS_WARNING_THRESHOLD: int = 5  # Warn if this many blocks skipped due to missing parents
 FEW_HEADERS_WARNING_COUNT: int = 10  # Warn if fewer headers available than this when gap > 5
-EXTENDED_STALL_SNAPSHOT_TRIGGER_SEC: float = 90.0  # Trigger snapshot recovery after this many seconds of extended stall
+EXTENDED_STALL_SNAPSHOT_TRIGGER_SEC: float = 30.0  # Reduced from 90.0 to 30.0 for much faster snapshot recovery (eliminates long stalls)
 EXTENDED_STALL_WATCHDOG_MULTIPLIER: float = 1.5  # Multiplier for watchdog timeout to determine extended stall
 PERIODIC_HEALTH_CHECK_INTERVAL_SEC: float = 30.0  # Interval for periodic sync health check when idle at tip
 
@@ -884,7 +884,7 @@ class P2PService:
             os.environ.get("ANIMICA_P2P_NO_HEADERS_THRESHOLD", "3") or 3
         )
         self._sync_no_headers_backoff = float(
-            os.environ.get("ANIMICA_P2P_NO_HEADERS_BACKOFF", "5.0") or 5.0  # Reduced from 15s for faster recovery when at tip
+            os.environ.get("ANIMICA_P2P_NO_HEADERS_BACKOFF", "2.0") or 2.0  # Reduced from 5.0 to 2.0 for even faster recovery when at tip
         )
         self._sync_not_anchored_backoff = float(
             os.environ.get("ANIMICA_P2P_NOT_ANCHORED_BACKOFF", "1.0") or 1.0
@@ -932,16 +932,16 @@ class P2PService:
         self._sync_stale_network_best_at = 0.0
         self._sync_stale_network_best_count = 0
         self._sync_stale_network_best_cooldown = float(
-            os.environ.get("ANIMICA_P2P_STALE_NETWORK_BEST_COOLDOWN", "5.0") or 5.0
+            os.environ.get("ANIMICA_P2P_STALE_NETWORK_BEST_COOLDOWN", "2.0") or 2.0  # Reduced from 5.0 to 2.0 for ultra-fast stall recovery
         )
         self._sync_network_best_cache_timeout = float(
-            os.environ.get("ANIMICA_P2P_NETWORK_BEST_CACHE_TIMEOUT", "60.0") or 60.0
+            os.environ.get("ANIMICA_P2P_NETWORK_BEST_CACHE_TIMEOUT", "30.0") or 30.0  # Reduced from 60.0 to 30.0 for faster cache invalidation
         )
         self._sync_peer_head_stale_sec = float(
-            os.environ.get("ANIMICA_P2P_PEER_HEAD_STALE_SEC", "60.0") or 60.0
+            os.environ.get("ANIMICA_P2P_PEER_HEAD_STALE_SEC", "30.0") or 30.0  # Reduced from 60.0 to 30.0 for faster peer rotation
         )
         self._sync_peer_head_cooldown_sec = float(
-            os.environ.get("ANIMICA_P2P_PEER_HEAD_COOLDOWN_SEC", "120.0") or 120.0
+            os.environ.get("ANIMICA_P2P_PEER_HEAD_COOLDOWN_SEC", "60.0") or 60.0  # Reduced from 120.0 to 60.0 for faster recovery
         )
         self._sync_nonfatal_penalty_window_s = float(
             os.environ.get("ANIMICA_P2P_NONFATAL_PENALTY_WINDOW", "300") or 300
