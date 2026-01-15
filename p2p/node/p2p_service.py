@@ -9536,7 +9536,92 @@ class P2PService:
                 # Detect when headers == blocks and we're not making progress
                 # This indicates we're stuck because all connected peers are at the same height
                 # even though the network might have higher blocks available
-                # Use a reduced timeout (half of stall timeout) to detect this condition faster
+                
+                # URGENT FIX: If headers==blocks but we're clearly behind the network,
+                # trigger recovery IMMEDIATELY without waiting for timeout
+                if (
+                    best_header_height == best_block_height
+                    and best_block_height > 0
+                    and network_best_height is not None
+                    and int(network_best_height) > best_block_height
+                    and not self._sync_inflight_headers
+                    and not self._sync_inflight_blocks
+                    and not self._sync_block_queue
+                    and self._peers  # Have peers
+                ):
+                    # Check if we need immediate intervention (clearly behind network)
+                    gap = int(network_best_height) - best_block_height
+                    # If gap > 5 blocks and no requests in flight, trigger immediate recovery
+                    if gap > 5:
+                        log.warning(
+                            "Sync stalled: headers == blocks but clearly behind network",
+                            extra={
+                                "height": best_block_height,
+                                "network_best_height": network_best_height,
+                                "gap": gap,
+                                "peers": len(self._peers),
+                                "last_header_error": self._sync_last_header_error,
+                                "stall_elapsed_s": max(0.0, now - self._sync_last_progress_at),
+                            },
+                        )
+                        self._sync_block_stalled_reason = "headers_blocks_equal_behind_network"
+                        # Force sync on next iteration
+                        self._sync_requested = True
+                        # Clear ALL error states that might be blocking progress
+                        if self._sync_last_header_error:
+                            log.info(
+                                "Clearing header error state to retry sync",
+                                extra={"error": self._sync_last_header_error},
+                            )
+                            self._sync_last_header_error = None
+                            self._sync_last_header_error_at = None
+                            self._sync_last_header_error_peer = None
+                        # Clear ALL peer backoffs that might be preventing header requests
+                        cleared_backoff = self._clear_sync_backoff_reason("headers_empty")
+                        cleared_backoff += self._clear_sync_backoff_reason("peer_behind")
+                        cleared_backoff += self._clear_sync_backoff_reason("at_tip")
+                        cleared_backoff += self._clear_sync_backoff_reason("not_anchored")
+                        # Also clear block backoffs to ensure blocks can be fetched
+                        cleared_backoff += self._clear_block_backoff_reason("headers_empty")
+                        cleared_backoff += self._clear_block_backoff_reason("peer_behind")
+                        cleared_backoff += self._clear_block_backoff_reason("not_anchored")
+                        if cleared_backoff > 0:
+                            log.info(
+                                "Cleared peer backoffs to force sync resume",
+                                extra={"cleared_peers": cleared_backoff},
+                            )
+                        
+                        # CRITICAL FIX: Mark all eligible peers as anchored to bypass checkpoint deadlock
+                        # If checkpoint enforcement is preventing header requests from all peers,
+                        # we need to temporarily trust at least one peer to bootstrap sync
+                        if self._should_enforce_checkpoint_anchor():
+                            anchored_count = sum(1 for p in self._peers.values() if p.anchored)
+                            if anchored_count == 0:
+                                log.warning(
+                                    "No anchored peers during stall recovery - marking eligible peers as anchored",
+                                    extra={
+                                        "peers": len(self._peers),
+                                        "checkpoint_mode": self._sync_checkpoint_mode_enabled,
+                                    },
+                                )
+                                # Mark up to 3 eligible peers as anchored to allow sync to proceed
+                                marked = 0
+                                for peer in self._peers.values():
+                                    if peer.hello_done.is_set() and peer.ready_for_sync:
+                                        self._mark_peer_anchored(peer, reason="stall_recovery_bypass")
+                                        marked += 1
+                                        if marked >= 3:
+                                            break
+                                if marked > 0:
+                                    log.info(
+                                        "Marked peers as anchored for stall recovery",
+                                        extra={"marked_peers": marked},
+                                    )
+                        
+                        # Trigger aggressive peer rotation
+                        self._sync_kick(reason="headers_blocks_equal_behind_network", aggressive=True)
+                
+                # Use a reduced timeout (half of stall timeout) to detect general stall conditions
                 reduced_timeout = self._sync_stall_timeout / 2.0
                 if (
                     best_header_height == best_block_height
@@ -9952,6 +10037,17 @@ class P2PService:
         key = self._peer_backoff_key(peer)
         self._sync_block_peer_backoff[key] = until
         self._sync_block_peer_backoff_reason[key] = reason
+
+    def _clear_block_backoff_reason(self, reason: str) -> int:
+        """Clear block backoffs for all peers with a specific reason."""
+        removed = 0
+        for key, current_reason in list(self._sync_block_peer_backoff_reason.items()):
+            if current_reason != reason:
+                continue
+            self._sync_block_peer_backoff_reason.pop(key, None)
+            self._sync_block_peer_backoff.pop(key, None)
+            removed += 1
+        return removed
 
     def _should_enforce_checkpoint_anchor(self) -> bool:
         if not self._sync_checkpoint_mode_enabled:
