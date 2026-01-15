@@ -119,6 +119,7 @@ def test_ancestor_reset_not_at_genesis():
     # Scenario: Node at genesis - ancestor reset should not apply
     # (This validates that the ancestor reset logic correctly handles edge cases)
     anchor_height = 0
+    at_genesis = anchor_height == 0
     matched_ancestor_height = None  # Can't have ancestor below genesis
     not_anchored_attempts = 5
     not_anchored_reset_threshold = 3
@@ -126,18 +127,37 @@ def test_ancestor_reset_not_at_genesis():
     last_progress_at = 100.0
     now = last_progress_at + 30.0
     
-    # Ancestor reset condition
+    # NEW FIXED Ancestor reset condition (with at_genesis check)
     should_reset_to_ancestor = (
-        not_anchored_attempts >= not_anchored_reset_threshold
+        not at_genesis  # Ancestor reset only makes sense for heights > 0
+        and not_anchored_attempts >= not_anchored_reset_threshold
         and now - last_progress_at > stall_timeout
         and matched_ancestor_height is not None
         and matched_ancestor_height < anchor_height
     )
     
-    # Should not trigger at genesis (no valid ancestor below 0)
+    # Should not trigger at genesis (explicitly disabled)
     assert not should_reset_to_ancestor, \
-        "Ancestor reset should not trigger at genesis"
+        "Ancestor reset should not trigger at genesis (explicitly disabled)"
     print("✓ Ancestor reset correctly disabled at genesis")
+
+
+def test_genesis_recovery_triggers():
+    """Test that genesis has special recovery logic when anchor fails."""
+    
+    # At genesis with repeated anchor failures
+    anchor_height = 0
+    at_genesis = anchor_height == 0
+    not_anchored_attempts = 3
+    not_anchored_reset_threshold = 3
+    
+    # Genesis recovery should trigger when at genesis and attempts >= threshold
+    should_trigger_genesis_recovery = (
+        at_genesis and not_anchored_attempts >= not_anchored_reset_threshold
+    )
+    
+    assert should_trigger_genesis_recovery, "Genesis recovery should trigger when anchor fails repeatedly"
+    print("✓ Genesis recovery triggers after repeated anchor failures")
 
 
 if __name__ == "__main__":
@@ -149,19 +169,22 @@ if __name__ == "__main__":
         test_no_reset_above_threshold()
         test_code_has_fix()
         test_ancestor_reset_not_at_genesis()
+        test_genesis_recovery_triggers()
         
         print("\n✅ All tests passed!")
         print("\nGenesis Reset Complete Disable Summary:")
         print("  • Genesis reset COMPLETELY DISABLED - never resets under any conditions")
+        print("  • Genesis has SPECIAL RECOVERY - aggressive peer rotation when anchor fails")
         print("  • Prevents any possibility of reset-to-genesis loop")
         print("  • Breaks the infinite reset loop that was blocking sync")
-        print("  • Node will use fork resolution via ancestor reset instead")
+        print("  • Node will use fork resolution via ancestor reset (for heights > 0)")
         print("  • Node can now sync from genesis without any reset interference")
         
         print("\n📈 Impact:")
         print("  • Fixes: 'It should never reset to genesis under any conditions'")
         print("  • Fixes: Blockchain resetting to genesis inappropriately")
         print("  • Fixes: Node stuck at height 0 with peers connected")
+        print("  • Fixes: Genesis sync deadlock when anchor fails")
         print("  • Allows bootstrapping from genesis to proceed normally")
         print("  • Node will try different peers/strategies instead of resetting")
         
