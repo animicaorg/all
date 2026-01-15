@@ -9744,6 +9744,82 @@ class P2PService:
                             )
                             self._sync_kick(reason="fork_at_same_height", aggressive=True)
                 
+                # CRITICAL FIX: Detect when node is on a minority fork based on matched_ancestor_height
+                # If matched_ancestor is significantly behind local height, and there's evidence
+                # that the canonical chain has progressed (via target_height or network_best),
+                # then the node is likely on a wrong fork and should reorganize
+                if (
+                    self._sync_last_matched_ancestor_height is not None
+                    and best_block_height > 0
+                    and self._sync_last_matched_ancestor_height < best_block_height
+                ):
+                    ancestor_gap = best_block_height - self._sync_last_matched_ancestor_height
+                    
+                    # Check if there's evidence of canonical chain progress beyond matched ancestor
+                    canonical_chain_progressed = False
+                    canonical_height_estimate = 0
+                    
+                    # Evidence 1: target_height (from block announcements)
+                    if self._sync_target_height is not None and self._sync_target_height > self._sync_last_matched_ancestor_height:
+                        canonical_chain_progressed = True
+                        canonical_height_estimate = max(canonical_height_estimate, self._sync_target_height)
+                    
+                    # Evidence 2: network_best_height (from peer heads)
+                    network_best = self._network_best_height()
+                    if network_best is not None and network_best > self._sync_last_matched_ancestor_height:
+                        canonical_chain_progressed = True
+                        canonical_height_estimate = max(canonical_height_estimate, network_best)
+                    
+                    # Evidence 3: best_peer_height
+                    if best_peer_height is not None and best_peer_height > self._sync_last_matched_ancestor_height:
+                        canonical_chain_progressed = True
+                        canonical_height_estimate = max(canonical_height_estimate, int(best_peer_height))
+                    
+                    # If ancestor gap > threshold AND canonical chain progressed, likely on wrong fork
+                    if ancestor_gap > FORK_DETECTION_GAP_THRESHOLD and canonical_chain_progressed:
+                        log.error(
+                            "FORK DETECTED: Node is on minority fork - matched ancestor far behind local head",
+                            extra={
+                                "local_height": best_block_height,
+                                "matched_ancestor_height": self._sync_last_matched_ancestor_height,
+                                "ancestor_gap": ancestor_gap,
+                                "canonical_height_estimate": canonical_height_estimate,
+                                "target_height": self._sync_target_height,
+                                "network_best_height": network_best,
+                                "best_peer_height": best_peer_height,
+                                "threshold": FORK_DETECTION_GAP_THRESHOLD,
+                            },
+                        )
+                        
+                        # Force reorganization back to matched ancestor
+                        log.warning(
+                            "Forcing chain reorganization to matched ancestor",
+                            extra={
+                                "reset_to_height": self._sync_last_matched_ancestor_height,
+                                "discarding_blocks": ancestor_gap,
+                            },
+                        )
+                        
+                        # Reset chain to matched ancestor
+                        self._reset_chain_to_ancestor(
+                            height=self._sync_last_matched_ancestor_height,
+                            reason="minority_fork_detected",
+                        )
+                        
+                        # Clear all sync state to force fresh sync from ancestor
+                        self._reset_sync_state(reason="fork_reorganization")
+                        
+                        # Clear peer anchors to allow syncing from all peers
+                        for p in self._peers.values():
+                            p.anchored = False
+                            p.anchor_reason = None
+                        
+                        # Trigger aggressive sync
+                        self._sync_kick(reason="fork_reorganization", aggressive=True)
+                        
+                        # Skip rest of this sync iteration to allow reorganization
+                        continue
+                
                 self._expire_inflight_headers()
                 self._expire_inflight_blocks()
                 self._prune_orphan_buffer()
