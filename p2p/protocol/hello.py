@@ -185,7 +185,7 @@ def verify_hello_message(
     data: bytes,
     *,
     expected_chain_id: Optional[int],
-    expected_fork_id: Optional[int] = None,
+    expected_fork_id: Optional[int] = None,  # CHAIN_RESET_TOUCHPOINT: Derived from genesis_hash
     expected_consensus_id: Optional[str] = None,
     expected_protocol_version: Optional[str] = None,
     expected_transcript_hash: bytes,
@@ -196,11 +196,15 @@ def verify_hello_message(
       • protocol major & wire schema match
       • transcript hash matches the active KEM session
       • chain_id (if provided) matches
+      • fork_id (if provided) matches - REJECTS peers with different genesis
       • peer-id derivation matches provided pubkey
       • signature verifies under the advertised alg_id/pubkey
       • alg-policy root (if provided) matches
 
     Returns a VerifiedHello with the parsed values.
+    
+    CHAIN_RESET_TOUCHPOINT: fork_id is derived from genesis_hash (CRC32).
+    Peers with different genesis will have different fork_ids and will be rejected.
     """
     hello = _decoder.decode(data)
 
