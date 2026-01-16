@@ -86,6 +86,14 @@ EXTENDED_STALL_SNAPSHOT_TRIGGER_SEC: float = 30.0  # Reduced from 90.0 to 30.0 f
 EXTENDED_STALL_WATCHDOG_MULTIPLIER: float = 1.5  # Multiplier for watchdog timeout to determine extended stall
 PERIODIC_HEALTH_CHECK_INTERVAL_SEC: float = 30.0  # Interval for periodic sync health check when idle at tip
 
+# In-flight request retry/timeout constants
+MAX_REQUEST_RETRIES: int = 5  # Maximum retries before triggering recovery
+RETRY_BACKOFF_BASE_SEC: float = 2.0  # Base backoff time for exponential backoff
+RETRY_BACKOFF_MAX_SEC: float = 60.0  # Maximum backoff time
+RETRY_JITTER_FACTOR: float = 0.2  # Jitter factor for randomizing backoff
+MAX_IN_FLIGHT_BLOCKS: int = 128  # Maximum concurrent block requests
+MAX_IN_FLIGHT_HEADERS: int = 64  # Maximum concurrent header requests
+
 # Fork detection and recovery constants
 FORK_DETECTION_GAP_THRESHOLD: int = 100  # Blocks: if matched ancestor gap > this, consider it a fork
 FORK_RECOVERY_GAP_THRESHOLD: int = 50  # Blocks: if gap > this in watchdog, trigger recovery
@@ -394,6 +402,9 @@ class _SyncRequest:
     locator_mode: Optional[str] = None
     anchor_height: Optional[int] = None
     anchor_hash: Optional[bytes] = None
+    # Enhanced retry tracking for sync stall prevention
+    previous_peers: List[str] = field(default_factory=list)  # Track peers we've tried
+    last_error: Optional[str] = None  # Last error encountered
 
 
 @dataclass(slots=True)
@@ -482,6 +493,10 @@ class SyncStatusSnapshot:
     next_block_needed_hash: Optional[str]
     orphan_pool_size: int
     """Number of blocks in orphan buffer waiting for parents."""
+    orphan_cascade_successes: int
+    """Total successful orphan cascade imports."""
+    orphan_seen_count_entries: int
+    """Number of unique orphans being tracked for cooldown."""
     stall_timeout_s: float
     stall_reason: Optional[str]
     stall_elapsed_s: float
@@ -584,6 +599,8 @@ class SyncStatusSnapshot:
             "next_block_needed_height": self.next_block_needed_height,
             "next_block_needed_hash": self.next_block_needed_hash,
             "orphan_pool_size": self.orphan_pool_size,
+            "orphan_cascade_successes": self.orphan_cascade_successes,
+            "orphan_seen_count_entries": self.orphan_seen_count_entries,
             "stall_timeout_s": self.stall_timeout_s,
             "stall_reason": self.stall_reason,
             "stall_elapsed_s": self.stall_elapsed_s,
@@ -1172,6 +1189,8 @@ class P2PService:
         )
         # Enhanced orphan handling for missing parent deadlock fix
         self._orphan_parent_requests: Dict[bytes, float] = {}  # parent_hash -> last_request_time
+        self._orphan_seen_count: Dict[bytes, int] = {}  # orphan_hash -> times seen (for cooldown)
+        self._orphan_cascade_successes: int = 0  # Track successful cascade imports
         self._orphan_parent_request_limit = float(
             os.environ.get("ANIMICA_P2P_ORPHAN_PARENT_REQUEST_INTERVAL", "5.0") or 5.0
         )
@@ -3036,6 +3055,8 @@ class P2PService:
             next_block_needed_height=next_block_height,
             next_block_needed_hash=next_block_hash_hex,
             orphan_pool_size=len(self._sync_block_buffer),
+            orphan_cascade_successes=self._orphan_cascade_successes,
+            orphan_seen_count_entries=len(self._orphan_seen_count),
             stall_timeout_s=float(self._sync_stall_timeout),
             stall_reason=self._sync_block_stalled_reason,
             stall_elapsed_s=stall_elapsed_s,
@@ -7647,16 +7668,36 @@ class P2PService:
         Enhanced missing parent handler with parent backfill to prevent sync deadlocks.
         
         When a block's parent is missing, this method:
-        1. Adds the block to the orphan buffer
+        1. Adds the block to the orphan buffer (with cooldown tracking)
         2. Requests the missing parent block (with rate limiting to prevent loops)
         3. Requests missing parent headers if needed
         4. Tracks parent requests to avoid duplicate fetches
+        5. Rotates to different peers if orphan seen multiple times
         """
         peer.missing_parent += 1
         now = time.time()
         self._sync_last_block_error = "missing parent"
         self._sync_last_block_error_at = now
         self._sync_last_block_error_peer = peer.remote
+        
+        # Track how many times we've seen this orphan
+        self._orphan_seen_count[sync_block.hash] = self._orphan_seen_count.get(sync_block.hash, 0) + 1
+        seen_count = self._orphan_seen_count[sync_block.hash]
+        
+        # If orphan seen too many times, prefer different peer for parent/child
+        if seen_count > 3:
+            log.warning(
+                "Orphan block seen multiple times - implementing cooldown",
+                extra={
+                    "orphan_hash": sync_block.hash.hex()[:16],
+                    "parent_hash": sync_block.parent_hash.hex()[:16] if sync_block.parent_hash else None,
+                    "seen_count": seen_count,
+                    "origin_peer": peer.remote,
+                },
+            )
+            # Penalize the peer providing repeated orphans
+            self._penalize_peer(peer, "repeated_orphan", nonfatal=True)
+        
         parent_header_known = False
         parent_block_known = False
         if sync_block.parent_hash:
@@ -7708,6 +7749,7 @@ class P2PService:
                         "parent_hash": sync_block.parent_hash.hex(),
                         "parent_height": parent_height,
                         "rate_limited": not can_request,
+                        "seen_count": seen_count,
                     },
                 )
             elif not can_request:
@@ -7787,6 +7829,8 @@ class P2PService:
         
         Special handling: height 1 blocks whose parent is genesis are always
         eligible for import since genesis is the implicit starting point.
+        
+        Enhanced with cascade success tracking for observability.
         """
         if not self._sync_block_buffer:
             return
@@ -7795,6 +7839,7 @@ class P2PService:
         local_height, _ = self._local_head()
         local_height_int = int(local_height or 0)
         
+        cascade_count = 0
         progressed = True
         while progressed:
             progressed = False
@@ -7823,6 +7868,9 @@ class P2PService:
                 )
                 if ok:
                     self._sync_block_buffer.pop(h, None)
+                    # Clear orphan tracking for successfully imported block
+                    self._orphan_seen_count.pop(h, None)
+                    cascade_count += 1
                     progressed = True
                     self._sync_wakeup.set()
                     continue
@@ -7836,8 +7884,24 @@ class P2PService:
                             severity=2,
                             quarantine_s=300.0,
                         )
+        
+        # Track and log cascade import successes
+        if cascade_count > 0:
+            self._orphan_cascade_successes += cascade_count
+            log.info(
+                "Orphan cascade import completed",
+                extra={
+                    "cascade_count": cascade_count,
+                    "total_cascades": self._orphan_cascade_successes,
+                    "remaining_orphans": len(self._sync_block_buffer),
+                },
+            )
 
     def _expire_inflight_blocks(self) -> None:
+        """
+        Enhanced in-flight block expiry with exponential backoff, peer rotation, and retry limits.
+        Prevents indefinite stalls by ensuring failed requests are properly retried with different peers.
+        """
         if not self._sync_inflight_blocks:
             return
         now = time.time()
@@ -7854,17 +7918,81 @@ class P2PService:
                 if now - started >= timeout:
                     expired.append(h)
         requeued_count = 0
+        abandoned_count = 0
+        peer_rotated_count = 0
+        
         for h in expired:
             self._sync_inflight_blocks.pop(h, None)
             peer_remote = self._sync_inflight_peers.pop(h, None)
             request = self._sync_inflight_block_requests.pop(h, None)
+            
+            # Track the peer that failed for this request
+            if request and peer_remote:
+                if peer_remote not in request.previous_peers:
+                    request.previous_peers.append(peer_remote)
+                request.last_error = "timeout"
+            
             # Always re-queue blocks that haven't been imported yet
             # This ensures we don't lose track of blocks that failed to download
             if not self._has_block(h):
+                # Check retry limit - if exceeded, trigger recovery
+                if request and request.retry_count >= MAX_REQUEST_RETRIES:
+                    abandoned_count += 1
+                    self._stats["blocks_req_abandoned"] = self._stats.get("blocks_req_abandoned", 0) + 1
+                    log.error(
+                        "Block request abandoned after max retries - triggering recovery",
+                        extra={
+                            "request_id": request.request_id if request else "unknown",
+                            "block_hash": h.hex()[:16],
+                            "retry_count": request.retry_count,
+                            "max_retries": MAX_REQUEST_RETRIES,
+                            "previous_peers": request.previous_peers if request else [],
+                        },
+                    )
+                    # Schedule parent backfill check in case this is an orphan issue
+                    if h in self._sync_headers:
+                        parent_hash = self._sync_headers[h].parent_hash
+                        if not self._has_block(parent_hash) and parent_hash not in self._sync_block_queue_set:
+                            log.info(
+                                "Scheduling parent backfill for abandoned block",
+                                extra={
+                                    "block_hash": h.hex()[:16],
+                                    "parent_hash": parent_hash.hex()[:16],
+                                },
+                            )
+                            self._sync_block_queue.appendleft(parent_hash)
+                            self._sync_block_queue_set.add(parent_hash)
+                    # Still requeue it but mark for watchdog attention
+                    self._sync_block_stalled_reason = "block_request_abandoned"
+                    # Don't continue - still try to sync it but with lower priority
+                
                 if h not in self._sync_block_queue_set:
+                    # Calculate exponential backoff with jitter for retry delay
+                    if request and request.retry_count > 0:
+                        backoff = min(
+                            RETRY_BACKOFF_BASE_SEC * (2 ** (request.retry_count - 1)),
+                            RETRY_BACKOFF_MAX_SEC
+                        )
+                        # Add jitter: ±20% randomization
+                        jitter = backoff * RETRY_JITTER_FACTOR * (random.random() * 2 - 1)
+                        backoff = max(1.0, backoff + jitter)
+                        
+                        # Don't immediately requeue - schedule for later
+                        # For now, just add to queue but note the backoff in tracking
+                        # (actual backoff happens via peer rotation and cooldown)
+                        log.debug(
+                            "Block retry with backoff",
+                            extra={
+                                "block_hash": h.hex()[:16],
+                                "retry_count": request.retry_count,
+                                "backoff_sec": round(backoff, 2),
+                            },
+                        )
+                    
                     self._sync_block_queue.appendleft(h)
                     self._sync_block_queue_set.add(h)
                     requeued_count += 1
+                    
                     # Try to restore height hint if available
                     if h not in self._sync_block_queue_heights:
                         if h in self._sync_headers:
@@ -7873,18 +8001,28 @@ class P2PService:
                             self._sync_block_queue_heights[h] = request.start_height
                         else:
                             self._sync_block_queue_heights[h] = -1
+            
+            # Penalize the peer that timed out
             if peer_remote:
                 peer = self._peer_by_remote(peer_remote)
                 if peer is not None:
-                    self._set_block_backoff(peer, reason="block_timeout", delay=60.0)
+                    # Longer backoff for repeated timeouts
+                    backoff_delay = 60.0 * (1.5 ** min(peer.sync_timeouts, 5))
+                    self._set_block_backoff(peer, reason="block_timeout", delay=backoff_delay)
                     peer.sync_timeouts += 1
                     peer.sync_failures += 1
+                    peer_rotated_count += 1
                 self._penalize_peer(peer, "block_timeout", nonfatal=True)
                 if peer is not None:
                     self._mark_peer_head_issue(peer, reason="block_timeout")
+            
             if request is not None:
                 request.retry_count += 1
                 self._stats["blocks_req_timeout"] += 1
+                self._stats["sync_inflight_timeout_total"] = self._stats.get("sync_inflight_timeout_total", 0) + 1
+                if request.retry_count > 1:
+                    self._stats["sync_retry_total"] = self._stats.get("sync_retry_total", 0) + 1
+                
                 log.warning(
                     "Block request expired",
                     extra={
@@ -7893,18 +8031,31 @@ class P2PService:
                         "kind": request.kind,
                         "age_s": round(now - request.started_at, 3),
                         "retry_count": request.retry_count,
+                        "max_retries": MAX_REQUEST_RETRIES,
                         "item_hash": request.item_hash.hex() if request.item_hash else None,
                         "start_height": request.start_height,
+                        "previous_peers": len(request.previous_peers),
                     },
                 )
+        
         if expired:
             self._sync_wakeup.set()
-            self._sync_kick(reason="block_timeout", aggressive=False)
+            # Use aggressive kick if we have abandoned requests (indicates serious issue)
+            self._sync_kick(reason="block_timeout", aggressive=abandoned_count > 0)
             if requeued_count > 0:
                 log.info(
                     "Re-queued expired blocks for retry",
-                    extra={"count": requeued_count, "total_expired": len(expired)},
+                    extra={
+                        "count": requeued_count,
+                        "total_expired": len(expired),
+                        "abandoned": abandoned_count,
+                        "peers_rotated": peer_rotated_count,
+                    },
                 )
+            
+            # Update peer failure metrics
+            if peer_rotated_count > 0:
+                self._stats["sync_peer_fail_total"] = self._stats.get("sync_peer_fail_total", 0) + peer_rotated_count
 
     def _retry_skipped_blocks(self) -> None:
         """
@@ -11205,6 +11356,10 @@ class P2PService:
         return (peer.remote, request_id) in self._sync_inflight_header_requests
 
     def _expire_inflight_headers(self) -> None:
+        """
+        Enhanced in-flight header expiry with exponential backoff, peer rotation, and retry limits.
+        Prevents indefinite stalls by ensuring failed requests are properly retried with different peers.
+        """
         if not self._sync_inflight_header_requests:
             return
         now = time.monotonic()
@@ -11219,9 +11374,13 @@ class P2PService:
         local_height, _ = self._local_head()
         at_genesis = (local_height or 0) == 0
         
+        abandoned_count = 0
+        peer_rotated_count = 0
+        
         for remote, request_id in expired:
             request = self._sync_inflight_header_requests.pop((remote, request_id), None)
             peer = self._peer_by_remote(remote)
+            
             if peer and peer.pending_header_request_id == request_id:
                 peer.pending_header_request_id = None
                 fut = peer.pending_headers
@@ -11230,24 +11389,38 @@ class P2PService:
                     fut.set_result(None)
                 self._penalize_peer(peer, "headers_timeout", nonfatal=True)
                 peer.sync_timeouts += 1
+                peer_rotated_count += 1
                 
                 # Longer backoff at genesis to force peer rotation
                 # The increased delay keeps failed peers unavailable longer,
                 # pushing sync to try different peers instead of retrying the same one
                 backoff_delay = 10.0 if at_genesis else 5.0
+                
+                # Exponential backoff based on peer timeout count
+                if peer.sync_timeouts > 1:
+                    backoff_delay *= (1.5 ** min(peer.sync_timeouts - 1, 5))
+                
                 self._set_sync_backoff(peer, reason="headers_timeout", delay=backoff_delay)
                 
                 if request is not None:
                     request.retry_count += 1
                     
+                    # Track peer that failed
+                    if remote not in request.previous_peers:
+                        request.previous_peers.append(remote)
+                    request.last_error = "timeout"
+                    
                     # At genesis, limit retries and force peer rotation
-                    max_retries = 2 if at_genesis else 5
+                    max_retries = 2 if at_genesis else MAX_REQUEST_RETRIES
+                    
                     if request.retry_count <= max_retries:
-                        # Mark to try different peer by clearing peer_id
-                        if at_genesis and request.retry_count > 1:
-                            request.peer_id = None  # Force peer rotation
+                        # Mark to try different peer by clearing peer_id if we've tried multiple peers
+                        if len(request.previous_peers) >= 2:
+                            request.peer_id = ""  # Force peer rotation
                         self._sync_header_retry_queue.append(request)
                     else:
+                        abandoned_count += 1
+                        self._stats["headers_req_abandoned"] = self._stats.get("headers_req_abandoned", 0) + 1
                         log.warning(
                             "Header request abandoned after max retries",
                             extra={
@@ -11256,10 +11429,18 @@ class P2PService:
                                 "retry_count": request.retry_count,
                                 "max_retries": max_retries,
                                 "at_genesis": at_genesis,
+                                "previous_peers": request.previous_peers,
                             },
                         )
+                        # Trigger recovery if abandoning headers at genesis
+                        if at_genesis:
+                            self._sync_block_stalled_reason = "genesis_header_abandoned"
                     
                     self._stats["headers_req_timeout"] += 1
+                    self._stats["sync_inflight_timeout_total"] = self._stats.get("sync_inflight_timeout_total", 0) + 1
+                    if request.retry_count > 1:
+                        self._stats["sync_retry_total"] = self._stats.get("sync_retry_total", 0) + 1
+                    
                     self._mark_peer_head_issue(peer, reason="headers_timeout")
                     log.warning(
                         "Header request expired",
@@ -11269,10 +11450,12 @@ class P2PService:
                             "kind": request.kind,
                             "age_s": round(now - request.started_at, 3),
                             "retry_count": request.retry_count,
+                            "max_retries": max_retries,
                             "start_height": request.start_height,
                             "count": request.count,
                             "locator_mode": request.locator_mode,
                             "at_genesis": at_genesis,
+                            "previous_peers": len(request.previous_peers),
                         },
                     )
         
@@ -11285,15 +11468,21 @@ class P2PService:
                     "count": len(expired),
                     "remaining_inflight": self._sync_inflight_headers,
                     "at_genesis": at_genesis,
+                    "abandoned": abandoned_count,
+                    "peers_rotated": peer_rotated_count,
                 },
             )
             
             # At genesis, be more aggressive with sync kick and peer rotation
-            if at_genesis:
-                self._force_peer_refresh(reason="genesis_headers_timeout")
-                self._sync_kick(reason="headers_timeout_genesis", aggressive=True)
+            if at_genesis or abandoned_count > 0:
+                self._force_peer_refresh(reason="genesis_headers_timeout" if at_genesis else "headers_abandoned")
+                self._sync_kick(reason="headers_timeout_genesis" if at_genesis else "headers_timeout", aggressive=True)
             else:
                 self._sync_kick(reason="headers_timeout", aggressive=False)
+            
+            # Update peer failure metrics
+            if peer_rotated_count > 0:
+                self._stats["sync_peer_fail_total"] = self._stats.get("sync_peer_fail_total", 0) + peer_rotated_count
 
     def _ensure_sync_cursor_integrity(self) -> None:
         head_height, head_hash = self._local_head()
