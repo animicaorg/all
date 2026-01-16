@@ -96,6 +96,7 @@ class MainWindow(QMainWindow):
         if self.config.miner.auto_start:
             logger.info("Auto-start mining enabled (will start when node is ready)")
         self.backend.nodeReady.connect(self.on_node_ready)
+        self.backend.nodeError.connect(self.on_node_error)
         QTimer.singleShot(700, self.check_node_bundle)  # Validate bundle after UI is visible
     
     def on_node_ready(self, rpc_client) -> None:
@@ -104,6 +105,17 @@ class MainWindow(QMainWindow):
         if self.config.miner.auto_start:
             logger.info("Auto-starting mining")
             QTimer.singleShot(2000, self.start_mining)  # Give node a moment to stabilize
+
+    def on_node_error(self, error: str) -> None:
+        """Handle node startup errors with a detailed dialog."""
+        logger.error(f"Local node error: {error}")
+        try:
+            self.node_tab.show_node_failure_dialog(
+                error,
+                retry_callback=self.backend.ensureNodeRunning,
+            )
+        except Exception as exc:
+            logger.error(f"Failed to show node failure dialog: {exc}")
 
     def check_node_bundle(self) -> None:
         """Validate the bundled node layout and show a banner if missing."""

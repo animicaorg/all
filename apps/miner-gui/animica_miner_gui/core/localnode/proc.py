@@ -7,13 +7,12 @@ from __future__ import annotations
 
 import logging
 import os
-import signal
 import subprocess
 import sys
-import time
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, List
+from typing import Optional, List, Dict
 
 from .paths import (
     is_frozen,
@@ -21,11 +20,28 @@ from .paths import (
     get_data_directory,
     get_log_directory,
     get_rpc_token_path,
+    NodeBundleError,
 )
 from .ports import get_rpc_port
 from .status import NodeState, NodeStatus
 
 logger = logging.getLogger(__name__)
+
+TAIL_LINES = 200
+
+
+@dataclass
+class NodeFailureDetails:
+    reason: str
+    exit_code: Optional[int]
+    stdout_tail: str
+    stderr_tail: str
+    stdout_log: Optional[Path]
+    stderr_log: Optional[Path]
+    argv: List[str]
+    cwd: str
+    env_deltas: Dict[str, str]
+    node_path: str
 
 
 class NodeProcessManager:
@@ -44,6 +60,16 @@ class NodeProcessManager:
         self.port: Optional[int] = None
         self.auth_token: Optional[str] = None
         self.start_time: Optional[datetime] = None
+        self.last_exit_code: Optional[int] = None
+        self.stdout_log_path: Optional[Path] = None
+        self.stderr_log_path: Optional[Path] = None
+        self._stdout_handle: Optional[object] = None
+        self._stderr_handle: Optional[object] = None
+        self._last_failure: Optional[NodeFailureDetails] = None
+        self._last_argv: List[str] = []
+        self._last_env_deltas: Dict[str, str] = {}
+        self._last_cwd: str = ""
+        self._last_node_path: str = ""
         
         # Paths
         self.data_dir = get_data_directory(network)
@@ -90,7 +116,7 @@ class NodeProcessManager:
         
         return token
     
-    def _build_node_command(self, port: int) -> List[str]:
+    def _build_node_command(self, port: int) -> tuple[List[str], Dict[str, str], Path, Optional[Path]]:
         """Build the command line to start the node.
         
         Args:
@@ -133,7 +159,99 @@ class NodeProcessManager:
             "ANIMICA_LOG_LEVEL": "INFO",
         }
         
-        return cmd, env_vars, log_file
+        return cmd, env_vars, log_file, node_binary
+
+    def _read_tail(self, path: Optional[Path], max_lines: int = TAIL_LINES) -> str:
+        if path is None or not path.exists():
+            return ""
+        try:
+            content = path.read_text(errors="ignore")
+        except Exception as exc:
+            return f"(failed to read {path}: {exc})"
+        lines = content.splitlines()
+        if not lines:
+            return "(no output)"
+        return "\n".join(lines[-max_lines:])
+
+    def _record_failure(
+        self,
+        reason: str,
+        exit_code: Optional[int] = None,
+        stdout_tail: Optional[str] = None,
+        stderr_tail: Optional[str] = None,
+    ) -> None:
+        stdout_text = stdout_tail if stdout_tail is not None else self._read_tail(self.stdout_log_path)
+        stderr_text = stderr_tail if stderr_tail is not None else self._read_tail(self.stderr_log_path)
+        self._last_failure = NodeFailureDetails(
+            reason=reason,
+            exit_code=exit_code,
+            stdout_tail=stdout_text,
+            stderr_tail=stderr_text,
+            stdout_log=self.stdout_log_path,
+            stderr_log=self.stderr_log_path,
+            argv=self._last_argv,
+            cwd=self._last_cwd,
+            env_deltas=self._last_env_deltas,
+            node_path=self._last_node_path,
+        )
+        if exit_code is not None:
+            logger.info(f"Node exit code: {exit_code}")
+
+    def _close_log_handles(self) -> None:
+        if self._stdout_handle not in (None, subprocess.DEVNULL):
+            try:
+                self._stdout_handle.close()
+            except Exception:
+                pass
+        if self._stderr_handle not in (None, subprocess.DEVNULL):
+            try:
+                self._stderr_handle.close()
+            except Exception:
+                pass
+
+    def pop_last_failure_details(self) -> Optional[NodeFailureDetails]:
+        details = self._last_failure
+        self._last_failure = None
+        return details
+
+    def record_failure(self, reason: str, exit_code: Optional[int] = None) -> None:
+        self._record_failure(reason=reason, exit_code=exit_code)
+
+    def _preflight_node(self, node_binary: Path, env: Dict[str, str], cwd: str) -> Optional[str]:
+        try:
+            result = subprocess.run(
+                [str(node_binary), "--help"],
+                env=env,
+                cwd=cwd,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        except Exception as exc:
+            error_message = f"Node bundle is broken: failed to run {node_binary} --help ({exc})"
+            self._record_failure(reason="Node preflight failed", stdout_tail="", stderr_tail=str(exc))
+            return error_message
+
+        if result.returncode != 0:
+            stderr_snippet = (result.stderr or result.stdout).strip()
+            if stderr_snippet:
+                stderr_lines = "\n".join(stderr_snippet.splitlines()[-20:])
+            else:
+                stderr_lines = "(no output)"
+            self._record_failure(
+                reason="Node preflight failed",
+                exit_code=result.returncode,
+                stdout_tail=result.stdout.strip() or "(no output)",
+                stderr_tail=stderr_lines,
+            )
+            return (
+                "Node bundle is broken. "
+                f"Preflight failed for {node_binary}.\n"
+                f"{stderr_lines}\n"
+                "Please reinstall the app or rebuild the node bundle."
+            )
+
+        return None
     
     def start(self) -> NodeStatus:
         """Start the local node process.
@@ -156,8 +274,9 @@ class NodeProcessManager:
         
         # Build command
         try:
-            cmd, env_vars, log_file = self._build_node_command(self.port)
-        except FileNotFoundError as e:
+            cmd, env_vars, log_file, node_binary = self._build_node_command(self.port)
+        except (FileNotFoundError, NodeBundleError) as e:
+            self._record_failure(reason=str(e))
             return NodeStatus(
                 state=NodeState.ERROR,
                 error=str(e)
@@ -166,14 +285,45 @@ class NodeProcessManager:
         # Prepare environment
         env = os.environ.copy()
         env.update(env_vars)
+        cwd = os.getcwd()
+
+        self._last_argv = cmd
+        self._last_env_deltas = env_vars
+        self._last_cwd = cwd
+        self._last_node_path = str(node_binary) if node_binary else cmd[0]
+
+        node_log_dir = self.log_dir / "node"
+        node_log_dir.mkdir(parents=True, exist_ok=True)
+        self.stdout_log_path = node_log_dir / "node-stdout.log"
+        self.stderr_log_path = node_log_dir / "node-stderr.log"
+
+        logger.info(f"NODE_PATH={self._last_node_path}")
+        logger.info(f"ARGV={cmd}")
+        logger.info(f"CWD={cwd}")
+        logger.info(f"ENV_DELTAS={env_vars}")
         
-        # Open log file
+        # Ensure log file directory exists for node-side logging
         try:
             log_file.parent.mkdir(parents=True, exist_ok=True)
-            log_handle = open(log_file, 'a')
         except Exception as e:
-            logger.error(f"Failed to open log file: {e}")
-            log_handle = subprocess.DEVNULL
+            logger.error(f"Failed to prepare log directory: {e}")
+
+        try:
+            self._stdout_handle = open(self.stdout_log_path, "a")
+            self._stderr_handle = open(self.stderr_log_path, "a")
+        except Exception as e:
+            logger.error(f"Failed to open stdout/stderr log files: {e}")
+            self._stdout_handle = subprocess.DEVNULL
+            self._stderr_handle = subprocess.DEVNULL
+
+        if node_binary is not None:
+            preflight_error = self._preflight_node(node_binary, env, cwd)
+            if preflight_error:
+                self._close_log_handles()
+                return NodeStatus(
+                    state=NodeState.ERROR,
+                    error=preflight_error,
+                )
         
         # Start process
         try:
@@ -184,8 +334,8 @@ class NodeProcessManager:
             self.process = subprocess.Popen(
                 cmd,
                 env=env,
-                stdout=log_handle,
-                stderr=subprocess.STDOUT,
+                stdout=self._stdout_handle,
+                stderr=self._stderr_handle,
                 stdin=subprocess.DEVNULL,
                 start_new_session=True,  # Detach from parent
             )
@@ -202,6 +352,7 @@ class NodeProcessManager:
         
         except Exception as e:
             logger.error(f"Failed to start node: {e}")
+            self._record_failure(reason=f"Failed to start node: {e}")
             return NodeStatus(
                 state=NodeState.ERROR,
                 error=f"Failed to start node: {e}"
@@ -238,6 +389,7 @@ class NodeProcessManager:
             logger.error(f"Error stopping node: {e}")
         
         finally:
+            self._close_log_handles()
             self.process = None
             self.port = None
             self.start_time = None
@@ -257,7 +409,9 @@ class NodeProcessManager:
         poll = self.process.poll()
         if poll is not None:
             # Process has exited
-            logger.debug(f"Node process exited with code {poll}")
+            logger.info(f"Node process exited with code {poll}")
+            self.last_exit_code = poll
+            self._close_log_handles()
             self.process = None
             self.port = None
             self.start_time = None

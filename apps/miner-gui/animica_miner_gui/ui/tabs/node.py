@@ -9,10 +9,12 @@ Provides:
 """
 
 import logging
-from typing import Optional
+from typing import Optional, Callable
 
-from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtCore import Qt, QTimer, Signal, QUrl
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
+    QApplication,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -22,6 +24,7 @@ from PySide6.QtWidgets import (
     QTextEdit,
     QVBoxLayout,
     QWidget,
+    QMessageBox,
 )
 
 from animica_miner_gui.core.localnode import (
@@ -202,6 +205,7 @@ class NodeTab(QWidget):
             else:
                 error_msg = status.error or "Unknown error"
                 self.console_output.append(f"<b style='color: red;'>✗ Failed to start node: {error_msg}</b>")
+                self.show_node_failure_dialog(error_msg)
         
         except Exception as e:
             logger.error(f"Error starting node: {e}")
@@ -248,6 +252,7 @@ class NodeTab(QWidget):
             else:
                 error_msg = status.error or "Unknown error"
                 self.console_output.append(f"<b style='color: red;'>✗ Failed to restart: {error_msg}</b>")
+                self.show_node_failure_dialog(error_msg)
         
         except Exception as e:
             logger.error(f"Error restarting node: {e}")
@@ -358,3 +363,59 @@ class NodeTab(QWidget):
             self.phase_label.setText("N/A")
             self.sync_progress.setValue(0)
             self.phase_label.setStyleSheet("")
+
+    def show_node_failure_dialog(
+        self,
+        error: str,
+        retry_callback: Optional[Callable[[], None]] = None,
+    ) -> None:
+        """Show a modal dialog with node failure details and actions."""
+        details = self.node_manager.proc_manager.pop_last_failure_details()
+        if details is None:
+            QMessageBox.warning(self, "Node Error", error)
+            return
+
+        exit_code = details.exit_code if details.exit_code is not None else "unknown"
+        header = f"Node exited (code {exit_code})."
+        stderr_text = details.stderr_tail or "(no stderr output)"
+        stdout_text = details.stdout_tail or "(no stdout output)"
+        log_dir = details.stderr_log.parent if details.stderr_log else None
+
+        msg = QMessageBox(self)
+        msg.setIcon(QMessageBox.Critical)
+        msg.setWindowTitle("Node Exited")
+        msg.setText(header)
+        msg.setInformativeText(
+            "Last stderr lines:\n"
+            f"{stderr_text}\n\n"
+            "Last stdout lines:\n"
+            f"{stdout_text}"
+        )
+
+        open_btn = msg.addButton("Open full logs", QMessageBox.ActionRole)
+        copy_btn = msg.addButton("Copy", QMessageBox.ActionRole)
+        retry_btn = msg.addButton("Retry", QMessageBox.AcceptRole)
+        msg.addButton("Close", QMessageBox.RejectRole)
+
+        msg.exec()
+        clicked = msg.clickedButton()
+
+        if clicked == open_btn and log_dir:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(log_dir)))
+        elif clicked == copy_btn:
+            clipboard = QApplication.clipboard()
+            clipboard.setText(
+                f"{header}\n"
+                f"Reason: {details.reason}\n"
+                f"Node path: {details.node_path}\n"
+                f"ARGV: {details.argv}\n"
+                f"CWD: {details.cwd}\n"
+                f"ENV_DELTAS: {details.env_deltas}\n"
+                f"STDERR (tail):\n{stderr_text}\n\n"
+                f"STDOUT (tail):\n{stdout_text}\n"
+            )
+        elif clicked == retry_btn:
+            if retry_callback is not None:
+                retry_callback()
+            else:
+                self.start_node()
