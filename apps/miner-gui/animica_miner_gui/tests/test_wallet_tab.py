@@ -22,6 +22,7 @@ class StubBackend(QObject):
     nodeError = Signal(str)
     syncStatus = Signal(object)
     walletUpdated = Signal(object)
+    rpcChanged = Signal(object)
 
     def __init__(self):
         super().__init__()
@@ -39,10 +40,12 @@ class StubBackend(QObject):
     def set_ready(self, rpc_client) -> None:
         self._rpc = rpc_client
         self.nodeReady.emit(rpc_client)
+        self.rpcChanged.emit(rpc_client)
 
     def set_error(self, message: str) -> None:
         self._rpc = None
         self.nodeError.emit(message)
+        self.rpcChanged.emit(None)
 
 
 @pytest.fixture

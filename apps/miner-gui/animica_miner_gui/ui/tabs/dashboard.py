@@ -1,6 +1,6 @@
 """Dashboard tab - main status and control panel.
 
-Uses LocalNodeManager for chain information (local node only).
+Uses NodeBackend for chain information (local node only).
 """
 
 import logging
@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (
 
 from animica_miner_gui.backend.config import MiningAppConfig
 from animica_miner_gui.backend.miner_runner import MiningEvent, EventType
-from animica_miner_gui.core.localnode import LocalNodeManager
+from animica_miner_gui.ui.node_backend import NodeBackend
 
 logger = logging.getLogger(__name__)
 
@@ -37,10 +37,10 @@ class DashboardTab(QWidget):
     # Signal for thread-safe event handling
     mining_event_received = Signal(object)  # MiningEvent
     
-    def __init__(self, config: MiningAppConfig, node_manager: LocalNodeManager, parent: Optional[QWidget] = None):
+    def __init__(self, config: MiningAppConfig, backend: NodeBackend, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.config = config
-        self.node_manager = node_manager
+        self.backend = backend
         self.current_hashrate = 0.0
         self.current_theta_micro = 0
         self.current_share_target = 0.25
@@ -163,13 +163,13 @@ class DashboardTab(QWidget):
     def update_chain_info(self) -> None:
         """Query RPC for current chain head and update display."""
         # Check if node is ready
-        if not self.node_manager.is_ready:
+        if not self.backend.isReady():
             self.chain_id_label.setText("Node not ready")
             self.height_label.setText("N/A")
             self.sync_label.setText("N/A")
             return
         
-        rpc_client = self.node_manager.get_rpc_client()
+        rpc_client = self.backend.getRpc()
         if not rpc_client:
             return
         
@@ -201,7 +201,7 @@ class DashboardTab(QWidget):
                 try:
                     payout_address = self.config.miner.payout_address
                     if payout_address:
-                        template = self.rpc_client.get_block_template(payout_address)
+                        template = rpc_client.get_block_template(payout_address)
                         theta_micro = template.get("thetaMicro") or template.get("theta_micro")
                         if theta_micro:
                             self.current_theta_micro = int(theta_micro)
@@ -223,11 +223,11 @@ class DashboardTab(QWidget):
     
     def refresh_balance(self) -> None:
         """Query RPC for wallet balance."""
-        if not self.node_manager.is_ready:
+        if not self.backend.isReady():
             self.balance_label.setText("Node not ready")
             return
         
-        rpc_client = self.node_manager.get_rpc_client()
+        rpc_client = self.backend.getRpc()
         if not rpc_client:
             self.balance_label.setText("RPC not available")
             return

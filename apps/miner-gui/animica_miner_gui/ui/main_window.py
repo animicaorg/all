@@ -37,6 +37,7 @@ from animica_miner_gui.ui.tabs.logs import LogsTab
 from animica_miner_gui.ui.tabs.stats import StatsTab
 from animica_miner_gui.ui.tabs.wallet import WalletTab
 from animica_miner_gui.ui.node_backend import NodeBackend
+from animica_miner_gui.backend.console_router import set_rpc_client
 
 logger = logging.getLogger(__name__)
 
@@ -97,6 +98,7 @@ class MainWindow(QMainWindow):
             logger.info("Auto-start mining enabled (will start when node is ready)")
         self.backend.nodeReady.connect(self.on_node_ready)
         self.backend.nodeError.connect(self.on_node_error)
+        self.backend.rpcChanged.connect(self._handle_rpc_changed)
         QTimer.singleShot(700, self.check_node_bundle)  # Validate bundle after UI is visible
     
     def on_node_ready(self, rpc_client) -> None:
@@ -116,6 +118,10 @@ class MainWindow(QMainWindow):
             )
         except Exception as exc:
             logger.error(f"Failed to show node failure dialog: {exc}")
+
+    def _handle_rpc_changed(self, rpc_client) -> None:
+        """Update console router when RPC client changes."""
+        set_rpc_client(rpc_client)
 
     def check_node_bundle(self) -> None:
         """Validate the bundled node layout and show a banner if missing."""
@@ -216,8 +222,8 @@ class MainWindow(QMainWindow):
         # Create tab widget
         self.tabs = QTabWidget()
         
-        # Create tabs - pass node_manager to tabs that need it
-        self.dashboard_tab = self._safe_tab("Dashboard", lambda: DashboardTab(self.config, self.node_manager))
+        # Create tabs - pass backend to tabs that need it
+        self.dashboard_tab = self._safe_tab("Dashboard", lambda: DashboardTab(self.config, self.backend))
         self.devices_tab = self._safe_tab("Devices", lambda: DevicesTab(self.config))
         self.pools_tab = self._safe_tab("Pools/Modes", lambda: PoolsTab(self.config))
         self.wallet_tab = self._safe_tab("Wallet", lambda: WalletTab(self.config, self.backend))

@@ -169,6 +169,8 @@ class WalletTab(QWidget):
         """Connect backend signals to update state."""
         self.backend.nodeReady.connect(self.on_node_ready)
         self.backend.nodeError.connect(self.on_node_error)
+        if hasattr(self.backend, "rpcChanged"):
+            self.backend.rpcChanged.connect(self.on_rpc_changed)
 
     def _refresh_if_ready(self) -> None:
         """Refresh wallet info only when RPC is ready."""
@@ -251,6 +253,16 @@ class WalletTab(QWidget):
         self._set_wallet_controls_enabled(False)
         self.error_banner.setText(f"Node error: {error}")
         self.error_banner.setVisible(True)
+
+    def on_rpc_changed(self, rpc_client: Optional[LocalRpcClient]) -> None:
+        """Update RPC client when backend changes ports."""
+        self.rpc_client = rpc_client
+        if rpc_client is None:
+            self._set_wallet_controls_enabled(False)
+            return
+        self.error_banner.setVisible(False)
+        self._set_wallet_controls_enabled(True)
+        self.refresh_wallet_info()
     
     def copy_address_to_clipboard(self) -> None:
         """Copy the wallet address to clipboard."""
