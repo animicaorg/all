@@ -14,6 +14,7 @@ from animica.cli.wallet_balances import (
     _get_balance_backup_path,
     _load_wallet_file,
     export_wallet_balances_sync,
+    restore_wallet_balances_sync,
 )
 
 
@@ -164,6 +165,193 @@ async def test_export_wallet_balances_with_mocked_rpc():
             assert len(backup_data["balances"]) == 2
             assert backup_data["balances"][0]["balance"] == 1000000000
             assert backup_data["balances"][1]["balance"] == 0
+
+
+@pytest.mark.asyncio
+async def test_restore_wallet_balances_no_backup():
+    """Test restore when no backup file exists."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        data_dir = Path(tmpdir) / "chain-1337"
+        data_dir.mkdir()
+        
+        # Try to restore without a backup file
+        with pytest.raises(RuntimeError, match="backup file not found"):
+            restore_wallet_balances_sync(
+                data_dir=data_dir,
+                rpc_url="http://localhost:8545/rpc",
+                quiet=True,
+            )
+
+
+@pytest.mark.asyncio
+async def test_restore_wallet_balances_empty_backup():
+    """Test restore with empty backup (no balances)."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        data_dir = Path(tmpdir) / "chain-1337"
+        data_dir.mkdir()
+        
+        # Create empty backup file
+        backup_file = _get_balance_backup_path(data_dir)
+        backup_data = {
+            "version": 1,
+            "exported_at": "2024-01-01T00:00:00Z",
+            "data_dir": str(data_dir),
+            "rpc_url": "http://localhost:8545/rpc",
+            "balances": [],
+        }
+        backup_file.write_text(json.dumps(backup_data))
+        
+        restored, failed = restore_wallet_balances_sync(
+            data_dir=data_dir,
+            rpc_url="http://localhost:8545/rpc",
+            quiet=True,
+        )
+        
+        assert restored == 0
+        assert failed == 0
+
+
+@pytest.mark.asyncio
+async def test_restore_wallet_balances_success():
+    """Test successful restore with mocked RPC."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        data_dir = Path(tmpdir) / "chain-1337"
+        data_dir.mkdir()
+        
+        # Create backup file with balances
+        backup_file = _get_balance_backup_path(data_dir)
+        backup_data = {
+            "version": 1,
+            "exported_at": "2024-01-01T00:00:00Z",
+            "data_dir": str(data_dir),
+            "rpc_url": "http://localhost:8545/rpc",
+            "balances": [
+                {
+                    "label": "test1",
+                    "address": "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+                    "hex_address": "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+                    "balance": 1000000000,  # 1 ANM
+                },
+                {
+                    "label": "test2",
+                    "address": "0xfedcba0987654321fedcba0987654321fedcba0987654321fedcba0987654321",
+                    "hex_address": "0xfedcba0987654321fedcba0987654321fedcba0987654321fedcba0987654321",
+                    "balance": 2000000000,  # 2 ANM
+                },
+                {
+                    "label": "test3",
+                    "address": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    "hex_address": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    "balance": 0,  # Should be skipped
+                },
+            ],
+        }
+        backup_file.write_text(json.dumps(backup_data))
+        
+        # Mock RPC calls to simulate successful setBalance calls
+        with patch("animica.cli.wallet_balances._rpc_call") as mock_rpc:
+            # Simulate successful RPC responses
+            mock_rpc.side_effect = [
+                {"success": True, "address": backup_data["balances"][0]["address"], "balance": "1000000000"},
+                {"success": True, "address": backup_data["balances"][1]["address"], "balance": "2000000000"},
+            ]
+            
+            restored, failed = restore_wallet_balances_sync(
+                data_dir=data_dir,
+                rpc_url="http://localhost:8545/rpc",
+                quiet=True,
+            )
+            
+            assert restored == 2
+            assert failed == 0
+            
+            # Verify RPC was called correct number of times (only for non-zero balances)
+            assert mock_rpc.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_restore_wallet_balances_partial_failure():
+    """Test restore with some failures."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        data_dir = Path(tmpdir) / "chain-1337"
+        data_dir.mkdir()
+        
+        # Create backup file with balances
+        backup_file = _get_balance_backup_path(data_dir)
+        backup_data = {
+            "version": 1,
+            "exported_at": "2024-01-01T00:00:00Z",
+            "data_dir": str(data_dir),
+            "rpc_url": "http://localhost:8545/rpc",
+            "balances": [
+                {
+                    "label": "test1",
+                    "address": "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+                    "hex_address": "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+                    "balance": 1000000000,
+                },
+                {
+                    "label": "test2",
+                    "address": "0xfedcba0987654321fedcba0987654321fedcba0987654321fedcba0987654321",
+                    "hex_address": "0xfedcba0987654321fedcba0987654321fedcba0987654321fedcba0987654321",
+                    "balance": 2000000000,
+                },
+            ],
+        }
+        backup_file.write_text(json.dumps(backup_data))
+        
+        # Mock RPC calls - first succeeds, second fails
+        with patch("animica.cli.wallet_balances._rpc_call") as mock_rpc:
+            mock_rpc.side_effect = [
+                {"success": True, "address": backup_data["balances"][0]["address"], "balance": "1000000000"},
+                RuntimeError("RPC connection failed"),
+            ]
+            
+            restored, failed = restore_wallet_balances_sync(
+                data_dir=data_dir,
+                rpc_url="http://localhost:8545/rpc",
+                quiet=True,
+            )
+            
+            assert restored == 1
+            assert failed == 1
+
+
+@pytest.mark.asyncio
+async def test_restore_wallet_balances_admin_rpc_disabled():
+    """Test restore when admin RPC is disabled."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        data_dir = Path(tmpdir) / "chain-1337"
+        data_dir.mkdir()
+        
+        # Create backup file
+        backup_file = _get_balance_backup_path(data_dir)
+        backup_data = {
+            "version": 1,
+            "exported_at": "2024-01-01T00:00:00Z",
+            "data_dir": str(data_dir),
+            "rpc_url": "http://localhost:8545/rpc",
+            "balances": [
+                {
+                    "label": "test1",
+                    "address": "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+                    "hex_address": "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+                    "balance": 1000000000,
+                },
+            ],
+        }
+        backup_file.write_text(json.dumps(backup_data))
+        
+        # Mock RPC to simulate "admin RPC disabled" error
+        with patch("animica.cli.wallet_balances._rpc_call") as mock_rpc:
+            mock_rpc.side_effect = RuntimeError("Admin RPC methods are disabled")
+            
+            with pytest.raises(RuntimeError, match="Admin RPC is not enabled"):
+                restore_wallet_balances_sync(
+                    data_dir=data_dir,
+                    rpc_url="http://localhost:8545/rpc",
+                    quiet=True,
+                )
 
 
 if __name__ == "__main__":
