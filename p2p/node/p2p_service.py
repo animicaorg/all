@@ -462,6 +462,18 @@ class SyncStatusSnapshot:
     best_block_height: int
     best_block_hash: Optional[str]
     network_best_height: Optional[int]
+    best_remote_height: Optional[int]
+    """Best advertised height from fresh peer tips (for accurate sync status)."""
+    best_remote_hash: Optional[str]
+    """Best advertised hash from fresh peer tips."""
+    best_remote_peer: Optional[str]
+    """Peer ID/address of best remote tip."""
+    best_remote_age_sec: Optional[float]
+    """Age in seconds of best remote tip info."""
+    behind_by: Optional[int]
+    """Blocks behind best remote (None if remote unknown)."""
+    sync_status_reason: Optional[str]
+    """Reason for current sync status (e.g., 'no_fresh_peer_tips')."""
     in_flight: int
     in_flight_headers: int
     in_flight_blocks: int
@@ -576,6 +588,12 @@ class SyncStatusSnapshot:
             "best_block_height": self.best_block_height,
             "best_block_hash": self.best_block_hash,
             "network_best_height": self.network_best_height,
+            "best_remote_height": self.best_remote_height,
+            "best_remote_hash": self.best_remote_hash,
+            "best_remote_peer": self.best_remote_peer,
+            "best_remote_age_sec": self.best_remote_age_sec,
+            "behind_by": self.behind_by,
+            "sync_status_reason": self.sync_status_reason,
             "in_flight": self.in_flight,
             "in_flight_headers": self.in_flight_headers,
             "in_flight_blocks": self.in_flight_blocks,
@@ -2906,6 +2924,24 @@ class P2PService:
         best_block_height = int(height or 0)
         best_block_hash = head_hex
         network_best_height = self._network_best_height()
+        
+        # CRITICAL FIX: Compute best_remote info with strict freshness checking
+        # This is the authoritative source for sync status decisions
+        chain_id = (self._peers.values().__iter__().__next__().hello or {}).get("chain_id") if self._peers else None
+        best_remote_height, best_remote_hash, best_remote_peer, best_remote_age = self._compute_best_remote_info(
+            chain_id=chain_id
+        )
+        
+        # Compute behind_by and sync_status_reason
+        behind_by: Optional[int] = None
+        sync_status_reason: Optional[str] = None
+        
+        if best_remote_height is not None:
+            behind_by = max(0, best_remote_height - best_block_height)
+        else:
+            # No fresh peer tips available - critical condition
+            sync_status_reason = "no_fresh_peer_tips"
+        
         target_candidates = [
             int(height)
             for height in (
@@ -2930,26 +2966,46 @@ class P2PService:
                 if best_header_height >= max(0, peer_tip - self._sync_tip_tolerance):
                     anchored_tip = True
                     break
-        if target_height is not None:
+        
+        # CRITICAL FIX: New synchronized logic that requires fresh best_remote info
+        # ALLOWED_LAG: small tolerance for being slightly behind (e.g., 1-2 blocks due to network latency)
+        ALLOWED_LAG = 2
+        
+        # Rule 1: NEVER synchronized if we don't have fresh best_remote info
+        if best_remote_height is None:
+            synchronized = False
+            if not sync_status_reason:
+                sync_status_reason = "no_fresh_peer_tips"
+        # Rule 2: If we have fresh best_remote, check if we're within ALLOWED_LAG
+        elif behind_by is not None:
+            if behind_by <= ALLOWED_LAG:
+                # Within allowed lag and have target info
+                synchronized = (
+                    best_block_height > 0
+                    and best_header_height >= best_block_height
+                )
+            else:
+                # Behind by more than allowed lag
+                synchronized = False
+                sync_status_reason = f"behind_by_{behind_by}_blocks"
+        else:
+            synchronized = False
+            sync_status_reason = "unknown_behind_by"
+        
+        # Original fallback logic for backwards compatibility (but still enforce best_remote requirement)
+        if not synchronized and target_height is not None and best_remote_height is not None:
             remote_target = int(target_height)
             if network_best_height is not None and target_height == int(network_best_height):
                 remote_target = max(0, int(network_best_height) - self._sync_tip_tolerance)
-            synchronized = (
+            fallback_synced = (
                 best_block_height > 0
                 and best_header_height >= remote_target
                 and best_block_height >= min(best_header_height, remote_target)
             )
-        elif anchored_tip and self._sync_headers_seen_total > 0:
-            synchronized = best_block_height > 0
-        else:
-            synchronized = False
-        if (
-            not synchronized
-            and network_best_height is not None
-            and best_header_height >= max(0, int(network_best_height) - self._sync_tip_tolerance)
-            and best_block_height >= best_header_height
-        ):
-            synchronized = True
+            # Only allow fallback if we also pass the behind_by check
+            if fallback_synced and behind_by is not None and behind_by <= ALLOWED_LAG:
+                synchronized = True
+        
         queued_blocks_count = self._queued_blocks_count(best_block_height)
         synchronized = synchronized and self._sync_status_invariants(
             head_height=best_block_height,
@@ -3061,6 +3117,12 @@ class P2PService:
             best_block_height=best_block_height,
             best_block_hash=best_block_hash,
             network_best_height=network_best_height,
+            best_remote_height=best_remote_height,
+            best_remote_hash=best_remote_hash,
+            best_remote_peer=best_remote_peer,
+            best_remote_age_sec=best_remote_age,
+            behind_by=behind_by,
+            sync_status_reason=sync_status_reason,
             in_flight=len(self._sync_inflight_blocks),
             in_flight_headers=int(self._sync_inflight_headers),
             in_flight_blocks=len(self._sync_inflight_blocks),
@@ -4366,15 +4428,18 @@ class P2PService:
         if peer.hello is None:
             peer.hello = {}
             peer.hello_received_at = time.time()  # Initialize timestamp if creating new hello dict
-        # Update hello_received_at whenever we update peer head info
-        # This ensures staleness tracking stays accurate even for existing hello dicts
-        if peer.hello_received_at == 0.0:
-            peer.hello_received_at = time.time()
+        
+        # CRITICAL FIX: Always update hello_received_at when we receive ANY tip update from peer
+        # This keeps the peer's advertised tip info fresh for sync status computation
+        # Previously, timestamp was only updated when height increased, causing stale data
+        peer.hello_received_at = time.time()
+        
         try:
             current = int(peer.hello.get("head_height") or 0)
         except Exception:
             current = 0
         if height <= current:
+            # Even if height didn't increase, update the timestamp to show tip is fresh
             self._update_peer_head_table(peer, height=int(current), source="peer_head")
             return
         peer.hello["head_height"] = int(height)
@@ -11707,6 +11772,75 @@ class P2PService:
         if genesis and self._has_header(bytes(genesis)):
             return 0, bytes(genesis)
         return None
+
+    def _compute_best_remote_info(
+        self, *, chain_id: Optional[int] = None
+    ) -> tuple[Optional[int], Optional[str], Optional[str], Optional[float]]:
+        """
+        Compute best remote head info with strict freshness checking.
+        
+        Returns: (height, hash, peer_addr, age_sec)
+        
+        Only considers peers with:
+        - Same chain_id (if specified)
+        - Fresh tip info (updated within TIP_FRESHNESS threshold)
+        - Valid numeric height > 0
+        
+        Returns (None, None, None, None) if no fresh peer tips available.
+        This is critical for accurate sync status - we must never claim SYNCHRONIZED
+        when we have no fresh knowledge of the network tip.
+        """
+        TIP_FRESHNESS_SEC = 60.0  # Only use peer tips updated in last 60 seconds
+        
+        best_height: Optional[int] = None
+        best_hash: Optional[str] = None
+        best_peer: Optional[str] = None
+        best_age: Optional[float] = None
+        
+        now = time.time()
+        
+        for peer in self._peers.values():
+            # Skip peers without completed handshake
+            if not peer.hello_done.is_set():
+                continue
+            
+            # Skip peers with repo issues
+            if not peer.repo_state_ok:
+                continue
+            
+            # Check chain_id match if specified
+            if chain_id is not None:
+                peer_chain_id = (peer.hello or {}).get("chain_id")
+                if peer_chain_id != chain_id:
+                    continue
+            
+            # Get peer's advertised height and check freshness
+            hello_age = now - peer.hello_received_at if peer.hello_received_at else float('inf')
+            
+            # CRITICAL: Only use fresh tip info
+            if hello_age > TIP_FRESHNESS_SEC:
+                continue
+            
+            try:
+                peer_height = int((peer.hello or {}).get("head_height") or 0)
+            except Exception:
+                peer_height = 0
+            
+            if peer_height <= 0:
+                continue
+            
+            # Track best height
+            if best_height is None or peer_height > best_height:
+                best_height = peer_height
+                peer_hash = (peer.hello or {}).get("head_hash")
+                if peer_hash:
+                    best_hash = "0x" + bytes(peer_hash).hex() if isinstance(peer_hash, bytes) else str(peer_hash)
+                else:
+                    best_hash = None
+                best_peer = peer.remote
+                best_age = hello_age
+        
+        return best_height, best_hash, best_peer, best_age
 
     def _network_best_height(self) -> Optional[int]:
         """
