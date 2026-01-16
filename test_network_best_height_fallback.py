@@ -61,8 +61,6 @@ def test_network_best_height_with_stale_peer_heads():
     }
     
     # Call the actual _network_best_height method
-    
-    # Call the actual _network_best_height method
     result = P2PService._network_best_height(service)
     
     # With the fix: should return 1000 (from peer.hello["head_height"])
@@ -109,8 +107,6 @@ def test_network_best_height_with_cooldown():
     }
     
     # Call the actual _network_best_height method
-    
-    # Call the actual _network_best_height method
     result = P2PService._network_best_height(service)
     
     # With the fix: should return 2000 (from peer.hello["head_height"])
@@ -145,8 +141,6 @@ def test_network_best_height_with_missing_peer_heads():
     service._sync_peer_head_stale_sec = 60.0
     service._sync_network_best_cache_timeout = 300.0
     service._sync_peer_heads = {}  # No entry for peer1!
-    
-    # Call the actual _network_best_height method
     
     # Call the actual _network_best_height method
     result = P2PService._network_best_height(service)
@@ -194,8 +188,6 @@ def test_network_best_height_uses_max_of_all_sources():
         "peer1": _PeerHeadInfo(height=1000, updated_at=now, source="test"),
         "peer2": _PeerHeadInfo(height=950, updated_at=now, source="test"),
     }
-    
-    # Call the actual _network_best_height method
     
     # Call the actual _network_best_height method
     result = P2PService._network_best_height(service)
