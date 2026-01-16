@@ -4,7 +4,7 @@ from __future__ import annotations
 Animica Miner CLI
 
 Usage:
-  python -m mining.cli.miner start [--threads N] [--device cpu|cuda|rocm|opencl|metal|auto]
+  python -m mining.cli.miner start [--threads N] [--miner-id ID] [--device cpu|cuda|rocm|opencl|metal|auto]
                                    [--rpc-url URL] [--ws-url URL]
                                    [--stratum-listen HOST:PORT]
                                    [--getwork-enable/--no-getwork]
@@ -13,7 +13,7 @@ Usage:
                                    [--metrics :PORT] [--log-level LEVEL]
                                    [--dry-run]
 
-  python -m mining.cli.miner mine-blocks --address ADDR --count N [--workers N]
+  python -m mining.cli.miner mine-blocks --address ADDR --count N [--workers N] [--miner-id ID]
                                           [--rpc-url URL] [--log-level LEVEL]
                                           [--retry-delay SECONDS] [--no-timeout]
   
@@ -21,6 +21,11 @@ Usage:
   nonce search. By default (0), the miner auto-detects available CPU cores and uses
   max(1, cpu_count - 1). Higher worker counts can significantly speed up mining on
   multi-core systems.
+  
+  The --miner-id option (0-255) enables efficient multi-node mining to the same wallet.
+  Each miner with a different ID searches a unique portion of the nonce space, preventing
+  wasted work from multiple nodes checking the same nonces. Set different IDs for each
+  mining node to maximize total hashrate.
 
 Commands:
   start       - Start the continuous miner (orchestrator)
@@ -42,6 +47,14 @@ Multi-Core Mining:
   - Example: --workers 2 uses only 2 cores even if 8 are available
   - Set ANIMICA_MINER_WORKERS to configure the default worker count (0=auto)
 
+Multi-Node Mining:
+  - Use --miner-id to assign unique IDs (0-255) to each mining node
+  - Different miner IDs ensure nodes search different nonce spaces
+  - This dramatically improves efficiency when mining to the same wallet address
+  - Example: Node 1 uses --miner-id 0, Node 2 uses --miner-id 1, etc.
+  - Set ANIMICA_MINER_ID environment variable for default miner ID
+  - Without unique IDs, multiple nodes will waste effort checking duplicate nonces
+
 Examples:
   # Start the miner (uses all CPU cores by default)
   python -m mining.cli.miner start
@@ -49,8 +62,20 @@ Examples:
   # Start with explicit thread count
   python -m mining.cli.miner start --threads 4
 
+  # Start with miner ID for multi-node setup (node 1)
+  python -m mining.cli.miner start --miner-id 0
+  
+  # Start with miner ID for multi-node setup (node 2)
+  python -m mining.cli.miner start --miner-id 1
+
   # Mine 5 blocks for testing (uses auto worker count by default)
   python -m mining.cli.miner mine-blocks --address anim1test123 --count 5
+  
+  # Multi-node mining: Node 1
+  python -m mining.cli.miner mine-blocks --address anim1shared --count 10 --miner-id 0 --workers 4
+  
+  # Multi-node mining: Node 2 (same address, different miner ID)
+  python -m mining.cli.miner mine-blocks --address anim1shared --count 10 --miner-id 1 --workers 4
   
   # Mine blocks with custom retry delay (2.5 seconds between retries)
   python -m mining.cli.miner mine-blocks --address anim1test123 --count 3 --retry-delay 2.5
@@ -145,6 +170,13 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         type=int,
         default=os.cpu_count() or 1,
         help="number of worker threads (default: CPU count)",
+    )
+    start.add_argument(
+        "--miner-id",
+        type=int,
+        default=_env_int("ANIMICA_MINER_ID", 0),
+        help="unique miner instance ID for multi-node mining (0-255, default: 0). "
+             "Different IDs ensure nodes search different nonce spaces.",
     )
     start.add_argument(
         "--device",
@@ -260,6 +292,13 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         dest="workers",
         type=int,
         help="deprecated alias for --workers",
+    )
+    mine_blocks.add_argument(
+        "--miner-id",
+        type=int,
+        default=_env_int("ANIMICA_MINER_ID", 0),
+        help="unique miner instance ID for multi-node mining (0-255, default: 0). "
+             "Different IDs ensure nodes search different nonce spaces.",
     )
     mine_blocks.add_argument(
         "--rpc-url",
@@ -405,6 +444,11 @@ async def _run_mine_blocks(args: argparse.Namespace, log: logging.Logger) -> int
     if args.retry_delay <= 0:
         log.error("retry-delay must be greater than 0, got %.3f", args.retry_delay)
         return 2
+    
+    # Validate miner_id
+    if not (0 <= args.miner_id <= 255):
+        log.error("miner-id must be in range [0, 255], got %d", args.miner_id)
+        return 2
 
     try:
         from mining.parallel_nonce_search import resolve_worker_count
@@ -438,11 +482,12 @@ async def _run_mine_blocks(args: argparse.Namespace, log: logging.Logger) -> int
     timeout_msg = "no timeout" if args.no_timeout else "30.0s timeout"
     
     log.info(
-        "Mining %d block(s) with payout to address %s via RPC %s (workers=%d, retry_delay=%.1fs, %s, force_empty_template=%s, verbose=%s)",
+        "Mining %d block(s) with payout to address %s via RPC %s (workers=%d, miner_id=%d, retry_delay=%.1fs, %s, force_empty_template=%s, verbose=%s)",
         args.count,
         args.address,
         args.rpc_url,
         workers,
+        args.miner_id,
         args.retry_delay,
         timeout_msg,
         args.force_empty_template,
@@ -473,6 +518,7 @@ async def _run_mine_blocks(args: argparse.Namespace, log: logging.Logger) -> int
                         "count": args.count,
                         "address": args.address,
                         "workers": workers,
+                        "miner_id": args.miner_id,
                         "verbose": bool(args.verbose),
                     }
                     if args.force_empty_template:
@@ -502,6 +548,7 @@ async def _run_mine_blocks(args: argparse.Namespace, log: logging.Logger) -> int
                                 "count": args.count,
                                 "address": args.address,
                                 "threads": workers,
+                                "miner_id": args.miner_id,
                                 "verbose": bool(args.verbose),
                             }
                             if args.force_empty_template:
