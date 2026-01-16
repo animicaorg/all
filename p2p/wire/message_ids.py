@@ -53,6 +53,8 @@ class MsgID(IntEnum):
     GET_PEERS = 0x0102  # ask for known peers (scored)
     PEERS = 0x0103  # list of peer addresses/ids
     ADDRESS_ANNOUNCE = 0x0104  # this node's reachable addresses
+    HEAD_STATUS = 0x0105  # lightweight head announcement (height, hash, timestamp)
+    GET_HEAD_STATUS = 0x0106  # request peer's current head
 
     # ---------------------------
     # 0x02xx — Inventory (generic)
@@ -149,6 +151,7 @@ _REQUEST_RESPONSE: Dict[MsgID, MsgID] = {
     MsgID.PING: MsgID.PONG,
     MsgID.IDENTIFY: MsgID.IDENTIFY_RESP,
     MsgID.GET_PEERS: MsgID.PEERS,
+    MsgID.GET_HEAD_STATUS: MsgID.HEAD_STATUS,
     MsgID.GETDATA: MsgID.NOTFOUND,  # may also be answered by TX/BLOCKS/SHARE/DA_* depending on type
     MsgID.GET_HEADERS: MsgID.HEADERS,
     MsgID.GET_BLOCKS: MsgID.BLOCKS,

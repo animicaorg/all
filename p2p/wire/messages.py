@@ -197,6 +197,26 @@ class AddressAnnounce:
     addresses: List[Address] = dc.field(default_factory=list)
 
 
+@dataclass(frozen=True)
+class GetHeadStatus:
+    """Request peer's current head status for tip freshness."""
+    msg_id: MsgID = MsgID.GET_HEAD_STATUS
+
+
+@dataclass(frozen=True)
+class HeadStatus:
+    """Lightweight head status announcement for keeping peer tips fresh."""
+    msg_id: MsgID = MsgID.HEAD_STATUS
+    chain_id: ChainId = 0
+    head_height: Height = 0
+    head_hash: Hash32 = b""
+    timestamp_ms: int = 0  # Unix timestamp in milliseconds
+    network_best_height: Optional[Height] = None  # Optional: highest known network height
+
+    def __post_init__(self):
+        _ensure_len("head_hash", self.head_hash, 32)
+
+
 # ---------------------------
 # 0x02xx — Inventory
 # ---------------------------
@@ -710,6 +730,8 @@ def _schema_descriptor() -> str:
         GetPeers,
         Peers,
         AddressAnnounce,
+        GetHeadStatus,
+        HeadStatus,
         InvItem,
         Inv,
         GetData,
@@ -762,6 +784,8 @@ __all__ = [
     "GetPeers",
     "Peers",
     "AddressAnnounce",
+    "GetHeadStatus",
+    "HeadStatus",
     "InvItem",
     "Inv",
     "GetData",

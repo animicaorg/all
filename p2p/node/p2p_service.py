@@ -887,6 +887,8 @@ class P2PService:
         self._tx_inv_sent_by_peer: dict[str, "OrderedDict[bytes, float]"] = {}
         self._tx_rebroadcast_task: Optional[asyncio.Task] = None
         self._tx_relay_heartbeat_at: float = 0.0
+        self._head_status_heartbeat_at: float = 0.0  # For periodic HEAD_STATUS broadcasting
+        self._head_status_heartbeat_interval_sec: float = 10.0  # Broadcast every 10s
         self._tx_recent_rejects: Deque[dict[str, Any]] = deque(
             maxlen=int(os.environ.get("ANIMICA_P2P_TX_REJECT_LOG", "50") or 50)
         )
@@ -5474,6 +5476,12 @@ class P2PService:
         if mid == int(MsgID.ADDRESS_ANNOUNCE):
             await self._handle_address_announce(peer, payload)
             return
+        if mid == int(MsgID.GET_HEAD_STATUS):
+            await self._handle_get_head_status(peer, payload)
+            return
+        if mid == int(MsgID.HEAD_STATUS):
+            await self._handle_head_status(peer, payload)
+            return
         if mid == int(MsgID.HEADERS):
             await self._handle_headers(peer, payload)
             return
@@ -6226,6 +6234,98 @@ class P2PService:
                 if isinstance(addr, str) and addr:
                     self._mark_peer_known(peer, addr)
             self._ingest_peer_entries(entries, source=f"announce:{peer.remote}", source_peer=peer)
+
+    async def _handle_get_head_status(self, peer: _PeerState, payload: bytes) -> None:
+        """
+        Handle GET_HEAD_STATUS request: respond with our current head.
+        This enables peers to keep their view of our tip fresh.
+        """
+        # Get current local head
+        local_height, local_head_hash = self._local_head()
+        if local_head_hash is None:
+            local_head_hash = b"\x00" * 32
+        
+        # Get network best height if available
+        network_best = self._network_best_height()
+        
+        # Send HEAD_STATUS response
+        from p2p.wire.messages import HeadStatus
+        await self._send(
+            peer,
+            MsgID.HEAD_STATUS,
+            HeadStatus(
+                chain_id=self.chain_id,
+                head_height=int(local_height or 0),
+                head_hash=bytes(local_head_hash),
+                timestamp_ms=int(time.time() * 1000),
+                network_best_height=network_best,
+            ),
+        )
+        log.debug(
+            "Sent HEAD_STATUS response",
+            extra={
+                "remote": peer.remote,
+                "height": int(local_height or 0),
+                "network_best": network_best,
+            },
+        )
+
+    async def _handle_head_status(self, peer: _PeerState, payload: bytes) -> None:
+        """
+        Handle HEAD_STATUS message: update peer's tip info to keep it fresh.
+        This is critical for accurate sync status computation.
+        """
+        data = self._decode_map(payload)
+        
+        # Extract head info
+        peer_chain_id = int(data.get("chain_id") or 0)
+        peer_height = int(data.get("head_height") or 0)
+        peer_hash = data.get("head_hash")
+        peer_timestamp_ms = int(data.get("timestamp_ms") or 0)
+        peer_network_best = data.get("network_best_height")
+        
+        # Validate chain_id match
+        if peer_chain_id != int(self.chain_id):
+            log.debug(
+                "Ignoring HEAD_STATUS from peer with different chain_id",
+                extra={
+                    "remote": peer.remote,
+                    "peer_chain_id": peer_chain_id,
+                    "local_chain_id": int(self.chain_id),
+                },
+            )
+            return
+        
+        # Validate hash
+        if not isinstance(peer_hash, (bytes, bytearray)) or len(peer_hash) != 32:
+            log.debug(
+                "Ignoring HEAD_STATUS with invalid hash",
+                extra={"remote": peer.remote},
+            )
+            return
+        
+        # Update peer head info - this refreshes the timestamp
+        self._update_peer_head(peer, height=peer_height, head_hash=peer_hash)
+        
+        # Update network_best_height in hello if available
+        if peer_network_best is not None and peer.hello is not None:
+            peer.hello["network_best_height"] = int(peer_network_best)
+        
+        log.debug(
+            "Received HEAD_STATUS update",
+            extra={
+                "remote": peer.remote,
+                "height": peer_height,
+                "network_best": peer_network_best,
+                "age_ms": int(time.time() * 1000) - peer_timestamp_ms if peer_timestamp_ms else None,
+            },
+        )
+        
+        # Kick sync if peer's head is higher than ours
+        # Cache _local_head() result to avoid redundant computation
+        local_height, _ = self._local_head()
+        if peer_height > int(local_height or 0):
+            self._sync_kick(reason="head_status_advance", aggressive=False)
 
     async def query_peer_snapshots(
         self, peer: _PeerState, chain_id: Optional[int] = None, timeout: float = 10.0
@@ -11790,7 +11890,9 @@ class P2PService:
         This is critical for accurate sync status - we must never claim SYNCHRONIZED
         when we have no fresh knowledge of the network tip.
         """
-        TIP_FRESHNESS_SEC = 60.0  # Only use peer tips updated in last 60 seconds
+        # REDUCED from 60.0 to 45.0 per requirements - less strict freshness window
+        # With HEAD_STATUS broadcasts every 10s, 45s allows for up to 4 missed heartbeats
+        TIP_FRESHNESS_SEC = 45.0
         
         best_height: Optional[int] = None
         best_hash: Optional[str] = None
@@ -14461,8 +14563,10 @@ class P2PService:
                 except asyncio.CancelledError:
                     return
                 await self._relay_heartbeat()
+                await self._head_status_heartbeat()
                 await self._rebroadcast_pending_txs()
                 await self._relay_heartbeat()
+                await self._head_status_heartbeat()
         except asyncio.CancelledError:
             return
 
@@ -14494,6 +14598,62 @@ class P2PService:
                 "peers": peer_count,
             },
         )
+
+    async def _head_status_heartbeat(self) -> None:
+        """
+        Periodic HEAD_STATUS broadcast to keep peer tips fresh.
+        
+        This broadcasts our current head every 10s to all peers,
+        ensuring they have fresh tip information for sync status decisions.
+        """
+        now = time.time()
+        if now - self._head_status_heartbeat_at < self._head_status_heartbeat_interval_sec:
+            return
+        self._head_status_heartbeat_at = now
+        
+        # Get current local head
+        local_height, local_head_hash = self._local_head()
+        if local_head_hash is None:
+            local_head_hash = b"\x00" * 32
+        
+        # Get network best height if available
+        network_best = self._network_best_height()
+        
+        # Broadcast to all peers
+        from p2p.wire.messages import HeadStatus
+        head_status = HeadStatus(
+            chain_id=self.chain_id,
+            head_height=int(local_height or 0),
+            head_hash=bytes(local_head_hash),
+            timestamp_ms=int(time.time() * 1000),
+            network_best_height=network_best,
+        )
+        
+        async with self._peer_lock:
+            peers = list(self._peers.values())
+        
+        broadcast_count = 0
+        for peer in peers:
+            if not peer.hello_done.is_set():
+                continue
+            if not self._peer_chain_matches(peer):
+                continue
+            try:
+                await self._send(peer, MsgID.HEAD_STATUS, head_status)
+                broadcast_count += 1
+            except Exception:
+                continue
+        
+        if broadcast_count > 0:
+            log.debug(
+                "HEAD_STATUS broadcast",
+                extra={
+                    "height": int(local_height or 0),
+                    "network_best": network_best,
+                    "peers": broadcast_count,
+                },
+            )
+
 
     async def _rebroadcast_pending_txs(self) -> None:
         if self.deps is None:

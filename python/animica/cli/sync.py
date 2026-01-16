@@ -1416,7 +1416,13 @@ def sync_status(
         typer.echo("   Try: animica sync force")
         typer.echo("   Or: animica snapshot discover")
     elif sync_state == "SYNCHRONIZED":
-        typer.secho("✓ Node is synchronized with the network", fg=typer.colors.GREEN)
+        # Only show synchronized if we have fresh peer tip confirmation
+        if best_remote_height is not None:
+            typer.secho("✓ Node is synchronized with the network", fg=typer.colors.GREEN)
+        else:
+            # Should not happen if sync status logic is correct, but add safety check
+            typer.secho("⚠ Node appears synchronized but cannot confirm (no fresh peer tips)", fg=typer.colors.YELLOW)
+            typer.echo("   Peer tips may be stale. Check network connectivity.")
     else:
         typer.secho("⚠ Node is not yet synchronized.", fg=typer.colors.YELLOW)
 
