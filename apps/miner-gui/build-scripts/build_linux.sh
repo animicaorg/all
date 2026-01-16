@@ -1,11 +1,16 @@
 #!/usr/bin/env bash
 # Build Linux executable for Animica Miner GUI
-# Creates a standalone executable and AppImage
+# Creates a standalone executable and tarball
+#
+# NOTE: This script is deprecated. Use the unified build system instead:
+#   ../../ops/build/build-miner-gui-linux.sh
+#
+# The unified scripts in ops/build/ bundle the node binary with the executable
+# and include additional protections.
 #
 # Requirements:
 #   - Linux (x86_64 or aarch64)
 #   - Python 3.10 or higher
-#   - FUSE (for AppImage testing)
 #
 # Usage:
 #   ./build_linux.sh
@@ -15,39 +20,34 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_DIR="$(dirname "$SCRIPT_DIR")"
 REPO_ROOT="$(cd "$APP_DIR/../.." && pwd)"
-DIST_DIR="${APP_DIR}/dist"
-BUILD_DIR="${APP_DIR}/build"
 
 log() { printf "\033[1;34m[build-linux]\033[0m %s\n" "$*"; }
 warn() { printf "\033[1;33m[warn]\033[0m %s\n" "$*" >&2; }
 err() { printf "\033[1;31m[error]\033[0m %s\n" "$*" >&2; }
 die() { err "$*"; exit 1; }
 
-# Check if running on Linux
-if [[ "$(uname -s)" != "Linux" ]]; then
-    die "This script must be run on Linux"
+# ---- Show deprecation warning ----
+warn "========================================================================="
+warn "DEPRECATION NOTICE:"
+warn "This script is deprecated. Please use the unified build system instead:"
+warn "  $REPO_ROOT/ops/build/build-miner-gui-linux.sh"
+warn ""
+warn "The unified scripts bundle the node binary with the executable."
+warn ""
+warn "See: ops/build/README.md for documentation"
+warn "========================================================================="
+warn ""
+warn "Delegating to unified build script in 3 seconds..."
+sleep 3
+
+# ---- Delegate to unified script ----
+UNIFIED_SCRIPT="$REPO_ROOT/ops/build/build-miner-gui-linux.sh"
+
+if [[ ! -x "$UNIFIED_SCRIPT" ]]; then
+    die "Unified build script not found or not executable: $UNIFIED_SCRIPT"
 fi
 
-# Detect architecture
-ARCH="$(uname -m)"
-case "$ARCH" in
-    x86_64|amd64)
-        ARCH_NAME="x86_64"
-        APPIMAGE_ARCH="x86_64"
-        ;;
-    aarch64|arm64)
-        ARCH_NAME="aarch64"
-        APPIMAGE_ARCH="aarch64"
-        ;;
-    *)
-        die "Unsupported architecture: $ARCH"
-        ;;
-esac
-
-log "Building for Linux $ARCH_NAME"
-
-# Check Python version
-if ! command -v python3 >/dev/null 2>&1; then
+exec "$UNIFIED_SCRIPT" --out-dir "$APP_DIR/dist" "$@"
     die "Python 3 is required"
 fi
 

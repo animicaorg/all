@@ -1,6 +1,60 @@
 # Animica Miner GUI - Build Scripts
 
-This directory contains build scripts for creating standalone executables of the Animica Miner GUI for macOS, Windows, and Linux.
+> **⚠️ DEPRECATION NOTICE**  
+> These build scripts are deprecated. Please use the **unified build system** at:
+> - `../../ops/build/build-miner-gui-macos.sh`
+> - `../../ops/build/build-miner-gui-linux.sh`
+> - `../../ops/build/build-node-binary.sh`
+>
+> The unified scripts:
+> - Bundle the node binary inside the application
+> - Include protections against macOS infinite spawn issues
+> - Use defensive bash patterns with comprehensive error handling
+> - Generate build manifests with version tracking
+>
+> **See:** `../../ops/build/README.md` for complete documentation
+
+---
+
+## Legacy Scripts (Auto-Delegate)
+
+This directory contains **legacy** build scripts that now delegate to the unified build system.
+
+When you run these scripts, they will:
+1. Show a deprecation warning (3 second delay)
+2. Automatically delegate to the unified build scripts in `ops/build/`
+3. Pass through any command-line arguments
+
+## Quick Start (Use Unified Scripts)
+
+### macOS
+```bash
+# From repo root
+./ops/build/build-node-binary.sh --clean
+./ops/build/build-miner-gui-macos.sh --clean
+```
+
+### Linux
+```bash
+# From repo root
+./ops/build/build-node-binary.sh --clean
+./ops/build/build-miner-gui-linux.sh --clean
+```
+
+## Why Unified Scripts?
+
+The new unified build system at `ops/build/` provides:
+
+1. **Node Binary Bundling**: The node daemon is built first and bundled inside the GUI application
+2. **Frozen Execution Safety**: Proper detection of PyInstaller frozen mode to prevent infinite spawn loops
+3. **Single-Instance Enforcement**: Qt-based single-instance guard prevents multiple windows
+4. **Startup Loop Detection**: Safety net that detects and breaks launch loops
+5. **Comprehensive Logging**: Startup logs written to app data directory for debugging
+6. **Defensive Scripting**: All scripts use `set -euo pipefail` with validation and clear errors
+
+## Legacy Documentation
+
+The original build scripts are maintained for backward compatibility but delegate to the unified system.
 
 ## Overview
 
