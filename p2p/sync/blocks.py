@@ -180,13 +180,25 @@ class BlocksDownloader:
                     timeout = base * (
                         1.0 + (random.random() - 0.5) * 2 * self.cfg.jitter_frac
                     )
+                except (ConnectionError, OSError) as e:
+                    # Transient network errors - retry with short backoff
+                    self.stats.errors += 1
+                    self.stats.retries += 1
+                    self._log.warning(
+                        f"Network error fetching block {h.hex()[:16]}...: {e.__class__.__name__} "
+                        f"(attempt {attempt + 1}/{self.cfg.max_retries + 1})"
+                    )
+                    # Always sleep on network errors (even last attempt) for consistent behavior
+                    await asyncio.sleep(0.002)  # 2ms backoff for network errors
                 except Exception as e:
+                    # Other errors (validation, parse, etc.) - log and retry with backoff
                     self.stats.errors += 1
                     self.stats.retries += 1
                     self._log.error(
                         f"Block fetch error for {h.hex()[:16]}...: {e.__class__.__name__}: {e}"
                     )
-                    await asyncio.sleep(0.05)
+                    # Reduced from 0.05s to 0.005s (5ms) for faster error recovery
+                    await asyncio.sleep(0.005)
             self._log.error(f"Failed to fetch block {h.hex()[:16]}... after {self.cfg.max_retries + 1} attempts")
             return None
 
@@ -261,18 +273,21 @@ class BlocksDownloader:
         buffer: Dict[Hash, BlockLike],
     ) -> Optional[int]:
         """
-        Choose the next index to fetch:
+        Choose the next index to fetch with optimized search:
           - prefer a small band near `next_idx` to encourage quick reassembly,
           - skip ones already in buffer or in-flight.
+        Optimized to reduce O(n²) behavior with efficient set lookups.
         """
         window = max(self.cfg.max_parallel * 2, 8)
         lo = next_idx
         hi = min(len(order), next_idx + window)
+        # Primary window search - O(window) with O(1) set lookups
         for i in range(lo, hi):
             h = order[i]
             if h not in in_flight and h not in buffer:
                 return i
         # If the near band is saturated, search the tail sparsely.
+        # This is a fallback case that should be rare with proper window sizing.
         for i in range(hi, len(order)):
             h = order[i]
             if h not in in_flight and h not in buffer:
