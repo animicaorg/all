@@ -2937,6 +2937,11 @@ def reset(
         "--backup-balances/--no-backup-balances",
         help="Export wallet balances before reset (recommended)",
     ),
+    restore_balances: bool = typer.Option(
+        False,
+        "--restore-balances/--no-restore-balances",
+        help="Automatically restore balances after reset+up (requires --up and admin RPC)",
+    ),
 ) -> None:
     """
     Stop the node and wipe network data (docker volumes and/or host directories).
@@ -2948,11 +2953,24 @@ def reset(
     
     Use --backup-balances (default) to export balances before reset. The backup file
     can be used to manually restore balances or verify what was lost.
+    
+    Use --restore-balances with --up to automatically restore balances after the node
+    restarts. This requires admin RPC to be enabled (ANIMICA_ADMIN_RPC_ENABLED=1) and
+    should only be used in dev/test environments.
     """
     resolved_network = network or _ensure_network_set()
     compose_file = _get_compose_file(resolved_network)
     net_cfg = load_network_config(resolved_network)
     data_dir = Path(net_cfg.data_dir).expanduser()
+
+    # Validate restore_balances requires --up
+    if restore_balances and not up_node:
+        typer.secho(
+            "Error: --restore-balances requires --up to restart the node after reset.",
+            fg=typer.colors.RED,
+            err=True
+        )
+        raise typer.Exit(code=1)
 
     targets: list[str] = []
     if volumes:
@@ -3127,12 +3145,71 @@ def reset(
         typer.echo("This file contains the balances that were lost during reset.")
         typer.echo("\nTo view the backup:")
         typer.echo(f"  cat {balance_backup_file}")
-        typer.echo("\nNote: Automatic balance restoration is not yet implemented.")
-        typer.echo("You can manually re-credit balances by mining to these addresses again.")
+        
+        if restore_balances:
+            typer.echo("\n✓ Balances will be automatically restored after node startup.")
+        else:
+            typer.echo("\nTo restore balances manually:")
+            typer.echo("  ANIMICA_ADMIN_RPC_ENABLED=1 animica node up")
+            typer.echo("  animica balance restore")
 
     if up_node:
+        # Set network environment variable
         os.environ["ANIMICA_NETWORK"] = resolved_network
+        
+        # If restore_balances is requested, enable admin RPC
+        if restore_balances:
+            typer.secho(
+                "\n🔧 Enabling admin RPC for balance restoration (dev/test only)...",
+                fg=typer.colors.YELLOW
+            )
+            os.environ["ANIMICA_ADMIN_RPC_ENABLED"] = "1"
+        
+        # Start the node
+        typer.secho(f"\n🚀 Starting node for {resolved_network}...", fg=typer.colors.CYAN)
         up()
+        
+        # If restore_balances is requested and we have a backup, restore it
+        if restore_balances and balance_backup_file and balance_backup_file.exists():
+            typer.secho("\n💾 Restoring balances from backup...", fg=typer.colors.CYAN)
+            
+            # Wait a moment for node to fully start
+            typer.echo("Waiting for node to be fully ready...")
+            time.sleep(5)
+            
+            try:
+                from animica.cli.wallet_balances import restore_wallet_balances_sync
+                
+                restored, failed = restore_wallet_balances_sync(
+                    data_dir=data_dir,
+                    rpc_url=rpc_url,
+                    backup_file=balance_backup_file,
+                    timeout=10.0,
+                    quiet=False,
+                )
+                
+                if failed == 0:
+                    typer.secho(
+                        f"\n✓ Successfully restored balances for {restored} addresses!",
+                        fg=typer.colors.GREEN,
+                        bold=True
+                    )
+                else:
+                    typer.secho(
+                        f"\n⚠️  Partially restored balances: {restored} succeeded, {failed} failed",
+                        fg=typer.colors.YELLOW
+                    )
+                    typer.echo("Check the output above for details.")
+            
+            except Exception as e:
+                typer.secho(
+                    f"\n✗ Failed to restore balances: {e}",
+                    fg=typer.colors.RED,
+                    err=True
+                )
+                typer.echo("\nYou can try restoring manually:")
+                typer.echo("  animica balance restore")
+
 
 
 @p2p_app.command("status")
