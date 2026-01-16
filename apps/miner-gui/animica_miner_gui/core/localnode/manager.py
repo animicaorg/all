@@ -5,6 +5,8 @@ This is the primary interface that the GUI uses to manage the local node.
 
 from __future__ import annotations
 
+import ast
+import json
 import logging
 import time
 from typing import Optional
@@ -40,6 +42,8 @@ class LocalNodeManager:
         self.proc_manager = NodeProcessManager(network, preferred_port)
         self._rpc_client: Optional[LocalRpcClient] = None
         self._status = NodeStatus(state=NodeState.STOPPED)
+        self._rpc_url: Optional[str] = None
+        self._auth_token: Optional[str] = None
     
     def start(self, ready_timeout: float = DEFAULT_READY_TIMEOUT) -> NodeStatus:
         """Start the local node and wait for it to be ready.
@@ -56,6 +60,9 @@ class LocalNodeManager:
         
         # Start the process
         self._status = self.proc_manager.start()
+        self._rpc_client = None
+        self._rpc_url = self.rpc_url
+        self._auth_token = self.proc_manager.auth_token
         
         if self._status.state == NodeState.ERROR:
             return self._status
@@ -82,11 +89,8 @@ class LocalNodeManager:
             # Try to create RPC client and ping
             try:
                 if self._rpc_client is None:
-                    self._rpc_client = LocalRpcClient(
-                        port=self.proc_manager.port,
-                        auth_token=self.proc_manager.auth_token,
-                    )
-                
+                    self._rpc_client = self._build_rpc_client()
+
                 if self._rpc_client.ping():
                     # Node is ready!
                     self._status = NodeStatus(
@@ -97,6 +101,18 @@ class LocalNodeManager:
                     logger.info("Node is ready")
                     return self._status
             
+            except LocalRpcError as e:
+                if _rpc_error_code(e) == -32001:
+                    error_msg = "RPC unauthorized: auth token rejected by node"
+                    logger.error(error_msg)
+                    self.proc_manager.record_failure(reason=error_msg, exit_code=self.proc_manager.last_exit_code)
+                    self._status = NodeStatus(
+                        state=NodeState.ERROR,
+                        error=error_msg,
+                    )
+                    self.stop()
+                    return self._status
+                logger.debug(f"Readiness check failed: {e}")
             except Exception as e:
                 logger.debug(f"Readiness check failed: {e}")
             
@@ -129,6 +145,8 @@ class LocalNodeManager:
         """
         self._status = self.proc_manager.stop()
         self._rpc_client = None
+        self._rpc_url = None
+        self._auth_token = None
         return self._status
     
     def restart(self, ready_timeout: float = DEFAULT_READY_TIMEOUT) -> NodeStatus:
@@ -184,7 +202,15 @@ class LocalNodeManager:
         """
         if not self._status.is_ready:
             return None
-        
+        if self._rpc_client is None:
+            self._rpc_client = self._build_rpc_client()
+        else:
+            current_url = self.rpc_url
+            current_token = self.proc_manager.auth_token
+            if current_url != self._rpc_client.rpc_url or current_token != self._rpc_client.auth_token:
+                self._rpc_client = self._build_rpc_client()
+        self._rpc_url = self.rpc_url
+        self._auth_token = self.proc_manager.auth_token
         return self._rpc_client
     
     def get_sync_status(self) -> Optional[SyncStatus]:
@@ -228,3 +254,35 @@ class LocalNodeManager:
         if self.port is None:
             return None
         return f"http://127.0.0.1:{self.port}/rpc"
+
+    @property
+    def auth_token(self) -> Optional[str]:
+        """Get the current RPC auth token."""
+        return self._auth_token
+
+    def _build_rpc_client(self) -> LocalRpcClient:
+        return LocalRpcClient(
+            port=self.proc_manager.port,
+            auth_token=self.proc_manager.auth_token,
+            auth_token_path=self.proc_manager.token_path,
+        )
+
+
+def _rpc_error_code(exc: Exception) -> Optional[int]:
+    if not isinstance(exc, LocalRpcError):
+        return None
+    message = str(exc)
+    if not message.startswith("RPC error:"):
+        return None
+    payload = message.replace("RPC error:", "", 1).strip()
+    try:
+        data = json.loads(payload)
+    except json.JSONDecodeError:
+        try:
+            data = ast.literal_eval(payload)
+        except Exception:
+            return None
+    if isinstance(data, dict):
+        code = data.get("code")
+        return int(code) if isinstance(code, (int, float)) else None
+    return None

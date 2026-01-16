@@ -204,7 +204,13 @@ def _run_preflight_imports() -> int:
     ]
     for module in modules:
         import_module(module)
-    print("OK")
+    from rpc import methods as rpc_methods
+    from rpc import server as rpc_server
+
+    methods = rpc_server.ensure_rpc_methods_registered()
+    rpc_server._assert_required_methods(methods)
+    print(f"OK: {len(methods)} methods registered")
+    print(",".join(methods))
     return 0
 
 
@@ -271,6 +277,11 @@ binaries = []
 for package in internal_packages:
     hiddenimports += collect_submodules(package)
     datas += collect_data_files(package, include_py_files=True)
+
+# Ensure RPC method modules are bundled explicitly (PyInstaller + dynamic imports)
+hiddenimports += collect_submodules("rpc")
+hiddenimports += collect_submodules("rpc.methods")
+datas += collect_data_files("rpc", include_py_files=True)
 
 hiddenimports += [
     "httpx",
@@ -381,6 +392,89 @@ verify_executable "$BUILT_BINARY"
 log "Running node preflight checks..."
 "$BUILT_BINARY" --help >/dev/null 2>&1 || die "Node --help preflight failed"
 "$BUILT_BINARY" --preflight-imports || die "Node --preflight-imports failed"
+
+log "Running RPC runtime preflight..."
+RUNTIME_DATA_DIR="$OUT_DIR/preflight-data"
+mkdir -p "$RUNTIME_DATA_DIR"
+TOKEN_FILE="$(mktemp)"
+python - <<'PY' "$TOKEN_FILE"
+import secrets
+import sys
+token_path = sys.argv[1]
+with open(token_path, "w", encoding="utf-8") as handle:
+    handle.write(secrets.token_hex(32))
+PY
+
+PORT="$(python - <<'PY'
+import socket
+sock = socket.socket()
+sock.bind(("127.0.0.1", 0))
+port = sock.getsockname()[1]
+sock.close()
+print(port)
+PY
+)"
+
+"$BUILT_BINARY" \
+    --rpc-bind 127.0.0.1 \
+    --rpc-port "$PORT" \
+    --rpc-auth-token-file "$TOKEN_FILE" \
+    --data-dir "$RUNTIME_DATA_DIR" \
+    --log-file "$OUT_DIR/preflight-node.log" \
+    >/dev/null 2>&1 &
+NODE_PID=$!
+
+RPC_PAYLOAD='{"jsonrpc":"2.0","id":1,"method":"rpc.methods","params":[]}'
+RPC_RESP="$(mktemp)"
+RPC_OK="0"
+for _ in $(seq 1 50); do
+    HTTP_CODE="$(curl -s -o "$RPC_RESP" -w "%{http_code}" \
+        -H "Content-Type: application/json" \
+        -H "Authorization: Bearer $(cat "$TOKEN_FILE")" \
+        -d "$RPC_PAYLOAD" \
+        "http://127.0.0.1:$PORT/rpc" || true)"
+    if [[ "$HTTP_CODE" == "200" ]]; then
+        RPC_OK="1"
+        break
+    fi
+    sleep 0.2
+done
+
+if [[ "$RPC_OK" != "1" ]]; then
+    kill "$NODE_PID" >/dev/null 2>&1 || true
+    wait "$NODE_PID" >/dev/null 2>&1 || true
+    die "RPC runtime preflight failed: rpc.methods unavailable (HTTP $HTTP_CODE)"
+fi
+
+python - <<'PY' "$RPC_RESP"
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    payload = json.load(handle)
+
+methods = payload.get("result") or []
+required_all = {"chain.getHead"}
+required_any = {
+    "sync": {"sync.getStatus", "sync.dump"},
+    "peers": {"net.peers", "net.getPeers", "peer.list", "p2p.peers"},
+}
+
+missing_all = sorted(required_all - set(methods))
+missing_any = {
+    key: sorted(list(values))
+    for key, values in required_any.items()
+    if not set(values).intersection(methods)
+}
+
+if missing_all or missing_any:
+    raise SystemExit(f"RPC runtime preflight missing methods: {missing_all} {missing_any}")
+print(f"RPC runtime preflight OK ({len(methods)} methods)")
+PY
+
+kill "$NODE_PID" >/dev/null 2>&1 || true
+wait "$NODE_PID" >/dev/null 2>&1 || true
+rm -f "$TOKEN_FILE" "$RPC_RESP"
 
 # Validate PyInstaller runtime layout
 INTERNAL_DIR="$BUILT_DIR/_internal"

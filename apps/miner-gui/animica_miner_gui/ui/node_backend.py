@@ -135,8 +135,22 @@ class NodeBackend(QObject):
             rpc = self._node_manager.get_rpc_client()
             if rpc is not None:
                 self._set_rpc_client(rpc)
-        elif self._rpc_client is not None and not self._node_manager.is_ready:
+            return
+
+        if self._rpc_client is not None and not self._node_manager.is_ready:
             self._rpc_client = None
             self._sync_timer.stop()
             self.nodeError.emit("Node is not ready")
             self.rpcChanged.emit(None)
+            return
+
+        if self._rpc_client is not None and self._node_manager.is_ready:
+            current_url = self._node_manager.rpc_url
+            current_token = self._node_manager.auth_token
+            if current_url and (
+                current_url != self._rpc_client.rpc_url
+                or current_token != self._rpc_client.auth_token
+            ):
+                rpc = self._node_manager.get_rpc_client()
+                if rpc is not None:
+                    self._set_rpc_client(rpc)

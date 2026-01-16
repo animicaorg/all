@@ -164,6 +164,11 @@ class AccessPolicy:
     def _authorized(self, ctx: t.Any, client_ip: str | None) -> bool:
         if self.admin_token:
             headers = {k.lower(): v for k, v in getattr(ctx, "headers", {}).items()}
+            bearer = headers.get("authorization", "")
+            if bearer.lower().startswith("bearer "):
+                token = bearer.split(" ", 1)[1].strip()
+                if token == self.admin_token:
+                    return True
             if headers.get("x-animica-admin-token") == self.admin_token:
                 return True
         if client_ip:
@@ -205,7 +210,7 @@ class AccessPolicy:
         if method in self.admin_methods:
             if self._peer_injection_authorized(ctx, client_ip):
                 return
-            raise errors.AccessDenied(
+            raise errors.Unauthorized(
                 "Unauthorized",
                 method=method,
                 required="localhost or valid admin token",
@@ -214,7 +219,7 @@ class AccessPolicy:
         if self.mode == AccessMode.PRIVATE_FULL:
             if self._authorized(ctx, client_ip):
                 return
-            raise errors.RpcMethodRestricted(method=method)
+            raise errors.Unauthorized("Unauthorized", method=method)
 
         if self.mode == AccessMode.PUBLIC_BOOTSTRAP:
             if method in self.bootstrap_methods or method.startswith("bootstrap."):
@@ -222,9 +227,9 @@ class AccessPolicy:
                 return
             if self._authorized(ctx, client_ip):
                 return
-            raise errors.RpcMethodRestricted(method=method)
+            raise errors.Unauthorized("Unauthorized", method=method)
 
-        raise errors.RpcMethodRestricted(method=method)
+        raise errors.Unauthorized("Unauthorized", method=method)
 
 
 _ACTIVE_POLICY: AccessPolicy = AccessPolicy.from_config(object())

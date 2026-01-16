@@ -268,10 +268,11 @@ Structured JSON-RPC errors with codes:
 	•	-32602 Invalid params
 	•	-32000 Server error (generic)
 	•	App-specific (examples):
+	•	-32001 Unauthorized
 	•	-32010 InvalidTx
 	•	-32011 ChainIdMismatch
 	•	-32012 FeeTooLow
-	•	-32013 RateLimited
+	•	-32006 RateLimited
 
 Example:
 

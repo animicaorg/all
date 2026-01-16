@@ -33,6 +33,78 @@ _metrics_mod = importlib.import_module("rpc.metrics")
 log = logging.getLogger("animica.rpc.server")
 
 
+def ensure_rpc_methods_registered() -> list[str]:
+    """Ensure RPC method modules are imported and registered."""
+    from rpc import methods as rpc_methods
+
+    # Explicit imports to ensure PyInstaller bundles method modules.
+    import rpc.methods.bootstrap  # noqa: F401
+    import rpc.methods.chain  # noqa: F401
+    import rpc.methods.sync  # noqa: F401
+    import rpc.methods.net  # noqa: F401
+    import rpc.methods.node  # noqa: F401
+    import rpc.methods.tx  # noqa: F401
+    import rpc.methods.receipt  # noqa: F401
+    import rpc.methods.state  # noqa: F401
+    import rpc.methods.miner  # noqa: F401
+    import rpc.methods.mempool  # noqa: F401
+    import rpc.methods.ptl  # noqa: F401
+    import rpc.methods.da  # noqa: F401
+    import rpc.methods.faucet  # noqa: F401
+    import rpc.methods.p2p  # noqa: F401
+    import rpc.methods.snapshot  # noqa: F401
+    import rpc.methods.marketplace  # noqa: F401
+    import rpc.methods.admin  # noqa: F401
+
+    rpc_methods.ensure_loaded()
+    return sorted(rpc_methods.get_registry().keys())
+
+
+def _assert_required_methods(methods: list[str]) -> None:
+    required_any = {
+        "sync": {"sync.getStatus", "sync.dump"},
+        "peers": {"net.peers", "net.getPeers", "peer.list", "p2p.peers"},
+    }
+    required_all = {"chain.getHead"}
+
+    missing_all = sorted(required_all - set(methods))
+    missing_any = {
+        key: sorted(list(values))
+        for key, values in required_any.items()
+        if not set(values).intersection(methods)
+    }
+
+    if missing_all or missing_any:
+        log.error(
+            "RPC method registration incomplete: missing=%s missing_any=%s",
+            missing_all,
+            missing_any,
+        )
+        raise RuntimeError(
+            "RPC method registration incomplete; required methods not found."
+        )
+
+
+def _status_for_result(result: t.Any) -> int:
+    if isinstance(result, dict):
+        err = result.get("error")
+        if isinstance(err, dict) and err.get("code") == int(
+            rpc_errors.AnimicaCode.UNAUTHORIZED
+        ):
+            return 401
+        return 200
+    if isinstance(result, list):
+        for item in result:
+            if isinstance(item, dict):
+                err = item.get("error")
+                if isinstance(err, dict) and err.get("code") == int(
+                    rpc_errors.AnimicaCode.UNAUTHORIZED
+                ):
+                    return 401
+        return 200
+    return 200
+
+
 # -----------------------------------------------------------------------------
 # JSON-RPC integration (feature-detect common shapes)
 # -----------------------------------------------------------------------------
@@ -315,6 +387,14 @@ def create_app(cfg: rpc_config.Config | None = None) -> FastAPI:
                 "port": cfg.port,
             },
         )
+        methods = ensure_rpc_methods_registered()
+        try:
+            from rpc import jsonrpc as jsonrpc_mod
+
+            jsonrpc_mod.sync_registry()
+        except Exception:
+            log.exception("Failed to sync JSON-RPC dispatcher registry")
+        _assert_required_methods(methods)
         # Initialize deps (idempotent if already set)
         await deps.startup(cfg)
 
@@ -362,9 +442,14 @@ def create_app(cfg: rpc_config.Config | None = None) -> FastAPI:
             except rpc_errors.RpcError as re:  # type: ignore[attr-defined]
                 # Structured RPC error already; return as-is
                 rpc_id = payload.get("id") if isinstance(payload, dict) else None
+                status_code = (
+                    401
+                    if re.code == int(rpc_errors.AnimicaCode.UNAUTHORIZED)
+                    else 200
+                )
                 return JSONResponse(
                     {"jsonrpc": "2.0", "id": rpc_id, "error": re.to_dict()},
-                    status_code=200,
+                    status_code=status_code,
                 )
             except Exception as e:
                 log.exception("Unhandled error in JSON-RPC")
@@ -386,7 +471,7 @@ def create_app(cfg: rpc_config.Config | None = None) -> FastAPI:
             if result is None:
                 return Response(status_code=204)
             if isinstance(result, (dict, list)):
-                return JSONResponse(result)
+                return JSONResponse(result, status_code=_status_for_result(result))
             # As a fallback, dump to JSON
             return Response(content=json.dumps(result), media_type="application/json")
 
