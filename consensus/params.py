@@ -30,8 +30,8 @@ CHAIN_ID: int = 1
 # CHAIN_RESET_TOUCHPOINT: New genesis hash (to be updated after genesis generation)
 # This is the NEW genesis block hash for the reset chain.
 # Old genesis hash was: 0x27fab3a17fd3a166908cdaa32462511ded2da86724314de45f335b0a59f820d8
-# NEW genesis hash computed by consensus/build_genesis.py:
-GENESIS_HASH_HEX: str = "0x6a16a931365ca90fe6b5e115d94e26d025771c5d3be269f5105e1cd3de22b517"
+# Updated genesis hash (2026-01-16 mainnet reset):
+GENESIS_HASH_HEX: str = "0x21b05e15fbba80b81d60529bb7d977fed93a8bbe2fb513d9363f1af8bb7e0b2c"
 GENESIS_HASH: bytes = bytes.fromhex(GENESIS_HASH_HEX[2:])
 
 # ============================================================================
