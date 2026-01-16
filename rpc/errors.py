@@ -59,7 +59,8 @@ class JsonRpcCode(IntEnum):
 
 class AnimicaCode(IntEnum):
     SERVER_ERROR = -32000
-    RATE_LIMITED = -32001
+    UNAUTHORIZED = -32001
+    RATE_LIMITED = -32006
     TEMPORARILY_UNAVAILABLE = -32002
     ACCESS_DENIED = -32003
     NOT_FOUND = -32004
@@ -174,6 +175,11 @@ class RateLimited(RpcError):
         if retry_after_ms is not None:
             payload["retryAfterMs"] = int(retry_after_ms)
         super().__init__(AnimicaCode.RATE_LIMITED, "Too many requests", payload or None)
+
+
+class Unauthorized(RpcError):
+    def __init__(self, detail: str = "Unauthorized", **data: Any) -> None:
+        super().__init__(AnimicaCode.UNAUTHORIZED, detail, data or None)
 
 
 class RpcMethodRestricted(RpcError):
@@ -395,6 +401,8 @@ def http_status_hint(code: int) -> int:
         return 400
     if code == JsonRpcCode.METHOD_NOT_FOUND:
         return 404
+    if code in (AnimicaCode.UNAUTHORIZED,):
+        return 401
     if code in (AnimicaCode.ACCESS_DENIED, AnimicaCode.RPC_METHOD_RESTRICTED):
         return 403
     if code in (AnimicaCode.RATE_LIMITED,):
@@ -498,6 +506,7 @@ __all__ = [
     # server/general
     "ServerError",
     "RateLimited",
+    "Unauthorized",
     "TemporarilyUnavailable",
     "AccessDenied",
     "NotFound",

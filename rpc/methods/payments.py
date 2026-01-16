@@ -430,7 +430,7 @@ async def process_stripe_webhook(
 
     Errors:
         -32000: Invalid signature
-        -32001: Invalid payment details
+        -32004: Invalid payment details
         -32002: On-chain minting failed
     """
 
@@ -494,7 +494,7 @@ async def process_paypal_webhook(
 
     Errors:
         -32000: Invalid signature
-        -32001: Invalid payment details
+        -32004: Invalid payment details
         -32002: On-chain minting failed
     """
 

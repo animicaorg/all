@@ -98,6 +98,7 @@ except Exception:  # pragma: no cover - fallback if errors module not ready
 
 from rpc import version as rpc_version
 from rpc.access_policy import get_active_policy
+from rpc import errors as rpc_errors
 
 log = logging.getLogger(__name__)
 
@@ -204,6 +205,11 @@ def _sync_with_methods_registry() -> None:
 
 
 _sync_with_methods_registry()
+
+
+def sync_registry() -> None:
+    """Public hook to resync the rpc.methods registry into the dispatcher."""
+    _sync_with_methods_registry()
 
 # Cached OpenRPC doc (if available)
 _OPENRPC_CACHE_PATH: Path | None = None
@@ -494,6 +500,24 @@ def _default_ctx() -> Context:
     return Context(request=None, received_at_ms=_now_ms(), client=None, headers={})
 
 
+def _status_for_result(result: Json | List[Json]) -> int:
+    if isinstance(result, dict):
+        err = result.get("error")
+        if isinstance(err, dict) and err.get("code") == int(rpc_errors.AnimicaCode.UNAUTHORIZED):
+            return 401
+        return 200
+    if isinstance(result, list):
+        for item in result:
+            if isinstance(item, dict):
+                err = item.get("error")
+                if isinstance(err, dict) and err.get("code") == int(
+                    rpc_errors.AnimicaCode.UNAUTHORIZED
+                ):
+                    return 401
+        return 200
+    return 200
+
+
 async def dispatch_one(obj: Json, ctx: Optional[Context]) -> Optional[Json]:
     """
     Dispatch a single JSON-RPC request object.
@@ -609,9 +633,11 @@ async def jsonrpc_endpoint(request: Request) -> Response:
         result = await dispatch(payload, ctx)
         if result is None:
             return Response(status_code=204)
+        status_code = _status_for_result(result)
         return Response(
             content=json.dumps(result, separators=(",", ":")),
             media_type="application/json",
+            status_code=status_code,
         )
     except JsonRpcError as e:
         # Top-level structural errors
@@ -646,3 +672,15 @@ async def rpc_discover() -> Dict[str, Any]:
 async def rpc_list_methods() -> List[str]:
     """Return the list of registered method names (for debugging/clients)."""
     return registry.names
+
+
+@registry.method("rpc.methods")
+async def rpc_methods() -> List[str]:
+    """Return the list of registered method names (alias for rpc.listMethods)."""
+    return registry.names
+
+
+@registry.method("rpc.ping")
+async def rpc_ping() -> Dict[str, Any]:
+    """Return a simple health indicator (requires auth like other methods)."""
+    return {"ok": True, "version": rpc_version.__version__}

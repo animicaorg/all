@@ -10,6 +10,7 @@ import ast
 import json
 import logging
 import time
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 try:
@@ -41,7 +42,13 @@ class LocalRpcClient:
     It cannot be used to connect to remote nodes.
     """
     
-    def __init__(self, port: int, auth_token: Optional[str] = None, timeout: float = 10.0):
+    def __init__(
+        self,
+        port: int,
+        auth_token: Optional[str] = None,
+        auth_token_path: Optional[Path] = None,
+        timeout: float = 10.0,
+    ):
         """Initialize local RPC client.
         
         Args:
@@ -57,6 +64,7 @@ class LocalRpcClient:
         
         self.port = port
         self.auth_token = auth_token
+        self.auth_token_path = auth_token_path
         self.timeout = timeout
         self._request_id = 0
         self._methods_cache: Optional[set[str]] = None
@@ -137,12 +145,26 @@ class LocalRpcClient:
             supported.add(method)
         return supported
     
+    def _read_auth_token(self) -> Optional[str]:
+        if self.auth_token_path is None:
+            return self.auth_token
+        try:
+            token = self.auth_token_path.read_text().strip()
+            if token:
+                self.auth_token = token
+                return token
+        except Exception as exc:
+            logger.debug("Failed to read auth token file %s: %s", self.auth_token_path, exc)
+        return self.auth_token
+
     def _build_headers(self) -> Dict[str, str]:
         """Build request headers including auth token if present."""
         headers = {"Content-Type": "application/json"}
-        
-        if self.auth_token:
-            headers["X-Animica-Admin-Token"] = self.auth_token
+
+        token = self._read_auth_token()
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+            headers["X-Animica-Admin-Token"] = token
         
         return headers
     
@@ -181,8 +203,9 @@ class LocalRpcClient:
                     timeout=self.timeout,
                     follow_redirects=True
                 )
-                response.raise_for_status()
                 data = response.json()
+                if response.status_code >= 400:
+                    raise LocalRpcError(f"RPC error: {data.get('error', data)}")
             elif HAVE_REQUESTS:
                 import requests
                 response = requests.post(
@@ -192,8 +215,9 @@ class LocalRpcClient:
                     timeout=self.timeout,
                     allow_redirects=True
                 )
-                response.raise_for_status()
                 data = response.json()
+                if response.status_code >= 400:
+                    raise LocalRpcError(f"RPC error: {data.get('error', data)}")
             else:
                 raise LocalRpcError("No HTTP client available (install httpx or requests)")
             
@@ -227,12 +251,8 @@ class LocalRpcClient:
         Returns:
             True if server responds, False otherwise
         """
-        try:
-            self.get_chain_head()
-            return True
-        except Exception as e:
-            logger.debug(f"RPC ping failed: {e}")
-            return False
+        result = self._call("rpc.ping", [])
+        return bool(result)
     
     def get_chain_head(self) -> Dict[str, Any]:
         """Get current chain head.
