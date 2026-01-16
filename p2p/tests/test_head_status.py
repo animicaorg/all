@@ -71,7 +71,7 @@ class TestHeadStatusFreshness:
     def test_freshness_window_is_45_seconds(self):
         """Verify TIP_FRESHNESS_SEC is 45.0 in _compute_best_remote_info."""
         # This is a documentation test to ensure we maintain 45s freshness
-        # The actual constant is defined in p2p/node/p2p_service.py line ~11797
+        # The actual constant is defined in p2p/node/p2p_service.py
         expected_freshness = 45.0
         
         # We expect HEAD_STATUS broadcasts every 10s
@@ -85,7 +85,7 @@ class TestHeadStatusFreshness:
     def test_broadcast_interval_is_10_seconds(self):
         """Verify HEAD_STATUS broadcasts every 10 seconds."""
         # This is a documentation test to ensure we maintain 10s broadcast interval
-        # The actual constant is defined in p2p/node/p2p_service.py line ~891
+        # The actual constant is defined in p2p/node/p2p_service.py
         expected_interval = 10.0
         
         # With 10s broadcasts and 45s freshness, we get good tolerance

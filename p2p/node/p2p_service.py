@@ -6322,6 +6322,7 @@ class P2PService:
         )
         
         # Kick sync if peer's head is higher than ours
+        # Cache _local_head() result to avoid redundant computation
         local_height, _ = self._local_head()
         if peer_height > int(local_height or 0):
             self._sync_kick(reason="head_status_advance", aggressive=False)
