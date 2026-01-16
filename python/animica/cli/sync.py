@@ -369,7 +369,29 @@ def _compute_sync_state(
     metrics: Dict[str, Any],
     near_tip_blocks: int = 10,
 ) -> str:
-    """Compute a truthful sync state label based on local and network data."""
+    """
+    Compute a truthful sync state label based on local and network data.
+    
+    CRITICAL: Never returns SYNCHRONIZED if best_remote_height is unknown.
+    This enforces strict fresh peer tip requirements for accurate status.
+    
+    States:
+    - UNKNOWN: No valid peer tips OR cannot determine sync state
+    - BEHIND: We have peer tip info and we are behind
+    - SYNCING: Actively syncing (headers or blocks in progress)
+    - STALLED: Behind but no progress for extended time
+    - SYNCHRONIZED: At tip (requires fresh peer confirmation)
+    """
+    # Extract fresh best_remote info
+    best_remote_height = metrics.get("best_remote_height")
+    best_remote_age = metrics.get("best_remote_age_sec")
+    behind_by = metrics.get("behind_by")
+    sync_status_reason = metrics.get("sync_status_reason")
+    
+    # Rule 1: If no fresh peer tips, status is UNKNOWN
+    if best_remote_height is None:
+        return "UNKNOWN"
+    
     if head_height is None:
         return "UNKNOWN"
 
@@ -381,49 +403,82 @@ def _compute_sync_state(
     target_height = metrics.get("target_height")
     phase_label = str(phase).lower() if phase is not None else ""
 
+    # Check for explicit stalled state
+    if phase_label == "stalled":
+        return "STALLED"
+
+    # Check for active syncing phases
     if phase_label in {"headers", "header", "syncing_headers"}:
         return "SYNCING_HEADERS"
     if phase_label in {"blocks", "syncing_blocks", "verifying"}:
         return "SYNCING_BLOCKS"
-    if phase_label in {"syncing", "stalled"}:
+    if phase_label in {"syncing"}:
         return "SYNCING"
-    if phase_label in {"synced", "synchronized"}:
-        return "SYNCHRONIZED"
 
+    # If explicitly marked as synced in phase
+    if phase_label in {"synced", "synchronized"}:
+        # But double-check we have fresh peer info
+        if best_remote_height is not None and behind_by is not None and behind_by <= 2:
+            return "SYNCHRONIZED"
+        # Phase says synced but we don't have confirmation - downgrade
+        return "UNKNOWN"
+
+    # Check header/block gap
     if best_header_height is not None and best_block_height is not None and best_header_height > best_block_height:
         if phase and str(phase).lower() in {"headers", "header", "syncing_headers"}:
             return "SYNCING_HEADERS"
         return "SYNCING_BLOCKS"
 
+    # Generic syncing flag
     if syncing:
         return "SYNCING"
 
+    # Genesis/idle state
     if head_height == 0:
-        if network_height is not None and network_height > 0:
-            return "SYNCING"
+        if best_remote_height is not None and best_remote_height > 0:
+            return "BEHIND"
         return "IDLE"
 
+    # Rule 2: Use best_remote_height as the authoritative source
+    if best_remote_height is not None:
+        delta = best_remote_height - head_height
+        if delta <= 0:
+            return "SYNCHRONIZED"
+        if delta <= near_tip_blocks:
+            return "NEAR_TIP"
+        return "BEHIND"
+
+    # Fallback to network_height if available (less authoritative)
     if network_height is not None:
         delta = network_height - head_height
         if delta <= 0:
             return "SYNCHRONIZED"
         if delta <= near_tip_blocks:
             return "NEAR_TIP"
-        return "SYNCING"
+        return "BEHIND"
 
+    # Fallback to target_height
     if target_height is not None:
         delta = target_height - head_height
         if delta <= 0:
             return "SYNCHRONIZED"
+        return "BEHIND"
 
+    # Check best_header/block candidates
     for candidate_height in (best_header_height, best_block_height):
         if candidate_height is not None:
             delta = candidate_height - head_height
             if delta <= 0:
                 return "SYNCHRONIZED"
+            return "BEHIND"
 
+    # If synchronized flag is set, verify it
     if synchronized:
-        return "SYNCHRONIZED"
+        # Only trust synchronized if we have peer confirmation
+        if best_remote_height is not None:
+            return "SYNCHRONIZED"
+        # Synchronized without peer confirmation is UNKNOWN
+        return "UNKNOWN"
 
     return "IDLE"
 
@@ -1272,12 +1327,20 @@ def sync_status(
             typer.secho(f"  Behind by: 0 blocks (at tip)", fg=typer.colors.GREEN)
         typer.echo()
     elif height is not None and height > 0:
-        # No fresh peer tips - this is a problem
-        typer.secho("Best Remote Head:", fg=typer.colors.YELLOW, bold=True)
-        typer.secho("  ⚠ No fresh peer tips available", fg=typer.colors.YELLOW)
+        # No fresh peer tips - CRITICAL: Cannot claim synchronized
+        typer.secho("Best Remote Head:", fg=typer.colors.RED, bold=True)
+        typer.secho("  ⚠ No fresh peer tips available", fg=typer.colors.RED, bold=True)
         if sync_status_reason:
             typer.echo(f"  Reason:    {sync_status_reason}")
-        typer.echo("  Status:    Cannot determine if synchronized")
+        else:
+            typer.echo(f"  Reason:    no_fresh_peer_tips")
+        if peer_count is not None and peer_count > 0:
+            typer.echo(f"  Peers:     {peer_count} connected but tips are stale")
+            typer.echo("  Action:    Peer heads may not be broadcasting or polling disabled")
+        else:
+            typer.echo("  Peers:     No peers connected")
+            typer.echo("  Action:    Connect to peers with 'animica peer bootstrap'")
+        typer.secho("  ⚠ CANNOT determine if synchronized - sync state is UNKNOWN", fg=typer.colors.RED, bold=True)
         typer.echo()
 
     if network_height is not None and network_height > 0 and (height is None or height < network_height):
@@ -1298,7 +1361,15 @@ def sync_status(
     progress_current = height if height is not None else best_block_height
     progress_target = target_height or network_height
     progress_pct = _compute_sync_percent(progress_current, progress_target)
-    if sync_state in {"SYNCING_HEADERS", "SYNCING_BLOCKS", "SYNCING"}:
+    
+    if sync_state == "UNKNOWN":
+        typer.secho("  Status:    UNKNOWN", fg=typer.colors.RED, bold=True)
+        if sync_status_reason:
+            typer.echo(f"  Reason:    {sync_status_reason}")
+        if peer_count is not None:
+            typer.echo(f"  Peers:     {peer_count} connected")
+        typer.secho("  ⚠ Cannot determine sync state without fresh peer tips", fg=typer.colors.YELLOW)
+    elif sync_state in {"SYNCING_HEADERS", "SYNCING_BLOCKS", "SYNCING", "BEHIND"}:
         typer.secho(f"  Status:    {sync_state}", fg=typer.colors.YELLOW, bold=True)
         if best_header_height is not None or best_block_height is not None:
             typer.echo(
@@ -1310,16 +1381,28 @@ def sync_status(
                 typer.echo(f"  Progress:  {progress_current} / {progress_target}")
                 remaining = max(0, progress_target - progress_current)
                 typer.echo(f"  Remaining: {remaining} blocks")
+    elif sync_state == "STALLED":
+        typer.secho("  Status:    STALLED", fg=typer.colors.RED, bold=True)
+        typer.secho("  ⚠ Sync has stalled - no progress for extended time", fg=typer.colors.YELLOW)
+        if best_header_height is not None or best_block_height is not None:
+            typer.echo(
+                f"  Headers:   {best_header_height or 0} | Blocks: {best_block_height or 0}"
+            )
+        typer.echo("  Action:    Try 'animica sync force' to restart sync")
     elif sync_state == "SYNCHRONIZED":
-        typer.secho("  Status:    SYNCHRONIZED", fg=typer.colors.GREEN, bold=True)
-        if progress_pct is not None:
-            typer.secho(f"  Sync %:    {progress_pct:.1f}%", fg=typer.colors.MAGENTA, bold=True)
+        # CRITICAL: Only display if we have fresh peer confirmation
+        if best_remote_height is not None:
+            typer.secho("  Status:    SYNCHRONIZED", fg=typer.colors.GREEN, bold=True)
+            if progress_pct is not None:
+                typer.secho(f"  Sync %:    {progress_pct:.1f}%", fg=typer.colors.MAGENTA, bold=True)
+        else:
+            # Should not happen due to state machine fix, but defensive
+            typer.secho("  Status:    UNKNOWN", fg=typer.colors.RED, bold=True)
+            typer.secho("  ⚠ Cannot confirm synchronized status without fresh peer tips", fg=typer.colors.YELLOW)
     elif sync_state == "NEAR_TIP":
         typer.secho("  Status:    NEAR_TIP", fg=typer.colors.YELLOW, bold=True)
         if progress_pct is not None:
             typer.secho(f"  Sync %:    {progress_pct:.1f}%", fg=typer.colors.MAGENTA, bold=True)
-    elif sync_state == "UNKNOWN":
-        typer.secho("  Status:    UNKNOWN", fg=typer.colors.YELLOW)
     elif height == 0:
         typer.secho("  Status:    IDLE (genesis)", fg=typer.colors.YELLOW)
     else:
@@ -1403,11 +1486,30 @@ def sync_status(
         typer.echo("   animica peer bootstrap")
     elif peer_count is None and peer_error_msg:
         typer.secho("💡 RPC peer data unavailable. Check node RPC or logs.", fg=typer.colors.YELLOW)
-    elif sync_state in {"SYNCING_HEADERS", "SYNCING_BLOCKS", "SYNCING", "NEAR_TIP"}:
+    elif sync_state == "UNKNOWN":
+        typer.secho("⚠ Cannot determine sync status without fresh peer tips", fg=typer.colors.YELLOW, bold=True)
+        typer.echo()
+        typer.echo("Possible causes:")
+        if peer_count and peer_count > 0:
+            typer.echo("  - Peer head announcements not being received")
+            typer.echo("  - Peer head polling may be disabled or failing")
+            typer.echo("  - All peer tips are stale (older than 45s)")
+        else:
+            typer.echo("  - No peers connected")
+        typer.echo()
+        typer.echo("Actions:")
+        typer.echo("   1. Check peer connectivity: animica peer list")
+        typer.echo("   2. Force sync to trigger polling: animica sync force")
+        typer.echo("   3. Add more peers: animica peer bootstrap")
+    elif sync_state in {"SYNCING_HEADERS", "SYNCING_BLOCKS", "SYNCING", "NEAR_TIP", "BEHIND"}:
         typer.secho("💡 Syncing in progress... Check back later or run:", fg=typer.colors.CYAN)
         typer.echo("   animica sync status")
         if height is not None and height < 1000:
             typer.echo("   Or check for snapshots: animica snapshot discover")
+    elif sync_state == "STALLED":
+        typer.secho("⚠ Sync has stalled. Run sync force to restart:", fg=typer.colors.YELLOW, bold=True)
+        typer.echo("   animica sync force")
+        typer.echo("   Or check diagnostics: animica debug sync-dump")
     elif height == 0 and network_height and network_height > 0:
         typer.secho("⚠ Node is not synced yet. Wait for peers or run sync force.", fg=typer.colors.YELLOW)
         typer.echo("   Or check for snapshots: animica snapshot discover")
@@ -1418,11 +1520,11 @@ def sync_status(
     elif sync_state == "SYNCHRONIZED":
         # Only show synchronized if we have fresh peer tip confirmation
         if best_remote_height is not None:
-            typer.secho("✓ Node is synchronized with the network", fg=typer.colors.GREEN)
+            typer.secho("✓ Node is synchronized with the network", fg=typer.colors.GREEN, bold=True)
         else:
-            # Should not happen if sync status logic is correct, but add safety check
-            typer.secho("⚠ Node appears synchronized but cannot confirm (no fresh peer tips)", fg=typer.colors.YELLOW)
-            typer.echo("   Peer tips may be stale. Check network connectivity.")
+            # Should not reach here due to state machine fix, but defensive
+            typer.secho("⚠ Status uncertain - no fresh peer tips available", fg=typer.colors.YELLOW, bold=True)
+            typer.echo("   Check peer connectivity and try: animica sync force")
     else:
         typer.secho("⚠ Node is not yet synchronized.", fg=typer.colors.YELLOW)
 
