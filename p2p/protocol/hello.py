@@ -2,6 +2,7 @@ from __future__ import annotations
 
 """
 HELLO handshake message:
+CHAIN_RESET_TOUCHPOINT: P2P handshake with chain identity (chain_id, fork_id)
 - Authenticates the peer's static identity (Dilithium3 / SPHINCS+)
 - Binds to the PQ KEM transcript hash (Kyber768 + HKDF) to prevent replay/mitM
 - Communicates chain_id, alg-policy root, and capability blob

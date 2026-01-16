@@ -7,6 +7,9 @@ from typing import Optional
 
 from core.utils.hash import sha3_256
 
+# CHAIN_RESET_TOUCHPOINT: Genesis hash constants
+# These define the expected genesis block hash for each network.
+# For a chain reset, update these constants with the new genesis hash.
 
 @dataclass(frozen=True)
 class NetworkParams:

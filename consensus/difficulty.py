@@ -135,6 +135,7 @@ class RetargetParams:
     ----------
     target_block_time_s : float
         Target inter-block time (T).
+        BLOCKTIME_TOUCHPOINT: This is the consensus target block time.
     half_life_blocks : float
         EMA half-life (in blocks). Larger → smoother.
     gain_beta : float
@@ -150,6 +151,7 @@ class RetargetParams:
         Default is None (uses hard cap).
     """
 
+    # BLOCKTIME_TOUCHPOINT: Default target block time
     target_block_time_s: float = 120.0
     half_life_blocks: float = 24.0
     gain_beta: float = 0.75

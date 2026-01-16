@@ -1,6 +1,7 @@
 """
 Fork Choice (PoIES)
 ===================
+CHAIN_RESET_TOUCHPOINT: Fork choice and best chain selection
 
 This module implements a *weight-aware* and *deterministic* fork-choice rule:
 

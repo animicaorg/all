@@ -7,6 +7,8 @@ from typing import Any, Optional
 
 from core.utils.hash import sha3_256
 
+# CHAIN_RESET_TOUCHPOINT: Chain identity and fork_id derivation
+# The fork_id is derived from genesis_hash and used for network discrimination.
 
 @dataclass(frozen=True)
 class ChainIdentity:
