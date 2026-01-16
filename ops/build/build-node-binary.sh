@@ -125,9 +125,25 @@ setup_python_build_env
 log "Installing build dependencies..."
 pip_install "$PY" pip setuptools wheel pyinstaller pyinstaller-hooks-contrib
 
+# Determine Python project directory
+PYTHON_PKG_DIR="$REPO_ROOT/python"
+if [[ ! -f "$PYTHON_PKG_DIR/pyproject.toml" ]]; then
+    # Fallback: check if repo root has pyproject.toml
+    if [[ -f "$REPO_ROOT/pyproject.toml" ]]; then
+        PYTHON_PKG_DIR="$REPO_ROOT"
+    else
+        err "Cannot find Python package. Searched:"
+        err "  - $REPO_ROOT/python/pyproject.toml"
+        err "  - $REPO_ROOT/pyproject.toml"
+        die "No Python project found. Please ensure the repository contains a valid pyproject.toml"
+    fi
+fi
+
+log "Using Python project root: $PYTHON_PKG_DIR"
+
 # Install repo in editable mode (ensures all dependencies are available)
 log "Installing Animica in editable mode..."
-"$PY" -m pip install --quiet -e "$REPO_ROOT"
+"$PY" -m pip install --quiet -e "$PYTHON_PKG_DIR"
 
 # ============================================================================
 # Determine build method (PyInstaller for Python-based node)

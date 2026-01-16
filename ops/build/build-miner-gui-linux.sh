@@ -129,8 +129,27 @@ setup_python_build_env
 log "Installing PyInstaller tooling..."
 pip_install "$PY" pip setuptools wheel pyinstaller pyinstaller-hooks-contrib
 
-# Install miner-gui with dependencies
-log "Installing miner-gui dependencies..."
+# Determine and install Python project directories
+# 1. Install the main animica package (for CLI dependencies)
+PYTHON_PKG_DIR="$REPO_ROOT/python"
+if [[ ! -f "$PYTHON_PKG_DIR/pyproject.toml" ]]; then
+    if [[ -f "$REPO_ROOT/pyproject.toml" ]]; then
+        PYTHON_PKG_DIR="$REPO_ROOT"
+    else
+        err "Cannot find main Python package. Searched:"
+        err "  - $REPO_ROOT/python/pyproject.toml"
+        err "  - $REPO_ROOT/pyproject.toml"
+        die "No Python project found"
+    fi
+fi
+log "Installing main Python package from: $PYTHON_PKG_DIR"
+"$PY" -m pip install --quiet -e "$PYTHON_PKG_DIR"
+
+# 2. Install miner-gui with dependencies
+if [[ ! -f "$APP_DIR/pyproject.toml" ]]; then
+    die "Miner GUI package not found at: $APP_DIR/pyproject.toml"
+fi
+log "Installing miner-gui dependencies from: $APP_DIR"
 "$PY" -m pip install --quiet -e "$APP_DIR"
 
 # ============================================================================
