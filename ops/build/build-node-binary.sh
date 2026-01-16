@@ -115,6 +115,13 @@ fi
 # Create output directory
 mkdir -p "$OUT_DIR"
 
+# Create isolated build venv to avoid system/site-packages leakage
+VENV_DIR="$OUT_DIR/.node-build-venv"
+log "Creating build venv: $VENV_DIR"
+"$PY" -m venv "$VENV_DIR"
+PY="$VENV_DIR/bin/python"
+check_python_version "$PY"
+
 # ============================================================================
 # Setup build environment
 # ============================================================================
@@ -136,6 +143,18 @@ log "Using Python project root: $PYTHON_PKG_DIR"
 log "Installing Animica in editable mode..."
 "$PY" -m pip install --quiet -e "$PYTHON_PKG_DIR"
 
+# Install node runtime dependencies (FastAPI stack, etc.)
+NODE_REQUIREMENTS="$REPO_ROOT/requirements.txt"
+if [[ -f "$NODE_REQUIREMENTS" ]]; then
+    log "Installing node runtime requirements from $NODE_REQUIREMENTS..."
+    "$PY" -m pip install --quiet -r "$NODE_REQUIREMENTS"
+else
+    die "Node requirements not found at $NODE_REQUIREMENTS"
+fi
+
+log "Verifying FastAPI import..."
+"$PY" -c "import fastapi" >/dev/null 2>&1 || die "FastAPI import failed in build venv"
+
 # ============================================================================
 # Determine build method (PyInstaller for Python-based node)
 # ============================================================================
@@ -146,9 +165,34 @@ log "Installing Animica in editable mode..."
 ENTRY_POINT="$OUT_DIR/animica-node-entry.py"
 cat > "$ENTRY_POINT" <<'PYEOF'
 import sys
+from importlib import import_module
 
 from animica.cli.main import main as cli_main
-from rpc.server import main as rpc_main
+
+
+def _run_preflight_imports() -> int:
+    modules = [
+        "fastapi",
+        "starlette",
+        "pydantic",
+        "uvicorn",
+        "rpc.server",
+        "rpc.jsonrpc",
+        "rpc.ws",
+        "rpc.methods",
+        "core.state",
+        "core.db",
+        "mempool",
+        "p2p",
+        "consensus",
+        "execution",
+        "mining",
+        "wallet",
+    ]
+    for module in modules:
+        import_module(module)
+    print("OK")
+    return 0
 
 
 def _should_run_rpc(argv: list[str]) -> bool:
@@ -162,7 +206,13 @@ def _should_run_rpc(argv: list[str]) -> bool:
     return any(arg.split("=", 1)[0] in rpc_flags for arg in argv[1:])
 
 
+if "--preflight-imports" in sys.argv:
+    sys.exit(_run_preflight_imports())
+
+
 if _should_run_rpc(sys.argv):
+    from rpc.server import main as rpc_main
+
     rpc_main()
 else:
     cli_main()
@@ -183,6 +233,7 @@ log "Creating PyInstaller spec: $SPEC_FILE"
 cat > "$SPEC_FILE" <<'SPEC_EOF'
 # -*- mode: python ; coding: utf-8 -*-
 from pathlib import Path
+from PyInstaller.utils.hooks import collect_all
 
 block_cipher = None
 
@@ -249,16 +300,43 @@ hiddenimports = [
     'pq.dilithium',
     'httpx',
     'uvicorn',
+    'uvicorn.logging',
+    'uvicorn.loops.auto',
+    'uvicorn.protocols.http.auto',
+    'uvicorn.protocols.websockets.auto',
     'fastapi',
+    'starlette',
+    'starlette.middleware',
+    'starlette.middleware.cors',
+    'starlette.responses',
+    'starlette.routing',
     'pydantic',
+    'pydantic_core',
+    'typing_extensions',
+    'anyio',
+    'sniffio',
+    'h11',
+    'httpcore',
+    'httptools',
+    'websockets',
+    'watchfiles',
     'typer',
 ]
+
+datas = []
+binaries = []
+
+for package in ('fastapi', 'starlette', 'uvicorn'):
+    pkg_datas, pkg_binaries, pkg_hidden = collect_all(package)
+    datas += pkg_datas
+    binaries += pkg_binaries
+    hiddenimports += pkg_hidden
 
 a = Analysis(
     [str(Path(r'ENTRY_POINT_PLACEHOLDER'))],
     pathex=[str(Path(r'REPO_ROOT_PLACEHOLDER'))],
-    binaries=[],
-    datas=[],
+    binaries=binaries,
+    datas=datas,
     hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
@@ -327,6 +405,11 @@ fi
 
 verify_executable "$BUILT_BINARY"
 
+# Build-time preflight checks (runtime imports + basic CLI)
+log "Running node preflight checks..."
+"$BUILT_BINARY" --help >/dev/null 2>&1 || die "Node --help preflight failed"
+"$BUILT_BINARY" --preflight-imports || die "Node --preflight-imports failed"
+
 # Validate PyInstaller runtime layout
 INTERNAL_DIR="$BUILT_DIR/_internal"
 if [[ ! -d "$INTERNAL_DIR" ]]; then
@@ -358,6 +441,7 @@ log "Cleaning up intermediate build files..."
 safe_rm_rf "$WORK_DIR"
 safe_rm_rf "$SPEC_FILE"
 safe_rm_rf "$ENTRY_POINT"
+safe_rm_rf "$VENV_DIR"
 
 # ============================================================================
 # Success
