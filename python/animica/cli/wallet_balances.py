@@ -244,8 +244,12 @@ async def restore_wallet_balances(
     """Restore balances from a backup file by crediting them via RPC.
     
     This function assumes the node has been reset and is running with a fresh
-    genesis state. It will credit balances to addresses using an RPC method
-    that directly manipulates state (requires admin/miner privileges).
+    genesis state. It will credit balances to addresses using the admin.setBalance
+    RPC method that directly manipulates state.
+    
+    ⚠️ IMPORTANT: This requires the ANIMICA_ADMIN_RPC_ENABLED=1 environment
+    variable to be set when starting the node. This is a security feature to
+    prevent accidental use in production.
     
     Args:
         data_dir: Network data directory
@@ -287,41 +291,77 @@ async def restore_wallet_balances(
             logger.info("No non-zero balances to restore")
         return (0, 0)
     
-    # Restore balances using miner.creditBalance RPC method
-    # This method allows direct balance manipulation for admin/testing purposes
+    if not quiet:
+        logger.info(f"Restoring balances for {len(to_restore)} addresses...")
+    
+    # Restore balances using admin.setBalance RPC method
     restored = 0
     failed = 0
+    errors = []
     
     for entry in to_restore:
         label = entry.get("label", "unlabeled")
-        address = entry.get("hex_address") or entry.get("address")
+        address = entry.get("address")
+        hex_address = entry.get("hex_address")
         balance = entry.get("balance", 0)
         
-        try:
-            # Try to credit balance via RPC
-            # This requires an RPC method that can directly manipulate state
-            # For now, we'll document this limitation and require manual restoration
-            
-            # TODO: Implement miner.creditBalance or admin.setBalance RPC method
-            # result = await _rpc_call(
-            #     rpc_url,
-            #     "admin.setBalance",
-            #     [address, hex(balance)],
-            #     timeout=timeout
-            # )
-            
-            if not quiet:
-                logger.warning(
-                    f"Balance restoration not yet implemented for {label}: {balance} nANM"
-                )
+        # Prefer original address format, fallback to hex
+        addr_to_use = address or hex_address
+        if not addr_to_use:
+            logger.warning(f"Skipping entry with no address: {label}")
             failed += 1
+            continue
+        
+        try:
+            # Call admin.setBalance RPC method
+            result = await _rpc_call(
+                rpc_url,
+                "admin.setBalance",
+                [addr_to_use, balance],
+                timeout=timeout
+            )
+            
+            if result and result.get("success"):
+                restored += 1
+                if not quiet:
+                    # Format balance in ANM (divide by 1e9)
+                    balance_anm = balance / 1_000_000_000
+                    logger.info(f"✓ Restored {label}: {balance_anm:.9f} ANM")
+            else:
+                failed += 1
+                error_msg = result.get("error", "unknown error") if result else "no response"
+                logger.warning(f"✗ Failed to restore {label}: {error_msg}")
+                errors.append(f"{label}: {error_msg}")
+        
+        except RuntimeError as e:
+            error_str = str(e)
+            # Check if this is an "admin RPC disabled" error
+            if "disabled" in error_str.lower() or "not found" in error_str.lower():
+                # Admin RPC is not enabled - provide helpful error
+                raise RuntimeError(
+                    "Admin RPC is not enabled. To restore balances, restart the node with:\n"
+                    "  ANIMICA_ADMIN_RPC_ENABLED=1 animica node up\n"
+                    "Then run: animica balance restore"
+                ) from e
+            failed += 1
+            logger.warning(f"✗ Failed to restore {label}: {e}")
+            errors.append(f"{label}: {error_str}")
         
         except Exception as e:
-            logger.warning(f"Failed to restore balance for {label}: {e}")
             failed += 1
+            logger.warning(f"✗ Failed to restore {label}: {e}")
+            errors.append(f"{label}: {str(e)}")
     
     if not quiet:
-        logger.info(f"Restore summary: {restored} succeeded, {failed} failed")
+        logger.info(f"\nRestore summary: {restored} succeeded, {failed} failed")
+        if errors and len(errors) <= 5:
+            logger.info("Errors:")
+            for err in errors:
+                logger.info(f"  - {err}")
+        elif errors:
+            logger.info(f"Errors: {len(errors)} total (showing first 5)")
+            for err in errors[:5]:
+                logger.info(f"  - {err}")
     
     return (restored, failed)
 

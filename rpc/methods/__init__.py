@@ -133,6 +133,7 @@ def _iter_builtin_modules() -> Iterable[str]:
         # "rpc.methods.account",  # disabled: module does not exist yet
         "rpc.methods.marketplace",
         # "rpc.methods.payments",  # disabled: depends on consensus.PolicyProvider which may be absent
+        "rpc.methods.admin",  # admin methods for dev/test only (requires ANIMICA_ADMIN_RPC_ENABLED=1)
     ]
 
 
