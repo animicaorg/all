@@ -11982,7 +11982,8 @@ class P2PService:
                     peer_head_height = int(peer_head_height)
                     if peer_head_height > 0:
                         heights.append(peer_head_height)
-            except Exception:
+            except (ValueError, TypeError):
+                # Ignore invalid head_height values (non-numeric or None)
                 pass
             
             try:

@@ -10,6 +10,9 @@ from unittest.mock import Mock, MagicMock
 from dataclasses import dataclass
 from typing import Optional
 
+# Import at top of file
+from p2p.node.p2p_service import P2PService
+
 
 @dataclass
 class _PeerHeadInfo:
@@ -57,8 +60,7 @@ def test_network_best_height_with_stale_peer_heads():
         )
     }
     
-    # Import the actual implementation
-    from p2p.node.p2p_service import P2PService
+    # Call the actual _network_best_height method
     
     # Call the actual _network_best_height method
     result = P2PService._network_best_height(service)
@@ -106,8 +108,7 @@ def test_network_best_height_with_cooldown():
         )
     }
     
-    # Import the actual implementation
-    from p2p.node.p2p_service import P2PService
+    # Call the actual _network_best_height method
     
     # Call the actual _network_best_height method
     result = P2PService._network_best_height(service)
@@ -145,8 +146,7 @@ def test_network_best_height_with_missing_peer_heads():
     service._sync_network_best_cache_timeout = 300.0
     service._sync_peer_heads = {}  # No entry for peer1!
     
-    # Import the actual implementation
-    from p2p.node.p2p_service import P2PService
+    # Call the actual _network_best_height method
     
     # Call the actual _network_best_height method
     result = P2PService._network_best_height(service)
@@ -195,8 +195,7 @@ def test_network_best_height_uses_max_of_all_sources():
         "peer2": _PeerHeadInfo(height=950, updated_at=now, source="test"),
     }
     
-    # Import the actual implementation
-    from p2p.node.p2p_service import P2PService
+    # Call the actual _network_best_height method
     
     # Call the actual _network_best_height method
     result = P2PService._network_best_height(service)
