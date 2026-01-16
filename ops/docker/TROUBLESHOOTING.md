@@ -76,7 +76,8 @@ docker compose -f ops/docker/docker-compose.mainnet.yml ps
 # Check logs
 docker compose -f ops/docker/docker-compose.mainnet.yml logs node
 
-# Should see: "[genesis] Selected genesis: ... hash=0x8daaca93... pinned=0x8daaca93..."
+# Should see: "[genesis] Selected genesis: ... hash=0x[hash]... pinned=0x[hash]..."
+# (The hashes will match when successful)
 ```
 
 ### Prevention

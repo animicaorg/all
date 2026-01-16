@@ -36,6 +36,8 @@ def test_pinned_hashes_match():
         ("devnet", 1337),
     ]
     
+    HASH_DISPLAY_LENGTH = 16  # Show first 16 hex chars of hash
+    
     for name, chain_id in networks:
         genesis_path = get_network_genesis_path(network_name=name, chain_id=chain_id)
         if genesis_path is None:
@@ -50,7 +52,8 @@ def test_pinned_hashes_match():
             return False
             
         if identity.genesis_block_hash == pinned:
-            print(f"  ✅ {name}: Hash matches (0x{identity.genesis_block_hash.hex()[:16]}...)")
+            hash_preview = identity.genesis_block_hash.hex()[:HASH_DISPLAY_LENGTH]
+            print(f"  ✅ {name}: Hash matches (0x{hash_preview}...)")
         else:
             print(f"  ❌ {name}: Hash mismatch!")
             print(f"     Expected: 0x{pinned.hex()}")
@@ -64,6 +67,8 @@ def test_error_message():
     """Test that the error message includes Docker rebuild instructions."""
     print("\nTesting error message...")
     
+    HASH_LENGTH = 32  # Standard hash length in bytes
+    
     genesis_path = get_network_genesis_path(network_name="mainnet", chain_id=1)
     if genesis_path is None:
         print("  ❌ No mainnet genesis path")
@@ -71,7 +76,7 @@ def test_error_message():
     
     try:
         # Intentionally wrong hash
-        wrong_hash = b"\x00" * 32
+        wrong_hash = b"\x00" * HASH_LENGTH
         enforce_pinned_genesis(
             chain_id=1,
             genesis_block_hash=wrong_hash,
@@ -82,12 +87,13 @@ def test_error_message():
         return False
     except GenesisError as e:
         hint = e.data.get("hint", "")
+        hint_lower = hint.lower()
         
-        # Check for key phrases
+        # Check for key phrases (case-insensitive for consistency)
         checks = [
-            ("Docker" in hint or "docker" in hint, "mentions Docker"),
-            ("rebuild" in hint.lower(), "mentions rebuild"),
-            ("docker compose build" in hint, "includes rebuild command"),
+            ("docker" in hint_lower, "mentions Docker"),
+            ("rebuild" in hint_lower, "mentions rebuild"),
+            ("docker compose build" in hint_lower, "includes rebuild command"),
             ("--no-cache" in hint, "includes --no-cache flag"),
         ]
         
