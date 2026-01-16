@@ -152,12 +152,38 @@ def _should_apply_snapshot(
     snapshot_height: int,
     force: bool,
 ) -> bool:
+    """
+    Determine if a snapshot should be applied.
+    
+    CRITICAL SAFEGUARD: Never apply a snapshot that would revert the chain
+    backwards, especially not to genesis. Snapshots must always move forward
+    or be at the same height.
+    """
     if snapshot_height <= 0:
         return False
+    
+    # CRITICAL: Never allow reverting backwards with a snapshot
+    # Only apply if snapshot is ahead or at genesis initialization (local_height == 0)
+    if local_height > 0 and snapshot_height < local_height:
+        _log.warning(
+            "BLOCKED: Snapshot would revert chain backwards",
+            extra={
+                "local_height": local_height,
+                "snapshot_height": snapshot_height,
+                "blocked_by": "backwards_revert_safeguard",
+            },
+        )
+        return False
+    
     if force:
-        return True
+        # Even with force, never revert backwards
+        return snapshot_height >= local_height
+    
     if local_height <= 0:
+        # Allow at genesis initialization
         return True
+    
+    # Normal case: only apply if snapshot advances chain significantly
     return snapshot_height >= local_height + policy.min_advance_blocks
 
 
