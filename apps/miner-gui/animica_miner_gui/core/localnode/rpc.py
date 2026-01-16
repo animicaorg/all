@@ -136,6 +136,19 @@ class LocalRpcClient:
             if isinstance(e, LocalRpcError):
                 raise
             raise LocalRpcError(f"RPC request failed: {e}")
+
+    def call(self, method: str, params: Optional[Any] = None) -> Any:
+        """Public wrapper to execute an RPC method.
+
+        Args:
+            method: RPC method name
+            params: Optional params list or object
+        """
+        if isinstance(params, dict):
+            return self._call(method, params)
+        if params is None:
+            return self._call(method, [])
+        return self._call(method, list(params) if isinstance(params, tuple) else params)
     
     def ping(self) -> bool:
         """Check if RPC server is responsive.
