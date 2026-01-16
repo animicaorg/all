@@ -10,7 +10,6 @@ from unittest.mock import Mock, MagicMock
 from dataclasses import dataclass
 from typing import Optional
 
-# Import at top of file
 from p2p.node.p2p_service import P2PService
 
 

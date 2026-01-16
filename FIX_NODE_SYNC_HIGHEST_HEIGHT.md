@@ -149,7 +149,7 @@ Testing _network_best_height() fallback to peer.hello['head_height']
 - `p2p/node/p2p_service.py` (lines 11974-11986)
 
 ### Lines Added
-- 15 lines (11 code + 4 comments)
+- 14 lines (10 code + 4 comments)
 
 ### Backward Compatibility
 - ✅ Fully backward compatible
