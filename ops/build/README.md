@@ -16,6 +16,35 @@ All scripts follow defensive programming practices:
 - Provide clear error messages
 - Never assume `/root` paths or interactive prompts
 
+### Monorepo Layout
+
+The Animica repository is a **monorepo** containing multiple Python packages:
+
+```
+animicaorg/all/
+├── python/                    # Main animica CLI package ✓
+│   ├── pyproject.toml         # Entry point: animica = "animica.cli.main:main"
+│   └── animica/               # Core CLI and libraries
+├── apps/
+│   ├── miner-gui/             # Miner GUI application ✓
+│   │   ├── pyproject.toml
+│   │   └── animica_miner_gui/
+│   └── qt-wallet-py/          # Wallet application
+│       └── pyproject.toml
+├── pq/                        # Post-quantum crypto
+│   └── pyproject.toml
+├── zk/                        # Zero-knowledge proofs
+│   └── pyproject.toml
+├── sdk/python/                # Python SDK
+│   └── pyproject.toml
+└── ... (other packages)
+```
+
+**Build scripts automatically locate the correct Python packages:**
+- Main package: `python/` (contains the `animica` CLI)
+- GUI packages: `apps/miner-gui/`, `apps/qt-wallet-py/`
+- The scripts dynamically detect the repo root and never use hardcoded absolute paths
+
 ## Prerequisites
 
 ### All Platforms
@@ -174,6 +203,29 @@ To reduce binary size:
 - `matplotlib`, `PIL` - Unused in node binary
 
 ## Troubleshooting
+
+### Build Path Issues
+
+If you see errors like:
+```
+ERROR: file:///Volumes/ExtremePro/animica does not appear to be a Python project
+```
+
+This means the build script couldn't locate the Python package. The scripts automatically search for:
+1. `$REPO_ROOT/python/pyproject.toml` (main package)
+2. `$REPO_ROOT/pyproject.toml` (fallback for top-level package)
+
+**To debug:**
+```bash
+# From anywhere in the repo:
+cd /path/to/your/clone
+find . -maxdepth 2 -name pyproject.toml -print
+
+# Expected output should include:
+#   ./python/pyproject.toml
+```
+
+**The fix:** Ensure you're running the build scripts from within the repository clone (not from an external path). The scripts use git to find the repo root automatically.
 
 ### macOS: "App is damaged and can't be opened"
 

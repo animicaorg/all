@@ -125,18 +125,25 @@ setup_python_build_env
 log "Installing build dependencies..."
 pip_install "$PY" pip setuptools wheel pyinstaller pyinstaller-hooks-contrib
 
+# Determine Python project directory using shared helper
+# The function provides detailed error messages if not found
+PYTHON_PKG_DIR="$(find_python_package_dir "$REPO_ROOT")" || \
+    die "Python project not found. Please ensure the repository contains a valid pyproject.toml at 'python/' or repo root."
+
+log "Using Python project root: $PYTHON_PKG_DIR"
+
 # Install repo in editable mode (ensures all dependencies are available)
 log "Installing Animica in editable mode..."
-"$PY" -m pip install --quiet -e "$REPO_ROOT"
+"$PY" -m pip install --quiet -e "$PYTHON_PKG_DIR"
 
 # ============================================================================
 # Determine build method (PyInstaller for Python-based node)
 # ============================================================================
 
-# The node is Python-based, entry point is python/animica/cli/main.py
+# The node is Python-based, entry point is in the detected package directory
 # We'll use PyInstaller to create a standalone binary
 
-ENTRY_POINT="$REPO_ROOT/python/animica/cli/main.py"
+ENTRY_POINT="$PYTHON_PKG_DIR/animica/cli/main.py"
 if [[ ! -f "$ENTRY_POINT" ]]; then
     die "Node entry point not found: $ENTRY_POINT"
 fi
