@@ -376,6 +376,9 @@ BUNDLED_INTERNAL="$BUNDLED_NODE_DIR/_internal"
 if [[ ! -f "$BUNDLED_NODE" ]]; then
     die "Node binary not found in .app bundle: $BUNDLED_NODE"
 fi
+if [[ ! -x "$BUNDLED_NODE" ]]; then
+    die "Node binary is not executable in .app bundle: $BUNDLED_NODE"
+fi
 if [[ ! -d "$BUNDLED_INTERNAL" ]]; then
     die "Node runtime folder not found in .app bundle: $BUNDLED_INTERNAL"
 fi

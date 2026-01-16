@@ -67,9 +67,15 @@ class LocalNodeManager:
         while time.time() - start_time < ready_timeout:
             # Check if process is still running
             if not self.proc_manager.is_running():
+                elapsed = time.time() - start_time
+                exit_code = self.proc_manager.last_exit_code
+                reason = "Node process exited unexpectedly"
+                if elapsed <= 5.0:
+                    reason = f"Node exited within {elapsed:.1f}s"
+                self.proc_manager.record_failure(reason=reason, exit_code=exit_code)
                 self._status = NodeStatus(
                     state=NodeState.ERROR,
-                    error="Node process exited unexpectedly"
+                    error=reason
                 )
                 return self._status
             
@@ -99,6 +105,10 @@ class LocalNodeManager:
         
         # Timeout
         logger.error("Node readiness timeout")
+        self.proc_manager.record_failure(
+            reason=f"Node failed to become ready within {ready_timeout}s",
+            exit_code=self.proc_manager.last_exit_code,
+        )
         self._status = NodeStatus(
             state=NodeState.ERROR,
             pid=self.proc_manager.process.pid if self.proc_manager.process else None,
@@ -145,6 +155,10 @@ class LocalNodeManager:
         if self._status.is_running:
             if not self.proc_manager.is_running():
                 # Process died
+                self.proc_manager.record_failure(
+                    reason="Node process exited unexpectedly",
+                    exit_code=self.proc_manager.last_exit_code,
+                )
                 self._status = NodeStatus(
                     state=NodeState.ERROR,
                     error="Node process exited unexpectedly"

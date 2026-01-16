@@ -15,6 +15,11 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 
+class NodeBundleError(FileNotFoundError):
+    """Raised when a bundled node layout is invalid."""
+
+
+
 def is_frozen() -> bool:
     """Check if running as a frozen/packaged executable."""
     return getattr(sys, 'frozen', False)
@@ -68,6 +73,23 @@ def _find_libpython(internal_dir: Path) -> Optional[Path]:
     return matches[0] if matches else None
 
 
+def _normalize_node_executable(candidate: Path) -> Path:
+    """Return the node executable path, resolving onedir folders."""
+    if candidate.is_dir():
+        return candidate / "animica-node"
+    return candidate
+
+
+def _validate_node_runtime(executable_path: Path) -> None:
+    internal_dir = executable_path.parent / "_internal"
+    if not internal_dir.exists():
+        raise NodeBundleError(f"Node runtime folder missing at {internal_dir}")
+
+    libpython = _find_libpython(internal_dir)
+    if libpython is None:
+        raise NodeBundleError(f"Node runtime missing libpython in {internal_dir}")
+
+
 def validate_bundled_node_layout() -> tuple[bool, str]:
     """Validate bundled node layout and return (ok, message)."""
     if not is_frozen():
@@ -116,8 +138,9 @@ def resolve_node_binary() -> Optional[Path]:
         # Packaged mode - look in bundle
         node_dir = get_bundled_node_dir()
         if node_dir:
-            binary_path = node_dir / "animica-node"
+            binary_path = _normalize_node_executable(node_dir)
             if binary_path.exists() and os.access(binary_path, os.X_OK):
+                _validate_node_runtime(binary_path)
                 logger.info(f"Found node binary in bundle: {binary_path}")
                 return binary_path
 
@@ -138,7 +161,7 @@ def resolve_node_binary() -> Optional[Path]:
                 logger.info(f"Found node binary next to executable: {binary_path}")
                 return binary_path
 
-        raise FileNotFoundError(
+        raise NodeBundleError(
             "Node binary not found in packaged application. "
             "The application bundle may be incomplete or corrupted."
         )
@@ -153,6 +176,8 @@ def resolve_node_binary() -> Optional[Path]:
             for binary_name in ['animica-node', 'animicad', 'animica']:
                 onedir_path = dist_dir / 'animica-node' / binary_name
                 if onedir_path.exists() and os.access(onedir_path, os.X_OK):
+                    if onedir_path.parent.name == "animica-node":
+                        _validate_node_runtime(onedir_path)
                     logger.info(f"Found node binary in dist: {onedir_path}")
                     return onedir_path
 
