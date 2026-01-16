@@ -87,7 +87,7 @@ class TestHeadStatusPropagationFix:
         Scenario:
         - Node A broadcasts HEAD_STATUS every 10s
         - Node B receives fresh tip updates
-        - Tip age is < 45s (fresh!)
+        - Tip age is < 600s (fresh!)
         - Node B correctly reports BEHIND, not SYNCHRONIZED
         """
         # Simulate Node B (at height 2861)
@@ -98,8 +98,8 @@ class TestHeadStatusPropagationFix:
         peer_a_tip_age = 8.0  # Fresh!
         peer_a_height = 4579
         
-        # With NEW 45s freshness threshold, fresh tip is accepted
-        TIP_FRESHNESS_NEW = 45.0
+        # With NEW 600s (10 minute) freshness threshold, fresh tip is accepted
+        TIP_FRESHNESS_NEW = 600.0
         
         # Compute best_remote with new logic
         best_remote_height = None
@@ -165,7 +165,7 @@ class TestHeadStatusPropagationFix:
         check_time = hello_time + 45
         tip_age = check_time - last_broadcast
         
-        TIP_FRESHNESS = 45.0
+        TIP_FRESHNESS = 600.0  # 10 minutes
         is_fresh = (tip_age <= TIP_FRESHNESS)
         
         assert tip_age == 5.0, "Last broadcast was 5s ago"
@@ -179,13 +179,14 @@ class TestHeadStatusPropagationFix:
         assert tip_age_missed == 13.0, "Last broadcast was 13s ago (missed one)"
         assert is_fresh_missed, "Tip is still fresh even after missing one broadcast"
         
-        # If we miss 4 broadcasts in a row (40s gap), tip becomes stale
-        check_time_stale = hello_time + 90
+        # With 600s (10 minute) freshness window, tips remain fresh for a long time
+        # If we miss 60 broadcasts in a row (600s gap), tip finally becomes stale
+        check_time_stale = hello_time + 650  # 650s after hello, last broadcast at t=40s
         tip_age_stale = check_time_stale - last_broadcast  # Still using t=40s broadcast
         is_fresh_stale = (tip_age_stale <= TIP_FRESHNESS)
         
-        assert tip_age_stale == 50.0, "Last broadcast was 50s ago (missed 4 broadcasts)"
-        assert not is_fresh_stale, "Tip becomes stale after missing 4+ broadcasts"
+        assert tip_age_stale == 610.0, "Last broadcast was 610s ago (missed 60+ broadcasts)"
+        assert not is_fresh_stale, "Tip becomes stale after missing 60+ broadcasts (>10 minutes)"
 
     def test_fix_prevents_false_synchronized(self):
         """
@@ -207,9 +208,9 @@ class TestHeadStatusPropagationFix:
         
         assert not synchronized_no_peers, "Never synchronized without peer tips"
         
-        # Case 2: Peer tips are stale (>45s)
-        peer_tip_age_stale = 50.0
-        TIP_FRESHNESS = 45.0
+        # Case 2: Peer tips are stale (>600s / 10 minutes)
+        peer_tip_age_stale = 650.0  # More than 10 minutes
+        TIP_FRESHNESS = 600.0  # 10 minutes
         
         best_remote_height_stale = None
         if peer_tip_age_stale <= TIP_FRESHNESS:

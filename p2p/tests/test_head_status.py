@@ -6,7 +6,7 @@ Verifies that:
 2. GET_HEAD_STATUS requests are handled correctly
 3. HEAD_STATUS updates refresh peer tip timestamps
 4. Periodic broadcasting keeps peer tips fresh
-5. Freshness window is 45 seconds
+5. Freshness window is 600 seconds (10 minutes)
 """
 from __future__ import annotations
 
@@ -66,21 +66,21 @@ class TestHeadStatusMessages:
 
 
 class TestHeadStatusFreshness:
-    """Test HEAD_STATUS freshness logic (45s window)."""
+    """Test HEAD_STATUS freshness logic (600s / 10 minute window)."""
 
-    def test_freshness_window_is_45_seconds(self):
-        """Verify TIP_FRESHNESS_SEC is 45.0 in _compute_best_remote_info."""
-        # This is a documentation test to ensure we maintain 45s freshness
+    def test_freshness_window_is_600_seconds(self):
+        """Verify TIP_FRESHNESS_SEC is 600.0 in _compute_best_remote_info."""
+        # This is a documentation test to ensure we maintain 600s (10 minute) freshness
         # The actual constant is defined in p2p/node/p2p_service.py
-        expected_freshness = 45.0
+        expected_freshness = 600.0
         
         # We expect HEAD_STATUS broadcasts every 10s
-        # With 45s freshness window, we allow 4 missed heartbeats (4 * 10s = 40s < 45s)
+        # With 600s freshness window, we allow 60 missed heartbeats (60 * 10s = 600s)
         heartbeat_interval = 10.0
         max_missed_heartbeats = int(expected_freshness / heartbeat_interval)
         
-        assert max_missed_heartbeats >= 4, "Should allow at least 4 missed heartbeats"
-        assert expected_freshness == 45.0, "Freshness window should be 45s per requirements"
+        assert max_missed_heartbeats >= 60, "Should allow at least 60 missed heartbeats"
+        assert expected_freshness == 600.0, "Freshness window should be 600s (10 minutes) per requirements"
 
     def test_broadcast_interval_is_10_seconds(self):
         """Verify HEAD_STATUS broadcasts every 10 seconds."""
@@ -88,9 +88,9 @@ class TestHeadStatusFreshness:
         # The actual constant is defined in p2p/node/p2p_service.py
         expected_interval = 10.0
         
-        # With 10s broadcasts and 45s freshness, we get good tolerance
-        freshness_window = 45.0
-        safety_margin = freshness_window - (expected_interval * 4)
+        # With 10s broadcasts and 600s freshness, we get excellent tolerance
+        freshness_window = 600.0
+        safety_margin = freshness_window - (expected_interval * 60)
         
         assert safety_margin >= 0, "Should have positive safety margin"
         assert expected_interval == 10.0, "Broadcast interval should be 10s per requirements"

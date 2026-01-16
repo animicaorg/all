@@ -1493,7 +1493,7 @@ def sync_status(
         if peer_count and peer_count > 0:
             typer.echo("  - Peer head announcements not being received")
             typer.echo("  - Peer head polling may be disabled or failing")
-            typer.echo("  - All peer tips are stale (older than 45s)")
+            typer.echo("  - All peer tips are stale (older than 10 minutes)")
         else:
             typer.echo("  - No peers connected")
         typer.echo()

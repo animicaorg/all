@@ -12039,9 +12039,9 @@ class P2PService:
         This is critical for accurate sync status - we must never claim SYNCHRONIZED
         when we have no fresh knowledge of the network tip.
         """
-        # REDUCED from 60.0 to 45.0 per requirements - less strict freshness window
-        # With HEAD_STATUS broadcasts every 10s, 45s allows for up to 4 missed heartbeats
-        TIP_FRESHNESS_SEC = 45.0
+        # INCREASED from 45.0 to 600.0 (10 minutes) per requirements - more tolerant freshness window
+        # With HEAD_STATUS broadcasts every 10s, 600s allows for up to 60 missed heartbeats
+        TIP_FRESHNESS_SEC = 600.0
         
         best_height: Optional[int] = None
         best_hash: Optional[str] = None
