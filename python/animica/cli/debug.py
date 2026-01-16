@@ -137,6 +137,11 @@ def sync_dump(
             "attempts": sync_status.get("recovery_attempts"),
             "last_action": sync_status.get("last_recovery_action"),
         },
+        "inflight_block_samples": sync_status.get("inflight_block_samples") or [],
+        "orphan_block_samples": sync_status.get("orphan_block_samples") or [],
+        "peer_scores": (p2p_debug.get("peer_scores") if isinstance(p2p_debug, dict) else []) or [],
+        "timeouts_by_peer": (p2p_debug.get("timeouts_by_peer") if isinstance(p2p_debug, dict) else {}) or {},
+        "retries_by_peer": (p2p_debug.get("retries_by_peer") if isinstance(p2p_debug, dict) else {}) or {},
     }
 
     if json_output:
@@ -215,6 +220,48 @@ def sync_dump(
             f"Last recovery:    {dump['sync_recovery']['last_action']} "
             f"(attempt {dump['sync_recovery']['attempts']})"
         )
+
+    if dump["inflight_block_samples"]:
+        typer.echo("\nIn-flight blocks (sample):")
+        for item in dump["inflight_block_samples"]:
+            typer.echo(
+                "  - {hash} parent={parent} requested_at={requested_at} peer={peer}".format(
+                    hash=item.get("hash"),
+                    parent=item.get("parent_hash"),
+                    requested_at=item.get("requested_at"),
+                    peer=item.get("from_peer"),
+                )
+            )
+
+    if dump["orphan_block_samples"]:
+        typer.echo("\nOrphan pool (waiting on parent):")
+        for item in dump["orphan_block_samples"]:
+            typer.echo(
+                "  - {hash} parent={parent} age_s={age_s} peer={peer}".format(
+                    hash=item.get("hash"),
+                    parent=item.get("parent_hash"),
+                    age_s=item.get("age_s"),
+                    peer=item.get("from_peer"),
+                )
+            )
+
+    if dump["peer_scores"]:
+        typer.echo("\nPeer scores:")
+        for peer in dump["peer_scores"]:
+            typer.echo(
+                "  - {remote} score={score} penalty={penalty} sync_penalties={sync_penalties} last_response={last}".format(
+                    remote=peer.get("remote"),
+                    score=peer.get("score"),
+                    penalty=peer.get("penalty_score"),
+                    sync_penalties=peer.get("sync_penalties"),
+                    last=peer.get("last_response_at"),
+                )
+            )
+
+    if dump["timeouts_by_peer"] or dump["retries_by_peer"]:
+        typer.echo("\nPeer retry/timeout counters:")
+        for peer, count in dump["timeouts_by_peer"].items():
+            typer.echo(f"  - {peer}: timeouts={count} retries={dump['retries_by_peer'].get(peer, 0)}")
     
     typer.echo("━" * 60)
     
