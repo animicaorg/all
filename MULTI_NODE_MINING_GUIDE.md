@@ -21,10 +21,12 @@ This results in:
 
 The `--miner-id` parameter (0-255) assigns each node a unique identifier that partitions the nonce search space:
 
+**Important:** For multi-node mining, use miner-id values **starting from 1**. The value 0 is reserved for single-node mode (backward compatibility).
+
 ```
-Node 1 (miner-id=0): 0, 512, 1024, 1536, ...
-Node 2 (miner-id=1): 2, 514, 1026, 1538, ...  ← Different nonces!
-Node 3 (miner-id=2): 4, 516, 1028, 1540, ...  ← Different nonces!
+Node 1 (miner-id=1): 2, 514, 1026, 1538, ...
+Node 2 (miner-id=2): 4, 516, 1028, 1540, ...  ← Different nonces!
+Node 3 (miner-id=3): 6, 518, 1030, 1542, ...  ← Different nonces!
 ```
 
 Benefits:
@@ -48,18 +50,9 @@ python -m mining.cli.miner mine-blocks \
 
 ### Multi-Node Mining
 
-Assign unique miner IDs (0-255) to each node:
+Assign unique miner IDs **starting from 1** to each node:
 
 **Node 1:**
-```bash
-python -m mining.cli.miner mine-blocks \
-  --address anim1shared \
-  --count 10 \
-  --miner-id 0 \
-  --workers 4
-```
-
-**Node 2:**
 ```bash
 python -m mining.cli.miner mine-blocks \
   --address anim1shared \
@@ -68,7 +61,7 @@ python -m mining.cli.miner mine-blocks \
   --workers 4
 ```
 
-**Node 3:**
+**Node 2:**
 ```bash
 python -m mining.cli.miner mine-blocks \
   --address anim1shared \
@@ -77,21 +70,30 @@ python -m mining.cli.miner mine-blocks \
   --workers 4
 ```
 
+**Node 3:**
+```bash
+python -m mining.cli.miner mine-blocks \
+  --address anim1shared \
+  --count 10 \
+  --miner-id 3 \
+  --workers 4
+```
+
 ### Continuous Mining (orchestrator mode)
 
-For long-running mining operations:
+For long-running mining operations, use miner-id **starting from 1**:
 
 **Node 1:**
 ```bash
 python -m mining.cli.miner start \
-  --miner-id 0 \
+  --miner-id 1 \
   --threads 8
 ```
 
 **Node 2:**
 ```bash
 python -m mining.cli.miner start \
-  --miner-id 1 \
+  --miner-id 2 \
   --threads 8
 ```
 
@@ -99,10 +101,10 @@ python -m mining.cli.miner start \
 
 ### Environment Variable
 
-Set a default miner ID via environment variable:
+Set a default miner ID via environment variable (use 1+ for multi-node):
 
 ```bash
-export ANIMICA_MINER_ID=0
+export ANIMICA_MINER_ID=1
 python -m mining.cli.miner mine-blocks --address anim1... --count 10
 ```
 
@@ -114,21 +116,21 @@ services:
   miner-1:
     image: animica/miner:latest
     environment:
-      - ANIMICA_MINER_ID=0
+      - ANIMICA_MINER_ID=1
       - ANIMICA_MINER_WORKERS=4
     command: mine-blocks --address anim1shared --count 100
   
   miner-2:
     image: animica/miner:latest
     environment:
-      - ANIMICA_MINER_ID=1
+      - ANIMICA_MINER_ID=2
       - ANIMICA_MINER_WORKERS=4
     command: mine-blocks --address anim1shared --count 100
   
   miner-3:
     image: animica/miner:latest
     environment:
-      - ANIMICA_MINER_ID=2
+      - ANIMICA_MINER_ID=3
       - ANIMICA_MINER_WORKERS=4
     command: mine-blocks --address anim1shared --count 100
 ```
@@ -171,17 +173,20 @@ start_nonce = global_worker_id
 
 ## Best Practices
 
-### 1. Use Sequential Miner IDs
+### 1. Use Sequential Miner IDs Starting from 1
 
-Start from 0 and increment:
+**For multi-node mining, start from 1** (0 is reserved for single-node mode):
 ```bash
-# Good
---miner-id 0
+# Good - multi-node mining
 --miner-id 1
 --miner-id 2
+--miner-id 3
+
+# Single-node mining (default)
+--miner-id 0  # or omit the parameter
 
 # Avoid gaps (less efficient)
---miner-id 0
+--miner-id 1
 --miner-id 5
 --miner-id 10
 ```
@@ -192,18 +197,18 @@ For optimal distribution, use the same number of workers on each node:
 
 ```bash
 # All nodes with 4 workers (optimal)
---miner-id 0 --workers 4
 --miner-id 1 --workers 4
 --miner-id 2 --workers 4
+--miner-id 3 --workers 4
 ```
 
-### 3. Scale Up to 256 Miners
+### 3. Scale Up to 255 Miners
 
-The system supports up to 256 concurrent miners (IDs 0-255):
+The system supports up to 255 concurrent miners (IDs 1-255):
 
 ```bash
-# Maximum scale
---miner-id 0    # through
+# Maximum scale for multi-node
+--miner-id 1    # through
 --miner-id 255
 ```
 

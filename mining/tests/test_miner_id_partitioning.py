@@ -7,26 +7,27 @@ from mining.parallel_nonce_search import iter_stride, parallel_nonce_search
 
 def test_miner_id_prevents_overlap():
     """Test that different miner_ids result in non-overlapping nonce spaces."""
-    # Simulate 2 miners with 2 workers each
-    miner0_worker0 = set(list(iter_stride(0, 10000, 0, 2, miner_id=0)))
-    miner0_worker1 = set(list(iter_stride(0, 10000, 1, 2, miner_id=0)))
+    # Use miner_id > 0 for multi-node mode (miner_id=0 is single-node mode)
     miner1_worker0 = set(list(iter_stride(0, 10000, 0, 2, miner_id=1)))
     miner1_worker1 = set(list(iter_stride(0, 10000, 1, 2, miner_id=1)))
+    miner2_worker0 = set(list(iter_stride(0, 10000, 0, 2, miner_id=2)))
+    miner2_worker1 = set(list(iter_stride(0, 10000, 1, 2, miner_id=2)))
     
     # Verify no overlaps between any pair
-    assert len(miner0_worker0 & miner0_worker1) == 0, "Workers within same miner overlap"
-    assert len(miner0_worker0 & miner1_worker0) == 0, "Miners with different IDs overlap"
-    assert len(miner0_worker0 & miner1_worker1) == 0, "Cross-miner cross-worker overlap"
-    assert len(miner0_worker1 & miner1_worker0) == 0, "Cross-miner cross-worker overlap"
-    assert len(miner0_worker1 & miner1_worker1) == 0, "Cross-miner cross-worker overlap"
     assert len(miner1_worker0 & miner1_worker1) == 0, "Workers within same miner overlap"
+    assert len(miner1_worker0 & miner2_worker0) == 0, "Miners with different IDs overlap"
+    assert len(miner1_worker0 & miner2_worker1) == 0, "Cross-miner cross-worker overlap"
+    assert len(miner1_worker1 & miner2_worker0) == 0, "Cross-miner cross-worker overlap"
+    assert len(miner1_worker1 & miner2_worker1) == 0, "Cross-miner cross-worker overlap"
+    assert len(miner2_worker0 & miner2_worker1) == 0, "Workers within same miner overlap"
 
 
 def test_miner_id_coverage():
     """Test that multiple miners with different IDs cover the nonce space efficiently."""
-    # Simulate 3 miners with 2 workers each
+    # Use miner_id > 0 for multi-node mode
+    # Simulate 3 miners with 2 workers each (IDs 1, 2, 3)
     all_nonces = set()
-    for miner_id in range(3):
+    for miner_id in range(1, 4):  # IDs 1, 2, 3
         for worker_id in range(2):
             nonces = set(list(iter_stride(0, 5000, worker_id, 2, miner_id=miner_id)))
             all_nonces.update(nonces)
@@ -34,7 +35,7 @@ def test_miner_id_coverage():
     # All nonces should be unique (no worker checked the same nonce twice)
     expected_unique = sum(
         len(list(iter_stride(0, 5000, worker_id, 2, miner_id=miner_id)))
-        for miner_id in range(3)
+        for miner_id in range(1, 4)
         for worker_id in range(2)
     )
     assert len(all_nonces) == expected_unique, "Duplicate nonces found across miners"
@@ -51,12 +52,12 @@ def test_miner_id_zero_default():
 
 
 def test_miner_id_stride_consistency():
-    """Test that stride is consistent across all miners."""
-    # All miners should use the same stride (workers * 256)
+    """Test that stride is consistent across all miners with miner_id > 0."""
+    # All miners with miner_id > 0 should use the same stride (workers * 256)
     workers = 4
-    stride = workers * 256  # Expected stride
+    stride = workers * 256  # Expected stride for multi-node mode
     
-    for miner_id in range(3):
+    for miner_id in range(1, 4):  # Test miners 1, 2, 3
         for worker_id in range(workers):
             nonces = list(iter_stride(0, stride * 3, worker_id, workers, miner_id=miner_id))
             if len(nonces) >= 2:
@@ -73,34 +74,35 @@ def test_parallel_search_with_miner_id():
     """Test that parallel_nonce_search respects miner_id."""
     # Use a larger range so all miners can find solutions
     # Target is 17, so multiples are: 0, 17, 34, 51, 68, 85, ...
-    result0 = parallel_nonce_search(
-        toy_check_modulo, (17,), 0, 10000, workers=2, miner_id=0
-    )
     result1 = parallel_nonce_search(
         toy_check_modulo, (17,), 0, 10000, workers=2, miner_id=1
     )
+    result2 = parallel_nonce_search(
+        toy_check_modulo, (17,), 0, 10000, workers=2, miner_id=2
+    )
     
     # Both should find valid solutions
-    assert result0 is not None, "Miner 0 failed to find solution"
     assert result1 is not None, "Miner 1 failed to find solution"
+    assert result2 is not None, "Miner 2 failed to find solution"
     
     # Both nonces should be valid
-    assert result0.nonce % 17 == 0, "Miner 0 found invalid nonce"
     assert result1.nonce % 17 == 0, "Miner 1 found invalid nonce"
+    assert result2.nonce % 17 == 0, "Miner 2 found invalid nonce"
     
     # The key point: both miners can find solutions without overlapping their search
 
 
 def test_miner_id_global_worker_id():
-    """Test that global worker ID is calculated correctly."""
+    """Test that global worker ID is calculated correctly for miner_id > 0."""
     workers = 2
     
-    # Miner 0: global IDs 0, 1
+    # For multi-node mode (miner_id > 0):
     # Miner 1: global IDs 2, 3
     # Miner 2: global IDs 4, 5
+    # Miner 3: global IDs 6, 7
     
     # Get first nonce for each worker (which equals their global_worker_id)
-    for miner_id in range(3):
+    for miner_id in range(1, 4):  # Miners 1, 2, 3
         for worker_id in range(workers):
             nonces = list(iter_stride(0, 1000, worker_id, workers, miner_id=miner_id))
             assert len(nonces) > 0, f"No nonces generated for miner {miner_id} worker {worker_id}"

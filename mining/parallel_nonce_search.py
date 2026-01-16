@@ -50,19 +50,22 @@ def iter_stride(
     start_nonce: int, max_nonce: int, worker_id: int, workers: int, *, miner_id: int = 0
 ) -> Iterable[int]:
     """
-    Generate nonce sequence for a worker using stride pattern with miner_id offset.
+    Generate nonce sequence for a worker using stride pattern with optional miner_id offset.
     
-    Multi-node mining optimization:
+    For backward compatibility:
+    - When miner_id=0 (default): uses stride=workers (original behavior)
+    - When miner_id>0: uses stride=workers*256 for multi-node coordination
+    
+    Multi-node mining optimization (miner_id > 0):
     - Each (miner_id, worker_id) pair gets a unique offset in the nonce space
     - Global stride ensures no overlap between any miner/worker combinations
-    - When all nodes use default miner_id=0, they'll overlap (user must set unique IDs)
+    - Supports up to 256 concurrent miners
     
     The global worker ID formula ensures perfect partitioning:
       global_id = miner_id * workers + worker_id
-      stride = workers (single miner assumed if all use 0) OR workers * 256 (multi-miner)
+      stride = workers * 256 (multi-node) OR workers (single node with miner_id=0)
     
     Example with 3 miners (IDs 0,1,2), 2 workers each:
-      Global IDs: 0, 1, 2, 3, 4, 5
       Stride: 512 (2 workers * 256 miners)
       Miner 0, Worker 0 (global_id=0): 0, 512, 1024, 1536, ...
       Miner 0, Worker 1 (global_id=1): 1, 513, 1025, 1537, ...
@@ -76,21 +79,26 @@ def iter_stride(
         max_nonce: Number of nonces to search
         worker_id: Worker index within this miner (0 to workers-1)
         workers: Total number of workers in this miner
-        miner_id: Unique miner instance ID (0-255) for multi-node coordination
+        miner_id: Unique miner instance ID (0-255) for multi-node coordination.
+                  When 0 (default), uses original stride behavior for backward compatibility.
+                  When >0, uses larger stride for multi-node partitioning.
     
     Returns:
         Iterator of nonce values for this worker to check
     """
     end = start_nonce + max_nonce
     
-    # Calculate global worker ID across all miners
-    global_worker_id = miner_id * workers + worker_id
-    
-    # Use consistent stride that works for multi-miner scenarios
-    # Stride assumes up to 256 miners total
-    stride = workers * 256
-    
-    nonce = start_nonce + global_worker_id
+    if miner_id == 0:
+        # Single miner mode (backward compatible): original stride behavior
+        nonce = start_nonce + worker_id
+        stride = workers
+    else:
+        # Multi-miner mode: partition nonce space to prevent overlap
+        # Calculate global worker ID across all miners
+        global_worker_id = miner_id * workers + worker_id
+        # Use larger stride that accounts for up to 256 miners
+        stride = workers * 256
+        nonce = start_nonce + global_worker_id
     
     while nonce < end:
         yield nonce
