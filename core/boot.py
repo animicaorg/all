@@ -141,7 +141,6 @@ def main(argv: Optional[list[str]] = None) -> int:
                         print("=" * 80, file=sys.stderr)
                         
                         # Close and delete the database
-                        import shutil
                         db_path = args.db.replace("sqlite:///", "")
                         if os.path.exists(db_path):
                             os.remove(db_path)

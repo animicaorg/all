@@ -106,8 +106,8 @@ def build_genesis_block(header: Header) -> Block:
     # Genesis block has no transactions
     return Block(
         header=header,
-        txs=(),  # Empty tuple
-        proofs=(),  # Empty tuple
+        txs=(),
+        proofs=(),
         receipts=None,
     )
 
@@ -322,7 +322,7 @@ def main():
             print()
             print("  ACTION REQUIRED: Update consensus.params.GENESIS_HASH_HEX with the computed value:")
             print(f'  GENESIS_HASH_HEX = "{genesis_hash_hex}"')
-            sys.exit(1)
+            return 1  # Return error code instead of sys.exit
     else:
         print("NOTE: To commit this genesis, update consensus.params.GENESIS_HASH_HEX:")
         print(f'  GENESIS_HASH_HEX = "{genesis_hash_hex}"')
