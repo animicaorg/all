@@ -5,6 +5,7 @@ import multiprocessing
 import sys
 from pathlib import Path
 
+from PySide6.QtCore import QTimer
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication, QMessageBox
 
@@ -145,6 +146,7 @@ def main() -> int:
         guard.raise_requested.connect(window.activateWindow)
         
         window.show()
+        QTimer.singleShot(0, window.backend.ensureNodeRunning)
         
         log_startup_stage("Main window shown, entering event loop")
         
@@ -157,6 +159,16 @@ def main() -> int:
     
     except Exception as e:
         logger.exception("Fatal error in main application")
+        try:
+            app = QApplication.instance() or QApplication(sys.argv)
+            msg = QMessageBox()
+            msg.setIcon(QMessageBox.Critical)
+            msg.setWindowTitle("Animica Miner Error")
+            msg.setText("A fatal error occurred while starting Animica Miner.")
+            msg.setInformativeText(str(e))
+            msg.exec()
+        except Exception:
+            logger.exception("Failed to show fatal error dialog")
         return 1
 
 

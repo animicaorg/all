@@ -1,6 +1,6 @@
 """Wallet tab - send transactions and manage wallet.
 
-Uses LocalNodeManager for balance queries and transaction sending (local node only).
+Uses the node backend for balance queries and transaction sending (local node only).
 """
 
 import json
@@ -26,7 +26,8 @@ from PySide6.QtWidgets import (
 )
 
 from animica_miner_gui.backend.config import MiningAppConfig
-from animica_miner_gui.core.localnode import LocalNodeManager
+from animica_miner_gui.core.localnode import LocalRpcClient
+from animica_miner_gui.ui.node_backend import NodeBackend
 
 logger = logging.getLogger(__name__)
 
@@ -41,16 +42,27 @@ WALLET_INFO_REFRESH_INTERVAL = 10000  # Refresh wallet info every 10 seconds (mi
 class WalletTab(QWidget):
     """Wallet tab for sending transactions."""
     
-    def __init__(self, config: MiningAppConfig, node_manager: LocalNodeManager, parent: Optional[QWidget] = None):
+    def __init__(self, config: MiningAppConfig, backend: NodeBackend, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.config = config
-        self.node_manager = node_manager
+        self.backend = backend
+        self.rpc_client: Optional[LocalRpcClient] = None
         self.setup_ui()
         self.setup_auto_refresh()
+        self._connect_backend_signals()
+        self._set_starting_state()
     
     def setup_ui(self) -> None:
         """Set up the UI."""
         layout = QVBoxLayout()
+
+        self.error_banner = QLabel()
+        self.error_banner.setVisible(False)
+        self.error_banner.setTextFormat(Qt.RichText)
+        self.error_banner.setStyleSheet(
+            "QLabel { background-color: #aa1f2f; color: white; padding: 8px; }"
+        )
+        layout.addWidget(self.error_banner)
         
         # Wallet info group
         wallet_group = QGroupBox("Wallet Information")
@@ -150,12 +162,33 @@ class WalletTab(QWidget):
         """Set up timer to auto-refresh wallet info."""
         # Refresh wallet info periodically
         self.refresh_timer = QTimer(self)  # Set parent to ensure cleanup
-        self.refresh_timer.timeout.connect(self.refresh_wallet_info)
+        self.refresh_timer.timeout.connect(self._refresh_if_ready)
         self.refresh_timer.start(WALLET_INFO_REFRESH_INTERVAL)
-        
-        # Do initial refresh
-        if self.config.miner.payout_address:
-            self.refresh_wallet_info()
+
+    def _connect_backend_signals(self) -> None:
+        """Connect backend signals to update state."""
+        self.backend.nodeReady.connect(self.on_node_ready)
+        self.backend.nodeError.connect(self.on_node_error)
+
+    def _refresh_if_ready(self) -> None:
+        """Refresh wallet info only when RPC is ready."""
+        if self.rpc_client is None:
+            return
+        self.refresh_wallet_info()
+
+    def _set_starting_state(self) -> None:
+        """Set UI to the initial 'node starting' state."""
+        self.balance_label.setText("Node starting...")
+        self.nonce_label.setText("--")
+        self._set_wallet_controls_enabled(False)
+
+    def _set_wallet_controls_enabled(self, enabled: bool) -> None:
+        """Enable or disable wallet actions based on node readiness."""
+        address_ready = bool(self.config.miner.payout_address)
+        self.refresh_balance_button.setEnabled(enabled and address_ready)
+        self.send_button.setEnabled(enabled and address_ready)
+        self.recipient_input.setEnabled(enabled and address_ready)
+        self.amount_input.setEnabled(enabled and address_ready)
     
     def closeEvent(self, event) -> None:
         """Clean up resources when widget is closed."""
@@ -167,6 +200,8 @@ class WalletTab(QWidget):
     def refresh_wallet_info(self) -> None:
         """Query RPC for wallet balance and nonce."""
         if not self.rpc_client:
+            self.balance_label.setText("Node starting...")
+            self.nonce_label.setText("--")
             logger.debug("No RPC client available")
             return
         
@@ -188,7 +223,7 @@ class WalletTab(QWidget):
                 
         except Exception as e:
             logger.debug(f"Failed to query balance: {e}")
-            self.balance_label.setText("Query failed")
+            self.balance_label.setText(f"Query failed: {e}")
         
         # Query nonce using public method
         try:
@@ -201,7 +236,21 @@ class WalletTab(QWidget):
                 
         except Exception as e:
             logger.debug(f"Failed to query nonce: {e}")
-            self.nonce_label.setText("Query failed")
+            self.nonce_label.setText(f"Query failed: {e}")
+
+    def on_node_ready(self, rpc_client: LocalRpcClient) -> None:
+        """Handle node readiness by enabling UI and refreshing."""
+        self.rpc_client = rpc_client
+        self.error_banner.setVisible(False)
+        self._set_wallet_controls_enabled(True)
+        self.refresh_wallet_info()
+
+    def on_node_error(self, error: str) -> None:
+        """Handle backend errors in the wallet UI."""
+        self.rpc_client = None
+        self._set_wallet_controls_enabled(False)
+        self.error_banner.setText(f"Node error: {error}")
+        self.error_banner.setVisible(True)
     
     def copy_address_to_clipboard(self) -> None:
         """Copy the wallet address to clipboard."""
@@ -241,6 +290,13 @@ class WalletTab(QWidget):
     
     def send_transaction(self) -> None:
         """Send a transaction using the wallet CLI."""
+        if not self.rpc_client:
+            QMessageBox.warning(
+                self,
+                "Node Starting",
+                "The local node is still starting. Please wait for it to be ready."
+            )
+            return
         # Get sender address from config
         from_addr = self.config.miner.payout_address
         if not from_addr:
@@ -339,7 +395,7 @@ class WalletTab(QWidget):
         try:
             # Build the tx send command
             # Use the animica CLI: animica tx send --from <addr> --to <addr> --value <amount>
-            rpc_url = self.config.network.rpc_url
+            rpc_url = self.rpc_client.rpc_url
             
             cmd = [
                 sys.executable, "-m", "animica", "tx", "send",
