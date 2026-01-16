@@ -7876,6 +7876,14 @@ class P2PService:
                     continue
                 if not self._is_orphan_reason(reason):
                     self._sync_block_buffer.pop(h, None)
+                    if blk.origin_peer:
+                        reject_reason = reason or "block_rejected"
+                        self._penalize_peer(
+                            self._peer_by_remote(blk.origin_peer),
+                            f"block_rejected:{reject_reason}",
+                            severity=2,
+                            quarantine_s=300.0,
+                        )
         
         # Track and log cascade import successes
         if cascade_count > 0:
@@ -7888,14 +7896,6 @@ class P2PService:
                     "remaining_orphans": len(self._sync_block_buffer),
                 },
             )
-                    if blk.origin_peer:
-                        reject_reason = reason or "block_rejected"
-                        self._penalize_peer(
-                            self._peer_by_remote(blk.origin_peer),
-                            f"block_rejected:{reject_reason}",
-                            severity=2,
-                            quarantine_s=300.0,
-                        )
 
     def _expire_inflight_blocks(self) -> None:
         """
