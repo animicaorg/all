@@ -265,6 +265,18 @@ verify_directory() {
 # Returns the path to the Python package containing pyproject.toml
 find_python_package_dir() {
     local repo_root="$1"
+    
+    # Validate input
+    if [[ -z "$repo_root" ]]; then
+        err "find_python_package_dir: repo_root parameter is required"
+        return 1
+    fi
+    
+    if [[ ! -d "$repo_root" ]]; then
+        err "find_python_package_dir: directory does not exist: $repo_root"
+        return 1
+    fi
+    
     local python_pkg_dir="$repo_root/python"
     
     if [[ -f "$python_pkg_dir/pyproject.toml" ]]; then
@@ -278,7 +290,7 @@ find_python_package_dir() {
         return 0
     fi
     
-    # Not found
+    # Not found - provide detailed error message
     err "Cannot find Python package. Searched:"
     err "  - $repo_root/python/pyproject.toml"
     err "  - $repo_root/pyproject.toml"

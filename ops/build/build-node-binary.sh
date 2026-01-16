@@ -126,7 +126,9 @@ log "Installing build dependencies..."
 pip_install "$PY" pip setuptools wheel pyinstaller pyinstaller-hooks-contrib
 
 # Determine Python project directory using shared helper
-PYTHON_PKG_DIR="$(find_python_package_dir "$REPO_ROOT")" || die "No Python project found. Please ensure the repository contains a valid pyproject.toml"
+# The function provides detailed error messages if not found
+PYTHON_PKG_DIR="$(find_python_package_dir "$REPO_ROOT")" || \
+    die "Python project not found. Please ensure the repository contains a valid pyproject.toml at 'python/' or repo root."
 
 log "Using Python project root: $PYTHON_PKG_DIR"
 

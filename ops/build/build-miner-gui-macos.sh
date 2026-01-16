@@ -141,7 +141,9 @@ pip_install "$PY" pip setuptools wheel pyinstaller pyinstaller-hooks-contrib
 
 # Determine and install Python project directories using shared helpers
 # 1. Install the main animica package (for CLI dependencies)
-PYTHON_PKG_DIR="$(find_python_package_dir "$REPO_ROOT")" || die "No Python project found"
+# The function provides detailed error messages if not found
+PYTHON_PKG_DIR="$(find_python_package_dir "$REPO_ROOT")" || \
+    die "Main Python project not found. Ensure 'python/' directory contains pyproject.toml"
 
 log "Installing main Python package from: $PYTHON_PKG_DIR"
 "$PY" -m pip install --quiet -e "$PYTHON_PKG_DIR"
