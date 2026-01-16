@@ -137,6 +137,13 @@ _MEMPOOL_BINDINGS_LOGGED: set[str] = set()
 _MINING_AUDIT_TRAIL: list[dict[str, Any]] = []
 _MINING_AUDIT_MAX_SIZE = int(os.getenv("ANIMICA_MINING_AUDIT_MAX_SIZE", "1000"))
 
+# Track active mining addresses to detect multi-node mining conflicts
+# Maps address -> {"last_template_time": timestamp, "template_count": int, "warned": bool}
+# Used to warn users when the same address is actively mining on multiple nodes
+_ACTIVE_MINING_ADDRESSES: dict[str, dict[str, Any]] = {}
+_ACTIVE_MINING_TTL_S = 300  # Consider address inactive after 5 minutes without template requests
+
+
 
 def _record_mining_audit(
     height: int,
@@ -179,6 +186,58 @@ def _record_mining_audit(
         _MINING_AUDIT_TRAIL = _MINING_AUDIT_TRAIL[-_MINING_AUDIT_MAX_SIZE:]
     
     log.debug(f"Mining audit recorded: height={height}, expected={expected_reward}, credited={credited_reward}")
+
+
+def _track_mining_address(address: str) -> bool:
+    """
+    Track active mining address and check for potential multi-node conflicts.
+    
+    Returns:
+        True if this looks like potential multi-node mining conflict (should warn)
+    """
+    global _ACTIVE_MINING_ADDRESSES
+    
+    current_time = time.time()
+    
+    # Clean up stale entries (addresses not seen in TTL window)
+    stale_addresses = [
+        addr for addr, info in _ACTIVE_MINING_ADDRESSES.items()
+        if current_time - info.get("last_template_time", 0) > _ACTIVE_MINING_TTL_S
+    ]
+    for addr in stale_addresses:
+        _ACTIVE_MINING_ADDRESSES.pop(addr, None)
+    
+    # Update or create entry for this address
+    if address not in _ACTIVE_MINING_ADDRESSES:
+        _ACTIVE_MINING_ADDRESSES[address] = {
+            "last_template_time": current_time,
+            "template_count": 1,
+            "warned": False,
+        }
+        return False
+    
+    entry = _ACTIVE_MINING_ADDRESSES[address]
+    entry["last_template_time"] = current_time
+    entry["template_count"] = entry.get("template_count", 0) + 1
+    
+    # Check if we should warn: multiple template requests in a short window
+    # This could indicate multiple nodes mining to the same address
+    # We only warn once per address to avoid spam
+    should_warn = (
+        not entry.get("warned", False)
+        and entry["template_count"] > 10  # More than 10 templates requested
+        and (current_time - entry.get("first_template_time", current_time)) < 60  # Within 60 seconds
+    )
+    
+    if should_warn:
+        entry["warned"] = True
+    
+    # Track first template time if not set
+    if "first_template_time" not in entry:
+        entry["first_template_time"] = current_time
+    
+    return should_warn
+
 
 
 
@@ -4603,6 +4662,19 @@ def miner_get_block_template(*args: Any, **kwargs: Any) -> Dict[str, Any]:
                 coinbase["amount"] = int(rewards[0][1])
         except Exception:
             coinbase["amount"] = None
+        
+        # Track mining address and warn if potential multi-node conflict
+        should_warn = _track_mining_address(payout_address)
+        if should_warn:
+            log.warning(
+                "MULTI_NODE_MINING_DETECTED",
+                extra={
+                    "payout_address": payout_address,
+                    "warning": "Mining to the same wallet address on multiple nodes can cause sync issues, "
+                              "block conflicts, and node instability. Each node should mine to a unique wallet address.",
+                    "recommendation": "Use a different wallet address for each mining node to avoid conflicts.",
+                },
+            )
 
         log.info(
             "miner.getBlockTemplate assembled",
@@ -4913,16 +4985,28 @@ def miner_submit_block(payload: Any = None, **kwargs: Any) -> Dict[str, Any]:
     head_snapshot = _current_head_snapshot()
     head_hash = head_snapshot.get("hash")
     if parent_hash_hex and head_hash and parent_hash_hex != head_hash:
-        raise rpc_errors.RpcError(
-            rpc_errors.AnimicaCode.STALE_TEMPLATE,
-            "stale template",
-            {
-                "reason": "stale_template",
+        # Check if this is a competing block at the same height (multi-node mining scenario)
+        # In this case, don't reject immediately - let the block import and fork choice decide
+        head_height = head_snapshot.get("height")
+        block_header = block.get("header", {})
+        block_height = None
+        if isinstance(block_header, dict):
+            block_height = block_header.get("height")
+        
+        # If block is at head_height + 1 but parent doesn't match head, this could be:
+        # 1. A stale block from before a reorg
+        # 2. A competing block from another node mining to same wallet
+        # Let block import handle it - it will either accept it as a fork or reject it
+        log.warning(
+            "Block parent mismatch - possible multi-node mining or reorg",
+            extra={
                 "expected_head": head_hash,
                 "got_parent": parent_hash_hex,
-                "head_height": head_snapshot.get("height"),
+                "head_height": head_height,
+                "block_height": block_height,
             },
         )
+        # Don't raise exception here - let block import decide via fork choice
 
     try:
         ctx = _ctx()
@@ -4945,15 +5029,29 @@ def miner_submit_block(payload: Any = None, **kwargs: Any) -> Dict[str, Any]:
             reason_lower = str(reason).lower()
             reject_reason = "invalid_state_transition"
             code = rpc_errors.AnimicaCode.INVALID_STATE_TRANSITION
-            if "pow" in reason_lower:
+            
+            # Check if this is an orphan block (missing parent) due to multi-node mining
+            # In this case, log more information to help diagnose the issue
+            if "parent" in reason_lower or "orphan" in reason_lower or "height continuity" in reason_lower:
+                reject_reason = "invalid_parent"
+                code = rpc_errors.AnimicaCode.INVALID_PARENT
+                log.warning(
+                    "Block rejected due to parent mismatch - possible multi-node mining conflict",
+                    extra={
+                        "reason": reason,
+                        "height": result.height,
+                        "block_hash": result.block_hash.hex() if result.block_hash else None,
+                        "payout_address": payout_address if template_id else None,
+                        "hint": "Multiple nodes mining to the same wallet can cause conflicts. "
+                               "Consider using different wallets for each node."
+                    },
+                )
+            elif "pow" in reason_lower:
                 reject_reason = "invalid_pow"
                 code = rpc_errors.AnimicaCode.INVALID_POW
             elif "timestamp" in reason_lower:
                 reject_reason = "invalid_timestamp"
                 code = rpc_errors.AnimicaCode.INVALID_TIMESTAMP
-            elif "parent" in reason_lower or "height continuity" in reason_lower:
-                reject_reason = "invalid_parent"
-                code = rpc_errors.AnimicaCode.INVALID_PARENT
             elif "coinbase" in reason_lower:
                 reject_reason = "invalid_coinbase"
                 code = rpc_errors.AnimicaCode.INVALID_COINBASE
