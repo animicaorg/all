@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+# CHAIN_RESET_TOUCHPOINT: Mining and block template creation
+# BLOCKTIME_TOUCHPOINT: Block timestamp and difficulty selection
+
 import os
 import time
 from dataclasses import asdict, dataclass

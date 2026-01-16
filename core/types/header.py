@@ -3,6 +3,7 @@ from __future__ import annotations
 """
 Animica core/types/header.py
 ===========================
+CHAIN_RESET_TOUCHPOINT: Block header structure and hashing
 
 Canonical block-header representation matching spec/header_format.cddl.
 

@@ -1,5 +1,6 @@
 """
 Animica — Genesis loader
+CHAIN_RESET_TOUCHPOINT: Genesis initialization and chain bootstrap
 
 Loads a genesis JSON, validates key fields, initializes the on-disk state DB with
 premine/system accounts, computes the canonical state root, builds the genesis

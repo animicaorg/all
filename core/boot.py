@@ -87,6 +87,11 @@ def main(argv: Optional[list[str]] = None) -> int:
         choices=["debug", "info", "warn", "error"],
         help="Log level (default: info)",
     )
+    ap.add_argument(
+        "--force-reset-db",
+        action="store_true",
+        help="Force reset database if genesis mismatch detected (destructive operation)",
+    )
     args = ap.parse_args(argv)
 
     setup_logging(level=args.log.upper())
@@ -112,6 +117,62 @@ def main(argv: Optional[list[str]] = None) -> int:
 
         params, genesis_header = _load_genesis(genesis_path)
         block_db, state_db = _open_dbs(args.db)
+        
+        # CHAIN_RESET_TOUCHPOINT: Check for genesis mismatch
+        try:
+            # Check if DB has existing genesis that doesn't match
+            stored_genesis_hash = block_db.get_genesis_hash()
+            stored_chain_id = block_db.get_chain_id()
+            
+            if stored_genesis_hash is not None:
+                # Compare with expected genesis
+                expected_hash = identity.genesis_block_hash
+                if stored_genesis_hash != expected_hash:
+                    expected_hex = "0x" + expected_hash.hex()
+                    found_hex = "0x" + stored_genesis_hash.hex()
+                    
+                    if args.force_reset_db:
+                        print("=" * 80, file=sys.stderr)
+                        print("WARNING: Genesis mismatch detected!", file=sys.stderr)
+                        print(f"  Expected: {expected_hex}", file=sys.stderr)
+                        print(f"  Found:    {found_hex}", file=sys.stderr)
+                        print("", file=sys.stderr)
+                        print("Resetting database (--force-reset-db specified)...", file=sys.stderr)
+                        print("=" * 80, file=sys.stderr)
+                        
+                        # Close and delete the database
+                        db_path = args.db.replace("sqlite:///", "")
+                        if os.path.exists(db_path):
+                            os.remove(db_path)
+                            print(f"Deleted: {db_path}", file=sys.stderr)
+                        
+                        # Re-open fresh database
+                        block_db, state_db = _open_dbs(args.db)
+                    else:
+                        print("=" * 80, file=sys.stderr)
+                        print("ERROR: Genesis mismatch detected!", file=sys.stderr)
+                        print(f"  Expected: {expected_hex}", file=sys.stderr)
+                        print(f"  Found:    {found_hex}", file=sys.stderr)
+                        print("", file=sys.stderr)
+                        print("This database was initialized with a different genesis.", file=sys.stderr)
+                        print("To reset the database and start fresh, use:", file=sys.stderr)
+                        print(f"  python -m core.boot --genesis {genesis_path} --db {args.db} --force-reset-db", file=sys.stderr)
+                        print("", file=sys.stderr)
+                        print("WARNING: This will delete all blockchain data!", file=sys.stderr)
+                        print("=" * 80, file=sys.stderr)
+                        return 3
+            
+            if stored_chain_id is not None and stored_chain_id != params.chain_id:
+                if not args.force_reset_db:
+                    print("=" * 80, file=sys.stderr)
+                    print("ERROR: Chain ID mismatch!", file=sys.stderr)
+                    print(f"  Expected: {params.chain_id}", file=sys.stderr)
+                    print(f"  Found:    {stored_chain_id}", file=sys.stderr)
+                    print("=" * 80, file=sys.stderr)
+                    return 3
+        except Exception as e:
+            # If metadata read fails, continue (might be fresh DB)
+            pass
 
         # Ensure canonical head exists and points at our genesis if DB is fresh.
         genesis_sha256 = identity.genesis_file_hash

@@ -54,7 +54,8 @@ networks:
             vesting: { cliff_days: 0, linear_months: 0 }
       issuance:
         # Target block time (consensus retarget aims to meet this)
-        target_block_interval_ms: 120000
+        # BLOCKTIME_TOUCHPOINT: Changed from 120000ms (2 min) to 300000ms (5 min)
+        target_block_interval_ms: 300000
         # Block subsidy schedule: exponential decay toward a tail emission
         subsidy:
           start_nANM_per_block: 300000000000  # 300 ANM per block base reward

@@ -1,6 +1,8 @@
 """
 Validator
 =========
+CHAIN_RESET_TOUCHPOINT: Block validation (timestamp checks, consensus rules)
+BLOCKTIME_TOUCHPOINT: Timestamp validation rules
 
 Recomputes the PoIES acceptance score S = H(u) + Σψ for a candidate block,
 enforces policy/roots/nullifiers, and checks S ≥ Θ at the header's height.

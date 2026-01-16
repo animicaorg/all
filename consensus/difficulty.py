@@ -135,6 +135,7 @@ class RetargetParams:
     ----------
     target_block_time_s : float
         Target inter-block time (T).
+        BLOCKTIME_TOUCHPOINT: This is the consensus target block time.
     half_life_blocks : float
         EMA half-life (in blocks). Larger → smoother.
     gain_beta : float
@@ -150,7 +151,9 @@ class RetargetParams:
         Default is None (uses hard cap).
     """
 
-    target_block_time_s: float = 120.0
+    # BLOCKTIME_TOUCHPOINT: Default target block time
+    # Import from consensus.params for consistency
+    target_block_time_s: float = 300.0  # 5 minutes
     half_life_blocks: float = 24.0
     gain_beta: float = 0.75
     step_clamp_micro: MicroNat = 400_000  # ~0.4 nats per step max
