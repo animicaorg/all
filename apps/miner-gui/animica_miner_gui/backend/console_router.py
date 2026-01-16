@@ -27,16 +27,17 @@ class ConsoleResult:
 _RPC_CLIENT: Optional[LocalRpcClient] = None
 
 HELP_TEXT = """Available commands:
+  status
   animica node status
-  animica sync force
-  animica mempool list
-  animica wallet show <address>
+  peers
   animica peer list
   animica peer count
   animica peer add <multiaddr>
-  animica peer remove <peer_id>
-  animica peer info <peer_id>
-  animica peer bootstrap
+  animica peer bootstrap [multiaddr]
+  animica debug sync-dump
+  animica sync force
+  animica mempool list
+  animica wallet show <address>
 
 Raw RPC:
   rpc <method> [json-params]
@@ -111,11 +112,20 @@ def _handle_animica_command(command: str) -> ConsoleResult:
     sub = tokens[1].lower() if len(tokens) > 1 else ""
     remainder = tokens[2:]
 
-    if verb == "node" and sub == "status":
-        return _execute_rpc("node.status", [])
+    if _RPC_CLIENT:
+        _RPC_CLIENT.ensure_methods()
+
+    if verb in {"status"} or (verb == "node" and sub == "status"):
+        return _execute_status()
+
+    if verb in {"peers"}:
+        return _execute_peers()
 
     if verb == "sync" and sub == "force":
         return _execute_rpc("sync.force", [])
+
+    if verb == "debug" and sub == "sync-dump":
+        return _execute_sync_dump()
 
     if verb == "mempool" and sub == "list":
         return _execute_rpc("mempool.list", [])
@@ -127,15 +137,15 @@ def _handle_animica_command(command: str) -> ConsoleResult:
 
     if verb == "peer":
         if sub in {"list", "ls"}:
-            return _execute_rpc("net.peers", [])
+            return _execute_peers()
         if sub == "count":
             return _execute_rpc("net.peerCount", [])
         if sub == "bootstrap":
-            return _execute_rpc("net.getBootstrapSeeds", [])
+            return _execute_peer_bootstrap(remainder)
         if sub == "add":
             if not remainder:
                 return ConsoleResult(ok=False, output="peer add requires a multiaddr.")
-            return _execute_rpc("p2p.addPeer", [remainder[0]])
+            return _execute_peer_add(remainder[0])
         if sub == "remove":
             if not remainder:
                 return ConsoleResult(ok=False, output="peer remove requires a peer id.")
@@ -183,6 +193,112 @@ def _execute_rpc(method: str, params: Any) -> ConsoleResult:
         error_text = _format_error(method, exc)
         logger.debug(f"Console command failed: {exc}")
         return ConsoleResult(ok=False, output=error_text, method=method, error=str(exc))
+
+
+def _execute_status() -> ConsoleResult:
+    if _RPC_CLIENT is None:
+        return ConsoleResult(ok=False, output="RPC client is not available.")
+
+    head_method, head = _call_first_supported(
+        ["chain.getHead", "chain.getTip", "chain.getHeight"],
+        [],
+    )
+    if head_method == "chain.getHeight":
+        head = {"height": head} if head is not None else {}
+    if not head_method:
+        head = {
+            "unavailable": True,
+            "reason": "no known chain head RPC methods enabled",
+        }
+
+    sync_method, sync = _call_first_supported(
+        ["sync.getStatus", "sync.dump", "sync.status"],
+        [],
+    )
+    peers_method, peers = _call_first_supported(
+        ["net.peers", "net.getPeers", "peer.list", "p2p.peers"],
+        [],
+    )
+
+    status = {
+        "rpc_url": _RPC_CLIENT.rpc_url,
+        "head": _normalize_head(head) if head_method else head,
+        "sync": _normalize_sync(sync) if sync_method else {
+            "unavailable": True,
+            "reason": "no known sync RPC methods enabled",
+        },
+        "peers": _normalize_peers(peers) if peers_method else {
+            "unavailable": True,
+            "reason": "no known peer RPC methods enabled",
+        },
+    }
+
+    status["connectivity"] = _build_connectivity(status.get("peers", {}))
+
+    return ConsoleResult(ok=True, output=_pretty_json(status), method="node.status")
+
+
+def _execute_peers() -> ConsoleResult:
+    if _RPC_CLIENT is None:
+        return ConsoleResult(ok=False, output="RPC client is not available.")
+
+    method, peers = _call_first_supported(
+        ["net.peers", "net.getPeers", "peer.list", "p2p.peers"],
+        [],
+    )
+    if not method:
+        return ConsoleResult(
+            ok=False,
+            output="Peer RPC methods are not enabled in this node build.",
+        )
+
+    normalized = _normalize_peers(peers)
+    table = _format_peers_table(normalized)
+    output = "\n".join([table, "", "JSON:", _pretty_json(normalized)])
+    return ConsoleResult(ok=True, output=output, method=method)
+
+
+def _execute_sync_dump() -> ConsoleResult:
+    if _RPC_CLIENT is None:
+        return ConsoleResult(ok=False, output="RPC client is not available.")
+
+    method, result = _call_first_supported(["sync.dump"], [])
+    if not method:
+        method, result = _call_first_supported(["sync.getStatus", "sync.status"], [True])
+    if not method:
+        return ConsoleResult(
+            ok=False,
+            output="Sync debug RPC methods are not enabled in this node build.",
+        )
+
+    output = "\n".join(
+        [
+            f"RPC method: {method}",
+            "Result:",
+            _pretty_json(result),
+        ]
+    )
+    return ConsoleResult(ok=True, output=output, method=method)
+
+
+def _execute_peer_bootstrap(args: list[str]) -> ConsoleResult:
+    if _RPC_CLIENT is None:
+        return ConsoleResult(ok=False, output="RPC client is not available.")
+
+    method, result = _call_first_supported(
+        ["net.bootstrap", "peer.bootstrap", "net.addPeer", "peer.add"],
+        [args[0]] if args else [],
+    )
+    if not method:
+        return ConsoleResult(
+            ok=False,
+            output="Peer management RPC methods are not enabled in this node build.",
+        )
+    return ConsoleResult(ok=True, output=_format_result(method, args or [], result), method=method)
+
+
+def _execute_peer_add(address: str) -> ConsoleResult:
+    return _execute_peer_bootstrap([address])
 
 
 def _format_result(method: str, params: Any, result: Any) -> str:
@@ -238,6 +354,156 @@ def _pretty_json(value: Any) -> str:
     if value is None:
         return "(no result)"
     return str(value)
+
+
+def _call_first_supported(methods: list[str], params: Any) -> Tuple[Optional[str], Any]:
+    if _RPC_CLIENT is None:
+        return None, None
+
+    supported = _RPC_CLIENT.ensure_methods()
+    cache_source = getattr(_RPC_CLIENT, "_methods_cache_source", None)
+
+    for method in methods:
+        if method not in supported and cache_source != "probe":
+            continue
+        try:
+            result = _RPC_CLIENT.call(method, params)
+            return method, result
+        except Exception as exc:
+            code, _ = _extract_rpc_error_details(exc, str(exc))
+            if method not in supported and cache_source == "probe" and code == -32601:
+                continue
+            logger.debug("RPC method %s failed: %s", method, exc)
+            continue
+    return None, None
+
+
+def _normalize_head(head: Any) -> dict[str, Any]:
+    if not isinstance(head, dict):
+        return {}
+    height = head.get("height")
+    if height is None:
+        height = head.get("number")
+    return {
+        "height": height,
+        "hash": head.get("hash") or head.get("blockHash") or head.get("block_hash"),
+    }
+
+
+def _normalize_sync(sync: Any) -> dict[str, Any]:
+    if not isinstance(sync, dict):
+        return {}
+    return {
+        "phase": sync.get("phase") or sync.get("stage") or sync.get("state"),
+        "best_peer_head": (
+            sync.get("best_peer_head")
+            or sync.get("bestPeerHead")
+            or sync.get("best_peer_height")
+        ),
+        "in_flight": sync.get("in_flight") or sync.get("inFlight") or sync.get("inflight"),
+        "last_error": sync.get("last_error") or sync.get("lastError") or sync.get("error"),
+    }
+
+
+def _normalize_peers(peers: Any) -> dict[str, Any]:
+    peer_list: list[dict[str, Any]] = []
+    if isinstance(peers, list):
+        peer_list = [p for p in peers if isinstance(p, dict)]
+    elif isinstance(peers, dict):
+        if isinstance(peers.get("peers"), list):
+            peer_list = [p for p in peers["peers"] if isinstance(p, dict)]
+        elif isinstance(peers.get("result"), list):
+            peer_list = [p for p in peers["result"] if isinstance(p, dict)]
+
+    inbound = 0
+    outbound = 0
+    for peer in peer_list:
+        direction = peer.get("direction") or peer.get("dir")
+        if isinstance(direction, str):
+            if direction.lower().startswith("in"):
+                inbound += 1
+            elif direction.lower().startswith("out"):
+                outbound += 1
+        else:
+            if peer.get("inbound") or peer.get("isInbound") or peer.get("inbound_only"):
+                inbound += 1
+            if peer.get("outbound") or peer.get("isOutbound") or peer.get("outbound_only"):
+                outbound += 1
+
+    sample = peer_list[:5]
+    return {
+        "total": len(peer_list),
+        "inbound": inbound,
+        "outbound": outbound,
+        "sample": sample,
+    }
+
+
+def _format_peers_table(peers: dict[str, Any]) -> str:
+    sample = peers.get("sample") or []
+    lines = [
+        f"Peers: total={peers.get('total', 0)} inbound={peers.get('inbound', 0)} outbound={peers.get('outbound', 0)}",
+        "id | address | direction",
+        "-" * 60,
+    ]
+    for peer in sample:
+        if not isinstance(peer, dict):
+            continue
+        peer_id = peer.get("id") or peer.get("peer_id") or peer.get("peerId") or "?"
+        address = peer.get("address") or peer.get("addr") or peer.get("multiaddr") or "?"
+        direction = peer.get("direction") or ("inbound" if peer.get("inbound") else "outbound" if peer.get("outbound") else "?")
+        lines.append(f"{peer_id} | {address} | {direction}")
+    return "\n".join(lines)
+
+
+def _build_connectivity(peers: dict[str, Any]) -> dict[str, Any]:
+    connectivity: dict[str, Any] = {}
+
+    listen_method, listen = _call_first_supported(
+        [
+            "net.listening",
+            "net.listen",
+            "net.listenAddr",
+            "net.getListenAddr",
+            "net.getListenAddresses",
+            "p2p.listening",
+            "p2p.listen",
+        ],
+        [],
+    )
+    if listen_method:
+        connectivity["listening"] = {"method": listen_method, "value": listen}
+
+    bootstrap_method, bootstrap = _call_first_supported(
+        ["net.getBootstrapSeeds", "net.bootstrap", "peer.bootstrap", "p2p.bootstrap"],
+        [],
+    )
+    if bootstrap_method:
+        connectivity["bootstrap"] = {"method": bootstrap_method, "value": bootstrap}
+
+    last_activity = _extract_last_peer_activity(peers.get("sample", []))
+    if last_activity:
+        connectivity["last_peer_activity"] = last_activity
+
+    return connectivity
+
+
+def _extract_last_peer_activity(peers: list[Any]) -> Optional[Any]:
+    last_activity = None
+    for peer in peers:
+        if not isinstance(peer, dict):
+            continue
+        activity = (
+            peer.get("last_activity")
+            or peer.get("lastActivity")
+            or peer.get("last_seen")
+            or peer.get("lastSeen")
+        )
+        if activity is None:
+            continue
+        if last_activity is None or str(activity) > str(last_activity):
+            last_activity = activity
+    return last_activity
 
 
 def _contains_disallowed_args(command: str) -> bool:

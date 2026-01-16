@@ -6,7 +6,10 @@ be used to connect to remote nodes.
 
 from __future__ import annotations
 
+import ast
+import json
 import logging
+import time
 from typing import Any, Dict, Optional
 
 try:
@@ -56,6 +59,9 @@ class LocalRpcClient:
         self.auth_token = auth_token
         self.timeout = timeout
         self._request_id = 0
+        self._methods_cache: Optional[set[str]] = None
+        self._methods_cache_expires_at = 0.0
+        self._methods_cache_source: Optional[str] = None
         
         # Build RPC URL - always localhost
         self.rpc_url = f"http://127.0.0.1:{port}/rpc"
@@ -65,6 +71,71 @@ class LocalRpcClient:
             raise ValueError(f"Invalid localhost URL: {self.rpc_url}")
         
         logger.debug(f"LocalRpcClient initialized: {self.rpc_url}")
+
+    def ensure_methods(self) -> set[str]:
+        """Ensure the supported RPC methods list is populated and fresh."""
+        now = time.time()
+        if self._methods_cache and now < self._methods_cache_expires_at:
+            return self._methods_cache
+
+        methods = self.discover_methods()
+        self._methods_cache = methods
+        self._methods_cache_expires_at = now + 60.0
+        logger.info(
+            "RPC method discovery (%s): %s",
+            self.rpc_url,
+            ", ".join(sorted(methods)) if methods else "(none)",
+        )
+        return methods
+
+    def supports(self, method: str) -> bool:
+        """Return True if a method is supported based on cached discovery."""
+        return method in self.ensure_methods()
+
+    def discover_methods(self) -> set[str]:
+        """Discover supported RPC methods via discovery calls or probing."""
+        discovery_methods = ["rpc.discover", "rpc.methods", "rpc.listMethods", "rpc.help"]
+        for discovery in discovery_methods:
+            try:
+                result = self._call(discovery, [])
+            except Exception as exc:
+                if _rpc_error_code(exc) == -32601:
+                    continue
+                logger.debug("RPC discovery call %s failed: %s", discovery, exc)
+                continue
+
+            methods = _extract_methods(result)
+            if methods:
+                self._methods_cache_source = "discovery"
+                return methods
+
+        self._methods_cache_source = "probe"
+        return self._probe_methods()
+
+    def _probe_methods(self) -> set[str]:
+        probe_methods = [
+            "chain.getHead",
+            "sync.getStatus",
+            "sync.dump",
+            "net.peers",
+            "net.getPeers",
+            "peer.list",
+            "p2p.peers",
+            "chain.getHeight",
+            "chain.getTip",
+            "state.getBalance",
+        ]
+        supported: set[str] = set()
+        for method in probe_methods:
+            try:
+                self._call(method, [])
+            except Exception as exc:
+                if _rpc_error_code(exc) == -32601:
+                    continue
+                supported.add(method)
+                continue
+            supported.add(method)
+        return supported
     
     def _build_headers(self) -> Dict[str, str]:
         """Build request headers including auth token if present."""
@@ -191,14 +262,24 @@ class LocalRpcClient:
         Returns:
             SyncStatus object with current sync state
         """
+        head = {}
         try:
-            # Try the dedicated sync status method
+            head = self.get_chain_head()
+        except Exception as exc:
+            logger.debug(f"get_chain_head failed during sync status: {exc}")
+
+        head_height = head.get("number", 0) or head.get("height", 0)
+        head_height = head_height if head_height is not None else 0
+
+        try:
             result = self._call("chain.getSyncStatus", [])
             if result:
+                best_height = result.get("highestBlock", 0) or result.get("best_height", 0)
+                best_height = best_height if best_height is not None else head_height
                 return SyncStatus(
                     syncing=result.get("syncing", False),
-                    current_height=result.get("currentBlock", 0) or result.get("current_height", 0),
-                    best_height=result.get("highestBlock", 0) or result.get("best_height", 0),
+                    current_height=head_height or result.get("currentBlock", 0) or result.get("current_height", 0),
+                    best_height=best_height,
                     phase=result.get("phase", "idle"),
                     in_flight=result.get("in_flight", 0),
                     queued=result.get("queued", 0),
@@ -208,21 +289,15 @@ class LocalRpcClient:
                     last_progress=result.get("last_progress"),
                     last_error=result.get("last_error"),
                 )
-        except Exception as e:
-            logger.debug(f"getSyncStatus failed: {e}")
-        
-        # Fallback: just return head info
-        try:
-            head = self.get_chain_head()
-            height = head.get("number", 0) or head.get("height", 0)
-            return SyncStatus(
-                syncing=False,
-                current_height=height,
-                best_height=height,
-                phase="synced",
-            )
-        except Exception:
-            return SyncStatus(syncing=False)
+        except Exception as exc:
+            logger.debug(f"getSyncStatus failed: {exc}")
+
+        return SyncStatus(
+            syncing=False,
+            current_height=head_height,
+            best_height=head_height,
+            phase="synced" if head_height else "idle",
+        )
     
     def get_balance(self, address: str) -> Optional[int]:
         """Get balance for an address.
@@ -311,3 +386,40 @@ class LocalRpcClient:
         except Exception:
             pass
         return 0
+
+
+def _extract_methods(result: Any) -> set[str]:
+    if not result:
+        return set()
+    if isinstance(result, list):
+        return {item for item in result if isinstance(item, str)}
+    if isinstance(result, dict):
+        methods: set[str] = set()
+        if isinstance(result.get("methods"), list):
+            methods.update(item for item in result["methods"] if isinstance(item, str))
+        methods.update(item for item in result.keys() if isinstance(item, str))
+        for value in result.values():
+            if isinstance(value, list):
+                methods.update(item for item in value if isinstance(item, str))
+        return methods
+    return set()
+
+
+def _rpc_error_code(exc: Exception) -> Optional[int]:
+    if not isinstance(exc, LocalRpcError):
+        return None
+    message = str(exc)
+    if not message.startswith("RPC error:"):
+        return None
+    payload = message.replace("RPC error:", "", 1).strip()
+    try:
+        data = json.loads(payload)
+    except json.JSONDecodeError:
+        try:
+            data = ast.literal_eval(payload)
+        except Exception:
+            return None
+    if isinstance(data, dict):
+        code = data.get("code")
+        return int(code) if isinstance(code, (int, float)) else None
+    return None

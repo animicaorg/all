@@ -48,6 +48,7 @@ class NodeBackend(QObject):
     nodeError = Signal(str)
     syncStatus = Signal(object)
     walletUpdated = Signal(object)
+    rpcChanged = Signal(object)
 
     def __init__(self, node_manager: LocalNodeManager, parent: Optional[QObject] = None):
         super().__init__(parent)
@@ -109,10 +110,15 @@ class NodeBackend(QObject):
         self._rpc_client = None
         self._sync_timer.stop()
         self.nodeError.emit(error)
+        self.rpcChanged.emit(None)
 
     def _set_rpc_client(self, rpc_client: LocalRpcClient) -> None:
+        previous_url = self._rpc_client.rpc_url if self._rpc_client else None
         self._rpc_client = rpc_client
+        if previous_url != rpc_client.rpc_url:
+            logger.info("RPC client updated: %s", rpc_client.rpc_url)
         self.nodeReady.emit(rpc_client)
+        self.rpcChanged.emit(rpc_client)
         self._sync_timer.start()
         self._emit_sync_status()
 
@@ -133,3 +139,4 @@ class NodeBackend(QObject):
             self._rpc_client = None
             self._sync_timer.stop()
             self.nodeError.emit("Node is not ready")
+            self.rpcChanged.emit(None)
