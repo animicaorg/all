@@ -1650,6 +1650,7 @@ class P2PService:
             ),
             asyncio.create_task(self._score_decay_loop(), name="p2p.score_decay"),
             asyncio.create_task(self._metrics_loop(), name="p2p.metrics"),
+            asyncio.create_task(self._task_watchdog_loop(), name="p2p.task_watchdog"),
             asyncio.create_task(self._startup_sync_kick(), name="p2p.startup_sync"),
         ]
         self._txrelay_inv_flush_task = asyncio.create_task(
@@ -2583,6 +2584,85 @@ class P2PService:
                 if not self._running:
                     return
                 self.decay_scores()
+        except asyncio.CancelledError:
+            return
+
+    async def _task_watchdog_loop(self) -> None:
+        """
+        Monitor critical tasks and restart them if they die unexpectedly.
+        
+        This watchdog ensures that critical background tasks like sync continue
+        running even if they crash due to unexpected errors. It checks each task
+        periodically and restarts any that have completed abnormally.
+        """
+        # Map of task names to their factory functions
+        critical_tasks = {
+            "p2p.sync": lambda: self._sync_loop(),
+            "p2p.head_watch": lambda: self._head_watch_loop(),
+        }
+        
+        # Track which tasks we're monitoring
+        monitored_tasks: dict[str, asyncio.Task] = {}
+        
+        # Initialize monitored tasks by finding them in the existing task list
+        for task in self._tasks:
+            task_name = task.get_name()
+            if task_name in critical_tasks:
+                monitored_tasks[task_name] = task
+                log.info(f"Task watchdog monitoring: {task_name}")
+        
+        try:
+            while self._running:
+                await asyncio.sleep(5.0)  # Check every 5 seconds
+                
+                if not self._running:
+                    return
+                
+                # Check each monitored task
+                for task_name, task in list(monitored_tasks.items()):
+                    if task.done():
+                        # Task completed - check if it was an error or clean shutdown
+                        try:
+                            exception = task.exception()
+                            if exception is not None:
+                                # Task crashed with an exception
+                                log.error(
+                                    f"Critical task {task_name} crashed - restarting",
+                                    extra={
+                                        "task_name": task_name,
+                                        "error_type": type(exception).__name__,
+                                        "error": str(exception),
+                                    },
+                                    exc_info=exception,
+                                )
+                                
+                                # Restart the task
+                                if task_name in critical_tasks and self._running:
+                                    new_task = asyncio.create_task(
+                                        critical_tasks[task_name](),
+                                        name=task_name
+                                    )
+                                    monitored_tasks[task_name] = new_task
+                                    
+                                    # Update the main task list
+                                    for i, t in enumerate(self._tasks):
+                                        if t.get_name() == task_name:
+                                            self._tasks[i] = new_task
+                                            break
+                                    
+                                    log.info(f"Restarted critical task: {task_name}")
+                            else:
+                                # Task completed cleanly (possibly during shutdown)
+                                log.debug(f"Task {task_name} completed cleanly")
+                        except asyncio.CancelledError:
+                            # Task was cancelled (expected during shutdown)
+                            pass
+                        except Exception as e:
+                            log.error(
+                                f"Error checking task {task_name}",
+                                extra={"error": str(e)},
+                                exc_info=True,
+                            )
         except asyncio.CancelledError:
             return
 
@@ -7653,11 +7733,16 @@ class P2PService:
     # ---------------------------------------------------------------------
 
     async def _head_watch_loop(self) -> None:
+        """
+        Monitor head changes and propagate network updates.
+        
+        Enhanced with comprehensive exception handling to prevent crashes.
+        """
         last: Optional[str] = None
         last_height = 0
         last_network_best = 0
-        try:
-            while self._running:
+        while self._running:
+            try:
                 await asyncio.sleep(1.0)
                 height, hh = self._local_head()
                 if hh and hh != last:
@@ -7686,8 +7771,22 @@ class P2PService:
                     )
                     # Trigger re-handshake or send update to all peers
                     await self._propagate_network_height_update(current_network_best)
-        except asyncio.CancelledError:
-            return
+            except asyncio.CancelledError:
+                # Clean shutdown requested
+                log.info("Head watch loop cancelled - shutting down")
+                return
+            except Exception as e:
+                # CRITICAL: Catch ALL exceptions to prevent head watch loop from dying
+                log.error(
+                    "Head watch loop iteration failed - continuing",
+                    extra={
+                        "error_type": type(e).__name__,
+                        "error": str(e),
+                    },
+                    exc_info=True,
+                )
+                # Brief delay to avoid tight error loops
+                await asyncio.sleep(0.5)
 
     def _header_meta(self, h: bytes) -> Optional[Tuple[int, int]]:
         cached = self._sync_headers.get(h)
@@ -10588,8 +10687,15 @@ class P2PService:
             return result
 
     async def _sync_loop(self) -> None:
-        try:
-            while self._running:
+        """
+        Main sync loop with comprehensive exception handling.
+        
+        This loop continues running through any exceptions to ensure sync
+        never gets permanently stuck. All exceptions are caught, logged,
+        and the loop continues after a brief delay.
+        """
+        while self._running:
+            try:
                 if not self._sync_enabled:
                     # Adaptive backoff when disabled - reduced CPU usage (10x longer tick = 90% less CPU)
                     await asyncio.sleep(0.1 if self._sync_tick_sec >= 0.01 else self._sync_tick_sec * 10)
@@ -11208,8 +11314,24 @@ class P2PService:
                 # Single call is sufficient: _schedule_block_requests() handles all cases
                 # internally (seeding from headers, checking inflight, respecting limits)
                 await self._schedule_block_requests()
-        except asyncio.CancelledError:
-            return
+            except asyncio.CancelledError:
+                # Clean shutdown requested
+                log.info("Sync loop cancelled - shutting down")
+                return
+            except Exception as e:
+                # CRITICAL: Catch ALL exceptions to prevent sync loop from dying
+                # This ensures sync continues working through any transient errors
+                log.error(
+                    "Sync loop iteration failed - continuing",
+                    extra={
+                        "error_type": type(e).__name__,
+                        "error": str(e),
+                        "phase": self._sync_phase,
+                    },
+                    exc_info=True,
+                )
+                # Brief delay to avoid tight error loops
+                await asyncio.sleep(0.5)
 
     def _sync_phase_reason(self, *, best_header_height: int, best_block_height: int) -> str:
         if self._sync_block_stalled_reason:
