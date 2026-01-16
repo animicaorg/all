@@ -132,15 +132,21 @@ setup_python_build_env
 log "Installing build dependencies..."
 pip_install "$PY" pip setuptools wheel pyinstaller pyinstaller-hooks-contrib
 
-# Determine Python project directory using shared helper
-# The function provides detailed error messages if not found
-PYTHON_PKG_DIR="$(find_python_package_dir "$REPO_ROOT")" || \
-    die "Python project not found. Please ensure the repository contains a valid pyproject.toml at 'python/' or repo root."
+# Determine Python project directories
+NODE_PKG_DIR="$REPO_ROOT"
+PYTHON_PKG_DIR="$REPO_ROOT/python"
 
-log "Using Python project root: $PYTHON_PKG_DIR"
+validate_python_package "$NODE_PKG_DIR" "Animica node package"
+validate_python_package "$PYTHON_PKG_DIR" "Animica CLI package"
+
+log "Using node package root: $NODE_PKG_DIR"
+log "Using CLI package root: $PYTHON_PKG_DIR"
 
 # Install repo in editable mode (ensures all dependencies are available)
-log "Installing Animica in editable mode..."
+log "Installing Animica node package in editable mode..."
+"$PY" -m pip install --quiet -e "$NODE_PKG_DIR"
+
+log "Installing Animica CLI package in editable mode..."
 "$PY" -m pip install --quiet -e "$PYTHON_PKG_DIR"
 
 # Install node runtime dependencies (FastAPI stack, etc.)
@@ -154,6 +160,10 @@ fi
 
 log "Verifying FastAPI import..."
 "$PY" -c "import fastapi" >/dev/null 2>&1 || die "FastAPI import failed in build venv"
+
+log "Verifying node package imports..."
+"$PY" -c "import animica.cli.main; import consensus.state; import rpc.server; import p2p; import consensus; import execution; import mining; import wallet; import mempool; import randomness; print('imports ok')" \
+    >/dev/null 2>&1 || die "Node package import precheck failed"
 
 # ============================================================================
 # Determine build method (PyInstaller for Python-based node)
@@ -176,11 +186,12 @@ def _run_preflight_imports() -> int:
         "starlette",
         "pydantic",
         "uvicorn",
+        "animica.cli.main",
         "rpc.server",
         "rpc.jsonrpc",
         "rpc.ws",
         "rpc.methods",
-        "core.state",
+        "consensus.state",
         "core.db",
         "mempool",
         "p2p",
@@ -188,6 +199,8 @@ def _run_preflight_imports() -> int:
         "execution",
         "mining",
         "wallet",
+        "randomness",
+        "pq",
     ]
     for module in modules:
         import_module(module)
@@ -233,98 +246,57 @@ log "Creating PyInstaller spec: $SPEC_FILE"
 cat > "$SPEC_FILE" <<'SPEC_EOF'
 # -*- mode: python ; coding: utf-8 -*-
 from pathlib import Path
-from PyInstaller.utils.hooks import collect_all
+from PyInstaller.utils.hooks import collect_all, collect_data_files, collect_submodules
 
 block_cipher = None
 
-# Hidden imports for all node functionality
-hiddenimports = [
-    'animica',
-    'animica.cli',
-    'animica.cli.main',
-    'animica.cli.node',
-    'animica.cli.mining',
-    'animica.cli.wallet',
-    'animica.cli.tx',
-    'animica.cli.chain',
-    'animica.cli.rpc',
-    'animica.cli.p2p',
-    'animica.cli.peer',
-    'animica.cli.sync',
-    'animica.cli.mempool',
-    'animica.cli.network',
-    'animica.cli.key',
-    'animica.cli.balance',
-    'animica.config',
-    'animica.bootstrap',
-    'animica.seeds',
-    'core',
-    'core.db',
-    'core.state',
-    'consensus',
-    'execution',
-    'mining',
-    'mining.cli',
-    'mining.cli.miner',
-    'p2p',
-    'p2p.protocol',
-    'p2p.discovery',
-    'mempool',
-    'rpc',
-    'rpc.server',
-    'rpc.jsonrpc',
-    'rpc.ws',
-    'rpc.openrpc_mount',
-    'rpc.metrics',
-    'rpc.middleware',
-    'rpc.methods',
-    'rpc.methods.bootstrap',
-    'rpc.methods.net',
-    'rpc.methods.node',
-    'rpc.methods.tx',
-    'rpc.methods.receipt',
-    'rpc.methods.state',
-    'rpc.methods.chain',
-    'rpc.methods.sync',
-    'rpc.methods.miner',
-    'rpc.methods.mempool',
-    'rpc.methods.ptl',
-    'rpc.methods.da',
-    'rpc.methods.faucet',
-    'rpc.methods.p2p',
-    'rpc.methods.snapshot',
-    'rpc.methods.marketplace',
-    'rpc.methods.admin',
-    'wallet',
-    'pq',
-    'pq.dilithium',
-    'httpx',
-    'uvicorn',
-    'uvicorn.logging',
-    'uvicorn.loops.auto',
-    'uvicorn.protocols.http.auto',
-    'uvicorn.protocols.websockets.auto',
-    'fastapi',
-    'starlette',
-    'starlette.middleware',
-    'starlette.middleware.cors',
-    'starlette.responses',
-    'starlette.routing',
-    'pydantic',
-    'pydantic_core',
-    'typing_extensions',
-    'anyio',
-    'sniffio',
-    'h11',
-    'httpcore',
-    'httptools',
-    'websockets',
-    'watchfiles',
-    'typer',
+internal_packages = [
+    "animica",
+    "core",
+    "rpc",
+    "p2p",
+    "consensus",
+    "execution",
+    "mining",
+    "wallet",
+    "mempool",
+    "pq",
+    "randomness",
 ]
 
+hiddenimports = []
 datas = []
 binaries = []
+
+for package in internal_packages:
+    hiddenimports += collect_submodules(package)
+    datas += collect_data_files(package, include_py_files=True)
+
+hiddenimports += [
+    "httpx",
+    "uvicorn",
+    "uvicorn.logging",
+    "uvicorn.loops.auto",
+    "uvicorn.protocols.http.auto",
+    "uvicorn.protocols.websockets.auto",
+    "fastapi",
+    "starlette",
+    "starlette.middleware",
+    "starlette.middleware.cors",
+    "starlette.responses",
+    "starlette.routing",
+    "pydantic",
+    "pydantic_core",
+    "typing_extensions",
+    "anyio",
+    "sniffio",
+    "h11",
+    "httpcore",
+    "httptools",
+    "websockets",
+    "watchfiles",
+    "typer",
+]
 
 for package in ('fastapi', 'starlette', 'uvicorn'):
     pkg_datas, pkg_binaries, pkg_hidden = collect_all(package)
@@ -376,7 +348,7 @@ SPEC_EOF
 
 # Replace placeholders
 sed -i.bak "s|ENTRY_POINT_PLACEHOLDER|$ENTRY_POINT|g" "$SPEC_FILE"
-sed -i.bak "s|REPO_ROOT_PLACEHOLDER|$REPO_ROOT|g" "$SPEC_FILE"
+sed -i.bak "s|REPO_ROOT_PLACEHOLDER|$NODE_PKG_DIR|g" "$SPEC_FILE"
 rm -f "$SPEC_FILE.bak"
 
 # ============================================================================
