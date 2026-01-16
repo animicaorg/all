@@ -271,6 +271,11 @@ class MinerRunner:
         logger.info("Miner thread started")
         
         try:
+            # Import freeze utilities for proper subprocess handling
+            from animica_miner_gui.backend.freeze_utils import (
+                is_frozen, get_python_executable, get_bundled_bin_path
+            )
+            
             # Get configuration
             payout_address = config.get('miner', {}).get('payout_address')
             if not payout_address:
@@ -286,60 +291,120 @@ class MinerRunner:
             threads = config.get('cpu', {}).get('threads', 1)
             blocks_per_batch = config.get('miner', {}).get('blocks_per_batch', 10)
             
-            # Find the repository root (where mining module exists)
-            repo_root = None
-            try:
-                import mining
-                mining_path = Path(mining.__file__).parent.parent.resolve()
-                if (mining_path / "mining").is_dir():
-                    repo_root = str(mining_path)
-                    logger.info(f"Found mining module at: {repo_root}")
-            except ImportError:
-                pass
-            
-            if not repo_root:
-                current_file = Path(__file__).resolve()
-                potential_root = current_file.parent.parent.parent.parent.parent
-                if (potential_root / "mining" / "__init__.py").is_file():
-                    repo_root = str(potential_root)
-                    logger.info(f"Found repository root at: {repo_root}")
-            
-            # Prepare environment
-            current_pythonpath = os.environ.get('PYTHONPATH', '')
-            if repo_root:
-                if current_pythonpath:
-                    pythonpath = f"{repo_root}{os.pathsep}{current_pythonpath}"
+            # Determine how to run the miner based on frozen state
+            if is_frozen():
+                # Frozen mode: NEVER use sys.executable (would relaunch GUI)
+                # Instead, use the bundled CLI tool or animica binary
+                logger.info("Running in frozen mode, using bundled binaries")
+                
+                # Try to find bundled animica-node or animica CLI
+                node_binary = get_bundled_bin_path("animica-node")
+                if node_binary:
+                    logger.info(f"Using bundled node binary: {node_binary}")
+                    cmd = [
+                        str(node_binary), "mining", "mine-blocks",
+                        "--address", payout_address,
+                        "--count", str(blocks_per_batch),
+                        "--threads", str(threads),
+                        "--rpc-url", rpc_url,
+                        "--allow-offline-mining",
+                        "--allow-unsynced"
+                    ]
                 else:
-                    pythonpath = repo_root
+                    # Fallback: try bundled animica CLI
+                    cli_binary = get_bundled_bin_path("animica")
+                    if cli_binary:
+                        logger.info(f"Using bundled CLI: {cli_binary}")
+                        cmd = [
+                            str(cli_binary), "mining", "mine-blocks",
+                            "--address", payout_address,
+                            "--count", str(blocks_per_batch),
+                            "--threads", str(threads),
+                            "--rpc-url", rpc_url,
+                            "--allow-offline-mining",
+                            "--allow-unsynced"
+                        ]
+                    else:
+                        # No bundled binary found
+                        error_msg = (
+                            "Mining not available: No bundled node binary found. "
+                            "Please ensure the application was built correctly with "
+                            "the node binary bundled inside."
+                        )
+                        logger.error(error_msg)
+                        self._emit_event(MiningEvent(
+                            event_type=EventType.ERROR,
+                            timestamp=time.time(),
+                            data={"error": error_msg}
+                        ))
+                        return
+                
+                minimal_env = {
+                    'PATH': os.environ.get('PATH', ''),
+                    'HOME': os.environ.get('HOME', ''),
+                    'USER': os.environ.get('USER', ''),
+                    'ANIMICA_PAYOUT_ADDRESS': payout_address
+                }
             else:
-                pythonpath = current_pythonpath
-                logger.warning("Could not locate repository root; mining module may not be found")
+                # Development mode: Use Python executable with mining module
+                logger.info("Running in development mode, using Python module")
+                
+                # Find the repository root (where mining module exists)
+                repo_root = None
+                try:
+                    import mining
+                    mining_path = Path(mining.__file__).parent.parent.resolve()
+                    if (mining_path / "mining").is_dir():
+                        repo_root = str(mining_path)
+                        logger.info(f"Found mining module at: {repo_root}")
+                except ImportError:
+                    pass
+                
+                if not repo_root:
+                    current_file = Path(__file__).resolve()
+                    potential_root = current_file.parent.parent.parent.parent.parent
+                    if (potential_root / "mining" / "__init__.py").is_file():
+                        repo_root = str(potential_root)
+                        logger.info(f"Found repository root at: {repo_root}")
+                
+                # Prepare environment
+                current_pythonpath = os.environ.get('PYTHONPATH', '')
+                if repo_root:
+                    if current_pythonpath:
+                        pythonpath = f"{repo_root}{os.pathsep}{current_pythonpath}"
+                    else:
+                        pythonpath = repo_root
+                else:
+                    pythonpath = current_pythonpath
+                    logger.warning("Could not locate repository root; mining module may not be found")
+                
+                minimal_env = {
+                    'PATH': os.environ.get('PATH', ''),
+                    'HOME': os.environ.get('HOME', ''),
+                    'USER': os.environ.get('USER', ''),
+                    'PYTHONPATH': pythonpath,
+                    'ANIMICA_PAYOUT_ADDRESS': payout_address
+                }
+                
+                logger.info(f"Subprocess PYTHONPATH: {pythonpath}")
+                
+                # Build command using get_python_executable (safe in dev mode)
+                py_exe = get_python_executable()
+                cmd = [
+                    py_exe, "-m", "mining.cli.miner", "mine-blocks",
+                    "--address", payout_address,
+                    "--count", str(blocks_per_batch),
+                    "--threads", str(threads),
+                    "--rpc-url", rpc_url,
+                    "--allow-offline-mining",
+                    "--allow-unsynced"
+                ]
             
-            minimal_env = {
-                'PATH': os.environ.get('PATH', ''),
-                'HOME': os.environ.get('HOME', ''),
-                'USER': os.environ.get('USER', ''),
-                'PYTHONPATH': pythonpath,
-                'ANIMICA_PAYOUT_ADDRESS': payout_address
-            }
-            
+            # Add wallet file to env if configured
             wallet_file = config.get('miner', {}).get('wallet_file')
             if wallet_file:
                 minimal_env['ANIMICA_WALLETS_FILE'] = wallet_file
                 logger.info(f"Using custom wallet file: {wallet_file}")
-            
-            logger.info(f"Subprocess PYTHONPATH: {pythonpath}")
-            
-            # Build command once outside the loop (optimization)
-            cmd = [
-                sys.executable, "-m", "mining.cli.miner", "mine-blocks",
-                "--address", payout_address,
-                "--count", str(blocks_per_batch),
-                "--threads", str(threads),
-                "--rpc-url", rpc_url,
-                "--allow-offline-mining",
-                "--allow-unsynced"
-            ]
             
             # Configurable retry delay (default: 2 seconds)
             retry_delay = config.get('miner', {}).get('retry_delay', 2.0)

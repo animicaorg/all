@@ -2,6 +2,12 @@
 # Build macOS executable for Animica Miner GUI
 # Creates a standalone .app bundle and DMG installer
 #
+# NOTE: This script is deprecated. Use the unified build system instead:
+#   ../../ops/build/build-miner-gui-macos.sh
+#
+# The unified scripts in ops/build/ bundle the node binary inside the .app
+# and include additional protections against macOS infinite spawn issues.
+#
 # Usage:
 #   ./build-scripts/build_macos.sh
 
@@ -16,38 +22,30 @@ die()  { err "$*"; exit 1; }
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"          # apps/miner-gui
 REPO_ROOT="$(cd "$APP_DIR/../.." && pwd)"        # repo root
-DIST_DIR="$APP_DIR/dist"
-BUILD_DIR="$APP_DIR/build"
-SPEC_FILE="$BUILD_DIR/animica-miner-gui-macos.spec"
-PYI_WORK="$BUILD_DIR/pyinstaller-work"
-RUNTIME_HOOK="$BUILD_DIR/qt_runtime_hook.py"
 
-# ---- Platform checks ----
-if [[ "$(uname -s)" != "Darwin" ]]; then
-  die "This script must be run on macOS"
+# ---- Show deprecation warning ----
+warn "========================================================================="
+warn "DEPRECATION NOTICE:"
+warn "This script is deprecated. Please use the unified build system instead:"
+warn "  $REPO_ROOT/ops/build/build-miner-gui-macos.sh"
+warn ""
+warn "The unified scripts bundle the node binary inside the .app and include"
+warn "protections against macOS infinite spawn issues."
+warn ""
+warn "See: ops/build/README.md for documentation"
+warn "========================================================================="
+warn ""
+warn "Delegating to unified build script in 3 seconds..."
+sleep 3
+
+# ---- Delegate to unified script ----
+UNIFIED_SCRIPT="$REPO_ROOT/ops/build/build-miner-gui-macos.sh"
+
+if [[ ! -x "$UNIFIED_SCRIPT" ]]; then
+    die "Unified build script not found or not executable: $UNIFIED_SCRIPT"
 fi
-command -v hdiutil >/dev/null 2>&1 || die "hdiutil not found (macOS tool)"
 
-# ---- Choose python (prefer venv) ----
-choose_python() {
-  if [[ -n "${VIRTUAL_ENV:-}" ]] && [[ -x "${VIRTUAL_ENV}/bin/python3" ]]; then
-    echo "${VIRTUAL_ENV}/bin/python3"; return
-  fi
-  if [[ -x "${REPO_ROOT}/.venv/bin/python3" ]]; then
-    echo "${REPO_ROOT}/.venv/bin/python3"; return
-  fi
-  command -v python3 >/dev/null 2>&1 || return 1
-  echo "$(command -v python3)"
-}
-PY="$(choose_python)" || die "Python 3 not found"
-
-PY_VERSION="$("$PY" --version 2>&1 | awk '{print $2}')"
-log "Using Python $PY_VERSION ($PY)"
-
-# ---- Clean previous builds ----
-log "Cleaning previous builds..."
-rm -rf "$DIST_DIR" "$BUILD_DIR"
-mkdir -p "$DIST_DIR" "$BUILD_DIR" "$PYI_WORK"
+exec "$UNIFIED_SCRIPT" --out-dir "$APP_DIR/dist" "$@"
 
 # ---- Install build tooling ----
 log "Installing PyInstaller tooling..."
