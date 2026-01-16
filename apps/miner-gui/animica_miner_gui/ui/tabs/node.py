@@ -11,7 +11,7 @@ Provides:
 import logging
 from typing import Optional, Callable
 
-from PySide6.QtCore import Qt, QTimer, Signal, QUrl
+from PySide6.QtCore import Qt, QTimer, Signal, QUrl, QEvent
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QApplication,
@@ -34,6 +34,11 @@ from animica_miner_gui.core.localnode import (
     SyncStatus,
 )
 from animica_miner_gui.core.localnode.console import ConsoleCommandExecutor
+from animica_miner_gui.backend.console_router import (
+    ConsoleResult,
+    run_console_command,
+    set_rpc_client,
+)
 from animica_miner_gui.backend.config import MiningAppConfig
 
 logger = logging.getLogger(__name__)
@@ -51,7 +56,8 @@ class NodeTab(QWidget):
         
         self.config = config
         self.node_manager = node_manager
-        self.console_executor: Optional[ConsoleCommandExecutor] = None
+        self.console_history: list[str] = []
+        self.console_history_index = 0
         
         self.setup_ui()
         
@@ -164,8 +170,9 @@ class NodeTab(QWidget):
         input_row = QHBoxLayout()
         input_row.addWidget(QLabel("Command:"))
         self.console_input = QLineEdit()
-        self.console_input.setPlaceholderText("Enter CLI command (without 'animica' prefix)...")
+        self.console_input.setPlaceholderText("Enter command (e.g. animica node status, rpc chain.getHead [])...")
         self.console_input.returnPressed.connect(self.execute_command)
+        self.console_input.installEventFilter(self)
         input_row.addWidget(self.console_input)
         
         self.exec_btn = QPushButton("Execute")
@@ -196,12 +203,7 @@ class NodeTab(QWidget):
                 self.console_output.append(f"<b style='color: green;'>✓ Node started successfully on port {status.port}</b>")
                 self.node_ready.emit()
                 
-                # Initialize console executor
-                if self.node_manager.rpc_url:
-                    self.console_executor = ConsoleCommandExecutor(
-                        rpc_url=self.node_manager.rpc_url,
-                        auth_token=self.node_manager.proc_manager.auth_token,
-                    )
+                set_rpc_client(self.node_manager.get_rpc_client())
             else:
                 error_msg = status.error or "Unknown error"
                 self.console_output.append(f"<b style='color: red;'>✗ Failed to start node: {error_msg}</b>")
@@ -222,7 +224,7 @@ class NodeTab(QWidget):
         try:
             self.node_manager.stop()
             self.console_output.append("<b style='color: orange;'>Node stopped</b>")
-            self.console_executor = None
+            set_rpc_client(None)
             self.node_stopped.emit()
         
         except Exception as e:
@@ -243,12 +245,7 @@ class NodeTab(QWidget):
             if status.is_ready:
                 self.console_output.append(f"<b style='color: green;'>✓ Node restarted on port {status.port}</b>")
                 
-                # Reinitialize console executor
-                if self.node_manager.rpc_url:
-                    self.console_executor = ConsoleCommandExecutor(
-                        rpc_url=self.node_manager.rpc_url,
-                        auth_token=self.node_manager.proc_manager.auth_token,
-                    )
+                set_rpc_client(self.node_manager.get_rpc_client())
             else:
                 error_msg = status.error or "Unknown error"
                 self.console_output.append(f"<b style='color: red;'>✗ Failed to restart: {error_msg}</b>")
@@ -263,7 +260,7 @@ class NodeTab(QWidget):
     
     def execute_command(self) -> None:
         """Execute a CLI command."""
-        if not self.console_executor or not self.node_manager.is_ready:
+        if not self.node_manager.is_ready:
             self.console_output.append("<b style='color: red;'>✗ Node must be running to execute commands</b>")
             return
         
@@ -285,22 +282,13 @@ class NodeTab(QWidget):
             if reply != QMessageBox.Yes:
                 return
         
-        self.console_output.append(f"<b>$ animica {command}</b>")
+        self.console_output.append(f"<b>$ {command}</b>")
         self.console_input.clear()
         self.exec_btn.setEnabled(False)
         
         try:
-            returncode, stdout, stderr = self.console_executor.execute(command)
-            
-            if returncode == 0:
-                if stdout:
-                    self.console_output.append(f"<pre>{stdout}</pre>")
-                else:
-                    self.console_output.append("<i>(no output)</i>")
-            else:
-                self.console_output.append(f"<b style='color: red;'>Command failed (exit {returncode})</b>")
-                if stderr:
-                    self.console_output.append(f"<pre style='color: red;'>{stderr}</pre>")
+            result = run_console_command(command)
+            self._append_console_result(result, command)
         
         except Exception as e:
             logger.error(f"Error executing command: {e}")
@@ -344,6 +332,7 @@ class NodeTab(QWidget):
         
         # Update sync status
         if status.is_ready:
+            set_rpc_client(self.node_manager.get_rpc_client())
             sync_status = self.node_manager.get_sync_status()
             if sync_status:
                 self.current_height_label.setText(str(sync_status.current_height))
@@ -363,6 +352,50 @@ class NodeTab(QWidget):
             self.phase_label.setText("N/A")
             self.sync_progress.setValue(0)
             self.phase_label.setStyleSheet("")
+
+    def eventFilter(self, obj, event):
+        if obj is self.console_input and event.type() == QEvent.KeyPress:
+            if event.key() == Qt.Key_Up:
+                self._navigate_history(-1)
+                return True
+            if event.key() == Qt.Key_Down:
+                self._navigate_history(1)
+                return True
+        return super().eventFilter(obj, event)
+
+    def _navigate_history(self, direction: int) -> None:
+        if not self.console_history:
+            return
+
+        if direction < 0 and self.console_history_index > 0:
+            self.console_history_index -= 1
+        elif direction > 0 and self.console_history_index < len(self.console_history):
+            self.console_history_index += 1
+
+        if self.console_history_index >= len(self.console_history):
+            self.console_input.setText("")
+            return
+
+        self.console_input.setText(self.console_history[self.console_history_index])
+
+    def _append_console_result(self, result: ConsoleResult, command: str) -> None:
+        import html
+
+        if result.ok:
+            output = html.escape(result.output)
+            self.console_output.append(f"<pre>{output}</pre>")
+        else:
+            output = html.escape(result.output)
+            self.console_output.append(f"<pre style='color: red;'>{output}</pre>")
+
+        self._record_history(command)
+
+    def _record_history(self, command: str) -> None:
+        if not command:
+            return
+        if not self.console_history or self.console_history[-1] != command:
+            self.console_history.append(command)
+        self.console_history_index = len(self.console_history)
 
     def show_node_failure_dialog(
         self,
