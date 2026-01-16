@@ -57,6 +57,12 @@ class MainWindow(QMainWindow):
         # Load configuration
         self.config = load_config()
         
+        # Initialize local node manager
+        from animica_miner_gui.core.localnode import LocalNodeManager
+        network = self.config.network.network_type.value  # mainnet, testnet, or devnet
+        preferred_port = self.config.network.local_rpc_port
+        self.node_manager = LocalNodeManager(network=network, preferred_port=preferred_port)
+        
         # Apply theme
         self.apply_theme()
         
@@ -75,10 +81,32 @@ class MainWindow(QMainWindow):
         self.update_timer.timeout.connect(self.update_ui)
         self.update_timer.start(1000)  # Update every second
         
-        # Auto-start mining if configured
+        # Start local node automatically
+        logger.info("Starting local node...")
+        QTimer.singleShot(500, self.start_local_node)  # Start after UI is ready
+        
+        # Auto-start mining if configured (after node is ready)
         if self.config.miner.auto_start:
-            logger.info("Auto-starting mining")
-            self.start_mining()
+            logger.info("Auto-start mining enabled (will start when node is ready)")
+    
+    def start_local_node(self) -> None:
+        """Start the local node in the background."""
+        try:
+            self.node_manager.start(ready_timeout=60.0)
+            logger.info(f"Local node ready on port {self.node_manager.port}")
+            
+            # Auto-start mining if configured
+            if self.config.miner.auto_start:
+                logger.info("Auto-starting mining")
+                QTimer.singleShot(2000, self.start_mining)  # Give node a moment to stabilize
+        except Exception as e:
+            logger.error(f"Failed to start local node: {e}")
+            QMessageBox.critical(
+                self,
+                "Node Startup Failed",
+                f"Failed to start local Animica node:\n\n{e}\n\n"
+                "The application will continue, but you'll need to start the node manually from the Node tab."
+            )
     
     def apply_theme(self) -> None:
         """Apply dark theme if enabled."""
@@ -145,16 +173,21 @@ class MainWindow(QMainWindow):
         # Create tab widget
         self.tabs = QTabWidget()
         
-        # Create tabs
-        self.dashboard_tab = DashboardTab(self.config)
+        # Create tabs - pass node_manager to tabs that need it
+        self.dashboard_tab = DashboardTab(self.config, self.node_manager)
         self.devices_tab = DevicesTab(self.config)
         self.pools_tab = PoolsTab(self.config)
-        self.wallet_tab = WalletTab(self.config)
+        self.wallet_tab = WalletTab(self.config, self.node_manager)
         self.config_tab = ConfigurationTab(self.config)
         self.logs_tab = LogsTab()
         self.stats_tab = StatsTab()
         
-        # Add tabs
+        # Create node tab
+        from animica_miner_gui.ui.tabs.node import NodeTab
+        self.node_tab = NodeTab(self.config, self.node_manager)
+        
+        # Add tabs - Node tab first for easy access
+        self.tabs.addTab(self.node_tab, "Node")
         self.tabs.addTab(self.dashboard_tab, "Dashboard")
         self.tabs.addTab(self.devices_tab, "Devices")
         self.tabs.addTab(self.pools_tab, "Pools/Modes")
@@ -383,10 +416,23 @@ class MainWindow(QMainWindow):
         # Config summary
         diagnostics.append("=== Configuration ===")
         diagnostics.append(f"Network: {self.config.network.network_type.value}")
-        diagnostics.append(f"RPC URL: {self.config.network.rpc_url}")
+        diagnostics.append(f"Local Node Port: {self.config.network.local_rpc_port or 'auto'}")
         diagnostics.append(f"Mining Mode: {self.config.miner.mining_mode.value}")
         diagnostics.append(f"CPU Threads: {self.config.cpu.threads}")
         diagnostics.append(f"GPU Count: {len(self.config.gpus)}")
+        diagnostics.append("")
+        
+        # Node status
+        diagnostics.append("=== Node Status ===")
+        if self.node_manager.is_ready:
+            diagnostics.append(f"Status: Ready (PID: {self.node_manager.get_status().pid})")
+            diagnostics.append(f"RPC URL: {self.node_manager.rpc_url}")
+            sync_status = self.node_manager.get_sync_status()
+            if sync_status:
+                diagnostics.append(f"Height: {sync_status.current_height}/{sync_status.best_height}")
+                diagnostics.append(f"Peers: {sync_status.peer_count}")
+        else:
+            diagnostics.append(f"Status: {self.node_manager.get_status().state.value}")
         diagnostics.append("")
         
         # Device detection
@@ -509,4 +555,12 @@ class MainWindow(QMainWindow):
             # Stop mining before closing
             if self.miner_runner.is_running():
                 self.stop_mining()
+            
+            # Stop local node
+            logger.info("Stopping local node...")
+            try:
+                self.node_manager.stop()
+            except Exception as e:
+                logger.error(f"Error stopping node: {e}")
+            
             event.accept()
