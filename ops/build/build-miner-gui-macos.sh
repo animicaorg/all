@@ -122,12 +122,22 @@ mkdir -p "$OUT_DIR"
 log "Step 1: Building node binary..."
 "$SCRIPT_DIR/build-node-binary.sh" --out-dir "$OUT_DIR" --clean
 
-NODE_BINARY="$OUT_DIR/animica-node"
+NODE_DIR="$OUT_DIR/animica-node"
+NODE_BINARY="$NODE_DIR/animica-node"
+if [[ ! -d "$NODE_DIR" ]]; then
+    die "Node bundle not found after build: $NODE_DIR"
+fi
 if [[ ! -f "$NODE_BINARY" ]]; then
     die "Node binary not found after build: $NODE_BINARY"
 fi
+if [[ ! -d "$NODE_DIR/_internal" ]]; then
+    die "Node runtime folder not found after build: $NODE_DIR/_internal"
+fi
+if ! ls "$NODE_DIR/_internal"/libpython*.dylib >/dev/null 2>&1; then
+    die "Node runtime missing libpython dylib in: $NODE_DIR/_internal"
+fi
 
-log "Node binary ready: $NODE_BINARY"
+log "Node bundle ready: $NODE_DIR"
 
 # ============================================================================
 # Step 2: Setup build environment
@@ -233,7 +243,6 @@ from pathlib import Path
 SPEC_DIR = Path(r"${BUILD_DIR}").resolve()
 APP_DIR  = Path(r"${APP_DIR}").resolve()
 ENTRY    = Path(r"${ENTRY}").resolve()
-NODE_BINARY = Path(r"${NODE_BINARY}").resolve()
 
 block_cipher = None
 
@@ -243,11 +252,8 @@ datas = []
 if logo.exists():
     datas.append((str(logo), "."))
 
-# Bundle node binary inside the .app
+ # Node bundle is copied into the .app after build (full onedir tree).
 binaries = []
-if NODE_BINARY.exists():
-    # Place in Contents/Resources/bin/ (standard location for bundled tools)
-    binaries.append((str(NODE_BINARY), "bin"))
 
 hiddenimports = [
     "PySide6.QtCore",
@@ -358,10 +364,23 @@ fi
 verify_directory "$APP_BUNDLE"
 log "App bundle created: $APP_BUNDLE"
 
-# Verify node binary is inside
-BUNDLED_NODE="$APP_BUNDLE/Contents/Resources/bin/animica-node"
+# Copy full node bundle into .app
+BUNDLED_NODE_DIR="$APP_BUNDLE/Contents/Resources/node/animica-node"
+safe_rm_rf "$BUNDLED_NODE_DIR"
+mkdir -p "$(dirname "$BUNDLED_NODE_DIR")"
+cp -R "$NODE_DIR" "$BUNDLED_NODE_DIR"
+
+# Verify node bundle is inside
+BUNDLED_NODE="$BUNDLED_NODE_DIR/animica-node"
+BUNDLED_INTERNAL="$BUNDLED_NODE_DIR/_internal"
 if [[ ! -f "$BUNDLED_NODE" ]]; then
     die "Node binary not found in .app bundle: $BUNDLED_NODE"
+fi
+if [[ ! -d "$BUNDLED_INTERNAL" ]]; then
+    die "Node runtime folder not found in .app bundle: $BUNDLED_INTERNAL"
+fi
+if ! ls "$BUNDLED_INTERNAL"/libpython*.dylib >/dev/null 2>&1; then
+    die "Node runtime missing libpython dylib in .app bundle: $BUNDLED_INTERNAL"
 fi
 
 verify_executable "$BUNDLED_NODE"

@@ -71,7 +71,7 @@ class LocalRpcClient:
         headers = {"Content-Type": "application/json"}
         
         if self.auth_token:
-            headers["Authorization"] = f"Bearer {self.auth_token}"
+            headers["X-Animica-Admin-Token"] = self.auth_token
         
         return headers
     

@@ -6,6 +6,7 @@ Provides infrastructure for executing CLI commands and capturing output.
 from __future__ import annotations
 
 import logging
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -118,11 +119,17 @@ class ConsoleCommandExecutor:
         
         # Execute command
         try:
+            env = None
+            if self.auth_token:
+                env = dict(**{k: v for k, v in os.environ.items()})
+                env["ANIMICA_RPC_ADMIN_TOKEN"] = self.auth_token
+
             result = subprocess.run(
                 full_cmd,
                 capture_output=True,
                 text=True,
                 timeout=timeout,
+                env=env,
             )
             
             return (result.returncode, result.stdout, result.stderr)

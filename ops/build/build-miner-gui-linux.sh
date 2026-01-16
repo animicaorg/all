@@ -112,12 +112,19 @@ mkdir -p "$OUT_DIR"
 log "Step 1: Building node binary..."
 "$SCRIPT_DIR/build-node-binary.sh" --out-dir "$OUT_DIR" --clean
 
-NODE_BINARY="$OUT_DIR/animica-node"
+NODE_DIR="$OUT_DIR/animica-node"
+NODE_BINARY="$NODE_DIR/animica-node"
+if [[ ! -d "$NODE_DIR" ]]; then
+    die "Node bundle not found after build: $NODE_DIR"
+fi
 if [[ ! -f "$NODE_BINARY" ]]; then
     die "Node binary not found after build: $NODE_BINARY"
 fi
+if [[ ! -d "$NODE_DIR/_internal" ]]; then
+    die "Node runtime folder not found after build: $NODE_DIR/_internal"
+fi
 
-log "Node binary ready: $NODE_BINARY"
+log "Node bundle ready: $NODE_DIR"
 
 # ============================================================================
 # Step 2: Setup build environment
@@ -199,7 +206,6 @@ from pathlib import Path
 
 APP_DIR  = Path(r"${APP_DIR}").resolve()
 ENTRY    = Path(r"${ENTRY}").resolve()
-NODE_BINARY = Path(r"${NODE_BINARY}").resolve()
 
 block_cipher = None
 
@@ -209,10 +215,8 @@ datas = []
 if logo.exists():
     datas.append((str(logo), "."))
 
-# Bundle node binary
+# Node bundle is copied into the dist output after build (full onedir tree).
 binaries = []
-if NODE_BINARY.exists():
-    binaries.append((str(NODE_BINARY), "bin"))
 
 hiddenimports = [
     "PySide6.QtCore",
@@ -305,10 +309,23 @@ chmod +x "$FINAL_BINARY"
 
 log "Binary copied to: $FINAL_BINARY"
 
-# Verify node binary is bundled
-BUNDLED_NODE="$BUILT_DIR/bin/animica-node"
+# Copy full node bundle into dist output
+BUNDLED_NODE_DIR="$BUILT_DIR/node/animica-node"
+safe_rm_rf "$BUNDLED_NODE_DIR"
+mkdir -p "$(dirname "$BUNDLED_NODE_DIR")"
+cp -R "$NODE_DIR" "$BUNDLED_NODE_DIR"
+
+# Verify node bundle is bundled
+BUNDLED_NODE="$BUNDLED_NODE_DIR/animica-node"
+BUNDLED_INTERNAL="$BUNDLED_NODE_DIR/_internal"
 if [[ ! -f "$BUNDLED_NODE" ]]; then
     die "Node binary not found in build output: $BUNDLED_NODE"
+fi
+if [[ ! -d "$BUNDLED_INTERNAL" ]]; then
+    die "Node runtime folder not found in build output: $BUNDLED_INTERNAL"
+fi
+if ! ls "$BUNDLED_INTERNAL"/libpython*.so* >/dev/null 2>&1; then
+    die "Node runtime missing libpython shared library in build output: $BUNDLED_INTERNAL"
 fi
 
 log "Bundled node verified: $BUNDLED_NODE"

@@ -29,10 +29,6 @@ def get_bundle_dir() -> Optional[Path]:
     if not is_frozen():
         return None
     
-    # PyInstaller sets sys._MEIPASS to the temporary extraction directory
-    if hasattr(sys, '_MEIPASS'):
-        return Path(sys._MEIPASS)
-    
     # On macOS .app bundle, sys.executable is AnimicaMiner.app/Contents/MacOS/AnimicaMiner
     # The binary should be at AnimicaMiner.app/Contents/Resources/bin/
     exe_path = Path(sys.executable).resolve()
@@ -42,9 +38,58 @@ def get_bundle_dir() -> Optional[Path]:
         resources_dir = exe_path.parent.parent / "Resources"
         if resources_dir.exists():
             return resources_dir
+
+    # PyInstaller sets sys._MEIPASS to the temporary extraction directory
+    if hasattr(sys, '_MEIPASS'):
+        return Path(sys._MEIPASS)
     
     # For other platforms, use the executable directory
     return exe_path.parent
+
+
+def get_bundled_node_dir() -> Optional[Path]:
+    """Get the bundled node directory (PyInstaller onedir layout)."""
+    bundle_dir = get_bundle_dir()
+    if not bundle_dir:
+        return None
+
+    node_dir = bundle_dir / "node" / "animica-node"
+    if node_dir.exists():
+        return node_dir
+
+    return None
+
+
+def _find_libpython(internal_dir: Path) -> Optional[Path]:
+    if sys.platform == "darwin":
+        matches = list(internal_dir.glob("libpython*.dylib"))
+    else:
+        matches = list(internal_dir.glob("libpython*.so*"))
+    return matches[0] if matches else None
+
+
+def validate_bundled_node_layout() -> tuple[bool, str]:
+    """Validate bundled node layout and return (ok, message)."""
+    if not is_frozen():
+        return True, ""
+
+    node_dir = get_bundled_node_dir()
+    if node_dir is None:
+        return False, "Node bundle directory not found in app resources."
+
+    node_binary = node_dir / "animica-node"
+    if not node_binary.exists():
+        return False, f"Node binary not found at {node_binary}"
+
+    internal_dir = node_dir / "_internal"
+    if not internal_dir.exists():
+        return False, f"Node runtime folder missing at {internal_dir}"
+
+    libpython = _find_libpython(internal_dir)
+    if libpython is None:
+        return False, f"Node runtime missing libpython in {internal_dir}"
+
+    return True, ""
 
 
 def get_repo_root() -> Path:
@@ -69,15 +114,22 @@ def resolve_node_binary() -> Optional[Path]:
     """
     if is_frozen():
         # Packaged mode - look in bundle
+        node_dir = get_bundled_node_dir()
+        if node_dir:
+            binary_path = node_dir / "animica-node"
+            if binary_path.exists() and os.access(binary_path, os.X_OK):
+                logger.info(f"Found node binary in bundle: {binary_path}")
+                return binary_path
+
+        # Fallback to legacy bin location
         bundle_dir = get_bundle_dir()
         if bundle_dir:
-            # Try common binary names
             for binary_name in ['animica-node', 'animicad', 'animica']:
                 binary_path = bundle_dir / 'bin' / binary_name
                 if binary_path.exists() and os.access(binary_path, os.X_OK):
                     logger.info(f"Found node binary in bundle: {binary_path}")
                     return binary_path
-        
+
         # Also check next to the executable
         exe_dir = Path(sys.executable).parent
         for binary_name in ['animica-node', 'animicad', 'animica']:
@@ -85,7 +137,7 @@ def resolve_node_binary() -> Optional[Path]:
             if binary_path.exists() and os.access(binary_path, os.X_OK):
                 logger.info(f"Found node binary next to executable: {binary_path}")
                 return binary_path
-        
+
         raise FileNotFoundError(
             "Node binary not found in packaged application. "
             "The application bundle may be incomplete or corrupted."
@@ -95,14 +147,19 @@ def resolve_node_binary() -> Optional[Path]:
         # Dev mode - look for built binary or use Python module
         repo_root = get_repo_root()
         
-        # Check dist directory for built binary
+        # Check dist directory for built binary (onedir)
         dist_dir = repo_root / 'dist'
         if dist_dir.exists():
             for binary_name in ['animica-node', 'animicad', 'animica']:
-                binary_path = dist_dir / binary_name
-                if binary_path.exists() and os.access(binary_path, os.X_OK):
-                    logger.info(f"Found node binary in dist: {binary_path}")
-                    return binary_path
+                onedir_path = dist_dir / 'animica-node' / binary_name
+                if onedir_path.exists() and os.access(onedir_path, os.X_OK):
+                    logger.info(f"Found node binary in dist: {onedir_path}")
+                    return onedir_path
+
+                flat_path = dist_dir / binary_name
+                if flat_path.exists() and os.access(flat_path, os.X_OK):
+                    logger.info(f"Found node binary in dist: {flat_path}")
+                    return flat_path
         
         # Check if we can run via Python module
         # Verify that 'rpc' module is available (the node is started via python -m rpc)

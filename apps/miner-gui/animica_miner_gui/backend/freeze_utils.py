@@ -82,24 +82,35 @@ def get_bundled_bin_path(binary_name: str) -> Optional[Path]:
     if is_frozen():
         # Frozen mode: Look for bundled binary
         resources = get_bundled_resources_dir()
-        
+
+        # Preferred node bundle location (onedir tree)
+        if binary_name == "animica-node":
+            node_path = resources / "node" / "animica-node" / "animica-node"
+            if node_path.exists() and node_path.is_file():
+                return node_path
+
         # Check in bin/ subdirectory
         bin_path = resources / 'bin' / binary_name
         if bin_path.exists() and bin_path.is_file():
             return bin_path
-        
+
         # Check directly in resources directory (fallback)
         bin_path = resources / binary_name
         if bin_path.exists() and bin_path.is_file():
             return bin_path
-        
+
         return None
     else:
         # Development mode: Look in standard locations
         
         # Try repo dist/ directory
         repo_root = Path(__file__).parent.parent.parent.parent
-        dist_path = repo_root / 'dist' / binary_name
+        dist_dir = repo_root / 'dist'
+        onedir_path = dist_dir / "animica-node" / binary_name
+        if onedir_path.exists() and onedir_path.is_file():
+            return onedir_path
+
+        dist_path = dist_dir / binary_name
         if dist_path.exists() and dist_path.is_file():
             return dist_path
         
