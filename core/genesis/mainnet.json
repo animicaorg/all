@@ -2,11 +2,13 @@
   "meta": {
     "version": 2,
     "genesis_version": "reset-2026-01",
-    "description": "Animica mainnet reset genesis (chainId=1). Premine + system accounts only."
+    "description": "Animica mainnet reset genesis (chainId=1). 5-minute block time. Premine + system accounts only.",
+    "genesis_hash": "0x6a16a931365ca90fe6b5e115d94e26d025771c5d3be269f5105e1cd3de22b517",
+    "fork_id": "0x4539f8c9"
   },
   "chainId": 1,
   "network": "animica-mainnet",
-  "genesisTime": "2026-01-01T00:00:00Z",
+  "genesisTime": "2026-01-16T00:00:00Z",
 
   "unit": {
     "symbol": "ANM",
@@ -33,7 +35,8 @@
       "foundation": 8100000,
       "faucet": 3240000,
       "dev_reserve": 9810000
-    }
+    },
+    "targetBlockTimeSec": 300
   },
 
 "alloc": [
@@ -42,12 +45,14 @@
 
   "consensus": {
     "initialThetaMicro": 1000000,
-    "gammaCapMicro": 2000000
+    "gammaCapMicro": 2000000,
+    "targetBlockTimeSec": 300
   },
 
   "notes": [
     "All balances are integers in base units (10^9 = 1 ANM).",
     "Premine total: 81,000,000 ANM → 81,000,000 × 10^9 = 81,000,000,000,000,000 base units.",
+    "Target block time: 300 seconds (5 minutes).",
     "System addresses use the 'system:<name>' convention and are resolved by execution/runtime/system.py.",
     "algPolicyRoot and paramsRef.sha3_256 are placeholders—replace with actual roots before launch."
   ]
