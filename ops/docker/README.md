@@ -30,6 +30,41 @@ docker compose -f ops/devnet/docker-compose.yml --profile devnet down
 Wipe volumes (⚠ destructive):
 
 bash tests/devnet/cleanup.sh
+```
+
+**Important: Rebuilding After Updates**
+
+If you pull updates from the repository (especially genesis file changes or core code updates), you **must rebuild** the Docker images to pick up the changes:
+
+```bash
+# Rebuild all images (mainnet example)
+docker compose -f ops/docker/docker-compose.mainnet.yml build --no-cache
+
+# Or rebuild specific service
+docker compose -f ops/docker/docker-compose.mainnet.yml build --no-cache node
+
+# Then restart
+docker compose -f ops/docker/docker-compose.mainnet.yml up -d
+```
+
+**Common Issue: Genesis Hash Mismatch**
+
+If you see an error like:
+```
+Code.GENESIS: genesis does not match pinned network genesis
+[expected=0x..., found=0x..., genesis_path=/app/core/genesis/mainnet.json]
+```
+
+This means your Docker image has outdated code. The genesis file hash validation is baked into the image at build time. To fix:
+
+1. **Rebuild the image** (see above)
+2. **Clear old data** if switching genesis versions:
+   ```bash
+   docker compose down -v  # Removes volumes
+   docker compose up -d
+   ```
+
+The genesis file hash is pinned in `core/network_params.py` and must match the actual genesis file's computed hash. After any genesis reset or chain parameter updates, **always rebuild your Docker images**.
 
 
 ⸻

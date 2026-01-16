@@ -381,6 +381,15 @@ animica node up --with-miner
 animica node up --no-build
 ```
 
+**Important**: After pulling repository updates (especially genesis file changes), **always rebuild** Docker images:
+```bash
+animica node up --force-build
+# Or manually:
+docker compose -f ops/docker/docker-compose.mainnet.yml build --no-cache
+```
+
+See [ops/docker/TROUBLESHOOTING.md](ops/docker/TROUBLESHOOTING.md) for common Docker issues and solutions.
+
 #### Network-Specific Ports
 
 When you start a node, it automatically uses the correct ports for your active network:

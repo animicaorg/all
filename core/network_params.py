@@ -195,8 +195,10 @@ def enforce_pinned_genesis(
             network=params.name,
             hint=(
                 "The configured genesis file does not match the pinned hash. "
-                "If this is the correct genesis file, update PINNED_GENESIS_BY_NETWORK; "
-                "otherwise point to the correct network genesis file."
+                "This usually means your Docker image has outdated code. "
+                "To fix: rebuild your Docker images with 'docker compose build --no-cache'. "
+                "If you're not using Docker and this is the correct genesis file, "
+                "update PINNED_GENESIS_BY_NETWORK in core/network_params.py."
             ),
         )
 
