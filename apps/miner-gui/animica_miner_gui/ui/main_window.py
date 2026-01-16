@@ -10,19 +10,19 @@ Provides tabbed interface for:
 """
 
 import logging
-from pathlib import Path
-from typing import Optional
+import traceback
+from typing import Optional, Callable
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QAction, QIcon
 from PySide6.QtWidgets import (
     QMainWindow,
-    QMenuBar,
     QMessageBox,
     QLabel,
     QStatusBar,
     QSystemTrayIcon,
     QTabWidget,
+    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
@@ -36,6 +36,7 @@ from animica_miner_gui.ui.tabs.configuration import ConfigurationTab
 from animica_miner_gui.ui.tabs.logs import LogsTab
 from animica_miner_gui.ui.tabs.stats import StatsTab
 from animica_miner_gui.ui.tabs.wallet import WalletTab
+from animica_miner_gui.ui.node_backend import NodeBackend
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +44,12 @@ logger = logging.getLogger(__name__)
 class MainWindow(QMainWindow):
     """Main application window."""
     
-    def __init__(self, parent: Optional[QWidget] = None):
+    def __init__(
+        self,
+        parent: Optional[QWidget] = None,
+        node_manager: Optional["LocalNodeManager"] = None,
+        backend: Optional[NodeBackend] = None,
+    ):
         super().__init__(parent)
         
         self.setWindowTitle("Animica Miner")
@@ -62,7 +68,11 @@ class MainWindow(QMainWindow):
         from animica_miner_gui.core.localnode import LocalNodeManager
         network = self.config.network.network_type.value  # mainnet, testnet, or devnet
         preferred_port = self.config.network.local_rpc_port
-        self.node_manager = LocalNodeManager(network=network, preferred_port=preferred_port)
+        self.node_manager = node_manager or LocalNodeManager(
+            network=network,
+            preferred_port=preferred_port,
+        )
+        self.backend = backend or NodeBackend(self.node_manager)
         
         # Apply theme
         self.apply_theme()
@@ -82,33 +92,18 @@ class MainWindow(QMainWindow):
         self.update_timer.timeout.connect(self.update_ui)
         self.update_timer.start(1000)  # Update every second
         
-        # Start local node automatically
-        logger.info("Starting local node...")
-        QTimer.singleShot(500, self.start_local_node)  # Start after UI is ready
-        QTimer.singleShot(700, self.check_node_bundle)  # Validate bundle after UI is visible
-        
         # Auto-start mining if configured (after node is ready)
         if self.config.miner.auto_start:
             logger.info("Auto-start mining enabled (will start when node is ready)")
+        self.backend.nodeReady.connect(self.on_node_ready)
+        QTimer.singleShot(700, self.check_node_bundle)  # Validate bundle after UI is visible
     
-    def start_local_node(self) -> None:
-        """Start the local node in the background."""
-        try:
-            self.node_manager.start(ready_timeout=60.0)
-            logger.info(f"Local node ready on port {self.node_manager.port}")
-            
-            # Auto-start mining if configured
-            if self.config.miner.auto_start:
-                logger.info("Auto-starting mining")
-                QTimer.singleShot(2000, self.start_mining)  # Give node a moment to stabilize
-        except Exception as e:
-            logger.error(f"Failed to start local node: {e}")
-            QMessageBox.critical(
-                self,
-                "Node Startup Failed",
-                f"Failed to start local Animica node:\n\n{e}\n\n"
-                "The application will continue, but you'll need to start the node manually from the Node tab."
-            )
+    def on_node_ready(self, rpc_client) -> None:
+        """Handle local node readiness."""
+        logger.info("Local node ready")
+        if self.config.miner.auto_start:
+            logger.info("Auto-starting mining")
+            QTimer.singleShot(2000, self.start_mining)  # Give node a moment to stabilize
 
     def check_node_bundle(self) -> None:
         """Validate the bundled node layout and show a banner if missing."""
@@ -210,17 +205,17 @@ class MainWindow(QMainWindow):
         self.tabs = QTabWidget()
         
         # Create tabs - pass node_manager to tabs that need it
-        self.dashboard_tab = DashboardTab(self.config, self.node_manager)
-        self.devices_tab = DevicesTab(self.config)
-        self.pools_tab = PoolsTab(self.config)
-        self.wallet_tab = WalletTab(self.config, self.node_manager)
-        self.config_tab = ConfigurationTab(self.config)
-        self.logs_tab = LogsTab()
-        self.stats_tab = StatsTab()
+        self.dashboard_tab = self._safe_tab("Dashboard", lambda: DashboardTab(self.config, self.node_manager))
+        self.devices_tab = self._safe_tab("Devices", lambda: DevicesTab(self.config))
+        self.pools_tab = self._safe_tab("Pools/Modes", lambda: PoolsTab(self.config))
+        self.wallet_tab = self._safe_tab("Wallet", lambda: WalletTab(self.config, self.backend))
+        self.config_tab = self._safe_tab("Configuration", lambda: ConfigurationTab(self.config))
+        self.logs_tab = self._safe_tab("Logs", LogsTab)
+        self.stats_tab = self._safe_tab("Stats/Graphs", StatsTab)
         
         # Create node tab
         from animica_miner_gui.ui.tabs.node import NodeTab
-        self.node_tab = NodeTab(self.config, self.node_manager)
+        self.node_tab = self._safe_tab("Node", lambda: NodeTab(self.config, self.node_manager))
         
         # Add tabs - Node tab first for easy access
         self.tabs.addTab(self.node_tab, "Node")
@@ -239,6 +234,38 @@ class MainWindow(QMainWindow):
         # Connect dashboard signals
         self.dashboard_tab.start_mining_requested.connect(self.start_mining)
         self.dashboard_tab.stop_mining_requested.connect(self.stop_mining)
+
+    def _safe_tab(self, name: str, builder: Callable[[], QWidget]) -> QWidget:
+        """Create a tab widget, falling back to an error placeholder on failure."""
+        try:
+            return builder()
+        except Exception:
+            logger.exception("Failed to create %s tab", name)
+            return self._build_error_tab(name, traceback.format_exc())
+
+    def _build_error_tab(self, name: str, stack_trace: str) -> QWidget:
+        """Build a placeholder widget that shows the stack trace and log location."""
+        from animica_miner_gui.backend.config import get_default_config_dir
+
+        widget = QWidget()
+        layout = QVBoxLayout()
+
+        title = QLabel(f"Failed to load {name} tab")
+        title.setStyleSheet("color: red; font-weight: bold;")
+        layout.addWidget(title)
+
+        log_dir = get_default_config_dir() / "logs"
+        log_label = QLabel(f"Check logs in: {log_dir}")
+        log_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        layout.addWidget(log_label)
+
+        details = QTextEdit()
+        details.setReadOnly(True)
+        details.setPlainText(stack_trace)
+        layout.addWidget(details)
+
+        widget.setLayout(layout)
+        return widget
     
     def setup_menu(self) -> None:
         """Set up the menu bar."""
