@@ -163,6 +163,10 @@ class _PeerState:
     pending_header_request_id: Optional[str] = None
     pending_snapshot_list: Optional[asyncio.Future] = None
     pending_snapshot_chunk: Optional[asyncio.Future] = None
+    advertised_head_height: Optional[int] = None
+    advertised_head_hash: Optional[bytes] = None
+    advertised_at_monotonic: float = 0.0
+    advertised_chain_id: Optional[int] = None
     ready_for_sync: bool = False
     connected_at: float = field(default_factory=time.time)
     feeler: bool = False
@@ -1045,6 +1049,9 @@ class P2PService:
         )
         self._sync_peer_head_cooldown_sec = float(
             os.environ.get("ANIMICA_P2P_PEER_HEAD_COOLDOWN_SEC", "60.0") or 60.0  # Reduced from 120.0 to 60.0 for faster recovery
+        )
+        self._sync_tip_freshness_sec = float(
+            os.environ.get("ANIMICA_SYNC_TIP_FRESHNESS_SEC", "60.0") or 60.0
         )
         self._sync_nonfatal_penalty_window_s = float(
             os.environ.get("ANIMICA_P2P_NONFATAL_PENALTY_WINDOW", "300") or 300
@@ -3252,6 +3259,7 @@ class P2PService:
                 }
             )
         locator = self._build_locator()
+        tip_diagnostics = self.peer_tip_diagnostics()
         return {
             "expected_chain_id": self.chain_id,
             "expected_genesis_hash": self._genesis_hash().hex(),
@@ -3263,6 +3271,10 @@ class P2PService:
             "last_recovery_action": self._sync_last_recovery_action,
             "eligible_peers_for_headers": [peer.remote for peer in eligible],
             "ineligible_peers_for_headers": dict(ineligible),
+            "best_remote_tip": tip_diagnostics.get("best_remote"),
+            "peer_tip_candidates": tip_diagnostics.get("top_peers", []),
+            "peer_tip_exclusions": tip_diagnostics.get("excluded", []),
+            "tip_freshness_sec": tip_diagnostics.get("tip_freshness_sec"),
             "connected_peers": peers,
             "peer_scores": self._peer_score_snapshot(),
             "retries_by_peer": dict(self._sync_retries_by_peer),
@@ -4358,6 +4370,24 @@ class P2PService:
             last_progress_at=peer.last_progress_at,
         )
 
+    def _note_peer_tip(
+        self,
+        peer: _PeerState,
+        *,
+        height: Optional[int],
+        head_hash: Optional[bytes],
+        chain_id: Optional[int],
+    ) -> None:
+        if height is not None:
+            with contextlib.suppress(Exception):
+                peer.advertised_head_height = int(height)
+        if head_hash:
+            peer.advertised_head_hash = bytes(head_hash)
+        if chain_id is not None:
+            with contextlib.suppress(Exception):
+                peer.advertised_chain_id = int(chain_id)
+        peer.advertised_at_monotonic = time.monotonic()
+
     def _update_peer_head(
         self, peer: _PeerState, *, height: int, head_hash: Optional[bytes]
     ) -> None:
@@ -4370,6 +4400,12 @@ class P2PService:
         # This ensures staleness tracking stays accurate even for existing hello dicts
         if peer.hello_received_at == 0.0:
             peer.hello_received_at = time.time()
+        self._note_peer_tip(
+            peer,
+            height=height,
+            head_hash=head_hash,
+            chain_id=(peer.hello or {}).get("chain_id"),
+        )
         try:
             current = int(peer.hello.get("head_height") or 0)
         except Exception:
@@ -4445,6 +4481,122 @@ class P2PService:
                 best_height = height
                 best_peer = peer
         return best_peer, best_height
+
+    def _peer_display(self, peer: _PeerState) -> str:
+        if peer.peer_id:
+            return f"{peer.remote} ({peer.peer_id})"
+        return peer.remote
+
+    def _peer_tip_candidates(
+        self,
+        *,
+        tip_freshness_s: Optional[float] = None,
+    ) -> tuple[
+        Optional[dict[str, Any]],
+        list[dict[str, Any]],
+        list[dict[str, Any]],
+        list[dict[str, Any]],
+    ]:
+        now = time.monotonic()
+        freshness = (
+            float(tip_freshness_s)
+            if tip_freshness_s is not None
+            else self._sync_tip_freshness_sec
+        )
+        candidates: list[dict[str, Any]] = []
+        excluded: list[dict[str, Any]] = []
+        ranked: list[dict[str, Any]] = []
+        expected_chain_id = int(self.chain_id)
+
+        for peer in self._peers.values():
+            base: dict[str, Any] = {
+                "remote": peer.remote,
+                "peer_id": peer.peer_id,
+                "peer": self._peer_display(peer),
+            }
+            if not peer.hello_done.is_set():
+                excluded.append({**base, "reason": "handshake_incomplete"})
+                continue
+            chain_id = peer.advertised_chain_id
+            if chain_id is None and peer.hello:
+                chain_id = peer.hello.get("chain_id")
+            try:
+                chain_id_val = int(chain_id) if chain_id is not None else None
+            except Exception:
+                chain_id_val = None
+            height = peer.advertised_head_height
+            if height is None and peer.hello:
+                height = peer.hello.get("head_height")
+            try:
+                height_val = int(height or 0)
+            except Exception:
+                height_val = 0
+            age_sec = None
+            if peer.advertised_at_monotonic:
+                age_sec = max(0.0, now - peer.advertised_at_monotonic)
+            tip_hash = self._canon_hash0x(peer.advertised_head_hash)
+            detail = {
+                **base,
+                "height": height_val if height_val > 0 else None,
+                "hash": tip_hash,
+                "age_sec": round(age_sec, 3) if age_sec is not None else None,
+                "chain_id": chain_id_val,
+            }
+            if height_val > 0:
+                ranked.append(
+                    {
+                        **detail,
+                        "fresh": age_sec is not None and age_sec <= freshness,
+                    }
+                )
+            if chain_id_val is not None and chain_id_val != expected_chain_id:
+                excluded.append({**detail, "reason": "chain_id_mismatch"})
+                continue
+            if height_val <= 0:
+                excluded.append({**detail, "reason": "no_tip"})
+                continue
+            if age_sec is None:
+                excluded.append({**detail, "reason": "unknown_tip_age"})
+                continue
+            if age_sec > freshness:
+                excluded.append({**detail, "reason": "stale_tip"})
+                continue
+            candidates.append(detail)
+
+        best = max(candidates, key=lambda item: item["height"]) if candidates else None
+        ranked.sort(key=lambda item: item["height"] or 0, reverse=True)
+        return best, candidates, excluded, ranked
+
+    def best_remote_tip(
+        self,
+        *,
+        tip_freshness_s: Optional[float] = None,
+    ) -> Optional[dict[str, Any]]:
+        best, _candidates, _excluded, _ranked = self._peer_tip_candidates(
+            tip_freshness_s=tip_freshness_s
+        )
+        return best
+
+    def peer_tip_diagnostics(
+        self,
+        *,
+        tip_freshness_s: Optional[float] = None,
+        limit: int = 5,
+    ) -> dict[str, Any]:
+        best, candidates, excluded, ranked = self._peer_tip_candidates(
+            tip_freshness_s=tip_freshness_s
+        )
+        return {
+            "best_remote": best,
+            "candidates": candidates,
+            "excluded": excluded,
+            "top_peers": ranked[: max(0, int(limit))],
+            "tip_freshness_sec": float(
+                tip_freshness_s
+                if tip_freshness_s is not None
+                else self._sync_tip_freshness_sec
+            ),
+        }
 
     def _peer_is_sync_eligible(self, peer: _PeerState) -> bool:
         ok, _reason = self._sync_peer_eligibility(peer, now=time.time())
@@ -5941,6 +6093,12 @@ class P2PService:
         peer.hello = normalized
         peer.hello_received_at = time.time()  # Track when hello was received
         peer.hello_done.set()
+        self._note_peer_tip(
+            peer,
+            height=normalized.get("head_height"),
+            head_hash=normalized.get("head_hash"),
+            chain_id=normalized.get("chain_id"),
+        )
         if normalized.get("head_height"):
             self._update_peer_head_table(
                 peer,

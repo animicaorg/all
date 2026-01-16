@@ -200,6 +200,25 @@ def _extract_sync_metrics(sync_status: Optional[Dict[str, Any]]) -> Dict[str, An
     if not isinstance(sync_status, dict):
         return metrics
 
+    status = sync_status.get("status")
+    if status:
+        metrics["phase"] = status
+        metrics["synchronized"] = str(status).upper() == "SYNCHRONIZED"
+        metrics["syncing"] = str(status).upper() in {"SYNCING", "UNKNOWN_REMOTE"}
+    local = sync_status.get("local") if isinstance(sync_status.get("local"), dict) else None
+    best_remote = (
+        sync_status.get("best_remote") if isinstance(sync_status.get("best_remote"), dict) else None
+    )
+    if local or best_remote:
+        local_height = _coerce_int(local.get("height")) if local else None
+        best_remote_height = _coerce_int(best_remote.get("height")) if best_remote else None
+        metrics["best_block_height"] = local_height
+        metrics["best_header_height"] = best_remote_height
+        metrics["target_height"] = best_remote_height
+        if metrics["phase"] is None:
+            metrics["phase"] = sync_status.get("phase") or sync_status.get("state")
+        return metrics
+
     metrics["phase"] = sync_status.get("phase") or sync_status.get("state")
     metrics["synchronized"] = bool(sync_status.get("synchronized"))
 
@@ -1082,13 +1101,25 @@ def sync_status(
     chain_id = _extract_chain_id(head_info)
     bootstrap_height = _extract_height(bootstrap_head)
     bootstrap_hash = bootstrap_head.get("hash") if bootstrap_head else None
+    if chain_id is None and isinstance(sync_status, dict):
+        chain_id = sync_status.get("chain_id") or sync_status.get("chainId")
 
+    best_remote_tip = (
+        sync_status.get("best_remote")
+        if isinstance(sync_status, dict)
+        and isinstance(sync_status.get("best_remote"), dict)
+        else None
+    )
     best_peer_height, best_peer_hash, best_peer = _select_best_peer_head(peers)
     network_height = bootstrap_height
     network_hash = bootstrap_hash
     network_source = None
     if bootstrap_height is not None:
         network_source = "bootstrap"
+    if best_remote_tip and _coerce_int(best_remote_tip.get("height")) is not None:
+        network_height = _coerce_int(best_remote_tip.get("height"))
+        network_hash = best_remote_tip.get("hash")
+        network_source = "peer_tip"
     if best_peer_height is not None and (network_height is None or best_peer_height > network_height):
         network_height = best_peer_height
         network_hash = best_peer_hash
@@ -1177,6 +1208,15 @@ def sync_status(
             output["p2p_running"] = p2p_status.get("p2p_running")
             output["peers_inbound"] = p2p_status.get("peers_inbound")
             output["peers_outbound"] = p2p_status.get("peers_outbound")
+        if isinstance(sync_status, dict):
+            if sync_status.get("status"):
+                output["status"] = sync_status.get("status")
+            if sync_status.get("behind_by") is not None:
+                output["behind_by"] = sync_status.get("behind_by")
+            if sync_status.get("reason"):
+                output["reason"] = sync_status.get("reason")
+            if best_remote_tip:
+                output["best_remote"] = best_remote_tip
         if peer_error_msg:
             output["peer_error"] = peer_error_msg
         if verbose and peers:
@@ -1224,8 +1264,35 @@ def sync_status(
         typer.echo(f"  Hash:      {head_hash}")
     typer.echo()
 
+    status_label = sync_status.get("status") if isinstance(sync_status, dict) else None
+    behind_by = sync_status.get("behind_by") if isinstance(sync_status, dict) else None
+    if best_remote_tip:
+        typer.secho("Best Remote Tip:", fg=typer.colors.BRIGHT_BLUE, bold=True)
+        typer.echo(f"  Height:    {best_remote_tip.get('height')}")
+        if best_remote_tip.get("hash"):
+            typer.echo(f"  Hash:      {best_remote_tip.get('hash')}")
+        if best_remote_tip.get("peer"):
+            typer.echo(f"  Peer:      {best_remote_tip.get('peer')}")
+        if best_remote_tip.get("age_sec") is not None:
+            typer.echo(f"  Tip age:   {best_remote_tip.get('age_sec')}s")
+        if isinstance(behind_by, int):
+            typer.echo(f"  Behind by: {behind_by}")
+        typer.echo()
+    elif status_label == "UNKNOWN_REMOTE":
+        typer.secho("Best Remote Tip:", fg=typer.colors.BRIGHT_BLUE, bold=True)
+        typer.secho(
+            "  Remote tip unknown (peers did not advertise tip yet) -> treating as SYNCING",
+            fg=typer.colors.YELLOW,
+        )
+        typer.echo()
+
     if network_height is not None and network_height > 0 and (height is None or height < network_height):
-        source_label = "bootstrap" if network_source == "bootstrap" else "peer"
+        if network_source == "bootstrap":
+            source_label = "bootstrap"
+        elif network_source == "peer_tip":
+            source_label = "peer_tip"
+        else:
+            source_label = "peer"
         typer.secho("Network Head:", fg=typer.colors.BRIGHT_BLUE, bold=True)
         typer.echo(f"  Height:    {network_height} ({source_label})")
         if network_hash:
@@ -1242,7 +1309,15 @@ def sync_status(
     progress_current = height if height is not None else best_block_height
     progress_target = target_height or network_height
     progress_pct = _compute_sync_percent(progress_current, progress_target)
-    if sync_state in {"SYNCING_HEADERS", "SYNCING_BLOCKS", "SYNCING"}:
+    if status_label == "UNKNOWN_REMOTE":
+        typer.secho("  Status:    SYNCING (UNKNOWN_REMOTE)", fg=typer.colors.YELLOW, bold=True)
+        if progress_pct is not None:
+            typer.secho(f"  Sync %:    {progress_pct:.1f}%", fg=typer.colors.MAGENTA, bold=True)
+    elif status_label == "SYNCHRONIZED":
+        typer.secho("  Status:    SYNCHRONIZED", fg=typer.colors.GREEN, bold=True)
+        if progress_pct is not None:
+            typer.secho(f"  Sync %:    {progress_pct:.1f}%", fg=typer.colors.MAGENTA, bold=True)
+    elif sync_state in {"SYNCING_HEADERS", "SYNCING_BLOCKS", "SYNCING"}:
         typer.secho(f"  Status:    {sync_state}", fg=typer.colors.YELLOW, bold=True)
         if best_header_height is not None or best_block_height is not None:
             typer.echo(
@@ -1254,10 +1329,6 @@ def sync_status(
                 typer.echo(f"  Progress:  {progress_current} / {progress_target}")
                 remaining = max(0, progress_target - progress_current)
                 typer.echo(f"  Remaining: {remaining} blocks")
-    elif sync_state == "SYNCHRONIZED":
-        typer.secho("  Status:    SYNCHRONIZED", fg=typer.colors.GREEN, bold=True)
-        if progress_pct is not None:
-            typer.secho(f"  Sync %:    {progress_pct:.1f}%", fg=typer.colors.MAGENTA, bold=True)
     elif sync_state == "NEAR_TIP":
         typer.secho("  Status:    NEAR_TIP", fg=typer.colors.YELLOW, bold=True)
         if progress_pct is not None:

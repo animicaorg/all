@@ -106,18 +106,27 @@ def sync_dump(
 
     peers = p2p_debug.get("connected_peers", []) if isinstance(p2p_debug, dict) else []
     best_peer_height, best_peer_hash, best_peer = _best_peer_head(peers)
+    best_remote = None
+    if isinstance(sync_status, dict):
+        best_remote = sync_status.get("best_remote") if isinstance(sync_status.get("best_remote"), dict) else None
+    if not best_remote and isinstance(p2p_debug, dict):
+        best_remote = p2p_debug.get("best_remote_tip")
 
     local_head_height = sync_status.get("head_height")
+    local_head = sync_status.get("local") if isinstance(sync_status.get("local"), dict) else None
+    if local_head:
+        local_head_height = local_head.get("height", local_head_height)
     at_genesis = local_head_height is not None and int(local_head_height) == 0
     
     dump = {
         "rpc_url": url,
         "local_head_height": local_head_height,
-        "local_head_hash": sync_status.get("head_hash"),
+        "local_head_hash": (local_head or {}).get("hash") if local_head else sync_status.get("head_hash"),
         "at_genesis": at_genesis,
         "best_peer_height": best_peer_height,
         "best_peer_hash": best_peer_hash,
         "best_peer": best_peer,
+        "best_remote": best_remote,
         "sync_phase": sync_status.get("phase") or sync_status.get("state"),
         "in_flight_headers": sync_status.get("in_flight_headers"),
         "in_flight_blocks": sync_status.get("in_flight_blocks"),
@@ -142,6 +151,9 @@ def sync_dump(
         "peer_scores": (p2p_debug.get("peer_scores") if isinstance(p2p_debug, dict) else []) or [],
         "timeouts_by_peer": (p2p_debug.get("timeouts_by_peer") if isinstance(p2p_debug, dict) else {}) or {},
         "retries_by_peer": (p2p_debug.get("retries_by_peer") if isinstance(p2p_debug, dict) else {}) or {},
+        "peer_tip_candidates": (p2p_debug.get("peer_tip_candidates") if isinstance(p2p_debug, dict) else []) or [],
+        "peer_tip_exclusions": (p2p_debug.get("peer_tip_exclusions") if isinstance(p2p_debug, dict) else []) or [],
+        "tip_freshness_sec": (p2p_debug.get("tip_freshness_sec") if isinstance(p2p_debug, dict) else None),
     }
 
     if json_output:
@@ -161,6 +173,14 @@ def sync_dump(
         )
         typer.echo("   This is a special case requiring aggressive sync recovery.")
     
+    if best_remote:
+        typer.echo(
+            "Best remote tip:  "
+            f"{best_remote.get('height')} ({best_remote.get('hash')}) "
+            f"from {best_remote.get('peer')}"
+        )
+        if best_remote.get("age_sec") is not None:
+            typer.echo(f"Tip age:          {best_remote.get('age_sec')}s")
     typer.echo(f"Best peer head:   {best_peer_height} ({best_peer_hash}) from {best_peer}")
     
     if best_peer_height and local_head_height is not None:
@@ -169,6 +189,23 @@ def sync_dump(
             typer.secho(
                 f"   Gap: {gap} blocks behind",
                 fg=typer.colors.YELLOW if gap < 100 else typer.colors.RED,
+            )
+
+    if dump["peer_tip_candidates"]:
+        typer.echo("\nTop peer tips:")
+        for entry in dump["peer_tip_candidates"][:5]:
+            typer.echo(
+                "  - "
+                f"{entry.get('peer')}: height={entry.get('height')} "
+                f"age={entry.get('age_sec')}s"
+            )
+    if dump["peer_tip_exclusions"]:
+        typer.echo("\nExcluded peer tips:")
+        for entry in dump["peer_tip_exclusions"][:5]:
+            typer.echo(
+                "  - "
+                f"{entry.get('peer')}: reason={entry.get('reason')} "
+                f"height={entry.get('height')} age={entry.get('age_sec')}s"
             )
     
     typer.echo(f"Sync phase:       {dump['sync_phase']}")

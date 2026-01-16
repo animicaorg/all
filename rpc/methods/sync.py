@@ -1,12 +1,46 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import typing as t
 
 from rpc import deps
 from rpc.methods import method
 
 P2P_UNAVAILABLE_ERROR = "P2P disabled/unavailable"
+DEFAULT_TIP_FRESHNESS_SEC = 60.0
+DEFAULT_ALLOWED_LAG = 0
+
+
+def _compute_sync_status(
+    *,
+    local_height: int,
+    best_remote_height: int | None,
+    allowed_lag: int,
+) -> tuple[str, int | None, str | None]:
+    if best_remote_height is None:
+        return "UNKNOWN_REMOTE", None, "no peer tip information"
+    behind_by = max(0, int(best_remote_height) - int(local_height))
+    if behind_by > int(allowed_lag):
+        return "SYNCING", behind_by, None
+    return "SYNCHRONIZED", behind_by, None
+
+
+def _allowed_lag() -> int:
+    try:
+        return int(os.environ.get("ANIMICA_SYNC_ALLOWED_LAG", str(DEFAULT_ALLOWED_LAG)) or DEFAULT_ALLOWED_LAG)
+    except Exception:
+        return DEFAULT_ALLOWED_LAG
+
+
+def _tip_freshness() -> float:
+    try:
+        return float(
+            os.environ.get("ANIMICA_SYNC_TIP_FRESHNESS_SEC", str(DEFAULT_TIP_FRESHNESS_SEC))
+            or DEFAULT_TIP_FRESHNESS_SEC
+        )
+    except Exception:
+        return DEFAULT_TIP_FRESHNESS_SEC
 
 
 def _get_p2p_service() -> t.Any:
@@ -154,6 +188,7 @@ async def sync_get_status(opts: dict[str, t.Any] | str | None = None) -> dict[st
     fatal_error = None
     chain_head_height = None
     chain_head_hash = None
+    chain_id = None
     try:
         ctx = deps.get_ctx()
         fatal_error = getattr(ctx, "p2p_start_error", None)
@@ -161,6 +196,7 @@ async def sync_get_status(opts: dict[str, t.Any] | str | None = None) -> dict[st
         if isinstance(head, dict):
             chain_head_height = head.get("height")
             chain_head_hash = head.get("hash")
+        chain_id = deps.get_chain_id()
     except Exception:
         fatal_error = None
     refresh = False
@@ -174,6 +210,41 @@ async def sync_get_status(opts: dict[str, t.Any] | str | None = None) -> dict[st
             snap = svc.sync_status_snapshot(refresh=refresh)
         except TypeError:
             snap = svc.sync_status_snapshot()
+        best_remote = None
+        if hasattr(svc, "best_remote_tip"):
+            try:
+                best_remote = svc.best_remote_tip(tip_freshness_s=_tip_freshness())
+            except Exception:
+                best_remote = None
+        local_height = int(chain_head_height or 0)
+        local_hash = chain_head_hash
+        if local_height == 0 and hasattr(snap, "head_height"):
+            try:
+                local_height = int(getattr(snap, "head_height", 0) or 0)
+            except Exception:
+                local_height = int(chain_head_height or 0)
+        if not local_hash and hasattr(snap, "head_hash"):
+            local_hash = getattr(snap, "head_hash", None)
+        allowed_lag = _allowed_lag()
+        best_remote_height = (
+            int(best_remote.get("height")) if isinstance(best_remote, dict) and best_remote.get("height") is not None else None
+        )
+        status, behind_by, reason = _compute_sync_status(
+            local_height=local_height,
+            best_remote_height=best_remote_height,
+            allowed_lag=allowed_lag,
+        )
+        peers_summary = {"total": 0, "in": 0, "out": 0}
+        if hasattr(svc, "p2p_status_snapshot"):
+            try:
+                p2p_snap = svc.p2p_status_snapshot()
+                peers_summary = {
+                    "total": int(getattr(p2p_snap, "peers_total", 0) or 0),
+                    "in": int(getattr(p2p_snap, "peers_inbound", 0) or 0),
+                    "out": int(getattr(p2p_snap, "peers_outbound", 0) or 0),
+                }
+            except Exception:
+                peers_summary = {"total": 0, "in": 0, "out": 0}
         if hasattr(snap, "to_dict"):
             payload = snap.to_dict()
             if fatal_error and not payload.get("fatal_error"):
@@ -187,6 +258,14 @@ async def sync_get_status(opts: dict[str, t.Any] | str | None = None) -> dict[st
             if "p2p_init_failed" not in payload:
                 payload["p2p_init_failed"] = bool(fatal_error)
                 payload["p2p_init_error"] = fatal_error
+            payload["chain_id"] = chain_id
+            payload["local"] = {"height": local_height, "hash": local_hash}
+            payload["best_remote"] = best_remote
+            payload["behind_by"] = behind_by
+            payload["status"] = status
+            payload["reason"] = reason
+            payload["peers"] = peers_summary
+            payload["allowed_lag"] = allowed_lag
             return payload
         if isinstance(snap, dict):
             if fatal_error and not snap.get("fatal_error"):
@@ -200,8 +279,21 @@ async def sync_get_status(opts: dict[str, t.Any] | str | None = None) -> dict[st
             if "p2p_init_failed" not in snap:
                 snap["p2p_init_failed"] = bool(fatal_error)
                 snap["p2p_init_error"] = fatal_error
+            snap["chain_id"] = chain_id
+            snap["local"] = {"height": local_height, "hash": local_hash}
+            snap["best_remote"] = best_remote
+            snap["behind_by"] = behind_by
+            snap["status"] = status
+            snap["reason"] = reason
+            snap["peers"] = peers_summary
+            snap["allowed_lag"] = allowed_lag
             return snap
     head_height = int(chain_head_height or 0)
+    status, behind_by, reason = _compute_sync_status(
+        local_height=head_height,
+        best_remote_height=None,
+        allowed_lag=_allowed_lag(),
+    )
     return {
         "phase": "IDLE",
         "head_height": head_height,
@@ -237,6 +329,14 @@ async def sync_get_status(opts: dict[str, t.Any] | str | None = None) -> dict[st
         "fatal_error": fatal_error,
         "p2p_init_failed": bool(fatal_error),
         "p2p_init_error": fatal_error,
+        "chain_id": chain_id,
+        "local": {"height": head_height, "hash": chain_head_hash},
+        "best_remote": None,
+        "behind_by": behind_by,
+        "status": status,
+        "reason": reason,
+        "peers": {"total": 0, "in": 0, "out": 0},
+        "allowed_lag": _allowed_lag(),
         "active_peer_for_headers": None,
         "active_peer_for_blocks": None,
         "active_peers_for_headers": [],

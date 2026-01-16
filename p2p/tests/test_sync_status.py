@@ -223,6 +223,20 @@ def _make_service(tmp_path: Path, name: str) -> tuple[P2PService, P2PDeps]:
     return node, deps_sync
 
 
+def _set_peer_tip(
+    peer: _PeerState,
+    *,
+    height: int,
+    head_hash: bytes,
+    chain_id: int,
+    age_sec: float = 0.0,
+) -> None:
+    peer.advertised_head_height = height
+    peer.advertised_head_hash = head_hash
+    peer.advertised_chain_id = chain_id
+    peer.advertised_at_monotonic = time.monotonic() - age_sec
+
+
 def test_phase_not_idle_when_headers_ahead(tmp_path: Path) -> None:
     node, deps_sync = _make_service(tmp_path, "phase")
     genesis = deps_sync.header_by_number(0)
@@ -1795,6 +1809,35 @@ def test_select_block_peer_ignores_not_anchored_backoff_on_retry(tmp_path: Path)
     assert len(eligible_with_ignore) == 2
     assert peer_a in eligible_with_ignore
     assert peer_b in eligible_with_ignore
+
+
+def test_best_remote_tip_ignores_stale_entries(tmp_path: Path) -> None:
+    node, _deps = _make_service(tmp_path, "peer-tip-stale")
+    stale_peer = _register_peer(node, "peer-stale:0")
+    _setup_peer_hello(node, stale_peer, head_height=1666, head_hash=b"\x11" * 32)
+    _set_peer_tip(
+        stale_peer,
+        height=1666,
+        head_hash=b"\x11" * 32,
+        chain_id=node.chain_id,
+        age_sec=120.0,
+    )
+
+    assert node.best_remote_tip(tip_freshness_s=60.0) is None
+
+    fresh_peer = _register_peer(node, "peer-fresh:0")
+    _setup_peer_hello(node, fresh_peer, head_height=927, head_hash=b"\x22" * 32)
+    _set_peer_tip(
+        fresh_peer,
+        height=927,
+        head_hash=b"\x22" * 32,
+        chain_id=node.chain_id,
+        age_sec=1.0,
+    )
+
+    best = node.best_remote_tip(tip_freshness_s=60.0)
+    assert best is not None
+    assert best["height"] == 927
 
 
 def test_handle_sync_stall_clears_not_anchored_errors_on_recovery(tmp_path: Path) -> None:
