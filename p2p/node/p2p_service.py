@@ -6904,7 +6904,34 @@ class P2PService:
 
         # If we have a pending request waiting on this response, fulfill it.
         fut = peer.pending_headers
-        if fut is not None and not fut.done() and self._match_header_response(peer):
+        matched = self._match_header_response(peer)
+        
+        # CRITICAL FIX: Always clear inflight requests from this peer to prevent counter leaks
+        # Even if the response doesn't match the expected request_id, we need to clear
+        # any inflight requests to avoid _sync_inflight_headers getting stuck at max
+        if not matched:
+            # Clear any stale inflight requests from this peer
+            inflight_keys = [
+                key for key in self._sync_inflight_header_requests
+                if key[0] == peer.remote
+            ]
+            if inflight_keys:
+                log.warning(
+                    "Clearing stale inflight header requests from peer",
+                    extra={
+                        "remote": peer.remote,
+                        "peer_id": peer.peer_id,
+                        "stale_requests": len(inflight_keys),
+                        "response_count": len(msg.headers),
+                    },
+                )
+                for key in inflight_keys:
+                    del self._sync_inflight_header_requests[key]
+                # Update the counter immediately to unblock future requests
+                self._sync_inflight_headers = len(self._sync_inflight_header_requests)
+                self._sync_wakeup.set()
+        
+        if fut is not None and not fut.done() and matched:
             if peer.last_header_request_at:
                 self._update_latency(peer, peer.last_header_request_at)
             self._clear_header_request(peer)
