@@ -8775,10 +8775,13 @@ class P2PService:
         if not requested:
             return 0
 
+        # Track successfully sent blocks to handle send failures
+        successfully_sent: List[bytes] = []
+        
         # Chunk requests to keep payloads small.
         for i in range(0, len(requested), 16):
             chunk = requested[i : i + 16]
-            with contextlib.suppress(Exception):
+            try:
                 self._sync_last_block_request_at = time.time()
                 peer.last_block_request_at = self._sync_last_block_request_at
                 self._sync_active_block_peer = peer.remote
@@ -8787,19 +8790,46 @@ class P2PService:
                     MsgID.GET_BLOCKS,
                     GetBlocks(by_hash=chunk, max_blocks=len(chunk)),
                 )
+                # Only mark as sent if _send succeeded
+                successfully_sent.extend(chunk)
+            except Exception as e:
+                # Remove failed blocks from inflight tracking so they can be retried
+                for h in chunk:
+                    self._sync_inflight_blocks.pop(h, None)
+                    self._sync_inflight_peers.pop(h, None)
+                    self._sync_inflight_block_requests.pop(h, None)
+                    # Re-add to queue for immediate retry
+                    if h not in self._sync_block_queue_set and not self._has_block(h):
+                        self._sync_block_queue.appendleft(h)
+                        self._sync_block_queue_set.add(h)
+                        # Restore height hint if available
+                        height_hint = self._block_height_hint(h)
+                        if height_hint is not None:
+                            self._sync_block_queue_heights[h] = height_hint
+                log.warning(
+                    "Failed to send block request - re-queuing for retry",
+                    extra={
+                        "remote": peer.remote,
+                        "chunk_size": len(chunk),
+                        "error": str(e),
+                    },
+                )
             await asyncio.sleep(0)
-        self._stats["blocks_requested"] += len(requested)
-        self._stats["blocks_req_sent"] += len(requested)
-        if best_fetch_height is not None:
+        
+        sent_count = len(successfully_sent)
+        self._stats["blocks_requested"] += sent_count
+        self._stats["blocks_req_sent"] += sent_count
+        if best_fetch_height is not None and sent_count > 0:
             self._note_sync_progress(
                 reason="blocks_requested",
                 block_fetch_height=best_fetch_height,
             )
-        log.info(
-            "Blocks requested",
-            extra={"remote": peer.remote, "count": len(requested)},
-        )
-        return len(requested)
+        if sent_count > 0:
+            log.info(
+                "Blocks requested",
+                extra={"remote": peer.remote, "count": sent_count},
+            )
+        return sent_count
 
     async def _schedule_block_requests(
         self, peer: Optional[_PeerState] = None
