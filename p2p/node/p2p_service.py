@@ -12258,11 +12258,51 @@ class P2PService:
         log.info("Reset sync state", extra={"reason": reason})
 
     def _reset_chain_to_genesis(self, *, reason: str) -> bool:
+        """
+        Reset chain to genesis block.
+        
+        CRITICAL SAFEGUARD: This function is intentionally disabled to prevent
+        syncing from reverting to genesis under any circumstances. Reverting to
+        genesis during sync would cause catastrophic loss of chain state and
+        force a full resync from block 0.
+        
+        This safeguard ensures that once a node has synced past genesis, it can
+        NEVER revert back to genesis, regardless of sync errors, fork detection,
+        or recovery attempts.
+        """
+        # Get current head to check if we're trying to revert
         bdb = self._block_db()
+        current_head = bdb.get_canonical_head()
+        current_height = current_head[0] if current_head else 0
+        
+        # CRITICAL: Never allow reverting to genesis if we've made any progress
+        if current_height > 0:
+            log.error(
+                "BLOCKED: Attempted to reset chain to genesis from non-zero height",
+                extra={
+                    "reason": reason,
+                    "current_height": current_height,
+                    "blocked_by": "genesis_revert_safeguard",
+                },
+            )
+            return False
+        
+        # If already at genesis (height 0), this is a no-op, not a reset
         genesis = bdb.get_canonical_hash(0) or bdb.get_genesis_hash() or self._genesis_hash()
         if not genesis:
             log.warning("Unable to reset chain to genesis", extra={"reason": reason})
             return False
+        
+        # Only allow setting genesis if we're initializing (current_height == 0)
+        log.warning(
+            "Setting genesis block (initialization only, not a reset)",
+            extra={
+                "reason": reason,
+                "current_height": current_height,
+                "genesis_hash": bytes(genesis).hex(),
+            },
+        )
+        
         batch_fn = getattr(bdb.kv, "batch", None)
         if callable(batch_fn):
             with bdb.kv.batch() as batch:
@@ -12278,18 +12318,48 @@ class P2PService:
         hdr = self._sync_header_by_hash(bytes(genesis))
         if hdr is not None:
             self._sync_best_header = hdr
-        log.warning(
-            "Reset chain to genesis after repeated not_anchored",
-            extra={"reason": reason, "genesis_hash": bytes(genesis).hex()},
-        )
         return True
 
     def _reset_chain_to_ancestor(self, *, height: int, reason: str) -> bool:
         """
         Reset chain to a specific ancestor height to resolve forks.
         This is less drastic than resetting to genesis.
+        
+        CRITICAL SAFEGUARD: This function will never reset to genesis (height 0)
+        even if requested. This prevents syncing from reverting to genesis under
+        any circumstances during fork resolution.
         """
+        # CRITICAL: Never allow resetting to genesis
+        if height == 0:
+            log.error(
+                "BLOCKED: Attempted to reset chain to ancestor at genesis height",
+                extra={
+                    "requested_height": height,
+                    "reason": reason,
+                    "blocked_by": "genesis_revert_safeguard",
+                },
+            )
+            return False
+        
         bdb = self._block_db()
+        
+        # Additional safeguard: Check current head and only allow backward movement
+        # but never to genesis
+        current_head = bdb.get_canonical_head()
+        current_height = current_head[0] if current_head else 0
+        
+        if current_height > 0 and height == 0:
+            log.error(
+                "BLOCKED: Ancestor reset would revert to genesis",
+                extra={
+                    "current_height": current_height,
+                    "requested_height": height,
+                    "reason": reason,
+                    "blocked_by": "genesis_revert_safeguard",
+                },
+            )
+            return False
+        
         ancestor_hash = bdb.get_canonical_hash(height)
         if not ancestor_hash:
             log.warning(
@@ -12301,6 +12371,7 @@ class P2PService:
         log.warning(
             "Resetting chain to ancestor to resolve fork",
             extra={
+                "current_height": current_height,
                 "height": height,
                 "hash": ancestor_hash.hex(),
                 "reason": reason,
