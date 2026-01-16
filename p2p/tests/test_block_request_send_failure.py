@@ -6,10 +6,8 @@ peer disconnect or network error), the blocks are properly removed from
 inflight tracking and re-queued for retry instead of getting stuck.
 """
 
-import asyncio
 import time
-from unittest.mock import AsyncMock, MagicMock, patch
-from typing import List
+from collections import deque
 
 
 def test_block_request_send_failure_handling():
@@ -29,7 +27,7 @@ def test_block_request_send_failure_handling():
     inflight_blocks = {}
     inflight_peers = {}
     inflight_requests = {}
-    block_queue = []
+    block_queue = deque()  # Use deque for O(1) appendleft
     block_queue_set = set()
     block_queue_heights = {}
     
@@ -53,7 +51,7 @@ def test_block_request_send_failure_handling():
         
         # Re-add to queue if not already there
         if h not in block_queue_set:
-            block_queue.insert(0, h)  # appendleft equivalent
+            block_queue.appendleft(h)
             block_queue_set.add(h)
     
     # Step 3: Verify cleanup

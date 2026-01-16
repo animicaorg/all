@@ -8798,7 +8798,9 @@ class P2PService:
                     self._sync_inflight_blocks.pop(h, None)
                     self._sync_inflight_peers.pop(h, None)
                     self._sync_inflight_block_requests.pop(h, None)
-                    # Re-add to queue for immediate retry
+                    # Re-add to queue for immediate retry if block wasn't received by another peer
+                    # The _has_block check handles race condition where block arrived between
+                    # marking as inflight and the failed send attempt
                     if h not in self._sync_block_queue_set and not self._has_block(h):
                         self._sync_block_queue.appendleft(h)
                         self._sync_block_queue_set.add(h)
