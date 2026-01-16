@@ -27,7 +27,7 @@ ADMIN_RPC_ENABLED_ENV = "ANIMICA_ADMIN_RPC_ENABLED"
 # Optional helpers for address parsing
 try:
     from pq.py.utils import bech32 as _bech32  # type: ignore
-except Exception:  # pragma: no cover
+except (ImportError, ModuleNotFoundError):  # pragma: no cover
     _bech32 = None  # type: ignore
 
 
@@ -169,26 +169,7 @@ async def set_balance(address: str, balance: t.Union[str, int]) -> t.Dict[str, t
     
     log.info(f"Admin RPC: Setting balance for {addr} to {bal} nANM")
     
-    # Try to use state service if available
-    try:
-        state_svc = deps.state_service()
-        if state_svc is not None:
-            # Set balance using state service
-            # Note: This assumes the state service has a set_balance method
-            # If not available, we'll fall back to direct DB access
-            if hasattr(state_svc, 'set_balance'):
-                state_svc.set_balance(addr, bal)
-                log.info(f"Balance set via state service: {addr} = {bal}")
-                return {
-                    "success": True,
-                    "address": addr,
-                    "balance": str(bal),
-                    "method": "state_service"
-                }
-    except Exception as e:
-        log.debug(f"State service not available or failed: {e}")
-    
-    # Fallback: Direct state DB access
+    # Try to use state DB via deps
     try:
         state_db = deps.state_db()
         if state_db is None:
@@ -199,38 +180,41 @@ async def set_balance(address: str, balance: t.Union[str, int]) -> t.Dict[str, t
         if key is None:
             raise rpc_errors.InvalidParams(f"Failed to convert address to key bytes: {addr}")
         
-        # Set balance in state DB
-        # The exact method depends on the StateDB implementation
-        # Try multiple approaches
+        # The state DB should have a method to set balance
+        # Check for the specific method that exists in the codebase
         if hasattr(state_db, 'set_balance'):
+            # Direct method (preferred)
             state_db.set_balance(key, bal)
+            log.info(f"Balance set via state_db.set_balance: {addr} = {bal}")
         elif hasattr(state_db, 'set_account_balance'):
+            # Alternative method name
             state_db.set_account_balance(key, bal)
-        elif hasattr(state_db, 'put_balance'):
-            state_db.put_balance(key, bal)
+            log.info(f"Balance set via state_db.set_account_balance: {addr} = {bal}")
         else:
-            # Last resort: try to set via generic put method
-            if hasattr(state_db, 'put'):
-                # Construct account data with balance
-                # This is a simplified approach - actual account structure may vary
-                state_db.put(key, bal.to_bytes(32, byteorder='big'))
-            else:
-                raise rpc_errors.InternalError(
-                    "State DB does not support balance updates. "
-                    "Available methods: " + str(dir(state_db))
-                )
+            # State DB doesn't have a direct balance setter
+            # This is expected - most implementations don't allow direct manipulation
+            raise rpc_errors.InternalError(
+                "State DB does not support direct balance updates. "
+                "This is a limitation of the current implementation. "
+                "Consider using genesis initialization or transaction-based updates."
+            )
         
-        log.info(f"Balance set via direct DB access: {addr} = {bal}")
         return {
             "success": True,
             "address": addr,
             "balance": str(bal),
-            "method": "direct_db"
+            "method": "state_db"
         }
     
+    except rpc_errors.RpcError:
+        # Re-raise RPC errors as-is
+        raise
     except Exception as e:
         log.error(f"Failed to set balance for {addr}: {e}", exc_info=True)
-        raise rpc_errors.InternalError(f"Failed to set balance: {e}") from e
+        raise rpc_errors.InternalError(
+            f"Failed to set balance: {e}. "
+            "Admin RPC balance updates may not be fully implemented yet."
+        ) from e
 
 
 @method("admin.getInfo", desc="Get admin RPC information")

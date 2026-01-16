@@ -3173,9 +3173,44 @@ def reset(
         if restore_balances and balance_backup_file and balance_backup_file.exists():
             typer.secho("\n💾 Restoring balances from backup...", fg=typer.colors.CYAN)
             
-            # Wait a moment for node to fully start
+            # Wait for node to be fully ready with proper health check
             typer.echo("Waiting for node to be fully ready...")
-            time.sleep(5)
+            max_wait = 60  # Maximum 60 seconds
+            wait_interval = 2  # Check every 2 seconds
+            elapsed = 0
+            node_ready = False
+            
+            while elapsed < max_wait:
+                try:
+                    import httpx
+                    # Check both health endpoint and RPC
+                    health_response = httpx.get(
+                        f"http://127.0.0.1:{_resolve_host_port('HOST_RPC_PORT', get_network_defaults(resolved_network)['rpc_port'])}/healthz",
+                        timeout=2.0
+                    )
+                    if health_response.status_code == 200:
+                        # Also verify RPC is responding
+                        test_payload = {"jsonrpc": "2.0", "method": "chain.getHead", "params": [], "id": 1}
+                        rpc_response = httpx.post(rpc_url, json=test_payload, timeout=2.0)
+                        if rpc_response.status_code == 200:
+                            node_ready = True
+                            break
+                except Exception:
+                    pass
+                
+                time.sleep(wait_interval)
+                elapsed += wait_interval
+            
+            if not node_ready:
+                typer.secho(
+                    f"\n⚠️  Node did not become ready within {max_wait}s",
+                    fg=typer.colors.YELLOW
+                )
+                typer.echo("You can try restoring manually:")
+                typer.echo("  animica balance restore")
+                return
+            
+            typer.echo(f"✓ Node ready after {elapsed}s")
             
             try:
                 from animica.cli.wallet_balances import restore_wallet_balances_sync
