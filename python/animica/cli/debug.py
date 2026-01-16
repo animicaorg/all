@@ -94,54 +94,57 @@ def sync_dump(
     """
     url = _resolve_rpc_url(rpc_url)
     try:
-        sync_status = asyncio.run(
-            rpc_call("sync.getStatus", {}, rpc_url=url, timeout=timeout)
-        )
-        p2p_debug = asyncio.run(
-            rpc_call("p2p.syncDebug", {}, rpc_url=url, timeout=timeout)
-        )
+        dump = asyncio.run(rpc_call("sync.dump", {}, rpc_url=url, timeout=timeout))
     except Exception as exc:
-        typer.secho(f"❌ Failed to query sync diagnostics: {exc}", fg=typer.colors.RED, err=True)
+        typer.secho(
+            f"❌ Failed to query sync diagnostics: {exc}",
+            fg=typer.colors.RED,
+            err=True,
+        )
         raise typer.Exit(code=1)
 
-    peers = p2p_debug.get("connected_peers", []) if isinstance(p2p_debug, dict) else []
+    if not isinstance(dump, dict):
+        typer.secho(
+            "❌ Failed to query sync diagnostics: invalid response",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    peers = dump.get("peers", {}).get("connected", [])
     best_peer_height, best_peer_hash, best_peer = _best_peer_head(peers)
 
-    local_head_height = sync_status.get("head_height")
+    head = dump.get("head", {})
+    sync_status = dump.get("sync", {})
+    queues = dump.get("queues", {})
+    inflight = dump.get("in_flight", {})
+    local_head_height = head.get("height")
     at_genesis = local_head_height is not None and int(local_head_height) == 0
     
-    dump = {
+    summary = {
         "rpc_url": url,
+        "timestamp": dump.get("timestamp"),
         "local_head_height": local_head_height,
-        "local_head_hash": sync_status.get("head_hash"),
+        "local_head_hash": head.get("hash"),
         "at_genesis": at_genesis,
         "best_peer_height": best_peer_height,
         "best_peer_hash": best_peer_hash,
         "best_peer": best_peer,
         "sync_phase": sync_status.get("phase") or sync_status.get("state"),
-        "in_flight_headers": sync_status.get("in_flight_headers"),
-        "in_flight_blocks": sync_status.get("in_flight_blocks"),
-        "queued_blocks_count": sync_status.get("queued_blocks_count"),
-        "pending_header_batches": sync_status.get("pending_header_batches"),
+        "in_flight_headers": inflight.get("in_flight_headers"),
+        "in_flight_blocks": inflight.get("in_flight_blocks"),
+        "queued_blocks_count": queues.get("queued_blocks"),
+        "pending_header_batches": queues.get("pending_header_batches"),
         "last_progress_at": sync_status.get("last_progress_at"),
         "last_header_error": sync_status.get("last_header_error"),
         "last_block_error": sync_status.get("last_block_error"),
         "last_block_error_peer": sync_status.get("last_block_error_peer"),
         "stall_reason": sync_status.get("stall_reason"),
         "stall_elapsed_s": sync_status.get("stall_elapsed_s"),
-        "eligible_header_peers": sync_status.get("eligible_peers_for_headers"),
-        "eligible_block_peers": sync_status.get("eligible_peers_for_blocks"),
-        "active_block_peer": sync_status.get("active_peer_for_blocks"),
-        "peer_error_summary": sync_status.get("block_error_summary"),
         "sync_recovery": {
             "attempts": sync_status.get("recovery_attempts"),
             "last_action": sync_status.get("last_recovery_action"),
         },
-        "inflight_block_samples": sync_status.get("inflight_block_samples") or [],
-        "orphan_block_samples": sync_status.get("orphan_block_samples") or [],
-        "peer_scores": (p2p_debug.get("peer_scores") if isinstance(p2p_debug, dict) else []) or [],
-        "timeouts_by_peer": (p2p_debug.get("timeouts_by_peer") if isinstance(p2p_debug, dict) else {}) or {},
-        "retries_by_peer": (p2p_debug.get("retries_by_peer") if isinstance(p2p_debug, dict) else {}) or {},
     }
 
     if json_output:
@@ -151,7 +154,7 @@ def sync_dump(
     typer.echo("\n🧪 Sync Debug Dump\n")
     typer.echo("━" * 60)
     typer.echo(f"RPC URL:          {url}")
-    typer.echo(f"Local head:       {dump['local_head_height']} ({dump['local_head_hash']})")
+    typer.echo(f"Local head:       {summary['local_head_height']} ({summary['local_head_hash']})")
     
     if at_genesis:
         typer.secho(
@@ -171,16 +174,16 @@ def sync_dump(
                 fg=typer.colors.YELLOW if gap < 100 else typer.colors.RED,
             )
     
-    typer.echo(f"Sync phase:       {dump['sync_phase']}")
+    typer.echo(f"Sync phase:       {summary['sync_phase']}")
     typer.echo(
         "In-flight:        "
-        f"headers={dump['in_flight_headers']} blocks={dump['in_flight_blocks']}"
+        f"headers={summary['in_flight_headers']} blocks={summary['in_flight_blocks']}"
     )
     
     # Highlight stuck in-flight requests
-    if dump['in_flight_headers'] and dump['in_flight_headers'] > 0:
+    if summary['in_flight_headers'] and summary['in_flight_headers'] > 0:
         typer.secho(
-            f"   ⚠️  {dump['in_flight_headers']} header request(s) in-flight",
+            f"   ⚠️  {summary['in_flight_headers']} header request(s) in-flight",
             fg=typer.colors.YELLOW,
         )
         if at_genesis:
@@ -188,42 +191,53 @@ def sync_dump(
     
     typer.echo(
         "Queues:           "
-        f"pending_headers={dump['pending_header_batches']} queued_blocks={dump['queued_blocks_count']}"
+        f"pending_headers={summary['pending_header_batches']} queued_blocks={summary['queued_blocks_count']}"
     )
     
-    if dump["last_progress_at"]:
-        typer.echo(f"Last progress:    {dump['last_progress_at']}")
+    if summary["last_progress_at"]:
+        typer.echo(f"Last progress:    {summary['last_progress_at']}")
     else:
         typer.secho("Last progress:    Never", fg=typer.colors.RED)
     
-    if dump["stall_reason"]:
-        typer.echo(f"Stall reason:     {dump['stall_reason']}")
-        typer.echo(f"Stall elapsed:    {dump['stall_elapsed_s']}s")
-    
-    if dump["last_header_error"]:
-        if dump["last_header_error"] == "at_tip":
+    if summary["stall_reason"]:
+        typer.echo(f"Stall reason:     {summary['stall_reason']}")
+    if summary.get("stall_elapsed_s") is not None:
+        typer.echo(f"Stall elapsed:    {summary['stall_elapsed_s']}s")
+
+    errors = dump.get("errors") or []
+    if errors:
+        typer.secho("\n⚠️  Partial dump (some sections unavailable):", fg=typer.colors.YELLOW)
+        for err in errors:
+            section = err.get("section")
+            err_type = err.get("type")
+            message = err.get("message")
+            typer.echo(f"  - {section}: {err_type} ({message})")
+
+    if summary["last_header_error"]:
+        if summary["last_header_error"] == "at_tip":
             typer.echo("Last header status: at_tip (no higher headers reported)")
             typer.echo(
                 "Workaround: run 'animica sync force --boost-seconds 30' to re-scan peers."
             )
         else:
-            typer.echo(f"Last header error: {dump['last_header_error']}")
-    
-    if dump["last_block_error"]:
-        typer.echo(f"Last block error:  {dump['last_block_error']}")
-    
-    if dump["last_block_error_peer"]:
-        typer.echo(f"Block error peer:  {dump['last_block_error_peer']}")
-    
-    if dump["sync_recovery"]["last_action"]:
+            typer.echo(f"Last header error: {summary['last_header_error']}")
+
+    if summary["last_block_error"]:
+        typer.echo(f"Last block error:  {summary['last_block_error']}")
+
+    if summary["last_block_error_peer"]:
+        typer.echo(f"Block error peer:  {summary['last_block_error_peer']}")
+
+    if summary["sync_recovery"]["last_action"]:
         typer.echo(
-            f"Last recovery:    {dump['sync_recovery']['last_action']} "
-            f"(attempt {dump['sync_recovery']['attempts']})"
+            f"Last recovery:    {summary['sync_recovery']['last_action']} "
+            f"(attempt {summary['sync_recovery']['attempts']})"
         )
 
-    if dump["inflight_block_samples"]:
+    inflight_samples = inflight.get("inflight_block_samples") or []
+    if inflight_samples:
         typer.echo("\nIn-flight blocks (sample):")
-        for item in dump["inflight_block_samples"]:
+        for item in inflight_samples:
             typer.echo(
                 "  - {hash} parent={parent} requested_at={requested_at} peer={peer}".format(
                     hash=item.get("hash"),
@@ -233,9 +247,10 @@ def sync_dump(
                 )
             )
 
-    if dump["orphan_block_samples"]:
+    orphan_samples = dump.get("orphans", {}).get("samples") or []
+    if orphan_samples:
         typer.echo("\nOrphan pool (waiting on parent):")
-        for item in dump["orphan_block_samples"]:
+        for item in orphan_samples:
             typer.echo(
                 "  - {hash} parent={parent} age_s={age_s} peer={peer}".format(
                     hash=item.get("hash"),
@@ -245,9 +260,10 @@ def sync_dump(
                 )
             )
 
-    if dump["peer_scores"]:
+    peer_scores = dump.get("peers", {}).get("scores") or []
+    if peer_scores:
         typer.echo("\nPeer scores:")
-        for peer in dump["peer_scores"]:
+        for peer in peer_scores:
             typer.echo(
                 "  - {remote} score={score} penalty={penalty} sync_penalties={sync_penalties} last_response={last}".format(
                     remote=peer.get("remote"),
@@ -258,10 +274,12 @@ def sync_dump(
                 )
             )
 
-    if dump["timeouts_by_peer"] or dump["retries_by_peer"]:
+    timeouts_by_peer = dump.get("peers", {}).get("timeouts_by_peer") or {}
+    retries_by_peer = dump.get("peers", {}).get("retries_by_peer") or {}
+    if timeouts_by_peer or retries_by_peer:
         typer.echo("\nPeer retry/timeout counters:")
-        for peer, count in dump["timeouts_by_peer"].items():
-            typer.echo(f"  - {peer}: timeouts={count} retries={dump['retries_by_peer'].get(peer, 0)}")
+        for peer, count in timeouts_by_peer.items():
+            typer.echo(f"  - {peer}: timeouts={count} retries={retries_by_peer.get(peer, 0)}")
     
     typer.echo("━" * 60)
     
@@ -274,7 +292,7 @@ def sync_dump(
         typer.echo("   3. Force sync restart: animica sync force --clear-cache")
         typer.echo("   4. If still stuck, check node logs for errors")
         typer.echo("   5. Watchdog will auto-recover after 15s of no progress")
-    elif dump['in_flight_headers'] and dump['in_flight_headers'] > 0:
+    elif summary['in_flight_headers'] and summary['in_flight_headers'] > 0:
         typer.echo()
         typer.secho("💡 In-Flight Headers Detected:", fg=typer.colors.CYAN, bold=True)
         typer.echo("   Requests should timeout after 15-20s and retry")

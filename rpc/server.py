@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import importlib
 import json
+import secrets
 import logging
 import os
 import typing as t
@@ -452,7 +453,8 @@ def create_app(cfg: rpc_config.Config | None = None) -> FastAPI:
                     status_code=status_code,
                 )
             except Exception as e:
-                log.exception("Unhandled error in JSON-RPC")
+                error_id = secrets.token_hex(4)
+                log.exception("Unhandled error in JSON-RPC", extra={"error_id": error_id})
                 # Map to JSON-RPC internal error shape
                 return JSONResponse(
                     {
@@ -460,7 +462,7 @@ def create_app(cfg: rpc_config.Config | None = None) -> FastAPI:
                         "error": {
                             "code": -32603,
                             "message": "Internal error",
-                            "data": str(e),
+                            "data": {"error_id": error_id},
                         },
                         "id": payload.get("id") if isinstance(payload, dict) else None,
                     },
