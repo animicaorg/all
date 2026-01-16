@@ -6912,7 +6912,7 @@ class P2PService:
         if not matched:
             # Clear any stale inflight requests from this peer
             inflight_keys = [
-                key for key in list(self._sync_inflight_header_requests.keys())
+                key for key in self._sync_inflight_header_requests
                 if key[0] == peer.remote
             ]
             if inflight_keys:
@@ -6926,7 +6926,7 @@ class P2PService:
                     },
                 )
                 for key in inflight_keys:
-                    self._sync_inflight_header_requests.pop(key, None)
+                    del self._sync_inflight_header_requests[key]
                 # Update the counter immediately to unblock future requests
                 self._sync_inflight_headers = len(self._sync_inflight_header_requests)
                 self._sync_wakeup.set()
