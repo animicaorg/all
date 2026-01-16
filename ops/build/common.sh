@@ -258,6 +258,46 @@ verify_directory() {
 }
 
 # ============================================================================
+# Python project helpers
+# ============================================================================
+
+# Find and validate the main Python package directory
+# Returns the path to the Python package containing pyproject.toml
+find_python_package_dir() {
+    local repo_root="$1"
+    local python_pkg_dir="$repo_root/python"
+    
+    if [[ -f "$python_pkg_dir/pyproject.toml" ]]; then
+        echo "$python_pkg_dir"
+        return 0
+    fi
+    
+    # Fallback: check if repo root has pyproject.toml
+    if [[ -f "$repo_root/pyproject.toml" ]]; then
+        echo "$repo_root"
+        return 0
+    fi
+    
+    # Not found
+    err "Cannot find Python package. Searched:"
+    err "  - $repo_root/python/pyproject.toml"
+    err "  - $repo_root/pyproject.toml"
+    return 1
+}
+
+# Validate that a directory contains a Python project
+validate_python_package() {
+    local pkg_dir="$1"
+    local pkg_name="${2:-Python package}"
+    
+    if [[ ! -f "$pkg_dir/pyproject.toml" ]]; then
+        die "$pkg_name not found at: $pkg_dir/pyproject.toml"
+    fi
+    
+    log "Found $pkg_name at: $pkg_dir"
+}
+
+# ============================================================================
 # Dependency installation helpers
 # ============================================================================
 
