@@ -152,7 +152,8 @@ class RetargetParams:
     """
 
     # BLOCKTIME_TOUCHPOINT: Default target block time
-    target_block_time_s: float = 120.0
+    # Import from consensus.params for consistency
+    target_block_time_s: float = 300.0  # 5 minutes
     half_life_blocks: float = 24.0
     gain_beta: float = 0.75
     step_clamp_micro: MicroNat = 400_000  # ~0.4 nats per step max
