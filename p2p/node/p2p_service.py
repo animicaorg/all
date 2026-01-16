@@ -493,6 +493,10 @@ class SyncStatusSnapshot:
     next_block_needed_hash: Optional[str]
     orphan_pool_size: int
     """Number of blocks in orphan buffer waiting for parents."""
+    orphan_cascade_successes: int
+    """Total successful orphan cascade imports."""
+    orphan_seen_count_entries: int
+    """Number of unique orphans being tracked for cooldown."""
     stall_timeout_s: float
     stall_reason: Optional[str]
     stall_elapsed_s: float
@@ -595,6 +599,8 @@ class SyncStatusSnapshot:
             "next_block_needed_height": self.next_block_needed_height,
             "next_block_needed_hash": self.next_block_needed_hash,
             "orphan_pool_size": self.orphan_pool_size,
+            "orphan_cascade_successes": self.orphan_cascade_successes,
+            "orphan_seen_count_entries": self.orphan_seen_count_entries,
             "stall_timeout_s": self.stall_timeout_s,
             "stall_reason": self.stall_reason,
             "stall_elapsed_s": self.stall_elapsed_s,
@@ -3049,6 +3055,8 @@ class P2PService:
             next_block_needed_height=next_block_height,
             next_block_needed_hash=next_block_hash_hex,
             orphan_pool_size=len(self._sync_block_buffer),
+            orphan_cascade_successes=self._orphan_cascade_successes,
+            orphan_seen_count_entries=len(self._orphan_seen_count),
             stall_timeout_s=float(self._sync_stall_timeout),
             stall_reason=self._sync_block_stalled_reason,
             stall_elapsed_s=stall_elapsed_s,
