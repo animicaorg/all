@@ -1094,6 +1094,29 @@ def sync_status(
         network_hash = best_peer_hash
         network_source = "peer"
     
+    # Extract new best_remote fields from sync_status (from P2P layer)
+    best_remote_height = None
+    best_remote_hash = None
+    best_remote_peer = None
+    best_remote_age_sec = None
+    behind_by = None
+    sync_status_reason = None
+    
+    if isinstance(sync_status, dict):
+        best_remote_height = sync_status.get("best_remote_height")
+        best_remote_hash = sync_status.get("best_remote_hash")
+        best_remote_peer = sync_status.get("best_remote_peer")
+        best_remote_age_sec = sync_status.get("best_remote_age_sec")
+        behind_by = sync_status.get("behind_by")
+        sync_status_reason = sync_status.get("sync_status_reason")
+    
+    # Use best_remote as the authoritative network height if available and fresher
+    if best_remote_height is not None:
+        if network_height is None or best_remote_height > network_height:
+            network_height = best_remote_height
+            network_hash = best_remote_hash
+            network_source = "peer_fresh"
+    
     metrics = _extract_sync_metrics(sync_status)
     is_syncing = bool(metrics.get("syncing"))
     target_height = metrics.get("target_height")
@@ -1173,6 +1196,15 @@ def sync_status(
             output["best_header_height"] = best_header_height
         if best_block_height is not None:
             output["best_block_height"] = best_block_height
+        if best_remote_height is not None:
+            output["best_remote_height"] = best_remote_height
+            output["best_remote_hash"] = best_remote_hash
+            output["best_remote_peer"] = best_remote_peer
+            output["best_remote_age_sec"] = best_remote_age_sec
+        if behind_by is not None:
+            output["behind_by"] = behind_by
+        if sync_status_reason:
+            output["sync_status_reason"] = sync_status_reason
         if p2p_status:
             output["p2p_running"] = p2p_status.get("p2p_running")
             output["peers_inbound"] = p2p_status.get("peers_inbound")
@@ -1223,6 +1255,30 @@ def sync_status(
     if head_hash:
         typer.echo(f"  Hash:      {head_hash}")
     typer.echo()
+
+    # Best Remote Head section (from fresh peer tips)
+    if best_remote_height is not None:
+        typer.secho("Best Remote Head (from fresh peer tips):", fg=typer.colors.BRIGHT_BLUE, bold=True)
+        typer.echo(f"  Height:    {best_remote_height}")
+        if best_remote_hash:
+            typer.echo(f"  Hash:      {best_remote_hash}")
+        if best_remote_peer:
+            typer.echo(f"  Peer:      {best_remote_peer}")
+        if best_remote_age_sec is not None:
+            typer.echo(f"  Tip Age:   {best_remote_age_sec:.1f}s ago")
+        if behind_by is not None and behind_by > 0:
+            typer.secho(f"  Behind by: {behind_by} blocks", fg=typer.colors.YELLOW, bold=True)
+        elif behind_by == 0:
+            typer.secho(f"  Behind by: 0 blocks (at tip)", fg=typer.colors.GREEN)
+        typer.echo()
+    elif height is not None and height > 0:
+        # No fresh peer tips - this is a problem
+        typer.secho("Best Remote Head:", fg=typer.colors.YELLOW, bold=True)
+        typer.secho("  ⚠ No fresh peer tips available", fg=typer.colors.YELLOW)
+        if sync_status_reason:
+            typer.echo(f"  Reason:    {sync_status_reason}")
+        typer.echo("  Status:    Cannot determine if synchronized")
+        typer.echo()
 
     if network_height is not None and network_height > 0 and (height is None or height < network_height):
         source_label = "bootstrap" if network_source == "bootstrap" else "peer"
