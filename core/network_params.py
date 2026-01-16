@@ -24,9 +24,10 @@ GENESIS_DIR = BASE_DIR / "genesis"
 
 # CHAIN_RESET_TOUCHPOINT: New genesis hash for mainnet reset
 # Old: 0x27fab3a17fd3a166908cdaa32462511ded2da86724314de45f335b0a59f820d8
-# Updated: 0x21b05e15fbba80b81d60529bb7d977fed93a8bbe2fb513d9363f1af8bb7e0b2c (2026-01-16 mainnet reset)
+# New: 0x8daaca93deb86f4047d54097a08e68df926f91e0ac9658c716da8d6eb8be766d
+# This matches core/genesis/mainnet.json with deterministic beacon seed
 MAINNET_GENESIS_HASH_HEX = (
-    "0x21b05e15fbba80b81d60529bb7d977fed93a8bbe2fb513d9363f1af8bb7e0b2c"
+    "0x8daaca93deb86f4047d54097a08e68df926f91e0ac9658c716da8d6eb8be766d"
 )
 TESTNET_GENESIS_HASH_HEX = (
     "0xcf4489041eb0ae6a4e29a7e9684392eee2b74d2e9ad4bc8c38b82b260a615b34"
