@@ -16,11 +16,13 @@ from pydantic import BaseModel, Field, field_validator
 
 
 class NetworkType(str, Enum):
-    """Supported network types."""
+    """Supported network types.
+    
+    Note: All networks run via local node only. No remote connections supported.
+    """
     MAINNET = "mainnet"
     TESTNET = "testnet"
     DEVNET = "devnet"
-    CUSTOM = "custom"
 
 
 class DeviceType(str, Enum):
@@ -89,11 +91,17 @@ class PoolConfig(BaseModel):
 
 
 class NetworkConfig(BaseModel):
-    """Network and RPC configuration."""
+    """Network configuration for local node.
+    
+    Note: This application ONLY runs a local node. Remote RPC connections are not supported.
+    """
     network_type: NetworkType = Field(default=NetworkType.DEVNET, description="Network type")
-    rpc_url: str = Field(default="http://127.0.0.1:8545/rpc", description="RPC endpoint URL")
-    custom_rpc_url: Optional[str] = Field(default=None, description="Custom RPC URL (when network_type=custom)")
+    local_rpc_port: Optional[int] = Field(default=None, ge=1024, le=65535, description="Preferred local RPC port (None=auto-select)")
     chain_id: Optional[int] = Field(default=None, ge=1, description="Chain ID (None=auto-detect)")
+    
+    # Legacy fields - ignored if present in old configs
+    rpc_url: Optional[str] = Field(default=None, description="[DEPRECATED] No longer used")
+    custom_rpc_url: Optional[str] = Field(default=None, description="[DEPRECATED] No longer used")
 
 
 class MinerConfig(BaseModel):

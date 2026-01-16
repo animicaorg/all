@@ -1,12 +1,14 @@
 """First-run wizard for initial setup.
 
 Guides users through:
-1. Network selection (mainnet/testnet/devnet/custom)
-2. RPC URL configuration and validation
+1. Network selection (mainnet/testnet/devnet) - always runs local node
+2. Local node configuration
 3. Wallet/payout address setup
 4. Device detection and selection
 5. Performance presets
 6. Summary and start mining
+
+Note: This GUI ONLY runs a local node. Remote RPC connections are not supported.
 """
 
 import json
@@ -42,7 +44,6 @@ from animica_miner_gui.backend.config import (
     save_config,
 )
 from animica_miner_gui.backend.device_detection import detect_all
-from animica_miner_gui.backend.rpc_client import RPCClient
 
 logger = logging.getLogger(__name__)
 
@@ -242,40 +243,74 @@ class CreateWalletDialog(QDialog):
 
 
 class NetworkSelectionPage(QWizardPage):
-    """Network selection page."""
+    """Network selection page.
+    
+    Note: This GUI always runs a local node. You're selecting which network
+    the local node should connect to.
+    """
     
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.setTitle("Network Selection")
-        self.setSubTitle("Choose the Animica network to connect to")
+        self.setSubTitle("Choose which Animica network your local node will connect to")
         
         layout = QVBoxLayout()
         
+        # Info message
+        info_label = QLabel(
+            "ℹ️ This application runs a local Animica node on your computer. "
+            "Select which network your node should connect to:"
+        )
+        info_label.setWordWrap(True)
+        info_label.setStyleSheet(
+            "color: #2196F3; "
+            "background-color: rgba(33, 150, 243, 0.1); "
+            "padding: 8px; "
+            "border-left: 3px solid #2196F3; "
+            "border-radius: 3px; "
+            "margin-bottom: 16px;"
+        )
+        layout.addWidget(info_label)
+        
         # Network type selection
-        self.mainnet_radio = QRadioButton("Mainnet (production)")
-        self.testnet_radio = QRadioButton("Testnet (testing with real conditions)")
-        self.devnet_radio = QRadioButton("Devnet (development and testing)")
-        self.custom_radio = QRadioButton("Custom (specify your own RPC)")
+        self.mainnet_radio = QRadioButton("Mainnet (production network)")
+        self.testnet_radio = QRadioButton("Testnet (testing with real network conditions)")
+        self.devnet_radio = QRadioButton("Devnet (local development and testing)")
         
         self.devnet_radio.setChecked(True)  # Default to devnet
         
         layout.addWidget(self.mainnet_radio)
         layout.addWidget(self.testnet_radio)
         layout.addWidget(self.devnet_radio)
-        layout.addWidget(self.custom_radio)
         
-        # Custom RPC URL field (enabled only for custom)
-        self.custom_rpc_label = QLabel("Custom RPC URL:")
-        self.custom_rpc_input = QLineEdit()
-        self.custom_rpc_input.setPlaceholderText("http://127.0.0.1:8545/rpc")
-        self.custom_rpc_input.setEnabled(False)
+        # Add network descriptions
+        desc_label = QLabel()
+        desc_label.setWordWrap(True)
+        desc_label.setStyleSheet("color: gray; margin-top: 8px; font-size: 11px;")
+        layout.addWidget(desc_label)
         
-        layout.addWidget(self.custom_rpc_label)
-        layout.addWidget(self.custom_rpc_input)
+        def update_description():
+            if self.mainnet_radio.isChecked():
+                desc_label.setText(
+                    "Your local node will sync with the Mainnet network. "
+                    "This is the production network with real value."
+                )
+            elif self.testnet_radio.isChecked():
+                desc_label.setText(
+                    "Your local node will sync with the Testnet network. "
+                    "This network uses test tokens with no real value."
+                )
+            else:
+                desc_label.setText(
+                    "Your local node will run in local development mode. "
+                    "Perfect for testing without network connectivity."
+                )
         
         # Connect signals
-        self.custom_radio.toggled.connect(self.custom_rpc_input.setEnabled)
-        self.custom_radio.toggled.connect(self.custom_rpc_label.setEnabled)
+        self.mainnet_radio.toggled.connect(update_description)
+        self.testnet_radio.toggled.connect(update_description)
+        self.devnet_radio.toggled.connect(update_description)
+        update_description()
         
         layout.addStretch()
         self.setLayout(layout)
@@ -284,121 +319,78 @@ class NetworkSelectionPage(QWizardPage):
         self.registerField("mainnet", self.mainnet_radio)
         self.registerField("testnet", self.testnet_radio)
         self.registerField("devnet", self.devnet_radio)
-        self.registerField("custom", self.custom_radio)
-        self.registerField("custom_rpc", self.custom_rpc_input)
+
+
+class LocalNodeConfigPage(QWizardPage):
+    """Local node configuration page.
     
-    def validatePage(self) -> bool:
-        """Validate the page before moving to next."""
-        if self.custom_radio.isChecked():
-            url = self.custom_rpc_input.text().strip()
-            if not url:
-                return False
-            if not (url.startswith("http://") or url.startswith("https://")):
-                return False
-        return True
-
-
-class RPCConfigPage(QWizardPage):
-    """RPC configuration and validation page."""
+    Replaces the old RPCConfigPage with local-node-specific settings.
+    """
     
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
-        self.setTitle("RPC Configuration")
-        self.setSubTitle("Configure and test your RPC connection")
+        self.setTitle("Local Node Configuration")
+        self.setSubTitle("Configure your local Animica node")
         
         layout = QVBoxLayout()
         
-        # RPC URL display
-        self.rpc_label = QLabel("RPC URL:")
-        self.rpc_display = QLabel()
-        self.rpc_display.setStyleSheet("font-weight: bold;")
+        # Network display
+        network_layout = QHBoxLayout()
+        network_layout.addWidget(QLabel("Network:"))
+        self.network_display = QLabel()
+        self.network_display.setStyleSheet("font-weight: bold;")
+        network_layout.addWidget(self.network_display)
+        network_layout.addStretch()
+        layout.addLayout(network_layout)
         
-        layout.addWidget(self.rpc_label)
-        layout.addWidget(self.rpc_display)
+        # Info about local node
+        info_label = QLabel(
+            "✓ Your local node will run on 127.0.0.1 (localhost only)\n"
+            "✓ The node will be started automatically when you launch the miner\n"
+            "✓ All data will be stored in ~/.animica/"
+        )
+        info_label.setWordWrap(True)
+        info_label.setStyleSheet(
+            "color: #4CAF50; "
+            "background-color: rgba(76, 175, 80, 0.1); "
+            "padding: 12px; "
+            "border-left: 3px solid #4CAF50; "
+            "border-radius: 3px; "
+            "margin: 16px 0;"
+        )
+        layout.addWidget(info_label)
         
-        # Test button and status
-        test_layout = QHBoxLayout()
-        self.test_button = QPushButton("Test Connection")
-        self.test_button.clicked.connect(self.test_connection)
-        self.status_label = QLabel("")
+        # Port configuration (optional)
+        port_layout = QHBoxLayout()
+        self.port_checkbox = QCheckBox("Use custom RPC port:")
+        self.port_input = QLineEdit()
+        self.port_input.setPlaceholderText("8545 (default)")
+        self.port_input.setMaximumWidth(100)
+        self.port_input.setEnabled(False)
+        self.port_checkbox.toggled.connect(self.port_input.setEnabled)
         
-        test_layout.addWidget(self.test_button)
-        test_layout.addWidget(self.status_label)
-        test_layout.addStretch()
+        port_layout.addWidget(self.port_checkbox)
+        port_layout.addWidget(self.port_input)
+        port_layout.addWidget(QLabel("(optional - leave unchecked for auto-selection)"))
+        port_layout.addStretch()
+        layout.addLayout(port_layout)
         
-        layout.addLayout(test_layout)
-        
-        # Connection info
-        self.info_text = QTextEdit()
-        self.info_text.setReadOnly(True)
-        self.info_text.setMaximumHeight(150)
-        
-        layout.addWidget(QLabel("Connection Info:"))
-        layout.addWidget(self.info_text)
+        self.registerField("custom_port", self.port_checkbox)
+        self.registerField("port_value", self.port_input)
         
         layout.addStretch()
         self.setLayout(layout)
-        
-        self.connection_ok = False
     
     def initializePage(self) -> None:
-        """Initialize the page with RPC URL from previous page."""
-        # Determine RPC URL based on network selection
-        if self.field("custom"):
-            rpc_url = self.field("custom_rpc")
-        elif self.field("mainnet"):
-            rpc_url = "https://rpc.mainnet.animica.org/rpc"
+        """Initialize the page with network selection."""
+        if self.field("mainnet"):
+            network = "Mainnet"
         elif self.field("testnet"):
-            rpc_url = "https://rpc.testnet.animica.org/rpc"
-        else:  # devnet
-            rpc_url = "http://127.0.0.1:8545/rpc"
+            network = "Testnet"
+        else:
+            network = "Devnet"
         
-        self.rpc_display.setText(rpc_url)
-        self.info_text.clear()
-        self.status_label.setText("")
-        self.connection_ok = False
-    
-    def test_connection(self) -> None:
-        """Test the RPC connection."""
-        rpc_url = self.rpc_display.text()
-        self.status_label.setText("Testing...")
-        self.test_button.setEnabled(False)
-        
-        try:
-            client = RPCClient(rpc_url, timeout=5.0)
-            if client.check_connection():
-                head = client.get_chain_head()
-                chain_id = head.get("chainId") or head.get("chain_id", "Unknown")
-                height = head.get("number") or head.get("height", 0)
-                
-                self.info_text.setHtml(
-                    f"<b style='color: green;'>✓ Connection Successful</b><br>"
-                    f"Chain ID: {chain_id}<br>"
-                    f"Current Height: {height}"
-                )
-                self.status_label.setText("✓ OK")
-                self.status_label.setStyleSheet("color: green; font-weight: bold;")
-                self.connection_ok = True
-                self.completeChanged.emit()
-            else:
-                raise Exception("Connection check failed")
-        
-        except Exception as e:
-            self.info_text.setHtml(
-                f"<b style='color: red;'>✗ Connection Failed</b><br>"
-                f"Error: {str(e)}"
-            )
-            self.status_label.setText("✗ Failed")
-            self.status_label.setStyleSheet("color: red; font-weight: bold;")
-            self.connection_ok = False
-            self.completeChanged.emit()
-        
-        finally:
-            self.test_button.setEnabled(True)
-    
-    def isComplete(self) -> bool:
-        """Page is complete only if connection was tested successfully."""
-        return self.connection_ok
+        self.network_display.setText(network)
 
 
 class WalletConfigPage(QWizardPage):
@@ -880,7 +872,7 @@ class FirstRunWizard(QWizard):
         
         # Add pages
         self.addPage(NetworkSelectionPage())
-        self.addPage(RPCConfigPage())
+        self.addPage(LocalNodeConfigPage())  # Replaced RPCConfigPage
         self.addPage(WalletConfigPage())
         self.addPage(DeviceSelectionPage())
         self.addPage(PresetSelectionPage())
@@ -892,20 +884,22 @@ class FirstRunWizard(QWizard):
             # Build configuration from wizard fields
             config = MiningAppConfig()
             
-            # Network configuration
-            if self.field("custom"):
-                config.network.network_type = NetworkType.CUSTOM
-                config.network.custom_rpc_url = self.field("custom_rpc")
-                config.network.rpc_url = self.field("custom_rpc")
-            elif self.field("mainnet"):
+            # Network configuration - local node only
+            if self.field("mainnet"):
                 config.network.network_type = NetworkType.MAINNET
-                config.network.rpc_url = "https://rpc.mainnet.animica.org/rpc"
             elif self.field("testnet"):
                 config.network.network_type = NetworkType.TESTNET
-                config.network.rpc_url = "https://rpc.testnet.animica.org/rpc"
             else:
                 config.network.network_type = NetworkType.DEVNET
-                config.network.rpc_url = "http://127.0.0.1:8545/rpc"
+            
+            # Custom port if specified
+            if self.field("custom_port"):
+                port_text = self.field("port_value")
+                if port_text:
+                    try:
+                        config.network.local_rpc_port = int(port_text)
+                    except ValueError:
+                        pass  # Ignore invalid port, will use auto
             
             # Payout address
             config.miner.payout_address = self.field("payout_address")
