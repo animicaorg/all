@@ -1,4 +1,7 @@
-"""Wallet tab - send transactions and manage wallet."""
+"""Wallet tab - send transactions and manage wallet.
+
+Uses LocalNodeManager for balance queries and transaction sending (local node only).
+"""
 
 import json
 import logging
@@ -23,7 +26,7 @@ from PySide6.QtWidgets import (
 )
 
 from animica_miner_gui.backend.config import MiningAppConfig
-from animica_miner_gui.backend.rpc_client import RPCClient
+from animica_miner_gui.core.localnode import LocalNodeManager
 
 logger = logging.getLogger(__name__)
 
@@ -38,12 +41,11 @@ WALLET_INFO_REFRESH_INTERVAL = 10000  # Refresh wallet info every 10 seconds (mi
 class WalletTab(QWidget):
     """Wallet tab for sending transactions."""
     
-    def __init__(self, config: MiningAppConfig, parent: Optional[QWidget] = None):
+    def __init__(self, config: MiningAppConfig, node_manager: LocalNodeManager, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.config = config
-        self.rpc_client: Optional[RPCClient] = None
+        self.node_manager = node_manager
         self.setup_ui()
-        self.setup_rpc_client()
         self.setup_auto_refresh()
     
     def setup_ui(self) -> None:
@@ -143,13 +145,6 @@ class WalletTab(QWidget):
         
         layout.addStretch()
         self.setLayout(layout)
-    
-    def setup_rpc_client(self) -> None:
-        """Set up RPC client for querying wallet info."""
-        try:
-            self.rpc_client = RPCClient(self.config.network.rpc_url)
-        except Exception as e:
-            logger.error(f"Failed to initialize RPC client: {e}")
     
     def setup_auto_refresh(self) -> None:
         """Set up timer to auto-refresh wallet info."""
