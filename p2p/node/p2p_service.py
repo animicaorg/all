@@ -12343,22 +12343,9 @@ class P2PService:
         
         bdb = self._block_db()
         
-        # Additional safeguard: Check current head and only allow backward movement
-        # but never to genesis
+        # Get current head for logging
         current_head = bdb.get_canonical_head()
         current_height = current_head[0] if current_head else 0
-        
-        if current_height > 0 and height == 0:
-            log.error(
-                "BLOCKED: Ancestor reset would revert to genesis",
-                extra={
-                    "current_height": current_height,
-                    "requested_height": height,
-                    "reason": reason,
-                    "blocked_by": "genesis_revert_safeguard",
-                },
-            )
-            return False
         
         ancestor_hash = bdb.get_canonical_hash(height)
         if not ancestor_hash:

@@ -175,7 +175,7 @@ def test_comprehensive_genesis_revert_scenarios():
             blocked = current_height > 0
         elif action == "ancestor_reset":
             target_height = scenario["target_height"]
-            blocked = target_height == 0 or (current_height > 0 and target_height == 0)
+            blocked = target_height == 0
         elif action == "snapshot":
             snapshot_height = scenario["snapshot_height"]
             blocked = snapshot_height <= 0 or snapshot_height < current_height
@@ -216,7 +216,7 @@ def test_safeguard_persistence():
             blocked = from_height > 0
         elif op_type == "ancestor_reset":
             to_height = op["to_height"]
-            blocked = to_height == 0 or (from_height > 0 and to_height == 0)
+            blocked = to_height == 0
         elif op_type == "snapshot":
             to_height = op["to_height"]
             blocked = to_height <= 0 or to_height < from_height
