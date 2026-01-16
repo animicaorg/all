@@ -11970,6 +11970,21 @@ class P2PService:
                 if now - info.updated_at <= self._sync_peer_head_stale_sec:
                     if not info.cooldown_until or info.cooldown_until <= now:
                         heights.append(int(info.height))
+            
+            # FIX: Always include peer's advertised head_height as a fallback
+            # This ensures we capture the highest network height even when:
+            # - _sync_peer_heads data is missing, stale, or in cooldown
+            # - Peer tip updates haven't been tracked yet
+            # Without this, nodes can miss the actual highest height and stop syncing prematurely
+            try:
+                peer_head_height = (peer.hello or {}).get("head_height")
+                if peer_head_height is not None:
+                    peer_head_height = int(peer_head_height)
+                    if peer_head_height > 0:
+                        heights.append(peer_head_height)
+            except Exception:
+                pass
+            
             try:
                 # Add peer's view of network best height (peers-of-peers)
                 # But only if the hello message is recent (not stale)
