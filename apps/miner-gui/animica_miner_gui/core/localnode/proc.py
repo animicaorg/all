@@ -110,7 +110,7 @@ class NodeProcessManager:
             if is_frozen():
                 raise RuntimeError("Cannot use Python module in frozen mode")
             
-            cmd = [sys.executable, "-m", "rpc"]
+            cmd = [sys.executable, "-m", "rpc.server"]
         else:
             # Use binary
             cmd = [str(node_binary)]
@@ -118,17 +118,21 @@ class NodeProcessManager:
         # Log file
         log_file = self.log_dir / f"node-{self.network}.log"
         
+        cmd.extend([
+            "--rpc-bind", "127.0.0.1",
+            "--rpc-port", str(port),
+            "--rpc-auth-token-file", str(self.token_path),
+            "--data-dir", str(self.data_dir.parent),
+            "--log-file", str(log_file),
+        ])
+        
         # Environment variables for node configuration
         env_vars = {
-            "ANIMICA_RPC_HOST": "127.0.0.1",
-            "ANIMICA_RPC_PORT": str(port),
             "ANIMICA_NETWORK": self.network,
             "ANIMICA_DATA_DIR": str(self.data_dir.parent),  # Base .animica directory
             "ANIMICA_LOG_LEVEL": "INFO",
         }
         
-        # Note: The RPC server uses environment variables for configuration
-        # We'll pass these via the subprocess environment
         return cmd, env_vars, log_file
     
     def start(self) -> NodeStatus:

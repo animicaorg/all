@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMenuBar,
     QMessageBox,
+    QLabel,
     QStatusBar,
     QSystemTrayIcon,
     QTabWidget,
@@ -84,6 +85,7 @@ class MainWindow(QMainWindow):
         # Start local node automatically
         logger.info("Starting local node...")
         QTimer.singleShot(500, self.start_local_node)  # Start after UI is ready
+        QTimer.singleShot(700, self.check_node_bundle)  # Validate bundle after UI is visible
         
         # Auto-start mining if configured (after node is ready)
         if self.config.miner.auto_start:
@@ -107,6 +109,31 @@ class MainWindow(QMainWindow):
                 f"Failed to start local Animica node:\n\n{e}\n\n"
                 "The application will continue, but you'll need to start the node manually from the Node tab."
             )
+
+    def check_node_bundle(self) -> None:
+        """Validate the bundled node layout and show a banner if missing."""
+        from animica_miner_gui.core.localnode.paths import (
+            validate_bundled_node_layout,
+            get_log_directory,
+            is_frozen,
+        )
+
+        if not is_frozen():
+            return
+
+        ok, message = validate_bundled_node_layout()
+        if ok:
+            return
+
+        log_dir = get_log_directory()
+        log_url = f"file://{log_dir}"
+        banner = (
+            "<b>Node not bundled correctly.</b> "
+            f"{message} "
+            f"Check logs in <a href=\"{log_url}\">{log_dir}</a>."
+        )
+        self.node_bundle_banner.setText(banner)
+        self.node_bundle_banner.setVisible(True)
     
     def apply_theme(self) -> None:
         """Apply dark theme if enabled."""
@@ -169,6 +196,15 @@ class MainWindow(QMainWindow):
         central_widget = QWidget()
         layout = QVBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
+
+        self.node_bundle_banner = QLabel()
+        self.node_bundle_banner.setVisible(False)
+        self.node_bundle_banner.setTextFormat(Qt.RichText)
+        self.node_bundle_banner.setOpenExternalLinks(True)
+        self.node_bundle_banner.setStyleSheet(
+            "QLabel { background-color: #aa1f2f; color: white; padding: 8px; }"
+        )
+        layout.addWidget(self.node_bundle_banner)
         
         # Create tab widget
         self.tabs = QTabWidget()

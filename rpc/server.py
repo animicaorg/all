@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import argparse
 import asyncio
 import importlib
 import json
 import logging
 import os
 import typing as t
+from pathlib import Path
 
 from fastapi import (APIRouter, FastAPI, HTTPException, Request, Response,
                      WebSocket, WebSocketDisconnect)
@@ -438,8 +440,55 @@ def create_app(cfg: rpc_config.Config | None = None) -> FastAPI:
 # -----------------------------------------------------------------------------
 # Entrypoint (uvicorn)
 # -----------------------------------------------------------------------------
+def _parse_cli_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Animica RPC server")
+    parser.add_argument("--rpc-bind", dest="rpc_bind", help="RPC bind address (host)")
+    parser.add_argument("--rpc-port", dest="rpc_port", type=int, help="RPC bind port")
+    parser.add_argument(
+        "--rpc-auth-token-file",
+        dest="rpc_auth_token_file",
+        help="Path to RPC admin token file",
+    )
+    parser.add_argument("--data-dir", dest="data_dir", help="Animica data directory root")
+    parser.add_argument("--log-file", dest="log_file", help="Log file path")
+    return parser.parse_args()
+
+
+def _apply_cli_env_overrides(args: argparse.Namespace) -> None:
+    if args.rpc_bind:
+        os.environ["ANIMICA_RPC_HOST"] = args.rpc_bind
+    if args.rpc_port:
+        os.environ["ANIMICA_RPC_PORT"] = str(args.rpc_port)
+    if args.data_dir:
+        os.environ["ANIMICA_DATA_DIR"] = args.data_dir
+    if args.rpc_auth_token_file:
+        token_path = Path(args.rpc_auth_token_file).expanduser()
+        if not token_path.exists():
+            raise SystemExit(f"RPC auth token file not found: {token_path}")
+        token = token_path.read_text().strip()
+        if not token:
+            raise SystemExit(f"RPC auth token file is empty: {token_path}")
+        os.environ["ANIMICA_RPC_ADMIN_TOKEN"] = token
+
+
+def _configure_log_file(cfg: rpc_config.Config, args: argparse.Namespace) -> None:
+    if not args.log_file:
+        return
+    log_path = Path(args.log_file).expanduser()
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    if not logging.getLogger().handlers:
+        logging.basicConfig(
+            level=getattr(logging, cfg.logging.upper(), logging.INFO),
+            filename=str(log_path),
+            format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        )
+
+
 def main() -> None:
+    args = _parse_cli_args()
+    _apply_cli_env_overrides(args)
     cfg = rpc_config.load_config()
+    _configure_log_file(cfg, args)
     app = create_app(cfg)
     # Lazy import uvicorn so the module is importable in tests without uvicorn installed
     import uvicorn

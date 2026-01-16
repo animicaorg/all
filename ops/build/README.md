@@ -101,7 +101,7 @@ Options:
 ```
 
 **Output:**
-- `dist/animica-node` - Standalone node binary
+- `dist/animica-node/animica-node` - Standalone node binary (onedir layout)
 - `dist/animica-node.manifest.json` - Build metadata (version, git SHA, timestamp, platform)
 
 ### `build-miner-gui-macos.sh`
@@ -134,7 +134,7 @@ Options:
 - `dist/animica-miner-gui-macos.manifest.json` - Build metadata
 
 **Bundled Node:**
-The node binary is embedded at: `Animica Miner GUI.app/Contents/Resources/bin/animica-node`
+The node binary is embedded at: `Animica Miner GUI.app/Contents/Resources/node/animica-node/animica-node`
 
 ### `build-miner-gui-linux.sh`
 
@@ -276,8 +276,8 @@ python3 --version
 ### Test Node Binary
 
 ```bash
-dist/animica-node --help
-dist/animica-node --version
+dist/animica-node/animica-node --help
+dist/animica-node/animica-node --version
 ```
 
 ### Test Miner GUI (macOS)
@@ -301,8 +301,8 @@ Check that:
 
 **macOS:**
 ```bash
-ls -lh "dist/Animica Miner GUI.app/Contents/Resources/bin/animica-node"
-"dist/Animica Miner GUI.app/Contents/Resources/bin/animica-node" --help
+ls -lh "dist/Animica Miner GUI.app/Contents/Resources/node/animica-node/animica-node"
+"dist/Animica Miner GUI.app/Contents/Resources/node/animica-node/animica-node" --help
 ```
 
 **Linux:**

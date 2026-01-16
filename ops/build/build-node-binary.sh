@@ -143,10 +143,30 @@ log "Installing Animica in editable mode..."
 # The node is Python-based, entry point is in the detected package directory
 # We'll use PyInstaller to create a standalone binary
 
-ENTRY_POINT="$PYTHON_PKG_DIR/animica/cli/main.py"
-if [[ ! -f "$ENTRY_POINT" ]]; then
-    die "Node entry point not found: $ENTRY_POINT"
-fi
+ENTRY_POINT="$OUT_DIR/animica-node-entry.py"
+cat > "$ENTRY_POINT" <<'PYEOF'
+import sys
+
+from animica.cli.main import main as cli_main
+from rpc.server import main as rpc_main
+
+
+def _should_run_rpc(argv: list[str]) -> bool:
+    rpc_flags = {
+        "--rpc-bind",
+        "--rpc-port",
+        "--rpc-auth-token-file",
+        "--data-dir",
+        "--log-file",
+    }
+    return any(arg.split("=", 1)[0] in rpc_flags for arg in argv[1:])
+
+
+if _should_run_rpc(sys.argv):
+    rpc_main()
+else:
+    cli_main()
+PYEOF
 
 log "Entry point: $ENTRY_POINT"
 
@@ -156,7 +176,7 @@ log "Entry point: $ENTRY_POINT"
 
 SPEC_FILE="$OUT_DIR/animica-node.spec"
 WORK_DIR="$OUT_DIR/build-work"
-DIST_SUBDIR="$OUT_DIR/build-dist"
+DIST_SUBDIR="$OUT_DIR"
 
 log "Creating PyInstaller spec: $SPEC_FILE"
 
@@ -201,7 +221,29 @@ hiddenimports = [
     'mempool',
     'rpc',
     'rpc.server',
-    'rpc.handlers',
+    'rpc.jsonrpc',
+    'rpc.ws',
+    'rpc.openrpc_mount',
+    'rpc.metrics',
+    'rpc.middleware',
+    'rpc.methods',
+    'rpc.methods.bootstrap',
+    'rpc.methods.net',
+    'rpc.methods.node',
+    'rpc.methods.tx',
+    'rpc.methods.receipt',
+    'rpc.methods.state',
+    'rpc.methods.chain',
+    'rpc.methods.sync',
+    'rpc.methods.miner',
+    'rpc.methods.mempool',
+    'rpc.methods.ptl',
+    'rpc.methods.da',
+    'rpc.methods.faucet',
+    'rpc.methods.p2p',
+    'rpc.methods.snapshot',
+    'rpc.methods.marketplace',
+    'rpc.methods.admin',
     'wallet',
     'pq',
     'pq.dilithium',
@@ -275,8 +317,9 @@ log "Running PyInstaller..."
 # Locate and verify output
 # ============================================================================
 
-# PyInstaller creates: build-dist/animica-node/animica-node
-BUILT_BINARY="$DIST_SUBDIR/animica-node/animica-node"
+# PyInstaller creates: dist/animica-node/animica-node (onedir)
+BUILT_DIR="$DIST_SUBDIR/animica-node"
+BUILT_BINARY="$BUILT_DIR/animica-node"
 
 if [[ ! -f "$BUILT_BINARY" ]]; then
     die "Build failed: expected binary not found at $BUILT_BINARY"
@@ -284,15 +327,21 @@ fi
 
 verify_executable "$BUILT_BINARY"
 
-# ============================================================================
-# Copy to final output location
-# ============================================================================
+# Validate PyInstaller runtime layout
+INTERNAL_DIR="$BUILT_DIR/_internal"
+if [[ ! -d "$INTERNAL_DIR" ]]; then
+    die "Build failed: missing PyInstaller runtime directory at $INTERNAL_DIR"
+fi
 
-FINAL_BINARY="$OUT_DIR/animica-node"
-cp "$BUILT_BINARY" "$FINAL_BINARY"
-chmod +x "$FINAL_BINARY"
-
-log "Binary copied to: $FINAL_BINARY"
+if [[ "$(uname -s)" == "Darwin" ]]; then
+    if ! ls "$INTERNAL_DIR"/libpython*.dylib >/dev/null 2>&1; then
+        die "Build failed: missing libpython dylib in $INTERNAL_DIR"
+    fi
+else
+    if ! ls "$INTERNAL_DIR"/libpython*.so* >/dev/null 2>&1; then
+        die "Build failed: missing libpython shared library in $INTERNAL_DIR"
+    fi
+fi
 
 # ============================================================================
 # Create manifest
@@ -307,8 +356,8 @@ create_manifest "$MANIFEST_FILE" "animica-node" "$VERSION"
 
 log "Cleaning up intermediate build files..."
 safe_rm_rf "$WORK_DIR"
-safe_rm_rf "$DIST_SUBDIR"
 safe_rm_rf "$SPEC_FILE"
+safe_rm_rf "$ENTRY_POINT"
 
 # ============================================================================
 # Success
@@ -317,8 +366,9 @@ safe_rm_rf "$SPEC_FILE"
 log "✅ Build completed successfully!"
 log ""
 log "Artifacts:"
-log "  Binary:   $FINAL_BINARY"
+log "  Binary:   $BUILT_BINARY"
+log "  Runtime:  $INTERNAL_DIR"
 log "  Manifest: $MANIFEST_FILE"
 log ""
 log "Test:"
-log "  $FINAL_BINARY --help"
+log "  $BUILT_BINARY --help"
