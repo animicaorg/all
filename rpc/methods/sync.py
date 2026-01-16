@@ -1,12 +1,18 @@
 from __future__ import annotations
 
 import asyncio
+import threading
+import time
 import typing as t
+from dataclasses import is_dataclass
+from datetime import date, datetime
 
 from rpc import deps
 from rpc.methods import method
 
 P2P_UNAVAILABLE_ERROR = "P2P disabled/unavailable"
+SYNC_DUMP_LOCK_TIMEOUT_S = 0.05
+SYNC_DUMP_RECURSION_LIMIT = 5
 
 
 def _get_p2p_service() -> t.Any:
@@ -37,6 +43,252 @@ def _get_core_p2p_service() -> t.Any:
     except Exception:
         return None
     return None
+
+
+def _to_jsonable(value: t.Any, *, _depth: int = 0) -> t.Any:
+    if _depth > SYNC_DUMP_RECURSION_LIMIT:
+        return "<max_depth>"
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    if isinstance(value, bytes):
+        return value.hex()
+    if isinstance(value, bytearray):
+        return bytes(value).hex()
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    if is_dataclass(value):
+        return _to_jsonable(value.__dict__, _depth=_depth + 1)
+    if isinstance(value, dict):
+        return {
+            str(key): _to_jsonable(val, _depth=_depth + 1)
+            for key, val in list(value.items())
+        }
+    if isinstance(value, (list, tuple, set)):
+        return [_to_jsonable(item, _depth=_depth + 1) for item in list(value)]
+    if hasattr(value, "to_dict") and callable(getattr(value, "to_dict")):
+        try:
+            return _to_jsonable(value.to_dict(), _depth=_depth + 1)
+        except Exception:
+            return "<unserializable>"
+    if hasattr(value, "__dict__"):
+        return _to_jsonable(value.__dict__, _depth=_depth + 1)
+    return str(value)
+
+
+def _mark_unavailable(
+    result: dict[str, t.Any],
+    section: str,
+    exc: Exception,
+) -> None:
+    result[section] = {"unavailable": True}
+    result["errors"].append(
+        {
+            "section": section,
+            "type": exc.__class__.__name__,
+            "message": str(exc)[:200],
+        }
+    )
+
+
+async def _try_async_lock(lock: t.Any, timeout_s: float) -> bool:
+    try:
+        return await asyncio.wait_for(lock.acquire(), timeout=timeout_s)
+    except Exception:
+        return False
+
+
+@method("sync.dump", desc="Return a best-effort sync diagnostic snapshot")
+async def sync_dump() -> dict[str, t.Any]:
+    result: dict[str, t.Any] = {
+        "rpc_url": None,
+        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "head": {},
+        "sync": {},
+        "queues": {},
+        "in_flight": {},
+        "orphans": {},
+        "peers": {},
+        "cache": {},
+        "errors": [],
+    }
+
+    ctx = None
+    try:
+        ctx = deps.get_ctx()
+    except Exception as exc:
+        _mark_unavailable(result, "head", exc)
+        ctx = None
+
+    try:
+        head = ctx.get_head() if ctx else None
+        if isinstance(head, dict):
+            result["head"] = {
+                "height": head.get("height"),
+                "hash": head.get("hash"),
+            }
+        else:
+            result["head"] = {"height": None, "hash": None}
+    except Exception as exc:
+        _mark_unavailable(result, "head", exc)
+
+    svc = _get_p2p_service()
+    if svc is None:
+        result["sync"] = {"unavailable": True, "error": P2P_UNAVAILABLE_ERROR}
+        result["errors"].append(
+            {"section": "sync", "type": "Unavailable", "message": P2P_UNAVAILABLE_ERROR}
+        )
+        return result
+
+    sync_lock = getattr(svc, "_sync_lock", None)
+    peer_lock = getattr(svc, "_peer_lock", None)
+    sync_locked = False
+    peer_locked = False
+
+    try:
+        if sync_lock is not None:
+            sync_locked = await _try_async_lock(sync_lock, SYNC_DUMP_LOCK_TIMEOUT_S)
+            if not sync_locked:
+                raise TimeoutError("sync lock busy")
+
+        sync_phase = getattr(svc, "_sync_phase", None)
+        sync_best_header = getattr(svc, "_sync_best_header", None)
+        sync_best_header_height = (
+            getattr(sync_best_header, "height", None) if sync_best_header else None
+        )
+        sync_best_header_hash = (
+            sync_best_header.hash.hex() if getattr(sync_best_header, "hash", None) else None
+        )
+        sync_target_height = getattr(svc, "_sync_target_height", None)
+        network_best_height = None
+        if hasattr(svc, "_network_best_height"):
+            try:
+                network_best_height = svc._network_best_height()
+            except Exception:
+                network_best_height = None
+
+        result["sync"] = _to_jsonable(
+            {
+                "phase": sync_phase,
+                "best_header_height": sync_best_header_height,
+                "best_header_hash": sync_best_header_hash,
+                "target_height": sync_target_height,
+                "network_best_height": network_best_height,
+                "last_progress_at": getattr(svc, "_sync_last_progress_at", None),
+                "last_header_error": getattr(svc, "_sync_last_header_error", None),
+                "last_block_error": getattr(svc, "_sync_last_block_error", None),
+                "last_block_error_peer": getattr(svc, "_sync_last_block_error_peer", None),
+                "stall_reason": getattr(svc, "_sync_last_block_error", None)
+                or getattr(svc, "_sync_last_header_error", None),
+                "stall_elapsed_s": _to_jsonable(
+                    max(0.0, time.time() - float(getattr(svc, "_sync_last_progress_at", 0.0) or 0.0))
+                ),
+                "recovery_attempts": getattr(svc, "_sync_recovery_attempts", None),
+                "last_recovery_action": getattr(svc, "_sync_last_recovery_action", None),
+                "last_checkpoint_action": getattr(svc, "_sync_last_checkpoint_action", None),
+            }
+        )
+
+        queues_snapshot = {
+            "pending_header_batches": len(getattr(svc, "_sync_header_queue", [])),
+            "queued_blocks": len(getattr(svc, "_sync_block_queue", [])),
+            "orphan_pool_size": len(getattr(svc, "_sync_block_buffer", {})),
+        }
+        result["queues"] = _to_jsonable(queues_snapshot)
+
+        inflight_snapshot = {
+            "in_flight_headers": int(getattr(svc, "_sync_inflight_headers", 0)),
+            "in_flight_blocks": len(getattr(svc, "_sync_inflight_blocks", {})),
+            "inflight_block_samples": [],
+        }
+        try:
+            inflight_snapshot["inflight_block_samples"] = _to_jsonable(
+                svc._inflight_block_samples(limit=10)
+                if hasattr(svc, "_inflight_block_samples")
+                else []
+            )
+        except Exception as exc:
+            _mark_unavailable(result, "in_flight", exc)
+        else:
+            result["in_flight"] = _to_jsonable(inflight_snapshot)
+
+        try:
+            result["orphans"] = _to_jsonable(
+                {
+                    "samples": svc._orphan_block_samples(limit=10)
+                    if hasattr(svc, "_orphan_block_samples")
+                    else [],
+                }
+            )
+        except Exception as exc:
+            _mark_unavailable(result, "orphans", exc)
+
+    except Exception as exc:
+        _mark_unavailable(result, "sync", exc)
+        _mark_unavailable(result, "queues", exc)
+        _mark_unavailable(result, "in_flight", exc)
+        _mark_unavailable(result, "orphans", exc)
+    finally:
+        if sync_locked and sync_lock is not None:
+            sync_lock.release()
+
+    try:
+        if peer_lock is not None:
+            peer_locked = await _try_async_lock(peer_lock, SYNC_DUMP_LOCK_TIMEOUT_S)
+            if not peer_locked:
+                raise TimeoutError("peer lock busy")
+        peers = []
+        for peer in list(getattr(svc, "_peers", {}).values()):
+            hello = getattr(peer, "hello", {}) or {}
+            peers.append(
+                {
+                    "remote": getattr(peer, "remote", None),
+                    "peer_id": getattr(peer, "peer_id", None),
+                    "direction": getattr(peer, "direction", None),
+                    "handshake_done": bool(getattr(peer, "hello_done", threading.Event()).is_set()),
+                    "ready_for_sync": getattr(peer, "ready_for_sync", None),
+                    "version": hello.get("version"),
+                    "agent": hello.get("agent"),
+                    "chain_id": hello.get("chain_id"),
+                    "head_height": hello.get("head_height"),
+                    "head_hash": bytes(hello.get("head_hash") or b"").hex()
+                    if hello.get("head_hash")
+                    else None,
+                    "last_msg_at": getattr(peer, "last_msg_at", None),
+                    "last_progress_at": getattr(peer, "last_progress_at", None),
+                }
+            )
+        scores = []
+        if hasattr(svc, "_peer_score_snapshot"):
+            try:
+                scores = svc._peer_score_snapshot()
+            except Exception:
+                scores = []
+        result["peers"] = _to_jsonable(
+            {
+                "connected": peers,
+                "scores": scores,
+                "timeouts_by_peer": dict(getattr(svc, "_sync_timeouts_by_peer", {})),
+                "retries_by_peer": dict(getattr(svc, "_sync_retries_by_peer", {})),
+            }
+        )
+    except Exception as exc:
+        _mark_unavailable(result, "peers", exc)
+    finally:
+        if peer_locked and peer_lock is not None:
+            peer_lock.release()
+
+    try:
+        cache = {
+            "sync_status_cache_at": getattr(svc, "_sync_status_cache_at", None),
+            "sync_status_cache_hits": getattr(svc, "_sync_status_cache_hits", None),
+            "sync_status_cache_refreshes": getattr(svc, "_sync_status_cache_refreshes", None),
+            "sync_status_cache_interval_s": getattr(svc, "_sync_status_cache_interval", None),
+        }
+        result["cache"] = _to_jsonable(cache)
+    except Exception as exc:
+        _mark_unavailable(result, "cache", exc)
+
+    return _to_jsonable(result)
 
 
 async def _core_force_sync(core_svc: t.Any) -> dict[str, t.Any]:
@@ -335,6 +587,7 @@ async def node_sync_status(opts: dict[str, t.Any] | str | None = None) -> dict[s
 
 
 __all__ = [
+    "sync_dump",
     "sync_force",
     "sync_trigger",
     "sync_start",

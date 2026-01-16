@@ -20,6 +20,7 @@ import asyncio
 import inspect
 import json
 import logging
+import secrets
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -335,6 +336,10 @@ def _error_obj(exc: Exception) -> Json:
     }
 
 
+def _new_error_id() -> str:
+    return secrets.token_hex(4)
+
+
 _REDACT_KEYS = {
     "password",
     "secret",
@@ -517,19 +522,22 @@ async def dispatch_one(obj: Json, ctx: Optional[Context]) -> Optional[Json]:
         params = obj.get("params")
         rpc_err = to_error(exc)
         if getattr(rpc_err, "code", None) == -32603:
+            error_id = _new_error_id()
             log.exception(
                 "RPC internal error",
                 extra={
                     "jsonrpc_method": method,
                     "params": _redact_params(params),
+                    "error_id": error_id,
                 },
             )
+            rpc_err = InternalError(detail="Internal error", error_id=error_id)
         elif req_id is _NO_ID:
             log.debug("Error in notification %s: %s", method, exc)
             return None
         if req_id is _NO_ID:
             return None
-        return {"jsonrpc": "2.0", "id": req_id, "error": _error_obj(exc)}
+        return {"jsonrpc": "2.0", "id": req_id, "error": _error_obj(rpc_err)}
 
 
 async def dispatch(
@@ -622,7 +630,13 @@ async def jsonrpc_endpoint(request: Request) -> Response:
             media_type="application/json",
         )
     except Exception as e:  # pragma: no cover
-        err = {"jsonrpc": "2.0", "id": None, "error": _error_obj(InternalError(str(e)))}
+        error_id = _new_error_id()
+        log.exception("Unhandled JSON-RPC endpoint error", extra={"error_id": error_id})
+        err = {
+            "jsonrpc": "2.0",
+            "id": None,
+            "error": _error_obj(InternalError("Internal error", error_id=error_id)),
+        }
         return Response(
             content=json.dumps(err, separators=(",", ":")),
             status_code=500,
