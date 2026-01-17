@@ -321,8 +321,10 @@ class StratumServer:
             
             await self.start()
             
+            # start() will have set self._server or raised an exception
+            assert self._server is not None, "Server should be set after start()"
+            
             # Wait until the server is closed (by stop() or cancellation)
-            # start() will have set self._server, so we can safely await serve_forever
             await self._server.serve_forever()
         finally:
             # Restore original values (though this is unlikely to matter in practice)
