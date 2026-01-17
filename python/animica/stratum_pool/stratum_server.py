@@ -77,6 +77,10 @@ class StratumPoolServer:
             header.setdefault("target", job.target)
         if job.height:
             header.setdefault("number", job.height)
+        # Add mixSeed to header from hints for miner compatibility
+        # Miners expect header.mixSeed, not hints.mixSeed
+        if job.hints and "mixSeed" in job.hints:
+            header.setdefault("mixSeed", job.hints["mixSeed"])
         stratum_job = StratumJob(
             job_id=job.job_id,
             header=header,

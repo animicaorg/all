@@ -424,6 +424,7 @@ class StratumServer:
                         share_target=job.share_target,
                         clean_jobs=clean_jobs,
                         hints=job.hints or {},
+                        height=job.height,
                     )
                 await self._send(s, msg)
                 s.jobs_seen.append(job.job_id)
