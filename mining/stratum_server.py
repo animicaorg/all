@@ -780,17 +780,20 @@ class StratumServer:
             session.authorized = (
                 True  # Add real checks here if desired (e.g., bech32 format)
             )
-            await self._send(session, res_authorize(id_val, True))
-            log.info(
-                f"[Stratum] authorize worker={session.worker} address={session.address} session={session.session_id}"
-            )
             
-            # Call authorize hook if set (allows bridge to update payout address)
+            # Call authorize hook BEFORE sending response to ensure job is ready
+            # This prevents race condition where client starts waiting for job
+            # before the hook has published it
             if self._authorize_hook is not None and session.address:
                 try:
                     await self._authorize_hook(session, session.worker or "", session.address)
                 except Exception as e:  # pragma: no cover
                     log.warning(f"[Stratum] authorize hook error: {e}")
+            
+            await self._send(session, res_authorize(id_val, True))
+            log.info(
+                f"[Stratum] authorize worker={session.worker} address={session.address} session={session.session_id}"
+            )
 
         elif method == Method.SET_DIFFICULTY:
             # Clients should not be sending this; treat as request to fetch current settings
