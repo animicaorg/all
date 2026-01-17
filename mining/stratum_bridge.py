@@ -180,33 +180,34 @@ class StratumBridge:
             return
         
         try:
-            # Call miner.getBlockTemplate
-            template = await self._rpc.call("miner.getBlockTemplate", {
+            # Call miner.getWork instead of getBlockTemplate
+            # getWork returns signBytes and hints.mixSeed which are required for stratum mining
+            template = await self._rpc.call("miner.getWork", {
                 "address": self._payout_address,
                 "include_mempool": True,
             })
             
-            if not template or not template.get("enabled"):
+            if not template or not template.get("miningEnabled"):
                 reason = template.get("reason", "unknown") if template else "no_response"
                 log.debug(f"Template not available: {reason}")
                 return
             
             # Check if head changed
-            parent_hash = template.get("parent", {}).get("hash")
+            parent_hash = template.get("parentHash")
             if parent_hash and parent_hash != self._last_parent_hash:
                 # Head changed, new job needed
                 self._last_parent_hash = parent_hash
                 self._current_template = template
-                self._current_job_id = template.get("templateId") or uuid.uuid4().hex[:16]
+                self._current_job_id = template.get("jobId") or template.get("templateId") or uuid.uuid4().hex[:16]
                 
                 log.info(
                     f"New template: job={self._current_job_id} "
-                    f"height={template.get('parent', {}).get('height', 0) + 1} "
-                    f"parent={parent_hash[:18]}..."
+                    f"height={template.get('height', 0)} "
+                    f"parent={parent_hash[:18] if isinstance(parent_hash, str) else 'unknown'}..."
                 )
         
         except Exception as e:
-            log.warning(f"Failed to get block template: {e}")
+            log.warning(f"Failed to get work template: {e}")
     
     async def get_current_job(self) -> Optional[Dict[str, Any]]:
         """
@@ -221,20 +222,22 @@ class StratumBridge:
         header = template.get("header", {})
         
         # Build Stratum job
+        # Note: miner.getWork returns signBytes and hints at top level
         job = {
             "job_id": self._current_job_id or uuid.uuid4().hex[:16],
-            "height": header.get("height", 0),
-            "parent_hash": template.get("parent", {}).get("hash"),
-            "parent_height": template.get("parent", {}).get("height", 0),
-            "chain_id": header.get("chainId", 1),
+            "height": template.get("height", 0),
+            "parent_hash": template.get("parentHash"),
+            "parent_height": template.get("parentHeight", 0),
+            "chain_id": template.get("chainId", 1),
             "theta_micro": template.get("thetaMicro", 800_000),
-            "share_target": self.default_share_target,
+            "share_target": template.get("shareTarget", self.default_share_target),
             "target": template.get("target"),
             "header": header,
-            "sign_bytes": header.get("signBytes"),
+            "sign_bytes": template.get("signBytes"),  # FIX: Get from template top level, not header
+            "hints": template.get("hints", {}),  # Include hints from template
             "coinbase": template.get("coinbase"),
             "payout_address": self._payout_address,
-            "template_id": template.get("templateId"),
+            "template_id": template.get("templateId") or template.get("jobId"),
             "timestamp_min": template.get("timestampMin"),
             "timestamp_max": template.get("timestampMax"),
             "clean_jobs": True,  # Always true when returning new job
@@ -390,6 +393,7 @@ def _create_stratum_job(job_dict: Dict[str, Any], share_target: float) -> "Strat
         theta_micro=job_dict.get("theta_micro", 800_000),
         target=job_dict.get("target"),
         sign_bytes=job_dict.get("sign_bytes"),
+        hints=job_dict.get("hints", {}),  # Include hints
         height=job_dict.get("height"),
         parent_hash=job_dict.get("parent_hash"),
         parent_height=job_dict.get("parent_height"),
