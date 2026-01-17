@@ -3107,7 +3107,7 @@ class P2PService:
         # CRITICAL FIX: Compute best_remote info with strict freshness checking
         # This is the authoritative source for sync status decisions
         chain_id = int(self.chain_id)
-        connected_peers = self._peer_registry.peer_count()
+        connected_peers = max(self._peer_registry.peer_count(), len(self._peers))
         best_remote_height, best_remote_hash, best_remote_peer, best_remote_age = (
             self._compute_best_remote_info(chain_id=chain_id)
         )
@@ -3124,7 +3124,9 @@ class P2PService:
         else:
             # No fresh peer tips available - critical condition
             sync_status_reason = (
-                "no_peers_connected" if connected_peers == 0 else "no_fresh_peer_tips"
+                "no_peers_connected"
+                if connected_peers == 0 and peer_tips_total == 0
+                else "no_fresh_peer_tips"
             )
 
         if behind_by and behind_by > 0:
@@ -3177,7 +3179,7 @@ class P2PService:
             if not sync_status_reason:
                 sync_status_reason = (
                     "no_peers_connected"
-                    if connected_peers == 0
+                    if connected_peers == 0 and peer_tips_total == 0
                     else "no_fresh_peer_tips"
                 )
         # Rule 2: If we have fresh best_remote, check if we're within ALLOWED_LAG
