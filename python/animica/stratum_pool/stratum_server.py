@@ -58,6 +58,7 @@ class StratumPoolServer:
             default_share_target=config.min_difficulty,
             default_theta_micro=0,
             validator=self._validator,
+            debug_raw=config.debug_raw,
         )
 
     async def start(self) -> None:

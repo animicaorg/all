@@ -96,6 +96,12 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Size of extranonce2 for ASIC profile",
     )
+    parser.add_argument(
+        "--debug-raw",
+        dest="debug_raw",
+        action="store_true",
+        help="Log raw Stratum RX/TX message types with payload size",
+    )
     return parser
 
 
