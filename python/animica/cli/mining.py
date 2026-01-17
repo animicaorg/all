@@ -1968,7 +1968,37 @@ def miner_stratum(
             client = StratumClient(host=host, port=port, framing="lines")
             
             # Connect
-            await client.connect()
+            try:
+                await client.connect()
+            except ConnectionRefusedError:
+                typer.secho(
+                    f"\nError: Failed to reach stratum server at {host}:{port}\n"
+                    f"Connection refused - is the server running?\n"
+                    f"Try starting a stratum bridge with: animica stratum up",
+                    fg=typer.colors.RED,
+                    err=True,
+                )
+                raise typer.Exit(1)
+            except OSError as e:
+                # Covers socket errors including gaierror (hostname resolution)
+                typer.secho(
+                    f"\nError: Failed to reach stratum server at {host}:{port}\n"
+                    f"Network error: {e}\n"
+                    f"Check that the host and port are correct and the server is reachable.",
+                    fg=typer.colors.RED,
+                    err=True,
+                )
+                raise typer.Exit(1)
+            except TimeoutError:
+                typer.secho(
+                    f"\nError: Failed to reach stratum server at {host}:{port}\n"
+                    f"Connection timeout - server is not responding.\n"
+                    f"Check that the server is running and accessible.",
+                    fg=typer.colors.RED,
+                    err=True,
+                )
+                raise typer.Exit(1)
+            
             typer.echo(f"✓ Connected to {host}:{port}")
             
             # Subscribe
