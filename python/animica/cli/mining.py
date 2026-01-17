@@ -1951,6 +1951,7 @@ def miner_stratum(
         from mining.stratum_client import StratumClient
         from mining.hash_search import digest_to_int256, micro_threshold_to_target256
         import hashlib
+        import secrets
         import time as time_module
         
         # Stats tracking
@@ -2017,6 +2018,11 @@ def miner_stratum(
             current_job = None
             mining_active = True
             
+            # Initialize nonce counter with random starting point to avoid collisions
+            # Use high starting values as requested, keeping within 32-bit range
+            nonce_counter = secrets.randbelow(2**31) + 2**31  # Range: [2^31, 2^32)
+            extranonce2_counter = 1  # Counter for extranonce2
+            
             # Set up callbacks
             async def on_notify(job_data):
                 nonlocal current_job
@@ -2070,8 +2076,9 @@ def miner_stratum(
                     
                     # Simple CPU mining loop (single-threaded for now)
                     # In a production implementation, this would use multiprocessing
-                    nonce_start = 0
+                    nonce_start = nonce_counter
                     nonce_batch_size = 10000
+                    share_found_in_batch = False
                     
                     for nonce in range(nonce_start, nonce_start + nonce_batch_size):
                         # Build hashshare payload (simplified)
@@ -2103,6 +2110,15 @@ def miner_stratum(
                         if digest_int <= share_target256:
                             # Found a share!
                             stats["shares_submitted"] += 1
+                            share_found_in_batch = True
+                            
+                            # Update nonce counter to continue from where we left off
+                            nonce_counter = nonce + 1
+                            
+                            # Generate unique extranonce2 for this share
+                            # Format as hex with proper padding (8 bytes = 16 hex chars)
+                            extranonce2_hex = f"0x{extranonce2_counter:016x}"
+                            extranonce2_counter += 1
                             
                             # Submit share (simplified submission)
                             hashshare_data = {
@@ -2111,7 +2127,7 @@ def miner_stratum(
                             }
                             
                             try:
-                                result = await client.submit_share(job_id, hashshare_data)
+                                result = await client.submit_share(job_id, hashshare_data, extranonce2=extranonce2_hex)
                                 if result:
                                     stats["shares_accepted"] += 1
                                     
@@ -2152,6 +2168,11 @@ def miner_stratum(
                             last_hashrate_report = now
                             hashrate_window_hashes = 0
                             hashrate_window_start = now
+                    
+                    # Update nonce counter after batch only if no share was found
+                    # (if share was found, counter was already updated to nonce+1)
+                    if not share_found_in_batch:
+                        nonce_counter = nonce_start + nonce_batch_size
                     
                     # Small delay to allow job updates
                     await asyncio.sleep(0.001)
