@@ -52,16 +52,22 @@ MAINNET_SEEDS: Final[tuple[str, ...]] = (
     "/dns4/mainnet.animica.org/tcp/30333",
     "/ip4/144.126.133.21/udp/443/quic-v1",
     "/ip4/144.126.133.21/tcp/30333",
+    "/ip4/3.133.122.91/udp/443/quic-v1",
+    "/ip4/3.133.122.91/tcp/30333",
 )
 
 TESTNET_SEEDS: Final[tuple[str, ...]] = (
     "/ip4/144.126.133.21/udp/443/quic-v1",
     "/ip4/144.126.133.21/tcp/30333",
+    "/ip4/3.133.122.91/udp/443/quic-v1",
+    "/ip4/3.133.122.91/tcp/30333",
 )
 
 DEVNET_SEEDS: Final[tuple[str, ...]] = (
     "/ip4/144.126.133.21/udp/443/quic-v1",
     "/ip4/144.126.133.21/tcp/30333",
+    "/ip4/3.133.122.91/udp/443/quic-v1",
+    "/ip4/3.133.122.91/tcp/30333",
 )
 
 # Legacy default: fall back to mainnet seeds.
