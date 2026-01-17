@@ -60,7 +60,7 @@ async def test_miner_receives_signbytes_in_header():
         height=100,
         parent_hash="0x" + "11" * 32,
         parent_height=99,
-        chain_id=1,
+        chain_id=0,
     )
     
     # Verify initial state (before fix this would fail miners)

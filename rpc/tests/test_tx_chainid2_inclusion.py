@@ -105,8 +105,8 @@ def test_chainid_validation_rejects_mismatch():
     deps.get_chain_id = lambda: 2
     
     try:
-        # Transaction with chainId=1 (mainnet) should be rejected when node expects chainId=2
-        obj_wrong = {"body": {"chainId": 1}}
+        # Transaction with chainId=0 (mainnet) should be rejected when node expects chainId=2
+        obj_wrong = {"body": {"chainId": 0}}
         
         with pytest.raises(rpc_errors.ChainIdMismatch):
             _validate_chain_id(obj_wrong)

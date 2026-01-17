@@ -10,7 +10,7 @@ from mining.quantum_worker import SimulatedQuantumProvider
 @pytest.mark.asyncio
 async def test_quantum_simulated_provider_payload():
     challenge = derive_challenge(
-        chain_id=1,
+        chain_id=0,
         parent_hash=b"\x01" * 32,
         parent_height=42,
         proof_type="quantum",

@@ -19,6 +19,7 @@ from core.db.sqlite import SQLiteKV
 from core.chain.block_import import _theta_to_target, compute_header_hash
 from core.types.block import Block
 from core.utils.hash import ZERO32
+from p2p.constants import NETWORK_MAGIC
 from p2p.deps import P2PDeps
 from p2p.errors import P2PError
 from p2p.node.p2p_service import (
@@ -997,6 +998,7 @@ async def test_self_peer_filtered(tmp_path: Path) -> None:
         version="2",
         agent="animica-p2p/test",
         chain_id=node.chain_id,
+        network_magic=NETWORK_MAGIC,
         listen_port=30333,
         listen_addrs=["127.0.0.1:30333"],
         genesis_hash=node._genesis_hash(),
@@ -1306,7 +1308,7 @@ async def test_at_tip_requires_network_confirmation(tmp_path: Path) -> None:
 
 
 def test_sync_status_head_hash_matches_mainnet_genesis(tmp_path: Path) -> None:
-    expected = get_expected_genesis_hash(1)
+    expected = get_expected_genesis_hash(0)
     assert expected is not None
     expected_hex = "0x" + expected.hex()
 
@@ -1329,7 +1331,7 @@ def test_sync_status_head_hash_matches_mainnet_genesis(tmp_path: Path) -> None:
     node = P2PService(
         listen_addrs=[tcp_multiaddr(0)],
         seeds=[],
-        chain_id=1,
+        chain_id=0,
         deps=_StubDeps(expected, expected),
         peerstore_path=str(tmp_path / "head-genesis" / "p2p"),
     )
@@ -1387,6 +1389,7 @@ async def test_peer_rejected_on_genesis_mismatch(
         version="2",
         agent="test",
         chain_id=node.chain_id,
+        network_magic=NETWORK_MAGIC,
         listen_port=0,
         listen_addrs=[],
         genesis_hash=b"\x22" * 32,
@@ -1429,6 +1432,7 @@ async def test_peer_rejected_on_chain_id_mismatch(
         version="2",
         agent="test",
         chain_id=node.chain_id + 1,
+        network_magic=NETWORK_MAGIC,
         listen_port=0,
         listen_addrs=[],
         genesis_hash=node._genesis_hash(),
@@ -1707,6 +1711,7 @@ async def test_peer_ready_triggers_header_request(tmp_path: Path, monkeypatch: p
 
     hello = Hello(
         chain_id=node.chain_id,
+        network_magic=NETWORK_MAGIC,
         listen_port=30333,
         peer_id=b"\x11" * 32,
         genesis_hash=node._genesis_hash(),

@@ -21,7 +21,7 @@ def test_sanitize_peer_addr_normalizes_public(address: str, expected: str, tmp_p
     svc = P2PService(
         listen_addrs=[tcp_multiaddr(free_port())],
         seeds=[],
-        chain_id=1,
+        chain_id=0,
         deps=None,
         peerstore_path=str(tmp_path / "p2p"),
     )
@@ -38,7 +38,7 @@ def test_sanitize_peer_addr_filters_private(address: str, tmp_path: Path, monkey
     svc = P2PService(
         listen_addrs=[tcp_multiaddr(free_port())],
         seeds=[],
-        chain_id=1,
+        chain_id=0,
         deps=None,
         peerstore_path=str(tmp_path / "p2p"),
     )
@@ -50,7 +50,7 @@ def test_sanitize_peer_addr_allows_private_when_enabled(tmp_path: Path, monkeypa
     svc = P2PService(
         listen_addrs=[tcp_multiaddr(free_port())],
         seeds=[],
-        chain_id=1,
+        chain_id=0,
         deps=None,
         peerstore_path=str(tmp_path / "p2p"),
     )
@@ -62,7 +62,7 @@ async def test_peer_known_tracking_filters_samples(tmp_path: Path) -> None:
     svc = P2PService(
         listen_addrs=[tcp_multiaddr(free_port())],
         seeds=[],
-        chain_id=1,
+        chain_id=0,
         deps=None,
         peerstore_path=str(tmp_path / "p2p"),
     )

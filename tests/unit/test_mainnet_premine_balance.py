@@ -81,7 +81,7 @@ def test_mainnet_premine_loads_to_state_db(mainnet_genesis_path):
         result = load_and_init_genesis(
             str(mainnet_genesis_path),
             f"sqlite:///{db_path}",
-            override_chain_id=1,
+            override_chain_id=0,
             log=False,
         )
         
@@ -115,7 +115,7 @@ def test_mainnet_premine_accessible_via_rpc():
         # Initialize RPC with mainnet configuration
         cfg = rpc_config.Config(
             db_uri=f"sqlite:///{db_path}",
-            chain_id=1,
+            chain_id=0,
             host="127.0.0.1",
             port=8545,
             logging="ERROR",
@@ -157,7 +157,7 @@ def test_mainnet_premine_via_rpc_method():
         # Initialize RPC with mainnet configuration
         cfg = rpc_config.Config(
             db_uri=f"sqlite:///{db_path}",
-            chain_id=1,
+            chain_id=0,
             host="127.0.0.1",
             port=8545,
             logging="ERROR",

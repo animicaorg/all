@@ -126,7 +126,7 @@ class RpcWorkBackend:
     rpc_url: str
     ws_url: Optional[str] = None
     poll_interval: float = 1.5
-    chain_id: int = 1
+    chain_id: int = 0
     _rpc: JsonRpcClient = field(init=False)
     _current_work: Optional[Dict[str, Any]] = field(default=None, init=False)
     _current_job_id: Optional[str] = field(default=None, init=False)

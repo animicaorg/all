@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from p2p.constants import NETWORK_MAGIC
 from p2p.deps import P2PDeps
 from p2p.node.p2p_service import P2PService, _PeerState
 from p2p.tests import tcp_multiaddr
@@ -221,6 +222,7 @@ async def test_genesis_mismatch_bans_peer(tmp_path: Path) -> None:
         version="2",
         agent="animica-test",
         chain_id=node.chain_id,
+        network_magic=NETWORK_MAGIC,
         listen_port=30333,
         listen_addrs=[],
         genesis_hash=b"\x01" * 32,
@@ -259,6 +261,7 @@ async def test_network_params_missing_rejects_peer(tmp_path: Path) -> None:
         version="2",
         agent="animica-test",
         chain_id=node.chain_id,
+        network_magic=NETWORK_MAGIC,
         listen_port=30333,
         listen_addrs=[],
         genesis_hash=node._genesis_hash(),
@@ -297,6 +300,7 @@ async def test_network_params_mismatch_rejects_peer(tmp_path: Path) -> None:
         version="2",
         agent="animica-test",
         chain_id=node.chain_id,
+        network_magic=NETWORK_MAGIC,
         listen_port=30333,
         listen_addrs=[],
         genesis_hash=node._genesis_hash(),

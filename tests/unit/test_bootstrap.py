@@ -107,7 +107,7 @@ def test_bootstrap_mainnet_genesis_correct_password():
                 from core.types.params import ChainParams, BlockLimits, RetargetParams, RetargetBounds
 
                 params = ChainParams(
-                    chain_id=1,
+                    chain_id=0,
                     chain_name="Mainnet",
                     genesis_time="2025-01-01T00:00:00Z",
                     genesis_hash=b"\x00" * 32,
@@ -129,7 +129,7 @@ def test_bootstrap_mainnet_genesis_correct_password():
                     ),
                 )
                 header = Header.genesis(
-                    chain_id=1,
+                    chain_id=0,
                     timestamp=0,
                     state_root=b"\x00" * 32,
                     txs_root=b"\x00" * 32,

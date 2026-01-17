@@ -38,7 +38,7 @@ async def test_stratum_rejects_stale_job():
         height=1,
         parent_hash="0x" + "11" * 32,
         parent_height=0,
-        chain_id=1,
+        chain_id=0,
     )
     job2 = StratumJob(
         job_id="job2",
@@ -51,7 +51,7 @@ async def test_stratum_rejects_stale_job():
         height=2,
         parent_hash="0x" + "22" * 32,
         parent_height=1,
-        chain_id=1,
+        chain_id=0,
     )
 
     await server.publish_job(job1)
@@ -95,7 +95,7 @@ async def test_stratum_block_submit_hook_called():
         height=1,
         parent_hash="0x" + "11" * 32,
         parent_height=0,
-        chain_id=1,
+        chain_id=0,
     )
     await server.publish_job(job)
 

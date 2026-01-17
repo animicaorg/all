@@ -2,6 +2,7 @@ import asyncio
 
 import pytest
 
+from p2p.constants import NETWORK_MAGIC
 from p2p.node.p2p_service import P2PService, _PeerState
 from p2p.wire.encoding import encode_payload
 from p2p.wire.frames import Framer
@@ -44,6 +45,7 @@ async def test_inbound_hello_stores_listen_port(tmp_path, monkeypatch):
 
     hello = Hello(
         chain_id=service.chain_id,
+        network_magic=NETWORK_MAGIC,
         listen_port=30333,
         peer_id=b"\x11" * 32,
         genesis_hash=service._genesis_hash(),

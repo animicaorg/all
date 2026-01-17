@@ -33,7 +33,7 @@ def _new_service(tmp_path) -> MempoolService:
     pool = Pool(cfg=PoolConfig())
     return MempoolService(
         pool=pool,
-        chain_id=1,
+        chain_id=0,
         min_gas_price_wei=0,
         state_db=None,
         tx_index=None,

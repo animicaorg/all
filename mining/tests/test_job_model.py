@@ -38,7 +38,7 @@ def test_job_id_determinism(monkeypatch):
 
 def test_aicf_challenge_and_payload_verification():
     challenge = derive_challenge(
-        chain_id=1,
+        chain_id=0,
         parent_hash=b"\x00" * 32,
         parent_height=0,
         proof_type="aicf",

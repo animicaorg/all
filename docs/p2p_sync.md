@@ -88,7 +88,7 @@ automatically dropped and re-fetched from peers.
 
 Seeds are automatically selected based on chain ID:
 
-**Mainnet (chain_id=1)**:
+**Mainnet (chain_id=0)**:
 ```bash
 /dns4/mainnet.animica.org/udp/443/quic-v1
 /dns4/mainnet.animica.org/tcp/30333

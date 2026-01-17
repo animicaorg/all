@@ -18,7 +18,7 @@ class TestNetworkSpecificSeeds:
     """Test that seeds are correctly selected based on chain_id/network."""
 
     def test_default_seeds_by_network_mainnet(self):
-        """Test mainnet (chain_id=1) seeds point at the primary host."""
+    """Test mainnet (chain_id=0) seeds point at the primary host."""
         seeds = p2p_config.DEFAULT_SEEDS_BY_NETWORK[1]
 
         for host in MAINNET_SEED_HOSTS:
@@ -62,7 +62,7 @@ class TestSeedLoadingFromEnv:
         monkeypatch.delenv("ANIMICA_P2P_SEEDS", raising=False)
         monkeypatch.delenv("ANIMICA_P2P_NETWORK", raising=False)
         
-        seeds = p2p_config._load_seeds_from_env(chain_id=1)
+    seeds = p2p_config._load_seeds_from_env(chain_id=0)
 
         for host in MAINNET_SEED_HOSTS:
             assert any(host in s for s in seeds)
@@ -134,7 +134,7 @@ class TestSeedLoadingFromEnv:
         monkeypatch.setenv("ANIMICA_P2P_SEEDS", custom_seeds)
         monkeypatch.setenv("ANIMICA_P2P_NETWORK", "mainnet")
         
-        seeds = p2p_config._load_seeds_from_env(chain_id=1)
+    seeds = p2p_config._load_seeds_from_env(chain_id=0)
         
         # Should use custom seeds, not network defaults
         assert "/ip4/1.2.3.4/tcp/1234" in seeds

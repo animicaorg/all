@@ -26,7 +26,7 @@ class SnapshotPolicy:
     def from_env(cls, *, chain_id: Optional[int] = None) -> "SnapshotPolicy":
         network = (os.environ.get("ANIMICA_NETWORK") or "").strip().lower() or None
         if network is None and chain_id is not None:
-            if chain_id == 1:
+            if chain_id == 0:
                 network = "mainnet"
             elif chain_id == 2:
                 network = "testnet"

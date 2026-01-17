@@ -59,7 +59,7 @@ async def test_continuous_snapshot_discovery_retries(clean_snapshot_env):
         await continuous_snapshot_discovery(
             block_db=mock_block_db,
             state_db=mock_state_db,
-            chain_id=1,
+            chain_id=0,
             p2p_service=mock_p2p_service,
         )
     
@@ -95,7 +95,7 @@ async def test_continuous_discovery_stops_on_max_retries(clean_snapshot_env):
         await continuous_snapshot_discovery(
             block_db=mock_block_db,
             state_db=mock_state_db,
-            chain_id=1,
+            chain_id=0,
             p2p_service=mock_p2p_service,
         )
     
@@ -141,7 +141,7 @@ async def test_continuous_discovery_stops_when_synced(clean_snapshot_env):
         await continuous_snapshot_discovery(
             block_db=mock_block_db,
             state_db=mock_state_db,
-            chain_id=1,
+            chain_id=0,
             p2p_service=mock_p2p_service,
         )
     
@@ -180,7 +180,7 @@ async def test_continuous_discovery_respects_stop_event(clean_snapshot_env):
             continuous_snapshot_discovery(
                 block_db=mock_block_db,
                 state_db=mock_state_db,
-                chain_id=1,
+                chain_id=0,
                 p2p_service=mock_p2p_service,
                 stop_event=stop_event,
             )
@@ -231,7 +231,7 @@ async def test_continuous_discovery_handles_exceptions(clean_snapshot_env):
         await continuous_snapshot_discovery(
             block_db=mock_block_db,
             state_db=mock_state_db,
-            chain_id=1,
+            chain_id=0,
             p2p_service=mock_p2p_service,
         )
     

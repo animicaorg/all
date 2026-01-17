@@ -9,7 +9,7 @@ Canonical block-header representation matching spec/header_format.cddl.
 
 Fields (stable, consensus-critical):
   - v:                small schema version (uint, default 1)
-  - chainId:          uint (matches spec/chains.json; animica mainnet = 1)
+  - chainId:          uint (matches spec/chains.json; animica mainnet = 0)
   - height:           uint block height (genesis = 0)
   - parentHash:       bstr .size 32  (sha3_256 of parent header CBOR)
   - timestamp:        uint seconds since UNIX epoch (block producer clock; bounded in consensus)
@@ -328,7 +328,7 @@ def serialize_header(header: Any) -> bytes:
 if __name__ == "__main__":  # pragma: no cover
     z = b"\x00" * 32
     hdr = Header.genesis(
-        chain_id=1,
+        chain_id=0,
         timestamp=1_700_000_000,
         state_root=z,
         txs_root=z,

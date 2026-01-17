@@ -25,7 +25,7 @@ Typical usage
         signer=signer,
         manifest=manifest_dict,
         code=code_bytes,
-        chain_id=1,
+        chain_id=0,
         nonce=0,
         max_fee=2_000_000,
     )

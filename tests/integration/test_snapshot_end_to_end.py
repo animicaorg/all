@@ -73,7 +73,7 @@ def test_snapshot_auto_creation_integration():
         
         # Create minimal params
         params = ChainParams(
-            chain_id=1,
+            chain_id=0,
             block=Mock(target_seconds=2.0),
             retarget=Mock(window=100, ema_alpha=0.1, bounds=Mock(min=0.5, max=2.0)),
             theta_initial=1000000,
@@ -188,7 +188,7 @@ async def test_peer_snapshot_discovery():
             mock_fetch.side_effect = fetch_snapshots
             
             # Query peers for snapshots
-            snapshots_by_peer = await _query_peers_for_snapshots(p2p_service, chain_id=1)
+            snapshots_by_peer = await _query_peers_for_snapshots(p2p_service, chain_id=0)
             
             # Verify we got snapshots from peers
             if len(snapshots_by_peer) > 0:
@@ -241,7 +241,7 @@ async def test_snapshot_bootstrap_decision():
                 success, error = await try_snapshot_bootstrap(
                     block_db=block_db,
                     state_db=state_db,
-                    chain_id=1,
+                    chain_id=0,
                     current_height=500,  # Low height, should try snapshot
                     p2p_service=None,
                 )
@@ -259,7 +259,7 @@ async def test_snapshot_bootstrap_decision():
             success, error = await try_snapshot_bootstrap(
                 block_db=block_db,
                 state_db=state_db,
-                chain_id=1,
+                chain_id=0,
                 current_height=1500,  # High height, should skip
                 p2p_service=None,
             )
@@ -276,7 +276,7 @@ async def test_snapshot_bootstrap_decision():
             success, error = await try_snapshot_bootstrap(
                 block_db=block_db,
                 state_db=state_db,
-                chain_id=1,
+                chain_id=0,
                 current_height=500,
                 p2p_service=None,
             )

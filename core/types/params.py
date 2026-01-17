@@ -180,8 +180,8 @@ class ChainParams:
         block = m["block"]
 
         chain_id = int(chain["id"])
-        if chain_id <= 0:
-            raise ValueError("chain.id must be positive")
+        if chain_id < 0:
+            raise ValueError("chain.id must be >= 0")
         chain_name = str(chain["name"]).strip()
         if not chain_name:
             raise ValueError("chain.name must be non-empty")
@@ -273,8 +273,8 @@ class ChainParams:
         chain_id = int(
             chain_id if chain_id is not None else net.get("chain_id", 0) or 0
         )
-        if chain_id <= 0:
-            raise ValueError("chain.id must be positive")
+        if chain_id < 0:
+            raise ValueError("chain.id must be >= 0")
 
         chain_name = str(net.get("name") or network_key).strip()
         if not chain_name:

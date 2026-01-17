@@ -750,7 +750,7 @@ def test_reset_with_volumes_removes_named_volume(monkeypatch: Any) -> None:
         monkeypatch.setattr("animica.cli.node._get_compose_file", lambda network: mock_compose_file)
         monkeypatch.setattr(
             "animica.cli.node.load_network_config",
-            lambda network: SimpleNamespace(data_dir=str(mock_data_dir), chain_id=1, name=network),
+            lambda network: SimpleNamespace(data_dir=str(mock_data_dir), chain_id=0, name=network),
         )
         monkeypatch.setattr("animica.cli.node._genesis_tag_for_network", lambda cfg: "deadbeef")
         monkeypatch.setattr("animica.cli.node._wait_for_compose_stop", lambda *args, **kwargs: True)
@@ -793,7 +793,7 @@ def test_reset_preserves_wallet_files_in_data_dir(monkeypatch: Any) -> None:
         monkeypatch.setattr("animica.cli.node._get_compose_file", lambda network: mock_compose_file)
         monkeypatch.setattr(
             "animica.cli.node.load_network_config",
-            lambda network: SimpleNamespace(data_dir=str(data_dir), chain_id=1, name=network),
+            lambda network: SimpleNamespace(data_dir=str(data_dir), chain_id=0, name=network),
         )
         monkeypatch.setattr("animica.cli.node._wait_for_compose_stop", lambda *args, **kwargs: True)
 

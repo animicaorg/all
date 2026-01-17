@@ -693,7 +693,7 @@ async def dispatch(method: str | None, params: dict[str, Any], state: WalletdSta
             chain_id_result = await _proxy_to_node("chain.getChainId", {}, node_status.rpc_url)
             chain_id = int(chain_id_result) if chain_id_result else 1
         except Exception:
-            chain_id = 1  # Default to mainnet
+            chain_id = 0  # Default to mainnet
         
         tx = {
             "from": from_addr,

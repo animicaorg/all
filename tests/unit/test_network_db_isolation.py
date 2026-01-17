@@ -26,11 +26,11 @@ def test_core_config_per_network_data_dir():
     """Test that core.config uses distinct data directories per chain ID."""
     from core.config import ChainConfig, PathsConfig
     
-    # Test mainnet (chain 1)
-    mainnet_chain = ChainConfig(chain_id=1, network_name="mainnet")
+    # Test mainnet (chain 0)
+    mainnet_chain = ChainConfig(chain_id=0, network_name="mainnet")
     mainnet_paths = PathsConfig.defaults(mainnet_chain)
-    assert "chain-1" in str(mainnet_paths.data_dir), \
-        f"Mainnet should use chain-1 directory, got {mainnet_paths.data_dir}"
+    assert "chain-0" in str(mainnet_paths.data_dir), \
+        f"Mainnet should use chain-0 directory, got {mainnet_paths.data_dir}"
     
     # Test testnet (chain 2)
     testnet_chain = ChainConfig(chain_id=2, network_name="testnet")
@@ -68,9 +68,9 @@ def test_rpc_config_per_network_db_uri():
         importlib.reload(rpc.config)
         from rpc.config import load
         mainnet_cfg = load()
-        assert mainnet_cfg.chain_id == 1, f"Mainnet should be chain 1, got {mainnet_cfg.chain_id}"
-        assert "chain-1" in mainnet_cfg.db_uri, \
-            f"Mainnet DB should use chain-1 path, got {mainnet_cfg.db_uri}"
+        assert mainnet_cfg.chain_id == 0, f"Mainnet should be chain 0, got {mainnet_cfg.chain_id}"
+        assert "chain-0" in mainnet_cfg.db_uri, \
+            f"Mainnet DB should use chain-0 path, got {mainnet_cfg.db_uri}"
         
         # Test testnet
         os.environ["ANIMICA_NETWORK"] = "testnet"
@@ -132,7 +132,7 @@ def test_rpc_config_migrates_legacy_profile_db(tmp_path, monkeypatch):
     importlib.reload(rpc_config)
     cfg = rpc_config.load()
 
-    expected_db = data_root / "chain-1" / "animica.db"
+    expected_db = data_root / "chain-0" / "animica.db"
     assert expected_db.exists(), "Expected mainnet DB to be materialized"
     assert expected_db.read_bytes() == b"legacy-mainnet-db"
     assert str(expected_db) in cfg.db_uri
@@ -152,7 +152,7 @@ def test_network_switch_does_not_contaminate_state():
         
         # Create separate genesis files for two networks
         mainnet_genesis = {
-            "chainId": 1,
+            "chainId": 0,
             "network": "mainnet-test",
             "genesisTime": "2025-01-01T00:00:00Z",
             "unit": {"symbol": "ANM", "decimals": 9},
@@ -184,14 +184,14 @@ def test_network_switch_does_not_contaminate_state():
         mainnet_genesis_path.write_text(json.dumps(mainnet_genesis))
         devnet_genesis_path.write_text(json.dumps(devnet_genesis))
         
-        # Initialize mainnet with chain-1 DB
-        mainnet_db = tmpdir / "chain-1" / "animica.db"
+        # Initialize mainnet with chain-0 DB
+        mainnet_db = tmpdir / "chain-0" / "animica.db"
         mainnet_db.parent.mkdir(parents=True, exist_ok=True)
         
         mainnet_result = load_and_init_genesis(
             str(mainnet_genesis_path),
             f"sqlite:///{mainnet_db}",
-            override_chain_id=1,
+            override_chain_id=0,
             log=False,
         )
         
@@ -261,7 +261,7 @@ def test_default_network_is_mainnet():
         
         # Infer from empty env should default to mainnet
         chain = ChainConfig.infer_from_env()
-        assert chain.chain_id == 1, f"Default should be mainnet (chain 1), got {chain.chain_id}"
+        assert chain.chain_id == 0, f"Default should be mainnet (chain 0), got {chain.chain_id}"
         assert chain.network_name == "mainnet", f"Default network name should be mainnet, got {chain.network_name}"
         
     finally:

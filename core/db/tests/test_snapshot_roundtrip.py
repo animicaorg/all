@@ -45,7 +45,7 @@ def test_snapshot_export_import_roundtrip_with_pq_signatures():
         
         unsigned_tx = UnsignedTx(
             version=1,
-            chain_id=1,
+            chain_id=0,
             fork_id=None,
             valid_after=None,
             valid_until=None,
@@ -73,7 +73,7 @@ def test_snapshot_export_import_roundtrip_with_pq_signatures():
         
         genesis_header = Header(
             v=1,
-            chainId=1,
+            chainId=0,
             height=0,
             parentHash=_zero_hash(),
             timestamp=1000000,
@@ -104,7 +104,7 @@ def test_snapshot_export_import_roundtrip_with_pq_signatures():
         export_block_db.put_block(genesis_block)
         export_block_db.set_canonical(0, genesis_hash)
         export_block_db.set_head(0, genesis_hash)
-        export_block_db.set_chain_id(1)
+        export_block_db.set_chain_id(0)
         export_state_db.kv.put(b"\x01account_key", b"account_data")
         
         # Export snapshot

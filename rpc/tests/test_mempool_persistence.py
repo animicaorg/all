@@ -7,7 +7,7 @@ def _build_transfer_tx() -> tuple[Tx, bytes]:
     sender = b"\x11" * 32
     to = b"\x22" * 32
     tx = Tx.transfer(
-        chain_id=1,
+        chain_id=0,
         nonce=0,
         gas_price=1,
         gas_limit=21_000,
@@ -22,7 +22,7 @@ def _build_transfer_tx() -> tuple[Tx, bytes]:
 def test_mempool_persists_and_restores(tmp_path):
     tx, raw = _build_transfer_tx()
     service = MempoolService.create(
-        chain_id=1,
+        chain_id=0,
         min_gas_price_wei=0,
         state_db=None,
         tx_index=None,
@@ -33,7 +33,7 @@ def test_mempool_persists_and_restores(tmp_path):
     assert persist_path.exists()
 
     restored = MempoolService.create(
-        chain_id=1,
+        chain_id=0,
         min_gas_price_wei=0,
         state_db=None,
         tx_index=None,

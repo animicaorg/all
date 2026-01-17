@@ -12,7 +12,7 @@ import pytest
 from rpc.tests import new_test_client, rpc_call
 
 
-def _build_cli_format_tx(chain_id: int = 1):
+def _build_cli_format_tx(chain_id: int = 0):
     """
     Build a transaction in CLI simplified envelope format.
     

@@ -4,7 +4,7 @@ from core.types.header import HASH32_LEN, Header
 def _make_minimal_genesis_header() -> Header:
     zero = b"\x00" * HASH32_LEN
     return Header.genesis(
-        chain_id=1,
+        chain_id=0,
         timestamp=1_700_000_000,
         state_root=zero,
         txs_root=zero,

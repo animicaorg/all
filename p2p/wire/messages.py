@@ -20,6 +20,7 @@ from enum import IntEnum
 from hashlib import sha3_256
 from typing import Any, Dict, List, Optional, Tuple
 
+from p2p.constants import NETWORK_MAGIC
 from .message_ids import WIRE_SCHEMA_VERSION, MsgID
 
 # ---------------------------
@@ -46,6 +47,14 @@ def _ensure_len(name: str, b: bytes, n: int) -> None:
         )
 
 
+def _ensure_len_range(name: str, b: bytes, min_len: int, max_len: int) -> None:
+    blen = _blen(b)
+    if blen < min_len or blen > max_len:
+        raise ValueError(
+            f"{name} must be {min_len}-{max_len} bytes, got {blen if blen >= 0 else 'not-bytes'}"
+        )
+
+
 # ---------------------------
 # 0x00xx — Core control
 # ---------------------------
@@ -58,6 +67,7 @@ class Hello:
     agent: str = "animica-node/unknown"
     repo_state: str = ""
     chain_id: ChainId = 0
+    network_magic: bytes = NETWORK_MAGIC
     listen_port: int = 0
     listen_addrs: List[Address] = dc.field(default_factory=list)
     # Optional genesis hash for strict network matching (recommended).
@@ -86,6 +96,7 @@ class Hello:
     network_best_height: Optional[Height] = None
 
     def __post_init__(self):
+        _ensure_len_range("network_magic", self.network_magic, 4, 8)
         if self.genesis_hash:
             _ensure_len("genesis_hash", self.genesis_hash, 32)
         if self.genesis_header_hash:

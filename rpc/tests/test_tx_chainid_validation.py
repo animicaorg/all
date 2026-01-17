@@ -1,7 +1,7 @@
 """
 Test chainId validation in tx.sendRawTransaction
 
-Regression test for issue where signed transactions with chainId=1
+Regression test for issue where signed transactions with chainId=0
 were decoded as chainId=0, causing CHAIN_ID_MISMATCH errors.
 
 This test validates:
@@ -84,7 +84,7 @@ def test_tx_signature_replay_protection_with_fork_id() -> None:
         alg,
         kp.secret_key,
         domain="tx",
-        chain_id=1,
+        chain_id=0,
         fork_id=fork_a,
     )
     assert (
@@ -93,7 +93,7 @@ def test_tx_signature_replay_protection_with_fork_id() -> None:
             sig_env,
             kp.public_key,
             domain="tx",
-            chain_id=1,
+            chain_id=0,
             fork_id=fork_a,
         )
         is True
@@ -104,7 +104,7 @@ def test_tx_signature_replay_protection_with_fork_id() -> None:
             sig_env,
             kp.public_key,
             domain="tx",
-            chain_id=1,
+            chain_id=0,
             fork_id=fork_b,
         )
         is False
@@ -337,21 +337,19 @@ async def test_decode_and_validate_chainid_from_body_field(client_and_cfg):
     assert "result" in result, f"Node failed to extract chainId from body field: {result}"
 
 
-async def test_reject_transaction_with_chainid_zero(client_and_cfg):
+async def test_reject_transaction_with_negative_chainid(client_and_cfg):
     """
-    Test that transactions with chainId=0 are rejected.
-    
-    ChainId=0 is invalid per spec.
+    Test that transactions with negative chainId are rejected.
     """
     client, cfg = client_and_cfg
     
-    # Try to build a tx with chainId=0 (should fail at construction)
+    # Try to build a tx with chainId=-1 (should fail at construction)
     from core.types.tx import UnsignedTx
     
-    # UnsignedTx should reject chainId=0 during construction
-    with pytest.raises(ValueError, match="chain_id must be positive"):
+    # UnsignedTx should reject negative chainId during construction
+    with pytest.raises(ValueError, match="chain_id must be >= 0"):
         UnsignedTx.build_transfer(
-            chain_id=0,  # Invalid
+            chain_id=-1,  # Invalid
             sender=b"\x00" * 32,
             nonce=0,
             gas_price=1,

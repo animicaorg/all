@@ -18,9 +18,7 @@ if TYPE_CHECKING:
 
 
 # Raw checkpoint data (height, hash) as tuples to avoid circular import
-_MAINNET_CHECKPOINTS_RAW = [
-    (55795, "0x0a3205eb3aca078a9c6e8415e5970e198b43c087bff7b71371054bbbc99d8938"),
-]
+_MAINNET_CHECKPOINTS_RAW: List[tuple[int, str]] = []
 
 _TESTNET_CHECKPOINTS_RAW: List[tuple[int, str]] = []
 
@@ -51,14 +49,14 @@ def get_builtin_checkpoints(chain_id: int) -> List['Checkpoint']:
     Get built-in checkpoints for a specific chain ID.
     
     Args:
-        chain_id: Chain identifier (1=mainnet, 2=testnet, 1337=devnet, etc.)
+        chain_id: Chain identifier (0=mainnet, 2=testnet, 1337=devnet, etc.)
     
     Returns:
         List of Checkpoint objects for the specified chain, empty list if none defined.
     """
     _ensure_loaded()
     
-    if chain_id == 1:
+    if chain_id == 0:
         return _MAINNET_CHECKPOINTS.copy()  # type: ignore
     elif chain_id == 2:
         return _TESTNET_CHECKPOINTS.copy()  # type: ignore
@@ -81,7 +79,7 @@ def get_all_builtin_checkpoints() -> Dict[int, List['Checkpoint']]:
     result = {}
     
     if _MAINNET_CHECKPOINTS:  # type: ignore
-        result[1] = _MAINNET_CHECKPOINTS.copy()  # type: ignore
+        result[0] = _MAINNET_CHECKPOINTS.copy()  # type: ignore
     
     if _TESTNET_CHECKPOINTS:  # type: ignore
         result[2] = _TESTNET_CHECKPOINTS.copy()  # type: ignore

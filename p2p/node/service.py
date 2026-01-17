@@ -17,6 +17,7 @@ from urllib.parse import urlparse
 # Local imports are intentionally late/dynamic in a few places to avoid import cycles.
 from .. import version as p2p_version
 from ..config import P2PConfig  # typed config (see p2p/config.py)
+from ..constants import NETWORK_MAGIC
 from ..metrics import \
     get_metrics  # light wrapper; no-op metrics if not configured
 from ..peer import connection_manager as conman
@@ -619,7 +620,11 @@ class P2PServiceLegacy:
 
         self.loop = asyncio.get_event_loop()
         prologue = f"animica/tcp/{chain_id}".encode()
-        self._transport = TcpTransport(handshake_prologue=prologue, chain_id=chain_id)
+        self._transport = TcpTransport(
+            handshake_prologue=prologue,
+            chain_id=chain_id,
+            network_magic=NETWORK_MAGIC,
+        )
         self._listen_cfg = ListenConfig(addr="tcp://0.0.0.0:0")
         self._accept_task: asyncio.Task | None = None
         self._dial_tasks: list[asyncio.Task] = []
@@ -633,7 +638,7 @@ class P2PServiceLegacy:
         # Initialize persistent peer store
         if peerstore_path is None:
             # Default to network-specific directory
-            network_name = {1: "mainnet", 2: "testnet", 1337: "devnet"}.get(
+            network_name = {0: "mainnet", 2: "testnet", 1337: "devnet"}.get(
                 chain_id, "custom"
             )
             peerstore_path = os.path.expanduser(f"~/.animica/p2p/{network_name}")

@@ -79,7 +79,7 @@ from core.encoding import cbor as core_cbor
 # Build a tiny, valid transfer (fields shown here are illustrative)
 tx = Tx(
     kind="transfer",
-    chain_id=1,
+    chain_id=0,
     sender=b"\x01"*32,
     to=b"\x02"*32,
     nonce=0,

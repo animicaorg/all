@@ -280,7 +280,7 @@ def _coerce_config(cfg: t.Any) -> _ConfigView:
 
     return _ConfigView(
         db_uri=str(_get("db_uri", "sqlite:///animica.db")),
-        chain_id=int(_get("chain_id", 1)),
+        chain_id=int(_get("chain_id", 0)),
         genesis_path=genesis,
         log_level=str(_get("log_level", "INFO")),
         p2p_required=_parse_bool(_get("p2p_required", None), False),

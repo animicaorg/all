@@ -12,6 +12,7 @@ from core.chain.block_import import _theta_to_target, compute_header_hash
 from core.types.block import Block
 from core.utils.hash import ZERO32
 from p2p.deps import AsyncP2PDeps, P2PDeps
+from p2p.constants import NETWORK_MAGIC
 from p2p.node.p2p_service import P2PService, PeerMisbehavior, _PeerState
 from p2p.wire.encoding import encode_payload
 from p2p.wire.frames import Framer
@@ -177,6 +178,7 @@ async def test_consensus_mismatch_disconnects_early(tmp_path: Path) -> None:
         version="2",
         agent="animica-test",
         chain_id=node.chain_id,
+        network_magic=NETWORK_MAGIC,
         listen_port=0,
         listen_addrs=[],
         genesis_hash=node._genesis_header_hash(),

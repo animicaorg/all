@@ -24,10 +24,10 @@ GENESIS_DIR = BASE_DIR / "genesis"
 
 # CHAIN_RESET_TOUCHPOINT: New genesis hash for mainnet reset
 # Old: 0x27fab3a17fd3a166908cdaa32462511ded2da86724314de45f335b0a59f820d8
-# New: 0x8daaca93deb86f4047d54097a08e68df926f91e0ac9658c716da8d6eb8be766d
-# This matches core/genesis/mainnet.json with deterministic beacon seed
+# New: 0x7d0801cf029a13ca4ff4e1864ae6645015c1c3b46288ca99ad224f043ec1a09e
+# This matches core/genesis/mainnet.json after the chain reset
 MAINNET_GENESIS_HASH_HEX = (
-    "0x8daaca93deb86f4047d54097a08e68df926f91e0ac9658c716da8d6eb8be766d"
+    "0x7d0801cf029a13ca4ff4e1864ae6645015c1c3b46288ca99ad224f043ec1a09e"
 )
 TESTNET_GENESIS_HASH_HEX = (
     "0xcf4489041eb0ae6a4e29a7e9684392eee2b74d2e9ad4bc8c38b82b260a615b34"
@@ -38,7 +38,7 @@ DEVNET_GENESIS_HASH_HEX = (
 
 MAINNET_PARAMS = NetworkParams(
     name="mainnet",
-    chain_id=1,
+    chain_id=0,
     expected_genesis_block_hash=bytes.fromhex(MAINNET_GENESIS_HASH_HEX[2:]),
 )
 
@@ -64,13 +64,13 @@ NETWORK_NAME_ALIASES = {
 }
 
 PINNED_GENESIS_BY_NETWORK: dict[tuple[str, int], bytes] = {
-    ("mainnet", 1): bytes.fromhex(MAINNET_GENESIS_HASH_HEX[2:]),
+    ("mainnet", 0): bytes.fromhex(MAINNET_GENESIS_HASH_HEX[2:]),
     ("testnet", 2): bytes.fromhex(TESTNET_GENESIS_HASH_HEX[2:]),
     ("devnet", 1337): bytes.fromhex(DEVNET_GENESIS_HASH_HEX[2:]),
 }
 
 GENESIS_PATH_BY_NETWORK: dict[tuple[str, int], Path] = {
-    ("mainnet", 1): GENESIS_DIR / "mainnet.json",
+    ("mainnet", 0): GENESIS_DIR / "mainnet.json",
     ("testnet", 2): GENESIS_DIR / "testnet.json",
     ("devnet", 1337): GENESIS_DIR / "devnet.json",
 }

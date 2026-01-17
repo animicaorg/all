@@ -17,6 +17,7 @@ __all__ = [
     "PROTOCOL_ID",
     "HANDSHAKE_ALPN",
     "SCHEMA_VERSION",
+    "NETWORK_MAGIC",
     # Crypto preferences
     "KEM_PREFERENCE",
     "HKDF_HASH",
@@ -85,6 +86,24 @@ def _env_choice(name: str, default: str, choices: Iterable[str]) -> str:
     return v if v in {c.lower() for c in choices} else default
 
 
+def _env_bytes(
+    name: str, default: bytes, *, min_len: int = 4, max_len: int = 8
+) -> bytes:
+    raw = os.getenv(name)
+    if not raw:
+        return default
+    try:
+        if raw.startswith(("0x", "0X")):
+            data = bytes.fromhex(raw[2:])
+        else:
+            data = raw.encode()
+    except Exception:
+        return default
+    if min_len <= len(data) <= max_len:
+        return data
+    return default
+
+
 # ---- identity & versioning ----------------------------------------------------
 
 # Wire protocol major version. Backward-incompatible changes MUST bump this.
@@ -98,6 +117,11 @@ HANDSHAKE_ALPN: Final[str] = PROTOCOL_ID
 
 # Schema version for P2P wire messages (msg ids, envelopes).
 SCHEMA_VERSION: Final[int] = 1
+
+# Network magic bytes (4-8 bytes) used to prevent cross-network peering.
+NETWORK_MAGIC: Final[bytes] = _env_bytes(
+    "ANIMICA_P2P_NETWORK_MAGIC", b"ANM0", min_len=4, max_len=8
+)
 
 
 # ---- crypto preferences -------------------------------------------------------

@@ -203,8 +203,8 @@ animica/gossip/v1/{chain_id}/txs
 ```
 
 Examples:
-- Mainnet (chain_id=1): `animica/gossip/v1/1/txs`
-- Testnet (chain_id=1337): `animica/gossip/v1/1337/txs`
+- Mainnet (chain_id=0): `animica/gossip/v1/0/txs`
+- Testnet (chain_id=2): `animica/gossip/v1/2/txs`
 
 ## Testing
 

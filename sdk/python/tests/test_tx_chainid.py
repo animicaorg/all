@@ -25,7 +25,7 @@ def test_tx_builder_requires_chainid():
         nonce=0,
         gas_limit=21000,
         max_fee=1000000000,
-        chain_id=1,  # Required parameter
+        chain_id=0,  # Required parameter
     )
     
     assert tx.chain_id == 1

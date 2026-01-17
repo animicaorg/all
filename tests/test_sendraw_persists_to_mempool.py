@@ -9,7 +9,7 @@ from mempool.errors import PersistenceFailed
 from rpc.mempool_service import MempoolService
 
 
-def _build_tx(chain_id: int = 1):
+def _build_tx(chain_id: int = 0):
     from core.types.tx import Tx
 
     tx = Tx.transfer(
@@ -31,7 +31,7 @@ def _new_service(tmp_path) -> MempoolService:
     pool = Pool(cfg=PoolConfig())
     return MempoolService(
         pool=pool,
-        chain_id=1,
+        chain_id=0,
         min_gas_price_wei=0,
         state_db=None,
         tx_index=None,

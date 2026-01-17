@@ -127,7 +127,7 @@ When a transaction arrives at a node:
    sign_bytes = build_sign_bytes(
        msg=canonical_tx_bytes,
        domain="tx/sign",
-       chain_id=1,
+       chain_id=0,
        alg_id=alg_id,
        prehash="sha3-512"
    )
@@ -293,7 +293,7 @@ signature = sign.sign_detached(
     alg="dilithium3",
     sk=secret_key,
     domain="tx/sign",
-    chain_id=1
+    chain_id=0
 )
 
 # Attach to transaction
@@ -316,7 +316,7 @@ is_valid = verify.verify_detached(
     sig=signature,
     pk=public_key,
     domain="tx/sign",
-    chain_id=1
+    chain_id=0
 )
 
 if not is_valid:

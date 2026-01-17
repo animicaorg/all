@@ -226,7 +226,7 @@ async def test_tcp_handshake_handles_mismatched_prologue_lengths():
 
     async def _server(reader, writer):
         try:
-            await perform_tcp(reader, writer, is_outbound=False, chain_id=1)
+            await perform_tcp(reader, writer, is_outbound=False, chain_id=0)
         except HandshakeError as exc:
             errors.append(exc)
         finally:
@@ -256,3 +256,58 @@ async def test_tcp_handshake_handles_mismatched_prologue_lengths():
     assert len(errors) == 2, "both peers should fail the handshake"
     for exc in errors:
         assert "prologue/chain-id mismatch" in str(exc)
+
+
+@pytest.mark.asyncio
+async def test_tcp_handshake_rejects_network_magic_mismatch():
+    perform_tcp = getattr(hs_mod, "perform_handshake_tcp", None)
+    if perform_tcp is None:
+        pytest.skip("perform_handshake_tcp not available")
+
+    errors: list[HandshakeError] = []
+    server_done = asyncio.Event()
+
+    async def _server(reader, writer):
+        try:
+            await perform_tcp(
+                reader,
+                writer,
+                is_outbound=False,
+                chain_id=0,
+                network_magic=b"ANM0",
+            )
+        except HandshakeError as exc:
+            errors.append(exc)
+        finally:
+            writer.close()
+            await writer.wait_closed()
+            server_done.set()
+
+    server = await asyncio.start_server(_server, host="127.0.0.1", port=0)
+    host, port = server.sockets[0].getsockname()[:2]
+
+    async def _client():
+        reader, writer = await asyncio.open_connection(host, port)
+        try:
+            await perform_tcp(
+                reader,
+                writer,
+                is_outbound=True,
+                chain_id=0,
+                network_magic=b"OLD1",
+            )
+        except HandshakeError as exc:
+            errors.append(exc)
+        finally:
+            writer.close()
+            await writer.wait_closed()
+
+    await _client()
+    await asyncio.wait_for(server_done.wait(), timeout=1.0)
+
+    server.close()
+    await server.wait_closed()
+
+    assert len(errors) == 2, "both peers should fail the handshake"
+    for exc in errors:
+        assert "prologue" in str(exc)

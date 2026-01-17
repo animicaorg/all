@@ -80,12 +80,12 @@ def test_normal_transfer():
         height=1,
         timestamp=1000,
         coinbase=coinbase,
-        chain_id=1,
+        chain_id=0,
     )
     
     tx_env = TxEnv(
         sender=alice,
-        chain_id=1,
+        chain_id=0,
         gas_price=1,
     )
     
@@ -163,12 +163,12 @@ def test_self_send():
         height=1,
         timestamp=1000,
         coinbase=coinbase,
-        chain_id=1,
+        chain_id=0,
     )
     
     tx_env = TxEnv(
         sender=alice,
-        chain_id=1,
+        chain_id=0,
         gas_price=1,
     )
     

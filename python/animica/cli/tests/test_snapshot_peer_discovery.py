@@ -151,7 +151,7 @@ def test_query_peer_snapshots_success():
         mock_client.return_value = MockAsyncClient(responses)
         
         rpc_url, snapshots, error = asyncio.run(
-            snapshot_cli._query_peer_snapshots("192.168.1.10:30303", chain_id=1)
+            snapshot_cli._query_peer_snapshots("192.168.1.10:30303", chain_id=0)
         )
         
         assert rpc_url == "http://192.168.1.10:8545/rpc"
@@ -208,7 +208,7 @@ def test_query_all_peers_for_snapshots(mock_rpc_with_peers, mock_peer_snapshots)
         
         snapshots_by_peer, errors, peer_count = asyncio.run(
             snapshot_cli._query_all_peers_for_snapshots(
-                "http://127.0.0.1:8545/rpc", chain_id=1
+                "http://127.0.0.1:8545/rpc", chain_id=0
             )
         )
         

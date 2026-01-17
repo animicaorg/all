@@ -257,7 +257,7 @@ def _resolve_chain_id_for_sig(ctx: Any) -> int:
         try:
             chain_id = int(deps.get_chain_id())
         except Exception:
-            chain_id = 1
+            chain_id = 0
     return int(chain_id)
 
 
@@ -1537,7 +1537,7 @@ def _get_miner_address() -> bytes:
         ctx = _ctx()
         chain_id = ctx.cfg.chain_id
         
-        # For mainnet (chain_id=1) or devnet (chain_id=1337), use first premine address
+        # For mainnet (chain_id=0) or devnet (chain_id=1337), use first premine address
         if chain_id in (1, 1337) and MAINNET_PREMINE_DISTRIBUTION:
             premine_addr = MAINNET_PREMINE_DISTRIBUTION[0][0]  # First address in distribution
             try:

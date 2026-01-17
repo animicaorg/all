@@ -66,7 +66,7 @@ def _install_client_stub():
             return None
 
     class ContractClient:
-        def __init__(self, rpc, address, abi, chain_id=1):
+        def __init__(self, rpc, address, abi, chain_id=0):
             self.rpc = rpc
             self.address = address
             self.abi = abi
@@ -139,7 +139,7 @@ def test_codegen_emits_valid_source_and_compiles():
     assert inspect.isclass(Counter), "Generated class 'Counter' not found"
 
     # Instantiate with a fake RPC (could be anything, the stub ignores it)
-    c = Counter(object(), "anim1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq", chain_id=1)
+    c = Counter(object(), "anim1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq", chain_id=0)
 
     # Call view: get() should proxy to ContractClient.read/call and return 42
     assert hasattr(c, "get"), "Generated class missing method 'get'"

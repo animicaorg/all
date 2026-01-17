@@ -1424,7 +1424,7 @@ def test_cli_and_node_sign_bytes_align() -> None:
         nonce=0,
         gas_limit=21000,
         max_fee=1_000_000_000,
-        chain_id=1,
+        chain_id=0,
     )
 
     cli_msg = sdk_sign_bytes(tx_obj)

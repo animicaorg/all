@@ -236,7 +236,7 @@ if __name__ == "__main__":  # pragma: no cover
     from core.utils.hash import ZERO32
 
     hdr = Header.genesis(
-        chain_id=1,
+        chain_id=0,
         timestamp=1_700_000_123,
         state_root=ZERO32,
         txs_root=ZERO32,

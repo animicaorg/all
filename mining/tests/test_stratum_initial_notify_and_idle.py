@@ -29,7 +29,7 @@ def _sample_job(job_id: str) -> StratumJob:
         height=100,
         parent_hash="0x" + "11" * 32,
         parent_height=99,
-        chain_id=1,
+        chain_id=0,
     )
 
 
