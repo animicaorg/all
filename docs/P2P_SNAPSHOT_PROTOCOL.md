@@ -35,7 +35,7 @@ Request list of available snapshots from a peer.
 ```python
 from p2p.wire.messages import GetSnapshots
 
-request = GetSnapshots(chain_id=1)  # Request snapshots for chain 1
+request = GetSnapshots(chain_id=0)  # Request snapshots for chain 0
 ```
 
 ### SNAPSHOTS (0x0306)
@@ -60,7 +60,7 @@ from p2p.wire.messages import Snapshots, SnapshotInfo
 
 response = Snapshots(snapshots=[
     SnapshotInfo(
-        chain_id=1,
+        chain_id=0,
         checkpoint_height=1000,
         checkpoint_hash="abcd...",
         blocks_count=1000,
@@ -85,7 +85,7 @@ Request a specific chunk of a snapshot.
 from p2p.wire.messages import GetSnapshotChunk
 
 request = GetSnapshotChunk(
-    chain_id=1,
+    chain_id=0,
     checkpoint_height=1000,
     chunk_name="blocks.tar.zst"
 )
@@ -107,7 +107,7 @@ Response with snapshot chunk data.
 from p2p.wire.messages import SnapshotChunk
 
 response = SnapshotChunk(
-    chain_id=1,
+    chain_id=0,
     checkpoint_height=1000,
     chunk_name="blocks.tar.zst",
     data=b"...",  # Actual chunk data
@@ -284,7 +284,7 @@ animica snapshot list  # Should discover snapshots from connected peers
 from p2p.wire.messages import GetSnapshots, Snapshots, SnapshotInfo
 from p2p.wire.encoding import encode_payload, decode_payload
 
-request = GetSnapshots(chain_id=1)
+request = GetSnapshots(chain_id=0)
 encoded = encode_payload(request)
 decoded = decode_payload(encoded)
 assert decoded["chain_id"] == 1
@@ -292,7 +292,7 @@ assert decoded["chain_id"] == 1
 # Test GET_SNAPSHOT_CHUNK encoding/decoding  
 from p2p.wire.messages import GetSnapshotChunk, SnapshotChunk
 
-request = GetSnapshotChunk(chain_id=1, checkpoint_height=100, chunk_name="test.tar.zst")
+request = GetSnapshotChunk(chain_id=0, checkpoint_height=100, chunk_name="test.tar.zst")
 encoded = encode_payload(request)
 decoded = decode_payload(encoded)
 assert decoded["chunk_name"] == "test.tar.zst"

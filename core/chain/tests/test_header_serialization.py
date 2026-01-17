@@ -9,7 +9,7 @@ def test_header_serialization_matches_node_hash() -> None:
     zero32 = b"\x00" * 32
     header = Header(
         v=1,
-        chainId=1,
+        chainId=0,
         height=1,
         parentHash=zero32,
         timestamp=1_700_000_000,

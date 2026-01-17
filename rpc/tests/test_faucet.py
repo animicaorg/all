@@ -5,7 +5,7 @@ Tests for faucet RPC methods
 Tests cover:
   - Faucet success on devnet (chainId=1337)
   - Faucet success on testnet (chainId=2)
-  - Faucet rejection on mainnet (chainId=1)
+  - Faucet rejection on mainnet (chainId=0)
   - Default amount handling
   - Custom amount handling
   - Address validation
@@ -62,7 +62,7 @@ def mainnet_client(tmp_path):
         host="127.0.0.1",
         port=0,
         db_uri=db_uri,
-        chain_id=1,  # mainnet
+        chain_id=0,  # mainnet
         logging="ERROR",
     )
     app = rpc_server.create_app(cfg)
@@ -111,7 +111,7 @@ def test_faucet_success_on_testnet(testnet_client):
 
 
 def test_faucet_rejected_on_mainnet(mainnet_client):
-    """Test faucet is rejected on mainnet (chainId=1)."""
+    """Test faucet is rejected on mainnet (chainId=0)."""
     client = mainnet_client
     
     # Try to use faucet on mainnet - should fail

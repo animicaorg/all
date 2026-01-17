@@ -12,7 +12,7 @@ from p2p.checkpoints.loader import CheckpointLoader
 async def test_loader_builtin_mainnet():
     """Test loading built-in checkpoints for mainnet."""
     config = CheckpointsConfig(mode="off")
-    loader = CheckpointLoader(config, chain_id=1)
+    loader = CheckpointLoader(config, chain_id=0)
     
     # Load with built-in enabled
     checkpoints = await loader.load_checkpoints(include_builtin=True)
@@ -42,7 +42,7 @@ async def test_loader_builtin_testnet():
 async def test_loader_no_builtin_when_disabled():
     """Test that built-in checkpoints are not loaded when include_builtin=False."""
     config = CheckpointsConfig(mode="off")
-    loader = CheckpointLoader(config, chain_id=1)
+    loader = CheckpointLoader(config, chain_id=0)
     
     # Load without built-in
     checkpoints = await loader.load_checkpoints(include_builtin=False)
@@ -78,7 +78,7 @@ async def test_loader_merge_file_with_builtin(tmp_path):
         json.dump(checkpoint_data, f)
     
     config = CheckpointsConfig(mode="file", file_path=str(checkpoint_file))
-    loader = CheckpointLoader(config, chain_id=1)
+    loader = CheckpointLoader(config, chain_id=0)
     
     # Load with built-in enabled
     checkpoints = await loader.load_checkpoints(include_builtin=True)
@@ -109,7 +109,7 @@ async def test_loader_builtin_takes_precedence(tmp_path):
         json.dump(checkpoint_data, f)
     
     config = CheckpointsConfig(mode="file", file_path=str(checkpoint_file))
-    loader = CheckpointLoader(config, chain_id=1)
+    loader = CheckpointLoader(config, chain_id=0)
     
     # Load with built-in enabled
     checkpoints = await loader.load_checkpoints(include_builtin=True)
@@ -133,7 +133,7 @@ async def test_loader_builtin_fallback_on_error(tmp_path):
         file_path="/nonexistent/checkpoints.json",
         strict=False
     )
-    loader = CheckpointLoader(config, chain_id=1)
+    loader = CheckpointLoader(config, chain_id=0)
     
     # Load with built-in enabled
     checkpoints = await loader.load_checkpoints(include_builtin=True)
@@ -161,7 +161,7 @@ async def test_loader_builtin_sorted(tmp_path):
         json.dump(checkpoint_data, f)
     
     config = CheckpointsConfig(mode="file", file_path=str(checkpoint_file))
-    loader = CheckpointLoader(config, chain_id=1)
+    loader = CheckpointLoader(config, chain_id=0)
     
     checkpoints = await loader.load_checkpoints(include_builtin=True)
     

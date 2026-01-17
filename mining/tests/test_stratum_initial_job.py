@@ -50,7 +50,7 @@ async def test_stratum_client_receives_initial_job():
         height=1,
         parent_hash="0x" + "11" * 32,
         parent_height=0,
-        chain_id=1,
+        chain_id=0,
     )
     
     # Publish job to server before client connects
@@ -141,7 +141,7 @@ async def test_stratum_client_waits_for_first_job():
         height=1,
         parent_hash="0x" + "22" * 32,
         parent_height=0,
-        chain_id=1,
+        chain_id=0,
     )
     
     await server.publish_job(delayed_job)

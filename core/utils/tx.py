@@ -129,7 +129,7 @@ def normalize_tx_body(body: Mapping[str, Any]) -> dict:
     if "v" in body and "gas" in body and "payload" in body:
         return dict(body)
 
-    chain_id = body.get("chainId", body.get("chain_id", 1))
+    chain_id = body.get("chainId", body.get("chain_id", 0))
     from_addr = body.get("from", body.get("sender"))
     to_addr = body.get("to")
     nonce = body.get("nonce")

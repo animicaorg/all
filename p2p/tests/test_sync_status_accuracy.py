@@ -86,7 +86,7 @@ class TestSyncStatusAccuracy:
         service._peers["peer1:30333"] = peer
         
         # Compute best remote info
-        best_height, best_hash, best_peer, best_age = service._compute_best_remote_info(chain_id=1)
+        best_height, best_hash, best_peer, best_age = service._compute_best_remote_info(chain_id=0)
         
         # Assertions
         assert best_height == 1666, "Should detect peer at height 1666"
@@ -121,7 +121,7 @@ class TestSyncStatusAccuracy:
         service._peers["peer1:30333"] = peer
         
         # Compute best remote info
-        best_height, best_hash, best_peer, best_age = service._compute_best_remote_info(chain_id=1)
+        best_height, best_hash, best_peer, best_age = service._compute_best_remote_info(chain_id=0)
         
         # Assertions
         assert best_height is None, "Stale peer tips should be ignored"
@@ -157,7 +157,7 @@ class TestSyncStatusAccuracy:
         service._peers["peer_stale:30333"] = peer_stale
         
         # Compute best remote info
-        best_height, best_hash, best_peer, best_age = service._compute_best_remote_info(chain_id=1)
+        best_height, best_hash, best_peer, best_age = service._compute_best_remote_info(chain_id=0)
         
         # Assertions
         assert best_height == 1100, f"Should use fresh peer height 1100, got {best_height}"
@@ -180,7 +180,7 @@ class TestSyncStatusAccuracy:
         service._peers["peer1:30333"] = peer
         
         # Compute best remote info
-        best_height, best_hash, best_peer, best_age = service._compute_best_remote_info(chain_id=1)
+        best_height, best_hash, best_peer, best_age = service._compute_best_remote_info(chain_id=0)
         
         # Assertions
         assert best_height == 1666, "Should detect peer at height 1666"
@@ -218,7 +218,7 @@ class TestSyncStatusAccuracy:
         service._peers["peer1:30333"] = peer
         
         # Compute best remote info
-        best_height, best_hash, best_peer, best_age = service._compute_best_remote_info(chain_id=1)
+        best_height, best_hash, best_peer, best_age = service._compute_best_remote_info(chain_id=0)
         
         # Assertions
         assert best_height == 1666, "Should detect peer at height 1666"
@@ -255,8 +255,8 @@ class TestSyncStatusAccuracy:
         peer.hello_done.set()
         service._peers["peer1:30333"] = peer
         
-        # Compute best remote info for chain_id=1
-        best_height, best_hash, best_peer, best_age = service._compute_best_remote_info(chain_id=1)
+        # Compute best remote info for chain_id=0
+        best_height, best_hash, best_peer, best_age = service._compute_best_remote_info(chain_id=0)
         
         # Assertions
         assert best_height is None, "Peer on wrong chain_id should be ignored"
@@ -278,7 +278,7 @@ class TestSyncStatusAccuracy:
         service._peers["peer1:30333"] = peer
         
         # Compute best remote info
-        best_height, best_hash, best_peer, best_age = service._compute_best_remote_info(chain_id=1)
+        best_height, best_hash, best_peer, best_age = service._compute_best_remote_info(chain_id=0)
         
         # Assertions
         assert best_height == 100, "Should detect peer at height 100"

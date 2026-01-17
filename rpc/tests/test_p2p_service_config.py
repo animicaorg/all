@@ -15,7 +15,7 @@ def test_p2p_service_reads_env_vars(monkeypatch):
     service = P2PService(
         listen_addrs=["/ip4/0.0.0.0/tcp/30333"],
         seeds=["/ip4/1.2.3.4/tcp/30333", "/ip4/5.6.7.8/tcp/30333"],
-        chain_id=1,
+        chain_id=0,
     )
     
     # Verify configuration
@@ -32,7 +32,7 @@ def test_p2p_listen_address_parsing():
     # Test with host:port format
     service = P2PService(
         listen_addrs=["/ip4/0.0.0.0/tcp/30333"],
-        chain_id=1,
+        chain_id=0,
     )
     
     assert service.listen_addrs == ["/ip4/0.0.0.0/tcp/30333"]
@@ -43,7 +43,7 @@ def test_p2p_service_default_listen_addr():
     from p2p.node.service import P2PService
     
     # Create service without explicit listen_addrs
-    service = P2PService(chain_id=1)
+    service = P2PService(chain_id=0)
     
     # Should use default
     assert service.listen_addrs == ["/ip4/0.0.0.0/tcp/42069"]
@@ -57,7 +57,7 @@ def test_p2p_service_empty_seeds():
     service = P2PService(
         listen_addrs=["/ip4/0.0.0.0/tcp/30333"],
         seeds=[],
-        chain_id=1,
+        chain_id=0,
     )
     
     assert service.seeds == []
@@ -70,7 +70,7 @@ def test_p2p_service_multiaddr_format():
     # Test with multiaddr format
     service = P2PService(
         listen_addrs=["/ip4/127.0.0.1/tcp/30333"],
-        chain_id=1,
+        chain_id=0,
     )
     
     assert service.listen_addrs == ["/ip4/127.0.0.1/tcp/30333"]

@@ -11,8 +11,8 @@ async def test_initialize_checkpoints_mainnet_builtin():
     """Test that mainnet gets built-in checkpoint even in off mode."""
     config = CheckpointsConfig(mode="off")
     
-    # With chain_id=1 and include_builtin=True (default), should get built-in checkpoints
-    verifier = await initialize_checkpoints(config, chain_id=1, include_builtin=True)
+    # With chain_id=0 and include_builtin=True (default), should get built-in checkpoints
+    verifier = await initialize_checkpoints(config, chain_id=0, include_builtin=True)
     
     assert verifier is not None, "Should get verifier with built-in checkpoints"
     assert verifier.has_checkpoints(), "Should have checkpoints"
@@ -40,7 +40,7 @@ async def test_initialize_checkpoints_disabled_no_builtin():
     config = CheckpointsConfig(mode="off")
     
     # Even with mainnet, if include_builtin=False, should get nothing
-    verifier = await initialize_checkpoints(config, chain_id=1, include_builtin=False)
+    verifier = await initialize_checkpoints(config, chain_id=0, include_builtin=False)
     
     assert verifier is None, "Should get None when built-in is disabled"
 
@@ -76,7 +76,7 @@ async def test_initialize_checkpoints_file_mode_with_builtin(tmp_path):
     config = CheckpointsConfig(mode="file", file_path=str(checkpoint_file))
     
     # Should get both file checkpoints and built-in checkpoint
-    verifier = await initialize_checkpoints(config, chain_id=1, include_builtin=True)
+    verifier = await initialize_checkpoints(config, chain_id=0, include_builtin=True)
     
     assert verifier is not None
     assert verifier.has_checkpoints()

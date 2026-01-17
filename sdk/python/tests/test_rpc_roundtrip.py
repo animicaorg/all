@@ -57,7 +57,7 @@ def test_transfer_send_and_await_receipt():
 
     # Build a simple transfer tx (avoid any RPC-dependent estimates by passing explicit values)
     tx = build_transfer_tx(
-        chain_id=1,
+        chain_id=0,
         sender=sender,
         to=recipient,
         amount=12345,

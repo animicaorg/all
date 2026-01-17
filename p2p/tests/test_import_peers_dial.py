@@ -7,7 +7,7 @@ from p2p.node.p2p_service import P2PService
 async def test_import_peers_triggers_dial(tmp_path, monkeypatch):
     monkeypatch.setenv("ANIMICA_P2P_PRIVATE_NETWORK", "1")
     service = P2PService(
-        chain_id=1,
+        chain_id=0,
         listen_addrs=["/ip4/127.0.0.1/tcp/0"],
         seeds=[],
         peerstore_path=str(tmp_path),

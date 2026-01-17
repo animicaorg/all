@@ -33,7 +33,7 @@ Quickstart
 
     # Later:
     # from counter_client import CounterClient
-    # c = CounterClient(rpc, "anim1...", chain_id=1)
+    # c = CounterClient(rpc, "anim1...", chain_id=0)
 """
 
 from __future__ import annotations

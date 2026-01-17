@@ -497,7 +497,7 @@ def dummy_get_head() -> Tuple[bytes, int, bytes, int, bytes]:  # pragma: no cove
     parent_hash = os.urandom(32)
     height = 0
     parent_mix_seed = b"\x00" * 32
-    chain_id = 1
+    chain_id = 0
     parent_state_root = ZERO32
     return parent_hash, height, parent_mix_seed, chain_id, parent_state_root
 

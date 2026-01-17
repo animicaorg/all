@@ -127,13 +127,13 @@ def test_transfers_module():
             height=1,
             timestamp=1000,
             coinbase=coinbase,
-            chain_id=1,
+            chain_id=0,
         )
         
         # Create tx environment (32-byte sender)
         tx_env = TxEnv(
             sender=alice,
-            chain_id=1,
+            chain_id=0,
             nonce=0,
             gas_price=1,
         )

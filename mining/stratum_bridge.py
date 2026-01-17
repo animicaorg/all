@@ -242,7 +242,7 @@ class StratumBridge:
             "height": template.get("height", 0),
             "parent_hash": template.get("parentHash"),
             "parent_height": template.get("parentHeight", 0),
-            "chain_id": template.get("chainId", 1),
+            "chain_id": template.get("chainId", 0),
             "theta_micro": template.get("thetaMicro", 800_000),
             "share_target": template.get("shareTarget", self.default_share_target),
             "target": template.get("target"),

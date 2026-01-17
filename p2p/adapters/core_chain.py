@@ -170,8 +170,8 @@ def sanity_header(h: Header) -> None:
     theta = int(getattr(h, "theta", 0))
     if height < 0:
         raise ValueError("height must be >= 0")
-    if chain_id <= 0:
-        raise ValueError("chainId must be > 0")
+    if chain_id < 0:
+        raise ValueError("chainId must be >= 0")
     if theta <= 0:
         raise ValueError("Θ (theta) must be > 0")
 
@@ -186,8 +186,8 @@ def sanity_tx(tx: Tx, expected_chain_id: int | None = None) -> None:
     - signature present and plausible length (depends on alg_id, not verified here)
     """
     cid = int(getattr(tx, "chainId", 0))
-    if cid <= 0:
-        raise ValueError("tx.chainId must be > 0")
+    if cid < 0:
+        raise ValueError("tx.chainId must be >= 0")
     if expected_chain_id is not None and cid != expected_chain_id:
         raise ValueError(f"tx.chainId mismatch: got {cid}, want {expected_chain_id}")
 

@@ -27,7 +27,7 @@ def _start_rpc_server(port: int, tmp_path: Path):
         host="127.0.0.1",
         port=port,
         db_uri=db_uri,
-        chain_id=1,
+        chain_id=0,
         logging="ERROR",
         cors_allow_origins=["*"],
         rate_limit_per_ip=0,

@@ -36,7 +36,7 @@ async def test_snapshot_bootstrap_integration():
         with tempfile.TemporaryDirectory() as tmpdir:
             cfg = RpcConfig(
                 data_dir=tmpdir,
-                chain_id=1,
+                chain_id=0,
                 db_uri=f"sqlite:///{tmpdir}/test.db",
                 genesis_path=None,
             )
@@ -74,7 +74,7 @@ async def test_snapshot_bootstrap_called_with_correct_params():
         success, error = await try_snapshot_bootstrap(
             block_db=mock_block_db,
             state_db=mock_state_db,
-            chain_id=1,
+            chain_id=0,
             current_height=100,
             p2p_service=mock_p2p_service,
         )
@@ -83,7 +83,7 @@ async def test_snapshot_bootstrap_called_with_correct_params():
         mock_bootstrap.assert_called_once_with(
             block_db=mock_block_db,
             state_db=mock_state_db,
-            chain_id=1,
+            chain_id=0,
             current_height=100,
             p2p_service=mock_p2p_service,
         )
@@ -126,7 +126,7 @@ async def test_snapshot_download_fallback():
         # Should return False when no RPC URL
         result = await _download_and_import_snapshot(
             rpc_url="",
-            chain_id=1,
+            chain_id=0,
             checkpoint_height=1000,
             block_db=mock_block_db,
             state_db=mock_state_db,
@@ -275,7 +275,7 @@ async def test_peer_snapshot_discovery():
                 success, error = await try_snapshot_bootstrap(
                     block_db=mock_block_db,
                     state_db=mock_state_db,
-                    chain_id=1,
+                    chain_id=0,
                     current_height=0,
                     p2p_service=mock_p2p_service,
                 )

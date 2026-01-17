@@ -11,6 +11,7 @@ from core.chain.block_import import _theta_to_target, compute_header_hash
 from core.types.block import Block
 from core.utils.hash import ZERO32
 from p2p.deps import P2PDeps
+from p2p.constants import NETWORK_MAGIC
 from p2p.node.p2p_service import P2PService, PeerMisbehavior, _PeerState
 from p2p.tests import tcp_multiaddr
 from p2p.wire.encoding import encode_payload
@@ -110,6 +111,7 @@ async def test_handshake_accepts_hello_after_headers(tmp_path: Path) -> None:
         version="2",
         agent="test-node",
         chain_id=node.chain_id,
+        network_magic=NETWORK_MAGIC,
         listen_port=0,
         listen_addrs=[],
         genesis_hash=genesis_header_hash,
@@ -192,6 +194,7 @@ async def test_mismatch_rejects_peer(tmp_path: Path) -> None:
         version="2",
         agent="test-node",
         chain_id=node.chain_id,
+        network_magic=NETWORK_MAGIC,
         listen_port=0,
         listen_addrs=[],
         genesis_hash=bad_genesis,
@@ -213,3 +216,108 @@ async def test_mismatch_rejects_peer(tmp_path: Path) -> None:
     with pytest.raises(PeerMisbehavior) as exc:
         await node._handle_hello(peer, encode_payload(hello))
     assert exc.value.reason == "genesis_mismatch"
+
+
+@pytest.mark.asyncio
+async def test_chain_id_mismatch_rejects_peer(tmp_path: Path) -> None:
+    node, _deps = _make_service(tmp_path, "cid-mismatch")
+    peer = _register_peer(node, "peer-cid:0")
+
+    genesis_header_hash = node._genesis_header_hash()
+    genesis_block_hash = node._genesis_block_hash()
+    hello = Hello(
+        version="2",
+        agent="test-node",
+        chain_id=1,
+        network_magic=NETWORK_MAGIC,
+        listen_port=0,
+        listen_addrs=[],
+        genesis_hash=genesis_header_hash,
+        genesis_header_hash=genesis_header_hash,
+        genesis_block_hash=genesis_block_hash,
+        fork_id=node._fork_id(),
+        consensus_id=node._consensus_id(),
+        protocol_version=node._protocol_version(),
+        genesis_identity=node._genesis_identity(),
+        network_params_hash=node._network_params_hash(),
+        peer_id=b"\x44" * 32,
+        head_height=1,
+        head_hash=genesis_header_hash,
+        alg_policy_root=b"",
+        capabilities=["sync"],
+        timestamp=0,
+    )
+
+    with pytest.raises(PeerMisbehavior) as exc:
+        await node._handle_hello(peer, encode_payload(hello))
+    assert exc.value.reason == "chain_id_mismatch"
+
+
+@pytest.mark.asyncio
+async def test_network_magic_mismatch_rejects_peer(tmp_path: Path) -> None:
+    node, _deps = _make_service(tmp_path, "magic-mismatch")
+    peer = _register_peer(node, "peer-magic:0")
+
+    genesis_header_hash = node._genesis_header_hash()
+    genesis_block_hash = node._genesis_block_hash()
+    hello = Hello(
+        version="2",
+        agent="test-node",
+        chain_id=node.chain_id,
+        network_magic=b"OLD1",
+        listen_port=0,
+        listen_addrs=[],
+        genesis_hash=genesis_header_hash,
+        genesis_header_hash=genesis_header_hash,
+        genesis_block_hash=genesis_block_hash,
+        fork_id=node._fork_id(),
+        consensus_id=node._consensus_id(),
+        protocol_version=node._protocol_version(),
+        genesis_identity=node._genesis_identity(),
+        network_params_hash=node._network_params_hash(),
+        peer_id=b"\x55" * 32,
+        head_height=1,
+        head_hash=genesis_header_hash,
+        alg_policy_root=b"",
+        capabilities=["sync"],
+        timestamp=0,
+    )
+
+    with pytest.raises(PeerMisbehavior) as exc:
+        await node._handle_hello(peer, encode_payload(hello))
+    assert exc.value.reason == "network_magic_mismatch"
+
+
+@pytest.mark.asyncio
+async def test_protocol_version_mismatch_rejects_peer(tmp_path: Path) -> None:
+    node, _deps = _make_service(tmp_path, "proto-mismatch")
+    peer = _register_peer(node, "peer-proto:0")
+
+    genesis_header_hash = node._genesis_header_hash()
+    genesis_block_hash = node._genesis_block_hash()
+    hello = Hello(
+        version="2",
+        agent="test-node",
+        chain_id=node.chain_id,
+        network_magic=NETWORK_MAGIC,
+        listen_port=0,
+        listen_addrs=[],
+        genesis_hash=genesis_header_hash,
+        genesis_header_hash=genesis_header_hash,
+        genesis_block_hash=genesis_block_hash,
+        fork_id=node._fork_id(),
+        consensus_id=node._consensus_id(),
+        protocol_version="0.0",
+        genesis_identity=node._genesis_identity(),
+        network_params_hash=node._network_params_hash(),
+        peer_id=b"\x66" * 32,
+        head_height=1,
+        head_hash=genesis_header_hash,
+        alg_policy_root=b"",
+        capabilities=["sync"],
+        timestamp=0,
+    )
+
+    with pytest.raises(PeerMisbehavior) as exc:
+        await node._handle_hello(peer, encode_payload(hello))
+    assert exc.value.reason == "protocol_mismatch"

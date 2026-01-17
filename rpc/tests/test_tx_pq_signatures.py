@@ -25,7 +25,7 @@ def _allow_fake_pq(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ANIMICA_ALLOW_PQ_PURE_FALLBACK", "1")
 
 
-def _create_signed_tx(chain_id: int = 1, alg: str = "dilithium3"):
+def _create_signed_tx(chain_id: int = 0, alg: str = "dilithium3"):
     """Create a properly signed transaction envelope for testing."""
     try:
         from omni_sdk.wallet.signer import PQSigner
@@ -134,7 +134,7 @@ async def test_sendRawTransaction_rejects_tampered_signature(monkeypatch):
     class MockDeps:
         def get_chain_params(self):
             class ChainParams:
-                chain_id = 1
+                chain_id = 0
             return ChainParams()
     
     monkeypatch.setattr(tx_methods, "deps", MockDeps())
@@ -152,7 +152,7 @@ async def test_sendRawTransaction_rejects_tampered_signature(monkeypatch):
 async def test_sendRawTransaction_falls_back_to_alt_sign_bytes(monkeypatch):
     """Verification should succeed even if the primary SignBytes helper drifts."""
 
-    raw_tx, _signer = _create_signed_tx(chain_id=1)
+    raw_tx, _signer = _create_signed_tx(chain_id=0)
 
     from rpc.methods import tx as tx_methods
 
@@ -162,7 +162,7 @@ async def test_sendRawTransaction_falls_back_to_alt_sign_bytes(monkeypatch):
     class MockDeps:
         def get_chain_params(self):
             class ChainParams:
-                chain_id = 1
+                chain_id = 0
 
             return ChainParams()
 
@@ -193,7 +193,7 @@ async def test_sendRawTransaction_falls_back_to_alt_sign_bytes(monkeypatch):
 
 async def test_sendRawTransaction_rejects_wrong_chain_id(monkeypatch):
     """Test that tx.sendRawTransaction rejects transactions with wrong chain_id."""
-    # Create signed tx for chain_id=1
+    # Create signed tx for chain_id=0
     try:
         from omni_sdk.wallet.signer import PQSigner
         from omni_sdk.tx.build import transfer
@@ -230,13 +230,13 @@ async def test_sendRawTransaction_rejects_wrong_chain_id(monkeypatch):
         public_key=signer.public_key,
     )
     
-    # Mock dependencies - node expects chain_id=1
+    # Mock dependencies - node expects chain_id=0
     from rpc.methods import tx as tx_methods
     
     class MockDeps:
         def get_chain_params(self):
             class ChainParams:
-                chain_id = 1  # Node expects chain_id=1
+                chain_id = 0  # Node expects chain_id=0
             return ChainParams()
     
     monkeypatch.setattr(tx_methods, "deps", MockDeps())
@@ -324,12 +324,12 @@ def test_pq_verify_works_without_oqs(monkeypatch):
     importlib.reload(pq_keygen)
     importlib.reload(tx_methods)
 
-    raw_tx, _signer = _create_signed_tx(chain_id=1)
+    raw_tx, _signer = _create_signed_tx(chain_id=0)
     envelope = cbor_loads(raw_tx)
 
     # pq verify backend should be present and able to validate the tx envelope
     assert tx_methods._pq_verify is not None
-    tx_methods._verify_pq_signature(envelope, envelope, chain_id=1)
+    tx_methods._verify_pq_signature(envelope, envelope, chain_id=0)
 
 async def test_sendRawTransaction_requires_sig_field(monkeypatch):
     """Test that tx.sendRawTransaction requires sig field in envelope."""
@@ -344,7 +344,7 @@ async def test_sendRawTransaction_requires_sig_field(monkeypatch):
         nonce=5,
         gas_limit=21000,
         max_fee=1000000000,
-        chain_id=1,
+        chain_id=0,
     )
     
     # Create envelope WITHOUT signature
@@ -363,7 +363,7 @@ async def test_sendRawTransaction_requires_sig_field(monkeypatch):
     class MockDeps:
         def get_chain_params(self):
             class ChainParams:
-                chain_id = 1
+                chain_id = 0
             return ChainParams()
     
     monkeypatch.setattr(tx_methods, "deps", MockDeps())
@@ -378,7 +378,7 @@ async def test_sendRawTransaction_requires_sig_field(monkeypatch):
         tx_send_raw_transaction(raw_hex)
 
 
-def _create_signed_tx_sphincs(chain_id: int = 1):
+def _create_signed_tx_sphincs(chain_id: int = 0):
     """Create a properly signed transaction envelope using SPHINCS+ for testing."""
     try:
         from omni_sdk.wallet.signer import PQSigner

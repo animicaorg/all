@@ -129,7 +129,7 @@ def test_get_work_handles_callable_header_hash():
     try:
         header = Header(
             v=1,
-            chainId=1,
+            chainId=0,
             height=1,
             parentHash=miner_methods.ZERO32,
             timestamp=0,

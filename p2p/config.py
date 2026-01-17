@@ -69,14 +69,14 @@ DEFAULT_SEEDS: Final[tuple[str, ...]] = MAINNET_SEEDS
 
 # Network-specific seeds.
 DEFAULT_SEEDS_BY_NETWORK: Final[dict[int, tuple[str, ...]]] = {
-    1: MAINNET_SEEDS,
+    0: MAINNET_SEEDS,
     2: TESTNET_SEEDS,
     1337: DEVNET_SEEDS,
 }
 
 # Network name to chain_id mapping (for ANIMICA_P2P_NETWORK env var)
 NETWORK_NAME_TO_CHAIN_ID: Final[dict[str, int]] = {
-    "mainnet": 1,
+    "mainnet": 0,
     "testnet": 2,
     "devnet": 1337,
 }

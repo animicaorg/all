@@ -58,7 +58,7 @@ async def test_client_receives_job_after_authorization():
             height=1,
             parent_hash="0x" + "11" * 32,
             parent_height=0,
-            chain_id=1,
+            chain_id=0,
         )
         await server.publish_job(job)
         published_job_id = job.job_id
@@ -127,7 +127,7 @@ async def test_client_waits_for_job_like_cli():
             height=42,
             parent_hash="0x" + "cc" * 32,
             parent_height=41,
-            chain_id=1,
+            chain_id=0,
         )
         await server.publish_job(job)
     

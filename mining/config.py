@@ -115,7 +115,7 @@ class MiningConfig:
     # Node endpoints & chain id
     rpc_http_url: str = "http://127.0.0.1:8545/rpc"
     rpc_ws_url: str = "ws://127.0.0.1:8545/ws"
-    chain_id: int = 1
+    chain_id: int = 0
 
     # Stratum TCP server
     stratum_enabled: bool = True
@@ -161,7 +161,7 @@ class MiningConfig:
             share_target=_env_float("ANIMICA_MINER_SHARE_TARGET", 1e-6),
             rpc_http_url=_env("ANIMICA_MINER_RPC_HTTP", "http://127.0.0.1:8545/rpc"),
             rpc_ws_url=_env("ANIMICA_MINER_RPC_WS", "ws://127.0.0.1:8545/ws"),
-            chain_id=_env_int("ANIMICA_MINER_CHAIN_ID", 1),
+            chain_id=_env_int("ANIMICA_MINER_CHAIN_ID", 0),
             stratum_enabled=_env_bool("ANIMICA_MINER_STRATUM_ENABLED", True),
             stratum_host=_env("ANIMICA_MINER_STRATUM_HOST", "0.0.0.0"),
             stratum_port=_env_int("ANIMICA_MINER_STRATUM_PORT", 23454),
@@ -200,8 +200,8 @@ class MiningConfig:
             if not (0 < port < 65536):
                 raise ValueError(f"{name} must be a valid TCP port (1..65535)")
         # Chain id
-        if self.chain_id <= 0:
-            raise ValueError("chain_id must be a positive integer")
+        if self.chain_id < 0:
+            raise ValueError("chain_id must be >= 0")
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)

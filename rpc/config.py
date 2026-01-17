@@ -370,20 +370,20 @@ def load() -> RpcConfig:
 
     explicit_chain_id = "ANIMICA_CHAIN_ID" in os.environ
     # Respect explicit chain id first, then fall back to ANIMICA_NETWORK.
-    # Default to mainnet (chain_id=1) when no network is explicitly configured.
+    # Default to mainnet (chain_id=0) when no network is explicitly configured.
     network = (_env("ANIMICA_NETWORK", "") or "").strip().lower()
     if explicit_chain_id:
-        chain_id = _env_int("ANIMICA_CHAIN_ID", 1)
+        chain_id = _env_int("ANIMICA_CHAIN_ID", 0)
     else:
         if network in {"main", "mainnet"}:
-            chain_id = 1
+            chain_id = 0
         elif network in {"test", "testnet"}:
             chain_id = 2
         elif network in {"dev", "devnet", "local-devnet"}:
             chain_id = 1337
         else:
             # Default to mainnet when no network is specified
-            chain_id = 1
+            chain_id = 0
     
     # Use per-network DB path based on chain_id to ensure DB isolation and
     # align with the shared data directory used by CLI + Docker mounts.

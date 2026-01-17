@@ -7,7 +7,7 @@ from core.utils.hash import sha3_256
 def test_header_hash_matches_cbor_digest() -> None:
     zero = b"\x00" * 32
     header = Header.genesis(
-        chain_id=1,
+        chain_id=0,
         timestamp=1_700_000_000,
         state_root=zero,
         txs_root=zero,

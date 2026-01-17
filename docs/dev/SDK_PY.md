@@ -311,7 +311,7 @@ sender = bech32_address(signer.public_key(), hrp="anim")
 
 nonce = rpc.call("state.getNonce", [sender])
 tx = build_transfer(
-    chain_id=1, from_addr=sender,
+    chain_id=0, from_addr=sender,
     to_addr="anim1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqv3c9xv",
     amount="1000000", gas_price="1200", gas_limit="100000", nonce=nonce)
 signed = signer.sign_tx(tx)
@@ -329,4 +329,3 @@ print(result.tx_hash, result.receipt and result.receipt["status"])
 	•	omni_sdk/contracts/* — ABI client, events, codegen
 	•	omni_sdk/da/client.py, aicf/client.py, randomness/client.py
 	•	omni_sdk/light_client/verify.py
-

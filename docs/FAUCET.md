@@ -255,7 +255,7 @@ pytest rpc/tests/test_faucet.py -v
 A: Testnet and devnet are development environments where developers need frequent, flexible access to test funds. Rate limits would slow down development and testing workflows.
 
 **Q: Can I use the faucet on mainnet?**  
-A: No. The faucet is explicitly blocked on mainnet (chainId=1) to prevent any potential abuse or confusion about real token distribution.
+A: No. The faucet is explicitly blocked on mainnet (chainId=0) to prevent any potential abuse or confusion about real token distribution.
 
 **Q: How often can I request funds?**  
 A: As often as needed on testnet/devnet. Each request adds to the existing balance.

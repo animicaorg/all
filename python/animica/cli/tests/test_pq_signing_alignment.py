@@ -51,10 +51,10 @@ def test_cli_sign_bytes_match_sdk_helper():
         nonce=1,
         gas_limit=21000,
         max_fee=1_000_000_000,
-        chain_id=1,
+        chain_id=0,
     )
 
-    signed = sign_transaction(tx_obj, signer, chain_id=1)
+    signed = sign_transaction(tx_obj, signer, chain_id=0)
     expected = build_signable_tx_bytes(tx_obj)
     # Golden value for regression coverage (domain separation applied by PQ layer)
     assert expected.hex() == (
@@ -128,11 +128,11 @@ def test_cli_send_signature_verifies_with_pq(
             )
 
             assert verify_detached(
-                message, signature_obj, envelope["sig"]["pubkey"], chain_id=1
+                message, signature_obj, envelope["sig"]["pubkey"], chain_id=0
             )
 
             # RPC helper should also pass (no exception)
-            rpc_tx._verify_pq_signature(envelope, envelope, chain_id=1)
+            rpc_tx._verify_pq_signature(envelope, envelope, chain_id=0)
 
             return httpx.Response(
                 200,
@@ -165,4 +165,3 @@ def test_cli_send_signature_verifies_with_pq(
 
     assert result.exit_code == 0, result.output
     assert "Invalid post-quantum signature" not in result.output
-

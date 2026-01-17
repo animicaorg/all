@@ -22,7 +22,7 @@ Example
     from execution.runtime.env import make_block_env, make_tx_env
 
     head = {"number": 100, "timestamp": 1_725_000_000, "baseFee": 3}
-    params = ChainParams(chain_id=1)   # from core.types.params
+    params = ChainParams(chain_id=0)   # from core.types.params
     block_env = make_block_env(head, params, coinbase="0x00"*20)
 
     tx = {"gasPrice": 5, "from": "0x12.."}

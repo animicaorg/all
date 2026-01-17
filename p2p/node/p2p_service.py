@@ -30,7 +30,7 @@ from p2p.peer.p2p_store import (
     read_peers_json,
 )
 from p2p.transport.base import ListenConfig
-from p2p.constants import DEFAULT_TCP_PORT, MAX_INV_PER_MSG, MAX_TX_BYTES
+from p2p.constants import DEFAULT_TCP_PORT, MAX_INV_PER_MSG, MAX_TX_BYTES, NETWORK_MAGIC
 from p2p.transport.multiaddr import parse_multiaddr
 from p2p.transport.tcp import TcpTransport
 from p2p.wire.encoding import decode_payload, encode_payload
@@ -448,10 +448,69 @@ class SyncWatchdog:
 @dataclass(slots=True)
 class _PeerHeadInfo:
     height: int
+    head_hash: Optional[bytes]
     updated_at: float
     source: str
     cooldown_until: float = 0.0
     last_error: Optional[str] = None
+
+
+class PeerTipTracker:
+    """Track per-peer tips with freshness, source, and last error metadata."""
+
+    def __init__(self) -> None:
+        self._tips: Dict[str, _PeerHeadInfo] = {}
+
+    def get(self, peer_id: str) -> Optional[_PeerHeadInfo]:
+        return self._tips.get(peer_id)
+
+    def update(
+        self,
+        peer_id: str,
+        *,
+        height: int,
+        head_hash: Optional[bytes],
+        source: str,
+    ) -> None:
+        now = time.time()
+        info = self._tips.get(peer_id)
+        if info is None:
+            self._tips[peer_id] = _PeerHeadInfo(
+                height=int(height),
+                head_hash=bytes(head_hash) if head_hash else None,
+                updated_at=now,
+                source=source,
+            )
+            return
+        if height > info.height:
+            info.height = int(height)
+        if head_hash:
+            info.head_hash = bytes(head_hash)
+        info.updated_at = now
+        info.source = source
+
+    def mark_error(
+        self,
+        peer_id: str,
+        *,
+        reason: str,
+        cooldown: float,
+    ) -> None:
+        now = time.time()
+        info = self._tips.get(peer_id)
+        if info is None:
+            info = _PeerHeadInfo(
+                height=0,
+                head_hash=None,
+                updated_at=now,
+                source="unknown",
+            )
+            self._tips[peer_id] = info
+        info.cooldown_until = max(info.cooldown_until, now + max(1.0, cooldown))
+        info.last_error = reason
+
+    def items(self) -> list[tuple[str, _PeerHeadInfo]]:
+        return list(self._tips.items())
 
 
 @dataclass(slots=True)
@@ -821,6 +880,7 @@ class P2PService:
             "P2P chain identity",
             extra={
                 "chain_id": self.chain_id,
+                "network_magic": NETWORK_MAGIC.hex(),
                 "genesis_hash": self._genesis_hash().hex(),
                 "fork_id": self._fork_id(),
                 "consensus_id": self._consensus_id(),
@@ -841,7 +901,9 @@ class P2PService:
         # Transport (TCP only for now)
         prologue = f"animica/tcp/{self.chain_id}".encode()
         self._transport = TcpTransport(
-            handshake_prologue=prologue, chain_id=self.chain_id
+            handshake_prologue=prologue,
+            chain_id=self.chain_id,
+            network_magic=NETWORK_MAGIC,
         )
 
         self._running = False
@@ -1344,6 +1406,7 @@ class P2PService:
         self._peer_exemptions = {"144.126.133.21:30333", "144.126.133.21"}
         self._sync_peer_penalty_whitelist = set(self._peer_exemptions)
         self._sync_last_progress_at = time.time()
+        self._sync_last_behind_log_at = 0.0
         self._sync_last_head_height = 0
         self._sync_last_head_hash: Optional[str] = None
         self._sync_last_header_height = 0
@@ -1375,7 +1438,7 @@ class P2PService:
         self._sync_active_block_peer: Optional[str] = None
         self._sync_block_peer_cursor = 0
         self._sync_inflight_headers = 0
-        self._sync_peer_heads: Dict[str, _PeerHeadInfo] = {}
+        self._peer_tip_tracker = PeerTipTracker()
         self._sync_paused = False
         self._sync_enabled = _env_flag("SYNC_ENABLED", "ANIMICA_SYNC_ENABLED", default=True)
         self._sync_requested = False
@@ -3046,6 +3109,21 @@ class P2PService:
             sync_status_reason = (
                 "no_peers_connected" if not self._peers else "no_fresh_peer_tips"
             )
+
+        if behind_by and behind_by > 0:
+            now = time.time()
+            if now - self._sync_last_behind_log_at > 30.0:
+                log.info(
+                    "Detected behind network tip",
+                    extra={
+                        "local_height": best_block_height,
+                        "best_remote_height": best_remote_height,
+                        "behind_by": behind_by,
+                        "best_remote_peer": best_remote_peer,
+                        "best_remote_age_sec": best_remote_age,
+                    },
+                )
+                self._sync_last_behind_log_at = now
         
         target_candidates = [
             int(height)
@@ -4550,7 +4628,17 @@ class P2PService:
             current = 0
         if height <= current:
             # Even if height didn't increase, update the timestamp to show tip is fresh
-            self._update_peer_head_table(peer, height=int(current), source="peer_head")
+            existing_hash = None
+            try:
+                existing_hash = bytes((peer.hello or {}).get("head_hash") or b"")
+            except Exception:
+                existing_hash = None
+            self._update_peer_head_table(
+                peer,
+                height=int(current),
+                head_hash=existing_hash or head_hash,
+                source="peer_head",
+            )
             return
         peer.hello["head_height"] = int(height)
         if head_hash:
@@ -4562,26 +4650,29 @@ class P2PService:
         local_height, _ = self._local_head()
         if int(height) > int(local_height or 0):
             self._sync_kick(reason="peer_head_advance", aggressive=False)
-        self._update_peer_head_table(peer, height=int(height), source="peer_head")
+        self._update_peer_head_table(
+            peer,
+            height=int(height),
+            head_hash=head_hash,
+            source="peer_head",
+        )
 
     def _update_peer_head_table(
-        self, peer: _PeerState, *, height: int, source: str
+        self,
+        peer: _PeerState,
+        *,
+        height: int,
+        head_hash: Optional[bytes],
+        source: str,
     ) -> None:
         if height <= 0:
             return
-        now = time.time()
-        info = self._sync_peer_heads.get(peer.remote)
-        if info is None:
-            self._sync_peer_heads[peer.remote] = _PeerHeadInfo(
-                height=int(height),
-                updated_at=now,
-                source=source,
-            )
-            return
-        if height > info.height:
-            info.height = int(height)
-        info.updated_at = now
-        info.source = source
+        self._peer_tip_tracker.update(
+            peer.remote,
+            height=int(height),
+            head_hash=head_hash,
+            source=source,
+        )
 
     def _mark_peer_head_issue(
         self,
@@ -4590,14 +4681,12 @@ class P2PService:
         reason: str,
         cooldown: Optional[float] = None,
     ) -> None:
-        now = time.time()
-        info = self._sync_peer_heads.get(peer.remote)
-        if info is None:
-            info = _PeerHeadInfo(height=0, updated_at=now, source="unknown")
-            self._sync_peer_heads[peer.remote] = info
         delay = cooldown if cooldown is not None else self._sync_peer_head_cooldown_sec
-        info.cooldown_until = max(info.cooldown_until, now + max(1.0, delay))
-        info.last_error = reason
+        self._peer_tip_tracker.mark_error(
+            peer.remote,
+            reason=reason,
+            cooldown=delay,
+        )
 
     def _best_peer_head(self) -> tuple[Optional[_PeerState], Optional[int]]:
         now = time.time()
@@ -4606,7 +4695,7 @@ class P2PService:
         for peer in self._peers.values():
             if not peer.hello_done.is_set():
                 continue
-            info = self._sync_peer_heads.get(peer.remote)
+            info = self._peer_tip_tracker.get(peer.remote)
             if info is None:
                 continue
             if now - info.updated_at > self._sync_peer_head_stale_sec:
@@ -5503,6 +5592,7 @@ class P2PService:
             agent=f"animica-p2p/{p2p_version.__version__}",
             repo_state=self._repo_state,
             chain_id=self.chain_id,
+            network_magic=NETWORK_MAGIC,
             listen_port=listen_port,
             listen_addrs=listen_addrs,
             genesis_hash=genesis_header_hash,
@@ -5657,6 +5747,7 @@ class P2PService:
         reason: str,
         peer_chain_id: Optional[int],
         peer_genesis_hash: Optional[bytes],
+        peer_network_magic: Optional[bytes] = None,
         peer_genesis_header_hash: Optional[bytes] = None,
         peer_genesis_block_hash: Optional[bytes] = None,
         peer_genesis_identity: Optional[bytes] = None,
@@ -5678,6 +5769,7 @@ class P2PService:
                 "remote": peer.remote,
                 "reason": reason,
                 "local_chain_id": self.chain_id,
+                "local_network_magic": NETWORK_MAGIC.hex(),
                 "local_genesis_hash": local_genesis.hex(),
                 "local_genesis_header_hash": local_genesis_header.hex(),
                 "local_genesis_block_hash": local_genesis_block.hex(),
@@ -5688,6 +5780,9 @@ class P2PService:
                 "local_protocol_version": self._protocol_version(),
                 "local_repo_state": local_repo_state,
                 "peer_chain_id": peer_chain_id,
+                "peer_network_magic": peer_network_magic.hex()
+                if peer_network_magic
+                else None,
                 "peer_genesis_hash": peer_genesis_hash.hex()
                 if peer_genesis_hash
                 else None,
@@ -5715,12 +5810,31 @@ class P2PService:
         allowed = set(Hello.__dataclass_fields__)
         hello = Hello(**{k: v for k, v in data.items() if k in allowed})
 
+        if bytes(getattr(hello, "network_magic", b"")) != NETWORK_MAGIC:
+            self._log_handshake_mismatch(
+                peer,
+                reason="network_magic_mismatch",
+                peer_chain_id=int(hello.chain_id or 0),
+                peer_genesis_hash=bytes(hello.genesis_hash or b""),
+                peer_network_magic=bytes(getattr(hello, "network_magic", b"") or b""),
+            )
+            await self._send(
+                peer,
+                MsgID.HELLO_ACK,
+                HelloAck(accepted=False, reason="network_magic_mismatch"),
+            )
+            raise PeerMisbehavior(
+                "network_magic_mismatch",
+                points=self._score_points["wrong_chain"],
+            )
+
         if int(hello.chain_id) != int(self.chain_id):
             self._log_handshake_mismatch(
                 peer,
                 reason="chain_id_mismatch",
                 peer_chain_id=int(hello.chain_id or 0),
                 peer_genesis_hash=bytes(hello.genesis_hash or b""),
+                peer_network_magic=bytes(getattr(hello, "network_magic", b"") or b""),
             )
             await self._send(
                 peer,
@@ -6070,6 +6184,9 @@ class P2PService:
             raise PeerMisbehavior("self_peer", points=0)
         normalized = dict(data)
         normalized["chain_id"] = int(getattr(hello, "chain_id", 0) or 0)
+        normalized["network_magic"] = bytes(
+            getattr(hello, "network_magic", b"")
+        ) or data.get("network_magic") or data.get("networkMagic")
         normalized["head_height"] = int(
             getattr(hello, "head_height", 0)
             or data.get("head_height")
@@ -6128,6 +6245,7 @@ class P2PService:
             self._update_peer_head_table(
                 peer,
                 height=int(normalized["head_height"]),
+                head_hash=bytes(normalized.get("head_hash") or b""),
                 source="hello",
             )
         peer.ready_for_sync = True
@@ -6396,8 +6514,9 @@ class P2PService:
             if not peer.repo_state_ok:
                 continue
             last_poll = self._peer_head_poll_at.get(peer.remote, 0.0)
+            info = self._peer_tip_tracker.get(peer.remote)
             tip_age = (
-                now - peer.hello_received_at if peer.hello_received_at else float("inf")
+                now - info.updated_at if info is not None else float("inf")
             )
             if not force:
                 if now - last_poll < self._peer_head_poll_interval_sec:
@@ -6461,6 +6580,13 @@ class P2PService:
         This is critical for accurate sync status computation.
         """
         data = self._decode_map(payload)
+
+        if not self._peer_chain_matches(peer):
+            log.debug(
+                "Ignoring HEAD_STATUS from peer with mismatched chain identity",
+                extra={"remote": peer.remote},
+            )
+            return
         
         # Extract head info
         peer_chain_id = int(data.get("chain_id") or 0)
@@ -9129,6 +9255,17 @@ class P2PService:
         peer.last_header_request_at = self._sync_last_header_request_at
         self._sync_active_header_peer = peer.remote
         self._sync_last_header_request_peer = peer.remote
+        log.info(
+            "Requesting headers range",
+            extra={
+                "remote": peer.remote,
+                "peer_id": peer.peer_id,
+                "request_start_height": request_start_height,
+                "anchor_height": anchor_height,
+                "max_headers": max_headers,
+                "locator_mode": locator_mode,
+            },
+        )
         log.debug(
             "Sending getheaders",
             extra={
@@ -9652,6 +9789,7 @@ class P2PService:
             self._update_peer_head_table(
                 peer,
                 height=int(last_header.height),
+                head_hash=bytes(last_header.hash),
                 source="headers",
             )
         if not peer.anchored:
@@ -11511,6 +11649,14 @@ class P2PService:
         need = [h for h in hashes if not self._has_block(h)]
         if not need:
             return
+        log.info(
+            "Requesting blocks",
+            extra={
+                "remote": peer.remote,
+                "peer_id": peer.peer_id,
+                "count": len(need),
+            },
+        )
         # Bounded batching to keep payloads small and requests manageable.
         for i in range(0, len(need), 16):
             chunk = need[i : i + 16]
@@ -11785,6 +11931,12 @@ class P2PService:
             return False
         if chain_id != int(self.chain_id):
             return False
+        try:
+            peer_magic = bytes(peer.hello.get("network_magic") or b"")
+        except Exception:
+            return False
+        if peer_magic != NETWORK_MAGIC:
+            return False
         genesis_header_hash = bytes(
             peer.hello.get("genesis_header_hash")
             or peer.hello.get("genesis_hash")
@@ -11932,7 +12084,7 @@ class P2PService:
                 continue
             if require_anchored and not self._peer_is_anchored(p):
                 continue
-            info = self._sync_peer_heads.get(p.remote)
+            info = self._peer_tip_tracker.get(p.remote)
             if (
                 info is not None
                 and now - info.updated_at <= self._sync_peer_head_stale_sec
@@ -11991,7 +12143,7 @@ class P2PService:
         for peer in eligible:
             if require_anchored and not self._peer_is_anchored(peer):
                 continue
-            info = self._sync_peer_heads.get(peer.remote)
+            info = self._peer_tip_tracker.get(peer.remote)
             if (
                 info is not None
                 and now - info.updated_at <= self._sync_peer_head_stale_sec
@@ -12169,42 +12321,38 @@ class P2PService:
             # Skip peers without completed handshake
             if not peer.hello_done.is_set():
                 continue
-            
+
             # Skip peers with repo issues
             if not peer.repo_state_ok:
                 continue
-            
+
             # Check chain_id match if specified
-            if chain_id is not None:
-                peer_chain_id = (peer.hello or {}).get("chain_id")
-                if peer_chain_id != chain_id:
-                    continue
-            
-            # Get peer's advertised height and check freshness
-            hello_age = now - peer.hello_received_at if peer.hello_received_at else float('inf')
-            
-            # CRITICAL: Only use fresh tip info
-            if hello_age > PEER_TIP_FRESHNESS_SEC:
+            if chain_id is not None and not self._peer_chain_matches(peer):
                 continue
-            
-            try:
-                peer_height = int((peer.hello or {}).get("head_height") or 0)
-            except Exception:
-                peer_height = 0
-            
+
+            info = self._peer_tip_tracker.get(peer.remote)
+            if info is None:
+                continue
+
+            # CRITICAL: Only use fresh tip info
+            tip_age = now - info.updated_at
+            if tip_age > PEER_TIP_FRESHNESS_SEC:
+                continue
+
+            peer_height = int(info.height)
             if peer_height <= 0:
                 continue
-            
+
             # Track best height
             if best_height is None or peer_height > best_height:
                 best_height = peer_height
-                peer_hash = (peer.hello or {}).get("head_hash")
+                peer_hash = info.head_hash
                 if peer_hash:
-                    best_hash = "0x" + bytes(peer_hash).hex() if isinstance(peer_hash, bytes) else str(peer_hash)
+                    best_hash = "0x" + bytes(peer_hash).hex()
                 else:
                     best_hash = None
                 best_peer = peer.remote
-                best_age = hello_age
+                best_age = tip_age
         
         return best_height, best_hash, best_peer, best_age
 
@@ -12220,13 +12368,15 @@ class P2PService:
                 continue
             if not peer.repo_state_ok:
                 continue
-            if chain_id is not None:
-                peer_chain_id = (peer.hello or {}).get("chain_id")
-                if peer_chain_id != chain_id:
-                    continue
+            if chain_id is not None and not self._peer_chain_matches(peer):
+                continue
             total += 1
-            hello_age = now - peer.hello_received_at if peer.hello_received_at else float("inf")
-            if hello_age <= PEER_TIP_FRESHNESS_SEC:
+            info = self._peer_tip_tracker.get(peer.remote)
+            if info is None:
+                stale += 1
+                continue
+            tip_age = now - info.updated_at
+            if tip_age <= PEER_TIP_FRESHNESS_SEC:
                 fresh += 1
             else:
                 stale += 1
@@ -12253,7 +12403,9 @@ class P2PService:
                 continue
             if not peer.repo_state_ok:
                 continue
-            info = self._sync_peer_heads.get(peer.remote)
+            if not self._peer_chain_matches(peer):
+                continue
+            info = self._peer_tip_tracker.get(peer.remote)
             if info is not None:
                 if now - info.updated_at <= self._sync_peer_head_stale_sec:
                     if not info.cooldown_until or info.cooldown_until <= now:
@@ -14351,7 +14503,7 @@ class P2PService:
             if after_height > before_height:
                 self._sync_last_validated_height = after_height
                 log.info(
-                    "Head advanced",
+                    "Accepted new head",
                     extra={"height": after_height, "origin": origin_remote},
                 )
         elif not ok:

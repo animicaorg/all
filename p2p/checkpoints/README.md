@@ -17,7 +17,7 @@ Model 3 (Hybrid) maintains P2P-first sync as the default while adding an optiona
 
 Built-in checkpoints are hardcoded safety rails that don't require external fetching. These are particularly useful for mainnet to provide a baseline security check.
 
-**Mainnet (chain_id=1):**
+**Mainnet (chain_id=0):**
 - Height 55795: `0x0a3205eb3aca078a9c6e8415e5970e198b43c087bff7b71371054bbbc99d8938`
 
 Built-in checkpoints are always available and can be merged with external checkpoints from RPC or file sources. When there's a conflict, built-in checkpoints take precedence.
@@ -132,14 +132,14 @@ python -m p2p.checkpoints.cli.checkpoints export --output all_checkpoints.json
 from p2p.checkpoints import initialize_checkpoints, CheckpointsConfig
 
 # Load from environment (includes built-in checkpoints for mainnet)
-verifier = await initialize_checkpoints(chain_id=1)
+verifier = await initialize_checkpoints(chain_id=0)
 
 # Load without built-in checkpoints
-verifier = await initialize_checkpoints(chain_id=1, include_builtin=False)
+verifier = await initialize_checkpoints(chain_id=0, include_builtin=False)
 
 # Or with explicit config
 config = CheckpointsConfig(mode="file", file_path="/path/to/checkpoints.json")
-verifier = await initialize_checkpoints(config, chain_id=1)
+verifier = await initialize_checkpoints(config, chain_id=0)
 
 # Use with header sync
 from p2p.sync.headers import HeaderSync
@@ -158,10 +158,10 @@ sync = HeaderSync(
 from p2p.checkpoints import builtin
 
 # Get built-in checkpoints for mainnet
-mainnet_cps = builtin.get_builtin_checkpoints(chain_id=1)
+mainnet_cps = builtin.get_builtin_checkpoints(chain_id=0)
 
 # Check if a chain has built-in checkpoints
-has_checkpoints = builtin.has_builtin_checkpoints(chain_id=1)
+has_checkpoints = builtin.has_builtin_checkpoints(chain_id=0)
 
 # Get all built-in checkpoints
 all_cps = builtin.get_all_builtin_checkpoints()

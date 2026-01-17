@@ -65,7 +65,7 @@ def test_block_txs_root_handles_reordered_transactions():
     """
     # Create a minimal genesis header
     header = Header.genesis(
-        chain_id=1,
+        chain_id=0,
         timestamp=1700000000,
         state_root=ZERO32,
         txs_root=ZERO32,
@@ -86,7 +86,7 @@ def test_block_txs_root_handles_reordered_transactions():
         recipient = bytes([100 + i]) * 32
         
         unsigned = UnsignedTx(
-            chain_id=1,
+            chain_id=0,
             nonce=0,
             gas_price=1,
             gas_limit=21000,
@@ -126,7 +126,7 @@ def test_block_txs_root_handles_reordered_transactions():
 def test_empty_block_txs_root_is_zero():
     """Test that empty blocks (no transactions) have zero txsRoot."""
     header = Header.genesis(
-        chain_id=1,
+        chain_id=0,
         timestamp=1700000000,
         state_root=ZERO32,
         txs_root=ZERO32,
@@ -150,7 +150,7 @@ def test_empty_block_txs_root_is_zero():
 def test_single_transaction_block_has_consistent_root():
     """Test that a block with a single transaction produces consistent root."""
     header = Header.genesis(
-        chain_id=1,
+        chain_id=0,
         timestamp=1700000000,
         state_root=ZERO32,
         txs_root=ZERO32,
@@ -166,7 +166,7 @@ def test_single_transaction_block_has_consistent_root():
     
     # Create a single transaction
     unsigned = UnsignedTx(
-        chain_id=1,
+        chain_id=0,
         nonce=0,
         gas_price=1,
         gas_limit=21000,

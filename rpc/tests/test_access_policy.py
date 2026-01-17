@@ -71,7 +71,7 @@ def test_rpc_endpoint_rejects_restricted_methods(monkeypatch, tmp_path) -> None:
         host="127.0.0.1",
         port=0,
         db_uri=f"sqlite:///{tmp_path}/rpc.db",
-        chain_id=1,
+        chain_id=0,
         access_mode=AccessMode.PUBLIC_BOOTSTRAP.value,
     )
 
@@ -96,7 +96,7 @@ def test_rpc_endpoint_rejects_restricted_methods(monkeypatch, tmp_path) -> None:
 def test_bootstrap_node_restricts_non_bootstrap_methods(monkeypatch) -> None:
     monkeypatch.setenv("ANIMICA_RPC_ACCESS_MODE", AccessMode.PRIVATE_FULL.value)
     monkeypatch.setenv("ANIMICA_RPC_BOOTSTRAP_NODE", "1")
-    policy = AccessPolicy.from_config(Config(host="0.0.0.0", port=0, db_uri=":memory:", chain_id=1))
+    policy = AccessPolicy.from_config(Config(host="0.0.0.0", port=0, db_uri=":memory:", chain_id=0))
     ctx = DummyCtx()
 
     policy.authorize("bootstrap.getManifest", ctx)

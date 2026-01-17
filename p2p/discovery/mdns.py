@@ -21,7 +21,7 @@ Usage
 # Advertise:
 from p2p.discovery.mdns import MdnsAdvertiser
 adv = MdnsAdvertiser(
-    peer_id="12ab34cd…", chain_id=1, port=6750,
+    peer_id="12ab34cd…", chain_id=0, port=6750,
     version="0.1.0",
     endpoints=["tcp://192.168.1.20:6750","quic://192.168.1.20:6751"]
 )

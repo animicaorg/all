@@ -56,7 +56,7 @@ def test_reseed_existing_db_preserves_balances():
         db_uri = f"sqlite:///{db_path}"
         
         # First seeding
-        env1 = load_and_init_genesis(genesis_path, db_uri, override_chain_id=1, log=False)
+        env1 = load_and_init_genesis(genesis_path, db_uri, override_chain_id=0, log=False)
         
         # Verify balances after first seeding
         state1 = env1["state"]
@@ -71,7 +71,7 @@ def test_reseed_existing_db_preserves_balances():
         env1["kv"].close()
         
         # Second seeding on same DB (reseeding scenario)
-        env2 = load_and_init_genesis(genesis_path, db_uri, override_chain_id=1, log=False)
+        env2 = load_and_init_genesis(genesis_path, db_uri, override_chain_id=0, log=False)
         
         # Verify balances are still correct after reseeding
         state2 = env2["state"]
@@ -131,12 +131,12 @@ def test_reseed_with_updated_genesis():
         account_addr = "system:account".encode("utf-8")
         
         # Seed with v1
-        env1 = load_and_init_genesis(genesis_path_v1, db_uri, override_chain_id=1, log=False)
+        env1 = load_and_init_genesis(genesis_path_v1, db_uri, override_chain_id=0, log=False)
         assert env1["state"].get_balance(account_addr) == 100
         env1["kv"].close()
         
         # Reseed with v2 (different balance)
-        env2 = load_and_init_genesis(genesis_path_v2, db_uri, override_chain_id=1, log=False)
+        env2 = load_and_init_genesis(genesis_path_v2, db_uri, override_chain_id=0, log=False)
         assert env2["state"].get_balance(account_addr) == 200, \
             "Balance should be updated to 200 after reseeding with v2"
         env2["kv"].close()
@@ -176,7 +176,7 @@ def test_absolute_sqlite_uri_with_four_slashes():
         # Use absolute path URI with 4 slashes
         db_uri = f"sqlite:///{db_path}"
         
-        env = load_and_init_genesis(genesis_path, db_uri, override_chain_id=1, log=False)
+        env = load_and_init_genesis(genesis_path, db_uri, override_chain_id=0, log=False)
         
         # Verify the DB file was created at the absolute path
         assert os.path.exists(db_path), f"DB file should exist at {db_path}"
@@ -235,7 +235,7 @@ def test_statedb_direct_read_after_seeding():
         db_uri = f"sqlite:///{db_path}"
         
         # Seed the DB
-        env = load_and_init_genesis(genesis_path, db_uri, override_chain_id=1, log=False)
+        env = load_and_init_genesis(genesis_path, db_uri, override_chain_id=0, log=False)
         env["kv"].close()
         
         # Now open a fresh KV and StateDB (simulates separate process)

@@ -59,7 +59,7 @@ def test_snapshot_export_with_pq_signature_tx():
         
         unsigned_tx = UnsignedTx(
             version=1,
-            chain_id=1,
+            chain_id=0,
             fork_id=None,
             valid_after=None,
             valid_until=None,
@@ -90,7 +90,7 @@ def test_snapshot_export_with_pq_signature_tx():
         # Create genesis header with correct roots
         genesis_header = Header(
             v=1,
-            chainId=1,
+            chainId=0,
             height=0,
             parentHash=_zero_hash(),
             timestamp=1000000,

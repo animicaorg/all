@@ -272,8 +272,8 @@ class UnsignedTx:
         
         if self.version not in (1, 2):
             raise ValueError("UnsignedTx.version must be 1 or 2")
-        if self.chain_id <= 0:
-            raise ValueError("UnsignedTx.chain_id must be positive")
+        if self.chain_id < 0:
+            raise ValueError("UnsignedTx.chain_id must be >= 0")
         
         # Coinbase txs can have zero gas_limit, others must have gas_limit > 0
         if is_coinbase:
@@ -781,7 +781,7 @@ if __name__ == "__main__":  # pragma: no cover
         return secrets.token_bytes(ADDRESS_LEN)
 
     u = UnsignedTx.build_transfer(
-        chain_id=1,
+        chain_id=0,
         sender=rand_addr(),
         gas_price=1_000,
         gas_limit=50_000,

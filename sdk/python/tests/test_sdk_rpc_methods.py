@@ -278,7 +278,7 @@ def test_contract_client_rpc_wrappers():
         rpc=rpc,
         address="anim1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq",
         abi=[],
-        chain_id=1,
+        chain_id=0,
     )
 
     assert client.get_nonce("anim1abc") == 7
@@ -293,7 +293,7 @@ def test_contract_client_rpc_wrappers():
         rpc=rpc_error,
         address="anim1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq",
         abi=[],
-        chain_id=1,
+        chain_id=0,
     )
     with pytest.raises(RpcError):
         client_bad.get_nonce("anim1abc")

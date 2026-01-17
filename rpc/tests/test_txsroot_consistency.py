@@ -73,7 +73,7 @@ def _get_premine_address_hex() -> str:
     Helper to get the premine address as hex string.
     
     Note: Uses MAINNET_PREMINE_DISTRIBUTION which works for both mainnet and testnet
-    since the test environment uses chain_id=1 (default).
+    since the test environment uses chain_id=0 (default).
     
     Returns:
         str: Premine address as hex string (e.g., "0xabcd...")

@@ -25,7 +25,7 @@ Example
 
     # Load ABI JSON (dict) and construct client
     abi = {...}
-    c = ContractClient(rpc=rpc, address="anim1xyz...", abi=abi, chain_id=1)
+    c = ContractClient(rpc=rpc, address="anim1xyz...", abi=abi, chain_id=0)
 
     # Read-only simulation (if simulator provided; see notes below)
     # result = c.call("get", args=[], simulator=studio_services_sim)

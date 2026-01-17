@@ -63,7 +63,7 @@ async def test_p2p_optional_on_port_conflict(monkeypatch):
 
     cfg = SimpleNamespace(
         db_uri="sqlite:///:memory:",
-        chain_id=1,
+        chain_id=0,
         genesis_path=None,
         log_level="INFO",
         p2p_required=True,
@@ -91,7 +91,7 @@ async def test_p2p_required_raises_on_port_conflict(monkeypatch):
 
     cfg = SimpleNamespace(
         db_uri="sqlite:///:memory:",
-        chain_id=1,
+        chain_id=0,
         genesis_path=None,
         log_level="INFO",
         p2p_required=True,

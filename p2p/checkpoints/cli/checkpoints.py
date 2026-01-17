@@ -15,7 +15,7 @@ Examples:
 # List all built-in checkpoints
 python -m p2p.checkpoints.cli.checkpoints list
 
-# List checkpoints for mainnet (chain_id=1)
+# List checkpoints for mainnet (chain_id=0)
 python -m p2p.checkpoints.cli.checkpoints list --chain-id 1
 
 # Export mainnet checkpoints to file

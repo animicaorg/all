@@ -116,7 +116,7 @@ def snapshot_manifest(tmp_path: Path) -> SnapshotManifest:
     archive_path = Path(archive_path)
     file_size, chunks = build_chunk_manifest(archive_path, 1024)
     manifest = SnapshotManifest(
-        chain_id=1,
+        chain_id=0,
         snapshot_height=100,
         snapshot_hash="aa" * 32,
         state_root="bb" * 32,
@@ -284,7 +284,7 @@ def test_epoch_pack_creation_manifest(tmp_path: Path) -> None:
     items = [b"block1", b"block2", b"block3"]
     hashes = [hash_payload(item) for item in items]
     manifest = build_epoch_pack(
-        chain_id=1,
+        chain_id=0,
         kind="headers",
         epoch_id=0,
         start_height=0,
@@ -309,7 +309,7 @@ def test_epoch_pack_chunk_corruption_redownload(tmp_path: Path) -> None:
     hashes = [hash_payload(item) for item in items]
     pack_path = tmp_path / "epoch.epk"
     manifest = build_epoch_pack(
-        chain_id=1,
+        chain_id=0,
         kind="full",
         epoch_id=1,
         start_height=0,
@@ -355,7 +355,7 @@ def test_epoch_pack_chunk_corruption_redownload(tmp_path: Path) -> None:
 def test_epoch_pack_anchor_rejects_mismatch(tmp_path: Path) -> None:
     engine = _make_engine(tmp_path, [])
     manifest = EpochPackManifest(
-        chain_id=1,
+        chain_id=0,
         kind="headers",
         epoch_id=0,
         start_height=0,
@@ -382,7 +382,7 @@ def test_backfill_resume_after_interruption(tmp_path: Path) -> None:
     hashes = [hash_payload(item) for item in items]
     pack_path = tmp_path / "epoch.epk"
     manifest = build_epoch_pack(
-        chain_id=1,
+        chain_id=0,
         kind="headers",
         epoch_id=2,
         start_height=0,
@@ -431,7 +431,7 @@ def test_pcp_sample_rate_limit(tmp_path: Path) -> None:
     hashes = [hash_payload(item) for item in items]
     pack_path = tmp_path / "epoch.epk"
     manifest = build_epoch_pack(
-        chain_id=1,
+        chain_id=0,
         kind="headers",
         epoch_id=0,
         start_height=0,

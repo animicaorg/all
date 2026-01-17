@@ -8,7 +8,7 @@ from p2p.checkpoints.loader import Checkpoint
 
 def test_mainnet_builtin_checkpoint_exists():
     """Test that mainnet has the expected built-in checkpoint."""
-    checkpoints = builtin.get_builtin_checkpoints(chain_id=1)
+    checkpoints = builtin.get_builtin_checkpoints(chain_id=0)
     
     assert len(checkpoints) >= 1, "Mainnet should have at least one built-in checkpoint"
     
@@ -21,7 +21,7 @@ def test_mainnet_builtin_checkpoint_exists():
 
 def test_mainnet_checkpoint_properties():
     """Test properties of mainnet built-in checkpoint."""
-    checkpoints = builtin.get_builtin_checkpoints(chain_id=1)
+    checkpoints = builtin.get_builtin_checkpoints(chain_id=0)
     
     cp = checkpoints[0]
     
@@ -83,8 +83,8 @@ def test_get_all_builtin_checkpoints():
 
 def test_builtin_checkpoints_immutable():
     """Test that built-in checkpoints are returned as copies."""
-    checkpoints1 = builtin.get_builtin_checkpoints(chain_id=1)
-    checkpoints2 = builtin.get_builtin_checkpoints(chain_id=1)
+    checkpoints1 = builtin.get_builtin_checkpoints(chain_id=0)
+    checkpoints2 = builtin.get_builtin_checkpoints(chain_id=0)
     
     # Should be equal but not the same object
     assert checkpoints1 == checkpoints2
@@ -93,7 +93,7 @@ def test_builtin_checkpoints_immutable():
 
 def test_builtin_mainnet_checkpoints_constant():
     """Test that mainnet built-in checkpoints contain expected checkpoint."""
-    mainnet_checkpoints = builtin.get_builtin_checkpoints(chain_id=1)
+    mainnet_checkpoints = builtin.get_builtin_checkpoints(chain_id=0)
     assert len(mainnet_checkpoints) >= 1
     
     # Find the specific checkpoint
@@ -106,7 +106,7 @@ def test_builtin_mainnet_checkpoints_constant():
 
 def test_builtin_checkpoints_sorted():
     """Test that built-in checkpoints are sorted by height."""
-    checkpoints = builtin.get_builtin_checkpoints(chain_id=1)
+    checkpoints = builtin.get_builtin_checkpoints(chain_id=0)
     
     if len(checkpoints) > 1:
         for i in range(len(checkpoints) - 1):

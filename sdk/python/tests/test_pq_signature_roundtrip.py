@@ -128,7 +128,7 @@ def test_sdk_sign_bytes_returns_cbor_body():
         nonce=5,
         gas_limit=21000,
         max_fee=1000000000,
-        chain_id=1,
+        chain_id=0,
     )
     
     # Get sign_bytes
@@ -268,7 +268,7 @@ def test_node_verification_rejects_wrong_chain_id():
     # Create signer
     signer = PQSigner.from_seed("dilithium3", seed=_seed())
     
-    # Build transaction for chain_id=1
+    # Build transaction for chain_id=0
     chain_id = 1
     tx = transfer(
         from_addr=signer.address or "anim1test",
@@ -280,7 +280,7 @@ def test_node_verification_rejects_wrong_chain_id():
         chain_id=chain_id,
     )
     
-    # Sign using SDK with chain_id=1
+    # Sign using SDK with chain_id=0
     msg = sign_bytes(tx)
     from core.genesis.loader import compute_chain_identity
 

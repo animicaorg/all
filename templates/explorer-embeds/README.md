@@ -67,7 +67,7 @@ python -m templates.engine.cli render \
   --var project_slug=explorer-embeds-demo \
   --var rpc_url=https://rpc.devnet.animica.xyz/rpc \
   --var ws_url=wss://rpc.devnet.animica.xyz/ws \
-  --var chain_id=1
+  --var chain_id=0
 
 2) Install & build
 
@@ -208,4 +208,3 @@ registry["your-widget"] = mountYourWidget;
 License
 
 The template scaffold is provided under the repository’s default license. See LICENSE-THIRD-PARTY.md for any third-party notices relevant to the embed build.
-

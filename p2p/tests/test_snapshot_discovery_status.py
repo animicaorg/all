@@ -20,7 +20,7 @@ async def test_snapshot_discovery_counts_empty_responses() -> None:
 
     service = _Service()
     snapshots, status = await _query_peers_for_snapshots(
-        service, chain_id=1, include_status=True
+        service, chain_id=0, include_status=True
     )
 
     assert snapshots == {}

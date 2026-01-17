@@ -186,7 +186,7 @@ class ConsensusView:
     def _check_chain_id(self, h: Header) -> None:
         cid = int(_get(h, "chainId", default=0))
         if cid <= 0:
-            raise ValueError("header.chainId must be > 0")
+            raise ValueError("header.chainId must be >= 0")
         if self.expected_chain_id and cid != self.expected_chain_id:
             raise ValueError(
                 f"header.chainId mismatch: got {cid}, want {self.expected_chain_id}"

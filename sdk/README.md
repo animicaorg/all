@@ -68,7 +68,7 @@ tx = transfer(
     to_addr=sender,
     amount=1,
     nonce=0,
-    chain_id=1,
+    chain_id=0,
     max_fee=50_000,
     gas_limit=suggest_gas_limit("transfer"),
 )
@@ -317,4 +317,3 @@ Security Notes
 License
 
 See sdk/LICENSE. Each language subpackage may carry additional notices.
-

@@ -205,13 +205,18 @@ class TcpTransport(Transport):
     name = "tcp"
 
     def __init__(
-        self, *, handshake_prologue: bytes | None = None, chain_id: int | None = None
+        self,
+        *,
+        handshake_prologue: bytes | None = None,
+        chain_id: int | None = None,
+        network_magic: bytes | None = None,
     ):
         self._server: Optional[asyncio.AbstractServer] = None
         self._incoming: "asyncio.Queue[TcpConn]" = asyncio.Queue()
         self._listen_cfg: Optional[ListenConfig] = None
         self._handshake_prologue = handshake_prologue or b"animica/tcp/1"
         self._chain_id = chain_id
+        self._network_magic = network_magic
 
     # ---------- helpers ----------
 
@@ -250,6 +255,7 @@ class TcpTransport(Transport):
                     is_outbound=False,
                     prologue=self._handshake_prologue,
                     chain_id=self._chain_id,
+                    network_magic=self._network_magic,
                     timeout=15.0,
                 )
                 info.local_addr = f"{host}:{port}"
@@ -299,6 +305,7 @@ class TcpTransport(Transport):
                 is_outbound=True,
                 prologue=self._handshake_prologue,
                 chain_id=self._chain_id,
+                network_magic=self._network_magic,
                 timeout=15.0,
             )
             try:

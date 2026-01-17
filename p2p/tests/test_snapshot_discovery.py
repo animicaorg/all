@@ -44,7 +44,7 @@ async def test_query_peers_for_snapshots_reports_inventory() -> None:
     service = _DummyService()
 
     snapshots, status = await _query_peers_for_snapshots(
-        service, chain_id=1, include_status=True
+        service, chain_id=0, include_status=True
     )
 
     assert "peer:peer-a" in snapshots

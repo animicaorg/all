@@ -25,7 +25,7 @@ def test_reward_tracking_initialization():
         
         # Create a minimal ChainParams
         params = ChainParams(
-            chain_id=1,
+            chain_id=0,
             block_interval_ms=5000,
             retarget=ChainParams.Retarget(
                 window=100,

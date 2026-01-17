@@ -150,7 +150,7 @@ def test_send_includes_chainid_in_body(wallet_store: Path) -> None:
     # Verify chainId is in the body
     body = decoded["body"]
     assert "chainId" in body, f"Missing 'chainId' in body: {list(body.keys())}"
-    assert body["chainId"] == 1, f"Expected chainId=1, got {body['chainId']}"
+    assert body["chainId"] == 0, f"Expected chainId=0, got {body['chainId']}"
     assert "validAfter" in body, f"Missing 'validAfter' in body: {list(body.keys())}"
     assert "validUntil" in body, f"Missing 'validUntil' in body: {list(body.keys())}"
     assert "salt" in body, f"Missing 'salt' in body: {list(body.keys())}"

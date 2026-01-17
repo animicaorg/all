@@ -201,7 +201,7 @@ async def test_no_duplicate_server_instances():
         height=1,
         parent_hash="0x" + "11" * 32,
         parent_height=0,
-        chain_id=1,
+        chain_id=0,
     )
     
     # Publish job BEFORE starting server (matching stratum_bridge.py flow)

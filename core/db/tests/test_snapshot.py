@@ -15,7 +15,7 @@ def test_snapshot_manifest_creation():
 
     manifest = SnapshotManifest(
         version=1,
-        chain_id=1,
+        chain_id=0,
         network="testnet",
         checkpoint_height=1000,
         checkpoint_hash="0x1234",
@@ -29,7 +29,7 @@ def test_snapshot_manifest_creation():
     )
 
     assert manifest.version == 1
-    assert manifest.chain_id == 1
+    assert manifest.chain_id == 0
     assert manifest.checkpoint_height == 1000
     assert manifest.checkpoint_hash == "0x1234"
     assert manifest.blocks_count == 1000
@@ -115,7 +115,7 @@ def test_import_snapshot_rejects_corrupted_chunk(tmp_path: Path) -> None:
 
     manifest = {
         "version": 2,
-        "chain_id": 1,
+        "chain_id": 0,
         "network": "devnet",
         "checkpoint_height": 0,
         "checkpoint_hash": "0x" + "00" * 32,

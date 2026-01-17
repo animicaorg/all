@@ -20,7 +20,7 @@ def test_orchestrator_status_without_db_uri(tmp_path: Path) -> None:
     orchestrator = SnapshotOrchestrator(
         block_db=DummyBlockDB(height=0),
         state_db=DummyStateDB(),
-        chain_id=1,
+        chain_id=0,
         config=config,
     )
 

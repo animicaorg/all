@@ -2,29 +2,26 @@
   "meta": {
     "version": 2,
     "genesis_version": "reset-2026-01",
-    "description": "Animica mainnet reset genesis (chainId=1). Premine + system accounts only."
+    "description": "Animica mainnet reset genesis (chainId=0). Premine + system accounts only.",
+    "genesis_hash": "0x7d0801cf029a13ca4ff4e1864ae6645015c1c3b46288ca99ad224f043ec1a09e",
+    "fork_id": "0x17e196ff"
   },
-  "chainId": 1,
+  "chainId": 0,
   "network": "animica-mainnet",
   "genesisTime": "2026-01-01T00:00:00Z",
-
   "unit": {
     "symbol": "ANM",
     "decimals": 9
   },
-
   "paramsRef": {
     "path": "spec/params.yaml",
     "sha3_256": "0x0000000000000000000000000000000000000000000000000000000000000000"
   },
-
   "algPolicyRoot": "0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
-
   "beacon": {
     "seed": "0x1111111111111111111111111111111111111111111111111111111111111111",
     "round": 0
   },
-
   "economics": {
     "premineTotal": "81000000000000000",
     "premineBreakdownANM": {
@@ -35,20 +32,21 @@
       "dev_reserve": 9810000
     }
   },
-
-"alloc": [
-  { "address": "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz", "nonce": 0, "balance": "81000000000000000" }
-],
-
+  "alloc": [
+    {
+      "address": "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz",
+      "nonce": 0,
+      "balance": "81000000000000000"
+    }
+  ],
   "consensus": {
     "initialThetaMicro": 1000000,
     "gammaCapMicro": 2000000
   },
-
   "notes": [
     "All balances are integers in base units (10^9 = 1 ANM).",
-    "Premine total: 81,000,000 ANM → 81,000,000 × 10^9 = 81,000,000,000,000,000 base units.",
+    "Premine total: 81,000,000 ANM \u2192 81,000,000 \u00d7 10^9 = 81,000,000,000,000,000 base units.",
     "System addresses use the 'system:<name>' convention and are resolved by execution/runtime/system.py.",
-    "algPolicyRoot and paramsRef.sha3_256 are placeholders—replace with actual roots before launch."
+    "algPolicyRoot and paramsRef.sha3_256 are placeholders\u2014replace with actual roots before launch."
   ]
 }

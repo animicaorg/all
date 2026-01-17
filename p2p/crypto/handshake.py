@@ -373,6 +373,7 @@ async def perform_handshake_tcp(
     is_outbound: bool,
     prologue: bytes = b"animica/tcp/1",
     chain_id: int | None = None,
+    network_magic: bytes | None = None,
     timeout: Optional[float] = None,
 ):
     """
@@ -393,6 +394,8 @@ async def perform_handshake_tcp(
         pro = prologue or b""
         if chain_id is not None:
             pro = pro + b"|cid=" + int(chain_id).to_bytes(4, "big", signed=False)
+        if network_magic is not None:
+            pro = pro + b"|magic=" + bytes(network_magic)
         if len(pro) > 255:
             pro = pro[:255]
 

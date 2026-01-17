@@ -24,7 +24,7 @@ Examples
     tx = transfer(
         from_addr="anim1...", to_addr="anim1...",
         amount=12345, nonce=7,
-        chain_id=1, max_fee=2_000_000_000_000,
+        chain_id=0, max_fee=2_000_000_000_000,
         gas_limit=suggest_gas_limit("transfer"),
     )
 

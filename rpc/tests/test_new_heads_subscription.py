@@ -8,7 +8,7 @@ from rpc.tests import new_test_client, ws_connect
 
 def _make_head(number: int = 1) -> Head:
     return Head(
-        chainId=1,
+        chainId=0,
         number=number,
         hash="0x" + "11" * 32,
         parentHash="0x" + "22" * 32,
