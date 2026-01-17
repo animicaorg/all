@@ -122,6 +122,54 @@ class TestSyncStateMachine:
         
         assert state == "BEHIND", "Should be BEHIND when peer is ahead"
 
+    def test_stale_peer_tip_reports_behind(self):
+        """Stale peer tips should still show BEHIND when local is behind."""
+        metrics = {
+            "best_remote_height": 2000,
+            "best_remote_age_sec": 1200.0,
+            "best_remote_fresh": False,
+            "behind_by": 1000,
+            "sync_status_reason": "peer_tips_stale",
+            "best_header_height": 1000,
+            "best_block_height": 1000,
+            "phase": "IDLE",
+            "syncing": False,
+            "synchronized": False,
+            "target_height": 2000,
+        }
+
+        state = _compute_sync_state(
+            head_height=1000,
+            network_height=2000,
+            metrics=metrics,
+        )
+
+        assert state == "BEHIND", "Should be BEHIND when stale tips show higher height"
+
+    def test_stale_peer_tip_at_or_above_tip_is_unknown(self):
+        """Stale peer tips should not claim SYNCHRONIZED when at or above tip."""
+        metrics = {
+            "best_remote_height": 1000,
+            "best_remote_age_sec": 1200.0,
+            "best_remote_fresh": False,
+            "behind_by": 0,
+            "sync_status_reason": "peer_tips_stale",
+            "best_header_height": 1000,
+            "best_block_height": 1000,
+            "phase": "IDLE",
+            "syncing": False,
+            "synchronized": False,
+            "target_height": 1000,
+        }
+
+        state = _compute_sync_state(
+            head_height=1000,
+            network_height=1000,
+            metrics=metrics,
+        )
+
+        assert state == "UNKNOWN", "Must be UNKNOWN when stale tips can't confirm sync"
+
     def test_stalled_state_detection(self):
         """STALLED state when phase explicitly says stalled."""
         metrics = {

@@ -215,6 +215,7 @@ def _extract_sync_metrics(sync_status: Optional[Dict[str, Any]]) -> Dict[str, An
         "best_remote_hash": None,
         "best_remote_peer": None,
         "best_remote_age_sec": None,
+        "best_remote_fresh": None,
         "behind_by": None,
         "sync_status_reason": None,
     }
@@ -228,6 +229,13 @@ def _extract_sync_metrics(sync_status: Optional[Dict[str, Any]]) -> Dict[str, An
     metrics["best_remote_hash"] = sync_status.get("best_remote_hash")
     metrics["best_remote_peer"] = sync_status.get("best_remote_peer")
     metrics["best_remote_age_sec"] = _coerce_float(sync_status.get("best_remote_age_sec"))
+    if metrics["best_remote_height"] is not None:
+        if metrics["best_remote_age_sec"] is None:
+            metrics["best_remote_fresh"] = True
+        else:
+            metrics["best_remote_fresh"] = (
+                metrics["best_remote_age_sec"] <= PEER_TIP_FRESHNESS_WINDOW_S
+            )
     metrics["behind_by"] = _coerce_int(sync_status.get("behind_by"))
     metrics["sync_status_reason"] = sync_status.get("sync_status_reason")
 
@@ -400,8 +408,9 @@ def _compute_sync_state(
     """
     Compute a truthful sync state label based on local and network data.
     
-    CRITICAL: Never returns SYNCHRONIZED if best_remote_height is unknown.
-    This enforces strict fresh peer tip requirements for accurate status.
+    CRITICAL: Never returns SYNCHRONIZED if best_remote_height is unknown
+    or if the best tip is stale. This enforces strict fresh peer tip
+    requirements for accurate status.
     
     States:
     - UNKNOWN: No valid peer tips OR cannot determine sync state
@@ -415,6 +424,7 @@ def _compute_sync_state(
     best_remote_age = metrics.get("best_remote_age_sec")
     behind_by = metrics.get("behind_by")
     sync_status_reason = metrics.get("sync_status_reason")
+    best_remote_fresh = metrics.get("best_remote_fresh", True)
     
     # Rule 1: If no fresh peer tips, status is UNKNOWN
     if best_remote_height is None:
@@ -422,6 +432,14 @@ def _compute_sync_state(
     
     if head_height is None:
         return "UNKNOWN"
+
+    if best_remote_fresh is False:
+        delta = best_remote_height - head_height
+        if delta <= 0:
+            return "UNKNOWN"
+        if delta <= near_tip_blocks:
+            return "NEAR_TIP"
+        return "BEHIND"
 
     best_header_height = metrics.get("best_header_height")
     best_block_height = metrics.get("best_block_height")
@@ -1259,6 +1277,7 @@ def sync_status(
     best_remote_hash = None
     best_remote_peer = None
     best_remote_age_sec = None
+    best_remote_fresh = None
     behind_by = None
     sync_status_reason = None
     
@@ -1267,6 +1286,11 @@ def sync_status(
         best_remote_hash = sync_status.get("best_remote_hash")
         best_remote_peer = sync_status.get("best_remote_peer")
         best_remote_age_sec = _coerce_float(sync_status.get("best_remote_age_sec"))
+        if best_remote_height is not None:
+            if best_remote_age_sec is None:
+                best_remote_fresh = True
+            else:
+                best_remote_fresh = best_remote_age_sec <= PEER_TIP_FRESHNESS_WINDOW_S
         behind_by = _coerce_int(sync_status.get("behind_by"))
         sync_status_reason = sync_status.get("sync_status_reason")
 
@@ -1285,6 +1309,7 @@ def sync_status(
             best_remote_hash = fresh_tip_hash
             best_remote_peer = _format_peer_label(fresh_tip_peer) if fresh_tip_peer else None
             best_remote_age_sec = fresh_tip_age
+            best_remote_fresh = True
         elif sync_status_reason is None:
             diagnostics = _peer_tip_diagnostics(
                 peers,
@@ -1296,6 +1321,16 @@ def sync_status(
                 sync_status_reason = "peer_tip_timestamp_missing"
             else:
                 sync_status_reason = "peer_tips_stale"
+            stale_height, stale_hash, stale_peer = _select_best_peer_head(peers)
+            if stale_height is not None:
+                best_remote_height = stale_height
+                best_remote_hash = stale_hash
+                best_remote_peer = _format_peer_label(stale_peer) if stale_peer else None
+                if stale_peer:
+                    stale_seen = _extract_peer_last_seen(stale_peer)
+                    if stale_seen is not None:
+                        best_remote_age_sec = max(0.0, time.time() - stale_seen)
+                best_remote_fresh = False
     elif best_remote_height is None and sync_status_reason is None:
         sync_status_reason = "no_peers_connected"
 
@@ -1314,6 +1349,7 @@ def sync_status(
     metrics["best_remote_hash"] = best_remote_hash
     metrics["best_remote_peer"] = best_remote_peer
     metrics["best_remote_age_sec"] = _coerce_float(best_remote_age_sec)
+    metrics["best_remote_fresh"] = best_remote_fresh
     metrics["behind_by"] = _coerce_int(behind_by)
     metrics["sync_status_reason"] = sync_status_reason
     is_syncing = bool(metrics.get("syncing"))
@@ -1399,6 +1435,8 @@ def sync_status(
             output["best_remote_hash"] = best_remote_hash
             output["best_remote_peer"] = best_remote_peer
             output["best_remote_age_sec"] = best_remote_age_sec
+            if best_remote_fresh is not None:
+                output["best_remote_fresh"] = best_remote_fresh
         if behind_by is not None:
             output["behind_by"] = behind_by
         if sync_status_reason:
@@ -1454,9 +1492,12 @@ def sync_status(
         typer.echo(f"  Hash:      {head_hash}")
     typer.echo()
 
-    # Best Remote Head section (from fresh peer tips)
+    # Best Remote Head section (from peer tips)
     if best_remote_height is not None:
-        typer.secho("Best Remote Head (from fresh peer tips):", fg=typer.colors.BRIGHT_BLUE, bold=True)
+        if best_remote_fresh is False:
+            typer.secho("Best Remote Head (from stale peer tips):", fg=typer.colors.YELLOW, bold=True)
+        else:
+            typer.secho("Best Remote Head (from fresh peer tips):", fg=typer.colors.BRIGHT_BLUE, bold=True)
         typer.echo(f"  Height:    {best_remote_height}")
         if best_remote_hash:
             typer.echo(f"  Hash:      {best_remote_hash}")
@@ -1464,9 +1505,11 @@ def sync_status(
             typer.echo(f"  Peer:      {best_remote_peer}")
         if best_remote_age_sec is not None:
             typer.echo(f"  Tip Age:   {best_remote_age_sec:.1f}s ago")
+        if best_remote_fresh is False:
+            typer.secho("  ⚠ Using stale peer tips as sync target", fg=typer.colors.YELLOW)
         if behind_by is not None and behind_by > 0:
             typer.secho(f"  Behind by: {behind_by} blocks", fg=typer.colors.YELLOW, bold=True)
-        elif behind_by == 0:
+        elif behind_by == 0 and best_remote_fresh is not False:
             typer.secho(f"  Behind by: 0 blocks (at tip)", fg=typer.colors.GREEN)
         typer.echo()
     elif height is not None and height > 0:
@@ -1550,6 +1593,11 @@ def sync_status(
         typer.secho("  Status:    IDLE (genesis)", fg=typer.colors.YELLOW)
     else:
         typer.secho("  Status:    IDLE (no blocks)", fg=typer.colors.YELLOW)
+    if best_remote_fresh is False:
+        typer.secho(
+            "  ⚠ Peer tips are stale; using last known height for sync target",
+            fg=typer.colors.YELLOW,
+        )
     typer.echo()
     
     # Peer info
