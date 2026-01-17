@@ -19,7 +19,7 @@ def set_test_chain_id(monkeypatch: pytest.MonkeyPatch) -> None:
     Auto-use fixture to set chain ID to 1337 for all tests.
     
     This prevents conflicts when tests mock a node with chain ID 1337
-    but the default network config has chain ID 1 (mainnet).
+    but the default network config has chain ID 0 (mainnet).
     
     Tests can override this by setting ANIMICA_CHAIN_ID explicitly.
     """
