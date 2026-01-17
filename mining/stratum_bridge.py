@@ -347,6 +347,24 @@ async def run_bridge_server(
     # Start bridge
     await bridge.start(payout_address)
     
+    # Fetch initial template before starting server to ensure clients get a job immediately
+    log.info("Fetching initial block template...")
+    max_retries = 10
+    for attempt in range(max_retries):
+        try:
+            await bridge._poll_template()
+            if bridge._current_template:
+                log.info(f"Initial template ready (job_id={bridge._current_job_id})")
+                break
+        except Exception as e:
+            log.debug(f"Initial template fetch attempt {attempt + 1}/{max_retries} failed: {e}")
+        
+        if attempt < max_retries - 1:
+            await asyncio.sleep(0.5)
+    
+    if not bridge._current_template:
+        log.warning("Failed to fetch initial template; server will start without a job")
+    
     # Create Stratum server
     server = StratumServer()
     
@@ -390,6 +408,27 @@ async def run_bridge_server(
                 log.info(f"✓ Block found by worker {session.worker}!")
     
     server.set_submit_hook(submit_hook)
+    
+    # Publish initial job to server if available
+    if bridge._current_template:
+        initial_job_dict = await bridge.get_current_job()
+        if initial_job_dict:
+            initial_job = StratumJob(
+                job_id=initial_job_dict["job_id"],
+                header=initial_job_dict.get("header", {}),
+                share_target=initial_job_dict.get("share_target", share_target),
+                theta_micro=initial_job_dict.get("theta_micro", 800_000),
+                target=initial_job_dict.get("target"),
+                sign_bytes=initial_job_dict.get("sign_bytes"),
+                height=initial_job_dict.get("height"),
+                parent_hash=initial_job_dict.get("parent_hash"),
+                parent_height=initial_job_dict.get("parent_height"),
+                chain_id=initial_job_dict.get("chain_id"),
+            )
+            # Set initial job in server before accepting connections
+            server._jobs[initial_job.job_id] = initial_job
+            server._current_job_id = initial_job.job_id
+            log.info(f"Initial job loaded into server (job_id={initial_job.job_id})")
     
     # Start job publisher
     asyncio.create_task(job_publisher(), name="job-publisher")
