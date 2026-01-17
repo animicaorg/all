@@ -1854,7 +1854,7 @@ def miner_stratum(
     count: int = typer.Option(
         1,
         "--count",
-        help="Stop after N blocks accepted by node",
+        help="Stop after N shares accepted (not blocks found)",
     ),
     threads: int = typer.Option(
         0,
@@ -1878,16 +1878,16 @@ def miner_stratum(
     This command connects to a Stratum server (typically animica stratum up),
     receives mining jobs, performs CPU mining, and submits shares.
     
-    The miner stops after --count blocks are accepted by the node.
+    The miner stops after --count shares are accepted (not blocks found).
     
     Examples:
-        # Mine to an address via local Stratum bridge
+        # Mine 1 share to an address via local Stratum bridge
         animica miner stratum --address anim1... --url stratum+tcp://127.0.0.1:3333 --count 1
         
-        # Mine with 4 threads and custom difficulty
+        # Mine 5 shares with 4 threads and custom difficulty
         animica miner stratum --address anim1... --url stratum+tcp://127.0.0.1:3333 --count 5 --threads 4 --difficulty 0.05
         
-        # Mine with worker identifier
+        # Mine 10 shares with worker identifier
         animica miner stratum --address anim1... --url stratum+tcp://127.0.0.1:3333 --count 10 --worker rig1
     
     Environment variables:
@@ -1938,7 +1938,7 @@ def miner_stratum(
     typer.echo(f"Connecting to Stratum server: {host}:{port}")
     typer.echo(f"Payout address: {address}")
     typer.echo(f"Mining threads: {threads}")
-    typer.echo(f"Target blocks: {count}")
+    typer.echo(f"Target shares: {count}")
     if difficulty:
         typer.echo(f"Requested difficulty: {difficulty}")
     if worker:
@@ -2059,7 +2059,7 @@ def miner_stratum(
             hashrate_window_start = time_module.time()
             
             try:
-                while mining_active and stats["blocks_found"] < count:
+                while mining_active and stats["shares_accepted"] < count:
                     if not current_job:
                         await asyncio.sleep(0.1)
                         continue
@@ -2135,15 +2135,17 @@ def miner_stratum(
                                     if isinstance(result, dict) and result.get("is_block"):
                                         stats["blocks_found"] += 1
                                         typer.secho(
-                                            f"✓ BLOCK FOUND! ({stats['blocks_found']}/{count})",
+                                            f"✓ BLOCK FOUND! Share {stats['shares_accepted']}/{count}",
                                             fg=typer.colors.GREEN,
                                             bold=True,
                                         )
-                                        if stats["blocks_found"] >= count:
-                                            mining_active = False
-                                            break
                                     else:
                                         typer.echo(f"✓ Share accepted (nonce: {hex(nonce)})")
+                                    
+                                    # Stop after reaching share count
+                                    if stats["shares_accepted"] >= count:
+                                        mining_active = False
+                                        break
                                 else:
                                     stats["shares_rejected"] += 1
                                     typer.echo(f"✗ Share rejected (nonce: {hex(nonce)})")
@@ -2162,8 +2164,8 @@ def miner_stratum(
                                 hashrate = hashrate_window_hashes / elapsed
                                 typer.echo(
                                     f"Hashrate: {hashrate:.2f} H/s | "
-                                    f"Shares: {stats['shares_accepted']}/{stats['shares_submitted']} | "
-                                    f"Blocks: {stats['blocks_found']}/{count}"
+                                    f"Shares: {stats['shares_accepted']}/{count} | "
+                                    f"Blocks: {stats['blocks_found']}"
                                 )
                             last_hashrate_report = now
                             hashrate_window_hashes = 0
@@ -2194,17 +2196,17 @@ def miner_stratum(
         typer.echo("\n" + "=" * 60)
         typer.echo("Mining Summary:")
         typer.echo(f"  Duration:        {elapsed:.1f}s")
-        typer.echo(f"  Blocks found:    {stats['blocks_found']}/{count}")
-        typer.echo(f"  Shares accepted: {stats['shares_accepted']}")
+        typer.echo(f"  Shares accepted: {stats['shares_accepted']}/{count}")
         typer.echo(f"  Shares rejected: {stats['shares_rejected']}")
+        typer.echo(f"  Blocks found:    {stats['blocks_found']}")
         typer.echo(f"  Total hashes:    {stats['hashes_computed']}")
         typer.echo(f"  Avg hashrate:    {avg_hashrate:.2f} H/s")
         typer.echo("=" * 60)
         
-        if stats["blocks_found"] >= count:
+        if stats["shares_accepted"] >= count:
             typer.secho("\n✓ Mining target reached!", fg=typer.colors.GREEN, bold=True)
         else:
-            typer.secho(f"\n✗ Mining incomplete ({stats['blocks_found']}/{count} blocks)", fg=typer.colors.YELLOW)
+            typer.secho(f"\n✗ Mining incomplete ({stats['shares_accepted']}/{count} shares)", fg=typer.colors.YELLOW)
     
     except ImportError as e:
         typer.secho(
