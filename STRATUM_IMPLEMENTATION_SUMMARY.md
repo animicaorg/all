@@ -31,7 +31,7 @@ animica miner stratum --address anim1... --url stratum+tcp://127.0.0.1:3333 --co
 - Connects to Stratum bridge
 - Performs CPU mining
 - Submits shares
-- Stops after --count N blocks accepted
+- Stops after --count N shares accepted
 - Displays hashrate and progress
 
 ### ✅ 3. Node's chain height increases and coinbase pays address
@@ -91,7 +91,7 @@ animica stratum down
    - CPU mining loop
    - Share submission
    - Hashrate tracking
-   - Stop after N blocks
+   - Stop after N shares
 
 4. **Documentation** (`STRATUM_MINING_GUIDE.md`)
    - Quick start guide
@@ -295,7 +295,7 @@ animica stratum down
 --rpc-url URL        # Node RPC URL
 --log-level info     # Logging: debug|info|warning|error
 --threads 4          # Mining threads (0=auto)
---count 10           # Mine N blocks
+--count 10           # Mine N shares
 ```
 
 For complete documentation, see [STRATUM_MINING_GUIDE.md](./STRATUM_MINING_GUIDE.md).
