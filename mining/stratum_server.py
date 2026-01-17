@@ -302,12 +302,21 @@ class StratumServer:
         """
         Start the server and serve forever until cancelled.
         
+        This method initializes the server and blocks until the server is stopped
+        or the task is cancelled. It's designed to be the main entry point for
+        running the server in daemon/background mode.
+        
         Args:
             host: Override bind host (uses constructor value if None)
             port: Override bind port (uses constructor value if None)
         
+        Raises:
+            OSError: If the server fails to bind to the specified host/port
+            asyncio.CancelledError: When the task is cancelled (expected behavior)
+            RuntimeError: If server initialization fails unexpectedly
+        
         Note: This method is designed to be called once per server instance.
-        Multiple concurrent calls are not supported.
+        Multiple concurrent calls are not supported and will lead to undefined behavior.
         """
         # Temporarily override host/port for this start
         original_host = self._host
@@ -321,13 +330,16 @@ class StratumServer:
             
             await self.start()
             
-            # start() will have set self._server or raised an exception
-            assert self._server is not None, "Server should be set after start()"
+            # Verify server was properly initialized
+            if self._server is None:
+                raise RuntimeError(
+                    "Server initialization failed: _server is None after start()"
+                )
             
             # Wait until the server is closed (by stop() or cancellation)
             await self._server.serve_forever()
         finally:
-            # Restore original values (though this is unlikely to matter in practice)
+            # Restore original values to maintain instance consistency
             self._host = original_host
             self._port = original_port
 
