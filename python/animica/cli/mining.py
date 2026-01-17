@@ -2105,16 +2105,13 @@ def miner_stratum(
                             stats["shares_submitted"] += 1
                             
                             # Submit share (simplified submission)
-                            submit_params = {
-                                "job_id": job_id,
-                                "hashshare": {
-                                    "nonce": hex(nonce),
-                                    "body": {},
-                                },
+                            hashshare_data = {
+                                "nonce": hex(nonce),
+                                "body": {},
                             }
                             
                             try:
-                                result = await client.submit(submit_params)
+                                result = await client.submit_share(job_id, hashshare_data)
                                 if result:
                                     stats["shares_accepted"] += 1
                                     
