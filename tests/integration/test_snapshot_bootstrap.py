@@ -49,7 +49,7 @@ async def test_snapshot_bootstrap_integration():
                 
                 # Verify context was created
                 assert ctx is not None
-                assert ctx.chain_id == 1
+                assert ctx.chain_id == 0
                 
             finally:
                 os.environ.pop("ANIMICA_P2P_ENABLE", None)

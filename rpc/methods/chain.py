@@ -252,7 +252,7 @@ def chain_get_params() -> dict:
 )
 def chain_get_chain_id() -> int:
     """
-    Returns the numeric chainId (e.g., 1 for animica mainnet).
+    Returns the numeric chainId (e.g., 0 for animica mainnet).
     """
     return int(deps.get_chain_id())
 

@@ -40,7 +40,7 @@ from p2p.checkpoints.loader import Checkpoint
 def get_chain_name(chain_id: int) -> str:
     """Get human-readable chain name."""
     names = {
-        1: "mainnet",
+        0: "mainnet",
         2: "testnet",
         1337: "devnet",
     }

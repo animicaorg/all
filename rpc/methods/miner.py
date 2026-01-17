@@ -1553,7 +1553,7 @@ def _get_miner_address() -> bytes:
         chain_id = _resolve_chain_id_for_sig(ctx)
         
         # For mainnet (chain_id=0) or devnet (chain_id=1337), use first premine address
-        if chain_id in (1, 1337) and MAINNET_PREMINE_DISTRIBUTION:
+        if chain_id in (0, 1337) and MAINNET_PREMINE_DISTRIBUTION:
             premine_addr = MAINNET_PREMINE_DISTRIBUTION[0][0]  # First address in distribution
             try:
                 return _decode_bech32_address(premine_addr)
@@ -3200,8 +3200,6 @@ def _mine_once(
     # Cap iterations to avoid infinite loops in tests or misconfigured environments
     DEFAULT_MAX_NONCE = 100_000
     max_nonce = int(os.getenv("ANIMICA_MINER_MAX_NONCE", str(DEFAULT_MAX_NONCE)))
-
-    reward_amount = 0
 
     def _mine_for_header(
         template: Header,

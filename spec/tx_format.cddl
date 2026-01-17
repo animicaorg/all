@@ -12,7 +12,7 @@
 ; where TxSignView is the Tx map with "auth" removed.
 ;
 ; Notes:
-; - chainId is CAIP-2 style string: "animica:1", "animica:2", "animica:1337".
+; - chainId is CAIP-2 style string: "animica:0", "animica:2", "animica:1337".
 ; - Address is a 20B or 32B payload (bech32m-encoded at the edge, bytes on-chain).
 ; - AccessList is optional and can be empty; it enables optimistic scheduling.
 ; - Kinds are explicit; "body" MUST match "kind".
@@ -22,7 +22,7 @@
 Tx = {
   ; --- header (common) ---
   "v":          uint .default 1,             ; tx version
-  "chainId":    tstr,                        ; e.g. "animica:1"
+  "chainId":    tstr,                        ; e.g. "animica:0"
   "nonce":      uint,                        ; account nonce (strictly increasing)
   "sender":     Address,                     ; derived from PQ pubkey (domain-separated)
   "gasLimit":   uint,                        ; maximum gas the sender will buy

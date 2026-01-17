@@ -42,7 +42,7 @@
 
     "chainId": {
       "type": "integer",
-      "minimum": 1,
+      "minimum": 0,
       "description": "EVM-style or Animica numeric chain identifier."
     },
 

@@ -78,7 +78,7 @@ def test_cli_export_mainnet(tmp_path):
     with output_file.open() as f:
         data = json.load(f)
     
-    assert data["chain_id"] == 1
+    assert data["chain_id"] == 0
     assert data["network"] == "mainnet"
     assert "checkpoints" in data
     assert len(data["checkpoints"]) >= 1
@@ -115,7 +115,7 @@ def test_cli_export_all(tmp_path):
     assert "mainnet" in data["networks"]
     
     mainnet_data = data["networks"]["mainnet"]
-    assert mainnet_data["chain_id"] == 1
+    assert mainnet_data["chain_id"] == 0
     assert len(mainnet_data["checkpoints"]) >= 1
 
 

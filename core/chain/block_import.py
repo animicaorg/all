@@ -1642,6 +1642,14 @@ class BlockImporter:
             try:
                 new_balance = credit(self.state_db, target_addr, amount)
                 log.debug(
+                    "apply_block: credit_reward",
+                    extra={
+                        "height": height,
+                        "address": target_addr.hex(),
+                        "amount": amount,
+                    },
+                )
+                log.debug(
                     "Applied block reward",
                     extra={
                         "height": height,
@@ -2151,10 +2159,10 @@ class _OrphanBlock:
 
 _IMPORTER_CACHE: Dict[int, BlockImporter] = {}
 
-# Network key prefix for params.yaml lookup (e.g., "animica:1" for mainnet)
+# Network key prefix for params.yaml lookup (e.g., "animica:0" for mainnet)
 # This matches the network key format in spec/params.yaml under the "networks" section:
 #   networks:
-#     "animica:1":    # mainnet
+#     "animica:0":    # mainnet
 #     "animica:2":    # testnet
 #     "animica:1337": # devnet
 _NETWORK_KEY_PREFIX = "animica"
@@ -2169,7 +2177,7 @@ def _load_full_params_dict(chain_id: int) -> Dict[str, Any]:
     Returns a network-specific dict with all parameters, or empty dict if file not found.
     
     Args:
-        chain_id: Chain identifier (1=mainnet, 2=testnet, 1337=devnet, etc.)
+        chain_id: Chain identifier (0=mainnet, 2=testnet, 1337=devnet, etc.)
         
     Returns:
         Dict with full network configuration including monetary.issuance

@@ -405,7 +405,7 @@ def test_snapshot_list_local_with_auto_peer_discovery(mock_rpc_with_peers, mock_
                     "blocks_count": 1001,
                     "accounts_count": 50,
                     "size_mb": 10.5,
-                    "path": "/data/snapshots/chain-1-height-1000",
+                    "path": "/data/snapshots/chain-0-height-1000",
                 }
             ],
         },
@@ -442,7 +442,7 @@ def test_snapshot_list_local_only_flag():
                     "blocks_count": 1001,
                     "accounts_count": 50,
                     "size_mb": 10.5,
-                    "path": "/data/snapshots/chain-1-height-1000",
+                    "path": "/data/snapshots/chain-0-height-1000",
                 }
             ],
         },
@@ -500,7 +500,7 @@ def test_snapshot_list_with_peer_errors():
                     "blocks_count": 1001,
                     "accounts_count": 50,
                     "size_mb": 10.5,
-                    "path": "/data/snapshots/chain-1-height-1000",
+                    "path": "/data/snapshots/chain-0-height-1000",
                 }
             ],
         },

@@ -233,7 +233,7 @@ class TemplateBuilder:
         work_type = None
         # Only stamp a workType once the adaptive PoW fork activates
         if self._select_work is not None:
-            activation_height = 100_000 if chain_id == 1 else 0
+            activation_height = 100_000 if chain_id == 0 else 0
             if (height + 1) >= activation_height:
                 try:
                     work_type = self._select_work(chain_id, height + 1)

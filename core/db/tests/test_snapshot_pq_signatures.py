@@ -122,7 +122,7 @@ def test_snapshot_export_with_pq_signature_tx():
         block_db.put_block(genesis_block)
         block_db.set_canonical(0, genesis_hash)
         block_db.set_head(0, genesis_hash)
-        block_db.set_chain_id(1)
+        block_db.set_chain_id(0)
         
         # Initialize state DB with minimal data
         state_db.kv.put(b"\x01account_key", b"account_data")
@@ -146,7 +146,7 @@ def test_snapshot_export_with_pq_signature_tx():
         assert manifest.checkpoint_height == 0
         assert manifest.blocks_count == 1
         assert manifest.headers_count == 1
-        assert manifest.chain_id == 1
+        assert manifest.chain_id == 0
         
         # Verify snapshot files exist
         blocks_file = snapshot_dir / "blocks.cbor"

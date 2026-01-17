@@ -5,7 +5,7 @@
     {
       "key": "animica-mainnet",
       "name": "Animica Mainnet",
-      "chainId": 1,
+      "chainId": 0,
       "network": "mainnet",
       "status": "planned",
       "testnet": false,

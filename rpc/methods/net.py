@@ -242,7 +242,7 @@ from rpc import errors as rpc_errors
 
 
 def _fallback_seeds_from_network(chain_id: int | None) -> list[str]:
-    network_name = {1: "mainnet", 2: "testnet", 1337: "devnet"}.get(chain_id, "mainnet")
+    network_name = {0: "mainnet", 2: "testnet", 1337: "devnet"}.get(chain_id, "mainnet")
     try:
         from animica.seeds import get_seed_nodes
 

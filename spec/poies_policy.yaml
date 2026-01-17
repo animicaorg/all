@@ -183,7 +183,7 @@ policy:
 # ------------------------------------------------------------------------------
 
 networks:
-  "animica:1":   # Mainnet policy id
+  "animica:0":   # Mainnet policy id
     inherit: "default"
     overrides:
       gamma:
@@ -265,4 +265,3 @@ constraints:
     max: 0.80
   psi_nonneg: true
   enabled_types_min: 2
-

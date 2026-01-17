@@ -19,7 +19,7 @@ Environment variables (examples):
   ANIMICA_RPC_RATE_BURST=200
   ANIMICA_RPC_RATE_PER_METHOD='{"tx.sendRawTransaction": 5, "chain.getHead": 40}'
   ANIMICA_RPC_DB_URI=sqlite:///~/animica/data/chain.db
-  ANIMICA_CHAIN_ID=1
+  ANIMICA_CHAIN_ID=0
   ANIMICA_LOG_LEVEL=INFO
   ANIMICA_METRICS_ENABLED=true
   ANIMICA_METRICS_PORT=9100
@@ -47,7 +47,7 @@ _PYTHON_DIR = _REPO_ROOT / "python"
 if str(_PYTHON_DIR) not in sys.path:
     sys.path.insert(0, str(_PYTHON_DIR))
 
-from animica.config import parse_env_bool
+from animica.config import get_chain_data_dir, parse_env_bool
 
 logger = logging.getLogger(__name__)
 
@@ -197,12 +197,11 @@ def _env_access_mode(name: str, default: AccessMode) -> AccessMode:
 
 
 def _default_chain_dir(chain_id: int) -> Path:
-    base = os.getenv("ANIMICA_DATA_DIR") or "~/.animica"
-    return Path(base).expanduser() / f"chain-{chain_id}"
+    return get_chain_data_dir(chain_id, create=False)
 
 
 def _legacy_db_candidates(chain_id: int, *, base_dir: Path | None = None) -> list[Path]:
-    network_name = {1: "mainnet", 2: "testnet", 1337: "devnet"}.get(
+    network_name = {0: "mainnet", 2: "testnet", 1337: "devnet"}.get(
         chain_id, f"chain-{chain_id}"
     )
     base = (base_dir or Path(os.getenv("ANIMICA_DATA_DIR") or "~/.animica")).expanduser()

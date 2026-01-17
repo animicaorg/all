@@ -40,7 +40,7 @@ On connect, server sends a hello:
   "params": {
     "protocol": "animica/getwork/1",
     "nodeVersion": "animica-rpc/0.1.0",
-    "network": { "chainId": 1, "name": "animica:mainnet" },
+    "network": { "chainId": 0, "name": "animica:mainnet" },
     "thetaMicro": 5400000,
     "policyRoots": {
       "poies": "0x…",
@@ -332,4 +332,3 @@ C → { "op":"pong", "params":{"ts":1731091245} }
 	•	CPU scan loop: mining/hash_search.py
 	•	Proof verifiers: proofs/*
 	•	Policy roots / Θ: consensus/*
-

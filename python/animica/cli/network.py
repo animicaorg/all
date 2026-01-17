@@ -11,6 +11,9 @@ from typing import Optional
 
 import typer
 
+from pathlib import Path
+
+from animica.config import get_chain_data_dir
 from .state import get_cli_state
 
 app = typer.Typer(help="Manage network settings for Animica CLI.")
@@ -18,6 +21,17 @@ app = typer.Typer(help="Manage network settings for Animica CLI.")
 # Valid network names
 VALID_NETWORKS = ["mainnet", "testnet", "devnet", "local-devnet"]
 STATE_KEY_NETWORK = "active_network"
+
+
+def _format_display_path(path: Path) -> str:
+    try:
+        expanded = path.expanduser().resolve()
+        home = Path.home()
+        if str(expanded).startswith(str(home)):
+            return f"~{str(expanded)[len(str(home)):]}"
+    except Exception:
+        pass
+    return str(path)
 
 
 @app.command(name="set")
@@ -62,16 +76,18 @@ def set_network(
     
     # Show expected chain IDs and DB paths for transparency
     network_info = {
-        "mainnet": ("chain-1", 1),
-        "testnet": ("chain-2", 2),
-        "devnet": ("chain-1337", 1337),
-        "local-devnet": ("chain-1337", 1337),
+        "mainnet": 0,
+        "testnet": 2,
+        "devnet": 1337,
+        "local-devnet": 1337,
     }
     if network in network_info:
-        db_dir, chain_id = network_info[network]
+        chain_id = network_info[network]
+        data_dir = get_chain_data_dir(chain_id, create=False)
+        data_dir_display = _format_display_path(data_dir)
         typer.echo(f"Chain ID: {chain_id}")
-        typer.echo(f"Data directory: ~/.animica/{db_dir}/")
-        typer.echo(f"DB file: ~/.animica/{db_dir}/animica.db")
+        typer.echo(f"Data directory: {data_dir_display}/")
+        typer.echo(f"DB file: {data_dir_display}/animica.db")
 
 
 @app.command(name="get")
@@ -100,7 +116,7 @@ def get_network() -> None:
         typer.echo("\nSet a network with: animica network set <network>")
     
     typer.echo("\nNote: Each network uses an isolated database to prevent state contamination.")
-    typer.echo("Data directories are organized by chain ID (e.g., ~/.animica/chain-1/ for mainnet).")
+    typer.echo("Data directories are organized by chain ID (e.g., ~/.animica/chain-0/ for mainnet).")
 
 
 @app.command(name="list")
@@ -130,7 +146,7 @@ def list_networks() -> None:
         typer.echo("No network explicitly set (using default: mainnet)")
     
     typer.echo("\nNote: Each network uses an isolated database directory:")
-    typer.echo("  mainnet:      ~/.animica/chain-1/")
+    typer.echo("  mainnet:      ~/.animica/chain-0/")
     typer.echo("  testnet:      ~/.animica/chain-2/")
     typer.echo("  devnet:       ~/.animica/chain-1337/")
     typer.echo("  local-devnet: ~/.animica/chain-1337/")

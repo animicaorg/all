@@ -34,7 +34,7 @@ def test_load_full_params_dict_mainnet():
     """Test that _load_full_params_dict loads mainnet config correctly."""
     from core.chain.block_import import _load_full_params_dict
     
-    params = _load_full_params_dict(1)
+    params = _load_full_params_dict(0)
     
     # Verify structure
     assert isinstance(params, dict)
@@ -44,7 +44,7 @@ def test_load_full_params_dict_mainnet():
     
     # Verify mainnet subsidy config
     subsidy = params["monetary"]["issuance"]["subsidy"]
-    assert subsidy["start_nANM_per_block"] == 5_000_000_000  # 5 ANM
+    assert subsidy["start_nANM_per_block"] == 300_000_000_000  # 300 ANM
 
 
 def test_block_importer_initializes_with_full_params():

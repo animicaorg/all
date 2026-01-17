@@ -59,7 +59,7 @@ def test_unknown_chain_no_checkpoints():
 
 def test_has_builtin_checkpoints():
     """Test has_builtin_checkpoints helper."""
-    assert builtin.has_builtin_checkpoints(1) is True, "Mainnet should have checkpoints"
+    assert builtin.has_builtin_checkpoints(0) is True, "Mainnet should have checkpoints"
     assert builtin.has_builtin_checkpoints(2) is False, "Testnet should have no checkpoints"
     assert builtin.has_builtin_checkpoints(1337) is False, "Devnet should have no checkpoints"
     assert builtin.has_builtin_checkpoints(9999) is False, "Unknown chain should have no checkpoints"
@@ -70,8 +70,8 @@ def test_get_all_builtin_checkpoints():
     all_checkpoints = builtin.get_all_builtin_checkpoints()
     
     # Should have mainnet
-    assert 1 in all_checkpoints, "Should include mainnet"
-    assert len(all_checkpoints[1]) > 0, "Mainnet should have checkpoints"
+    assert 0 in all_checkpoints, "Should include mainnet"
+    assert len(all_checkpoints[0]) > 0, "Mainnet should have checkpoints"
     
     # Should not have empty entries for testnet/devnet
     if 2 in all_checkpoints:
