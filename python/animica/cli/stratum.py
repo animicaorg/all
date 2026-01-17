@@ -141,9 +141,9 @@ def stratum_up(
         help="Logging level (debug, info, warning, error)",
     ),
     daemon: bool = typer.Option(
-        False,
-        "--daemon",
-        help="Run in background as daemon",
+        True,
+        "--daemon/--no-daemon",
+        help="Run in background as daemon (default: True)",
     ),
     log_file: Optional[str] = typer.Option(
         None,
@@ -164,8 +164,26 @@ def stratum_up(
     """
     Start the Stratum mining bridge server.
     
-    By default, binds to localhost (127.0.0.1) only for security.
+    By default, runs as a background daemon. Use --no-daemon to run in foreground.
+    
+    The server binds to localhost (127.0.0.1) only for security.
     Use --public to bind to 0.0.0.0, which requires --auth-token.
+    
+    Examples:
+        # Start in background (default)
+        animica stratum up
+        
+        # Start in foreground
+        animica stratum up --no-daemon
+        
+        # Start on custom port
+        animica stratum up --port 9999
+        
+        # Check if running
+        animica stratum status
+        
+        # Stop the server
+        animica stratum down
     """
     # Check if already running
     pid_file = _resolve_stratum_pid_file()
@@ -216,7 +234,11 @@ def stratum_up(
     if auth_token:
         cmd.extend(["--auth-token", auth_token])
     
-    typer.echo(f"Starting Stratum server on stratum+tcp://{bind}:{port}")
+    if daemon:
+        typer.echo(f"Starting Stratum server in background (daemon mode)")
+    else:
+        typer.echo(f"Starting Stratum server in foreground (press Ctrl+C to stop)")
+    typer.echo(f"Server URL: stratum+tcp://{bind}:{port}")
     typer.echo(f"RPC URL: {rpc_url}")
     typer.echo("Note: Payout address will be set by connecting miners")
     
@@ -252,8 +274,12 @@ def stratum_up(
             _remove_pid_file(pid_file)
             raise typer.Exit(1)
         
-        typer.echo(f"Stratum server started (PID {process.pid})")
-        typer.echo(f"Listening on stratum+tcp://{bind}:{port}")
+        typer.echo(f"\n✓ Stratum server started successfully!")
+        typer.echo(f"  PID: {process.pid}")
+        typer.echo(f"  URL: stratum+tcp://{bind}:{port}")
+        typer.echo(f"  Logs: {log_file}")
+        typer.echo(f"\nConnect miners with:")
+        typer.echo(f"  animica miner stratum --address anim1... --url stratum+tcp://{bind}:{port}")
     else:
         # Run in foreground
         try:

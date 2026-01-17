@@ -20,9 +20,12 @@ animica stratum up --rpc-url http://127.0.0.1:8545/rpc
 
 This will:
 - Start a Stratum server on `stratum+tcp://127.0.0.1:3333` (default)
+- Run as a background daemon (automatic)
 - Connect to your local node RPC
 - Poll for block templates
 - Accept mining connections
+
+The server runs in the background by default. Check status with `animica stratum status` and stop with `animica stratum down`.
 
 ### 3. Mine with the built-in miner
 
@@ -47,8 +50,8 @@ Start the Stratum mining bridge server.
 - `--bind ADDRESS` - Bind address (default: `127.0.0.1` for localhost only)
 - `--port PORT` - Server port (default: `3333`)
 - `--rpc-url URL` - Node RPC URL (default: from network config)
-- `--daemon` - Run in background as daemon
-- `--log-file PATH` - Log file path (daemon mode only)
+- `--daemon / --no-daemon` - Run in background as daemon (default: `--daemon`)
+- `--log-file PATH` - Log file path (daemon mode only, default: `~/.animica/stratum.log`)
 - `--log-level LEVEL` - Logging level: debug, info, warning, error (default: info)
 - `--public` - Bind to 0.0.0.0 (requires `--auth-token`)
 - `--auth-token TOKEN` - Authentication token for public binding
@@ -56,7 +59,7 @@ Start the Stratum mining bridge server.
 **Examples:**
 
 ```bash
-# Start on localhost (default, most secure)
+# Start on localhost (default, most secure, runs as daemon)
 animica stratum up
 
 # Start on custom port
@@ -65,8 +68,11 @@ animica stratum up --port 13333
 # Start with custom RPC URL
 animica stratum up --rpc-url http://localhost:8545/rpc
 
-# Start in daemon mode
-animica stratum up --daemon --log-file ~/.animica/stratum.log
+# Start in foreground mode (for debugging)
+animica stratum up --no-daemon
+
+# Specify custom log file (daemon mode)
+animica stratum up --log-file /var/log/animica/stratum.log
 
 # Start on public IP (requires auth token)
 animica stratum up --public --auth-token my_secret_token --bind 0.0.0.0
