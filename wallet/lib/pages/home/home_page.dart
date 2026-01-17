@@ -275,6 +275,7 @@ class _ActiveSummary extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final amount = balance?.amount ?? BigInt.zero;
+    final metaLines = _balanceMetaLines(balance);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -315,9 +316,51 @@ class _ActiveSummary extends StatelessWidget {
               .bodySmall
               ?.copyWith(color: Theme.of(context).textTheme.bodySmall?.color?.withOpacity(0.7)),
         ),
+        if (metaLines.isNotEmpty) ...[
+          const SizedBox(height: 6),
+          ...metaLines.map(
+            (line) => Text(
+              line,
+              style: Theme.of(context)
+                  .textTheme
+                  .bodySmall
+                  ?.copyWith(color: Theme.of(context).textTheme.bodySmall?.color?.withOpacity(0.7)),
+            ),
+          ),
+        ],
       ],
     );
   }
+}
+
+List<String> _balanceMetaLines(AccountBalance? balance) {
+  if (balance == null) return const [];
+  final lines = <String>[];
+  final height = balance.queriedHeight;
+  final hash = balance.queriedHash;
+  final source = balance.source;
+  final bestBlock = balance.bestBlockHeight;
+  final bestHeader = balance.bestHeaderHeight;
+
+  final headBits = <String>[];
+  if (source.isNotEmpty) headBits.add('source: $source');
+  if (height != null) headBits.add('height: $height');
+  if (hash != null && hash.isNotEmpty) {
+    final short = hash.length > 12 ? '${hash.substring(0, 10)}…' : hash;
+    headBits.add('hash: $short');
+  }
+  if (headBits.isNotEmpty) {
+    lines.add(headBits.join(' • '));
+  }
+  if (bestBlock != null || bestHeader != null) {
+    lines.add(
+      'best block: ${bestBlock ?? '-'} • best header: ${bestHeader ?? '-'}',
+    );
+  }
+  if (balance.isSyncing) {
+    lines.add('syncing: balance may be incomplete');
+  }
+  return lines;
 }
 
 class _AccountsSection extends StatelessWidget {
