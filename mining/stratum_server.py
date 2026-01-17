@@ -252,6 +252,9 @@ class StratumServer:
                 Awaitable[None],
             ]
         ] = None,
+        authorize_hook: Optional[
+            Callable[[Session, str, str], Awaitable[None]]
+        ] = None,
     ) -> None:
         self._host = host
         self._port = port
@@ -266,6 +269,7 @@ class StratumServer:
         self._keepalive_secs = float(keepalive_secs)
         self._validator = validator or ShareValidator()
         self._submit_hook = submit_hook
+        self._authorize_hook = authorize_hook
 
         # Stats
         self._accepted = 0
@@ -672,9 +676,22 @@ class StratumServer:
                 return
             if method_name == Method.AUTHORIZE.value:
                 session.is_v1 = True
+                # V1 authorize typically has format: ["username.worker", "password"]
+                # For Animica, we could encode address in username field if needed
                 session.worker = raw_params[0] if raw_params else None
+                # V1 doesn't pass address in authorize - it's typically encoded in worker name
+                # or set during subscription. For now, we don't support address extraction from v1.
                 session.authorized = True
                 await self._send(session, res_authorize_v1(obj.get("id"), True))
+                
+                # Note: V1 miners don't typically send address in authorize.
+                # If session.address was set elsewhere (e.g., during subscription),
+                # we can call the hook here. Otherwise, v1 miners won't trigger address updates.
+                if self._authorize_hook is not None and session.address:
+                    try:
+                        await self._authorize_hook(session, session.worker or "", session.address)
+                    except Exception as e:  # pragma: no cover
+                        log.warning(f"[Stratum] authorize hook error: {e}")
                 return
             if method_name == Method.SUBMIT.value:
                 mapped = {
@@ -757,6 +774,13 @@ class StratumServer:
             log.info(
                 f"[Stratum] authorize worker={session.worker} address={session.address} session={session.session_id}"
             )
+            
+            # Call authorize hook if set (allows bridge to update payout address)
+            if self._authorize_hook is not None and session.address:
+                try:
+                    await self._authorize_hook(session, session.worker or "", session.address)
+                except Exception as e:  # pragma: no cover
+                    log.warning(f"[Stratum] authorize hook error: {e}")
 
         elif method == Method.SET_DIFFICULTY:
             # Clients should not be sending this; treat as request to fetch current settings
@@ -897,6 +921,23 @@ class StratumServer:
         ],
     ) -> None:
         self._submit_hook = hook
+    
+    def set_authorize_hook(
+        self,
+        hook: Optional[Callable[[Session, str, str], Awaitable[None]]],
+    ) -> None:
+        """
+        Set a hook to be called when a miner authorizes.
+        
+        The hook receives:
+        - session: The Session object
+        - worker: Worker name/identifier
+        - address: Payout address (Bech32 format)
+        
+        This is useful for dynamically updating the bridge's payout address
+        when miners connect.
+        """
+        self._authorize_hook = hook
 
 
 # --------------------------------------------------------------------------------------
