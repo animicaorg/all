@@ -209,7 +209,12 @@ class PathsConfig:
 
     @staticmethod
     def defaults(chain: ChainConfig) -> "PathsConfig":
-        root = _default_data_dir() / f"chain-{chain.chain_id}"
+        try:
+            from animica.config import get_chain_data_dir
+
+            root = get_chain_data_dir(chain.chain_id, create=False)
+        except Exception:
+            root = _default_data_dir() / f"chain-{chain.chain_id}"
         return PathsConfig(
             data_dir=root,
             logs_dir=root / "logs",

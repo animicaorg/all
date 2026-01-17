@@ -15,7 +15,7 @@ Examples
 --------
 python -m p2p.cli.listen \
   --db sqlite:///animica.db \
-  --chain-id 1 \
+  --chain-id 0 \
   --listen /ip4/0.0.0.0/tcp/30333 \
   --seed /ip4/144.126.133.21/tcp/30333 \
   --enable-quic \
@@ -348,7 +348,7 @@ def _build_argparser() -> argparse.ArgumentParser:
     p.add_argument(
         "--db", default=DEFAULT_DB_URI, help=f"DB URI (default: {DEFAULT_DB_URI})"
     )
-    p.add_argument("--chain-id", type=int, default=1, help="Chain ID (default: 1)")
+    p.add_argument("--chain-id", type=int, default=0, help="Chain ID (default: 0)")
     p.add_argument(
         "--listen",
         action="append",

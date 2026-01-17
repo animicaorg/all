@@ -67,7 +67,7 @@ def _setup_logging(level: str = "INFO") -> None:
 # ---- Args -----------------------------------------------------------------------------
 def _build_argparser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="animica-p2p publish", add_help=True)
-    p.add_argument("--chain-id", type=int, default=1, help="Chain ID (default: 1)")
+    p.add_argument("--chain-id", type=int, default=0, help="Chain ID (default: 0)")
     p.add_argument(
         "--seed",
         action="append",

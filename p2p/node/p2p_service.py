@@ -538,6 +538,10 @@ class SyncStatusSnapshot:
     """Peers with fresh tip info."""
     peer_tips_stale: int
     """Peers with stale tip info."""
+    peer_tip_last_poll_at: Dict[str, float]
+    """Last HEAD_STATUS poll attempt timestamps by peer."""
+    peer_tip_last_errors: Dict[str, str]
+    """Most recent HEAD_STATUS polling errors by peer."""
     behind_by: Optional[int]
     """Blocks behind best remote (None if remote unknown)."""
     sync_status_reason: Optional[str]
@@ -666,6 +670,8 @@ class SyncStatusSnapshot:
             "peer_tips_total": self.peer_tips_total,
             "peer_tips_fresh": self.peer_tips_fresh,
             "peer_tips_stale": self.peer_tips_stale,
+            "peer_tip_last_poll_at": dict(self.peer_tip_last_poll_at),
+            "peer_tip_last_errors": dict(self.peer_tip_last_errors),
             "behind_by": self.behind_by,
             "sync_status_reason": self.sync_status_reason,
             "in_flight": self.in_flight,
@@ -3119,6 +3125,23 @@ class P2PService:
         peer_tips_total, peer_tips_fresh, peer_tips_stale = (
             self._peer_tip_freshness_snapshot(chain_id=chain_id)
         )
+        peer_tip_last_poll_at: Dict[str, float] = {}
+        peer_tip_last_errors: Dict[str, str] = {}
+        for peer in self._peers.values():
+            if not peer.hello_done.is_set():
+                continue
+            if not peer.identity_ok:
+                continue
+            if not peer.repo_state_ok:
+                continue
+            if chain_id is not None and not self._peer_chain_matches(peer):
+                continue
+            last_poll = self._peer_head_poll_at.get(peer.remote)
+            if last_poll is not None and last_poll > 0:
+                peer_tip_last_poll_at[peer.remote] = float(last_poll)
+            info = self._peer_tip_tracker.get(peer.remote)
+            if info is not None and info.last_error:
+                peer_tip_last_errors[peer.remote] = str(info.last_error)
         
         # Compute behind_by and sync_status_reason
         behind_by: Optional[int] = None
@@ -3335,6 +3358,8 @@ class P2PService:
             peer_tips_total=peer_tips_total,
             peer_tips_fresh=peer_tips_fresh,
             peer_tips_stale=peer_tips_stale,
+            peer_tip_last_poll_at=peer_tip_last_poll_at,
+            peer_tip_last_errors=peer_tip_last_errors,
             behind_by=behind_by,
             sync_status_reason=sync_status_reason,
             in_flight=len(self._sync_inflight_blocks),
@@ -4704,7 +4729,7 @@ class P2PService:
         head_hash: Optional[bytes],
         source: str,
     ) -> None:
-        if height <= 0:
+        if height < 0:
             return
         self._peer_tip_tracker.update(
             peer.remote,
@@ -6302,7 +6327,7 @@ class P2PService:
                 },
             )
         peer.hello_done.set()
-        if normalized.get("head_height"):
+        if normalized.get("head_height") is not None:
             self._update_peer_head_table(
                 peer,
                 height=int(normalized["head_height"]),
@@ -12457,7 +12482,7 @@ class P2PService:
         Only considers peers with:
         - Same chain_id (if specified)
         - Fresh tip info (updated within TIP_FRESHNESS threshold)
-        - Valid numeric height > 0
+        - Valid numeric height >= 0
         
         Returns (None, None, None, None) if no fresh peer tips available.
         This is critical for accurate sync status - we must never claim SYNCHRONIZED
@@ -12497,7 +12522,7 @@ class P2PService:
                 continue
 
             peer_height = int(info.height)
-            if peer_height <= 0:
+            if peer_height < 0:
                 continue
 
             # Track best height

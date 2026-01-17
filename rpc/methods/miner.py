@@ -2727,6 +2727,17 @@ def _mine_once(
     ctx = _ctx()
     adapter = _adapter()
     mempool_service = getattr(ctx, "mempool", None)
+    payout_addr_bytes = (
+        payout_address if payout_address is not None else _get_miner_address()
+    )
+    balance_before = None
+    if getattr(ctx, "state_db", None) is not None:
+        try:
+            from execution.state.apply_balance import get_balance as get_balance_from_state
+
+            balance_before = get_balance_from_state(ctx.state_db, payout_addr_bytes)
+        except Exception:
+            balance_before = None
     pending_entries: list[PendingTxEntry] = []
     pending_raw_by_hash: dict[str, bytes] = {}
     selection_summary: dict[str, Any] = {
@@ -3050,7 +3061,7 @@ def _mine_once(
     timestamp_min, timestamp_max, _ = _timestamp_bounds(parent_header)
     
     # Use provided payout_address or fall back to default miner address
-    coinbase_bytes = payout_address if payout_address is not None else _get_miner_address()
+    coinbase_bytes = payout_addr_bytes
     
     header_template = _build_child_header(parent_height, parent_hash_bytes, parent_header, coinbase=coinbase_bytes, instant_block=instant_block)
     
@@ -3567,13 +3578,24 @@ def _mine_once(
 
             # INVARIANT CHECK: Verify reward was credited correctly
             # This is a critical check to ensure mining economics are correct
-            payout_addr_bytes = (
-                payout_address if payout_address is not None else _get_miner_address()
-            )
             try:
                 from execution.state.apply_balance import get_balance as get_balance_from_state
                 final_balance = get_balance_from_state(ctx.state_db, payout_addr_bytes)
                 block_hash_hex = "0x" + block_hash_bytes.hex()
+                credited_total = None
+                fee_total = None
+                if balance_before is not None:
+                    credited_total = final_balance - balance_before
+                    fee_total = max(0, credited_total - reward_amount)
+                total_reward = reward_amount + (fee_total or 0)
+                subsidy_anm = reward_amount / 1_000_000_000
+                fees_anm = (fee_total or 0) / 1_000_000_000
+                total_anm = total_reward / 1_000_000_000
+                credited_anm = (
+                    credited_total / 1_000_000_000
+                    if credited_total is not None
+                    else None
+                )
                 
                 # Record in mining audit trail
                 # IMPORTANT: credited_reward is the actual reward amount credited for THIS block,
@@ -3616,12 +3638,20 @@ def _mine_once(
                     )
                     # Don't fail mining, but log prominently so this is caught
                 
+                credited_label = (
+                    f"{credited_total} nANM ({credited_anm:.9f} ANM)"
+                    if credited_total is not None
+                    else "unknown"
+                )
                 log.info(
                     f"✓ ACCEPTED: Block mined and reward credited | "
                     f"height={header.height} | "
                     f"hash={block_hash_hex} | "
                     f"coinbase={payout_addr_bytes.hex()[:16]}... | "
-                    f"reward={reward_amount} nANM | "
+                    f"subsidy={reward_amount} nANM ({subsidy_anm:.9f} ANM) | "
+                    f"fees={fee_total or 0} nANM ({fees_anm:.9f} ANM) | "
+                    f"total={total_reward} nANM ({total_anm:.9f} ANM) | "
+                    f"credited={credited_label} | "
                     f"new_balance={final_balance} nANM | "
                     f"txs={len(txs)} | receipts={len(receipts) if receipts else 0}"
                 )

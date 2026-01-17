@@ -8,7 +8,7 @@ Fetches the current mining template from a local/remote node via JSON-RPC and
 prints it as JSON. Useful for quick sanity checks and debugging miners.
 
 Usage:
-  python -m mining.cli.getwork --rpc-url http://127.0.0.1:8547 --chain-id 1
+  python -m mining.cli.getwork --rpc-url http://127.0.0.1:8547 --chain-id 0
   ANIMICA_RPC_URL=http://127.0.0.1:8547 python -m mining.cli.getwork
 """
 
@@ -79,7 +79,7 @@ def main(argv: list[str]) -> int:
     p.add_argument(
         "--chain-id",
         type=int,
-        default=int(_env_default("ANIMICA_CHAIN_ID", "1") or "1"),
+        default=int(_env_default("ANIMICA_CHAIN_ID", "0") or "0"),
         help="Chain ID to request work for (default: %(default)s or $ANIMICA_CHAIN_ID)",
     )
     p.add_argument(

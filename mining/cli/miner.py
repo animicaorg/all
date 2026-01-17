@@ -247,8 +247,8 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     start.add_argument(
         "--chain-id",
         type=int,
-        default=int(_env_default("ANIMICA_CHAIN_ID", "1")),
-        help="chain id (default: 1 animica main)",
+        default=int(_env_default("ANIMICA_CHAIN_ID", "0")),
+        help="chain id (default: 0 animica main)",
     )
     start.add_argument(
         "--metrics",

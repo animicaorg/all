@@ -79,6 +79,14 @@ def test_mainnet_block_reward_at_height_1():
         f"Expected coinbase address, got {miner_addr}"
 
 
+def test_mainnet_block_reward_height_1_base_units():
+    """Unit test: height=1 subsidy equals 300 ANM in base units."""
+    params = load_mainnet_params()
+    rewards = compute_block_reward(chain_id=0, height=1, params=params)
+    assert rewards
+    assert rewards[0][1] == 300 * 1_000_000_000
+
+
 def test_mainnet_block_reward_halving_at_1_35m():
     """Test that mainnet block reward halves at 1.35M blocks."""
     params = load_mainnet_params()
