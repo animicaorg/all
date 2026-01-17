@@ -73,6 +73,12 @@ class StratumPoolServer:
         header = dict(job.header or {})
         if job.sign_bytes:
             header.setdefault("signBytes", job.sign_bytes)
+        else:
+            # Log warning if signBytes is missing
+            self._log.warning(
+                "MiningJob lacks signBytes; miners will not be able to hash",
+                extra={"job_id": job.job_id, "height": job.height},
+            )
         if job.target:
             header.setdefault("target", job.target)
         if job.height:
@@ -81,6 +87,12 @@ class StratumPoolServer:
         # Miners expect header.mixSeed, not hints.mixSeed
         if job.hints and "mixSeed" in job.hints:
             header.setdefault("mixSeed", job.hints["mixSeed"])
+        else:
+            # Log info if mixSeed is missing (less critical than signBytes)
+            self._log.info(
+                "MiningJob lacks mixSeed in hints; using default",
+                extra={"job_id": job.job_id, "height": job.height},
+            )
         stratum_job = StratumJob(
             job_id=job.job_id,
             header=header,

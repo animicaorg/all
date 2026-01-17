@@ -122,6 +122,18 @@ class MiningCoreAdapter:
         target = work.get("target")
         sign_bytes = work.get("signBytes")
         hints = work.get("hints") or {}
+        
+        # Critical: signBytes is required for miners to hash
+        if not sign_bytes:
+            self._log.warning(
+                "signBytes missing from miner.getWork response; "
+                "miners will not be able to hash this job",
+                extra={
+                    "job_id": job_id,
+                    "height": height,
+                    "work_keys": list(work.keys()),
+                },
+            )
 
         return MiningJob(
             job_id=job_id,
