@@ -110,6 +110,31 @@ class StratumBridge:
         """Stop the bridge."""
         self._stop.set()
     
+    async def set_payout_address(self, address: str) -> None:
+        """
+        Update the payout address and immediately fetch a new template.
+        
+        This method is called when a miner connects and authorizes with a valid address.
+        It updates the bridge's payout address and immediately attempts to fetch a template
+        so that the miner can start working without delay.
+        
+        Args:
+            address: Valid Bech32 payout address
+        """
+        if address == self._payout_address:
+            return  # No change needed
+        
+        old_address = self._payout_address
+        self._payout_address = address
+        
+        log.info(f"Updated payout address: {old_address} -> {address}")
+        
+        # Immediately fetch a template with the new address
+        try:
+            await self._poll_template()
+        except Exception as e:
+            log.warning(f"Failed to fetch template after address update: {e}")
+    
     async def _poll_loop(self) -> None:
         """Poll getBlockTemplate from node."""
         while not self._stop.is_set():
@@ -422,6 +447,15 @@ async def run_bridge_server(
                 log.info(f"✓ Block found by worker {session.worker}!")
     
     server.set_submit_hook(submit_hook)
+    
+    # Set up authorize hook to update bridge payout address when miners connect
+    async def authorize_hook(session, worker, address):
+        """Update bridge payout address when miner authorizes with an address."""
+        if address and address.startswith("anim1"):
+            log.info(f"Miner authorized with address {address}, updating bridge payout address")
+            await bridge.set_payout_address(address)
+    
+    server.set_authorize_hook(authorize_hook)
     
     # Publish initial job to server if available
     # This ensures clients connecting immediately after startup receive a job
