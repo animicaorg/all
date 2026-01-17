@@ -31,8 +31,8 @@ async def test_client_receives_job_after_authorization():
     1. Server starts with no job
     2. Client connects and subscribes (no job available)
     3. Client authorizes
-    4. authorize_hook publishes a job
-    5. Client should receive the job before authorization completes
+    4. authorize_hook publishes a job (runs before auth response is sent)
+    5. Client should receive the job after authorization completes
     """
     port = _free_port()
     

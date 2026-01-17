@@ -35,6 +35,11 @@ log = get_logger("mining.stratum_bridge")
 PLACEHOLDER_ADDRESS = "anim1placeholder"
 
 
+# Configuration constants for template fetching
+MAX_TEMPLATE_RETRIES = 3
+TEMPLATE_RETRY_DELAY = 0.5  # seconds
+
+
 def is_valid_animica_address(address: str) -> bool:
     """
     Check if an address is a valid Animica Bech32 address.
@@ -499,8 +504,7 @@ async def run_bridge_server(
             
             # Retry fetching template if not available yet
             # This handles the case where the initial fetch with placeholder address failed
-            max_retries = 3
-            for attempt in range(max_retries):
+            for attempt in range(MAX_TEMPLATE_RETRIES):
                 job_dict = await bridge.get_current_job()
                 if job_dict:
                     job = _create_stratum_job(job_dict, share_target)
@@ -508,16 +512,16 @@ async def run_bridge_server(
                     log.info(f"Published job {job_dict['job_id']} to miner {worker} after address update")
                     break
                 else:
-                    if attempt < max_retries - 1:
-                        log.warning(f"No template available yet for address {address}, retrying ({attempt + 1}/{max_retries})...")
-                        await asyncio.sleep(0.5)
+                    if attempt < MAX_TEMPLATE_RETRIES - 1:
+                        log.warning(f"No template available yet for address {address}, retrying ({attempt + 1}/{MAX_TEMPLATE_RETRIES})...")
+                        await asyncio.sleep(TEMPLATE_RETRY_DELAY)
                         # Manually trigger a template poll
                         try:
                             await bridge._poll_template()
                         except Exception as e:
                             log.debug(f"Template poll attempt {attempt + 1} failed: {e}")
                     else:
-                        log.error(f"Failed to fetch template after {max_retries} attempts for address {address}")
+                        log.error(f"Failed to fetch template after {MAX_TEMPLATE_RETRIES} attempts for address {address}")
     
     server.set_authorize_hook(authorize_hook)
     
