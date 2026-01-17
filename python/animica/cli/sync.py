@@ -49,6 +49,7 @@ fastbootstrap_app = typer.Typer(help="FastBootstrap v2 utilities.")
 DEFAULT_RPC_URL = load_network_config().rpc_url
 RPC_ENV = "ANIMICA_RPC_URL"
 BOOTSTRAP_RPC_ENV = "ANIMICA_BOOTSTRAP_RPC_URL"
+PEER_TIP_FRESHNESS_WINDOW_S = 600.0
 
 
 async def rpc_call(
@@ -179,6 +180,21 @@ def _coerce_int(value: Any) -> Optional[int]:
     return None
 
 
+def _coerce_float(value: Any) -> Optional[float]:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError:
+            return None
+    return None
+
+
 def _compute_sync_percent(current: Optional[int], target: Optional[int]) -> Optional[float]:
     if current is None or target is None or target <= 0:
         return None
@@ -195,6 +211,12 @@ def _extract_sync_metrics(sync_status: Optional[Dict[str, Any]]) -> Dict[str, An
         "best_block_height": None,
         "phase": None,
         "target_height": None,
+        "best_remote_height": None,
+        "best_remote_hash": None,
+        "best_remote_peer": None,
+        "best_remote_age_sec": None,
+        "behind_by": None,
+        "sync_status_reason": None,
     }
 
     if not isinstance(sync_status, dict):
@@ -202,6 +224,12 @@ def _extract_sync_metrics(sync_status: Optional[Dict[str, Any]]) -> Dict[str, An
 
     metrics["phase"] = sync_status.get("phase") or sync_status.get("state")
     metrics["synchronized"] = bool(sync_status.get("synchronized"))
+    metrics["best_remote_height"] = _coerce_int(sync_status.get("best_remote_height"))
+    metrics["best_remote_hash"] = sync_status.get("best_remote_hash")
+    metrics["best_remote_peer"] = sync_status.get("best_remote_peer")
+    metrics["best_remote_age_sec"] = _coerce_float(sync_status.get("best_remote_age_sec"))
+    metrics["behind_by"] = _coerce_int(sync_status.get("behind_by"))
+    metrics["sync_status_reason"] = sync_status.get("sync_status_reason")
 
     best_header_height = _coerce_int(
         sync_status.get("best_header_height")
@@ -509,6 +537,75 @@ def _extract_peer_head_hash(peer: Dict[str, Any]) -> Optional[str]:
     return None
 
 
+def _extract_peer_last_seen(peer: Dict[str, Any]) -> Optional[float]:
+    for key in ("lastSeen", "last_seen", "lastSeenAt", "last_seen_at"):
+        if key in peer:
+            return _coerce_float(peer.get(key))
+    meta = peer.get("meta") if isinstance(peer.get("meta"), dict) else None
+    if meta:
+        for key in ("lastSeen", "last_seen", "lastSeenAt", "last_seen_at"):
+            if key in meta:
+                return _coerce_float(meta.get(key))
+    return None
+
+
+def _select_best_fresh_peer_tip(
+    peers: List[Dict[str, Any]],
+    *,
+    freshness_window_s: float,
+) -> tuple[Optional[int], Optional[str], Optional[Dict[str, Any]], Optional[float]]:
+    now = time.time()
+    best_height = None
+    best_hash = None
+    best_peer = None
+    best_age = None
+    for peer in peers:
+        height = _extract_peer_head_height(peer)
+        if height is None:
+            continue
+        last_seen = _extract_peer_last_seen(peer)
+        if last_seen is None:
+            continue
+        age = max(0.0, now - last_seen)
+        if age > freshness_window_s:
+            continue
+        if best_height is None or height > best_height:
+            best_height = height
+            best_hash = _extract_peer_head_hash(peer)
+            best_peer = peer
+            best_age = age
+    return best_height, best_hash, best_peer, best_age
+
+
+def _peer_tip_diagnostics(
+    peers: List[Dict[str, Any]],
+    *,
+    freshness_window_s: float,
+) -> Dict[str, int]:
+    now = time.time()
+    diagnostics = {
+        "peers_with_height": 0,
+        "peers_with_seen": 0,
+        "peers_with_fresh_tip": 0,
+        "peers_with_stale_tip": 0,
+    }
+    for peer in peers:
+        height = _extract_peer_head_height(peer)
+        if height is None:
+            continue
+        diagnostics["peers_with_height"] += 1
+        last_seen = _extract_peer_last_seen(peer)
+        if last_seen is None:
+            continue
+        diagnostics["peers_with_seen"] += 1
+        age = max(0.0, now - last_seen)
+        if age <= freshness_window_s:
+            diagnostics["peers_with_fresh_tip"] += 1
+        else:
+            diagnostics["peers_with_stale_tip"] += 1
+    return diagnostics
+
+
 def _select_best_peer_head(peers: List[Dict[str, Any]]) -> tuple[Optional[int], Optional[str], Optional[Dict[str, Any]]]:
     best_height = None
     best_hash = None
@@ -522,6 +619,14 @@ def _select_best_peer_head(peers: List[Dict[str, Any]]) -> tuple[Optional[int], 
             best_hash = _extract_peer_head_hash(peer)
             best_peer = peer
     return best_height, best_hash, best_peer
+
+
+def _format_peer_label(peer: Dict[str, Any]) -> Optional[str]:
+    peer_id = peer.get("id") or peer.get("peerId") or peer.get("peer_id")
+    peer_addr = peer.get("addr") or peer.get("address") or peer.get("multiaddr")
+    if peer_id and peer_addr:
+        return f"{peer_id} ({peer_addr})"
+    return peer_id or peer_addr
 
 
 def _pretty(obj: Any) -> str:
@@ -1158,12 +1263,44 @@ def sync_status(
     sync_status_reason = None
     
     if isinstance(sync_status, dict):
-        best_remote_height = sync_status.get("best_remote_height")
+        best_remote_height = _coerce_int(sync_status.get("best_remote_height"))
         best_remote_hash = sync_status.get("best_remote_hash")
         best_remote_peer = sync_status.get("best_remote_peer")
-        best_remote_age_sec = sync_status.get("best_remote_age_sec")
-        behind_by = sync_status.get("behind_by")
+        best_remote_age_sec = _coerce_float(sync_status.get("best_remote_age_sec"))
+        behind_by = _coerce_int(sync_status.get("behind_by"))
         sync_status_reason = sync_status.get("sync_status_reason")
+
+    if best_remote_height is None and peers:
+        (
+            fresh_tip_height,
+            fresh_tip_hash,
+            fresh_tip_peer,
+            fresh_tip_age,
+        ) = _select_best_fresh_peer_tip(
+            peers,
+            freshness_window_s=PEER_TIP_FRESHNESS_WINDOW_S,
+        )
+        if fresh_tip_height is not None:
+            best_remote_height = fresh_tip_height
+            best_remote_hash = fresh_tip_hash
+            best_remote_peer = _format_peer_label(fresh_tip_peer) if fresh_tip_peer else None
+            best_remote_age_sec = fresh_tip_age
+        elif sync_status_reason is None:
+            diagnostics = _peer_tip_diagnostics(
+                peers,
+                freshness_window_s=PEER_TIP_FRESHNESS_WINDOW_S,
+            )
+            if diagnostics["peers_with_height"] == 0:
+                sync_status_reason = "peer_head_heights_unavailable"
+            elif diagnostics["peers_with_seen"] == 0:
+                sync_status_reason = "peer_tip_timestamp_missing"
+            else:
+                sync_status_reason = "peer_tips_stale"
+    elif best_remote_height is None and sync_status_reason is None:
+        sync_status_reason = "no_peers_connected"
+
+    if behind_by is None and best_remote_height is not None and height is not None:
+        behind_by = best_remote_height - height
     
     # Use best_remote as the authoritative network height if available and fresher
     if best_remote_height is not None:
@@ -1173,6 +1310,12 @@ def sync_status(
             network_source = "peer_fresh"
     
     metrics = _extract_sync_metrics(sync_status)
+    metrics["best_remote_height"] = _coerce_int(best_remote_height)
+    metrics["best_remote_hash"] = best_remote_hash
+    metrics["best_remote_peer"] = best_remote_peer
+    metrics["best_remote_age_sec"] = _coerce_float(best_remote_age_sec)
+    metrics["behind_by"] = _coerce_int(behind_by)
+    metrics["sync_status_reason"] = sync_status_reason
     is_syncing = bool(metrics.get("syncing"))
     target_height = metrics.get("target_height")
     best_header_height = metrics.get("best_header_height")
