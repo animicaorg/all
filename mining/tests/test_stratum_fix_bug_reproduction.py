@@ -12,6 +12,7 @@ two server instances and orphaned the first one with the initial job.
 
 import asyncio
 import socket
+import sys
 from typing import Optional
 
 import pytest
@@ -31,7 +32,19 @@ def _free_port() -> int:
 
 
 class MockRpcClient:
-    """Mock RPC client that returns a fake block template."""
+    """
+    Mock RPC client for testing stratum bridge without a real node.
+    
+    Returns fake block templates to simulate a working node RPC endpoint.
+    Tracks call counts for test assertions.
+    
+    Args:
+        template_available: If True, getBlockTemplate returns a valid template.
+                           If False, returns None (simulates no template available).
+    
+    Attributes:
+        call_count: Number of times call() has been invoked (useful for assertions).
+    """
     
     def __init__(self, template_available: bool = True):
         self.template_available = template_available
@@ -244,8 +257,6 @@ async def test_no_duplicate_server_instances():
     await client.close()
     await server.stop()
 
-
 if __name__ == "__main__":
     # Allow running directly for manual testing
-    import sys
-    sys.exit(pytest.main([__file__, "-v", "-s"]))
+    pytest.main([__file__, "-v", "-s"])
