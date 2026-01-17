@@ -522,8 +522,9 @@ def test_wallet_show_rpc_success(premine_wallet_store: Path) -> None:
     """Test wallet show with successful RPC balance fetch."""
     rpc_url = "http://localhost:9999/rpc"
     # Mock RPC to return 1.5 ANM (1,500,000,000 base units)
-    # Now needs 3 responses: getSafeHead, getHead, getBalance
+    # Now needs 4 responses: sync.getStatus, getSafeHead, getHead, getBalance
     respx.post(rpc_url).mock(side_effect=[
+        httpx.Response(200, json={"jsonrpc": "2.0", "id": 1, "result": {"best_block_height": 145, "best_block_hash": "0x" + "c" * 64, "best_header_height": 150}}),  # sync.getStatus
         httpx.Response(200, json={"jsonrpc": "2.0", "id": 1, "result": {"height": 145, "hash": "0x" + "a" * 64}}),  # getSafeHead
         httpx.Response(200, json={"jsonrpc": "2.0", "id": 2, "result": {"height": 150, "hash": "0x" + "b" * 64}}),  # getHead
         httpx.Response(200, json={"jsonrpc": "2.0", "id": 3, "result": 1_500_000_000}),  # getBalance
@@ -541,15 +542,17 @@ def test_wallet_show_rpc_success(premine_wallet_store: Path) -> None:
     
     # Verify height information is present
     assert "balance_confirmed_height" in data
-    assert data["balance_confirmed_height"] == 145  # From getSafeHead
+    assert data["balance_confirmed_height"] == 145  # From best_block_height
+    assert data["balance_confirmed_hash"] == "0x" + "c" * 64
 
 
 @respx.mock
 def test_wallet_show_rpc_failure(premine_wallet_store: Path) -> None:
     """Test wallet show handles RPC failure gracefully."""
     rpc_url = "http://localhost:9999/rpc"
-    # Mock RPC to return error - now needs 3 responses
+    # Mock RPC to return error - now needs 4 responses
     respx.post(rpc_url).mock(side_effect=[
+        httpx.Response(200, json={"jsonrpc": "2.0", "id": 1, "result": {"best_block_height": 100, "best_block_hash": "0x" + "c" * 64, "best_header_height": 105}}),  # sync.getStatus
         httpx.Response(200, json={"jsonrpc": "2.0", "id": 1, "result": {"height": 100, "hash": "0x" + "a" * 64}}),  # getSafeHead
         httpx.Response(200, json={"jsonrpc": "2.0", "id": 2, "result": {"height": 105, "hash": "0x" + "b" * 64}}),  # getHead
         httpx.Response(200, json={"jsonrpc": "2.0", "id": 3, "error": {"code": -32000, "message": "Node unreachable"}}),  # getBalance error
@@ -570,9 +573,10 @@ def test_wallet_show_rpc_failure(premine_wallet_store: Path) -> None:
 def test_wallet_show_rpc_network_timeout(premine_wallet_store: Path) -> None:
     """Test wallet show handles network timeout gracefully."""
     rpc_url = "http://localhost:9999/rpc"
-    # Mock RPC to timeout - now needs 3 responses
+    # Mock RPC to timeout - now needs 4 responses
     import httpx
     respx.post(rpc_url).mock(side_effect=[
+        httpx.Response(200, json={"jsonrpc": "2.0", "id": 1, "result": {"best_block_height": 100, "best_block_hash": "0x" + "c" * 64, "best_header_height": 105}}),  # sync.getStatus
         httpx.Response(200, json={"jsonrpc": "2.0", "id": 1, "result": {"height": 100, "hash": "0x" + "a" * 64}}),  # getSafeHead
         httpx.Response(200, json={"jsonrpc": "2.0", "id": 2, "result": {"height": 105, "hash": "0x" + "b" * 64}}),  # getHead
         httpx.TimeoutException("Connection timeout"),  # getBalance timeout
@@ -593,6 +597,7 @@ def test_wallet_show_chain_source_errors_on_failure(premine_wallet_store: Path) 
 
     rpc_url = "http://localhost:9999/rpc"
     respx.post(rpc_url).mock(side_effect=[
+        httpx.Response(200, json={"jsonrpc": "2.0", "id": 1, "result": {"best_block_height": 100, "best_block_hash": "0x" + "c" * 64, "best_header_height": 105}}),  # sync.getStatus
         httpx.Response(200, json={"jsonrpc": "2.0", "id": 1, "result": {"height": 100, "hash": "0x" + "a" * 64}}),  # getSafeHead
         httpx.Response(200, json={"jsonrpc": "2.0", "id": 2, "result": {"height": 105, "hash": "0x" + "b" * 64}}),  # getHead
         httpx.Response(200, json={"jsonrpc": "2.0", "id": 3, "error": {"code": -32000}}),  # getBalance error

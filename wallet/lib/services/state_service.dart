@@ -30,6 +30,26 @@ final _M_BLOCK_NUMBER    = _USE_ETH_NAMES ? 'eth_blockNumber' : 'animica_blockNu
 /// Block tag values typically: 'latest' | 'pending' | explicit height (0xHEX or int)
 typedef BlockTag = Object?; // String tag or int/hex string
 
+class BalanceContext {
+  final String source;
+  final int? queriedHeight;
+  final String? queriedHash;
+  final int? bestBlockHeight;
+  final String? bestBlockHash;
+  final int? bestHeaderHeight;
+  final bool isSyncing;
+
+  const BalanceContext({
+    required this.source,
+    this.queriedHeight,
+    this.queriedHash,
+    this.bestBlockHeight,
+    this.bestBlockHash,
+    this.bestHeaderHeight,
+    this.isSyncing = false,
+  });
+}
+
 class StateService {
   final RpcClient rpc;
 
@@ -60,6 +80,74 @@ class StateService {
   Future<int> getBlockNumber() async {
     final res = await rpc.call<dynamic>(_M_BLOCK_NUMBER);
     return _parseInt(res);
+  }
+
+  /// Canonical balance context (head/best block) with sync metadata.
+  Future<BalanceContext> getBalanceContext() async {
+    int? headHeight;
+    String? headHash;
+    int? bestBlockHeight;
+    String? bestBlockHash;
+    int? bestHeaderHeight;
+
+    try {
+      final status = await rpc.call<dynamic>('node.getStatus');
+      if (status is Map) {
+        final chain = status['chain'];
+        if (chain is Map) {
+          final head = chain['head'];
+          if (head is Map) {
+            headHeight = _parseNullableInt(head['height']);
+            headHash = _asHex(head['hash']);
+          }
+        }
+        final sync = status['sync'];
+        if (sync is Map) {
+          bestBlockHeight = _parseNullableInt(
+            sync['best_block_height'] ?? sync['bestBlockHeight'],
+          );
+          bestBlockHash = _asHex(sync['best_block_hash'] ?? sync['bestBlockHash']);
+          bestHeaderHeight = _parseNullableInt(
+            sync['best_header_height'] ?? sync['bestHeaderHeight'],
+          );
+        }
+      }
+    } catch (_) {
+      // Fall back below.
+    }
+
+    if (headHeight == null || headHash == null) {
+      try {
+        final head = await rpc.call<dynamic>('chain.getHead');
+        if (head is Map) {
+          headHeight = headHeight ?? _parseNullableInt(head['height']);
+          headHash = headHash ?? _asHex(head['hash']);
+        }
+      } catch (_) {
+        // Ignore; we'll fall back to blockNumber if needed.
+      }
+    }
+
+    if (bestBlockHeight == null && headHeight != null) {
+      bestBlockHeight = headHeight;
+    }
+    if (bestBlockHash == null && headHash != null) {
+      bestBlockHash = headHash;
+    }
+
+    final syncing = (bestHeaderHeight != null &&
+        bestBlockHeight != null &&
+        bestHeaderHeight > bestBlockHeight);
+
+    return BalanceContext(
+      source: 'chain_state',
+      queriedHeight: bestBlockHeight ?? headHeight,
+      queriedHash: bestBlockHash ?? headHash,
+      bestBlockHeight: bestBlockHeight,
+      bestBlockHash: bestBlockHash,
+      bestHeaderHeight: bestHeaderHeight,
+      isSyncing: syncing,
+    );
   }
 
   // ---------------- Helpers ----------------
@@ -115,6 +203,27 @@ class StateService {
       return int.tryParse(s) ?? int.parse(json.decode(s).toString());
     }
     return int.parse(v.toString());
+  }
+
+  int? _parseNullableInt(dynamic v) {
+    if (v == null) return null;
+    if (v is int) return v;
+    if (v is String) {
+      final s = v.trim();
+      if (s.isEmpty) return null;
+      if (s.startsWith('0x') || s.startsWith('0X')) {
+        if (s.length <= 2) return 0;
+        return int.parse(s.substring(2), radix: 16);
+      }
+      return int.tryParse(s) ?? int.tryParse(json.decode(s).toString());
+    }
+    return int.tryParse(v.toString());
+  }
+
+  String? _asHex(dynamic v) {
+    if (v == null) return null;
+    if (v is String) return v;
+    return v.toString();
   }
 
   /// Dispose underlying HTTP client if you created many instances.

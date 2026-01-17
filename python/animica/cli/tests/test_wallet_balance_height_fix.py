@@ -51,6 +51,7 @@ def test_wallet_show_displays_balance_height_with_safe_and_tip(
     monkeypatch.setattr(wallet, "_resolve_rpc_url", lambda x: "http://127.0.0.1:8545")
     
     safe_height = 145
+    best_block_height = 148
     tip_height = 150
     safe_balance = 1000000000
     tip_balance = 1100000000
@@ -66,6 +67,15 @@ def test_wallet_show_displays_balance_height_with_safe_and_tip(
         return None
     
     monkeypatch.setattr(wallet, "_get_head_info", mock_get_head_info)
+    monkeypatch.setattr(
+        wallet,
+        "_get_sync_status",
+        lambda rpc_url: {
+            "best_block_height": best_block_height,
+            "best_block_hash": "0x" + "c" * 64,
+            "best_header_height": tip_height,
+        },
+    )
     
     # Mock get_balance to return different balances for safe and latest
     def mock_get_balance(address: str, rpc_url: str, *, tag: str = "latest") -> int:
@@ -101,8 +111,8 @@ def test_wallet_show_displays_balance_height_with_safe_and_tip(
     # Verify balance_confirmed has the height it was queried at
     assert data["balance_confirmed"] == safe_balance
     assert "balance_confirmed_height" in data, "balance_confirmed_height should be in output"
-    assert data["balance_confirmed_height"] == safe_height, \
-        f"balance_confirmed_height should match safe_head height ({safe_height})"
+    assert data["balance_confirmed_height"] == best_block_height, \
+        f"balance_confirmed_height should match best block height ({best_block_height})"
     
     # Verify balance_tip has the height it was queried at
     assert data["balance_tip"] == tip_balance
@@ -112,7 +122,7 @@ def test_wallet_show_displays_balance_height_with_safe_and_tip(
     
     # Verify the heights are different (demonstrating the fix)
     assert data["balance_confirmed_height"] != data["balance_tip_height"], \
-        "Safe and tip heights should be different in this test"
+        "Best block and tip heights should be different in this test"
 
 
 def test_wallet_show_without_include_tip_shows_safe_only(
@@ -124,6 +134,7 @@ def test_wallet_show_without_include_tip_shows_safe_only(
     monkeypatch.setattr(wallet, "_resolve_rpc_url", lambda x: "http://127.0.0.1:8545")
     
     safe_height = 145
+    best_block_height = 146
     tip_height = 150
     
     # Mock _get_head_info
@@ -135,6 +146,15 @@ def test_wallet_show_without_include_tip_shows_safe_only(
         return None
     
     monkeypatch.setattr(wallet, "_get_head_info", mock_get_head_info)
+    monkeypatch.setattr(
+        wallet,
+        "_get_sync_status",
+        lambda rpc_url: {
+            "best_block_height": best_block_height,
+            "best_block_hash": "0x" + "c" * 64,
+            "best_header_height": tip_height,
+        },
+    )
     monkeypatch.setattr(wallet, "get_balance", lambda addr, url, tag="latest": 1000000000)
     
     # Run wallet show WITHOUT --include-tip flag
@@ -157,7 +177,7 @@ def test_wallet_show_without_include_tip_shows_safe_only(
     
     # Verify balance_confirmed_height is present
     assert "balance_confirmed_height" in data
-    assert data["balance_confirmed_height"] == safe_height
+    assert data["balance_confirmed_height"] == best_block_height
     
     # Verify balance_tip is NOT present (not requested)
     assert "balance_tip" not in data
@@ -173,6 +193,7 @@ def test_wallet_show_fallback_when_safe_head_unavailable(
     monkeypatch.setattr(wallet, "_resolve_rpc_url", lambda x: "http://127.0.0.1:8545")
     
     tip_height = 150
+    best_block_height = 149
     
     # Mock _get_head_info to simulate getSafeHead not available
     def mock_get_head_info(rpc_url: str, method: str) -> Optional[Dict[str, Any]]:
@@ -184,6 +205,15 @@ def test_wallet_show_fallback_when_safe_head_unavailable(
         return None
     
     monkeypatch.setattr(wallet, "_get_head_info", mock_get_head_info)
+    monkeypatch.setattr(
+        wallet,
+        "_get_sync_status",
+        lambda rpc_url: {
+            "best_block_height": best_block_height,
+            "best_block_hash": "0x" + "c" * 64,
+            "best_header_height": tip_height,
+        },
+    )
     monkeypatch.setattr(wallet, "get_balance", lambda addr, url, tag="latest": 2000000000)
     
     # Run wallet show
@@ -209,18 +239,19 @@ def test_wallet_show_fallback_when_safe_head_unavailable(
     
     # balance_confirmed_height should still be present
     assert "balance_confirmed_height" in data
-    assert data["balance_confirmed_height"] == tip_height
+    assert data["balance_confirmed_height"] == best_block_height
 
 
-def test_wallet_show_balance_height_matches_safe_head(
+def test_wallet_show_balance_height_matches_best_block(
     test_wallet_store: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Test that balance_confirmed_height always matches safe_head height."""
+    """Test that balance_confirmed_height always matches best block height."""
     
     monkeypatch.setattr(wallet, "_wallet_file_path", lambda x: test_wallet_store)
     monkeypatch.setattr(wallet, "_resolve_rpc_url", lambda x: "http://127.0.0.1:8545")
     
     safe_height = 200
+    best_block_height = 205
     tip_height = 210
     
     def mock_get_head_info(rpc_url: str, method: str) -> Optional[Dict[str, Any]]:
@@ -231,6 +262,15 @@ def test_wallet_show_balance_height_matches_safe_head(
         return None
     
     monkeypatch.setattr(wallet, "_get_head_info", mock_get_head_info)
+    monkeypatch.setattr(
+        wallet,
+        "_get_sync_status",
+        lambda rpc_url: {
+            "best_block_height": best_block_height,
+            "best_block_hash": "0x" + "c" * 64,
+            "best_header_height": tip_height,
+        },
+    )
     monkeypatch.setattr(wallet, "get_balance", lambda addr, url, tag="latest": 5000000000)
     
     result = runner.invoke(
@@ -241,9 +281,44 @@ def test_wallet_show_balance_height_matches_safe_head(
     assert result.exit_code == 0
     data = json.loads(result.output)
     
-    # This is the key assertion: balance_confirmed_height must match safe_head
-    assert data["balance_confirmed_height"] == data["safe_head"]["height"]
-    assert data["balance_confirmed_height"] == safe_height
+    # This is the key assertion: balance_confirmed_height must match best block
+    assert data["balance_confirmed_height"] == best_block_height
     
     # And it should NOT match the tip head height in this case
     assert data["balance_confirmed_height"] != data["head"]["height"]
+
+
+def test_wallet_show_emits_sync_warning_when_headers_ahead(
+    test_wallet_store: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test that wallet show surfaces syncing warning when headers are ahead of blocks."""
+
+    monkeypatch.setattr(wallet, "_wallet_file_path", lambda x: test_wallet_store)
+    monkeypatch.setattr(wallet, "_resolve_rpc_url", lambda x: "http://127.0.0.1:8545")
+
+    monkeypatch.setattr(
+        wallet,
+        "_get_sync_status",
+        lambda rpc_url: {
+            "best_block_height": 95,
+            "best_block_hash": "0x" + "c" * 64,
+            "best_header_height": 100,
+        },
+    )
+    monkeypatch.setattr(
+        wallet,
+        "_get_head_info",
+        lambda rpc_url, method: {"height": 100, "hash": "0x" + "b" * 64},
+    )
+    monkeypatch.setattr(wallet, "get_balance", lambda addr, url, tag="latest": 42)
+
+    result = runner.invoke(
+        wallet.app,
+        ["--wallet-file", str(test_wallet_store), "show", "test"],
+    )
+
+    assert result.exit_code == 0
+    data = json.loads(result.output)
+
+    assert data["node_syncing"] is True
+    assert "sync_warning" in data

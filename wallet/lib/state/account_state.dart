@@ -86,12 +86,24 @@ class AccountBalance {
   final int nonce;              // tx nonce
   final DateTime lastUpdated;
   final bool loading;
+  final String source;
+  final int? queriedHeight;
+  final String? queriedHash;
+  final int? bestBlockHeight;
+  final int? bestHeaderHeight;
+  final bool isSyncing;
 
   const AccountBalance({
     required this.amount,
     required this.nonce,
     required this.lastUpdated,
     this.loading = false,
+    this.source = 'chain_state',
+    this.queriedHeight,
+    this.queriedHash,
+    this.bestBlockHeight,
+    this.bestHeaderHeight,
+    this.isSyncing = false,
   });
 
   AccountBalance copyWith({
@@ -99,12 +111,24 @@ class AccountBalance {
     int? nonce,
     DateTime? lastUpdated,
     bool? loading,
+    String? source,
+    int? queriedHeight,
+    String? queriedHash,
+    int? bestBlockHeight,
+    int? bestHeaderHeight,
+    bool? isSyncing,
   }) {
     return AccountBalance(
       amount: amount ?? this.amount,
       nonce: nonce ?? this.nonce,
       lastUpdated: lastUpdated ?? this.lastUpdated,
       loading: loading ?? this.loading,
+      source: source ?? this.source,
+      queriedHeight: queriedHeight ?? this.queriedHeight,
+      queriedHash: queriedHash ?? this.queriedHash,
+      bestBlockHeight: bestBlockHeight ?? this.bestBlockHeight,
+      bestHeaderHeight: bestHeaderHeight ?? this.bestHeaderHeight,
+      isSyncing: isSyncing ?? this.isSyncing,
     );
   }
 
@@ -112,6 +136,12 @@ class AccountBalance {
         'amount': amount.toString(), // decimal
         'nonce': nonce,
         'lastUpdated': lastUpdated.toIso8601String(),
+        'source': source,
+        'queriedHeight': queriedHeight,
+        'queriedHash': queriedHash,
+        'bestBlockHeight': bestBlockHeight,
+        'bestHeaderHeight': bestHeaderHeight,
+        'isSyncing': isSyncing,
       };
 
   factory AccountBalance.fromJson(Map<String, dynamic> m) => AccountBalance(
@@ -119,6 +149,20 @@ class AccountBalance {
         nonce: int.tryParse((m['nonce'] ?? '0').toString()) ?? 0,
         lastUpdated: DateTime.tryParse((m['lastUpdated'] ?? '').toString()) ??
             DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
+        source: (m['source'] ?? 'chain_state').toString(),
+        queriedHeight: m['queriedHeight'] is int
+            ? m['queriedHeight'] as int
+            : int.tryParse((m['queriedHeight'] ?? '').toString()),
+        queriedHash: (m['queriedHash'] ?? '').toString().isEmpty
+            ? null
+            : (m['queriedHash'] ?? '').toString(),
+        bestBlockHeight: m['bestBlockHeight'] is int
+            ? m['bestBlockHeight'] as int
+            : int.tryParse((m['bestBlockHeight'] ?? '').toString()),
+        bestHeaderHeight: m['bestHeaderHeight'] is int
+            ? m['bestHeaderHeight'] as int
+            : int.tryParse((m['bestHeaderHeight'] ?? '').toString()),
+        isSyncing: _asBool(m['isSyncing'], false),
       );
 }
 
@@ -305,8 +349,10 @@ class AccountsNotifier extends StateNotifier<AccountsState> {
       (prev ?? _emptyBal()).copyWith(loading: true, lastUpdated: DateTime.now().toUtc()),
     );
     try {
-      final bal = await svc.getBalance(a); // BigInt or hex string (our service normalizes)
-      final nonce = await svc.getNonce(a);
+      final ctx = await svc.getBalanceContext();
+      final queryTag = ctx.queriedHeight ?? 'latest';
+      final bal = await svc.getBalance(a, at: queryTag); // BigInt or hex string (our service normalizes)
+      final nonce = await svc.getNonce(a, at: queryTag);
       _setBalance(
         a,
         AccountBalance(
@@ -314,6 +360,12 @@ class AccountsNotifier extends StateNotifier<AccountsState> {
           nonce: nonce,
           lastUpdated: DateTime.now().toUtc(),
           loading: false,
+          source: ctx.source,
+          queriedHeight: ctx.queriedHeight,
+          queriedHash: ctx.queriedHash,
+          bestBlockHeight: ctx.bestBlockHeight,
+          bestHeaderHeight: ctx.bestHeaderHeight,
+          isSyncing: ctx.isSyncing,
         ),
       );
     } catch (e) {
@@ -328,6 +380,7 @@ class AccountsNotifier extends StateNotifier<AccountsState> {
             nonce: 0,
             lastUpdated: DateTime.now().toUtc(),
             loading: false,
+            source: 'chain_state',
           ),
         );
       }
@@ -340,6 +393,7 @@ class AccountsNotifier extends StateNotifier<AccountsState> {
         nonce: 0,
         lastUpdated: DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
         loading: false,
+        source: 'chain_state',
       );
 
   void _setBalance(String address, AccountBalance b) {
