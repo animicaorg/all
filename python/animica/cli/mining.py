@@ -2027,7 +2027,7 @@ def miner_stratum(
             async def on_notify(job_data):
                 nonlocal current_job
                 current_job = job_data
-                job_id = job_data.get("job_id", "unknown")
+                job_id = job_data.get("jobId", "unknown")
                 height = job_data.get("height", "?")
                 typer.echo(f"\n→ New job: {job_id} (height {height})")
             
@@ -2065,10 +2065,10 @@ def miner_stratum(
                         continue
                     
                     # Extract job parameters
-                    job_id = current_job.get("job_id", "")
+                    job_id = current_job.get("jobId", "")
                     header = current_job.get("header", {})
-                    share_target_ratio = current_job.get("share_target", client.share_target or 0.01)
-                    theta_micro = current_job.get("theta_micro", client.theta_micro or 800_000)
+                    share_target_ratio = current_job.get("shareTarget", client.share_target or 0.01)
+                    theta_micro = current_job.get("thetaMicro", client.theta_micro or 800_000)
                     
                     # Compute share target
                     t_share_micro = max(0, int(theta_micro * share_target_ratio))
@@ -2080,18 +2080,29 @@ def miner_stratum(
                     nonce_batch_size = 10000
                     share_found_in_batch = False
                     
+                    # Extract job parameters for proper hash computation
+                    sign_bytes_hex = header.get("signBytes", "")
+                    if not sign_bytes_hex:
+                        typer.echo("Warning: No signBytes in job header, skipping batch")
+                        await asyncio.sleep(0.1)
+                        continue
+                    
+                    # Extract mixSeed (32 bytes)
+                    mix_seed_hex = header.get("mixSeed", "")
+                    if not mix_seed_hex:
+                        mix_seed_hex = "0x" + "00" * 32
+                    
+                    try:
+                        prefix = bytes.fromhex(sign_bytes_hex[2:] if sign_bytes_hex.startswith("0x") else sign_bytes_hex)
+                        mix_seed = bytes.fromhex(mix_seed_hex[2:] if mix_seed_hex.startswith("0x") else mix_seed_hex)
+                    except (ValueError, AttributeError) as e:
+                        typer.echo(f"Error parsing job bytes: {e}")
+                        await asyncio.sleep(0.1)
+                        continue
+                    
                     for nonce in range(nonce_start, nonce_start + nonce_batch_size):
-                        # Build hashshare payload (simplified)
-                        # In real implementation, this would properly construct the header
-                        sign_bytes = header.get("signBytes", "")
-                        if not sign_bytes:
-                            # Fallback: construct from header
-                            sign_bytes = "0x" + "00" * 80
-                        
-                        # Compute hash (simplified - real implementation uses proper header serialization)
+                        # Compute hash: sha3_256(signBytes || mixSeed || nonce_le8)
                         try:
-                            prefix = bytes.fromhex(sign_bytes[2:] if sign_bytes.startswith("0x") else sign_bytes)
-                            mix_seed = bytes(32)  # Would extract from header
                             nonce_bytes = nonce.to_bytes(8, "little", signed=False)
                             
                             h = hashlib.sha3_256()
@@ -2120,10 +2131,21 @@ def miner_stratum(
                             extranonce2_hex = f"0x{extranonce2_counter:016x}"
                             extranonce2_counter += 1
                             
-                            # Submit share (simplified submission)
+                            # Build hashshare envelope with proper body
+                            # The body includes headerHash, uDraw, and mix fields required by PoIES
+                            parent_hash_hex = header.get("parentHash", "0x" + "00" * 32)
+                            
+                            # Generate uDraw (random draw for this share)
+                            u_draw = secrets.token_bytes(32)
+                            u_draw_hex = "0x" + u_draw.hex()
+                            
                             hashshare_data = {
                                 "nonce": hex(nonce),
-                                "body": {},
+                                "body": {
+                                    "headerHash": parent_hash_hex,
+                                    "uDraw": u_draw_hex,
+                                    "mix": mix_seed_hex,
+                                },
                             }
                             
                             try:
