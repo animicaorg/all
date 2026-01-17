@@ -129,8 +129,8 @@ async def test_initial_job_availability():
                 parent_height=job_dict.get("parent_height"),
                 chain_id=job_dict.get("chain_id"),
             )
-            server._jobs[initial_job.job_id] = initial_job
-            server._current_job_id = initial_job.job_id
+            # Use publish_job to properly set up the job
+            await server.publish_job(initial_job)
             print(f"   ✓ Initial job loaded into server: {initial_job.job_id}")
     
     # Connect client
