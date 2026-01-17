@@ -70,13 +70,13 @@ The fix ensures the bridge fetches at least one template **before** the stratum 
 2. **Pre-load initial job into server** (lines 398-414):
    ```python
    # Publish initial job to server if available
+   # This ensures clients connecting immediately after startup receive a job
    if bridge._current_template:
        initial_job_dict = await bridge.get_current_job()
        if initial_job_dict:
-           initial_job = StratumJob(...)
-           # Set initial job in server before accepting connections
-           server._jobs[initial_job.job_id] = initial_job
-           server._current_job_id = initial_job.job_id
+           initial_job = create_stratum_job(initial_job_dict)
+           # Use publish_job to properly set up the job in the server
+           await server.publish_job(initial_job)
            log.info(f"Initial job loaded into server (job_id={initial_job.job_id})")
    ```
 

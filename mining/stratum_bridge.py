@@ -316,6 +316,33 @@ class StratumBridge:
             }
 
 
+def _create_stratum_job(job_dict: Dict[str, Any], share_target: float) -> "StratumJob":
+    """
+    Convert a job dictionary to a StratumJob instance.
+    
+    Args:
+        job_dict: Job dictionary from bridge.get_current_job()
+        share_target: Share difficulty target
+        
+    Returns:
+        StratumJob instance ready for publishing
+    """
+    from .stratum_server import StratumJob
+    
+    return StratumJob(
+        job_id=job_dict["job_id"],
+        header=job_dict.get("header", {}),
+        share_target=job_dict.get("share_target", share_target),
+        theta_micro=job_dict.get("theta_micro", 800_000),
+        target=job_dict.get("target"),
+        sign_bytes=job_dict.get("sign_bytes"),
+        height=job_dict.get("height"),
+        parent_hash=job_dict.get("parent_hash"),
+        parent_height=job_dict.get("parent_height"),
+        chain_id=job_dict.get("chain_id"),
+    )
+
+
 async def run_bridge_server(
     rpc_url: str,
     listen_host: str,
@@ -368,22 +395,6 @@ async def run_bridge_server(
     # Create Stratum server
     server = StratumServer()
     
-    # Helper to convert job dict to StratumJob
-    def create_stratum_job(job_dict: Dict[str, Any]) -> StratumJob:
-        """Convert a job dictionary to a StratumJob instance."""
-        return StratumJob(
-            job_id=job_dict["job_id"],
-            header=job_dict.get("header", {}),
-            share_target=job_dict.get("share_target", share_target),
-            theta_micro=job_dict.get("theta_micro", 800_000),
-            target=job_dict.get("target"),
-            sign_bytes=job_dict.get("sign_bytes"),
-            height=job_dict.get("height"),
-            parent_hash=job_dict.get("parent_hash"),
-            parent_height=job_dict.get("parent_height"),
-            chain_id=job_dict.get("chain_id"),
-        )
-    
     # Set up job publisher - poll bridge for new jobs
     async def job_publisher():
         last_job_id = None
@@ -392,7 +403,7 @@ async def run_bridge_server(
                 job_dict = await bridge.get_current_job()
                 if job_dict and job_dict.get("job_id") != last_job_id:
                     # Create and publish job
-                    job = create_stratum_job(job_dict)
+                    job = _create_stratum_job(job_dict, share_target)
                     await server.publish_job(job)
                     last_job_id = job_dict["job_id"]
                     log.info(f"Published job {job_dict['job_id']} to miners")
@@ -417,7 +428,7 @@ async def run_bridge_server(
     if bridge._current_template:
         initial_job_dict = await bridge.get_current_job()
         if initial_job_dict:
-            initial_job = create_stratum_job(initial_job_dict)
+            initial_job = _create_stratum_job(initial_job_dict, share_target)
             # Use publish_job to properly set up the job in the server
             await server.publish_job(initial_job)
             log.info(f"Initial job loaded into server (job_id={initial_job.job_id})")
