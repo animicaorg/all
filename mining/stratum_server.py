@@ -298,6 +298,25 @@ class StratumServer:
         self._server = None
         log.info("[Stratum] stopped")
 
+    async def run_async(self, host: Optional[str] = None, port: Optional[int] = None) -> None:
+        """
+        Start the server and serve forever until cancelled.
+        
+        Args:
+            host: Override bind host (uses constructor value if None)
+            port: Override bind port (uses constructor value if None)
+        """
+        if host is not None:
+            self._host = host
+        if port is not None:
+            self._port = port
+        
+        await self.start()
+        
+        # Wait until the server is closed (by stop() or cancellation)
+        if self._server:
+            await self._server.serve_forever()
+
     # ---------------- job control ----------------
 
     def _from_mining_job(self, job: MiningJob) -> StratumJob:
