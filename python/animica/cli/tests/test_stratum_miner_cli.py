@@ -14,11 +14,11 @@ runner = CliRunner()
 def test_miner_stratum_connection_refused() -> None:
     """Test that miner stratum handles connection refused errors gracefully."""
     test_address = "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz"
-    
+
     # Create a mock that simulates ConnectionRefusedError
     async def mock_connect_refused(*args, **kwargs):
         raise ConnectionRefusedError("[Errno 111] Connect call failed ('127.0.0.1', 3333)")
-    
+
     with patch("asyncio.open_connection", side_effect=mock_connect_refused):
         result = runner.invoke(
             mining.app,
@@ -41,13 +41,13 @@ def test_miner_stratum_connection_refused() -> None:
 def test_miner_stratum_hostname_not_found() -> None:
     """Test that miner stratum handles hostname resolution errors gracefully."""
     import socket
-    
+
     test_address = "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz"
-    
+
     # Create a mock that simulates gaierror (hostname not found)
     async def mock_connect_gaierror(*args, **kwargs):
         raise socket.gaierror(-5, "No address associated with hostname")
-    
+
     with patch("asyncio.open_connection", side_effect=mock_connect_gaierror):
         result = runner.invoke(
             mining.app,
@@ -70,11 +70,11 @@ def test_miner_stratum_hostname_not_found() -> None:
 def test_miner_stratum_timeout() -> None:
     """Test that miner stratum handles connection timeout errors gracefully."""
     test_address = "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz"
-    
+
     # Create a mock that simulates TimeoutError
     async def mock_connect_timeout(*args, **kwargs):
         raise TimeoutError()
-    
+
     with patch("asyncio.open_connection", side_effect=mock_connect_timeout):
         result = runner.invoke(
             mining.app,
@@ -115,7 +115,7 @@ def test_miner_stratum_invalid_address() -> None:
 def test_miner_stratum_invalid_url() -> None:
     """Test that miner stratum validates URL format."""
     test_address = "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz"
-    
+
     result = runner.invoke(
         mining.app,
         [
