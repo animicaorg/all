@@ -2141,10 +2141,6 @@ def miner_stratum(
                                         )
                                     else:
                                         typer.echo(f"✓ Share accepted (nonce: {hex(nonce)})")
-                                    
-                                    # Stop after reaching share count
-                                    if stats["shares_accepted"] >= count:
-                                        break
                                 else:
                                     stats["shares_rejected"] += 1
                                     typer.echo(f"✗ Share rejected (nonce: {hex(nonce)})")
