@@ -54,6 +54,12 @@ import typer
 # Import subcommand apps
 from . import balance, chain, da, debug, faucet, gui, key, mempool, mining, network, node, p2p, peer, rpc, script, snapshot, stratum, studio, sync, tx, wallet
 
+# Import pool CLI (separate from stratum)
+try:
+    from animica.pool import cli as pool_cli
+except ImportError:
+    pool_cli = None
+
 app = typer.Typer(
     name="animica",
     help="Animica blockchain command-line interface",
@@ -178,6 +184,10 @@ app.add_typer(sync.app, name="sync")
 app.add_typer(snapshot.app, name="snapshot")
 app.add_typer(gui.app, name="gui")
 app.add_typer(debug.app, name="debug")
+
+# Add pool CLI if available
+if pool_cli is not None:
+    app.add_typer(pool_cli.app, name="pool")
 
 
 # ============================================================================
