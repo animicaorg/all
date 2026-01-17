@@ -676,11 +676,17 @@ class StratumServer:
                 return
             if method_name == Method.AUTHORIZE.value:
                 session.is_v1 = True
+                # V1 authorize typically has format: ["username.worker", "password"]
+                # For Animica, we could encode address in username field if needed
                 session.worker = raw_params[0] if raw_params else None
+                # V1 doesn't pass address in authorize - it's typically encoded in worker name
+                # or set during subscription. For now, we don't support address extraction from v1.
                 session.authorized = True
                 await self._send(session, res_authorize_v1(obj.get("id"), True))
                 
-                # Call authorize hook if set (v1 doesn't pass address in authorize)
+                # Note: V1 miners don't typically send address in authorize.
+                # If session.address was set elsewhere (e.g., during subscription),
+                # we can call the hook here. Otherwise, v1 miners won't trigger address updates.
                 if self._authorize_hook is not None and session.address:
                     try:
                         await self._authorize_hook(session, session.worker or "", session.address)
