@@ -279,7 +279,7 @@ def stratum_up(
         typer.echo(f"  URL: stratum+tcp://{bind}:{port}")
         typer.echo(f"  Logs: {log_file}")
         typer.echo(f"\nConnect miners with:")
-        typer.echo(f"  animica miner stratum --address <your-address> --url stratum+tcp://{bind}:{port}")
+        typer.echo(f"  animica miner stratum --address anim1... --url stratum+tcp://{bind}:{port}")
     else:
         # Run in foreground
         try:
