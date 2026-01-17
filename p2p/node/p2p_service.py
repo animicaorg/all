@@ -560,8 +560,11 @@ class SyncStatusSnapshot:
     last_headers_accepted_count: int
     last_headers_discarded_count: int
     last_headers_discard_reason_counts: Dict[str, int]
+    last_headers_discard_detail_counts: Dict[str, int]
+    last_headers_discard_samples: list[dict[str, Any]]
     headers_accepted_total: int
     headers_seen_total: int
+    headers_decode_failed_total: int
     last_block_request_at: float
     last_block_response_at: float
     last_header_request_peer: Optional[str]
@@ -685,8 +688,13 @@ class SyncStatusSnapshot:
             "last_headers_discard_reason_counts": dict(
                 self.last_headers_discard_reason_counts
             ),
+            "last_headers_discard_detail_counts": dict(
+                self.last_headers_discard_detail_counts
+            ),
+            "last_headers_discard_samples": list(self.last_headers_discard_samples),
             "headers_accepted_total": self.headers_accepted_total,
             "headers_seen_total": self.headers_seen_total,
+            "headers_decode_failed_total": self.headers_decode_failed_total,
             "last_block_request_at": self.last_block_request_at,
             "last_block_response_at": self.last_block_response_at,
             "last_header_request_peer": self.last_header_request_peer,
@@ -1420,6 +1428,12 @@ class P2PService:
         self._sync_last_headers_accepted_count = 0
         self._sync_last_headers_discarded_count = 0
         self._sync_last_headers_discard_reason_counts: dict[str, int] = {}
+        self._sync_last_headers_discard_detail_counts: dict[str, int] = {}
+        self._sync_last_headers_discard_samples: Deque[dict[str, Any]] = deque(
+            maxlen=int(
+                os.environ.get("ANIMICA_SYNC_HEADER_DISCARD_SAMPLES", "20") or 20
+            )
+        )
         self._sync_last_locator_head_height: Optional[int] = None
         self._sync_last_locator_head_hash: Optional[bytes] = None
         self._sync_last_matched_ancestor_height: Optional[int] = None
@@ -1427,6 +1441,7 @@ class P2PService:
         self._sync_last_anchor_check: Optional[dict[str, Any]] = None
         self._sync_headers_accepted_total = 0
         self._sync_headers_seen_total = 0
+        self._sync_headers_decode_failed_total = 0
         self._sync_last_block_request_at = 0.0
         self._sync_last_block_response_at = 0.0
         self._sync_last_header_request_peer: Optional[str] = None
@@ -1441,6 +1456,7 @@ class P2PService:
         self._peer_tip_tracker = PeerTipTracker()
         self._sync_paused = False
         self._sync_enabled = _env_flag("SYNC_ENABLED", "ANIMICA_SYNC_ENABLED", default=True)
+        self._sync_verbose = _env_flag("ANIMICA_SYNC_VERBOSE", "ANIMICA_P2P_SYNC_VERBOSE")
         self._sync_requested = False
         self._sync_requested_at: Optional[float] = None
         tick_ms = float(_env_value("SYNC_TICK_MS", "ANIMICA_SYNC_TICK_MS", default="1") or 1)  # Ultra-aggressive 1ms default for maximum sync speed (reduces from 5ms)
@@ -3090,12 +3106,13 @@ class P2PService:
         
         # CRITICAL FIX: Compute best_remote info with strict freshness checking
         # This is the authoritative source for sync status decisions
-        chain_id = (self._peers.values().__iter__().__next__().hello or {}).get("chain_id") if self._peers else None
-        best_remote_height, best_remote_hash, best_remote_peer, best_remote_age = self._compute_best_remote_info(
-            chain_id=chain_id
+        chain_id = int(self.chain_id)
+        connected_peers = self._peer_registry.peer_count()
+        best_remote_height, best_remote_hash, best_remote_peer, best_remote_age = (
+            self._compute_best_remote_info(chain_id=chain_id)
         )
-        peer_tips_total, peer_tips_fresh, peer_tips_stale = self._peer_tip_freshness_snapshot(
-            chain_id=chain_id
+        peer_tips_total, peer_tips_fresh, peer_tips_stale = (
+            self._peer_tip_freshness_snapshot(chain_id=chain_id)
         )
         
         # Compute behind_by and sync_status_reason
@@ -3107,7 +3124,7 @@ class P2PService:
         else:
             # No fresh peer tips available - critical condition
             sync_status_reason = (
-                "no_peers_connected" if not self._peers else "no_fresh_peer_tips"
+                "no_peers_connected" if connected_peers == 0 else "no_fresh_peer_tips"
             )
 
         if behind_by and behind_by > 0:
@@ -3159,7 +3176,9 @@ class P2PService:
             synchronized = False
             if not sync_status_reason:
                 sync_status_reason = (
-                    "no_peers_connected" if not self._peers else "no_fresh_peer_tips"
+                    "no_peers_connected"
+                    if connected_peers == 0
+                    else "no_fresh_peer_tips"
                 )
         # Rule 2: If we have fresh best_remote, check if we're within ALLOWED_LAG
         elif behind_by is not None:
@@ -3214,7 +3233,7 @@ class P2PService:
             last_header_error=self._sync_last_header_error,
             active_block_peer=self._sync_active_block_peer,
             synchronized=synchronized,
-            peers_total=len(self._peers),
+            peers_total=connected_peers,
             sync_enabled=self._sync_enabled,
             sync_requested=self._sync_requested,
         )
@@ -3234,7 +3253,7 @@ class P2PService:
                     "headers_seen_total": self._sync_headers_seen_total,
                     "anchored_tip": anchored_tip,
                     "eligible_peers": len(eligible_peers),
-                    "peers_total": len(self._peers),
+                    "peers_total": connected_peers,
                 },
             )
             self._sync_last_phase_reported = phase
@@ -3332,8 +3351,13 @@ class P2PService:
             last_headers_discard_reason_counts=dict(
                 self._sync_last_headers_discard_reason_counts
             ),
+            last_headers_discard_detail_counts=dict(
+                self._sync_last_headers_discard_detail_counts
+            ),
+            last_headers_discard_samples=list(self._sync_last_headers_discard_samples),
             headers_accepted_total=self._sync_headers_accepted_total,
             headers_seen_total=self._sync_headers_seen_total,
+            headers_decode_failed_total=self._sync_headers_decode_failed_total,
             last_block_request_at=self._sync_last_block_request_at,
             last_block_response_at=self._sync_last_block_response_at,
             last_header_request_peer=self._sync_last_header_request_peer,
@@ -3370,7 +3394,7 @@ class P2PService:
             paused=self._sync_paused,
             sync_enabled=self._sync_enabled,
             target_height=self._sync_target_height,
-            peers_total=len(self._peers),
+            peers_total=connected_peers,
             cache_size_bytes=cache_size_bytes,
             cache_entries=cache_entries,
             peer_penalties={
@@ -6240,6 +6264,27 @@ class P2PService:
         ) or data.get("network_params_hash") or data.get("networkParamsHash")
         peer.hello = normalized
         peer.hello_received_at = time.time()  # Track when hello was received
+        if self._sync_verbose:
+            log.info(
+                "Handshake identity accepted",
+                extra={
+                    "remote": peer.remote,
+                    "peer_id": peer.peer_id,
+                    "chain_id": normalized.get("chain_id"),
+                    "genesis_hash": self._canon_hash0x(
+                        normalized.get("genesis_header_hash")
+                        or normalized.get("genesis_hash")
+                        or normalized.get("genesis_block_hash")
+                    ),
+                    "fork_id": normalized.get("fork_id"),
+                    "consensus_id": normalized.get("consensus_id"),
+                    "protocol_version": normalized.get("protocol_version"),
+                    "repo_state": normalized.get("repo_state"),
+                    "network_params_hash": self._canon_hash0x(
+                        normalized.get("network_params_hash")
+                    ),
+                },
+            )
         peer.hello_done.set()
         if normalized.get("head_height"):
             self._update_peer_head_table(
@@ -7193,7 +7238,24 @@ class P2PService:
         await self._send(peer, MsgID.HEADERS, Headers(headers=headers))
 
     async def _handle_headers(self, peer: _PeerState, payload: bytes) -> None:
-        data = self._decode_map(payload)
+        try:
+            data = self._decode_map(payload)
+        except PeerMisbehavior as exc:
+            self._sync_headers_decode_failed_total += 1
+            self._sync_last_header_error = "headers_decode_failed"
+            self._sync_last_header_error_at = time.time()
+            self._sync_last_header_error_peer = peer.remote
+            if self._sync_verbose:
+                log.warning(
+                    "Header decode failed",
+                    extra={
+                        "remote": peer.remote,
+                        "peer_id": peer.peer_id,
+                        "error": str(exc),
+                        "payload_bytes": len(payload),
+                    },
+                )
+            raise
         headers: list[HeaderCompact] = []
         for h in data.get("headers") or []:
             if isinstance(h, dict):
@@ -7214,6 +7276,15 @@ class P2PService:
                 **info,
             },
         )
+        if self._sync_verbose:
+            log.info(
+                "Headers batch received",
+                extra={
+                    "remote": peer.remote,
+                    "peer_id": peer.peer_id,
+                    **info,
+                },
+            )
 
         # If we have a pending request waiting on this response, fulfill it.
         fut = peer.pending_headers
@@ -10582,6 +10653,7 @@ class P2PService:
                             self._sync_last_headers_accepted_count = 0
                             self._sync_last_headers_discarded_count = 0
                             self._sync_last_headers_discard_reason_counts = {}
+                            self._sync_last_headers_discard_detail_counts = {}
                         if not saw_headers:
                             network_best_height = self._network_best_height()
                             empty_reason = self._empty_headers_reason(
@@ -10761,9 +10833,11 @@ class P2PService:
                                 discard_reason_counts[discard_reason] = len(headers)
                         elif discarded_count > 0:
                             discard_reason_counts["duplicate_headers"] = discarded_count
+                    bucket_counts = self._bucketize_discard_counts(discard_reason_counts)
                     self._sync_last_headers_accepted_count = accepted_count
                     self._sync_last_headers_discarded_count = discarded_count
-                    self._sync_last_headers_discard_reason_counts = discard_reason_counts
+                    self._sync_last_headers_discard_reason_counts = bucket_counts
+                    self._sync_last_headers_discard_detail_counts = discard_reason_counts
 
                     rotate_peer = False
                     if header_error == "invalid_headers":
@@ -12771,8 +12845,11 @@ class P2PService:
         self._sync_last_headers_accepted_count = 0
         self._sync_last_headers_discarded_count = 0
         self._sync_last_headers_discard_reason_counts = {}
+        self._sync_last_headers_discard_detail_counts = {}
         self._sync_headers_accepted_total = 0
         self._sync_headers_seen_total = 0
+        self._sync_headers_decode_failed_total = 0
+        self._sync_last_headers_discard_samples.clear()
         self._sync_block_queue.clear()
         self._sync_block_queue_set.clear()
         self._sync_block_queue_heights.clear()
@@ -13070,6 +13147,71 @@ class P2PService:
             "last_hash": bytes(last.hash).hex(),
         }
 
+    def _header_discard_bucket(self, reason: Optional[str]) -> str:
+        if not reason:
+            return "other_exception"
+        lowered = str(reason).lower()
+        if "genesis" in lowered:
+            return "genesis_mismatch"
+        if "chain_id" in lowered or "wrong_network" in lowered:
+            return "chain_id_mismatch"
+        if "protocol" in lowered:
+            return "protocol_mismatch"
+        if "theta" in lowered or "difficulty" in lowered or "pow" in lowered:
+            return "difficulty_invalid"
+        if "timestamp" in lowered or "time" in lowered:
+            return "timestamp_invalid"
+        if "hash_mismatch" in lowered:
+            return "header_hash_mismatch"
+        if "parent_unknown" in lowered or "parent_meta_missing" in lowered:
+            return "unknown_ancestor"
+        if "anchor" in lowered:
+            return "unknown_ancestor"
+        if "parent_mismatch" in lowered or "prev_missing" in lowered:
+            return "invalid_prev_hash"
+        return "other_exception"
+
+    def _record_header_discard_sample(
+        self,
+        peer: _PeerState,
+        header: _SyncHeader,
+        *,
+        reason: Optional[str],
+    ) -> None:
+        bucket = self._header_discard_bucket(reason)
+        self._sync_last_headers_discard_samples.append(
+            {
+                "remote": peer.remote,
+                "height": header.height,
+                "hash": header.hash.hex(),
+                "prev_hash": header.parent_hash.hex(),
+                "reason": reason,
+                "bucket": bucket,
+                "at": time.time(),
+            }
+        )
+        if self._sync_verbose:
+            log.info(
+                "Header discard sample",
+                extra={
+                    "remote": peer.remote,
+                    "height": header.height,
+                    "hash": header.hash.hex(),
+                    "prev_hash": header.parent_hash.hex(),
+                    "reason": reason,
+                    "bucket": bucket,
+                },
+            )
+
+    def _bucketize_discard_counts(
+        self, detail_counts: Dict[str, int]
+    ) -> dict[str, int]:
+        buckets: dict[str, int] = {}
+        for reason, count in detail_counts.items():
+            bucket = self._header_discard_bucket(reason)
+            buckets[bucket] = buckets.get(bucket, 0) + int(count)
+        return buckets
+
     def _log_header_reject(
         self,
         peer: _PeerState,
@@ -13078,6 +13220,7 @@ class P2PService:
         reason: str,
         parent_ts: Optional[int] = None,
     ) -> None:
+        self._record_header_discard_sample(peer, header, reason=reason)
         now = time.time()
         key = f"{peer.remote}:{reason}"
         last = self._sync_header_reject_log_at.get(key, 0.0)
@@ -13654,8 +13797,11 @@ class P2PService:
         self._sync_last_headers_accepted_count = 0
         self._sync_last_headers_discarded_count = 0
         self._sync_last_headers_discard_reason_counts = {}
+        self._sync_last_headers_discard_detail_counts = {}
         self._sync_headers_accepted_total = 0
         self._sync_headers_seen_total = 0
+        self._sync_headers_decode_failed_total = 0
+        self._sync_last_headers_discard_samples.clear()
         self._sync_last_locator_head_height = None
         self._sync_last_locator_head_hash = None
         self._sync_last_matched_ancestor_height = None
@@ -13947,6 +14093,7 @@ class P2PService:
                     "first_prev_hash": header.parent_hash.hex(),
                 },
             )
+            self._record_header_discard_sample(peer, header, reason="wrong_network")
             return [], "wrong_network"
         prior_probe_hash = self._sync_anchor_probe_hash
         prior_probe_until = self._sync_anchor_probe_until
@@ -14135,6 +14282,7 @@ class P2PService:
                 "first_prev_hash": header.parent_hash.hex(),
             }
         )
+        self._record_header_discard_sample(peer, header, reason=reason)
         return [], "not_anchored"
 
     async def _pending_get(self, tx_hash: bytes) -> bytes | None:
