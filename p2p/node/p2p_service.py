@@ -10270,14 +10270,24 @@ class P2PService:
                                 "local_height": local_height,
                                 "network_best": network_best,
                                 "gap": gap,
-                                "in_flight_headers": len(self._sync_inflight_headers),
+                                "in_flight_headers": int(self._sync_inflight_headers),
                                 "last_accepted": self._sync_last_headers_accepted_count,
                                 "matched_ancestor": self._sync_last_matched_ancestor_height,
                             },
                         )
                         
                         # Clear in-flight to allow retry
-                        self._sync_inflight_headers.clear()
+                        self._sync_inflight_header_requests.clear()
+                        self._sync_inflight_headers = 0
+                        self._sync_active_header_peer = None
+                        for pending_peer in self._peers.values():
+                            if (
+                                pending_peer.pending_headers is not None
+                                and not pending_peer.pending_headers.done()
+                            ):
+                                pending_peer.pending_headers.set_result(None)
+                            pending_peer.pending_headers = None
+                            pending_peer.pending_header_request_id = None
                         
                         # Force peer rotation
                         tried_peers.add(peer.remote)
