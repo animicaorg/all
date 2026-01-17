@@ -2130,7 +2130,7 @@ def miner_stratum(
                                 result = await client.submit_share(job_id, hashshare_data, extranonce2=extranonce2_hex)
                                 
                                 # Check if share was accepted
-                                if result and result.get("accepted", False):
+                                if result is not None and result.get("accepted", False):
                                     stats["shares_accepted"] += 1
                                     
                                     # Check if it's a block
@@ -2162,7 +2162,7 @@ def miner_stratum(
                                 hashrate = hashrate_window_hashes / elapsed
                                 typer.echo(
                                     f"Hashrate: {hashrate:.2f} H/s | "
-                                    f"Shares: {stats['shares_accepted']}/{count} | "
+                                    f"Shares: {stats['shares_accepted']}/{stats['shares_submitted']} accepted ({stats['shares_accepted']}/{count}) | "
                                     f"Blocks found: {stats['blocks_found']}"
                                 )
                             last_hashrate_report = now
