@@ -244,15 +244,32 @@ class PoolDatabase:
 
         # Define migrations
         migrations = [
-            # ("migration_name", "SQL or function"),
+            ("add_bans_table", self._migration_add_bans_table),
         ]
 
-        for name, migration_sql in migrations:
+        for name, migration_func in migrations:
             if name not in applied:
                 self._log.info(f"Applying migration: {name}")
-                self._conn.executescript(migration_sql)
+                migration_func()
                 self._conn.execute("INSERT INTO _migrations (name) VALUES (?)", (name,))
                 self._conn.commit()
+
+    def _migration_add_bans_table(self) -> None:
+        """Add bans table for abuse prevention."""
+        migration_sql = """
+        -- Bans table for abuse prevention
+        CREATE TABLE IF NOT EXISTS bans (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ip TEXT NOT NULL,
+            reason TEXT NOT NULL,
+            created_at TIMESTAMP NOT NULL,
+            expires_at TIMESTAMP NOT NULL,
+            strike_count INTEGER DEFAULT 1
+        );
+        CREATE INDEX IF NOT EXISTS idx_bans_ip ON bans(ip);
+        CREATE INDEX IF NOT EXISTS idx_bans_expires ON bans(expires_at);
+        """
+        self._conn.executescript(migration_sql)
 
     def get_schema_version(self) -> int:
         """Get current schema version (number of applied migrations)."""

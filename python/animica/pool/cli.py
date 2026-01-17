@@ -12,6 +12,10 @@ Commands:
 - pool payouts pause/resume: Control payout engine
 - pool payouts history: Show payout history
 - pool db migrate: Run database migrations
+- pool bans list: List banned IPs
+- pool bans add: Ban an IP
+- pool bans remove: Unban an IP
+- pool bans clear-expired: Clear expired bans
 """
 
 from __future__ import annotations
@@ -24,6 +28,7 @@ import signal
 import subprocess
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -482,6 +487,179 @@ def db_migrate(
         
         # Migrations are auto-applied on connect
         typer.echo("Migrations complete!")
+        
+        db.close()
+    except Exception as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(1)
+
+
+# Bans subcommands
+bans_app = typer.Typer(help="Manage IP bans")
+app.add_typer(bans_app, name="bans")
+
+
+@bans_app.command("list")
+def bans_list(
+    db_path: Optional[str] = typer.Option(
+        None,
+        "--db",
+        help="Database path",
+    ),
+    active_only: bool = typer.Option(
+        True,
+        "--active-only/--all",
+        help="Show only active bans",
+    ),
+) -> None:
+    """List banned IPs."""
+    if not db_path:
+        db_path = os.path.expanduser("~/.animica/pool.db")
+    
+    try:
+        from animica.pool.abuse_manager import AbuseConfig, AbuseManager
+        
+        db = PoolDatabase(db_path)
+        db.connect()
+        
+        config = AbuseConfig()
+        manager = AbuseManager(db, config)
+        
+        bans = manager.list_bans(active_only=active_only)
+        
+        if not bans:
+            typer.echo("No bans found.")
+            db.close()
+            return
+        
+        typer.echo(f"\nFound {len(bans)} ban(s):\n")
+        for ban in bans:
+            status = "Active" if ban.expires_at > datetime.utcnow() else "Expired"
+            typer.echo(f"IP: {ban.ip}")
+            typer.echo(f"  Status: {status}")
+            typer.echo(f"  Reason: {ban.reason}")
+            typer.echo(f"  Created: {ban.created_at}")
+            typer.echo(f"  Expires: {ban.expires_at}")
+            typer.echo(f"  Strikes: {ban.strike_count}")
+            typer.echo()
+        
+        db.close()
+    except Exception as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(1)
+
+
+@bans_app.command("add")
+def bans_add(
+    ip: str = typer.Option(
+        ...,
+        "--ip",
+        help="IP address to ban",
+    ),
+    minutes: int = typer.Option(
+        60,
+        "--minutes",
+        help="Ban duration in minutes",
+    ),
+    reason: str = typer.Option(
+        "Manual ban",
+        "--reason",
+        help="Ban reason",
+    ),
+    db_path: Optional[str] = typer.Option(
+        None,
+        "--db",
+        help="Database path",
+    ),
+) -> None:
+    """Manually ban an IP address."""
+    if not db_path:
+        db_path = os.path.expanduser("~/.animica/pool.db")
+    
+    try:
+        from animica.pool.abuse_manager import AbuseConfig, AbuseManager
+        
+        db = PoolDatabase(db_path)
+        db.connect()
+        
+        config = AbuseConfig()
+        manager = AbuseManager(db, config)
+        
+        ban = manager.add_manual_ban(ip, minutes, reason)
+        
+        typer.echo(f"Successfully banned {ip} for {minutes} minutes")
+        typer.echo(f"Reason: {reason}")
+        typer.echo(f"Expires at: {ban.expires_at}")
+        
+        db.close()
+    except Exception as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(1)
+
+
+@bans_app.command("remove")
+def bans_remove(
+    ip: str = typer.Option(
+        ...,
+        "--ip",
+        help="IP address to unban",
+    ),
+    db_path: Optional[str] = typer.Option(
+        None,
+        "--db",
+        help="Database path",
+    ),
+) -> None:
+    """Remove a ban for an IP address."""
+    if not db_path:
+        db_path = os.path.expanduser("~/.animica/pool.db")
+    
+    try:
+        from animica.pool.abuse_manager import AbuseConfig, AbuseManager
+        
+        db = PoolDatabase(db_path)
+        db.connect()
+        
+        config = AbuseConfig()
+        manager = AbuseManager(db, config)
+        
+        removed = manager.remove_ban(ip)
+        
+        if removed:
+            typer.echo(f"Successfully removed ban for {ip}")
+        else:
+            typer.echo(f"No active ban found for {ip}")
+        
+        db.close()
+    except Exception as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(1)
+
+
+@bans_app.command("clear-expired")
+def bans_clear_expired(
+    db_path: Optional[str] = typer.Option(
+        None,
+        "--db",
+        help="Database path",
+    ),
+) -> None:
+    """Clear expired bans from cache."""
+    if not db_path:
+        db_path = os.path.expanduser("~/.animica/pool.db")
+    
+    try:
+        from animica.pool.abuse_manager import AbuseConfig, AbuseManager
+        
+        db = PoolDatabase(db_path)
+        db.connect()
+        
+        config = AbuseConfig()
+        manager = AbuseManager(db, config)
+        
+        cleared = manager.clear_expired_bans()
+        
+        typer.echo(f"Cleared {cleared} expired ban(s) from cache")
         
         db.close()
     except Exception as e:
