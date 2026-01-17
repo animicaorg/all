@@ -187,8 +187,8 @@ def test_mainnet_supply_cap_clamps_rewards():
     assert rewards == [], "Rewards should be zero once cap is reached"
 
 
-def test_devnet_still_has_split():
-    """Test that devnet (chain_id=1337) still uses split distribution."""
+def test_devnet_params_100_pct_miner():
+    """Test that devnet (chain_id=1337) has 100% miner subsidy split."""
     params_path = Path(__file__).resolve().parents[2] / "spec" / "params.yaml"
     with params_path.open("r") as f:
         params_yaml = yaml.safe_load(f)
@@ -196,14 +196,14 @@ def test_devnet_still_has_split():
     devnet_params = params_yaml["networks"]["animica:1337"]
     split = devnet_params["monetary"]["issuance"]["subsidy_split_pct"]
     
-    # Devnet should NOT be 100% miner (should have split)
-    assert split["miner"] != 100, "Devnet should NOT have 100% miner"
-    assert split["miner"] + split["aicf"] + split["treasury"] == 100, \
-        "Devnet split should sum to 100%"
+    # Devnet should have 100% miner (same as mainnet)
+    assert split["miner"] == 100, "Devnet should have 100% miner"
+    assert split["aicf"] == 0, "Devnet should give 0% to AICF"
+    assert split["treasury"] == 0, "Devnet should give 0% to treasury"
 
 
-def test_testnet_still_has_split():
-    """Test that testnet (chain_id=2) still uses split distribution."""
+def test_testnet_params_100_pct_miner():
+    """Test that testnet (chain_id=2) has 100% miner subsidy split."""
     params_path = Path(__file__).resolve().parents[2] / "spec" / "params.yaml"
     with params_path.open("r") as f:
         params_yaml = yaml.safe_load(f)
@@ -211,7 +211,81 @@ def test_testnet_still_has_split():
     testnet_params = params_yaml["networks"]["animica:2"]
     split = testnet_params["monetary"]["issuance"]["subsidy_split_pct"]
     
-    # Testnet should NOT be 100% miner (should have split)
-    assert split["miner"] != 100, "Testnet should NOT have 100% miner"
-    assert split["miner"] + split["aicf"] + split["treasury"] == 100, \
-        "Testnet split should sum to 100%"
+    # Testnet should have 100% miner (same as mainnet)
+    assert split["miner"] == 100, "Testnet should have 100% miner"
+    assert split["aicf"] == 0, "Testnet should give 0% to AICF"
+    assert split["treasury"] == 0, "Testnet should give 0% to treasury"
+
+
+def test_devnet_params_300_anm_and_5min():
+    """Test that devnet has 300 ANM base reward and 5-minute block time."""
+    params_path = Path(__file__).resolve().parents[2] / "spec" / "params.yaml"
+    with params_path.open("r") as f:
+        params_yaml = yaml.safe_load(f)
+    
+    devnet_params = params_yaml["networks"]["animica:1337"]
+    subsidy = devnet_params["monetary"]["issuance"]["subsidy"]
+    issuance = devnet_params["monetary"]["issuance"]
+    
+    # 300 ANM = 300_000_000_000 nANM (1 ANM = 10^9 nANM)
+    assert subsidy["start_nANM_per_block"] == 300_000_000_000, \
+        "Devnet should have 300 ANM base reward"
+    # 5 minutes = 300_000 ms
+    assert issuance["target_block_interval_ms"] == 300_000, \
+        "Devnet should have 5-minute (300s) block time"
+
+
+def test_testnet_params_300_anm_and_5min():
+    """Test that testnet has 300 ANM base reward and 5-minute block time."""
+    params_path = Path(__file__).resolve().parents[2] / "spec" / "params.yaml"
+    with params_path.open("r") as f:
+        params_yaml = yaml.safe_load(f)
+    
+    testnet_params = params_yaml["networks"]["animica:2"]
+    subsidy = testnet_params["monetary"]["issuance"]["subsidy"]
+    issuance = testnet_params["monetary"]["issuance"]
+    
+    # 300 ANM = 300_000_000_000 nANM (1 ANM = 10^9 nANM)
+    assert subsidy["start_nANM_per_block"] == 300_000_000_000, \
+        "Testnet should have 300 ANM base reward"
+    # 5 minutes = 300_000 ms
+    assert issuance["target_block_interval_ms"] == 300_000, \
+        "Testnet should have 5-minute (300s) block time"
+
+
+def test_devnet_block_reward_at_height_1():
+    """Test that devnet block reward at height 1 gives full 300 ANM to miner."""
+    params_path = Path(__file__).resolve().parents[2] / "spec" / "params.yaml"
+    with params_path.open("r") as f:
+        params_yaml = yaml.safe_load(f)
+    
+    devnet_params = params_yaml["networks"]["animica:1337"]
+    rewards = compute_block_reward(chain_id=1337, height=1, params=devnet_params)
+    
+    # Should return exactly 1 reward entry (100% to miner)
+    assert len(rewards) == 1, \
+        f"Expected 1 reward entry (100% to miner), got {len(rewards)}"
+    
+    # Verify miner gets full 300 ANM (300_000_000_000 nANM)
+    miner_addr, miner_amt = rewards[0]
+    assert miner_amt == 300_000_000_000, \
+        f"Expected 300 ANM (300_000_000_000 nANM), got {miner_amt}"
+
+
+def test_testnet_block_reward_at_height_1():
+    """Test that testnet block reward at height 1 gives full 300 ANM to miner."""
+    params_path = Path(__file__).resolve().parents[2] / "spec" / "params.yaml"
+    with params_path.open("r") as f:
+        params_yaml = yaml.safe_load(f)
+    
+    testnet_params = params_yaml["networks"]["animica:2"]
+    rewards = compute_block_reward(chain_id=2, height=1, params=testnet_params)
+    
+    # Should return exactly 1 reward entry (100% to miner)
+    assert len(rewards) == 1, \
+        f"Expected 1 reward entry (100% to miner), got {len(rewards)}"
+    
+    # Verify miner gets full 300 ANM (300_000_000_000 nANM)
+    miner_addr, miner_amt = rewards[0]
+    assert miner_amt == 300_000_000_000, \
+        f"Expected 300 ANM (300_000_000_000 nANM), got {miner_amt}"
