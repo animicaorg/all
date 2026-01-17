@@ -31,6 +31,28 @@ except Exception:
 log = get_logger("mining.stratum_bridge")
 
 
+# Constants
+PLACEHOLDER_ADDRESS = "anim1placeholder"
+
+
+def is_valid_animica_address(address: str) -> bool:
+    """
+    Check if an address is a valid Animica Bech32 address.
+    
+    Args:
+        address: Address string to validate
+        
+    Returns:
+        bool: True if valid (starts with 'anim1' and is not placeholder)
+    """
+    return (
+        address is not None
+        and isinstance(address, str)
+        and address.startswith("anim1")
+        and address != PLACEHOLDER_ADDRESS
+    )
+
+
 @dataclass
 class RpcClient:
     """Simple JSON-RPC HTTP client."""
@@ -109,6 +131,38 @@ class StratumBridge:
     async def stop(self) -> None:
         """Stop the bridge."""
         self._stop.set()
+    
+    async def set_payout_address(self, address: str) -> None:
+        """
+        Update the payout address and immediately fetch a new template.
+        
+        This method is called when a miner connects and authorizes with a valid address.
+        It updates the bridge's payout address and immediately attempts to fetch a template
+        so that the miner can start working without delay.
+        
+        Args:
+            address: Valid Bech32 payout address
+            
+        Raises:
+            ValueError: If the address is invalid or template fetch fails critically
+        """
+        if address == self._payout_address:
+            return  # No change needed
+        
+        old_address = self._payout_address
+        self._payout_address = address
+        
+        log.info(f"Updated payout address: {old_address} -> {address}")
+        
+        # Immediately fetch a template with the new address
+        try:
+            await self._poll_template()
+        except asyncio.CancelledError:
+            # Re-raise cancellation to properly handle task shutdown
+            raise
+        except Exception as e:
+            # Log but don't fail - the periodic poll will retry
+            log.warning(f"Failed to fetch template after address update: {e}")
     
     async def _poll_loop(self) -> None:
         """Poll getBlockTemplate from node."""
@@ -422,6 +476,22 @@ async def run_bridge_server(
                 log.info(f"✓ Block found by worker {session.worker}!")
     
     server.set_submit_hook(submit_hook)
+    
+    # Set up authorize hook to update bridge payout address when miners connect
+    async def authorize_hook(session, worker, address):
+        """Update bridge payout address and immediately publish job when miner authorizes."""
+        if is_valid_animica_address(address):
+            log.info(f"Miner authorized with address {address}, updating bridge payout address")
+            await bridge.set_payout_address(address)
+            
+            # Immediately publish job if template is now available
+            job_dict = await bridge.get_current_job()
+            if job_dict:
+                job = _create_stratum_job(job_dict, share_target)
+                await server.publish_job(job)
+                log.info(f"Published job {job_dict['job_id']} to miner {worker} after address update")
+    
+    server.set_authorize_hook(authorize_hook)
     
     # Publish initial job to server if available
     # This ensures clients connecting immediately after startup receive a job
