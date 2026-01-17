@@ -305,17 +305,29 @@ class StratumServer:
         Args:
             host: Override bind host (uses constructor value if None)
             port: Override bind port (uses constructor value if None)
+        
+        Note: This method is designed to be called once per server instance.
+        Multiple concurrent calls are not supported.
         """
-        if host is not None:
-            self._host = host
-        if port is not None:
-            self._port = port
+        # Temporarily override host/port for this start
+        original_host = self._host
+        original_port = self._port
         
-        await self.start()
-        
-        # Wait until the server is closed (by stop() or cancellation)
-        if self._server:
+        try:
+            if host is not None:
+                self._host = host
+            if port is not None:
+                self._port = port
+            
+            await self.start()
+            
+            # Wait until the server is closed (by stop() or cancellation)
+            # start() will have set self._server, so we can safely await serve_forever
             await self._server.serve_forever()
+        finally:
+            # Restore original values (though this is unlikely to matter in practice)
+            self._host = original_host
+            self._port = original_port
 
     # ---------------- job control ----------------
 
