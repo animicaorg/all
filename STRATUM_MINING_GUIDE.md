@@ -37,7 +37,7 @@ This will:
 - Connect to the Stratum bridge
 - Start mining with your CPU
 - Submit shares to the bridge
-- Stop after 1 block is accepted
+- Stop after 1 share is accepted
 
 ## Command Reference
 
@@ -107,7 +107,7 @@ Mine via Stratum protocol connection.
 
 - `--address ADDRESS` - **Required.** Payout address (Bech32 format, e.g., `anim1...`)
 - `--url URL` - **Required.** Stratum server URL (e.g., `stratum+tcp://127.0.0.1:3333`)
-- `--count N` - Stop after N blocks accepted by node (default: 1)
+- `--count N` - Stop after N shares accepted (not blocks found) (default: 1)
 - `--threads N` - Number of CPU threads (0=auto-detect, default: 0)
 - `--difficulty FLOAT` - Initial share difficulty (server may override)
 - `--worker NAME` - Worker name/identifier
@@ -115,20 +115,20 @@ Mine via Stratum protocol connection.
 **Examples:**
 
 ```bash
-# Mine 1 block to an address
+# Mine 1 share to an address
 animica miner stratum \
   --address anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz \
   --url stratum+tcp://127.0.0.1:3333 \
   --count 1
 
-# Mine 5 blocks with 4 threads
+# Mine 5 shares with 4 threads
 animica miner stratum \
   --address anim1... \
   --url stratum+tcp://127.0.0.1:3333 \
   --count 5 \
   --threads 4
 
-# Mine with custom worker name and difficulty
+# Mine 10 shares with custom worker name and difficulty
 animica miner stratum \
   --address anim1... \
   --url stratum+tcp://127.0.0.1:3333 \
