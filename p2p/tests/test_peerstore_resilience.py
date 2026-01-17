@@ -42,4 +42,4 @@ def test_row_to_peer_tolerates_corrupt_snapshot(tmp_path) -> None:
     assert peer.peer_id == "peer_bad"
     assert peer.caps == set()
     assert peer.status == PeerStatus.DISCONNECTED
-    assert peer.chain_id == 1
+    assert peer.chain_id == 0

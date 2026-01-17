@@ -79,7 +79,7 @@ class IdentifyRequest:
     agent: str
     height: int
     timestamp: float
-    network_id: Optional[str] = None  # e.g., "animica:1"
+    network_id: Optional[str] = None  # e.g., "animica:0"
     head_hash: Optional[str] = None  # Optional hex-encoded head hash for consensus probing
 
 

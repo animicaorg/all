@@ -62,7 +62,7 @@ Server sends `mining.hello` **upon TCP accept**:
   "params": {
     "protocol": "animica/stratum/1",
     "nodeVersion": "animica-rpc/0.1.0",
-    "network": { "chainId": 1, "name": "animica:mainnet" },
+    "network": { "chainId": 0, "name": "animica:mainnet" },
     "thetaMicro": 5400000,
     "policyRoots": {
       "poies": "0x…",      // merkle root of poies_policy.yaml
@@ -370,4 +370,3 @@ S → { "id":42, "result":{"accepted":true,"d_ratio":0.00123,"asBlock":false}}
 	•	Dummy client: python -m mining.cli.getwork (or use WS GetWork)
 	•	Enable TLS: --tls-cert server.crt --tls-key server.key
 	•	Trace I/O: set env LOG_LEVEL=DEBUG
-

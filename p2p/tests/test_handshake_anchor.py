@@ -228,7 +228,7 @@ async def test_chain_id_mismatch_rejects_peer(tmp_path: Path) -> None:
     hello = Hello(
         version="2",
         agent="test-node",
-        chain_id=1,
+        chain_id=0,
         network_magic=NETWORK_MAGIC,
         listen_port=0,
         listen_addrs=[],

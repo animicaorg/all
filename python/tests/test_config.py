@@ -17,6 +17,7 @@ def clean_env_vars() -> Generator[None, None, None]:
         "ANIMICA_NETWORK": os.environ.get("ANIMICA_NETWORK"),
         "ANIMICA_RPC_URL": os.environ.get("ANIMICA_RPC_URL"),
         "ANIMICA_CHAIN_ID": os.environ.get("ANIMICA_CHAIN_ID"),
+        "ANIMICA_DATA_DIR": os.environ.get("ANIMICA_DATA_DIR"),
     }
     
     yield
@@ -33,11 +34,11 @@ def test_get_network_defaults_mainnet() -> None:
     """Test mainnet network defaults."""
     defaults = get_network_defaults("mainnet")
     
-    assert defaults["chain_id"] == 1
+    assert defaults["chain_id"] == 0
     assert defaults["rpc_port"] == 8545
     assert defaults["rpc_url"] == "http://127.0.0.1:8545/rpc"
-    assert defaults["db_name"] == "mainnet.db"
-    assert defaults["data_dir"] == "~/.animica/chain-1"
+    assert defaults["db_name"] == "animica.db"
+    assert defaults["data_dir"] == str(Path("~/.animica/chain-0").expanduser())
     assert "docker-compose.mainnet.yml" in str(defaults["compose_file"])
 
 
@@ -46,10 +47,10 @@ def test_get_network_defaults_testnet() -> None:
     defaults = get_network_defaults("testnet")
     
     assert defaults["chain_id"] == 2
-    assert defaults["rpc_port"] == 8546
-    assert defaults["rpc_url"] == "http://127.0.0.1:8546/rpc"
-    assert defaults["db_name"] == "testnet.db"
-    assert defaults["data_dir"] == "~/.animica/chain-2"
+    assert defaults["rpc_port"] == 18546
+    assert defaults["rpc_url"] == "http://127.0.0.1:18546/rpc"
+    assert defaults["db_name"] == "animica.db"
+    assert defaults["data_dir"] == str(Path("~/.animica/chain-2").expanduser())
     assert "docker-compose.testnet.yml" in str(defaults["compose_file"])
 
 
@@ -58,10 +59,10 @@ def test_get_network_defaults_devnet() -> None:
     defaults = get_network_defaults("devnet")
     
     assert defaults["chain_id"] == 1337
-    assert defaults["rpc_port"] == 8545
-    assert defaults["rpc_url"] == "http://127.0.0.1:8545/rpc"
-    assert defaults["db_name"] == "devnet.db"
-    assert defaults["data_dir"] == "~/.animica/chain-1337"
+    assert defaults["rpc_port"] == 28545
+    assert defaults["rpc_url"] == "http://127.0.0.1:28545/rpc"
+    assert defaults["db_name"] == "animica.db"
+    assert defaults["data_dir"] == str(Path("~/.animica/chain-1337").expanduser())
     assert "docker-compose.yml" in str(defaults["compose_file"])
 
 
@@ -70,10 +71,10 @@ def test_get_network_defaults_local_devnet() -> None:
     defaults = get_network_defaults("local-devnet")
     
     assert defaults["chain_id"] == 1337
-    assert defaults["rpc_port"] == 8545
-    assert defaults["rpc_url"] == "http://127.0.0.1:8545/rpc"
-    assert defaults["db_name"] == "devnet.db"
-    assert defaults["data_dir"] == "~/.animica/chain-1337"
+    assert defaults["rpc_port"] == 38545
+    assert defaults["rpc_url"] == "http://127.0.0.1:38545/rpc"
+    assert defaults["db_name"] == "animica.db"
+    assert defaults["data_dir"] == str(Path("~/.animica/chain-1337").expanduser())
 
 
 def test_get_network_defaults_unknown_returns_mainnet() -> None:
@@ -81,8 +82,20 @@ def test_get_network_defaults_unknown_returns_mainnet() -> None:
     defaults = get_network_defaults("unknown-network")
     
     # Should fall back to mainnet
-    assert defaults["chain_id"] == 1
+    assert defaults["chain_id"] == 0
     assert defaults["rpc_port"] == 8545
+
+
+def test_mainnet_db_path_resolves_chain_zero(clean_env_vars: Any) -> None:
+    """Test that mainnet resolves to chain-0 DB path."""
+    os.environ.pop("ANIMICA_DATA_DIR", None)
+    config = load_network_config("mainnet")
+
+    db_path = Path(config.data_dir).expanduser() / config.db_name
+
+    assert config.chain_id == 0
+    assert db_path.name == "animica.db"
+    assert db_path.parent.name == "chain-0"
 
 
 def test_load_network_config_default() -> None:
@@ -100,7 +113,7 @@ def test_load_network_config_default() -> None:
         config = load_network_config()
         
         assert config.name == "mainnet"
-        assert config.chain_id == 1
+        assert config.chain_id == 0
         assert config.rpc_port == 8545
         assert config.rpc_url == "http://127.0.0.1:8545/rpc"
         assert config.rpc_host == "127.0.0.1"
@@ -123,7 +136,7 @@ def test_load_network_config_from_env() -> None:
         
         assert config.name == "testnet"
         assert config.chain_id == 2
-        assert config.rpc_port == 8546
+        assert config.rpc_port == 18546
     finally:
         # Restore original environment
         if old_network:
@@ -138,7 +151,7 @@ def test_load_network_config_explicit_network() -> None:
     
     assert config.name == "devnet"
     assert config.chain_id == 1337
-    assert config.rpc_port == 8545
+    assert config.rpc_port == 28545
 
 
 def test_load_network_config_env_override() -> None:
@@ -202,7 +215,7 @@ def test_load_network_config_empty_chain_id(clean_env_vars: Any) -> None:
     config = load_network_config()
     
     assert config.name == "mainnet"
-    assert config.chain_id == 1  # mainnet default
+    assert config.chain_id == 0  # mainnet default
 
 
 def test_load_network_config_whitespace_chain_id(clean_env_vars: Any) -> None:
@@ -249,7 +262,7 @@ def test_load_network_config_no_chain_id_env(clean_env_vars: Any) -> None:
     config = load_network_config()
     
     assert config.name == "mainnet"
-    assert config.chain_id == 1  # mainnet default
+    assert config.chain_id == 0  # mainnet default
 
 
 def test_load_network_config_empty_rpc_url(clean_env_vars: Any) -> None:
@@ -273,7 +286,7 @@ def test_load_network_config_whitespace_rpc_url(clean_env_vars: Any) -> None:
     config = load_network_config()
     
     assert config.name == "testnet"
-    assert config.rpc_url == "http://127.0.0.1:8546/rpc"  # testnet default
+    assert config.rpc_url == "http://127.0.0.1:18546/rpc"  # testnet default
 
 
 def test_load_network_config_valid_rpc_url_override(clean_env_vars: Any) -> None:
@@ -296,4 +309,4 @@ def test_load_network_config_no_rpc_url_env(clean_env_vars: Any) -> None:
     config = load_network_config()
     
     assert config.name == "devnet"
-    assert config.rpc_url == "http://127.0.0.1:8545/rpc"  # devnet default
+    assert config.rpc_url == "http://127.0.0.1:28545/rpc"  # devnet default

@@ -19,7 +19,7 @@ class TestNetworkSpecificSeeds:
 
     def test_default_seeds_by_network_mainnet(self):
     """Test mainnet (chain_id=0) seeds point at the primary host."""
-        seeds = p2p_config.DEFAULT_SEEDS_BY_NETWORK[1]
+        seeds = p2p_config.DEFAULT_SEEDS_BY_NETWORK[0]
 
         for host in MAINNET_SEED_HOSTS:
             assert any(host in s for s in seeds)
@@ -49,7 +49,7 @@ class TestNetworkSpecificSeeds:
 
     def test_network_name_to_chain_id_mapping(self):
         """Test network name to chain_id mapping."""
-        assert p2p_config.NETWORK_NAME_TO_CHAIN_ID["mainnet"] == 1
+        assert p2p_config.NETWORK_NAME_TO_CHAIN_ID["mainnet"] == 0
         assert p2p_config.NETWORK_NAME_TO_CHAIN_ID["testnet"] == 2
         assert p2p_config.NETWORK_NAME_TO_CHAIN_ID["devnet"] == 1337
 

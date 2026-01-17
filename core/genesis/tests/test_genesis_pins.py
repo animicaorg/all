@@ -6,7 +6,7 @@ from core.network_params import get_network_genesis_path, get_pinned_genesis_has
 
 def test_pinned_genesis_hashes_match_files() -> None:
     networks = [
-        ("mainnet", 1),
+        ("mainnet", 0),
         ("testnet", 2),
         ("devnet", 1337),
     ]

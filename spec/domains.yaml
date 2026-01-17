@@ -12,7 +12,7 @@
 #
 # Canonical construction (MUST):
 #   DomainTag = b"ANM|" + chainId_ascii + b"|" + path_ascii + b"|v" + str(version)
-#   Where chainId_ascii is one of: "animica:1", "animica:2", "animica:1337".
+#   Where chainId_ascii is one of: "animica:0", "animica:2", "animica:1337".
 #   SignBytes = DomainTag || CanonicalEncode(payload)   # CBOR for core objects
 #   Hash      = SHA3-256( DomainTag || bytes_to_hash )
 #

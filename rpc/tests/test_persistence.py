@@ -20,7 +20,7 @@ def test_expand_sqlite_uri_creates_parent_directory():
     
     with tempfile.TemporaryDirectory() as tmpdir:
         # Test with a path that doesn't exist yet
-        test_path = Path(tmpdir) / "animica" / "chain-1" / "test.db"
+        test_path = Path(tmpdir) / "animica" / "chain-0" / "test.db"
         test_uri = f"sqlite:///{test_path}"
         
         # Expand the URI (should create parent directory)
@@ -36,7 +36,7 @@ def test_expand_sqlite_uri_handles_tilde_paths():
     from rpc.config import _expand_sqlite_uri
     
     # Test with ~ path (should expand to actual home directory)
-    test_uri = "sqlite:///~/.animica/chain-1/test.db"
+    test_uri = "sqlite:///~/.animica/chain-0/test.db"
     expanded = _expand_sqlite_uri(test_uri)
     
     # Verify ~ was expanded
@@ -98,7 +98,7 @@ def test_rpc_config_default_db_path_uses_chain_id():
     from rpc.config import load
     
     # Test with different chain IDs
-    for chain_id, expected_dir in [(1, "chain-1"), (2, "chain-2"), (1337, "chain-1337")]:
+    for chain_id, expected_dir in [(0, "chain-0"), (2, "chain-2"), (1337, "chain-1337")]:
         os.environ["ANIMICA_CHAIN_ID"] = str(chain_id)
         try:
             cfg = load()

@@ -7,7 +7,7 @@ This document specifies how nodes discover initial peers before the gossip/sync 
 - Transport/address parsing: `p2p/transport/multiaddr.py`
 - Peer identity: `p2p/crypto/peer_id.py` (sha3-256(pubkey||alg_id))
 
-Networks use CAIP-2 chain IDs (e.g., `animica:1` mainnet, `animica:2` testnet, `animica:1337` devnet).
+Networks use CAIP-2 chain IDs (e.g., `animica:0` mainnet, `animica:2` testnet, `animica:1337` devnet).
 
 ---
 
@@ -32,7 +32,7 @@ available as a last resort.
 ### 2.1 Endpoint
 Optional per network, published at:
 
-- Mainnet: `https://seeds.example.net/v1/animica:1.json`
+- Mainnet: `https://seeds.example.net/v1/animica:0.json`
 - Testnet: `https://seeds.example.net/v1/animica:2.json`
 - Devnet:  `https://seeds.example.net/v1/animica:1337.json`
 
@@ -42,7 +42,7 @@ Each JSON has a detached signature at the same path with `.sig` suffix (see **2.
 ```jsonc
 {
   "version": 1,
-  "network": "animica:1",        // CAIP-2
+  "network": "animica:0",        // CAIP-2
   "generatedAt": "2025-01-20T12:34:56Z",
   "expiresAt":   "2025-02-03T12:34:56Z",   // MUST be <= 14 days after generatedAt
   "entries": [
@@ -202,11 +202,11 @@ Client-side:
   "expiresAt": "2025-02-03T12:34:56Z",
   "generatedAt": "2025-01-20T12:34:56Z",
   "metadata": { "minVersion": ">=1.0.0", "source": "curated" },
-  "network": "animica:1",
+  "network": "animica:0",
   "version": 1
 }
 
-Detached signature: Base64 in animica:1.json.sig.
+Detached signature: Base64 in animica:0.json.sig.
 
 7.2 Example DNS zone (TXT + A/AAAA)
 

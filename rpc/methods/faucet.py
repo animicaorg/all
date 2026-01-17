@@ -10,7 +10,7 @@ Methods:
   - faucet.request(address, amount?) -> { address, amount, balance }
 
 Security:
-  - ONLY available on non-mainnet chains (chainId != 1)
+  - ONLY available on non-mainnet chains (chainId != 0)
   - Returns clear error on mainnet
   - No rate limits (testnet/devnet simplicity)
   - Direct state DB credit (no block production required)
@@ -124,11 +124,11 @@ def _parse_address(addr: str) -> bytes:
 
 def _check_mainnet() -> None:
     """
-    Check if we're on mainnet (chainId == 1) and raise error if so.
+    Check if we're on mainnet (chainId == 0) and raise error if so.
     """
     ctx = deps.get_ctx()
     chain_id = ctx.cfg.chain_id
-    if chain_id == 1:
+    if chain_id == 0:
         raise rpc_errors.RpcError(
             code=-32600,  # Invalid Request
             message="Faucet is not available on mainnet",

@@ -131,7 +131,7 @@ class Chain(BaseModel):
     model_config = ConfigDict(extra="forbid")
     schemaVersion: str
     name: str
-    chainId: int = Field(ge=1)
+    chainId: int = Field(ge=0)
     network: Literal["mainnet", "testnet", "localnet"]
     status: Literal["planned", "active", "dev", "deprecated"]
     testnet: bool
@@ -166,7 +166,7 @@ class RegistryEntry(BaseModel):
     model_config = ConfigDict(extra="forbid")
     key: str
     name: str
-    chainId: int = Field(ge=1)
+    chainId: int = Field(ge=0)
     network: Literal["mainnet", "testnet", "localnet"]
     status: Literal["planned", "active", "dev", "deprecated"]
     testnet: bool

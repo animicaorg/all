@@ -81,7 +81,7 @@ def _params_from_spec(chain_id: int | None = None) -> t.Dict[str, t.Any]:
 
     The params.yaml file uses a network-specific structure under a 'networks' key:
     networks:
-      "animica:1": {...}    # mainnet
+      "animica:0": {...}    # mainnet
       "animica:2": {...}    # testnet
       "animica:1337": {...} # devnet
     """
@@ -310,7 +310,9 @@ def _infer_data_root(cfg: _ConfigView) -> Path:
     if base is None:
         base = Path("~/.animica").expanduser()
 
-    return base / f"chain-{cfg.chain_id}"
+    from animica.config import get_chain_data_dir
+
+    return get_chain_data_dir(cfg.chain_id, base_dir=base, create=True)
 
 
 def _load_rpc_config() -> _ConfigView:
@@ -935,7 +937,7 @@ def build_context(cfg: t.Any | None = None) -> RpcContext:
     network = os.environ.get("ANIMICA_NETWORK", "").strip().lower()
     if not network:
         # Infer from chain_id
-        if cfg_view.chain_id == 1:
+        if cfg_view.chain_id == 0:
             network = "mainnet"
         elif cfg_view.chain_id == 2:
             network = "testnet"

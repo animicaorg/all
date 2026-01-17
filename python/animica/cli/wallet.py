@@ -702,6 +702,14 @@ def show(
     else:
         output.pop("secret_key_hex", None)
 
+    try:
+        net_cfg = load_network_config()
+        output["network"] = net_cfg.name
+        output["chain_id"] = net_cfg.chain_id
+        output["data_dir"] = net_cfg.data_dir
+    except Exception:
+        pass
+
     output["balance"] = balance_confirmed
     output["balance_confirmed"] = balance_confirmed
     output["balance_confirmed_formatted"] = (
@@ -712,6 +720,10 @@ def show(
         output["balance_confirmed_height"] = balance_query_height
     if balance_confirmed is not None and balance_query_hash is not None:
         output["balance_confirmed_hash"] = balance_query_hash
+    if balance_query_height is not None:
+        output["queried_at_height"] = balance_query_height
+    if balance_query_hash is not None:
+        output["queried_at_hash"] = balance_query_hash
     if balance_tip is not None:
         output["balance_tip"] = balance_tip
         output["balance_tip_formatted"] = format_amount(balance_tip)

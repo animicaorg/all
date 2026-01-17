@@ -745,7 +745,7 @@ def test_reset_with_volumes_removes_named_volume(monkeypatch: Any) -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         mock_compose_file = Path(tmpdir) / "docker-compose.yml"
         mock_compose_file.write_text("version: '3'\nservices:\n  node:\n    image: test\n")
-        mock_data_dir = Path(tmpdir) / "chain-1"
+        mock_data_dir = Path(tmpdir) / "chain-0"
 
         monkeypatch.setattr("animica.cli.node._get_compose_file", lambda network: mock_compose_file)
         monkeypatch.setattr(

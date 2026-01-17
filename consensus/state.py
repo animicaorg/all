@@ -84,7 +84,7 @@ class InMemoryConsensusState:
         → harder to cross acceptance.
 
     chain_id:
-        CAIP-2 chain id integer (animica:1 → 1, etc.)
+        CAIP-2 chain id integer (animica:0 → 0, etc.)
 
     policy_roots:
         Expected policy roots (alg-policy, PoIES). Tests can mutate these to
@@ -302,7 +302,7 @@ class InMemoryConsensusState:
 if __name__ == "__main__":  # pragma: no cover
     # Tiny smoke demo
     roots = PolicyRoots(alg_policy_root=b"\xaa" * 32, poies_policy_root=b"\xbb" * 32)
-    st = InMemoryConsensusState(chain_id=1, theta_micro=5_000_000, policy_roots=roots)
+    st = InMemoryConsensusState(chain_id=0, theta_micro=5_000_000, policy_roots=roots)
     st.init_from_genesis(genesis_hash=b"\x00" * 32, genesis_timestamp=1_700_000_000)
 
     # Synthesize ~10s blocks with jitter

@@ -14,7 +14,7 @@ policy_roots:
   poies_policy_root: "0x0000000000000000000000000000000000000000000000000000000000000000"
 
 consensus:
-  # Mainnet PoIES parameters (see spec/params.yaml networks.animica:1.consensus.poies)
+  # Mainnet PoIES parameters (see spec/params.yaml networks.animica:0.consensus.poies)
   theta_initial: 16000000
   gamma_total_cap: 12000000
   retarget:

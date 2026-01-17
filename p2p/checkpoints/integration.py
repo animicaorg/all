@@ -29,7 +29,7 @@ async def initialize_checkpoints(
     
     Args:
         config: CheckpointsConfig instance, or None to load from environment.
-        chain_id: Optional chain identifier for built-in checkpoints (1=mainnet, etc.)
+        chain_id: Optional chain identifier for built-in checkpoints (0=mainnet, etc.)
         include_builtin: If True, include built-in checkpoints for the chain.
     
     Returns:

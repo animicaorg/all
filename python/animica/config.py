@@ -33,10 +33,51 @@ def _base_data_dir() -> Path:
     return Path("~/.animica").expanduser()
 
 
+def get_chain_data_dir(
+    chain_id: int,
+    base_dir: Path | None = None,
+    *,
+    create: bool = False,
+) -> Path:
+    """Resolve the per-chain data directory.
+
+    If base_dir (or ANIMICA_DATA_DIR) already ends with chain-<id>, use it when the
+    chain matches; otherwise treat the parent as the root and resolve the requested
+    chain directory beneath it.
+    """
+    base = (base_dir or _base_data_dir()).expanduser()
+    if base.name.startswith("chain-"):
+        try:
+            existing_id = int(base.name.split("chain-", 1)[1])
+        except (ValueError, IndexError):
+            existing_id = None
+        if existing_id == chain_id:
+            data_dir = base
+        else:
+            data_dir = base.parent / f"chain-{chain_id}"
+    else:
+        data_dir = base / f"chain-{chain_id}"
+    if create:
+        data_dir.mkdir(parents=True, exist_ok=True)
+    return data_dir
+
+
+def get_chain_db_path(
+    chain_id: int,
+    *,
+    base_dir: Path | None = None,
+    db_name: str = "animica.db",
+    create: bool = False,
+) -> Path:
+    """Return the SQLite DB path for a chain (animica.db by default)."""
+    data_dir = get_chain_data_dir(chain_id, base_dir=base_dir, create=create)
+    return data_dir / db_name
+
+
 def _network_data_dir(chain_id: int) -> str:
     """Return the canonical data directory for a chain id."""
 
-    return str(_base_data_dir() / f"chain-{chain_id}")
+    return str(get_chain_data_dir(chain_id, create=False))
 
 logger = logging.getLogger(__name__)
 
@@ -286,7 +327,7 @@ def get_network_defaults(network: str) -> dict[str, any]:
     
     network_configs = {
         "mainnet": {
-            "chain_id": 1,
+            "chain_id": 0,
             "rpc_url": "http://127.0.0.1:8545/rpc",
             "bootstrap_url": "http://127.0.0.1:8545/rpc",
             "rpc_port": 8545,
@@ -294,7 +335,7 @@ def get_network_defaults(network: str) -> dict[str, any]:
             "metrics_port": 9000,
             "compose_file": repo_root / "ops" / "docker" / "docker-compose.mainnet.yml",
             "genesis_path": str(repo_root / "core" / "genesis" / "mainnet.json"),
-            "data_dir": _network_data_dir(1),
+            "data_dir": _network_data_dir(0),
             "db_name": "animica.db",
         },
         "testnet": {
@@ -404,6 +445,8 @@ def load_network_config(network: Optional[str] = None) -> NetworkConfig:
             bootstrap_url = defaults.get("bootstrap_url", defaults["rpc_url"])
     chain_id = _safe_int_from_env("ANIMICA_CHAIN_ID", defaults["chain_id"])
 
+    data_dir = str(get_chain_data_dir(chain_id, create=True))
+
     return NetworkConfig(
         name=network_name,
         rpc_url=rpc_url,
@@ -411,7 +454,7 @@ def load_network_config(network: Optional[str] = None) -> NetworkConfig:
         chain_id=chain_id,
         compose_file=defaults["compose_file"],
         genesis_path=defaults["genesis_path"],
-        data_dir=defaults["data_dir"],
+        data_dir=data_dir,
         rpc_port=defaults["rpc_port"],
         db_name=defaults["db_name"],
     )
@@ -422,6 +465,8 @@ __all__ = [
     "NetworkConfig",
     "load_network_config",
     "get_network_defaults",
+    "get_chain_data_dir",
+    "get_chain_db_path",
     "DEFAULT_NETWORK",
     "DEFAULT_RPC_URL",
     "ENV_FILE_VAR",
