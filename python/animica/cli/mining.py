@@ -2019,8 +2019,8 @@ def miner_stratum(
             mining_active = True
             
             # Initialize nonce counter with random starting point to avoid collisions
-            # Use high starting values as requested
-            nonce_counter = secrets.randbelow(2**32) + 2**31  # Start from at least 2^31
+            # Use high starting values as requested, keeping within 32-bit range
+            nonce_counter = secrets.randbelow(2**31) + 2**31  # Range: [2^31, 2^32)
             extranonce2_counter = 1  # Counter for extranonce2
             
             # Set up callbacks
@@ -2078,6 +2078,7 @@ def miner_stratum(
                     # In a production implementation, this would use multiprocessing
                     nonce_start = nonce_counter
                     nonce_batch_size = 10000
+                    share_found_in_batch = False
                     
                     for nonce in range(nonce_start, nonce_start + nonce_batch_size):
                         # Build hashshare payload (simplified)
@@ -2109,6 +2110,7 @@ def miner_stratum(
                         if digest_int <= share_target256:
                             # Found a share!
                             stats["shares_submitted"] += 1
+                            share_found_in_batch = True
                             
                             # Update nonce counter to continue from where we left off
                             nonce_counter = nonce + 1
@@ -2167,8 +2169,10 @@ def miner_stratum(
                             hashrate_window_hashes = 0
                             hashrate_window_start = now
                     
-                    # Update nonce counter after batch to continue from next batch
-                    nonce_counter = nonce_start + nonce_batch_size
+                    # Update nonce counter after batch only if no share was found
+                    # (if share was found, counter was already updated to nonce+1)
+                    if not share_found_in_batch:
+                        nonce_counter = nonce_start + nonce_batch_size
                     
                     # Small delay to allow job updates
                     await asyncio.sleep(0.001)
