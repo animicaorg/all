@@ -252,7 +252,22 @@ def _tracked(tx: Any) -> tuple[str, bytes] | None:
 
 
 def _resolve_chain_id_for_sig(ctx: Any) -> int:
-    chain_id = getattr(getattr(ctx, "cfg", None), "chain_id", None)
+    chain_id = None
+    try:
+        chain_identity = getattr(ctx, "chain_identity", None)
+        if chain_identity is not None and hasattr(chain_identity, "chain_id"):
+            chain_id = int(chain_identity.chain_id)
+    except Exception:
+        chain_id = None
+    if chain_id is None:
+        try:
+            block_db = getattr(ctx, "block_db", None)
+            if block_db is not None and hasattr(block_db, "get_chain_id"):
+                chain_id = block_db.get_chain_id()
+        except Exception:
+            chain_id = None
+    if chain_id is None:
+        chain_id = getattr(getattr(ctx, "cfg", None), "chain_id", None)
     if chain_id is None:
         try:
             chain_id = int(deps.get_chain_id())
@@ -1535,7 +1550,7 @@ def _get_miner_address() -> bytes:
         from consensus.rewards import MAINNET_PREMINE_DISTRIBUTION  # type: ignore[import-not-found]
         
         ctx = _ctx()
-        chain_id = ctx.cfg.chain_id
+        chain_id = _resolve_chain_id_for_sig(ctx)
         
         # For mainnet (chain_id=0) or devnet (chain_id=1337), use first premine address
         if chain_id in (1, 1337) and MAINNET_PREMINE_DISTRIBUTION:
@@ -1572,7 +1587,7 @@ def _build_coinbase_transactions(ctx: Any, height: int, payout_address: bytes | 
         # Get miner address (use custom payout address if provided)
         miner_address = payout_address if payout_address is not None else _get_miner_address()
         
-        chain_id = ctx.cfg.chain_id
+        chain_id = _resolve_chain_id_for_sig(ctx)
         params = getattr(ctx, "params", None) or {}
         
         canonical_height = None
@@ -2368,10 +2383,12 @@ def _build_child_header(
         except Exception as e:
             log.warning(f"Failed to encode extra field: {e}")
             extra_data = b""
+
+    chain_id = _resolve_chain_id_for_sig(_ctx())
     
     return Header(
         v=1,
-        chainId=_ctx().cfg.chain_id,
+        chainId=chain_id,
         height=parent_height + 1,
         parentHash=_bytes32(parent_hash),
         timestamp=timestamp,
@@ -5025,8 +5042,16 @@ def miner_submit_block(payload: Any = None, **kwargs: Any) -> Dict[str, Any]:
             block_import_mod.ImportErrorCode.DUPLICATE,
         )
         if not accepted:
-            reason = result.reason or result.code
-            reason_lower = str(reason).lower()
+            reason_detail = result.reason or result.code
+            reason_label = None
+            if isinstance(reason_detail, dict):
+                reason_label = (
+                    reason_detail.get("reason")
+                    or reason_detail.get("name")
+                    or reason_detail.get("error")
+                )
+            reason_text = reason_label if reason_label is not None else reason_detail
+            reason_lower = str(reason_text).lower()
             reject_reason = "invalid_state_transition"
             code = rpc_errors.AnimicaCode.INVALID_STATE_TRANSITION
             
@@ -5038,7 +5063,7 @@ def miner_submit_block(payload: Any = None, **kwargs: Any) -> Dict[str, Any]:
                 log.warning(
                     "Block rejected due to parent mismatch - possible multi-node mining conflict",
                     extra={
-                        "reason": reason,
+                        "reason": reason_detail,
                         "height": result.height,
                         "block_hash": result.block_hash.hex() if result.block_hash else None,
                         "payout_address": payout_address if template_id else None,
@@ -5064,7 +5089,7 @@ def miner_submit_block(payload: Any = None, **kwargs: Any) -> Dict[str, Any]:
                 "block rejected",
                 {
                     "reason": reject_reason,
-                    "detail": reason,
+                    "detail": reason_detail,
                     "height": result.height,
                     "block_hash": result.block_hash.hex() if result.block_hash else None,
                 },
