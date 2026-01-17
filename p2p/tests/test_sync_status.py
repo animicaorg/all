@@ -32,7 +32,7 @@ from p2p.tests import tcp_multiaddr
 from p2p.wire.encoding import encode_payload
 from p2p.wire.frames import Framer
 from p2p.wire.message_ids import MsgID
-from p2p.wire.messages import Blocks, HeaderCompact, Headers, Hello
+from p2p.wire.messages import Blocks, HeaderCompact, Headers, Hello, HeadStatus
 from p2p.wire.messages import GetHeaders
 
 GENESIS_PATH = Path(__file__).resolve().parents[2] / "core" / "genesis" / "genesis.json"
@@ -221,6 +221,42 @@ def _make_service(tmp_path: Path, name: str) -> tuple[P2PService, P2PDeps]:
         peerstore_path=str(tmp_path / name / "p2p"),
     )
     return node, deps_sync
+
+
+def test_sync_status_snapshot_no_peers_reason(tmp_path: Path) -> None:
+    node, _deps = _make_service(tmp_path, "no_peers")
+    snapshot = node._build_sync_status_snapshot()
+
+    assert snapshot.best_remote_height is None
+    assert snapshot.sync_status_reason == "no_peers_connected"
+    assert snapshot.peer_tips_total == 0
+    assert snapshot.peer_tips_fresh == 0
+    assert snapshot.peer_tips_stale == 0
+
+
+@pytest.mark.asyncio
+async def test_head_status_updates_sync_status_snapshot(tmp_path: Path) -> None:
+    node, _deps = _make_service(tmp_path, "head_status")
+    peer = _register_peer(node, "peer-b:0")
+    _setup_peer_hello(node, peer, head_height=1, head_hash=b"\x00" * 32)
+
+    payload = encode_payload(
+        HeadStatus(
+            chain_id=node.chain_id,
+            head_height=5,
+            head_hash=b"\x11" * 32,
+            timestamp_ms=int(time.time() * 1000),
+            network_best_height=5,
+        )
+    )
+    await node._handle_head_status(peer, payload)
+
+    snapshot = node._build_sync_status_snapshot()
+    assert snapshot.best_remote_height == 5
+    assert snapshot.sync_status_reason is None
+    assert snapshot.peer_tips_total == 1
+    assert snapshot.peer_tips_fresh == 1
+    assert snapshot.peer_tips_stale == 0
 
 
 def test_phase_not_idle_when_headers_ahead(tmp_path: Path) -> None:

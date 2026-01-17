@@ -122,6 +122,8 @@ MAX_SKIPPED_BLOCKS_QUEUE_SIZE: int = 100  # Maximum size of skipped blocks queue
 SKIPPED_BLOCKS_RETRY_QUEUE_THRESHOLD: int = 10  # Only retry skipped blocks when main queue < this
 MAX_SKIPPED_BLOCKS_RETRY_PER_CYCLE: int = 5  # Maximum skipped blocks to retry per cycle
 
+PEER_TIP_FRESHNESS_SEC = 600.0
+
 DEFAULT_BOOTSTRAP_SEEDS = [
     "/dns4/mainnet.animica.org/tcp/30333",
     "/ip4/144.126.133.21/tcp/30333",
@@ -470,6 +472,12 @@ class SyncStatusSnapshot:
     """Peer ID/address of best remote tip."""
     best_remote_age_sec: Optional[float]
     """Age in seconds of best remote tip info."""
+    peer_tips_total: int
+    """Total peers considered for tip freshness."""
+    peer_tips_fresh: int
+    """Peers with fresh tip info."""
+    peer_tips_stale: int
+    """Peers with stale tip info."""
     behind_by: Optional[int]
     """Blocks behind best remote (None if remote unknown)."""
     sync_status_reason: Optional[str]
@@ -592,6 +600,9 @@ class SyncStatusSnapshot:
             "best_remote_hash": self.best_remote_hash,
             "best_remote_peer": self.best_remote_peer,
             "best_remote_age_sec": self.best_remote_age_sec,
+            "peer_tips_total": self.peer_tips_total,
+            "peer_tips_fresh": self.peer_tips_fresh,
+            "peer_tips_stale": self.peer_tips_stale,
             "behind_by": self.behind_by,
             "sync_status_reason": self.sync_status_reason,
             "in_flight": self.in_flight,
@@ -889,6 +900,13 @@ class P2PService:
         self._tx_relay_heartbeat_at: float = 0.0
         self._head_status_heartbeat_at: float = 0.0  # For periodic HEAD_STATUS broadcasting
         self._head_status_heartbeat_interval_sec: float = 10.0  # Broadcast every 10s
+        self._peer_head_poll_interval_sec = float(
+            os.environ.get("ANIMICA_P2P_PEER_HEAD_POLL_INTERVAL", "20") or 20
+        )
+        self._peer_head_poll_concurrency = int(
+            os.environ.get("ANIMICA_P2P_PEER_HEAD_POLL_CONCURRENCY", "10") or 10
+        )
+        self._peer_head_poll_at: dict[str, float] = {}
         self._tx_recent_rejects: Deque[dict[str, Any]] = deque(
             maxlen=int(os.environ.get("ANIMICA_P2P_TX_REJECT_LOG", "50") or 50)
         )
@@ -3013,6 +3031,9 @@ class P2PService:
         best_remote_height, best_remote_hash, best_remote_peer, best_remote_age = self._compute_best_remote_info(
             chain_id=chain_id
         )
+        peer_tips_total, peer_tips_fresh, peer_tips_stale = self._peer_tip_freshness_snapshot(
+            chain_id=chain_id
+        )
         
         # Compute behind_by and sync_status_reason
         behind_by: Optional[int] = None
@@ -3022,7 +3043,9 @@ class P2PService:
             behind_by = max(0, best_remote_height - best_block_height)
         else:
             # No fresh peer tips available - critical condition
-            sync_status_reason = "no_fresh_peer_tips"
+            sync_status_reason = (
+                "no_peers_connected" if not self._peers else "no_fresh_peer_tips"
+            )
         
         target_candidates = [
             int(height)
@@ -3057,7 +3080,9 @@ class P2PService:
         if best_remote_height is None:
             synchronized = False
             if not sync_status_reason:
-                sync_status_reason = "no_fresh_peer_tips"
+                sync_status_reason = (
+                    "no_peers_connected" if not self._peers else "no_fresh_peer_tips"
+                )
         # Rule 2: If we have fresh best_remote, check if we're within ALLOWED_LAG
         elif behind_by is not None:
             if behind_by <= ALLOWED_LAG:
@@ -3203,6 +3228,9 @@ class P2PService:
             best_remote_hash=best_remote_hash,
             best_remote_peer=best_remote_peer,
             best_remote_age_sec=best_remote_age,
+            peer_tips_total=peer_tips_total,
+            peer_tips_fresh=peer_tips_fresh,
+            peer_tips_stale=peer_tips_stale,
             behind_by=behind_by,
             sync_status_reason=sync_status_reason,
             in_flight=len(self._sync_inflight_blocks),
@@ -4684,6 +4712,7 @@ class P2PService:
         }
 
     async def force_sync(self) -> dict[str, Any]:
+        await self._poll_peer_heads(reason="force_sync", force=True)
         self._sync_kick(reason="force_sync", aggressive=True)
         return await self._sync_once(force=True)
 
@@ -4764,6 +4793,7 @@ class P2PService:
     ) -> dict[str, Any]:
         if clear_cache:
             self._clear_sync_cache()
+        await self._poll_peer_heads(reason="force_sync_with_cache", force=True)
         self._sync_kick(reason="force_sync_with_cache", aggressive=True)
         result = await self._sync_once(force=True)
         if clear_cache:
@@ -6234,6 +6264,10 @@ class P2PService:
             self._send_get_peers(peer),
             name=f"p2p.get_peers@{peer.remote}",
         )
+        self._create_child_task(
+            self._request_peer_head_status(peer, reason="hello"),
+            name=f"p2p.head_status_request@{peer.remote}",
+        )
         if peer.feeler:
             self._create_child_task(
                 self._close_feeler_after_delay(peer),
@@ -6315,6 +6349,77 @@ class P2PService:
                     self._mark_peer_known(peer, addr)
             self._ingest_peer_entries(entries, source=f"announce:{peer.remote}", source_peer=peer)
 
+    async def _request_peer_head_status(self, peer: _PeerState, *, reason: str) -> bool:
+        if not peer.hello_done.is_set():
+            return False
+        if not self._peer_chain_matches(peer):
+            return False
+        if not peer.repo_state_ok:
+            return False
+        now = time.time()
+        self._peer_head_poll_at[peer.remote] = now
+        from p2p.wire.messages import GetHeadStatus
+        try:
+            await self._send(peer, MsgID.GET_HEAD_STATUS, GetHeadStatus())
+        except Exception as exc:
+            self._mark_peer_head_issue(peer, reason="head_status_poll_failed")
+            log.warning(
+                "HEAD_STATUS poll failed",
+                extra={
+                    "peer": peer.remote,
+                    "peer_id": peer.peer_id,
+                    "error": str(exc),
+                    "reason": reason,
+                },
+            )
+            return False
+        return True
+
+    async def _poll_peer_heads(self, *, reason: str, force: bool = False) -> int:
+        now = time.time()
+        async with self._peer_lock:
+            peers = list(self._peers.values())
+        if not peers:
+            return 0
+        semaphore = asyncio.Semaphore(max(1, self._peer_head_poll_concurrency))
+        tasks: list[asyncio.Task] = []
+
+        async def _poll(peer: _PeerState) -> bool:
+            async with semaphore:
+                return await self._request_peer_head_status(peer, reason=reason)
+
+        for peer in peers:
+            if not peer.hello_done.is_set():
+                continue
+            if not self._peer_chain_matches(peer):
+                continue
+            if not peer.repo_state_ok:
+                continue
+            last_poll = self._peer_head_poll_at.get(peer.remote, 0.0)
+            tip_age = (
+                now - peer.hello_received_at if peer.hello_received_at else float("inf")
+            )
+            if not force:
+                if now - last_poll < self._peer_head_poll_interval_sec:
+                    continue
+                if tip_age < self._peer_head_poll_interval_sec:
+                    continue
+            tasks.append(asyncio.create_task(_poll(peer)))
+        if not tasks:
+            return 0
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        updated = sum(1 for result in results if result is True)
+        if updated:
+            log.info(
+                "HEAD_STATUS poll completed",
+                extra={
+                    "updated": updated,
+                    "total": len(tasks),
+                    "reason": reason,
+                },
+            )
+        return updated
+
     async def _handle_get_head_status(self, peer: _PeerState, payload: bytes) -> None:
         """
         Handle GET_HEAD_STATUS request: respond with our current head.
@@ -6391,11 +6496,13 @@ class P2PService:
         if peer_network_best is not None and peer.hello is not None:
             peer.hello["network_best_height"] = int(peer_network_best)
         
-        log.debug(
+        log.info(
             "Received HEAD_STATUS update",
             extra={
                 "remote": peer.remote,
+                "peer_id": peer.peer_id,
                 "height": peer_height,
+                "hash": peer_hash.hex() if isinstance(peer_hash, (bytes, bytearray)) else None,
                 "network_best": peer_network_best,
                 "age_ms": int(time.time() * 1000) - peer_timestamp_ms if peer_timestamp_ms else None,
             },
@@ -12051,8 +12158,6 @@ class P2PService:
         """
         # INCREASED from 45.0 to 600.0 (10 minutes) per requirements - more tolerant freshness window
         # With HEAD_STATUS broadcasts every 10s, 600s allows for up to 60 missed heartbeats
-        TIP_FRESHNESS_SEC = 600.0
-        
         best_height: Optional[int] = None
         best_hash: Optional[str] = None
         best_peer: Optional[str] = None
@@ -12079,7 +12184,7 @@ class P2PService:
             hello_age = now - peer.hello_received_at if peer.hello_received_at else float('inf')
             
             # CRITICAL: Only use fresh tip info
-            if hello_age > TIP_FRESHNESS_SEC:
+            if hello_age > PEER_TIP_FRESHNESS_SEC:
                 continue
             
             try:
@@ -12102,6 +12207,30 @@ class P2PService:
                 best_age = hello_age
         
         return best_height, best_hash, best_peer, best_age
+
+    def _peer_tip_freshness_snapshot(
+        self, *, chain_id: Optional[int] = None
+    ) -> tuple[int, int, int]:
+        now = time.time()
+        total = 0
+        fresh = 0
+        stale = 0
+        for peer in self._peers.values():
+            if not peer.hello_done.is_set():
+                continue
+            if not peer.repo_state_ok:
+                continue
+            if chain_id is not None:
+                peer_chain_id = (peer.hello or {}).get("chain_id")
+                if peer_chain_id != chain_id:
+                    continue
+            total += 1
+            hello_age = now - peer.hello_received_at if peer.hello_received_at else float("inf")
+            if hello_age <= PEER_TIP_FRESHNESS_SEC:
+                fresh += 1
+            else:
+                stale += 1
+        return total, fresh, stale
 
     def _network_best_height(self) -> Optional[int]:
         """
@@ -14739,6 +14868,7 @@ class P2PService:
                     return
                 await self._relay_heartbeat()
                 await self._head_status_heartbeat()
+                await self._poll_peer_heads(reason="heartbeat")
                 await self._rebroadcast_pending_txs()
                 await self._relay_heartbeat()
                 await self._head_status_heartbeat()
