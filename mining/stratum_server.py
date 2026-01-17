@@ -313,7 +313,6 @@ class StratumServer:
         Raises:
             OSError: If the server fails to bind to the specified host/port
             asyncio.CancelledError: When the task is cancelled (expected behavior)
-            RuntimeError: If server initialization fails unexpectedly
         
         Note: This method is designed to be called once per server instance.
         Multiple concurrent calls are not supported and will lead to undefined behavior.
@@ -328,15 +327,11 @@ class StratumServer:
             if port is not None:
                 self._port = port
             
+            # Start the server (raises OSError on failure)
             await self.start()
             
-            # Verify server was properly initialized
-            if self._server is None:
-                raise RuntimeError(
-                    "Server initialization failed: _server is None after start()"
-                )
-            
-            # Wait until the server is closed (by stop() or cancellation)
+            # Serve forever until cancelled or stopped
+            # start() guarantees self._server is set on success
             await self._server.serve_forever()
         finally:
             # Restore original values to maintain instance consistency
