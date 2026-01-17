@@ -2144,7 +2144,6 @@ def miner_stratum(
                                     
                                     # Stop after reaching share count
                                     if stats["shares_accepted"] >= count:
-                                        mining_active = False
                                         break
                                 else:
                                     stats["shares_rejected"] += 1
@@ -2165,7 +2164,7 @@ def miner_stratum(
                                 typer.echo(
                                     f"Hashrate: {hashrate:.2f} H/s | "
                                     f"Shares: {stats['shares_accepted']}/{count} | "
-                                    f"Blocks: {stats['blocks_found']}"
+                                    f"Blocks found: {stats['blocks_found']}"
                                 )
                             last_hashrate_report = now
                             hashrate_window_hashes = 0
