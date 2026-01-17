@@ -206,10 +206,10 @@ def stratum_up(
     cmd = [
         python_exe,
         "-m",
-        "mining.cli.stratum_proxy",
-        "start",
+        "mining.stratum_bridge",
         "--rpc-url", rpc_url,
         "--listen", f"{bind}:{port}",
+        "--address", "anim1placeholder",  # Will be overridden by miner
         "--log-level", log_level,
     ]
     
@@ -218,6 +218,7 @@ def stratum_up(
     
     typer.echo(f"Starting Stratum server on stratum+tcp://{bind}:{port}")
     typer.echo(f"RPC URL: {rpc_url}")
+    typer.echo("Note: Payout address will be set by connecting miners")
     
     if daemon:
         # Run in background
