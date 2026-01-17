@@ -195,6 +195,13 @@ def _timestamp_of(header: Header, payload: Optional[Dict[str, Any]] = None) -> O
     return None
 
 
+def _failure_detail(reason: str, **data: Any) -> Dict[str, Any]:
+    detail = {"reason": reason}
+    if data:
+        detail.update(data)
+    return detail
+
+
 def _is_instant_block(header: Header, payload: Optional[Dict[str, Any]] = None) -> bool:
     """
     Check if a block is an instant block by examining the extra field.
@@ -750,7 +757,11 @@ class BlockImporter:
                     None,
                     None,
                     False,
-                    f"chainId mismatch: got {chain_id}, expected {self.params.chain_id}",
+                    _failure_detail(
+                        "chain_id_mismatch",
+                        got=int(chain_id),
+                        expected=int(self.params.chain_id),
+                    ),
                 )
 
             height = _height_of(header, hdr_map)
@@ -804,12 +815,19 @@ class BlockImporter:
                     height,
                     h,
                     False,
-                    f"height continuity failed: got {height}, parent at {parent_height}",
+                    _failure_detail(
+                        "height_continuity_failed",
+                        got=height,
+                        expected=parent_height + 1,
+                        parent_height=parent_height,
+                    ),
                 )
 
             timestamp_error = self._timestamp_sanity(header, parent_header, hdr_map)
             if timestamp_error is not None:
-                return ImportResult(ImportErrorCode.INVALID, height, h, False, timestamp_error)
+                return ImportResult(
+                    ImportErrorCode.INVALID, height, h, False, timestamp_error
+                )
 
             theta_error = self._theta_sanity(header, parent_hash, hdr_map)
             if theta_error is not None:
@@ -842,7 +860,13 @@ class BlockImporter:
             return ImportResult(ImportErrorCode.ACCEPTED, height, h, head_changed, None)
 
         except BlockImportError as e:
-            return ImportResult(ImportErrorCode.INVALID, None, None, False, str(e))
+            return ImportResult(
+                ImportErrorCode.INVALID,
+                None,
+                None,
+                False,
+                _failure_detail("block_import_error", detail=str(e)),
+            )
 
     # --- Helpers ------------------------------------------------------------
 
@@ -985,7 +1009,7 @@ class BlockImporter:
         header: Header,
         header_hash: bytes,
         payload: Dict[str, Any],
-    ) -> Optional[str]:
+    ) -> Optional[Dict[str, Any]]:
         """
         Lightweight PoW threshold check aligned with miner target rules.
         
@@ -1046,7 +1070,16 @@ class BlockImporter:
                             "genesis_hash": self.params.genesis_hash.hex(),
                         },
                     )
-                return "pow target not met"
+                return _failure_detail(
+                    "pow_target_not_met",
+                    height=height,
+                    parent_hash=parent_hash,
+                    claimed_theta_micro=int(theta_micro),
+                    pow_hash=header_hash.hex(),
+                    pow_hash_int=pow_hash_int,
+                    target=target,
+                    target_hex=hex(int(target)),
+                )
         except Exception as e:
             if os.getenv("ANIMICA_SYNC_DEBUG") == "1":
                 log.debug(
@@ -1056,7 +1089,10 @@ class BlockImporter:
                         "reason": str(e),
                     },
                 )
-            return f"pow check failed: {e}"
+            return _failure_detail(
+                "pow_check_failed",
+                error=str(e),
+            )
         return None
 
     def _tx_hash(self, tx: Tx) -> bytes:
@@ -2029,21 +2065,36 @@ class BlockImporter:
 
     def _timestamp_sanity(
         self, header: Header, parent_header: Header, payload: Dict[str, Any]
-    ) -> Optional[str]:
+    ) -> Optional[Dict[str, Any]]:
         ts = _timestamp_of(header, payload)
         if ts is None:
             return None
         parent_ts = _timestamp_of(parent_header)
         if parent_ts is not None and ts < parent_ts:
-            return "timestamp regression"
+            return _failure_detail(
+                "timestamp_regression",
+                timestamp=ts,
+                parent_timestamp=parent_ts,
+            )
         if self._max_future_seconds > 0:
             now = int(time.time())
             if ts > now + self._max_future_seconds:
-                return "timestamp too far in future"
+                return _failure_detail(
+                    "timestamp_too_far_future",
+                    timestamp=ts,
+                    max_future_seconds=self._max_future_seconds,
+                    max_allowed=now + self._max_future_seconds,
+                )
         if self._min_block_spacing_ms > 0 and parent_ts is not None:
             delta_ms = (ts - parent_ts) * 1000
             if delta_ms < self._min_block_spacing_ms:
-                return "timestamp spacing too short"
+                return _failure_detail(
+                    "timestamp_spacing_too_short",
+                    timestamp=ts,
+                    parent_timestamp=parent_ts,
+                    delta_ms=delta_ms,
+                    min_spacing_ms=self._min_block_spacing_ms,
+                )
         return None
 
     def _theta_sanity(
@@ -2051,7 +2102,7 @@ class BlockImporter:
         header: Header,
         parent_hash: bytes,
         payload: Dict[str, Any],
-    ) -> Optional[str]:
+    ) -> Optional[Dict[str, Any]]:
         head = self.block_db.get_canonical_head()
         if head is None or head[1] != parent_hash:
             return None
@@ -2078,9 +2129,12 @@ class BlockImporter:
                     },
                 )
                 return None
-            return (
-                "theta mismatch"
-                f": got {int(claimed_theta)}, expected {int(expected_theta)}"
+            return _failure_detail(
+                "theta_mismatch",
+                claimed_theta_micro=int(claimed_theta),
+                expected_theta_micro=int(expected_theta),
+                samples=self._difficulty_samples,
+                warmup_blocks=warmup_blocks,
             )
         return None
 

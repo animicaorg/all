@@ -1495,16 +1495,25 @@ def mine_blocks(
                         error_str = _format_rpc_error(submit_error)
                         error_data = getattr(submit_error, "data", None)
                         reason = None
+                        detail = None
                         if isinstance(error_data, dict):
                             reason = error_data.get("reason")
+                            detail = error_data.get("detail")
                         is_stale = (
                             isinstance(reason, str) and reason == "stale_template"
                         ) or "stale template" in error_str.lower()
+                        detail_text = None
+                        if detail is not None:
+                            if isinstance(detail, dict):
+                                detail_text = json.dumps(detail, sort_keys=True)
+                            else:
+                                detail_text = str(detail)
                         _emit_mining_summary(summary, verbose=verbose, force=True)
                         
                         # REJECTED - explicit rejection with reason
+                        detail_suffix = f" detail={detail_text}" if detail_text else ""
                         typer.secho(
-                            f"  REJECTED: Block {i + 1}/{count} (reason: {reason or error_str})",
+                            f"  REJECTED: Block {i + 1}/{count} (reason: {reason or error_str}{detail_suffix})",
                             fg=typer.colors.RED,
                         )
                         
@@ -1520,11 +1529,19 @@ def mine_blocks(
 
                     if not submit_result or not submit_result.get("accepted", False):
                         rejection_reason = submit_result.get("reason")
+                        rejection_detail = submit_result.get("detail")
+                        detail_text = None
+                        if rejection_detail is not None:
+                            if isinstance(rejection_detail, dict):
+                                detail_text = json.dumps(rejection_detail, sort_keys=True)
+                            else:
+                                detail_text = str(rejection_detail)
                         _emit_mining_summary(summary, verbose=verbose, force=True)
                         
                         # REJECTED - node did not accept
+                        detail_suffix = f" detail={detail_text}" if detail_text else ""
                         typer.secho(
-                            f"  REJECTED: Block {i + 1}/{count} by node (reason: {rejection_reason})",
+                            f"  REJECTED: Block {i + 1}/{count} by node (reason: {rejection_reason}{detail_suffix})",
                             fg=typer.colors.RED,
                         )
                         if isinstance(rejection_reason, str) and "stale" in rejection_reason and stale_attempts < 3:
