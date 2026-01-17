@@ -409,6 +409,15 @@ class StratumServer:
     async def _broadcast_job(self, job: StratumJob, clean_jobs: bool) -> None:
         """Send a job to each session in the format it expects."""
         dead: List[str] = []
+        
+        # Enrich header with signBytes and mixSeed for miner compatibility
+        # Miners expect these fields in the header dict, not as separate fields
+        header = dict(job.header or {})
+        if job.sign_bytes and "signBytes" not in header:
+            header["signBytes"] = job.sign_bytes
+        if job.hints and "mixSeed" in job.hints and "mixSeed" not in header:
+            header["mixSeed"] = job.hints["mixSeed"]
+        
         for sid, s in self._sessions.items():
             try:
                 if s.is_v1:
@@ -420,7 +429,7 @@ class StratumServer:
                         continue
                     msg = push_notify(
                         job_id=job.job_id,
-                        header=job.header,
+                        header=header,
                         share_target=job.share_target,
                         clean_jobs=clean_jobs,
                         hints=job.hints or {},
