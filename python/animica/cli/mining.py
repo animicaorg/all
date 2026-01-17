@@ -2128,11 +2128,13 @@ def miner_stratum(
                             
                             try:
                                 result = await client.submit_share(job_id, hashshare_data, extranonce2=extranonce2_hex)
-                                if result:
+                                
+                                # Check if share was accepted
+                                if result and result.get("accepted", False):
                                     stats["shares_accepted"] += 1
                                     
                                     # Check if it's a block
-                                    if isinstance(result, dict) and result.get("is_block"):
+                                    if result.get("is_block", False):
                                         stats["blocks_found"] += 1
                                         typer.secho(
                                             f"✓ BLOCK FOUND! Share {stats['shares_accepted']}/{count}",
@@ -2143,7 +2145,8 @@ def miner_stratum(
                                         typer.echo(f"✓ Share accepted (nonce: {hex(nonce)})")
                                 else:
                                     stats["shares_rejected"] += 1
-                                    typer.echo(f"✗ Share rejected (nonce: {hex(nonce)})")
+                                    reason = result.get("reason", "unknown") if result else "no response"
+                                    typer.echo(f"✗ Share rejected (nonce: {hex(nonce)}, reason: {reason})")
                             except Exception as e:
                                 stats["shares_rejected"] += 1
                                 typer.echo(f"✗ Share submission error: {e}")

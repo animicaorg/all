@@ -69,18 +69,18 @@ else:
     typer.echo(f"✓ Share accepted (nonce: {hex(nonce)})")
 
 # NEW (fixed)
-stats["shares_accepted"] += 1
+# Check if share was accepted
+if result and result.get("accepted", False):
+    stats["shares_accepted"] += 1
+    
+    if result.get("is_block", False):
+        stats["blocks_found"] += 1
+        typer.secho(f"✓ BLOCK FOUND! Share {stats['shares_accepted']}/{count}")
+    else:
+        typer.echo(f"✓ Share accepted (nonce: {hex(nonce)})")
 
-if isinstance(result, dict) and result.get("is_block"):
-    stats["blocks_found"] += 1
-    typer.secho(f"✓ BLOCK FOUND! Share {stats['shares_accepted']}/{count}")
-else:
-    typer.echo(f"✓ Share accepted (nonce: {hex(nonce)})")
-
-# Stop after reaching share count
-if stats["shares_accepted"] >= count:
-    mining_active = False
-    break
+# The while loop condition handles stopping naturally:
+# while mining_active and stats["shares_accepted"] < count:
 ```
 
 ### 3. Help Text and Documentation
