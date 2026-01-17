@@ -187,7 +187,7 @@ class StratumBridge:
                 "include_mempool": True,
             })
             
-            if not template or not template.get("miningEnabled"):
+            if not template or not (template.get("miningEnabled") or template.get("enabled")):
                 reason = template.get("reason", "unknown") if template else "no_response"
                 log.debug(f"Template not available: {reason}")
                 return
