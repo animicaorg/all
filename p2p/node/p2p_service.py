@@ -4613,11 +4613,17 @@ class P2PService:
             host = remote
         if not host:
             return None
+
         port = int(listen_port) if 1 <= int(listen_port) <= 65535 else 0
-        fallback_port = self._local_listen_port()
+        remote_port = self._extract_port(remote) or 0
+        if not port and remote_port and not self._is_ephemeral_port(remote_port):
+            port = remote_port
         if not port:
-            port = fallback_port
-        return self._sanitize_peer_addr(f"{host}:{port}", fallback_port=fallback_port)
+            return None
+        return self._sanitize_peer_addr(
+            f"{host}:{port}",
+            fallback_port=port,
+        )
 
     def _update_peer_meta(self, peer: _PeerState) -> None:
         self._peer_registry.update_meta(
