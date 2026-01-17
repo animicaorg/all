@@ -177,6 +177,7 @@ class StratumBridge:
     async def _poll_template(self) -> None:
         """Fetch a new block template."""
         if not self._payout_address:
+            log.debug("No payout address set, skipping template poll")
             return
         
         try:
@@ -187,9 +188,13 @@ class StratumBridge:
                 "include_mempool": True,
             })
             
-            if not template or not (template.get("miningEnabled") or template.get("enabled")):
-                reason = template.get("reason", "unknown") if template else "no_response"
-                log.debug(f"Template not available: {reason}")
+            if not template:
+                log.warning(f"Template poll returned empty response for address {self._payout_address}")
+                return
+            
+            if not (template.get("miningEnabled") or template.get("enabled")):
+                reason = template.get("reason", "unknown")
+                log.warning(f"Mining not enabled for address {self._payout_address}: {reason}")
                 return
             
             # Check if head changed
@@ -205,9 +210,13 @@ class StratumBridge:
                     f"height={template.get('height', 0)} "
                     f"parent={parent_hash[:18] if isinstance(parent_hash, str) else 'unknown'}..."
                 )
+            elif parent_hash == self._last_parent_hash:
+                log.debug(f"Template poll: same parent hash, no new job needed")
+            else:
+                log.debug(f"Template poll: no parent hash in response")
         
         except Exception as e:
-            log.warning(f"Failed to get work template: {e}")
+            log.warning(f"Failed to get work template for address {self._payout_address}: {e}")
     
     async def get_current_job(self) -> Optional[Dict[str, Any]]:
         """
@@ -433,13 +442,13 @@ async def run_bridge_server(
     await bridge.start(payout_address)
     
     # Fetch initial template before starting server to ensure clients get a job immediately
-    log.info("Fetching initial block template...")
+    log.info(f"Fetching initial block template for address {payout_address}...")
     max_retries = 10
     for attempt in range(max_retries):
         try:
             await bridge._poll_template()
             if bridge._current_template:
-                log.info(f"Initial template ready (job_id={bridge._current_job_id})")
+                log.info(f"✓ Initial template ready (job_id={bridge._current_job_id}, height={bridge._current_template.get('height', '?')})")
                 break
         except Exception as e:
             log.debug(f"Initial template fetch attempt {attempt + 1}/{max_retries} failed: {e}")
@@ -448,7 +457,7 @@ async def run_bridge_server(
             await asyncio.sleep(0.5)
     
     if not bridge._current_template:
-        log.warning("Failed to fetch initial template; server will start without a job")
+        log.warning(f"Failed to fetch initial template with address {payout_address}; miners will need to authorize with valid addresses")
     
     # Create Stratum server
     server = StratumServer()
@@ -488,12 +497,27 @@ async def run_bridge_server(
             log.info(f"Miner authorized with address {address}, updating bridge payout address")
             await bridge.set_payout_address(address)
             
-            # Immediately publish job if template is now available
-            job_dict = await bridge.get_current_job()
-            if job_dict:
-                job = _create_stratum_job(job_dict, share_target)
-                await server.publish_job(job)
-                log.info(f"Published job {job_dict['job_id']} to miner {worker} after address update")
+            # Retry fetching template if not available yet
+            # This handles the case where the initial fetch with placeholder address failed
+            max_retries = 3
+            for attempt in range(max_retries):
+                job_dict = await bridge.get_current_job()
+                if job_dict:
+                    job = _create_stratum_job(job_dict, share_target)
+                    await server.publish_job(job)
+                    log.info(f"Published job {job_dict['job_id']} to miner {worker} after address update")
+                    break
+                else:
+                    if attempt < max_retries - 1:
+                        log.warning(f"No template available yet for address {address}, retrying ({attempt + 1}/{max_retries})...")
+                        await asyncio.sleep(0.5)
+                        # Manually trigger a template poll
+                        try:
+                            await bridge._poll_template()
+                        except Exception as e:
+                            log.debug(f"Template poll attempt {attempt + 1} failed: {e}")
+                    else:
+                        log.error(f"Failed to fetch template after {max_retries} attempts for address {address}")
     
     server.set_authorize_hook(authorize_hook)
     
