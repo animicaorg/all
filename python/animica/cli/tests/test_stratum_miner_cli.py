@@ -19,7 +19,7 @@ def test_miner_stratum_connection_refused() -> None:
     async def mock_connect_refused(*args, **kwargs):
         raise ConnectionRefusedError("[Errno 111] Connect call failed ('127.0.0.1', 3333)")
     
-    with patch("mining.stratum_client.asyncio.open_connection", side_effect=mock_connect_refused):
+    with patch("asyncio.open_connection", side_effect=mock_connect_refused):
         result = runner.invoke(
             mining.app,
             [
@@ -48,7 +48,7 @@ def test_miner_stratum_hostname_not_found() -> None:
     async def mock_connect_gaierror(*args, **kwargs):
         raise socket.gaierror(-5, "No address associated with hostname")
     
-    with patch("mining.stratum_client.asyncio.open_connection", side_effect=mock_connect_gaierror):
+    with patch("asyncio.open_connection", side_effect=mock_connect_gaierror):
         result = runner.invoke(
             mining.app,
             [
@@ -75,7 +75,7 @@ def test_miner_stratum_timeout() -> None:
     async def mock_connect_timeout(*args, **kwargs):
         raise TimeoutError()
     
-    with patch("mining.stratum_client.asyncio.open_connection", side_effect=mock_connect_timeout):
+    with patch("asyncio.open_connection", side_effect=mock_connect_timeout):
         result = runner.invoke(
             mining.app,
             [
