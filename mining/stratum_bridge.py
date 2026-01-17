@@ -316,6 +316,33 @@ class StratumBridge:
             }
 
 
+def _create_stratum_job(job_dict: Dict[str, Any], share_target: float) -> "StratumJob":
+    """
+    Convert a job dictionary to a StratumJob instance.
+    
+    Args:
+        job_dict: Job dictionary from bridge.get_current_job()
+        share_target: Share difficulty target
+        
+    Returns:
+        StratumJob instance ready for publishing
+    """
+    from .stratum_server import StratumJob
+    
+    return StratumJob(
+        job_id=job_dict["job_id"],
+        header=job_dict.get("header", {}),
+        share_target=job_dict.get("share_target", share_target),
+        theta_micro=job_dict.get("theta_micro", 800_000),
+        target=job_dict.get("target"),
+        sign_bytes=job_dict.get("sign_bytes"),
+        height=job_dict.get("height"),
+        parent_hash=job_dict.get("parent_hash"),
+        parent_height=job_dict.get("parent_height"),
+        chain_id=job_dict.get("chain_id"),
+    )
+
+
 async def run_bridge_server(
     rpc_url: str,
     listen_host: str,
@@ -347,6 +374,24 @@ async def run_bridge_server(
     # Start bridge
     await bridge.start(payout_address)
     
+    # Fetch initial template before starting server to ensure clients get a job immediately
+    log.info("Fetching initial block template...")
+    max_retries = 10
+    for attempt in range(max_retries):
+        try:
+            await bridge._poll_template()
+            if bridge._current_template:
+                log.info(f"Initial template ready (job_id={bridge._current_job_id})")
+                break
+        except Exception as e:
+            log.debug(f"Initial template fetch attempt {attempt + 1}/{max_retries} failed: {e}")
+        
+        if attempt < max_retries - 1:
+            await asyncio.sleep(0.5)
+    
+    if not bridge._current_template:
+        log.warning("Failed to fetch initial template; server will start without a job")
+    
     # Create Stratum server
     server = StratumServer()
     
@@ -357,21 +402,8 @@ async def run_bridge_server(
             try:
                 job_dict = await bridge.get_current_job()
                 if job_dict and job_dict.get("job_id") != last_job_id:
-                    # Create StratumJob
-                    job = StratumJob(
-                        job_id=job_dict["job_id"],
-                        header=job_dict.get("header", {}),
-                        share_target=job_dict.get("share_target", share_target),
-                        theta_micro=job_dict.get("theta_micro", 800_000),
-                        target=job_dict.get("target"),
-                        sign_bytes=job_dict.get("sign_bytes"),
-                        height=job_dict.get("height"),
-                        parent_hash=job_dict.get("parent_hash"),
-                        parent_height=job_dict.get("parent_height"),
-                        chain_id=job_dict.get("chain_id"),
-                    )
-                    
-                    # Publish to all connected miners
+                    # Create and publish job
+                    job = _create_stratum_job(job_dict, share_target)
                     await server.publish_job(job)
                     last_job_id = job_dict["job_id"]
                     log.info(f"Published job {job_dict['job_id']} to miners")
@@ -390,6 +422,16 @@ async def run_bridge_server(
                 log.info(f"✓ Block found by worker {session.worker}!")
     
     server.set_submit_hook(submit_hook)
+    
+    # Publish initial job to server if available
+    # This ensures clients connecting immediately after startup receive a job
+    if bridge._current_template:
+        initial_job_dict = await bridge.get_current_job()
+        if initial_job_dict:
+            initial_job = _create_stratum_job(initial_job_dict, share_target)
+            # Use publish_job to properly set up the job in the server
+            await server.publish_job(initial_job)
+            log.info(f"Initial job loaded into server (job_id={initial_job.job_id})")
     
     # Start job publisher
     asyncio.create_task(job_publisher(), name="job-publisher")
