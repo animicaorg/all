@@ -131,6 +131,29 @@ def mock_rpc_no_peers():
     }
 
 
+@pytest.fixture
+def mock_rpc_peers_no_fresh_tips():
+    """Mock RPC responses with peers connected but no fresh tips."""
+    return {
+        "chain.getHead": {
+            "height": 10,
+            "hash": "0x" + "d" * 64,
+            "chainId": 1337,
+        },
+        "node.syncStatus": {
+            "syncing": False,
+            "synchronized": False,
+            "best_remote_height": None,
+            "sync_status_reason": None,
+            "peer_tips_total": 11,
+            "peer_tips_fresh": 0,
+            "peer_tips_stale": 11,
+        },
+        "net.peerCount": 11,
+        "p2p.listPeers": [],
+    }
+
+
 def test_sync_status_success(mock_rpc_success):
     """Test sync status command with successful response."""
     with patch("httpx.AsyncClient") as mock_client:
@@ -262,6 +285,18 @@ def test_sync_status_no_peers(mock_rpc_no_peers):
         assert "0 connected" in result.stdout
         assert "No peers connected" in result.stdout
         assert "animica peer bootstrap" in result.stdout
+
+
+def test_sync_status_peers_without_fresh_tips(mock_rpc_peers_no_fresh_tips):
+    """Peers connected but no fresh tips should not claim no_peers_connected."""
+    with patch("httpx.AsyncClient") as mock_client:
+        mock_client.return_value = MockAsyncClient(mock_rpc_peers_no_fresh_tips)
+
+        result = runner.invoke(app, ["sync", "status"])
+
+        assert result.exit_code == 0
+        assert "no_fresh_peer_tips" in result.stdout
+        assert "Peers:     11 connected but tips are stale" in result.stdout
 
 
 def test_sync_status_connection_error():

@@ -218,6 +218,9 @@ def _extract_sync_metrics(sync_status: Optional[Dict[str, Any]]) -> Dict[str, An
         "best_remote_fresh": None,
         "behind_by": None,
         "sync_status_reason": None,
+        "peer_tips_total": None,
+        "peer_tips_fresh": None,
+        "peer_tips_stale": None,
     }
 
     if not isinstance(sync_status, dict):
@@ -238,6 +241,9 @@ def _extract_sync_metrics(sync_status: Optional[Dict[str, Any]]) -> Dict[str, An
             )
     metrics["behind_by"] = _coerce_int(sync_status.get("behind_by"))
     metrics["sync_status_reason"] = sync_status.get("sync_status_reason")
+    metrics["peer_tips_total"] = _coerce_int(sync_status.get("peer_tips_total"))
+    metrics["peer_tips_fresh"] = _coerce_int(sync_status.get("peer_tips_fresh"))
+    metrics["peer_tips_stale"] = _coerce_int(sync_status.get("peer_tips_stale"))
 
     best_header_height = _coerce_int(
         sync_status.get("best_header_height")
@@ -1280,6 +1286,9 @@ def sync_status(
     best_remote_fresh = None
     behind_by = None
     sync_status_reason = None
+    peer_tips_total = None
+    peer_tips_fresh = None
+    peer_tips_stale = None
     
     if isinstance(sync_status, dict):
         best_remote_height = _coerce_int(sync_status.get("best_remote_height"))
@@ -1293,6 +1302,9 @@ def sync_status(
                 best_remote_fresh = best_remote_age_sec <= PEER_TIP_FRESHNESS_WINDOW_S
         behind_by = _coerce_int(sync_status.get("behind_by"))
         sync_status_reason = sync_status.get("sync_status_reason")
+        peer_tips_total = _coerce_int(sync_status.get("peer_tips_total"))
+        peer_tips_fresh = _coerce_int(sync_status.get("peer_tips_fresh"))
+        peer_tips_stale = _coerce_int(sync_status.get("peer_tips_stale"))
 
     if best_remote_height is None and peers:
         (
@@ -1331,9 +1343,6 @@ def sync_status(
                     if stale_seen is not None:
                         best_remote_age_sec = max(0.0, time.time() - stale_seen)
                 best_remote_fresh = False
-    elif best_remote_height is None and sync_status_reason is None:
-        sync_status_reason = "no_peers_connected"
-
     if behind_by is None and best_remote_height is not None and height is not None:
         behind_by = best_remote_height - height
     
@@ -1343,7 +1352,21 @@ def sync_status(
             network_height = best_remote_height
             network_hash = best_remote_hash
             network_source = "peer_fresh"
-    
+
+    peer_count: Optional[int] = None
+    if isinstance(peer_count_result, int):
+        peer_count = peer_count_result
+    elif peers:
+        peer_count = len(peers)
+    elif p2p_status:
+        peer_count = p2p_status.get("peers_total")
+
+    if best_remote_height is None and sync_status_reason is None:
+        if peer_count is not None and peer_count > 0:
+            sync_status_reason = "no_fresh_peer_tips"
+        else:
+            sync_status_reason = "no_peers_connected"
+
     metrics = _extract_sync_metrics(sync_status)
     metrics["best_remote_height"] = _coerce_int(best_remote_height)
     metrics["best_remote_hash"] = best_remote_hash
@@ -1352,6 +1375,9 @@ def sync_status(
     metrics["best_remote_fresh"] = best_remote_fresh
     metrics["behind_by"] = _coerce_int(behind_by)
     metrics["sync_status_reason"] = sync_status_reason
+    metrics["peer_tips_total"] = _coerce_int(peer_tips_total)
+    metrics["peer_tips_fresh"] = _coerce_int(peer_tips_fresh)
+    metrics["peer_tips_stale"] = _coerce_int(peer_tips_stale)
     is_syncing = bool(metrics.get("syncing"))
     target_height = metrics.get("target_height")
     best_header_height = metrics.get("best_header_height")
@@ -1361,14 +1387,6 @@ def sync_status(
         network_height=network_height,
         metrics=metrics,
     )
-    
-    peer_count: Optional[int] = None
-    if isinstance(peer_count_result, int):
-        peer_count = peer_count_result
-    elif peers:
-        peer_count = len(peers)
-    elif p2p_status:
-        peer_count = p2p_status.get("peers_total")
 
     stall_elapsed = None
     stall_timeout = None
@@ -1505,6 +1523,13 @@ def sync_status(
             typer.echo(f"  Peer:      {best_remote_peer}")
         if best_remote_age_sec is not None:
             typer.echo(f"  Tip Age:   {best_remote_age_sec:.1f}s ago")
+        if peer_tips_fresh is not None or peer_tips_stale is not None:
+            total = peer_tips_total
+            if total is None:
+                total = (peer_tips_fresh or 0) + (peer_tips_stale or 0)
+            typer.echo(
+                f"  Peer Tips: {peer_tips_fresh or 0} fresh / {peer_tips_stale or 0} stale (total {total})"
+            )
         if best_remote_fresh is False:
             typer.secho("  ⚠ Using stale peer tips as sync target", fg=typer.colors.YELLOW)
         if behind_by is not None and behind_by > 0:
@@ -1520,6 +1545,13 @@ def sync_status(
             typer.echo(f"  Reason:    {sync_status_reason}")
         else:
             typer.echo(f"  Reason:    no_fresh_peer_tips")
+        if peer_tips_fresh is not None or peer_tips_stale is not None:
+            total = peer_tips_total
+            if total is None:
+                total = (peer_tips_fresh or 0) + (peer_tips_stale or 0)
+            typer.echo(
+                f"  Peer Tips: {peer_tips_fresh or 0} fresh / {peer_tips_stale or 0} stale (total {total})"
+            )
         if peer_count is not None and peer_count > 0:
             typer.echo(f"  Peers:     {peer_count} connected but tips are stale")
             typer.echo("  Action:    Peer heads may not be broadcasting or polling disabled")
