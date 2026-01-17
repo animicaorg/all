@@ -422,6 +422,7 @@ async def run_bridge_server(
     payout_address: str,
     poll_interval: float = 2.0,
     share_target: float = 0.01,
+    debug_raw: bool = False,
 ) -> None:
     """
     Run the Stratum bridge server.
@@ -465,7 +466,21 @@ async def run_bridge_server(
         log.warning(f"Failed to fetch initial template with address {payout_address}; miners will need to authorize with valid addresses")
     
     # Create Stratum server
-    server = StratumServer()
+    server = StratumServer(debug_raw=debug_raw)
+
+    async def job_fetcher() -> Optional[StratumJob]:
+        job_dict = await bridge.get_current_job()
+        if not job_dict:
+            try:
+                await bridge._poll_template()
+            except Exception as e:
+                log.debug(f"Job fetcher poll failed: {e}")
+            job_dict = await bridge.get_current_job()
+        if not job_dict:
+            return None
+        return _create_stratum_job(job_dict, share_target)
+
+    server.set_job_fetcher(job_fetcher)
     
     # Set up job publisher - poll bridge for new jobs
     async def job_publisher():
@@ -565,6 +580,11 @@ if __name__ == "__main__":
                         help="Default share difficulty target (default: 0.01)")
     parser.add_argument("--auth-token", type=str, default=None,
                         help="Authentication token (not yet implemented)")
+    parser.add_argument(
+        "--debug-raw",
+        action="store_true",
+        help="Log raw Stratum RX/TX message types with payload size",
+    )
     
     args = parser.parse_args()
     
@@ -607,6 +627,7 @@ if __name__ == "__main__":
             payout_address=args.address,
             poll_interval=args.poll_interval,
             share_target=args.share_target,
+            debug_raw=args.debug_raw,
         ))
         
         await stop_event.wait()

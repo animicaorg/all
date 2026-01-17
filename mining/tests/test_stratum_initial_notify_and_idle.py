@@ -68,6 +68,77 @@ async def test_notify_sent_after_authorize():
 
 
 @pytest.mark.asyncio
+async def test_authorize_sends_difficulty_and_notify_when_job_ready():
+    port = _free_port()
+    server = StratumServer(host="127.0.0.1", port=port)
+    await server.start()
+
+    job = _sample_job("ready-job")
+    await server.publish_job(job)
+
+    client = StratumClient(host="127.0.0.1", port=port)
+    difficulty_event = asyncio.Event()
+    notify_event = asyncio.Event()
+
+    async def on_set_difficulty(_share_target, _theta_micro):
+        difficulty_event.set()
+
+    async def on_notify(job_data):
+        if job_data.get("jobId") == job.job_id:
+            notify_event.set()
+
+    client.on_set_difficulty = on_set_difficulty
+    client.on_notify = on_notify
+
+    await client.connect()
+    await client.subscribe()
+    difficulty_event.clear()
+    notify_event.clear()
+
+    await client.authorize(worker="sequence-worker", address="anim1sequence")
+
+    await asyncio.wait_for(difficulty_event.wait(), timeout=1.0)
+    await asyncio.wait_for(notify_event.wait(), timeout=1.0)
+
+    await client.close()
+    await server.stop()
+
+
+@pytest.mark.asyncio
+async def test_authorize_waits_for_job_without_closing():
+    port = _free_port()
+    server = StratumServer(host="127.0.0.1", port=port, initial_job_timeout=0.5)
+    await server.start()
+
+    client = StratumClient(host="127.0.0.1", port=port)
+    notify_event = asyncio.Event()
+
+    async def on_notify(_job_data):
+        notify_event.set()
+
+    client.on_notify = on_notify
+
+    await client.connect()
+    await client.subscribe()
+    await client.authorize(worker="retry-worker", address="anim1retry")
+
+    async def publish_later():
+        await asyncio.sleep(1.2)
+        await server.publish_job(_sample_job("delayed-job"))
+
+    asyncio.create_task(publish_later())
+
+    await asyncio.wait_for(notify_event.wait(), timeout=3.0)
+
+    await asyncio.sleep(5.0)
+    assert not client._closed
+    assert client.writer and not client.writer.is_closing()
+
+    await client.close()
+    await server.stop()
+
+
+@pytest.mark.asyncio
 async def test_idle_connection_stays_open():
     port = _free_port()
     server = StratumServer(host="127.0.0.1", port=port, initial_job_timeout=0.5)

@@ -29,6 +29,7 @@ class PoolConfig:
     network: str = "mainnet"
     profile: str = "hashshare"
     extranonce2_size: int = 4
+    debug_raw: bool = False
 
 
 def _env(name: str, default: Optional[str] = None) -> Optional[str]:
@@ -36,6 +37,13 @@ def _env(name: str, default: Optional[str] = None) -> Optional[str]:
     if val is None or val == "":
         return default
     return val
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    val = _env(name)
+    if val is None:
+        return default
+    return val.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def load_config_from_env(*, overrides: Optional[dict] = None) -> PoolConfig:
@@ -99,6 +107,11 @@ def load_config_from_env(*, overrides: Optional[dict] = None) -> PoolConfig:
         overrides.get("extranonce2_size")
         or _env("ANIMICA_STRATUM_EXTRANONCE2_SIZE", "4")
     )
+    debug_raw = bool(
+        overrides.get("debug_raw")
+        if overrides.get("debug_raw") is not None
+        else _env_bool("ANIMICA_STRATUM_DEBUG_RAW", False)
+    )
 
     if rpc_timeout <= 0:
         raise ValueError("rpc_timeout must be positive")
@@ -124,4 +137,5 @@ def load_config_from_env(*, overrides: Optional[dict] = None) -> PoolConfig:
         network=network,
         profile=profile,
         extranonce2_size=extranonce2_size,
+        debug_raw=debug_raw,
     )

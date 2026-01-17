@@ -54,6 +54,7 @@ class StratumClient:
         port: int = 23454,
         agent: str = "animica-stratum-client/0.1",
         framing: str = "lines",  # "lines" | "lenpref"
+        debug_raw: bool = False,
         loop: Optional[asyncio.AbstractEventLoop] = None,
     ) -> None:
         assert framing in ("lines", "lenpref")
@@ -61,6 +62,7 @@ class StratumClient:
         self.port = int(port)
         self.agent = agent
         self.framing = framing
+        self.debug_raw = debug_raw
         self.loop = loop or asyncio.get_event_loop()
 
         self.reader: asyncio.StreamReader
@@ -76,6 +78,7 @@ class StratumClient:
         self.share_target: Optional[float] = None
         self.theta_micro: Optional[int] = None
         self.last_job: Optional[JSON] = None
+        self.last_message_type: Optional[str] = None
 
         # Callbacks (set by user)
         self.on_notify: Optional[Callable[[JSON], Awaitable[None]]] = None
@@ -119,6 +122,14 @@ class StratumClient:
             data = encode_lenpref(obj)
         else:
             data = encode_lines(obj)
+        if self.debug_raw:
+            method = obj.get("method")
+            log.info(
+                "[client] tx method=%s id=%s bytes=%s",
+                method,
+                obj.get("id"),
+                len(data),
+            )
         self.writer.write(data)
         await self.writer.drain()
 
@@ -236,7 +247,14 @@ class StratumClient:
         except asyncio.CancelledError:  # pragma: no cover
             return
         except Exception as e:
-            log.warning(f"[client] rx loop error: {e}")
+            last = self.last_message_type or "unknown"
+            if isinstance(e, ConnectionResetError):
+                log.warning(
+                    "[client] rx loop error: server closed connection; last=%s",
+                    last,
+                )
+            else:
+                log.warning("[client] rx loop error: %s (last=%s)", e, last)
         finally:
             await self.close()
 
@@ -249,11 +267,17 @@ class StratumClient:
             fut = self._pending.pop(rid, None)
             if fut and not fut.done():
                 fut.set_result(obj)
+            self.last_message_type = "response"
+            if self.debug_raw:
+                log.info("[client] rx response id=%s", rid)
             return
 
         # Notifications
         method = obj.get("method")
         params = obj.get("params") or {}
+        self.last_message_type = str(method or "unknown")
+        if self.debug_raw:
+            log.info("[client] rx notify method=%s", method)
 
         if method == str(Method.SET_DIFFICULTY.value):
             self.share_target = float(params["shareTarget"])

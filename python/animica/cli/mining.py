@@ -1871,6 +1871,16 @@ def miner_stratum(
         "--worker",
         help="Worker name/identifier",
     ),
+    debug_raw: bool = typer.Option(
+        False,
+        "--debug-raw",
+        help="Log raw Stratum RX/TX message types for debugging",
+    ),
+    job_timeout: float = typer.Option(
+        10.0,
+        "--job-timeout",
+        help="Seconds to wait for the initial mining.notify before exiting",
+    ),
 ) -> None:
     """
     Mine via Stratum protocol connection to a Stratum bridge.
@@ -1966,7 +1976,12 @@ def miner_stratum(
         
         async def run_miner():
             # Create client
-            client = StratumClient(host=host, port=port, framing="lines")
+            client = StratumClient(
+                host=host,
+                port=port,
+                framing="lines",
+                debug_raw=debug_raw,
+            )
             
             # Connect
             try:
@@ -2039,7 +2054,8 @@ def miner_stratum(
             
             # Wait for first job
             typer.echo("\nWaiting for mining job...")
-            for _ in range(100):  # Wait up to 10 seconds
+            wait_iters = max(1, int(job_timeout / 0.1))
+            for _ in range(wait_iters):  # Wait up to job_timeout seconds
                 if client.last_job:
                     current_job = client.last_job
                     break
