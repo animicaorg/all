@@ -1849,7 +1849,7 @@ def miner_stratum(
     url: str = typer.Option(
         ...,
         "--url",
-        help="Stratum server URL (e.g., stratum+tcp://127.0.0.1:3333)",
+        help="Stratum server URL (e.g., stratum+tcp://127.0.0.1:3333 or stratum+tcp://127.0.0.1; default port 3333)",
     ),
     count: int = typer.Option(
         1,

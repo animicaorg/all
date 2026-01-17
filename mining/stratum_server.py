@@ -47,6 +47,41 @@ log = get_logger("mining.stratum_server")
 # --------------------------------------------------------------------------------------
 
 
+class JobManager:
+    """Track the current Stratum job and notify waiters when it changes."""
+
+    def __init__(self) -> None:
+        self._jobs: Dict[str, StratumJob] = {}
+        self._current_job_id: Optional[str] = None
+        self._job_event = asyncio.Event()
+
+    def publish(self, job: "StratumJob") -> None:
+        self._jobs[job.job_id] = job
+        self._current_job_id = job.job_id
+        self._job_event.set()
+
+    def current_job(self) -> Optional["StratumJob"]:
+        if self._current_job_id is None:
+            return None
+        return self._jobs.get(self._current_job_id)
+
+    def current_job_id(self) -> Optional[str]:
+        return self._current_job_id
+
+    def get_job(self, job_id: Optional[str]) -> Optional["StratumJob"]:
+        if not job_id:
+            return None
+        return self._jobs.get(job_id)
+
+    async def wait_for_job(self) -> "StratumJob":
+        while True:
+            job = self.current_job()
+            if job is not None:
+                return job
+            await self._job_event.wait()
+            self._job_event.clear()
+
+
 @dataclass(frozen=True)
 class StratumJob:
     job_id: str
@@ -90,6 +125,7 @@ class Session:
     current_difficulty: float = 0.0
     is_v1: bool = False
     subscription_ids: Tuple[str, str] = ("subscription-id-1", "subscription-id-2")
+    initial_job_sent: bool = False
 
     def touch(self) -> None:
         self.last_seen = time.time()
@@ -245,6 +281,7 @@ class StratumServer:
         default_share_target: float = 0.01,
         default_theta_micro: int = 800_000,
         keepalive_secs: float = 45.0,
+        initial_job_timeout: float = 1.0,
         validator: Optional[ShareValidator] = None,
         submit_hook: Optional[
             Callable[
@@ -261,12 +298,12 @@ class StratumServer:
         self._server: Optional[asyncio.AbstractServer] = None
         self._sessions: Dict[str, Session] = {}
         self._conn_tasks: Dict[asyncio.Task, None] = {}
-        self._jobs: Dict[str, StratumJob] = {}
-        self._current_job_id: Optional[str] = None
+        self._job_manager = JobManager()
         self._extranonce2_size = int(extranonce2_size)
         self._default_share_target = float(default_share_target)
         self._default_theta_micro = int(default_theta_micro)
         self._keepalive_secs = float(keepalive_secs)
+        self._initial_job_timeout = float(initial_job_timeout)
         self._validator = validator or ShareValidator()
         self._submit_hook = submit_hook
         self._authorize_hook = authorize_hook
@@ -278,6 +315,7 @@ class StratumServer:
 
         # Background heartbeat tasks per session
         self._heartbeats: Dict[str, asyncio.Task] = {}
+        self._initial_job_tasks: Dict[str, asyncio.Task] = {}
 
     # ---------------- lifecycle ----------------
 
@@ -376,8 +414,7 @@ class StratumServer:
         """
         if isinstance(job, MiningJob):
             job = self._from_mining_job(job)
-        self._jobs[job.job_id] = job
-        self._current_job_id = job.job_id
+        self._job_manager.publish(job)
         await self._broadcast_job(job, clean_jobs=True)
         log.info(
             "[Stratum] notify job=%s θμ=%s shareTarget=%s sessions=%s",
@@ -522,12 +559,45 @@ class StratumServer:
             self._sessions.pop(sid, None)
 
     async def _send(self, session: Session, obj: JSON) -> None:
+        self._log_outbound(session, obj)
         if session.framing == "lenpref":
             payload = encode_lenpref(obj)
         else:
             payload = encode_lines(obj)
         session.writer.write(payload)
         await session.writer.drain()
+
+    def _log_outbound(self, session: Session, obj: JSON) -> None:
+        method = obj.get("method")
+        if method:
+            params = obj.get("params") or {}
+            job_id = params.get("jobId") if isinstance(params, dict) else None
+            log.info(
+                "[Stratum] send method=%s session=%s worker=%s job=%s",
+                method,
+                session.session_id,
+                session.worker,
+                job_id,
+            )
+            return
+        if obj.get("error") is not None:
+            err = obj.get("error") or {}
+            log.info(
+                "[Stratum] send error id=%s session=%s worker=%s code=%s message=%s",
+                obj.get("id"),
+                session.session_id,
+                session.worker,
+                err.get("code"),
+                err.get("message"),
+            )
+            return
+        if obj.get("result") is not None:
+            log.info(
+                "[Stratum] send result id=%s session=%s worker=%s",
+                obj.get("id"),
+                session.session_id,
+                session.worker,
+            )
 
     async def _push_difficulty(
         self,
@@ -575,6 +645,83 @@ class StratumServer:
                         f"[Stratum] keepalive failed for session={session.session_id} worker={session.worker}: {e}"
                     )
                     return
+
+    async def _send_current_job(
+        self, session: Session, *, clean_jobs: bool, force: bool
+    ) -> bool:
+        job = self._job_manager.current_job()
+        if job is None:
+            return False
+        if not force and job.job_id in session.jobs_seen:
+            return True
+        await self._send_job_to_session(session, job, clean_jobs=clean_jobs)
+        session.jobs_seen.append(job.job_id)
+        session.jobs_seen = session.jobs_seen[-16:]
+        return True
+
+    async def _send_job_to_session(
+        self, session: Session, job: StratumJob, *, clean_jobs: bool
+    ) -> None:
+        header = dict(job.header or {})
+        if job.sign_bytes and "signBytes" not in header:
+            header["signBytes"] = job.sign_bytes
+        if job.hints and "mixSeed" in job.hints and "mixSeed" not in header:
+            header["mixSeed"] = job.hints["mixSeed"]
+        if session.is_v1:
+            msg = self._build_v1_notify(job, clean_jobs=clean_jobs)
+        else:
+            msg = push_notify(
+                job_id=job.job_id,
+                header=header,
+                share_target=job.share_target,
+                clean_jobs=clean_jobs,
+                hints=job.hints or {},
+                height=job.height,
+            )
+        await self._send(session, msg)
+        log.info(
+            "[Stratum] sent notify job=%s height=%s session=%s worker=%s clean=%s",
+            job.job_id,
+            job.height,
+            session.session_id,
+            session.worker,
+            clean_jobs,
+        )
+
+    async def _ensure_initial_job(self, session: Session) -> None:
+        while session.session_id in self._sessions and not session.writer.is_closing():
+            sent = await self._send_current_job(
+                session, clean_jobs=True, force=not session.initial_job_sent
+            )
+            if sent:
+                session.initial_job_sent = True
+                return
+            try:
+                await asyncio.wait_for(
+                    self._job_manager.wait_for_job(), timeout=self._initial_job_timeout
+                )
+            except asyncio.TimeoutError:
+                await self._send(
+                    session,
+                    make_error(
+                        None,
+                        RpcErrorCodes.BACKEND_UNAVAILABLE,
+                        "no template available yet",
+                    ),
+                )
+                log.warning(
+                    "[Stratum] no template yet for session=%s worker=%s; retrying",
+                    session.session_id,
+                    session.worker,
+                )
+
+    def _schedule_initial_job(self, session: Session) -> None:
+        task = self._initial_job_tasks.pop(session.session_id, None)
+        if task:
+            task.cancel()
+        self._initial_job_tasks[session.session_id] = asyncio.create_task(
+            self._ensure_initial_job(session)
+        )
 
     # ---------------- connection handler ----------------
 
@@ -649,6 +796,9 @@ class StratumServer:
                 with suppress(asyncio.CancelledError):
                     await hb_task
             self._heartbeats.pop(session.session_id, None)
+            init_task = self._initial_job_tasks.pop(session.session_id, None)
+            if init_task:
+                init_task.cancel()
             self._conn_tasks.pop(task, None)
             log.info(
                 f"[Stratum] client disconnected {peer} session={session.session_id}"
@@ -678,11 +828,9 @@ class StratumServer:
                 await self._push_difficulty(
                     session, session.share_target, session.theta_micro
                 )
-                if self._current_job_id:
-                    job = self._jobs[self._current_job_id]
-                    await self._send(
-                        session, self._build_v1_notify(job, clean_jobs=True)
-                    )
+                await self._send_current_job(
+                    session, clean_jobs=True, force=not session.initial_job_sent
+                )
                 return
             if method_name == Method.AUTHORIZE.value:
                 session.is_v1 = True
@@ -693,6 +841,10 @@ class StratumServer:
                 # or set during subscription. For now, we don't support address extraction from v1.
                 session.authorized = True
                 await self._send(session, res_authorize_v1(obj.get("id"), True))
+                await self._push_difficulty(
+                    session, session.share_target, session.theta_micro
+                )
+                self._schedule_initial_job(session)
                 
                 # Note: V1 miners don't typically send address in authorize.
                 # If session.address was set elsewhere (e.g., during subscription),
@@ -765,14 +917,9 @@ class StratumServer:
             await self._push_difficulty(
                 session, session.share_target, session.theta_micro
             )
-            if self._current_job_id:
-                job = self._jobs[self._current_job_id]
-                await self._send(
-                    session,
-                    push_notify(
-                        job.job_id, job.header, job.share_target, True, job.hints or {}
-                    ),
-                )
+            await self._send_current_job(
+                session, clean_jobs=True, force=not session.initial_job_sent
+            )
 
         elif method == Method.AUTHORIZE:
             session.worker = params.get("worker")
@@ -791,8 +938,12 @@ class StratumServer:
                     log.warning(f"[Stratum] authorize hook error: {e}")
             
             await self._send(session, res_authorize(id_val, True))
+            await self._push_difficulty(
+                session, session.share_target, session.theta_micro
+            )
+            self._schedule_initial_job(session)
             log.info(
-                f"[Stratum] authorize worker={session.worker} address={session.address} session={session.session_id}"
+                f"[Stratum] authorize worker={session.worker} address={session.address} session={session.session_id} authorized={session.authorized}"
             )
 
         elif method == Method.SET_DIFFICULTY:
@@ -820,14 +971,14 @@ class StratumServer:
         elif method == Method.SUBMIT:
             # Validate job and share via validator
             job_id = params.get("jobId")
-            if job_id not in self._jobs:
+            job = self._job_manager.get_job(job_id)
+            if not job:
                 await self._send(
                     session,
                     make_error(id_val, RpcErrorCodes.STALE_JOB, "unknown or stale job"),
                 )
                 return
-            job = self._jobs[job_id]
-            if job_id != self._current_job_id:
+            if job_id != self._job_manager.current_job_id():
                 await self._send(
                     session,
                     make_error(id_val, RpcErrorCodes.STALE_JOB, "stale job"),
@@ -901,7 +1052,7 @@ class StratumServer:
             "accepted": self._accepted,
             "rejected": self._rejected,
             "uptime_sec": int(time.time() - self._started_ts),
-            "currentJob": self._current_job_id,
+            "currentJob": self._job_manager.current_job_id(),
         }
 
     def session_snapshots(self) -> List[JSON]:
