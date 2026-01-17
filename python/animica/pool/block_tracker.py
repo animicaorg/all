@@ -236,28 +236,40 @@ class BlockTracker:
         # TODO: Reverse any credited immature balances for this block
 
     async def _get_block_by_hash(self, block_hash: str) -> Optional[dict]:
-        """Get block info from node by hash."""
+        """
+        Get block info from node by hash.
+        
+        TODO: Implement RPC call to node: chain.getBlockByHash(hash)
+        Expected response: {"height": int, "hash": str, "confirmations": int, ...}
+        """
         try:
-            # This would call node RPC: chain.getBlockByHash
-            # For now, return None as placeholder
+            # Placeholder - requires node RPC integration
             return None
         except Exception:  # noqa: BLE001
             return None
 
     async def _get_block_hash_at_height(self, height: int) -> Optional[str]:
-        """Get canonical block hash at given height."""
+        """
+        Get canonical block hash at given height.
+        
+        TODO: Implement RPC call to node: chain.getBlockByHeight(height)
+        Expected response: {"hash": str, ...}
+        """
         try:
-            # This would call node RPC: chain.getBlockByHeight
-            # For now, return None as placeholder
+            # Placeholder - requires node RPC integration
             return None
         except Exception:  # noqa: BLE001
             return None
 
     async def _get_chain_head_height(self) -> int:
-        """Get current chain head height."""
+        """
+        Get current chain head height.
+        
+        TODO: Implement RPC call to node: chain.getHead()
+        Expected response: {"height": int, ...}
+        """
         try:
-            # This would call node RPC: chain.getHead
-            # For now, return 0 as placeholder
+            # Placeholder - requires node RPC integration
             return 0
         except Exception:  # noqa: BLE001
             return 0

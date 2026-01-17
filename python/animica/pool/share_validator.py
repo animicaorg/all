@@ -80,8 +80,10 @@ class ShareValidator:
         """
         now = time.time()
         
-        # Check for duplicate
-        dedup_key = f"{submission.job_id}:{submission.miner_address}:{submission.worker_name}:{submission.nonce}:{submission.extranonce2}"
+        # Check for duplicate using hash for memory efficiency
+        import hashlib
+        dedup_str = f"{submission.job_id}:{submission.miner_address}:{submission.worker_name}:{submission.nonce}:{submission.extranonce2}"
+        dedup_key = hashlib.sha256(dedup_str.encode()).hexdigest()[:32]
         if dedup_key in self._recent_submissions:
             return ShareValidationResult(
                 accepted=False,

@@ -341,7 +341,7 @@ def pool_status(
         db.connect()
         
         # Get basic stats
-        miners_count = db.fetchone("SELECT COUNT(*) as count FROM miners")[" count"] or 0
+        miners_count = db.fetchone("SELECT COUNT(*) as count FROM miners")["count"] or 0
         shares_count = db.fetchone("SELECT COUNT(*) as count FROM shares")["count"] or 0
         blocks_count = db.fetchone("SELECT COUNT(*) as count FROM blocks")["count"] or 0
         

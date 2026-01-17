@@ -198,20 +198,28 @@ class PayoutEngine:
             
             return payout_id
             
-        except Exception as e:  # noqa: BLE001
-            self._log.error(f"Payout {payout_id} failed: {e}", exc_info=True)
-            
-            # Mark payout as failed
+        except (ConnectionError, TimeoutError) as e:
+            # Network errors - log and mark for retry
+            self._log.warning(f"Payout {payout_id} network error (will retry): {e}")
+            # Don't mark as failed - will retry on next run
+            raise
+        except ValueError as e:
+            # Validation errors - permanent failure
+            self._log.error(f"Payout {payout_id} validation error: {e}")
             self._db.execute(
-                """
-                UPDATE payouts
-                SET state = ?
-                WHERE id = ?
-                """,
+                "UPDATE payouts SET state = ? WHERE id = ?",
                 (PayoutState.FAILED.value, payout_id),
             )
             self._db.commit()
-            
+            raise
+        except Exception as e:
+            # Unknown errors - log and mark failed
+            self._log.error(f"Payout {payout_id} unexpected error: {e}", exc_info=True)
+            self._db.execute(
+                "UPDATE payouts SET state = ? WHERE id = ?",
+                (PayoutState.FAILED.value, payout_id),
+            )
+            self._db.commit()
             raise
 
     async def _execute_batched_payout(self, plan: PayoutPlan) -> int:
@@ -287,8 +295,21 @@ class PayoutEngine:
         """
         Build and submit payout transaction to node.
         
+        TODO: Implement node RPC integration for transaction building and submission.
+        Required RPC methods:
+        1. wallet.buildTransaction(outputs) -> unsigned_tx
+        2. wallet.signTransaction(unsigned_tx) -> signed_tx
+        3. chain.submitTransaction(signed_tx) -> txid
+        
+        Args:
+            plan: PayoutPlan with addresses and amounts
+        
         Returns:
             Transaction ID
+        
+        Raises:
+            ConnectionError: If node RPC is unavailable
+            ValueError: If transaction building fails (insufficient balance, etc.)
         """
         # Build transaction with multiple outputs
         outputs = [
@@ -296,8 +317,12 @@ class PayoutEngine:
             for address, amount in plan.payouts.items()
         ]
         
-        # This would call node RPC to build and submit transaction
-        # For now, return placeholder
+        # Placeholder - requires node RPC integration
+        # In production, this should:
+        # 1. Build multi-output transaction via RPC
+        # 2. Sign transaction with pool wallet
+        # 3. Submit to network
+        # 4. Return confirmed txid
         txid = f"payout_tx_{int(datetime.utcnow().timestamp())}"
         
         self._log.debug(f"Submitted payout transaction: {txid}")

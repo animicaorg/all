@@ -158,8 +158,8 @@ class PoolDatabase:
         CREATE INDEX idx_shares_created ON shares(created_at);
         CREATE INDEX idx_shares_accepted ON shares(accepted);
         
-        -- Prevent duplicate shares (same job_id within time window)
-        CREATE UNIQUE INDEX idx_shares_dedup ON shares(job_id, miner_id, worker_id, created_at);
+        -- Note: Duplicate share prevention is handled in application layer
+        -- via share_validator's in-memory cache for better performance
 
         -- Blocks
         CREATE TABLE blocks (
