@@ -562,6 +562,7 @@ def push_notify(
     share_target: float,
     clean_jobs: bool = True,
     hints: Optional[JSON] = None,
+    height: Optional[int] = None,
 ) -> JSON:
     p: JSON = {
         "jobId": job_id,
@@ -571,6 +572,8 @@ def push_notify(
     }
     if hints is not None:
         p["hints"] = hints
+    if height is not None:
+        p["height"] = int(height)
     return make_request(Method.NOTIFY, p, id=None)
 
 
