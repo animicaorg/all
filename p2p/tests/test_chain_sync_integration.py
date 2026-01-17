@@ -114,13 +114,19 @@ async def test_two_nodes_sync_from_genesis(tmp_path: Path) -> None:
     await node_a.start()
     await node_b.start()
     try:
-        _mine_blocks(deps_a_sync, 3)
+        _mine_blocks(deps_a_sync, 4)
         await node_b.dial(addr_a)
         assert await _wait_for_peers(node_b, 1)
-        assert await _wait_for_height(deps_b, 3, timeout=20.0)
+        assert await _wait_for_height(deps_b, 4, timeout=20.0)
         assert await _wait_for_header_responses(node_b, timeout=10.0)
         status = node_b.sync_status_snapshot()
-        assert status.best_header_height > 0
+        assert status.best_header_height >= 4
+        assert status.head_height >= 4
+        assert status.headers_seen_total > 0
+        assert status.headers_accepted_total > 0
+        assert status.sync_status_reason != "no_peers_connected"
+        assert status.peers_total > 0
+        assert status.peer_tips_total > 0
     finally:
         await node_a.stop()
         await node_b.stop()

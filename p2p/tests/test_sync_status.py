@@ -235,11 +235,27 @@ def test_sync_status_snapshot_no_peers_reason(tmp_path: Path) -> None:
     assert snapshot.peer_tips_stale == 0
 
 
+def test_sync_status_snapshot_connected_peer_no_fresh_tips(tmp_path: Path) -> None:
+    node, _deps = _make_service(tmp_path, "peer_no_tip")
+    peer = _register_peer(node, "peer-b:0")
+    _setup_peer_hello(node, peer, head_height=1, head_hash=b"\x00" * 32)
+    node._peer_registry.mark_identified(peer.session_id, peer.peer_id or "peer-b")
+
+    snapshot = node._build_sync_status_snapshot()
+
+    assert snapshot.peers_total == 1
+    assert snapshot.sync_status_reason == "no_fresh_peer_tips"
+    assert snapshot.peer_tips_total == 1
+    assert snapshot.peer_tips_fresh == 0
+    assert snapshot.peer_tips_stale == 1
+
+
 @pytest.mark.asyncio
 async def test_head_status_updates_sync_status_snapshot(tmp_path: Path) -> None:
     node, _deps = _make_service(tmp_path, "head_status")
     peer = _register_peer(node, "peer-b:0")
     _setup_peer_hello(node, peer, head_height=1, head_hash=b"\x00" * 32)
+    node._peer_registry.mark_identified(peer.session_id, peer.peer_id or "peer-b")
 
     payload = encode_payload(
         HeadStatus(
@@ -258,6 +274,21 @@ async def test_head_status_updates_sync_status_snapshot(tmp_path: Path) -> None:
     assert snapshot.peer_tips_total == 1
     assert snapshot.peer_tips_fresh == 1
     assert snapshot.peer_tips_stale == 0
+
+
+@pytest.mark.asyncio
+async def test_headers_decode_failure_updates_metrics(tmp_path: Path) -> None:
+    node, _deps = _make_service(tmp_path, "headers_decode_fail")
+    peer = _register_peer(node, "peer-b:0")
+    _setup_peer_hello(node, peer, head_height=1, head_hash=b"\x00" * 32)
+    node._peer_registry.mark_identified(peer.session_id, peer.peer_id or "peer-b")
+
+    with pytest.raises(PeerMisbehavior):
+        await node._handle_headers(peer, b"not-a-map")
+
+    snapshot = node.sync_status_snapshot()
+    assert snapshot.headers_decode_failed_total == 1
+    assert snapshot.last_header_error == "headers_decode_failed"
 
 
 def test_phase_not_idle_when_headers_ahead(tmp_path: Path) -> None:
