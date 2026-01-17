@@ -450,10 +450,17 @@ async def run_bridge_server(
     
     # Set up authorize hook to update bridge payout address when miners connect
     async def authorize_hook(session, worker, address):
-        """Update bridge payout address when miner authorizes with an address."""
-        if address and address.startswith("anim1"):
+        """Update bridge payout address and immediately publish job when miner authorizes."""
+        if address and address.startswith("anim1") and address != "anim1placeholder":
             log.info(f"Miner authorized with address {address}, updating bridge payout address")
             await bridge.set_payout_address(address)
+            
+            # Immediately publish job if template is now available
+            job_dict = await bridge.get_current_job()
+            if job_dict:
+                job = _create_stratum_job(job_dict, share_target)
+                await server.publish_job(job)
+                log.info(f"Published job {job_dict['job_id']} to miner {worker} after address update")
     
     server.set_authorize_hook(authorize_hook)
     
