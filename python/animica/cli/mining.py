@@ -2084,7 +2084,7 @@ def miner_stratum(
                     sign_bytes_hex = header.get("signBytes", "")
                     if not sign_bytes_hex:
                         typer.echo("Warning: No signBytes in job header, skipping batch")
-                        await asyncio.sleep(1)
+                        await asyncio.sleep(0.1)
                         continue
                     
                     # Extract mixSeed (32 bytes)
@@ -2095,9 +2095,9 @@ def miner_stratum(
                     try:
                         prefix = bytes.fromhex(sign_bytes_hex[2:] if sign_bytes_hex.startswith("0x") else sign_bytes_hex)
                         mix_seed = bytes.fromhex(mix_seed_hex[2:] if mix_seed_hex.startswith("0x") else mix_seed_hex)
-                    except Exception as e:
+                    except (ValueError, AttributeError) as e:
                         typer.echo(f"Error parsing job bytes: {e}")
-                        await asyncio.sleep(1)
+                        await asyncio.sleep(0.1)
                         continue
                     
                     for nonce in range(nonce_start, nonce_start + nonce_batch_size):
