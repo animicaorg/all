@@ -436,11 +436,8 @@ async def run_bridge_server(
     # Start job publisher
     asyncio.create_task(job_publisher(), name="job-publisher")
     
-    # Start Stratum server
-    await server.start()
-    
     try:
-        # Run server
+        # Start and run Stratum server (run_async handles both start and serve_forever)
         log.info(f"Stratum bridge listening on {listen_host}:{listen_port}")
         await server.run_async(listen_host, listen_port)
     finally:
