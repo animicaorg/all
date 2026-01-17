@@ -172,5 +172,65 @@ async def test_polling_refreshes_peer_tip_and_sync_status(tmp_path: Path) -> Non
     assert snap.sync_status_reason != "no_fresh_peer_tips"
 
 
+@pytest.mark.asyncio
+async def test_genesis_peer_tip_is_fresh(tmp_path: Path) -> None:
+    deps_sync = P2PDeps.open(f"sqlite:///{tmp_path / 'genesis.db'}", str(GENESIS_PATH))
+    node = P2PService(
+        listen_addrs=[tcp_multiaddr(0)],
+        seeds=[],
+        chain_id=deps_sync.chain_id,
+        deps=deps_sync,
+        peerstore_path=str(tmp_path / "genesis" / "p2p"),
+    )
+
+    session = node._peer_registry.register("peer:genesis", "inbound")
+    peer = _PeerState(
+        session_id=session.session_id,
+        remote="peer:genesis",
+        direction="inbound",
+        conn=None,
+        stream=AsyncMock(),
+        framer=Framer(aead=None),
+        write_lock=asyncio.Lock(),
+    )
+    node._peers[peer.remote] = peer
+    node._peers_by_session[peer.session_id] = peer
+
+    peer.hello = {
+        "chain_id": node.chain_id,
+        "network_magic": NETWORK_MAGIC,
+        "genesis_header_hash": node._genesis_header_hash(),
+        "genesis_block_hash": node._genesis_block_hash(),
+        "genesis_hash": node._genesis_header_hash(),
+        "fork_id": node._fork_id(),
+        "consensus_id": node._consensus_id(),
+        "protocol_version": node._protocol_version(),
+        "genesis_identity": node._genesis_identity(),
+        "network_params_hash": node._network_params_hash(),
+        "head_height": 0,
+        "head_hash": b"\x00" * 32,
+        "capabilities": ["sync"],
+    }
+    peer.repo_state_ok = True
+    peer.identity_ok = True
+    peer.hello_done.set()
+
+    node._update_peer_head_table(
+        peer,
+        height=0,
+        head_hash=node._genesis_header_hash(),
+        source="hello",
+    )
+
+    total, fresh, stale = node._peer_tip_freshness_snapshot(chain_id=node.chain_id)
+    assert total == 1
+    assert fresh == 1
+    assert stale == 0
+
+    snap = node.sync_status_snapshot()
+    assert snap.best_remote_height == 0
+    assert snap.sync_status_reason != "no_fresh_peer_tips"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

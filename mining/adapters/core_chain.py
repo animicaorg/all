@@ -28,6 +28,7 @@ bindings, use `mining/share_submitter.py` which targets the RPC surface, not thi
 """
 
 from dataclasses import asdict
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
 # --- Logging (best-effort) ----------------------------------------------------
@@ -181,7 +182,10 @@ class CoreChainAdapter:
     @classmethod
     def from_sqlite(
         cls,
-        path: str = "animica.db",
+        path: str | None = None,
+        *,
+        chain_id: int = 0,
+        base_dir: Path | None = None,
         attach_mempool: bool = True,
     ) -> "CoreChainAdapter":
         """
@@ -190,6 +194,14 @@ class CoreChainAdapter:
         """
         if SQLiteKV is None or BlockDB is None:
             raise ImportError("core.db.sqlite or core.db.block_db not available")
+
+        if path is None:
+            try:
+                from animica.config import get_chain_db_path
+
+                path = str(get_chain_db_path(chain_id, base_dir=base_dir))
+            except Exception:
+                path = "animica.db"
 
         kv = SQLiteKV(f"sqlite:///{path}")
         bdb = BlockDB(kv)
