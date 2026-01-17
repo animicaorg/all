@@ -2027,7 +2027,7 @@ def miner_stratum(
             async def on_notify(job_data):
                 nonlocal current_job
                 current_job = job_data
-                job_id = job_data.get("job_id", "unknown")
+                job_id = job_data.get("jobId", "unknown")
                 height = job_data.get("height", "?")
                 typer.echo(f"\n→ New job: {job_id} (height {height})")
             
@@ -2065,10 +2065,10 @@ def miner_stratum(
                         continue
                     
                     # Extract job parameters
-                    job_id = current_job.get("job_id", "")
+                    job_id = current_job.get("jobId", "")
                     header = current_job.get("header", {})
-                    share_target_ratio = current_job.get("share_target", client.share_target or 0.01)
-                    theta_micro = current_job.get("theta_micro", client.theta_micro or 800_000)
+                    share_target_ratio = current_job.get("shareTarget", client.share_target or 0.01)
+                    theta_micro = current_job.get("thetaMicro", client.theta_micro or 800_000)
                     
                     # Compute share target
                     t_share_micro = max(0, int(theta_micro * share_target_ratio))
