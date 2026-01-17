@@ -298,6 +298,46 @@ class StratumServer:
         self._server = None
         log.info("[Stratum] stopped")
 
+    async def run_async(self, host: Optional[str] = None, port: Optional[int] = None) -> None:
+        """
+        Start the server and serve forever until cancelled.
+        
+        This method initializes the server and blocks until the server is stopped
+        or the task is cancelled. It's designed to be the main entry point for
+        running the server in daemon/background mode.
+        
+        Args:
+            host: Override bind host (uses constructor value if None)
+            port: Override bind port (uses constructor value if None)
+        
+        Raises:
+            OSError: If the server fails to bind to the specified host/port
+            asyncio.CancelledError: When the task is cancelled (expected behavior)
+        
+        Note: This method is designed to be called once per server instance.
+        Multiple concurrent calls are not supported and will lead to undefined behavior.
+        """
+        # Temporarily override host/port for this start
+        original_host = self._host
+        original_port = self._port
+        
+        try:
+            if host is not None:
+                self._host = host
+            if port is not None:
+                self._port = port
+            
+            # Start the server (raises OSError on failure)
+            await self.start()
+            
+            # Serve forever until cancelled or stopped
+            # start() guarantees self._server is set on success
+            await self._server.serve_forever()
+        finally:
+            # Restore original values to maintain instance consistency
+            self._host = original_host
+            self._port = original_port
+
     # ---------------- job control ----------------
 
     def _from_mining_job(self, job: MiningJob) -> StratumJob:
