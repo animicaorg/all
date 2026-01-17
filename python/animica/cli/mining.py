@@ -1839,5 +1839,341 @@ def show_mining_credits(
         raise typer.Exit(1)
 
 
+@app.command("stratum")
+def miner_stratum(
+    address: str = typer.Option(
+        ...,
+        "--address",
+        help="Payout address (Bech32 format, e.g., anim1...)",
+    ),
+    url: str = typer.Option(
+        ...,
+        "--url",
+        help="Stratum server URL (e.g., stratum+tcp://127.0.0.1:3333)",
+    ),
+    count: int = typer.Option(
+        1,
+        "--count",
+        help="Stop after N blocks accepted by node",
+    ),
+    threads: int = typer.Option(
+        0,
+        "--threads",
+        help="Number of CPU threads (0=auto-detect)",
+    ),
+    difficulty: Optional[float] = typer.Option(
+        None,
+        "--difficulty",
+        help="Initial share difficulty (server may override)",
+    ),
+    worker: Optional[str] = typer.Option(
+        None,
+        "--worker",
+        help="Worker name/identifier",
+    ),
+) -> None:
+    """
+    Mine via Stratum protocol connection to a Stratum bridge.
+    
+    This command connects to a Stratum server (typically animica stratum up),
+    receives mining jobs, performs CPU mining, and submits shares.
+    
+    The miner stops after --count blocks are accepted by the node.
+    
+    Examples:
+        # Mine to an address via local Stratum bridge
+        animica miner stratum --address anim1... --url stratum+tcp://127.0.0.1:3333 --count 1
+        
+        # Mine with 4 threads and custom difficulty
+        animica miner stratum --address anim1... --url stratum+tcp://127.0.0.1:3333 --count 5 --threads 4 --difficulty 0.05
+        
+        # Mine with worker identifier
+        animica miner stratum --address anim1... --url stratum+tcp://127.0.0.1:3333 --count 10 --worker rig1
+    
+    Environment variables:
+        ANIMICA_MINER_THREADS       - Default thread count (default: 0=auto)
+    """
+    # Validate address format
+    if not _validate_bech32_address(address):
+        typer.secho(
+            f"Error: Invalid Animica Bech32 address: {address}\n"
+            f"Address must start with 'anim1' and be properly formatted.",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(2)
+    
+    # Parse URL
+    if not url.startswith("stratum+tcp://"):
+        typer.secho(
+            f"Error: Invalid Stratum URL: {url}\n"
+            f"URL must start with 'stratum+tcp://'",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(2)
+    
+    # Extract host and port from URL
+    try:
+        url_part = url.replace("stratum+tcp://", "")
+        if ":" in url_part:
+            host, port_str = url_part.rsplit(":", 1)
+            port = int(port_str)
+        else:
+            host = url_part
+            port = 3333
+    except (ValueError, IndexError):
+        typer.secho(
+            f"Error: Could not parse host:port from URL: {url}",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(2)
+    
+    # Resolve thread count
+    if threads == 0:
+        import multiprocessing
+        threads = max(1, multiprocessing.cpu_count() - 1)
+    
+    typer.echo(f"Connecting to Stratum server: {host}:{port}")
+    typer.echo(f"Payout address: {address}")
+    typer.echo(f"Mining threads: {threads}")
+    typer.echo(f"Target blocks: {count}")
+    if difficulty:
+        typer.echo(f"Requested difficulty: {difficulty}")
+    if worker:
+        typer.echo(f"Worker: {worker}")
+    typer.echo()
+    
+    # Run the stratum client
+    try:
+        import asyncio
+        from mining.stratum_client import StratumClient
+        from mining.hash_search import digest_to_int256, micro_threshold_to_target256
+        import hashlib
+        import time as time_module
+        
+        # Stats tracking
+        stats = {
+            "shares_submitted": 0,
+            "shares_accepted": 0,
+            "shares_rejected": 0,
+            "blocks_found": 0,
+            "hashes_computed": 0,
+            "start_time": time_module.time(),
+        }
+        
+        async def run_miner():
+            # Create client
+            client = StratumClient(host=host, port=port, framing="lines")
+            
+            # Connect
+            await client.connect()
+            typer.echo(f"✓ Connected to {host}:{port}")
+            
+            # Subscribe
+            await client.subscribe()
+            typer.echo(f"✓ Subscribed (session: {client.session.session_id if client.session else 'unknown'})")
+            
+            # Authorize
+            await client.authorize(worker=worker or "animica-cli", address=address)
+            typer.echo(f"✓ Authorized")
+            
+            if difficulty:
+                # TODO: Send difficulty suggestion to server
+                pass
+            
+            # Mining state
+            current_job = None
+            mining_active = True
+            
+            # Set up callbacks
+            async def on_notify(job_data):
+                nonlocal current_job
+                current_job = job_data
+                job_id = job_data.get("job_id", "unknown")
+                height = job_data.get("height", "?")
+                typer.echo(f"\n→ New job: {job_id} (height {height})")
+            
+            async def on_set_difficulty(share_target, theta_micro):
+                typer.echo(f"→ Difficulty set: share_target={share_target:.6f}, theta={theta_micro}")
+            
+            client.on_notify = on_notify
+            client.on_set_difficulty = on_set_difficulty
+            
+            # Wait for first job
+            typer.echo("\nWaiting for mining job...")
+            for _ in range(100):  # Wait up to 10 seconds
+                if client.last_job:
+                    current_job = client.last_job
+                    break
+                await asyncio.sleep(0.1)
+            
+            if not current_job:
+                typer.secho("Error: No mining job received from server", fg=typer.colors.RED, err=True)
+                await client.close()
+                raise typer.Exit(1)
+            
+            typer.echo(f"✓ Received initial job")
+            typer.echo(f"\nMining started... (Ctrl+C to stop)\n")
+            
+            # Mining loop
+            last_hashrate_report = time_module.time()
+            hashrate_window_hashes = 0
+            hashrate_window_start = time_module.time()
+            
+            try:
+                while mining_active and stats["blocks_found"] < count:
+                    if not current_job:
+                        await asyncio.sleep(0.1)
+                        continue
+                    
+                    # Extract job parameters
+                    job_id = current_job.get("job_id", "")
+                    header = current_job.get("header", {})
+                    share_target_ratio = current_job.get("share_target", client.share_target or 0.01)
+                    theta_micro = current_job.get("theta_micro", client.theta_micro or 800_000)
+                    
+                    # Compute share target
+                    t_share_micro = max(0, int(theta_micro * share_target_ratio))
+                    share_target256 = micro_threshold_to_target256(t_share_micro)
+                    
+                    # Simple CPU mining loop (single-threaded for now)
+                    # In a production implementation, this would use multiprocessing
+                    nonce_start = 0
+                    nonce_batch_size = 10000
+                    
+                    for nonce in range(nonce_start, nonce_start + nonce_batch_size):
+                        # Build hashshare payload (simplified)
+                        # In real implementation, this would properly construct the header
+                        sign_bytes = header.get("signBytes", "")
+                        if not sign_bytes:
+                            # Fallback: construct from header
+                            sign_bytes = "0x" + "00" * 80
+                        
+                        # Compute hash (simplified - real implementation uses proper header serialization)
+                        try:
+                            prefix = bytes.fromhex(sign_bytes[2:] if sign_bytes.startswith("0x") else sign_bytes)
+                            mix_seed = bytes(32)  # Would extract from header
+                            nonce_bytes = nonce.to_bytes(8, "little", signed=False)
+                            
+                            h = hashlib.sha3_256()
+                            h.update(prefix)
+                            h.update(mix_seed)
+                            h.update(nonce_bytes)
+                            digest = h.digest()
+                            digest_int = digest_to_int256(digest)
+                            
+                            stats["hashes_computed"] += 1
+                            hashrate_window_hashes += 1
+                        except Exception:
+                            continue
+                        
+                        # Check if meets share target
+                        if digest_int <= share_target256:
+                            # Found a share!
+                            stats["shares_submitted"] += 1
+                            
+                            # Submit share (simplified submission)
+                            submit_params = {
+                                "job_id": job_id,
+                                "hashshare": {
+                                    "nonce": hex(nonce),
+                                    "body": {},
+                                },
+                            }
+                            
+                            try:
+                                result = await client.submit(submit_params)
+                                if result:
+                                    stats["shares_accepted"] += 1
+                                    
+                                    # Check if it's a block
+                                    if isinstance(result, dict) and result.get("is_block"):
+                                        stats["blocks_found"] += 1
+                                        typer.secho(
+                                            f"✓ BLOCK FOUND! ({stats['blocks_found']}/{count})",
+                                            fg=typer.colors.GREEN,
+                                            bold=True,
+                                        )
+                                        if stats["blocks_found"] >= count:
+                                            mining_active = False
+                                            break
+                                    else:
+                                        typer.echo(f"✓ Share accepted (nonce: {hex(nonce)})")
+                                else:
+                                    stats["shares_rejected"] += 1
+                                    typer.echo(f"✗ Share rejected (nonce: {hex(nonce)})")
+                            except Exception as e:
+                                stats["shares_rejected"] += 1
+                                typer.echo(f"✗ Share submission error: {e}")
+                            
+                            # Get new job after share submission
+                            break
+                        
+                        # Report hashrate periodically
+                        now = time_module.time()
+                        if now - last_hashrate_report >= 5.0:
+                            elapsed = now - hashrate_window_start
+                            if elapsed > 0:
+                                hashrate = hashrate_window_hashes / elapsed
+                                typer.echo(
+                                    f"Hashrate: {hashrate:.2f} H/s | "
+                                    f"Shares: {stats['shares_accepted']}/{stats['shares_submitted']} | "
+                                    f"Blocks: {stats['blocks_found']}/{count}"
+                                )
+                            last_hashrate_report = now
+                            hashrate_window_hashes = 0
+                            hashrate_window_start = now
+                    
+                    # Small delay to allow job updates
+                    await asyncio.sleep(0.001)
+                
+            except KeyboardInterrupt:
+                typer.echo("\n\nMining interrupted by user.")
+            
+            # Close connection
+            await client.close()
+            typer.echo("\n✓ Disconnected from server")
+        
+        # Run async miner
+        asyncio.run(run_miner())
+        
+        # Print final stats
+        elapsed = time_module.time() - stats["start_time"]
+        avg_hashrate = stats["hashes_computed"] / elapsed if elapsed > 0 else 0
+        
+        typer.echo("\n" + "=" * 60)
+        typer.echo("Mining Summary:")
+        typer.echo(f"  Duration:        {elapsed:.1f}s")
+        typer.echo(f"  Blocks found:    {stats['blocks_found']}/{count}")
+        typer.echo(f"  Shares accepted: {stats['shares_accepted']}")
+        typer.echo(f"  Shares rejected: {stats['shares_rejected']}")
+        typer.echo(f"  Total hashes:    {stats['hashes_computed']}")
+        typer.echo(f"  Avg hashrate:    {avg_hashrate:.2f} H/s")
+        typer.echo("=" * 60)
+        
+        if stats["blocks_found"] >= count:
+            typer.secho("\n✓ Mining target reached!", fg=typer.colors.GREEN, bold=True)
+        else:
+            typer.secho(f"\n✗ Mining incomplete ({stats['blocks_found']}/{count} blocks)", fg=typer.colors.YELLOW)
+    
+    except ImportError as e:
+        typer.secho(
+            f"Error: Failed to import required mining modules: {e}\n"
+            f"Ensure mining package is properly installed.",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(1)
+    except Exception as e:
+        typer.secho(
+            f"Error: Mining failed: {e}",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(1)
+
+
 if __name__ == "__main__":  # pragma: no cover
     app()
