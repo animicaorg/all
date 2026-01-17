@@ -20,6 +20,8 @@ EXPECTED_BLOCK_TIME_MS = 300_000  # 5 minutes in milliseconds
 EXPECTED_MINER_SPLIT_PCT = 100
 EXPECTED_AICF_SPLIT_PCT = 0
 EXPECTED_TREASURY_SPLIT_PCT = 0
+EXPECTED_REWARD_COUNT = 1  # Number of reward entries (100% to miner)
+NANM_TO_ANM_CONVERSION = 1e9  # Conversion factor: 1 ANM = 10^9 nANM
 
 def test_network(network_name, chain_id, network_key):
     """Test a specific network's rewards and block time."""
@@ -53,16 +55,17 @@ def test_network(network_name, chain_id, network_key):
             return False
         
         # Should have exactly 1 reward (100% to miner)
-        assert len(rewards) == 1, f"Expected 1 reward, got {len(rewards)}"
+        assert len(rewards) == EXPECTED_REWARD_COUNT, \
+            f"Expected {EXPECTED_REWARD_COUNT} reward, got {len(rewards)}"
         
         addr, amount = rewards[0]
-        amount_anm = amount / 1e9
+        amount_anm = amount / NANM_TO_ANM_CONVERSION
         
         print(f"  Height {height}: {amount_anm:.1f} ANM ({amount} nANM)")
         assert amount == EXPECTED_BLOCK_REWARD_NANM, \
             f"Expected {EXPECTED_BLOCK_REWARD_NANM / 1e9:.1f} ANM, got {amount_anm} ANM"
     
-    print(f"  ✓ All rewards are {EXPECTED_BLOCK_REWARD_NANM / 1e9:.0f} ANM")
+    print(f"  ✓ All rewards are {EXPECTED_BLOCK_REWARD_NANM / NANM_TO_ANM_CONVERSION:.0f} ANM")
     
     # Verify subsidy split (should be 100% miner)
     split = issuance.get('subsidy_split_pct', {})
