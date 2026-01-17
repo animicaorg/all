@@ -5,12 +5,21 @@ This validates the changes made to spec/params.yaml for devnet and testnet.
 """
 
 import sys
+import traceback
+
 sys.path.insert(0, '.')
 
 from consensus.rewards import compute_block_reward
 from rpc.deps import _params_from_spec
 import yaml
 from pathlib import Path
+
+# Expected values
+EXPECTED_BLOCK_REWARD_NANM = 300_000_000_000  # 300 ANM in nANM
+EXPECTED_BLOCK_TIME_MS = 300_000  # 5 minutes in milliseconds
+EXPECTED_MINER_SPLIT_PCT = 100
+EXPECTED_AICF_SPLIT_PCT = 0
+EXPECTED_TREASURY_SPLIT_PCT = 0
 
 def test_network(network_name, chain_id, network_key):
     """Test a specific network's rewards and block time."""
@@ -23,11 +32,16 @@ def test_network(network_name, chain_id, network_key):
     
     # Test block time
     issuance = params.get('monetary', {}).get('issuance', {})
-    block_time_ms = issuance.get('target_block_interval_ms', 0)
+    block_time_ms = issuance.get('target_block_interval_ms')
+    
+    if block_time_ms is None:
+        raise ValueError(f"{network_name}: Missing 'target_block_interval_ms' in params")
+    
     block_time_min = block_time_ms / 1000 / 60
     
     print(f"Block time: {block_time_ms} ms = {block_time_min:.1f} minutes")
-    assert block_time_ms == 300000, f"Expected 300000 ms (5 min), got {block_time_ms} ms"
+    assert block_time_ms == EXPECTED_BLOCK_TIME_MS, \
+        f"Expected {EXPECTED_BLOCK_TIME_MS} ms (5 min), got {block_time_ms} ms"
     print("  ✓ Block time is correct (5 minutes)")
     
     # Test block reward at various heights
@@ -45,16 +59,20 @@ def test_network(network_name, chain_id, network_key):
         amount_anm = amount / 1e9
         
         print(f"  Height {height}: {amount_anm:.1f} ANM ({amount} nANM)")
-        assert amount == 300_000_000_000, f"Expected 300 ANM, got {amount_anm} ANM"
+        assert amount == EXPECTED_BLOCK_REWARD_NANM, \
+            f"Expected {EXPECTED_BLOCK_REWARD_NANM / 1e9:.1f} ANM, got {amount_anm} ANM"
     
-    print(f"  ✓ All rewards are 300 ANM")
+    print(f"  ✓ All rewards are {EXPECTED_BLOCK_REWARD_NANM / 1e9:.0f} ANM")
     
     # Verify subsidy split (should be 100% miner)
     split = issuance.get('subsidy_split_pct', {})
-    assert split.get('miner') == 100, f"Expected 100% miner, got {split.get('miner')}%"
-    assert split.get('aicf') == 0, f"Expected 0% AICF, got {split.get('aicf')}%"
-    assert split.get('treasury') == 0, f"Expected 0% treasury, got {split.get('treasury')}%"
-    print(f"  ✓ Subsidy split is 100% to miner")
+    assert split.get('miner') == EXPECTED_MINER_SPLIT_PCT, \
+        f"Expected {EXPECTED_MINER_SPLIT_PCT}% miner, got {split.get('miner')}%"
+    assert split.get('aicf') == EXPECTED_AICF_SPLIT_PCT, \
+        f"Expected {EXPECTED_AICF_SPLIT_PCT}% AICF, got {split.get('aicf')}%"
+    assert split.get('treasury') == EXPECTED_TREASURY_SPLIT_PCT, \
+        f"Expected {EXPECTED_TREASURY_SPLIT_PCT}% treasury, got {split.get('treasury')}%"
+    print(f"  ✓ Subsidy split is {EXPECTED_MINER_SPLIT_PCT}% to miner")
     
     return True
 
@@ -85,7 +103,6 @@ def main():
         except Exception as e:
             print(f"  ✗ ERROR: {e}")
             failed += 1
-            import traceback
             traceback.print_exc()
     
     print("\n" + "="*70)
