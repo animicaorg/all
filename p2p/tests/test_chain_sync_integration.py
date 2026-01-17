@@ -124,6 +124,7 @@ async def test_two_nodes_sync_from_genesis(tmp_path: Path) -> None:
         assert status.head_height >= 4
         assert status.headers_seen_total > 0
         assert status.headers_accepted_total > 0
+        assert status.headers_seen_total >= status.last_header_response_count
         assert status.sync_status_reason != "no_peers_connected"
         assert status.peers_total > 0
         assert status.peer_tips_total > 0
