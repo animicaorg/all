@@ -78,7 +78,7 @@ Settings are resolved in this priority order (highest to lowest):
 4. Built-in network defaults
 
 Network defaults:
-- Mainnet: http://127.0.0.1:8545/rpc (chain ID 1, ports: RPC 8545, P2P 30333, Metrics 9000)
+- Mainnet: http://127.0.0.1:8545/rpc (chain ID 0, ports: RPC 8545, P2P 30333, Metrics 9000)
 - Testnet: http://127.0.0.1:18546/rpc (chain ID 2, ports: RPC 18546, P2P 31334, Metrics 19000)
 - Devnet: http://127.0.0.1:28545/rpc (chain ID 1337, ports: RPC 28545, P2P 31335, Metrics 29000)
 - Local-devnet: http://127.0.0.1:38545/rpc (chain ID 1337, ports: RPC 38545, P2P 31336, Metrics 39000)
@@ -132,7 +132,7 @@ Node Management & Network Selection
 ------------------------------------
   Animica supports multiple networks with automatic Docker Compose configuration
   and non-conflicting default ports to allow running multiple networks simultaneously:
-  - mainnet (chain ID 1): RPC 8545, P2P 30333, Metrics 9000
+  - mainnet (chain ID 0): RPC 8545, P2P 30333, Metrics 9000
   - testnet (chain ID 2): RPC 18546, P2P 31334, Metrics 19000
   - devnet (chain ID 1337): RPC 28545, P2P 31335, Metrics 29000
   - local-devnet (chain ID 1337): RPC 38545, P2P 31336, Metrics 39000

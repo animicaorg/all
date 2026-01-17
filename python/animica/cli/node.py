@@ -2592,7 +2592,7 @@ def up_all(
     
     This command sequentially starts all supported networks with non-conflicting
     default host ports:
-    - mainnet (chain ID 1): RPC 8545, P2P 30333, Metrics 9000
+    - mainnet (chain ID 0): RPC 8545, P2P 30333, Metrics 9000
     - testnet (chain ID 2): RPC 18546, P2P 31334, Metrics 19000
     - devnet (chain ID 1337): RPC 28545, P2P 31335, Metrics 29000
     - local-devnet (chain ID 1337): RPC 38545, P2P 31336, Metrics 39000

@@ -3643,6 +3643,7 @@ def _mine_once(
                     if credited_total is not None
                     else "unknown"
                 )
+                credited_nanm = credited_total if credited_total is not None else 0
                 log.info(
                     f"✓ ACCEPTED: Block mined and reward credited | "
                     f"height={header.height} | "
@@ -3651,6 +3652,10 @@ def _mine_once(
                     f"subsidy={reward_amount} nANM ({subsidy_anm:.9f} ANM) | "
                     f"fees={fee_total or 0} nANM ({fees_anm:.9f} ANM) | "
                     f"total={total_reward} nANM ({total_anm:.9f} ANM) | "
+                    f"subsidy_nanm={reward_amount} | "
+                    f"fees_nanm={fee_total or 0} | "
+                    f"total_nanm={total_reward} | "
+                    f"credited_nanm={credited_nanm} | "
                     f"credited={credited_label} | "
                     f"new_balance={final_balance} nANM | "
                     f"txs={len(txs)} | receipts={len(receipts) if receipts else 0}"
