@@ -198,6 +198,7 @@ class _PeerState:
     last_tx_inv_recv_at: Optional[float] = None
     last_tx_data_sent_at: Optional[float] = None
     last_tx_data_recv_at: Optional[float] = None
+    identity_ok: bool = False
     # Throughput tracking for peer quality scoring (ultra-fast sync)
     blocks_delivered: int = 0  # Total blocks successfully delivered
     headers_delivered: int = 0  # Total headers successfully delivered
@@ -1507,6 +1508,10 @@ class P2PService:
         self._sync_peer_penalty_window_s = float(
             os.environ.get("ANIMICA_P2P_SYNC_PENALTY_WINDOW", "600") or 600
         )
+        self._sync_peer_penalty_decay_interval = float(
+            os.environ.get("ANIMICA_P2P_SYNC_PENALTY_DECAY_INTERVAL", "30") or 30
+        )
+        self._sync_last_peer_penalty_decay_at = time.time()
         self._sync_stall_timeout = float(
             _env_value(
                 "SYNC_STALL_TIMEOUT_S",
@@ -3107,7 +3112,7 @@ class P2PService:
         # CRITICAL FIX: Compute best_remote info with strict freshness checking
         # This is the authoritative source for sync status decisions
         chain_id = int(self.chain_id)
-        connected_peers = max(self._peer_registry.peer_count(), len(self._peers))
+        connected_peers = int(self.peer_count())
         best_remote_height, best_remote_hash, best_remote_peer, best_remote_age = (
             self._compute_best_remote_info(chain_id=chain_id)
         )
@@ -3125,7 +3130,7 @@ class P2PService:
             # No fresh peer tips available - critical condition
             sync_status_reason = (
                 "no_peers_connected"
-                if connected_peers == 0 and peer_tips_total == 0
+                if connected_peers == 0
                 else "no_fresh_peer_tips"
             )
 
@@ -3179,7 +3184,7 @@ class P2PService:
             if not sync_status_reason:
                 sync_status_reason = (
                     "no_peers_connected"
-                    if connected_peers == 0 and peer_tips_total == 0
+                    if connected_peers == 0
                     else "no_fresh_peer_tips"
                 )
         # Rule 2: If we have fresh best_remote, check if we're within ALLOWED_LAG
@@ -3491,6 +3496,7 @@ class P2PService:
                     "penalty_score": peer.penalty_score,
                     "sync_penalties": self._sync_peer_penalties.get(peer.remote, 0),
                     "last_response_at": peer.last_msg_at,
+                    "identity_ok": peer.identity_ok,
                 }
             )
         return snapshot
@@ -3511,6 +3517,7 @@ class P2PService:
                     "direction": peer.direction,
                     "handshake_done": peer.hello_done.is_set(),
                     "ready_for_sync": peer.ready_for_sync,
+                    "identity_ok": peer.identity_ok,
                     "version": hello.get("version"),
                     "agent": hello.get("agent"),
                     "chain_id": hello.get("chain_id"),
@@ -6272,6 +6279,7 @@ class P2PService:
         ) or data.get("network_params_hash") or data.get("networkParamsHash")
         peer.hello = normalized
         peer.hello_received_at = time.time()  # Track when hello was received
+        peer.identity_ok = True
         if self._sync_verbose:
             log.info(
                 "Handshake identity accepted",
@@ -6369,6 +6377,15 @@ class P2PService:
             feeler=peer.feeler,
             reported_addr=reported_addr,
             listen_port=listen_port or None,
+            identity_ok=True,
+            chain_id=normalized.get("chain_id"),
+            network_magic=self._canon_hash0x(normalized.get("network_magic")),
+            genesis_hash=self._canon_hash0x(normalized.get("genesis_hash")),
+            genesis_identity=self._canon_hash0x(normalized.get("genesis_identity")),
+            fork_id=normalized.get("fork_id"),
+            consensus_id=normalized.get("consensus_id"),
+            protocol_version=normalized.get("protocol_version"),
+            network_params_hash=self._canon_hash0x(normalized.get("network_params_hash")),
         )
         self._update_peer_meta(peer)
 
@@ -7276,6 +7293,10 @@ class P2PService:
                 "headers_oversized", points=self._score_points["malformed_message"]
             )
         info = self._headers_debug_info(headers)
+        self._sync_headers_seen_total += len(msg.headers)
+        self._sync_last_header_response_at = time.time()
+        self._sync_last_header_response_peer = peer.remote
+        self._sync_last_header_response_count = len(msg.headers)
         log.debug(
             "Received headers message",
             extra={
@@ -7329,9 +7350,6 @@ class P2PService:
             self._clear_header_request(peer)
             fut.set_result(msg)
             peer.pending_headers = None
-            self._sync_last_header_response_at = time.time()
-            self._sync_last_header_response_peer = peer.remote
-            self._sync_last_header_response_count = len(msg.headers)
             if msg.headers:
                 last = msg.headers[-1]
                 self._update_peer_head(
@@ -9334,17 +9352,19 @@ class P2PService:
         peer.last_header_request_at = self._sync_last_header_request_at
         self._sync_active_header_peer = peer.remote
         self._sync_last_header_request_peer = peer.remote
-        log.info(
-            "Requesting headers range",
-            extra={
-                "remote": peer.remote,
-                "peer_id": peer.peer_id,
-                "request_start_height": request_start_height,
-                "anchor_height": anchor_height,
-                "max_headers": max_headers,
-                "locator_mode": locator_mode,
-            },
-        )
+        if self._sync_verbose:
+            log.info(
+                "Requesting headers range",
+                extra={
+                    "remote": peer.remote,
+                    "peer_id": peer.peer_id,
+                    "request_start_height": request_start_height,
+                    "anchor_height": anchor_height,
+                    "max_headers": max_headers,
+                    "locator_mode": locator_mode,
+                    "locator_summary": self._sync_last_locator_summary,
+                },
+            )
         log.debug(
             "Sending getheaders",
             extra={
@@ -9600,7 +9620,6 @@ class P2PService:
         if not headers:
             return [], None, {}
         peer.empty_header_responses = 0
-        self._sync_headers_seen_total += len(headers)
         local_height, local_hash_hex = self._local_head()
         local_hash: Optional[bytes] = None
         if local_hash_hex:
@@ -10042,6 +10061,25 @@ class P2PService:
 
         if not requested:
             return 0
+
+        if self._sync_verbose:
+            heights = [
+                h for h in (self._block_height_hint(h) for h in requested) if h is not None
+            ]
+            range_info = (
+                {"min": min(heights), "max": max(heights), "count": len(heights)}
+                if heights
+                else None
+            )
+            log.info(
+                "Requesting blocks batch",
+                extra={
+                    "remote": peer.remote,
+                    "peer_id": peer.peer_id,
+                    "range": range_info,
+                    "count": len(requested),
+                },
+            )
 
         # Track successfully sent blocks to handle send failures
         successfully_sent: List[bytes] = []
@@ -10846,6 +10884,17 @@ class P2PService:
                     self._sync_last_headers_discarded_count = discarded_count
                     self._sync_last_headers_discard_reason_counts = bucket_counts
                     self._sync_last_headers_discard_detail_counts = discard_reason_counts
+                    if self._sync_verbose:
+                        log.info(
+                            "Header batch processed",
+                            extra={
+                                "remote": peer.remote,
+                                "accepted": accepted_count,
+                                "discarded": discarded_count,
+                                "discard_reasons": discard_reason_counts,
+                                "discard_buckets": bucket_counts,
+                            },
+                        )
 
                     rotate_peer = False
                     if header_error == "invalid_headers":
@@ -11068,6 +11117,7 @@ class P2PService:
                 self._sync_wakeup.clear()
                 now = time.time()
                 head_height, head_hash = self._local_head()
+                self._decay_sync_peer_penalties()
                 best_header_height = (
                     self._sync_best_header.height if self._sync_best_header else 0
                 )
@@ -11833,6 +11883,8 @@ class P2PService:
             return False, "hello_missing"
         if not peer.peer_id:
             return False, "peer_id_missing"
+        if not peer.identity_ok:
+            return False, "identity_unverified"
         if not peer.ready_for_sync:
             return False, "not_ready"
         if self._is_self_address(
@@ -12005,6 +12057,8 @@ class P2PService:
             self._sync_peer_backoff_reason.pop(peer.remote, None)
 
     def _peer_chain_matches(self, peer: _PeerState) -> bool:
+        if not peer.identity_ok:
+            return False
         if peer.hello is None or not isinstance(peer.hello, dict):
             return False
         try:
@@ -12030,6 +12084,25 @@ class P2PService:
         if genesis_block_hash:
             return genesis_block_hash == self._genesis_block_hash()
         return False
+
+    def _decay_sync_peer_penalties(self) -> None:
+        now = time.time()
+        if now - self._sync_last_peer_penalty_decay_at < self._sync_peer_penalty_decay_interval:
+            return
+        self._sync_last_peer_penalty_decay_at = now
+        window = self._sync_peer_penalty_window_s
+        cleared = 0
+        for key, events in list(self._sync_peer_penalty_events.items()):
+            while events and now - events[0] > window:
+                events.popleft()
+            if not events:
+                cleared += 1
+                self._sync_peer_penalty_events.pop(key, None)
+                self._sync_peer_penalties.pop(key, None)
+                continue
+            self._sync_peer_penalties[key] = len(events)
+        if cleared and self._sync_verbose:
+            log.info("Decayed sync peer penalties", extra={"cleared": cleared})
 
     def _peer_head_matches_known_chain(self, peer: _PeerState) -> bool:
         if peer.hello is None or not isinstance(peer.hello, dict):
@@ -12403,6 +12476,8 @@ class P2PService:
             # Skip peers without completed handshake
             if not peer.hello_done.is_set():
                 continue
+            if not peer.identity_ok:
+                continue
 
             # Skip peers with repo issues
             if not peer.repo_state_ok:
@@ -12447,6 +12522,8 @@ class P2PService:
         stale = 0
         for peer in self._peers.values():
             if not peer.hello_done.is_set():
+                continue
+            if not peer.identity_ok:
                 continue
             if not peer.repo_state_ok:
                 continue
@@ -13163,20 +13240,20 @@ class P2PService:
             return "genesis_mismatch"
         if "chain_id" in lowered or "wrong_network" in lowered:
             return "chain_id_mismatch"
-        if "protocol" in lowered:
-            return "protocol_mismatch"
+        if "anchor" in lowered:
+            return "anchor_mismatch"
+        if "parent_unknown" in lowered or "parent_meta_missing" in lowered:
+            return "prev_hash_unknown"
+        if "prev" in lowered or "parent_mismatch" in lowered or "parent_missing" in lowered:
+            return "prev_hash_unknown"
+        if "height" in lowered:
+            return "height_invalid"
         if "theta" in lowered or "difficulty" in lowered or "pow" in lowered:
             return "difficulty_invalid"
         if "timestamp" in lowered or "time" in lowered:
             return "timestamp_invalid"
         if "hash_mismatch" in lowered:
-            return "header_hash_mismatch"
-        if "parent_unknown" in lowered or "parent_meta_missing" in lowered:
-            return "unknown_ancestor"
-        if "anchor" in lowered:
-            return "unknown_ancestor"
-        if "parent_mismatch" in lowered or "prev_missing" in lowered:
-            return "invalid_prev_hash"
+            return "hash_mismatch"
         return "other_exception"
 
     def _record_header_discard_sample(
@@ -14103,6 +14180,7 @@ class P2PService:
             )
             self._record_header_discard_sample(peer, header, reason="wrong_network")
             return [], "wrong_network"
+        self._record_header_discard_sample(peer, header, reason=reason)
         prior_probe_hash = self._sync_anchor_probe_hash
         prior_probe_until = self._sync_anchor_probe_until
         if now - peer.last_not_anchored_at > self._sync_not_anchored_window:
@@ -14664,6 +14742,23 @@ class P2PService:
                 )
         elif not ok:
             reason_str = reason or "block_rejected"
+            if self._sync_verbose:
+                block_hash_hex = None
+                block_height = None
+                if blk is not None and hasattr(blk, "header"):
+                    with contextlib.suppress(Exception):
+                        block_hash_hex = bytes(blk.header.hash()).hex()
+                    with contextlib.suppress(Exception):
+                        block_height = int(getattr(blk.header, "height", 0))
+                log.warning(
+                    "Block validation failed",
+                    extra={
+                        "origin": origin_remote,
+                        "hash": block_hash_hex,
+                        "height": block_height,
+                        "reason": reason_str,
+                    },
+                )
             if not self._is_orphan_reason(reason_str):
                 self._stats["blocks_rejected"] += 1
                 self._stats["blocks_failed"] = self._stats.get("blocks_failed", 0) + 1
