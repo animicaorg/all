@@ -52,7 +52,7 @@ from typing import Optional
 import typer
 
 # Import subcommand apps
-from . import balance, chain, da, debug, faucet, gui, key, mempool, mining, network, node, p2p, peer, rpc, script, snapshot, studio, sync, tx, wallet
+from . import balance, chain, da, debug, faucet, gui, key, mempool, mining, network, node, p2p, peer, rpc, script, snapshot, stratum, studio, sync, tx, wallet
 
 app = typer.Typer(
     name="animica",
@@ -171,6 +171,7 @@ app.add_typer(network.app, name="network")
 app.add_typer(peer.app, name="peer")
 app.add_typer(p2p.app, name="p2p")
 app.add_typer(script.app, name="script")
+app.add_typer(stratum.app, name="stratum")
 app.add_typer(studio.app, name="studio")
 app.add_typer(mempool.app, name="mempool")
 app.add_typer(sync.app, name="sync")
