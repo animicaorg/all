@@ -245,6 +245,25 @@ def _get_head_info(rpc_url: str, method: str) -> Optional[Dict[str, Any]]:
     return None
 
 
+def _get_sync_status(rpc_url: str) -> Optional[Dict[str, Any]]:
+    for method in ("sync.getStatus", "sync.status"):
+        try:
+            status = _request_rpc(method, [], rpc_url)
+            if isinstance(status, dict):
+                return status
+        except Exception:
+            continue
+    try:
+        node_status = _request_rpc("node.getStatus", [], rpc_url)
+        if isinstance(node_status, dict):
+            sync = node_status.get("sync")
+            if isinstance(sync, dict):
+                return sync
+    except Exception:
+        return None
+    return None
+
+
 def _is_dilithium3_alg(alg_name: str) -> bool:
     """Check if algorithm name refers to Dilithium3/ML-DSA-65."""
     name_lower = alg_name.lower().replace("_", "-").replace(" ", "")
@@ -600,6 +619,13 @@ def show(
     balance_warning: Optional[str] = None
     safe_head_info: Optional[Dict[str, Any]] = None
     tip_head_info: Optional[Dict[str, Any]] = None
+    sync_status: Optional[Dict[str, Any]] = None
+    balance_query_height: Optional[int] = None
+    balance_query_hash: Optional[str] = None
+    best_block_height: Optional[int] = None
+    best_block_hash: Optional[str] = None
+    best_header_height: Optional[int] = None
+    sync_warning: Optional[str] = None
     queried_at: Optional[str] = None
 
     # Query chain for balance and head info
@@ -607,7 +633,13 @@ def show(
         rpc_endpoint = _resolve_rpc_url(rpc_url)
         guard_bootstrap_rpc(rpc_endpoint, allow_remote=allow_remote_rpc, method="state.getBalance")
 
-        # Always fetch safe head for balance context, and tip head for completeness
+        sync_status = _get_sync_status(rpc_endpoint)
+        if sync_status is not None:
+            best_block_height = sync_status.get("best_block_height") or sync_status.get("bestBlockHeight")
+            best_block_hash = sync_status.get("best_block_hash") or sync_status.get("bestBlockHash")
+            best_header_height = sync_status.get("best_header_height") or sync_status.get("bestHeaderHeight")
+
+        # Fetch heads for transparency and fallback
         safe_head_info = _get_head_info(rpc_endpoint, "chain.getSafeHead")
         tip_head_info = _get_head_info(rpc_endpoint, "chain.getHead")
         
@@ -621,9 +653,8 @@ def show(
             tip_head_info["rpc_url"] = rpc_endpoint
         queried_at = datetime.now(timezone.utc).isoformat()
 
-        # Get balance with tag="safe"
         try:
-            balance_confirmed = get_balance(entry.address, rpc_endpoint, tag="safe")
+            balance_confirmed = get_balance(entry.address, rpc_endpoint, tag="latest")
             if include_tip:
                 balance_tip = get_balance(entry.address, rpc_endpoint, tag="latest")
             if include_mempool:
@@ -637,6 +668,17 @@ def show(
                 balance_source = "cached"
             except Exception:
                 balance_confirmed = None
+        balance_query_height = best_block_height or (tip_head_info or {}).get("height")
+        balance_query_hash = best_block_hash or (tip_head_info or {}).get("hash")
+        if (
+            best_header_height is not None
+            and best_block_height is not None
+            and best_header_height > best_block_height
+        ):
+            sync_warning = (
+                f"Node syncing (headers {best_header_height} > blocks {best_block_height}); "
+                "balance may be incomplete."
+            )
     else:
         # Cached balance from wallet file
         cached_balance = raw_entry.get("balance")
@@ -665,15 +707,18 @@ def show(
     output["balance_confirmed_formatted"] = (
         format_amount(balance_confirmed) if balance_confirmed is not None else None
     )
-    # Indicate the height at which balance_confirmed was queried (safe/finalized)
-    if balance_confirmed is not None and safe_head_info is not None:
-        output["balance_confirmed_height"] = safe_head_info.get("height")
+    # Indicate the height/hash at which balance_confirmed was queried (applied head)
+    if balance_confirmed is not None and balance_query_height is not None:
+        output["balance_confirmed_height"] = balance_query_height
+    if balance_confirmed is not None and balance_query_hash is not None:
+        output["balance_confirmed_hash"] = balance_query_hash
     if balance_tip is not None:
         output["balance_tip"] = balance_tip
         output["balance_tip_formatted"] = format_amount(balance_tip)
         # Indicate the height at which balance_tip was queried (latest/tip)
         if tip_head_info is not None:
             output["balance_tip_height"] = tip_head_info.get("height")
+            output["balance_tip_hash"] = tip_head_info.get("hash")
     if mempool_delta is not None:
         output["balance_mempool_delta"] = mempool_delta.get("delta")
         output["balance_mempool_delta_formatted"] = (
@@ -683,6 +728,16 @@ def show(
     output["balance_source"] = balance_source
     if balance_warning:
         output["balance_warning"] = balance_warning
+    if sync_warning:
+        output["sync_warning"] = sync_warning
+    if best_block_height is not None:
+        output["node_best_block_height"] = best_block_height
+    if best_block_hash is not None:
+        output["node_best_block_hash"] = best_block_hash
+    if best_header_height is not None:
+        output["node_best_header_height"] = best_header_height
+    if best_block_height is not None and best_header_height is not None:
+        output["node_syncing"] = best_header_height > best_block_height
     
     # Add head info if available
     if safe_head_info is not None:
