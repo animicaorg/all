@@ -954,6 +954,32 @@ def build_context(cfg: t.Any | None = None) -> RpcContext:
         log.info(f"Genesis file: {cfg_view.genesis_path}")
 
     params = _params_from_spec(cfg_view.chain_id)
+    
+    # Log critical params to help diagnose reward calculation issues
+    try:
+        monetary = params.get("monetary", {})
+        issuance = monetary.get("issuance", {})
+        subsidy = issuance.get("subsidy", {})
+        subsidy_split = issuance.get("subsidy_split_pct", {})
+        start_nanm = subsidy.get("start_nANM_per_block")
+        
+        if start_nanm is not None:
+            start_anm = start_nanm / 1_000_000_000
+            log.info(
+                f"Loaded chain params: chain_id={cfg_view.chain_id} network={network} "
+                f"block_subsidy={start_anm:.1f} ANM ({start_nanm} nANM) "
+                f"miner_split={subsidy_split.get('miner', 0)}% "
+                f"target_block_time={issuance.get('target_block_interval_ms', 0) / 1000:.0f}s "
+                f"source=spec/params.yaml"
+            )
+        else:
+            log.warning(
+                f"Chain params loaded but subsidy not found: chain_id={cfg_view.chain_id} network={network}. "
+                f"Block rewards may be zero. Check spec/params.yaml structure."
+            )
+    except Exception as e:
+        log.warning(f"Failed to log chain params details: {e}")
+    
     identity = None
     chain_identity = None
     try:
