@@ -35,7 +35,12 @@ def _base_data_dir(chain_id: int) -> Path:
     Priority:
     1. ANIMICA_DATA_DIR (expanded with ~)
     2. Docker defaults (/data/chain-<id>)
-    3. ~/.animica
+    3. $HOME/.animica (respecting HOME env var)
+    4. ~/.animica (fallback)
+    
+    Note: Uses $HOME environment variable when available to ensure correct
+    behavior in Docker containers where HOME may be set to /data but the
+    passwd file still points to /root.
     """
 
     override = os.environ.get("ANIMICA_DATA_DIR")
@@ -43,6 +48,13 @@ def _base_data_dir(chain_id: int) -> Path:
         return Path(override).expanduser()
     if _is_docker_env():
         return Path(f"/data/chain-{chain_id}")
+    
+    # Use $HOME environment variable if set, falling back to ~ expansion
+    # This ensures correct behavior in Docker where HOME=/data but passwd says /root
+    home = os.environ.get("HOME")
+    if home:
+        return Path(home) / ".animica"
+    
     return Path("~/.animica").expanduser()
 
 

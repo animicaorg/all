@@ -80,7 +80,11 @@ def ensure_writable(path: Path) -> WritablePath:
     _try_chgrp(target_dir)
     _try_chmod(target_dir, 0o775)
 
-    home = Path(os.environ.get("ANIMICA_HOME", Path.home() / ".animica")).expanduser()
+    # Use $HOME environment variable if available, falling back to Path.home()
+    # This ensures correct behavior in Docker where HOME=/data but passwd says /root
+    home_env = os.environ.get("HOME")
+    default_home = Path(home_env) / ".animica" if home_env else Path.home() / ".animica"
+    home = Path(os.environ.get("ANIMICA_HOME", str(default_home))).expanduser()
     fallback_root = home / "p2p-local"
     try:
         rel = target_dir.relative_to(home)

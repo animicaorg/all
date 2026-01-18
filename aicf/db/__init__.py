@@ -55,7 +55,10 @@ def default_base_dir() -> Path:
     if xdg:
         return Path(xdg).expanduser() / "animica" / "aicf"
 
-    return Path.home() / ".animica" / "aicf"
+    # Use $HOME environment variable if available, falling back to Path.home()
+    # This ensures correct behavior in Docker where HOME=/data but passwd says /root
+    home = os.environ.get("HOME")
+    return Path(home) / ".animica" / "aicf" if home else Path.home() / ".animica" / "aicf"
 
 
 def db_path(

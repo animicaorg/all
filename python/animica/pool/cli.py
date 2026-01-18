@@ -43,7 +43,10 @@ app = typer.Typer(help="Manage PPLNS mining pool")
 
 def _resolve_pool_pid_file() -> Path:
     """Resolve the PID file path for the pool."""
-    home = Path.home()
+    # Use $HOME environment variable if available, falling back to Path.home()
+    # This ensures correct behavior in Docker where HOME=/data but passwd says /root
+    home_env = os.environ.get("HOME")
+    home = Path(home_env) if home_env else Path.home()
     animica_home = home / ".animica"
     animica_home.mkdir(parents=True, exist_ok=True)
     return animica_home / "pool.pid"
@@ -230,7 +233,10 @@ def pool_up(
     
     if daemon:
         # Run in background
-        home = Path.home()
+        # Use $HOME environment variable if available, falling back to Path.home()
+        # This ensures correct behavior in Docker where HOME=/data but passwd says /root
+        home_env = os.environ.get("HOME")
+        home = Path(home_env) if home_env else Path.home()
         animica_home = home / ".animica"
         animica_home.mkdir(parents=True, exist_ok=True)
         

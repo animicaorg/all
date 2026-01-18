@@ -205,7 +205,10 @@ def _legacy_db_candidates(chain_id: int, *, base_dir: Path | None = None) -> lis
         chain_id, f"chain-{chain_id}"
     )
     base = (base_dir or Path(os.getenv("ANIMICA_DATA_DIR") or "~/.animica")).expanduser()
-    alt_base = Path.home() / "animica"
+    # Use $HOME environment variable if available, falling back to Path.home()
+    # This ensures correct behavior in Docker where HOME=/data but passwd says /root
+    home = os.environ.get("HOME")
+    alt_base = Path(home) / "animica" if home else Path.home() / "animica"
     candidates = [
         base / network_name / "chain.db",
         base / network_name / "animica.db",

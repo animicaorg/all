@@ -14,7 +14,10 @@ from typing import Any, Dict, Optional
 
 from animica.cli.paths import ensure_file_dir
 
-DEFAULT_STATE_DIR = Path.home() / ".config" / "animica"
+# Use $HOME environment variable if available, falling back to Path.home()
+# This ensures correct behavior in Docker where HOME=/data but passwd says /root
+_home = os.environ.get("HOME")
+DEFAULT_STATE_DIR = Path(_home) / ".config" / "animica" if _home else Path.home() / ".config" / "animica"
 DEFAULT_STATE_FILE = DEFAULT_STATE_DIR / "state.json"
 
 

@@ -91,7 +91,10 @@ class WalletEntry:
 
 
 def _get_default_wallet_path() -> Path:
-    return Path.home() / ".animica" / "wallets.json"
+    # Use $HOME environment variable if available, falling back to Path.home()
+    # This ensures correct behavior in Docker where HOME=/data but passwd says /root
+    home = os.environ.get("HOME")
+    return Path(home) / ".animica" / "wallets.json" if home else Path.home() / ".animica" / "wallets.json"
 
 
 def _wallet_file_path(wallet_file: Optional[Path]) -> Path:
