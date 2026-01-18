@@ -469,6 +469,24 @@ def load_network_config(network: Optional[str] = None) -> NetworkConfig:
         else:
             bootstrap_url = defaults.get("bootstrap_url", defaults["rpc_url"])
     chain_id = _safe_int_from_env("ANIMICA_CHAIN_ID", defaults["chain_id"])
+    
+    # CRITICAL: Validate mainnet always uses chain_id=0
+    # This prevents silent misconfigurations where mainnet runs with wrong chain_id
+    if network_name.lower() == "mainnet" and chain_id != 0:
+        error_msg = (
+            f"FATAL: Network 'mainnet' MUST use chain_id=0, but got chain_id={chain_id}. "
+            f"This indicates a configuration error. Please check ANIMICA_CHAIN_ID environment variable "
+            f"and ensure it is not set to a non-zero value when running mainnet."
+        )
+        logger.error(error_msg)
+        raise ValueError(error_msg)
+    
+    # Validate testnet uses chain_id=2
+    if network_name.lower() == "testnet" and chain_id != 2:
+        logger.warning(
+            f"Network 'testnet' typically uses chain_id=2, but got chain_id={chain_id}. "
+            f"This may cause compatibility issues."
+        )
 
     data_dir = str(get_chain_data_dir(chain_id, create=True))
 
