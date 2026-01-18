@@ -4,6 +4,11 @@ Test that genesis params path resolution works correctly.
 Regression test for the bug where relative paths in genesis.json's paramsRef.path
 were resolved relative to base_dir instead of repo root, causing mainnet to fail
 with "genesis chainId=0 does not match params.chain_id=1" error.
+
+NOTE: Chain IDs per network (as defined in spec/params.yaml and core/genesis/*.json):
+- mainnet: 0
+- testnet: 2
+- devnet: 1337
 """
 
 from pathlib import Path
