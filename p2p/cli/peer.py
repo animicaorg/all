@@ -45,7 +45,11 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 from p2p.peer.peer_addr import normalize_peer_addr
 from p2p.peer.p2p_store import ensure_writable
 
-DEFAULT_HOME = Path(os.environ.get("ANIMICA_HOME", os.environ.get("HOME", str(Path.home())) + "/.animica"))
+# Use $HOME environment variable if available, falling back to Path.home()
+# This ensures correct behavior in Docker where HOME=/data but passwd says /root
+_home_env = os.environ.get("HOME")
+_default_home = Path(_home_env) / ".animica" if _home_env else Path.home() / ".animica"
+DEFAULT_HOME = Path(os.environ.get("ANIMICA_HOME", str(_default_home)))
 DEFAULT_STORE = DEFAULT_HOME / "p2p" / "peers.json"
 
 # ---- Optional imports from full stack -------------------------------------------------
