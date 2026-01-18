@@ -55,6 +55,7 @@ services:
       ANIMICA_CHAIN_ID: "${ANIMICA_CHAIN_ID:-0}"
       GENESIS_PATH: "${GENESIS_PATH:-/app/core/genesis/mainnet.json}"
       ANIMICA_DATA_DIR: "/data/chain-0"
+      ANIMICA_RUN_AS_ROOT: "${ANIMICA_RUN_AS_ROOT:-true}"
       HOME: "/data"
       XDG_DATA_HOME: "/data"
       # RPC server config
@@ -106,6 +107,7 @@ services:
       context: ../..
       dockerfile: ops/docker/miner.Dockerfile
     container_name: animica-mainnet-miner
+    user: "0:0"
     working_dir: /app
     volumes:
       - ../..:/app:ro
@@ -135,6 +137,7 @@ services:
       context: ../../studio-services
       dockerfile: Dockerfile
     container_name: animica-mainnet-services
+    user: "0:0"
     environment:
       RPC_URL: "${RPC_URL:-http://node:8545}"
       CHAIN_ID: "${ANIMICA_CHAIN_ID:-0}"
@@ -171,6 +174,7 @@ services:
     profiles: [studio]
     image: node:20-alpine
     container_name: animica-mainnet-explorer
+    user: "0:0"
     working_dir: /app
     environment:
       VITE_RPC_URL: "http://localhost:${HOST_RPC_PORT:-8545}"
