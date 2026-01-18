@@ -42,6 +42,9 @@ def test_mainnet_genesis_chain_id():
 
 def test_config_validates_mainnet_chain_id():
     """Test that config.py validates mainnet chain_id=0."""
+    # Ensure repo root is in path for imports
+    if str(repo_root) not in sys.path:
+        sys.path.insert(0, str(repo_root))
     from animica.config import load_network_config
     
     # Test that mainnet loads with chain_id=0
@@ -65,7 +68,9 @@ def test_rpc_deps_validates_mainnet_chain_id():
     from dataclasses import dataclass
     from pathlib import Path
     
-    # Import after adding to path
+    # Ensure repo root is in path for imports
+    if str(repo_root) not in sys.path:
+        sys.path.insert(0, str(repo_root))
     from rpc.deps import build_context
     
     # Create a mock config with wrong chain_id for mainnet
@@ -89,6 +94,9 @@ def test_rpc_deps_validates_mainnet_chain_id():
 
 def test_testnet_uses_chain_id_2():
     """Test that testnet uses chain_id=2 (for comparison)."""
+    # Ensure repo root is in path for imports
+    if str(repo_root) not in sys.path:
+        sys.path.insert(0, str(repo_root))
     from animica.config import load_network_config
     
     cfg = load_network_config("testnet")
@@ -99,6 +107,9 @@ def test_testnet_uses_chain_id_2():
 
 def test_devnet_uses_chain_id_1337():
     """Test that devnet uses chain_id=1337 (for comparison)."""
+    # Ensure repo root is in path for imports
+    if str(repo_root) not in sys.path:
+        sys.path.insert(0, str(repo_root))
     from animica.config import load_network_config
     
     cfg = load_network_config("devnet")

@@ -181,6 +181,7 @@ Peer handshake mismatch: chain_id_mismatch local=0 remote=1
 
 ### Verify Genesis Chain ID
 ```bash
+# Run from repository root
 jq '.chainId' core/genesis/mainnet.json
 # Expected output: 0
 ```
@@ -244,8 +245,9 @@ export ANIMICA_P2P_SEEDS=""
 
 ## Testing Chain ID Enforcement
 
-Run the test suite:
+Run the test suite from repository root:
 ```bash
+# From repository root
 pytest test_mainnet_chain_id_fix.py -v
 ```
 
