@@ -3,8 +3,8 @@
     "version": 2,
     "genesis_version": "reset-2026-01-18",
     "description": "Animica mainnet reset genesis (chainId=1). Premine + system accounts only.",
-    "genesis_hash": "0xd2d2897104110b86bb60ccec251a7e2313f4abb301f8cc532d60162c20d3644f",
-    "fork_id": "0xb48c9f20"
+    "genesis_hash": "0x8d2dc90979ec33dfb3fb2c2e74c7f0743af92def329765a4bdababa3e414e68b",
+    "fork_id": "0xe5ab2a40"
   },
   "chainId": 1,
   "network": "animica-mainnet",
