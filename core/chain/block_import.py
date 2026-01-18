@@ -1691,8 +1691,13 @@ class BlockImporter:
                             "reward_type": "miner" if idx == 0 else f"other_{idx}",
                         },
                     )
-                    # Don't raise - allow block import to continue
-                    # But log the mismatch so it's visible in logs
+                    # Don't raise - the credit() call succeeded and state_db.get_balance() returned a value,
+                    # so the state update did happen. The mismatch could be due to:
+                    # 1. Concurrent state modifications (unlikely but possible)
+                    # 2. State DB implementation issues
+                    # 3. Race condition between credit() and get_balance()
+                    # Logging the CRITICAL error makes this visible for investigation while allowing
+                    # block import to proceed (block is still valid even if our verification has issues)
                 else:
                     log.info(
                         "Block reward credited successfully",

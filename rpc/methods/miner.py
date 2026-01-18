@@ -5253,9 +5253,11 @@ def miner_submit_block(payload: Any = None, **kwargs: Any) -> Dict[str, Any]:
                             f"Block accepted and reward credited: height={result.height}, "
                             f"expected_reward={credited_amount}, balance_after={actual_balance}"
                         )
-                        # Update credited_amount to reflect actual balance if verification succeeded
-                        # Note: This is the total balance, not just the reward delta
-                        # The client will display this as "credited" but it's really "balance after credit"
+                        # Note: We don't update credited_amount to actual_balance because:
+                        # 1. credited_amount is the reward amount (delta), not total balance
+                        # 2. actual_balance includes premine and other txs
+                        # 3. Changing the semantic would break backward compatibility
+                        # The log message above shows both values for verification
                     else:
                         log.warning(f"Could not verify balance after block acceptance (state_db unavailable)")
                 except Exception as e:
