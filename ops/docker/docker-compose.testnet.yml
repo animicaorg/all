@@ -40,6 +40,7 @@ services:
       context: ../..
       dockerfile: ops/docker/node.Dockerfile
     container_name: animica-testnet-node
+    user: "0:0"
     working_dir: /app
     # Env precedence: shell/--env-file > env_file > defaults in compose.
     env_file:
@@ -55,6 +56,7 @@ services:
       ANIMICA_CHAIN_ID: "${ANIMICA_CHAIN_ID:-2}"
       GENESIS_PATH: "${GENESIS_PATH:-/app/core/genesis/testnet.json}"
       ANIMICA_DATA_DIR: "/data"
+      ANIMICA_RUN_AS_ROOT: "${ANIMICA_RUN_AS_ROOT:-true}"
       HOME: "/data"
       XDG_DATA_HOME: "/data"
       # RPC server config
@@ -103,6 +105,7 @@ services:
       context: ../..
       dockerfile: ops/docker/miner.Dockerfile
     container_name: animica-testnet-miner
+    user: "0:0"
     working_dir: /app
     volumes:
       - ../..:/app:ro
@@ -133,6 +136,7 @@ services:
       context: ../../studio-services
       dockerfile: Dockerfile
     container_name: animica-testnet-services
+    user: "0:0"
     environment:
       RPC_URL: "${RPC_URL:-http://node:8546}"
       CHAIN_ID: "${ANIMICA_CHAIN_ID:-2}"
@@ -170,6 +174,7 @@ services:
     profiles: [studio]
     image: node:20-alpine
     container_name: animica-testnet-explorer
+    user: "0:0"
     working_dir: /app
     environment:
       VITE_RPC_URL: "http://localhost:${HOST_RPC_PORT:-8546}"

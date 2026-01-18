@@ -22,6 +22,7 @@ x-node-env: &node_env
   <<: *common_env
   ANIMICA_NETWORK: ${ANIMICA_NETWORK:-devnet}
   ANIMICA_COMPOSE_FILE: ${ANIMICA_COMPOSE_FILE:-/app/ops/docker/docker-compose.devnet.yml}
+  ANIMICA_RUN_AS_ROOT: ${ANIMICA_RUN_AS_ROOT:-true}
   # RPC / WS
   RPC_HOST: 0.0.0.0
   RPC_PORT: 8545
@@ -114,6 +115,7 @@ services:
       context: ../..
       dockerfile: ops/docker/node.Dockerfile
     container_name: animica-node
+    user: "0:0"
     restart: unless-stopped
     # Env precedence: shell/--env-file > env_file > defaults in compose.
     env_file:
@@ -143,6 +145,7 @@ services:
       context: ../..
       dockerfile: ops/docker/miner.Dockerfile
     container_name: animica-miner
+    user: "0:0"
     restart: unless-stopped
     environment: *miner_env
     command: ["/bin/sh", "-lc", "/app/ops/docker/entrypoints/miner.sh"]
@@ -168,6 +171,7 @@ services:
       context: ../..
       dockerfile: ops/docker/studio-services.Dockerfile
     container_name: animica-services
+    user: "0:0"
     restart: unless-stopped
     environment: *services_env
     command: ["/bin/sh", "-lc", "/app/ops/docker/entrypoints/services.sh"]
@@ -193,6 +197,7 @@ services:
       context: ../..
       dockerfile: ops/docker/explorer.Dockerfile
     container_name: animica-explorer
+    user: "0:0"
     restart: unless-stopped
     environment: *explorer_env
     command: ["/bin/sh", "-lc", "/app/ops/docker/entrypoints/explorer.sh"]
