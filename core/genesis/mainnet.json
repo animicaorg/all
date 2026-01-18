@@ -3,8 +3,8 @@
     "version": 2,
     "genesis_version": "reset-2026-01-18",
     "description": "Animica mainnet reset genesis (chainId=0). 5-minute block time. Premine + system accounts only.",
-    "genesis_hash": "0xd2d2897104110b86bb60ccec251a7e2313f4abb301f8cc532d60162c20d3644f",
-    "fork_id": "0xb48c9f20"
+    "genesis_hash": "0x6a27e93193020cd00fe429ef0ffac1c3a774268a589c2911ac396dd3cba2d242",
+    "fork_id": "0x942d1f1f"
   },
   "chainId": 0,
   "network": "animica-mainnet",
