@@ -1,8 +1,8 @@
 """
-Test transaction inclusion on chainId 2 (testnet).
+Test transaction inclusion on chainId 1 (testnet).
 
 This test verifies the fix for the issue where transactions submitted on
-chainId 2 remained stuck in mempool and never got included in blocks.
+chainId 1 remained stuck in mempool and never got included in blocks.
 
 Root cause: Transaction envelope format mismatch between CLI/RPC simplified
 format and core canonical format. The fix normalizes the envelope during
@@ -15,7 +15,7 @@ import rpc.server as rpc_server
 
 
 def _build_signed_tx_chainid2(client, cfg):
-    """Build a signed transaction for chainId 2 using core Tx types."""
+    """Build a signed transaction for chainId 1 using core Tx types."""
     try:
         from core.encoding.canonical import tx_sign_bytes
         from core.genesis.loader import compute_chain_identity
@@ -42,9 +42,9 @@ def _build_signed_tx_chainid2(client, cfg):
     # Use sender as recipient for testing (simple self-transfer)
     recipient_bytes = sender_bytes
     
-    # Build unsigned transfer with chainId=2
+    # Build unsigned transfer with chainId=1
     unsigned = UnsignedTx(
-        chain_id=2,  # TESTNET
+        chain_id=1,  # TESTNET
         nonce=0,
         gas_price=1000000000,  # 1 Gwei
         gas_limit=21000,
@@ -79,10 +79,10 @@ def _build_signed_tx_chainid2(client, cfg):
 
 
 def test_chainid2_tx_appears_in_mempool():
-    """Test that a chainId=2 transaction appears in mempool.getPending."""
-    # Create a test client with chainId=2
+    """Test that a chainId=1 transaction appears in mempool.getPending."""
+    # Create a test client with chainId=1
     cfg, tmp = make_test_config()
-    cfg = cfg._replace(chain_id=2)  # Set to testnet
+    cfg = cfg._replace(chain_id=1)  # Set to testnet
     
     app = rpc_server.create_app(cfg)
     rpc_server.deps.ensure_started(cfg)
@@ -109,10 +109,10 @@ def test_chainid2_tx_appears_in_mempool():
 
 
 def test_chainid2_tx_getTransactionByHash_returns_full_fields():
-    """Test that tx.getTransactionByHash returns full fields for chainId=2 pending tx."""
-    # Create a test client with chainId=2
+    """Test that tx.getTransactionByHash returns full fields for chainId=1 pending tx."""
+    # Create a test client with chainId=1
     cfg, tmp = make_test_config()
-    cfg = cfg._replace(chain_id=2)
+    cfg = cfg._replace(chain_id=1)
     
     app = rpc_server.create_app(cfg)
     rpc_server.deps.ensure_started(cfg)
@@ -151,10 +151,10 @@ def test_chainid2_tx_getTransactionByHash_returns_full_fields():
 
 
 def test_chainid2_tx_included_in_mined_block():
-    """Test that chainId=2 pending tx is included when mining a block."""
-    # Create a test client with chainId=2
+    """Test that chainId=1 pending tx is included when mining a block."""
+    # Create a test client with chainId=1
     cfg, tmp = make_test_config()
-    cfg = cfg._replace(chain_id=2)
+    cfg = cfg._replace(chain_id=1)
     
     app = rpc_server.create_app(cfg)
     rpc_server.deps.ensure_started(cfg)
@@ -204,10 +204,10 @@ def test_chainid2_tx_included_in_mined_block():
 
 
 def test_chainid2_state_updates_after_tx_mined():
-    """Test that sender nonce increments after chainId=2 tx is mined."""
-    # Create a test client with chainId=2
+    """Test that sender nonce increments after chainId=1 tx is mined."""
+    # Create a test client with chainId=1
     cfg, tmp = make_test_config()
-    cfg = cfg._replace(chain_id=2)
+    cfg = cfg._replace(chain_id=1)
     
     app = rpc_server.create_app(cfg)
     rpc_server.deps.ensure_started(cfg)

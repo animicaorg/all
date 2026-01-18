@@ -22,7 +22,7 @@ from consensus.rewards import compute_block_reward
 from rpc.deps import _params_from_spec
 
 EXPECTED_MAINNET_CHAIN_ID = 0
-EXPECTED_TESTNET_CHAIN_ID = 2
+EXPECTED_TESTNET_CHAIN_ID = 1
 EXPECTED_DEVNET_CHAIN_ID = 1337
 EXPECTED_BLOCK_REWARD_NANM = 300_000_000_000  # 300 ANM
 
@@ -115,38 +115,35 @@ def test_docker_compose_chain_ids():
 
 def test_chain_id_1_has_no_params():
     """
-    Document the bug: chain_id=1 has no params in spec/params.yaml.
+    Document: chain_id=1 is now testnet (changed from 2).
     
-    This test verifies that chain_id=1 returns empty/fallback params,
-    which would cause rewards=0. This is why mainnet MUST use chain_id=0.
+    This test verifies that chain_id=1 returns testnet params.
+    Mainnet still uses chain_id=0.
     """
     print("\n" + "="*70)
-    print("Chain ID 1 Bug Verification (should have no params)")
+    print("Chain ID 1 Testnet Verification")
     print("="*70)
     
     params = _params_from_spec(1)
     
-    # Chain ID 1 should not have monetary params (no network definition)
+    # Chain ID 1 should have monetary params (testnet)
     has_monetary = 'monetary' in params and params['monetary'].get('issuance')
     
     if has_monetary:
-        print("⚠ WARNING: Chain ID 1 now has monetary params!")
-        print("  This may be intentional if a new network was added.")
-        print("  Verify spec/params.yaml defines 'animica:1' network.")
+        print("✓ Chain ID 1 has monetary params (testnet)")
+        print("  Testnet now uses chain_id=1 (changed from 2)")
     else:
-        print("✓ Confirmed: Chain ID 1 has no monetary params (as expected)")
-        print("  This is why mainnet docker-compose MUST use chain_id=0")
+        print("⚠ WARNING: Chain ID 1 has no monetary params!")
+        print("  This is unexpected - testnet should use chain_id=1")
     
     # Try to compute rewards with chain_id=1
     rewards = compute_block_reward(chain_id=1, height=1, params=params)
     
-    if not rewards:
-        print("✓ Confirmed: Chain ID 1 returns no rewards (0 ANM)")
-        print("  Using chain_id=1 in docker would cause reward=0 bug")
-    else:
+    if rewards:
         addr, amount = rewards[0]
-        print(f"⚠ Chain ID 1 returns rewards: {amount / 1e9} ANM")
-        print("  This may be intentional if a new network was added.")
+        print(f"✓ Chain ID 1 returns rewards: {amount / 1e9} ANM (testnet)")
+    else:
+        print("⚠ Chain ID 1 returns no rewards - check params configuration")
     
     print("="*70)
 

@@ -35,7 +35,7 @@ def test_load_network_config_respects_cli_state(monkeypatch: Any) -> None:
         config = load_network_config()
         
         assert config.name == "testnet"
-        assert config.chain_id == 2
+        assert config.chain_id == 1
         assert config.rpc_url == "http://127.0.0.1:18546/rpc"
         assert config.rpc_port == 18546
 
@@ -85,7 +85,7 @@ def test_load_network_config_explicit_param_highest_priority(monkeypatch: Any) -
         config = load_network_config("testnet")
         
         assert config.name == "testnet"
-        assert config.chain_id == 2
+        assert config.chain_id == 1
         assert config.rpc_url == "http://127.0.0.1:18546/rpc"
 
 
@@ -128,7 +128,7 @@ def test_load_network_config_rpc_url_override(monkeypatch: Any) -> None:
         config = load_network_config()
         
         assert config.name == "testnet"
-        assert config.chain_id == 2
+        assert config.chain_id == 1
         assert config.rpc_url == custom_url
 
 

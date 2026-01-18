@@ -142,7 +142,7 @@ networks:
       gossip_target_degree: 8
 
   # ----------------------------- TESTNET --------------------------------------
-  "animica:2":
+  "animica:1":
     name: "Animica Testnet"
     symbol: "tANM"
     decimals: 9

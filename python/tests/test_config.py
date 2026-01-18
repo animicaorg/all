@@ -135,7 +135,7 @@ def test_load_network_config_from_env() -> None:
         config = load_network_config()
         
         assert config.name == "testnet"
-        assert config.chain_id == 2
+        assert config.chain_id == 1
         assert config.rpc_port == 18546
     finally:
         # Restore original environment
@@ -227,7 +227,7 @@ def test_load_network_config_whitespace_chain_id(clean_env_vars: Any) -> None:
     config = load_network_config()
     
     assert config.name == "testnet"
-    assert config.chain_id == 2  # testnet default
+    assert config.chain_id == 1  # testnet default
 
 
 def test_load_network_config_invalid_chain_id(clean_env_vars: Any) -> None:

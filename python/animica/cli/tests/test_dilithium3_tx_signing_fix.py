@@ -67,7 +67,7 @@ class TestDilithium3TxSigningWithNormalization:
             alg="dilithium3",
             sk=sk,
             domain="tx",
-            chain_id=2,
+            chain_id=1,
             prehash="sha3-512",
         )
         
@@ -77,7 +77,7 @@ class TestDilithium3TxSigningWithNormalization:
             sig,
             pk,
             domain="tx",
-            chain_id=2,
+            chain_id=1,
             prehash="sha3-512",
         )
         
@@ -105,7 +105,7 @@ class TestDilithium3TxSigningWithNormalization:
             alg="dilithium3",
             sk=sk_legacy,
             domain="tx",
-            chain_id=2,
+            chain_id=1,
             prehash="sha3-512",
         )
         
@@ -115,7 +115,7 @@ class TestDilithium3TxSigningWithNormalization:
             sig,
             pk,
             domain="tx",
-            chain_id=2,
+            chain_id=1,
             prehash="sha3-512",
         )
         
@@ -141,7 +141,7 @@ class TestDilithium3TxSigningWithNormalization:
             alg="dilithium3",
             sk=sk_canonical,
             domain="tx",
-            chain_id=2,
+            chain_id=1,
             prehash="sha3-512",
         )
         
@@ -151,7 +151,7 @@ class TestDilithium3TxSigningWithNormalization:
             alg="dilithium3",
             sk=sk_legacy,
             domain="tx",
-            chain_id=2,
+            chain_id=1,
             prehash="sha3-512",
         )
         
@@ -199,7 +199,7 @@ class TestDilithium3TxSigningWithNormalization:
             alg=alg_id,
             sk=sk_loaded,
             domain="tx",
-            chain_id=2,
+            chain_id=1,
             prehash="sha3-512",
         )
         
@@ -209,7 +209,7 @@ class TestDilithium3TxSigningWithNormalization:
             sig,
             pk_loaded,
             domain="tx",
-            chain_id=2,
+            chain_id=1,
             prehash="sha3-512",
         )
         
@@ -256,7 +256,7 @@ class TestDilithium3TxSigningWithNormalization:
             alg=alg_id,
             sk=sk_loaded,
             domain="tx",
-            chain_id=2,
+            chain_id=1,
             prehash="sha3-512",
         )
         
@@ -266,7 +266,7 @@ class TestDilithium3TxSigningWithNormalization:
             sig,
             pk_loaded,
             domain="tx",
-            chain_id=2,
+            chain_id=1,
             prehash="sha3-512",
         )
 
@@ -292,7 +292,7 @@ class TestDilithium3TxSigningWithNormalization:
             alg="dilithium3",
             sk=sk,
             domain="tx",
-            chain_id=2,
+            chain_id=1,
             prehash="sha3-512",
         )
         assert not verify_detached(
@@ -300,7 +300,7 @@ class TestDilithium3TxSigningWithNormalization:
             sig_default,
             pk_external,
             domain="tx",
-            chain_id=2,
+            chain_id=1,
             prehash="sha3-512",
         )
 
@@ -311,7 +311,7 @@ class TestDilithium3TxSigningWithNormalization:
             sk=sk,
             pk=pk_external,
             domain="tx",
-            chain_id=2,
+            chain_id=1,
             prehash="sha3-512",
         )
         assert verify_detached(
@@ -319,6 +319,6 @@ class TestDilithium3TxSigningWithNormalization:
             sig_with_pk,
             pk_external,
             domain="tx",
-            chain_id=2,
+            chain_id=1,
             prehash="sha3-512",
         )
