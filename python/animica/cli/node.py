@@ -1032,7 +1032,7 @@ def _get_sync_status(
 ) -> tuple[Optional[dict[str, Any]], Optional[str]]:
     """
     Get sync status with improved error handling.
-    
+
     Returns:
         (status, error_msg): status is a dict with sync information, or None if unavailable
     """
@@ -1042,7 +1042,8 @@ def _get_sync_status(
             result = asyncio.run(rpc_call(method, [], rpc_url=rpc_url, timeout=rpc_timeout))
             if isinstance(result, dict):
                 return result, None
-            # Handle boolean False response (not syncing)
+            # Handle boolean False response (not syncing) - normalize to dict format
+            # This is compatible with Ethereum-style sync APIs that return false when not syncing
             if result is False:
                 return {"syncing": False, "synchronized": True}, None
         except Exception as exc:
