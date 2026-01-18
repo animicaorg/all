@@ -967,6 +967,12 @@ def _coerce_peer_count(raw: Any) -> Optional[int]:
 
 
 def _get_peer_count(rpc_url: str, rpc_timeout: Optional[float]) -> tuple[Optional[int], Optional[str]]:
+    """
+    Get peer count with improved error handling.
+    
+    Returns:
+        (count, error_msg): count is the number of identity_ok peers, or None if unavailable
+    """
     last_error = None
     for method in PEER_COUNT_METHODS:
         try:
@@ -1353,7 +1359,19 @@ def _post_start_peer_bootstrap(
     while time.time() < deadline:
         peer_count, _ = _get_peer_count(rpc_url, None)
         if peer_count and peer_count > 0:
-            typer.secho(f"✓ Peers connected: {peer_count}", fg=typer.colors.GREEN)
+            # Get sync status to check peer tips freshness
+            sync_status, _ = _get_sync_status(rpc_url, None)
+            peer_tips_fresh = 0
+            if sync_status:
+                peer_tips_fresh = sync_status.get("peer_tips_fresh", 0)
+            
+            status_msg = f"✓ Peers connected: {peer_count}"
+            if peer_tips_fresh > 0:
+                status_msg += f" (fresh tips: {peer_tips_fresh})"
+            elif peer_count > 0:
+                status_msg += " (waiting for peer tips...)"
+            
+            typer.secho(status_msg, fg=typer.colors.GREEN)
             try:
                 if asyncio.run(_trigger_sync(rpc_url)):
                     typer.secho("✓ Sync trigger sent", fg=typer.colors.GREEN)

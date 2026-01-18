@@ -16,7 +16,7 @@ VENV_DIR="$ROOT/.venv"
 FRESH_INSTALL=false
 ENABLE_P2P=true
 ENABLE_P2P_EXPLICIT=false
-P2P_PORT="${P2P_PORT:-30334}"
+P2P_PORT="${P2P_PORT:-30333}"
 P2P_BIND_IP="${P2P_BIND_IP:-0.0.0.0}"
 P2P_ADVERTISE_IP="${P2P_ADVERTISE_IP:-}"   # if empty we auto-detect
 P2P_LOG_DIR="${P2P_LOG_DIR:-$ROOT/logs}"
@@ -51,7 +51,7 @@ Options:
   --fresh              Remove existing .venv and perform a clean installation
   --p2p                Start P2P listener/broadcaster after install (opt-in)
   --no-p2p             Do not start P2P listener/broadcaster after install
-  --p2p-port=PORT      P2P port (default: 30334 for host P2P)
+  --p2p-port=PORT      P2P port (default: 30333 TCP)
   --p2p-bind=IP        Bind IP for listener (default: 0.0.0.0)
   --p2p-advertise=IP   Advertise IP for peers (default: auto-detect)
 
@@ -78,7 +78,7 @@ Examples:
   # Disable P2P autostart
   ./setup.sh --no-p2p
 
-  # Opt in to host P2P autostart (default port 30334)
+  # Opt in to host P2P autostart (default port 30333 TCP)
   ./setup.sh --p2p
 
   # Explicit P2P advertise IP/port
