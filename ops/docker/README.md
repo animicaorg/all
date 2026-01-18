@@ -220,6 +220,38 @@ Common Pitfalls
 
 ⸻
 
+Troubleshooting
+
+Volume Permission Issues
+
+If you see errors like "data directory is not writable by animica (uid 10001)" when starting containers:
+
+Cause: Existing volumes may have been created with root ownership from an older configuration.
+
+Solution: Remove and recreate the volumes:
+
+# Stop all services
+docker compose -f ops/docker/docker-compose.mainnet.yml down
+
+# Remove the volume (⚠ this deletes all chain data!)
+docker volume rm animica_mainnet_data
+
+# Restart the node (volume will be recreated with correct permissions)
+docker compose -f ops/docker/docker-compose.mainnet.yml up -d
+
+Note: As of this fix, all node containers run as the 'animica' user (uid 10001) by default, which resolves permission conflicts. If you need to run as root for debugging, you can override: user: "0" in your local compose file, but this is not recommended for production.
+
+Container Restart Loops
+
+If the container keeps restarting:
+
+1. Check logs: docker logs animica-mainnet-node
+2. Look for permission errors (see above)
+3. Check port conflicts: sudo lsof -i :8545 (RPC) or :30333 (P2P)
+4. Verify the genesis file matches your network
+
+⸻
+
 Appendix: Minimal Traefik example (dev)
 
 # traefik.dev.yaml
