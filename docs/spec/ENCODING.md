@@ -60,7 +60,7 @@ These IDs appear inside CBOR objects as small integers or well-scoped strings.
 ### 3.1 Chain IDs
 - `chainId : u32`  
   Registry lives in `spec/chains.json` (CAIP-2 style), e.g.:
-  - `animica:1` mainnet
+  - `animica:0` mainnet
   - `animica:2` testnet
   - `animica:1337` devnet
 
@@ -183,4 +183,3 @@ Verifiers recompute sign_hash from the encoded Tx and check:
 	•	Randomness: randomness/utils/hash.py
 	•	Capabilities: capabilities/jobs/id.py, capabilities/host/*
 	•	ZK: zk/integration/*, zk/registry/*
-

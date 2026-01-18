@@ -5,7 +5,7 @@ set -eu
 : "${ANIMICA_UID:=10001}"
 : "${ANIMICA_GID:=10001}"
 : "${ANIMICA_DATA_DIR:=/data}"
-: "${ANIMICA_CHAIN_ID:=1}"
+: "${ANIMICA_CHAIN_ID:=0}"
 
 p2p_dir_default="${ANIMICA_DATA_DIR%/}/chain-${ANIMICA_CHAIN_ID}/p2p"
 P2P_DIR="${ANIMICA_P2P_DATA_DIR:-${p2p_dir_default}}"

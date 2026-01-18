@@ -5,11 +5,11 @@
 # Keep lists short (3–5 per network) and highly available.
 #
 # Chains:
-#  - animica:1  -> mainnet
+#  - animica:0  -> mainnet
 #  - animica:2  -> testnet
 #  - animica:1337 -> devnet
 
-# --- mainnet (animica:1) ---
+# --- mainnet (animica:0) ---
 seed-us-1.animica.net
 seed-eu-1.animica.net
 seed-ap-1.animica.net

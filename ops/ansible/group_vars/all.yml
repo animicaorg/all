@@ -7,7 +7,7 @@
 # ---- Environment -------------------------------------------------------------
 animica_env: devnet                 # devnet | testnet | prod
 animica_domain_root: animica.local  # used by ingress/proxies (override in prod)
-chain_id: 1337                      # animica:1 mainnet, :2 testnet, :1337 devnet
+chain_id: 1337                      # animica:0 mainnet, :2 testnet, :1337 devnet
 
 # ---- Paths & Layout ----------------------------------------------------------
 animica_user: animica
@@ -274,4 +274,3 @@ timezone: "UTC"
 ulimits:
   nofile: 1048576
   nproc:  65536
-

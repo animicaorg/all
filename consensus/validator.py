@@ -259,7 +259,7 @@ def validate_block(
             )
 
     chain_id, height = _chain_and_height(header)
-    adaptive_pow = chain_id == 1 and height >= 1
+    adaptive_pow = chain_id == 0 and height >= 1
     work_type = _work_type_from_header(header)
     availability: Optional[work_registry.WorkAvailability] = None
 

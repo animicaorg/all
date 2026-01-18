@@ -10,7 +10,7 @@ Short, practical answers to the questions we get most about **miners**, **contra
 A PoIES chain where blocks are accepted when `Σψ ≥ Θ`: we aggregate contributions `ψ` from heterogeneous proofs (hash, AI, quantum, storage, VDF) under policy caps `Γ`, and retarget `Θ` for stable block times.
 
 **Which networks exist?**  
-- `animica:1` — mainnet (reserved)  
+- `animica:0` — mainnet (reserved)  
 - `animica:2` — public testnet  
 - `animica:1337` — local/devnet  
 See site chain files in `website/chains/*.json`.

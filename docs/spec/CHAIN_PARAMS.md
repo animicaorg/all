@@ -19,7 +19,7 @@ Animica networks follow CAIP-2 style identifiers:
 
 | Network   | CAIP-2 ID      | Numeric `chainId` | Address HRP | Notes                          |
 |-----------|-----------------|-------------------|-------------|--------------------------------|
-| Mainnet   | `animica:1`     | `1`               | `anim`      | Production; params locked per release. |
+| Mainnet   | `animica:0`     | `0`               | `anim`      | Production; params locked per release. |
 | Testnet   | `animica:2`     | `2`               | `anim`      | Public test network; rapid upgrades.   |
 | Devnet    | `animica:1337`  | `1337`            | `anim`      | Local/dev; permissive limits.          |
 
@@ -263,4 +263,3 @@ address: { hrp: anim, payload: "alg_id || sha3_256(pubkey)" }
 ⸻
 
 Change history: maintained in docs/CHANGELOG.md and release tags.
-

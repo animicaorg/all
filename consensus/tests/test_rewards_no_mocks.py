@@ -38,7 +38,7 @@ def test_block_reward_uses_consensus_params():
     }
     
     # Height 1 should use emission schedule, not premine
-    rewards = compute_block_reward(chain_id=1, height=1, params=params)
+    rewards = compute_block_reward(chain_id=0, height=1, params=params)
     
     assert isinstance(rewards, list), "Rewards should be a list of (address, amount) tuples"
     
@@ -98,7 +98,7 @@ def test_genesis_rewards_differ_from_post_genesis():
         pytest.skip("consensus.rewards not available")
     
     # Mainnet genesis (height 0)
-    genesis_rewards = compute_block_reward(chain_id=1, height=0, params=None)
+    genesis_rewards = compute_block_reward(chain_id=0, height=0, params=None)
     
     # Post-genesis (height 1)
     params = {
@@ -115,7 +115,7 @@ def test_genesis_rewards_differ_from_post_genesis():
             "treasury": "anim1treasury",
         }
     }
-    post_genesis_rewards = compute_block_reward(chain_id=1, height=1, params=params)
+    post_genesis_rewards = compute_block_reward(chain_id=0, height=1, params=params)
     
     # Genesis should return premine
     assert len(genesis_rewards) > 0, "Genesis should have premine rewards"
@@ -140,7 +140,7 @@ def test_devnet_can_use_different_genesis():
     except ImportError:
         pytest.skip("consensus.rewards not available")
     
-    # Devnet (chain_id=1337) at genesis with custom params
+    # Devnet (chain_id=0337) at genesis with custom params
     params = {
         "monetary": {
             "issuance": {
@@ -156,8 +156,8 @@ def test_devnet_can_use_different_genesis():
         }
     }
     
-    devnet_genesis = compute_block_reward(chain_id=1337, height=0, params=params)
-    mainnet_genesis = compute_block_reward(chain_id=1, height=0, params=None)
+    devnet_genesis = compute_block_reward(chain_id=0337, height=0, params=params)
+    mainnet_genesis = compute_block_reward(chain_id=0, height=0, params=None)
     
     # Devnet genesis should differ from mainnet (not forced into mainnet premine)
     # NOTE: Current implementation may return empty list for non-mainnet genesis
@@ -247,7 +247,7 @@ def test_no_hardcoded_zero_addresses_in_rewards():
         }
     }
     
-    rewards = compute_block_reward(chain_id=1337, height=1, params=params)
+    rewards = compute_block_reward(chain_id=0337, height=1, params=params)
     
     # Check that no address is a zero/placeholder pattern
     for addr, _ in rewards:

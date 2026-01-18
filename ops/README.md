@@ -2,7 +2,7 @@
 
 This document describes the **public devnet** topology for Animica: the services we run, how traffic reaches them (DNS ↔ TLS ↔ reverse proxy), ports, and how we observe health and performance.
 
-> **Chain IDs (CAIP-2)**: `animica:1` (mainnet), `animica:2` (testnet), **`animica:1337` (devnet)**
+> **Chain IDs (CAIP-2)**: `animica:0` (mainnet), `animica:2` (testnet), **`animica:1337` (devnet)**
 
 ---
 
@@ -238,4 +238,3 @@ The compose and k8s manifests consume a standard set of env vars (see tests/devn
 	•	Ops on-call: ops@animica.xyz
 	•	Status page: https://status.animica.xyz
 	•	Security: security@animica.xyz (PGP preferred)
-

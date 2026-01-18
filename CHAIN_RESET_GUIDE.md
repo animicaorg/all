@@ -7,7 +7,7 @@ This guide describes the Animica chain reset implemented on **2026-01-18** that 
 ## What Changed
 
 ### New Genesis Parameters
-- **Genesis Hash**: `0xd2d2897104110b86bb60ccec251a7e2313f4abb301f8cc532d60162c20d3644f`
+- **Genesis Hash**: `0x6a27e93193020cd00fe429ef0ffac1c3a774268a589c2911ac396dd3cba2d242`
 - **Fork ID**: `0x823f8537`
 - **Genesis Timestamp**: `2026-01-18T00:00:00Z` (Unix: 1768694400)
 - **Genesis Message**: "Animica Chain Reset Jan 2026 - Quantum-Resistant Blockchain"
@@ -66,7 +66,7 @@ docker volume rm animica_mainnet_chain_0_<genesis_tag>_data
 
 ```bash
 # Remove chain data directory (mainnet example)
-rm -rf ~/.animica/chain-1/
+rm -rf ~/.animica/chain-0/
 
 # Preserve wallet files if separate
 # Wallet is typically at ~/.animica/wallets.json
@@ -91,7 +91,7 @@ animica chain head
 
 # Verify genesis hash in logs
 docker logs animica_mainnet_node | grep -i genesis
-# Should show: 0xd2d2897104110b86bb60ccec251a7e2313f4abb301f8cc532d60162c20d3644f
+# Should show: 0x6a27e93193020cd00fe429ef0ffac1c3a774268a589c2911ac396dd3cba2d242
 ```
 
 ## Data Loss Warning
@@ -181,7 +181,7 @@ animica node up
 ### Node won't start after reset
 
 **Check**:
-1. Verify genesis hash in logs matches `0xd2d2897104110b86bb60ccec251a7e2313f4abb301f8cc532d60162c20d3644f`
+1. Verify genesis hash in logs matches `0x6a27e93193020cd00fe429ef0ffac1c3a774268a589c2911ac396dd3cba2d242`
 2. Ensure all volumes/data directories were removed
 3. Check for lingering containers: `docker ps -a`
 4. Verify code is updated to latest version
@@ -199,8 +199,8 @@ animica node up
 
 ## Network-Specific Details
 
-### Mainnet (chain_id=1)
-- **Data Directory**: `~/.animica/chain-1/`
+### Mainnet (chain_id=0)
+- **Data Directory**: `~/.animica/chain-0/`
 - **Docker Volume**: `animica_mainnet_chain_0_<genesis_tag>_data`
 - **RPC Port**: 8545 (default)
 
@@ -232,7 +232,7 @@ animica node up
 **A**: All pending transactions are lost. Mempool is cleared on reset.
 
 ### Q: How do I verify I'm on the correct chain?
-**A**: Check genesis hash with `animica chain head` or in logs. It must match `0xd2d2897104110b86bb60ccec251a7e2313f4abb301f8cc532d60162c20d3644f`.
+**A**: Check genesis hash with `animica chain head` or in logs. It must match `0x6a27e93193020cd00fe429ef0ffac1c3a774268a589c2911ac396dd3cba2d242`.
 
 ## References
 

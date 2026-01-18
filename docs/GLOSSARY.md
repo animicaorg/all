@@ -163,7 +163,7 @@ Authoritative terms used across **specs**, **code**, **SDKs**, and **docs**. If 
 
 ## Chain & addressing
 
-- **Chain ID** — CAIP-2 styled identifier (e.g., `animica:1` mainnet, `:2` testnet, `:1337` devnet).
+- **Chain ID** — CAIP-2 styled identifier (e.g., `animica:0` mainnet, `:2` testnet, `:1337` devnet).
 - **Address** — bech32m (`anim1…`) derived from pubkey and `alg_id`.
 
 ---
@@ -196,4 +196,3 @@ Authoritative terms used across **specs**, **code**, **SDKs**, and **docs**. If 
 - **VM(Py) specs:** `vm_py/specs/*`
 
 > Proposing a new term? Open a PR to add it here, include the formal definition, and reference affected modules.
-

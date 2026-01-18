@@ -183,11 +183,11 @@ async def download_snapshot_via_p2p(peer, chain_id, height):
 
 ```
 ~/.animica/snapshots/
-├── chain-1-height-1000/
+├── chain-0-height-1000/
 │   ├── manifest.json
 │   ├── blocks.tar.zst
 │   └── state.tar.zst
-├── chain-1-height-2000/
+├── chain-0-height-2000/
 │   ├── manifest.json
 │   ├── blocks.tar.zst
 │   └── state.tar.zst

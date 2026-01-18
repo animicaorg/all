@@ -59,7 +59,7 @@ def _candidates_for_relative(path: Path, chain_id: Optional[int]) -> Iterable[Pa
             yield canonical_path
 
         sample_map = {
-            1: repo_root / "genesis" / "genesis.sample.mainnet.json",
+            0: repo_root / "genesis" / "genesis.sample.mainnet.json",
             2: repo_root / "genesis" / "genesis.sample.testnet.json",
             1337: repo_root / "genesis" / "genesis.sample.devnet.json",
         }
@@ -128,7 +128,7 @@ def resolve_genesis_path(
         except Exception:
             pass
         chain_samples = {
-            1: _repo_root() / "genesis" / "genesis.sample.mainnet.json",
+            0: _repo_root() / "genesis" / "genesis.sample.mainnet.json",
             2: _repo_root() / "genesis" / "genesis.sample.testnet.json",
             1337: _repo_root() / "genesis" / "genesis.sample.devnet.json",
         }

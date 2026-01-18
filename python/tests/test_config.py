@@ -34,11 +34,11 @@ def test_get_network_defaults_mainnet() -> None:
     """Test mainnet network defaults."""
     defaults = get_network_defaults("mainnet")
     
-    assert defaults["chain_id"] == 1
+    assert defaults["chain_id"] == 0
     assert defaults["rpc_port"] == 8545
     assert defaults["rpc_url"] == "http://127.0.0.1:8545/rpc"
     assert defaults["db_name"] == "animica.db"
-    assert defaults["data_dir"] == str(Path("~/.animica/chain-1").expanduser())
+    assert defaults["data_dir"] == str(Path("~/.animica/chain-0").expanduser())
     assert "docker-compose.mainnet.yml" in str(defaults["compose_file"])
 
 
@@ -82,20 +82,20 @@ def test_get_network_defaults_unknown_returns_mainnet() -> None:
     defaults = get_network_defaults("unknown-network")
     
     # Should fall back to mainnet
-    assert defaults["chain_id"] == 1
+    assert defaults["chain_id"] == 0
     assert defaults["rpc_port"] == 8545
 
 
-def test_mainnet_db_path_resolves_chain_one(clean_env_vars: Any) -> None:
-    """Test that mainnet resolves to chain-1 DB path."""
+def test_mainnet_db_path_resolves_chain_zero(clean_env_vars: Any) -> None:
+    """Test that mainnet resolves to chain-0 DB path."""
     os.environ.pop("ANIMICA_DATA_DIR", None)
     config = load_network_config("mainnet")
 
     db_path = Path(config.data_dir).expanduser() / config.db_name
 
-    assert config.chain_id == 1
+    assert config.chain_id == 0
     assert db_path.name == "animica.db"
-    assert db_path.parent.name == "chain-1"
+    assert db_path.parent.name == "chain-0"
 
 
 def test_load_network_config_default() -> None:
@@ -113,7 +113,7 @@ def test_load_network_config_default() -> None:
         config = load_network_config()
         
         assert config.name == "mainnet"
-        assert config.chain_id == 1
+        assert config.chain_id == 0
         assert config.rpc_port == 8545
         assert config.rpc_url == "http://127.0.0.1:8545/rpc"
         assert config.rpc_host == "127.0.0.1"
@@ -215,7 +215,7 @@ def test_load_network_config_empty_chain_id(clean_env_vars: Any) -> None:
     config = load_network_config()
     
     assert config.name == "mainnet"
-    assert config.chain_id == 1  # mainnet default
+    assert config.chain_id == 0  # mainnet default
 
 
 def test_load_network_config_whitespace_chain_id(clean_env_vars: Any) -> None:
@@ -262,7 +262,7 @@ def test_load_network_config_no_chain_id_env(clean_env_vars: Any) -> None:
     config = load_network_config()
     
     assert config.name == "mainnet"
-    assert config.chain_id == 1  # mainnet default
+    assert config.chain_id == 0  # mainnet default
 
 
 def test_mainnet_data_dir_respects_animica_data_dir(clean_env_vars: Any) -> None:
@@ -273,8 +273,8 @@ def test_mainnet_data_dir_respects_animica_data_dir(clean_env_vars: Any) -> None
 
     config = load_network_config()
 
-    assert config.chain_id == 1
-    assert Path(config.data_dir).as_posix().startswith("/data/chain-1")
+    assert config.chain_id == 0
+    assert Path(config.data_dir).as_posix().startswith("/data/chain-0")
 
 
 def test_load_network_config_empty_rpc_url(clean_env_vars: Any) -> None:

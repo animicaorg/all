@@ -46,19 +46,19 @@ def test_mainnet_premine_distribution_documented():
 
 def test_compute_block_reward_mainnet_height_0_returns_premine():
     """Mainnet at height 0 returns the premine distribution."""
-    reward = compute_block_reward(chain_id=1, height=0)
+    reward = compute_block_reward(chain_id=0, height=0)
     assert reward == list(MAINNET_PREMINE_DISTRIBUTION)
 
 
 def test_compute_block_reward_mainnet_height_1_returns_empty_without_params():
     """Mainnet at height 1+ without params returns empty (params required)."""
-    reward = compute_block_reward(chain_id=1, height=1, params=None)
+    reward = compute_block_reward(chain_id=0, height=1, params=None)
     assert reward == []
 
 
 def test_compute_block_reward_devnet_height_0_returns_empty():
     """Devnet (chain_id != 1) at height 0 returns empty (uses own genesis rules)."""
-    reward = compute_block_reward(chain_id=1337, height=0)
+    reward = compute_block_reward(chain_id=0337, height=0)
     assert reward == []
 
 
@@ -72,7 +72,7 @@ def test_validate_mainnet_genesis_coinbase_valid():
     """Valid mainnet genesis coinbase passes validation."""
     coinbase_outputs = list(MAINNET_PREMINE_DISTRIBUTION)
     is_valid, reason = validate_mainnet_genesis_coinbase(
-        chain_id=1, height=0, coinbase_outputs=coinbase_outputs
+        chain_id=0, height=0, coinbase_outputs=coinbase_outputs
     )
     assert is_valid
     assert "valid" in reason.lower()
@@ -86,7 +86,7 @@ def test_validate_mainnet_genesis_coinbase_invalid_total():
         for i, (addr, amt) in enumerate(MAINNET_PREMINE_DISTRIBUTION)
     ]
     is_valid, reason = validate_mainnet_genesis_coinbase(
-        chain_id=1, height=0, coinbase_outputs=bad_outputs
+        chain_id=0, height=0, coinbase_outputs=bad_outputs
     )
     assert not is_valid
     assert "total" in reason.lower()
@@ -102,7 +102,7 @@ def test_validate_mainnet_genesis_coinbase_invalid_distribution():
         addr2, amt2 = outputs[1]
         bad_outputs = [(addr1, amt2), (addr2, amt1)] + outputs[2:]
         is_valid, reason = validate_mainnet_genesis_coinbase(
-            chain_id=1, height=0, coinbase_outputs=bad_outputs
+            chain_id=0, height=0, coinbase_outputs=bad_outputs
         )
         assert not is_valid
         assert "distribution" in reason.lower()
@@ -113,7 +113,7 @@ def test_validate_mainnet_genesis_coinbase_non_mainnet_skips():
     # Devnet with arbitrary outputs
     bad_outputs = [("random_addr", 12345)]
     is_valid, reason = validate_mainnet_genesis_coinbase(
-        chain_id=1337, height=0, coinbase_outputs=bad_outputs
+        chain_id=0337, height=0, coinbase_outputs=bad_outputs
     )
     assert is_valid
     assert "not mainnet" in reason.lower()
@@ -124,7 +124,7 @@ def test_validate_mainnet_genesis_coinbase_non_genesis_skips():
     # Mainnet at height 1 with arbitrary outputs
     bad_outputs = [("random_addr", 12345)]
     is_valid, reason = validate_mainnet_genesis_coinbase(
-        chain_id=1, height=1, coinbase_outputs=bad_outputs
+        chain_id=0, height=1, coinbase_outputs=bad_outputs
     )
     assert is_valid
     assert "not genesis" in reason.lower()
@@ -338,7 +338,7 @@ def test_compute_block_reward_with_params():
     }
     
     # Test at height 1 (first post-genesis block)
-    rewards = compute_block_reward(chain_id=1337, height=1, params=params)
+    rewards = compute_block_reward(chain_id=0337, height=1, params=params)
     
     # Should return only 1 reward (miner gets 100%)
     assert len(rewards) == 1, f"Expected 1 reward (100% to miner), got {len(rewards)}"
@@ -362,7 +362,7 @@ def test_compute_block_reward_returns_empty_for_invalid_params():
     # Missing required fields
     invalid_params = {"monetary": {}}
     
-    rewards = compute_block_reward(chain_id=1337, height=1, params=invalid_params)
+    rewards = compute_block_reward(chain_id=0337, height=1, params=invalid_params)
     
     # Should return empty due to invalid params
     assert rewards == []
@@ -395,7 +395,7 @@ def test_compute_block_reward_5_anm_base():
     }
     
     # Test at height 1 (first post-genesis block)
-    rewards = compute_block_reward(chain_id=1337, height=1, params=params)
+    rewards = compute_block_reward(chain_id=0337, height=1, params=params)
     
     # Should return only 1 reward (miner gets 100%)
     assert len(rewards) == 1, f"Expected 1 reward (100% to miner), got {len(rewards)}"
@@ -438,7 +438,7 @@ def test_compute_block_reward_halving_at_1_35m():
     }
     
     # Test at height 1_350_001 (first block of epoch 1, after first halving)
-    rewards = compute_block_reward(chain_id=1337, height=1350001, params=params)
+    rewards = compute_block_reward(chain_id=0337, height=1350001, params=params)
     
     # Should return only 1 reward (miner gets 100%)
     assert len(rewards) == 1, f"Expected 1 reward (100% to miner), got {len(rewards)}"
@@ -481,7 +481,7 @@ def test_compute_block_reward_second_halving_at_2_7m():
     }
     
     # Test at height 2_700_001 (first block of epoch 2, after second halving)
-    rewards = compute_block_reward(chain_id=1337, height=2700001, params=params)
+    rewards = compute_block_reward(chain_id=0337, height=2700001, params=params)
     
     # Should return only 1 reward (miner gets 100%)
     assert len(rewards) == 1, f"Expected 1 reward (100% to miner), got {len(rewards)}"
@@ -524,7 +524,7 @@ def test_compute_block_reward_mainnet_100_pct_to_miner():
     }
     
     # Test at height 1 (first post-genesis block)
-    rewards = compute_block_reward(chain_id=1, height=1, params=params)
+    rewards = compute_block_reward(chain_id=0, height=1, params=params)
     
     # Should return only 1 reward (miner gets 100%)
     assert len(rewards) == 1, f"Expected 1 reward (100% to miner), got {len(rewards)}"
@@ -562,7 +562,7 @@ def test_compute_block_reward_mainnet_100_pct_halving():
     }
     
     # Test at height 1_350_001 (first block of epoch 1, after first halving)
-    rewards = compute_block_reward(chain_id=1, height=1350001, params=params)
+    rewards = compute_block_reward(chain_id=0, height=1350001, params=params)
     
     # Should return only 1 reward (miner gets 100%)
     assert len(rewards) == 1, f"Expected 1 reward (100% to miner), got {len(rewards)}"
@@ -580,7 +580,7 @@ def test_instant_block_always_returns_zero_rewards():
     
     for height in test_heights:
         # Without params
-        rewards = compute_block_reward(chain_id=1337, height=height, params=None, instant_block=True)
+        rewards = compute_block_reward(chain_id=0337, height=height, params=None, instant_block=True)
         assert rewards == [], f"Height {height} without params: Expected empty, got {rewards}"
         
         # With params (should still be empty)
@@ -607,18 +607,18 @@ def test_instant_block_always_returns_zero_rewards():
                 "treasury": "anim1treasuryxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
             },
         }
-        rewards = compute_block_reward(chain_id=1337, height=height, params=params, instant_block=True)
+        rewards = compute_block_reward(chain_id=0337, height=height, params=params, instant_block=True)
         assert rewards == [], f"Height {height} with params: Expected empty, got {rewards}"
 
 
 def test_instant_block_mainnet_genesis_returns_zero():
     """Instant blocks at mainnet genesis return zero (no premine)."""
     # Mainnet genesis normally has premine
-    normal_rewards = compute_block_reward(chain_id=1, height=0, params=None, instant_block=False)
+    normal_rewards = compute_block_reward(chain_id=0, height=0, params=None, instant_block=False)
     assert len(normal_rewards) > 0, "Normal mainnet genesis should have premine"
     
     # But instant block at genesis has no premine
-    instant_rewards = compute_block_reward(chain_id=1, height=0, params=None, instant_block=True)
+    instant_rewards = compute_block_reward(chain_id=0, height=0, params=None, instant_block=True)
     assert instant_rewards == [], "Instant mainnet genesis should have zero rewards"
 
 
@@ -649,12 +649,12 @@ def test_instant_block_vs_normal_block():
     }
     
     # Normal block should have rewards
-    normal = compute_block_reward(chain_id=1337, height=1, params=params, instant_block=False)
+    normal = compute_block_reward(chain_id=0337, height=1, params=params, instant_block=False)
     assert len(normal) == 3, f"Normal block should have 3 rewards (miner, aicf, treasury), got {len(normal)}"
     
     total_normal = sum(amt for _, amt in normal)
     assert total_normal == 5000000000, f"Normal block should have 5 ANM total, got {total_normal}"
     
     # Instant block should have zero rewards
-    instant = compute_block_reward(chain_id=1337, height=1, params=params, instant_block=True)
+    instant = compute_block_reward(chain_id=0337, height=1, params=params, instant_block=True)
     assert instant == [], f"Instant block should have zero rewards, got {instant}"

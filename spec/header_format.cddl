@@ -12,7 +12,7 @@
 Hash32    = bstr .size 32
 Hash20or32 = bstr .size 20 / bstr .size 32  ; Address payload (on-chain)
 UIntTs    = uint                             ; UNIX seconds (chain time)
-ChainId   = tstr                             ; e.g. "animica:1"
+ChainId   = tstr                             ; e.g. "animica:0"
 
 ; ---------- Top-level ----------
 Header = {

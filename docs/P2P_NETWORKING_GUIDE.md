@@ -185,7 +185,7 @@ export ANIMICA_NETWORK=mainnet
 export ANIMICA_P2P_ENABLE=true
 
 # 4. Start the node
-python -m rpc.server --db ~/.animica/chain-1/mainnet.db
+python -m rpc.server --db ~/.animica/chain-0/mainnet.db
 ```
 
 Your node will:
@@ -550,7 +550,7 @@ See `docs/MULTI_NODE_DOCKER_SETUP.md` for a complete docker-compose configuratio
    animica chain export --height 1000000 > checkpoint.json
    
    # Clear and reimport
-   rm -rf ~/.animica/chain-1/
+   rm -rf ~/.animica/chain-0/
    animica chain import < checkpoint.json
    ```
 

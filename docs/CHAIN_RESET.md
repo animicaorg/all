@@ -1,6 +1,6 @@
 # Animica Mainnet Chain Reset (Genesis Reset 2026-01)
 
-This release performs a **hard chain reset** for mainnet while keeping **chain_id = 1**.
+This release performs a **hard chain reset** for mainnet while keeping **chain_id = 0**.
 The genesis hash has changed, so all nodes must start syncing from height 0.
 
 ## What changed
@@ -8,10 +8,10 @@ The genesis hash has changed, so all nodes must start syncing from height 0.
 - Chain ID remains **1**.
 - Genesis hash changed (new genesis).
 - P2P nodes refuse connections to peers with the old genesis.
-- Datadir guard prevents reusing old chain data for chain_id=1.
+- Datadir guard prevents reusing old chain data for chain_id=0.
 
 **Hard reset note:** The mainnet genesis file and pinned hash changed in this release.
-All nodes must wipe or reset their `/data/chain-1` volume before restarting.
+All nodes must wipe or reset their `/data/chain-0` volume before restarting.
 
 ## Reset steps (mainnet)
 

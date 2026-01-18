@@ -226,7 +226,7 @@ Default seed configuration
 The P2P stack automatically selects seeds based on the network (chain_id):
 
 **Network-specific domains:**
-- Mainnet (chain_id=1): `mainnet.animica.org`
+- Mainnet (chain_id=0): `mainnet.animica.org`
 - Testnet (chain_id=2): `testnet.animica.org`
 - Devnet (chain_id=1337): `devnet.animica.org`
 
@@ -276,4 +276,3 @@ A: Use DNS where possible for rotation without client updates; include one IP fo
 Appendix: jq filter to list host:port pairs
 
 jq -r '.seeds[].multiaddrs[]' ops/seeds/bootstrap_nodes.json
-

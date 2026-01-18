@@ -25,13 +25,13 @@ from typing import Optional
 # ============================================================================
 
 # CHAIN_RESET_TOUCHPOINT: Chain ID (kept constant across reset)
-CHAIN_ID: int = 1
+CHAIN_ID: int = 0
 
 # CHAIN_RESET_TOUCHPOINT: New genesis hash (updated for chain reset)
 # This is the NEW genesis block hash for the reset chain.
 # Previous genesis hash: 0x5868b982d22fe2eb4eb15567dd6afdbae453001388bc23a2517639729428cfda (2026-01-16)
-# Current genesis hash (matches core/genesis/loader.compute_genesis_hash for chain_id=1):
-GENESIS_HASH_HEX: str = "0xd2d2897104110b86bb60ccec251a7e2313f4abb301f8cc532d60162c20d3644f"
+# Current genesis hash (matches core/genesis/loader.compute_genesis_hash for chain_id=0):
+GENESIS_HASH_HEX: str = "0x6a27e93193020cd00fe429ef0ffac1c3a774268a589c2911ac396dd3cba2d242"
 GENESIS_HASH: bytes = bytes.fromhex(GENESIS_HASH_HEX[2:])
 
 # ============================================================================
@@ -103,7 +103,7 @@ GENESIS_POIES_POLICY_ROOT: bytes = b"\x00" * 32
 def get_network_name(chain_id: Optional[int] = None) -> str:
     """Get network name from chain ID."""
     cid = chain_id if chain_id is not None else CHAIN_ID
-    if cid == 1:
+    if cid == 0:
         return "mainnet"
     elif cid == 2:
         return "testnet"

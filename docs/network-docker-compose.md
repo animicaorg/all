@@ -10,7 +10,7 @@ Animica provides first-class Docker Compose configurations for mainnet, testnet,
 
 | Network | Chain ID | RPC Port (Host) | Compose File | Data Directory |
 |---------|----------|-----------------|--------------|----------------|
-| **mainnet** | 1 | 8545 | `ops/docker/docker-compose.mainnet.yml` | `~/.animica/chain-1/` |
+| **mainnet** | 0 | 8545 | `ops/docker/docker-compose.mainnet.yml` | `~/.animica/chain-0/` |
 | **testnet** | 2 | 18546 | `ops/docker/docker-compose.testnet.yml` | `~/.animica/chain-2/` |
 | **devnet** | 1337 | 28545 | `ops/docker/docker-compose.devnet.yml` | `~/.animica/chain-1337/` |
 | **local-devnet** | 1337 | 38545 | `tests/devnet/docker-compose.yml` | `~/.animica/chain-1337/` |
@@ -215,7 +215,7 @@ chain_id: 1
 rpc_url: http://127.0.0.1:8545/rpc
 rpc_port: 8545
 genesis_path: core/genesis/genesis.mainnet.json
-data_dir: ~/.animica/chain-1
+data_dir: ~/.animica/chain-0
 db_name: mainnet.db
 p2p_port: 30333
 metrics_port: 9000
@@ -335,7 +335,7 @@ docker volume ls | grep animica
 docker volume inspect mainnet_node_data
 
 # Check database location
-# Mainnet: ~/.animica/chain-1/mainnet.db
+# Mainnet: ~/.animica/chain-0/mainnet.db
 # Testnet: ~/.animica/chain-2/testnet.db
 # Devnet: ~/.animica/chain-1337/devnet.db
 ```

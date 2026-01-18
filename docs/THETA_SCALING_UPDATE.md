@@ -56,7 +56,7 @@ Updated in `rpc/methods/miner.py` (dynamic theta adjustment for mining):
 
 Updated in `spec/params.yaml` for all networks:
 
-#### Mainnet (`animica:1`)
+#### Mainnet (`animica:0`)
 ```yaml
 consensus:
   poies:
