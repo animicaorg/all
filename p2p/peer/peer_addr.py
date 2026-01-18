@@ -24,7 +24,7 @@ class PeerAddrParseResult:
     should_penalize: bool = False
 
 
-_SUPPORTED_SCHEMES = {"tcp", "quic", "ws", "wss", "p2p"}
+_SUPPORTED_SCHEMES = {"tcp", "quic", "ws", "wss", "p2p", "animica"}
 
 
 def _bracket_ipv6(host: str) -> str:
@@ -102,7 +102,7 @@ def normalize_peer_addr(
         scheme = (parsed.scheme or "").lower()
         if scheme not in _SUPPORTED_SCHEMES:
             return PeerAddrParseResult(None, f"unsupported_scheme:{scheme}", False)
-        if scheme == "p2p":
+        if scheme in ("p2p", "animica"):
             scheme = "tcp"
         if scheme in ("ws", "wss") and not allow_ws:
             return PeerAddrParseResult(None, "unsupported_ws", False)

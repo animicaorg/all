@@ -13,6 +13,7 @@ from typing import Optional
 import typer
 
 from .rpc import _resolve_rpc_url, call_rpc
+from .node import p2p_doctor as _node_p2p_doctor
 
 app = typer.Typer(name="p2p", help="P2P debugging utilities", no_args_is_help=True)
 
@@ -72,7 +73,7 @@ def tx_debug(
         if known_sample:
             known_sample_text = " sample=[{sample}]".format(
                 sample=", ".join(known_sample)
-            )
+        )
         typer.echo(
             "  peer={peer} remote={remote} direction={direction} known_txids={known}{sample} "
             "inv_queue={inv_queue} last_sync_sent={sent} last_sync_recv={recv}".format(
@@ -86,3 +87,20 @@ def tx_debug(
                 recv=last_sync_recv,
             )
         )
+
+
+@app.command("doctor")
+def doctor(
+    rpc_url: Optional[str] = typer.Option(
+        None, "--rpc-url", help="JSON-RPC endpoint", envvar="ANIMICA_RPC_URL"
+    ),
+    timeout: Optional[float] = typer.Option(
+        None,
+        "--timeout",
+        help="JSON-RPC request timeout in seconds",
+        envvar="ANIMICA_RPC_TIMEOUT",
+    ),
+    limit: int = typer.Option(10, "--limit", help="Number of dial attempts to display"),
+) -> None:
+    """Run a P2P connectivity doctor against the local node."""
+    _node_p2p_doctor(rpc_url=rpc_url, timeout=timeout, limit=limit)

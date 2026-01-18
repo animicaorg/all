@@ -843,12 +843,21 @@ def list_peers(
             addr = peer.get("addr") or peer.get("address") or peer.get("multiaddr") or "unknown"
             status = peer.get("status") or peer.get("state") or "connected"
             direction = peer.get("direction")
+            last_error = peer.get("last_error") or peer.get("error")
+            last_attempt = peer.get("lastAttempt") or peer.get("last_attempt")
+            attempts = peer.get("attempts")
 
             typer.echo(f"{i}. Peer: {peer_id}")
             typer.echo(f"   Address: {addr}")
             typer.echo(f"   Status: {status}")
             if direction:
                 typer.echo(f"   Direction: {direction}")
+            if last_attempt is not None:
+                typer.echo(f"   Last attempt: {last_attempt}")
+            if attempts is not None:
+                typer.echo(f"   Attempts: {attempts}")
+            if last_error:
+                typer.echo(f"   Last error: {last_error}")
             typer.echo()
 
 

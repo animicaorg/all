@@ -17,6 +17,8 @@ Key env vars (examples):
 - ANIMICA_P2P_LISTEN_WS=0.0.0.0:30335
 - ANIMICA_P2P_ADVERTISED_ADDRS=/ip4/203.0.113.5/tcp/30333,/dns4/node.example.com/quic/30334
 - ANIMICA_P2P_ADVERTISE_ADDR=203.0.113.5:30333
+- ANIMICA_P2P_ADVERTISE_HOST=203.0.113.5
+- ANIMICA_P2P_ADVERTISE_PORT=30333
 - ANIMICA_P2P_SEEDS=/dnsaddr/bootstrap.animica.dev,/dns4/seed1.animica.dev/tcp/30333
 - ANIMICA_P2P_MAX_PEERS=64
 - ANIMICA_P2P_MAX_OUTBOUND=16
@@ -30,6 +32,10 @@ Key env vars (examples):
 - ANIMICA_P2P_PRIVATE_NETWORK=false
 - ANIMICA_P2P_NODE_KEY_PATH=~/.animica/node_key.json
 - ANIMICA_P2P_NODE_CERT_PATH=~/.animica/node_cert.pem  (for optional QUIC ALPN cert)
+- P2P_HOST=0.0.0.0
+- P2P_PORT=30333
+- P2P_ADVERTISE_HOST=203.0.113.5
+- P2P_ADVERTISE_PORT=30333
 """
 
 from __future__ import annotations
@@ -45,6 +51,7 @@ from .constants import MAX_INBOUND_PEERS as CONST_MAX_INBOUND
 from .constants import MAX_OUTBOUND_PEERS as CONST_MAX_OUTBOUND
 from .constants import MAX_PEERS as CONST_MAX_PEERS
 from .constants import PROTOCOL_ID
+from .peer.peer_addr import normalize_peer_addr
 
 # Default fallback seeds (mainnet).
 # Use a neutral bootstrap IP so the network does not depend on domain seeds.
@@ -96,6 +103,14 @@ def _getenv(name: str, default: str | None = None) -> str | None:
     if v is None:
         return default
     return v.strip()
+
+
+def _getenv_first(names: Iterable[str], default: str | None = None) -> str | None:
+    for name in names:
+        value = _getenv(name)
+        if value:
+            return value
+    return default
 
 
 def _getenv_bool(name: str, default: bool) -> bool:
@@ -151,7 +166,7 @@ def _load_seeds_from_env(chain_id: int | None = None) -> tuple[str, ...]:
     if raw is not None:
         parsed = _csv(raw)
         if parsed:
-            return tuple(_validate_advertised_addrs(parsed))
+            return tuple(parsed)
         # Treat empty or separator-only values as unset so defaults apply.
 
     # Check for network name env var (P2P-specific first, then global fallback)
@@ -217,6 +232,24 @@ def _validate_advertised_addrs(addrs: Iterable[str]) -> list[str]:
             continue
         if _looks_like_multiaddr(a):
             out.append(a)
+        elif "://" in a:
+            parsed = normalize_peer_addr(a, allow_ws=True, allow_quic=True, allow_tcp=True)
+            if parsed.addr:
+                host = parsed.addr.host
+                port = parsed.addr.port
+                try:
+                    ip_obj = ipaddress.ip_address(host)
+                    ip_tag = "ip6" if ip_obj.version == 6 else "ip4"
+                except ValueError:
+                    ip_tag = "dns4"
+                if parsed.addr.scheme == "quic":
+                    out.append(f"/{ip_tag}/{host}/udp/{port}/quic-v1")
+                elif parsed.addr.scheme in ("ws", "wss"):
+                    out.append(f"/{ip_tag}/{host}/tcp/{port}/{parsed.addr.scheme}")
+                else:
+                    out.append(f"/{ip_tag}/{host}/tcp/{port}")
+            else:
+                out.append(a)
         else:
             # Allow raw host:port for convenience; convert to a canonical multiaddr-like string
             host, port = _parse_host_port(a, 0)
@@ -372,7 +405,13 @@ def load_config() -> P2PConfig:
     enable_quic = _getenv_bool("ANIMICA_P2P_ENABLE_QUIC", True)
     enable_ws = _getenv_bool("ANIMICA_P2P_ENABLE_WS", True)
 
-    listen_tcp = _parse_host_port(_getenv("ANIMICA_P2P_LISTEN_TCP"), DEFAULT_TCP_PORT)
+    p2p_port = _getenv_int("ANIMICA_P2P_PORT", _getenv_int("P2P_PORT", DEFAULT_TCP_PORT))
+    p2p_host = _getenv_first(("ANIMICA_P2P_HOST", "P2P_HOST"))
+    listen_tcp_raw = _getenv("ANIMICA_P2P_LISTEN_TCP")
+    if not listen_tcp_raw and p2p_host:
+        listen_tcp = (p2p_host, p2p_port)
+    else:
+        listen_tcp = _parse_host_port(listen_tcp_raw, p2p_port)
     listen_quic = _parse_host_port(
         _getenv("ANIMICA_P2P_LISTEN_QUIC"), DEFAULT_QUIC_PORT
     )
@@ -383,6 +422,14 @@ def load_config() -> P2PConfig:
         advertised_raw = _getenv("ANIMICA_P2P_ADVERTISE_ADDR")
     if not advertised_raw:
         advertised_raw = _getenv("P2P_ADVERTISE_ADDR")
+    if not advertised_raw:
+        advertise_host = _getenv_first(("ANIMICA_P2P_ADVERTISE_HOST", "P2P_ADVERTISE_HOST"))
+        advertise_port = _getenv_int(
+            "ANIMICA_P2P_ADVERTISE_PORT",
+            _getenv_int("P2P_ADVERTISE_PORT", p2p_port),
+        )
+        if advertise_host:
+            advertised_raw = f"{advertise_host}:{advertise_port}"
 
     advertised_addrs = tuple(_validate_advertised_addrs(_csv(advertised_raw)))
     # Try to get chain_id for network-specific seeds (best effort)
@@ -415,8 +462,14 @@ def load_config() -> P2PConfig:
     # Data directory for persistent storage (defaults to ~/.animica/p2p/)
     data_dir = _expanduser(_getenv("ANIMICA_P2P_DATA_DIR"))
     if data_dir is None:
-        # Default to ~/.animica/p2p/ for peer store and other persistent data
-        data_dir = os.path.expanduser("~/.animica/p2p")
+        chain_id = _parse_chain_id(_getenv("ANIMICA_P2P_CHAIN_ID"))
+        if chain_id is None:
+            chain_id = _parse_chain_id(_getenv("ANIMICA_CHAIN_ID"))
+        if chain_id is not None:
+            data_dir = os.path.expanduser(f"~/.animica/chain-{chain_id}/p2p")
+        else:
+            # Default to ~/.animica/p2p/ for peer store and other persistent data
+            data_dir = os.path.expanduser("~/.animica/p2p")
 
     # Discovery configuration
     enable_kademlia = _getenv_bool("ANIMICA_P2P_ENABLE_KADEMLIA", False)
