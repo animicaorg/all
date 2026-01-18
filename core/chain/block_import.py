@@ -1669,12 +1669,15 @@ class BlockImporter:
             
             # Credit the reward to the target address
             try:
-                old_balance = self.state_db.get_balance(target_addr) if hasattr(self.state_db, 'get_balance') else 0
+                old_balance = self.state_db.get_balance(target_addr)
                 new_balance = credit(self.state_db, target_addr, amount)
                 
                 # Verify the credit actually worked
-                verified_balance = self.state_db.get_balance(target_addr) if hasattr(self.state_db, 'get_balance') else new_balance
-                if verified_balance != new_balance:
+                # Re-query the balance from state_db to ensure persistence
+                verified_balance = self.state_db.get_balance(target_addr)
+                expected_balance = old_balance + amount
+                
+                if verified_balance != expected_balance:
                     log.error(
                         "CRITICAL: Balance verification failed after credit!",
                         extra={
@@ -1682,11 +1685,14 @@ class BlockImporter:
                             "address": target_addr.hex()[:16] + "...",
                             "amount": amount,
                             "old_balance": old_balance,
-                            "expected_new_balance": new_balance,
+                            "expected_balance": expected_balance,
                             "actual_balance": verified_balance,
+                            "credit_returned": new_balance,
                             "reward_type": "miner" if idx == 0 else f"other_{idx}",
                         },
                     )
+                    # Don't raise - allow block import to continue
+                    # But log the mismatch so it's visible in logs
                 else:
                     log.info(
                         "Block reward credited successfully",
@@ -1695,7 +1701,7 @@ class BlockImporter:
                             "address": target_addr.hex()[:16] + "...",
                             "amount": amount,
                             "old_balance": old_balance,
-                            "new_balance": new_balance,
+                            "new_balance": verified_balance,
                             "reward_type": "miner" if idx == 0 else f"other_{idx}",
                         },
                     )

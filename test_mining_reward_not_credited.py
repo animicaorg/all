@@ -1,13 +1,11 @@
 """
-Test to reproduce mining reward not being credited issue.
+Test to verify that the credit() function works correctly with StateDB.
 
-This test reproduces the scenario from the problem statement:
-1. Genesis has an address with 81M ANM premine
-2. Mine 1 block with 300 ANM reward to that address
-3. Check balance - should be 81M + 300 ANM
+This is a simple unit test that verifies the credit() function from 
+execution.state.apply_balance properly updates balances in StateDB.
 
-Expected: Balance = 81,000,300 ANM
-Actual (BUG): Balance = 81,000,000 ANM (reward not credited)
+Note: This test does NOT reproduce the full block mining scenario.
+It only tests that the basic credit mechanism works.
 """
 
 import tempfile
@@ -16,73 +14,67 @@ import sys
 from pathlib import Path
 
 
-def test_mining_reward_credited_to_premine_address():
-    """Test that mining rewards are properly credited to addresses with premine balance."""
+def test_credit_function_with_state_db():
+    """Test that credit() function correctly updates balances in StateDB."""
     
-    # Create temporary directories for test
+    # Create temporary directory for test database
     with tempfile.TemporaryDirectory() as tmpdir:
-        chain_dir = Path(tmpdir) / "chain"
-        chain_dir.mkdir()
+        db_path = Path(tmpdir) / "test_state.db"
         
         # Import required modules
+        from core.db.sqlite import SQLiteKV
         from core.db.state_db import StateDB
         from execution.state.apply_balance import credit
         
-        # Helper to get balance
-        def get_balance(state_db, address_bytes):
-            return state_db.get_balance(address_bytes)
+        # Create state DB
+        kv = SQLiteKV(str(db_path))
+        state_db = StateDB(kv)
         
-        # Test address (from genesis.json)
-        test_address_bech32 = "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz"
+        # Test address (arbitrary 32 bytes)
+        test_address_bytes = b"\x01" * 32
         
-        # Decode address to bytes (32-byte digest)
-        from pq.py.address import decode_address
-        addr_record = decode_address(test_address_bech32)
-        test_address_bytes = bytes(addr_record.digest)[:32].ljust(32, b"\x00")
-        
-        # Expected values
+        # Test amounts (simulating premine + mining reward)
         PREMINE_AMOUNT = 81_000_000_000_000_000  # 81M ANM in nANM
         MINING_REWARD = 300_000_000_000  # 300 ANM in nANM
         EXPECTED_TOTAL = PREMINE_AMOUNT + MINING_REWARD
         
-        # Initialize state DB
-        state_db_path = chain_dir / "state.db"
-        state_db = StateDB(str(state_db_path))
-        
-        # Load genesis (which should set premine balance)
-        genesis_path = Path(__file__).parent / "core" / "genesis" / "genesis.json"
-        assert genesis_path.exists(), f"Genesis file not found: {genesis_path}"
-        
-        # Manually initialize genesis state for this test
-        # (simulating what load_and_init_genesis does)
+        # Set initial balance (simulating genesis premine)
         state_db.set_balance(test_address_bytes, PREMINE_AMOUNT)
         
-        # Verify premine balance
-        balance_after_genesis = get_balance(state_db, test_address_bytes)
+        # Verify initial balance
+        balance_after_genesis = state_db.get_balance(test_address_bytes)
         assert balance_after_genesis == PREMINE_AMOUNT, (
-            f"Premine balance incorrect: expected {PREMINE_AMOUNT}, "
+            f"Initial balance incorrect: expected {PREMINE_AMOUNT}, "
             f"got {balance_after_genesis}"
         )
-        print(f"✓ Genesis balance: {balance_after_genesis} nANM ({balance_after_genesis / 1e9:.9f} ANM)")
+        print(f"✓ Initial balance: {balance_after_genesis} nANM ({balance_after_genesis / 1e9:.9f} ANM)")
         
-        # Simulate mining reward credit (what _apply_block_reward should do)
+        # Credit mining reward (simulating what _apply_block_reward does)
         new_balance = credit(state_db, test_address_bytes, MINING_REWARD)
         print(f"✓ After credit: {new_balance} nANM ({new_balance / 1e9:.9f} ANM)")
         
-        # Verify the balance increased
-        balance_after_mining = get_balance(state_db, test_address_bytes)
-        print(f"✓ Final balance: {balance_after_mining} nANM ({balance_after_mining / 1e9:.9f} ANM)")
+        # Verify the balance was actually updated in state_db
+        balance_after_mining = state_db.get_balance(test_address_bytes)
+        print(f"✓ Verified balance: {balance_after_mining} nANM ({balance_after_mining / 1e9:.9f} ANM)")
         
+        # Check that credit() returned correct value
+        assert new_balance == EXPECTED_TOTAL, (
+            f"credit() return value incorrect:\n"
+            f"  Expected: {EXPECTED_TOTAL} nANM ({EXPECTED_TOTAL / 1e9:.9f} ANM)\n"
+            f"  Got:      {new_balance} nANM ({new_balance / 1e9:.9f} ANM)"
+        )
+        
+        # Check that state_db actually persisted the change
         assert balance_after_mining == EXPECTED_TOTAL, (
-            f"Balance after mining incorrect:\n"
+            f"Balance in state_db incorrect after credit:\n"
             f"  Expected: {EXPECTED_TOTAL} nANM ({EXPECTED_TOTAL / 1e9:.9f} ANM)\n"
             f"  Got:      {balance_after_mining} nANM ({balance_after_mining / 1e9:.9f} ANM)\n"
             f"  Missing:  {EXPECTED_TOTAL - balance_after_mining} nANM "
             f"({(EXPECTED_TOTAL - balance_after_mining) / 1e9:.9f} ANM)"
         )
         
-        print(f"✓ Test passed: Mining reward was properly credited")
+        print(f"✓ Test passed: credit() function works correctly with StateDB")
 
 
 if __name__ == "__main__":
-    test_mining_reward_credited_to_premine_address()
+    test_credit_function_with_state_db()
