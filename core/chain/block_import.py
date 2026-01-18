@@ -1669,25 +1669,36 @@ class BlockImporter:
             
             # Credit the reward to the target address
             try:
+                old_balance = self.state_db.get_balance(target_addr) if hasattr(self.state_db, 'get_balance') else 0
                 new_balance = credit(self.state_db, target_addr, amount)
-                log.debug(
-                    "apply_block: credit_reward",
-                    extra={
-                        "height": height,
-                        "address": target_addr.hex(),
-                        "amount": amount,
-                    },
-                )
-                log.debug(
-                    "Applied block reward",
-                    extra={
-                        "height": height,
-                        "address": target_addr.hex()[:16] + "...",
-                        "amount": amount,
-                        "new_balance": new_balance,
-                        "reward_type": "miner" if idx == 0 else f"other_{idx}",
-                    },
-                )
+                
+                # Verify the credit actually worked
+                verified_balance = self.state_db.get_balance(target_addr) if hasattr(self.state_db, 'get_balance') else new_balance
+                if verified_balance != new_balance:
+                    log.error(
+                        "CRITICAL: Balance verification failed after credit!",
+                        extra={
+                            "height": height,
+                            "address": target_addr.hex()[:16] + "...",
+                            "amount": amount,
+                            "old_balance": old_balance,
+                            "expected_new_balance": new_balance,
+                            "actual_balance": verified_balance,
+                            "reward_type": "miner" if idx == 0 else f"other_{idx}",
+                        },
+                    )
+                else:
+                    log.info(
+                        "Block reward credited successfully",
+                        extra={
+                            "height": height,
+                            "address": target_addr.hex()[:16] + "...",
+                            "amount": amount,
+                            "old_balance": old_balance,
+                            "new_balance": new_balance,
+                            "reward_type": "miner" if idx == 0 else f"other_{idx}",
+                        },
+                    )
             except Exception as e:
                 log.error(
                     "Failed to credit block reward",
