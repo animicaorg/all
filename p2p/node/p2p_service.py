@@ -11584,6 +11584,33 @@ class P2PService:
                     now=now, head_height=best_block_height, head_hash=head_hash
                 )
                 network_best_height = self._network_best_height()
+                
+                # FIX: If we have no network best height but have connected peers,
+                # immediately poll peer heads to get fresh tip information.
+                # This prevents the node from getting stuck with "no_fresh_peer_tips".
+                if network_best_height is None and len(self._peers) > 0:
+                    # Check if we recently polled to avoid excessive polling
+                    time_since_last_poll = min(
+                        (now - self._peer_head_poll_at.get(peer.remote, 0.0))
+                        for peer in self._peers.values()
+                        if peer.hello_done.is_set()
+                    ) if any(peer.hello_done.is_set() for peer in self._peers.values()) else float('inf')
+                    
+                    # Only poll if last poll was more than 5 seconds ago
+                    if time_since_last_poll > 5.0:
+                        log.info(
+                            "No network best height available - polling peer heads",
+                            extra={
+                                "peers_count": len(self._peers),
+                                "time_since_last_poll": time_since_last_poll,
+                            },
+                        )
+                        # Schedule async poll without blocking sync loop
+                        self._create_child_task(
+                            self._poll_peer_heads(reason="no_network_best_height", force=True),
+                            name="p2p.poll_peer_heads_recovery",
+                        )
+                
                 previous_target = self._sync_target_height
                 target_height = best_peer_height
                 if network_best_height is not None:
@@ -12734,6 +12761,38 @@ class P2PService:
 
             info = self._peer_tip_tracker.get(peer.remote)
             if info is None:
+                # FIX: Fallback to peer's hello head_height if tip tracker has no entry
+                # This ensures we can use peer tip info even if the tracker wasn't updated yet
+                # (e.g., during initial connection or after a reset)
+                try:
+                    hello_height = (peer.hello or {}).get("head_height")
+                    hello_hash = (peer.hello or {}).get("head_hash")
+                    hello_age = now - peer.hello_received_at if peer.hello_received_at else float('inf')
+                    
+                    if hello_height is not None and hello_age <= PEER_TIP_FRESHNESS_SEC:
+                        peer_height = int(hello_height)
+                        if peer_height >= 0:
+                            if best_height is None or peer_height > best_height:
+                                best_height = peer_height
+                                if hello_hash and isinstance(hello_hash, (bytes, bytearray)) and len(hello_hash) == 32:
+                                    best_hash = "0x" + bytes(hello_hash).hex()
+                                else:
+                                    best_hash = None
+                                best_peer = peer.remote
+                                best_age = hello_age
+                                log.info(
+                                    "Using peer hello head_height as fallback (no tip tracker entry)",
+                                    extra={
+                                        "remote": peer.remote,
+                                        "height": peer_height,
+                                        "age": hello_age,
+                                    },
+                                )
+                except (ValueError, TypeError) as e:
+                    log.debug(
+                        "Failed to parse hello head_height fallback",
+                        extra={"remote": peer.remote, "error": str(e)},
+                    )
                 continue
 
             # CRITICAL: Only use fresh tip info
@@ -12765,25 +12824,95 @@ class P2PService:
         total = 0
         fresh = 0
         stale = 0
+        # Diagnostic counters to understand why peers aren't counted
+        filtered_hello_not_done = 0
+        filtered_identity_not_ok = 0
+        filtered_repo_state_not_ok = 0
+        filtered_chain_mismatch = 0
+        
         for peer in self._peers.values():
             if not peer.hello_done.is_set():
+                filtered_hello_not_done += 1
                 continue
             if not peer.identity_ok:
+                filtered_identity_not_ok += 1
                 continue
             if not peer.repo_state_ok:
+                filtered_repo_state_not_ok += 1
                 continue
             if chain_id is not None and not self._peer_chain_matches(peer):
+                filtered_chain_mismatch += 1
+                # Log detailed chain mismatch info for diagnostics
+                if self._sync_verbose or total == 0:
+                    log.warning(
+                        "Peer filtered due to chain mismatch in tip freshness check",
+                        extra={
+                            "remote": peer.remote,
+                            "peer_chain_id": (peer.hello or {}).get("chain_id"),
+                            "local_chain_id": chain_id,
+                            "peer_genesis": self._canon_hash0x(
+                                bytes((peer.hello or {}).get("genesis_header_hash") or b"")
+                            ) if (peer.hello or {}).get("genesis_header_hash") else None,
+                            "local_genesis": self._canon_hash0x(self._genesis_header_hash()) if self._genesis_header_hash() else None,
+                        },
+                    )
                 continue
             total += 1
             info = self._peer_tip_tracker.get(peer.remote)
             if info is None:
-                stale += 1
+                # FIX: Fallback to hello age if tip tracker has no entry
+                # This ensures we can still classify peers even if tracker wasn't updated
+                try:
+                    hello_age = now - peer.hello_received_at if peer.hello_received_at else float('inf')
+                    if hello_age <= PEER_TIP_FRESHNESS_SEC:
+                        fresh += 1
+                        if self._sync_verbose:
+                            log.info(
+                                "Peer counted as fresh using hello age (no tip tracker entry)",
+                                extra={
+                                    "remote": peer.remote,
+                                    "hello_age": hello_age,
+                                    "peer_head_height": (peer.hello or {}).get("head_height"),
+                                },
+                            )
+                    else:
+                        stale += 1
+                        if self._sync_verbose or total == 1:
+                            log.info(
+                                "Peer counted as stale: hello too old",
+                                extra={
+                                    "remote": peer.remote,
+                                    "hello_age": hello_age,
+                                    "peer_head_height": (peer.hello or {}).get("head_height"),
+                                },
+                            )
+                except Exception as e:
+                    stale += 1
+                    log.debug(
+                        "Failed to compute hello age for peer",
+                        extra={"remote": peer.remote, "error": str(e)},
+                    )
                 continue
             tip_age = now - info.updated_at
             if tip_age <= PEER_TIP_FRESHNESS_SEC:
                 fresh += 1
             else:
                 stale += 1
+        
+        # Log diagnostic summary if no peers pass filters
+        if total == 0 and len(self._peers) > 0:
+            log.warning(
+                "No peers passed tip freshness filters",
+                extra={
+                    "total_peers": len(self._peers),
+                    "filtered_hello_not_done": filtered_hello_not_done,
+                    "filtered_identity_not_ok": filtered_identity_not_ok,
+                    "filtered_repo_state_not_ok": filtered_repo_state_not_ok,
+                    "filtered_chain_mismatch": filtered_chain_mismatch,
+                    "chain_id_filter": chain_id,
+                },
+            )
+        
         return total, fresh, stale
 
     def _network_best_height(self) -> Optional[int]:
