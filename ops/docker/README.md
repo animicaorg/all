@@ -224,7 +224,7 @@ Troubleshooting
 
 Volume Permission Issues
 
-If you see errors like "data directory is not writable by animica (uid 10001)" when starting containers:
+If you see errors like 'data directory is not writable by animica (uid 10001)' when starting containers:
 
 Cause: Existing volumes may have been created with root ownership from an older configuration.
 
@@ -251,7 +251,7 @@ Note: As of this fix, all node containers run as the 'animica' user (uid 10001) 
 
 services:
   node:
-    user: "0"
+    user: '0'
     # ... rest of service config
 
 However, running as root is not recommended for production.
