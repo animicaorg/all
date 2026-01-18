@@ -81,7 +81,7 @@ def _params_from_spec(chain_id: int | None = None) -> t.Dict[str, t.Any]:
 
     The params.yaml file uses a network-specific structure under a 'networks' key:
     networks:
-      "animica:1": {...}    # mainnet
+      "animica:0": {...}    # mainnet
       "animica:2": {...}    # testnet
       "animica:1337": {...} # devnet
     """

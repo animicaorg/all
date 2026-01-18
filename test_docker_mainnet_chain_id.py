@@ -2,12 +2,8 @@
 """
 Integration test to verify docker-compose.mainnet.yml uses correct chain_id.
 
-This test ensures the mainnet docker configuration uses chain_id=1 (not 0)
-to match the spec/params.yaml network definition. Using the wrong chain_id
-causes rewards to be 0 because params don't load correctly.
-
-Issue: docker-compose.mainnet.yml was using ANIMICA_CHAIN_ID: 0
-Fix: Changed to ANIMICA_CHAIN_ID: 1
+This test ensures the mainnet docker configuration uses chain_id=0.
+Using the wrong chain_id causes rewards to be 0 because params don't load correctly.
 
 This test documents the issue and prevents regression.
 """
@@ -21,7 +17,7 @@ sys.path.insert(0, '.')
 from consensus.rewards import compute_block_reward
 from rpc.deps import _params_from_spec
 
-EXPECTED_MAINNET_CHAIN_ID = 1
+EXPECTED_MAINNET_CHAIN_ID = 0
 EXPECTED_TESTNET_CHAIN_ID = 2
 EXPECTED_DEVNET_CHAIN_ID = 1337
 EXPECTED_BLOCK_REWARD_NANM = 300_000_000_000  # 300 ANM
@@ -51,6 +47,12 @@ def test_docker_compose_chain_ids():
     print(f"\n✓ Mainnet docker-compose chain_id: {default_chain_id}")
     assert default_chain_id == EXPECTED_MAINNET_CHAIN_ID, \
         f"Mainnet should use chain_id={EXPECTED_MAINNET_CHAIN_ID}, got {default_chain_id}"
+
+    data_dir_line = node_env.get("ANIMICA_DATA_DIR")
+    assert data_dir_line, "ANIMICA_DATA_DIR missing from mainnet docker-compose"
+    print(f"  ✓ Mainnet docker-compose data_dir: {data_dir_line}")
+    assert "/data/chain-0" in data_dir_line, \
+        f"Mainnet data dir should use /data/chain-0, got {data_dir_line}"
     
     # Verify params load correctly for this chain_id
     params = _params_from_spec(default_chain_id)
@@ -118,15 +120,15 @@ def test_chain_id_2_has_testnet_params():
     Document: chain_id=2 is now testnet.
     
     This test verifies that chain_id=2 returns testnet params.
-    Mainnet uses chain_id=1.
+    Mainnet uses chain_id=0.
     """
     print("\n" + "="*70)
-    print("Chain ID 1 Testnet Verification")
+    print("Chain ID 2 Testnet Verification")
     print("="*70)
     
     params = _params_from_spec(2)
     
-    # Chain ID 1 should have monetary params (testnet)
+    # Chain ID 2 should have monetary params (testnet)
     has_monetary = 'monetary' in params and params['monetary'].get('issuance')
     
     if has_monetary:
@@ -136,7 +138,7 @@ def test_chain_id_2_has_testnet_params():
         print("⚠ WARNING: Chain ID 2 has no monetary params!")
         print("  This is unexpected - testnet should use chain_id=2")
     
-    # Try to compute rewards with chain_id=1
+    # Try to compute rewards with chain_id=2
     rewards = compute_block_reward(chain_id=2, height=1, params=params)
     
     if rewards:

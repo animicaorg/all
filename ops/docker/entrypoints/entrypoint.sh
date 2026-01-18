@@ -4,29 +4,26 @@ set -eu
 : "${ANIMICA_USER:=animica}"
 : "${ANIMICA_UID:=10001}"
 : "${ANIMICA_GID:=10001}"
-: "${ANIMICA_DATA_DIR:=/data}"
-: "${ANIMICA_CHAIN_ID:=1}"
-: "${HOME:=${ANIMICA_DATA_DIR}}"
+: "${ANIMICA_CHAIN_ID:=0}"
+: "${ANIMICA_DATA_DIR:=/data/chain-${ANIMICA_CHAIN_ID}}"
+: "${HOME:=/data}"
 
 export HOME
 
-p2p_dir_default="${ANIMICA_DATA_DIR%/}/chain-${ANIMICA_CHAIN_ID}/p2p"
-P2P_DIR="${ANIMICA_P2P_DATA_DIR:-${p2p_dir_default}}"
-CHAIN_DIR="${ANIMICA_DATA_DIR%/}/chain-${ANIMICA_CHAIN_ID}"
+CHAIN_DIR="${ANIMICA_DATA_DIR%/}"
+P2P_DIR="${ANIMICA_P2P_DATA_DIR:-${CHAIN_DIR%/}/p2p}"
 
 ensure_dir() {
   dir="$1"
   if [ -z "$dir" ]; then
     return
   fi
-  mkdir -p "$dir" || true
-  chmod 0755 "$dir" || true
+  mkdir -p "$dir"
   if [ "$(id -u)" = "0" ]; then
-    chown -R "${ANIMICA_UID}:${ANIMICA_GID}" "$dir" || true
+    chown -R "${ANIMICA_UID}:${ANIMICA_GID}" "$dir"
   fi
 }
 
-ensure_dir "${ANIMICA_DATA_DIR}"
 ensure_dir "${CHAIN_DIR}"
 ensure_dir "${P2P_DIR}"
 
@@ -55,7 +52,6 @@ check_writable() {
   fi
 }
 
-check_writable "${ANIMICA_DATA_DIR}"
 check_writable "${CHAIN_DIR}"
 check_writable "${P2P_DIR}"
 

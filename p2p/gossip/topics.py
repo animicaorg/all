@@ -14,7 +14,7 @@ except Exception:  # pragma: no cover
 
 _CHAIN_RE = re.compile(
     r"^(?:\d+|[a-z0-9_-]+:\d+)$"
-)  # e.g., 1 or animica:1 (CAIP-2-ish)
+)  # e.g., 0 or animica:0 (CAIP-2-ish)
 
 # Canonical leaf names for topics. Keep this list stable across releases.
 _CANONICAL_LEAVES: Set[str] = {

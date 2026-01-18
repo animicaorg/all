@@ -1,6 +1,6 @@
 [
   {
-    "chainId": "animica:1",
+    "chainId": "animica:0",
     "name": "Animica Mainnet",
     "shortName": "animica",
     "networkType": "mainnet",
