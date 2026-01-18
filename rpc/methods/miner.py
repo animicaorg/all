@@ -3502,10 +3502,10 @@ def _mine_once(
         try:
             from core.chain import block_import as block_import_mod
             
-            params = block_import_mod._load_chain_params_for_import(
+            params = block_import_mod._load_chain_params_for_import(  # type: ignore[attr-defined]
                 getattr(ctx.cfg, "genesis_path", None)
             )
-            importer = block_import_mod._get_importer(
+            importer = block_import_mod._get_importer(  # type: ignore[attr-defined]
                 ctx.block_db, ctx.state_db, ctx.tx_index, params
             )
             import_result = importer.import_block(block)

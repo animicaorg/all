@@ -23,14 +23,15 @@ This guide provides steps to manually verify that the mining rewards fix correct
 cd /home/runner/work/all/all
 source .venv/bin/activate
 
-# Initialize fresh chain data
+# Initialize fresh chain data (optional environment variables)
 rm -rf /tmp/animica-test-mining
 export ANIMICA_DATA_DIR=/tmp/animica-test-mining
-export ANIMICA_CHAIN_ID=1337
-export ANIMICA_NETWORK=devnet
+# Note: ANIMICA_CHAIN_ID and ANIMICA_NETWORK may vary based on your setup
+# Adjust these values according to your node configuration
 
-# Start the node
-python -m animica node start --data-dir /tmp/animica-test-mining &
+# Start the node (use the actual command for your setup)
+# The exact command may vary - check README.md for details
+animica node start --data-dir /tmp/animica-test-mining &
 NODE_PID=$!
 sleep 5  # Wait for node to start
 ```
@@ -114,8 +115,8 @@ grep "INVARIANT VIOLATION\|ORPHANED?" /tmp/animica-test-mining/node.log
 kill $NODE_PID
 wait $NODE_PID
 
-# Restart the node
-python -m animica node start --data-dir /tmp/animica-test-mining &
+# Restart the node (use same command as before)
+animica node start --data-dir /tmp/animica-test-mining &
 NODE_PID=$!
 sleep 5
 
