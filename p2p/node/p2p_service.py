@@ -10829,9 +10829,7 @@ class P2PService:
                                     target_height = network_best
                                 else:
                                     target_height = max(target_height, network_best)
-                            if target_height is not None and local_height >= max(
-                                0, target_height - 1
-                            ):
+                            if target_height is not None and local_height >= target_height:
                                 self._sync_phase = "SYNCED" if local_height > 0 else "IDLE"
                             log.debug(
                                 "Skipped header request: already at tip",
