@@ -7,6 +7,7 @@ and persisting the active network choice for subsequent CLI commands.
 
 from __future__ import annotations
 
+import os
 from typing import Optional
 
 import typer
