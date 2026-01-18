@@ -101,7 +101,7 @@
     "org_name": "Displayed in README badges and docs.",
     "author_email": "Used in pyproject metadata and issue templates.",
     "rpc_url": "Your node's JSON-RPC endpoint (http/https).",
-    "chain_id": "Network chain id (devnet=1337, testnet=2, mainnet=1)."
+    "chain_id": "Network chain id (devnet=1337, testnet=1, mainnet=0)."
   },
   "computed": {
     "package_name": {

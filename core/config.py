@@ -48,7 +48,7 @@ except Exception:  # py310 or missing
 # ------------------------------
 
 MAINNET_CHAIN_ID = 0  # animica:0
-TESTNET_CHAIN_ID = 2  # animica:2
+TESTNET_CHAIN_ID = 1  # animica:1
 DEVNET_CHAIN_ID = 1337  # animica:1337
 
 DEFAULT_RPC_HOST = "127.0.0.1"
@@ -183,7 +183,7 @@ class ChainConfig:
         # Priority: explicit chain id → network name
         if "ANIMICA_CHAIN_ID" in os.environ:
             cid = _env_int("ANIMICA_CHAIN_ID", default)
-            name = {"0": "mainnet", "2": "testnet", "1337": "devnet"}.get(
+            name = {"0": "mainnet", "1": "testnet", "1337": "devnet"}.get(
                 str(cid), f"chain-{cid}"
             )
             finality = _env_int("ANIMICA_FINALITY_DEPTH", 12)

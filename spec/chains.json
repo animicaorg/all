@@ -48,7 +48,7 @@
     "status": "planned"
   },
   {
-    "chainId": "animica:2",
+    "chainId": "animica:1",
     "name": "Animica Testnet",
     "shortName": "animica-testnet",
     "networkType": "testnet",
