@@ -423,6 +423,24 @@ def load() -> RpcConfig:
         genesis_chain_id = _chain_id_from_genesis(genesis_path)
         if genesis_chain_id is not None:
             chain_id = genesis_chain_id
+    
+    # CRITICAL: Validate mainnet always uses chain_id=0
+    # This prevents silent misconfigurations where mainnet runs with wrong chain_id
+    if network in {"main", "mainnet"} and chain_id != 0:
+        error_msg = (
+            f"FATAL: Network 'mainnet' MUST use chain_id=0, but got chain_id={chain_id}. "
+            f"Check ANIMICA_CHAIN_ID environment variable and genesis file. "
+            f"Genesis: {genesis_path}, Network: {network}"
+        )
+        logger.error(error_msg)
+        raise ValueError(error_msg)
+    
+    # Validate testnet uses chain_id=2
+    if network in {"test", "testnet"} and chain_id != 2:
+        logger.warning(
+            f"Network 'testnet' typically uses chain_id=2, but got chain_id={chain_id}. "
+            f"This may cause compatibility issues."
+        )
 
     metrics_enabled = _env_bool("ANIMICA_METRICS_ENABLED", True)
     metrics_port = _env_int("ANIMICA_METRICS_PORT", 9100)

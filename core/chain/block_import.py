@@ -1332,7 +1332,14 @@ class BlockImporter:
     ) -> None:
         if self.state_db is None:
             return
-        if not detached and not attached:
+        # CRITICAL FIX: Don't skip state application if we have blocks to attach
+        # Even if there are no detached blocks (normal chain extension), we must apply attached blocks
+        if not attached:
+            # No new blocks to apply - this is the only valid early return
+            log.debug(
+                "state: reorg called with no attached blocks; nothing to apply",
+                extra={"detached_count": len(detached), "best_height": best.height if best else None},
+            )
             return
 
         lca_height = self._reorg_lca_height(detached, attached, best)
@@ -1372,11 +1379,24 @@ class BlockImporter:
         for h in sorted(attached, key=self._block_height_for_hash):
             block = self.block_db.get_block_by_hash(h)
             if block is None:
+                log.warning(
+                    "state: attached block not found in DB",
+                    extra={"hash": h.hex()[:16]},
+                )
                 continue
+            block_height = _height_of(block.header)
+            log.info(
+                "state: applying attached block",
+                extra={
+                    "height": block_height,
+                    "hash": h.hex()[:16],
+                    "tx_count": len(block.txs),
+                },
+            )
             if not self._apply_block_state(block):
                 log.warning(
                     "state: block execution failed during reorg",
-                    extra={"height": getattr(block.header, "height", None), "hash": h.hex()},
+                    extra={"height": block_height, "hash": h.hex()},
                 )
                 continue
             height = _height_of(block.header)
@@ -1389,6 +1409,15 @@ class BlockImporter:
                 extra={
                     "lca_height": lca_height,
                     "applied_blocks": applied,
+                    "best_height": best.height,
+                },
+            )
+        else:
+            log.warning(
+                "state: reorg completed but no blocks were applied",
+                extra={
+                    "attached_count": len(attached),
+                    "lca_height": lca_height,
                     "best_height": best.height,
                 },
             )
