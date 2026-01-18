@@ -946,6 +946,17 @@ def build_context(cfg: t.Any | None = None) -> RpcContext:
         else:
             network = f"custom (chain_id={cfg_view.chain_id})"
 
+    # CRITICAL: Enforce mainnet chain_id=0 invariant at RPC startup
+    # This is a defense-in-depth check; config.py also validates this
+    if network == "mainnet" and cfg_view.chain_id != 0:
+        error_msg = (
+            f"FATAL: Network 'mainnet' MUST use chain_id=0, but RPC context has chain_id={cfg_view.chain_id}. "
+            f"This indicates a configuration error or genesis mismatch. "
+            f"Check ANIMICA_CHAIN_ID environment variable and genesis file."
+        )
+        log.error(error_msg)
+        raise ValueError(error_msg)
+
     log.info(
         f"Building RPC context for network: {network} (chain_id={cfg_view.chain_id})"
     )
