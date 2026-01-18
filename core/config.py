@@ -47,7 +47,7 @@ except Exception:  # py310 or missing
 # Defaults & helpers
 # ------------------------------
 
-MAINNET_CHAIN_ID = 1  # animica:1
+MAINNET_CHAIN_ID = 0  # animica:0
 TESTNET_CHAIN_ID = 2  # animica:2
 DEVNET_CHAIN_ID = 1337  # animica:1337
 
@@ -70,7 +70,7 @@ def get_expected_genesis_hash(chain_id: int) -> Optional[bytes]:
     """
     Return the canonical genesis hash for a known chain ID, if defined.
 
-    For mainnet (chain_id=1) this returns the hard-coded canonical hash.
+    For mainnet (chain_id=0) this returns the hard-coded canonical hash.
     """
     try:
         from core.network_params import get_expected_genesis_hash as _expected

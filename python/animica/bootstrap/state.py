@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import json
-import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 
+from animica.config import get_chain_data_dir
 
 @dataclass(slots=True)
 class BootstrapState:
@@ -18,9 +18,9 @@ class BootstrapState:
 
 
 def _resolve_chain_dir(chain_id: int, data_dir: str | None) -> Path:
-    base = Path(os.path.expanduser(data_dir)) if data_dir else None
+    base = Path(data_dir).expanduser() if data_dir else None
     if base is None:
-        base = Path(os.environ.get("ANIMICA_DATA_DIR") or "~/.animica").expanduser()
+        return get_chain_data_dir(chain_id, create=False)
     if base.name == f"chain-{chain_id}" or (base / "bootstrap.json").exists():
         return base
     return base / f"chain-{chain_id}"

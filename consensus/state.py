@@ -84,7 +84,7 @@ class InMemoryConsensusState:
         → harder to cross acceptance.
 
     chain_id:
-    CAIP-2 chain id integer (animica:1 → 1, etc.)
+    CAIP-2 chain id integer (animica:0 → 0, etc.)
 
     policy_roots:
         Expected policy roots (alg-policy, PoIES). Tests can mutate these to

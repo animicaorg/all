@@ -19,17 +19,30 @@ DEFAULT_NETWORK = "mainnet"
 DEFAULT_RPC_URL = "http://127.0.0.1:8545/rpc"
 
 
-def _base_data_dir() -> Path:
+def _is_docker_env() -> bool:
+    if os.environ.get("ANIMICA_DOCKER") == "1":
+        return True
+    if Path("/.dockerenv").exists():
+        return True
+    if Path("/data").exists():
+        return True
+    return False
+
+
+def _base_data_dir(chain_id: int) -> Path:
     """Resolve the root data directory for all Animica assets.
 
     Priority:
     1. ANIMICA_DATA_DIR (expanded with ~)
-    2. ~/.animica
+    2. Docker defaults (/data/chain-<id>)
+    3. ~/.animica
     """
 
     override = os.environ.get("ANIMICA_DATA_DIR")
     if override:
         return Path(override).expanduser()
+    if _is_docker_env():
+        return Path(f"/data/chain-{chain_id}")
     return Path("~/.animica").expanduser()
 
 
@@ -45,7 +58,7 @@ def get_chain_data_dir(
     chain matches; otherwise treat the parent as the root and resolve the requested
     chain directory beneath it.
     """
-    base = (base_dir or _base_data_dir()).expanduser()
+    base = (base_dir or _base_data_dir(chain_id)).expanduser()
     if base.name.startswith("chain-"):
         try:
             existing_id = int(base.name.split("chain-", 1)[1])
@@ -327,7 +340,7 @@ def get_network_defaults(network: str) -> dict[str, any]:
     
     network_configs = {
         "mainnet": {
-            "chain_id": 1,
+            "chain_id": 0,
             "rpc_url": "http://127.0.0.1:8545/rpc",
             "bootstrap_url": "http://127.0.0.1:8545/rpc",
             "rpc_port": 8545,
@@ -335,7 +348,7 @@ def get_network_defaults(network: str) -> dict[str, any]:
             "metrics_port": 9000,
             "compose_file": repo_root / "ops" / "docker" / "docker-compose.mainnet.yml",
             "genesis_path": str(repo_root / "core" / "genesis" / "mainnet.json"),
-            "data_dir": _network_data_dir(1),
+            "data_dir": _network_data_dir(0),
             "db_name": "animica.db",
         },
         "testnet": {

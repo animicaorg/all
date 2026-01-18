@@ -50,7 +50,7 @@
       "chain_id": 1,
       "cbor_hex": "0xa1deadbeef03",
       "data": "0x",
-      "desc": "INVALID — chainId mismatch (tx says testnet :2, vector intended for animica:1)",
+      "desc": "INVALID — chainId mismatch (tx says testnet :2, vector intended for animica:0)",
       "gas_limit": "21000",
       "gas_price": "1",
       "kind": "transfer",

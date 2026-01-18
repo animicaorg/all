@@ -6,14 +6,14 @@ Requirements to run:
   - Set RUN_INTEGRATION_TESTS=1 (package-level gate in tests/integration/__init__.py)
   - Optionally set:
       ANIMICA_RPC_URL              (default: http://127.0.0.1:8545)
-      ANIMICA_CHAIN_ID             (optional expected chain id, e.g. "1" or "animica:1")
+      ANIMICA_CHAIN_ID             (optional expected chain id, e.g. "0" or "animica:0")
       ANIMICA_HTTP_TIMEOUT         (seconds, default 5)
       ANIMICA_HEAD_ADVANCE_TIMEOUT (seconds, default 60)
       ANIMICA_HEAD_POLL_INTERVAL   (seconds, default 1.0)
 
 What this test does:
   1) Calls chain.getParams and sanity-checks the returned shape; if ANIMICA_CHAIN_ID
-     is provided, it must match (supports plain int, "0x1", or "animica:1").
+     is provided, it must match (supports plain int, "0x0", or "animica:0").
   2) Polls chain.getHead until the height increases from the initial value within
      the configured timeout.
 
@@ -104,7 +104,7 @@ def _parse_chain_id(result: Any) -> Optional[int]:
     Accept a variety of shapes:
       - {"chainId": 0}
       - {"chain": {"id": 0}} or {"params": {"chainId": 0}}
-      - {"chainId": "0x1"} or {"chainId": "animica:1"} (CAIP-2-like)
+      - {"chainId": "0x0"} or {"chainId": "animica:0"} (CAIP-2-like)
     """
 
     # dig helpers
@@ -139,7 +139,7 @@ def _parse_chain_id(result: Any) -> Optional[int]:
             except Exception:
                 return None
         if ":" in s:
-            # CAIP-2 like: "animica:1"
+            # CAIP-2 like: "animica:0"
             try:
                 return int(s.split(":", 1)[1], 10)
             except Exception:
