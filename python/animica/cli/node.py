@@ -83,6 +83,13 @@ PEER_COUNT_METHODS = (
     "p2p.peer_count",
     "net_peerCount",
 )
+SYNC_STATUS_METHODS = (
+    "sync.getStatus",
+    "sync.status",
+    "node.syncStatus",
+    "chain.syncing",
+    "sync.isSyncing",
+)
 
 app = typer.Typer(help="Manage and query Animica nodes.")
 p2p_app = typer.Typer(help="P2P diagnostics and peer helpers.")
@@ -1018,6 +1025,33 @@ def _get_p2p_status(
         return None, "unexpected p2p status response"
     except Exception as exc:
         return None, str(exc)
+
+
+def _get_sync_status(
+    rpc_url: str, rpc_timeout: Optional[float]
+) -> tuple[Optional[dict[str, Any]], Optional[str]]:
+    """
+    Get sync status with improved error handling.
+    
+    Returns:
+        (status, error_msg): status is a dict with sync information, or None if unavailable
+    """
+    last_error = None
+    for method in SYNC_STATUS_METHODS:
+        try:
+            result = asyncio.run(rpc_call(method, [], rpc_url=rpc_url, timeout=rpc_timeout))
+            if isinstance(result, dict):
+                return result, None
+            # Handle boolean False response (not syncing) - normalize to dict format
+            # This is compatible with Ethereum-style sync APIs that return false when not syncing
+            if result is False:
+                return {"syncing": False, "synchronized": True}, None
+        except Exception as exc:
+            last_error = exc
+            continue
+    if last_error:
+        return None, str(last_error)
+    return None, "RPC sync status unavailable"
 
 
 def _persist_sync_state(
