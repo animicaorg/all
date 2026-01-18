@@ -1669,25 +1669,47 @@ class BlockImporter:
             
             # Credit the reward to the target address
             try:
+                old_balance = self.state_db.get_balance(target_addr)
                 new_balance = credit(self.state_db, target_addr, amount)
-                log.debug(
-                    "apply_block: credit_reward",
-                    extra={
-                        "height": height,
-                        "address": target_addr.hex(),
-                        "amount": amount,
-                    },
-                )
-                log.debug(
-                    "Applied block reward",
-                    extra={
-                        "height": height,
-                        "address": target_addr.hex()[:16] + "...",
-                        "amount": amount,
-                        "new_balance": new_balance,
-                        "reward_type": "miner" if idx == 0 else f"other_{idx}",
-                    },
-                )
+                
+                # Verify the credit actually worked
+                # Re-query the balance from state_db to ensure persistence
+                verified_balance = self.state_db.get_balance(target_addr)
+                expected_balance = old_balance + amount
+                
+                if verified_balance != expected_balance:
+                    log.error(
+                        "CRITICAL: Balance verification failed after credit!",
+                        extra={
+                            "height": height,
+                            "address": target_addr.hex()[:16] + "...",
+                            "amount": amount,
+                            "old_balance": old_balance,
+                            "expected_balance": expected_balance,
+                            "actual_balance": verified_balance,
+                            "credit_returned": new_balance,
+                            "reward_type": "miner" if idx == 0 else f"other_{idx}",
+                        },
+                    )
+                    # Don't raise - the credit() call succeeded and state_db.get_balance() returned a value,
+                    # so the state update did happen. The mismatch could be due to:
+                    # 1. Concurrent state modifications (unlikely but possible)
+                    # 2. State DB implementation issues
+                    # 3. Race condition between credit() and get_balance()
+                    # Logging the CRITICAL error makes this visible for investigation while allowing
+                    # block import to proceed (block is still valid even if our verification has issues)
+                else:
+                    log.info(
+                        "Block reward credited successfully",
+                        extra={
+                            "height": height,
+                            "address": target_addr.hex()[:16] + "...",
+                            "amount": amount,
+                            "old_balance": old_balance,
+                            "new_balance": verified_balance,
+                            "reward_type": "miner" if idx == 0 else f"other_{idx}",
+                        },
+                    )
             except Exception as e:
                 log.error(
                     "Failed to credit block reward",

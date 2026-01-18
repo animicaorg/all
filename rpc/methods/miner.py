@@ -5245,12 +5245,21 @@ def miner_submit_block(payload: Any = None, **kwargs: Any) -> Dict[str, Any]:
             # Verify reward was actually credited
             if credited_amount > 0 and payout_address:
                 try:
-                    from execution.state.apply_balance import get_balance as get_balance_from_state
-                    actual_balance = get_balance_from_state(ctx.state_db, payout_address)
-                    log.info(
-                        f"Block accepted and reward credited: height={result.height}, "
-                        f"expected_reward={credited_amount}, balance_after={actual_balance}"
-                    )
+                    # Use state_db.get_balance directly (get_balance is not exported from apply_balance module)
+                    payout_addr_bytes = _as_bytes32_addr(payout_address)
+                    actual_balance = ctx.state_db.get_balance(payout_addr_bytes) if ctx.state_db else None
+                    if actual_balance is not None:
+                        log.info(
+                            f"Block accepted and reward credited: height={result.height}, "
+                            f"expected_reward={credited_amount}, balance_after={actual_balance}"
+                        )
+                        # Note: We don't update credited_amount to actual_balance because:
+                        # 1. credited_amount is the reward amount (delta), not total balance
+                        # 2. actual_balance includes premine and other txs
+                        # 3. Changing the semantic would break backward compatibility
+                        # The log message above shows both values for verification
+                    else:
+                        log.warning(f"Could not verify balance after block acceptance (state_db unavailable)")
                 except Exception as e:
                     log.warning(f"Failed to verify credited reward: {e}")
         
