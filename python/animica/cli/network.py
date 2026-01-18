@@ -116,7 +116,7 @@ def get_network() -> None:
         typer.echo("\nSet a network with: animica network set <network>")
     
     typer.echo("\nNote: Each network uses an isolated database to prevent state contamination.")
-    typer.echo("Data directories are organized by chain ID (e.g., ~/.animica/chain-0/ for mainnet).")
+    typer.echo("Data directories are organized by chain ID (e.g., ~/.animica/chain-1/ for mainnet).")
 
 
 @app.command(name="list")
@@ -146,7 +146,7 @@ def list_networks() -> None:
         typer.echo("No network explicitly set (using default: mainnet)")
     
     typer.echo("\nNote: Each network uses an isolated database directory:")
-    typer.echo("  mainnet:      ~/.animica/chain-0/")
+    typer.echo("  mainnet:      ~/.animica/chain-1/")
     typer.echo("  testnet:      ~/.animica/chain-2/")
     typer.echo("  devnet:       ~/.animica/chain-1337/")
     typer.echo("  local-devnet: ~/.animica/chain-1337/")

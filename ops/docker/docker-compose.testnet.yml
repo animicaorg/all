@@ -27,7 +27,7 @@ networks:
 
 volumes:
   testnet_chain_data:
-    name: ${ANIMICA_DATA_ROOT:-animica_testnet_chain_1_data}
+    name: ${ANIMICA_DATA_ROOT:-animica_testnet_chain_2_data}
   testnet_services_data:
     name: animica_testnet_services_data
 
@@ -40,6 +40,7 @@ services:
       context: ../..
       dockerfile: ops/docker/node.Dockerfile
     container_name: animica-testnet-node
+    user: "0"
     working_dir: /app
     # Env precedence: shell/--env-file > env_file > defaults in compose.
     env_file:
@@ -52,9 +53,11 @@ services:
       # Testnet chain config
       ANIMICA_NETWORK: "testnet"
       ANIMICA_COMPOSE_FILE: "${ANIMICA_COMPOSE_FILE:-/app/ops/docker/docker-compose.testnet.yml}"
-      ANIMICA_CHAIN_ID: "${ANIMICA_CHAIN_ID:-1}"
+      ANIMICA_CHAIN_ID: "${ANIMICA_CHAIN_ID:-2}"
       GENESIS_PATH: "${GENESIS_PATH:-/app/core/genesis/testnet.json}"
       ANIMICA_DATA_DIR: "/data"
+      HOME: "/data"
+      XDG_DATA_HOME: "/data"
       # RPC server config
       ANIMICA_RPC_HOST: "${ANIMICA_RPC_HOST:-0.0.0.0}"
       ANIMICA_RPC_PORT: "${ANIMICA_RPC_PORT:-8546}"
@@ -66,14 +69,14 @@ services:
       # Note: Testnet uses port 30334 (vs mainnet 30333) to allow running both networks simultaneously
       # Primary config (ANIMICA_P2P_* vars are canonical):
       ANIMICA_P2P_ENABLE: "${ANIMICA_P2P_ENABLE:-true}"
-      ANIMICA_P2P_CHAIN_ID: "${ANIMICA_P2P_CHAIN_ID:-1}"  # Auto-loads testnet seeds
+      ANIMICA_P2P_CHAIN_ID: "${ANIMICA_P2P_CHAIN_ID:-2}"  # Auto-loads testnet seeds
       ANIMICA_P2P_PORT: "${ANIMICA_P2P_PORT:-30334}"
       ANIMICA_P2P_LISTEN_TCP: "${ANIMICA_P2P_LISTEN_TCP:-0.0.0.0:${ANIMICA_P2P_PORT:-30334}}"
       ANIMICA_P2P_LISTEN_QUIC: "${ANIMICA_P2P_LISTEN_QUIC:-0.0.0.0:443}"
       ANIMICA_P2P_ENABLE_TCP: "${ANIMICA_P2P_ENABLE_TCP:-true}"
       ANIMICA_P2P_ENABLE_QUIC: "${ANIMICA_P2P_ENABLE_QUIC:-true}"
-      ANIMICA_P2P_DATA_DIR: "${ANIMICA_P2P_DATA_DIR:-/data/chain-${ANIMICA_CHAIN_ID:-1}/p2p}"
-      ANIMICA_PEER_STORE_PATH: "${ANIMICA_PEER_STORE_PATH:-/data/chain-${ANIMICA_CHAIN_ID:-1}/p2p}"
+      ANIMICA_P2P_DATA_DIR: "${ANIMICA_P2P_DATA_DIR:-/data/chain-${ANIMICA_CHAIN_ID:-2}/p2p}"
+      ANIMICA_PEER_STORE_PATH: "${ANIMICA_PEER_STORE_PATH:-/data/chain-${ANIMICA_CHAIN_ID:-2}/p2p}"
       # Legacy P2P config (backward compatibility - deprecated):
       P2P_ENABLE: "${P2P_ENABLE:-true}"
       P2P_LISTEN: "${P2P_LISTEN:-0.0.0.0:${ANIMICA_P2P_PORT:-30334}}"
@@ -133,7 +136,7 @@ services:
     container_name: animica-testnet-services
     environment:
       RPC_URL: "${RPC_URL:-http://node:8546}"
-      CHAIN_ID: "${ANIMICA_CHAIN_ID:-1}"
+      CHAIN_ID: "${ANIMICA_CHAIN_ID:-2}"
       STORAGE_DIR: "/var/lib/services/storage"
       RATE_LIMITS: "${RATE_LIMITS:-burst=15,per_min=90}"
       LOG_LEVEL: "${STUDIO_LOG_LEVEL:-INFO}"
@@ -171,7 +174,7 @@ services:
     working_dir: /app
     environment:
       VITE_RPC_URL: "http://localhost:${HOST_RPC_PORT:-8546}"
-      VITE_CHAIN_ID: "${ANIMICA_CHAIN_ID:-1}"
+      VITE_CHAIN_ID: "${ANIMICA_CHAIN_ID:-2}"
       VITE_SERVICES_URL: "http://localhost:${HOST_STUDIO_SERVICES:-8788}"
       ANIMICA_NETWORK: "testnet"
     volumes:

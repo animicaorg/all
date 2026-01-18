@@ -7,7 +7,7 @@ This directory is the **single source of truth** for Animica’s on-chain format
 - **`params.yaml`** — Canonical chain/economic/consensus parameters (Θ, Γ caps, gas tables, block limits, issuance).
 - **`poies_policy.yaml`** — PoIES ψ-mapping knobs, per-type caps, diversity/escort rules, total Γ cap.
 - **`pq_policy.yaml`** — Post-quantum signature/KEM policy; alg IDs; thresholds; alg-policy Merkle layout.
-- **`chains.json`** — CAIP-2 style chain registry (`animica:0` mainnet, `:2` testnet, `:1337` devnet).
+- **`chains.json`** — CAIP-2 style chain registry (`animica:1` mainnet, `:2` testnet, `:1337` devnet).
 - **`domains.yaml`** — Domain separators/personalization strings for hashing, signing, and nullifiers.
 - **`*.cddl`** — CBOR schemas (transactions, headers, blob/DA envelopes).
 - **`abi.schema.json`** — JSON-Schema for Python-VM contract ABIs.
@@ -158,7 +158,7 @@ opcodes_vm_py.yaml defines the opcode whitelist and gas costs for the determinis
 Chain IDs (CAIP-2 style)
 
 chains.json tracks human-friendly IDs:
-	•	animica:0 — mainnet
+	•	animica:1 — mainnet
 	•	animica:2 — testnet
 	•	animica:1337 — devnet (local)
 

@@ -3,7 +3,7 @@
 Integration tests for block rewards with params loaded from spec/params.yaml.
 
 These tests verify that:
-1. Mainnet params (chain_id=0) load correctly and produce 100% miner rewards
+1. Mainnet params (chain_id=1) load correctly and produce 100% miner rewards
 2. Reward calculation matches the 300 ANM base with halving schedule
 3. Custom payout addresses are correctly handled
 """
@@ -29,7 +29,7 @@ def load_mainnet_params() -> dict:
     params_path = Path(__file__).resolve().parents[2] / "spec" / "params.yaml"
     with params_path.open("r") as f:
         params_yaml = yaml.safe_load(f)
-    return params_yaml["networks"]["animica:0"]
+    return params_yaml["networks"]["animica:1"]
 
 
 def test_mainnet_params_100_pct_miner():
@@ -65,7 +65,7 @@ def test_mainnet_block_reward_at_height_1():
     params = load_mainnet_params()
     
     # Compute block reward for mainnet at height 1
-    rewards = compute_block_reward(chain_id=0, height=1, params=params)
+    rewards = compute_block_reward(chain_id=1, height=1, params=params)
     
     # Should return exactly 1 reward entry (100% to miner)
     assert len(rewards) == 1, \

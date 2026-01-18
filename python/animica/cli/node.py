@@ -42,7 +42,7 @@ from animica.seeds import get_seed_nodes
 from .timeouts import DEFAULT_RPC_TIMEOUT, RPC_TIMEOUT_ENV, describe_timeout, resolve_timeout
 
 from .state import get_cli_state
-from .rpc_utils import candidate_rpc_urls, is_method_not_found
+from .rpc_utils import candidate_rpc_urls, is_local_rpc_url, is_method_not_found
 
 load_dotenv()
 DEFAULT_RPC_URL = load_network_config().rpc_url
@@ -1079,6 +1079,8 @@ def _persist_sync_state(
 def _record_bootstrap_head(net_cfg: Any, bootstrap_url: Optional[str], *, quiet: bool = False) -> bool:
     if not bootstrap_url:
         return False
+    if is_local_rpc_url(bootstrap_url) and not _wait_for_rpc_ready(bootstrap_url, timeout_s=2.0):
+        return False
     last_exc: Optional[Exception] = None
     delay = BOOTSTRAP_HEAD_RETRY_DELAY
     attempt = 1
@@ -1465,6 +1467,7 @@ def _fetch_bootstrap_data(
     manifest: dict[str, Any] = {}
     manifest_error: Optional[Exception] = None
     seed_error: Optional[Exception] = None
+    local_bootstrap = is_local_rpc_url(bootstrap_url)
 
     try:
         manifest = _bootstrap_rpc(bootstrap_url, "bootstrap.getManifest")
@@ -1488,7 +1491,7 @@ def _fetch_bootstrap_data(
         fallback_seeds = get_seed_nodes(getattr(net_cfg, "name", "mainnet"))
         if fallback_seeds:
             seeds = list(fallback_seeds)
-            if not quiet:
+            if not quiet and not local_bootstrap:
                 typer.secho(
                     "Warning: bootstrap RPC unavailable; using bundled seed list.",
                     fg=typer.colors.YELLOW,
@@ -1499,7 +1502,7 @@ def _fetch_bootstrap_data(
         exc = manifest_error or seed_error
         raise RuntimeError(f"Bootstrap RPC failed and no fallback seeds available: {exc}") from exc
 
-    if manifest_error and not quiet:
+    if manifest_error and not quiet and not local_bootstrap:
         typer.secho(
             f"Warning: bootstrap manifest fetch failed ({manifest_error}); continuing.",
             fg=typer.colors.YELLOW,
@@ -1539,6 +1542,20 @@ def _auto_bootstrap_if_needed(net_cfg: Any, bootstrap_url: str | None, *, force:
     endpoint = bootstrap_url or getattr(net_cfg, "bootstrap_url", None)
     if not endpoint:
         return False
+    if is_local_rpc_url(endpoint) and not _wait_for_rpc_ready(endpoint, timeout_s=2.0):
+        fallback_seeds = list(get_seed_nodes(getattr(net_cfg, "name", "mainnet")))
+        if not fallback_seeds:
+            return False
+        state_path = save_bootstrap_state(
+            getattr(net_cfg, "chain_id", 0),
+            net_cfg.data_dir,
+            manifest={},
+            seeds=fallback_seeds,
+        )
+        seed_csv = ",".join(str(s) for s in fallback_seeds)
+        os.environ["ANIMICA_P2P_SEEDS"] = seed_csv
+        os.environ["P2P_SEEDS"] = seed_csv
+        return bool(state_path)
 
     if not quiet:
         typer.echo(f"Auto-bootstrap: fetching seeds from {endpoint}")

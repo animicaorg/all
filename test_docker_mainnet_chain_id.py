@@ -2,12 +2,12 @@
 """
 Integration test to verify docker-compose.mainnet.yml uses correct chain_id.
 
-This test ensures the mainnet docker configuration uses chain_id=0 (not 1)
+This test ensures the mainnet docker configuration uses chain_id=1 (not 0)
 to match the spec/params.yaml network definition. Using the wrong chain_id
 causes rewards to be 0 because params don't load correctly.
 
-Issue: docker-compose.mainnet.yml was using ANIMICA_CHAIN_ID: 1
-Fix: Changed to ANIMICA_CHAIN_ID: 0
+Issue: docker-compose.mainnet.yml was using ANIMICA_CHAIN_ID: 0
+Fix: Changed to ANIMICA_CHAIN_ID: 1
 
 This test documents the issue and prevents regression.
 """
@@ -21,8 +21,8 @@ sys.path.insert(0, '.')
 from consensus.rewards import compute_block_reward
 from rpc.deps import _params_from_spec
 
-EXPECTED_MAINNET_CHAIN_ID = 0
-EXPECTED_TESTNET_CHAIN_ID = 1
+EXPECTED_MAINNET_CHAIN_ID = 1
+EXPECTED_TESTNET_CHAIN_ID = 2
 EXPECTED_DEVNET_CHAIN_ID = 1337
 EXPECTED_BLOCK_REWARD_NANM = 300_000_000_000  # 300 ANM
 
@@ -113,44 +113,44 @@ def test_docker_compose_chain_ids():
     print("✓ SUCCESS: All docker-compose files use correct chain_ids")
     print("="*70)
 
-def test_chain_id_1_has_no_params():
+def test_chain_id_2_has_testnet_params():
     """
-    Document: chain_id=1 is now testnet (changed from 2).
+    Document: chain_id=2 is now testnet.
     
-    This test verifies that chain_id=1 returns testnet params.
-    Mainnet still uses chain_id=0.
+    This test verifies that chain_id=2 returns testnet params.
+    Mainnet uses chain_id=1.
     """
     print("\n" + "="*70)
     print("Chain ID 1 Testnet Verification")
     print("="*70)
     
-    params = _params_from_spec(1)
+    params = _params_from_spec(2)
     
     # Chain ID 1 should have monetary params (testnet)
     has_monetary = 'monetary' in params and params['monetary'].get('issuance')
     
     if has_monetary:
-        print("✓ Chain ID 1 has monetary params (testnet)")
-        print("  Testnet now uses chain_id=1 (changed from 2)")
+        print("✓ Chain ID 2 has monetary params (testnet)")
+        print("  Testnet now uses chain_id=2")
     else:
-        print("⚠ WARNING: Chain ID 1 has no monetary params!")
-        print("  This is unexpected - testnet should use chain_id=1")
+        print("⚠ WARNING: Chain ID 2 has no monetary params!")
+        print("  This is unexpected - testnet should use chain_id=2")
     
     # Try to compute rewards with chain_id=1
-    rewards = compute_block_reward(chain_id=1, height=1, params=params)
+    rewards = compute_block_reward(chain_id=2, height=1, params=params)
     
     if rewards:
         addr, amount = rewards[0]
-        print(f"✓ Chain ID 1 returns rewards: {amount / 1e9} ANM (testnet)")
+        print(f"✓ Chain ID 2 returns rewards: {amount / 1e9} ANM (testnet)")
     else:
-        print("⚠ Chain ID 1 returns no rewards - check params configuration")
+        print("⚠ Chain ID 2 returns no rewards - check params configuration")
     
     print("="*70)
 
 if __name__ == "__main__":
     try:
         test_docker_compose_chain_ids()
-        test_chain_id_1_has_no_params()
+        test_chain_id_2_has_testnet_params()
         print("\n✓ ALL TESTS PASSED\n")
         sys.exit(0)
     except AssertionError as e:

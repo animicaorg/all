@@ -1113,6 +1113,20 @@ bash genesis/devnet.sh
 python -m core.boot --genesis /path/to/genesis.json
 ```
 
+### Mainnet Genesis Reset (Hard Reset)
+
+**Note**: The 2026-01-18 mainnet genesis is a hard reset. Existing mainnet data volumes
+or local chain databases must be wiped before restarting.
+
+**Action**:
+```bash
+# Remove mainnet chain data (chain ID 1)
+rm -rf ~/.local/share/animica/chain-1/
+
+# Or reset via CLI
+animica node reset --network mainnet --yes
+```
+
 ### DB Initialization Failed
 
 **Problem**: Database initialization or corruption errors

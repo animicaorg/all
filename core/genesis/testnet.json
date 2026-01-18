@@ -1,9 +1,9 @@
 {
   "meta": {
     "version": 1,
-    "description": "Animica testnet genesis (chainId=1). Premine + system accounts only."
+    "description": "Animica testnet genesis (chainId=2). Premine + system accounts only."
   },
-  "chainId": 1,
+  "chainId": 2,
   "network": "animica-testnet",
   "genesisTime": "2025-01-01T00:00:00Z",
   "unit": {

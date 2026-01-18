@@ -498,6 +498,20 @@ def compute_genesis_identity(
     )
 
 
+def compute_genesis_hash(
+    genesis_path: str | os.PathLike[str] | None,
+    *,
+    chain_id: int | None = None,
+) -> str:
+    """
+    Compute the canonical genesis block hash for a genesis file as a hex string.
+
+    This helper is used by both pin enforcement and diagnostics to avoid drift.
+    """
+    identity = compute_genesis_identity(genesis_path, chain_id=chain_id)
+    return "0x" + identity.genesis_block_hash.hex()
+
+
 def compute_chain_identity(
     genesis_path: str | os.PathLike[str] | None,
     *,

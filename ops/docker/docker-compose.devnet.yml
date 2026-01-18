@@ -33,6 +33,8 @@ x-node-env: &node_env
   DB_BACKEND: sqlite
   DB_PATH: /data/animica.db
   ANIMICA_DATA_DIR: /data
+  HOME: /data
+  XDG_DATA_HOME: /data
   ANIMICA_P2P_DATA_DIR: /data/p2p
   ANIMICA_PEER_STORE_PATH: /data/p2p
   # P2P (public devnet defaults)
@@ -112,6 +114,7 @@ services:
       context: ../..
       dockerfile: ops/docker/node.Dockerfile
     container_name: animica-node
+    user: "0"
     restart: unless-stopped
     # Env precedence: shell/--env-file > env_file > defaults in compose.
     env_file:

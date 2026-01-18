@@ -204,7 +204,7 @@ Chain Identity (Mainnet Reset)
   - RPC: `chain.getChainIdentity` returns the active identity.
   - P2P: peers with mismatched `genesisHash`/`forkId` are rejected immediately.
   - Operators: run `animica node reset --network mainnet --yes` (or delete volumes
-    and `~/.animica/chain-0`) before restarting on the new genesis.
+    and `~/.animica/chain-1`) before restarting on the new genesis.
 
   # View node logs
   # The exact compose file path depends on the active network

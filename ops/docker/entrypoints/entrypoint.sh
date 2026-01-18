@@ -6,6 +6,9 @@ set -eu
 : "${ANIMICA_GID:=10001}"
 : "${ANIMICA_DATA_DIR:=/data}"
 : "${ANIMICA_CHAIN_ID:=1}"
+: "${HOME:=${ANIMICA_DATA_DIR}}"
+
+export HOME
 
 p2p_dir_default="${ANIMICA_DATA_DIR%/}/chain-${ANIMICA_CHAIN_ID}/p2p"
 P2P_DIR="${ANIMICA_P2P_DATA_DIR:-${p2p_dir_default}}"
@@ -52,7 +55,9 @@ check_writable() {
   fi
 }
 
+check_writable "${ANIMICA_DATA_DIR}"
 check_writable "${CHAIN_DIR}"
+check_writable "${P2P_DIR}"
 
 if [ "$(id -u)" = "0" ]; then
   exec gosu "${ANIMICA_USER}" "$@"

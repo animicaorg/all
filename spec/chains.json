@@ -1,6 +1,6 @@
 [
   {
-    "chainId": "animica:0",
+    "chainId": "animica:1",
     "name": "Animica Mainnet",
     "shortName": "animica",
     "networkType": "mainnet",
@@ -38,7 +38,7 @@
     "genesis": {
       "height": 0,
       "time": "TBD",
-      "hash": "0x27fab3a17fd3a166908cdaa32462511ded2da86724314de45f335b0a59f820d8"
+      "hash": "0xd2d2897104110b86bb60ccec251a7e2313f4abb301f8cc532d60162c20d3644f"
     },
     "policyRoots": {
       "algPolicyRoot": "0x0000000000000000000000000000000000000000000000000000000000000000",
@@ -48,7 +48,7 @@
     "status": "planned"
   },
   {
-    "chainId": "animica:1",
+    "chainId": "animica:2",
     "name": "Animica Testnet",
     "shortName": "animica-testnet",
     "networkType": "testnet",
