@@ -327,7 +327,7 @@ def get_network_defaults(network: str) -> dict[str, any]:
     
     network_configs = {
         "mainnet": {
-            "chain_id": 0,
+            "chain_id": 1,
             "rpc_url": "http://127.0.0.1:8545/rpc",
             "bootstrap_url": "http://127.0.0.1:8545/rpc",
             "rpc_port": 8545,
@@ -335,11 +335,11 @@ def get_network_defaults(network: str) -> dict[str, any]:
             "metrics_port": 9000,
             "compose_file": repo_root / "ops" / "docker" / "docker-compose.mainnet.yml",
             "genesis_path": str(repo_root / "core" / "genesis" / "mainnet.json"),
-            "data_dir": _network_data_dir(0),
+            "data_dir": _network_data_dir(1),
             "db_name": "animica.db",
         },
         "testnet": {
-            "chain_id": 1,
+            "chain_id": 2,
             "rpc_url": "http://127.0.0.1:18546/rpc",
             "bootstrap_url": "https://rpc.testnet.animica.org/rpc",
             "rpc_port": 18546,
@@ -347,7 +347,7 @@ def get_network_defaults(network: str) -> dict[str, any]:
             "metrics_port": 19000,
             "compose_file": repo_root / "ops" / "docker" / "docker-compose.testnet.yml",
             "genesis_path": str(repo_root / "core" / "genesis" / "testnet.json"),
-            "data_dir": _network_data_dir(1),
+            "data_dir": _network_data_dir(2),
             "db_name": "animica.db",
         },
         "devnet": {

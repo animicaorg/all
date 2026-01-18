@@ -8,7 +8,7 @@ The genesis hash has changed, so all nodes must start syncing from height 0.
 - Chain ID remains **1**.
 - Genesis hash changed (new genesis).
 - P2P nodes refuse connections to peers with the old genesis.
-- Datadir guard prevents reusing old chain data for chain_id=0.
+- Datadir guard prevents reusing old chain data for chain_id=1.
 
 ## Reset steps (mainnet)
 

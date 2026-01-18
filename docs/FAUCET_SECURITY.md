@@ -8,7 +8,7 @@ This document provides a security analysis of the devnet/testnet-only faucet imp
 
 ### 1. Mainnet Protection (CRITICAL)
 
-**Control**: The faucet explicitly checks the chain ID and rejects any requests on mainnet (chainId=0).
+**Control**: The faucet explicitly checks the chain ID and rejects any requests on mainnet (chainId=1).
 
 **Implementation**:
 ```python

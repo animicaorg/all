@@ -2,7 +2,7 @@
 
 ## Critical Bug Fixed: Mining Rewards = 0 ANM
 
-**Root Cause**: docker-compose.mainnet.yml used `ANIMICA_CHAIN_ID: 1` but mainnet is `animica:0` in spec/params.yaml. Chain ID 1 has no network definition → empty params → **rewards = 0**.
+**Root Cause**: docker-compose.mainnet.yml used `ANIMICA_CHAIN_ID: 0` but mainnet is `animica:1` in spec/params.yaml. Chain ID 0 has no network definition → empty params → **rewards = 0**.
 
 **Fix**: Changed all mainnet chain_id references from 1 to 0
 

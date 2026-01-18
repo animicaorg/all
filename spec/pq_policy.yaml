@@ -65,7 +65,7 @@ address_rules:
     - "dilithium3"
     - "sphincs_shake_128s"
   default_sig_alg:
-    animica:0: "dilithium3"
+    animica:1: "dilithium3"
     animica:2: "dilithium3"
     animica:1337: "dilithium3"
   # Back-compat / migration:
@@ -135,7 +135,7 @@ rollout:
       retire_height: null
 
   networks:
-    "animica:0":   # Mainnet
+    "animica:1":   # Mainnet
       dilithium3:  { activate_height: 0,     deprecate_height: null, retire_height: null }
       sphincs_shake_128s: { activate_height: 0, deprecate_height: null, retire_height: null }
       kyber768:    { activate_height: 0,     deprecate_height: null, retire_height: null }

@@ -358,7 +358,7 @@ def test_status_prefers_chain_head_over_status(monkeypatch: Any) -> None:
 
 @respx_mock
 def test_status_prefers_env_over_cached(monkeypatch: Any, tmp_path: Path) -> None:
-    cfg = _dummy_net_cfg(tmp_path)
+    cfg = _dummy_net_cfg(tmp_path, bootstrap_url="https://bootstrap.example/rpc")
     monkeypatch.setattr(node, "load_network_config", lambda *args, **kwargs: cfg)
 
     rpc_url = "http://localhost:9999/rpc"
@@ -419,7 +419,7 @@ def test_status_prefers_env_over_cached(monkeypatch: Any, tmp_path: Path) -> Non
 
 @respx_mock
 def test_status_rpc_url_flag_overrides_env(monkeypatch: Any, tmp_path: Path) -> None:
-    cfg = _dummy_net_cfg(tmp_path)
+    cfg = _dummy_net_cfg(tmp_path, bootstrap_url="https://bootstrap.example/rpc")
     monkeypatch.setattr(node, "load_network_config", lambda *args, **kwargs: cfg)
 
     env_url = "http://localhost:9998/rpc"
@@ -745,12 +745,12 @@ def test_reset_with_volumes_removes_named_volume(monkeypatch: Any) -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         mock_compose_file = Path(tmpdir) / "docker-compose.yml"
         mock_compose_file.write_text("version: '3'\nservices:\n  node:\n    image: test\n")
-        mock_data_dir = Path(tmpdir) / "chain-0"
+        mock_data_dir = Path(tmpdir) / "chain-1"
 
         monkeypatch.setattr("animica.cli.node._get_compose_file", lambda network: mock_compose_file)
         monkeypatch.setattr(
             "animica.cli.node.load_network_config",
-            lambda network: SimpleNamespace(data_dir=str(mock_data_dir), chain_id=0, name=network),
+            lambda network: SimpleNamespace(data_dir=str(mock_data_dir), chain_id=1, name=network),
         )
         monkeypatch.setattr("animica.cli.node._genesis_tag_for_network", lambda cfg: "deadbeef")
         monkeypatch.setattr("animica.cli.node._wait_for_compose_stop", lambda *args, **kwargs: True)
@@ -793,7 +793,7 @@ def test_reset_preserves_wallet_files_in_data_dir(monkeypatch: Any) -> None:
         monkeypatch.setattr("animica.cli.node._get_compose_file", lambda network: mock_compose_file)
         monkeypatch.setattr(
             "animica.cli.node.load_network_config",
-            lambda network: SimpleNamespace(data_dir=str(data_dir), chain_id=0, name=network),
+            lambda network: SimpleNamespace(data_dir=str(data_dir), chain_id=1, name=network),
         )
         monkeypatch.setattr("animica.cli.node._wait_for_compose_stop", lambda *args, **kwargs: True)
 

@@ -112,7 +112,9 @@ RUN python -m pip install --no-cache-dir -e /app/python -e /app/pq
 
 ENV ANIMICA_USER=${USER} \
     ANIMICA_UID=${UID} \
-    ANIMICA_GID=${GID}
+    ANIMICA_GID=${GID} \
+    HOME=/data \
+    XDG_DATA_HOME=/data
 
 # Switch to non-root user
 USER ${USER}

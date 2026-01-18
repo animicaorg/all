@@ -89,7 +89,7 @@ def main():
     print("  - Block time: 5 minutes")
     
     networks = [
-        ("Mainnet", 0, "animica:0"),
+        ("Mainnet", 1, "animica:1"),
         ("Testnet", 2, "animica:2"),
         ("Devnet", 1337, "animica:1337"),
     ]
