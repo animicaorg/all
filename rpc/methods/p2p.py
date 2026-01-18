@@ -542,6 +542,17 @@ async def list_peers() -> list[dict[str, t.Any]]:
     # First try to get the P2P service directly
     p2p_svc = _get_p2p_service()
     
+    # If we have a P2PService with detailed peer states, use it
+    if p2p_svc is not None and hasattr(p2p_svc, "peer_state_snapshot"):
+        try:
+            peers = p2p_svc.peer_state_snapshot()
+            if peers is None:
+                peers = []
+            log.debug("Listed %d peer states from P2P service", len(peers))
+            return peers
+        except Exception as e:
+            log.debug("Failed to get peer states from P2P service: %s", e)
+
     # If we have a P2PService with a peers property, use it
     if p2p_svc is not None and hasattr(p2p_svc, "peers"):
         try:
@@ -635,6 +646,28 @@ async def list_peers() -> list[dict[str, t.Any]]:
     
     log.debug("P2P service not available, returning empty peer list")
     return []
+
+
+@method(
+    "p2p.doctor",
+    desc="Return P2P connectivity diagnostics for troubleshooting",
+    aliases=["p2p.connectivityDoctor", "p2p.diagnostics"],
+)
+async def doctor(limit: int = 10) -> dict[str, t.Any]:
+    """
+    Return a P2P diagnostics snapshot for connectivity troubleshooting.
+    """
+    p2p_svc = _get_p2p_service()
+    if p2p_svc is not None and hasattr(p2p_svc, "doctor_snapshot"):
+        try:
+            snapshot = p2p_svc.doctor_snapshot(limit=limit)
+            if isinstance(snapshot, dict):
+                return snapshot
+        except Exception as exc:
+            log.debug("Failed to fetch P2P doctor snapshot: %s", exc)
+    status = await get_status()
+    status["doctor_available"] = False
+    return status
 
 
 @method("p2p.getStatus", desc="Return the live P2P status snapshot")
@@ -1713,6 +1746,7 @@ async def debug_tx_by_id(tx_hash: str) -> dict[str, t.Any]:
 __all__ = [
     "list_peers",
     "get_status",
+    "doctor",
     "sync_debug",
     "debug_status",
     "debug_p2p_status",

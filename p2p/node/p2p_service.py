@@ -333,6 +333,10 @@ class _AddrMan:
 class P2PStatusSnapshot:
     p2p_running: bool
     listen_addrs: list[str]
+    advertised_addrs: list[str]
+    advertise_host: Optional[str]
+    advertise_port: Optional[int]
+    external_ip: Optional[str]
     peers_total: int
     peers_inbound: int
     peers_outbound: int
@@ -347,6 +351,9 @@ class P2PStatusSnapshot:
     learned_addrs_1m: int
     announced_addrs_1m: int
     persisted_peer_count: Optional[int]
+    dial_history: list[dict[str, Any]]
+    dial_inflight: list[str]
+    invalid_seeds: dict[str, str]
     dial_last_error: Optional[dict[str, Any]] = None
     bootstrap_last_attempt: Optional[dict[str, Any]] = None
     bootstrap_last_success: Optional[dict[str, Any]] = None
@@ -356,6 +363,10 @@ class P2PStatusSnapshot:
         return {
             "p2p_running": self.p2p_running,
             "listen_addrs": list(self.listen_addrs),
+            "advertised_addrs": list(self.advertised_addrs),
+            "advertise_host": self.advertise_host,
+            "advertise_port": self.advertise_port,
+            "external_ip": self.external_ip,
             "peers_total": self.peers_total,
             "peers_inbound": self.peers_inbound,
             "peers_outbound": self.peers_outbound,
@@ -370,6 +381,9 @@ class P2PStatusSnapshot:
             "learned_addrs_1m": self.learned_addrs_1m,
             "announced_addrs_1m": self.announced_addrs_1m,
             "persisted_peer_count": self.persisted_peer_count,
+            "dial_history": list(self.dial_history),
+            "dial_inflight": list(self.dial_inflight),
+            "invalid_seeds": dict(self.invalid_seeds),
             "dial_last_error": self.dial_last_error,
             "bootstrap_last_attempt": self.bootstrap_last_attempt,
             "bootstrap_last_success": self.bootstrap_last_success,
@@ -826,6 +840,7 @@ class P2PService:
         self.deps = deps
         self._allow_ws_addrs = False
         self._allow_quic_addrs = False
+        self._invalid_seed_errors: dict[str, str] = {}
         self.seeds = []
         for addr in merged_seeds:
             normalized = self._normalize_seed(addr)
@@ -930,6 +945,7 @@ class P2PService:
         self._dial_attempt_total: int = 0
         self._dial_success_total: int = 0
         self._dial_last_error: Optional[dict[str, Any]] = None
+        self._dial_history: deque[dict[str, Any]] = deque(maxlen=50)
         # Increased from 6 to 20 per 5min window for faster bootstrap peer discovery
         self._bootstrap_seed_rate_limit = int(
             os.environ.get("ANIMICA_P2P_SEED_RATE_LIMIT", "20") or 20
@@ -1257,11 +1273,23 @@ class P2PService:
         ).lower() in ("1", "true", "yes", "on")
         self._allow_self_peers = _env_flag("ANIMICA_P2P_ALLOW_SELF_PEERS", default=False)
         self._maybe_enable_private_from_config()
-        self._external_ip = os.environ.get("ANIMICA_P2P_EXTERNAL_IP")
+        self._external_ip = (
+            os.environ.get("ANIMICA_P2P_EXTERNAL_IP")
+            or os.environ.get("PUBLIC_IP")
+            or os.environ.get("HOST_IP")
+        )
         self._external_ip_endpoint = (
             os.environ.get("ANIMICA_P2P_EXTERNAL_IP_ENDPOINT")
             or os.environ.get("ANIMICA_PUBLIC_IP_ENDPOINT")
+            or "https://api.ipify.org"
         )
+        self._advertise_host = (
+            os.environ.get("ANIMICA_P2P_ADVERTISE_HOST")
+            or os.environ.get("P2P_ADVERTISE_HOST")
+        )
+        self._advertise_port = self._parse_int_env(
+            "ANIMICA_P2P_ADVERTISE_PORT"
+        ) or self._parse_int_env("P2P_ADVERTISE_PORT")
         self._seeding_mode = True
         self._feeler_interval = float(
             os.environ.get("ANIMICA_P2P_FEELER_INTERVAL", "25") or 25
@@ -1724,6 +1752,21 @@ class P2PService:
             len(self.seeds),
             extra={"seed_sources": self._seed_sources},
         )
+        advertise_host = self._resolve_advertise_host()
+        advertise_port = self._advertise_port or self._local_listen_port()
+        log.info(
+            "P2P listen configuration",
+            extra={"listen_addrs": self.listen_addrs},
+        )
+        log.info(
+            "P2P advertise configuration",
+            extra={
+                "advertise_host": advertise_host,
+                "advertise_port": advertise_port,
+                "advertised_addrs": self._advertised_addrs(),
+                "external_ip": self._external_ip,
+            },
+        )
 
         # Listen
         for ma in self.listen_addrs:
@@ -1838,6 +1881,98 @@ class P2PService:
     @property
     def peer_registry(self) -> PeerRegistry:
         return self._peer_registry
+
+    def peer_state_snapshot(
+        self,
+        *,
+        include_failed: bool = True,
+        include_pending: bool = True,
+        limit_failed: int = 20,
+    ) -> list[dict[str, Any]]:
+        entries: list[dict[str, Any]] = []
+        seen_keys: set[str] = set()
+        latest_by_key: dict[str, dict[str, Any]] = {}
+        for event in reversed(self._dial_history):
+            addr = str(event.get("addr", ""))
+            addr_key = self._addr_key(addr)
+            if addr_key not in latest_by_key:
+                latest_by_key[addr_key] = event
+
+        for snap in self._peer_registry.snapshot():
+            remote = str(snap.get("remote", ""))
+            addr_key = self._addr_key(remote)
+            peer_id = snap.get("peer_id") or "unknown"
+            status = "connected" if peer_id != "unknown" else "handshaking"
+            entry = {
+                "id": peer_id,
+                "addr": remote,
+                "status": status,
+                "direction": snap.get("direction"),
+                "lastSeen": snap.get("last_seen"),
+                "connectedAt": snap.get("connected_at"),
+            }
+            entries.append(entry)
+            seen_keys.add(addr_key)
+
+        if include_pending:
+            for addr in sorted(self._dial_inflight):
+                addr_key = self._addr_key(addr)
+                if addr_key in seen_keys:
+                    continue
+                last_event = latest_by_key.get(addr_key, {})
+                entries.append(
+                    {
+                        "id": "pending",
+                        "addr": addr,
+                        "status": "dialing",
+                        "direction": "outbound",
+                        "lastAttempt": last_event.get("at"),
+                        "attempts": last_event.get("attempts"),
+                        "last_error": last_event.get("error"),
+                        "next_retry_at": last_event.get("next_retry_at"),
+                    }
+                )
+                seen_keys.add(addr_key)
+
+        if include_failed:
+            failed_added = 0
+            for event in reversed(self._dial_history):
+                if failed_added >= limit_failed:
+                    break
+                if event.get("status") != "failed":
+                    continue
+                addr = str(event.get("addr", ""))
+                addr_key = self._addr_key(addr)
+                if addr_key in seen_keys:
+                    continue
+                entries.append(
+                    {
+                        "id": "failed",
+                        "addr": addr,
+                        "status": "failed",
+                        "direction": "outbound",
+                        "lastAttempt": event.get("at"),
+                        "attempts": event.get("attempts"),
+                        "last_error": event.get("error"),
+                        "next_retry_at": event.get("next_retry_at"),
+                    }
+                )
+                seen_keys.add(addr_key)
+                failed_added += 1
+        return entries
+
+    def doctor_snapshot(self, *, limit: int = 10) -> dict[str, Any]:
+        status = self.status_snapshot().to_dict()
+        status.update(
+            {
+                "peerstore_dir": str(self._peerstore_dir),
+                "chain_data_dir": str(self._chain_data_dir),
+                "dial_history": list(self._dial_history)[-limit:],
+                "peers": self.peer_state_snapshot(limit_failed=limit),
+                "docker_detected": self._is_docker_env(),
+            }
+        )
+        return status
 
     def peer_stats_snapshot(self) -> list[dict[str, Any]]:
         stats: list[dict[str, Any]] = []
@@ -1955,6 +2090,18 @@ class P2PService:
             return []
         return [item.strip() for item in raw.split(",") if item.strip()]
 
+    def _parse_int_env(self, name: str) -> Optional[int]:
+        raw = os.environ.get(name)
+        if raw is None:
+            return None
+        raw = raw.strip()
+        if not raw:
+            return None
+        try:
+            return int(raw)
+        except ValueError:
+            return None
+
     def _ensure_peerstore_dir(self, path: Path) -> None:
         try:
             path.mkdir(parents=True, exist_ok=True)
@@ -2012,6 +2159,78 @@ class P2PService:
             return None
         return text or None
 
+    def _is_docker_env(self) -> bool:
+        if os.path.exists("/.dockerenv"):
+            return True
+        try:
+            with open("/proc/1/cgroup", "r", encoding="utf-8") as fh:
+                data = fh.read()
+            if "docker" in data or "kubepods" in data or "containerd" in data:
+                return True
+        except Exception:
+            return False
+        return False
+
+    def _resolve_primary_ip(self) -> Optional[str]:
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+                sock.connect(("8.8.8.8", 80))
+                return sock.getsockname()[0]
+        except Exception:
+            pass
+        try:
+            host = socket.gethostname()
+            return socket.gethostbyname(host)
+        except Exception:
+            return None
+
+    def _is_disallowed_advertise_host(self, host: str) -> bool:
+        if not host:
+            return True
+        lowered = host.lower()
+        if lowered in {"0.0.0.0", "127.0.0.1", "::", "::1", "localhost"}:
+            return True
+        try:
+            ip_obj = ipaddress.ip_address(host)
+        except ValueError:
+            return False
+        if ip_obj.is_unspecified or ip_obj.is_loopback or ip_obj.is_link_local:
+            return True
+        if ip_obj.is_private and not self._allow_private_addrs:
+            return True
+        return False
+
+    def _has_public_seeds(self) -> bool:
+        for host in self._seed_hosts:
+            try:
+                ip_obj = ipaddress.ip_address(host)
+            except ValueError:
+                return True
+            if not ip_obj.is_private and not ip_obj.is_loopback and not ip_obj.is_link_local:
+                return True
+        return False
+
+    def _resolve_advertise_host(self) -> Optional[str]:
+        if self._advertise_host:
+            return self._advertise_host
+        if self._is_docker_env():
+            if self._external_ip:
+                return self._external_ip
+        if self._external_ip:
+            return self._external_ip
+        primary_ip = self._resolve_primary_ip()
+        if primary_ip:
+            if self._allow_private_addrs:
+                return primary_ip
+            try:
+                ip_obj = ipaddress.ip_address(primary_ip)
+            except ValueError:
+                return primary_ip
+            if ip_obj.is_private and self._external_ip:
+                return self._external_ip
+            return primary_ip
+        return None
+
     def _addr_events_last_minute(self, events: deque[float]) -> int:
         cutoff = time.time() - 60.0
         while events and events[0] < cutoff:
@@ -2034,19 +2253,41 @@ class P2PService:
 
     def _advertised_addrs(self) -> list[str]:
         addrs: list[str] = []
-        for key in ("ANIMICA_P2P_ADVERTISED_ADDRS", "ANIMICA_P2P_ADVERTISE_ADDR"):
+        for key in (
+            "ANIMICA_P2P_ADVERTISED_ADDRS",
+            "ANIMICA_P2P_ADVERTISE_ADDR",
+            "P2P_ADVERTISE_ADDR",
+        ):
             for entry in self._env_list(key):
                 normalized = self._normalize_seed(entry)
-                if normalized:
+                if normalized and not self._is_disallowed_advertise_host(
+                    self._extract_host(normalized)
+                ):
                     addrs.append(normalized)
+                elif normalized:
+                    log.warning("Skipping unroutable advertised address %s", normalized)
         if addrs:
             return list(dict.fromkeys(addrs))
-        if self._external_ip:
-            port = self._local_listen_port()
-            normalized = self._normalize_seed(f"{self._external_ip}:{port}")
-            if normalized:
-                addrs.append(normalized)
-            return list(dict.fromkeys(addrs))
+        resolved_host = self._resolve_advertise_host()
+        advertise_port = self._advertise_port or self._local_listen_port()
+        if resolved_host:
+            try:
+                ip_obj = ipaddress.ip_address(resolved_host)
+            except ValueError:
+                ip_obj = None
+            if ip_obj is not None and ip_obj.is_private and self._has_public_seeds():
+                log.warning(
+                    "Advertising private IP %s while public seeds are configured",
+                    resolved_host,
+                )
+            if self._is_disallowed_advertise_host(resolved_host):
+                log.warning("Advertise host %s is not routable; skipping", resolved_host)
+            else:
+                normalized = self._normalize_seed(f"{resolved_host}:{advertise_port}")
+                if normalized:
+                    addrs.append(normalized)
+            if addrs:
+                return list(dict.fromkeys(addrs))
         for addr in self.listen_addrs:
             try:
                 parsed = parse_multiaddr(addr)
@@ -2058,7 +2299,7 @@ class P2PService:
                 except ValueError:
                     ip_obj = None
                 if ip_obj is not None:
-                    if ip_obj.is_loopback:
+                    if ip_obj.is_loopback or ip_obj.is_link_local:
                         continue
                     if ip_obj.is_private and not self._allow_private_addrs:
                         continue
@@ -2936,6 +3177,31 @@ class P2PService:
         lowered = error.lower()
         return "invalid handshake magic" in lowered or "handshakeerror" in lowered
 
+    def _record_dial_event(
+        self,
+        addr: str,
+        *,
+        status: str,
+        attempts: int,
+        error: Optional[str] = None,
+        is_seed: bool = False,
+    ) -> None:
+        addr_key = self._addr_key(addr)
+        entry: dict[str, Any] = {
+            "addr": addr,
+            "status": status,
+            "attempts": attempts,
+            "at": time.time(),
+        }
+        if error:
+            entry["error"] = error
+        if is_seed:
+            entry["is_seed"] = True
+        next_retry = self._dial_backoff.get(addr_key)
+        if next_retry:
+            entry["next_retry_at"] = next_retry
+        self._dial_history.append(entry)
+
     def _mark_dial_failure(self, addr: str, *, is_seed: bool, error: str) -> None:
         addr_key = self._addr_key(addr)
         attempts = self._dial_attempts.get(addr_key, 0) + 1
@@ -2949,6 +3215,9 @@ class P2PService:
         delay = self._dial_delay_for_error(addr_key, error)
         next_retry = time.time() + delay
         self._dial_backoff[addr_key] = next_retry
+        self._record_dial_event(
+            addr, status="failed", attempts=attempts, error=error, is_seed=is_seed
+        )
         normalized = self._sanitize_peer_addr(addr, fallback_port=self._local_listen_port())
         if normalized:
             self._addrman.mark_failure(normalized, reason=error)
@@ -2976,6 +3245,12 @@ class P2PService:
             )
         else:
             log.info("Dial to %s failed: %s (retry in %.1fs)", addr, error, delay)
+            lowered = error.lower()
+            if "connectionrefusederror" in lowered or "econnrefused" in lowered:
+                log.warning(
+                    "Dial refused by %s; check remote listen address, docker port publishing, or firewall",
+                    addr,
+                )
             if attempts >= 3:
                 fallback_port = self._local_listen_port()
                 normalized = self._sanitize_peer_addr(addr, fallback_port=fallback_port)
@@ -2987,9 +3262,13 @@ class P2PService:
 
     def _mark_dial_success(self, addr: str, *, is_seed: bool) -> None:
         addr_key = self._addr_key(addr)
+        attempts = self._dial_attempts.get(addr_key, 0)
         self._dial_attempts.pop(addr_key, None)
         self._dial_backoff.pop(addr_key, None)
         self._dial_success_total += 1
+        self._record_dial_event(
+            addr, status="success", attempts=attempts, error=None, is_seed=is_seed
+        )
         normalized = self._sanitize_peer_addr(addr, fallback_port=self._local_listen_port())
         if normalized:
             self._addrman.mark_success(normalized)
@@ -3037,9 +3316,15 @@ class P2PService:
         learned_1m = self._addr_events_last_minute(self._addr_learned_events)
         announced_1m = self._addr_events_last_minute(self._addr_announced_events)
 
+        advertise_host = self._resolve_advertise_host()
+        advertise_port = self._advertise_port or self._local_listen_port()
         return P2PStatusSnapshot(
             p2p_running=self._running,
             listen_addrs=list(self.listen_addrs),
+            advertised_addrs=self._advertised_addrs(),
+            advertise_host=advertise_host,
+            advertise_port=advertise_port,
+            external_ip=self._external_ip,
             peers_total=self._peer_registry.peer_count() + bootstrap_bonus,
             peers_inbound=inbound,
             peers_outbound=outbound + bootstrap_bonus,
@@ -3054,6 +3339,9 @@ class P2PService:
             learned_addrs_1m=learned_1m,
             announced_addrs_1m=announced_1m,
             persisted_peer_count=self._persisted_peer_count,
+            dial_history=list(self._dial_history),
+            dial_inflight=sorted(self._dial_inflight),
+            invalid_seeds=dict(self._invalid_seed_errors),
             dial_last_error=self._dial_last_error,
             bootstrap_last_attempt=self._last_bootstrap_attempt,
             bootstrap_last_success=self._last_bootstrap_success,
@@ -3613,6 +3901,9 @@ class P2PService:
             source="seed",
         )
         if not result.addr:
+            reason = result.reason or "invalid_seed"
+            self._invalid_seed_errors[address] = reason
+            log.warning("Invalid seed %s: %s", address, reason)
             return None
         if result.addr.port == 443:
             seed_hosts = {"144.126.133.21"}
@@ -5342,7 +5633,11 @@ class P2PService:
             addr, fallback_port=self._local_listen_port(), source="dial"
         )
         if not parsed.addr:
-            log.info("Skipping unsupported dial target %s", addr)
+            log.info(
+                "Skipping unsupported dial target %s (%s)",
+                addr,
+                parsed.reason or "invalid",
+            )
             return False
         if self._is_self_address(parsed.addr.host, parsed.addr.port):
             log.info("Skipping self dial target %s", parsed.addr.canonical)

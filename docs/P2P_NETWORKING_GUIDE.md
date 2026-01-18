@@ -210,6 +210,13 @@ export ANIMICA_P2P_LISTEN_QUIC=0.0.0.0:443
 export ANIMICA_P2P_LISTEN_TCP=127.0.0.1:30333
 ```
 
+You can also use simplified host/port env vars (defaults to 0.0.0.0:30333):
+
+```bash
+export P2P_HOST=0.0.0.0
+export P2P_PORT=30333
+```
+
 #### Advertised Addresses
 
 Tell other nodes how to reach you (important for NAT/firewall):
@@ -223,6 +230,13 @@ export ANIMICA_P2P_ADVERTISED_ADDRS="/dns4/node.example.com/tcp/30333"
 
 # Multiple addresses
 export ANIMICA_P2P_ADVERTISED_ADDRS="/ip4/203.0.113.5/tcp/30333,/dns4/node.example.com/quic/443"
+```
+
+If your node is behind NAT, set explicit advertise host/port overrides:
+
+```bash
+export P2P_ADVERTISE_HOST=203.0.113.5
+export P2P_ADVERTISE_PORT=30333
 ```
 
 #### Peer Limits

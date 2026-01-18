@@ -1030,6 +1030,83 @@ def _get_p2p_status(
         return None, str(exc)
 
 
+def _detect_docker_env() -> bool:
+    if os.path.exists("/.dockerenv"):
+        return True
+    try:
+        with open("/proc/1/cgroup", "r", encoding="utf-8") as fh:
+            data = fh.read()
+        return "docker" in data or "kubepods" in data or "containerd" in data
+    except Exception:
+        return False
+
+
+def _parse_listen_endpoints(addrs: list[str]) -> list[tuple[str, int]]:
+    endpoints: list[tuple[str, int]] = []
+    for addr in addrs:
+        if not isinstance(addr, str):
+            continue
+        addr = addr.strip()
+        if not addr:
+            continue
+        if addr.startswith("/"):
+            match = re.search(r"/(ip4|ip6|dns4|dns6)/([^/]+)/tcp/(\d+)", addr)
+            if match:
+                host = match.group(2)
+                port = int(match.group(3))
+                endpoints.append((host, port))
+                continue
+        if "://" in addr:
+            parsed = httpx.URL(addr)
+            if parsed.host and parsed.port:
+                endpoints.append((parsed.host, int(parsed.port)))
+                continue
+        if addr.startswith("[") and "]" in addr:
+            host_part, _, remainder = addr.partition("]")
+            host = host_part.lstrip("[")
+            if remainder.startswith(":") and remainder[1:].isdigit():
+                endpoints.append((host, int(remainder[1:])))
+                continue
+        if ":" in addr:
+            host, port = addr.rsplit(":", 1)
+            if port.isdigit():
+                endpoints.append((host, int(port)))
+    return endpoints
+
+
+def _probe_tcp_port(host: str, port: int, *, timeout_s: float = 1.0) -> bool:
+    try:
+        with socket.create_connection((host, port), timeout=timeout_s):
+            return True
+    except OSError:
+        return False
+
+
+def _ufw_port_open(port: int) -> tuple[Optional[bool], Optional[str]]:
+    ufw_path = shutil.which("ufw")
+    if not ufw_path:
+        return None, None
+    result = subprocess.run(
+        [ufw_path, "status"], capture_output=True, text=True, check=False
+    )
+    output = result.stdout.strip()
+    if not output:
+        return None, None
+    active = "Status: active" in output
+    if not active:
+        return active, None
+    port_line = None
+    for line in output.splitlines():
+        if f"{port}/tcp" in line:
+            port_line = line
+            break
+    if port_line and "ALLOW" in port_line.upper():
+        return active, "allow"
+    if port_line and "DENY" in port_line.upper():
+        return active, "deny"
+    return active, None
+
+
 def _get_sync_status(
     rpc_url: str, rpc_timeout: Optional[float]
 ) -> tuple[Optional[dict[str, Any]], Optional[str]]:
@@ -3389,6 +3466,150 @@ def p2p_status(
     if data_dir:
         typer.echo(f"  Data dir: {data_dir}")
     typer.echo(f"  Seeds loaded: {len(seeds)}")
+
+
+@p2p_app.command("doctor")
+def p2p_doctor(
+    rpc_url: Optional[str] = typer.Option(
+        None, "--rpc-url", help="JSON-RPC endpoint", envvar=RPC_ENV
+    ),
+    timeout: Optional[float] = typer.Option(
+        None,
+        "--timeout",
+        help=f"JSON-RPC request timeout in seconds (default: {describe_timeout(DEFAULT_RPC_TIMEOUT)})",
+        envvar=RPC_TIMEOUT_ENV,
+    ),
+    limit: int = typer.Option(10, "--limit", help="Number of dial attempts to display"),
+) -> None:
+    """Run a P2P connectivity doctor against the local node."""
+    url = _resolve_rpc_url(rpc_url)
+    try:
+        rpc_timeout = resolve_timeout("RPC timeout", timeout, env_var=RPC_TIMEOUT_ENV)
+    except ValueError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=1)
+
+    doctor_payload: dict[str, Any] = {}
+    try:
+        result = asyncio.run(
+            rpc_call("p2p.doctor", [limit], rpc_url=url, timeout=rpc_timeout)
+        )
+        if isinstance(result, dict):
+            doctor_payload = result
+    except Exception:
+        try:
+            status = asyncio.run(
+                rpc_call("p2p.getStatus", [], rpc_url=url, timeout=rpc_timeout)
+            )
+            if isinstance(status, dict):
+                doctor_payload = status
+                doctor_payload.setdefault("doctor_available", False)
+        except Exception as exc:
+            typer.echo(f"Error: Unable to fetch P2P status ({exc})", err=True)
+            raise typer.Exit(code=1)
+
+    listen_addrs = doctor_payload.get("listen_addrs") or []
+    advertised_addrs = doctor_payload.get("advertised_addrs") or []
+    peers_total = doctor_payload.get("peers_total")
+    peers_inbound = doctor_payload.get("peers_inbound")
+    peers_outbound = doctor_payload.get("peers_outbound")
+    advertise_host = doctor_payload.get("advertise_host")
+    advertise_port = doctor_payload.get("advertise_port")
+    external_ip = doctor_payload.get("external_ip")
+    dial_history = doctor_payload.get("dial_history") or []
+    pending = doctor_payload.get("dial_inflight") or []
+
+    typer.echo(f"RPC URL: {url}")
+    typer.echo(f"P2P running: {doctor_payload.get('p2p_running')}")
+    typer.echo(
+        "Peer counts: total={total} inbound={inbound} outbound={outbound}".format(
+            total=peers_total,
+            inbound=peers_inbound,
+            outbound=peers_outbound,
+        )
+    )
+    typer.echo(f"Listen addrs: {listen_addrs}")
+    typer.echo(f"Advertised addrs: {advertised_addrs}")
+    typer.echo(f"Advertise host: {advertise_host}")
+    typer.echo(f"Advertise port: {advertise_port}")
+    typer.echo(f"External IP: {external_ip}")
+    docker_detected = _detect_docker_env()
+    typer.echo(f"Docker detected: {docker_detected}")
+    if docker_detected:
+        published_port = os.environ.get("HOST_P2P_PORT") or os.environ.get("HOST_P2P_TCP_PORT")
+        typer.echo(f"Docker published port: {published_port or 'unknown'}")
+
+    endpoints = _parse_listen_endpoints(listen_addrs)
+    if endpoints:
+        typer.echo("Local listen checks:")
+        for host, port in endpoints:
+            probe_host = host
+            if host in {"0.0.0.0", "::"}:
+                probe_host = "127.0.0.1"
+            ok = _probe_tcp_port(probe_host, port)
+            status = "open" if ok else "closed"
+            typer.echo(f"  {host}:{port} -> {status}")
+
+    if pending:
+        typer.echo(f"Pending dials: {len(pending)}")
+
+    if dial_history:
+        typer.echo("Recent dial attempts:")
+        for entry in dial_history[-limit:]:
+            if not isinstance(entry, dict):
+                continue
+            status = entry.get("status")
+            addr = entry.get("addr")
+            error = entry.get("error")
+            attempts = entry.get("attempts")
+            at = entry.get("at")
+            typer.echo(
+                f"  {status} addr={addr} attempts={attempts} at={at} error={error}"
+            )
+
+    suggestions: list[str] = []
+    for host, port in endpoints:
+        if host in {"127.0.0.1", "::1", "localhost"}:
+            suggestions.append(
+                f"Bind to 0.0.0.0 instead of {host} so peers can reach port {port}."
+            )
+    for addr in advertised_addrs:
+        if "127.0.0.1" in addr or "0.0.0.0" in addr:
+            suggestions.append(
+                "Advertised address is loopback/unspecified; set P2P_ADVERTISE_HOST to a routable IP."
+            )
+            break
+
+    if docker_detected and endpoints:
+        port_list = ", ".join(str(port) for _, port in endpoints)
+        suggestions.append(
+            f"Docker detected: ensure P2P port(s) {port_list} are published (e.g. -p {port_list.split(',')[0].strip()}:{port_list.split(',')[0].strip()})."
+        )
+
+    for host, port in endpoints:
+        probe_host = host
+        if host in {"0.0.0.0", "::"}:
+            probe_host = "127.0.0.1"
+        if not _probe_tcp_port(probe_host, port):
+            suggestions.append(
+                f"Port {port} is not accepting connections locally; verify P2P service bind and firewall."
+            )
+            break
+
+    ufw_active, ufw_rule = None, None
+    ufw_port = None
+    if endpoints:
+        ufw_port = endpoints[0][1]
+        ufw_active, ufw_rule = _ufw_port_open(ufw_port)
+    if ufw_active and ufw_rule != "allow" and ufw_port:
+        suggestions.append(
+            f"UFW appears active; allow inbound {ufw_port}/tcp (ufw allow {ufw_port}/tcp)."
+        )
+
+    if suggestions:
+        typer.echo("\nSuggested fixes:")
+        for suggestion in suggestions:
+            typer.echo(f"  - {suggestion}")
 
 
 @p2p_app.command("peers")
