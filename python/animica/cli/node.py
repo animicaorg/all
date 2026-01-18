@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Optional
+from urllib.parse import urlparse
 
 import httpx
 import typer
@@ -65,6 +66,7 @@ BOOTSTRAP_SEED_RETRY_DELAY_MAX = 30.0
 BOOTSTRAP_HEAD_RETRIES: Optional[int] = 1
 BOOTSTRAP_HEAD_RETRY_DELAY = 1.0
 BOOTSTRAP_HEAD_RETRY_DELAY_MAX = 30.0
+BOOTSTRAP_PING_TIMEOUT_S = 0.5
 ALLOWED_BOOTSTRAP_METHODS = {
     "bootstrap.getManifest",
     "bootstrap.getSeeds",
@@ -1079,6 +1081,8 @@ def _persist_sync_state(
 def _record_bootstrap_head(net_cfg: Any, bootstrap_url: Optional[str], *, quiet: bool = False) -> bool:
     if not bootstrap_url:
         return False
+    if _is_local_bootstrap_url(bootstrap_url) and not _bootstrap_endpoint_ready(bootstrap_url):
+        return False
     last_exc: Optional[Exception] = None
     delay = BOOTSTRAP_HEAD_RETRY_DELAY
     attempt = 1
@@ -1166,6 +1170,25 @@ def _health_url_from_rpc(rpc_url: str) -> str:
     if rpc_url.endswith("/rpc"):
         return rpc_url[: -len("/rpc")] + "/healthz"
     return rpc_url.rstrip("/") + "/healthz"
+
+
+def _is_local_bootstrap_url(bootstrap_url: str) -> bool:
+    try:
+        host = urlparse(bootstrap_url).hostname or ""
+    except Exception:
+        return False
+    return host in {"127.0.0.1", "localhost", "::1", "0.0.0.0"}
+
+
+def _bootstrap_endpoint_ready(bootstrap_url: str) -> bool:
+    try:
+        resp = httpx.get(
+            _health_url_from_rpc(bootstrap_url),
+            timeout=BOOTSTRAP_PING_TIMEOUT_S,
+        )
+        return resp.status_code < 500
+    except Exception:
+        return False
 
 
 def _assert_numeric_params(**values: Any) -> None:
@@ -1465,6 +1488,7 @@ def _fetch_bootstrap_data(
     manifest: dict[str, Any] = {}
     manifest_error: Optional[Exception] = None
     seed_error: Optional[Exception] = None
+    local_bootstrap = _is_local_bootstrap_url(bootstrap_url)
 
     try:
         manifest = _bootstrap_rpc(bootstrap_url, "bootstrap.getManifest")
@@ -1488,7 +1512,7 @@ def _fetch_bootstrap_data(
         fallback_seeds = get_seed_nodes(getattr(net_cfg, "name", "mainnet"))
         if fallback_seeds:
             seeds = list(fallback_seeds)
-            if not quiet:
+            if not quiet and not local_bootstrap:
                 typer.secho(
                     "Warning: bootstrap RPC unavailable; using bundled seed list.",
                     fg=typer.colors.YELLOW,
@@ -1499,7 +1523,7 @@ def _fetch_bootstrap_data(
         exc = manifest_error or seed_error
         raise RuntimeError(f"Bootstrap RPC failed and no fallback seeds available: {exc}") from exc
 
-    if manifest_error and not quiet:
+    if manifest_error and not quiet and not local_bootstrap:
         typer.secho(
             f"Warning: bootstrap manifest fetch failed ({manifest_error}); continuing.",
             fg=typer.colors.YELLOW,
@@ -1538,6 +1562,8 @@ def _auto_bootstrap_if_needed(net_cfg: Any, bootstrap_url: str | None, *, force:
 
     endpoint = bootstrap_url or getattr(net_cfg, "bootstrap_url", None)
     if not endpoint:
+        return False
+    if _is_local_bootstrap_url(endpoint) and not _bootstrap_endpoint_ready(endpoint):
         return False
 
     if not quiet:

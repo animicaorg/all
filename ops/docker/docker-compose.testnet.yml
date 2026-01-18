@@ -55,6 +55,7 @@ services:
       ANIMICA_CHAIN_ID: "${ANIMICA_CHAIN_ID:-2}"
       GENESIS_PATH: "${GENESIS_PATH:-/app/core/genesis/testnet.json}"
       ANIMICA_DATA_DIR: "/data"
+      HOME: "/data"
       # RPC server config
       ANIMICA_RPC_HOST: "${ANIMICA_RPC_HOST:-0.0.0.0}"
       ANIMICA_RPC_PORT: "${ANIMICA_RPC_PORT:-8546}"

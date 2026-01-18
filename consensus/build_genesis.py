@@ -42,7 +42,8 @@ try:
     from core.utils.hash import sha3_256
     from core.utils import merkle as umerkle
     from core.utils.address import address_to_bytes
-    from core.genesis.loader import compute_state_root_from_alloc
+    from core.genesis.genesis_loader import get_genesis
+    from core.genesis.loader import compute_state_root_from_alloc, load_genesis
 except ImportError as e:
     print(f"Error: Failed to import required modules: {e}", file=sys.stderr)
     print("Ensure you are running from the repository root with a virtual environment activated.", file=sys.stderr)
@@ -203,43 +204,47 @@ def main():
     print("=" * 80)
     print()
     
-    # Parse inputs
-    chain_id = args.chain_id
-    timestamp = parse_timestamp(args.timestamp)
-    target_block_time_sec = consensus_params.TARGET_BLOCK_TIME_SEC
-    theta_micro = consensus_params.GENESIS_THETA_MICRO
-    
+    genesis_path = Path(__file__).parent.parent / "core" / "genesis" / "genesis.json"
+    bundle = get_genesis(genesis_path)
+    genesis = bundle.genesis
+
+    # Parse inputs (prefer genesis file as the source of truth)
+    chain_id = int(genesis.get("chainId", args.chain_id))
+    _params, header = load_genesis(str(genesis_path))
+    timestamp = int(getattr(header, "timestamp", parse_timestamp(args.timestamp)))
+    target_block_time_sec = float(
+        (genesis.get("economics") or {}).get("targetBlockTimeSec", consensus_params.TARGET_BLOCK_TIME_SEC)
+    )
+    theta_micro = int(getattr(header, "thetaMicro", consensus_params.GENESIS_THETA_MICRO))
+    genesis_message = getattr(header, "extra", b"") or b""
+    if isinstance(genesis_message, (bytes, bytearray)):
+        genesis_message = genesis_message.decode("utf-8", errors="replace")
+
     print(f"Chain ID:              {chain_id}")
-    print(f"Genesis Timestamp:     {args.timestamp} ({timestamp} unix)")
+    print(f"Genesis Timestamp:     {genesis.get('genesisTime', args.timestamp)} ({timestamp} unix)")
     print(f"Target Block Time:     {target_block_time_sec} seconds ({target_block_time_sec/60:.1f} minutes)")
     print(f"Initial Theta:         {theta_micro} µ-nats ({theta_micro/1e6:.6f} nats)")
-    print(f"Genesis Message:       {consensus_params.GENESIS_MESSAGE}")
+    print(f"Genesis Message:       {genesis_message}")
     print()
-    
+
     # Load allocations
     print("Loading genesis allocations...")
-    alloc = load_genesis_allocations()
+    alloc = genesis.get("alloc") or load_genesis_allocations()
     print(f"  Loaded {len(alloc)} allocation(s)")
     total_balance = sum(int(a.get("balance", 0)) for a in alloc)
     print(f"  Total premine: {total_balance} base units ({total_balance/1e9:.2f} ANM)")
     print()
-    
+
     # Compute state root
     print("Computing state root...")
-    state_root = compute_state_root_from_alloc(alloc)
+    state_root = getattr(header, "stateRoot", None) or compute_state_root_from_alloc(alloc)
+    if isinstance(state_root, str):
+        state_root = bytes.fromhex(state_root.removeprefix("0x"))
     print(f"  State root: 0x{state_root.hex()}")
     print()
-    
+
     # Build header
     print("Building genesis header...")
-    header = build_genesis_header(
-        chain_id=chain_id,
-        timestamp=timestamp,
-        state_root=state_root,
-        theta_micro=theta_micro,
-        alg_policy_root=consensus_params.GENESIS_ALG_POLICY_ROOT,
-        poies_policy_root=consensus_params.GENESIS_POIES_POLICY_ROOT,
-    )
     print(f"  Height:          {header.height}")
     print(f"  Chain ID:        {header.chainId}")
     print(f"  Timestamp:       {header.timestamp}")
@@ -283,10 +288,10 @@ def main():
         },
         "inputs": {
             "chain_id": chain_id,
-            "timestamp_utc": args.timestamp,
+            "timestamp_utc": genesis.get("genesisTime", args.timestamp),
             "timestamp_unix": timestamp,
             "target_block_time_sec": target_block_time_sec,
-            "genesis_message": consensus_params.GENESIS_MESSAGE,
+            "genesis_message": genesis_message,
             "theta_micro": theta_micro,
             "premine_total": total_balance,
         },

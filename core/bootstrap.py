@@ -8,7 +8,7 @@ operators can initialize the mainnet genesis for the first time.
 
 Security Requirements:
 ----------------------
-- Bootstrap password is required ONLY for creating mainnet genesis (chain_id == 0)
+- Bootstrap password is required ONLY for creating mainnet genesis (chain_id == 1)
 - Password is never logged or persisted (constant exists in code only)
 - Interactive prompt uses getpass for non-echo input
 - Password mismatch exits cleanly without creating genesis
@@ -179,7 +179,7 @@ def bootstrap_mainnet_genesis(
         print(BOOTSTRAP_ERROR_ALREADY_EXISTS, file=sys.stderr)
         return 1
 
-    # Step 2: Load genesis to determine if it's mainnet (chain_id == 0)
+    # Step 2: Load genesis to determine if it's mainnet (chain_id == 1)
     try:
         with open(genesis_path, "r", encoding="utf-8") as f:
             genesis_data = json.load(f)
@@ -189,7 +189,7 @@ def bootstrap_mainnet_genesis(
         return 2
 
     # Step 3: Password gate (mainnet only)
-    is_mainnet = chain_id == 0
+    is_mainnet = chain_id == 1
     if is_mainnet and not skip_password:
         entered_password = prompt_bootstrap_password()
         if not validate_bootstrap_password(entered_password):

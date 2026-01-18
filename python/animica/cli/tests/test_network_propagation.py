@@ -103,7 +103,7 @@ def test_load_network_config_defaults_to_mainnet(monkeypatch: Any) -> None:
     config = load_network_config()
     
     assert config.name == "mainnet"
-    assert config.chain_id == 0
+    assert config.chain_id == 1
     assert config.rpc_url == "http://127.0.0.1:8545/rpc"
 
 

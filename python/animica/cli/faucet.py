@@ -295,7 +295,7 @@ Animica Faucet - Testnet/Devnet Fund Request
 
 The faucet provides unlimited test funds on non-mainnet networks (devnet, testnet).
 
-IMPORTANT: The faucet is NOT available on mainnet (chainId=0).
+IMPORTANT: The faucet is NOT available on mainnet (chainId=1).
 
 Usage:
   animica faucet request ADDRESS [OPTIONS]

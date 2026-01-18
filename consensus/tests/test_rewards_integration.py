@@ -3,7 +3,7 @@
 Integration tests for block rewards with params loaded from spec/params.yaml.
 
 These tests verify that:
-1. Mainnet params (chain_id=0) load correctly and produce 100% miner rewards
+1. Mainnet params (chain_id=1) load correctly and produce 100% miner rewards
 2. Reward calculation matches the 300 ANM base with halving schedule
 3. Custom payout addresses are correctly handled
 """
@@ -65,7 +65,7 @@ def test_mainnet_block_reward_at_height_1():
     params = load_mainnet_params()
     
     # Compute block reward for mainnet at height 1
-    rewards = compute_block_reward(chain_id=0, height=1, params=params)
+    rewards = compute_block_reward(chain_id=1, height=1, params=params)
     
     # Should return exactly 1 reward entry (100% to miner)
     assert len(rewards) == 1, \
@@ -82,7 +82,7 @@ def test_mainnet_block_reward_at_height_1():
 def test_mainnet_block_reward_height_1_base_units():
     """Unit test: height=1 subsidy equals 300 ANM in base units."""
     params = load_mainnet_params()
-    rewards = compute_block_reward(chain_id=0, height=1, params=params)
+    rewards = compute_block_reward(chain_id=1, height=1, params=params)
     assert rewards
     assert rewards[0][1] == 300 * 1_000_000_000
 
@@ -92,7 +92,7 @@ def test_mainnet_block_reward_halving_at_1_35m():
     params = load_mainnet_params()
     
     # Compute block reward at height 1_350_001 (first block of epoch 1)
-    rewards = compute_block_reward(chain_id=0, height=1_350_001, params=params)
+    rewards = compute_block_reward(chain_id=1, height=1_350_001, params=params)
     
     # Should return exactly 1 reward entry (100% to miner)
     assert len(rewards) == 1, \
@@ -109,7 +109,7 @@ def test_mainnet_block_reward_second_halving_at_2_7m():
     params = load_mainnet_params()
     
     # Compute block reward at height 2_700_001 (first block of epoch 2)
-    rewards = compute_block_reward(chain_id=0, height=2_700_001, params=params)
+    rewards = compute_block_reward(chain_id=1, height=2_700_001, params=params)
     
     # Should return exactly 1 reward entry (100% to miner)
     assert len(rewards) == 1, \
@@ -182,7 +182,7 @@ def test_mainnet_supply_cap_clamps_rewards():
     assert total_before >= cap, "Height should exceed total subsidy cap for test"
 
     rewards = compute_block_reward(
-        chain_id=0, height=height, params=params, canonical_height=height
+        chain_id=1, height=height, params=params, canonical_height=height
     )
     assert rewards == [], "Rewards should be zero once cap is reached"
 

@@ -15,7 +15,7 @@ Mainnet Premine Rules:
 
 Security:
 ---------
-- Premine enforcement is network-specific (chain_id == 0 for mainnet).
+- Premine enforcement is network-specific (chain_id == 1 for mainnet).
 - Genesis validation ensures the height-0 coinbase matches configured premine.
 - Reward logic is deterministic and depends only on (chain_id, height, params).
 """
@@ -31,7 +31,7 @@ log = logging.getLogger("consensus.rewards")
 # MAINNET PREMINE CONSTANTS
 # ==================================================================================
 # These values are derived from genesis/genesis.sample.mainnet.json and represent
-# the one-time issuance at genesis (height 0) for mainnet only (chain_id == 0).
+# the one-time issuance at genesis (height 0) for mainnet only (chain_id == 1).
 #
 # Total: 81,000,000 ANM = 81,000,000,000,000,000 base units (nANM, 10^9 = 1 ANM)
 # ==================================================================================
@@ -94,7 +94,7 @@ def compute_block_reward(
     """
     Compute the block reward (coinbase outputs) for a given chain and height.
 
-    For mainnet (chain_id == 0):
+    For mainnet (chain_id == 1):
       - height == 0: return MAINNET_PREMINE_DISTRIBUTION (one-time premine)
       - height >= 1: return normal emission schedule per params
 
@@ -127,7 +127,7 @@ def compute_block_reward(
         return []
     
     # Mainnet premine enforcement: height 0 only
-    if chain_id == 0 and height == 0:
+    if chain_id == 1 and height == 0:
         return list(MAINNET_PREMINE_DISTRIBUTION)
 
     # For height >= 1 (or non-mainnet genesis), use normal emission schedule.
@@ -158,8 +158,8 @@ def compute_block_reward(
         # Collect non-zero rewards
         rewards: List[Tuple[str, int]] = []
         
-        # Enforce total supply cap for mainnet (chain_id == 0).
-        if chain_id == 0:
+        # Enforce total supply cap for mainnet (chain_id == 1).
+        if chain_id == 1:
             height_for_supply = height_for_halving
             total_before = _total_subsidy_through_height(
                 max(0, height_for_supply - 1), schedule

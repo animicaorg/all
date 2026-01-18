@@ -112,10 +112,8 @@ RUN python -m pip install --no-cache-dir -e /app/python -e /app/pq
 
 ENV ANIMICA_USER=${USER} \
     ANIMICA_UID=${UID} \
-    ANIMICA_GID=${GID}
-
-# Switch to non-root user
-USER ${USER}
+    ANIMICA_GID=${GID} \
+    HOME=/data
 
 # Export common ports:
 # - 8545: JSON-RPC HTTP

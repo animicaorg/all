@@ -7,7 +7,7 @@ All requirements from the problem statement have been successfully implemented, 
 ## Implementation Complete
 
 ### New Genesis Details
-- **Genesis Hash**: `0xa1e73debf7b0c8e492de2f8d5c9b8d85f16fe9f2db6c3c844592c2e2dfe9cacf`
+- **Genesis Hash**: `0xd2d2897104110b86bb60ccec251a7e2313f4abb301f8cc532d60162c20d3644f`
 - **Fork ID**: `0x823f8537`
 - **Timestamp**: 2026-01-18T00:00:00Z
 - **Old Hash (rejected)**: `0x5868b982d22fe2eb4eb15567dd6afdbae453001388bc23a2517639729428cfda`

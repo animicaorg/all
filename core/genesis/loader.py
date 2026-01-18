@@ -387,11 +387,11 @@ def load_genesis(
 
     params = _load_chain_params(genesis, params_override, base_dir=bundle.base_dir)
 
-    # Validate mainnet premine if applicable (chain_id == 0, height == 0)
+    # Validate mainnet premine if applicable (chain_id == 1, height == 0)
     # Note: Import is done here to avoid circular dependencies between
     # core.genesis and consensus.rewards at module load time.
     chain_id = int(genesis.get("chainId", 0))
-    if chain_id == 0:
+    if chain_id == 1:
         try:
             from consensus.rewards import validate_mainnet_genesis_coinbase
             
@@ -496,6 +496,20 @@ def compute_genesis_identity(
         consensus_id=consensus_id,
         protocol_version=protocol_version,
     )
+
+
+def compute_genesis_hash(
+    genesis_path: str | os.PathLike[str],
+    *,
+    chain_id: int | None = None,
+) -> str:
+    """
+    Compute the canonical genesis header hash for a given genesis file.
+
+    Returns a 0x-prefixed hex string to keep diagnostics consistent.
+    """
+    identity = compute_genesis_identity(genesis_path, chain_id=chain_id)
+    return "0x" + identity.genesis_block_hash.hex()
 
 
 def compute_chain_identity(

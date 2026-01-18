@@ -46,13 +46,13 @@ def test_mainnet_premine_distribution_documented():
 
 def test_compute_block_reward_mainnet_height_0_returns_premine():
     """Mainnet at height 0 returns the premine distribution."""
-    reward = compute_block_reward(chain_id=0, height=0)
+    reward = compute_block_reward(chain_id=1, height=0)
     assert reward == list(MAINNET_PREMINE_DISTRIBUTION)
 
 
 def test_compute_block_reward_mainnet_height_1_returns_empty_without_params():
     """Mainnet at height 1+ without params returns empty (params required)."""
-    reward = compute_block_reward(chain_id=0, height=1, params=None)
+    reward = compute_block_reward(chain_id=1, height=1, params=None)
     assert reward == []
 
 
@@ -72,7 +72,7 @@ def test_validate_mainnet_genesis_coinbase_valid():
     """Valid mainnet genesis coinbase passes validation."""
     coinbase_outputs = list(MAINNET_PREMINE_DISTRIBUTION)
     is_valid, reason = validate_mainnet_genesis_coinbase(
-        chain_id=0, height=0, coinbase_outputs=coinbase_outputs
+        chain_id=1, height=0, coinbase_outputs=coinbase_outputs
     )
     assert is_valid
     assert "valid" in reason.lower()
@@ -86,7 +86,7 @@ def test_validate_mainnet_genesis_coinbase_invalid_total():
         for i, (addr, amt) in enumerate(MAINNET_PREMINE_DISTRIBUTION)
     ]
     is_valid, reason = validate_mainnet_genesis_coinbase(
-        chain_id=0, height=0, coinbase_outputs=bad_outputs
+        chain_id=1, height=0, coinbase_outputs=bad_outputs
     )
     assert not is_valid
     assert "total" in reason.lower()
@@ -102,7 +102,7 @@ def test_validate_mainnet_genesis_coinbase_invalid_distribution():
         addr2, amt2 = outputs[1]
         bad_outputs = [(addr1, amt2), (addr2, amt1)] + outputs[2:]
         is_valid, reason = validate_mainnet_genesis_coinbase(
-            chain_id=0, height=0, coinbase_outputs=bad_outputs
+            chain_id=1, height=0, coinbase_outputs=bad_outputs
         )
         assert not is_valid
         assert "distribution" in reason.lower()
@@ -124,7 +124,7 @@ def test_validate_mainnet_genesis_coinbase_non_genesis_skips():
     # Mainnet at height 1 with arbitrary outputs
     bad_outputs = [("random_addr", 12345)]
     is_valid, reason = validate_mainnet_genesis_coinbase(
-        chain_id=0, height=1, coinbase_outputs=bad_outputs
+        chain_id=1, height=1, coinbase_outputs=bad_outputs
     )
     assert is_valid
     assert "not genesis" in reason.lower()
@@ -524,7 +524,7 @@ def test_compute_block_reward_mainnet_100_pct_to_miner():
     }
     
     # Test at height 1 (first post-genesis block)
-    rewards = compute_block_reward(chain_id=0, height=1, params=params)
+    rewards = compute_block_reward(chain_id=1, height=1, params=params)
     
     # Should return only 1 reward (miner gets 100%)
     assert len(rewards) == 1, f"Expected 1 reward (100% to miner), got {len(rewards)}"
@@ -562,7 +562,7 @@ def test_compute_block_reward_mainnet_100_pct_halving():
     }
     
     # Test at height 1_350_001 (first block of epoch 1, after first halving)
-    rewards = compute_block_reward(chain_id=0, height=1350001, params=params)
+    rewards = compute_block_reward(chain_id=1, height=1350001, params=params)
     
     # Should return only 1 reward (miner gets 100%)
     assert len(rewards) == 1, f"Expected 1 reward (100% to miner), got {len(rewards)}"
@@ -614,11 +614,11 @@ def test_instant_block_always_returns_zero_rewards():
 def test_instant_block_mainnet_genesis_returns_zero():
     """Instant blocks at mainnet genesis return zero (no premine)."""
     # Mainnet genesis normally has premine
-    normal_rewards = compute_block_reward(chain_id=0, height=0, params=None, instant_block=False)
+    normal_rewards = compute_block_reward(chain_id=1, height=0, params=None, instant_block=False)
     assert len(normal_rewards) > 0, "Normal mainnet genesis should have premine"
     
     # But instant block at genesis has no premine
-    instant_rewards = compute_block_reward(chain_id=0, height=0, params=None, instant_block=True)
+    instant_rewards = compute_block_reward(chain_id=1, height=0, params=None, instant_block=True)
     assert instant_rewards == [], "Instant mainnet genesis should have zero rewards"
 
 

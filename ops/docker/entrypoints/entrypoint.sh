@@ -16,8 +16,11 @@ ensure_dir() {
   if [ -z "$dir" ]; then
     return
   fi
-  mkdir -p "$dir" || true
-  chmod 0755 "$dir" || true
+  if ! mkdir -p "$dir"; then
+    echo "!! ERROR: failed to create directory: ${dir}"
+    exit 1
+  fi
+  chmod 0755 "$dir" 2>/dev/null || true
   if [ "$(id -u)" = "0" ]; then
     chown -R "${ANIMICA_UID}:${ANIMICA_GID}" "$dir" || true
   fi
@@ -52,7 +55,9 @@ check_writable() {
   fi
 }
 
+check_writable "${ANIMICA_DATA_DIR}"
 check_writable "${CHAIN_DIR}"
+check_writable "${P2P_DIR}"
 
 if [ "$(id -u)" = "0" ]; then
   exec gosu "${ANIMICA_USER}" "$@"

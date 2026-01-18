@@ -102,7 +102,7 @@ def _make_envelope(t: int, idx: int = 0) -> ProofEnvelope:
 def test_prefork_uses_legacy_rules():
     hdr = _Header(
         height=99_999,
-        chain_id=0,
+        chain_id=1,
         theta_micro=900_000,
         poies_policy_root=b"\x01" * 32,
         policy_alg_root=b"\x02" * 32,
@@ -123,7 +123,7 @@ def test_prefork_uses_legacy_rules():
 def test_postfork_requires_declared_work(monkeypatch):
     hdr = _Header(
         height=100_000,
-        chain_id=0,
+        chain_id=1,
         theta_micro=1_000_000,
         poies_policy_root=b"\x01" * 32,
         policy_alg_root=b"\x02" * 32,
@@ -153,7 +153,7 @@ def test_postfork_requires_declared_work(monkeypatch):
 def test_mismatch_between_header_and_proofs(monkeypatch):
     hdr = _Header(
         height=100_000,
-        chain_id=0,
+        chain_id=1,
         theta_micro=700_000,
         poies_policy_root=b"\x01" * 32,
         policy_alg_root=b"\x02" * 32,
@@ -190,7 +190,7 @@ def test_fallback_hash_work_allowed(monkeypatch):
     )
     hdr = _Header(
         height=120_000,
-        chain_id=0,
+        chain_id=1,
         theta_micro=400_000,
         poies_policy_root=b"\x01" * 32,
         policy_alg_root=b"\x02" * 32,

@@ -94,7 +94,7 @@ from omni_sdk.contracts.client import ContractClient
 from omni_sdk.tx.send import send_and_await
 from omni_sdk.wallet.keystore import Keystore
 
-rpc = RpcClient(base_url="http://localhost:8545", chain_id=0)
+rpc = RpcClient(base_url="http://localhost:8545", chain_id=1)
 wallet = Keystore.load("~/.animica/keystore.json").unlock("pass")
 acct = wallet.default_account()
 

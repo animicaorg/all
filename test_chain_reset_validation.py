@@ -19,6 +19,7 @@ import tempfile
 import pytest
 
 from consensus import params as consensus_params
+from core.genesis.loader import compute_genesis_hash
 from core.db.sqlite import SQLiteKV
 from core.db.block_db import BlockDB
 from p2p.errors import P2PError
@@ -27,7 +28,7 @@ from p2p.errors import P2PError
 # These are test-only files we'll check
 GENESIS_PATH = Path(__file__).resolve().parent / "core" / "genesis" / "mainnet.json"
 OLD_GENESIS_HASH = "0x5868b982d22fe2eb4eb15567dd6afdbae453001388bc23a2517639729428cfda"
-NEW_GENESIS_HASH = "0xa1e73debf7b0c8e492de2f8d5c9b8d85f16fe9f2db6c3c844592c2e2dfe9cacf"
+NEW_GENESIS_HASH = "0xd2d2897104110b86bb60ccec251a7e2313f4abb301f8cc532d60162c20d3644f"
 
 
 def test_new_genesis_hash_is_correct():
@@ -69,36 +70,17 @@ def test_genesis_message_updated():
     )
 
 
-def test_genesis_builder_produces_correct_hash():
+def test_genesis_file_hash_matches_pinned():
     """
-    Verify that consensus/build_genesis.py produces the expected new genesis hash.
-    
-    This is the canonical genesis hash used for chain validation.
+    Verify that core/genesis/mainnet.json matches the pinned consensus hash.
     """
-    import subprocess
-    import json as json_lib
-    
-    # Run genesis builder
-    result = subprocess.run(
-        ["python", "consensus/build_genesis.py", "--output", "/tmp/test_genesis_output.json"],
-        cwd=Path(__file__).resolve().parent,
-        capture_output=True,
-        text=True,
-    )
-    
-    assert result.returncode == 0, f"Genesis builder failed: {result.stderr}"
-    
-    # Read the output
-    with open("/tmp/test_genesis_output.json") as f:
-        output = json_lib.load(f)
-    
-    computed_hash = output["outputs"]["genesis_hash"]
-    
+    computed_hash = compute_genesis_hash(GENESIS_PATH)
+
     assert computed_hash == NEW_GENESIS_HASH, (
-        f"Genesis builder produced unexpected hash!\n"
+        f"Genesis file produced unexpected hash!\n"
         f"Expected: {NEW_GENESIS_HASH}\n"
         f"Got: {computed_hash}\n"
-        f"Check if consensus/params.py GENESIS_MESSAGE or GENESIS_TIMESTAMP_UTC changed"
+        "Check core/genesis/mainnet.json and core/network_params pinning."
     )
 
 

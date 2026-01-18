@@ -2,12 +2,12 @@
 """
 Integration test to verify docker-compose.mainnet.yml uses correct chain_id.
 
-This test ensures the mainnet docker configuration uses chain_id=0 (not 1)
+This test ensures the mainnet docker configuration uses chain_id=1 (not 0)
 to match the spec/params.yaml network definition. Using the wrong chain_id
 causes rewards to be 0 because params don't load correctly.
 
-Issue: docker-compose.mainnet.yml was using ANIMICA_CHAIN_ID: 1
-Fix: Changed to ANIMICA_CHAIN_ID: 0
+Issue: docker-compose.mainnet.yml was using ANIMICA_CHAIN_ID: 0
+Fix: Changed to ANIMICA_CHAIN_ID: 1
 
 This test documents the issue and prevents regression.
 """
@@ -21,7 +21,7 @@ sys.path.insert(0, '.')
 from consensus.rewards import compute_block_reward
 from rpc.deps import _params_from_spec
 
-EXPECTED_MAINNET_CHAIN_ID = 0
+EXPECTED_MAINNET_CHAIN_ID = 1
 EXPECTED_TESTNET_CHAIN_ID = 2
 EXPECTED_DEVNET_CHAIN_ID = 1337
 EXPECTED_BLOCK_REWARD_NANM = 300_000_000_000  # 300 ANM
@@ -113,40 +113,24 @@ def test_docker_compose_chain_ids():
     print("✓ SUCCESS: All docker-compose files use correct chain_ids")
     print("="*70)
 
-def test_chain_id_1_has_no_params():
+def test_chain_id_1_has_params():
     """
-    Document the bug: chain_id=1 has no params in spec/params.yaml.
-    
-    This test verifies that chain_id=1 returns empty/fallback params,
-    which would cause rewards=0. This is why mainnet MUST use chain_id=0.
+    Ensure mainnet chain_id=1 is defined in spec/params.yaml.
     """
     print("\n" + "="*70)
-    print("Chain ID 1 Bug Verification (should have no params)")
+    print("Chain ID 1 Params Verification")
     print("="*70)
     
     params = _params_from_spec(1)
     
-    # Chain ID 1 should not have monetary params (no network definition)
     has_monetary = 'monetary' in params and params['monetary'].get('issuance')
+    assert has_monetary, "Chain ID 1 should have monetary params for mainnet"
     
-    if has_monetary:
-        print("⚠ WARNING: Chain ID 1 now has monetary params!")
-        print("  This may be intentional if a new network was added.")
-        print("  Verify spec/params.yaml defines 'animica:1' network.")
-    else:
-        print("✓ Confirmed: Chain ID 1 has no monetary params (as expected)")
-        print("  This is why mainnet docker-compose MUST use chain_id=0")
-    
-    # Try to compute rewards with chain_id=1
     rewards = compute_block_reward(chain_id=1, height=1, params=params)
+    assert rewards and len(rewards) > 0, "Chain ID 1 should yield rewards"
     
-    if not rewards:
-        print("✓ Confirmed: Chain ID 1 returns no rewards (0 ANM)")
-        print("  Using chain_id=1 in docker would cause reward=0 bug")
-    else:
-        addr, amount = rewards[0]
-        print(f"⚠ Chain ID 1 returns rewards: {amount / 1e9} ANM")
-        print("  This may be intentional if a new network was added.")
+    addr, amount = rewards[0]
+    print(f"✓ Chain ID 1 returns rewards: {amount / 1e9} ANM")
     
     print("="*70)
 
