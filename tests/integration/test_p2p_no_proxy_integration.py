@@ -80,11 +80,11 @@ def test_p2p_config_loads_network_seeds():
         
         # Verify seeds are defined for mainnet, testnet, devnet
         assert 0 in DEFAULT_SEEDS_BY_NETWORK, "Mainnet (chain_id=0) should have seeds"
-        assert 2 in DEFAULT_SEEDS_BY_NETWORK, "Testnet (chain_id=1) should have seeds"
+        assert 1 in DEFAULT_SEEDS_BY_NETWORK, "Testnet (chain_id=1) should have seeds"
         assert 1337 in DEFAULT_SEEDS_BY_NETWORK, "Devnet (chain_id=1337) should have seeds"
         
         # Verify seeds are not empty
-        mainnet_seeds = DEFAULT_SEEDS_BY_NETWORK[1]
+        mainnet_seeds = DEFAULT_SEEDS_BY_NETWORK[0]
         assert len(mainnet_seeds) > 0, "Mainnet should have at least one seed"
         
         # Verify seed format (should contain DNS or IP multiaddr)
@@ -93,8 +93,8 @@ def test_p2p_config_loads_network_seeds():
             f"Seed should be in multiaddr format: {seed}"
         
         print(f"✓ Network seeds configured:")
-        print(f"  Mainnet: {len(DEFAULT_SEEDS_BY_NETWORK[1])} seeds")
-        print(f"  Testnet: {len(DEFAULT_SEEDS_BY_NETWORK[2])} seeds")
+        print(f"  Mainnet: {len(DEFAULT_SEEDS_BY_NETWORK[0])} seeds")
+        print(f"  Testnet: {len(DEFAULT_SEEDS_BY_NETWORK[1])} seeds")
         print(f"  Devnet: {len(DEFAULT_SEEDS_BY_NETWORK[1337])} seeds")
         
     except ImportError as e:

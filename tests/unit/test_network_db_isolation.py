@@ -35,8 +35,8 @@ def test_core_config_per_network_data_dir():
     # Test testnet (chain 1)
     testnet_chain = ChainConfig(chain_id=1, network_name="testnet")
     testnet_paths = PathsConfig.defaults(testnet_chain)
-    assert "chain-2" in str(testnet_paths.data_dir), \
-        f"Testnet should use chain-2 directory, got {testnet_paths.data_dir}"
+    assert "chain-1" in str(testnet_paths.data_dir), \
+        f"Testnet should use chain-1 directory, got {testnet_paths.data_dir}"
     
     # Test devnet (chain 1337)
     devnet_chain = ChainConfig(chain_id=1337, network_name="devnet")
