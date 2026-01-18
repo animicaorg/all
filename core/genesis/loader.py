@@ -337,8 +337,13 @@ def _load_chain_params(
         params_path = Path(str(params_ref["path"])).expanduser()
     if params_path is None:
         params_path = default_params_path()
-    elif base_dir is not None and not params_path.is_absolute():
-        params_path = (base_dir / params_path).resolve()
+    elif not params_path.is_absolute():
+        # Resolve relative paths relative to repo root, not base_dir
+        # The genesis JSON typically uses paths like "spec/params.yaml" which are
+        # relative to the repo root, not relative to the genesis file location.
+        # core/genesis/loader.py -> parents[0]=core/genesis, parents[1]=core, parents[2]=repo_root
+        repo_root = Path(__file__).resolve().parents[2]
+        params_path = (repo_root / params_path).resolve()
 
     if not params_path.exists():
         origin = (
