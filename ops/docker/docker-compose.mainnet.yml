@@ -39,7 +39,6 @@ services:
       context: ../..
       dockerfile: ops/docker/node.Dockerfile
     container_name: animica-mainnet-node
-    user: "0"
     working_dir: /app
     # Env precedence: shell/--env-file > env_file > defaults in compose.
     env_file:
