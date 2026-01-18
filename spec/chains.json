@@ -38,7 +38,7 @@
     "genesis": {
       "height": 0,
       "time": "TBD",
-      "hash": "0xd2d2897104110b86bb60ccec251a7e2313f4abb301f8cc532d60162c20d3644f"
+      "hash": "0x6a27e93193020cd00fe429ef0ffac1c3a774268a589c2911ac396dd3cba2d242"
     },
     "policyRoots": {
       "algPolicyRoot": "0x0000000000000000000000000000000000000000000000000000000000000000",
