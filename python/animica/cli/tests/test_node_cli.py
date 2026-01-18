@@ -175,7 +175,7 @@ def create_mock_get_network_defaults(compose_files: dict[str, Path]):
         rpc_port, p2p_port, metrics_port = port_map.get(network, (8545, 30333, 9000))
         return {
             "compose_file": compose_files[network],
-            "chain_id": 1 if network == "mainnet" else (2 if network == "testnet" else 1337),
+            "chain_id": 0 if network == "mainnet" else (1 if network == "testnet" else 1337),
             "rpc_port": rpc_port,
             "p2p_port": p2p_port,
             "metrics_port": metrics_port,
@@ -1471,7 +1471,7 @@ def test_up_all_missing_compose_file(monkeypatch: Any) -> None:
             rpc_port, p2p_port, metrics_port = port_map.get(network, (8545, 30333, 9000))
             return {
                 "compose_file": compose_files.get(network, Path(tmpdir) / f"missing-{network}.yml"),
-                "chain_id": 1 if network == "mainnet" else (2 if network == "testnet" else 1337),
+                "chain_id": 0 if network == "mainnet" else (1 if network == "testnet" else 1337),
                 "rpc_port": rpc_port,
                 "p2p_port": p2p_port,
                 "metrics_port": metrics_port,

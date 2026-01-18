@@ -51,8 +51,8 @@ def test_devnet_100_percent_to_miner():
     return True
 
 def test_testnet_100_percent_to_miner():
-    """Test testnet (chain_id=2) gives 100% to miner."""
-    print("Testing Testnet (2) reward allocation...")
+    """Test testnet (chain_id=1) gives 100% to miner."""
+    print("Testing Testnet (1) reward allocation...")
     params = {
         "monetary": {
             "issuance": {
@@ -77,7 +77,7 @@ def test_testnet_100_percent_to_miner():
         },
     }
     
-    rewards = compute_block_reward(chain_id=2, height=1, params=params)
+    rewards = compute_block_reward(chain_id=1, height=1, params=params)
     
     assert len(rewards) == 1, f"Expected 1 reward (100% to miner), got {len(rewards)}"
     total = sum(amt for _, amt in rewards)

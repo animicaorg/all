@@ -32,11 +32,11 @@ def test_core_config_per_network_data_dir():
     assert "chain-0" in str(mainnet_paths.data_dir), \
         f"Mainnet should use chain-0 directory, got {mainnet_paths.data_dir}"
     
-    # Test testnet (chain 2)
-    testnet_chain = ChainConfig(chain_id=2, network_name="testnet")
+    # Test testnet (chain 1)
+    testnet_chain = ChainConfig(chain_id=1, network_name="testnet")
     testnet_paths = PathsConfig.defaults(testnet_chain)
-    assert "chain-2" in str(testnet_paths.data_dir), \
-        f"Testnet should use chain-2 directory, got {testnet_paths.data_dir}"
+    assert "chain-1" in str(testnet_paths.data_dir), \
+        f"Testnet should use chain-1 directory, got {testnet_paths.data_dir}"
     
     # Test devnet (chain 1337)
     devnet_chain = ChainConfig(chain_id=1337, network_name="devnet")
@@ -77,7 +77,7 @@ def test_rpc_config_per_network_db_uri():
         # Reload config module to pick up env change
         importlib.reload(rpc.config)
         testnet_cfg = load()
-        assert testnet_cfg.chain_id == 2, f"Testnet should be chain 2, got {testnet_cfg.chain_id}"
+        assert testnet_cfg.chain_id == 1, f"Testnet should be chain 1, got {testnet_cfg.chain_id}"
         assert "chain-2" in testnet_cfg.db_uri, \
             f"Testnet DB should use chain-2 path, got {testnet_cfg.db_uri}"
         

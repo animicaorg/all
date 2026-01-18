@@ -98,7 +98,7 @@ def test_rpc_config_default_db_path_uses_chain_id():
     from rpc.config import load
     
     # Test with different chain IDs
-    for chain_id, expected_dir in [(0, "chain-0"), (2, "chain-2"), (1337, "chain-1337")]:
+    for chain_id, expected_dir in [(0, "chain-0"), (1, "chain-1"), (1337, "chain-1337")]:
         os.environ["ANIMICA_CHAIN_ID"] = str(chain_id)
         try:
             cfg = load()

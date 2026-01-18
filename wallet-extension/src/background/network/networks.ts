@@ -61,7 +61,7 @@ const BUILTIN: Record<Exclude<NetworkId, "custom-env">, Network> = {
   "animica-testnet": {
     id: "animica-testnet",
     name: "Animica Testnet",
-    chainId: 2,
+    chainId: 1,
     rpcHttp: "https://rpc.testnet.animica.example",
     rpcWs: "wss://ws.testnet.animica.example",
     explorer: "https://explorer.testnet.animica.example",

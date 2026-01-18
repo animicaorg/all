@@ -199,7 +199,7 @@ const DEFAULT_DEVNET: NetworkConfig = {
 const DEFAULT_TESTNET: NetworkConfig = {
   id: 'testnet',
   label: 'Animica Testnet',
-  chainId: 2,
+  chainId: 1,
   rpcUrl: 'https://rpc.testnet.animica.org/rpc',
   wsUrl: 'wss://rpc.testnet.animica.org/ws',
   servicesUrl: 'https://services.testnet.animica.org',

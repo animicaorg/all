@@ -3,16 +3,16 @@
     {
       "id": "animica.mainnet",
       "name": "Animica Mainnet (Reserved)",
-      "chainId": 1,
-      "caip2": "animica:1",
+      "chainId": 0,
+      "caip2": "animica:0",
       "testnet": false,
       "file": "animica.mainnet.json"
     },
     {
       "id": "animica.testnet",
       "name": "Animica Testnet (Public Devnet)",
-      "chainId": 2,
-      "caip2": "animica:2",
+      "chainId": 1,
+      "caip2": "animica:1",
       "testnet": true,
       "file": "animica.testnet.json"
     },

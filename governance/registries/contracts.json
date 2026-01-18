@@ -115,7 +115,7 @@
     },
     "testnet": {
       "label": "Animica Testnet",
-      "chain_id": 2,
+      "chain_id": 1,
       "rpc_url": "https://rpc.testnet.animica.org",
       "explorer_url": "https://explorer.testnet.animica.org",
       "contracts": {
@@ -223,7 +223,7 @@
     },
     "mainnet": {
       "label": "Animica Mainnet",
-      "chain_id": 1,
+      "chain_id": 0,
       "rpc_url": "http://127.0.0.1:8545",
       "explorer_url": "https://explorer.animica.org",
       "contracts": {

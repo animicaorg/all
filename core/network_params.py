@@ -42,7 +42,7 @@ MAINNET_PARAMS = NetworkParams(
     expected_genesis_block_hash=bytes.fromhex(MAINNET_GENESIS_HASH_HEX[2:]),
 )
 
-TESTNET_PARAMS = NetworkParams(name="testnet", chain_id=2)
+TESTNET_PARAMS = NetworkParams(name="testnet", chain_id=1)
 DEVNET_PARAMS = NetworkParams(name="devnet", chain_id=1337)
 
 _BY_CHAIN_ID = {
@@ -65,13 +65,13 @@ NETWORK_NAME_ALIASES = {
 
 PINNED_GENESIS_BY_NETWORK: dict[tuple[str, int], bytes] = {
     ("mainnet", 0): bytes.fromhex(MAINNET_GENESIS_HASH_HEX[2:]),
-    ("testnet", 2): bytes.fromhex(TESTNET_GENESIS_HASH_HEX[2:]),
+    ("testnet", 1): bytes.fromhex(TESTNET_GENESIS_HASH_HEX[2:]),
     ("devnet", 1337): bytes.fromhex(DEVNET_GENESIS_HASH_HEX[2:]),
 }
 
 GENESIS_PATH_BY_NETWORK: dict[tuple[str, int], Path] = {
     ("mainnet", 0): GENESIS_DIR / "mainnet.json",
-    ("testnet", 2): GENESIS_DIR / "testnet.json",
+    ("testnet", 1): GENESIS_DIR / "testnet.json",
     ("devnet", 1337): GENESIS_DIR / "devnet.json",
 }
 

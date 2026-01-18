@@ -1,6 +1,6 @@
 {
   "id": "animica.testnet",
-  "chainId": 2,
+  "chainId": 1,
   "name": "Animica Testnet (Public Devnet)",
   "rpc": [
     "https://rpc.testnet.animica.org",
@@ -15,6 +15,6 @@
   "features": ["PoIES", "DA", "VM(Py)", "PQ", "Quantum", "AICF"],
   "blockTimeMs": 2000,
   "finality": "probabilistic",
-  "caip2": "animica:2",
+  "caip2": "animica:1",
   "notes": "Default public devnet endpoints; rate limited and reset periodically."
 }

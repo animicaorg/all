@@ -1,6 +1,6 @@
 {
   "id": "animica.mainnet",
-  "chainId": 1,
+  "chainId": 0,
   "name": "Animica Mainnet (Reserved)",
   "rpc": [],
   "explorer": "",

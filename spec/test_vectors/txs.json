@@ -47,7 +47,7 @@
     {
       "access_list": [],
       "amount": "1",
-      "chain_id": 2,
+      "chain_id": 1,
       "cbor_hex": "0xa1deadbeef03",
       "data": "0x",
       "desc": "INVALID — chainId mismatch (tx says testnet :2, vector intended for animica:0)",

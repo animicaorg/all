@@ -74,7 +74,7 @@
       }
     },
     {
-      "chain_id": 2,
+      "chain_id": 1,
       "name": "animica.testnet",
       "rollout": {
         "tx_signing": [
@@ -90,7 +90,7 @@
       }
     },
     {
-      "chain_id": 1,
+      "chain_id": 0,
       "name": "animica.mainnet",
       "rollout": {
         "tx_signing": [
