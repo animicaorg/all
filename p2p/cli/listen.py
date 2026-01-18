@@ -70,7 +70,7 @@ def _setup_logging(level: str = "INFO") -> None:
 
 
 # ---- Config ---------------------------------------------------------------------------
-DEFAULT_HOME = Path(os.environ.get("ANIMICA_HOME", Path.home() / ".animica"))
+DEFAULT_HOME = Path(os.environ.get("ANIMICA_HOME", os.environ.get("HOME", str(Path.home())) + "/.animica"))
 DEFAULT_DB_URI = os.environ.get(
     "ANIMICA_DB", f"sqlite:///{DEFAULT_HOME / 'animica.db'}"
 )

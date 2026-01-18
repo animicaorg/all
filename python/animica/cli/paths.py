@@ -23,10 +23,21 @@ def get_animica_home() -> Path:
     Get the Animica home directory.
     
     Returns ~/.animica by default, or $ANIMICA_HOME if set.
+    
+    Note: Uses $HOME environment variable instead of Path.home() to ensure
+    correct behavior in Docker containers where HOME may be set to /data but
+    the passwd file still points to /root.
     """
     env_home = os.environ.get("ANIMICA_HOME")
     if env_home:
         return Path(env_home).expanduser()
+    
+    # Use $HOME environment variable if set, falling back to Path.home()
+    # This ensures correct behavior in Docker where HOME=/data but passwd says /root
+    home = os.environ.get("HOME")
+    if home:
+        return Path(home) / ".animica"
+    
     return Path.home() / ".animica"
 
 

@@ -860,7 +860,10 @@ def _wallet_preserve_candidates() -> list[Path]:
     candidates = []
     if env_path:
         candidates.append(Path(env_path).expanduser())
-    base = Path.home() / ".animica"
+    # Use $HOME environment variable if available, falling back to Path.home()
+    # This ensures correct behavior in Docker where HOME=/data but passwd says /root
+    home = os.environ.get("HOME")
+    base = Path(home) / ".animica" if home else Path.home() / ".animica"
     candidates.append(base / "wallets.json")
     candidates.append(base / "wallet.dat")
     return candidates
@@ -3099,7 +3102,10 @@ def reset(
         try:
             from animica.cli.wallet_balances import export_wallet_balances_sync
             
-            wallet_path = Path.home() / ".animica" / "wallets.json"
+            # Use $HOME environment variable if available, falling back to Path.home()
+            # This ensures correct behavior in Docker where HOME=/data but passwd says /root
+            home = os.environ.get("HOME")
+            wallet_path = Path(home) / ".animica" / "wallets.json" if home else Path.home() / ".animica" / "wallets.json"
             backup_file, total_addrs, non_zero = export_wallet_balances_sync(
                 wallet_path=wallet_path,
                 data_dir=data_dir,

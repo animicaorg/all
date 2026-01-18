@@ -26,7 +26,10 @@ STATE_KEY_NETWORK = "active_network"
 def _format_display_path(path: Path) -> str:
     try:
         expanded = path.expanduser().resolve()
-        home = Path.home()
+        # Use $HOME environment variable if available, falling back to Path.home()
+        # This ensures correct behavior in Docker where HOME=/data but passwd says /root
+        home_env = os.environ.get("HOME")
+        home = Path(home_env) if home_env else Path.home()
         if str(expanded).startswith(str(home)):
             return f"~{str(expanded)[len(str(home)):]}"
     except Exception:

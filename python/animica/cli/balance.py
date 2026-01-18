@@ -79,7 +79,10 @@ def export_balances(
     data_dir = Path(net_cfg.data_dir).expanduser()
     
     if wallet_file is None:
-        wallet_file = Path.home() / ".animica" / "wallets.json"
+        # Use $HOME environment variable if available, falling back to Path.home()
+        # This ensures correct behavior in Docker where HOME=/data but passwd says /root
+        home = os.environ.get("HOME")
+        wallet_file = Path(home) / ".animica" / "wallets.json" if home else Path.home() / ".animica" / "wallets.json"
     
     if rpc_url is None:
         rpc_url = net_cfg.rpc_url

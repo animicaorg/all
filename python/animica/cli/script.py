@@ -31,7 +31,11 @@ def _scripts_root() -> Path:
     root = os.environ.get("ANIMICA_SCRIPTS_DIR")
     if root:
         return ensure_script_store(Path(root).expanduser())
-    return ensure_script_store(Path.home() / ".animica" / "scripts")
+    # Use $HOME environment variable if available, falling back to Path.home()
+    # This ensures correct behavior in Docker where HOME=/data but passwd says /root
+    home = os.environ.get("HOME")
+    scripts_path = Path(home) / ".animica" / "scripts" if home else Path.home() / ".animica" / "scripts"
+    return ensure_script_store(scripts_path)
 
 
 def _pinned_path(root: Path) -> Path:

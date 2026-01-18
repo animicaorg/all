@@ -54,7 +54,10 @@ except Exception:
 
 app = typer.Typer(help="Key management (generate, show, list)")
 
-DEFAULT_KEY_DIR = Path.home() / ".animica" / "keys"
+# Use $HOME environment variable if available, falling back to Path.home()
+# This ensures correct behavior in Docker where HOME=/data but passwd says /root
+_home = os.environ.get("HOME")
+DEFAULT_KEY_DIR = Path(_home) / ".animica" / "keys" if _home else Path.home() / ".animica" / "keys"
 
 
 def _ensure_pq_available() -> None:

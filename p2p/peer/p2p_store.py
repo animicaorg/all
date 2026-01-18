@@ -80,7 +80,7 @@ def ensure_writable(path: Path) -> WritablePath:
     _try_chgrp(target_dir)
     _try_chmod(target_dir, 0o775)
 
-    home = Path(os.environ.get("ANIMICA_HOME", Path.home() / ".animica")).expanduser()
+    home = Path(os.environ.get("ANIMICA_HOME", os.environ.get("HOME", str(Path.home())) + "/.animica")).expanduser()
     fallback_root = home / "p2p-local"
     try:
         rel = target_dir.relative_to(home)
