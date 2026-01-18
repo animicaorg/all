@@ -1032,7 +1032,7 @@ def _get_sync_status(
 ) -> tuple[Optional[dict[str, Any]], Optional[str]]:
     """
     Get sync status with improved error handling.
-
+    
     Returns:
         (status, error_msg): status is a dict with sync information, or None if unavailable
     """
