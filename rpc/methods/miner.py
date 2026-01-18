@@ -3495,47 +3495,66 @@ def _mine_once(
             header=header, txs=txs, proofs=(), receipts=receipts, verify=True
         )
         
-        # Persist block directly using block_db's atomic method
-        # This ensures the block is stored and marked canonical in one transaction
+        # CRITICAL FIX: Use block importer to properly apply state including rewards
+        # Previous code directly called append_canonical_block which only stored the block
+        # but never applied state changes (rewards, transaction effects, etc.)
+        # This caused mining rewards to not be credited to the miner's balance.
         try:
-            block_db = ctx.block_db
-            if hasattr(block_db, "append_canonical_block"):
-                block_db.append_canonical_block(header.height, block)
-                accepted = True
-                log.info(f"Block persisted via append_canonical_block at height {header.height}")
+            from core.chain import block_import as block_import_mod
+            
+            params = block_import_mod._load_chain_params_for_import(  # type: ignore[attr-defined]
+                getattr(ctx.cfg, "genesis_path", None)
+            )
+            importer = block_import_mod._get_importer(  # type: ignore[attr-defined]
+                ctx.block_db, ctx.state_db, ctx.tx_index, params
+            )
+            import_result = importer.import_block(block)
+            
+            accepted = import_result.code in (
+                block_import_mod.ImportErrorCode.ACCEPTED,
+                block_import_mod.ImportErrorCode.DUPLICATE,
+            )
+            
+            if accepted:
+                log.info(
+                    f"Block imported successfully via block importer at height {header.height}",
+                    extra={
+                        "height": header.height,
+                        "hash": "0x" + block_hash_bytes.hex()[:16] + "...",
+                        "code": import_result.code.name if hasattr(import_result.code, 'name') else str(import_result.code),
+                    }
+                )
                 
-                # CRITICAL FIX: Re-index receipts using canonical tx hashes
-                # append_canonical_block indexes receipts using tx.hash() which re-encodes,
-                # but we need to index them using the canonical hash from raw CBOR.
+                # Re-index receipts using canonical tx hashes for RPC lookups
                 # This ensures tx.getTransactionReceipt can find receipts using the hash
-                # returned by tx.sendRawTransaction.
-                if txs and hasattr(block_db, "kv"):
+                # returned by tx.sendRawTransaction
+                if txs and hasattr(ctx.block_db, "kv"):
                     try:
                         from core.encoding.cbor import dumps as cbor_dumps
-                        # Re-index receipts with canonical hashes
-                        with block_db.kv.batch() as batch:
+                        with ctx.block_db.kv.batch() as batch:
                             for idx, tx in enumerate(txs):
-                                # Get canonical hash from tracked raw bytes
                                 tracked = _tracked(tx)
                                 if tracked:
                                     tx_hash_hex, raw = tracked
-                                    tx_hash = bytes.fromhex(tx_hash_hex[2:])  # strip "0x" prefix
-                                    
-                                    # Store receipt pointer using canonical hash
-                                    # Format: PFX_RXI + tx_hash → {"h": height, "i": idx, "b": block_hash}
+                                    tx_hash = bytes.fromhex(tx_hash_hex[2:])
                                     receipt_ptr = cbor_dumps({"h": header.height, "i": idx, "b": block_hash_bytes})
                                     batch.put(PFX_RXI + tx_hash, receipt_ptr)
-                                    log.debug(f"Re-indexed receipt for canonical hash: {tx_hash_hex[:16]}...")
                             batch.commit()
-                        log.info(f"Re-indexed {len(txs)} receipts with canonical tx hashes")
+                        log.debug(f"Re-indexed {len(txs)} receipts with canonical tx hashes")
                     except Exception as e:
-                        log.warning(f"Failed to re-index receipts with canonical hashes: {e}")
+                        log.warning(f"Failed to re-index receipts: {e}")
             else:
-                # Fallback to adapter
-                accepted = adapter.submit_block(block)
-                log.info(f"Block submitted via adapter: accepted={accepted}")
+                reason = import_result.reason or "unknown"
+                log.error(
+                    f"Block import rejected: {reason}",
+                    extra={
+                        "height": header.height,
+                        "code": import_result.code.name if hasattr(import_result.code, 'name') else str(import_result.code),
+                        "reason": reason,
+                    }
+                )
         except Exception as e:
-            log.error(f"Block persistence failed: {e}", exc_info=True)
+            log.error(f"Block import failed: {e}", exc_info=True)
             accepted = False
         
         if accepted:
