@@ -1,7 +1,7 @@
 # Animica Mainnet
 # -------------------------------------------------------------------
 # Production mainnet node configuration with:
-#   - Node (RPC+WS on 8545) - mainnet chain ID 1
+#   - Node (RPC+WS on 8545) - mainnet chain ID 0
 #   - Optional miner
 #   - Optional studio-services (deploy/verify API)
 #   - Optional explorer-web
@@ -13,7 +13,7 @@
 #   docker compose -f ops/docker/docker-compose.mainnet.yml up -d
 #
 # Notes:
-# - Uses mainnet chain ID (1)
+# - Uses mainnet chain ID (0)
 # - Isolated volumes: mainnet_node_data, mainnet_services_data
 # - Genesis: /app/core/genesis/mainnet.json (bundled in image)
 # - Data directory isolated to prevent cross-network contamination
@@ -26,7 +26,7 @@ networks:
 
 volumes:
   mainnet_chain_data:
-    name: ${ANIMICA_DATA_ROOT:-animica_mainnet_chain_1_data}
+    name: ${ANIMICA_DATA_ROOT:-animica_mainnet_chain_0_data}
   mainnet_services_data:
     name: animica_mainnet_services_data
 
@@ -51,7 +51,7 @@ services:
       # Mainnet chain config
       ANIMICA_NETWORK: "mainnet"
       ANIMICA_COMPOSE_FILE: "${ANIMICA_COMPOSE_FILE:-/app/ops/docker/docker-compose.mainnet.yml}"
-      ANIMICA_CHAIN_ID: "${ANIMICA_CHAIN_ID:-1}"
+      ANIMICA_CHAIN_ID: "${ANIMICA_CHAIN_ID:-0}"
       GENESIS_PATH: "${GENESIS_PATH:-/app/core/genesis/mainnet.json}"
       ANIMICA_DATA_DIR: "/data"
       # RPC server config
@@ -65,7 +65,7 @@ services:
       # P2P config - mainnet seeds auto-selected by chain_id
       # Primary config (ANIMICA_P2P_* vars are canonical):
       ANIMICA_P2P_ENABLE: "${ANIMICA_P2P_ENABLE:-true}"
-      ANIMICA_P2P_CHAIN_ID: "${ANIMICA_P2P_CHAIN_ID:-1}"  # Auto-loads mainnet seeds
+      ANIMICA_P2P_CHAIN_ID: "${ANIMICA_P2P_CHAIN_ID:-0}"  # Auto-loads mainnet seeds
       ANIMICA_P2P_PORT: "${ANIMICA_P2P_PORT:-30333}"
       ANIMICA_P2P_LISTEN_TCP: "${ANIMICA_P2P_LISTEN_TCP:-0.0.0.0:${ANIMICA_P2P_PORT:-30333}}"
       ANIMICA_P2P_LISTEN_QUIC: "${ANIMICA_P2P_LISTEN_QUIC:-0.0.0.0:443}"
@@ -74,8 +74,8 @@ services:
       # Optional advertised address (public IP/host for inbound peers):
       # Example: ANIMICA_P2P_ADVERTISE_ADDR=203.0.113.10:30333
       ANIMICA_P2P_ADVERTISE_ADDR: "${ANIMICA_P2P_ADVERTISE_ADDR:-}"
-      ANIMICA_P2P_DATA_DIR: "${ANIMICA_P2P_DATA_DIR:-/data/chain-${ANIMICA_CHAIN_ID:-1}/p2p}"
-      ANIMICA_PEER_STORE_PATH: "${ANIMICA_PEER_STORE_PATH:-/data/chain-${ANIMICA_CHAIN_ID:-1}/p2p}"
+      ANIMICA_P2P_DATA_DIR: "${ANIMICA_P2P_DATA_DIR:-/data/chain-${ANIMICA_CHAIN_ID:-0}/p2p}"
+      ANIMICA_PEER_STORE_PATH: "${ANIMICA_PEER_STORE_PATH:-/data/chain-${ANIMICA_CHAIN_ID:-0}/p2p}"
       # Legacy P2P config (backward compatibility - deprecated):
       P2P_ENABLE: "${P2P_ENABLE:-true}"
       P2P_LISTEN: "${P2P_LISTEN:-0.0.0.0:${ANIMICA_P2P_PORT:-30333}}"
