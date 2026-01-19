@@ -252,3 +252,18 @@ def get_manifest_for_env() -> Optional[NetworkManifest]:
             pass
 
     return None
+
+
+def is_mainnet(chain_id: int) -> bool:
+    """Check if a chain_id corresponds to mainnet."""
+    return chain_id == MAINNET_MANIFEST.chain_id
+
+
+def is_testnet(chain_id: int) -> bool:
+    """Check if a chain_id corresponds to testnet."""
+    return chain_id == TESTNET_MANIFEST.chain_id
+
+
+def is_devnet(chain_id: int) -> bool:
+    """Check if a chain_id corresponds to devnet."""
+    return chain_id == DEVNET_MANIFEST.chain_id
