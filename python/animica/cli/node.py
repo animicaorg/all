@@ -2170,6 +2170,16 @@ def status(
                         summary += f" error={last_bootstrap_err}"
                     typer.echo(summary)
             if recent_blocks > 0 and height is not None:
+                # Re-fetch head to ensure we show the most recent blocks (in case new blocks were mined)
+                try:
+                    fresh_head = asyncio.run(rpc_call("chain.getHead", [], rpc_url=url, timeout=rpc_timeout))
+                    fresh_height = _extract_field(fresh_head, "height", "number", "blockNumber")
+                    if fresh_height is not None and fresh_height > height:
+                        height = fresh_height
+                except Exception:
+                    # If fresh head fetch fails, use the original height
+                    pass
+                
                 typer.echo("Recent blocks:")
                 start = max(height - recent_blocks + 1, 0)
                 for h in range(height, start - 1, -1):
