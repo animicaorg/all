@@ -8,8 +8,8 @@ are accepted if their parent_hash matches ANY valid genesis hash variant
 Regression test for issue: "Node stuck syncing at genesis with no_fresh_peer_tips"
 """
 import pytest
-from unittest.mock import Mock, patch
-from p2p.node.p2p_service import P2PService, _SyncHeader
+from unittest.mock import Mock
+from p2p.node.p2p_service import P2PService
 
 
 class TestGenesisHashVariantsSync:
