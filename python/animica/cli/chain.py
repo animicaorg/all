@@ -497,3 +497,133 @@ def genesis_info(
         typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(1)
 
+
+@genesis_app.command("identity")
+def genesis_identity(
+    rpc_url: Optional[str] = typer.Option(
+        None,
+        "--rpc-url",
+        help="Override RPC URL to query running node",
+        envvar="ANIMICA_RPC_URL",
+    ),
+) -> None:
+    """
+    Display complete network identity including local config and RPC node state.
+    
+    Shows both local configuration and RPC-reported values to detect mismatches.
+    This is the authoritative diagnostic for network identity issues.
+    
+    Exit codes:
+      0 = identity verified (all sources match)
+      1 = mismatch detected or error
+    """
+    try:
+        sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../")))
+        from core.network_manifest import get_manifest_for_env, compute_genesis_hash
+        from animica.config import load_network_config
+        
+        # Get local config
+        net_cfg = load_network_config()
+        manifest = get_manifest_for_env()
+        
+        typer.echo("=" * 80)
+        typer.echo("Network Identity Report")
+        typer.echo("=" * 80)
+        typer.echo("")
+        
+        # Local configuration
+        typer.echo("LOCAL CONFIGURATION:")
+        typer.echo(f"  Network Name:      {net_cfg.name}")
+        typer.echo(f"  Chain ID:          {net_cfg.chain_id}")
+        typer.echo(f"  Genesis Path:      {net_cfg.genesis_path}")
+        typer.echo(f"  Data Directory:    {net_cfg.data_dir}")
+        typer.echo(f"  RPC URL:           {net_cfg.rpc_url}")
+        
+        if manifest:
+            typer.echo(f"  Pinned Genesis:    {manifest.pinned_genesis_hash_hex}")
+            
+            # Verify genesis file matches pinned hash
+            computed_match = None
+            if manifest.genesis_path.exists():
+                try:
+                    computed_hash = compute_genesis_hash(manifest.genesis_path)
+                    computed_hex = "0x" + computed_hash.hex()
+                    typer.echo(f"  Computed Genesis:  {computed_hex}")
+                    computed_match = (computed_hash == manifest.pinned_genesis_hash)
+                    if computed_match:
+                        typer.echo(f"  File Verification: ✓ MATCH")
+                    else:
+                        typer.echo(f"  File Verification: ✗ MISMATCH")
+                except Exception as e:
+                    typer.echo(f"  File Verification: ✗ ERROR: {e}")
+            else:
+                typer.echo(f"  File Verification: ✗ FILE NOT FOUND")
+        
+        typer.echo("")
+        
+        # RPC node state
+        typer.echo("RPC NODE STATE:")
+        url = _resolve_rpc_url(rpc_url)
+        typer.echo(f"  RPC URL:           {url}")
+        
+        try:
+            rpc_chain_id = call_rpc("net.getChainId", [], url)
+            typer.echo(f"  Chain ID:          {rpc_chain_id}")
+        except Exception as e:
+            typer.echo(f"  Chain ID:          (unavailable: {e})")
+            rpc_chain_id = None
+        
+        try:
+            rpc_genesis = call_rpc("net.getGenesisHash", [], url)
+            typer.echo(f"  Genesis Hash:      {rpc_genesis}")
+        except Exception as e:
+            typer.echo(f"  Genesis Hash:      (unavailable: {e})")
+            rpc_genesis = None
+        
+        typer.echo("")
+        typer.echo("=" * 80)
+        
+        # Check for mismatches
+        has_error = False
+        
+        if manifest and computed_match is False:
+            typer.echo("❌ ERROR: Local genesis file does not match pinned hash!", err=True)
+            typer.echo(f"   Genesis file: {manifest.genesis_path}", err=True)
+            typer.echo(f"   This indicates the genesis file was modified.", err=True)
+            has_error = True
+        
+        if rpc_chain_id is not None and rpc_chain_id != net_cfg.chain_id:
+            typer.echo(f"❌ ERROR: Chain ID mismatch!", err=True)
+            typer.echo(f"   Local config: {net_cfg.chain_id}", err=True)
+            typer.echo(f"   RPC node:     {rpc_chain_id}", err=True)
+            typer.echo(f"   You are querying a different network!", err=True)
+            has_error = True
+        
+        if rpc_genesis and manifest and rpc_genesis != manifest.pinned_genesis_hash_hex:
+            typer.echo(f"❌ ERROR: Genesis hash mismatch!", err=True)
+            typer.echo(f"   Local pinned: {manifest.pinned_genesis_hash_hex}", err=True)
+            typer.echo(f"   RPC node:     {rpc_genesis}", err=True)
+            typer.echo(f"   Node was initialized with different genesis!", err=True)
+            has_error = True
+        
+        if has_error:
+            typer.echo("=" * 80)
+            typer.echo("")
+            typer.echo("TO FIX:")
+            typer.echo("  1. Ensure ANIMICA_NETWORK and ANIMICA_CHAIN_ID are correct")
+            typer.echo("  2. Ensure ANIMICA_RPC_URL points to the right network")
+            typer.echo("  3. Reset node data if genesis changed: animica node reset")
+            typer.echo("  4. For docker: docker compose down -v && docker compose build && docker compose up -d")
+            raise typer.Exit(1)
+        else:
+            typer.echo("✓ All checks passed - network identity is consistent")
+            raise typer.Exit(0)
+            
+    except typer.Exit:
+        raise
+    except Exception as e:
+        typer.echo(f"❌ Error: {e}", err=True)
+        import traceback
+        traceback.print_exc()
+        raise typer.Exit(1)
+

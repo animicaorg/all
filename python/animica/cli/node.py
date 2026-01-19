@@ -1915,6 +1915,33 @@ def status(
             peers, peers_error = _get_peers(url, rpc_timeout)
             peer_error = peers_error
 
+            # Query RPC for authoritative chain_id and genesis hash
+            rpc_chain_id = None
+            rpc_genesis_hash = None
+            try:
+                rpc_chain_id = asyncio.run(
+                    rpc_call("net.getChainId", [], rpc_url=url, timeout=rpc_timeout)
+                )
+            except Exception:
+                pass
+            
+            try:
+                rpc_genesis_hash = asyncio.run(
+                    rpc_call("net.getGenesisHash", [], rpc_url=url, timeout=rpc_timeout)
+                )
+            except Exception:
+                pass
+            
+            # Get local config values for comparison
+            local_genesis_hash = None
+            try:
+                from core.network_params import get_pinned_genesis_hash
+                pinned = get_pinned_genesis_hash(chain_id=net_cfg.chain_id)
+                if pinned:
+                    local_genesis_hash = "0x" + pinned.hex()
+            except Exception:
+                pass
+            
             typer.echo(f"RPC URL: {url}")
             typer.echo("RPC reachable: yes")
             typer.echo(f"bootstrap_mode: {bootstrap_setting.value}")
@@ -1922,7 +1949,73 @@ def status(
             typer.echo(
                 f"bootstrap_rpc_url: {bootstrap_rpc_url or '(empty)'}"
             )
-            typer.echo("Animica blockchain info:")
+            typer.echo("")
+            typer.echo("=== Network Identity ===")
+            typer.echo(f"Local Config Network: {net_cfg.name}")
+            typer.echo(f"Local Config Chain ID: {net_cfg.chain_id}")
+            typer.echo(f"Local Config Genesis Path: {net_cfg.genesis_path}")
+            if local_genesis_hash:
+                typer.echo(f"Local Pinned Genesis Hash: {local_genesis_hash}")
+            typer.echo("")
+            typer.echo(f"RPC Reported Chain ID: {rpc_chain_id if rpc_chain_id is not None else '(unavailable)'}")
+            typer.echo(f"RPC Reported Genesis Hash: {rpc_genesis_hash or '(unavailable)'}")
+            
+            # Warn if mismatch detected
+            if rpc_chain_id is not None and rpc_chain_id != net_cfg.chain_id:
+                typer.secho(
+                    f"\n⚠️  WARNING: Chain ID mismatch detected!",
+                    fg=typer.colors.RED,
+                    bold=True,
+                )
+                typer.secho(
+                    f"  CLI config expects chain_id={net_cfg.chain_id} ({net_cfg.name})",
+                    fg=typer.colors.YELLOW,
+                )
+                typer.secho(
+                    f"  RPC node reports chain_id={rpc_chain_id}",
+                    fg=typer.colors.YELLOW,
+                )
+                typer.secho(
+                    f"  This means you are querying a different network than expected!",
+                    fg=typer.colors.RED,
+                )
+                typer.secho(
+                    f"  Fix: Set ANIMICA_NETWORK or ANIMICA_RPC_URL correctly.\n",
+                    fg=typer.colors.YELLOW,
+                )
+            
+            if rpc_genesis_hash and local_genesis_hash and rpc_genesis_hash != local_genesis_hash:
+                typer.secho(
+                    f"\n⚠️  WARNING: Genesis hash mismatch detected!",
+                    fg=typer.colors.RED,
+                    bold=True,
+                )
+                typer.secho(
+                    f"  Local config expects: {local_genesis_hash}",
+                    fg=typer.colors.YELLOW,
+                )
+                typer.secho(
+                    f"  RPC node reports: {rpc_genesis_hash}",
+                    fg=typer.colors.YELLOW,
+                )
+                typer.secho(
+                    f"  This indicates the node was initialized with a different genesis!",
+                    fg=typer.colors.RED,
+                )
+                typer.secho(
+                    f"  Fix: Reset node data or use correct genesis file.\n",
+                    fg=typer.colors.YELLOW,
+                )
+            
+            if rpc_chain_id is not None and rpc_chain_id == net_cfg.chain_id and \
+               rpc_genesis_hash and local_genesis_hash and rpc_genesis_hash == local_genesis_hash:
+                typer.secho(
+                    "✓ Network identity verified: RPC and local config match",
+                    fg=typer.colors.GREEN,
+                )
+            
+            typer.echo("")
+            typer.echo("=== Chain State ===")
             typer.echo(f"  Chain ID: {chain_id}")
             typer.echo(f"  Head height: {height}")
             typer.echo(f"  Head hash: {head_hash}")
