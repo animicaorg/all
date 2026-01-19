@@ -62,6 +62,14 @@ def _parse_params(params_args: list[str]) -> Any:
 
     if len(params_args) == 1:
         parsed = _parse_value(params_args[0])
+        
+        # Handle wrapped params format: {"params": [...]} or {"params": {...}}
+        # This allows: animica rpc call state.getBalance '{"params":["anim1..."]}'
+        if isinstance(parsed, dict) and "params" in parsed:
+            inner_params = parsed["params"]
+            # Return the unwrapped params (array or dict)
+            return inner_params
+        
         if isinstance(parsed, (list, dict)):
             return parsed
         return [parsed]
