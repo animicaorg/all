@@ -156,14 +156,51 @@ def enforce_pinned_genesis(
     genesis_path: Optional[str] = None,
     network_name: Optional[str] = None,
 ) -> None:
+    """
+    Enforce that the genesis block hash matches the pinned network genesis.
+    
+    This is a critical security check to ensure the node is on the correct network.
+    
+    Environment Variables:
+        ANIMICA_SKIP_GENESIS_PIN: If set to "1" (dev-only), bypasses genesis validation
+                                   with loud warnings. NEVER use in production!
+    
+    Args:
+        chain_id: Chain ID to validate
+        genesis_block_hash: Computed genesis block hash from the node
+        genesis_path: Optional path to genesis file for error messages
+        network_name: Optional network name for error messages
+        
+    Raises:
+        GenesisError: If genesis hash doesn't match pinned hash (unless bypass enabled)
+    """
+    import os
     from core.errors import GenesisError
     from core.genesis.loader import compute_genesis_hash
 
+    # DEV-ONLY BYPASS (with scary warnings)
+    skip_pin = os.environ.get("ANIMICA_SKIP_GENESIS_PIN", "").strip()
+    if skip_pin == "1":
+        logger.warning("=" * 80)
+        logger.warning("⚠️  WARNING: GENESIS PINNING BYPASSED!")
+        logger.warning("⚠️  ANIMICA_SKIP_GENESIS_PIN=1 is set")
+        logger.warning("⚠️  This is a DEVELOPMENT-ONLY feature!")
+        logger.warning("⚠️  NEVER use this in production or on mainnet!")
+        logger.warning("⚠️  Your node may sync to an incompatible chain!")
+        logger.warning("=" * 80)
+        logger.warning(f"[genesis] BYPASSED pinning check for chain_id={chain_id}")
+        return
+
     params = get_network_params(chain_id=chain_id, network_name=network_name)
     if params is None:
+        # Unknown network - no pinning available
+        logger.debug(f"[genesis] No pinning available for chain_id={chain_id}")
         return
+    
     expected = get_pinned_genesis_hash(chain_id=chain_id, network_name=params.name)
     if expected is None:
+        # Network exists but no pinned hash defined
+        logger.debug(f"[genesis] No pinned hash for {params.name} (chain_id={chain_id})")
         return
 
     expected_path = get_network_genesis_path(chain_id=chain_id, network_name=params.name)
@@ -192,6 +229,32 @@ def enforce_pinned_genesis(
     path_hint = str(resolved_path or expected_path_resolved or genesis_path or "<unknown>")
 
     if genesis_block_hash != expected:
+        error_msg = (
+            f"genesis does not match pinned network genesis\n"
+            f"  Expected (pinned): {expected_hex}\n"
+            f"  Found (computed):  {found_hex}\n"
+            f"  Genesis path:      {path_hint}\n"
+            f"  Chain ID:          {chain_id}\n"
+            f"  Network:           {params.name}\n"
+            f"\n"
+            f"This typically means:\n"
+            f"  (1) You're using the wrong genesis file for this network, OR\n"
+            f"  (2) The genesis file was modified without updating the pinned hash, OR\n"
+            f"  (3) Your data directory contains blocks from a different genesis\n"
+            f"\n"
+            f"To fix:\n"
+            f"  • Pull latest code and rebuild: git pull && docker compose build\n"
+            f"  • Reset chain data: animica node reset\n"
+            f"  • For docker: docker compose down -v && docker compose up -d\n"
+            f"  • If you intentionally changed genesis, update both:\n"
+            f"    - core/network_params.py (MAINNET_GENESIS_HASH_HEX or equivalent)\n"
+            f"    - core/network_manifest.py (pinned_genesis_hash)\n"
+            f"\n"
+            f"DEV-ONLY BYPASS (dangerous!):\n"
+            f"  Set ANIMICA_SKIP_GENESIS_PIN=1 to bypass this check\n"
+            f"  WARNING: Only use for testing! Never on mainnet!"
+        )
+        
         raise GenesisError(
             "genesis does not match pinned network genesis",
             expected=expected_hex,
@@ -199,22 +262,13 @@ def enforce_pinned_genesis(
             genesis_path=path_hint,
             chain_id=chain_id,
             network=params.name,
-            hint=(
-                f"Your genesis file does not match the pinned {params.name} genesis for chain_id={chain_id}. "
-                f"Expected hash: {expected_hex}, but computed hash: {found_hex}. "
-                "This typically means: "
-                "(1) You're using the wrong genesis file for this network, or "
-                "(2) The genesis file content changed without updating the pinned hash constant. "
-                "If you intentionally changed the genesis file, you MUST update BOTH: "
-                "(a) the pinned hash constant in core/network_params.py (MAINNET_GENESIS_HASH_HEX or equivalent), and "
-                "(b) the regression test that validates the pinned hash matches the computed hash. "
-                "If your /data volume already contains the old genesis DB, wipe it or use the reset command."
-            ),
+            hint=error_msg,
         )
 
     logger.info(
-        "[genesis] Selected genesis: %s hash=%s pinned=%s",
-        path_hint,
-        found_hex,
+        "[genesis] ✓ Verified genesis identity: network=%s chain_id=%s hash=%s path=%s",
+        params.name,
+        chain_id,
         expected_hex,
+        path_hint,
     )
