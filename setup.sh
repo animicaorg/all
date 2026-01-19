@@ -170,16 +170,21 @@ install_local_dependencies() {
 install_animica() {
   log "Installing Animica package in editable mode"
 
+  # First install root package (animica-node) which provides core, rpc, p2p, etc.
+  if [ -f "$ROOT/pyproject.toml" ]; then
+    log "Installing animica-node (core modules) from root"
+    if ! python -m pip install -e "$ROOT" --quiet; then
+      die "Failed to install animica-node from root pyproject.toml"
+    fi
+  fi
+
+  # Then install animica CLI package (depends on core from animica-node)
   if [ -d "$ROOT/python" ] && [ -f "$ROOT/python/pyproject.toml" ]; then
     if ! python -m pip install -e "$ROOT/python[dev]"; then
       die "Failed to install animica[dev]. Ensure omni-sdk is available via local path or PIP_EXTRA_INDEX_URL"
     fi
-  elif [ -f "$ROOT/pyproject.toml" ]; then
-    if ! python -m pip install -e "$ROOT[dev]"; then
-      die "Failed to install animica[dev] from root pyproject.toml"
-    fi
   else
-    die "Could not find pyproject.toml (checked ./python and repo root)"
+    die "Could not find animica CLI pyproject.toml at ./python/pyproject.toml"
   fi
 
   if [ -d "$ROOT/pq" ] && [ -f "$ROOT/pq/pyproject.toml" ]; then
