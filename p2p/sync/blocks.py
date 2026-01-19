@@ -187,11 +187,13 @@ class BlocksDownloader:
                         f"Block fetch timeout for {h.hex()[:16]}... "
                         f"(attempt {attempt + 1}/{self.cfg.max_retries + 1})"
                     )
-                    # Exponential backoff with jitter, but keep bounded.
-                    base = min(6.0, timeout * 1.6)
+                    # Phase 3: Improved exponential backoff with better cap
+                    # Instead of unbounded growth to 6s+, use bounded exponential backoff
+                    base = min(4.0, timeout * 1.4)  # Reduced from 1.6x to 1.4x, cap at 4s
                     timeout = base * (
                         1.0 + (random.random() - 0.5) * 2 * self.cfg.jitter_frac
                     )
+                    timeout = min(timeout, 30.0)  # Hard cap at 30s for extreme cases
                 except (ConnectionError, OSError) as e:
                     # Transient network errors - retry with short backoff
                     self.stats.errors += 1
