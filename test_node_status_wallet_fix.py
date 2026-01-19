@@ -91,13 +91,18 @@ def check_recent_blocks_in_status():
         if recent_blocks_started:
             # Look for lines like "  123: 0x1234abcd 2026-01-19 20:24:25Z txs=0"
             stripped = line.strip()
-            if stripped and stripped[0].isdigit():
+            if stripped:
                 try:
-                    height = int(stripped.split(":")[0])
-                    heights.append(height)
+                    # Extract the height (part before the colon) and check if it's a digit
+                    height_part = stripped.split(":")[0]
+                    if height_part.isdigit():
+                        height = int(height_part)
+                        heights.append(height)
                 except (ValueError, IndexError):
                     pass
-            elif stripped and not stripped.startswith(" "):
+            
+            # Check if we've moved past the recent blocks section
+            if stripped and not stripped.startswith(" ") and not stripped[0].isdigit():
                 # End of recent blocks section
                 break
     
