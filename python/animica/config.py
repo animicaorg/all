@@ -361,14 +361,30 @@ def get_network_defaults(network: str) -> dict[str, any]:
             canonical_chain_id = manifest.chain_id
             canonical_genesis_path = str(manifest.genesis_path)
         else:
-            # Fallback for unknown networks (shouldn't happen in practice)
-            canonical_chain_id = 0
-            canonical_genesis_path = str(repo_root / "core" / "genesis" / "mainnet.json")
-            logger.warning(f"Network '{network}' not found in network_manifest, using mainnet defaults")
-    except ImportError:
-        # Fallback if network_manifest not available (shouldn't happen)
-        logger.warning("core.network_manifest not available, using hardcoded chain_id values")
-        canonical_chain_id = {"mainnet": 0, "testnet": 2, "devnet": 1337, "local-devnet": 1337}.get(network, 0)
+            # Unknown network - fallback to hardcoded values
+            logger.warning(f"Network '{network}' not found in network_manifest, using fallback defaults")
+            canonical_chain_id = {"mainnet": 0, "testnet": 2, "devnet": 1337, "local-devnet": 1337}.get(network, 0)
+            canonical_genesis_path = str(repo_root / "core" / "genesis" / f"{network.replace('local-', '')}.json")
+    except ImportError as exc:
+        # CRITICAL: network_manifest import failure is a serious issue
+        # For mainnet, this MUST fail loudly as it indicates a packaging/deployment problem
+        if network.lower() in ("mainnet", "main"):
+            error_msg = (
+                f"FATAL: core.network_manifest not available for mainnet! "
+                f"This indicates a critical packaging or deployment issue. "
+                f"Mainnet MUST have network_manifest available to ensure correct chain identity. "
+                f"Import error: {exc}"
+            )
+            logger.error(error_msg)
+            raise ImportError(error_msg) from exc
+        
+        # For dev/test networks, allow fallback but warn loudly
+        logger.warning(
+            f"core.network_manifest not available (import error: {exc}). "
+            f"Falling back to hardcoded chain_id values for network '{network}'. "
+            f"This is acceptable for dev/test but should not happen in production."
+        )
+        canonical_chain_id = {"testnet": 2, "devnet": 1337, "local-devnet": 1337}.get(network, 1337)
         canonical_genesis_path = str(repo_root / "core" / "genesis" / f"{network.replace('local-', '')}.json")
     
     network_configs = {
@@ -508,18 +524,24 @@ def load_network_config(network: Optional[str] = None) -> NetworkConfig:
                 logger.error(error_msg)
                 raise ValueError(error_msg)
             logger.debug(f"Validated chain_id={chain_id} matches network '{network_name}' (from network_manifest)")
-    except ImportError:
-        # Fallback validation if network_manifest not available
-        logger.warning("core.network_manifest not available, using hardcoded chain_id validation")
-        if network_name.lower() == "mainnet" and chain_id != 0:
+    except ImportError as exc:
+        # CRITICAL: For mainnet, network_manifest MUST be available
+        if network_name.lower() in ("mainnet", "main"):
             error_msg = (
-                f"FATAL: Network 'mainnet' MUST use chain_id=0, but got chain_id={chain_id}. "
-                f"This indicates a configuration error. Please check ANIMICA_CHAIN_ID environment variable "
-                f"and ensure it is not set to a non-zero value when running mainnet."
+                f"FATAL: core.network_manifest not available for mainnet validation! "
+                f"This indicates a critical packaging or deployment issue. "
+                f"Mainnet MUST have network_manifest available to validate chain identity. "
+                f"Import error: {exc}"
             )
             logger.error(error_msg)
-            raise ValueError(error_msg)
+            raise ImportError(error_msg) from exc
         
+        # Fallback validation for dev/test networks
+        logger.warning(
+            f"core.network_manifest not available for chain_id validation (import error: {exc}). "
+            f"Using fallback validation for network '{network_name}'. "
+            f"This is acceptable for dev/test but should not happen in production."
+        )
         if network_name.lower() == "testnet" and chain_id != 2:
             logger.warning(
                 f"Network 'testnet' typically uses chain_id=2, but got chain_id={chain_id}. "

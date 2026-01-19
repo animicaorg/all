@@ -375,25 +375,46 @@ async def net_get_genesis_hash() -> str:
                 if genesis_block:
                     # Return block hash if available
                     block_hash = getattr(genesis_block, "hash", None)
-                    # If hash is a method, call it
+                    # CRITICAL: Always call hash if it's a method/callable
+                    # This prevents returning bound method objects like "<bound method Header.hash ...>"
                     if callable(block_hash):
                         block_hash = block_hash()
                     if block_hash:
                         if isinstance(block_hash, bytes):
                             return "0x" + block_hash.hex()
-                        return str(block_hash) if str(block_hash).startswith("0x") else "0x" + str(block_hash)
+                        # Additional safety: check if result is still callable (shouldn't happen)
+                        if callable(block_hash):
+                            raise ValueError(f"block_hash is still callable after invocation: {type(block_hash)}")
+                        # Ensure the result is a proper hex string
+                        hash_str = str(block_hash)
+                        if not hash_str.startswith("0x"):
+                            hash_str = "0x" + hash_str
+                        # Validate it's a proper hex string (64 chars + 0x prefix = 66 total)
+                        if len(hash_str) == 66 and all(c in "0123456789abcdefABCDEF" for c in hash_str[2:]):
+                            return hash_str.lower()
+                        raise ValueError(f"Invalid hash format: {hash_str}")
                     
                     # Try header hash
                     header = getattr(genesis_block, "header", None)
                     if header:
                         header_hash = getattr(header, "hash", None) or getattr(header, "block_hash", None)
-                        # If hash is a method, call it
+                        # CRITICAL: Always call hash if it's a method/callable
                         if callable(header_hash):
                             header_hash = header_hash()
                         if header_hash:
                             if isinstance(header_hash, bytes):
                                 return "0x" + header_hash.hex()
-                            return str(header_hash) if str(header_hash).startswith("0x") else "0x" + str(header_hash)
+                            # Additional safety: check if result is still callable (shouldn't happen)
+                            if callable(header_hash):
+                                raise ValueError(f"header_hash is still callable after invocation: {type(header_hash)}")
+                            # Ensure the result is a proper hex string
+                            hash_str = str(header_hash)
+                            if not hash_str.startswith("0x"):
+                                hash_str = "0x" + hash_str
+                            # Validate it's a proper hex string (64 chars + 0x prefix = 66 total)
+                            if len(hash_str) == 66 and all(c in "0123456789abcdefABCDEF" for c in hash_str[2:]):
+                                return hash_str.lower()
+                            raise ValueError(f"Invalid hash format: {hash_str}")
             except Exception:
                 pass
         
