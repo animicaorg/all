@@ -152,17 +152,52 @@ class NodeService:
             loop=self.loop,
         )
         self.ping = pingsvc.PingService(self.connmgr, window_size=16)
+        
+        # Get network manifest for P2P identity
+        network_id, genesis_hash = self._load_network_manifest()
+        
+        # Fall back to alg_policy_root if manifest not available
+        if not network_id:
+            network_id = self.cfg.alg_policy_root
+        
         self.identify = idsvc.IdentifyService(
             connmgr=self.connmgr,
             peer_id=self.peer_id,
             version=p2p_version.__version__,
             head_reader=self.deps.head_reader,
+            network_id=network_id,
+            genesis_hash=genesis_hash,
             alg_policy_root=self.cfg.alg_policy_root,
         )
         self.flowctl = proto_flow.FlowController(self.cfg.flow_control)
 
         # Mount protocol handlers into the router
         self._mount_protocols()
+
+    def _load_network_manifest(self) -> Tuple[Optional[str], Optional[str]]:
+        """
+        Load network manifest for P2P identity.
+        
+        Returns:
+            Tuple of (network_id, genesis_hash) or (None, None) if manifest not available.
+        """
+        network_id = None
+        genesis_hash = None
+        try:
+            from core.network_manifest import get_manifest_for_env
+            manifest = get_manifest_for_env()
+            if manifest:
+                network_id = manifest.p2p_network_id
+                genesis_hash = manifest.pinned_genesis_hash_hex
+                log.info(
+                    f"[p2p] Using network manifest: {manifest.network_identity_string}"
+                )
+        except ImportError:
+            log.debug("[p2p] core.network_manifest not available, skipping manifest")
+        except Exception as e:
+            log.warning(f"[p2p] Could not load network manifest: {e}", exc_info=True)
+        
+        return network_id, genesis_hash
 
     # ——————————————————————————————————————————————————————————
     # Lifecycle
@@ -666,6 +701,31 @@ class P2PServiceLegacy:
 
         self.metrics = _Metrics(self)
 
+    def _load_network_manifest(self) -> Tuple[Optional[str], Optional[str]]:
+        """
+        Load network manifest for P2P identity.
+        
+        Returns:
+            Tuple of (network_id, genesis_hash) or (None, None) if manifest not available.
+        """
+        network_id = None
+        genesis_hash = None
+        try:
+            from core.network_manifest import get_manifest_for_env
+            manifest = get_manifest_for_env()
+            if manifest:
+                network_id = manifest.p2p_network_id
+                genesis_hash = manifest.pinned_genesis_hash_hex
+                log.info(
+                    f"[p2p] Using network manifest: {manifest.network_identity_string}"
+                )
+        except ImportError:
+            log.debug("[p2p] core.network_manifest not available, skipping manifest")
+        except Exception as e:
+            log.warning(f"[p2p] Could not load network manifest: {e}", exc_info=True)
+        
+        return network_id, genesis_hash
+
     async def start(self) -> None:
         if self._running:
             return
@@ -929,13 +989,26 @@ class P2PServiceLegacy:
             info: Dict[str, Any] | None = None
             try:
                 local_height, local_hash = self._local_head()
+                
+                # Get network ID from manifest (simple inline version)
+                network_id_str = str(self.chain_id)
+                genesis_hash_str = None
+                try:
+                    from core.network_manifest import get_manifest
+                    manifest = get_manifest(chain_id=self.chain_id)
+                    if manifest:
+                        network_id_str = manifest.p2p_network_id
+                        genesis_hash_str = manifest.pinned_genesis_hash_hex
+                except (ImportError, Exception):
+                    pass  # Fall back to chain_id
+                
                 info = await self._identify(
                     conn,
                     timeout=5.0,
                     local_height=local_height,
-                    network_id=str(self.chain_id),
+                    network_id=network_id_str,
                     agent=f"animica-p2p/{p2p_version.__version__}",
-                    head_hash=local_hash,
+                    head_hash=genesis_hash_str or local_hash,
                 )
             except Exception:
                 self._log.debug(
@@ -997,13 +1070,25 @@ class P2PServiceLegacy:
                     if conn is None or peer_id is None:
                         continue
                     try:
+                        # Get network ID from manifest (simple inline version)
+                        network_id_str = str(self.chain_id)
+                        genesis_hash_str = None
+                        try:
+                            from core.network_manifest import get_manifest
+                            manifest = get_manifest(chain_id=self.chain_id)
+                            if manifest:
+                                network_id_str = manifest.p2p_network_id
+                                genesis_hash_str = manifest.pinned_genesis_hash_hex
+                        except (ImportError, Exception):
+                            pass  # Fall back to chain_id
+                        
                         info = await self._identify(
                             conn,
                             timeout=5.0,
                             local_height=local_height,
-                            network_id=str(self.chain_id),
+                            network_id=network_id_str,
                             agent=f"animica-p2p/{p2p_version.__version__}",
-                            head_hash=local_hash,
+                            head_hash=genesis_hash_str or local_hash,
                         )
                         # Update local cache
                         peer.update(

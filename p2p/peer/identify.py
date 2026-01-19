@@ -105,6 +105,62 @@ class IdentifyError(Exception):
     pass
 
 
+def validate_handshake(
+    local_network_id: Optional[str],
+    local_genesis_hash: Optional[str],
+    peer_response: Dict[str, Any],
+    *,
+    strict: bool = True,
+) -> bool:
+    """
+    Validate that peer's handshake response is compatible with local node.
+    
+    Args:
+        local_network_id: Local node's network ID (e.g., "animica:0")
+        local_genesis_hash: Local node's genesis hash (hex string)
+        peer_response: Peer's identify response dict
+        strict: If True, raise IdentifyError on mismatch; if False, return False
+    
+    Returns:
+        True if validation passes, False if mismatch (when strict=False)
+    
+    Raises:
+        IdentifyError: If validation fails (when strict=True)
+    """
+    peer_network_id = peer_response.get("network_id")
+    peer_genesis = peer_response.get("head_hash")
+    
+    # Check network ID match
+    if local_network_id and peer_network_id:
+        if str(peer_network_id) != str(local_network_id):
+            msg = (
+                f"Network mismatch: local={local_network_id}, "
+                f"peer={peer_network_id}"
+            )
+            if strict:
+                raise IdentifyError(msg)
+            return False
+    
+    # Check genesis hash match (if both available)
+    # Note: We check genesis equality at handshake time to prevent
+    # nodes from different chains from connecting
+    if local_genesis_hash and peer_genesis:
+        # Normalize both to hex strings without prefix
+        local_hex = local_genesis_hash.lower().replace("0x", "")
+        peer_hex = str(peer_genesis).lower().replace("0x", "")
+        
+        if local_hex != peer_hex:
+            msg = (
+                f"Genesis mismatch: local={local_genesis_hash}, "
+                f"peer={peer_genesis}"
+            )
+            if strict:
+                raise IdentifyError(msg)
+            return False
+    
+    return True
+
+
 class IdentifyService:
     """
     Minimal IDENTIFY background service.
@@ -124,6 +180,8 @@ class IdentifyService:
         *,
         head_reader: Any = None,
         alg_policy_root: Optional[str] = None,
+        network_id: Optional[str] = None,
+        genesis_hash: Optional[str] = None,
         caps: Optional[List[str]] = None,
         agent: Optional[str] = None,
     ) -> None:
@@ -133,7 +191,10 @@ class IdentifyService:
         )
         self.version = version
         self.head_reader = head_reader
-        self.alg_policy_root = alg_policy_root
+        # Use network_id from manifest if provided; fall back to alg_policy_root for backward compatibility
+        self.network_id = network_id or alg_policy_root
+        self.genesis_hash = genesis_hash
+        self.alg_policy_root = alg_policy_root  # Kept for backward compatibility
         self.caps = _normalize_caps(caps)
         self.agent = agent or _default_agent()
         self._running = False
@@ -165,7 +226,11 @@ class IdentifyService:
             with contextlib.suppress(Exception):
                 height = int(getattr(self.head_reader, "height", 0))
 
-        network_id = self.alg_policy_root
+        # Use network_id from manifest, or fall back to genesis_hash if provided
+        network_id = self.network_id
+        # Use genesis_hash if provided, otherwise use passed head_hash
+        response_head_hash = head_hash or self.genesis_hash
+        
         return asdict(
             IdentifyResponse(
                 peer_id=self.peer_id,
@@ -177,7 +242,7 @@ class IdentifyService:
                 network_id=network_id,
                 addr=addr,
                 rtt_ms=rtt_ms,
-                head_hash=head_hash,
+                head_hash=response_head_hash,
             )
         )
 
@@ -188,8 +253,9 @@ class IdentifyService:
             conn,
             timeout=timeout,
             local_caps=self.caps,
-            network_id=self.alg_policy_root,
+            network_id=self.network_id,
             agent=self.agent,
+            head_hash=self.genesis_hash,
         )
 
 
