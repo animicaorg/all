@@ -300,7 +300,11 @@ async def test_integration_genesis_to_height_sync():
     # Create mock fetcher that returns headers starting from genesis
     mock_fetcher = AsyncMock()
     mock_headers = [
-        MockHeader(height=i, hash_value=bytes([i] * 32), parent_hash=bytes([i-1] * 32))
+        MockHeader(
+            height=i, 
+            hash_value=bytes([i] * 32), 
+            parent_hash=bytes([max(0, i-1)] * 32)  # Fixed: handle genesis case
+        )
         for i in range(1, 11)  # Heights 1-10
     ]
     mock_fetcher.getheaders = AsyncMock(return_value=mock_headers)

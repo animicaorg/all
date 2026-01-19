@@ -110,6 +110,7 @@ class HeaderSyncConfig:
     max_batch_size: int = 32768  # Maximum batch size  
     batch_growth_factor: float = 1.5  # Multiply by this on success
     batch_shrink_factor: float = 0.5  # Multiply by this on failure
+    full_batch_threshold: float = 0.9  # Consider batch "full" if >= 90% of requested size
 
 
 class HeaderSync:
@@ -247,7 +248,7 @@ class HeaderSync:
             try:
                 loc_header = await self.chain.get_header(loc_hash)
                 if loc_header:
-                    loc_height = getattr(loc_header, 'height', None) or getattr(loc_header, 'number', None)
+                    loc_height = self._get_header_height(loc_header)
                     locator_heights.append(loc_height if loc_height is not None else '?')
             except Exception:
                 locator_heights.append('?')
@@ -295,7 +296,7 @@ class HeaderSync:
         contiguous: List[HeaderLike] = []
         known_or_batched: set[Hash] = set([h.hash for h in headers])
         for idx, h in enumerate(headers):
-            h_height = getattr(h, 'height', None) or getattr(h, 'number', None)
+            h_height = self._get_header_height(h)
             h_is_genesis = h_height == 0
             
             # Validate basic parent linkage
@@ -387,6 +388,10 @@ class HeaderSync:
     # ---------------------------
     # Helpers
     # ---------------------------
+    
+    def _get_header_height(self, header: HeaderLike) -> Optional[int]:
+        """Extract height from header, trying multiple attribute names."""
+        return getattr(header, 'height', None) or getattr(header, 'number', None)
 
     async def _build_locator(self, start: Hash, max_steps: int = 32) -> List[Hash]:
         """
@@ -416,7 +421,7 @@ class HeaderSync:
             # Try to get the header to check if it's genesis
             cursor_header = await self.chain.get_header(cursor)
             if cursor_header:
-                cursor_height = getattr(cursor_header, 'height', None) or getattr(cursor_header, 'number', None)
+                cursor_height = self._get_header_height(cursor_header)
                 if cursor_height == 0:
                     genesis_hash = cursor
                     break  # Stop at genesis
@@ -489,7 +494,7 @@ class HeaderSync:
             self._consecutive_successes += 1
             
             # If we got a full batch, peer can handle more - grow more aggressively
-            if items_received >= old_size * 0.9:  # 90% or more = "full"
+            if items_received >= old_size * self.cfg.full_batch_threshold:
                 self._current_batch_size = int(
                     self._current_batch_size * self.cfg.batch_growth_factor
                 )

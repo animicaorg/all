@@ -75,6 +75,10 @@ class BlocksSyncConfig:
     sanity_parent_required: bool = (
         True  # reassembly requires known parent for the first commit
     )
+    # Phase 3: Error recovery constants
+    backoff_cap_sec: float = 4.0  # Cap exponential backoff at 4s for faster recovery
+    backoff_multiplier: float = 1.4  # Multiply timeout by this on retry (reduced from 1.6x)
+    max_timeout_sec: float = 30.0  # Hard limit to prevent extreme timeout growth
 
 
 @dataclass(slots=True)
@@ -189,11 +193,11 @@ class BlocksDownloader:
                     )
                     # Phase 3: Improved exponential backoff with better cap
                     # Instead of unbounded growth to 6s+, use bounded exponential backoff
-                    base = min(4.0, timeout * 1.4)  # Reduced from 1.6x to 1.4x, cap at 4s
+                    base = min(self.cfg.backoff_cap_sec, timeout * self.cfg.backoff_multiplier)
                     timeout = base * (
                         1.0 + (random.random() - 0.5) * 2 * self.cfg.jitter_frac
                     )
-                    timeout = min(timeout, 30.0)  # Hard cap at 30s for extreme cases
+                    timeout = min(timeout, self.cfg.max_timeout_sec)  # Hard cap
                 except (ConnectionError, OSError) as e:
                     # Transient network errors - retry with short backoff
                     self.stats.errors += 1
