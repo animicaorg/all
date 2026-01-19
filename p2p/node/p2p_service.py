@@ -126,6 +126,9 @@ MAX_SKIPPED_BLOCKS_RETRY_PER_CYCLE: int = 5  # Maximum skipped blocks to retry p
 
 PEER_TIP_FRESHNESS_SEC = 600.0
 
+# Genesis/null hash constant for peer tip tracking
+NULL_HASH_32 = b"\x00" * 32
+
 DEFAULT_BOOTSTRAP_SEEDS = [
     "/dns4/mainnet.animica.org/tcp/30333",
     "/ip4/144.126.133.21/tcp/30333",
@@ -6583,7 +6586,7 @@ class P2PService:
             self._update_peer_head_table(
                 peer,
                 height=0,
-                head_hash=bytes(normalized.get("head_hash") or b"\x00" * 32),
+                head_hash=bytes(normalized.get("head_hash") or NULL_HASH_32),
                 source="hello_genesis",
             )
             if self._sync_verbose:
