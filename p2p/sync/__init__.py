@@ -32,6 +32,12 @@ DEFAULT_MAX_IN_FLIGHT: int = 16384  # Further increased from 8192 for ultra-fast
 DEFAULT_REQUEST_TIMEOUT_SEC: float = 20.0  # Increased from 15.0 to handle even larger batch sizes without premature timeouts
 DEFAULT_MAX_REORG_DEPTH: int = 96
 
+# Adaptive throughput parameters (Phase 2 optimization)
+# These allow sync to scale up/down based on peer performance
+MIN_BATCH_SIZE: int = 256  # Minimum batch size when peers are slow
+MAX_BATCH_SIZE: int = 32768  # Maximum batch size when peers are fast
+BATCH_SIZE_STEP: int = 1024  # Amount to increase/decrease batch on success/failure
+
 
 @dataclass(slots=True)
 class SyncStats:
@@ -62,6 +68,9 @@ __all__ = (
     "DEFAULT_MAX_IN_FLIGHT",
     "DEFAULT_REQUEST_TIMEOUT_SEC",
     "DEFAULT_MAX_REORG_DEPTH",
+    "MIN_BATCH_SIZE",
+    "MAX_BATCH_SIZE",
+    "BATCH_SIZE_STEP",
 )
 
 

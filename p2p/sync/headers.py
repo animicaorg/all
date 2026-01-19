@@ -104,6 +104,13 @@ class HeaderSyncConfig:
     locator_max_steps: int = 32  # number of entries in the locator (exp backoff)
     sanity_parent_required: bool = True  # require first header's parent to be known
     enable_checkpoints: bool = True  # enable checkpoint verification during sync
+    # Phase 2: Adaptive throughput optimization
+    adaptive_batching: bool = True  # Enable dynamic batch size adjustment
+    min_batch_size: int = 256  # Minimum batch size
+    max_batch_size: int = 32768  # Maximum batch size  
+    batch_growth_factor: float = 1.5  # Multiply by this on success
+    batch_shrink_factor: float = 0.5  # Multiply by this on failure
+    full_batch_threshold: float = 0.9  # Consider batch "full" if >= 90% of requested size
 
 
 class HeaderSync:
@@ -146,6 +153,11 @@ class HeaderSync:
         self._stop = asyncio.Event()
         self.stats = SyncStats(started_at=time.time(), last_progress_at=time.time())
         self._log = logging.getLogger("animica.p2p.sync.headers")
+        
+        # Phase 2: Adaptive batching state
+        self._current_batch_size = self.cfg.batch_size
+        self._consecutive_successes = 0
+        self._consecutive_failures = 0
         
         # Log checkpoint status
         if self.checkpoint_verifier and hasattr(self.checkpoint_verifier, 'has_checkpoints'):
@@ -220,47 +232,88 @@ class HeaderSync:
     async def _sync_step(self) -> bool:
         head_hash, head_height = await self.chain.get_head()
         
-        self._log.debug(f"Syncing headers from height {head_height}")
+        # Enhanced logging for genesis sync debugging
+        if head_height == 0:
+            self._log.info("Starting sync from genesis (height 0)")
+        else:
+            self._log.debug(f"Syncing headers from height {head_height}")
 
         locator = await self._build_locator(
             head_hash, max_steps=self.cfg.locator_max_steps
         )
         
-        self._log.debug(f"Built locator with {len(locator)} entries")
+        # Enhanced locator logging
+        locator_heights = []
+        for loc_hash in locator[:3]:  # Log first 3 for debugging
+            try:
+                loc_header = await self.chain.get_header(loc_hash)
+                if loc_header:
+                    loc_height = self._get_header_height(loc_header)
+                    locator_heights.append(loc_height if loc_height is not None else '?')
+            except Exception:
+                locator_heights.append('?')
+        
+        self._log.debug(
+            f"Built locator with {len(locator)} entries "
+            f"(first 3 heights: {locator_heights})"
+        )
         
         headers = await self.fetcher.getheaders(
             locator=locator,
             stop=None,
-            limit=self.cfg.batch_size,
+            limit=self._get_effective_batch_size(),  # Use adaptive batch size
             timeout_sec=self.cfg.request_timeout_sec,
         )
 
         if not headers:
             self._log.debug("No headers received from peers")
+            # Phase 2: Shrink batch on failure to adapt to slow/overloaded peers
+            self._adjust_batch_size(success=False)
             return False
         
         self._log.info(f"Received {len(headers)} headers from peers")
 
         # Sanity: require linkage and known parent for the first header unless explicitly allowed.
+        # GENESIS FIX: Skip parent validation for height 0 (genesis block)
         first = headers[0]
-        if self.cfg.sanity_parent_required:
+        first_height = getattr(first, 'height', None) or getattr(first, 'number', None)
+        is_genesis = first_height == 0
+        
+        if self.cfg.sanity_parent_required and not is_genesis:
             parent_known = await self.chain.has_header(first.parent_hash)
             if not parent_known:
                 # No known parent yet—likely mid-fork; tighten by increasing locator depth next time.
                 # We still *may* accept if the parent is also within this batch (rare); check contiguous tail below.
+                self._log.debug(
+                    f"First header parent not known (height={first_height}), "
+                    f"will check for batch-internal linkage"
+                )
                 pass
+        elif is_genesis:
+            self._log.info("Processing genesis block (height 0), skipping parent validation")
 
         # Precheck + compute the largest *contiguous* suffix whose ancestry is known or included.
         contiguous: List[HeaderLike] = []
         known_or_batched: set[Hash] = set([h.hash for h in headers])
         for idx, h in enumerate(headers):
+            h_height = self._get_header_height(h)
+            h_is_genesis = h_height == 0
+            
             # Validate basic parent linkage
             if idx == 0:
+                # GENESIS FIX: Allow genesis block to pass parent check
+                if h_is_genesis:
+                    # Genesis block has no parent, or parent_hash is zero/empty - always accept
+                    pass
                 # Parent is either known locally or appears later in the batch — allow batch-internal linkage.
-                if (
+                elif (
                     not await self.chain.has_header(h.parent_hash)
                     and h.parent_hash not in known_or_batched
                 ):
+                    self._log.warning(
+                        f"First header (height={h_height}) parent not found locally or in batch, "
+                        f"breaking contiguous sequence"
+                    )
                     break
             else:
                 # Enforce contiguous linkage inside the batch
@@ -278,6 +331,9 @@ class HeaderSync:
             contiguous.append(h)
 
         if not contiguous:
+            self._log.warning("No contiguous headers after parent/precheck validation")
+            # Phase 2: Shrink batch on validation failure
+            self._adjust_batch_size(success=False)
             return False
 
         # Enforce reorg bound: if we're switching to a fork, the fork point must be within max_reorg_depth.
@@ -290,12 +346,18 @@ class HeaderSync:
             )
             if ancestor is None:
                 # Can't find a shallow common ancestor → wait for more headers / peers.
+                self._log.debug("No shallow common ancestor found, waiting for more headers")
+                self._adjust_batch_size(success=False)
                 return False
 
         # Persist and maybe advance the canonical head.
         await self.chain.put_headers(contiguous)
         self.stats.headers_fetched += len(contiguous)
         self.stats.last_progress_at = time.time()
+        
+        # Phase 2: Grow batch on success - we're keeping up well
+        self._adjust_batch_size(success=True, items_received=len(contiguous))
+        self._log.info(f"Committed {len(contiguous)} headers (batch_size={self._current_batch_size})")
 
         # Decide whether to advance head to the last header in the contiguous suffix.
         last = contiguous[-1]
@@ -326,6 +388,10 @@ class HeaderSync:
     # ---------------------------
     # Helpers
     # ---------------------------
+    
+    def _get_header_height(self, header: HeaderLike) -> Optional[int]:
+        """Extract height from header, trying multiple attribute names."""
+        return getattr(header, 'height', None) or getattr(header, 'number', None)
 
     async def _build_locator(self, start: Hash, max_steps: int = 32) -> List[Hash]:
         """
@@ -333,11 +399,15 @@ class HeaderSync:
           - last 10 headers: step = 1
           - then step *= 2 until we reach genesis or max_steps
         The local adapter supplies ancestry via get_header().
+        
+        GENESIS FIX: Ensures genesis hash is always included in locator for
+        reliable sync from height 0.
         """
         locator: List[Hash] = []
         step = 1
         n_filled = 0
         cursor: Optional[Hash] = start
+        genesis_hash: Optional[Hash] = None
 
         while cursor is not None and n_filled < max_steps:
             locator.append(cursor)
@@ -348,12 +418,25 @@ class HeaderSync:
             else:
                 step *= 2
 
+            # Try to get the header to check if it's genesis
+            cursor_header = await self.chain.get_header(cursor)
+            if cursor_header:
+                cursor_height = self._get_header_height(cursor_header)
+                if cursor_height == 0:
+                    genesis_hash = cursor
+                    break  # Stop at genesis
+
             cursor = await self._walk_back(cursor, step)
 
             # Stop if we reached genesis (no further parent).
             if cursor is None:
                 break
 
+        # GENESIS FIX: Ensure genesis is always at the end of locator for reliable sync
+        # This helps peers find a common starting point even when syncing from scratch
+        if genesis_hash and genesis_hash not in locator:
+            locator.append(genesis_hash)
+        
         return locator
 
     async def _walk_back(self, h: Hash, steps: int) -> Optional[Hash]:
@@ -377,6 +460,78 @@ class HeaderSync:
         if callable(result):
             result = result()
         return result
+    
+    # ---------------------------
+    # Phase 2: Adaptive Batching
+    # ---------------------------
+    
+    def _get_effective_batch_size(self) -> int:
+        """Get the current effective batch size, respecting min/max bounds."""
+        if not self.cfg.adaptive_batching:
+            return self.cfg.batch_size
+        return max(
+            self.cfg.min_batch_size,
+            min(self._current_batch_size, self.cfg.max_batch_size)
+        )
+    
+    def _adjust_batch_size(self, success: bool, items_received: int = 0) -> None:
+        """
+        Adjust batch size based on success/failure and items received.
+        
+        Phase 2 Optimization: Dynamically scale batch size to match peer capacity.
+        - On success: Grow batch to maximize throughput
+        - On failure: Shrink batch to reduce peer load
+        - Full batch received: Peer can handle more, grow aggressively
+        - Partial batch: Peer at capacity, maintain current size
+        """
+        if not self.cfg.adaptive_batching:
+            return
+            
+        old_size = self._current_batch_size
+        
+        if success:
+            self._consecutive_failures = 0
+            self._consecutive_successes += 1
+            
+            # If we got a full batch, peer can handle more - grow more aggressively
+            if items_received >= old_size * self.cfg.full_batch_threshold:
+                self._current_batch_size = int(
+                    self._current_batch_size * self.cfg.batch_growth_factor
+                )
+                self._log.debug(
+                    f"Full batch received ({items_received}), growing: "
+                    f"{old_size} → {self._current_batch_size}"
+                )
+            # Partial batch but successful - hold steady or grow slowly
+            elif self._consecutive_successes >= 5:
+                # Only grow after several consecutive successes
+                self._current_batch_size = int(
+                    self._current_batch_size * 1.1  # Slower growth
+                )
+                self._consecutive_successes = 0  # Reset counter
+                self._log.debug(
+                    f"Sustained success, gradual growth: {old_size} → {self._current_batch_size}"
+                )
+        else:
+            self._consecutive_successes = 0
+            self._consecutive_failures += 1
+            
+            # Shrink on failure to reduce peer load
+            if self._consecutive_failures >= 2:
+                # Shrink after 2 consecutive failures
+                self._current_batch_size = int(
+                    self._current_batch_size * self.cfg.batch_shrink_factor
+                )
+                self._consecutive_failures = 0  # Reset counter
+                self._log.info(
+                    f"Consecutive failures, shrinking batch: {old_size} → {self._current_batch_size}"
+                )
+        
+        # Clamp to bounds
+        self._current_batch_size = max(
+            self.cfg.min_batch_size,
+            min(self._current_batch_size, self.cfg.max_batch_size)
+        )
     
     async def _verify_checkpoint_if_enabled(self, header: HeaderLike) -> bool:
         """
