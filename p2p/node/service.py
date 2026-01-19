@@ -154,19 +154,7 @@ class NodeService:
         self.ping = pingsvc.PingService(self.connmgr, window_size=16)
         
         # Get network manifest for P2P identity
-        network_id = None
-        genesis_hash = None
-        try:
-            from core.network_manifest import get_manifest_for_env
-            manifest = get_manifest_for_env()
-            if manifest:
-                network_id = manifest.p2p_network_id
-                genesis_hash = manifest.pinned_genesis_hash_hex
-                log.info(
-                    f"[p2p] Using network manifest: {manifest.network_identity_string}"
-                )
-        except Exception as e:
-            log.warning(f"[p2p] Could not load network manifest: {e}")
+        network_id, genesis_hash = self._load_network_manifest()
         
         # Fall back to alg_policy_root if manifest not available
         if not network_id:
@@ -185,6 +173,31 @@ class NodeService:
 
         # Mount protocol handlers into the router
         self._mount_protocols()
+
+    def _load_network_manifest(self) -> Tuple[Optional[str], Optional[str]]:
+        """
+        Load network manifest for P2P identity.
+        
+        Returns:
+            Tuple of (network_id, genesis_hash) or (None, None) if manifest not available.
+        """
+        network_id = None
+        genesis_hash = None
+        try:
+            from core.network_manifest import get_manifest_for_env
+            manifest = get_manifest_for_env()
+            if manifest:
+                network_id = manifest.p2p_network_id
+                genesis_hash = manifest.pinned_genesis_hash_hex
+                log.info(
+                    f"[p2p] Using network manifest: {manifest.network_identity_string}"
+                )
+        except ImportError:
+            log.debug("[p2p] core.network_manifest not available, skipping manifest")
+        except Exception as e:
+            log.warning(f"[p2p] Could not load network manifest: {e}", exc_info=True)
+        
+        return network_id, genesis_hash
 
     # ——————————————————————————————————————————————————————————
     # Lifecycle
@@ -688,6 +701,31 @@ class P2PServiceLegacy:
 
         self.metrics = _Metrics(self)
 
+    def _load_network_manifest(self) -> Tuple[Optional[str], Optional[str]]:
+        """
+        Load network manifest for P2P identity.
+        
+        Returns:
+            Tuple of (network_id, genesis_hash) or (None, None) if manifest not available.
+        """
+        network_id = None
+        genesis_hash = None
+        try:
+            from core.network_manifest import get_manifest_for_env
+            manifest = get_manifest_for_env()
+            if manifest:
+                network_id = manifest.p2p_network_id
+                genesis_hash = manifest.pinned_genesis_hash_hex
+                log.info(
+                    f"[p2p] Using network manifest: {manifest.network_identity_string}"
+                )
+        except ImportError:
+            log.debug("[p2p] core.network_manifest not available, skipping manifest")
+        except Exception as e:
+            log.warning(f"[p2p] Could not load network manifest: {e}", exc_info=True)
+        
+        return network_id, genesis_hash
+
     async def start(self) -> None:
         if self._running:
             return
@@ -952,7 +990,7 @@ class P2PServiceLegacy:
             try:
                 local_height, local_hash = self._local_head()
                 
-                # Get network ID from manifest
+                # Get network ID from manifest (simple inline version)
                 network_id_str = str(self.chain_id)
                 genesis_hash_str = None
                 try:
@@ -961,7 +999,7 @@ class P2PServiceLegacy:
                     if manifest:
                         network_id_str = manifest.p2p_network_id
                         genesis_hash_str = manifest.pinned_genesis_hash_hex
-                except Exception:
+                except (ImportError, Exception):
                     pass  # Fall back to chain_id
                 
                 info = await self._identify(
@@ -1032,7 +1070,7 @@ class P2PServiceLegacy:
                     if conn is None or peer_id is None:
                         continue
                     try:
-                        # Get network ID from manifest
+                        # Get network ID from manifest (simple inline version)
                         network_id_str = str(self.chain_id)
                         genesis_hash_str = None
                         try:
@@ -1041,7 +1079,7 @@ class P2PServiceLegacy:
                             if manifest:
                                 network_id_str = manifest.p2p_network_id
                                 genesis_hash_str = manifest.pinned_genesis_hash_hex
-                        except Exception:
+                        except (ImportError, Exception):
                             pass  # Fall back to chain_id
                         
                         info = await self._identify(

@@ -11,7 +11,7 @@ Validates that:
 import pytest
 
 from core.network_manifest import MAINNET_MANIFEST, TESTNET_MANIFEST
-from p2p.peer.identify import HandshakeError, IdentifyService, validate_handshake
+from p2p.peer.identify import IdentifyError, IdentifyService, validate_handshake
 
 
 def test_identify_service_uses_manifest_network_id():
@@ -68,8 +68,8 @@ def test_handshake_validation_rejects_network_mismatch():
         "peer_id": "test_peer",
     }
     
-    # Should raise HandshakeError
-    with pytest.raises(HandshakeError) as exc_info:
+    # Should raise IdentifyError
+    with pytest.raises(IdentifyError) as exc_info:
         validate_handshake(
             local_network_id="animica:0",  # Mainnet
             local_genesis_hash=MAINNET_MANIFEST.pinned_genesis_hash_hex,
@@ -92,8 +92,8 @@ def test_handshake_validation_rejects_genesis_mismatch():
         "peer_id": "test_peer",
     }
     
-    # Should raise HandshakeError
-    with pytest.raises(HandshakeError) as exc_info:
+    # Should raise IdentifyError
+    with pytest.raises(IdentifyError) as exc_info:
         validate_handshake(
             local_network_id="animica:0",
             local_genesis_hash=MAINNET_MANIFEST.pinned_genesis_hash_hex,

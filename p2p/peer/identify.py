@@ -105,11 +105,6 @@ class IdentifyError(Exception):
     pass
 
 
-class HandshakeError(IdentifyError):
-    """Raised when handshake validation fails (network mismatch, genesis mismatch, etc.)."""
-    pass
-
-
 def validate_handshake(
     local_network_id: Optional[str],
     local_genesis_hash: Optional[str],
@@ -124,13 +119,13 @@ def validate_handshake(
         local_network_id: Local node's network ID (e.g., "animica:0")
         local_genesis_hash: Local node's genesis hash (hex string)
         peer_response: Peer's identify response dict
-        strict: If True, raise HandshakeError on mismatch; if False, return False
+        strict: If True, raise IdentifyError on mismatch; if False, return False
     
     Returns:
         True if validation passes, False if mismatch (when strict=False)
     
     Raises:
-        HandshakeError: If validation fails (when strict=True)
+        IdentifyError: If validation fails (when strict=True)
     """
     peer_network_id = peer_response.get("network_id")
     peer_genesis = peer_response.get("head_hash")
@@ -143,7 +138,7 @@ def validate_handshake(
                 f"peer={peer_network_id}"
             )
             if strict:
-                raise HandshakeError(msg)
+                raise IdentifyError(msg)
             return False
     
     # Check genesis hash match (if both available)
@@ -160,7 +155,7 @@ def validate_handshake(
                 f"peer={peer_genesis}"
             )
             if strict:
-                raise HandshakeError(msg)
+                raise IdentifyError(msg)
             return False
     
     return True
