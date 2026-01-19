@@ -662,11 +662,9 @@ def show(
             # Query balance at the current tip to capture the most recent state including mining rewards
             balance_confirmed = get_balance(entry.address, rpc_endpoint, tag="latest")
             if include_tip:
-                # For tip, explicitly query at tip head height if available
-                if tip_head_info and tip_head_info.get("height") is not None:
-                    balance_tip = get_balance(entry.address, rpc_endpoint, tag="latest")
-                else:
-                    balance_tip = balance_confirmed
+                # Tip balance is the same as confirmed when using 'latest' tag
+                # Both query the current state which includes the most recent blocks
+                balance_tip = balance_confirmed
             if include_mempool:
                 mempool_delta = _request_rpc("state.getMempoolDelta", [entry.address], rpc_endpoint)
         except Exception as exc:
