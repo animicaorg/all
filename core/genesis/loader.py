@@ -627,6 +627,11 @@ def load_and_init_genesis(
         blocks.set_chain_id(int(genesis["chainId"]))
     if hasattr(blocks, "set_genesis_hash"):
         blocks.set_genesis_hash(head_hash)
+    if hasattr(blocks, "set_network_name"):
+        # Store network name from manifest for future verification
+        network_name = genesis.get("network") or os.getenv("ANIMICA_NETWORK")
+        if network_name:
+            blocks.set_network_name(network_name)
     if genesis_sha256 is not None and hasattr(blocks, "set_genesis_sha256"):
         blocks.set_genesis_sha256(genesis_sha256)
     if hasattr(blocks, "set_genesis_created_at"):

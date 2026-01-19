@@ -7,11 +7,14 @@ Implements:
   - animica chain tx         Query transaction
   - animica chain account    Query account state
   - animica chain events     Query events/logs
+  - animica chain genesis    Genesis verification and info
 """
 
 from __future__ import annotations
 
 import json
+import os
+import sys
 from typing import Iterable, List, Optional
 
 import typer
@@ -20,6 +23,8 @@ from animica.config import load_network_config
 from animica.cli.rpc import call_rpc
 
 app = typer.Typer(help="Chain queries (head, blocks, transactions, accounts)")
+genesis_app = typer.Typer(help="Genesis verification and info")
+app.add_typer(genesis_app, name="genesis")
 
 
 def _resolve_rpc_url(rpc_url: Optional[str]) -> str:
@@ -344,3 +349,151 @@ def events(
     except Exception as e:
         typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(1)
+
+
+@genesis_app.command("verify")
+def genesis_verify(
+    network: Optional[str] = typer.Option(
+        None,
+        "--network",
+        help="Network to verify (mainnet, testnet, devnet)",
+        envvar="ANIMICA_NETWORK",
+    ),
+    chain_id: Optional[int] = typer.Option(
+        None,
+        "--chain-id",
+        help="Chain ID to verify",
+        envvar="ANIMICA_CHAIN_ID",
+    ),
+) -> None:
+    """
+    Verify genesis file matches pinned genesis hash for the network.
+
+    This command checks that:
+    1. The genesis file exists at the expected location
+    2. The computed genesis hash matches the pinned hash
+    3. All network identity parameters are consistent
+
+    Exit codes:
+      0 = verification passed
+      1 = verification failed (mismatch or error)
+      2 = network not found or invalid parameters
+    """
+    try:
+        # Import here to avoid circular dependencies
+        sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../")))
+        from core.network_manifest import get_manifest, verify_genesis
+
+        # Determine which manifest to use
+        manifest = None
+        if network:
+            manifest = get_manifest(network=network)
+            if not manifest:
+                typer.echo(f"❌ Unknown network: {network}", err=True)
+                typer.echo("Available networks: mainnet, testnet, devnet", err=True)
+                raise typer.Exit(2)
+        elif chain_id is not None:
+            manifest = get_manifest(chain_id=chain_id)
+            if not manifest:
+                typer.echo(f"❌ Unknown chain_id: {chain_id}", err=True)
+                typer.echo("Available chain_ids: 0 (mainnet), 2 (testnet), 1337 (devnet)", err=True)
+                raise typer.Exit(2)
+        else:
+            # Try to detect from environment
+            from core.network_manifest import get_manifest_for_env
+            manifest = get_manifest_for_env()
+            if not manifest:
+                typer.echo("❌ No network specified", err=True)
+                typer.echo("Use --network or --chain-id, or set ANIMICA_NETWORK env var", err=True)
+                raise typer.Exit(2)
+
+        # Print verification info
+        typer.echo("=" * 80)
+        typer.echo("Genesis Verification")
+        typer.echo("=" * 80)
+        typer.echo(f"Network:           {manifest.network_name}")
+        typer.echo(f"Chain ID:          {manifest.chain_id}")
+        typer.echo(f"Genesis Path:      {manifest.genesis_path}")
+        typer.echo(f"Pinned Hash:       {manifest.pinned_genesis_hash_hex}")
+        typer.echo(f"Network Identity:  {manifest.network_identity_string}")
+        typer.echo(f"P2P Network ID:    {manifest.p2p_network_id}")
+        typer.echo("-" * 80)
+
+        # Verify genesis
+        is_valid = verify_genesis(manifest, raise_on_mismatch=False)
+
+        if is_valid:
+            typer.echo("✓ Genesis verification PASSED", err=False)
+            typer.echo("=" * 80)
+            raise typer.Exit(0)
+        else:
+            typer.echo("❌ Genesis verification FAILED", err=True)
+            typer.echo("=" * 80)
+            typer.echo("", err=True)
+            typer.echo("To fix:", err=True)
+            typer.echo("  1. Pull latest code: git pull origin main", err=True)
+            typer.echo("  2. Rebuild docker image: docker compose build", err=True)
+            typer.echo("  3. Reset chain data: animica node reset", err=True)
+            typer.echo("     or: docker compose down -v && docker compose up -d", err=True)
+            raise typer.Exit(1)
+
+    except typer.Exit:
+        raise
+    except Exception as e:
+        typer.echo(f"❌ Error: {e}", err=True)
+        raise typer.Exit(1)
+
+
+@genesis_app.command("info")
+def genesis_info(
+    network: Optional[str] = typer.Option(
+        None,
+        "--network",
+        help="Network to show info for (mainnet, testnet, devnet)",
+        envvar="ANIMICA_NETWORK",
+    ),
+    all_networks: bool = typer.Option(
+        False,
+        "--all",
+        help="Show info for all networks",
+    ),
+) -> None:
+    """Display genesis information for one or all networks."""
+    try:
+        sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../")))
+        from core.network_manifest import all_manifests, get_manifest, get_manifest_for_env
+
+        manifests = []
+        if all_networks:
+            manifests = all_manifests()
+        elif network:
+            manifest = get_manifest(network=network)
+            if manifest:
+                manifests = [manifest]
+        else:
+            manifest = get_manifest_for_env()
+            if manifest:
+                manifests = [manifest]
+
+        if not manifests:
+            typer.echo("No network specified or found", err=True)
+            typer.echo("Use --network or --all", err=True)
+            raise typer.Exit(1)
+
+        for manifest in manifests:
+            typer.echo("=" * 80)
+            typer.echo(f"Network:           {manifest.network_name}")
+            typer.echo(f"Chain ID:          {manifest.chain_id}")
+            typer.echo(f"Genesis Path:      {manifest.genesis_path}")
+            typer.echo(f"Pinned Hash:       {manifest.pinned_genesis_hash_hex}")
+            typer.echo(f"Network Identity:  {manifest.network_identity_string}")
+            typer.echo(f"P2P Network ID:    {manifest.p2p_network_id}")
+            typer.echo(f"Protocol Version:  {manifest.protocol_version}")
+            typer.echo(f"Genesis Exists:    {'✓' if manifest.genesis_path.exists() else '✗'}")
+            typer.echo("=" * 80)
+            typer.echo("")
+
+    except Exception as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(1)
+
