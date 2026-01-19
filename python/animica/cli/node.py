@@ -2170,6 +2170,23 @@ def status(
                         summary += f" error={last_bootstrap_err}"
                     typer.echo(summary)
             if recent_blocks > 0 and height is not None:
+                # Re-fetch head to ensure we show the most recent blocks (in case new blocks were mined)
+                import logging
+                logger = logging.getLogger(__name__)
+                
+                try:
+                    fresh_head = asyncio.run(rpc_call("chain.getHead", [], rpc_url=url, timeout=rpc_timeout))
+                    fresh_height = _extract_field(fresh_head, "height", "number", "blockNumber")
+                    if fresh_height is not None and fresh_height > height:
+                        height = fresh_height
+                except (httpx.HTTPError, httpx.TimeoutException, RuntimeError) as exc:
+                    # If fresh head fetch fails, use the original height
+                    # Log at debug level to aid troubleshooting without cluttering normal output
+                    logger.debug(f"Failed to refresh head height before showing recent blocks: {exc}")
+                except Exception as exc:
+                    # Catch any other unexpected errors but log them
+                    logger.debug(f"Unexpected error refreshing head height: {exc}")
+                
                 typer.echo("Recent blocks:")
                 start = max(height - recent_blocks + 1, 0)
                 for h in range(height, start - 1, -1):

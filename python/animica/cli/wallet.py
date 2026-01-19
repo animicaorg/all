@@ -636,6 +636,9 @@ def show(
         rpc_endpoint = _resolve_rpc_url(rpc_url)
         guard_bootstrap_rpc(rpc_endpoint, allow_remote=allow_remote_rpc, method="state.getBalance")
 
+        # Fetch current head first to get the most up-to-date height
+        tip_head_info = _get_head_info(rpc_endpoint, "chain.getHead")
+        
         sync_status = _get_sync_status(rpc_endpoint)
         if sync_status is not None:
             best_block_height = sync_status.get("best_block_height") or sync_status.get("bestBlockHeight")
@@ -644,7 +647,6 @@ def show(
 
         # Fetch heads for transparency and fallback
         safe_head_info = _get_head_info(rpc_endpoint, "chain.getSafeHead")
-        tip_head_info = _get_head_info(rpc_endpoint, "chain.getHead")
         
         # If getSafeHead is not available, treat tip as safe for backward compatibility
         if safe_head_info is None and tip_head_info is not None:
@@ -657,9 +659,15 @@ def show(
         queried_at = datetime.now(timezone.utc).isoformat()
 
         try:
+            # Query balance at the current tip to capture the most recent state including mining rewards
             balance_confirmed = get_balance(entry.address, rpc_endpoint, tag="latest")
             if include_tip:
-                balance_tip = get_balance(entry.address, rpc_endpoint, tag="latest")
+                # Tip balance is the same as confirmed when using 'latest' tag
+                # Both query the current state which includes the most recent blocks.
+                # NOTE: This assumes 'latest' always returns the current state_db state.
+                # If future RPC implementations distinguish between "latest committed" and "latest tip",
+                # this logic may need to be updated to query with different tags.
+                balance_tip = balance_confirmed
             if include_mempool:
                 mempool_delta = _request_rpc("state.getMempoolDelta", [entry.address], rpc_endpoint)
         except Exception as exc:
