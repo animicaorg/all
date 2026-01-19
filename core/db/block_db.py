@@ -57,6 +57,7 @@ META_GENESIS = PFX_META + b"genesis_hash"
 META_CHAIN_ID = PFX_META + b"chain_id"
 META_GENESIS_SHA256 = PFX_META + b"genesis_sha256"
 META_GENESIS_CREATED_AT = PFX_META + b"genesis_created_at"
+META_NETWORK_NAME = PFX_META + b"network_name"  # Network identity (mainnet, testnet, devnet)
 
 
 def _u64be(n: int) -> bytes:
@@ -297,6 +298,18 @@ class BlockDB:
     def get_chain_id(self) -> Optional[int]:
         v = self.kv.get(META_CHAIN_ID)
         return None if v is None else _from_u64be(v)
+
+    def set_network_name(self, network_name: str, batch: Optional[Batch] = None) -> None:
+        """Store network name (mainnet, testnet, devnet) in DB metadata."""
+        if batch is None:
+            self.kv.put(META_NETWORK_NAME, network_name.encode("utf-8"))
+        else:
+            batch.put(META_NETWORK_NAME, network_name.encode("utf-8"))
+
+    def get_network_name(self) -> Optional[str]:
+        """Retrieve network name from DB metadata."""
+        v = self.kv.get(META_NETWORK_NAME)
+        return None if v is None else v.decode("utf-8")
 
     def set_canonical_height(self, height: int, batch: Optional[Batch] = None) -> None:
         """
