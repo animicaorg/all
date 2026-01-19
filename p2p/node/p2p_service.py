@@ -1904,7 +1904,18 @@ class P2PService:
             remote = str(snap.get("remote", ""))
             addr_key = self._addr_key(remote)
             peer_id = snap.get("peer_id") or "unknown"
-            status = "connected" if peer_id != "unknown" else "handshaking"
+            identity_ok = snap.get("identity_ok", False)
+            
+            # Determine peer status based on handshake state and identity validation
+            # "connected" = has peer_id AND passed identity validation (chain_id, genesis match)
+            # "handshaking" = connection established but handshake incomplete or identity not validated
+            if peer_id != "unknown" and identity_ok:
+                status = "connected"
+            elif peer_id != "unknown":
+                status = "handshaking"  # Has peer_id but identity validation incomplete/failed
+            else:
+                status = "handshaking"  # No peer_id yet - still in handshake
+            
             entry = {
                 "id": peer_id,
                 "addr": remote,
@@ -1912,6 +1923,7 @@ class P2PService:
                 "direction": snap.get("direction"),
                 "lastSeen": snap.get("last_seen"),
                 "connectedAt": snap.get("connected_at"),
+                "identity_ok": identity_ok,  # Expose identity_ok for debugging
             }
             entries.append(entry)
             seen_keys.add(addr_key)
@@ -6556,7 +6568,39 @@ class P2PService:
                 head_hash=bytes(normalized.get("head_hash") or b""),
                 source="hello",
             )
+            if self._sync_verbose:
+                log.info(
+                    "Initialized peer tip from hello",
+                    extra={
+                        "remote": peer.remote,
+                        "peer_id": peer.peer_id,
+                        "head_height": int(normalized["head_height"]),
+                        "head_hash": self._canon_hash0x(bytes(normalized.get("head_hash") or b"")),
+                    },
+                )
+        else:
+            # At genesis or missing head info - still mark peer as having tip at height 0
+            self._update_peer_head_table(
+                peer,
+                height=0,
+                head_hash=bytes(normalized.get("head_hash") or b"\x00" * 32),
+                source="hello_genesis",
+            )
+            if self._sync_verbose:
+                log.info(
+                    "Initialized peer tip from hello (genesis or no head)",
+                    extra={
+                        "remote": peer.remote,
+                        "peer_id": peer.peer_id,
+                        "head_height": 0,
+                    },
+                )
+        
         peer.ready_for_sync = True
+        
+        # Wake sync loop to notice new peer with fresh tips
+        self._sync_wakeup.set()
+        
         peer_key = self._peer_tx_key(peer)
         self._txrelay.register_peer(
             peer_key,
