@@ -347,7 +347,7 @@ def _scan_for_highest_block() -> t.Tuple[int, t.Any] | None:
 @method(
     "chain.getHead",
     desc="Return the current best head (height + header view).",
-    aliases=("chain_getHead",),
+    aliases=("chain_getHead", "chain.head"),
 )
 def chain_get_head() -> dict:
     """
@@ -409,6 +409,84 @@ def chain_get_head() -> dict:
     except Exception:
         pass
     return view
+
+
+@method(
+    "chain.networkInfo",
+    desc="Return network information (name, chain ID, genesis hash, params).",
+    aliases=("chain_networkInfo", "chain.getNetworkInfo", "chain_getNetworkInfo"),
+)
+def chain_network_info() -> dict:
+    """
+    Returns network identification and configuration info.
+    
+    Returns:
+        dict: {
+            "network_name": str,
+            "chain_id": int,
+            "genesis_hash": str (optional),
+            "params": dict (subset of chain parameters)
+        }
+    """
+    chain_id_val = int(deps.get_chain_id())
+    
+    # Get network name from config or network params
+    network_name = "unknown"
+    try:
+        from core.network_params import get_network_params
+        params_obj = get_network_params(chain_id=chain_id_val)
+        if params_obj and hasattr(params_obj, "name"):
+            network_name = params_obj.name
+    except Exception:
+        pass
+    
+    # Try to get from config as fallback
+    if network_name == "unknown":
+        try:
+            ctx = deps.get_ctx()
+            cfg = getattr(ctx, "cfg", None)
+            if cfg and hasattr(cfg, "network_name"):
+                network_name = cfg.network_name
+        except Exception:
+            pass
+    
+    # Get genesis hash if available
+    genesis_hash = None
+    try:
+        from core.network_params import get_pinned_genesis_hash
+        genesis_hash = get_pinned_genesis_hash(chain_id=chain_id_val)
+    except Exception:
+        pass
+    
+    # Get subset of chain parameters (non-sensitive info)
+    params_subset = {}
+    try:
+        params = deps.get_params()
+        params_dict = _dataclass_to_dict(params)
+        # Include key network params
+        if isinstance(params_dict, dict):
+            params_subset = {
+                "monetary": params_dict.get("monetary"),
+                "consensus": params_dict.get("consensus"),
+                "target_block_interval_ms": params_dict.get("target_block_interval_ms"),
+            }
+            # Remove None values
+            params_subset = {k: v for k, v in params_subset.items() if v is not None}
+    except Exception:
+        pass
+    
+    result = {
+        "network_name": network_name,
+        "chain_id": chain_id_val,
+    }
+    
+    if genesis_hash is not None:
+        result["genesis_hash"] = genesis_hash
+    
+    if params_subset:
+        result["params"] = params_subset
+    
+    return result
 
 
 @method(

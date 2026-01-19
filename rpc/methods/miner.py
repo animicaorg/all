@@ -3858,6 +3858,9 @@ def miner_get_work(params: Any | None = None) -> Dict[str, Any]:
         "parent_height": job.parent_height,
         "chain_id": int(job.chain_id),
         "head_generation": head_snapshot.get("generation"),
+        # NEW: Store full header and txs for block reconstruction in submitShare
+        "header": job.header,  # Full header dataclass for block submission
+        "txs": getattr(job, "txs", []),  # Transaction list from template
     }
 
     # Check mempool status for diagnostic compatibility with diagnose_tx_propagation.py
@@ -4887,6 +4890,22 @@ def _extract_payload(payload: Any, kwargs: Dict[str, Any]) -> Optional[Dict[str,
     aliases=("miner_submitShare",),
 )
 def miner_submit_share(payload: Any = None, **kwargs: Any) -> Dict[str, Any]:
+    """
+    Accept a submitted share from the mining pool.
+    
+    This method serves two purposes:
+    1. Share accounting: validates and accepts shares for pool difficulty tracking
+    2. Block submission: when a share meets network difficulty, automatically submits
+       the block through the canonical mining pipeline (same path as mine-blocks)
+    
+    Flow:
+    - Verify share meets pool difficulty (share target)
+    - If share also meets network difficulty (block target):
+      - Reconstruct full block candidate from cached template
+      - Call miner_submit_block to validate and commit
+      - Return response indicating this is a block solution
+    - Otherwise, return share acceptance for accounting only
+    """
     # Support both positional (share as first param) and keyword arguments
     # This allows params=[payload_dict] from share_submitter and params={key: val} for backward compatibility
     share = _extract_payload(payload, kwargs)
@@ -4973,15 +4992,132 @@ def miner_submit_share(payload: Any = None, **kwargs: Any) -> Dict[str, Any]:
     if share_target_int and digest_int > share_target_int:
         return {"accepted": False, "reason": "low difficulty share"}
 
-    is_block = digest_int <= int(cached.get("block_target") or 0)
+    block_target = int(cached.get("block_target") or 0)
+    is_block = digest_int <= block_target
+    
+    # NEW: If share meets network difficulty, submit as full block
+    # This ensures pool shares drive actual block production through the same
+    # canonical path used by mine-blocks (validation, state transition, reward crediting)
+    if is_block:
+        log.info(
+            "Share meets network difficulty - submitting as block",
+            extra={
+                "job_id": job_id,
+                "nonce": hex(nonce_int),
+                "digest": "0x" + digest.hex(),
+                "height": int(cached.get("height") or 0),
+            },
+        )
+        
+        # Reconstruct block candidate from cached template and solved nonce
+        try:
+            # Get template data from cache (stored during job creation)
+            template_header = cached.get("header")
+            template_txs = cached.get("txs", [])
+            parent_hash = cached.get("parent_hash")
+            
+            if template_header is None or parent_hash is None:
+                log.error(
+                    "Cannot reconstruct block: missing template data in cache",
+                    extra={"job_id": job_id, "has_header": template_header is not None},
+                )
+                # Fall back to share-only response if we can't submit block
+                return {
+                    "accepted": True,
+                    "reason": "block_reconstruction_failed",
+                    "jobId": job_id,
+                    "isBlock": True,
+                    "hash": "0x" + digest.hex(),
+                    "height": int(cached.get("height") or 0),
+                }
+            
+            # Update header with solved nonce
+            if isinstance(template_header, dict):
+                template_header = dict(template_header)
+                template_header["nonce"] = nonce_int
+            else:
+                # Header is a dataclass - update via replace
+                template_header = replace(template_header, nonce=nonce_int)
+            
+            # Build block payload for submitBlock
+            block_candidate = {
+                "header": template_header,
+                "txs": template_txs,
+                "proofs": [],
+                "parentHash": parent_hash,
+                "templateId": job_id,
+            }
+            
+            # Submit through canonical block submission path
+            # This uses the same validation, state transition, and reward crediting
+            # logic as mine-blocks (via miner_submit_block -> BlockImporter)
+            submit_result = miner_submit_block(block_candidate)
+            
+            if submit_result.get("accepted", False):
+                log.info(
+                    "Block accepted via pool share submission",
+                    extra={
+                        "job_id": job_id,
+                        "height": submit_result.get("new_head"),
+                        "block_hash": submit_result.get("block_hash"),
+                        "credited_amount": submit_result.get("credited_amount"),
+                    },
+                )
+                # Return enriched response indicating successful block commit
+                return {
+                    "accepted": True,
+                    "reason": None,
+                    "jobId": job_id,
+                    "isBlock": True,
+                    "hash": "0x" + digest.hex(),
+                    "height": int(submit_result.get("new_head") or 0),
+                    "blockHash": submit_result.get("block_hash"),
+                    "creditedAmount": submit_result.get("credited_amount"),
+                }
+            else:
+                # Block submission failed - log and return failure
+                log.warning(
+                    "Block submission failed after share met network difficulty",
+                    extra={
+                        "job_id": job_id,
+                        "submit_result": submit_result,
+                    },
+                )
+                return {
+                    "accepted": False,
+                    "reason": "block_submission_failed",
+                    "jobId": job_id,
+                    "isBlock": True,
+                    "hash": "0x" + digest.hex(),
+                    "height": int(cached.get("height") or 0),
+                    "detail": submit_result,
+                }
+        except Exception as e:
+            log.error(
+                "Failed to submit block from share",
+                extra={"job_id": job_id, "error": str(e)},
+                exc_info=True,
+            )
+            # Return share acceptance but indicate block submission failed
+            return {
+                "accepted": True,
+                "reason": f"block_submit_error: {e}",
+                "jobId": job_id,
+                "isBlock": True,
+                "hash": "0x" + digest.hex(),
+                "height": int(cached.get("height") or 0),
+            }
+    
+    # Share-only response (doesn't meet network difficulty)
     return {
         "accepted": True,
         "reason": None,
         "jobId": job_id,
-        "isBlock": is_block,
+        "isBlock": False,
         "hash": "0x" + digest.hex(),
         "height": int(cached.get("height") or 0),
     }
+
 
 
 @method(
