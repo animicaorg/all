@@ -188,10 +188,30 @@ class PeerRegistry:
 
     def peer_count(self) -> int:
         """
-        Count active sessions with completed handshakes.
+        Count active sessions with completed handshakes AND validated identity.
+        
+        Only counts peers that have:
+        1. Completed handshake (peer_id assigned)
+        2. Passed identity validation (identity_ok = True in meta)
+        
+        This ensures "connected" peers reported to users have actually been
+        fully verified (chain_id, genesis hash match, etc).
+        
+        Deduplicates by (peer_id, direction) to match snapshot() behavior.
         """
-        identified = set(self._sessions_by_peer_key)
-        return len(identified)
+        # Deduplicate by (peer_id, direction) - same peer can have multiple connections
+        seen_keys = set()
+        for session in self._sessions.values():
+            # Must have peer_id (handshake complete)
+            if not session.peer_id:
+                continue
+            # Must have passed identity validation
+            if not session.meta.get("identity_ok", False):
+                continue
+            key = (session.peer_id, session.direction)
+            seen_keys.add(key)
+        
+        return len(seen_keys)
 
     def snapshot(self) -> List[Dict[str, object]]:
         """
