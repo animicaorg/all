@@ -8399,6 +8399,14 @@ class P2PService:
         genesis = self._genesis_hash()
         if genesis:
             anchors[bytes(genesis)] = (0, "genesis")
+        # Also add genesis_header_hash and genesis_block_hash as valid genesis anchors
+        # This ensures compatibility when peers send headers with different genesis references
+        genesis_header = self._genesis_header_hash()
+        if genesis_header and genesis_header != genesis:
+            anchors[bytes(genesis_header)] = (0, "genesis_header")
+        genesis_block = self._genesis_block_hash()
+        if genesis_block and genesis_block != genesis and genesis_block != genesis_header:
+            anchors[bytes(genesis_block)] = (0, "genesis_block")
         local_height, local_hash_hex = self._local_head()
         local_hash = self._parse_hash_bytes(local_hash_hex)
         if local_hash:
@@ -9974,12 +9982,64 @@ class P2PService:
                         and header.height == anchor_height + 1
                         and header.parent_hash != anchor_hash
                     ):
-                        if anchor_height == 0 and header.parent_hash in {
-                            expected_genesis,
-                            expected_genesis_block,
-                        }:
-                            pass
+                        # Special case: At genesis, allow any valid genesis hash variant as parent
+                        # This handles cases where anchor_hash might be genesis_block but header uses genesis_header
+                        if anchor_height == 0:
+                            valid_genesis_hashes = {
+                                expected_genesis,
+                                expected_genesis_block,
+                                anchor_hash,  # Also include the anchor hash itself
+                            }
+                            # Remove None values
+                            valid_genesis_hashes = {h for h in valid_genesis_hashes if h}
+                            
+                            if header.parent_hash in valid_genesis_hashes:
+                                # Parent is a valid genesis variant, allow it
+                                pass
+                            else:
+                                # Parent doesn't match any known genesis variant
+                                # Enhanced diagnostics for genesis anchor failures
+                                log.warning(
+                                    "Genesis anchor mismatch - diagnosing genesis hash inconsistency",
+                                    extra={
+                                        "remote": peer.remote,
+                                        "header_height": header.height,
+                                        "header_hash": header.hash.hex(),
+                                        "header_parent_hash": header.parent_hash.hex(),
+                                        "anchor_height": anchor_height,
+                                        "anchor_hash": anchor_hash.hex() if anchor_hash else None,
+                                        "expected_genesis": expected_genesis.hex() if expected_genesis else None,
+                                        "expected_genesis_block": expected_genesis_block.hex() if expected_genesis_block else None,
+                                        "valid_genesis_hashes": [h.hex() for h in valid_genesis_hashes],
+                                        "parent_in_candidates": header.parent_hash in anchor_candidates,
+                                        "anchor_candidates_count": len(anchor_candidates),
+                                    },
+                                )
+                                order, reason = self._note_not_anchored(
+                                    peer,
+                                    header=header,
+                                    anchor_height=anchor_height,
+                                    anchor_hash=anchor_hash,
+                                    reason="anchor_parent_mismatch",
+                                    allow_probe=prev_known,
+                                )
+                                return order, reason, {"anchor_parent_mismatch": len(headers)}
                         else:
+                            # Non-genesis: strict parent matching required
+                            if anchor_height <= 2 or header.height <= 3:
+                                # Add diagnostics for low heights
+                                log.warning(
+                                    "Anchor parent mismatch at low height",
+                                    extra={
+                                        "remote": peer.remote,
+                                        "header_height": header.height,
+                                        "header_hash": header.hash.hex(),
+                                        "header_parent_hash": header.parent_hash.hex(),
+                                        "anchor_height": anchor_height,
+                                        "anchor_hash": anchor_hash.hex() if anchor_hash else None,
+                                        "parent_in_candidates": header.parent_hash in anchor_candidates,
+                                    },
+                                )
                             order, reason = self._note_not_anchored(
                                 peer,
                                 header=header,
@@ -9989,14 +10049,36 @@ class P2PService:
                                 allow_probe=prev_known,
                             )
                             return order, reason, {"anchor_parent_mismatch": len(headers)}
-                    if header.height == 1 and header.parent_hash not in {
-                        expected_genesis,
-                        expected_genesis_block,
-                    }:
-                        self._stats["p2p_peers_rejected_genesis_mismatch"] += 1
-                        self._penalize_peer(peer, "genesis_mismatch", severity=2)
-                        self._log_header_reject(peer, header, reason="genesis_mismatch")
-                        return [], "genesis_mismatch", {"genesis_mismatch": len(headers)}
+                    if header.height == 1:
+                        # Build set of all valid genesis hash variants
+                        valid_genesis_hashes = {
+                            expected_genesis,
+                            expected_genesis_block,
+                        }
+                        # Also include anchor_hash if we're at genesis anchor
+                        if anchor_height == 0 and anchor_hash is not None:
+                            valid_genesis_hashes.add(anchor_hash)
+                        # Remove None values
+                        valid_genesis_hashes = {h for h in valid_genesis_hashes if h}
+                        
+                        if header.parent_hash not in valid_genesis_hashes:
+                            # Parent doesn't match any known genesis variant
+                            log.warning(
+                                "Height 1 header rejected: parent not a valid genesis hash",
+                                extra={
+                                    "remote": peer.remote,
+                                    "header_hash": header.hash.hex(),
+                                    "header_parent_hash": header.parent_hash.hex(),
+                                    "expected_genesis": expected_genesis.hex() if expected_genesis else None,
+                                    "expected_genesis_block": expected_genesis_block.hex() if expected_genesis_block else None,
+                                    "anchor_hash": anchor_hash.hex() if anchor_hash else None,
+                                    "valid_genesis_hashes": [h.hex() for h in valid_genesis_hashes],
+                                },
+                            )
+                            self._stats["p2p_peers_rejected_genesis_mismatch"] += 1
+                            self._penalize_peer(peer, "genesis_mismatch", severity=2)
+                            self._log_header_reject(peer, header, reason="genesis_mismatch")
+                            return [], "genesis_mismatch", {"genesis_mismatch": len(headers)}
                     if (
                         header.height == 1
                         and header.parent_hash
@@ -10013,6 +10095,25 @@ class P2PService:
                         and header.parent_hash not in self._sync_headers
                         and header.parent_hash not in anchor_candidates
                     ):
+                        # Enhanced diagnostics for parent_unknown at or near genesis
+                        if header.height <= 2:
+                            log.warning(
+                                "Header parent unknown near genesis - diagnosing",
+                                extra={
+                                    "remote": peer.remote,
+                                    "header_height": header.height,
+                                    "header_hash": header.hash.hex(),
+                                    "header_parent_hash": header.parent_hash.hex(),
+                                    "anchor_height": anchor_height,
+                                    "anchor_hash": anchor_hash.hex() if anchor_hash else None,
+                                    "parent_in_db": self._has_header(header.parent_hash),
+                                    "parent_in_sync_headers": header.parent_hash in self._sync_headers,
+                                    "parent_in_anchor_candidates": header.parent_hash in anchor_candidates,
+                                    "anchor_candidates": list(anchor_candidates.keys()),
+                                    "expected_genesis": expected_genesis.hex() if expected_genesis else None,
+                                    "expected_genesis_block": expected_genesis_block.hex() if expected_genesis_block else None,
+                                },
+                            )
                         order, reason = self._note_not_anchored(
                             peer,
                             header=header,
