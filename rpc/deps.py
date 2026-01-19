@@ -176,6 +176,17 @@ def _volume_name_for_chain(
 
 def _format_genesis_reset_guidance(data_dir: str, chain_id: int | None) -> str:
     network = os.getenv("ANIMICA_NETWORK")
+    
+    # If network not in env, try to resolve from chain_id using network_manifest
+    if not network and chain_id is not None:
+        try:
+            from core.network_manifest import get_manifest
+            manifest = get_manifest(chain_id=chain_id)
+            if manifest:
+                network = manifest.network_name
+        except Exception:
+            pass
+    
     compose_file = os.getenv("ANIMICA_COMPOSE_FILE")
     genesis_tag = os.getenv("ANIMICA_GENESIS_TAG")
     data_dir_hint = data_dir or "<unknown>"
@@ -995,29 +1006,61 @@ def build_context(cfg: t.Any | None = None) -> RpcContext:
     init_error: str | None = None
     init_error_code: str | None = None
 
-    # Determine network name for logging
+    # Determine network name and validate chain_id using network_manifest
     network = os.environ.get("ANIMICA_NETWORK", "").strip().lower()
     if not network:
-        # Infer from chain_id
-        if cfg_view.chain_id == 0:
-            network = "mainnet"
-        elif cfg_view.chain_id == 2:
-            network = "testnet"
-        elif cfg_view.chain_id == 1337:
-            network = "devnet"
-        else:
-            network = f"custom (chain_id={cfg_view.chain_id})"
+        # Try to get from network_manifest by chain_id
+        try:
+            from core.network_manifest import get_manifest
+            manifest = get_manifest(chain_id=cfg_view.chain_id)
+            if manifest:
+                network = manifest.network_name
+                log.debug(f"Resolved network '{network}' from network_manifest for chain_id={cfg_view.chain_id}")
+            else:
+                # Fallback to old logic for unknown chain_ids
+                if cfg_view.chain_id == 0:
+                    network = "mainnet"
+                elif cfg_view.chain_id == 2:
+                    network = "testnet"
+                elif cfg_view.chain_id == 1337:
+                    network = "devnet"
+                else:
+                    network = f"custom (chain_id={cfg_view.chain_id})"
+        except ImportError:
+            # Fallback if network_manifest not available
+            if cfg_view.chain_id == 0:
+                network = "mainnet"
+            elif cfg_view.chain_id == 2:
+                network = "testnet"
+            elif cfg_view.chain_id == 1337:
+                network = "devnet"
+            else:
+                network = f"custom (chain_id={cfg_view.chain_id})"
 
-    # CRITICAL: Enforce mainnet chain_id=0 invariant at RPC startup
+    # CRITICAL: Validate chain_id matches network using network_manifest
     # This is a defense-in-depth check; config.py also validates this
-    if network == "mainnet" and cfg_view.chain_id != 0:
-        error_msg = (
-            f"FATAL: Network 'mainnet' MUST use chain_id=0, but RPC context has chain_id={cfg_view.chain_id}. "
-            f"This indicates a configuration error or genesis mismatch. "
-            f"Check ANIMICA_CHAIN_ID environment variable and genesis file."
-        )
-        log.error(error_msg)
-        raise ValueError(error_msg)
+    try:
+        from core.network_manifest import get_manifest
+        manifest = get_manifest(network=network)
+        if manifest and cfg_view.chain_id != manifest.chain_id:
+            error_msg = (
+                f"FATAL: Network '{network}' MUST use chain_id={manifest.chain_id}, "
+                f"but RPC context has chain_id={cfg_view.chain_id}. "
+                f"This indicates a configuration error or genesis mismatch. "
+                f"Check ANIMICA_CHAIN_ID environment variable and genesis file."
+            )
+            log.error(error_msg)
+            raise ValueError(error_msg)
+    except ImportError:
+        # Fallback validation if network_manifest not available
+        if network == "mainnet" and cfg_view.chain_id != 0:
+            error_msg = (
+                f"FATAL: Network 'mainnet' MUST use chain_id=0, but RPC context has chain_id={cfg_view.chain_id}. "
+                f"This indicates a configuration error or genesis mismatch. "
+                f"Check ANIMICA_CHAIN_ID environment variable and genesis file."
+            )
+            log.error(error_msg)
+            raise ValueError(error_msg)
 
     log.info(
         f"Building RPC context for network: {network} (chain_id={cfg_view.chain_id})"
