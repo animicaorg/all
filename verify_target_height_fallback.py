@@ -30,9 +30,13 @@ def simulate_compute_best_remote_info(peers, sync_target_height):
     # FIX: Fallback to target_height when no fresh peer tips available
     if best_height is None and sync_target_height is not None:
         target = int(sync_target_height)
-        if target > 0:
+        # Match actual implementation: validate bounds
+        MAX_REASONABLE_HEIGHT = 50_000_000
+        if target > 0 and target <= MAX_REASONABLE_HEIGHT:
             print(f"  ✓ Using target_height={target} as fallback")
             return target, None, "target_fallback", 0.0
+        elif target > MAX_REASONABLE_HEIGHT:
+            print(f"  ✗ target_height={target} exceeds max reasonable ({MAX_REASONABLE_HEIGHT})")
     
     print(f"  ✗ No best_remote_height available")
     return best_height, best_hash, best_peer, best_age

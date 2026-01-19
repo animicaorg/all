@@ -127,6 +127,20 @@ class TestSyncTargetHeightFallback:
             assert result == (None, None, None, None), \
                 "Should not use target_height=0 as fallback"
     
+    def test_compute_best_remote_target_exceeds_max(self, mock_service):
+        """Target height exceeding MAX_REASONABLE_HEIGHT should not be used."""
+        from p2p.node.p2p_service import P2PService
+        
+        with patch.object(P2PService, '__init__', lambda x: None):
+            service = P2PService()
+            service._peers = {}
+            service._sync_target_height = 100_000_000  # Unreasonably high
+            
+            result = service._compute_best_remote_info(chain_id=0)
+            
+            assert result == (None, None, None, None), \
+                "Should not use target_height exceeding MAX_REASONABLE_HEIGHT as fallback"
+    
     def test_sync_status_with_target_fallback(self, mock_service):
         """Sync status should show proper reason when using target fallback."""
         from p2p.node.p2p_service import P2PService
