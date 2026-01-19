@@ -136,7 +136,19 @@ class BlocksDownloader:
         if not order:
             return 0
 
-        self._log.info(f"Starting block download for {len(order)} blocks")
+        # Enhanced logging with genesis detection
+        first_height = None
+        try:
+            first_header = await self.chain.get_header(order[0])
+            if first_header:
+                first_height = getattr(first_header, 'height', None) or getattr(first_header, 'number', None)
+        except Exception:
+            pass
+        
+        if first_height == 0:
+            self._log.info(f"Starting block download from GENESIS for {len(order)} blocks")
+        else:
+            self._log.info(f"Starting block download for {len(order)} blocks (first at height {first_height})")
         
         # Fast path: drop any prefix that is already persisted.
         next_idx = 0
@@ -318,10 +330,20 @@ class BlocksDownloader:
         if first_blk is None:
             return 0
 
-        if self.cfg.sanity_parent_required:
-            # Parent must be present in DB for the very first in this batch.
+        # GENESIS FIX: Check if this is the genesis block (height 0)
+        first_height = getattr(first_blk, 'height', None) or getattr(first_blk, 'number', None)
+        is_genesis = first_height == 0
+        
+        if self.cfg.sanity_parent_required and not is_genesis:
+            # Parent must be present in DB for the very first in this batch (except genesis).
             if not await self.chain.has_header(first_blk.parent_hash):
+                self._log.debug(
+                    f"Cannot commit block at index {next_idx} (height={first_height}): "
+                    f"parent not in DB yet"
+                )
                 return 0
+        elif is_genesis:
+            self._log.info("Processing genesis block (height 0) for commit, skipping parent check")
 
         # Grow the prefix
         contiguous: List[BlockLike] = [first_blk]

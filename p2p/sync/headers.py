@@ -220,13 +220,31 @@ class HeaderSync:
     async def _sync_step(self) -> bool:
         head_hash, head_height = await self.chain.get_head()
         
-        self._log.debug(f"Syncing headers from height {head_height}")
+        # Enhanced logging for genesis sync debugging
+        if head_height == 0:
+            self._log.info("Starting sync from genesis (height 0)")
+        else:
+            self._log.debug(f"Syncing headers from height {head_height}")
 
         locator = await self._build_locator(
             head_hash, max_steps=self.cfg.locator_max_steps
         )
         
-        self._log.debug(f"Built locator with {len(locator)} entries")
+        # Enhanced locator logging
+        locator_heights = []
+        for loc_hash in locator[:3]:  # Log first 3 for debugging
+            try:
+                loc_header = await self.chain.get_header(loc_hash)
+                if loc_header:
+                    loc_height = getattr(loc_header, 'height', None) or getattr(loc_header, 'number', None)
+                    locator_heights.append(loc_height if loc_height is not None else '?')
+            except Exception:
+                locator_heights.append('?')
+        
+        self._log.debug(
+            f"Built locator with {len(locator)} entries "
+            f"(first 3 heights: {locator_heights})"
+        )
         
         headers = await self.fetcher.getheaders(
             locator=locator,
@@ -242,25 +260,46 @@ class HeaderSync:
         self._log.info(f"Received {len(headers)} headers from peers")
 
         # Sanity: require linkage and known parent for the first header unless explicitly allowed.
+        # GENESIS FIX: Skip parent validation for height 0 (genesis block)
         first = headers[0]
-        if self.cfg.sanity_parent_required:
+        first_height = getattr(first, 'height', None) or getattr(first, 'number', None)
+        is_genesis = first_height == 0
+        
+        if self.cfg.sanity_parent_required and not is_genesis:
             parent_known = await self.chain.has_header(first.parent_hash)
             if not parent_known:
                 # No known parent yet—likely mid-fork; tighten by increasing locator depth next time.
                 # We still *may* accept if the parent is also within this batch (rare); check contiguous tail below.
+                self._log.debug(
+                    f"First header parent not known (height={first_height}), "
+                    f"will check for batch-internal linkage"
+                )
                 pass
+        elif is_genesis:
+            self._log.info("Processing genesis block (height 0), skipping parent validation")
 
         # Precheck + compute the largest *contiguous* suffix whose ancestry is known or included.
         contiguous: List[HeaderLike] = []
         known_or_batched: set[Hash] = set([h.hash for h in headers])
         for idx, h in enumerate(headers):
+            h_height = getattr(h, 'height', None) or getattr(h, 'number', None)
+            h_is_genesis = h_height == 0
+            
             # Validate basic parent linkage
             if idx == 0:
+                # GENESIS FIX: Allow genesis block to pass parent check
+                if h_is_genesis:
+                    # Genesis block has no parent, or parent_hash is zero/empty - always accept
+                    pass
                 # Parent is either known locally or appears later in the batch — allow batch-internal linkage.
-                if (
+                elif (
                     not await self.chain.has_header(h.parent_hash)
                     and h.parent_hash not in known_or_batched
                 ):
+                    self._log.warning(
+                        f"First header (height={h_height}) parent not found locally or in batch, "
+                        f"breaking contiguous sequence"
+                    )
                     break
             else:
                 # Enforce contiguous linkage inside the batch
@@ -333,11 +372,15 @@ class HeaderSync:
           - last 10 headers: step = 1
           - then step *= 2 until we reach genesis or max_steps
         The local adapter supplies ancestry via get_header().
+        
+        GENESIS FIX: Ensures genesis hash is always included in locator for
+        reliable sync from height 0.
         """
         locator: List[Hash] = []
         step = 1
         n_filled = 0
         cursor: Optional[Hash] = start
+        genesis_hash: Optional[Hash] = None
 
         while cursor is not None and n_filled < max_steps:
             locator.append(cursor)
@@ -348,12 +391,25 @@ class HeaderSync:
             else:
                 step *= 2
 
+            # Try to get the header to check if it's genesis
+            cursor_header = await self.chain.get_header(cursor)
+            if cursor_header:
+                cursor_height = getattr(cursor_header, 'height', None) or getattr(cursor_header, 'number', None)
+                if cursor_height == 0:
+                    genesis_hash = cursor
+                    break  # Stop at genesis
+
             cursor = await self._walk_back(cursor, step)
 
             # Stop if we reached genesis (no further parent).
             if cursor is None:
                 break
 
+        # GENESIS FIX: Ensure genesis is always at the end of locator for reliable sync
+        # This helps peers find a common starting point even when syncing from scratch
+        if genesis_hash and genesis_hash not in locator:
+            locator.append(genesis_hash)
+        
         return locator
 
     async def _walk_back(self, h: Hash, steps: int) -> Optional[Hash]:

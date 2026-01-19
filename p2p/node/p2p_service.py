@@ -91,8 +91,10 @@ MAX_REQUEST_RETRIES: int = 5  # Maximum retries before triggering recovery
 RETRY_BACKOFF_BASE_SEC: float = 2.0  # Base backoff time for exponential backoff
 RETRY_BACKOFF_MAX_SEC: float = 60.0  # Maximum backoff time
 RETRY_JITTER_FACTOR: float = 0.2  # Jitter factor for randomizing backoff
-MAX_IN_FLIGHT_BLOCKS: int = 128  # Maximum concurrent block requests
-MAX_IN_FLIGHT_HEADERS: int = 64  # Maximum concurrent header requests
+# SYNC PERFORMANCE FIX: Increased from 128 to 512 to match configured max_parallel in sync configs
+# This allows the full throughput of BlockSync (4096) and HeaderSync (16384) to be utilized
+MAX_IN_FLIGHT_BLOCKS: int = 512  # Maximum concurrent block requests (increased for faster genesis sync)
+MAX_IN_FLIGHT_HEADERS: int = 256  # Maximum concurrent header requests (increased for faster genesis sync)
 
 # Fork detection and recovery constants
 FORK_DETECTION_GAP_THRESHOLD: int = 100  # Blocks: if matched ancestor gap > this, consider it a fork
