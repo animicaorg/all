@@ -78,13 +78,22 @@ def main() -> int:
         print(f"Error: Could not import mining.cli.miner: {e}", file=sys.stderr)
         return 1
     
+    # Map device names to miner CLI device choices
+    # quantum -> cpu (quantum work is handled by workers)
+    # gpu -> auto (let miner detect GPU backend)
+    device_map = {
+        "quantum": "cpu",  # quantum mining uses CPU with quantum workers
+        "gpu": "auto",     # auto-detect GPU backend (cuda/rocm/opencl/metal)
+    }
+    device = device_map.get(args.device, args.device)
+    
     # Build arguments for the actual miner CLI
     # We always use 'start' command for continuous mining
     miner_args = [
         "start",
         "--rpc-url", args.rpc,
         "--threads", str(args.threads),
-        "--device", args.device,
+        "--device", device,
         "--log-level", args.log_level,
     ]
     
