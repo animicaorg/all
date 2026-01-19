@@ -88,11 +88,20 @@ DEFAULT_SEEDS_BY_NETWORK: Final[dict[int, tuple[str, ...]]] = {
 }
 
 # Network name to chain_id mapping (for ANIMICA_P2P_NETWORK env var)
-NETWORK_NAME_TO_CHAIN_ID: Final[dict[str, int]] = {
-    "mainnet": 0,
-    "testnet": 2,
-    "devnet": 1337,
-}
+# This uses network_manifest for canonical mapping, with fallback for compatibility
+try:
+    from core.network_manifest import get_manifest, all_manifests
+    # Build mapping from network_manifest
+    NETWORK_NAME_TO_CHAIN_ID: Final[dict[str, int]] = {
+        m.network_name: m.chain_id for m in all_manifests()
+    }
+except ImportError:
+    # Fallback if network_manifest not available
+    NETWORK_NAME_TO_CHAIN_ID: Final[dict[str, int]] = {
+        "mainnet": 0,
+        "testnet": 2,
+        "devnet": 1337,
+    }
 
 
 # ---------- parsing helpers ----------------------------------------------------

@@ -333,70 +333,91 @@ def get_network_defaults(network: str) -> dict[str, any]:
     Get default configuration values for a specific network.
     
     Returns a dictionary with network-specific defaults including:
-    - chain_id: Network chain ID
+    - chain_id: Network chain ID (sourced from network_manifest)
     - rpc_url: Default RPC endpoint URL
     - rpc_port: Default RPC port
     - p2p_port: Default P2P port
     - metrics_port: Default metrics port
     - compose_file: Path to network-specific Docker Compose file
-    - genesis_path: Path to genesis file
+    - genesis_path: Path to genesis file (sourced from network_manifest)
     - data_dir: Network-specific data directory
     - db_name: Database file name
     
     Note: devnet and local-devnet are distinct networks:
     - devnet: Uses ops/docker/docker-compose.devnet.yml (full stack with monitoring)
     - local-devnet: Uses tests/devnet/docker-compose.yml (minimal multi-node setup)
+    
+    Network identity (chain_id, genesis_path) is sourced from core.network_manifest
+    to ensure consistency across all components.
     """
     # Get repository root (3 levels up from this file)
     repo_root = Path(__file__).resolve().parents[2]
     
+    # Get canonical chain_id and genesis_path from network_manifest
+    try:
+        from core.network_manifest import get_manifest
+        manifest = get_manifest(network=network)
+        if manifest:
+            canonical_chain_id = manifest.chain_id
+            canonical_genesis_path = str(manifest.genesis_path)
+        else:
+            # Fallback for unknown networks (shouldn't happen in practice)
+            canonical_chain_id = 0
+            canonical_genesis_path = str(repo_root / "core" / "genesis" / "mainnet.json")
+            logger.warning(f"Network '{network}' not found in network_manifest, using mainnet defaults")
+    except ImportError:
+        # Fallback if network_manifest not available (shouldn't happen)
+        logger.warning("core.network_manifest not available, using hardcoded chain_id values")
+        canonical_chain_id = {"mainnet": 0, "testnet": 2, "devnet": 1337, "local-devnet": 1337}.get(network, 0)
+        canonical_genesis_path = str(repo_root / "core" / "genesis" / f"{network.replace('local-', '')}.json")
+    
     network_configs = {
         "mainnet": {
-            "chain_id": 0,
+            "chain_id": canonical_chain_id,
             "rpc_url": "http://127.0.0.1:8545/rpc",
             "bootstrap_url": "http://127.0.0.1:8545/rpc",
             "rpc_port": 8545,
             "p2p_port": 30333,
             "metrics_port": 9000,
             "compose_file": repo_root / "ops" / "docker" / "docker-compose.mainnet.yml",
-            "genesis_path": str(repo_root / "core" / "genesis" / "mainnet.json"),
-            "data_dir": _network_data_dir(0),
+            "genesis_path": canonical_genesis_path,
+            "data_dir": _network_data_dir(canonical_chain_id),
             "db_name": "animica.db",
         },
         "testnet": {
-            "chain_id": 2,
+            "chain_id": canonical_chain_id,
             "rpc_url": "http://127.0.0.1:18546/rpc",
             "bootstrap_url": "https://rpc.testnet.animica.org/rpc",
             "rpc_port": 18546,
             "p2p_port": 31334,
             "metrics_port": 19000,
             "compose_file": repo_root / "ops" / "docker" / "docker-compose.testnet.yml",
-            "genesis_path": str(repo_root / "core" / "genesis" / "testnet.json"),
-            "data_dir": _network_data_dir(2),
+            "genesis_path": canonical_genesis_path,
+            "data_dir": _network_data_dir(canonical_chain_id),
             "db_name": "animica.db",
         },
         "devnet": {
-            "chain_id": 1337,
+            "chain_id": canonical_chain_id,
             "rpc_url": "http://127.0.0.1:28545/rpc",
             "bootstrap_url": "http://127.0.0.1:28545/rpc",
             "rpc_port": 28545,
             "p2p_port": 31335,
             "metrics_port": 29000,
             "compose_file": repo_root / "ops" / "docker" / "docker-compose.devnet.yml",
-            "genesis_path": str(repo_root / "core" / "genesis" / "devnet.json"),
-            "data_dir": _network_data_dir(1337),
+            "genesis_path": canonical_genesis_path,
+            "data_dir": _network_data_dir(canonical_chain_id),
             "db_name": "animica.db",
         },
         "local-devnet": {
-            "chain_id": 1337,
+            "chain_id": canonical_chain_id,
             "rpc_url": "http://127.0.0.1:38545/rpc",
             "bootstrap_url": "http://127.0.0.1:38545/rpc",
             "rpc_port": 38545,
             "p2p_port": 31336,
             "metrics_port": 39000,
             "compose_file": repo_root / "tests" / "devnet" / "docker-compose.yml",
-            "genesis_path": str(repo_root / "core" / "genesis" / "devnet.json"),
-            "data_dir": _network_data_dir(1337),
+            "genesis_path": canonical_genesis_path,
+            "data_dir": _network_data_dir(canonical_chain_id),
             "db_name": "animica.db",
         },
     }
@@ -470,23 +491,40 @@ def load_network_config(network: Optional[str] = None) -> NetworkConfig:
             bootstrap_url = defaults.get("bootstrap_url", defaults["rpc_url"])
     chain_id = _safe_int_from_env("ANIMICA_CHAIN_ID", defaults["chain_id"])
     
-    # CRITICAL: Validate mainnet always uses chain_id=0
-    # This prevents silent misconfigurations where mainnet runs with wrong chain_id
-    if network_name.lower() == "mainnet" and chain_id != 0:
-        error_msg = (
-            f"FATAL: Network 'mainnet' MUST use chain_id=0, but got chain_id={chain_id}. "
-            f"This indicates a configuration error. Please check ANIMICA_CHAIN_ID environment variable "
-            f"and ensure it is not set to a non-zero value when running mainnet."
-        )
-        logger.error(error_msg)
-        raise ValueError(error_msg)
-    
-    # Validate testnet uses chain_id=2
-    if network_name.lower() == "testnet" and chain_id != 2:
-        logger.warning(
-            f"Network 'testnet' typically uses chain_id=2, but got chain_id={chain_id}. "
-            f"This may cause compatibility issues."
-        )
+    # CRITICAL: Validate chain_id matches network using network_manifest
+    # This prevents silent misconfigurations where networks run with wrong chain_id
+    try:
+        from core.network_manifest import get_manifest
+        manifest = get_manifest(network=network_name)
+        if manifest:
+            expected_chain_id = manifest.chain_id
+            if chain_id != expected_chain_id:
+                error_msg = (
+                    f"FATAL: Network '{network_name}' MUST use chain_id={expected_chain_id}, "
+                    f"but got chain_id={chain_id}. "
+                    f"This indicates a configuration error. Please check ANIMICA_CHAIN_ID environment variable "
+                    f"and ensure it matches the network's canonical chain_id from network_manifest."
+                )
+                logger.error(error_msg)
+                raise ValueError(error_msg)
+            logger.debug(f"Validated chain_id={chain_id} matches network '{network_name}' (from network_manifest)")
+    except ImportError:
+        # Fallback validation if network_manifest not available
+        logger.warning("core.network_manifest not available, using hardcoded chain_id validation")
+        if network_name.lower() == "mainnet" and chain_id != 0:
+            error_msg = (
+                f"FATAL: Network 'mainnet' MUST use chain_id=0, but got chain_id={chain_id}. "
+                f"This indicates a configuration error. Please check ANIMICA_CHAIN_ID environment variable "
+                f"and ensure it is not set to a non-zero value when running mainnet."
+            )
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+        
+        if network_name.lower() == "testnet" and chain_id != 2:
+            logger.warning(
+                f"Network 'testnet' typically uses chain_id=2, but got chain_id={chain_id}. "
+                f"This may cause compatibility issues."
+            )
 
     data_dir = str(get_chain_data_dir(chain_id, create=True))
 

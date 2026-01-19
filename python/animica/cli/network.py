@@ -78,20 +78,32 @@ def set_network(
         f"\nNote: Each network uses an isolated database to prevent state contamination."
     )
     
-    # Show expected chain IDs and DB paths for transparency
-    network_info = {
-        "mainnet": 0,
-        "testnet": 2,
-        "devnet": 1337,
-        "local-devnet": 1337,
-    }
-    if network in network_info:
-        chain_id = network_info[network]
-        data_dir = get_chain_data_dir(chain_id, create=False)
-        data_dir_display = _format_display_path(data_dir)
-        typer.echo(f"Chain ID: {chain_id}")
-        typer.echo(f"Data directory: {data_dir_display}/")
-        typer.echo(f"DB file: {data_dir_display}/animica.db")
+    # Show expected chain IDs and DB paths for transparency (from network_manifest)
+    try:
+        from core.network_manifest import get_manifest
+        manifest = get_manifest(network=network)
+        if manifest:
+            chain_id = manifest.chain_id
+            data_dir = get_chain_data_dir(chain_id, create=False)
+            data_dir_display = _format_display_path(data_dir)
+            typer.echo(f"Chain ID: {chain_id}")
+            typer.echo(f"Data directory: {data_dir_display}/")
+            typer.echo(f"DB file: {data_dir_display}/animica.db")
+    except ImportError:
+        # Fallback if network_manifest not available
+        network_info = {
+            "mainnet": 0,
+            "testnet": 2,
+            "devnet": 1337,
+            "local-devnet": 1337,
+        }
+        if network in network_info:
+            chain_id = network_info[network]
+            data_dir = get_chain_data_dir(chain_id, create=False)
+            data_dir_display = _format_display_path(data_dir)
+            typer.echo(f"Chain ID: {chain_id}")
+            typer.echo(f"Data directory: {data_dir_display}/")
+            typer.echo(f"DB file: {data_dir_display}/animica.db")
 
 
 @app.command(name="get")
