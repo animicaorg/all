@@ -66,6 +66,13 @@ from .caps import Contribution, apply_all_caps, clip_per_type, clip_total_gamma
 from .policy import PoiesPolicy
 from .types import MicroNat, ProofType
 
+# Import UWA types if available
+try:
+    from .uwa_types import DeviceType, WEIGHT_CPU, WEIGHT_GPU, WEIGHT_QUANTUM
+    _UWA_AVAILABLE = True
+except ImportError:
+    _UWA_AVAILABLE = False
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -263,8 +270,41 @@ def default_score_hooks(policy: PoiesPolicy) -> Dict[ProofType, ScoreHook]:
 
         score = k_units * (units + difficulty_bonus + iteration_bonus) * qos
         return _to_micro(score)
+    
+    # UWA — Useful Work Artifact with device-type weighting
+    def score_uwa(metrics: Mapping[str, Any], _policy: PoiesPolicy) -> MicroNat:
+        if not _UWA_AVAILABLE:
+            return 0
+        
+        # Extract device type and work score
+        device_type_val = metrics.get("device_type")
+        work_score = max(0, int(metrics.get("work_score", 0)))
+        
+        if device_type_val is None or work_score == 0:
+            return 0
+        
+        # Convert to DeviceType enum if needed
+        if isinstance(device_type_val, int):
+            try:
+                device_type = DeviceType(device_type_val)
+            except ValueError:
+                return 0
+        else:
+            device_type = device_type_val
+        
+        # Apply device-type weights
+        if device_type == DeviceType.CPU:
+            weighted_score = int(work_score * WEIGHT_CPU)
+        elif device_type == DeviceType.GPU:
+            weighted_score = int(work_score * WEIGHT_GPU)
+        elif device_type == DeviceType.QUANTUM:
+            weighted_score = int(work_score * WEIGHT_QUANTUM)
+        else:
+            weighted_score = work_score
+        
+        return weighted_score
 
-    return {
+    hooks = {
         ProofType.HASH: score_hash,
         ProofType.AI: score_ai,
         ProofType.QUANTUM: score_quantum,
@@ -272,6 +312,14 @@ def default_score_hooks(policy: PoiesPolicy) -> Dict[ProofType, ScoreHook]:
         ProofType.VDF: score_vdf,
         ProofType.HASH_WORK: score_hash_work,
     }
+    
+    # Add UWA scoring if available
+    if _UWA_AVAILABLE:
+        # UWA can be scored under HASH_WORK type or a dedicated UWA type
+        # For now, treat it as a separate scoring path
+        pass  # UWA is scored separately in validator via calculate_effective_work
+    
+    return hooks
 
 
 # ---------------------------------------------------------------------------

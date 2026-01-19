@@ -299,7 +299,7 @@ def verify_uwa(
             work_score = _verify_vm_compile_work(uwa, context)
         elif uwa.work_domain == WorkDomain.HASH_WORK_V1:
             work_score = _verify_hash_work(uwa, context)
-        elif uwa.work_domain == "quantum.circuit.v1":  # Quantum domain
+        elif uwa.work_domain == WorkDomain.QUANTUM_CIRCUIT_V1:
             work_score = _verify_quantum_work(uwa, context)
         else:
             raise UWAVerificationError(f"Unsupported work domain: {uwa.work_domain}")

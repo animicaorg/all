@@ -259,7 +259,7 @@ def generate_quantum_work_uwa(
     
     return UsefulWorkArtifact(
         version=1,
-        work_domain="quantum.circuit.v1",
+        work_domain=WorkDomain.QUANTUM_CIRCUIT_V1,
         device_type=DeviceType.QUANTUM,
         challenge=challenge,
         input_commitment=input_commitment,

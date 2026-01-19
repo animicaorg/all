@@ -12,6 +12,13 @@ from mining.hash_search import micro_threshold_to_target256
 
 from .nonce_domain import derive_mix_seed  # mixSeed evolution
 
+# Import UWA generator if available
+try:
+    from consensus.uwa_generator import create_work_challenge
+    _UWA_AVAILABLE = True
+except ImportError:
+    _UWA_AVAILABLE = False
+
 # We *prefer* the canonical header SignBytes encoder from core if present.
 try:
     from core.encoding.canonical import \
@@ -147,6 +154,21 @@ class MiningJob:
         if self.expires_at is None:
             return False
         return (now or time.time()) >= self.expires_at
+    
+    def get_work_challenge(self):
+        """
+        Generate a WorkChallenge for UWA generation from this mining job.
+        Returns None if UWA is not available.
+        """
+        if not _UWA_AVAILABLE:
+            return None
+        return create_work_challenge(
+            height=self.header.number,
+            prev_hash=self.parent_hash,
+            chain_id=self.chain_id,
+            timestamp=self.header.timestamp,
+            mix_seed=self.header.mix_seed,
+        )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -488,6 +510,22 @@ def share_target_to_difficulty(theta_micro: int, share_target: float) -> float:
         return 1.0
     difficulty = D1_TARGET / target
     return max(difficulty, 1e-6)
+
+
+def header_template_to_work_challenge(template: HeaderTemplate):
+    """
+    Convert a HeaderTemplate to a WorkChallenge for UWA generation.
+    Returns None if UWA is not available.
+    """
+    if not _UWA_AVAILABLE:
+        return None
+    return create_work_challenge(
+        height=template.number,
+        prev_hash=template.parent_hash,
+        chain_id=template.chain_id,
+        timestamp=template.timestamp,
+        mix_seed=template.mix_seed,
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -48,6 +48,9 @@ class WorkDomain(str):
     
     # Hash-based useful work (device-agnostic fallback)
     HASH_WORK_V1 = "hash.work.v1"
+    
+    # Quantum circuit work
+    QUANTUM_CIRCUIT_V1 = "quantum.circuit.v1"
 
 
 # -------------------------

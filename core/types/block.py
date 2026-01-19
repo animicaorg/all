@@ -36,8 +36,19 @@ from core.types.tx import Tx
 from core.utils.hash import ZERO32, sha3_256
 from core.utils.merkle import merkle_root, compute_txs_root_from_txs
 
+# Import UWA if available (optional for backward compatibility)
+try:
+    from consensus.uwa_types import UsefulWorkArtifact
+    _UWA_AVAILABLE = True
+except ImportError:
+    UsefulWorkArtifact = None  # type: ignore
+    _UWA_AVAILABLE = False
+
 # Union of all proof envelope types included in a block
-ProofLike = Union[HashShare, AIProofRef, QuantumProofRef, StorageHeartbeat, VDFProofRef]
+if _UWA_AVAILABLE:
+    ProofLike = Union[HashShare, AIProofRef, QuantumProofRef, StorageHeartbeat, VDFProofRef, UsefulWorkArtifact]  # type: ignore
+else:
+    ProofLike = Union[HashShare, AIProofRef, QuantumProofRef, StorageHeartbeat, VDFProofRef]
 
 
 @dataclass(frozen=True)
@@ -213,6 +224,9 @@ def _proof_from_obj(o: Mapping[str, Any]) -> ProofLike:
         return StorageHeartbeat.from_obj(o)
     if kind == "vdf":
         return VDFProofRef.from_obj(o)
+    # Handle UWA if available
+    if _UWA_AVAILABLE and (kind == "uwa" or o.get("work_domain")):
+        return UsefulWorkArtifact(**o)
     # Fallback: raw CBOR path (dev-only)
     raw = cast(Optional[bytes], o.get("_rawCbor"))
     if raw is None:
