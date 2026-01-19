@@ -103,8 +103,8 @@ def main() -> int:
     if args.address:
         print(
             f"Warning: --address {args.address} specified, but 'start' command "
-            "uses the node's configured miner address. To mine blocks to a specific "
-            "address, use: python -m mining.cli.miner mine-blocks --address {args.address}",
+            f"uses the node's configured miner address. To mine blocks to a specific "
+            f"address, use: python -m mining.cli.miner mine-blocks --address {args.address}",
             file=sys.stderr,
         )
     

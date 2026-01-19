@@ -35,7 +35,10 @@ def _parse_pool_url(pool_url: str) -> tuple[str, int]:
             port = int(port_str)
             return host, port
         except ValueError:
-            raise ValueError(f"Invalid port in pool URL: {pool_url}")
+            raise ValueError(
+                f"Invalid port in pool URL: {pool_url}. "
+                f"Port must be numeric (e.g., stratum+tcp://pool.example.com:3333)"
+            )
     else:
         # Default stratum port
         return pool_url, 3333
