@@ -4138,13 +4138,23 @@ def miner_mine(
     workers = resolve_worker_count(workers)
     
     # Validate and normalize miner_id (0-255 for multi-node mining coordination)
-    miner_id_value = 0 if miner_id is None else int(miner_id)
-    if not (0 <= miner_id_value <= 255):
-        log.warning(
-            "miner_id must be in range [0, 255], got %d. Using default 0.",
-            miner_id_value,
-        )
-        miner_id_value = 0
+    miner_id_value = 0
+    if miner_id is not None:
+        try:
+            miner_id_value = int(miner_id)
+            if not (0 <= miner_id_value <= 255):
+                log.warning(
+                    "miner_id must be in range [0, 255], got %d. Using default 0.",
+                    miner_id_value,
+                )
+                miner_id_value = 0
+        except (ValueError, TypeError) as e:
+            log.warning(
+                "Invalid miner_id value %r: %s. Using default 0.",
+                miner_id,
+                e,
+            )
+            miner_id_value = 0
     
     log.info(
         "Mining with %d worker(s) for parallel nonce search (miner_id=%d)",
