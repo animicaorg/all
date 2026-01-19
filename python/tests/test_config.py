@@ -310,3 +310,23 @@ def test_load_network_config_no_rpc_url_env(clean_env_vars: Any) -> None:
     
     assert config.name == "devnet"
     assert config.rpc_url == "http://127.0.0.1:28545/rpc"  # devnet default
+
+
+def test_core_network_manifest_available() -> None:
+    """Test that core.network_manifest is available (regression test for setup.sh fix).
+    
+    This test ensures that the core module is installed as part of animica-node
+    package installation, which is required for animica CLI to work correctly.
+    Without this, animica CLI fails with: ModuleNotFoundError: No module named 'core'
+    """
+    # This should not raise ImportError
+    from core.network_manifest import get_manifest
+    
+    # Verify mainnet manifest works
+    manifest = get_manifest(network="mainnet")
+    assert manifest is not None
+    assert manifest.chain_id == 0
+    
+    # Verify the chain_id from network_manifest matches config defaults
+    defaults = get_network_defaults("mainnet")
+    assert defaults["chain_id"] == manifest.chain_id
