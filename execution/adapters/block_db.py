@@ -259,9 +259,15 @@ class BlockStore:
     def _derive_block_hash(self, block: Any) -> bytes:
         """Derive block hash from block.hash or via callback; else error."""
         h = getattr(getattr(block, "header", None), "hash", None)
+        # If hash is a method, call it
+        if callable(h):
+            h = h()
         if isinstance(h, (bytes, bytearray)):
             return bytes(h)
         h2 = getattr(block, "hash", None)
+        # If hash is a method, call it
+        if callable(h2):
+            h2 = h2()
         if isinstance(h2, (bytes, bytearray)):
             return bytes(h2)
         if self._hash_block is not None:

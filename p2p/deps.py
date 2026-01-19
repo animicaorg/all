@@ -1177,13 +1177,18 @@ def _read_chain_id(block_db: Any, state_db: Any) -> int:
 if __name__ == "__main__":
     deps = P2PDeps.from_env()
     h, hdr = deps.head()
+    
+    # Get hash, handling both method and property cases
+    head_hash_val = getattr(hdr, "hash", None)
+    if callable(head_hash_val):
+        head_hash_val = head_hash_val()
+    head_hash_hex = head_hash_val.hex() if isinstance(head_hash_val, bytes) else None
+    
     info = {
         "db_uri": deps.db_uri,
         "chain_id": deps.chain_id,
         "head_height": h,
-        "head_hash": (
-            getattr(hdr, "hash", None).hex() if getattr(hdr, "hash", None) else None
-        ),
+        "head_hash": head_hash_hex,
         "locator_len_16": len(deps.header_locator(16)),
     }
     print(json.dumps(info, indent=2))

@@ -372,7 +372,11 @@ class HeaderSync:
             if cur is None:
                 # We know the hash of the parent, but not the header body (e.g., pruned or not yet persisted).
                 return parent if _ == steps - 1 else None
-        return getattr(cur, "hash", None)
+        result = getattr(cur, "hash", None)
+        # If hash is a method, call it
+        if callable(result):
+            result = result()
+        return result
     
     async def _verify_checkpoint_if_enabled(self, header: HeaderLike) -> bool:
         """
@@ -401,6 +405,9 @@ class HeaderSync:
             return True
         
         h_hash = getattr(header, "hash", None)
+        # If hash is a method, call it
+        if callable(h_hash):
+            h_hash = h_hash()
         if h_hash is None:
             return True
         
