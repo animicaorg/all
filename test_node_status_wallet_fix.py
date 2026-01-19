@@ -90,13 +90,14 @@ def check_recent_blocks_in_status():
         
         if recent_blocks_started:
             # Look for lines like "  123: 0x1234abcd 2026-01-19 20:24:25Z txs=0"
-            if line.strip().startswith(tuple("0123456789")):
+            stripped = line.strip()
+            if stripped and stripped[0].isdigit():
                 try:
-                    height = int(line.strip().split(":")[0])
+                    height = int(stripped.split(":")[0])
                     heights.append(height)
                 except (ValueError, IndexError):
                     pass
-            elif line.strip() and not line.strip().startswith(" "):
+            elif stripped and not stripped.startswith(" "):
                 # End of recent blocks section
                 break
     

@@ -663,7 +663,10 @@ def show(
             balance_confirmed = get_balance(entry.address, rpc_endpoint, tag="latest")
             if include_tip:
                 # Tip balance is the same as confirmed when using 'latest' tag
-                # Both query the current state which includes the most recent blocks
+                # Both query the current state which includes the most recent blocks.
+                # NOTE: This assumes 'latest' always returns the current state_db state.
+                # If future RPC implementations distinguish between "latest committed" and "latest tip",
+                # this logic may need to be updated to query with different tags.
                 balance_tip = balance_confirmed
             if include_mempool:
                 mempool_delta = _request_rpc("state.getMempoolDelta", [entry.address], rpc_endpoint)
