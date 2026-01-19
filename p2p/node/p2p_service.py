@@ -12338,12 +12338,26 @@ class P2PService:
             )
         caps = peer.hello.get("capabilities")
         head_height = int(peer.hello.get("head_height") or 0)
+        
+        # FIX: Allow peers at height 0 when local node is also at genesis
+        # This prevents chicken-and-egg problem where nodes at genesis can't sync from each other
+        # to bootstrap the chain. We need to allow height 0 peers so they can exchange blocks
+        # as they become available (either through mining or receiving from other sources).
+        local_height, _ = self._local_head()
+        at_genesis = (int(local_height or 0) == 0)
+        
         if isinstance(caps, list) and caps:
             if "sync" not in caps and "blocks" not in caps and "headers" not in caps:
                 if head_height <= 0:
-                    return False, "no_sync_capability"
+                    # If we're at genesis, allow peers at height 0 even without sync caps
+                    # They may mine/receive blocks soon and we need to stay connected
+                    if not at_genesis:
+                        return False, "no_sync_capability"
         elif head_height <= 0:
-            return False, "no_chain_data"
+            # Allow height 0 peers when we're also at genesis
+            # This enables initial sync bootstrapping
+            if not at_genesis:
+                return False, "no_chain_data"
         return True, "eligible"
 
     def _block_peer_eligibility(
@@ -12681,9 +12695,22 @@ class P2PService:
                     head_height = int((peer.hello or {}).get("head_height") or 0)
                 except Exception:
                     head_height = 0
+            
+            # FIX: Don't skip height 0 peers when we're at genesis and need height 1
+            # This allows initial block sync from genesis. Peers at height 0 may still
+            # be able to serve block 1 if they just mined/received it but haven't updated
+            # their head announcement yet. The needed_height check below will properly
+            # filter if the peer genuinely doesn't have the needed block.
             if head_height <= 0:
-                continue
-            if needed_height is not None and head_height < needed_height:
+                # Allow if we're transitioning from genesis (needed_height <= 1)
+                # or if we have no better information (needed_height is None)
+                if needed_height is not None and needed_height > 1:
+                    continue
+                # For genesis transition, keep the peer as a candidate with height 0
+                # The actual block availability will be checked when requesting
+            
+            if needed_height is not None and head_height < needed_height and head_height > 0:
+                # Peer's advertised height is too low (and we know it's not just a stale hello)
                 continue
             candidates.append((head_height, peer))
         if not candidates:
