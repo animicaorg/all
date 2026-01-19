@@ -540,7 +540,69 @@ def _maybe_bootstrap_genesis(
     CRITICAL: This function must NOT open a second connection to the DB that's
     already open in bundle.kv. Instead, it should use the existing KV instance
     to avoid conflicts and ensure state consistency.
+    
+    NETWORK_IDENTITY_TOUCHPOINT: Also verifies DB metadata (chain_id, genesis_hash,
+    network_name) matches expected values if DB already has metadata stored.
     """
+    # Step 1: Check for existing DB metadata and verify network identity
+    stored_chain_id = None
+    stored_genesis = None
+    stored_network = None
+    
+    if hasattr(bundle.block_db, "get_chain_id"):
+        try:
+            stored_chain_id = bundle.block_db.get_chain_id()
+        except Exception:
+            pass
+    
+    if hasattr(bundle.block_db, "get_genesis_hash"):
+        try:
+            stored_genesis = bundle.block_db.get_genesis_hash()
+        except Exception:
+            pass
+    
+    if hasattr(bundle.block_db, "get_network_name"):
+        try:
+            stored_network = bundle.block_db.get_network_name()
+        except Exception:
+            pass
+    
+    # Step 2: If DB has metadata, verify it matches expected network
+    if stored_chain_id is not None and stored_chain_id != chain_id:
+        from core.errors import GenesisMismatchError
+        raise GenesisMismatchError(
+            f"Database chain_id mismatch: DB has chain_id={stored_chain_id}, "
+            f"but config expects chain_id={chain_id}. "
+            f"Your database belongs to a different network. "
+            f"Delete or reset the data directory."
+        )
+    
+    # Step 3: If genesis_path provided, verify it matches stored genesis hash
+    if genesis_path and stored_genesis is not None:
+        try:
+            loader = _import("core.genesis.loader")
+            identity = loader.compute_genesis_identity(genesis_path, chain_id=chain_id)
+            expected_genesis = identity.genesis_block_hash
+            
+            if stored_genesis != expected_genesis:
+                from core.errors import GenesisMismatchError
+                expected_hex = "0x" + expected_genesis.hex()
+                stored_hex = "0x" + stored_genesis.hex()
+                raise GenesisMismatchError(
+                    f"Database genesis mismatch: DB has genesis={stored_hex}, "
+                    f"but genesis file computes to={expected_hex}. "
+                    f"Your database was initialized with a different genesis. "
+                    f"Delete or reset the data directory."
+                )
+        except Exception as e:
+            if "GenesisMismatchError" in type(e).__name__:
+                raise
+            # If we can't compute identity, log warning but continue
+            logging.getLogger("animica.rpc.deps").warning(
+                f"Could not verify genesis identity: {e}"
+            )
+    
+    # Step 4: Only bootstrap if no head exists (original logic)
     try:
         head_mod = _import("core.chain.head")
         need_boot = True
