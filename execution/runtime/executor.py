@@ -147,11 +147,13 @@ def apply_tx(
         return _dispatch_apply_tx(tx, state, block_env, params=params, tx_env=tx_env)  # type: ignore[misc]
 
     # Fallback: very small built-in dispatcher based on tx.kind
+    # Note: This mapping should stay in sync with dispatcher._NUMERIC_KIND
     kind = getattr(tx, "kind", None) or (isinstance(tx, dict) and tx.get("kind"))
     if isinstance(kind, (bytes, bytearray)):
         kind = bytes(kind).decode(errors="ignore")
     if isinstance(kind, int):
-        # 0=transfer, 1=deploy, 2=call, 3=coinbase (convention; may differ)
+        # 0=transfer, 1=deploy, 2=call, 3=coinbase
+        # TxKind.COINBASE (3) is for block rewards (protocol-generated, no signature)
         kind = {0: "transfer", 1: "deploy", 2: "call", 3: "coinbase"}.get(kind, "transfer")
 
     if kind == "transfer" or kind == "coinbase":

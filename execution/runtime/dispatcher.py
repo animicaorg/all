@@ -71,7 +71,7 @@ _NUMERIC_KIND = {
     0: "transfer",
     1: "deploy",
     2: "call",
-    3: "coinbase",  # Coinbase transactions for block rewards
+    3: "coinbase",  # TxKind.COINBASE - block rewards (protocol-generated, no signature required)
 }
 
 _ALIAS_KIND = {

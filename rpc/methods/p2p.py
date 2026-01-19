@@ -351,8 +351,14 @@ async def peer_count() -> int:
         >>> count
         5
     """
-    counts = _peer_counts_snapshot()
-    return counts.get("peers_total", 0)
+    try:
+        counts = _peer_counts_snapshot()
+        return counts.get("peers_total", 0)
+    except Exception as e:
+        # If peer counts unavailable, return 0 (no peers)
+        # This ensures sync commands don't fail when P2P is unavailable
+        log.debug("Failed to get peer count: %s", e)
+        return 0
 
 
 def _parse_core_address(address: str) -> tuple[t.Any | None, str | None]:
