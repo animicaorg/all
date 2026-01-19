@@ -49,6 +49,14 @@ from .interfaces import (PROOF_TYPE_HASHSHARE, HeaderView, PolicySnapshot,
                          ProofEnvelope, ProofMetrics, VerificationResult,
                          VerifierRegistry)
 
+# Import UWA verification if available
+try:
+    from .uwa_verifier import verify_uwa
+    from .uwa_types import UsefulWorkArtifact, calculate_effective_work
+    _UWA_AVAILABLE = True
+except ImportError:
+    _UWA_AVAILABLE = False
+
 # Fixed-point scale for µ-nats (micro-nats)
 _MICRO: int = 1_000_000
 
@@ -318,9 +326,11 @@ def validate_block(
             breakdown={},
         )
 
-    # (3) Verify each proof
+    # (3) Verify each proof (including UWA if present)
     verified: List[Tuple[int, ProofMetrics, bytes]] = []
     normalized_envelopes: List[ProofEnvelope] = []
+    uwa_device_scores: Dict[str, int] = {"cpu": 0, "gpu": 0, "quantum": 0}  # Track UWA scores by device
+    
     for i, env in enumerate(proofs):
         try:
             res: VerificationResult = verifiers.verify(
@@ -354,6 +364,48 @@ def validate_block(
                 breakdown={},
             )
 
+        # Check if this is a UWA proof envelope (check type_id first)
+        # UWA proofs should have a dedicated type_id in the future
+        # For now, we check the body_cbor content as fallback
+        if _UWA_AVAILABLE and hasattr(env, 'body_cbor'):
+            try:
+                # Attempt to decode as UWA
+                import cbor2
+                body_obj = cbor2.loads(env.body_cbor)
+                if isinstance(body_obj, dict) and body_obj.get('work_domain'):
+                    # This looks like a UWA - verify it
+                    uwa = UsefulWorkArtifact(**body_obj)
+                    
+                    # Get parent hash from header (handle multiple possible field names)
+                    parent_hash = getattr(header, 'parentHash', None)
+                    if parent_hash is None:
+                        parent_hash = getattr(header, 'parent_hash', b'')
+                    
+                    uwa_result = verify_uwa(
+                        uwa=uwa,
+                        header_height=header.height,
+                        header_prev_hash=parent_hash,
+                        header_chain_id=chain_id,
+                    )
+                    if not uwa_result.valid:
+                        return ValidationOutcome(
+                            ok=False,
+                            reason=f"uwa-invalid:{uwa_result.reason}",
+                            theta_micro=header.theta_micro,
+                            h_micro=0,
+                            psi_micro=0,
+                            s_micro=0,
+                            bad_index=i,
+                            bad_stage="uwa-verifier",
+                            normalized_envelopes=(),
+                            breakdown={},
+                        )
+                    # Track UWA score by device type
+                    device_key = uwa_result.device_type.name.lower()
+                    uwa_device_scores[device_key] = uwa_device_scores.get(device_key, 0) + uwa_result.work_score
+            except Exception:
+                # Not a UWA or failed to decode - continue with normal verification
+                pass
         # keep normalized CBOR body for receipts hashing/persistence
         normalized_envelopes.append(
             ProofEnvelope(
@@ -417,9 +469,23 @@ def validate_block(
             breakdown=breakdown,
         )
 
-    # (5) Compute H(u) from hashshare(s) and compare to Θ
+    # (5) Compute H(u) from hashshare(s) and UWA effective work, then compare to Θ
     h_micro = _compute_h_micro_from_hashshares(verified)
-    s_micro = h_micro + psi_micro
+    
+    # Add UWA effective work if available
+    uwa_effective_work = 0
+    if _UWA_AVAILABLE and any(uwa_device_scores.values()):
+        uwa_effective_work = calculate_effective_work(
+            cpu_score=uwa_device_scores.get("cpu", 0),
+            gpu_score=uwa_device_scores.get("gpu", 0),
+            quantum_score=uwa_device_scores.get("quantum", 0),
+        )
+        breakdown["uwa_cpu_score"] = uwa_device_scores.get("cpu", 0)
+        breakdown["uwa_gpu_score"] = uwa_device_scores.get("gpu", 0)
+        breakdown["uwa_quantum_score"] = uwa_device_scores.get("quantum", 0)
+        breakdown["uwa_effective_work"] = uwa_effective_work
+    
+    s_micro = h_micro + psi_micro + uwa_effective_work
     theta = max(0, int(header.theta_micro))
 
     if s_micro < theta:
