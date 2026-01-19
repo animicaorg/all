@@ -331,6 +331,36 @@ def _peer_counts_snapshot() -> dict[str, int]:
     return {"peers_total": 0, "peers_inbound": 0, "peers_outbound": 0}
 
 
+@method(
+    "net.peerCount",
+    desc="Return the number of connected peers (lightweight count method)",
+    aliases=["p2p.peerCount", "p2p.peer_count", "net_peerCount"],
+)
+async def peer_count() -> int:
+    """
+    Return the total number of connected peers.
+    
+    This is a lightweight alternative to p2p.listPeers when only the count
+    is needed. Used by sync commands to check peer connectivity.
+    
+    Returns:
+        int: Total number of connected peers (inbound + outbound)
+    
+    Examples:
+        >>> count = await peer_count()
+        >>> count
+        5
+    """
+    try:
+        counts = _peer_counts_snapshot()
+        return counts.get("peers_total", 0)
+    except Exception as e:
+        # If peer counts unavailable, return 0 (no peers)
+        # This ensures sync commands don't fail when P2P is unavailable
+        log.debug("Failed to get peer count: %s", e)
+        return 0
+
+
 def _parse_core_address(address: str) -> tuple[t.Any | None, str | None]:
     try:
         from p2p.core_p2p.netaddress import NetAddress
