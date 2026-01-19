@@ -424,23 +424,36 @@ def load() -> RpcConfig:
         if genesis_chain_id is not None:
             chain_id = genesis_chain_id
     
-    # CRITICAL: Validate mainnet always uses chain_id=0
-    # This prevents silent misconfigurations where mainnet runs with wrong chain_id
-    if network in {"main", "mainnet"} and chain_id != 0:
-        error_msg = (
-            f"FATAL: Network 'mainnet' MUST use chain_id=0, but got chain_id={chain_id}. "
-            f"Check ANIMICA_CHAIN_ID environment variable and genesis file. "
-            f"Genesis: {genesis_path}, Network: {network}"
-        )
-        logger.error(error_msg)
-        raise ValueError(error_msg)
-    
-    # Validate testnet uses chain_id=2
-    if network in {"test", "testnet"} and chain_id != 2:
-        logger.warning(
-            f"Network 'testnet' typically uses chain_id=2, but got chain_id={chain_id}. "
-            f"This may cause compatibility issues."
-        )
+    # CRITICAL: Validate chain_id matches network using network_manifest
+    # This prevents silent misconfigurations where networks run with wrong chain_id
+    try:
+        from core.network_manifest import get_manifest
+        manifest = get_manifest(network=network)
+        if manifest and chain_id != manifest.chain_id:
+            error_msg = (
+                f"FATAL: Network '{network}' MUST use chain_id={manifest.chain_id}, "
+                f"but got chain_id={chain_id}. "
+                f"Check ANIMICA_CHAIN_ID environment variable and genesis file. "
+                f"Genesis: {genesis_path}, Network: {network}"
+            )
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+    except ImportError:
+        # Fallback validation if network_manifest not available
+        if network in {"main", "mainnet"} and chain_id != 0:
+            error_msg = (
+                f"FATAL: Network 'mainnet' MUST use chain_id=0, but got chain_id={chain_id}. "
+                f"Check ANIMICA_CHAIN_ID environment variable and genesis file. "
+                f"Genesis: {genesis_path}, Network: {network}"
+            )
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+        
+        if network in {"test", "testnet"} and chain_id != 2:
+            logger.warning(
+                f"Network 'testnet' typically uses chain_id=2, but got chain_id={chain_id}. "
+                f"This may cause compatibility issues."
+            )
 
     metrics_enabled = _env_bool("ANIMICA_METRICS_ENABLED", True)
     metrics_port = _env_int("ANIMICA_METRICS_PORT", 9100)
