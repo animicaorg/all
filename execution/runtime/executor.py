@@ -151,10 +151,12 @@ def apply_tx(
     if isinstance(kind, (bytes, bytearray)):
         kind = bytes(kind).decode(errors="ignore")
     if isinstance(kind, int):
-        # 0=transfer, 1=deploy, 2=call (convention; may differ)
-        kind = {0: "transfer", 1: "deploy", 2: "call"}.get(kind, "transfer")
+        # 0=transfer, 1=deploy, 2=call, 3=coinbase (convention; may differ)
+        kind = {0: "transfer", 1: "deploy", 2: "call", 3: "coinbase"}.get(kind, "transfer")
 
-    if kind == "transfer":
+    if kind == "transfer" or kind == "coinbase":
+        # Both transfer and coinbase use the same handler
+        # apply_transfer knows how to handle coinbase transactions (kind=3)
         from .transfers import apply_transfer  # lazy import; raises if missing
 
         return apply_transfer(tx, state, block_env, tx_env=tx_env, params=params)

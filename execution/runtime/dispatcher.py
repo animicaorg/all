@@ -71,11 +71,14 @@ _NUMERIC_KIND = {
     0: "transfer",
     1: "deploy",
     2: "call",
+    3: "coinbase",  # Coinbase transactions for block rewards
 }
 
 _ALIAS_KIND = {
     "xfer": "transfer",
     "payment": "transfer",
+    "reward": "coinbase",
+    "block_reward": "coinbase",
     "create": "deploy",
     "contract_create": "deploy",
     "invoke": "call",
@@ -86,7 +89,7 @@ _ALIAS_KIND = {
 
 def resolve_tx_kind(tx: Any) -> str:
     """
-    Determine the transaction kind: 'transfer' | 'deploy' | 'call'.
+    Determine the transaction kind: 'transfer' | 'deploy' | 'call' | 'coinbase'.
 
     Resolution order:
       1) Explicit field: kind / tx_kind / type / txType (string or numeric).
@@ -105,7 +108,7 @@ def resolve_tx_kind(tx: Any) -> str:
                 return _NUMERIC_KIND[explicit]
         else:
             k = str(explicit).strip().lower()
-            if k in ("transfer", "deploy", "call"):
+            if k in ("transfer", "deploy", "call", "coinbase"):
                 return k
             if k in _ALIAS_KIND:
                 return _ALIAS_KIND[k]
@@ -190,7 +193,9 @@ def dispatch(
     """
     kind = resolve_tx_kind(tx)
 
-    if kind == "transfer":
+    if kind == "transfer" or kind == "coinbase":
+        # Both transfer and coinbase use apply_transfer
+        # apply_transfer knows how to handle coinbase transactions (kind=3)
         from . import transfers as _transfers
 
         if not hasattr(_transfers, "apply_transfer"):
