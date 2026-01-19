@@ -330,4 +330,94 @@ async def net_peers() -> list[dict[str, object]]:
         raise rpc_errors.InternalError(f"peer list unavailable: {exc}")
 
 
-__all__ = ["net_get_bootstrap_seeds", "net_peer_count", "net_peers"]
+@method("net.getChainId", desc="Return the chain ID of the running node", aliases=["net.chainId", "eth_chainId"])
+async def net_get_chain_id() -> int:
+    """
+    Return the chain ID that this node is operating on.
+    
+    This is the authoritative chain ID used by consensus, state, and P2P.
+    Use this to verify the CLI/wallet are querying the correct network.
+    
+    Returns:
+        Chain ID (0 for mainnet, 2 for testnet, 1337 for devnet)
+    """
+    try:
+        # Try to get from RPC context first (most authoritative)
+        ctx = deps.get_ctx()
+        if hasattr(ctx, "cfg") and hasattr(ctx.cfg, "chain_id"):
+            return int(ctx.cfg.chain_id)
+        
+        # Fallback to config resolution
+        return int(resolve_chain_id())
+    except Exception as exc:
+        raise rpc_errors.InternalError(f"chain ID unavailable: {exc}")
+
+
+@method("net.getGenesisHash", desc="Return the genesis block hash of the running node", aliases=["net.genesisHash", "chain.genesisHash"])
+async def net_get_genesis_hash() -> str:
+    """
+    Return the genesis block hash that this node was initialized with.
+    
+    This is the pinned genesis hash used for network identity validation.
+    Use this to verify the node is on the expected network/chain.
+    
+    Returns:
+        Genesis block hash as 0x-prefixed hex string (32 bytes)
+    """
+    try:
+        # Get genesis hash from context or block_db
+        ctx = deps.get_ctx()
+        
+        # Try to get from block_db (genesis block at height 0)
+        if hasattr(ctx, "block_db"):
+            try:
+                genesis_block = ctx.block_db.get_block_by_height(0)
+                if genesis_block:
+                    # Return block hash if available
+                    block_hash = getattr(genesis_block, "hash", None)
+                    if block_hash:
+                        if isinstance(block_hash, bytes):
+                            return "0x" + block_hash.hex()
+                        return str(block_hash) if str(block_hash).startswith("0x") else "0x" + str(block_hash)
+                    
+                    # Try header hash
+                    header = getattr(genesis_block, "header", None)
+                    if header:
+                        header_hash = getattr(header, "hash", None) or getattr(header, "block_hash", None)
+                        if header_hash:
+                            if isinstance(header_hash, bytes):
+                                return "0x" + header_hash.hex()
+                            return str(header_hash) if str(header_hash).startswith("0x") else "0x" + str(header_hash)
+            except Exception:
+                pass
+        
+        # Fallback: get pinned genesis hash from network params
+        chain_id = resolve_chain_id()
+        try:
+            from core.network_params import get_pinned_genesis_hash
+            
+            pinned_hash = get_pinned_genesis_hash(chain_id=chain_id)
+            if pinned_hash:
+                return "0x" + pinned_hash.hex()
+        except Exception:
+            pass
+        
+        # Last resort: try to get from network manifest
+        try:
+            from core.network_manifest import get_manifest
+            
+            manifest = get_manifest(chain_id=chain_id)
+            if manifest:
+                return manifest.pinned_genesis_hash_hex
+        except Exception:
+            pass
+        
+        raise rpc_errors.InternalError("genesis hash not available from any source")
+        
+    except Exception as exc:
+        if isinstance(exc, rpc_errors.InternalError):
+            raise
+        raise rpc_errors.InternalError(f"genesis hash unavailable: {exc}")
+
+
+__all__ = ["net_get_bootstrap_seeds", "net_peer_count", "net_peers", "net_get_chain_id", "net_get_genesis_hash"]

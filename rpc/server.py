@@ -379,6 +379,31 @@ def create_app(cfg: rpc_config.Config | None = None) -> FastAPI:
     # --- Lifecycle wiring (DBs, heads, pools) ---
     @app.on_event("startup")
     async def _on_startup() -> None:
+        # Log network identity for diagnostics
+        log.info("=" * 80)
+        log.info("ANIMICA RPC SERVER - NETWORK IDENTITY")
+        log.info("=" * 80)
+        log.info("Network:           %s", cfg.network_name if hasattr(cfg, 'network_name') else 'unknown')
+        log.info("Chain ID:          %s", cfg.chain_id)
+        log.info("Database:          %s", cfg.db_uri)
+        log.info("Genesis Path:      %s", cfg.genesis_path if hasattr(cfg, 'genesis_path') else 'not specified')
+        log.info("Data Directory:    %s", cfg.data_dir if hasattr(cfg, 'data_dir') else 'not specified')
+        log.info("RPC Endpoint:      http://%s:%s/rpc", cfg.host, cfg.port)
+        
+        # Load and display pinned genesis hash if available
+        try:
+            from core.network_params import get_pinned_genesis_hash, get_network_params
+            params = get_network_params(chain_id=cfg.chain_id)
+            if params:
+                log.info("Network Name:      %s", params.name)
+                pinned_hash = get_pinned_genesis_hash(chain_id=cfg.chain_id)
+                if pinned_hash:
+                    log.info("Pinned Genesis:    0x%s", pinned_hash.hex())
+        except Exception as e:
+            log.debug("Could not load pinned genesis info: %s", e)
+        
+        log.info("=" * 80)
+        
         log.info(
             "RPC server starting",
             extra={
