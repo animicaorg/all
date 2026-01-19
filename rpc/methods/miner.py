@@ -2675,6 +2675,7 @@ def _construct_tx_from_dict(normalized: dict) -> Tx | None:
 def _mine_once(
     payout_address: bytes | None = None,
     workers: int | None = None,
+    miner_id: int = 0,
     *,
     include_mempool: bool = True,
     allow_offline_mining: bool = False,
@@ -2705,6 +2706,8 @@ def _mine_once(
     Args:
         payout_address: Optional 32-byte payout address. If None, uses default miner address.
         workers: Number of parallel worker processes to use for nonce search (default: CPU count)
+        miner_id: Unique miner instance ID (0-255) for multi-node mining coordination.
+                  Different IDs ensure nodes search different nonce spaces.
         
     Returns:
         tuple[bool, int, dict[str, Any]]: (success, reward_amount, selection_summary) where:
@@ -3236,6 +3239,7 @@ def _mine_once(
             timeout_s=timeout_s,
             max_restarts=max_restarts,
             log=log if verbose else None,
+            miner_id=miner_id,
         )
         if result is None:
             return None
@@ -4049,6 +4053,7 @@ def miner_mine(
     address: str | None = None,
     workers: int | None = None,
     threads: int | None = None,
+    miner_id: int | None = None,
     include_mempool: bool | None = None,
     allow_offline_mining: bool | None = None,
     allow_unsynced_mining: bool | None = None,
@@ -4065,6 +4070,8 @@ def miner_mine(
         workers: Optional number of CPU worker processes to use for mining (default: auto).
                  The nonce search space is divided among workers for parallel mining.
         threads: Deprecated alias for workers (for backward compatibility).
+        miner_id: Optional unique miner instance ID (0-255) for multi-node mining coordination.
+                  Different miner IDs ensure nodes search different nonce spaces to avoid duplicate work.
         include_mempool: Whether to include pending mempool transactions (default: True).
         allow_offline_mining: Requested offline override (ignored; unsafe overrides disabled).
         allow_unsynced_mining: Requested unsynced override (ignored; unsafe overrides disabled).
@@ -4129,10 +4136,21 @@ def miner_mine(
     from mining.parallel_nonce_search import resolve_worker_count
 
     workers = resolve_worker_count(workers)
+    
+    # Validate and normalize miner_id (0-255 for multi-node mining coordination)
+    miner_id_value = 0 if miner_id is None else int(miner_id)
+    if not (0 <= miner_id_value <= 255):
+        log.warning(
+            "miner_id must be in range [0, 255], got %d. Using default 0.",
+            miner_id_value,
+        )
+        miner_id_value = 0
+    
     log.info(
-        "Mining with %d worker(s) for parallel nonce search",
+        "Mining with %d worker(s) for parallel nonce search (miner_id=%d)",
         workers,
-        extra={"workers": workers},
+        miner_id_value,
+        extra={"workers": workers, "miner_id": miner_id_value},
     )
     
     # Parse payout address if provided
@@ -4172,6 +4190,7 @@ def miner_mine(
             "allow_unsynced_mining": allow_unsynced_flag,
             "force_empty_template": force_empty_flag,
             "workers": workers,
+            "miner_id": miner_id_value,
             "verbose": bool(verbose),
         },
     )
@@ -4189,6 +4208,7 @@ def miner_mine(
         mine_result = _mine_once(
             payout_address=payout_address_bytes,
             workers=workers,
+            miner_id=miner_id_value,
             include_mempool=include_mempool_flag,
             allow_offline_mining=allow_offline_flag,
             allow_unsynced_mining=allow_unsynced_flag,
