@@ -191,7 +191,7 @@ class IdentifyService:
         )
         self.version = version
         self.head_reader = head_reader
-        # Prefer network_id from manifest, fall back to alg_policy_root for compatibility
+        # Use network_id from manifest if provided; fall back to alg_policy_root for backward compatibility
         self.network_id = network_id or alg_policy_root
         self.genesis_hash = genesis_hash
         self.alg_policy_root = alg_policy_root  # Kept for backward compatibility
