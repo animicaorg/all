@@ -184,7 +184,12 @@ def main(argv: list[str] | None = None) -> int:
 
     head = block_db.get_best_head()
     head_num = getattr(head, "number", None) or head.get("number")
-    head_hash = getattr(head, "hash", None) or head.get("hash")
+    head_hash = getattr(head, "hash", None)
+    # If hash is a method, call it
+    if callable(head_hash):
+        head_hash = head_hash()
+    if head_hash is None:
+        head_hash = head.get("hash")
 
     # 6) Output
     if ns.print_receipts:

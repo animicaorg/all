@@ -375,6 +375,9 @@ async def net_get_genesis_hash() -> str:
                 if genesis_block:
                     # Return block hash if available
                     block_hash = getattr(genesis_block, "hash", None)
+                    # If hash is a method, call it
+                    if callable(block_hash):
+                        block_hash = block_hash()
                     if block_hash:
                         if isinstance(block_hash, bytes):
                             return "0x" + block_hash.hex()
@@ -384,6 +387,9 @@ async def net_get_genesis_hash() -> str:
                     header = getattr(genesis_block, "header", None)
                     if header:
                         header_hash = getattr(header, "hash", None) or getattr(header, "block_hash", None)
+                        # If hash is a method, call it
+                        if callable(header_hash):
+                            header_hash = header_hash()
                         if header_hash:
                             if isinstance(header_hash, bytes):
                                 return "0x" + header_hash.hex()

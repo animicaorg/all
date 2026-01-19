@@ -165,7 +165,10 @@ def _header_view(
     computed_hash = _compute_header_hash(header)
     if computed_hash is None:
         computed_hash = getattr(header, "hash", None)
-        if computed_hash is None and isinstance(header, dict):
+        # If hash is a method, call it
+        if callable(computed_hash):
+            computed_hash = _hex(bytes(computed_hash()))
+        elif computed_hash is None and isinstance(header, dict):
             computed_hash = header.get("hash")
 
     if chain_id is None and chain_id_fallback is not None:
