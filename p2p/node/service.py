@@ -1276,11 +1276,14 @@ class P2PService:
         peerstore_path = str(writable_peerstore.path)
         
         # Create P2PConfig for NodeService
+        # Note: P2PConfig uses listen_multiaddrs, not chain_id
         cfg = P2PConfig(
-            listen_multiaddrs=self.listen_addrs,
-            seeds=self.seeds,
+            listen_multiaddrs=tuple(self.listen_addrs),
+            seeds=tuple(self.seeds),
             data_dir=peerstore_path,
-            chain_id=chain_id,
+            enable_tcp=True,
+            enable_quic=enable_quic,
+            enable_ws=enable_ws,
         )
         
         # Create NodeDeps if not provided
