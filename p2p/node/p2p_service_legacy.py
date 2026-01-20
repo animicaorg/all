@@ -10255,11 +10255,10 @@ class P2PService:
                                         "anchor_height": anchor_height,
                                     },
                                 )
-                                # Accept the header - it's height 1 and we're at genesis
-                                pass
+                                # Continue processing - header accepted
                             elif header.parent_hash in valid_genesis_hashes:
-                                # Parent is a valid genesis variant, allow it
-                                pass
+                                # Parent matches a valid genesis variant - continue processing
+                                # (no action needed, just documenting the acceptance)
                             else:
                                 # Parent doesn't match any known genesis variant
                                 # Enhanced diagnostics for genesis anchor failures
