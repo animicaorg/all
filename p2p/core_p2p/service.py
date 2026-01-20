@@ -112,9 +112,11 @@ class CoreP2PService:
             max_outbound=self.max_outbound,
         )
         # Sync check interval - request headers periodically if we have pending blocks
-        self._sync_check_interval = float(
-            os.environ.get("ANIMICA_P2P_CORE_SYNC_CHECK_SEC", "10") or 10
-        )
+        sync_check_sec = os.environ.get("ANIMICA_P2P_CORE_SYNC_CHECK_SEC", "10")
+        try:
+            self._sync_check_interval = float(sync_check_sec)
+        except (ValueError, TypeError):
+            self._sync_check_interval = 10.0
 
     async def start(self) -> None:
         if self._running:

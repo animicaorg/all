@@ -11,6 +11,11 @@ import pytest
 
 from p2p.core_p2p.sync_manager import SyncManager
 
+# Bitcoin-style header size (80 bytes)
+HEADER_SIZE = 80
+# Padding size for test headers (32-byte hash + 48 bytes padding = 80 total)
+TEST_HEADER_PADDING = 48
+
 
 @dataclass
 class FakeChain:
@@ -41,7 +46,7 @@ class FakeChain:
         return None
     
     def process_block(self, block: bytes) -> None:
-        header = block[:80]
+        header = block[:HEADER_SIZE]
         block_hash = hashlib.sha256(header).digest()
         self.blocks[block_hash] = block
     
@@ -168,8 +173,8 @@ async def test_sync_timeout_integration():
     chain = FakeChain()
     sm = SyncManager(chain, request_timeout=0.2)
     
-    # Simulate receiving headers
-    headers = [hashlib.sha256(str(i).encode()).digest() + b"\x00" * 48 for i in range(10)]
+    # Simulate receiving headers (32-byte hash + 48 bytes padding = 80-byte Bitcoin-style header)
+    headers = [hashlib.sha256(str(i).encode()).digest() + b"\x00" * TEST_HEADER_PADDING for i in range(10)]
     sm.receive_headers(headers)
     
     # Queue blocks based on headers
