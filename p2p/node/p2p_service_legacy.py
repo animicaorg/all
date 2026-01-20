@@ -3324,11 +3324,9 @@ class P2PService:
 
     def status_snapshot(self) -> P2PStatusSnapshot:
         snapshot = self._peer_registry.snapshot()
-        identified = [
-            p for p in snapshot if p.get("peer_id") and p.get("peer_id") != "(handshaking)"
-        ]
-        inbound = sum(1 for p in identified if p.get("direction") == "inbound")
-        outbound = sum(1 for p in identified if p.get("direction") == "outbound")
+        # FIX: Include handshaking peers to prevent sync waiting indefinitely for connected peers
+        inbound = sum(1 for p in snapshot if p.get("direction") == "inbound")
+        outbound = sum(1 for p in snapshot if p.get("direction") == "outbound")
         bootstrap_bonus = self.bootstrap_peer_bonus()
         now = time.time()
         attempts_last_5m = sum(
@@ -3347,7 +3345,8 @@ class P2PService:
             advertise_host=advertise_host,
             advertise_port=advertise_port,
             external_ip=self._external_ip,
-            peers_total=self._peer_registry.peer_count() + bootstrap_bonus,
+            # FIX: Use total_active_sessions() to include handshaking peers
+            peers_total=self._peer_registry.total_active_sessions(include_handshaking=True) + bootstrap_bonus,
             peers_inbound=inbound,
             peers_outbound=outbound + bootstrap_bonus,
             bootstrap_attempts_last_5m=attempts_last_5m,
@@ -4339,7 +4338,13 @@ class P2PService:
             return False
         if in_flight_headers != 0 or in_flight_blocks != 0:
             return False
-        if target_height is not None and head_height < max(0, int(target_height) - 1):
+        # FIX: Off-by-one bug - when target_height=1 and head_height=0,
+        # the old condition `head_height < max(0, int(target_height) - 1)`
+        # evaluated to `0 < 0` = False, allowing sync to be marked as done
+        # even though we haven't reached the target yet.
+        # Changed to `head_height < int(target_height)` so sync continues
+        # until we actually reach the target height.
+        if target_height is not None and head_height < int(target_height):
             return False
         if best_header_height > head_height:
             return False
@@ -5259,7 +5264,9 @@ class P2PService:
         return added
 
     def peer_count(self) -> int:
-        return self._peer_registry.peer_count() + self.bootstrap_peer_bonus()
+        # FIX: Count all active sessions including handshaking to properly
+        # reflect connection state for sync and RPC queries
+        return self._peer_registry.total_active_sessions(include_handshaking=True) + self.bootstrap_peer_bonus()
 
     async def import_peers(self, addresses: list[str]) -> dict[str, Any]:
         if not addresses:
@@ -11695,9 +11702,15 @@ class P2PService:
             target_height = self._sync_target_height
             if target_height is None:
                 target_height = remote_height
+            # FIX: Off-by-one bug - when target_height=1 and new_height=0,
+            # the old condition `new_height >= max(0, int(target_height) - 1)`
+            # evaluated to `0 >= 0` = True, marking sync as SYNCED/IDLE
+            # even though we haven't reached height 1 yet.
+            # Changed to `new_height >= int(target_height)` so we only mark
+            # as synced when we actually reach the target height.
             if (
                 target_height is not None
-                and new_height >= max(0, int(target_height) - 1)
+                and new_height >= int(target_height)
                 and best_header_height <= new_height
             ):
                 self._sync_phase = "SYNCED" if new_height > 0 else "IDLE"
