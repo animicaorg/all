@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import random
 import socket
 from dataclasses import dataclass, field
 from typing import Iterable, Optional
@@ -298,7 +299,6 @@ class CoreP2PService:
                         extra={"pending": len(self.net_processing.sync.pending_blocks)}
                     )
                     # Pick a random peer to request from
-                    import random
                     peer = random.choice(peers)
                     if peer.handshake_complete:
                         try:
@@ -312,11 +312,19 @@ class CoreP2PService:
             return
     
     def _current_height(self) -> int:
-        """Get current chain height."""
+        """
+        Get current chain height.
+        
+        Note: This method assumes the header format follows Bitcoin-style encoding
+        where the first 4 bytes (little-endian) represent the block height.
+        For chains using different header formats, this method should be overridden
+        or the ChainAdapter should provide a best_height() method.
+        """
         getter = getattr(self.chain, "best_height", None)
         if callable(getter):
             return getter()
         head = self.chain.best_header()
         if not head or len(head) < 4:
             return 0
+        # Bitcoin-style: first 4 bytes are height in little-endian
         return int.from_bytes(head[:4], "little", signed=False)
