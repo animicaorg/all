@@ -1473,7 +1473,6 @@ class P2PService:
         
         # For compatibility with legacy code that checks these
         self.peer_registry = None  # Legacy attribute, not used in NodeService
-        self.peers = {}  # Will be populated from connmgr on demand
         
         self._log.info(
             "P2PService initialized",
@@ -1520,6 +1519,11 @@ class P2PService:
     def health(self) -> Dict[str, Any]:
         """Get health snapshot."""
         return self._node_service.health()
+    
+    @property
+    def peers(self) -> Dict[str, Dict[str, Any]]:
+        """Get connected peers dict from underlying NodeService."""
+        return self._node_service.peers
     
     async def publish(self, topic: str, payload: bytes) -> None:
         """Publish a message to a gossip topic."""
