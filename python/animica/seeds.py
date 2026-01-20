@@ -15,19 +15,24 @@ DEFAULT_P2P_PORTS = [30333, 30303, 31333, 31334]
 NETWORK_SEEDS: Dict[str, List[str]] = {
     "mainnet": [
         "mainnet.animica.org:30333",
+        "144.126.133.21:30333",
+        "3.12.224.189:30333",
     ],
     "testnet": [
         "testnet.animica.org:30333",
         "rpc.testnet.animica.org:30333",
         "144.126.133.21:30333",
+        "3.12.224.189:30333",
     ],
     "devnet": [
         "devnet.animica.org:30333",
         "144.126.133.21:30333",
+        "3.12.224.189:30333",
     ],
     "local-devnet": [
         "127.0.0.1:30333",
         "144.126.133.21:30333",
+        "3.12.224.189:30333",
     ],
 }
 

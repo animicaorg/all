@@ -664,6 +664,7 @@ class P2PServiceLegacy:
         self._accept_task: asyncio.Task | None = None
         self._dial_tasks: list[asyncio.Task] = []
         self._consensus_task: asyncio.Task | None = None
+        self._seed_reconnect_task: asyncio.Task | None = None
         self._peers: Dict[str, Dict[str, Any]] = {}
         self._running = False
         self._parse_multiaddr = parse_multiaddr
@@ -803,6 +804,11 @@ class P2PServiceLegacy:
         self._consensus_task = self.loop.create_task(
             self._consensus_watch_loop(), name="consensus-watch"
         )
+        
+        # Continuous seed reconnection loop (like legacy P2P)
+        self._seed_reconnect_task = self.loop.create_task(
+            self._seed_reconnect_loop(), name="seed-reconnect"
+        )
 
         self._log.info(
             "Started full P2P service",
@@ -827,6 +833,10 @@ class P2PServiceLegacy:
             self._consensus_task.cancel()
             with contextlib.suppress(Exception):
                 await self._consensus_task
+        if hasattr(self, "_seed_reconnect_task") and self._seed_reconnect_task:
+            self._seed_reconnect_task.cancel()
+            with contextlib.suppress(Exception):
+                await self._seed_reconnect_task
         # Close live connections and record disconnections
         for peer in list(self._peers.values()):
             conn = peer.get("conn")
@@ -860,24 +870,43 @@ class P2PServiceLegacy:
             return
 
     async def _dial(self, addr: str) -> None:
+        """Dial a peer with exponential backoff on failure."""
         attempt = 0
-        while self._running:
+        max_attempts = 5
+        backoff = 2.0
+        
+        while self._running and attempt < max_attempts:
             try:
                 conn = await self._transport.dial(addr, timeout=5.0)
             except asyncio.CancelledError:
                 raise
             except Exception as e:
                 attempt += 1
-                self._log.warning(
-                    "Failed to dial %s (attempt %s): %s: %s",
+                if attempt >= max_attempts:
+                    self._log.warning(
+                        "Failed to dial %s after %s attempts (last error: %s: %s)",
+                        addr,
+                        attempt,
+                        e.__class__.__name__,
+                        e,
+                    )
+                    return
+                
+                delay = min(backoff ** attempt, 60.0)  # Cap at 60 seconds
+                self._log.debug(
+                    "Failed to dial %s (attempt %s/%s), retrying in %.1fs: %s: %s",
                     addr,
                     attempt,
+                    max_attempts,
+                    delay,
                     e.__class__.__name__,
                     e,
                 )
-                await asyncio.sleep(0)
+                await asyncio.sleep(delay)
                 continue
+            
             self._track_peer(conn, direction="outbound", dial_addr=addr)
+            self._log.info("Successfully connected to %s", addr)
             return
 
     def _peer_id_from_conn(self, conn: Any, remote: str) -> str:
@@ -1054,6 +1083,48 @@ class P2PServiceLegacy:
                     pass
 
         self.loop.create_task(_do_identify(), name=f"identify@{remote}")
+
+    async def _seed_reconnect_loop(self) -> None:
+        """
+        Continuously monitor and reconnect to seed nodes.
+        
+        This ensures the node maintains connections to bootstrap seeds,
+        similar to how the legacy P2P service operates.
+        """
+        try:
+            while self._running:
+                await asyncio.sleep(30.0)  # Check every 30 seconds
+                
+                # Get currently connected peers
+                connected_addrs = set()
+                for peer in self._peers.values():
+                    dial_addr = peer.get("dial_addr")
+                    if dial_addr:
+                        connected_addrs.add(dial_addr)
+                
+                # Reconnect to disconnected seeds
+                for seed in self.seeds:
+                    try:
+                        parsed = self._parse_multiaddr(seed)
+                        if parsed.transport != "tcp":
+                            continue
+                        
+                        addr = f"tcp://{parsed.host}:{parsed.port}"
+                        seed_multiaddr = f"/ip4/{parsed.host}/tcp/{parsed.port}"
+                        
+                        # Check if already connected
+                        if seed_multiaddr in connected_addrs or addr in connected_addrs:
+                            continue
+                        
+                        # Try to reconnect
+                        self._log.info("Reconnecting to seed: %s", addr)
+                        self.loop.create_task(self._dial(addr), name=f"redial-seed@{addr}")
+                    except Exception as e:
+                        self._log.debug(
+                            "Failed to schedule seed reconnect: %s", e, exc_info=True
+                        )
+        except asyncio.CancelledError:
+            return
 
     async def _consensus_watch_loop(self) -> None:
         """

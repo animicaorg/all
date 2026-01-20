@@ -144,6 +144,8 @@ class SeedBundle:
 EMBEDDED_FALLBACK_SEEDS: List[str] = [
     "quic://144.126.133.21:443",
     "tcp://144.126.133.21:30333",
+    "quic://3.12.224.189:443",
+    "tcp://3.12.224.189:30333",
 ]
 
 # Network-specific DNS seeds (for TXT record discovery)
