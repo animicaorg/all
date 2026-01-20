@@ -5616,30 +5616,50 @@ class P2PService:
         This is called when we discover a significantly higher network height, ensuring
         all peers in the network stay informed about the true highest height even if
         they're not directly connected to the node with that height.
+        
+        Uses HEAD_STATUS messages (not HELLO) for ongoing height updates after handshake.
         """
+        # Get current local head for HEAD_STATUS message
+        local_height, local_head_hash = self._local_head()
+        if local_head_hash is None:
+            local_head_hash = b"\x00" * 32
+        
         async with self._peer_lock:
             peers = list(self._peers.values())
         
+        from p2p.wire.messages import HeadStatus
+        
+        broadcast_count = 0
         for peer in peers:
             if not peer.hello_done.is_set():
                 continue
-            if not peer.hello:
+            if not self._peer_chain_matches(peer):
                 continue
 
-            # Update peer's view with new network best if it's higher
+            # Send HEAD_STATUS to all peers to propagate network best height
+            # This ensures both inbound and outbound connections receive updates
             try:
-                peer_network_best = peer.hello.get("network_best_height")
-                if peer_network_best is None or int(peer_network_best) < network_best_height:
-                    await self._send_hello(peer)
-                    log.debug(
-                        "Propagated network best height via HELLO",
-                        extra={
-                            "remote": peer.remote,
-                            "network_best_height": network_best_height,
-                        },
-                    )
+                head_status = HeadStatus(
+                    chain_id=self.chain_id,
+                    head_height=int(local_height or 0),
+                    head_hash=bytes(local_head_hash),
+                    timestamp_ms=int(time.time() * 1000),
+                    network_best_height=network_best_height,
+                )
+                await self._send(peer, MsgID.HEAD_STATUS, head_status)
+                broadcast_count += 1
             except Exception:
                 pass
+        
+        if broadcast_count > 0:
+            log.debug(
+                "Propagated network best height via HEAD_STATUS",
+                extra={
+                    "network_best_height": network_best_height,
+                    "local_height": int(local_height or 0),
+                    "peers": broadcast_count,
+                },
+            )
 
     # ---------------------------------------------------------------------
     # Connection management
