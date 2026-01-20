@@ -3326,8 +3326,9 @@ class P2PService:
         snapshot = self._peer_registry.snapshot()
         # FIX: Count ALL peers including handshaking to allow sync to progress
         # when peers are connecting but haven't completed identity exchange yet.
-        # Previously only counted peers with peer_id != "(handshaking)", causing
-        # sync to wait indefinitely for "connected" peers that would never be counted.
+        # Previously filtered out peers where peer_id was missing or "(handshaking)"
+        # with: `[p for p in snapshot if p.get("peer_id") and p.get("peer_id") != "(handshaking)"]`
+        # This caused sync to wait indefinitely for "connected" peers that would never be counted.
         inbound = sum(1 for p in snapshot if p.get("direction") == "inbound")
         outbound = sum(1 for p in snapshot if p.get("direction") == "outbound")
         bootstrap_bonus = self.bootstrap_peer_bonus()
