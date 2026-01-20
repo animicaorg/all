@@ -57,6 +57,7 @@ from p2p.wire.messages import (
     GetPeers,
     HeaderCompact,
     Headers,
+    HeadStatus,
     Hello,
     HelloAck,
     Inv,
@@ -5627,8 +5628,6 @@ class P2PService:
         async with self._peer_lock:
             peers = list(self._peers.values())
         
-        from p2p.wire.messages import HeadStatus
-        
         broadcast_count = 0
         for peer in peers:
             if not peer.hello_done.is_set():
@@ -7097,7 +7096,6 @@ class P2PService:
         network_best = self._network_best_height()
         
         # Send HEAD_STATUS response
-        from p2p.wire.messages import HeadStatus
         await self._send(
             peer,
             MsgID.HEAD_STATUS,
@@ -16103,7 +16101,6 @@ class P2PService:
         network_best = self._network_best_height()
         
         # Broadcast to all peers
-        from p2p.wire.messages import HeadStatus
         head_status = HeadStatus(
             chain_id=self.chain_id,
             head_height=int(local_height or 0),
