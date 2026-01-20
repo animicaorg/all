@@ -78,16 +78,23 @@ class ConnectionWrapper:
     def is_closed(self) -> bool:
         return self._conn.closed
     
-    async def _ensure_stream(self) -> tbase.Stream:
-        """Lazily open the stream for this connection."""
+    async def ensure_stream(self) -> tbase.Stream:
+        """Public method to lazily open the stream for this connection."""
         if self._stream is None:
             self._stream = await self._conn.open_stream()
         return self._stream
     
     async def send_frame(self, msg_id: int, payload: bytes, *, acks: bool = False) -> None:
-        """Pack and send a frame via the connection's stream."""
+        """
+        Pack and send a frame via the connection's stream.
+        
+        Args:
+            msg_id: Message ID for the frame
+            payload: Message payload bytes
+            acks: Whether to request acknowledgment (currently unused, reserved for future use)
+        """
         async with self._send_lock:
-            stream = await self._ensure_stream()
+            stream = await self.ensure_stream()
             
             # Pack the frame using the wire protocol
             frame_bytes = wire_frames.pack_frame(
@@ -340,7 +347,14 @@ class NodeService:
         host, port = parsed.host, parsed.port
 
         # Reconstruct the full address in the format expected by each transport
-        full_addr = f"{scheme}://{host}:{port}" if scheme == "tcp" else f"{scheme}://{host}:{port}/p2p" if scheme in ("ws", "wss") else f"{scheme}://{host}:{port}"
+        if scheme == "tcp":
+            full_addr = f"tcp://{host}:{port}"
+        elif scheme in ("ws", "wss"):
+            full_addr = f"{scheme}://{host}:{port}/p2p"
+        elif scheme == "quic":
+            full_addr = f"quic://{host}:{port}"
+        else:
+            raise ValueError(f"unsupported listen scheme: {scheme}")
 
         # Create ListenConfig with the full address
         # Use default max_frame_bytes from transport.base
@@ -419,8 +433,8 @@ class NodeService:
         The connection provides streams; we open one and read frames from it.
         """
         try:
-            # Open the stream for this connection
-            stream = await wrapped_conn._ensure_stream()
+            # Open the stream for this connection using public interface
+            stream = await wrapped_conn.ensure_stream()
             
             while not wrapped_conn.is_closed():
                 # Read frame data from the stream
