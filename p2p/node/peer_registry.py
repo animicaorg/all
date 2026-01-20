@@ -231,12 +231,7 @@ class PeerRegistry:
         """
         if not include_handshaking:
             # Count only sessions with peer_id assigned (handshake complete)
-            # Use explicit counter for better performance with large session counts
-            count = 0
-            for s in self._sessions.values():
-                if s.peer_id:
-                    count += 1
-            return count
+            return sum(1 for s in self._sessions.values() if s.peer_id)
         
         # Count all active sessions including handshaking
         return len(self._sessions)
