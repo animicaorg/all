@@ -48,7 +48,7 @@ def main():
     
     # Simulate the problem scenario
     peers = {
-        "3.133.122.91:30333": {"hello_done": False, "state": "dialing"},
+        "3.12.224.189:30333": {"hello_done": False, "state": "dialing"},
         "82.66.161.84:30333": {"hello_done": False, "state": "dialing"},
     }
     sync_target_height = 1
