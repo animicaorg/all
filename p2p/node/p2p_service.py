@@ -12990,6 +12990,32 @@ class P2PService:
                 best_peer = peer.remote
                 best_age = tip_age
         
+        # FIX: Fallback to target_height when no fresh peer tips available
+        # This allows sync to progress based on block announcements or explicit targets
+        # even when peer connections are unstable or peers haven't completed handshakes
+        if best_height is None and self._sync_target_height is not None:
+            target = int(self._sync_target_height)
+            # Validate target is reasonable: must be positive and not absurdly high
+            # Maximum reasonable height is ~10 years worth of blocks at 1 block/10s = ~31M blocks
+            MAX_REASONABLE_HEIGHT = 50_000_000
+            if target > 0 and target <= MAX_REASONABLE_HEIGHT:
+                log.info(
+                    "Using target_height as fallback for best_remote_height (no fresh peer tips)",
+                    extra={
+                        "target_height": target,
+                        "peers_count": len(self._peers),
+                        "peers_with_hello": sum(1 for p in self._peers.values() if p.hello_done.is_set()),
+                    },
+                )
+                # Return target as best_height with None for hash/peer (since it's synthetic)
+                # Age is set to 0 to indicate it's from our own target, not peer data
+                return target, None, "target_fallback", 0.0
+            elif target > MAX_REASONABLE_HEIGHT:
+                log.warning(
+                    "target_height exceeds reasonable bounds, not using as fallback",
+                    extra={"target_height": target, "max_reasonable": MAX_REASONABLE_HEIGHT},
+                )
+        
         return best_height, best_hash, best_peer, best_age
 
     def _peer_tip_freshness_snapshot(
