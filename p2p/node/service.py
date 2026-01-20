@@ -1210,9 +1210,148 @@ class P2PServiceLegacy:
 
 
 # -------------------------------------------------------------------------------------
-# Public service: use the production implementation by default.
+# P2PService: Compatibility wrapper around NodeService
 # -------------------------------------------------------------------------------------
 
-# This repo historically shipped a devnet-only stub (P2PServiceLegacy).  Keep it
-# around for reference/tests, but export the real service as `P2PService`.
-from .p2p_service import P2PService  # noqa: E402
+
+class P2PService:
+    """
+    Production P2P service with a simplified interface for RPC/CLI compatibility.
+    
+    This wraps the modern NodeService with a simple __init__ signature that accepts
+    listen_addrs, seeds, chain_id, etc. and provides start()/stop() methods.
+    
+    Internally uses NodeService for all the real P2P functionality.
+    """
+    
+    def __init__(
+        self,
+        *,
+        listen_addrs: list[str] | None = None,
+        seeds: list[str] | None = None,
+        chain_id: int = 0,
+        enable_quic: bool = False,
+        enable_ws: bool = False,
+        nat: bool = False,
+        deps: Any = None,
+        peerstore_path: str | None = None,
+    ) -> None:
+        """
+        Initialize P2P service with minimal configuration.
+        
+        Args:
+            listen_addrs: List of multiaddr strings to listen on (e.g., ["/ip4/0.0.0.0/tcp/30333"])
+            seeds: List of seed peer multiaddrs to connect to
+            chain_id: Chain ID for network identification
+            enable_quic: Whether to enable QUIC transport (currently unused, TCP only)
+            enable_ws: Whether to enable WebSocket transport (currently unused, TCP only)
+            nat: Whether to enable NAT traversal (currently unused)
+            deps: Dependency injection object with block_io, tx_io, etc.
+            peerstore_path: Path to persistent peer store directory
+        """
+        from ..config import P2PConfig
+        
+        apply_umask_from_env()
+        self._log = logging.getLogger("animica.p2p.service")
+        
+        # Store init params
+        self.chain_id = chain_id
+        self.deps = deps
+        self.listen_addrs = listen_addrs or ["/ip4/0.0.0.0/tcp/30333"]
+        self.seeds = seeds or []
+        
+        # Resolve peerstore path
+        if peerstore_path is None:
+            env_peerstore = os.environ.get("ANIMICA_PEER_STORE_PATH") or os.environ.get(
+                "ANIMICA_P2P_DATA_DIR"
+            )
+            if env_peerstore:
+                peerstore_path = os.path.expanduser(env_peerstore)
+            else:
+                base_dir = Path(os.environ.get("ANIMICA_DATA_DIR") or "~/.animica").expanduser()
+                peerstore_path = str(base_dir / f"chain-{chain_id}" / "p2p")
+        
+        peerstore_path = str(Path(peerstore_path).expanduser())
+        writable_peerstore = ensure_writable(Path(peerstore_path))
+        peerstore_path = str(writable_peerstore.path)
+        
+        # Create P2PConfig for NodeService
+        # Note: P2PConfig doesn't have chain_id field - it uses network identification
+        # through network_manifest (loaded in NodeService.__post_init__). We use chain_id
+        # here only for peerstore path resolution and store it for compatibility.
+        cfg = P2PConfig(
+            listen_multiaddrs=tuple(self.listen_addrs),
+            seeds=tuple(self.seeds),
+            data_dir=peerstore_path,
+            enable_tcp=True,
+            enable_quic=enable_quic,
+            enable_ws=enable_ws,
+        )
+        
+        # Create NodeDeps if not provided
+        if deps is None:
+            # Create minimal deps for standalone operation
+            self._log.warning("No deps provided; P2P will run without block/tx integration")
+            deps = self._create_minimal_deps()
+        
+        # Create NodeService instance
+        self._node_service = NodeService(cfg=cfg, deps=deps)
+        
+        # Expose commonly accessed attributes
+        self.peer_id = self._node_service.peer_id
+        self.peerstore = self._node_service.peerstore
+        self.connmgr = self._node_service.connmgr
+        
+        # For compatibility with legacy code that checks these
+        self.peer_registry = None  # Legacy attribute, not used in NodeService
+        self.peers = {}  # Will be populated from connmgr on demand
+        
+        self._log.info(
+            "P2PService initialized",
+            extra={
+                "chain_id": chain_id,
+                "peer_id": self.peer_id.hex()[:16],
+                "listen_addrs": len(self.listen_addrs),
+                "seeds": len(self.seeds),
+                "peerstore": peerstore_path,
+            }
+        )
+    
+    def _create_minimal_deps(self) -> NodeDeps:
+        """Create minimal NodeDeps for standalone operation."""
+        # Minimal stubs that return empty data
+        class MinimalReader:
+            def get_head(self):
+                return {"height": 0, "hash": "0x" + "00" * 32}
+        
+        class MinimalIO:
+            def get_by_hash(self, h):
+                return None
+        
+        return NodeDeps(
+            head_reader=MinimalReader(),
+            block_io=MinimalIO(),
+            tx_io=MinimalIO(),
+            proofs_view=MinimalIO(),
+            consensus_view=MinimalIO(),
+        )
+    
+    async def start(self) -> None:
+        """Start the P2P service."""
+        self._log.info("Starting P2P service")
+        await self._node_service.start()
+        self._log.info("P2P service started")
+    
+    async def stop(self) -> None:
+        """Stop the P2P service."""
+        self._log.info("Stopping P2P service")
+        await self._node_service.stop()
+        self._log.info("P2P service stopped")
+    
+    def health(self) -> Dict[str, Any]:
+        """Get health snapshot."""
+        return self._node_service.health()
+    
+    async def publish(self, topic: str, payload: bytes) -> None:
+        """Publish a message to a gossip topic."""
+        await self._node_service.publish(topic, payload)

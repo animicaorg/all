@@ -111,24 +111,41 @@ def _ensure_sig_alg(name: str) -> None:
 
 def _keypair(name: str) -> Tuple[bytes, bytes]:
     """Generate (pub, sec) for a signature algorithm using pq.keygen."""
-    # Flexible call across possible registry styles:
-    # Prefer keygen.keypair(name=...), else keygen.keypair(alg_id=...), else keygen.keygen(...)
+    # The current pq.py API uses keygen_sig which returns a KeyPair
+    # KeyPair has .public_key and .secret_key attributes
+    if hasattr(pq_keygen, "keygen_sig"):
+        try:
+            kp = pq_keygen.keygen_sig(name)  # type: ignore[call-arg]
+            # KeyPair object: extract public_key and secret_key
+            if hasattr(kp, "public_key") and hasattr(kp, "secret_key"):
+                return (kp.public_key, kp.secret_key)  # type: ignore
+            # Tuple (pk, sk) returned directly
+            return kp  # type: ignore
+        except Exception as e_name:
+            # Log and try with alg_id
+            try:
+                alg_id = pq_registry.id_of(name)  # type: ignore[attr-defined]
+                kp = pq_keygen.keygen_sig(alg_id)  # type: ignore[call-arg]
+                if hasattr(kp, "public_key") and hasattr(kp, "secret_key"):
+                    return (kp.public_key, kp.secret_key)  # type: ignore
+                return kp  # type: ignore
+            except Exception as e_id:
+                raise RuntimeError(f"Failed to generate keypair for {name}: {e_name}, alg_id attempt: {e_id}")
+    # Fallback: try older APIs
     if hasattr(pq_keygen, "keypair"):
         try:
             return pq_keygen.keypair(name=name)  # type: ignore[call-arg]
         except TypeError:
-            # maybe wants alg_id
-            try:
-                alg_id = pq_registry.id_of(name)  # type: ignore[attr-defined]
-                return pq_keygen.keypair(alg_id=alg_id)  # type: ignore[call-arg]
-            except Exception:
-                pass
-    # Fallback older signature: keygen(alg)
-    try:
-        return pq_keygen.keygen(name)  # type: ignore[arg-type]
-    except Exception:
-        alg_id = pq_registry.id_of(name)  # type: ignore[attr-defined]
-        return pq_keygen.keygen(alg_id)  # type: ignore[arg-type]
+            alg_id = pq_registry.id_of(name)  # type: ignore[attr-defined]
+            return pq_keygen.keypair(alg_id=alg_id)  # type: ignore[call-arg]
+    # Last resort: keygen function
+    if hasattr(pq_keygen, "keygen"):
+        try:
+            return pq_keygen.keygen(name)  # type: ignore[arg-type]
+        except Exception:
+            alg_id = pq_registry.id_of(name)  # type: ignore[attr-defined]
+            return pq_keygen.keygen(alg_id)  # type: ignore[arg-type]
+    raise RuntimeError(f"No keygen method found in pq.keygen module for algorithm {name}")
 
 
 def _sign(name: str, sk: bytes, msg: bytes, domain: bytes) -> bytes:
