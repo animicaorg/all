@@ -75,6 +75,7 @@ class CoreP2PService:
     max_outbound: int = 8
     max_inbound: int = 16
     dial_interval: float = 5.0
+    dial_attempts_multiplier: int = 3  # Max candidates to try per outbound slot
 
     addrman: AddressManager = field(init=False)
     net_processing: NetProcessing = field(init=False)
@@ -163,7 +164,7 @@ class CoreP2PService:
 
     async def _ensure_outbound(self) -> None:
         attempts = 0
-        max_attempts = self.max_outbound * 3  # Try multiple candidates
+        max_attempts = self.max_outbound * self.dial_attempts_multiplier
         while self.connman.outbound_count() < self.max_outbound and attempts < max_attempts:
             candidate = self.addrman.select()
             if candidate is None:

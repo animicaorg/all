@@ -268,6 +268,7 @@ def _filter_tcp_seeds(seeds: list[str]) -> list[str]:
     filtered: list[str] = []
     for seed in seeds:
         # Skip QUIC/UDP addresses - they're not supported by CoreP2PService yet
+        # The substring check "/quic" matches both "/quic" and "/quic-v1" variants
         if "/udp/" in seed or "/quic" in seed.lower():
             continue
         # Keep TCP addresses and host:port style addresses (which default to TCP)
