@@ -3377,7 +3377,121 @@ class P2PService:
             return self._apply_sync_status_cache_meta(
                 self._sync_status_cache, now, source="cache"
             )
-        snapshot = self._build_sync_status_snapshot()
+        
+        # FIX: Wrap _build_sync_status_snapshot in exception handling
+        # to ensure status never fails with a crash
+        try:
+            snapshot = self._build_sync_status_snapshot()
+        except Exception as exc:
+            log.error(
+                "Failed to build sync status snapshot - returning fallback",
+                exc_info=exc,
+            )
+            # Return a minimal but valid snapshot on error
+            height, head_hash = 0, None
+            try:
+                height, head_hash = self._local_head()
+            except Exception:
+                pass
+            snapshot = SyncStatusSnapshot(
+                phase="ERROR",
+                head_height=height or 0,
+                head_hash=head_hash,
+                best_header_height=height or 0,
+                best_header_hash=head_hash,
+                best_block_height=height or 0,
+                best_block_hash=head_hash,
+                network_best_height=None,
+                best_remote_height=None,
+                best_remote_hash=None,
+                best_remote_peer=None,
+                best_remote_age_sec=None,
+                peer_tips_total=0,
+                peer_tips_fresh=0,
+                peer_tips_stale=0,
+                peer_tip_last_poll_at={},
+                peer_tip_last_errors={},
+                behind_by=None,
+                sync_status_reason="fatal_error",
+                in_flight=0,
+                in_flight_headers=0,
+                in_flight_blocks=0,
+                queued_blocks_count=0,
+                last_progress_at=0.0,
+                last_head_height=0,
+                last_head_hash=None,
+                last_header_height=0,
+                last_block_fetch_height=0,
+                last_header_progress_at=0.0,
+                last_block_progress_at=0.0,
+                last_header_at=0.0,
+                last_block_at=0.0,
+                last_header_request_at=0.0,
+                last_header_response_at=0.0,
+                last_header_response_count=0,
+                last_headers_accepted_count=0,
+                last_headers_discarded_count=0,
+                last_headers_discard_reason_counts={},
+                last_headers_discard_detail_counts={},
+                last_headers_discard_samples=[],
+                headers_accepted_total=0,
+                headers_seen_total=0,
+                headers_decode_failed_total=0,
+                last_block_request_at=0.0,
+                last_block_response_at=0.0,
+                last_header_request_peer=None,
+                last_header_response_peer=None,
+                last_header_error=None,
+                last_header_error_at=None,
+                last_block_error=None,
+                fatal_error=str(exc),  # Include the exception message
+                active_peer_for_headers=None,
+                active_peer_for_blocks=None,
+                active_peers_for_headers=[],
+                active_peers_for_blocks=[],
+                eligible_peers_for_headers=[],
+                ineligible_peers_for_headers={},
+                eligible_peers_for_blocks=[],
+                ineligible_peers_for_blocks={},
+                pending_header_batches=0,
+                header_cooldown_count=0,
+                header_cooldown_next_expiry=None,
+                recovery_attempts=0,
+                last_recovery_action=None,
+                last_locator_summary=None,
+                sync_head_height=None,
+                sync_head_hash=None,
+                last_matched_ancestor_height=None,
+                last_matched_ancestor_hash=None,
+                last_anchor_check=None,
+                checkpoint_height=None,
+                checkpoint_hash=None,
+                checkpoint_mode_enabled=False,
+                checkpoint_validation=None,
+                last_checkpoint_action=None,
+                synchronized=False,
+                paused=False,
+                sync_enabled=False,
+                target_height=None,
+                peers_total=0,
+                cache_size_bytes=0,
+                cache_entries=0,
+                peer_penalties={},
+                last_block_error_peer=None,
+                block_error_summary={},
+                next_block_needed_height=None,
+                next_block_needed_hash=None,
+                orphan_pool_size=0,
+                orphan_cascade_successes=0,
+                orphan_seen_count_entries=0,
+                inflight_block_samples=[],
+                orphan_block_samples=[],
+                peer_scores=[],
+                retries_by_peer={},
+                timeouts_by_peer={},
+                blocks_failed=0,
+            )
+        
         self._sync_status_cache = snapshot
         self._sync_status_cache_at = now
         self._sync_status_cache_refreshes += 1
@@ -3401,7 +3515,18 @@ class P2PService:
 
     def _build_sync_status_snapshot(self) -> SyncStatusSnapshot:
         height, head_hash = self._canonical_head_for_status()
+        
+        # FIX: Ensure head_hash is never None - use genesis hash at height 0
         head_hex = head_hash
+        if head_hex is None and height == 0:
+            genesis = self._genesis_header_hash()
+            if genesis and len(genesis) == 32:
+                head_hex = "0x" + bytes(genesis).hex()
+                log.debug(
+                    "Using genesis hash for head_hash at height 0",
+                    extra={"genesis_hash": head_hex},
+                )
+        
         raw_best_header_height = (
             self._sync_best_header.height if self._sync_best_header else 0
         )
@@ -3415,7 +3540,7 @@ class P2PService:
             best_header_hash = head_hex
         else:
             best_header_height = raw_best_header_height
-            best_header_hash = raw_best_header_hash
+            best_header_hash = raw_best_header_hash or head_hex  # Fallback to head_hex if no best header
         best_block_height = int(height or 0)
         best_block_hash = head_hex
         network_best_height = self._network_best_height()
@@ -5784,8 +5909,16 @@ class P2PService:
                 peer.hello_done.wait(), timeout=self._peer_registry.handshake_timeout_s
             )
         except asyncio.TimeoutError:
-            log.info("Dropping peer %s due to hello timeout", peer.remote)
-            await self._drop_peer(peer, reason="hello_timeout")
+            log.warning(
+                "Peer handshake timeout - dropping connection",
+                extra={
+                    "remote": peer.remote,
+                    "direction": peer.direction,
+                    "timeout_s": self._peer_registry.handshake_timeout_s,
+                    "state_transition": "handshaking -> failed (timeout)",
+                },
+            )
+            await self._drop_peer(peer, reason="handshake_timeout")
 
     async def _peer_loop(self, peer: _PeerState) -> None:
         # Send HELLO immediately (both sides do this; handler is symmetric).
@@ -6558,27 +6691,29 @@ class P2PService:
         peer.hello = normalized
         peer.hello_received_at = time.time()  # Track when hello was received
         peer.identity_ok = True
-        if self._sync_verbose:
-            log.info(
-                "Handshake identity accepted",
-                extra={
-                    "remote": peer.remote,
-                    "peer_id": peer.peer_id,
-                    "chain_id": normalized.get("chain_id"),
-                    "genesis_hash": self._canon_hash0x(
-                        normalized.get("genesis_header_hash")
-                        or normalized.get("genesis_hash")
-                        or normalized.get("genesis_block_hash")
-                    ),
-                    "fork_id": normalized.get("fork_id"),
-                    "consensus_id": normalized.get("consensus_id"),
-                    "protocol_version": normalized.get("protocol_version"),
-                    "repo_state": normalized.get("repo_state"),
-                    "network_params_hash": self._canon_hash0x(
-                        normalized.get("network_params_hash")
-                    ),
-                },
-            )
+        log.info(
+            "Peer handshake completed successfully",
+            extra={
+                "remote": peer.remote,
+                "peer_id": peer.peer_id,
+                "direction": peer.direction,
+                "chain_id": normalized.get("chain_id"),
+                "genesis_hash": self._canon_hash0x(
+                    normalized.get("genesis_header_hash")
+                    or normalized.get("genesis_hash")
+                    or normalized.get("genesis_block_hash")
+                ),
+                "fork_id": normalized.get("fork_id"),
+                "consensus_id": normalized.get("consensus_id"),
+                "protocol_version": normalized.get("protocol_version"),
+                "repo_state": normalized.get("repo_state"),
+                "network_params_hash": self._canon_hash0x(
+                    normalized.get("network_params_hash")
+                ),
+                "head_height": normalized.get("head_height"),
+                "state_transition": "handshaking -> connected",
+            },
+        )
         peer.hello_done.set()
         if normalized.get("head_height") is not None:
             self._update_peer_head_table(
@@ -6616,6 +6751,15 @@ class P2PService:
                 )
         
         peer.ready_for_sync = True
+        log.info(
+            "Peer ready for sync - tip tracking initialized",
+            extra={
+                "remote": peer.remote,
+                "peer_id": peer.peer_id,
+                "head_height": normalized.get("head_height") or 0,
+                "state_transition": "connected -> ready_for_sync",
+            },
+        )
         
         # Wake sync loop to notice new peer with fresh tips
         self._sync_wakeup.set()
