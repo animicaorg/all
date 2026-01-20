@@ -6733,7 +6733,7 @@ class P2PService:
                 "state_transition": "handshaking -> connected",
             },
         )
-        peer.hello_done.set()
+        # NOTE: Do NOT set hello_done here - moved to end of function after all validations
         if normalized.get("head_height") is not None:
             self._update_peer_head_table(
                 peer,
@@ -6874,6 +6874,8 @@ class P2PService:
                 if dup_peer is None:
                     continue
                 if dup_peer.session_id == peer.session_id:
+                    # Set hello_done before dropping to stop timeout watchdog
+                    peer.hello_done.set()
                     await self._drop_peer(peer, reason="duplicate_peer_id")
                     return
                 self._create_child_task(
@@ -6896,6 +6898,11 @@ class P2PService:
             self._schedule_peer_persist()
 
         await self._send(peer, MsgID.HELLO_ACK, HelloAck(accepted=True, reason=None))
+        
+        # Set hello_done ONLY after all validations pass and HELLO_ACK is sent
+        # This ensures the timeout watchdog doesn't stop monitoring if validation fails
+        peer.hello_done.set()
+        
         self._sync_wakeup.set()
         self._create_child_task(
             self._announce_pending_txs(peer),
