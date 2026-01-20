@@ -4738,8 +4738,13 @@ class P2PService:
 
     async def _startup_sync_kick(self) -> None:
         deadline = time.time() + 10.0
+        # CRITICAL FIX: Wait for at least one peer to be ready_for_sync, not just connected
+        # This prevents the initial sync kick from firing before any peer has completed
+        # the hello handshake, which would result in no eligible peers and sync going IDLE
         while self._running and time.time() < deadline:
-            if self._peers:
+            # Check if we have at least one peer that's ready for sync
+            has_ready_peer = any(p.ready_for_sync for p in self._peers.values())
+            if has_ready_peer:
                 break
             await asyncio.sleep(0.5)
         if not self._running:
