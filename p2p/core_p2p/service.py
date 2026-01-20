@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import random
 import socket
 from dataclasses import dataclass, field
 from typing import Iterable, Optional
@@ -110,6 +111,12 @@ class CoreP2PService:
             max_inbound=self.max_inbound,
             max_outbound=self.max_outbound,
         )
+        # Sync check interval - request headers periodically if we have pending blocks
+        sync_check_sec = os.environ.get("ANIMICA_P2P_CORE_SYNC_CHECK_SEC", "10")
+        try:
+            self._sync_check_interval = float(sync_check_sec)
+        except (ValueError, TypeError):
+            self._sync_check_interval = 10.0
 
     async def start(self) -> None:
         if self._running:
@@ -119,6 +126,7 @@ class CoreP2PService:
         self._tasks = [
             asyncio.create_task(self._dial_loop(), name="core_p2p.dial"),
             asyncio.create_task(self._head_watch_loop(), name="core_p2p.head_watch"),
+            asyncio.create_task(self._sync_check_loop(), name="core_p2p.sync_check"),
         ]
         if self._mempool_rebroadcast_interval > 0:
             self._tasks.append(
@@ -222,3 +230,110 @@ class CoreP2PService:
         if not head:
             return None
         return head[-32:]
+
+    async def _sync_check_loop(self) -> None:
+        """
+        Periodically check if sync is progressing and request headers if needed.
+        
+        This ensures continuous sync even if initial getheaders doesn't complete
+        or if we fall behind while connected.
+        """
+        try:
+            last_check_height = -1
+            stall_count = 0
+            while self._running:
+                await asyncio.sleep(self._sync_check_interval)
+                
+                # Timeout any stale block requests and re-queue them
+                timed_out = self.net_processing.sync.timeout_stale_requests()
+                if timed_out > 0:
+                    log.info(
+                        "core p2p timed out stale block requests",
+                        extra={"count": timed_out}
+                    )
+                
+                # Get current chain height
+                current_height = self._current_height()
+                
+                # Check if we have connected peers
+                peers = list(self.connman.peers().values())
+                if not peers:
+                    continue
+                
+                # Check if we have pending blocks or inflight requests
+                has_pending = bool(self.net_processing.sync.pending_blocks)
+                has_inflight = bool(self.net_processing.sync.inflight_blocks)
+                
+                # Detect stall: height hasn't changed and no pending/inflight work
+                if current_height == last_check_height and not has_pending and not has_inflight:
+                    stall_count += 1
+                else:
+                    stall_count = 0
+                
+                last_check_height = current_height
+                
+                # Request more headers if stalled for 2+ checks (20+ seconds)
+                if stall_count >= 2:
+                    log.info(
+                        "core p2p sync appears stalled, requesting headers",
+                        extra={
+                            "height": current_height,
+                            "pending": len(self.net_processing.sync.pending_blocks),
+                            "inflight": len(self.net_processing.sync.inflight_blocks),
+                            "peers": len(peers),
+                        }
+                    )
+                    # Request headers from all connected peers
+                    msg = self.net_processing.sync.build_getheaders()
+                    for peer in peers:
+                        if peer.handshake_complete:
+                            try:
+                                await self.connman._send(peer, "getheaders", msg.serialize())
+                            except Exception as exc:
+                                log.debug("failed to send getheaders", exc_info=exc)
+                    stall_count = 0  # Reset after requesting
+                
+                # Request pending blocks if we have them but no inflight requests
+                # (this can happen after timeouts or if initial requests were missed)
+                if has_pending and not has_inflight and peers:
+                    log.debug(
+                        "core p2p requesting pending blocks",
+                        extra={"pending": len(self.net_processing.sync.pending_blocks)}
+                    )
+                    # Pick a random peer to request from
+                    peer = random.choice(peers)
+                    if peer.handshake_complete:
+                        try:
+                            # Create a send function that matches the expected signature
+                            async def send_to_peer(cmd: str, data: bytes) -> None:
+                                await self.connman._send(peer, cmd, data)
+                            
+                            await self.net_processing._request_pending_blocks(send_to_peer)
+                        except Exception as exc:
+                            log.debug("failed to request pending blocks", exc_info=exc)
+                
+        except asyncio.CancelledError:
+            return
+    
+    def _current_height(self) -> int:
+        """
+        Get current chain height.
+        
+        Note: This method assumes the header format follows Bitcoin-style encoding
+        where the first 4 bytes (little-endian) represent the block height.
+        
+        For chains using different header formats, override this method or ensure
+        the ChainAdapter provides a best_height() method which will be used instead.
+        
+        If neither approach works for your chain, consider implementing a custom
+        header parser in the ChainAdapter.
+        """
+        getter = getattr(self.chain, "best_height", None)
+        if callable(getter):
+            return getter()
+        head = self.chain.best_header()
+        if not head or len(head) < 4:
+            return 0
+        # Bitcoin-style: first 4 bytes are height in little-endian
+        # This is a fallback and may not be accurate for all chains
+        return int.from_bytes(head[:4], "little", signed=False)
