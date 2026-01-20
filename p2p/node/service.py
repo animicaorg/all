@@ -1276,7 +1276,9 @@ class P2PService:
         peerstore_path = str(writable_peerstore.path)
         
         # Create P2PConfig for NodeService
-        # Note: P2PConfig uses listen_multiaddrs, not chain_id
+        # Note: P2PConfig doesn't have chain_id field - it uses network identification
+        # through network_manifest (loaded in NodeService.__post_init__). We use chain_id
+        # here only for peerstore path resolution and store it for compatibility.
         cfg = P2PConfig(
             listen_multiaddrs=tuple(self.listen_addrs),
             seeds=tuple(self.seeds),

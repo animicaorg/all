@@ -121,7 +121,7 @@ def _keypair(name: str) -> Tuple[bytes, bytes]:
                 return (kp.public_key, kp.secret_key)  # type: ignore
             # Tuple (pk, sk) returned directly
             return kp  # type: ignore
-        except Exception as e:
+        except Exception as e_name:
             # Log and try with alg_id
             try:
                 alg_id = pq_registry.id_of(name)  # type: ignore[attr-defined]
@@ -129,8 +129,8 @@ def _keypair(name: str) -> Tuple[bytes, bytes]:
                 if hasattr(kp, "public_key") and hasattr(kp, "secret_key"):
                     return (kp.public_key, kp.secret_key)  # type: ignore
                 return kp  # type: ignore
-            except Exception:
-                raise RuntimeError(f"Failed to generate keypair for {name}: {e}")
+            except Exception as e_id:
+                raise RuntimeError(f"Failed to generate keypair for {name}: {e_name}, alg_id attempt: {e_id}")
     # Fallback: try older APIs
     if hasattr(pq_keygen, "keypair"):
         try:
