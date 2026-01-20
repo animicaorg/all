@@ -322,10 +322,15 @@ class NodeService:
     ) -> None:
         try:
             conn = await do_handshake(raw, self.node_keys, hkdf_salt)
-            await self.connmgr.register(conn)
+            peer = await self.connmgr.register_inbound(conn)
+            if peer is None:
+                # Registration failed (limits, bans, or identify failure)
+                with contextlib.suppress(Exception):
+                    await conn.close()
+                return
             # Once registered, route frames through the router
             self.loop.create_task(
-                self._read_frames(conn), name=f"read@{conn.remote_addr}"
+                self._read_frames(conn, peer.peer_id), name=f"read@{conn.remote_addr}"
             )
         except Exception as e:
             self.metrics.handshake_failures.inc()
@@ -333,7 +338,7 @@ class NodeService:
             with contextlib.suppress(Exception):
                 await raw.close()
 
-    async def _read_frames(self, conn: tbase.Conn) -> None:
+    async def _read_frames(self, conn: tbase.Conn, peer_id: str) -> None:
         """
         Read frames from a secure connection and feed them to the router.
         """
@@ -351,7 +356,7 @@ class NodeService:
                 "conn read error", extra={"peer": str(conn.remote_addr)}, exc_info=e
             )
         finally:
-            await self.connmgr.deregister(conn)
+            await self.connmgr._on_disconnect(peer_id, reason="disconnect")
             with contextlib.suppress(Exception):
                 await conn.close()
 
@@ -546,35 +551,18 @@ class NodeService:
     async def _dial(self, addr: str) -> None:
         """
         Dial and upgrade a single address. Called by discovery and manual CLI.
+        Uses ConnectionManager to handle full dial + registration flow.
         """
-        parsed = ma.parse(addr)
-        scheme = parsed.scheme
-        host, port = parsed.host, parsed.port
-
-        if scheme == "tcp":
-            from ..transport import tcp as tmod
-
-            raw = await tmod.dial(host, port, timeout=self.cfg.dial_timeout)
-        elif scheme in ("ws", "wss"):
-            from ..transport import ws as tmod
-
-            raw = await tmod.dial(
-                host, port, secure=(scheme == "wss"), timeout=self.cfg.dial_timeout
-            )
-        elif scheme == "quic":
-            from ..transport import quic as tmod
-
-            raw = await tmod.dial(
-                host, port, alpn=self.cfg.quic_alpn, timeout=self.cfg.dial_timeout
-            )
-        else:
-            raise ValueError(f"unsupported dial scheme: {scheme}")
-
-        from ..crypto.handshake import kyber_handshake
-
-        conn = await kyber_handshake(raw, self.node_keys, self.cfg.handshake_hkdf_salt)
-        await self.connmgr.register(conn)
-        self.loop.create_task(self._read_frames(conn), name=f"read@{conn.remote_addr}")
+        peer = await self.connmgr.connect(addr, tag="discovery")
+        if peer is None:
+            log.debug(f"Failed to connect to {addr}")
+            return
+        
+        # Start reading frames from the connected peer
+        self.loop.create_task(
+            self._read_frames(peer.conn, peer.peer_id),
+            name=f"read@{peer.conn.remote_addr}"
+        )
 
     # ——————————————————————————————————————————————————————————
     # Utilities
