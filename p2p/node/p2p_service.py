@@ -4154,8 +4154,22 @@ class P2PService:
         sync_enabled: bool = True,
         sync_requested: bool = False,
     ) -> str:
+        # FIX: Don't return STALLED when synchronized or caught up (behind_by==0)
+        # The stalled state should only apply when we're actually behind and not making progress
         if self._sync_block_stalled_reason:
-            return "STALLED"
+            # If synchronized is True, we're caught up - ignore stall reason
+            if not synchronized:
+                return "STALLED"
+            # If synchronized, clear the stall reason and continue to SYNCED
+            log.info(
+                "Clearing stall reason because node is synchronized",
+                extra={
+                    "stall_reason": self._sync_block_stalled_reason,
+                    "best_block_height": best_block_height,
+                    "best_header_height": best_header_height,
+                },
+            )
+            self._sync_block_stalled_reason = None
         if pending_header_batches > 0 or self._sync_inflight_headers:
             return "HEADERS"
         if best_header_height > best_block_height:
@@ -11955,7 +11969,23 @@ class P2PService:
                         self._sync_kick(reason="headers_blocks_equal_behind_network", aggressive=True)
                 
                 # Use a reduced timeout (half of stall timeout) to detect general stall conditions
+                # FIX: Only mark as stalled if we're actually behind the network
+                # Don't trigger stall when caught up (behind_by == 0)
                 reduced_timeout = self._sync_stall_timeout / 2.0
+                
+                # Compute best_remote_height to check if we're actually behind
+                chain_id = int(self.chain_id) if self.chain_id else None
+                best_remote_height, _, best_remote_peer, best_remote_age = (
+                    self._compute_best_remote_info(chain_id=chain_id)
+                )
+                
+                # Only consider stall if we're actually behind
+                behind_network = False
+                if best_remote_height is not None:
+                    behind_network = best_remote_height > best_block_height
+                elif network_best_height is not None:
+                    behind_network = int(network_best_height) > best_block_height
+                
                 if (
                     best_header_height == best_block_height
                     and best_block_height > 0
@@ -11964,17 +11994,21 @@ class P2PService:
                     and not self._sync_block_queue
                     and now - self._sync_last_progress_at > reduced_timeout
                     and self._peers  # Have peers but not making progress
+                    and behind_network  # FIX: Only mark stalled if actually behind
                 ):
                     # Mark as stalled to trigger peer rotation and recovery
                     if self._sync_block_stalled_reason != "headers_blocks_equal_stall":
                         log.warning(
-                            "Sync stalled: headers == blocks with no progress",
+                            "Sync stalled: headers == blocks with no progress and behind network",
                             extra={
                                 "height": best_block_height,
                                 "stall_elapsed_s": max(0.0, now - self._sync_last_progress_at),
                                 "peers": len(self._peers),
                                 "last_header_error": self._sync_last_header_error,
                                 "network_best_height": network_best_height,
+                                "best_remote_height": best_remote_height,
+                                "best_remote_peer": best_remote_peer,
+                                "behind_network": behind_network,
                             },
                         )
                         self._sync_block_stalled_reason = "headers_blocks_equal_stall"
@@ -12992,31 +13026,21 @@ class P2PService:
                 best_peer = peer.remote
                 best_age = tip_age
         
-        # FIX: Fallback to target_height when no fresh peer tips available
-        # This allows sync to progress based on block announcements or explicit targets
-        # even when peer connections are unstable or peers haven't completed handshakes
-        if best_height is None and self._sync_target_height is not None:
-            target = int(self._sync_target_height)
-            # Validate target is reasonable: must be positive and not absurdly high
-            # Maximum reasonable height is ~10 years worth of blocks at 1 block/10s = ~31M blocks
-            MAX_REASONABLE_HEIGHT = 50_000_000
-            if target > 0 and target <= MAX_REASONABLE_HEIGHT:
-                log.info(
-                    "Using target_height as fallback for best_remote_height (no fresh peer tips)",
-                    extra={
-                        "target_height": target,
-                        "peers_count": len(self._peers),
-                        "peers_with_hello": sum(1 for p in self._peers.values() if p.hello_done.is_set()),
-                    },
-                )
-                # Return target as best_height with None for hash/peer (since it's synthetic)
-                # Age is set to 0 to indicate it's from our own target, not peer data
-                return target, None, "target_fallback", 0.0
-            elif target > MAX_REASONABLE_HEIGHT:
-                log.warning(
-                    "target_height exceeds reasonable bounds, not using as fallback",
-                    extra={"target_height": target, "max_reasonable": MAX_REASONABLE_HEIGHT},
-                )
+        
+        # FIX: Remove target_fallback logic - it masks the fact that we have no fresh peer tips
+        # Returning target_fallback as best_remote_peer makes sync think it's caught up (behind_by=0)
+        # when in reality we have zero real peer tips and can't make progress.
+        # 
+        # The old logic returned:
+        #   return target, None, "target_fallback", 0.0
+        # 
+        # But this is fundamentally wrong because:
+        # 1. best_remote_peer="target_fallback" is not a real peer address
+        # 2. Sync status checks peer_tips_total which will be 0, contradicting non-None best_remote
+        # 3. Makes behind_by=0 when we actually have no idea what the network height is
+        # 
+        # Instead: return (None, None, None, None) when no fresh peer tips exist.
+        # This forces sync_status_reason="no_fresh_peer_tips" and prevents false SYNCHRONIZED state.
         
         return best_height, best_hash, best_peer, best_age
 
