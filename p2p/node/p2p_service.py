@@ -11311,17 +11311,23 @@ class P2PService:
                                     if self._sync_best_header
                                     else 0
                                 )
+                                # FIX: Only consider at_tip if we have reliable network info
+                                # Do NOT assume at_tip when network_best_height is None (no fresh peer tips)
+                                # This prevents premature IDLE state when peer connections are unstable
                                 if (
                                     network_best_height is not None
                                     and int(network_best_height)
                                     <= int(local_height or 0)
                                 ):
                                     at_tip = True
-                                elif (
-                                    network_best_height is None
-                                    and best_header_height <= int(local_height or 0)
-                                ):
-                                    at_tip = True
+                                # REMOVED: elif block that assumed at_tip when network_best_height is None
+                                # This was causing nodes to stop syncing when peer tips were stale/unavailable
+                                # Old code:
+                                # elif (
+                                #     network_best_height is None
+                                #     and best_header_height <= int(local_height or 0)
+                                # ):
+                                #     at_tip = True
                                 if (
                                     at_tip
                                     and not self._sync_block_queue
@@ -14358,9 +14364,13 @@ class P2PService:
                 continue
             if max_peer_height is None or candidate_height > max_peer_height:
                 max_peer_height = candidate_height
+        # FIX: Only return "at_tip" when we have reliable network info
+        # Do NOT assume at_tip when network_best_height is None (no fresh peer tips)
+        # This prevents premature sync stoppage when peer connections are unstable
         if (
             remote_height <= local_height
-            and (network_best_height is None or network_best_height <= local_height)
+            and network_best_height is not None  # CHANGED: require valid network height
+            and network_best_height <= local_height
             and (max_observed_height is None or max_observed_height <= local_height + 1)
         ):
             return "at_tip"
