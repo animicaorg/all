@@ -12,7 +12,7 @@ def test_sync_logic_with_network_best_none():
     """
     Test the sync logic to ensure at_tip is NOT set when network_best_height is None.
     
-    This simulates the fixed logic from lines 11308-11340 in p2p_service.py.
+    This simulates the fixed logic from lines 11317-11330 in p2p_service.py.
     """
     print("\n" + "="*70)
     print("Test 1: Sync loop logic with network_best_height=None")
@@ -84,7 +84,7 @@ def test_empty_headers_reason_logic():
     """
     Test the _empty_headers_reason logic with network_best_height=None.
     
-    This simulates the fixed logic from lines 14367-14372 in p2p_service.py.
+    This simulates the fixed logic from lines 14370-14375 in p2p_service.py.
     """
     print("\n" + "="*70)
     print("Test 2: _empty_headers_reason logic with network_best_height=None")
@@ -215,8 +215,8 @@ if __name__ == "__main__":
         print("- Nodes will continue trying to sync instead of going IDLE")
         print("- This fixes the 'no_fresh_peer_tips' sync stuck issue")
         print("- Fix applied to:")
-        print("  1. Sync loop (lines ~11308-11340 in p2p_service.py)")
-        print("  2. _empty_headers_reason (lines ~14367-14375 in p2p_service.py)")
+        print("  1. Sync loop (lines ~11317-11330 in p2p_service.py)")
+        print("  2. _empty_headers_reason (lines ~14370-14375 in p2p_service.py)")
     except AssertionError as e:
         print(f"\n❌ TEST FAILED: {e}")
         exit(1)
