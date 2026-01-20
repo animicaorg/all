@@ -6874,6 +6874,8 @@ class P2PService:
                 if dup_peer is None:
                     continue
                 if dup_peer.session_id == peer.session_id:
+                    # Set hello_done before dropping to stop timeout watchdog
+                    peer.hello_done.set()
                     await self._drop_peer(peer, reason="duplicate_peer_id")
                     return
                 self._create_child_task(
