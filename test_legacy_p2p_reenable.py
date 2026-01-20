@@ -30,15 +30,17 @@ def test_no_deprecation_warning():
     legacy_file = "p2p/node/p2p_service_legacy.py"
     
     with open(legacy_file, 'r') as f:
-        content = f.read(500)  # Check first 500 chars
+        # Read first 10 lines to check header
+        header_lines = [f.readline() for _ in range(10)]
+        header = ''.join(header_lines)
     
     # Check that DEPRECATED is not in the header
-    if "DEPRECATED" in content:
+    if "DEPRECATED" in header:
         print(f"  ✗ DEPRECATED warning still present")
         return False
     
     # Check that "Do not import" is not in the header
-    if "Do not import" in content:
+    if "Do not import" in header:
         print(f"  ✗ 'Do not import' warning still present")
         return False
     
@@ -116,15 +118,24 @@ def test_rpc_deps_integration():
     print("\nTest 5: RPC deps integration")
     
     deps_file = "rpc/deps.py"
-    with open(deps_file, 'r') as f:
-        content = f.read()
+    found_env_var = False
+    found_legacy_import = False
     
-    # Check for the toggle logic
-    if "ANIMICA_P2P_USE_LEGACY" not in content:
+    with open(deps_file, 'r') as f:
+        for line in f:
+            if "ANIMICA_P2P_USE_LEGACY" in line:
+                found_env_var = True
+            if "p2p.node.p2p_service_legacy" in line:
+                found_legacy_import = True
+            # Early exit if both found
+            if found_env_var and found_legacy_import:
+                break
+    
+    if not found_env_var:
         print("  ✗ ANIMICA_P2P_USE_LEGACY not found in rpc/deps.py")
         return False
     
-    if "p2p.node.p2p_service_legacy" not in content:
+    if not found_legacy_import:
         print("  ✗ Legacy service import not found in rpc/deps.py")
         return False
     
