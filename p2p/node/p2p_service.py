@@ -10990,7 +10990,7 @@ class P2PService:
             ):
                 self._sync_phase = "TARGET_REACHED"
                 return result
-            eligible_peers, _ = self._eligible_sync_peers()
+            eligible_peers, ineligible_peer_reasons = self._eligible_sync_peers()
             if not eligible_peers:
                 if self._sync_last_header_error == "invalid_headers":
                     cleared = self._clear_sync_backoff_reason("invalid_headers")
@@ -11002,13 +11002,56 @@ class P2PService:
                             "Cleared invalid headers backoff to retry sync",
                             extra={"cleared": cleared},
                         )
-                        eligible_peers, _ = self._eligible_sync_peers()
+                        eligible_peers, ineligible_peer_reasons = self._eligible_sync_peers()
                         if eligible_peers:
                             log.info(
                                 "Retrying sync after clearing invalid headers backoff",
                                 extra={"eligible_peers": len(eligible_peers)},
                             )
                 if not eligible_peers:
+                    # CRITICAL FIX: At genesis with no eligible peers, log detailed diagnostics
+                    # to help diagnose why sync is stuck. This is especially important when
+                    # peers are connecting but failing handshake or validation.
+                    local_height, _ = self._local_head()
+                    at_genesis = (local_height or 0) == 0
+                    if at_genesis and self._peers:
+                        # Count peers by state to understand what's blocking sync
+                        handshaking_count = sum(1 for p in self._peers.values() if not p.hello_done.is_set())
+                        identity_pending_count = sum(1 for p in self._peers.values() if p.hello_done.is_set() and not p.identity_ok)
+                        ineligible_reasons_summary = {}
+                        for reason in ineligible_peer_reasons.values():
+                            ineligible_reasons_summary[reason] = ineligible_reasons_summary.get(reason, 0) + 1
+                        log.warning(
+                            "Genesis sync stuck: no eligible peers despite peer connections",
+                            extra={
+                                "total_peers": len(self._peers),
+                                "eligible_peers": 0,
+                                "handshaking_peers": handshaking_count,
+                                "identity_pending_peers": identity_pending_count,
+                                "ineligible_reasons": ineligible_reasons_summary,
+                                "in_flight_headers": int(self._sync_inflight_headers),
+                                "last_header_error": self._sync_last_header_error,
+                                "stall_elapsed_s": time.time() - self._sync_last_progress_at,
+                            },
+                        )
+                        
+                        # DEFENSIVE FIX: If we have handshaking peers at genesis, clear all peer backoffs
+                        # to ensure that when handshake completes, the peer becomes immediately eligible.
+                        # This prevents a race where a peer completes handshake but is still in backoff
+                        # from a previous failed sync attempt, causing the node to remain stuck.
+                        if handshaking_count > 0:
+                            cleared_backoffs = 0
+                            for peer in self._peers.values():
+                                backoff_key = self._peer_backoff_key(peer)
+                                if backoff_key in self._sync_peer_backoff:
+                                    self._sync_peer_backoff.pop(backoff_key, None)
+                                    self._sync_peer_backoff_reason.pop(backoff_key, None)
+                                    cleared_backoffs += 1
+                            if cleared_backoffs > 0:
+                                log.info(
+                                    "Cleared peer backoffs to allow immediate sync when handshake completes",
+                                    extra={"cleared_backoffs": cleared_backoffs},
+                                )
                     self._sync_phase = "IDLE"
                     log.debug("Sync idle: no eligible peers for headers")
                     return result
