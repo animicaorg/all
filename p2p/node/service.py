@@ -40,10 +40,11 @@ try:
     from ..protocol import snapshot as proto_snapshot
     from ..protocol import tx_relay as proto_tx
     from ..wire import encoding as wire_codec
+    from ..wire import frames as wire_frames
 except Exception:  # pragma: no cover - optional full stack
     gossip_engine = None  # type: ignore
     gossip_topics = None  # type: ignore
-    proto_hello = proto_inv = proto_blk = proto_tx = proto_share = proto_flow = proto_snapshot = wire_codec = None  # type: ignore
+    proto_hello = proto_inv = proto_blk = proto_tx = proto_share = proto_flow = proto_snapshot = wire_codec = wire_frames = None  # type: ignore
 
 # Node router/event-bus (these are small glue modules under p2p/node/)
 from . import events as node_events
@@ -53,6 +54,70 @@ from . import router as node_router
 log = logging.getLogger("animica.p2p.node")
 
 OnAccept = Callable[[tbase.Conn], Awaitable[None]]
+
+
+class ConnectionWrapper:
+    """
+    Wraps a transport Conn to provide the ConnLike interface expected by the router.
+    
+    Adds:
+    - remote_addr: direct property access to conn.info.remote_addr
+    - send_frame(): frames a message and sends it via the connection's stream
+    - is_closed(): checks connection closed status
+    """
+    def __init__(self, conn: tbase.Conn):
+        self._conn = conn
+        self._stream: Optional[tbase.Stream] = None
+        self._send_seq = 0
+        self._send_lock = asyncio.Lock()
+    
+    @property
+    def remote_addr(self) -> str:
+        return self._conn.info.remote_addr if self._conn.info and self._conn.info.remote_addr else "unknown"
+    
+    def is_closed(self) -> bool:
+        return self._conn.closed
+    
+    async def ensure_stream(self) -> tbase.Stream:
+        """Public method to lazily open the stream for this connection."""
+        if self._stream is None:
+            self._stream = await self._conn.open_stream()
+        return self._stream
+    
+    async def send_frame(self, msg_id: int, payload: bytes, *, acks: bool = False) -> None:
+        """
+        Pack and send a frame via the connection's stream.
+        
+        Args:
+            msg_id: Message ID for the frame
+            payload: Message payload bytes
+            acks: Whether to request acknowledgment (currently unused, reserved for future use)
+        """
+        async with self._send_lock:
+            stream = await self.ensure_stream()
+            
+            # Pack the frame using the wire protocol
+            frame_bytes = wire_frames.pack_frame(
+                msg_id=msg_id,
+                seq=self._send_seq,
+                payload=payload,
+                # AEAD is already handled at the transport stream level
+                aead=None,
+                compress_threshold=1024,
+            )
+            self._send_seq += 1
+            
+            # Send via the stream
+            await stream.send(frame_bytes)
+    
+    async def close(self) -> None:
+        """Close the underlying connection."""
+        await self._conn.close()
+    
+    # Expose the underlying conn for use by ConnectionManager
+    @property
+    def conn(self) -> tbase.Conn:
+        return self._conn
 
 
 @dataclass
@@ -72,7 +137,7 @@ class NodeDeps:
 @dataclass
 class _Listener:
     addr: str
-    listener: tbase.Listener
+    listener: tbase.Transport
     task: asyncio.Task
 
 
@@ -272,7 +337,7 @@ class NodeService:
     # ——————————————————————————————————————————————————————————
     # Transports & handshake
     # ——————————————————————————————————————————————————————————
-    async def _bind_listener(self, addr: str) -> tbase.Listener:
+    async def _bind_listener(self, addr: str) -> tbase.Transport:
         """
         Resolve a multiaddr-like string and bind the appropriate transport listener.
         Supported schemes: tcp://, ws://, wss://, quic:// (if enabled).
@@ -281,84 +346,123 @@ class NodeService:
         scheme = parsed.scheme
         host, port = parsed.host, parsed.port
 
+        # Reconstruct the full address in the format expected by each transport
         if scheme == "tcp":
-            from ..transport import tcp as tmod
-
-            return await tmod.listen(host, port)
+            full_addr = f"tcp://{host}:{port}"
         elif scheme in ("ws", "wss"):
-            from ..transport import ws as tmod
-
-            return await tmod.listen(
-                host, port, secure=(scheme == "wss"), cors=self.cfg.ws_cors
-            )
+            full_addr = f"{scheme}://{host}:{port}/p2p"
         elif scheme == "quic":
-            from ..transport import quic as tmod
-
-            return await tmod.listen(host, port, alpn=self.cfg.quic_alpn)
+            full_addr = f"quic://{host}:{port}"
         else:
             raise ValueError(f"unsupported listen scheme: {scheme}")
 
-    async def _accept_loop(self, listener: tbase.Listener) -> None:
-        """
-        Accept raw connections, run the Kyber+HKDF handshake to derive AEAD keys, then register with ConnectionManager.
-        """
-        from ..crypto.handshake import \
-            kyber_handshake  # async: (raw_conn, node_keys, hkdf_salt) -> Conn
+        # Create ListenConfig with the full address
+        # Use default max_frame_bytes from transport.base
+        from ..transport.base import MAX_FRAME_DEFAULT
+        listen_cfg = tbase.ListenConfig(
+            addr=full_addr,
+            max_frame_bytes=MAX_FRAME_DEFAULT,
+            backlog=128,
+        )
 
-        hkdf_salt = self.cfg.handshake_hkdf_salt
+        if scheme == "tcp":
+            from ..transport import tcp as tmod
 
-        async for raw in listener.accept():
-            self.metrics.accepted.inc()
-            self.loop.create_task(
-                self._upgrade_and_register(raw, kyber_handshake, hkdf_salt),
-                name="upgrade+register",
+            transport = tmod.TcpTransport(
+                handshake_prologue=self.cfg.handshake_hkdf_salt,
+                chain_id=self.cfg.chain_id,
+                network_magic=NETWORK_MAGIC,
             )
+            await transport.listen(listen_cfg)
+            return transport
+        elif scheme in ("ws", "wss"):
+            from ..transport import ws as tmod
 
-    async def _upgrade_and_register(
-        self,
-        raw: tbase.Conn,
-        do_handshake: Callable[[tbase.Conn, Any, bytes], Awaitable[tbase.Conn]],
-        hkdf_salt: bytes,
-    ) -> None:
+            transport = tmod.WsTransport(
+                handshake_prologue=self.cfg.handshake_hkdf_salt,
+                chain_id=self.cfg.chain_id,
+                network_magic=NETWORK_MAGIC,
+            )
+            await transport.listen(listen_cfg)
+            return transport
+        elif scheme == "quic":
+            from ..transport import quic as tmod
+
+            transport = tmod.QuicTransport(
+                handshake_prologue=self.cfg.handshake_hkdf_salt,
+                chain_id=self.cfg.chain_id,
+                network_magic=NETWORK_MAGIC,
+            )
+            await transport.listen(listen_cfg)
+            return transport
+        else:
+            raise ValueError(f"unsupported listen scheme: {scheme}")
+
+    async def _accept_loop(self, listener: tbase.Transport) -> None:
+        """
+        Accept raw connections from the transport and register them with ConnectionManager.
+        The transport has already performed the cryptographic handshake during accept().
+        """
         try:
-            conn = await do_handshake(raw, self.node_keys, hkdf_salt)
-            peer = await self.connmgr.register_inbound(conn)
-            if peer is None:
-                # Registration failed (limits, bans, or identify failure)
-                with contextlib.suppress(Exception):
-                    await conn.close()
-                return
-            # Once registered, route frames through the router
-            self.loop.create_task(
-                self._read_frames(conn, peer.peer_id), name=f"read@{conn.remote_addr}"
-            )
+            while not self.stopping:
+                conn = await listener.accept()
+                self.metrics.accepted.inc()
+                # Register the inbound connection with the connection manager
+                peer = await self.connmgr.register_inbound(conn)
+                if peer is None:
+                    # Registration failed (limits, bans, or identify failure)
+                    with contextlib.suppress(Exception):
+                        await conn.close()
+                    continue
+                # Wrap the connection to provide ConnLike interface for the router
+                wrapped_conn = ConnectionWrapper(conn)
+                # Once registered, route frames through the router
+                remote = conn.info.remote_addr if conn.info else "unknown"
+                self.loop.create_task(
+                    self._read_frames(wrapped_conn, peer.peer_id), name=f"read@{remote}"
+                )
+        except asyncio.CancelledError:
+            log.debug("Accept loop cancelled")
+            raise
         except Exception as e:
-            self.metrics.handshake_failures.inc()
-            log.warning("Handshake/registration failed", exc_info=e)
-            with contextlib.suppress(Exception):
-                await raw.close()
+            log.error("Accept loop error", exc_info=e)
 
-    async def _read_frames(self, conn: tbase.Conn, peer_id: str) -> None:
+    async def _read_frames(self, wrapped_conn: ConnectionWrapper, peer_id: str) -> None:
         """
         Read frames from a secure connection and feed them to the router.
+        The connection provides streams; we open one and read frames from it.
         """
         try:
-            async for frame in conn.read_frames():
+            # Open the stream for this connection using public interface
+            stream = await wrapped_conn.ensure_stream()
+            
+            while not wrapped_conn.is_closed():
+                # Read frame data from the stream
+                # The transport handles length-prefixing, so we just receive the frame
+                frame_bytes = await stream.recv()
+                if not frame_bytes:
+                    # EOF - connection closed gracefully
+                    break
+                
+                # Unpack the frame
+                frame = wire_frames.unpack_frame(frame_bytes)
+                
                 # Optional fast-path flow control
-                if not self.flowctl.permit(conn, frame):
+                if not self.flowctl.permit(wrapped_conn, frame):
                     continue
-                await self.router.dispatch(conn, frame)
+                    
+                await self.router.dispatch(wrapped_conn, frame)
                 self.metrics.frames_rx.inc()
         except asyncio.CancelledError:
             pass
         except Exception as e:
             log.debug(
-                "conn read error", extra={"peer": str(conn.remote_addr)}, exc_info=e
+                "conn read error", extra={"peer": wrapped_conn.remote_addr}, exc_info=e
             )
         finally:
             await self.connmgr._on_disconnect(peer_id, reason="disconnect")
             with contextlib.suppress(Exception):
-                await conn.close()
+                await wrapped_conn.close()
 
     # ——————————————————————————————————————————————————————————
     # Protocols & gossip wiring
@@ -558,10 +662,13 @@ class NodeService:
             log.debug(f"Failed to connect to {addr}")
             return
         
+        # Wrap the connection to provide ConnLike interface for the router
+        wrapped_conn = ConnectionWrapper(peer.conn)
+        
         # Start reading frames from the connected peer
         self.loop.create_task(
-            self._read_frames(peer.conn, peer.peer_id),
-            name=f"read@{peer.conn.remote_addr}"
+            self._read_frames(wrapped_conn, peer.peer_id),
+            name=f"read@{wrapped_conn.remote_addr}"
         )
 
     # ——————————————————————————————————————————————————————————
