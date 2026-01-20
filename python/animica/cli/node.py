@@ -2062,7 +2062,7 @@ def status(
                 typer.echo(f"  Best header height: {best_header_height}")
             if best_block_height is not None and best_block_height != height:
                 typer.echo(f"  Best block height: {best_block_height}")
-            if network_best_height is not None:
+            if network_best_height is not None and network_best_height != height:
                 typer.echo(f"  Network best height: {network_best_height}")
             if target_height is not None and target_height != height:
                 typer.echo(f"  Sync target height: {target_height}")
