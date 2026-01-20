@@ -162,10 +162,13 @@ class CoreP2PService:
             return
 
     async def _ensure_outbound(self) -> None:
-        while self.connman.outbound_count() < self.max_outbound:
+        attempts = 0
+        max_attempts = self.max_outbound * 3  # Try multiple candidates
+        while self.connman.outbound_count() < self.max_outbound and attempts < max_attempts:
             candidate = self.addrman.select()
             if candidate is None:
                 return
+            attempts += 1
             try:
                 await self.connman.dial(candidate)
             except Exception as exc:
@@ -174,7 +177,8 @@ class CoreP2PService:
                     exc_info=exc,
                     extra={"peer": candidate.key()},
                 )
-                return
+                # Continue trying other peers instead of giving up
+                continue
 
     async def _head_watch_loop(self) -> None:
         try:
