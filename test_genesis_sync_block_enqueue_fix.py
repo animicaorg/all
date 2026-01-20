@@ -9,8 +9,7 @@ This test verifies that when syncing from genesis:
 Issue: Syncing is broken it remains in genesis even though it sees the headers
 """
 
-import asyncio
-from unittest.mock import Mock, MagicMock
+from unittest.mock import Mock
 
 
 def test_genesis_block_enqueued_when_at_genesis():
