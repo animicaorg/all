@@ -41,10 +41,10 @@ def _patch_p2p(monkeypatch) -> None:
     import p2p
     import p2p.config
     import p2p.deps
-    import p2p.node.p2p_service
+    import p2p.node.service
 
     monkeypatch.setattr(p2p.config, "load_config", lambda: DummyP2PConfig())
-    monkeypatch.setattr(p2p.node.p2p_service, "P2PService", DummyP2PService)
+    monkeypatch.setattr(p2p.node.service, "P2PService", DummyP2PService)
     monkeypatch.setattr(p2p, "register_service", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(p2p.deps, "P2PDeps", DummyP2PDeps)
     monkeypatch.setattr(p2p.deps, "AsyncP2PDeps", lambda deps: deps)

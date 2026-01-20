@@ -809,11 +809,7 @@ def _init_p2p_service(
     try:
         import p2p
         from p2p.config import load_config as load_p2p_config
-
-        try:
-            from p2p.node.p2p_service import P2PService
-        except Exception:  # pragma: no cover - legacy fallback
-            from p2p.node.service import P2PServiceLegacy as P2PService
+        from p2p.node.service import P2PService
         import ipaddress
 
         # Set chain_id in environment so P2P config can auto-select network seeds
