@@ -2017,7 +2017,38 @@ def status(
             typer.echo("")
             typer.echo("=== Chain State ===")
             typer.echo(f"  Chain ID: {chain_id}")
-            typer.echo(f"  Head height: {height}")
+            
+            # Extract highest head information from sync status
+            best_header_height = None
+            best_block_height = None
+            network_best_height = None
+            target_height = None
+            if isinstance(sync_status, dict):
+                best_header_height = sync_status.get("best_header_height")
+                best_block_height = sync_status.get("best_block_height")
+                network_best_height = sync_status.get("network_best_height")
+                target_height = sync_status.get("target_height")
+            
+            # Determine the highest known head
+            highest_head = height
+            highest_head_source = "local head"
+            if best_header_height is not None and best_header_height > highest_head:
+                highest_head = best_header_height
+                highest_head_source = "best header"
+            if network_best_height is not None and network_best_height > highest_head:
+                highest_head = network_best_height
+                highest_head_source = "network best"
+            if target_height is not None and target_height > highest_head:
+                highest_head = target_height
+                highest_head_source = "sync target"
+            
+            # Display highest head prominently
+            if highest_head > height:
+                typer.secho(f"  Highest head: {highest_head} ({highest_head_source})", fg=typer.colors.CYAN, bold=True)
+                typer.echo(f"  Local head: {height}")
+            else:
+                typer.secho(f"  Head height: {height}", fg=typer.colors.GREEN, bold=True)
+            
             typer.echo(f"  Head hash: {head_hash}")
             formatted_head_time, head_age = _format_block_time(head_time)
             if formatted_head_time:
@@ -2025,6 +2056,17 @@ def status(
                     typer.echo(f"  Head time: {formatted_head_time} (age {head_age})")
                 else:
                     typer.echo(f"  Head time: {formatted_head_time}")
+            
+            # Show additional height info if available
+            if best_header_height is not None and best_header_height != height:
+                typer.echo(f"  Best header height: {best_header_height}")
+            if best_block_height is not None and best_block_height != height:
+                typer.echo(f"  Best block height: {best_block_height}")
+            if network_best_height is not None and network_best_height != height:
+                typer.echo(f"  Network best height: {network_best_height}")
+            if target_height is not None and target_height != height:
+                typer.echo(f"  Sync target height: {target_height}")
+            
             if height == 0:
                 typer.echo("Chain: genesis only")
             if cached_bootstrap:
