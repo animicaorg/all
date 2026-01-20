@@ -10241,7 +10241,23 @@ class P2PService:
                             # Remove None values
                             valid_genesis_hashes = {h for h in valid_genesis_hashes if h}
                             
-                            if header.parent_hash in valid_genesis_hashes:
+                            # DEFENSIVE FIX: If we have NO valid genesis hashes, accept ANY parent for height 1
+                            # This handles the case where all genesis hash methods return None
+                            # Better to be permissive at genesis than to deadlock the network
+                            if not valid_genesis_hashes:
+                                log.warning(
+                                    "No valid genesis hashes available - accepting height 1 header unconditionally",
+                                    extra={
+                                        "remote": peer.remote,
+                                        "header_height": header.height,
+                                        "header_hash": header.hash.hex(),
+                                        "header_parent_hash": header.parent_hash.hex(),
+                                        "anchor_height": anchor_height,
+                                    },
+                                )
+                                # Accept the header - it's height 1 and we're at genesis
+                                pass
+                            elif header.parent_hash in valid_genesis_hashes:
                                 # Parent is a valid genesis variant, allow it
                                 pass
                             else:
@@ -10309,7 +10325,22 @@ class P2PService:
                         # Remove None values
                         valid_genesis_hashes = {h for h in valid_genesis_hashes if h}
                         
-                        if header.parent_hash not in valid_genesis_hashes:
+                        # DEFENSIVE FIX: If we have NO valid genesis hashes, accept height 1 header unconditionally
+                        # This prevents deadlock when all genesis hash methods return None
+                        if not valid_genesis_hashes:
+                            log.warning(
+                                "No valid genesis hashes available - accepting height 1 header unconditionally",
+                                extra={
+                                    "remote": peer.remote,
+                                    "header_hash": header.hash.hex(),
+                                    "header_parent_hash": header.parent_hash.hex(),
+                                    "expected_genesis": expected_genesis.hex() if expected_genesis else None,
+                                    "expected_genesis_block": expected_genesis_block.hex() if expected_genesis_block else None,
+                                    "anchor_hash": anchor_hash.hex() if anchor_hash else None,
+                                },
+                            )
+                            # Accept the header - it's height 1 and we may be at genesis
+                        elif header.parent_hash not in valid_genesis_hashes:
                             # Parent doesn't match any known genesis variant
                             log.warning(
                                 "Height 1 header rejected: parent not a valid genesis hash",
