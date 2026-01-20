@@ -8766,7 +8766,10 @@ class P2PService:
         sorted_headers = sorted(headers, key=lambda h: h.height)
         
         for hdr in sorted_headers:
-            if hdr.height <= local_height_int:
+            # GENESIS SYNC FIX: Allow genesis block (height 0) to be enqueued even when
+            # local_height_int == 0, as long as the block body isn't present yet.
+            # This prevents sync deadlock where headers are received but blocks aren't downloaded.
+            if hdr.height < local_height_int or (hdr.height == local_height_int and hdr.height != 0):
                 continue
             if self._has_block(hdr.hash):
                 continue
