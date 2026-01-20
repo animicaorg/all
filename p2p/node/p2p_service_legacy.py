@@ -4341,7 +4341,13 @@ class P2PService:
             return False
         if in_flight_headers != 0 or in_flight_blocks != 0:
             return False
-        if target_height is not None and head_height < max(0, int(target_height) - 1):
+        # FIX: Off-by-one bug - when target_height=1 and head_height=0,
+        # the old condition `head_height < max(0, int(target_height) - 1)`
+        # evaluated to `0 < 0` = False, allowing sync to be marked as done
+        # even though we haven't reached the target yet.
+        # Changed to `head_height < int(target_height)` so sync continues
+        # until we actually reach the target height.
+        if target_height is not None and head_height < int(target_height):
             return False
         if best_header_height > head_height:
             return False
@@ -11699,9 +11705,15 @@ class P2PService:
             target_height = self._sync_target_height
             if target_height is None:
                 target_height = remote_height
+            # FIX: Off-by-one bug - when target_height=1 and new_height=0,
+            # the old condition `new_height >= max(0, int(target_height) - 1)`
+            # evaluated to `0 >= 0` = True, marking sync as SYNCED/IDLE
+            # even though we haven't reached height 1 yet.
+            # Changed to `new_height >= int(target_height)` so we only mark
+            # as synced when we actually reach the target height.
             if (
                 target_height is not None
-                and new_height >= max(0, int(target_height) - 1)
+                and new_height >= int(target_height)
                 and best_header_height <= new_height
             ):
                 self._sync_phase = "SYNCED" if new_height > 0 else "IDLE"
