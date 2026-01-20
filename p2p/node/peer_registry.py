@@ -46,7 +46,7 @@ class PeerSession:
             "direction": self.direction,
             "connected_at": self.connected_at,
             "last_seen": self.last_seen,
-            "peer_id": self.peer_id or "unknown",
+            "peer_id": self.peer_id or "(handshaking)",
         }
         if self.meta:
             snap.update(self.meta)
@@ -61,7 +61,7 @@ class PeerRegistry:
       - Enforce per-IP inbound limits.
       - Rate-limit inbound handshakes per IP and netgroup.
       - Deduplicate by peer_id (keep the newest connection).
-      - Track handshake timeouts for unknown peer_ids.
+      - Track handshake timeouts for peers still handshaking.
     """
 
     def __init__(

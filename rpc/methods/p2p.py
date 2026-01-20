@@ -593,7 +593,7 @@ async def list_peers() -> list[dict[str, t.Any]]:
             iterable = peers_dict.values() if isinstance(peers_dict, dict) else (peers_dict or [])
             for peer_info in iterable:
                 peer_dict = {
-                    "id": peer_info.get("peer_id") or peer_info.get("id") or "unknown",
+                    "id": peer_info.get("peer_id") or peer_info.get("id") or "(handshaking)",
                     "addr": str(peer_info.get("remote") or peer_info.get("addr") or ""),
                     "status": "connected" if peer_info.get("connected", True) else "disconnected",
                     "direction": peer_info.get("direction"),
