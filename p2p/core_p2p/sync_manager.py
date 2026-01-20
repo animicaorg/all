@@ -26,6 +26,7 @@ class SyncManager:
     pending_blocks: Deque[bytes] = field(default_factory=deque)
     pending_set: Set[bytes] = field(default_factory=set)
     max_inflight: int = 4096  # Ultra-increased from 2048 to 4096 for extreme parallelism (thousands of blocks/sec)
+    request_timeout: float = 30.0  # Timeout for inflight block requests (seconds)
 
     def build_getheaders(self) -> GetHeadersMessage:
         return GetHeadersMessage(locator_hashes=self.chain.locator(), stop_hash=b"\x00" * 32)
@@ -70,3 +71,25 @@ class SyncManager:
 
     def complete_inflight(self, block_hash: bytes) -> None:
         self.inflight_blocks.pop(block_hash, None)
+    
+    def timeout_stale_requests(self) -> int:
+        """
+        Remove inflight requests that have timed out and re-queue them.
+        
+        Returns:
+            Number of requests that were timed out and re-queued.
+        """
+        now = time.time()
+        timed_out = []
+        for block_hash, start_time in list(self.inflight_blocks.items()):
+            if now - start_time > self.request_timeout:
+                timed_out.append(block_hash)
+        
+        for block_hash in timed_out:
+            self.inflight_blocks.pop(block_hash, None)
+            # Re-queue for retry
+            if block_hash not in self.pending_set:
+                self.pending_blocks.append(block_hash)
+                self.pending_set.add(block_hash)
+        
+        return len(timed_out)
