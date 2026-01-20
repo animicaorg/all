@@ -17,6 +17,7 @@ Modules expected to live alongside this __init__:
   - node.py / service.py (Node bootstrap, event loop wiring)
   - runtime.py (task group & graceful shutdown helpers)
   - config.py (node-level config wrapper around p2p.config)
+  - p2p_service_legacy.py (16k+ line battle-tested monolith)
 Nothing here imports those directly to avoid import cycles.
 """
 

@@ -809,8 +809,16 @@ def _init_p2p_service(
     try:
         import p2p
         from p2p.config import load_config as load_p2p_config
-        from p2p.node.service import P2PService
         import ipaddress
+        
+        # Choose between modern and legacy P2P service implementation
+        use_legacy_p2p = _bool_env("ANIMICA_P2P_USE_LEGACY", True)  # Default to legacy for stability
+        if use_legacy_p2p:
+            from p2p.node.p2p_service_legacy import P2PService
+            log.info("Using legacy P2P service (16k+ line monolith)")
+        else:
+            from p2p.node.service import P2PService
+            log.info("Using modern P2P service (NodeService wrapper)")
 
         # Set chain_id in environment so P2P config can auto-select network seeds
         os.environ.setdefault("ANIMICA_P2P_CHAIN_ID", str(cfg_view.chain_id))
