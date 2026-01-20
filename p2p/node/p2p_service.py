@@ -3377,7 +3377,121 @@ class P2PService:
             return self._apply_sync_status_cache_meta(
                 self._sync_status_cache, now, source="cache"
             )
-        snapshot = self._build_sync_status_snapshot()
+        
+        # FIX: Wrap _build_sync_status_snapshot in exception handling
+        # to ensure status never fails with a crash
+        try:
+            snapshot = self._build_sync_status_snapshot()
+        except Exception as exc:
+            log.error(
+                "Failed to build sync status snapshot - returning fallback",
+                exc_info=exc,
+            )
+            # Return a minimal but valid snapshot on error
+            height, head_hash = 0, None
+            try:
+                height, head_hash = self._local_head()
+            except Exception:
+                pass
+            snapshot = SyncStatusSnapshot(
+                phase="ERROR",
+                head_height=height or 0,
+                head_hash=head_hash,
+                best_header_height=height or 0,
+                best_header_hash=head_hash,
+                best_block_height=height or 0,
+                best_block_hash=head_hash,
+                network_best_height=None,
+                best_remote_height=None,
+                best_remote_hash=None,
+                best_remote_peer=None,
+                best_remote_age_sec=None,
+                peer_tips_total=0,
+                peer_tips_fresh=0,
+                peer_tips_stale=0,
+                peer_tip_last_poll_at={},
+                peer_tip_last_errors={},
+                behind_by=None,
+                sync_status_reason="fatal_error",
+                in_flight=0,
+                in_flight_headers=0,
+                in_flight_blocks=0,
+                queued_blocks_count=0,
+                last_progress_at=0.0,
+                last_head_height=0,
+                last_head_hash=None,
+                last_header_height=0,
+                last_block_fetch_height=0,
+                last_header_progress_at=0.0,
+                last_block_progress_at=0.0,
+                last_header_at=0.0,
+                last_block_at=0.0,
+                last_header_request_at=0.0,
+                last_header_response_at=0.0,
+                last_header_response_count=0,
+                last_headers_accepted_count=0,
+                last_headers_discarded_count=0,
+                last_headers_discard_reason_counts={},
+                last_headers_discard_detail_counts={},
+                last_headers_discard_samples=[],
+                headers_accepted_total=0,
+                headers_seen_total=0,
+                headers_decode_failed_total=0,
+                last_block_request_at=0.0,
+                last_block_response_at=0.0,
+                last_header_request_peer=None,
+                last_header_response_peer=None,
+                last_header_error=None,
+                last_header_error_at=None,
+                last_block_error=None,
+                fatal_error=str(exc),  # Include the exception message
+                active_peer_for_headers=None,
+                active_peer_for_blocks=None,
+                active_peers_for_headers=[],
+                active_peers_for_blocks=[],
+                eligible_peers_for_headers=[],
+                ineligible_peers_for_headers={},
+                eligible_peers_for_blocks=[],
+                ineligible_peers_for_blocks={},
+                pending_header_batches=0,
+                header_cooldown_count=0,
+                header_cooldown_next_expiry=None,
+                recovery_attempts=0,
+                last_recovery_action=None,
+                last_locator_summary=None,
+                sync_head_height=None,
+                sync_head_hash=None,
+                last_matched_ancestor_height=None,
+                last_matched_ancestor_hash=None,
+                last_anchor_check=None,
+                checkpoint_height=None,
+                checkpoint_hash=None,
+                checkpoint_mode_enabled=False,
+                checkpoint_validation=None,
+                last_checkpoint_action=None,
+                synchronized=False,
+                paused=False,
+                sync_enabled=False,
+                target_height=None,
+                peers_total=0,
+                cache_size_bytes=0,
+                cache_entries=0,
+                peer_penalties={},
+                last_block_error_peer=None,
+                block_error_summary={},
+                next_block_needed_height=None,
+                next_block_needed_hash=None,
+                orphan_pool_size=0,
+                orphan_cascade_successes=0,
+                orphan_seen_count_entries=0,
+                inflight_block_samples=[],
+                orphan_block_samples=[],
+                peer_scores=[],
+                retries_by_peer={},
+                timeouts_by_peer={},
+                blocks_failed=0,
+            )
+        
         self._sync_status_cache = snapshot
         self._sync_status_cache_at = now
         self._sync_status_cache_refreshes += 1
@@ -3401,7 +3515,18 @@ class P2PService:
 
     def _build_sync_status_snapshot(self) -> SyncStatusSnapshot:
         height, head_hash = self._canonical_head_for_status()
+        
+        # FIX: Ensure head_hash is never None - use genesis hash at height 0
         head_hex = head_hash
+        if head_hex is None and height == 0:
+            genesis = self._genesis_header_hash()
+            if genesis and len(genesis) == 32:
+                head_hex = "0x" + bytes(genesis).hex()
+                log.debug(
+                    "Using genesis hash for head_hash at height 0",
+                    extra={"genesis_hash": head_hex},
+                )
+        
         raw_best_header_height = (
             self._sync_best_header.height if self._sync_best_header else 0
         )
@@ -3415,7 +3540,7 @@ class P2PService:
             best_header_hash = head_hex
         else:
             best_header_height = raw_best_header_height
-            best_header_hash = raw_best_header_hash
+            best_header_hash = raw_best_header_hash or head_hex  # Fallback to head_hex if no best header
         best_block_height = int(height or 0)
         best_block_hash = head_hex
         network_best_height = self._network_best_height()
@@ -4154,8 +4279,22 @@ class P2PService:
         sync_enabled: bool = True,
         sync_requested: bool = False,
     ) -> str:
+        # FIX: Don't return STALLED when synchronized or caught up (behind_by==0)
+        # The stalled state should only apply when we're actually behind and not making progress
         if self._sync_block_stalled_reason:
-            return "STALLED"
+            # If synchronized is True, we're caught up - ignore stall reason
+            if not synchronized:
+                return "STALLED"
+            # If synchronized, clear the stall reason and continue to SYNCED
+            log.info(
+                "Clearing stall reason because node is synchronized",
+                extra={
+                    "stall_reason": self._sync_block_stalled_reason,
+                    "best_block_height": best_block_height,
+                    "best_header_height": best_header_height,
+                },
+            )
+            self._sync_block_stalled_reason = None
         if pending_header_batches > 0 or self._sync_inflight_headers:
             return "HEADERS"
         if best_header_height > best_block_height:
@@ -5770,8 +5909,16 @@ class P2PService:
                 peer.hello_done.wait(), timeout=self._peer_registry.handshake_timeout_s
             )
         except asyncio.TimeoutError:
-            log.info("Dropping peer %s due to hello timeout", peer.remote)
-            await self._drop_peer(peer, reason="hello_timeout")
+            log.warning(
+                "Peer handshake timeout - dropping connection",
+                extra={
+                    "remote": peer.remote,
+                    "direction": peer.direction,
+                    "timeout_s": self._peer_registry.handshake_timeout_s,
+                    "state_transition": "handshaking -> failed (timeout)",
+                },
+            )
+            await self._drop_peer(peer, reason="handshake_timeout")
 
     async def _peer_loop(self, peer: _PeerState) -> None:
         # Send HELLO immediately (both sides do this; handler is symmetric).
@@ -6544,27 +6691,29 @@ class P2PService:
         peer.hello = normalized
         peer.hello_received_at = time.time()  # Track when hello was received
         peer.identity_ok = True
-        if self._sync_verbose:
-            log.info(
-                "Handshake identity accepted",
-                extra={
-                    "remote": peer.remote,
-                    "peer_id": peer.peer_id,
-                    "chain_id": normalized.get("chain_id"),
-                    "genesis_hash": self._canon_hash0x(
-                        normalized.get("genesis_header_hash")
-                        or normalized.get("genesis_hash")
-                        or normalized.get("genesis_block_hash")
-                    ),
-                    "fork_id": normalized.get("fork_id"),
-                    "consensus_id": normalized.get("consensus_id"),
-                    "protocol_version": normalized.get("protocol_version"),
-                    "repo_state": normalized.get("repo_state"),
-                    "network_params_hash": self._canon_hash0x(
-                        normalized.get("network_params_hash")
-                    ),
-                },
-            )
+        log.info(
+            "Peer handshake completed successfully",
+            extra={
+                "remote": peer.remote,
+                "peer_id": peer.peer_id,
+                "direction": peer.direction,
+                "chain_id": normalized.get("chain_id"),
+                "genesis_hash": self._canon_hash0x(
+                    normalized.get("genesis_header_hash")
+                    or normalized.get("genesis_hash")
+                    or normalized.get("genesis_block_hash")
+                ),
+                "fork_id": normalized.get("fork_id"),
+                "consensus_id": normalized.get("consensus_id"),
+                "protocol_version": normalized.get("protocol_version"),
+                "repo_state": normalized.get("repo_state"),
+                "network_params_hash": self._canon_hash0x(
+                    normalized.get("network_params_hash")
+                ),
+                "head_height": normalized.get("head_height"),
+                "state_transition": "handshaking -> connected",
+            },
+        )
         peer.hello_done.set()
         if normalized.get("head_height") is not None:
             self._update_peer_head_table(
@@ -6602,6 +6751,15 @@ class P2PService:
                 )
         
         peer.ready_for_sync = True
+        log.info(
+            "Peer ready for sync - tip tracking initialized",
+            extra={
+                "remote": peer.remote,
+                "peer_id": peer.peer_id,
+                "head_height": normalized.get("head_height") or 0,
+                "state_transition": "connected -> ready_for_sync",
+            },
+        )
         
         # Wake sync loop to notice new peer with fresh tips
         self._sync_wakeup.set()
@@ -11955,7 +12113,23 @@ class P2PService:
                         self._sync_kick(reason="headers_blocks_equal_behind_network", aggressive=True)
                 
                 # Use a reduced timeout (half of stall timeout) to detect general stall conditions
+                # FIX: Only mark as stalled if we're actually behind the network
+                # Don't trigger stall when caught up (behind_by == 0)
                 reduced_timeout = self._sync_stall_timeout / 2.0
+                
+                # Compute best_remote_height to check if we're actually behind
+                chain_id = int(self.chain_id) if self.chain_id else None
+                best_remote_height, _, best_remote_peer, best_remote_age = (
+                    self._compute_best_remote_info(chain_id=chain_id)
+                )
+                
+                # Only consider stall if we're actually behind
+                behind_network = False
+                if best_remote_height is not None:
+                    behind_network = best_remote_height > best_block_height
+                elif network_best_height is not None:
+                    behind_network = int(network_best_height) > best_block_height
+                
                 if (
                     best_header_height == best_block_height
                     and best_block_height > 0
@@ -11964,17 +12138,21 @@ class P2PService:
                     and not self._sync_block_queue
                     and now - self._sync_last_progress_at > reduced_timeout
                     and self._peers  # Have peers but not making progress
+                    and behind_network  # FIX: Only mark stalled if actually behind
                 ):
                     # Mark as stalled to trigger peer rotation and recovery
                     if self._sync_block_stalled_reason != "headers_blocks_equal_stall":
                         log.warning(
-                            "Sync stalled: headers == blocks with no progress",
+                            "Sync stalled: headers == blocks with no progress and behind network",
                             extra={
                                 "height": best_block_height,
                                 "stall_elapsed_s": max(0.0, now - self._sync_last_progress_at),
                                 "peers": len(self._peers),
                                 "last_header_error": self._sync_last_header_error,
                                 "network_best_height": network_best_height,
+                                "best_remote_height": best_remote_height,
+                                "best_remote_peer": best_remote_peer,
+                                "behind_network": behind_network,
                             },
                         )
                         self._sync_block_stalled_reason = "headers_blocks_equal_stall"
@@ -12992,31 +13170,21 @@ class P2PService:
                 best_peer = peer.remote
                 best_age = tip_age
         
-        # FIX: Fallback to target_height when no fresh peer tips available
-        # This allows sync to progress based on block announcements or explicit targets
-        # even when peer connections are unstable or peers haven't completed handshakes
-        if best_height is None and self._sync_target_height is not None:
-            target = int(self._sync_target_height)
-            # Validate target is reasonable: must be positive and not absurdly high
-            # Maximum reasonable height is ~10 years worth of blocks at 1 block/10s = ~31M blocks
-            MAX_REASONABLE_HEIGHT = 50_000_000
-            if target > 0 and target <= MAX_REASONABLE_HEIGHT:
-                log.info(
-                    "Using target_height as fallback for best_remote_height (no fresh peer tips)",
-                    extra={
-                        "target_height": target,
-                        "peers_count": len(self._peers),
-                        "peers_with_hello": sum(1 for p in self._peers.values() if p.hello_done.is_set()),
-                    },
-                )
-                # Return target as best_height with None for hash/peer (since it's synthetic)
-                # Age is set to 0 to indicate it's from our own target, not peer data
-                return target, None, "target_fallback", 0.0
-            elif target > MAX_REASONABLE_HEIGHT:
-                log.warning(
-                    "target_height exceeds reasonable bounds, not using as fallback",
-                    extra={"target_height": target, "max_reasonable": MAX_REASONABLE_HEIGHT},
-                )
+        
+        # FIX: Remove target_fallback logic - it masks the fact that we have no fresh peer tips
+        # Returning target_fallback as best_remote_peer makes sync think it's caught up (behind_by=0)
+        # when in reality we have zero real peer tips and can't make progress.
+        # 
+        # The old logic returned:
+        #   return target, None, "target_fallback", 0.0
+        # 
+        # But this is fundamentally wrong because:
+        # 1. best_remote_peer="target_fallback" is not a real peer address
+        # 2. Sync status checks peer_tips_total which will be 0, contradicting non-None best_remote
+        # 3. Makes behind_by=0 when we actually have no idea what the network height is
+        # 
+        # Instead: return (None, None, None, None) when no fresh peer tips exist.
+        # This forces sync_status_reason="no_fresh_peer_tips" and prevents false SYNCHRONIZED state.
         
         return best_height, best_hash, best_peer, best_age
 
