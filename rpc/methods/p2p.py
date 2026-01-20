@@ -869,7 +869,7 @@ async def debug_p2p_status() -> dict[str, t.Any]:
     peer_list_for_diag = []
     for peer in peers_list:
         peer_entry = {
-            "id": peer.get("id", "unknown"),
+            "id": peer.get("id", "(handshaking)"),
             "addr": peer.get("addr", ""),
             "last_seen": peer.get("lastSeen"),
             "height": peer.get("height"),
