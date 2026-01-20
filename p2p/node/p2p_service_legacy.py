@@ -1911,15 +1911,15 @@ class P2PService:
         for snap in self._peer_registry.snapshot():
             remote = str(snap.get("remote", ""))
             addr_key = self._addr_key(remote)
-            peer_id = snap.get("peer_id") or "unknown"
+            peer_id = snap.get("peer_id") or "(handshaking)"
             identity_ok = snap.get("identity_ok", False)
             
             # Determine peer status based on handshake state and identity validation
             # "connected" = has peer_id AND passed identity validation (chain_id, genesis match)
             # "handshaking" = connection established but handshake incomplete or identity not validated
-            if peer_id != "unknown" and identity_ok:
+            if peer_id != "(handshaking)" and identity_ok:
                 status = "connected"
-            elif peer_id != "unknown":
+            elif peer_id != "(handshaking)":
                 status = "handshaking"  # Has peer_id but identity validation incomplete/failed
             else:
                 status = "handshaking"  # No peer_id yet - still in handshake
@@ -3325,7 +3325,7 @@ class P2PService:
     def status_snapshot(self) -> P2PStatusSnapshot:
         snapshot = self._peer_registry.snapshot()
         identified = [
-            p for p in snapshot if p.get("peer_id") and p.get("peer_id") != "unknown"
+            p for p in snapshot if p.get("peer_id") and p.get("peer_id") != "(handshaking)"
         ]
         inbound = sum(1 for p in identified if p.get("direction") == "inbound")
         outbound = sum(1 for p in identified if p.get("direction") == "outbound")
@@ -6038,7 +6038,7 @@ class P2PService:
         log.info(
             "Peer disconnected",
             extra={
-                "peer_id": peer.peer_id or "unknown",
+                "peer_id": peer.peer_id or "(handshaking)",
                 "remote": peer.remote,
                 "reason": reason,
                 "direction": peer.direction,

@@ -1663,7 +1663,7 @@ def sync_status(
         typer.echo()
         typer.secho("Connected Peers:", fg=typer.colors.BRIGHT_BLUE, bold=True)
         for i, peer in enumerate(peers[:10], 1):  # Show max 10 peers
-            peer_id = peer.get("id") or peer.get("peerId") or peer.get("peer_id") or "unknown"
+            peer_id = peer.get("id") or peer.get("peerId") or peer.get("peer_id") or "(handshaking)"
             addr = peer.get("addr") or peer.get("address") or "unknown"
             status = peer.get("status") or "connected"
             typer.echo(f"  {i}. {peer_id[:16]}... ({addr}) - {status}")

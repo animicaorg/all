@@ -64,7 +64,7 @@ async def test_two_node_outbound_stays_connected(tmp_path, monkeypatch):
             outbound = [
                 p
                 for p in node_b.peer_registry.snapshot()
-                if p.get("direction") == "outbound" and p.get("peer_id") not in (None, "unknown")
+                if p.get("direction") == "outbound" and p.get("peer_id") not in (None, "(handshaking)")
             ]
             return bool(outbound)
 
@@ -75,7 +75,7 @@ async def test_two_node_outbound_stays_connected(tmp_path, monkeypatch):
         outbound = [
             p
             for p in node_b.peer_registry.snapshot()
-            if p.get("direction") == "outbound" and p.get("peer_id") not in (None, "unknown")
+            if p.get("direction") == "outbound" and p.get("peer_id") not in (None, "(handshaking)")
         ]
         assert outbound, "Outbound peer disconnected unexpectedly"
 

@@ -2132,7 +2132,7 @@ def status(
             if peers:
                 typer.echo("Peers (live):")
                 for index, peer in enumerate(peers[:10], 1):
-                    peer_id = peer.get("id") or peer.get("peerId") or peer.get("peer_id") or "unknown"
+                    peer_id = peer.get("id") or peer.get("peerId") or peer.get("peer_id") or "(handshaking)"
                     addr = peer.get("addr") or peer.get("address") or peer.get("multiaddr") or "unknown"
                     status = peer.get("status") or peer.get("state") or "connected"
                     direction = peer.get("direction")
