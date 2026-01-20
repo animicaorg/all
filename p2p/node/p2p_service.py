@@ -4738,8 +4738,10 @@ class P2PService:
 
     async def _startup_sync_kick(self) -> None:
         deadline = time.time() + 10.0
+        # CRITICAL FIX: Wait for ready_for_sync peer to prevent sync starting with no eligible peers
         while self._running and time.time() < deadline:
-            if self._peers:
+            has_ready_peer = any(p.ready_for_sync for p in self._peers.values())
+            if has_ready_peer:
                 break
             await asyncio.sleep(0.5)
         if not self._running:
