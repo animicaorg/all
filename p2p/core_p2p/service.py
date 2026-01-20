@@ -304,9 +304,11 @@ class CoreP2PService:
                     peer = random.choice(peers)
                     if peer.handshake_complete:
                         try:
-                            await self.net_processing._request_pending_blocks(
-                                lambda cmd, data: self.connman._send(peer, cmd, data)
-                            )
+                            # Create a send function that matches the expected signature
+                            async def send_to_peer(cmd: str, data: bytes) -> None:
+                                await self.connman._send(peer, cmd, data)
+                            
+                            await self.net_processing._request_pending_blocks(send_to_peer)
                         except Exception as exc:
                             log.debug("failed to request pending blocks", exc_info=exc)
                 
@@ -319,8 +321,12 @@ class CoreP2PService:
         
         Note: This method assumes the header format follows Bitcoin-style encoding
         where the first 4 bytes (little-endian) represent the block height.
-        For chains using different header formats, this method should be overridden
-        or the ChainAdapter should provide a best_height() method.
+        
+        For chains using different header formats, override this method or ensure
+        the ChainAdapter provides a best_height() method which will be used instead.
+        
+        If neither approach works for your chain, consider implementing a custom
+        header parser in the ChainAdapter.
         """
         getter = getattr(self.chain, "best_height", None)
         if callable(getter):
@@ -329,4 +335,5 @@ class CoreP2PService:
         if not head or len(head) < 4:
             return 0
         # Bitcoin-style: first 4 bytes are height in little-endian
+        # This is a fallback and may not be accurate for all chains
         return int.from_bytes(head[:4], "little", signed=False)

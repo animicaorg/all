@@ -173,7 +173,9 @@ async def test_sync_timeout_integration():
     chain = FakeChain()
     sm = SyncManager(chain, request_timeout=0.2)
     
-    # Simulate receiving headers (32-byte hash + 48 bytes padding = 80-byte Bitcoin-style header)
+    # Simulate receiving headers
+    # Note: Test data mimics Bitcoin-style 80-byte header format (32-byte hash + 48-byte padding)
+    # This is not actual Bitcoin header data, just test data with the same size
     headers = [hashlib.sha256(str(i).encode()).digest() + b"\x00" * TEST_HEADER_PADDING for i in range(10)]
     sm.receive_headers(headers)
     
