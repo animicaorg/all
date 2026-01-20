@@ -3324,11 +3324,12 @@ class P2PService:
 
     def status_snapshot(self) -> P2PStatusSnapshot:
         snapshot = self._peer_registry.snapshot()
-        identified = [
-            p for p in snapshot if p.get("peer_id") and p.get("peer_id") != "(handshaking)"
-        ]
-        inbound = sum(1 for p in identified if p.get("direction") == "inbound")
-        outbound = sum(1 for p in identified if p.get("direction") == "outbound")
+        # FIX: Count ALL peers including handshaking to allow sync to progress
+        # when peers are connecting but haven't completed identity exchange yet.
+        # Previously only counted peers with peer_id != "(handshaking)", causing
+        # sync to wait indefinitely for "connected" peers that would never be counted.
+        inbound = sum(1 for p in snapshot if p.get("direction") == "inbound")
+        outbound = sum(1 for p in snapshot if p.get("direction") == "outbound")
         bootstrap_bonus = self.bootstrap_peer_bonus()
         now = time.time()
         attempts_last_5m = sum(
@@ -3347,7 +3348,8 @@ class P2PService:
             advertise_host=advertise_host,
             advertise_port=advertise_port,
             external_ip=self._external_ip,
-            peers_total=self._peer_registry.peer_count() + bootstrap_bonus,
+            # FIX: Use total_active_sessions() to include handshaking peers
+            peers_total=self._peer_registry.total_active_sessions(include_handshaking=True) + bootstrap_bonus,
             peers_inbound=inbound,
             peers_outbound=outbound + bootstrap_bonus,
             bootstrap_attempts_last_5m=attempts_last_5m,
@@ -5259,7 +5261,9 @@ class P2PService:
         return added
 
     def peer_count(self) -> int:
-        return self._peer_registry.peer_count() + self.bootstrap_peer_bonus()
+        # FIX: Count all active sessions including handshaking to properly
+        # reflect connection state for sync and RPC queries
+        return self._peer_registry.total_active_sessions(include_handshaking=True) + self.bootstrap_peer_bonus()
 
     async def import_peers(self, addresses: list[str]) -> dict[str, Any]:
         if not addresses:

@@ -213,6 +213,29 @@ class PeerRegistry:
         
         return len(seen_keys)
 
+    def total_active_sessions(self, *, include_handshaking: bool = True) -> int:
+        """
+        Count all active peer sessions, optionally including those still handshaking.
+        
+        Args:
+            include_handshaking: If True (default), counts peers in handshaking state.
+                                 If False, only counts peers with completed handshakes.
+        
+        Returns:
+            Total number of active sessions. When include_handshaking=True, this includes
+            peers that are connecting but haven't completed identity exchange yet.
+            
+        Note:
+            This method counts raw sessions without deduplication or identity validation.
+            Use peer_count() if you need validated, deduplicated peer counts.
+        """
+        if not include_handshaking:
+            # Count only sessions with peer_id assigned (handshake complete)
+            return sum(1 for s in self._sessions.values() if s.peer_id)
+        
+        # Count all active sessions including handshaking
+        return len(self._sessions)
+
     def snapshot(self) -> List[Dict[str, object]]:
         """
         Return a deduplicated list of peer snapshots for RPC/CLI consumption.
