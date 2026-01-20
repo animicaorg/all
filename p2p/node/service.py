@@ -561,7 +561,7 @@ class NodeService:
         # Start reading frames from the connected peer
         self.loop.create_task(
             self._read_frames(peer.conn, peer.peer_id),
-            name=f"read@{peer.address}"
+            name=f"read@{peer.conn.remote_addr}"
         )
 
     # ——————————————————————————————————————————————————————————
