@@ -29,9 +29,9 @@ CHAIN_ID: int = 0
 
 # CHAIN_RESET_TOUCHPOINT: New genesis hash (updated for chain reset)
 # This is the NEW genesis block hash for the reset chain.
-# Previous genesis hash: 0x5868b982d22fe2eb4eb15567dd6afdbae453001388bc23a2517639729428cfda (2026-01-16)
+# Previous genesis hash: 0xa1e73debf7b0c8e492de2f8d5c9b8d85f16fe9f2db6c3c844592c2e2dfe9cacf (2026-01-18)
 # Current genesis hash (matches consensus/build_genesis.py output for chain_id=0):
-GENESIS_HASH_HEX: str = "0xa1e73debf7b0c8e492de2f8d5c9b8d85f16fe9f2db6c3c844592c2e2dfe9cacf"
+GENESIS_HASH_HEX: str = "0xae7987f53209f3f7bdbc2bbef889191fc4d53927698deed0fac7185d44f1f94f"
 GENESIS_HASH: bytes = bytes.fromhex(GENESIS_HASH_HEX[2:])
 
 # ============================================================================
@@ -78,9 +78,9 @@ MIN_TIMESTAMP_INCREMENT_SEC: int = 1
 
 # Genesis block fixed parameters (for deterministic genesis builder)
 # CHAIN_RESET_TOUCHPOINT: Updated for chain reset
-GENESIS_TIMESTAMP_UTC: str = "2026-01-18T00:00:00Z"  # Fixed genesis time - UPDATED FOR RESET
+GENESIS_TIMESTAMP_UTC: str = "2026-01-20T05:11:00Z"  # Fixed genesis time - UPDATED FOR RESET
 GENESIS_NONCE: int = 0  # Genesis block nonce
-GENESIS_MESSAGE: str = "Animica Chain Reset Jan 2026 - Quantum-Resistant Blockchain"  # UPDATED FOR RESET
+GENESIS_MESSAGE: str = "Animica Genesis v2 - Quantum-Resistant Blockchain"  # UPDATED FOR RESET
 
 # Genesis allocation (matches core/genesis/genesis.json)
 GENESIS_PREMINE_TOTAL: int = 81_000_000_000_000_000  # 81M ANM in base units

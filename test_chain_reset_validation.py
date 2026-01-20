@@ -27,7 +27,7 @@ from p2p.errors import P2PError
 # These are test-only files we'll check
 GENESIS_PATH = Path(__file__).resolve().parent / "core" / "genesis" / "mainnet.json"
 OLD_GENESIS_HASH = "0x5868b982d22fe2eb4eb15567dd6afdbae453001388bc23a2517639729428cfda"
-NEW_GENESIS_HASH = "0xa1e73debf7b0c8e492de2f8d5c9b8d85f16fe9f2db6c3c844592c2e2dfe9cacf"
+NEW_GENESIS_HASH = "0xae7987f53209f3f7bdbc2bbef889191fc4d53927698deed0fac7185d44f1f94f"
 
 
 def test_new_genesis_hash_is_correct():

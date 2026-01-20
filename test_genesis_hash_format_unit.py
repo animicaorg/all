@@ -21,7 +21,7 @@ def test_genesis_hash_format_validation():
     """
     
     # Test 1: Valid bytes hash
-    valid_bytes = bytes.fromhex("6a27e93193020cd00fe429ef0ffac1c3a774268a589c2911ac396dd3cba2d242")
+    valid_bytes = bytes.fromhex("ae7987f53209f3f7bdbc2bbef889191fc4d53927698deed0fac7185d44f1f94f")
     result = "0x" + valid_bytes.hex()
     assert result.startswith("0x")
     assert len(result) == 66
@@ -31,7 +31,7 @@ def test_genesis_hash_format_validation():
     # Test 2: Callable hash (like Header.hash method)
     class MockHeader:
         def hash(self) -> bytes:
-            return bytes.fromhex("6a27e93193020cd00fe429ef0ffac1c3a774268a589c2911ac396dd3cba2d242")
+            return bytes.fromhex("ae7987f53209f3f7bdbc2bbef889191fc4d53927698deed0fac7185d44f1f94f")
     
     header = MockHeader()
     hash_method = header.hash
@@ -48,7 +48,7 @@ def test_genesis_hash_format_validation():
     print(f"✓ Callable hash method works correctly: {result}")
     
     # Test 3: Verify hex string validation
-    valid_hex = "0x6a27e93193020cd00fe429ef0ffac1c3a774268a589c2911ac396dd3cba2d242"
+    valid_hex = "0xae7987f53209f3f7bdbc2bbef889191fc4d53927698deed0fac7185d44f1f94f"
     assert len(valid_hex) == 66
     assert all(c in "0123456789abcdefABCDEF" for c in valid_hex[2:])
     print(f"✓ Hex string validation works: {valid_hex}")
