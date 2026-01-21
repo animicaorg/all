@@ -122,7 +122,9 @@ class ConnectionManager:
     async def _send(self, peer: PeerState, command: str, payload: bytes) -> None:
         conn = self._peers.get(peer.peer_id)
         if not conn:
-            return
+            # Log when peer connection not found - helps debugging connectivity issues
+            log.debug("peer connection not found for send", extra={"peer_id": peer.peer_id, "command": command})
+            raise ConnectionError("Peer connection not found")
         conn.writer.write(encode_message(command, payload))
         await conn.writer.drain()
         peer.mark_send()
