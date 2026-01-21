@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import time
 from dataclasses import dataclass
@@ -24,6 +25,8 @@ from .protocol import (
     build_version_message,
 )
 from .sync_manager import ChainAdapter, SyncManager
+
+log = logging.getLogger(__name__)
 
 INV_TYPE_TX = 1
 INV_TYPE_BLOCK = 2
