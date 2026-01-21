@@ -7,7 +7,7 @@ This module provides canonical network definitions to ensure consistency
 across docker, compose, RPC, CLI, wallet, miner, P2P, and on-disk data.
 
 Each network has:
-- chain_id: unique numeric identifier (mainnet=0, testnet=2, devnet=1337)
+- chain_id: unique numeric identifier (mainnet=1, testnet=2, devnet=1337)
 - genesis_path: path to canonical genesis JSON file
 - pinned_genesis_hash: expected hash of genesis block (enforced)
 - network_name: human-readable name
@@ -76,14 +76,14 @@ BASE_DIR = Path(__file__).resolve().parent
 REPO_ROOT = BASE_DIR.parent
 GENESIS_DIR = BASE_DIR / "genesis"
 
-# MAINNET (chain_id=0)
-# CHAIN_RESET_TOUCHPOINT: Genesis hash for mainnet reset 2026-01-18
+# MAINNET (chain_id=1)
+# CHAIN_RESET_TOUCHPOINT: Genesis hash for mainnet reset 2026-01-21
 MAINNET_MANIFEST = NetworkManifest(
     network_name="mainnet",
-    chain_id=0,
+    chain_id=1,
     genesis_path=GENESIS_DIR / "mainnet.json",
     pinned_genesis_hash=bytes.fromhex(
-        "6a27e93193020cd00fe429ef0ffac1c3a774268a589c2911ac396dd3cba2d242"
+        "753d4c91c89cab828fe1d52e55553b0de74863ce5dfdfe0f81eb6196e88728c2"
     ),
     hrp="anim",
     protocol_version="1.0.0",
@@ -128,7 +128,7 @@ _MANIFESTS_BY_NAME = {
 
 # Registry: chain_id -> manifest
 _MANIFESTS_BY_CHAIN_ID = {
-    0: MAINNET_MANIFEST,
+    1: MAINNET_MANIFEST,
     2: TESTNET_MANIFEST,
     1337: DEVNET_MANIFEST,
 }
