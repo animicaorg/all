@@ -1185,9 +1185,9 @@ async def import_peers(addresses: list[str]) -> dict[str, t.Any]:
                 store = _resolve_peer_store_paths(svc, None)
                 peer_counts = _peer_counts_snapshot()
                 # P2P service returns "success" and "added", but RPC expects "ok" and "imported"
-                # Map field names for compatibility
-                ok = result.get("ok") or result.get("success", False)
-                imported = result.get("imported") or result.get("added", 0)
+                # Map field names for compatibility, preferring new field names if present
+                ok = result.get("ok") if "ok" in result else result.get("success", False)
+                imported = result.get("imported") if "imported" in result else result.get("added", 0)
                 return _build_import_response(
                     ok=ok,
                     imported=imported,

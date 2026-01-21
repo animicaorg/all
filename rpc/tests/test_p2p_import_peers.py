@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -41,7 +41,6 @@ async def test_import_peers_handles_legacy_success_field() -> None:
     normalize this to {"ok": True, "imported": N} for consistency.
     """
     from rpc.methods.p2p import import_peers
-    from unittest.mock import patch
     
     # Mock P2P service response with legacy field names
     mock_service = MagicMock()
@@ -71,7 +70,6 @@ async def test_import_peers_handles_legacy_success_field() -> None:
 async def test_import_peers_handles_new_ok_field() -> None:
     """Test that import_peers RPC works with new 'ok' and 'imported' fields."""
     from rpc.methods.p2p import import_peers
-    from unittest.mock import patch
     
     # Mock P2P service response with new field names
     mock_service = MagicMock()
@@ -93,3 +91,30 @@ async def test_import_peers_handles_new_ok_field() -> None:
     # Verify the RPC works with new fields
     assert result["ok"] is True
     assert result["imported"] == 3
+
+
+@pytest.mark.asyncio
+async def test_import_peers_handles_explicit_false_and_zero() -> None:
+    """Test that explicit False and 0 values are preserved correctly."""
+    from rpc.methods.p2p import import_peers
+    
+    # Mock P2P service response with explicit False and 0
+    mock_service = MagicMock()
+    mock_service.import_peers = AsyncMock(return_value={
+        "ok": False,      # Explicit False should not fallback
+        "imported": 0,    # Explicit 0 should not fallback
+        "skipped": 5,
+        "invalid": 3,
+        "dial_attempted": 5,
+        "dial_success": 0,
+        "errors": ["failed to connect"]
+    })
+    
+    with patch('rpc.methods.p2p._get_p2p_service', return_value=mock_service):
+        with patch('rpc.methods.p2p._resolve_peer_store_paths', return_value={"db": "/tmp/db", "json": "/tmp/json"}):
+            with patch('rpc.methods.p2p._peer_counts_snapshot', return_value={"peers_total": 0, "peers_inbound": 0, "peers_outbound": 0}):
+                result = await import_peers(addresses=["peer1:30333"])
+    
+    # Verify explicit False and 0 are preserved
+    assert result["ok"] is False, "Explicit ok=False should be preserved"
+    assert result["imported"] == 0, "Explicit imported=0 should be preserved"
