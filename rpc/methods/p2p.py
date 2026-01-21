@@ -1184,9 +1184,13 @@ async def import_peers(addresses: list[str]) -> dict[str, t.Any]:
             if result is not None:
                 store = _resolve_peer_store_paths(svc, None)
                 peer_counts = _peer_counts_snapshot()
+                # P2P service returns "success" and "added", but RPC expects "ok" and "imported"
+                # Map field names for compatibility
+                ok = result.get("ok") or result.get("success", False)
+                imported = result.get("imported") or result.get("added", 0)
                 return _build_import_response(
-                    ok=result.get("ok", False),
-                    imported=result.get("imported", 0),
+                    ok=ok,
+                    imported=imported,
                     skipped=result.get("skipped", 0),
                     invalid=result.get("invalid", 0),
                     store=store,
@@ -1195,7 +1199,7 @@ async def import_peers(addresses: list[str]) -> dict[str, t.Any]:
                     extra={
                         "dial_attempted": result.get("dial_attempted", 0),
                         "dial_success": result.get("dial_success", 0),
-                        "seeds_added": result.get("imported", 0),
+                        "seeds_added": imported,
                         "seeds_skipped": result.get("skipped", 0),
                         "dial_attempts_started": result.get("dial_attempted", 0),
                         **peer_counts,
