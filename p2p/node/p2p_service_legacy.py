@@ -10259,6 +10259,7 @@ class P2PService:
                             elif header.parent_hash in valid_genesis_hashes:
                                 # Parent matches a valid genesis variant - continue processing
                                 # (no action needed, just documenting the acceptance)
+                                pass
                             else:
                                 # Parent doesn't match any known genesis variant
                                 # Enhanced diagnostics for genesis anchor failures
