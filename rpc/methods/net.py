@@ -251,6 +251,31 @@ def _fallback_seeds_from_network(chain_id: int | None) -> list[str]:
         return []
 
 
+def _filter_tcp_seeds(seeds: list[str]) -> list[str]:
+    """
+    Filter seeds to only include TCP transports that are supported by CoreP2PService.
+    
+    QUIC/UDP addresses are not yet supported by the core P2P implementation and will
+    be rejected as invalid during import. This filter prevents confusion by removing
+    them from the seed list before they're returned to clients.
+    
+    Args:
+        seeds: List of multiaddr or host:port seed addresses
+        
+    Returns:
+        Filtered list containing only TCP-compatible seeds
+    """
+    filtered: list[str] = []
+    for seed in seeds:
+        # Skip QUIC/UDP addresses - they're not supported by CoreP2PService yet
+        # The substring check "/quic" matches both "/quic" and "/quic-v1" variants
+        if "/udp/" in seed or "/quic" in seed.lower():
+            continue
+        # Keep TCP addresses and host:port style addresses (which default to TCP)
+        filtered.append(seed)
+    return filtered
+
+
 @method("net.getBootstrapSeeds", desc="Return canonical bootstrap seeds for the active network")
 def net_get_bootstrap_seeds() -> dict[str, t.Any]:
     seeds: list[str] = []
@@ -271,6 +296,9 @@ def net_get_bootstrap_seeds() -> dict[str, t.Any]:
             except Exception:
                 cid = None
         seeds = _fallback_seeds_from_network(cid)
+
+    # Filter out QUIC/UDP seeds that aren't supported by CoreP2PService
+    seeds = _filter_tcp_seeds(seeds)
 
     inbound_peers, outbound_peers = _collect_live_peer_seeds()
 
