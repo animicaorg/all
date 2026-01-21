@@ -1,7 +1,7 @@
 # Animica Mainnet
 # -------------------------------------------------------------------
 # Production mainnet node configuration with:
-#   - Node (RPC+WS on 8545) - mainnet chain ID 0
+#   - Node (RPC+WS on 8545) - mainnet chain ID 1
 #   - Optional miner
 #   - Optional studio-services (deploy/verify API)
 #   - Optional explorer-web
@@ -13,7 +13,7 @@
 #   docker compose -f ops/docker/docker-compose.mainnet.yml up -d
 #
 # Notes:
-# - Uses mainnet chain ID (0)
+# - Uses mainnet chain ID (1)
 # - Isolated volumes: animica_mainnet_data, mainnet_services_data
 # - Genesis: /app/core/genesis/mainnet.json (bundled in image)
 # - Data directory isolated to prevent cross-network contamination
@@ -78,8 +78,8 @@ services:
       # Optional advertised address (public IP/host for inbound peers):
       # Example: ANIMICA_P2P_ADVERTISE_ADDR=203.0.113.10:30333
       ANIMICA_P2P_ADVERTISE_ADDR: "${ANIMICA_P2P_ADVERTISE_ADDR:-}"
-      ANIMICA_P2P_DATA_DIR: "${ANIMICA_P2P_DATA_DIR:-/data/chain-0/p2p}"
-      ANIMICA_PEER_STORE_PATH: "${ANIMICA_PEER_STORE_PATH:-/data/chain-0/p2p}"
+      ANIMICA_P2P_DATA_DIR: "${ANIMICA_P2P_DATA_DIR:-/data/chain-1/p2p}"
+      ANIMICA_PEER_STORE_PATH: "${ANIMICA_PEER_STORE_PATH:-/data/chain-1/p2p}"
       # Legacy P2P config (backward compatibility - deprecated):
       P2P_ENABLE: "${P2P_ENABLE:-true}"
       P2P_LISTEN: "${P2P_LISTEN:-0.0.0.0:${ANIMICA_P2P_PORT:-30333}}"
