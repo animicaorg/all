@@ -13,7 +13,7 @@ Key principles:
 Usage:
     from core.network_identity import resolve_network_identity
     
-    identity = resolve_network_identity(network="mainnet", chain_id=0)
+    identity = resolve_network_identity(network="mainnet", chain_id=1)
     print(f"Genesis hash: {identity.genesis_identity_hash.hex()}")
     print(f"DB path: {identity.db_dir}")
 """
@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 
 # Network to chain_id mapping - SINGLE SOURCE OF TRUTH
 NETWORK_CHAIN_ID_MAP = {
-    "mainnet": 0,
+    "mainnet": 1,
     "testnet": 2,
     "devnet": 1337,
 }
@@ -276,12 +276,12 @@ def resolve_network_identity(
         
     Examples:
         >>> identity = resolve_network_identity(network="mainnet")
-        >>> assert identity.chain_id == 0
+        >>> assert identity.chain_id == 1
         
-        >>> identity = resolve_network_identity(chain_id=0)
+        >>> identity = resolve_network_identity(chain_id=1)
         >>> assert identity.network == "mainnet"
         
-        >>> identity = resolve_network_identity(network="mainnet", chain_id=0)
+        >>> identity = resolve_network_identity(network="mainnet", chain_id=1)
         >>> assert identity.genesis_identity_hash is not None
     """
     # Normalize network name
