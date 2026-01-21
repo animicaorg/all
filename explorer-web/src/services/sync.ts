@@ -437,6 +437,21 @@ export class SyncManager {
         await this.cache.putBlocks(filtered);
         const newGenesisHeight = Math.max(...filtered.map((b) => b.height));
         await this.cache.setGenesisSyncHeight(newGenesisHeight);
+        
+        // Also update lastSyncHeight to ensure progress calculation works correctly
+        const currentLastSyncHeight = (await this.cache.getLastSyncHeight()) ?? 0;
+        if (newGenesisHeight > currentLastSyncHeight) {
+          await this.cache.setLastSyncHeight(newGenesisHeight);
+          
+          // Update progress status immediately
+          this.updateStatus({
+            lastSyncHeight: newGenesisHeight,
+            blocksToSync: Math.max(0, currentHeight - newGenesisHeight),
+            progress: this.getProgress(currentHeight, newGenesisHeight, newGenesisHeight >= currentHeight),
+            isSynced: newGenesisHeight >= currentHeight,
+          });
+        }
+        
         await this.cache.setLastSyncTime(Date.now());
         console.debug(`[sync] Genesis bootstrap cached ${filtered.length} blocks up to ${newGenesisHeight}`);
       }
