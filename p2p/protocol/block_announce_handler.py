@@ -95,9 +95,14 @@ class BlockAnnounceHandler:
             
             self._metrics["announcements_received"] += 1
             
-            # Get session_id for this connection
-            # The connection wrapper should have the session_id
-            session_id = getattr(conn, "session_id", None)
+            # Find session for this connection by remote address
+            session_id = None
+            if self.registry:
+                for sid, session in self.registry._sessions.items():
+                    if session.remote == conn.remote_addr:
+                        session_id = sid
+                        break
+            
             if not session_id:
                 # Fallback: use remote_addr as identifier
                 session_id = conn.remote_addr
@@ -268,10 +273,13 @@ class BlockAnnounceHandler:
         if not self.registry:
             return
         
+        # Import PeerState
+        from p2p.node.peer_registry import PeerState
+        
         # Get all connected sessions
         connected_sessions = []
         for session_id, session in self.registry._sessions.items():
-            if session.state == self.registry.PeerState.CONNECTED and session.identity_ok:
+            if session.state == PeerState.CONNECTED and session.identity_ok:
                 connected_sessions.append((session_id, session))
         
         # Send to each peer
