@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import errno
 import json
+import logging
 import os
 import re
 import shutil
@@ -48,6 +49,8 @@ load_dotenv()
 DEFAULT_RPC_URL = load_network_config().rpc_url
 DEFAULT_RPC_READY_TIMEOUT = 60
 DEFAULT_SYNC_TIMEOUT = 600
+
+log = logging.getLogger(__name__)
 DEFAULT_SYNC_INTERVAL = 5
 RPC_ENV = "ANIMICA_RPC_URL"
 STATE_KEY_NETWORK = "active_network"
@@ -1159,7 +1162,8 @@ def _persist_sync_state(
 def _record_bootstrap_head(net_cfg: Any, bootstrap_url: Optional[str], *, quiet: bool = False) -> bool:
     if not bootstrap_url:
         return False
-    if is_local_rpc_url(bootstrap_url) and not _wait_for_rpc_ready(bootstrap_url, timeout_s=2.0):
+    # Increase timeout from 2s to 10s for slow systems/Docker
+    if is_local_rpc_url(bootstrap_url) and not _wait_for_rpc_ready(bootstrap_url, timeout_s=10.0):
         return False
     last_exc: Optional[Exception] = None
     delay = BOOTSTRAP_HEAD_RETRY_DELAY
@@ -1314,7 +1318,9 @@ def _wait_for_rpc_ready(rpc_url: str, *, timeout_s: float = 60.0, interval_s: fl
         try:
             _local_rpc(rpc_url, "chain.getHead", [])
             return True
-        except Exception:
+        except Exception as exc:
+            # Log exception details for debugging connectivity issues
+            log.debug(f"RPC not ready: {exc}", exc_info=True)
             time.sleep(interval_s)
     return False
 
@@ -1358,7 +1364,9 @@ def _wait_for_sync_completion(
     while time.time() < deadline:
         try:
             head = _local_rpc(rpc_url, "chain.getHead", [])
-        except Exception:
+        except Exception as exc:
+            # Log exception details for debugging sync issues
+            log.debug(f"Failed to get head during sync: {exc}", exc_info=True)
             time.sleep(interval_s)
             continue
 
@@ -1503,14 +1511,13 @@ def _bootstrap_rpc(bootstrap_url: str, method: str) -> Dict[str, Any]:
             f"Unsupported bootstrap method '{method}'. Only read-only bootstrap RPC calls are permitted."
         )
 
-    timeout = None
-    if method != "chain.getHead":
-        timeout = resolve_timeout(
-            "bootstrap RPC timeout",
-            None,
-            env_var=BOOTSTRAP_TIMEOUT_ENV,
-            default=BOOTSTRAP_RPC_TIMEOUT,
-        )
+    # All bootstrap methods should have timeout protection
+    timeout = resolve_timeout(
+        "bootstrap RPC timeout",
+        None,
+        env_var=BOOTSTRAP_TIMEOUT_ENV,
+        default=BOOTSTRAP_RPC_TIMEOUT,
+    )
     payload = {"jsonrpc": "2.0", "id": 1, "method": method, "params": []}
     try:
         resp = httpx.post(bootstrap_url, json=payload, timeout=timeout)
@@ -1530,7 +1537,9 @@ def _bootstrap_rpc(bootstrap_url: str, method: str) -> Dict[str, Any]:
 
 def _local_rpc(rpc_url: str, method: str, params: list[Any] | None = None) -> Any:
     payload = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params or []}
-    resp = httpx.post(rpc_url, json=payload, timeout=5.0)
+    # Use configurable timeout instead of hardcoded 5.0
+    timeout = resolve_timeout("RPC timeout", None, env_var=RPC_TIMEOUT_ENV, default=DEFAULT_RPC_TIMEOUT)
+    resp = httpx.post(rpc_url, json=payload, timeout=timeout)
     resp.raise_for_status()
     parsed = resp.json()
     if "error" in parsed and parsed["error"]:
@@ -1622,7 +1631,8 @@ def _auto_bootstrap_if_needed(net_cfg: Any, bootstrap_url: str | None, *, force:
     endpoint = bootstrap_url or getattr(net_cfg, "bootstrap_url", None)
     if not endpoint:
         return False
-    if is_local_rpc_url(endpoint) and not _wait_for_rpc_ready(endpoint, timeout_s=2.0):
+    # Increase timeout from 2s to 10s for slow systems/Docker
+    if is_local_rpc_url(endpoint) and not _wait_for_rpc_ready(endpoint, timeout_s=10.0):
         fallback_seeds = list(get_seed_nodes(getattr(net_cfg, "name", "mainnet")))
         if not fallback_seeds:
             return False
