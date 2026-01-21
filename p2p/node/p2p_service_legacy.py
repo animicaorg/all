@@ -6468,25 +6468,43 @@ class P2PService:
                 points=self._score_points["wrong_genesis"],
             )
 
+        # FIX: Be permissive when local genesis is fallback (all zeros)
+        # This allows nodes with missing genesis config to learn from peers
+        GENESIS_FALLBACK = b"\x00" * 32
+        local_is_fallback = local_genesis_header == GENESIS_FALLBACK
+        
         if peer_genesis_header and peer_genesis_header != local_genesis_header:
-            self._stats["p2p_peers_rejected_genesis_mismatch"] += 1
-            self._log_handshake_mismatch(
-                peer,
-                reason="genesis_mismatch",
-                peer_chain_id=int(hello.chain_id or 0),
-                peer_genesis_hash=peer_genesis_header,
-                peer_genesis_header_hash=peer_genesis_header,
-                peer_genesis_block_hash=peer_genesis_block or None,
-            )
-            await self._send(
-                peer,
-                MsgID.HELLO_ACK,
-                HelloAck(accepted=False, reason="genesis_mismatch"),
-            )
-            raise PeerMisbehavior(
-                "genesis_mismatch",
-                points=self._score_points["wrong_genesis"],
-            )
+            # If local genesis is fallback and peer has non-zero genesis, learn from peer
+            if local_is_fallback and peer_genesis_header != GENESIS_FALLBACK:
+                log.info(
+                    "Accepting peer with different genesis (local is fallback)",
+                    extra={
+                        "remote": peer.remote,
+                        "peer_genesis": peer_genesis_header.hex(),
+                        "local_genesis_fallback": local_genesis_header.hex(),
+                    },
+                )
+                # Continue handshake - don't reject
+            else:
+                # Normal case: both have real genesis hashes that don't match
+                self._stats["p2p_peers_rejected_genesis_mismatch"] += 1
+                self._log_handshake_mismatch(
+                    peer,
+                    reason="genesis_mismatch",
+                    peer_chain_id=int(hello.chain_id or 0),
+                    peer_genesis_hash=peer_genesis_header,
+                    peer_genesis_header_hash=peer_genesis_header,
+                    peer_genesis_block_hash=peer_genesis_block or None,
+                )
+                await self._send(
+                    peer,
+                    MsgID.HELLO_ACK,
+                    HelloAck(accepted=False, reason="genesis_mismatch"),
+                )
+                raise PeerMisbehavior(
+                    "genesis_mismatch",
+                    points=self._score_points["wrong_genesis"],
+                )
         if not peer_genesis_header and peer_genesis_block:
             if peer_genesis_block != local_genesis_block:
                 self._stats["p2p_peers_rejected_genesis_mismatch"] += 1
@@ -10397,7 +10415,11 @@ class P2PService:
             - ALL height-0 hashes from anchor_candidates
             
             This ensures headers are accepted if parent matches ANY valid genesis hash.
+            
+            FIX: Excludes the fallback genesis hash (all zeros) to ensure defensive
+            fix triggers when no real genesis hash is available.
             """
+            GENESIS_FALLBACK = b"\x00" * 32
             valid_hashes = {expected_genesis, expected_genesis_block}
             if include_anchor_hash:
                 valid_hashes.add(anchor_hash)
@@ -10406,8 +10428,9 @@ class P2PService:
             for h, (height, source) in anchor_candidates.items():
                 if height == 0:
                     valid_hashes.add(h)
-            # Remove None values
-            return {h for h in valid_hashes if h}
+            # Remove None values AND fallback genesis (all zeros)
+            # This ensures defensive fix triggers when only fallback is available
+            return {h for h in valid_hashes if h and h != GENESIS_FALLBACK}
 
         for idx, hc in enumerate(headers):
             header = self._header_from_compact(hc)
