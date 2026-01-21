@@ -26,10 +26,11 @@ GENESIS_DIR = BASE_DIR / "genesis"
 # Previous: 0x5868b982d22fe2eb4eb15567dd6afdbae453001388bc23a2517639729428cfda (2026-01-16)
 # Previous: 0xd2d2897104110b86bb60ccec251a7e2313f4abb301f8cc532d60162c20d3644f (2026-01-18, incorrect)
 # Previous: 0x6a27e93193020cd00fe429ef0ffac1c3a774268a589c2911ac396dd3cba2d242 (2026-01-18, chain_id=0)
-# Current: 0x753d4c91c89cab828fe1d52e55553b0de74863ce5dfdfe0f81eb6196e88728c2 (2026-01-21, chain_id=1)
+# Previous: 0x753d4c91c89cab828fe1d52e55553b0de74863ce5dfdfe0f81eb6196e88728c2 (2026-01-21, incorrect metadata)
+# Current: 0xcf08020c87d8c294e09e5a872d7a5a2f3ceb9b8576ba0cdbfd1daef6832cbbfb (2026-01-21, chain_id=1)
 # This is the canonical computed hash for core/genesis/mainnet.json (chain_id=1)
 MAINNET_GENESIS_HASH_HEX = (
-    "0x753d4c91c89cab828fe1d52e55553b0de74863ce5dfdfe0f81eb6196e88728c2"
+    "0xcf08020c87d8c294e09e5a872d7a5a2f3ceb9b8576ba0cdbfd1daef6832cbbfb"
 )
 TESTNET_GENESIS_HASH_HEX = (
     "0xcf4489041eb0ae6a4e29a7e9684392eee2b74d2e9ad4bc8c38b82b260a615b34"
