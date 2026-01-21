@@ -69,8 +69,9 @@ async def test_p2pservice_legacy_import_peers_triggers_dial():
         source = f.read()
     
     # Look for the second import_peers method (in P2PServiceLegacy)
+    # It uses list[str] instead of List[str]
     first_import = source.find("async def import_peers(self, addresses: List[str])")
-    second_import = source.find("async def import_peers(self, addresses: list[str])", first_import + 100)
+    second_import = source.find("async def import_peers(self, addresses:", first_import + 100)
     assert second_import > 0, "Should find second import_peers method for P2PServiceLegacy"
     
     # Get the method body
