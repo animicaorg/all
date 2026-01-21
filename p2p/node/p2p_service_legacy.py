@@ -10434,6 +10434,11 @@ class P2PService:
                                 expected_genesis_block,
                                 anchor_hash,  # Also include the anchor hash itself
                             }
+                            # CRITICAL FIX: Also include ALL genesis hashes from anchor_candidates
+                            # This handles cases where local_head has wrong genesis but peers have correct one
+                            for h, (height, source) in anchor_candidates.items():
+                                if height == 0:
+                                    valid_genesis_hashes.add(h)
                             # Remove None values
                             valid_genesis_hashes = {h for h in valid_genesis_hashes if h}
                             
@@ -10518,6 +10523,11 @@ class P2PService:
                         # Also include anchor_hash if we're at genesis anchor
                         if anchor_height == 0 and anchor_hash is not None:
                             valid_genesis_hashes.add(anchor_hash)
+                        # CRITICAL FIX: Also include ALL genesis hashes from anchor_candidates
+                        # This handles cases where local_head has wrong genesis but peers have correct one
+                        for h, (height, source) in anchor_candidates.items():
+                            if height == 0:
+                                valid_genesis_hashes.add(h)
                         # Remove None values
                         valid_genesis_hashes = {h for h in valid_genesis_hashes if h}
                         
@@ -10554,13 +10564,21 @@ class P2PService:
                             self._penalize_peer(peer, "genesis_mismatch", severity=2)
                             self._log_header_reject(peer, header, reason="genesis_mismatch")
                             return [], "genesis_mismatch", {"genesis_mismatch": len(headers)}
+                    # Build set of all valid genesis hashes for parent checks
+                    # Include all height-0 hashes from anchor_candidates
+                    valid_genesis_parent_hashes = {
+                        expected_genesis,
+                        expected_genesis_block,
+                    }
+                    for h, (height, source) in anchor_candidates.items():
+                        if height == 0:
+                            valid_genesis_parent_hashes.add(h)
+                    valid_genesis_parent_hashes = {h for h in valid_genesis_parent_hashes if h}
+                    
                     if (
                         header.height == 1
                         and header.parent_hash
-                        in {
-                            expected_genesis,
-                            expected_genesis_block,
-                        }
+                        in valid_genesis_parent_hashes
                     ):
                         parent_height = 0
                         parent_ts = None
@@ -10598,10 +10616,7 @@ class P2PService:
                             allow_probe=True,
                         )
                         return order, reason, {"parent_unknown": len(headers)}
-                    if header.height == 1 and header.parent_hash in {
-                        expected_genesis,
-                        expected_genesis_block,
-                    }:
+                    if header.height == 1 and header.parent_hash in valid_genesis_parent_hashes:
                         parent_height = 0
                         parent_ts = None
                     else:
