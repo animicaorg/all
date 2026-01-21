@@ -10371,7 +10371,10 @@ class P2PService:
                 )
                 headers = headers[1:]
                 if not headers:
-                    return [], None, {}
+                    # FIX: Track that headers were received and trimmed
+                    # This prevents sync from thinking no progress is being made
+                    # Return empty list but indicate the reason for the empty result
+                    return [], None, {"trimmed_anchor": 1}
 
         contiguous: List[_SyncHeader] = []
         prev: Optional[_SyncHeader] = None
