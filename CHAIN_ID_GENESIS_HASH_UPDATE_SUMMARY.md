@@ -9,7 +9,7 @@ This update changes the Animica mainnet chain ID from 0 to 1 and generates a new
 ### 1. Genesis Files Updated
 
 #### core/genesis/genesis.json
-- **chainId**: Changed from 1 → remains 1 ✓
+- **chainId**: Already set to 1 (no change needed) ✓
 - **genesis_hash**: Updated to `0x753d4c91c89cab828fe1d52e55553b0de74863ce5dfdfe0f81eb6196e88728c2`
 - **fork_id**: Updated to `0x753d4c91`
 - **genesisTime**: Updated to `2026-01-21T00:00:00Z`

@@ -296,7 +296,7 @@ def resolve_network_identity(
             raise ValueError(
                 f"Chain ID mismatch: network={network!r} requires chain_id={expected_chain_id}, "
                 f"but got chain_id={chain_id}. "
-                f"For mainnet, chain_id MUST be 0."
+                f"For mainnet, chain_id MUST be 1."
             )
     elif network:
         # Only network provided - derive chain_id
@@ -316,7 +316,7 @@ def resolve_network_identity(
     else:
         # Neither provided - default to mainnet
         network = "mainnet"
-        chain_id = 0
+        chain_id = 1
     
     # At this point, network and chain_id are both set and consistent
     assert network is not None
