@@ -67,10 +67,6 @@ class TestGenesisAnchorCandidatesFix:
         # Verify that BOTH genesis hashes are now in valid set
         assert wrong_genesis in valid_genesis_hashes, "Wrong genesis should be in valid set"
         assert correct_genesis in valid_genesis_hashes, "Correct genesis should be in valid set"
-        
-        # Verify that header with correct_genesis as parent would be accepted
-        # (parent_hash in valid_genesis_hashes)
-        assert correct_genesis in valid_genesis_hashes, "Header with correct parent should be accepted"
     
     def test_valid_genesis_parent_hashes_includes_all_anchor_candidates(self):
         """
