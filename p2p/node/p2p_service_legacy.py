@@ -11233,10 +11233,16 @@ class P2PService:
             self._ensure_sync_cursor_integrity()
             local_height, _ = self._local_head()
             result["localHeight"] = local_height
+            # CRITICAL FIX: Don't mark as "TARGET_REACHED" when at genesis (height 0)
+            # even if target_height == 0. At genesis, nodes need to stay ready to sync
+            # so they can receive the first block when it's mined. Without this fix,
+            # two nodes at genesis think they've "reached target" and stop syncing.
+            is_at_genesis = local_height == 0
             if (
                 self._sync_target_height is not None
                 and local_height >= self._sync_target_height
                 and not force
+                and not is_at_genesis  # Exclude genesis case
             ):
                 self._sync_phase = "TARGET_REACHED"
                 return result
@@ -11457,8 +11463,12 @@ class P2PService:
                                     target_height = network_best
                                 else:
                                     target_height = max(target_height, network_best)
-                            if target_height is not None and local_height >= target_height:
-                                self._sync_phase = "SYNCED" if local_height > 0 else "IDLE"
+                            # CRITICAL FIX: Don't mark as SYNCED/IDLE at genesis even if target == 0
+                            # At genesis, nodes must stay ready to sync so they can receive the first
+                            # block when it's mined. Otherwise two nodes at genesis stop syncing.
+                            is_at_genesis = local_height == 0
+                            if target_height is not None and local_height >= target_height and not is_at_genesis:
+                                self._sync_phase = "SYNCED"
                             log.debug(
                                 "Skipped header request: already at tip",
                                 extra={
