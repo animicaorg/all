@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import time
 from typing import Any, Dict, Optional
 
 import httpx
@@ -144,7 +145,6 @@ def health(
                 peer_tips["total"] += 1
                 tip_updated_at = peer.get("tip_updated_at")
                 if tip_updated_at:
-                    import time
                     age = time.time() - tip_updated_at
                     if age < 600:  # 10 minutes
                         peer_tips["fresh"] += 1

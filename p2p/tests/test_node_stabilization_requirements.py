@@ -16,7 +16,7 @@ These tests use the existing MockNode framework for fast, deterministic testing.
 
 import pytest
 import time
-from typing import Dict, List, Optional
+from typing import Dict, Optional
 
 from p2p.node.handshake import HandshakeManager
 from p2p.node.peer_registry import PeerRegistry, PeerState
