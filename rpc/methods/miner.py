@@ -1304,7 +1304,8 @@ def _mining_gate(
             return False, reason_msg
     
     # Offline mining check - require at least one outbound CONNECTED peer
-    if not allow_offline_mining and outbound_connected <= 0 and peers_connected <= 0:
+    # Skip this check if min_peers is set to 0 (local development mode)
+    if not allow_offline_mining and min_peers > 0 and outbound_connected <= 0 and peers_connected <= 0:
         log.info(
             "Mining template unavailable - no outbound connected peers",
             extra={
