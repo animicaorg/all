@@ -75,6 +75,8 @@ try:
 except Exception:  # pragma: no cover - optional
     proto_blk = None
 from p2p.node.peer_registry import PeerRegistry
+from p2p.node.handshake import HandshakeManager
+from p2p.node.tip_manager import TipManager
 from p2p.sync.cache_store import SyncCacheConfig, SyncCacheState, SyncCacheStore
 
 log = logging.getLogger("animica.p2p.service")
@@ -484,7 +486,10 @@ class PeerTipTracker:
     """
     Track per-peer tips with freshness, source, and last error metadata.
     
-    TODO: This class is deprecated and will be removed in Phase 4 of the P2P refactor.
+    DEPRECATED: This class is now replaced by TipManager + PeerRegistry (Phase 4 complete).
+    Kept for backward compatibility during gradual migration.
+    Will be removed in Phase 6 after full integration validation.
+    
     Use p2p.node.tip_manager.TipManager + PeerRegistry.update_peer_tip() instead.
     The new implementation provides:
     - Integrated tip tracking in PeerRegistry (no separate storage)
@@ -551,6 +556,8 @@ class PeerTipTracker:
 
 @dataclass(slots=True)
 class SyncStatusSnapshot:
+    status_version: str
+    """Status schema version (e.g., '2.0')."""
     phase: str
     head_height: int
     head_hash: Optional[str]
@@ -690,6 +697,7 @@ class SyncStatusSnapshot:
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            "status_version": self.status_version,
             "phase": self.phase,
             "head_height": self.head_height,
             "head_hash": self.head_hash,
@@ -1509,7 +1517,30 @@ class P2PService:
         self._sync_active_block_peer: Optional[str] = None
         self._sync_block_peer_cursor = 0
         self._sync_inflight_headers = 0
+        # DEPRECATED: Old tip tracking - replaced by TipManager
         self._peer_tip_tracker = PeerTipTracker()
+        
+        # PHASE 4: Initialize new managers for deterministic handshake and tip tracking
+        # Genesis hash for HandshakeManager validation
+        genesis_hash_bytes = self._genesis_header_hash()
+        genesis_hash_hex = genesis_hash_bytes.hex() if genesis_hash_bytes else ""
+        
+        # HandshakeManager: Orchestrates handshake flow with timeouts
+        self._handshake_manager = HandshakeManager(
+            registry=self._peer_registry,
+            dial_timeout_s=8.0,
+            handshake_timeout_s=15.0,
+            chain_id=int(self.chain_id),
+            genesis_hash=genesis_hash_hex,
+        )
+        
+        # TipManager: Manages periodic tip polling and freshness tracking
+        self._tip_manager = TipManager(
+            registry=self._peer_registry,
+            poll_interval_s=30.0,
+            freshness_window_s=PEER_TIP_FRESHNESS_SEC,
+        )
+        
         self._sync_paused = False
         self._sync_enabled = _env_flag("SYNC_ENABLED", "ANIMICA_SYNC_ENABLED", default=True)
         self._sync_verbose = _env_flag("ANIMICA_SYNC_VERBOSE", "ANIMICA_P2P_SYNC_VERBOSE")
@@ -3788,6 +3819,7 @@ class P2PService:
                 - (time.time() - self._snapshot_recovery_last_attempt_at),
             )
         return SyncStatusSnapshot(
+            status_version="2.0",
             phase=phase,
             head_height=best_block_height,
             head_hash=head_hex,
@@ -6732,6 +6764,46 @@ class P2PService:
         peer.hello = normalized
         peer.hello_received_at = time.time()  # Track when hello was received
         peer.identity_ok = True
+        
+        # PHASE 4: Notify HandshakeManager of successful identity validation
+        try:
+            success, error = self._handshake_manager.on_identity_received(
+                session_id=peer.session_id,
+                chain_id=int(normalized.get("chain_id", 0)),
+                genesis_hash=self._canon_hash0x(
+                    normalized.get("genesis_header_hash")
+                    or normalized.get("genesis_hash")
+                    or normalized.get("genesis_block_hash")
+                ) or "",
+            )
+            if success:
+                log.info(
+                    "HandshakeManager: identity validation complete",
+                    extra={
+                        "remote": peer.remote,
+                        "peer_id": peer.peer_id,
+                        "session_id": peer.session_id,
+                    },
+                )
+            else:
+                log.warning(
+                    "HandshakeManager: identity validation rejected",
+                    extra={
+                        "remote": peer.remote,
+                        "peer_id": peer.peer_id,
+                        "error": error,
+                    },
+                )
+        except Exception as e:
+            log.warning(
+                "HandshakeManager identity validation failed",
+                extra={
+                    "remote": peer.remote,
+                    "peer_id": peer.peer_id,
+                    "error": str(e),
+                },
+            )
+        
         log.info(
             "Peer handshake completed successfully",
             extra={
@@ -6954,6 +7026,29 @@ class P2PService:
             self._send_get_peers(peer),
             name=f"p2p.get_peers@{peer.remote}",
         )
+        
+        # PHASE 4: Notify TipManager of handshake completion - triggers initial tip request
+        try:
+            should_request_tip = self._tip_manager.on_handshake_complete(peer.session_id)
+            if should_request_tip:
+                log.info(
+                    "TipManager: handshake complete, will request initial tip",
+                    extra={
+                        "remote": peer.remote,
+                        "peer_id": peer.peer_id,
+                        "session_id": peer.session_id,
+                    },
+                )
+        except Exception as e:
+            log.warning(
+                "TipManager handshake notification failed",
+                extra={
+                    "remote": peer.remote,
+                    "peer_id": peer.peer_id,
+                    "error": str(e),
+                },
+            )
+        
         self._create_child_task(
             self._request_peer_head_status(peer, reason="hello"),
             name=f"p2p.head_status_request@{peer.remote}",
@@ -7188,6 +7283,36 @@ class P2PService:
         
         # Update peer head info - this refreshes the timestamp
         self._update_peer_head(peer, height=peer_height, head_hash=peer_hash)
+        
+        # PHASE 4: Notify TipManager of received tip
+        try:
+            # Convert hash to hex for TipManager
+            peer_hash_hex = peer_hash.hex() if isinstance(peer_hash, (bytes, bytearray)) else None
+            self._tip_manager.on_tip_received(
+                session_id=peer.session_id,
+                height=peer_height,
+                hash_hex=peer_hash_hex,
+                tip_time=float(peer_timestamp_ms / 1000.0) if peer_timestamp_ms else None,
+            )
+            log.info(
+                "TipManager: tip received and recorded",
+                extra={
+                    "remote": peer.remote,
+                    "peer_id": peer.peer_id,
+                    "session_id": peer.session_id,
+                    "height": peer_height,
+                    "hash": peer_hash_hex,
+                },
+            )
+        except Exception as e:
+            log.warning(
+                "TipManager tip recording failed",
+                extra={
+                    "remote": peer.remote,
+                    "peer_id": peer.peer_id,
+                    "error": str(e),
+                },
+            )
         
         # Update network_best_height in hello if available
         if peer_network_best is not None and peer.hello is not None:
@@ -8568,10 +8693,12 @@ class P2PService:
         Monitor head changes and propagate network updates.
         
         Enhanced with comprehensive exception handling to prevent crashes.
+        PHASE 4: Added periodic tip polling via TipManager.
         """
         last: Optional[str] = None
         last_height = 0
         last_network_best = 0
+        last_tip_poll_at = 0.0  # Track last tip poll
         while self._running:
             try:
                 await asyncio.sleep(1.0)
@@ -8602,6 +8729,61 @@ class P2PService:
                     )
                     # Trigger re-handshake or send update to all peers
                     await self._propagate_network_height_update(current_network_best)
+                
+                # PHASE 4: Periodic tip polling via TipManager
+                now = time.time()
+                if now - last_tip_poll_at >= 30.0:  # Poll every 30 seconds
+                    try:
+                        sessions_to_poll = self._tip_manager.poll_peer_tips()
+                        if sessions_to_poll:
+                            log.info(
+                                "TipManager: polling peer tips",
+                                extra={
+                                    "peer_count": len(sessions_to_poll),
+                                    "session_ids": sessions_to_poll[:5],  # Log first 5
+                                },
+                            )
+                            # Send HeadStatus requests to peers that need polling
+                            for session_id in sessions_to_poll:
+                                peer = self._peers_by_session.get(session_id)
+                                if peer and peer.hello_done.is_set() and peer.identity_ok:
+                                    self._create_child_task(
+                                        self._request_peer_head_status(peer, reason="periodic_poll"),
+                                        name=f"p2p.tip_poll@{peer.remote}",
+                                    )
+                        last_tip_poll_at = now
+                    except Exception as e:
+                        log.warning(
+                            "TipManager periodic polling failed",
+                            extra={"error": str(e)},
+                            exc_info=True,
+                        )
+                
+                # PHASE 4: Check HandshakeManager for timed out handshakes
+                try:
+                    timed_out = self._handshake_manager.check_timeouts()
+                    if timed_out:
+                        log.info(
+                            "HandshakeManager: detected timed out handshakes",
+                            extra={
+                                "timeout_count": len(timed_out),
+                                "session_ids": timed_out[:5],  # Log first 5
+                            },
+                        )
+                        # Drop peers with timed out handshakes
+                        for session_id in timed_out:
+                            peer = self._peers_by_session.get(session_id)
+                            if peer:
+                                self._create_child_task(
+                                    self._drop_peer(peer, reason="handshake_timeout"),
+                                    name=f"p2p.drop_timeout@{peer.remote}",
+                                )
+                except Exception as e:
+                    log.warning(
+                        "HandshakeManager timeout check failed",
+                        extra={"error": str(e)},
+                        exc_info=True,
+                    )
             except asyncio.CancelledError:
                 # Clean shutdown requested
                 log.info("Head watch loop cancelled - shutting down")
