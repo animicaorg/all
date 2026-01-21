@@ -355,20 +355,25 @@ class P2PStatusSnapshot:
     peers_total: int
     peers_inbound: int
     peers_outbound: int
-    bootstrap_attempts_last_5m: int
-    last_peer_connect_at: Optional[float]
-    last_peer_disconnect_at: Optional[float]
-    seed_sources: dict[str, list[str]]
-    dial_queue_depth: int
-    addrman_size: Optional[int]
-    dial_attempts: int
-    dial_successes: int
-    learned_addrs_1m: int
-    announced_addrs_1m: int
-    persisted_peer_count: Optional[int]
-    dial_history: list[dict[str, Any]]
-    dial_inflight: list[str]
-    invalid_seeds: dict[str, str]
+    # NEW: Track CONNECTED peers separately from total active sessions
+    peers_connected: int = 0  # Only peers in CONNECTED state (identity verified)
+    peers_handshaking: int = 0  # Peers still in handshake
+    peers_connected_inbound: int = 0
+    peers_connected_outbound: int = 0
+    bootstrap_attempts_last_5m: int = 0
+    last_peer_connect_at: Optional[float] = None
+    last_peer_disconnect_at: Optional[float] = None
+    seed_sources: dict[str, list[str]] = field(default_factory=dict)
+    dial_queue_depth: int = 0
+    addrman_size: Optional[int] = None
+    dial_attempts: int = 0
+    dial_successes: int = 0
+    learned_addrs_1m: int = 0
+    announced_addrs_1m: int = 0
+    persisted_peer_count: Optional[int] = None
+    dial_history: list[dict[str, Any]] = field(default_factory=list)
+    dial_inflight: list[str] = field(default_factory=list)
+    invalid_seeds: dict[str, str] = field(default_factory=dict)
     dial_last_error: Optional[dict[str, Any]] = None
     bootstrap_last_attempt: Optional[dict[str, Any]] = None
     bootstrap_last_success: Optional[dict[str, Any]] = None
@@ -385,6 +390,11 @@ class P2PStatusSnapshot:
             "peers_total": self.peers_total,
             "peers_inbound": self.peers_inbound,
             "peers_outbound": self.peers_outbound,
+            # NEW: Include CONNECTED peer counts for mining/sync gating
+            "peers_connected": self.peers_connected,
+            "peers_handshaking": self.peers_handshaking,
+            "peers_connected_inbound": self.peers_connected_inbound,
+            "peers_connected_outbound": self.peers_connected_outbound,
             "bootstrap_attempts_last_5m": self.bootstrap_attempts_last_5m,
             "last_peer_connect_at": self.last_peer_connect_at,
             "last_peer_disconnect_at": self.last_peer_disconnect_at,
@@ -3369,9 +3379,19 @@ class P2PService:
 
     def status_snapshot(self) -> P2PStatusSnapshot:
         snapshot = self._peer_registry.snapshot()
-        # FIX: Include handshaking peers to prevent sync waiting indefinitely for connected peers
+        # Count inbound/outbound for all active sessions (includes handshaking)
         inbound = sum(1 for p in snapshot if p.get("direction") == "inbound")
         outbound = sum(1 for p in snapshot if p.get("direction") == "outbound")
+        
+        # NEW: Count CONNECTED peers separately (identity verified, fully connected)
+        connected_peers = [p for p in snapshot if p.get("state") == "CONNECTED" and p.get("identity_ok")]
+        connected_total = len(connected_peers)
+        connected_inbound = sum(1 for p in connected_peers if p.get("direction") == "inbound")
+        connected_outbound = sum(1 for p in connected_peers if p.get("direction") == "outbound")
+        
+        # NEW: Count handshaking peers (not yet fully connected)
+        handshaking_total = sum(1 for p in snapshot if p.get("state") in ("DIALING", "HANDSHAKING"))
+        
         bootstrap_bonus = self.bootstrap_peer_bonus()
         now = time.time()
         attempts_last_5m = sum(
@@ -3390,10 +3410,15 @@ class P2PService:
             advertise_host=advertise_host,
             advertise_port=advertise_port,
             external_ip=self._external_ip,
-            # FIX: Use total_active_sessions() to include handshaking peers
+            # FIX: peers_total includes handshaking peers for visibility
             peers_total=self._peer_registry.total_active_sessions(include_handshaking=True) + bootstrap_bonus,
             peers_inbound=inbound,
             peers_outbound=outbound + bootstrap_bonus,
+            # NEW: Track CONNECTED peers separately for mining/sync gating
+            peers_connected=connected_total,
+            peers_handshaking=handshaking_total,
+            peers_connected_inbound=connected_inbound,
+            peers_connected_outbound=connected_outbound,
             bootstrap_attempts_last_5m=attempts_last_5m,
             last_peer_connect_at=self._last_peer_connect_at,
             last_peer_disconnect_at=self._last_peer_disconnect_at,
@@ -3434,7 +3459,8 @@ class P2PService:
         except Exception as exc:
             log.error(
                 "Failed to build sync status snapshot - returning fallback",
-                exc_info=exc,
+                extra={"error": str(exc)},
+                exc_info=True,
             )
             # Return a minimal but valid snapshot on error
             height, head_hash = 0, None
@@ -3442,14 +3468,34 @@ class P2PService:
                 height, head_hash = self._local_head()
             except Exception:
                 pass
+            
+            # FIX: Never return None for head_hash - use genesis hash as fallback
+            if head_hash is None:
+                try:
+                    genesis_hash_bytes = self._genesis_hash()
+                    if genesis_hash_bytes:
+                        head_hash = "0x" + genesis_hash_bytes.hex()
+                        log.info(
+                            "Status fallback using genesis hash",
+                            extra={"genesis_hash": head_hash},
+                        )
+                except Exception as genesis_exc:
+                    log.error(
+                        "Failed to get genesis hash for status fallback",
+                        extra={"error": str(genesis_exc)},
+                        exc_info=True,
+                    )
+                    # Last resort: use null hash string (not None)
+                    head_hash = "0x" + ("00" * 32)
+            
             snapshot = SyncStatusSnapshot(
                 phase="ERROR",
                 head_height=height or 0,
-                head_hash=head_hash,
+                head_hash=head_hash,  # Never None
                 best_header_height=height or 0,
-                best_header_hash=head_hash,
+                best_header_hash=head_hash,  # Never None
                 best_block_height=height or 0,
-                best_block_hash=head_hash,
+                best_block_hash=head_hash,  # Never None
                 network_best_height=None,
                 best_remote_height=None,
                 best_remote_hash=None,

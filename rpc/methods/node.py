@@ -1,24 +1,44 @@
 from __future__ import annotations
 
+import logging
 import time
 import typing as t
 
 from rpc import deps
 from rpc.methods import method
 
+log = logging.getLogger("animica.rpc.node")
+
 
 def _safe_peer_counts(p2p_status: dict[str, t.Any]) -> dict[str, int]:
-    def _coerce(value: t.Any) -> int:
+    """
+    Safely coerce peer counts to integers with logging for type mismatches.
+    """
+    def _coerce(key: str, value: t.Any) -> int:
         if isinstance(value, int):
             return value
         if isinstance(value, str) and value.isdigit():
             return int(value)
+        # Log unexpected type for debugging
+        if value is not None:
+            log.warning(
+                "Peer count type mismatch",
+                extra={
+                    "key": key,
+                    "value": value,
+                    "type": type(value).__name__,
+                    "fallback": 0,
+                },
+            )
         return 0
 
     return {
-        "total": _coerce(p2p_status.get("peers_total")),
-        "inbound": _coerce(p2p_status.get("peers_inbound")),
-        "outbound": _coerce(p2p_status.get("peers_outbound")),
+        "total": _coerce("peers_total", p2p_status.get("peers_total")),
+        "inbound": _coerce("peers_inbound", p2p_status.get("peers_inbound")),
+        "outbound": _coerce("peers_outbound", p2p_status.get("peers_outbound")),
+        # NEW: Include connected peer counts for mining/sync gating
+        "connected": _coerce("peers_connected", p2p_status.get("peers_connected")),
+        "handshaking": _coerce("peers_handshaking", p2p_status.get("peers_handshaking")),
     }
 
 
