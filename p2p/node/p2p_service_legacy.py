@@ -6644,6 +6644,15 @@ class P2PService:
                 peer_chain_id=int(hello.chain_id or 0),
                 peer_genesis_hash=peer_genesis_header or peer_genesis_block or b"",
             )
+            await self._send(
+                peer,
+                MsgID.HELLO_ACK,
+                HelloAck(accepted=False, reason="genesis_identity_missing"),
+            )
+            raise PeerMisbehavior(
+                "genesis_identity_missing",
+                points=self._score_points["wrong_chain"],
+            )
         elif bytes(hello.genesis_identity) != self._genesis_identity():
             self._log_handshake_mismatch(
                 peer,
@@ -6651,6 +6660,15 @@ class P2PService:
                 peer_chain_id=int(hello.chain_id or 0),
                 peer_genesis_hash=peer_genesis_header or peer_genesis_block or b"",
                 peer_genesis_identity=bytes(hello.genesis_identity or b""),
+            )
+            await self._send(
+                peer,
+                MsgID.HELLO_ACK,
+                HelloAck(accepted=False, reason="genesis_identity_mismatch"),
+            )
+            raise PeerMisbehavior(
+                "genesis_identity_mismatch",
+                points=self._score_points["wrong_chain"],
             )
 
         if not hello.network_params_hash:
@@ -6661,6 +6679,15 @@ class P2PService:
                 peer_genesis_hash=peer_genesis_header or peer_genesis_block or b"",
                 peer_genesis_identity=bytes(hello.genesis_identity or b""),
             )
+            await self._send(
+                peer,
+                MsgID.HELLO_ACK,
+                HelloAck(accepted=False, reason="network_params_missing"),
+            )
+            raise PeerMisbehavior(
+                "network_params_missing",
+                points=self._score_points["wrong_chain"],
+            )
         elif bytes(hello.network_params_hash) != self._network_params_hash():
             self._log_handshake_mismatch(
                 peer,
@@ -6669,6 +6696,15 @@ class P2PService:
                 peer_genesis_hash=peer_genesis_header or peer_genesis_block or b"",
                 peer_genesis_identity=bytes(hello.genesis_identity or b""),
                 peer_network_params_hash=bytes(hello.network_params_hash or b""),
+            )
+            await self._send(
+                peer,
+                MsgID.HELLO_ACK,
+                HelloAck(accepted=False, reason="network_params_mismatch"),
+            )
+            raise PeerMisbehavior(
+                "network_params_mismatch",
+                points=self._score_points["wrong_chain"],
             )
 
         if hello.version and str(hello.version) not in {"1", "2"}:
