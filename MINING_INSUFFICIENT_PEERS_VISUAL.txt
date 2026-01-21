@@ -1,0 +1,78 @@
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                MINING "insufficient_peers" ERROR - BEFORE vs AFTER           ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ BEFORE (Unhelpful)                                                           │
+├──────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│ $ animica miner mine-blocks --address anim1xxx --count 1                    │
+│                                                                              │
+│ Warning: Block template unavailable (insufficient_peers)                    │
+│ Warning: No blocks were mined (may have failed)                             │
+│                                                                              │
+│ ❌ User doesn't know what to do                                             │
+│ ❌ No information about how many peers are needed                           │
+│ ❌ No suggestions for fixing the issue                                      │
+│                                                                              │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ AFTER (Actionable & Helpful)                                                 │
+├──────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│ $ animica miner mine-blocks --address anim1xxx --count 1                    │
+│                                                                              │
+│ Warning: Block template unavailable (insufficient_peers (connected: 0,      │
+│ required: 1). Try: 'animica peer bootstrap' to connect to peers, or set    │
+│ ANIMICA_MINING_MIN_PEERS=0 for local development.)                          │
+│ Warning: No blocks were mined (may have failed)                             │
+│                                                                              │
+│ ✅ Shows current peer count: 0                                              │
+│ ✅ Shows required peer count: 1                                             │
+│ ✅ Suggests: 'animica peer bootstrap'                                       │
+│ ✅ Provides alternative: ANIMICA_MINING_MIN_PEERS=0                         │
+│                                                                              │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ SOLUTION 1: Local Development (No Peers Required)                           │
+├──────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│ $ export ANIMICA_MINING_MIN_PEERS=0                                         │
+│ $ animica miner mine-blocks --address anim1xxx --count 1                    │
+│                                                                              │
+│ ✓ Mining 1 block(s) with payout to address anim1xxx...                     │
+│ ✓ Block 1/1 mined (height 123, reward 300.000000000 ANM)                   │
+│ ✓ Successfully mined 1 block(s). New chain height: 123.                    │
+│                                                                              │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ SOLUTION 2: Production (Connect to Peers)                                   │
+├──────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│ $ animica peer bootstrap                                                    │
+│ ✓ Added 3 seed(s) to local peer store                                      │
+│ ✓ Seeds imported into running node (imported 2, skipped 1, invalid 1)      │
+│ ✓ Peers connected: 2 (waiting for peer tips...)                            │
+│                                                                              │
+│ $ animica miner mine-blocks --address anim1xxx --count 1                    │
+│ ✓ Mining 1 block(s) with payout to address anim1xxx...                     │
+│ ✓ Block 1/1 mined (height 123, reward 300.000000000 ANM)                   │
+│ ✓ Successfully mined 1 block(s). New chain height: 123.                    │
+│                                                                              │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                            KEY IMPROVEMENTS                                  ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║                                                                              ║
+║ 1. ✅ Error messages now show current vs required peer counts               ║
+║ 2. ✅ Two concrete solutions provided in the error message                  ║
+║ 3. ✅ ANIMICA_MINING_MIN_PEERS=0 works for local development                ║
+║ 4. ✅ Documentation added to mining/README.md                               ║
+║ 5. ✅ Comprehensive user guide in MINING_INSUFFICIENT_PEERS_FIX.md          ║
+║ 6. ✅ Backward compatible (default behavior unchanged)                      ║
+║                                                                              ║
+╚══════════════════════════════════════════════════════════════════════════════╝

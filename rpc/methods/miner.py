@@ -1202,6 +1202,11 @@ def _mining_gate(
         - (True, None) if mining is allowed
         - (False, reason) if mining is blocked
     """
+    # Helper for consistent peer-related error messages
+    def _peer_error_guidance() -> str:
+        """Return standard guidance for peer connection issues."""
+        return "Try: 'animica peer bootstrap' to connect to peers, or set ANIMICA_MINING_MIN_PEERS=0 for local development."
+    
     # Unsafe override flags are disabled; log and ignore if requested.
     if os.getenv("ANIMICA_MINING_FORCE", "").lower() in ("1", "true", "yes", "on"):
         log.warning(
@@ -1298,10 +1303,13 @@ def _mining_gate(
                     "reason": "insufficient_peers",
                 },
             )
-            return False, "insufficient_peers"
+            # Provide actionable guidance in the reason message
+            reason_msg = f"insufficient_peers (connected: {peers_connected}, required: {min_peers}). {_peer_error_guidance()}"
+            return False, reason_msg
     
     # Offline mining check - require at least one outbound CONNECTED peer
-    if not allow_offline_mining and outbound_connected <= 0 and peers_connected <= 0:
+    # Skip this check if min_peers is set to 0 (local development mode)
+    if not allow_offline_mining and min_peers > 0 and outbound_connected <= 0 and peers_connected <= 0:
         log.info(
             "Mining template unavailable - no outbound connected peers",
             extra={
@@ -1310,7 +1318,9 @@ def _mining_gate(
                 "reason": "offline_no_outbound_peers",
             },
         )
-        return False, "offline_no_outbound_peers"
+        # Provide actionable guidance
+        reason_msg = f"offline_no_outbound_peers (no connected peers). {_peer_error_guidance()}"
+        return False, reason_msg
     
     # Require the node to be fully synced before exposing mining templates.
     # We only allow mining when the sync phase reports SYNCED (or when phase
