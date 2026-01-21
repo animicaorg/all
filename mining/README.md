@@ -265,6 +265,9 @@ mining/config.py accepts:
 	•	MINER_TARGET_SHARES_PER_SEC (adaptive micro-target tuning)
 	•	RPC_URL, WS_URL, CHAIN_ID
 	•	ANIMICA_MINER_ADDRESS (bech32 address for block reward payouts; defaults to premine address)
+	•	ANIMICA_MINING_MIN_PEERS (minimum connected peers required for mining, default: 1)
+	    - Set to 0 to allow mining without peers (useful for local development/testing)
+	    - Example: export ANIMICA_MINING_MIN_PEERS=0
 	•	Stratum: STRATUM_LISTEN=0.0.0.0:11333
 	•	Selection policy overlays (local caps tighter than network)
 	•	AICF endpoints for AI/Quantum job queues (devnet-ready)

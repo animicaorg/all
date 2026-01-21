@@ -1298,7 +1298,10 @@ def _mining_gate(
                     "reason": "insufficient_peers",
                 },
             )
-            return False, "insufficient_peers"
+            # Provide actionable guidance in the reason message
+            reason_msg = f"insufficient_peers (connected: {peers_connected}, required: {min_peers}). "
+            reason_msg += "Try: 'animica peer bootstrap' to connect to peers, or set ANIMICA_MINING_MIN_PEERS=0 for local development."
+            return False, reason_msg
     
     # Offline mining check - require at least one outbound CONNECTED peer
     if not allow_offline_mining and outbound_connected <= 0 and peers_connected <= 0:
@@ -1310,7 +1313,10 @@ def _mining_gate(
                 "reason": "offline_no_outbound_peers",
             },
         )
-        return False, "offline_no_outbound_peers"
+        # Provide actionable guidance
+        reason_msg = "offline_no_outbound_peers (no connected peers). "
+        reason_msg += "Try: 'animica peer bootstrap' to connect to peers, or set ANIMICA_MINING_MIN_PEERS=0 for local development."
+        return False, reason_msg
     
     # Require the node to be fully synced before exposing mining templates.
     # We only allow mining when the sync phase reports SYNCED (or when phase
