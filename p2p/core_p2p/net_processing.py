@@ -208,11 +208,13 @@ class NetProcessing:
         try:
             await send("getdata", payload)
         except Exception as exc:
-            # Send failed - return blocks to pending queue to retry later
+            # Send failed - remove from inflight and return blocks to pending queue to retry later
             log.debug("failed to send getdata for blocks, will retry", exc_info=exc)
             for h in batch:
-                self.sync.pending_blocks.append(h)
-                self.sync.pending_set.add(h)
+                self.sync.complete_inflight(h)  # Remove from inflight
+                if h not in self.sync.pending_set:  # Only add if not already pending
+                    self.sync.pending_blocks.append(h)
+                    self.sync.pending_set.add(h)
             raise
 
     async def announce_block(self, peers: Iterable[PeerState], block_hash: bytes, send) -> None:

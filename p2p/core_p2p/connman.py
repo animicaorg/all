@@ -124,7 +124,7 @@ class ConnectionManager:
         if not conn:
             # Log when peer connection not found - helps debugging connectivity issues
             log.debug("peer connection not found for send", extra={"peer_id": peer.peer_id, "command": command})
-            raise ConnectionError(f"Peer {peer.peer_id} connection not found")
+            raise ConnectionError("Peer connection not found")
         conn.writer.write(encode_message(command, payload))
         await conn.writer.drain()
         peer.mark_send()
