@@ -4,6 +4,7 @@ import ipaddress
 import time
 import uuid
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Dict, List, Optional
 
 
@@ -30,6 +31,14 @@ def _extract_ip(remote: str) -> str:
         return remote
 
 
+class PeerState(str, Enum):
+    """Canonical peer connection states."""
+    DIALING = "DIALING"
+    HANDSHAKING = "HANDSHAKING"
+    CONNECTED = "CONNECTED"
+    FAILED = "FAILED"
+
+
 @dataclass
 class PeerSession:
     session_id: str
@@ -39,6 +48,28 @@ class PeerSession:
     peer_id: Optional[str] = None
     last_seen: float = field(default_factory=time.time)
     meta: Dict[str, object] = field(default_factory=dict)
+    
+    # State machine fields
+    state: PeerState = PeerState.DIALING
+    state_since: float = field(default_factory=time.time)
+    
+    # Identity validation fields
+    identity_ok: bool = False
+    remote_chain_id: Optional[int] = None
+    remote_genesis_hash: Optional[str] = None
+    
+    # Peer tip/capability fields
+    tip_height: Optional[int] = None
+    tip_hash: Optional[str] = None
+    tip_time: Optional[float] = None
+    tip_updated_at: Optional[float] = None
+    
+    # Error tracking fields
+    last_error: Optional[str] = None
+    last_error_at: Optional[float] = None
+    penalty_score: int = 0
+    retry_count: int = 0
+    next_retry_at: Optional[float] = None
 
     def snapshot(self) -> Dict[str, object]:
         snap = {
@@ -47,7 +78,32 @@ class PeerSession:
             "connected_at": self.connected_at,
             "last_seen": self.last_seen,
             "peer_id": self.peer_id or "(handshaking)",
+            "state": self.state.value,
+            "state_since": self.state_since,
+            "identity_ok": self.identity_ok,
         }
+        if self.remote_chain_id is not None:
+            snap["remote_chain_id"] = self.remote_chain_id
+        if self.remote_genesis_hash is not None:
+            snap["remote_genesis_hash"] = self.remote_genesis_hash
+        if self.tip_height is not None:
+            snap["tip_height"] = self.tip_height
+        if self.tip_hash is not None:
+            snap["tip_hash"] = self.tip_hash
+        if self.tip_time is not None:
+            snap["tip_time"] = self.tip_time
+        if self.tip_updated_at is not None:
+            snap["tip_updated_at"] = self.tip_updated_at
+        if self.last_error is not None:
+            snap["last_error"] = self.last_error
+        if self.last_error_at is not None:
+            snap["last_error_at"] = self.last_error_at
+        if self.penalty_score > 0:
+            snap["penalty_score"] = self.penalty_score
+        if self.retry_count > 0:
+            snap["retry_count"] = self.retry_count
+        if self.next_retry_at is not None:
+            snap["next_retry_at"] = self.next_retry_at
         if self.meta:
             snap.update(self.meta)
         return snap
@@ -113,6 +169,17 @@ class PeerRegistry:
         self._sessions[session.session_id] = session
         return session
 
+    def transition_state(self, session_id: str, new_state: PeerState) -> None:
+        """
+        Transition a peer session to a new state.
+        """
+        session = self._sessions.get(session_id)
+        if session is None:
+            return
+        session.state = new_state
+        session.state_since = time.time()
+        session.last_seen = time.time()
+
     def mark_identified(self, session_id: str, peer_id: str) -> List[str]:
         """
         Attach a peer_id to a session. Returns a list of session_ids that should be dropped
@@ -125,6 +192,10 @@ class PeerRegistry:
 
         session.peer_id = peer_id
         session.last_seen = time.time()
+        # Transition to HANDSHAKING state when peer_id is identified
+        if session.state == PeerState.DIALING:
+            session.state = PeerState.HANDSHAKING
+            session.state_since = time.time()
 
         replaced: List[str] = []
         peer_key = (peer_id, session.direction)
@@ -145,6 +216,94 @@ class PeerRegistry:
                 self.remove(rid)
 
         return list(dict.fromkeys(replaced))
+    
+    def mark_identity_validated(
+        self, 
+        session_id: str, 
+        *, 
+        chain_id: int, 
+        genesis_hash: str
+    ) -> None:
+        """
+        Mark a peer session as having validated identity (chain_id and genesis_hash match).
+        Transitions state to CONNECTED.
+        """
+        session = self._sessions.get(session_id)
+        if session is None:
+            return
+        session.identity_ok = True
+        session.remote_chain_id = chain_id
+        session.remote_genesis_hash = genesis_hash
+        session.state = PeerState.CONNECTED
+        session.state_since = time.time()
+        session.last_seen = time.time()
+        # Also update meta for backward compatibility
+        session.meta["identity_ok"] = True
+    
+    def mark_identity_failed(
+        self,
+        session_id: str,
+        *,
+        reason: str,
+        chain_id: Optional[int] = None,
+        genesis_hash: Optional[str] = None
+    ) -> None:
+        """
+        Mark a peer session as having failed identity validation.
+        Transitions state to FAILED.
+        """
+        session = self._sessions.get(session_id)
+        if session is None:
+            return
+        session.identity_ok = False
+        session.remote_chain_id = chain_id
+        session.remote_genesis_hash = genesis_hash
+        session.state = PeerState.FAILED
+        session.state_since = time.time()
+        session.last_error = reason
+        session.last_error_at = time.time()
+        session.penalty_score += 1
+    
+    def update_peer_tip(
+        self,
+        session_id: str,
+        *,
+        height: int,
+        hash_hex: Optional[str] = None,
+        tip_time: Optional[float] = None
+    ) -> None:
+        """
+        Update the peer's tip (head) information.
+        """
+        session = self._sessions.get(session_id)
+        if session is None:
+            return
+        session.tip_height = height
+        session.tip_hash = hash_hex
+        session.tip_time = tip_time
+        session.tip_updated_at = time.time()
+        session.last_seen = time.time()
+    
+    def mark_error(
+        self,
+        session_id: str,
+        *,
+        reason: str,
+        penalty: int = 1
+    ) -> None:
+        """
+        Mark an error for a peer session and increase penalty score.
+        """
+        session = self._sessions.get(session_id)
+        if session is None:
+            return
+        session.last_error = reason
+        session.last_error_at = time.time()
+        session.penalty_score += penalty
+        session.retry_count += 1
+        # Exponential backoff: 2^retry_count seconds, capped at 300s (5 min)
+        backoff = min(2 ** session.retry_count, 300)
+        session.next_retry_at = time.time() + backoff
 
     def update_meta(self, session_id: str, **meta: object) -> None:
         session = self._sessions.get(session_id)
@@ -192,7 +351,8 @@ class PeerRegistry:
         
         Only counts peers that have:
         1. Completed handshake (peer_id assigned)
-        2. Passed identity validation (identity_ok = True in meta)
+        2. Passed identity validation (identity_ok = True)
+        3. State is CONNECTED
         
         This ensures "connected" peers reported to users have actually been
         fully verified (chain_id, genesis hash match, etc).
@@ -206,12 +366,88 @@ class PeerRegistry:
             if not session.peer_id:
                 continue
             # Must have passed identity validation
-            if not session.meta.get("identity_ok", False):
+            if not session.identity_ok:
+                continue
+            # Must be in CONNECTED state
+            if session.state != PeerState.CONNECTED:
                 continue
             key = (session.peer_id, session.direction)
             seen_keys.add(key)
         
         return len(seen_keys)
+    
+    def get_peer_tips(
+        self, *, freshness_window_s: float = 600.0
+    ) -> tuple[int, int, int]:
+        """
+        Get peer tip statistics: (total, fresh, stale).
+        
+        Args:
+            freshness_window_s: Tips updated within this window are considered fresh (default 600s = 10 min)
+        
+        Returns:
+            Tuple of (total tips, fresh tips, stale tips)
+        """
+        now = time.time()
+        total = 0
+        fresh = 0
+        stale = 0
+        
+        for session in self._sessions.values():
+            if not session.identity_ok:
+                continue
+            if session.state != PeerState.CONNECTED:
+                continue
+            if session.tip_height is None:
+                continue
+            
+            total += 1
+            if session.tip_updated_at and (now - session.tip_updated_at) < freshness_window_s:
+                fresh += 1
+            else:
+                stale += 1
+        
+        return (total, fresh, stale)
+    
+    def get_best_peer_tip(
+        self, *, freshness_window_s: float = 600.0
+    ) -> tuple[Optional[int], Optional[str], Optional[str], Optional[float]]:
+        """
+        Get the best (highest) peer tip from fresh tips only.
+        
+        Args:
+            freshness_window_s: Only consider tips updated within this window
+        
+        Returns:
+            Tuple of (height, hash, peer_id, age_seconds) or (None, None, None, None) if no fresh tips
+        """
+        now = time.time()
+        best_height = None
+        best_hash = None
+        best_peer = None
+        best_age = None
+        
+        for session in self._sessions.values():
+            if not session.identity_ok:
+                continue
+            if session.state != PeerState.CONNECTED:
+                continue
+            if session.tip_height is None:
+                continue
+            if not session.tip_updated_at:
+                continue
+            
+            age = now - session.tip_updated_at
+            if age >= freshness_window_s:
+                continue
+            
+            if best_height is None or session.tip_height > best_height:
+                best_height = session.tip_height
+                best_hash = session.tip_hash
+                best_peer = session.peer_id or session.remote
+                best_age = age
+        
+        return (best_height, best_hash, best_peer, best_age)
 
     def total_active_sessions(self, *, include_handshaking: bool = True) -> int:
         """
@@ -251,6 +487,30 @@ class PeerRegistry:
                 key = session.session_id
             snapshots[key] = session
         return [s.snapshot() for s in snapshots.values()]
+
+    def get_connected_peers_for_sync(self) -> List[Dict[str, object]]:
+        """
+        Get list of connected peers suitable for sync operations.
+        Returns peers with identity_ok=True and state=CONNECTED.
+        """
+        peers = []
+        for session in self._sessions.values():
+            if not session.identity_ok:
+                continue
+            if session.state != PeerState.CONNECTED:
+                continue
+            peers.append({
+                "session_id": session.session_id,
+                "peer_id": session.peer_id,
+                "remote": session.remote,
+                "direction": session.direction,
+                "tip_height": session.tip_height,
+                "tip_hash": session.tip_hash,
+                "tip_updated_at": session.tip_updated_at,
+                "last_error": session.last_error,
+                "penalty_score": session.penalty_score,
+            })
+        return peers
 
     # --------------------------- helpers --------------------------- #
 
@@ -298,4 +558,4 @@ class PeerRegistry:
         return str(net)
 
 
-__all__ = ["PeerRegistry", "PeerSession"]
+__all__ = ["PeerRegistry", "PeerSession", "PeerState"]
