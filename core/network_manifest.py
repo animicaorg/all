@@ -83,7 +83,7 @@ MAINNET_MANIFEST = NetworkManifest(
     chain_id=1,
     genesis_path=GENESIS_DIR / "mainnet.json",
     pinned_genesis_hash=bytes.fromhex(
-        "753d4c91c89cab828fe1d52e55553b0de74863ce5dfdfe0f81eb6196e88728c2"
+        "cf08020c87d8c294e09e5a872d7a5a2f3ceb9b8576ba0cdbfd1daef6832cbbfb"
     ),
     hrp="anim",
     protocol_version="1.0.0",
