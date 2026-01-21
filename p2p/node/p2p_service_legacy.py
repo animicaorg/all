@@ -5924,6 +5924,23 @@ class P2PService:
             with contextlib.suppress(Exception):
                 await conn.close()
             return
+        # FIX: Prevent duplicate outbound connections to same address
+        # Check if we already have an active outbound connection to this address
+        if direction == "outbound":
+            async with self._peer_lock:
+                existing_to_addr = [
+                    p for p in self._peers.values()
+                    if p.direction == "outbound" and p.remote == remote
+                ]
+            if existing_to_addr:
+                log.info(
+                    "Rejecting duplicate outbound connection to %s (already connected)",
+                    remote
+                )
+                with contextlib.suppress(Exception):
+                    await conn.close()
+                return
+        
         try:
             session = self._peer_registry.register(remote, direction)
         except ValueError as exc:
