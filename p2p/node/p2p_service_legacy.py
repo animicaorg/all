@@ -1348,25 +1348,25 @@ class P2PService:
         )
         self._score_points = {
             "malformed_message": int(
-                os.environ.get("ANIMICA_P2P_SCORE_MALFORMED", "50") or 50
+                os.environ.get("ANIMICA_P2P_SCORE_MALFORMED", "10") or 10
             ),
             "wrong_genesis": int(
-                os.environ.get("ANIMICA_P2P_SCORE_GENESIS", "1000") or 1000
+                os.environ.get("ANIMICA_P2P_SCORE_GENESIS", "0") or 0
             ),
             "wrong_chain": int(
-                os.environ.get("ANIMICA_P2P_SCORE_CHAIN", "1000") or 1000
+                os.environ.get("ANIMICA_P2P_SCORE_CHAIN", "0") or 0
             ),
             "invalid_header": int(
-                os.environ.get("ANIMICA_P2P_SCORE_HEADER", "200") or 200
+                os.environ.get("ANIMICA_P2P_SCORE_HEADER", "50") or 50
             ),
             "invalid_block": int(
-                os.environ.get("ANIMICA_P2P_SCORE_BLOCK", "500") or 500
+                os.environ.get("ANIMICA_P2P_SCORE_BLOCK", "100") or 100
             ),
-            "timeout": int(os.environ.get("ANIMICA_P2P_SCORE_TIMEOUT", "10") or 10),
+            "timeout": int(os.environ.get("ANIMICA_P2P_SCORE_TIMEOUT", "1") or 1),
             "missing_parent": int(
-                os.environ.get("ANIMICA_P2P_SCORE_MISSING_PARENT", "25") or 25
+                os.environ.get("ANIMICA_P2P_SCORE_MISSING_PARENT", "5") or 5
             ),
-            "stall": int(os.environ.get("ANIMICA_P2P_SCORE_STALL", "25") or 25),
+            "stall": int(os.environ.get("ANIMICA_P2P_SCORE_STALL", "5") or 5),
         }
         self._ban_thresholds = [
             (
@@ -1547,7 +1547,7 @@ class P2PService:
             os.environ.get("ANIMICA_P2P_SYNC_TIMEOUT", "15.0") or 15.0  # Increased from 10.0 for much larger batches
         )
         self._sync_peer_penalty_threshold = int(
-            os.environ.get("ANIMICA_P2P_SYNC_PENALTY_THRESHOLD", "6") or 6
+            os.environ.get("ANIMICA_P2P_SYNC_PENALTY_THRESHOLD", "20") or 20
         )
         self._sync_peer_penalty_window_s = float(
             os.environ.get("ANIMICA_P2P_SYNC_PENALTY_WINDOW", "600") or 600
@@ -10259,6 +10259,7 @@ class P2PService:
                             elif header.parent_hash in valid_genesis_hashes:
                                 # Parent matches a valid genesis variant - continue processing
                                 # (no action needed, just documenting the acceptance)
+                                pass
                             else:
                                 # Parent doesn't match any known genesis variant
                                 # Enhanced diagnostics for genesis anchor failures
