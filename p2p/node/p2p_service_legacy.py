@@ -7073,6 +7073,15 @@ class P2PService:
             self._request_peer_head_status(peer, reason="hello"),
             name=f"p2p.head_status_request@{peer.remote}",
         )
+        
+        # PHASE 5: For outbound connections, proactively request headers to start sync immediately
+        # This matches core_p2p behavior and ensures outbound connections trigger sync
+        if peer.direction == "outbound":
+            self._create_child_task(
+                self._request_headers_on_outbound_hello(peer),
+                name=f"p2p.headers_request_outbound@{peer.remote}",
+            )
+        
         if peer.feeler:
             self._create_child_task(
                 self._close_feeler_after_delay(peer),
@@ -7179,6 +7188,68 @@ class P2PService:
             )
             return False
         return True
+
+    async def _request_headers_on_outbound_hello(self, peer: _PeerState) -> None:
+        """
+        Proactively request headers from an outbound peer immediately after handshake.
+        
+        This ensures outbound connections trigger sync immediately, matching the behavior
+        of core_p2p and preventing sync delays. Only called for outbound connections.
+        
+        Args:
+            peer: The outbound peer that just completed handshake
+        """
+        if not peer.hello_done.is_set():
+            return
+        if not self._peer_chain_matches(peer):
+            return
+        if not peer.repo_state_ok:
+            return
+            
+        # Build locator from our current chain state
+        locator = self._build_locator()
+        if not locator:
+            # Fallback to genesis if we have no chain
+            genesis_hash = self._genesis_hash()
+            if genesis_hash:
+                locator = [bytes(genesis_hash)]
+            else:
+                log.debug(
+                    "Skipping initial headers request - no locator available",
+                    extra={"remote": peer.remote, "direction": peer.direction},
+                )
+                return
+        
+        max_headers = int(self._max_headers_per_message or 2048)
+        
+        log.info(
+            "Sending initial headers request for outbound connection",
+            extra={
+                "remote": peer.remote,
+                "peer_id": peer.peer_id,
+                "direction": peer.direction,
+                "max_headers": max_headers,
+                "locator_length": len(locator),
+            },
+        )
+        
+        try:
+            await self._send(
+                peer,
+                MsgID.GET_HEADERS,
+                GetHeaders(locator=locator, max_headers=max_headers),
+            )
+            self._sync_wakeup.set()  # Wake sync loop to process incoming headers
+        except Exception as exc:
+            log.warning(
+                "Failed to send initial headers request for outbound connection",
+                extra={
+                    "remote": peer.remote,
+                    "peer_id": peer.peer_id,
+                    "error": str(exc),
+                },
+                exc_info=True,
+            )
 
     async def _poll_peer_heads(self, *, reason: str, force: bool = False) -> int:
         now = time.time()
