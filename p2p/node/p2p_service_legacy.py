@@ -481,7 +481,18 @@ class _PeerHeadInfo:
 
 
 class PeerTipTracker:
-    """Track per-peer tips with freshness, source, and last error metadata."""
+    """
+    Track per-peer tips with freshness, source, and last error metadata.
+    
+    TODO: This class is deprecated and will be removed in Phase 4 of the P2P refactor.
+    Use p2p.node.tip_manager.TipManager + PeerRegistry.update_peer_tip() instead.
+    The new implementation provides:
+    - Integrated tip tracking in PeerRegistry (no separate storage)
+    - Automatic freshness management via TipManager.poll_peer_tips()
+    - Cleaner separation of concerns (state vs. behavior)
+    
+    For now, both implementations coexist for backward compatibility.
+    """
 
     def __init__(self) -> None:
         self._tips: Dict[str, _PeerHeadInfo] = {}
