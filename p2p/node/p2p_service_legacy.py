@@ -7199,6 +7199,8 @@ class P2PService:
         Args:
             peer: The outbound peer that just completed handshake
         """
+        # Defensive checks: these conditions should already be true when called from the hello handler,
+        # but we verify them to ensure robustness if this method is called from other contexts
         if not peer.hello_done.is_set():
             return
         if not self._peer_chain_matches(peer):
@@ -7212,7 +7214,7 @@ class P2PService:
             # Fallback to genesis if we have no chain
             genesis_hash = self._genesis_hash()
             if genesis_hash:
-                locator = [bytes(genesis_hash)]
+                locator = [genesis_hash]  # _genesis_hash() already returns bytes
             else:
                 log.debug(
                     "Skipping initial headers request - no locator available",
