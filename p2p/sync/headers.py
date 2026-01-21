@@ -375,8 +375,9 @@ class HeaderSync:
             await self.chain.set_canonical_head(last.hash)
             return True
 
-        # FIX: Detect sequential sync (extending chain) vs fork resolution.
-        # Sequential sync always advances head; fork resolution uses fork choice.
+        # FIX: Detect sequential sync vs fork resolution.
+        # Sequential sync: first header directly extends current canonical head (parent_hash == head_hash).
+        # In this case, always advance head - this is normal chain growth, not a fork.
         is_sequential_sync = first.parent_hash == head_hash
         
         if is_sequential_sync:
