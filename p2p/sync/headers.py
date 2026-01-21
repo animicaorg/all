@@ -361,7 +361,17 @@ class HeaderSync:
 
         # Decide whether to advance head to the last header in the contiguous suffix.
         last = contiguous[-1]
+        first = contiguous[0]
         current_head_obj = await self.chain.get_header(head_hash)
+        
+        # FIX: If this is sequential sync (first header extends current head), 
+        # ALWAYS set it as canonical. Don't rely only on fork choice logic.
+        # This ensures the chain advances properly during normal sync.
+        is_sequential_sync = (
+            current_head_obj is not None 
+            and first.parent_hash == head_hash
+        )
+        
         if current_head_obj is None:
             # Extremely unlikely (head must exist), but be defensive.
             # Check checkpoint before setting canonical head
@@ -373,6 +383,22 @@ class HeaderSync:
             await self.chain.set_canonical_head(last.hash)
             return True
 
+        # FIX: For sequential sync, always advance the canonical head to the last header
+        # This is the normal case when syncing - we're extending the chain, not resolving a fork
+        if is_sequential_sync:
+            # Check checkpoint before setting canonical head
+            if not await self._verify_checkpoint_if_enabled(last):
+                self._log.error(
+                    f"Checkpoint verification failed for sequential sync at height {height_of(last)}"
+                )
+                return False
+            await self.chain.set_canonical_head(last.hash)
+            self._log.debug(
+                f"Advanced canonical head via sequential sync to height {height_of(last)}"
+            )
+            return True
+
+        # Fork resolution: use fork choice to decide if this is a better tip
         if await self.chain.is_better_tip(last, current_head_obj):
             # Check checkpoint before adopting new best tip (fork choice)
             if not await self._verify_checkpoint_if_enabled(last):
