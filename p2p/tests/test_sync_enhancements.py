@@ -95,6 +95,168 @@ class MockConsensusView:
         return self.always_valid
 
 
+class TestSequentialSyncFix:
+    """Test that sequential sync always advances canonical head."""
+    
+    @pytest.mark.asyncio
+    async def test_sequential_sync_advances_head_from_genesis(self):
+        """
+        Test that when syncing from genesis, receiving height 1 header
+        always advances the canonical head, even if is_better_tip would say no.
+        
+        This tests the fix for the issue where nodes get stuck at genesis
+        despite receiving valid next headers.
+        """
+        # Setup: node at genesis
+        chain = MockChainAdapter()
+        chain.head_hash = b"genesis"
+        chain.head_height = 0
+        chain.headers = {
+            b"genesis": MockHeader(b"genesis", b"\x00" * 32, 0)
+        }
+        chain.canonical_head = b"genesis"
+        
+        # Create a header for height 1 that extends genesis
+        h1 = MockHeader(b"block1", b"genesis", 1)
+        
+        # Setup fetcher to return height 1 header
+        fetcher = MockHeaderFetcher()
+        fetcher.headers_to_return = [h1]
+        
+        consensus = MockConsensusView(always_valid=True)
+        
+        # Create sync manager
+        cfg = HeaderSyncConfig(
+            batch_size=16,
+            max_in_flight=4,
+            max_reorg_depth=10,
+            sanity_parent_required=True,
+        )
+        sync = HeaderSync(
+            chain=chain,
+            consensus=consensus,
+            fetcher=fetcher,
+            cfg=cfg,
+        )
+        
+        # Run one sync tick
+        await sync.tick()
+        
+        # ASSERT: Canonical head should have advanced to height 1
+        assert chain.canonical_head == b"block1", \
+            "Canonical head should advance to height 1 during sequential sync"
+        assert chain.head_height == 1, \
+            "Head height should be 1"
+        assert b"block1" in chain.headers, \
+            "Height 1 header should be persisted"
+    
+    @pytest.mark.asyncio
+    async def test_sequential_sync_multi_block(self):
+        """
+        Test that sequential sync works for multiple blocks.
+        """
+        # Setup: node at genesis
+        chain = MockChainAdapter()
+        chain.head_hash = b"genesis"
+        chain.head_height = 0
+        chain.headers = {
+            b"genesis": MockHeader(b"genesis", b"\x00" * 32, 0)
+        }
+        chain.canonical_head = b"genesis"
+        
+        # Create headers for heights 1-3
+        h1 = MockHeader(b"block1", b"genesis", 1)
+        h2 = MockHeader(b"block2", b"block1", 2)
+        h3 = MockHeader(b"block3", b"block2", 3)
+        
+        # Setup fetcher to return all three headers
+        fetcher = MockHeaderFetcher()
+        fetcher.headers_to_return = [h1, h2, h3]
+        
+        consensus = MockConsensusView(always_valid=True)
+        
+        # Create sync manager
+        cfg = HeaderSyncConfig(
+            batch_size=16,
+            max_in_flight=4,
+            max_reorg_depth=10,
+            sanity_parent_required=True,
+        )
+        sync = HeaderSync(
+            chain=chain,
+            consensus=consensus,
+            fetcher=fetcher,
+            cfg=cfg,
+        )
+        
+        # Run one sync tick
+        await sync.tick()
+        
+        # ASSERT: Canonical head should have advanced to height 3
+        assert chain.canonical_head == b"block3", \
+            f"Canonical head should advance to height 3, got {chain.canonical_head}"
+        assert chain.head_height == 3, \
+            f"Head height should be 3, got {chain.head_height}"
+        assert all(h in chain.headers for h in [b"block1", b"block2", b"block3"]), \
+            "All headers should be persisted"
+    
+    @pytest.mark.asyncio
+    async def test_fork_still_uses_fork_choice(self):
+        """
+        Test that fork resolution still uses fork choice logic,
+        not the sequential sync path.
+        """
+        # Setup: node at height 2 on chain A
+        chain = MockChainAdapter()
+        chain.head_hash = b"blockA2"
+        chain.head_height = 2
+        chain.headers = {
+            b"genesis": MockHeader(b"genesis", b"\x00" * 32, 0),
+            b"blockA1": MockHeader(b"blockA1", b"genesis", 1),
+            b"blockA2": MockHeader(b"blockA2", b"blockA1", 2),
+        }
+        chain.canonical_head = b"blockA2"
+        
+        # Create a competing fork at height 2 (chain B)
+        # This fork does NOT extend our current head
+        blockB1 = MockHeader(b"blockB1", b"genesis", 1)
+        blockB2 = MockHeader(b"blockB2", b"blockB1", 2)
+        
+        # Setup fetcher to return fork headers
+        fetcher = MockHeaderFetcher()
+        fetcher.headers_to_return = [blockB1, blockB2]
+        
+        consensus = MockConsensusView(always_valid=True)
+        
+        # Override is_better_tip to return False (fork is not better)
+        async def not_better(candidate, current_head):
+            return False
+        chain.is_better_tip = not_better
+        
+        # Create sync manager
+        cfg = HeaderSyncConfig(
+            batch_size=16,
+            max_in_flight=4,
+            max_reorg_depth=10,
+            sanity_parent_required=True,
+        )
+        sync = HeaderSync(
+            chain=chain,
+            consensus=consensus,
+            fetcher=fetcher,
+            cfg=cfg,
+        )
+        
+        # Run one sync tick
+        await sync.tick()
+        
+        # ASSERT: Canonical head should NOT change (fork choice said no)
+        assert chain.canonical_head == b"blockA2", \
+            "Canonical head should remain on chain A (fork choice rejected chain B)"
+        assert chain.head_height == 2, \
+            "Head height should remain 2"
+
+
 class TestHeaderSyncIdleDetection:
     """Test idle detection and recovery in header sync."""
     
