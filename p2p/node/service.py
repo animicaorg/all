@@ -32,7 +32,7 @@ from ..transport import multiaddr as ma
 try:
     from ..gossip import engine as gossip_engine
     from ..gossip import topics as gossip_topics
-    from ..protocol import block_announce as proto_blk
+    from ..protocol import block_announce_handler as proto_blk_handler
     from ..protocol import flow_control as proto_flow
     from ..protocol import hello as proto_hello
     from ..protocol import inventory as proto_inv
@@ -44,12 +44,14 @@ try:
 except Exception:  # pragma: no cover - optional full stack
     gossip_engine = None  # type: ignore
     gossip_topics = None  # type: ignore
-    proto_hello = proto_inv = proto_blk = proto_tx = proto_share = proto_flow = proto_snapshot = wire_codec = wire_frames = None  # type: ignore
+    proto_hello = proto_inv = proto_blk_handler = proto_tx = proto_share = proto_flow = proto_snapshot = wire_codec = wire_frames = None  # type: ignore
 
 # Node router/event-bus (these are small glue modules under p2p/node/)
 from . import events as node_events
 from . import health as node_health
 from . import router as node_router
+from .tip_manager import TipManager
+from .peer_registry import PeerRegistry
 
 log = logging.getLogger("animica.p2p.node")
 
@@ -173,6 +175,9 @@ class NodeService:
     identify: idsvc.IdentifyService = field(init=False)
     flowctl: proto_flow.FlowController = field(init=False)
     tx_relay_handler: Any = field(init=False)  # TxRelayHandler
+    peer_registry: PeerRegistry = field(init=False)  # Phase 6
+    tip_manager: TipManager = field(init=False)  # Phase 6
+    block_announce_handler: Any = field(init=False)  # BlockAnnounceHandler (Phase 6)
 
     # crypto/ids
     node_keys: Any = field(init=False)
@@ -235,6 +240,14 @@ class NodeService:
             alg_policy_root=self.cfg.alg_policy_root,
         )
         self.flowctl = proto_flow.FlowController(self.cfg.flow_control)
+        
+        # Initialize PeerRegistry and TipManager for Phase 6
+        self.peer_registry = PeerRegistry()
+        self.tip_manager = TipManager(
+            registry=self.peer_registry,
+            poll_interval_s=30.0,  # Poll peer tips every 30 seconds
+            freshness_window_s=600.0,  # 10 minute freshness window
+        )
 
         # Mount protocol handlers into the router
         self._mount_protocols()
@@ -286,6 +299,9 @@ class NodeService:
 
         # Start TxRelayHandler (subscribe to gossip topic)
         await self.tx_relay_handler.start()
+        
+        # Start BlockAnnounceHandler (Phase 6)
+        await self.block_announce_handler.start()
 
         # Start background services
         self._tasks.extend(
@@ -313,6 +329,9 @@ class NodeService:
 
         # Stop TxRelayHandler
         await self.tx_relay_handler.stop()
+        
+        # Stop BlockAnnounceHandler (Phase 6)
+        await self.block_announce_handler.stop()
 
         # Stop background tasks
         for t in self._tasks:
@@ -490,11 +509,18 @@ class NodeService:
                 cfg=self.cfg, codec=codec, deps=self.deps, connmgr=self.connmgr
             )
         )
-        self.router.add_handler(
-            proto_blk.BlockAnnounceHandler(
-                cfg=self.cfg, codec=codec, deps=self.deps, gossip=self.gossip
-            )
+        
+        # Block announce handler (Phase 6)
+        self.block_announce_handler = proto_blk_handler.BlockAnnounceHandler(
+            cfg=self.cfg,
+            codec=codec,
+            deps=self.deps,
+            gossip=self.gossip,
+            tip_manager=self.tip_manager,
+            registry=self.peer_registry,
+            events=self.events,
         )
+        self.router.add_handler(self.block_announce_handler)
         self.tx_relay_handler = proto_tx.TxRelayHandler(
             cfg=self.cfg,
             codec=codec,
