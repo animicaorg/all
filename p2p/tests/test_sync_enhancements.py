@@ -194,7 +194,7 @@ class TestSequentialSyncFix:
         
         # ASSERT: Canonical head should have advanced to height 3
         assert chain.canonical_head == b"block3", \
-            f"Canonical head should advance to height 3, got {chain.canonical_head.hex()}"
+            f"Canonical head should advance to height 3, got {chain.canonical_head.hex() if chain.canonical_head else None}"
         assert chain.head_height == 3, \
             f"Head height should be 3, got {chain.head_height}"
         assert all(h in chain.headers for h in [b"block1", b"block2", b"block3"]), \
