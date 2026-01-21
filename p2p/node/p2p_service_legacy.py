@@ -81,6 +81,9 @@ from p2p.sync.cache_store import SyncCacheConfig, SyncCacheState, SyncCacheStore
 
 log = logging.getLogger("animica.p2p.service")
 
+# Genesis hash constants
+GENESIS_FALLBACK = b"\x00" * 32  # Fallback genesis hash when no real genesis is available
+
 # Sync performance tuning constants
 MIN_SYNC_TICK_SEC: float = 0.001  # Minimum sync tick interval (1ms) - ultra aggressive for maximum sync speed
 LOCATOR_PARENT_CHAIN_VALIDATION_DEPTH: int = 3  # Number of parent hashes to walk back when validating locator start point
@@ -6470,7 +6473,6 @@ class P2PService:
 
         # FIX: Be permissive when local genesis is fallback (all zeros)
         # This allows nodes with missing genesis config to learn from peers
-        GENESIS_FALLBACK = b"\x00" * 32
         local_is_fallback = local_genesis_header == GENESIS_FALLBACK
         
         if peer_genesis_header and peer_genesis_header != local_genesis_header:
@@ -10419,7 +10421,6 @@ class P2PService:
             FIX: Excludes the fallback genesis hash (all zeros) to ensure defensive
             fix triggers when no real genesis hash is available.
             """
-            GENESIS_FALLBACK = b"\x00" * 32
             valid_hashes = {expected_genesis, expected_genesis_block}
             if include_anchor_hash:
                 valid_hashes.add(anchor_hash)

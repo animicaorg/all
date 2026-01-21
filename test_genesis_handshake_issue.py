@@ -8,7 +8,7 @@ def test_genesis_hash_validation():
     """
     Test genesis hash validation logic in handshake.
     
-    Simulates the issue where local node has b"\\x00" * 32 as genesis hash fallback,
+    Simulates the issue where local node has b"\x00" * 32 as genesis hash fallback,
     but peers have the actual genesis hash, causing handshake failures.
     """
     print("\n" + "="*70)
