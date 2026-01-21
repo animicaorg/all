@@ -1177,6 +1177,34 @@ async def add_peer(address: str) -> dict[str, t.Any]:
 @method("p2p.importPeers", desc="Persist and dial a list of peers")
 async def import_peers(addresses: list[str]) -> dict[str, t.Any]:
     svc = _get_p2p_service()
+    if svc is not None and hasattr(svc, "import_peers"):
+        # Call the service's import_peers method which will dial immediately
+        try:
+            result = await _safe_call_method(svc, "import_peers", addresses)
+            if result is not None:
+                store = _resolve_peer_store_paths(svc, None)
+                peer_counts = _peer_counts_snapshot()
+                return _build_import_response(
+                    ok=result.get("ok", False),
+                    imported=result.get("imported", 0),
+                    skipped=result.get("skipped", 0),
+                    invalid=result.get("invalid", 0),
+                    store=store,
+                    message="peers imported and dial attempts started",
+                    errors=result.get("errors"),
+                    extra={
+                        "dial_attempted": result.get("dial_attempted", 0),
+                        "dial_success": result.get("dial_success", 0),
+                        "seeds_added": result.get("imported", 0),
+                        "seeds_skipped": result.get("skipped", 0),
+                        "dial_attempts_started": result.get("dial_attempted", 0),
+                        **peer_counts,
+                    },
+                )
+        except Exception as e:
+            log.error("Failed to import peers via service: %s", e, exc_info=True)
+            # Fall through to alternative methods
+    
     if svc is None:
         core_svc = _get_core_p2p_service()
         if core_svc is None or not hasattr(core_svc, "addrman"):

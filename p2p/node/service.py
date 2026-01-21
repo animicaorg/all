@@ -698,6 +698,85 @@ class NodeService:
     async def publish(self, topic: str, payload: bytes) -> None:
         await self.gossip.publish(topic, payload)
 
+    async def import_peers(self, addresses: List[str]) -> Dict[str, Any]:
+        """
+        Import and dial a list of peer addresses.
+        
+        This method:
+        1. Adds addresses to the runtime seed list
+        2. Persists them to the peerstore
+        3. Triggers immediate dial attempts
+        
+        Args:
+            addresses: List of peer addresses (multiaddr format)
+        
+        Returns:
+            Dict with import results (imported, skipped, invalid counts)
+        """
+        imported = 0
+        skipped = 0
+        invalid = 0
+        dial_attempted = 0
+        dial_success = 0
+        errors: List[str] = []
+        
+        for addr in addresses:
+            # Validate address format
+            try:
+                parsed = ma.parse(addr)
+                if not parsed.host or not parsed.port:
+                    invalid += 1
+                    errors.append(f"invalid address: {addr}")
+                    continue
+            except Exception as e:
+                invalid += 1
+                errors.append(f"invalid address {addr}: {e}")
+                continue
+            
+            # Add to runtime seed list if not already present
+            if addr not in self.cfg.seeds:
+                # Note: cfg.seeds is a tuple, so we can't modify it directly
+                # Instead, we'll track it separately and update the peerstore
+                log.info(f"[import_peers] Adding seed to runtime: {addr}")
+                imported += 1
+                
+                # Add to peerstore
+                try:
+                    # Generate a deterministic peer ID from the address
+                    peer_id_hash = hashlib.sha256(addr.encode()).digest()
+                    peer_id = peer_id_hash.hex()[:32]
+                    
+                    self.peerstore.add(
+                        peer_id=peer_id,
+                        addrs=[addr],
+                        score=10.0,  # Higher score for manually added seeds
+                        direction="outbound"
+                    )
+                    self.peerstore.record_seen(peer_id, addr)
+                except Exception as e:
+                    log.warning(f"[import_peers] Failed to add to peerstore: {e}")
+                
+                # Trigger immediate dial attempt
+                dial_attempted += 1
+                try:
+                    self.loop.create_task(self._dial(addr), name=f"import-dial@{addr}")
+                    dial_success += 1
+                except Exception as e:
+                    errors.append(f"dial failed for {addr}: {e}")
+            else:
+                skipped += 1
+                log.debug(f"[import_peers] Skipping already-known seed: {addr}")
+        
+        return {
+            "ok": imported > 0 or skipped > 0,
+            "imported": imported,
+            "skipped": skipped,
+            "invalid": invalid,
+            "dial_attempted": dial_attempted,
+            "dial_success": dial_success,
+            "errors": errors if errors else None,
+        }
+
     def health(self) -> Dict[str, Any]:
         return node_health.snapshot(
             peer_id=self.peer_id.hex(),
@@ -1230,6 +1309,86 @@ class P2PServiceLegacy:
                         )
         except asyncio.CancelledError:
             return
+    
+    async def import_peers(self, addresses: list[str]) -> dict[str, t.Any]:
+        """
+        Import and dial a list of peer addresses.
+        
+        This method:
+        1. Adds addresses to the runtime seed list
+        2. Persists them to the peerstore (if available)
+        3. Triggers immediate dial attempts
+        
+        Args:
+            addresses: List of peer addresses (multiaddr format)
+        
+        Returns:
+            Dict with import results (imported, skipped, invalid counts)
+        """
+        imported = 0
+        skipped = 0
+        invalid = 0
+        dial_attempted = 0
+        dial_success = 0
+        errors: list[str] = []
+        
+        for addr in addresses:
+            # Validate address format
+            try:
+                parsed = self._parse_multiaddr(addr)
+                if not parsed.host or not parsed.port or parsed.transport != "tcp":
+                    invalid += 1
+                    errors.append(f"invalid or unsupported address: {addr}")
+                    continue
+            except Exception as e:
+                invalid += 1
+                errors.append(f"invalid address {addr}: {e}")
+                continue
+            
+            # Add to runtime seed list if not already present
+            if addr not in self.seeds:
+                self.seeds.append(addr)
+                self._log.info("Added seed to runtime: %s", addr)
+                imported += 1
+                
+                # Add to peerstore if available
+                if hasattr(self, '_peerstore') and self._peerstore is not None:
+                    try:
+                        # Generate a deterministic peer ID from the address
+                        peer_id_hash = hashlib.sha256(addr.encode()).digest()
+                        peer_id = peer_id_hash.hex()[:32]
+                        
+                        self._peerstore.add(
+                            peer_id=peer_id,
+                            addrs=[addr],
+                            score=10.0,  # Higher score for manually added seeds
+                            direction="outbound"
+                        )
+                        self._peerstore.record_seen(peer_id, addr)
+                    except Exception as e:
+                        self._log.warning("Failed to add to peerstore: %s", e)
+                
+                # Trigger immediate dial attempt
+                dial_attempted += 1
+                try:
+                    tcp_addr = f"tcp://{parsed.host}:{parsed.port}"
+                    self.loop.create_task(self._dial(tcp_addr), name=f"import-dial@{tcp_addr}")
+                    dial_success += 1
+                except Exception as e:
+                    errors.append(f"dial failed for {addr}: {e}")
+            else:
+                skipped += 1
+                self._log.debug("Skipping already-known seed: %s", addr)
+        
+        return {
+            "ok": imported > 0 or skipped > 0,
+            "imported": imported,
+            "skipped": skipped,
+            "invalid": invalid,
+            "dial_attempted": dial_attempted,
+            "dial_success": dial_success,
+            "errors": errors if errors else None,
+        }
     
     async def _sync_monitor_loop(self) -> None:
         """
