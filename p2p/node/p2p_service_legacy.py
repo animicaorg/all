@@ -11237,11 +11237,12 @@ class P2PService:
             # even if target_height == 0. At genesis, nodes need to stay ready to sync
             # so they can receive the first block when it's mined. Without this fix,
             # two nodes at genesis think they've "reached target" and stop syncing.
+            is_at_genesis = local_height == 0
             if (
                 self._sync_target_height is not None
                 and local_height >= self._sync_target_height
                 and not force
-                and local_height > 0  # FIX: Exclude genesis case
+                and not is_at_genesis  # Exclude genesis case
             ):
                 self._sync_phase = "TARGET_REACHED"
                 return result
@@ -11465,7 +11466,8 @@ class P2PService:
                             # CRITICAL FIX: Don't mark as SYNCED/IDLE at genesis even if target == 0
                             # At genesis, nodes must stay ready to sync so they can receive the first
                             # block when it's mined. Otherwise two nodes at genesis stop syncing.
-                            if target_height is not None and local_height >= target_height and local_height > 0:
+                            is_at_genesis = local_height == 0
+                            if target_height is not None and local_height >= target_height and not is_at_genesis:
                                 self._sync_phase = "SYNCED"
                             log.debug(
                                 "Skipped header request: already at tip",
