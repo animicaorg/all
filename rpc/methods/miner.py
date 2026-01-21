@@ -1256,21 +1256,60 @@ def _mining_gate(
         # Status unavailable - allow mining (graceful degradation)
         return True, None
     
-    # Check minimum peer requirement (connectivity check, not execution check)
-    outbound = int(p2p_status.get("peers_outbound", 0))
+    # FIX: Use peers_connected (identity verified) instead of peers_total (includes handshaking)
+    # This ensures mining only happens when we have fully connected, validated peers
+    peers_connected = int(p2p_status.get("peers_connected", 0))
     peers_total = int(p2p_status.get("peers_total", 0))
+    peers_handshaking = int(p2p_status.get("peers_handshaking", 0))
+    outbound_connected = int(p2p_status.get("peers_connected_outbound", 0))
     min_peers = int(os.getenv("ANIMICA_MINING_MIN_PEERS", "1"))
     
-    if min_peers > 0 and peers_total < min_peers:
+    # Log peer breakdown for debugging
+    if peers_handshaking > 0 or peers_connected != peers_total:
+        log.debug(
+            "Mining gate peer check",
+            extra={
+                "peers_connected": peers_connected,
+                "peers_handshaking": peers_handshaking,
+                "peers_total": peers_total,
+                "min_peers": min_peers,
+            },
+        )
+    
+    # Check minimum CONNECTED peer requirement (not just handshaking)
+    if min_peers > 0 and peers_connected < min_peers:
         if allow_offline_mining:
             log.warning(
-                "MINER_ALLOW_OFFLINE",
-                extra={"peers": peers_total, "min_peers": min_peers},
+                "MINER_ALLOW_OFFLINE - insufficient connected peers",
+                extra={
+                    "peers_connected": peers_connected,
+                    "peers_handshaking": peers_handshaking,
+                    "min_peers": min_peers,
+                },
             )
         else:
+            log.info(
+                "Mining template unavailable - insufficient connected peers",
+                extra={
+                    "peers_connected": peers_connected,
+                    "peers_handshaking": peers_handshaking,
+                    "peers_total": peers_total,
+                    "min_peers": min_peers,
+                    "reason": "insufficient_peers",
+                },
+            )
             return False, "insufficient_peers"
     
-    if not allow_offline_mining and outbound <= 0 and peers_total <= 0:
+    # Offline mining check - require at least one outbound CONNECTED peer
+    if not allow_offline_mining and outbound_connected <= 0 and peers_connected <= 0:
+        log.info(
+            "Mining template unavailable - no outbound connected peers",
+            extra={
+                "peers_connected": peers_connected,
+                "outbound_connected": outbound_connected,
+                "reason": "offline_no_outbound_peers",
+            },
+        )
         return False, "offline_no_outbound_peers"
     
     # Require the node to be fully synced before exposing mining templates.
