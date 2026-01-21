@@ -63,7 +63,8 @@ def _parse_seed(addr: str) -> Optional[NetAddress]:
     resolved = _resolve_host(addr)
     if resolved is None:
         return None
-    return None
+    # No port specified - use default port 30333
+    return NetAddress(services=1, ip=resolved, port=30333)
 
 
 @dataclass
