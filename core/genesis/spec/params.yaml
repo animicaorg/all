@@ -1,4 +1,4 @@
-# Core chain parameters for Animica mainnet (chain_id=0).
+# Core chain parameters for Animica mainnet (chain_id=1).
 # This file is referenced by core/genesis/genesis.json via paramsRef.path.
 
 chain:
@@ -6,8 +6,8 @@ chain:
   name: "Animica Mainnet"
 
 genesis:
-  time: "2026-01-01T00:00:00Z"
-  hash: "0x6a27e93193020cd00fe429ef0ffac1c3a774268a589c2911ac396dd3cba2d242"
+  time: "2026-01-21T00:00:00Z"
+  hash: "0x753d4c91c89cab828fe1d52e55553b0de74863ce5dfdfe0f81eb6196e88728c2"
 
 policy_roots:
   alg_policy_root: "0x0000000000000000000000000000000000000000000000000000000000000000"
