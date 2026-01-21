@@ -205,23 +205,41 @@ class NetProcessing:
         payload = InvMessage(
             [InventoryVector(inv_type=INV_TYPE_BLOCK, inv_hash=h) for h in batch]
         ).serialize()
-        await send("getdata", payload)
+        try:
+            await send("getdata", payload)
+        except Exception as exc:
+            # Send failed - return blocks to pending queue to retry later
+            log.debug("failed to send getdata for blocks, will retry", exc_info=exc)
+            for h in batch:
+                self.sync.pending_blocks.append(h)
+                self.sync.pending_set.add(h)
+            raise
 
     async def announce_block(self, peers: Iterable[PeerState], block_hash: bytes, send) -> None:
         inv = InventoryVector(inv_type=INV_TYPE_BLOCK, inv_hash=block_hash)
         payload = InvMessage([inv]).serialize()
         for peer in peers:
             if block_hash not in peer.known_inventory:
-                peer.known_inventory.add(block_hash)
-                await send(peer, "inv", payload)
+                try:
+                    await send(peer, "inv", payload)
+                    # Only mark as known after successful send
+                    peer.known_inventory.add(block_hash)
+                except Exception as exc:
+                    log.debug("failed to announce block to peer", exc_info=exc, extra={"peer": peer.peer_id})
+                    continue
 
     async def announce_tx(self, peers: Iterable[PeerState], tx_hash: bytes, send) -> None:
         inv = InventoryVector(inv_type=INV_TYPE_TX, inv_hash=tx_hash)
         payload = InvMessage([inv]).serialize()
         for peer in peers:
             if tx_hash not in peer.known_inventory:
-                peer.known_inventory.add(tx_hash)
-                await send(peer, "inv", payload)
+                try:
+                    await send(peer, "inv", payload)
+                    # Only mark as known after successful send
+                    peer.known_inventory.add(tx_hash)
+                except Exception as exc:
+                    log.debug("failed to announce tx to peer", exc_info=exc, extra={"peer": peer.peer_id})
+                    continue
 
     def _block_hash(self, payload: bytes) -> bytes:
         getter = getattr(self.chain, "block_hash", None)

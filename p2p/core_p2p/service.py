@@ -169,7 +169,8 @@ class CoreP2PService:
         while self.connman.outbound_count() < self.max_outbound and attempts < max_attempts:
             candidate = self.addrman.select()
             if candidate is None:
-                return
+                # No peers available yet - break to retry in next dial_interval
+                break
             attempts += 1
             try:
                 await self.connman.dial(candidate)
