@@ -1265,20 +1265,23 @@ def _mining_gate(
     min_peers = int(os.getenv("ANIMICA_MINING_MIN_PEERS", "1"))
     
     # Helper for consistent peer-related error messages
-    def _peer_error_guidance() -> str:
-        """Return standard guidance for peer connection issues."""
+    def _peer_error_guidance(status: dict[str, t.Any]) -> str:
+        """Return standard guidance for peer connection issues.
+        
+        Args:
+            status: P2P status dict containing dial_last_error if available
+        """
         guidance = "Try: 'animica peer bootstrap' to connect to peers"
         
         # Include last dial error if available
-        if p2p_status and isinstance(p2p_status, dict):
-            dial_error = p2p_status.get("dial_last_error")
-            if dial_error and isinstance(dial_error, dict):
-                error_msg = dial_error.get("error") or dial_error.get("message")
-                error_peer = dial_error.get("peer") or dial_error.get("address")
-                if error_msg and error_peer:
-                    guidance += f". Last dial failed: {error_peer} ({error_msg})"
-                elif error_msg:
-                    guidance += f". Last dial error: {error_msg}"
+        dial_error = status.get("dial_last_error") if status else None
+        if dial_error and isinstance(dial_error, dict):
+            error_msg = dial_error.get("error") or dial_error.get("message")
+            error_peer = dial_error.get("peer") or dial_error.get("address")
+            if error_msg and error_peer:
+                guidance += f". Last dial failed: {error_peer} ({error_msg})"
+            elif error_msg:
+                guidance += f". Last dial error: {error_msg}"
         
         guidance += ". Check: 'animica p2p doctor' for diagnostics, or set ANIMICA_MINING_MIN_PEERS=0 for local development."
         return guidance
@@ -1323,7 +1326,7 @@ def _mining_gate(
             if peers_handshaking > 0:
                 peer_status += f", handshaking: {peers_handshaking}"
             peer_status += f", required: {min_peers}"
-            reason_msg = f"insufficient_peers ({peer_status}). {_peer_error_guidance()}"
+            reason_msg = f"insufficient_peers ({peer_status}). {_peer_error_guidance(p2p_status)}"
             return False, reason_msg
     
     # Offline mining check - require at least one outbound CONNECTED peer
@@ -1338,7 +1341,7 @@ def _mining_gate(
             },
         )
         # Provide actionable guidance
-        reason_msg = f"offline_no_outbound_peers (no connected peers). {_peer_error_guidance()}"
+        reason_msg = f"offline_no_outbound_peers (no connected peers). {_peer_error_guidance(p2p_status)}"
         return False, reason_msg
     
     # Require the node to be fully synced before exposing mining templates.

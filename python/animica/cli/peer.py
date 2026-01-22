@@ -452,6 +452,7 @@ async def _wait_for_connections(
     start = time.time()
     check_interval = 0.5  # Start with 0.5s checks
     max_interval = 2.0
+    backoff_factor = 1.5  # Exponential backoff multiplier
     
     while True:
         elapsed = time.time() - start
@@ -479,7 +480,7 @@ async def _wait_for_connections(
         
         # Exponential backoff
         await asyncio.sleep(check_interval)
-        check_interval = min(check_interval * 1.5, max_interval)
+        check_interval = min(check_interval * backoff_factor, max_interval)
     
     # Timeout
     final_status, _ = _fetch_peer_status(rpc_url)
