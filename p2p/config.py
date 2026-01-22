@@ -332,6 +332,9 @@ class FlowControlConfig:
 
 @dataclass(frozen=True, slots=True)
 class P2PConfig:
+    # Network identification
+    chain_id: int = 0  # Chain ID for network identification (0=mainnet, 1337=devnet, 2=testnet)
+    
     # Transports
     enable_tcp: bool = True
     enable_quic: bool = True
