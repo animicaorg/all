@@ -6330,6 +6330,7 @@ class P2PService:
             await self._handle_hello(peer, payload)
             return
         if mid == int(MsgID.HELLO_ACK):
+            await self._handle_hello_ack(peer, payload)
             return
         if mid == int(MsgID.GET_PEERS):
             await self._handle_get_peers(peer, payload)
@@ -7189,6 +7190,111 @@ class P2PService:
                 self._close_feeler_after_delay(peer),
                 name=f"p2p.feeler_close@{peer.remote}",
             )
+
+    async def _handle_hello_ack(self, peer: _PeerState, payload: bytes) -> None:
+        """
+        Handle HELLO_ACK message from peer (response to our HELLO).
+        
+        This completes the handshake for the initiating side:
+        - Responder (receives HELLO first): Sets identity_ok in _handle_hello()
+        - Initiator (sends HELLO first): Sets identity_ok here in _handle_hello_ack()
+        
+        Without this handler, initiating peers never complete the handshake!
+        """
+        try:
+            data = self._decode_map(payload)
+            allowed = set(HelloAck.__dataclass_fields__)
+            ack = HelloAck(**{k: v for k, v in data.items() if k in allowed})
+        except Exception as e:
+            log.warning(
+                "Failed to decode HELLO_ACK",
+                extra={
+                    "remote": peer.remote,
+                    "peer_id": peer.peer_id,
+                    "error": str(e),
+                },
+            )
+            raise PeerMisbehavior("invalid_hello_ack", points=50)
+        
+        if not ack.accepted:
+            reason = ack.reason or "unknown"
+            log.warning(
+                "HELLO_ACK rejected by peer",
+                extra={
+                    "remote": peer.remote,
+                    "peer_id": peer.peer_id,
+                    "reason": reason,
+                },
+            )
+            raise PeerMisbehavior(f"hello_rejected:{reason}", points=0)
+        
+        # HELLO_ACK accepted - complete handshake for initiator side
+        if not peer.identity_ok:
+            peer.identity_ok = True
+            peer.hello_done.set()
+            
+            log.info(
+                "HELLO_ACK received, handshake complete (initiator side)",
+                extra={
+                    "remote": peer.remote,
+                    "peer_id": peer.peer_id,
+                    "session_id": peer.session_id,
+                    "direction": peer.direction,
+                },
+            )
+            
+            # Notify HandshakeManager of identity validation
+            if peer.hello:
+                # We already received their HELLO message, now confirming handshake with their ACK
+                try:
+                    success, error = self._handshake_manager.on_identity_received(
+                        session_id=peer.session_id,
+                        chain_id=int(peer.hello.get("chain_id", 0)),
+                        genesis_hash=self._canon_hash0x(
+                            peer.hello.get("genesis_header_hash")
+                            or peer.hello.get("genesis_hash")
+                            or peer.hello.get("genesis_block_hash")
+                        ) or "",
+                    )
+                    if not success:
+                        log.warning(
+                            "HandshakeManager rejected identity in HELLO_ACK flow",
+                            extra={
+                                "remote": peer.remote,
+                                "peer_id": peer.peer_id,
+                                "error": error,
+                            },
+                        )
+                        raise PeerMisbehavior(f"identity_failed:{error}", points=10)
+                except Exception as e:
+                    log.warning(
+                        "HandshakeManager notification failed in HELLO_ACK flow",
+                        extra={
+                            "remote": peer.remote,
+                            "peer_id": peer.peer_id,
+                            "error": str(e),
+                        },
+                    )
+            
+            # Notify TipManager
+            try:
+                should_request_tip = self._tip_manager.on_handshake_complete(peer.session_id)
+                if should_request_tip:
+                    log.debug(
+                        "TipManager: handshake complete via HELLO_ACK",
+                        extra={
+                            "remote": peer.remote,
+                            "peer_id": peer.peer_id,
+                        },
+                    )
+            except Exception as e:
+                log.debug(
+                    "TipManager notification failed in HELLO_ACK flow",
+                    extra={"remote": peer.remote, "error": str(e)},
+                )
+            
+            # Wake sync to start processing this peer
+            self._sync_wakeup.set()
 
     async def _handle_get_peers(self, peer: _PeerState, payload: bytes) -> None:
         now = time.time()
