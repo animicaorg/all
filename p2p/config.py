@@ -525,6 +525,7 @@ def load_config() -> P2PConfig:
         max_inbound = max(0, max_peers - max_outbound)
 
     return P2PConfig(
+        chain_id=chain_id or 0,  # Use parsed chain_id or default to 0 (mainnet)
         enable_tcp=enable_tcp,
         enable_quic=enable_quic,
         enable_ws=enable_ws,
