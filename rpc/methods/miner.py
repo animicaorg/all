@@ -1304,7 +1304,11 @@ def _mining_gate(
                 },
             )
             # Provide actionable guidance in the reason message
-            reason_msg = f"insufficient_peers (connected: {peers_connected}, required: {min_peers}). {_peer_error_guidance()}"
+            # Include handshaking peer count to help diagnose the issue
+            if peers_handshaking > 0:
+                reason_msg = f"insufficient_peers (connected: {peers_connected}, handshaking: {peers_handshaking}, required: {min_peers}). {_peer_error_guidance()}"
+            else:
+                reason_msg = f"insufficient_peers (connected: {peers_connected}, required: {min_peers}). {_peer_error_guidance()}"
             return False, reason_msg
     
     # Offline mining check - require at least one outbound CONNECTED peer
