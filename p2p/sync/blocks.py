@@ -442,3 +442,7 @@ class BlocksSyncService:
             except Exception as e:  # noqa: BLE001
                 print(f"[blocks] segment sync error: {e!r}")
                 await asyncio.sleep(min(2 * self.cfg.idle_backoff_sec, 2.0))
+
+
+# Alias for backward compatibility and consistency with __init__.py exports
+BlockSync = BlocksSyncService
