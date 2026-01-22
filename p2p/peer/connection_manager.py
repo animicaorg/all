@@ -25,19 +25,17 @@ except Exception:  # pragma: no cover
             return "transport"
 
 
-try:
-    from p2p.peer.peer import Peer  # type: ignore
-except Exception:  # pragma: no cover
-
-    @dataclass
-    class Peer:  # type: ignore
-        peer_id: str
-        address: str
-        conn: Conn
-        direction: str  # "inbound" | "outbound"
-        last_rtt_ms: Optional[float] = None
-        last_seen: float = field(default_factory=lambda: time.time())
-        meta: Dict[str, Any] = field(default_factory=dict)
+# Use a simple Peer definition for ConnectionManager
+# The full p2p.peer.Peer is too complex and doesn't store connections
+@dataclass
+class Peer:  # type: ignore
+    peer_id: str
+    address: str
+    conn: Conn
+    direction: str  # "inbound" | "outbound"
+    last_rtt_ms: Optional[float] = None
+    last_seen: float = field(default_factory=lambda: time.time())
+    meta: Dict[str, Any] = field(default_factory=dict)
 
 
 try:
@@ -232,6 +230,25 @@ class ConnectionManager:
 
     def list_peers(self) -> List[Peer]:
         return [s.peer for s in self._peers_by_id.values()]
+    
+    def snapshot(self) -> Dict[str, Any]:
+        """Return a snapshot of current connection state for health/status reporting."""
+        return {
+            "total": len(self._peers_by_id),
+            "outbound": sum(1 for s in self._peers_by_id.values() if s.direction == "outbound"),
+            "inbound": sum(1 for s in self._peers_by_id.values() if s.direction == "inbound"),
+            "target_outbound": self.cfg.target_outbound,
+            "peers": [
+                {
+                    "peer_id": s.peer.peer_id,
+                    "address": s.addr,
+                    "direction": s.direction,
+                    "connected_at": s.connected_at,
+                    "last_rtt_ms": s.last_rtt_ms,
+                }
+                for s in self._peers_by_id.values()
+            ],
+        }
 
     def set_outbound_target(self, n: int) -> None:
         self.cfg.target_outbound = max(0, min(self.cfg.max_outbound, int(n)))

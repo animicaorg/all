@@ -332,6 +332,9 @@ class FlowControlConfig:
 
 @dataclass(frozen=True, slots=True)
 class P2PConfig:
+    # Network identification
+    chain_id: int = 0  # Chain ID for network identification (0=mainnet, 1337=devnet, 2=testnet)
+    
     # Transports
     enable_tcp: bool = True
     enable_quic: bool = True
@@ -522,6 +525,7 @@ def load_config() -> P2PConfig:
         max_inbound = max(0, max_peers - max_outbound)
 
     return P2PConfig(
+        chain_id=chain_id or 0,  # Use parsed chain_id or default to 0 (mainnet)
         enable_tcp=enable_tcp,
         enable_quic=enable_quic,
         enable_ws=enable_ws,

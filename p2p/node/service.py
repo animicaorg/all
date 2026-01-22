@@ -206,11 +206,41 @@ class NodeService:
             per_topic=self.cfg.limit_per_topic,
             global_limits=self.cfg.limit_global,
         )
+        
+        # Create AddressBook for ConnectionManager
+        from ..peer.address_book import AddressBook
+        addr_book_path = Path(self.cfg.data_dir) / "address_book.db"
+        self.addr_book = AddressBook(addr_book_path)
+        
+        # Add seed addresses to the address book
+        for seed_addr in self.cfg.seeds:
+            try:
+                self.addr_book.add(seed_addr, tag="seed")
+            except Exception as e:
+                log.warning(f"Failed to add seed address {seed_addr}: {e}")
+        
+        # Create a primary transport (TCP is always available)
+        from ..transport.tcp import TcpTransport
+        self._primary_transport = TcpTransport(
+            handshake_prologue=self.cfg.handshake_hkdf_salt,
+            chain_id=self.cfg.chain_id,
+            network_magic=NETWORK_MAGIC,
+        )
+        
+        # Create ConnectionManager config
+        cm_cfg = conman.CMConfig(
+            target_outbound=self.cfg.max_outbound or 16,
+            max_outbound=self.cfg.max_outbound or 32,
+            max_inbound=self.cfg.max_inbound or 128,
+            dial_timeout_s=self.cfg.dial_timeout,
+            verbosity=1 if log.level <= logging.INFO else 0,
+        )
+        
+        # Initialize ConnectionManager with correct signature
         self.connmgr = conman.ConnectionManager(
-            cfg=self.cfg,
-            peerstore=self.peerstore,
-            ratelimiter=self.ratelimiter,
-            loop=self.loop,
+            transport=self._primary_transport,
+            addr_book=self.addr_book,
+            cfg=cm_cfg,
         )
         self.events = node_events.EventBus(self.loop)
         self.router = node_router.Router(loop=self.loop, events=self.events)
@@ -303,10 +333,12 @@ class NodeService:
         # Start BlockAnnounceHandler (Phase 6)
         await self.block_announce_handler.start()
 
+        # Start ConnectionManager
+        await self.connmgr.start()
+        
         # Start background services
         self._tasks.extend(
             [
-                self.loop.create_task(self.connmgr.run(), name="connmgr"),
                 self.loop.create_task(self.gossip.run(), name="gossip"),
                 self.loop.create_task(self.ping.run(), name="ping"),
                 self.loop.create_task(self.identify.run(), name="identify"),
@@ -348,7 +380,7 @@ class NodeService:
 
         # Stop subordinate services that own resources
         await self.gossip.close()
-        await self.connmgr.close()
+        await self.connmgr.stop()
 
         self.started = False
         log.info("P2P node stopped")
@@ -1717,10 +1749,9 @@ class P2PService:
         peerstore_path = str(writable_peerstore.path)
         
         # Create P2PConfig for NodeService
-        # Note: P2PConfig doesn't have chain_id field - it uses network identification
-        # through network_manifest (loaded in NodeService.__post_init__). We use chain_id
-        # here only for peerstore path resolution and store it for compatibility.
+        # Pass chain_id to config so NodeService can use it for transports
         cfg = P2PConfig(
+            chain_id=chain_id,
             listen_multiaddrs=tuple(self.listen_addrs),
             seeds=tuple(self.seeds),
             data_dir=peerstore_path,
