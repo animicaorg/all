@@ -401,19 +401,88 @@ def _fetch_peer_status(rpc_url: str) -> tuple[Optional[Dict[str, Any]], Optional
 
 
 def _print_peer_status(status: Dict[str, Any]) -> None:
-    peers_total = status.get("peers_total")
-    inbound = status.get("peers_inbound")
-    outbound = status.get("peers_outbound")
+    """Print peer status with connected vs total distinction."""
+    peers_total = status.get("peers_total", 0)
+    peers_connected = status.get("peers_connected", 0)
+    peers_handshaking = status.get("peers_handshaking", 0)
+    connected_inbound = status.get("peers_connected_inbound", 0)
+    connected_outbound = status.get("peers_connected_outbound", 0)
+    inbound = status.get("peers_inbound", 0)
+    outbound = status.get("peers_outbound", 0)
     dial_error = status.get("dial_last_error")
-    typer.secho(
-        f"Peers: {peers_total} total (inbound {inbound} / outbound {outbound})",
-        fg=typer.colors.GREEN,
-    )
+    
+    # Show connected vs total with breakdown
+    if peers_connected != peers_total or peers_handshaking > 0:
+        typer.secho(
+            f"Peers: connected={peers_connected} (inbound={connected_inbound}, outbound={connected_outbound}) "
+            f"handshaking={peers_handshaking} total={peers_total}",
+            fg=typer.colors.GREEN if peers_connected > 0 else typer.colors.YELLOW,
+        )
+    else:
+        # Fallback to legacy format if connected fields not available
+        typer.secho(
+            f"Peers: {peers_total} total (inbound {inbound} / outbound {outbound})",
+            fg=typer.colors.GREEN if peers_total > 0 else typer.colors.YELLOW,
+        )
     if dial_error:
         typer.secho(
             f"Last dial error: {dial_error}",
             fg=typer.colors.YELLOW,
         )
+
+
+async def _wait_for_connections(
+    rpc_url: str,
+    initial_connected: int,
+    timeout_sec: float,
+    min_new_connections: int = 1,
+) -> Tuple[bool, int, Optional[str]]:
+    """
+    Wait for new peer connections to be established.
+    
+    Args:
+        rpc_url: RPC endpoint to query
+        initial_connected: Initial connected peer count before bootstrap
+        timeout_sec: Maximum time to wait in seconds
+        min_new_connections: Minimum number of new connections required
+        
+    Returns:
+        Tuple of (success, final_connected_count, error_message)
+    """
+    start = time.time()
+    elapsed = 0.0
+    check_interval = 0.5  # Start with 0.5s checks
+    max_interval = 2.0
+    
+    while elapsed < timeout_sec:
+        status, error = _fetch_peer_status(rpc_url)
+        if error:
+            return False, initial_connected, error
+            
+        if status:
+            peers_connected = status.get("peers_connected", 0)
+            new_connections = peers_connected - initial_connected
+            
+            if new_connections >= min_new_connections:
+                return True, peers_connected, None
+                
+            # Show progress
+            peers_handshaking = status.get("peers_handshaking", 0)
+            if peers_handshaking > 0:
+                typer.echo(
+                    f"  Waiting for connections... connected={peers_connected} handshaking={peers_handshaking} "
+                    f"(elapsed {elapsed:.1f}s/{timeout_sec}s)"
+                )
+        
+        # Exponential backoff
+        await asyncio.sleep(check_interval)
+        elapsed = time.time() - start
+        check_interval = min(check_interval * 1.5, max_interval)
+    
+    # Timeout
+    final_status, _ = _fetch_peer_status(rpc_url)
+    final_connected = final_status.get("peers_connected", initial_connected) if final_status else initial_connected
+    return False, final_connected, f"timeout after {timeout_sec}s"
 
 
 def _generate_peer_id(address: str) -> str:
@@ -1244,6 +1313,16 @@ def bootstrap_peers(
         "--start-node",
         help="Start a local node if it is not running, then push seeds",
     ),
+    wait: Optional[float] = typer.Option(
+        10.0,
+        "--wait",
+        help="Seconds to wait for peer connections (0 or --no-wait to skip)",
+    ),
+    no_wait: bool = typer.Option(
+        False,
+        "--no-wait",
+        help="Don't wait for connections after bootstrap",
+    ),
 ) -> None:
     """
     Connect to bootstrap/seed nodes for the network.
@@ -1390,17 +1469,83 @@ def bootstrap_peers(
                     break
 
             if rpc_added:
+                # Extract detailed counters from import result
+                imported = last_import_result.get("imported", 0) if isinstance(last_import_result, dict) else 0
+                dial_attempted = last_import_result.get("dial_attempted", 0) if isinstance(last_import_result, dict) else 0
+                dial_success = last_import_result.get("dial_success", 0) if isinstance(last_import_result, dict) else 0
+                
+                # Show detailed import summary
                 summary = _rpc_import_summary(last_import_result)
                 suffix = f" ({summary})" if summary else ""
                 typer.secho(
                     f"✓ Pushed {stored} seed(s) into running node{suffix}",
                     fg=typer.colors.GREEN,
                 )
-                status, status_error = _fetch_peer_status(target_rpc)
-                if status:
-                    _print_peer_status(status)
+                
+                # Show dial attempt counters if available
+                if dial_attempted > 0:
+                    typer.echo(f"  Dial attempts: {dial_attempted}, succeeded: {dial_success}")
+                
+                # Get initial peer status
+                initial_status, status_error = _fetch_peer_status(target_rpc)
+                initial_connected = 0
+                if initial_status:
+                    initial_connected = initial_status.get("peers_connected", 0)
+                    _print_peer_status(initial_status)
                 elif status_error:
                     typer.secho(f"⚠ Unable to refresh peer status: {status_error}", fg=typer.colors.YELLOW)
+                
+                # Wait for connections if requested
+                wait_time = 0.0 if no_wait else (wait or 0.0)
+                if wait_time > 0 and dial_attempted > 0:
+                    typer.echo()
+                    typer.echo(f"Waiting up to {wait_time}s for peer connections to establish...")
+                    
+                    success, final_connected, wait_error = asyncio.run(
+                        _wait_for_connections(target_rpc, initial_connected, wait_time, min_new_connections=1)
+                    )
+                    
+                    if success:
+                        typer.secho(
+                            f"✓ Connected to {final_connected - initial_connected} new peer(s) (total: {final_connected})",
+                            fg=typer.colors.GREEN,
+                            bold=True,
+                        )
+                        # Show final status
+                        final_status, _ = _fetch_peer_status(target_rpc)
+                        if final_status:
+                            _print_peer_status(final_status)
+                    else:
+                        typer.secho(
+                            f"⚠ No new connections established after {wait_time}s",
+                            fg=typer.colors.YELLOW,
+                        )
+                        if wait_error:
+                            typer.echo(f"  Reason: {wait_error}")
+                        
+                        # Show diagnostics
+                        if isinstance(last_import_result, dict):
+                            errors = last_import_result.get("errors", [])
+                            if errors:
+                                typer.echo()
+                                typer.secho("Dial errors:", fg=typer.colors.YELLOW)
+                                for err in errors[:5]:  # Show first 5 errors
+                                    typer.echo(f"  - {err}")
+                                if len(errors) > 5:
+                                    typer.echo(f"  ... and {len(errors) - 5} more")
+                        
+                        typer.echo()
+                        typer.secho(
+                            "Suggestions:",
+                            fg=typer.colors.CYAN,
+                        )
+                        typer.echo("  1. Check network connectivity and firewall rules")
+                        typer.echo("  2. Verify seed nodes are reachable: animica peer bootstrap --probe")
+                        typer.echo("  3. Check P2P diagnostics: animica p2p doctor")
+                        typer.echo("  4. View node logs for detailed dial errors")
+                        
+                        # Exit with error if no connections
+                        raise typer.Exit(code=1)
             elif rpc_error:
                 if "method not available" in rpc_error.lower():
                     typer.secho(

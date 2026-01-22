@@ -1157,3 +1157,204 @@ def test_list_peers_mixed_status(monkeypatch: Any) -> None:
     assert "Status: dialing" in result.output
     assert "Status: failed" in result.output
     assert "Connection refused" in result.output
+
+
+@respx_mock
+def test_bootstrap_with_wait_success(monkeypatch: Any, tmp_path: Any) -> None:
+    """Test bootstrap with wait that succeeds."""
+    rpc_url = "http://localhost:9999/rpc"
+    monkeypatch.setenv("ANIMICA_RPC_URL", rpc_url)
+    monkeypatch.setenv("ANIMICA_NETWORK", "testnet")
+    
+    # Mock RPC responses
+    # 1. Initial getBootstrapSeeds
+    respx.post(rpc_url).mock(
+        side_effect=[
+            httpx.Response(
+                200,
+                json={"jsonrpc": "2.0", "id": 1, "result": {"seeds": ["/ip4/1.2.3.4/tcp/30333"]}},
+            ),
+            # 2. p2p.addPeers
+            httpx.Response(
+                200,
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 2,
+                    "result": {
+                        "ok": True,
+                        "imported": 1,
+                        "skipped": 0,
+                        "invalid": 0,
+                        "dial_attempted": 1,
+                        "dial_success": 1,
+                        "peers_total": 1,
+                        "peers_connected": 1,
+                    },
+                },
+            ),
+            # 3. p2p.getStatus (initial)
+            httpx.Response(
+                200,
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 3,
+                    "result": {
+                        "peers_total": 1,
+                        "peers_connected": 1,
+                        "peers_handshaking": 0,
+                        "peers_connected_inbound": 0,
+                        "peers_connected_outbound": 1,
+                    },
+                },
+            ),
+        ]
+    )
+    
+    result = runner.invoke(
+        peer.app,
+        ["bootstrap", "--store", str(tmp_path / "peers.json"), "--wait", "5"],
+    )
+    
+    # Should succeed since peer connected
+    assert result.exit_code == 0
+    assert "Pushed" in result.output
+    assert "connected=1" in result.output
+
+
+@respx_mock
+def test_bootstrap_with_wait_timeout(monkeypatch: Any, tmp_path: Any) -> None:
+    """Test bootstrap with wait that times out."""
+    rpc_url = "http://localhost:9999/rpc"
+    monkeypatch.setenv("ANIMICA_RPC_URL", rpc_url)
+    monkeypatch.setenv("ANIMICA_NETWORK", "testnet")
+    
+    # Mock RPC responses
+    respx.post(rpc_url).mock(
+        side_effect=[
+            httpx.Response(
+                200,
+                json={"jsonrpc": "2.0", "id": 1, "result": {"seeds": ["/ip4/1.2.3.4/tcp/30333"]}},
+            ),
+            # 2. p2p.addPeers - dial attempted but not succeeded
+            httpx.Response(
+                200,
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 2,
+                    "result": {
+                        "ok": True,
+                        "imported": 1,
+                        "skipped": 0,
+                        "invalid": 0,
+                        "dial_attempted": 1,
+                        "dial_success": 0,
+                        "peers_total": 0,
+                        "peers_connected": 0,
+                        "errors": ["1.2.3.4:30333: connection refused"],
+                    },
+                },
+            ),
+            # 3. p2p.getStatus (initial) - no connections
+            httpx.Response(
+                200,
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 3,
+                    "result": {
+                        "peers_total": 0,
+                        "peers_connected": 0,
+                        "peers_handshaking": 0,
+                        "peers_connected_inbound": 0,
+                        "peers_connected_outbound": 0,
+                    },
+                },
+            ),
+            # 4. p2p.getStatus (final) - still no connections
+            httpx.Response(
+                200,
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 4,
+                    "result": {
+                        "peers_total": 0,
+                        "peers_connected": 0,
+                        "peers_handshaking": 0,
+                        "peers_connected_inbound": 0,
+                        "peers_connected_outbound": 0,
+                    },
+                },
+            ),
+        ]
+    )
+    
+    result = runner.invoke(
+        peer.app,
+        ["bootstrap", "--store", str(tmp_path / "peers.json"), "--wait", "1"],
+    )
+    
+    # Should fail since no peers connected
+    assert result.exit_code == 1
+    assert "No new connections established" in result.output
+    assert "connection refused" in result.output
+
+
+@respx_mock  
+def test_bootstrap_no_wait(monkeypatch: Any, tmp_path: Any) -> None:
+    """Test bootstrap with --no-wait skips connection check."""
+    rpc_url = "http://localhost:9999/rpc"
+    monkeypatch.setenv("ANIMICA_RPC_URL", rpc_url)
+    monkeypatch.setenv("ANIMICA_NETWORK", "testnet")
+    
+    # Mock RPC responses
+    respx.post(rpc_url).mock(
+        side_effect=[
+            httpx.Response(
+                200,
+                json={"jsonrpc": "2.0", "id": 1, "result": {"seeds": ["/ip4/1.2.3.4/tcp/30333"]}},
+            ),
+            # 2. p2p.addPeers
+            httpx.Response(
+                200,
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 2,
+                    "result": {
+                        "ok": True,
+                        "imported": 1,
+                        "skipped": 0,
+                        "invalid": 0,
+                        "dial_attempted": 1,
+                        "dial_success": 0,
+                        "peers_total": 0,
+                        "peers_connected": 0,
+                    },
+                },
+            ),
+            # 3. p2p.getStatus (initial only)
+            httpx.Response(
+                200,
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 3,
+                    "result": {
+                        "peers_total": 0,
+                        "peers_connected": 0,
+                        "peers_handshaking": 0,
+                        "peers_connected_inbound": 0,
+                        "peers_connected_outbound": 0,
+                    },
+                },
+            ),
+        ]
+    )
+    
+    result = runner.invoke(
+        peer.app,
+        ["bootstrap", "--store", str(tmp_path / "peers.json"), "--no-wait"],
+    )
+    
+    # Should succeed even without connections because --no-wait
+    assert result.exit_code == 0
+    assert "Pushed" in result.output
+    # Should NOT have "Waiting for connections" message
+    assert "Waiting" not in result.output
