@@ -2201,9 +2201,14 @@ def status(
                     direction = peer.get("direction")
                     height_info = peer.get("height")
                     last_seen = _format_peer_timestamp(peer.get("lastSeen") or peer.get("last_seen"))
+                    identity_ok = peer.get("identity_ok")
+                    
                     summary = f"  {index}. {peer_id} ({addr}) [{status}]"
                     if direction:
                         summary += f" {direction}"
+                    # Show identity_ok status for handshaking peers to aid debugging
+                    if status == "handshaking" and identity_ok is not None:
+                        summary += f" identity_ok={identity_ok}"
                     if height_info is not None:
                         summary += f" height={height_info}"
                     if last_seen:
