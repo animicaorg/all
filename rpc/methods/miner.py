@@ -1205,7 +1205,21 @@ def _mining_gate(
     # Helper for consistent peer-related error messages
     def _peer_error_guidance() -> str:
         """Return standard guidance for peer connection issues."""
-        return "Try: 'animica peer bootstrap' to connect to peers, or set ANIMICA_MINING_MIN_PEERS=0 for local development."
+        guidance = "Try: 'animica peer bootstrap' to connect to peers"
+        
+        # Include last dial error if available
+        if p2p_status and isinstance(p2p_status, dict):
+            dial_error = p2p_status.get("dial_last_error")
+            if dial_error and isinstance(dial_error, dict):
+                error_msg = dial_error.get("error") or dial_error.get("message")
+                error_peer = dial_error.get("peer") or dial_error.get("address")
+                if error_msg and error_peer:
+                    guidance += f". Last dial failed: {error_peer} ({error_msg})"
+                elif error_msg:
+                    guidance += f". Last dial error: {error_msg}"
+        
+        guidance += ". Check: 'animica p2p doctor' for diagnostics, or set ANIMICA_MINING_MIN_PEERS=0 for local development."
+        return guidance
     
     # Unsafe override flags are disabled; log and ignore if requested.
     if os.getenv("ANIMICA_MINING_FORCE", "").lower() in ("1", "true", "yes", "on"):

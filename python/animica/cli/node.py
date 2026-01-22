@@ -1923,6 +1923,8 @@ def status(
                     # NEW: Get connected and handshaking counts for clearer status
                     "connected": int(p2p_status.get("peers_connected") or 0),
                     "handshaking": int(p2p_status.get("peers_handshaking") or 0),
+                    "connected_inbound": int(p2p_status.get("peers_connected_inbound") or 0),
+                    "connected_outbound": int(p2p_status.get("peers_connected_outbound") or 0),
                 }
 
             peers, peers_error = _get_peers(url, rpc_timeout)
@@ -2181,15 +2183,31 @@ def status(
                 total = peer_counts.get("total", 0)
                 inbound = peer_counts.get("inbound", 0)
                 outbound = peer_counts.get("outbound", 0)
+                connected_inbound = peer_counts.get("connected_inbound", 0)
+                connected_outbound = peer_counts.get("connected_outbound", 0)
                 
-                # Primary status line: show connected vs handshaking
-                if handshaking > 0:
-                    typer.echo(f"Peers: total={total} (connected={connected}, handshaking={handshaking})")
+                # Primary status line: show connected with breakdown if available
+                if connected_inbound or connected_outbound:
+                    # Show detailed connected breakdown
+                    if handshaking > 0:
+                        typer.echo(
+                            f"Peers: connected={connected} (inbound={connected_inbound}, outbound={connected_outbound}) "
+                            f"handshaking={handshaking} total={total}"
+                        )
+                    else:
+                        typer.echo(
+                            f"Peers: connected={connected} (inbound={connected_inbound}, outbound={connected_outbound}) "
+                            f"total={total}"
+                        )
                 else:
-                    typer.echo(f"Peers: total={total} (connected={connected})")
-                
-                # Secondary line: show inbound/outbound breakdown
-                typer.echo(f"  Inbound: {inbound}, Outbound: {outbound}")
+                    # Fallback to simple format if detailed breakdown not available
+                    if handshaking > 0:
+                        typer.echo(f"Peers: total={total} (connected={connected}, handshaking={handshaking})")
+                    else:
+                        typer.echo(f"Peers: total={total} (connected={connected})")
+                    
+                    # Secondary line: show inbound/outbound breakdown
+                    typer.echo(f"  Inbound: {inbound}, Outbound: {outbound}")
             elif peer_error:
                 typer.echo(f"Peers: unavailable ({peer_error})")
             if peers:
