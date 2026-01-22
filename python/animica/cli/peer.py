@@ -823,22 +823,56 @@ def list_peers(
             typer.secho("No peers connected.", fg=typer.colors.YELLOW)
         return
 
-    # Display peers
+    # Categorize peers by status
+    connected_peers = []
+    handshaking_peers = []
+    dialing_peers = []
+    failed_peers = []
+    
+    for peer in peers:
+        status = peer.get("status") or peer.get("state") or "connected"
+        if status == "connected":
+            connected_peers.append(peer)
+        elif status == "handshaking":
+            handshaking_peers.append(peer)
+        elif status == "dialing":
+            dialing_peers.append(peer)
+        elif status == "failed":
+            failed_peers.append(peer)
+        else:
+            # Unknown status - treat as connected for backward compatibility
+            connected_peers.append(peer)
+    
+    # Display header with accurate counts
     if rpc_failed:
         source_msg = " (from local peer store)"
         header = f"Known Peers: {len(peers)}{source_msg}"
     else:
-        header = f"Connected Peers: {len(peers)}"
+        # Show breakdown of peer states
+        total = len(peers)
+        connected_count = len(connected_peers)
+        header = f"Peer Status: {connected_count} connected"
+        if handshaking_peers:
+            header += f", {len(handshaking_peers)} handshaking"
+        if dialing_peers:
+            header += f", {len(dialing_peers)} dialing"
+        if failed_peers:
+            header += f", {len(failed_peers)} failed"
+        header += f" (total: {total})"
     
     typer.secho(f"\n{header}", fg=typer.colors.CYAN, bold=True)
     typer.echo()
 
     if verbose:
-        # Detailed view
+        # Detailed view - show all peers
         typer.echo(_pretty(peers))
     else:
-        # Summary view
-        for i, peer in enumerate(peers, 1):
+        # Summary view - display by category
+        all_categorized_peers = (
+            connected_peers + handshaking_peers + dialing_peers + failed_peers
+        )
+        
+        for i, peer in enumerate(all_categorized_peers, 1):
             peer_id = peer.get("id") or peer.get("peerId") or peer.get("peer_id") or "(handshaking)"
             addr = peer.get("addr") or peer.get("address") or peer.get("multiaddr") or "unknown"
             status = peer.get("status") or peer.get("state") or "connected"

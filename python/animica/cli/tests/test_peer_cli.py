@@ -50,7 +50,8 @@ def test_list_peers_success(monkeypatch: Any) -> None:
 
     result = runner.invoke(peer.app, ["list"])
     assert result.exit_code == 0
-    assert "Connected Peers: 2" in result.output
+    # New format shows breakdown: "Peer Status: 2 connected (total: 2)"
+    assert "2 connected" in result.output
     assert "QmPeer1" in result.output
     assert "QmPeer2" in result.output
 
@@ -1107,3 +1108,52 @@ def test_peer_commands_block_bootstrap_rpc(monkeypatch: Any) -> None:
     )
     assert result.exit_code == 2
     assert "bootstrap RPC endpoint" in result.output
+
+
+@respx_mock
+def test_list_peers_mixed_status(monkeypatch: Any) -> None:
+    """Test listing peers with mixed status (connected, dialing, failed)."""
+    rpc_url = "http://localhost:9999/rpc"
+    monkeypatch.setenv("ANIMICA_RPC_URL", rpc_url)
+
+    # Mock peers with different statuses as shown in problem statement
+    mock_peers = [
+        {
+            "id": "pending",
+            "addr": "mainnet.animica.org:30333",
+            "status": "dialing",
+            "direction": "outbound",
+            "lastAttempt": 1769094322.5864313,
+            "attempts": 0,
+        },
+        {
+            "id": "failed",
+            "addr": "tcp://144.126.133.21:30333",
+            "status": "failed",
+            "direction": "outbound",
+            "lastAttempt": 1769094300.8006773,
+            "attempts": 1,
+            "last_error": "TransportError: dial failed to tcp://144.126.133.21:30333: [Errno 111] Connection refused",
+        },
+    ]
+
+    respx.post(rpc_url)(
+        return_value=httpx.Response(
+            200,
+            json={"jsonrpc": "2.0", "id": 1, "result": mock_peers},
+        )
+    )
+
+    result = runner.invoke(peer.app, ["list"])
+    assert result.exit_code == 0
+    # Should show 0 connected, 1 dialing, 1 failed
+    assert "0 connected" in result.output
+    assert "1 dialing" in result.output
+    assert "1 failed" in result.output
+    assert "total: 2" in result.output
+    # Should still show peer details
+    assert "pending" in result.output
+    assert "mainnet.animica.org:30333" in result.output
+    assert "Status: dialing" in result.output
+    assert "Status: failed" in result.output
+    assert "Connection refused" in result.output
