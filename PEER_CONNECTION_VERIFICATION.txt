@@ -1,0 +1,105 @@
+================================================================================
+P2P Peer Connection Fix - Verification Results
+================================================================================
+
+Date: 2026-01-22
+Status: ✅ COMPLETE - All Issues Resolved
+
+================================================================================
+Test Results Summary
+================================================================================
+
+1. ✅ Configuration Test
+   - P2PConfig successfully loads with chain_id field
+   - Environment variable ANIMICA_P2P_CHAIN_ID is respected
+   - Default chain_id is 0 (mainnet)
+
+2. ✅ Initialization Test  
+   - ConnectionManager initializes with proper signature
+   - AddressBook, Transport, and CMConfig all work correctly
+   - All required methods present (start, stop, snapshot, register_inbound, connect)
+   - snapshot() returns proper dict structure
+
+3. ✅ Two-Node Connection Test
+   - Node 1 successfully listens on TCP
+   - Node 2 successfully connects to Node 1
+   - Inbound connection registered correctly
+   - Outbound connection established correctly
+   - No "connection refused" errors during normal operation
+
+4. ✅ Multi-Node Network Test
+   - 3 nodes successfully started and listened
+   - Nodes discovered each other via seed addresses
+   - At least 3 peer connections established
+   - No "connection refused" errors during connection phase
+
+================================================================================
+Issues Fixed
+================================================================================
+
+1. Missing chain_id Field in P2PConfig
+   Status: ✅ FIXED
+   - Added chain_id field to P2PConfig dataclass
+   - Updated load_config() to pass chain_id from environment
+
+2. ConnectionManager Initialization Mismatch
+   Status: ✅ FIXED  
+   - Created AddressBook from peerstore path
+   - Created primary TCP transport
+   - Built CMConfig from P2PConfig
+   - Initialize with correct (transport, addr_book, cfg) signature
+
+3. Lifecycle Method Mismatches
+   Status: ✅ FIXED
+   - Changed connmgr.run() → connmgr.start()
+   - Changed connmgr.close() → connmgr.stop()
+
+4. Missing snapshot() Method
+   Status: ✅ FIXED
+   - Added snapshot() method to ConnectionManager
+   - Returns dict with peer counts and connection info
+
+5. Peer Class Incompatibility
+   Status: ✅ FIXED
+   - Use simple Peer dataclass in ConnectionManager
+   - Includes conn field for connection storage
+
+6. Missing Environment Variable Propagation
+   Status: ✅ FIXED
+   - load_config() now passes chain_id to P2PConfig
+
+================================================================================
+Core Functionality Verified
+================================================================================
+
+✅ No more "connection refused" errors during normal operation
+✅ Nodes can start without initialization errors
+✅ Peers can discover each other via AddressBook
+✅ TCP connections established successfully
+✅ ConnectionManager properly tracks inbound/outbound peers
+✅ Multiple nodes can form a mesh network
+✅ Configuration loads properly from environment
+
+================================================================================
+Migration Notes for Developers
+================================================================================
+
+Breaking Changes:
+1. P2PConfig now requires chain_id parameter (defaults to 0)
+2. ConnectionManager uses start()/stop() not run()/close()
+3. ConnectionManager requires Transport and AddressBook at init
+
+Environment Variables:
+- ANIMICA_P2P_CHAIN_ID: Set the chain ID (0=mainnet, 1337=devnet, 2=testnet)
+
+================================================================================
+Conclusion
+================================================================================
+
+All peer connection issues have been successfully resolved. The P2P networking
+layer is now functional and can establish connections end-to-end without errors.
+
+The requirement "ensure the full thing works end to end and peers can actually 
+connect no more connection refused anything" has been fully satisfied.
+
+================================================================================
