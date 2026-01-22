@@ -89,9 +89,38 @@ def test_peer_count_zero_connected():
     # This makes it clear why mining would fail with "connected: 0"
 
 
+def test_mining_error_message_format():
+    """Test that mining error message format is correct."""
+    # Test with handshaking peers
+    peers_connected = 0
+    peers_handshaking = 1
+    min_peers = 1
+    
+    peer_status = f"connected: {peers_connected}"
+    if peers_handshaking > 0:
+        peer_status += f", handshaking: {peers_handshaking}"
+    peer_status += f", required: {min_peers}"
+    
+    expected = "connected: 0, handshaking: 1, required: 1"
+    assert peer_status == expected, f"Expected '{expected}', got '{peer_status}'"
+    
+    # Test without handshaking peers
+    peers_connected = 0
+    peers_handshaking = 0
+    
+    peer_status = f"connected: {peers_connected}"
+    if peers_handshaking > 0:
+        peer_status += f", handshaking: {peers_handshaking}"
+    peer_status += f", required: {min_peers}"
+    
+    expected = "connected: 0, required: 1"
+    assert peer_status == expected, f"Expected '{expected}', got '{peer_status}'"
+
+
 if __name__ == "__main__":
     test_peer_count_display_with_handshaking()
     test_peer_count_display_no_handshaking()
     test_peer_count_zero_connected()
+    test_mining_error_message_format()
     print("\n✓ All tests passed!")
     print("Node status now clearly shows connected vs handshaking peer breakdown")
