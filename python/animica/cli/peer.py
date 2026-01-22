@@ -450,11 +450,14 @@ async def _wait_for_connections(
         Tuple of (success, final_connected_count, error_message)
     """
     start = time.time()
-    elapsed = 0.0
     check_interval = 0.5  # Start with 0.5s checks
     max_interval = 2.0
     
-    while elapsed < timeout_sec:
+    while True:
+        elapsed = time.time() - start
+        if elapsed >= timeout_sec:
+            break
+            
         status, error = _fetch_peer_status(rpc_url)
         if error:
             return False, initial_connected, error
@@ -476,7 +479,6 @@ async def _wait_for_connections(
         
         # Exponential backoff
         await asyncio.sleep(check_interval)
-        elapsed = time.time() - start
         check_interval = min(check_interval * 1.5, max_interval)
     
     # Timeout
