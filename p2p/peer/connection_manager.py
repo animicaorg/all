@@ -25,19 +25,17 @@ except Exception:  # pragma: no cover
             return "transport"
 
 
-try:
-    from p2p.peer.peer import Peer  # type: ignore
-except Exception:  # pragma: no cover
-
-    @dataclass
-    class Peer:  # type: ignore
-        peer_id: str
-        address: str
-        conn: Conn
-        direction: str  # "inbound" | "outbound"
-        last_rtt_ms: Optional[float] = None
-        last_seen: float = field(default_factory=lambda: time.time())
-        meta: Dict[str, Any] = field(default_factory=dict)
+# Use a simple Peer definition for ConnectionManager
+# The full p2p.peer.Peer is too complex and doesn't store connections
+@dataclass
+class Peer:  # type: ignore
+    peer_id: str
+    address: str
+    conn: Conn
+    direction: str  # "inbound" | "outbound"
+    last_rtt_ms: Optional[float] = None
+    last_seen: float = field(default_factory=lambda: time.time())
+    meta: Dict[str, Any] = field(default_factory=dict)
 
 
 try:
