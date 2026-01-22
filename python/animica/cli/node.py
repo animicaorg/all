@@ -1920,6 +1920,9 @@ def status(
                     "total": int(counts.get("total") or p2p_status.get("peers_total") or 0),
                     "inbound": int(counts.get("inbound") or p2p_status.get("peers_inbound") or 0),
                     "outbound": int(counts.get("outbound") or p2p_status.get("peers_outbound") or 0),
+                    # NEW: Get connected and handshaking counts for clearer status
+                    "connected": int(p2p_status.get("peers_connected") or 0),
+                    "handshaking": int(p2p_status.get("peers_handshaking") or 0),
                 }
 
             peers, peers_error = _get_peers(url, rpc_timeout)
@@ -2172,13 +2175,21 @@ def status(
             if p2p_status_error:
                 typer.echo(f"P2P status: unavailable ({p2p_status_error})")
             elif peer_counts:
-                typer.echo(
-                    "Peers: total={total} inbound={inbound} outbound={outbound}".format(
-                        total=peer_counts.get("total", 0),
-                        inbound=peer_counts.get("inbound", 0),
-                        outbound=peer_counts.get("outbound", 0),
-                    )
-                )
+                # Show connected/handshaking breakdown for clarity
+                connected = peer_counts.get("connected", 0)
+                handshaking = peer_counts.get("handshaking", 0)
+                total = peer_counts.get("total", 0)
+                inbound = peer_counts.get("inbound", 0)
+                outbound = peer_counts.get("outbound", 0)
+                
+                # Primary status line: show connected vs handshaking
+                if handshaking > 0:
+                    typer.echo(f"Peers: total={total} (connected={connected}, handshaking={handshaking})")
+                else:
+                    typer.echo(f"Peers: total={total} (connected={connected})")
+                
+                # Secondary line: show inbound/outbound breakdown
+                typer.echo(f"  Inbound: {inbound}, Outbound: {outbound}")
             elif peer_error:
                 typer.echo(f"Peers: unavailable ({peer_error})")
             if peers:
@@ -2190,9 +2201,14 @@ def status(
                     direction = peer.get("direction")
                     height_info = peer.get("height")
                     last_seen = _format_peer_timestamp(peer.get("lastSeen") or peer.get("last_seen"))
+                    identity_ok = peer.get("identity_ok")
+                    
                     summary = f"  {index}. {peer_id} ({addr}) [{status}]"
                     if direction:
                         summary += f" {direction}"
+                    # Show identity_ok status for handshaking peers to aid debugging
+                    if status == "handshaking" and identity_ok is not None:
+                        summary += f" identity_ok={identity_ok}"
                     if height_info is not None:
                         summary += f" height={height_info}"
                     if last_seen:
