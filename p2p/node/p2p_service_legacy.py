@@ -7243,9 +7243,9 @@ class P2PService:
                 },
             )
             
-            # Notify HandshakeManager (if we sent HELLO first, identity validation happens here)
+            # Notify HandshakeManager of identity validation
             if peer.hello:
-                # We already received their HELLO, just confirming with ACK
+                # We already received their HELLO message, now confirming handshake with their ACK
                 try:
                     success, error = self._handshake_manager.on_identity_received(
                         session_id=peer.session_id,
