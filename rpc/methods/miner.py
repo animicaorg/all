@@ -1265,14 +1265,19 @@ def _mining_gate(
     outbound_connected = int(p2p_status.get("peers_connected_outbound", 0))
     
     # Use override if provided, otherwise fall back to environment variable
+    env_min_peers = int(os.getenv("ANIMICA_MINING_MIN_PEERS", "1"))
     if min_peers_override is not None:
         min_peers = min_peers_override
         log.info(
             "Using min_peers override from RPC parameter",
-            extra={"min_peers": min_peers, "source": "rpc_parameter"},
+            extra={
+                "min_peers_override": min_peers,
+                "env_min_peers": env_min_peers,
+                "source": "rpc_parameter",
+            },
         )
     else:
-        min_peers = int(os.getenv("ANIMICA_MINING_MIN_PEERS", "1"))
+        min_peers = env_min_peers
     
     # Helper for consistent peer-related error messages
     def _peer_error_guidance(status: dict[str, t.Any]) -> str:
