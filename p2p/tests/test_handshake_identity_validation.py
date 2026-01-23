@@ -129,7 +129,112 @@ def test_genesis_hash_mismatch():
     assert session.last_error == "genesis_hash_mismatch"
 
 
+def test_genesis_hash_0x_prefix_consistency():
+    """
+    Verify that genesis_hash validation works correctly when HandshakeManager
+    is initialized with 0x-prefixed hash and peer provides 0x-prefixed hash.
+    
+    This tests the fix for the bug where HandshakeManager was initialized with
+    genesis_hash_bytes.hex() (no prefix) but _canon_hash0x() added prefix when
+    validating peer identity, causing all validations to fail.
+    
+    Bug: HandshakeManager("abc...") vs peer("0xabc...") → FAIL
+    Fix: HandshakeManager("0xabc...") vs peer("0xabc...") → PASS
+    """
+    registry = PeerRegistry()
+    
+    # Real mainnet genesis hash
+    genesis_hash = "0xcf08020c87d8c294e09e5a872d7a5a2f3ceb9b8576ba0cdbfd1daef6832cbbfb"
+    
+    # Initialize HandshakeManager with 0x-prefixed format (the fix)
+    manager = HandshakeManager(
+        registry,
+        chain_id=1,
+        genesis_hash=genesis_hash,  # With 0x prefix
+    )
+    
+    # Start handshake
+    session_id = manager.start_handshake("tcp://peer1:30333", "outbound")
+    
+    # Complete Hello exchange
+    manager.on_hello_received(
+        session_id,
+        peer_id="peer1" * 8,
+        version="2",
+        agent="animica/1.0",
+    )
+    
+    # Peer sends identity with 0x-prefixed genesis hash (from _canon_hash0x)
+    success, error = manager.on_identity_received(
+        session_id,
+        chain_id=1,
+        genesis_hash=genesis_hash,  # Peer also has 0x prefix
+    )
+    
+    # Verify success - formats match
+    assert success, f"Identity validation should succeed with matching 0x-prefixed hashes, but got error: {error}"
+    assert error is None
+    
+    # Verify state transitioned to CONNECTED
+    session = registry._sessions.get(session_id)
+    assert session is not None
+    assert session.state == PeerState.CONNECTED
+    assert session.identity_ok is True
+
+
+def test_genesis_hash_format_mismatch_bug():
+    """
+    Verify that the OLD buggy behavior (no 0x prefix in local, 0x prefix from peer) fails.
+    
+    This documents the bug that was fixed: when HandshakeManager was initialized
+    with genesis_hash_bytes.hex() (no prefix) but peer provided _canon_hash0x()
+    result (with prefix), validation would always fail.
+    """
+    registry = PeerRegistry()
+    
+    # Real mainnet genesis hash
+    genesis_hash_bytes = bytes.fromhex("cf08020c87d8c294e09e5a872d7a5a2f3ceb9b8576ba0cdbfd1daef6832cbbfb")
+    
+    # OLD BUGGY WAY: Initialize HandshakeManager WITHOUT 0x prefix
+    manager = HandshakeManager(
+        registry,
+        chain_id=1,
+        genesis_hash=genesis_hash_bytes.hex(),  # No 0x prefix (the bug)
+    )
+    
+    # Start handshake
+    session_id = manager.start_handshake("tcp://peer1:30333", "outbound")
+    
+    # Complete Hello exchange
+    manager.on_hello_received(
+        session_id,
+        peer_id="peer1" * 8,
+        version="2",
+        agent="animica/1.0",
+    )
+    
+    # Peer sends identity with 0x-prefixed genesis hash (from _canon_hash0x)
+    peer_genesis = "0x" + genesis_hash_bytes.hex()  # With 0x prefix
+    
+    success, error = manager.on_identity_received(
+        session_id,
+        chain_id=1,
+        genesis_hash=peer_genesis,
+    )
+    
+    # Verify failure - formats don't match (this was the bug)
+    assert not success, "Identity validation should fail when formats don't match (local no 0x, peer with 0x)"
+    assert error == "genesis_hash_mismatch"
+    
+    # Verify state transitioned to FAILED
+    session = registry._sessions.get(session_id)
+    assert session is not None
+    assert session.state == PeerState.FAILED
+    assert session.identity_ok is False
+
+
 def test_case_insensitive_genesis_hash():
+
     """Verify that genesis_hash comparison is case-insensitive."""
     registry = PeerRegistry()
     manager = HandshakeManager(
