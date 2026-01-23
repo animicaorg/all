@@ -11,7 +11,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import (Any, Awaitable, Callable, Dict, Iterable, List, Optional,
-                    Tuple)
+                    Set, Tuple)
 from urllib.parse import urlparse
 
 # Local imports are intentionally late/dynamic in a few places to avoid import cycles.
@@ -24,6 +24,7 @@ from ..peer import connection_manager as conman
 from ..peer import identify as idsvc
 from ..peer import peerstore as pstore
 from ..peer.p2p_store import apply_umask_from_env, ensure_writable
+from ..peer.peer_addr import normalize_peer_addr
 from ..peer import ping as pingsvc
 from ..peer import ratelimit as prlimit
 from ..transport import base as tbase
@@ -766,7 +767,7 @@ class NodeService:
         3. Triggers immediate dial attempts
         
         Args:
-            addresses: List of peer addresses (multiaddr format)
+            addresses: List of peer addresses (multiaddr, tcp://, or host:port format)
         
         Returns:
             Dict with import results (imported, skipped, invalid counts)
@@ -778,49 +779,57 @@ class NodeService:
         errors: List[str] = []
         
         # Track addresses we've already seen in this call
-        seen_addrs = set(self.cfg.seeds) if self.cfg.seeds else set()
+        # Normalize existing seeds to canonical form for proper deduplication
+        seen_addrs: Set[str] = set()
+        if self.cfg.seeds:
+            for seed in self.cfg.seeds:
+                result = normalize_peer_addr(seed, allow_quic=True, allow_ws=True, allow_tcp=True)
+                if result.addr:
+                    seen_addrs.add(result.addr.canonical)
         
         for addr in addresses:
-            # Validate address format
-            try:
-                parsed = ma.parse(addr)
-                if not parsed.host or not parsed.port:
-                    invalid += 1
-                    errors.append(f"invalid address: {addr}")
-                    continue
-            except Exception as e:
+            # Normalize and validate address format
+            # This handles multiaddr (/ip4/...), URI (tcp://...), and host:port formats
+            normalized_result = normalize_peer_addr(addr, allow_quic=True, allow_ws=True, allow_tcp=True)
+            if not normalized_result.addr:
                 invalid += 1
-                errors.append(f"invalid address {addr}: {e}")
+                reason = normalized_result.reason or "unknown"
+                errors.append(f"invalid address: {addr} ({reason})")
+                log.debug(f"[import_peers] Rejected address: {addr} (reason: {reason})")
                 continue
+            
+            # Use canonical form for consistency
+            canonical_addr = normalized_result.addr.canonical
             
             # Skip if already in seed list (dedupe within this call)
-            if addr in seen_addrs:
+            # Only check canonical form since different formats can resolve to same address
+            if canonical_addr in seen_addrs:
                 skipped += 1
-                log.debug(f"[import_peers] Skipping already-known seed: {addr}")
+                log.debug(f"[import_peers] Skipping already-known seed: {canonical_addr} (from {addr})")
                 continue
             
-            seen_addrs.add(addr)
-            log.info(f"[import_peers] Adding seed to runtime: {addr}")
+            seen_addrs.add(canonical_addr)
+            log.info(f"[import_peers] Adding seed to runtime: {canonical_addr} (from {addr})")
             imported += 1
             
             # Add to peerstore
             try:
-                # Generate a deterministic peer ID from the address using full hash
-                peer_id_hash = hashlib.sha256(addr.encode()).hexdigest()
+                # Generate a deterministic peer ID from the canonical address using full hash
+                peer_id_hash = hashlib.sha256(canonical_addr.encode()).hexdigest()
                 
                 self.peerstore.add(
                     peer_id=peer_id_hash,
-                    addrs=[addr],
+                    addrs=[canonical_addr],
                     score=10.0,  # Higher score for manually added seeds
                     direction="outbound"
                 )
-                self.peerstore.record_seen(peer_id_hash, addr)
+                self.peerstore.record_seen(peer_id_hash, canonical_addr)
             except Exception as e:
                 log.warning(f"[import_peers] Failed to add to peerstore: {e}")
             
-            # Trigger immediate dial attempt
+            # Trigger immediate dial attempt with canonical address
             dial_attempted += 1
-            self.loop.create_task(self._dial(addr), name=f"import-dial@{addr}")
+            self.loop.create_task(self._dial(canonical_addr), name=f"import-dial@{canonical_addr}")
         
         return {
             "ok": imported > 0 or skipped > 0,
@@ -1375,7 +1384,7 @@ class P2PServiceLegacy:
         3. Triggers immediate dial attempts
         
         Args:
-            addresses: List of peer addresses (multiaddr format)
+            addresses: List of peer addresses (multiaddr, tcp://, or host:port format)
         
         Returns:
             Dict with import results (imported, skipped, invalid counts)
@@ -1387,9 +1396,16 @@ class P2PServiceLegacy:
         errors: list[str] = []
         
         for addr in addresses:
-            # Validate address format
+            # Normalize address to multiaddr format
+            normalized = self._normalize_peer_addr(addr)
+            if not normalized:
+                invalid += 1
+                errors.append(f"invalid address: {addr}")
+                continue
+            
+            # Validate the normalized multiaddr
             try:
-                parsed = self._parse_multiaddr(addr)
+                parsed = self._parse_multiaddr(normalized)
                 if not parsed.host or not parsed.port or parsed.transport != "tcp":
                     invalid += 1
                     errors.append(f"invalid or unsupported address: {addr}")
@@ -1400,32 +1416,34 @@ class P2PServiceLegacy:
                 continue
             
             # Add to runtime seed list if not already present
-            if addr in self.seeds:
+            # Use normalized address for consistency
+            if normalized in self.seeds:
                 skipped += 1
-                self._log.debug("Skipping already-known seed: %s", addr)
+                self._log.debug("Skipping already-known seed: %s", normalized)
                 continue
             
-            self.seeds.append(addr)
-            self._log.info("Added seed to runtime: %s", addr)
+            self.seeds.append(normalized)
+            self._log.info("Added seed to runtime: %s (from %s)", normalized, addr)
             imported += 1
             
             # Add to peerstore if available
             if hasattr(self, '_peerstore') and self._peerstore is not None:
                 try:
-                    # Generate a deterministic peer ID from the address using full hash
-                    peer_id_hash = hashlib.sha256(addr.encode()).hexdigest()
+                    # Generate a deterministic peer ID from the normalized address using full hash
+                    peer_id_hash = hashlib.sha256(normalized.encode()).hexdigest()
                     
                     self._peerstore.add(
                         peer_id=peer_id_hash,
-                        addrs=[addr],
+                        addrs=[normalized],
                         score=10.0,  # Higher score for manually added seeds
                         direction="outbound"
                     )
-                    self._peerstore.record_seen(peer_id_hash, addr)
+                    self._peerstore.record_seen(peer_id_hash, normalized)
                 except Exception as e:
                     self._log.warning("Failed to add to peerstore: %s", e)
             
             # Trigger immediate dial attempt
+            # Convert normalized multiaddr back to tcp:// format for the transport layer
             dial_attempted += 1
             tcp_addr = f"tcp://{parsed.host}:{parsed.port}"
             self.loop.create_task(self._dial(tcp_addr), name=f"import-dial@{tcp_addr}")
