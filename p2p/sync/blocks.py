@@ -78,6 +78,9 @@ class BlocksSyncConfig:
     # Phase 3: Error recovery constants
     backoff_cap_sec: float = 4.0  # Cap exponential backoff at 4s for faster recovery
     backoff_multiplier: float = 1.4  # Multiply timeout by this on retry (reduced from 1.6x)
+    # CRITICAL FIX: Add timeout for buffered blocks waiting for parent
+    buffered_block_timeout_sec: float = 300.0  # 5 minutes max wait for missing parent
+    buffered_block_cleanup_interval_sec: float = 30.0  # Check every 30s for stale blocks
     max_timeout_sec: float = 30.0  # Hard limit to prevent extreme timeout growth
 
 
@@ -170,6 +173,8 @@ class BlocksDownloader:
         sem = asyncio.Semaphore(max(1, self.cfg.max_parallel))
         in_flight: Dict[Hash, asyncio.Task[Optional[BlockLike]]] = {}
         buffer: Dict[Hash, BlockLike] = {}
+        # CRITICAL FIX: Track when each block was buffered to detect stalls
+        buffer_timestamps: Dict[Hash, float] = {}
 
         async def fetch_one(h: Hash) -> Optional[BlockLike]:
             timeout = self.cfg.request_timeout_sec
@@ -259,6 +264,7 @@ class BlocksDownloader:
                             self.stats.errors += 1
                         if blk is not None:
                             buffer[h] = blk
+                            buffer_timestamps[h] = time.time()  # CRITICAL FIX: Track buffer time
                             self.stats.fetched += 1
                         # Remove from in_flight
                         del in_flight[h]
@@ -276,6 +282,31 @@ class BlocksDownloader:
             if committed_now > 0:
                 self.stats.committed += committed_now
                 self.stats.last_progress_at = time.time()
+                # CRITICAL FIX: Clean up timestamps for committed blocks
+                for i in range(next_idx - committed_now, next_idx):
+                    if i < len(order):
+                        buffer_timestamps.pop(order[i], None)
+            
+            # CRITICAL FIX: Check for stale buffered blocks and skip them to prevent deadlock
+            now = time.time()
+            stale_blocks = []
+            for h, timestamp in list(buffer_timestamps.items()):
+                age = now - timestamp
+                if age > self.cfg.buffered_block_timeout_sec:
+                    stale_blocks.append(h)
+            
+            if stale_blocks:
+                self._log.warning(
+                    f"Found {len(stale_blocks)} stale buffered blocks (waiting >{self.cfg.buffered_block_timeout_sec}s), "
+                    f"skipping to prevent deadlock"
+                )
+                for h in stale_blocks:
+                    buffer.pop(h, None)
+                    buffer_timestamps.pop(h, None)
+                    # Try to move next_idx forward if this was blocking us
+                    while next_idx < len(order) and order[next_idx] in stale_blocks:
+                        next_idx += 1
+                        self._log.warning(f"Skipped stale block at index {next_idx - 1}")
 
         return committed_this_round
 
@@ -343,9 +374,10 @@ class BlocksDownloader:
         if self.cfg.sanity_parent_required and not is_genesis:
             # Parent must be present in DB for the very first in this batch (except genesis).
             if not await self.chain.has_header(first_blk.parent_hash):
-                self._log.debug(
+                parent_hex = first_blk.parent_hash.hex()[:16] if first_blk.parent_hash else "None"
+                self._log.warning(
                     f"Cannot commit block at index {next_idx} (height={first_height}): "
-                    f"parent not in DB yet"
+                    f"parent {parent_hex}... not in DB yet. Block will timeout if parent doesn't arrive."
                 )
                 return 0
         elif is_genesis:
