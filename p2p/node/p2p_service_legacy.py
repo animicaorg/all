@@ -1535,8 +1535,9 @@ class P2PService:
         
         # PHASE 4: Initialize new managers for deterministic handshake and tip tracking
         # Genesis hash for HandshakeManager validation
+        # FIX: Use 0x-prefixed hex format for consistency with peer identity validation
         genesis_hash_bytes = self._genesis_header_hash()
-        genesis_hash_hex = genesis_hash_bytes.hex() if genesis_hash_bytes else ""
+        genesis_hash_hex = self._canon_hash0x(genesis_hash_bytes) or ""
         
         # HandshakeManager: Orchestrates handshake flow with timeouts
         self._handshake_manager = HandshakeManager(
