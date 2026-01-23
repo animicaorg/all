@@ -1260,7 +1260,6 @@ async def import_peers(addresses: list[str]) -> dict[str, t.Any]:
         for addr in addresses:
             net_addr, err = _parse_core_address(addr)
             if net_addr is None:
-                skipped += 1
                 invalid += 1
                 errors.append(err or f"invalid address {addr}")
                 continue
