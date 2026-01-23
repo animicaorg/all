@@ -26,8 +26,9 @@ def test_peer_registry_deduplicates_and_enforces_limits():
     assert registry.peer_count() == 0  # No identity_ok set yet
     
     # Set identity_ok for both sessions to mark them as fully validated
-    registry.update_meta(s1.session_id, identity_ok=True)
-    registry.update_meta(s3.session_id, identity_ok=True)
+    # Use mark_identity_validated to properly set identity_ok and state=CONNECTED
+    registry.mark_identity_validated(s1.session_id, chain_id=1, genesis_hash="0" * 64)
+    registry.mark_identity_validated(s3.session_id, chain_id=1, genesis_hash="0" * 64)
     
     # Now count should be 2 (inbound + outbound for peer-A)
     assert registry.peer_count() == 2
