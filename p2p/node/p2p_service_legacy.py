@@ -3044,6 +3044,18 @@ class P2PService:
                 if not self._running:
                     return
                 
+                # Purge stale handshaking peers that exceeded timeout
+                purged = self._peer_registry.purge_stale()
+                if purged:
+                    log.info(
+                        "Purged stale handshaking peers",
+                        extra={
+                            "count": len(purged),
+                            "session_ids": purged,
+                            "timeout_s": self._peer_registry.handshake_timeout_s,
+                        }
+                    )
+                
                 # Check each monitored task
                 for task_name, task in list(monitored_tasks.items()):
                     if task.done():
