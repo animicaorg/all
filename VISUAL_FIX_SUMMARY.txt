@@ -1,0 +1,116 @@
+╔══════════════════════════════════════════════════════════════════════════╗
+║               FIX: STUCK HANDSHAKING PEERS PREVENTING MINING             ║
+╚══════════════════════════════════════════════════════════════════════════╝
+
+PROBLEM (Before Fix):
+┌────────────────────────────────────────────────────────────────────────┐
+│ Mining Command:                                                         │
+│   animica miner mine-blocks --address anim1xxx... --count 1            │
+│                                                                         │
+│ Error:                                                                  │
+│   ⚠ Block template unavailable (insufficient_peers)                    │
+│   Status: connected: 0, handshaking: 1, required: 1                    │
+│   Peer stuck at: tcp://82.66.161.84:41596 [handshaking]               │
+│                                                                         │
+│ Why stuck?                                                              │
+│   • Peer connection timed out during handshake                         │
+│   • purge_stale() method existed but was NEVER CALLED                  │
+│   • Peer remained in registry indefinitely                             │
+│   • Mining blocked waiting for "connected" peer                        │
+└────────────────────────────────────────────────────────────────────────┘
+
+ROOT CAUSE:
+┌────────────────────────────────────────────────────────────────────────┐
+│ PeerRegistry.purge_stale() method:                                     │
+│   ✓ Exists in p2p/node/peer_registry.py                               │
+│   ✓ Removes sessions that never completed handshake                    │
+│   ✓ Has timeout: handshake_timeout_s = 3.0 seconds                    │
+│   ✗ NEVER CALLED from P2P service                                      │
+│                                                                         │
+│ Result: Stuck peers accumulate and block operations                    │
+└────────────────────────────────────────────────────────────────────────┘
+
+SOLUTION:
+┌────────────────────────────────────────────────────────────────────────┐
+│ Added to _task_watchdog_loop() in p2p/node/p2p_service_legacy.py:     │
+│                                                                         │
+│   while self._running:                                                 │
+│       await asyncio.sleep(5.0)  # Every 5 seconds                     │
+│                                                                         │
+│       # NEW: Purge stale handshaking peers                            │
+│       purged = self._peer_registry.purge_stale()                      │
+│       if purged:                                                       │
+│           log.info(f"Purged {len(purged)} stale peers")               │
+│                                                                         │
+│ Timeline:                                                               │
+│   T+0s:  Peer starts connecting (DIALING state)                       │
+│   T+1s:  Connection times out / fails                                 │
+│   T+3s:  handshake_timeout_s exceeded                                 │
+│   T+5s:  Watchdog runs, calls purge_stale()                           │
+│   T+5s:  ✓ Stuck peer removed from registry                           │
+│   T+6s:  System can retry with other peers                            │
+│   T+7s:  New peer connects successfully                               │
+│   T+8s:  ✓ Mining proceeds (connected: 1, required: 1)               │
+└────────────────────────────────────────────────────────────────────────┘
+
+AFTER FIX (Impact):
+┌────────────────────────────────────────────────────────────────────────┐
+│ ✓ Stuck peers automatically removed every 5 seconds                    │
+│ ✓ Mining no longer blocked by handshaking peers                        │
+│ ✓ System can retry with other peers                                    │
+│ ✓ Better observability with purge logging                              │
+│ ✓ No manual intervention required                                      │
+│ ✓ No configuration changes needed                                      │
+└────────────────────────────────────────────────────────────────────────┘
+
+FILES CHANGED:
+┌────────────────────────────────────────────────────────────────────────┐
+│ 1. p2p/node/p2p_service_legacy.py                                     │
+│    → Added purge_stale() call in _task_watchdog_loop (12 lines)       │
+│                                                                         │
+│ 2. p2p/tests/test_peer_registry.py                                    │
+│    → Fixed pre-existing test using wrong validation method             │
+│                                                                         │
+│ 3. test_purge_stale_integration.py (NEW)                              │
+│    → 3 integration tests validating the fix                            │
+│                                                                         │
+│ 4. FIX_STUCK_HANDSHAKING_PEERS.md (NEW)                               │
+│    → Comprehensive documentation                                       │
+└────────────────────────────────────────────────────────────────────────┘
+
+TESTING:
+┌────────────────────────────────────────────────────────────────────────┐
+│ ✓ All existing tests pass (10/10)                                      │
+│   • p2p/tests/test_peer_registry.py (2 tests)                         │
+│   • p2p/tests/test_handshake_timeout.py (5 tests)                     │
+│   • test_purge_stale_integration.py (3 tests)                         │
+│                                                                         │
+│ ✓ Integration test validates exact problem scenario                    │
+│ ✓ Code review passed (minor nitpicks addressed)                        │
+│ ✓ Security scan passed (no issues)                                     │
+└────────────────────────────────────────────────────────────────────────┘
+
+VERIFICATION STEPS:
+┌────────────────────────────────────────────────────────────────────────┐
+│ 1. Run: animica peer list                                              │
+│    → Check no peers stuck in [handshaking] for > 5 seconds            │
+│                                                                         │
+│ 2. Monitor logs for:                                                    │
+│    → "Purged stale handshaking peers" messages                         │
+│                                                                         │
+│ 3. Try mining:                                                          │
+│    → animica miner mine-blocks --address anim1xxx... --count 1         │
+│    → Should succeed once peer connects (no stuck state)                │
+│                                                                         │
+│ 4. For local dev (no peers needed):                                    │
+│    → export ANIMICA_MINING_MIN_PEERS=0                                 │
+└────────────────────────────────────────────────────────────────────────┘
+
+BACKWARD COMPATIBILITY:
+┌────────────────────────────────────────────────────────────────────────┐
+│ ✓ No API changes                                                       │
+│ ✓ No protocol changes                                                  │
+│ ✓ No configuration changes required                                    │
+│ ✓ All existing functionality preserved                                 │
+│ ✓ Only adds automatic cleanup of stuck peers                           │
+└────────────────────────────────────────────────────────────────────────┘
