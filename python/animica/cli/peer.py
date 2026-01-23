@@ -388,7 +388,21 @@ def _rpc_import_summary(result: Any) -> Optional[str]:
     return None
 
 
+async def _fetch_peer_status_async(rpc_url: str) -> tuple[Optional[Dict[str, Any]], Optional[str]]:
+    """Async version of _fetch_peer_status for use within async contexts."""
+    try:
+        status, error = await _rpc_call_with_error("p2p.getStatus", [], rpc_url=rpc_url)
+    except Exception as exc:
+        return None, str(exc)
+    if error:
+        return None, _rpc_error_message(error)
+    if isinstance(status, dict):
+        return status, None
+    return None, "Unexpected p2p.getStatus response"
+
+
 def _fetch_peer_status(rpc_url: str) -> tuple[Optional[Dict[str, Any]], Optional[str]]:
+    """Fetch peer status from RPC (sync version for use in non-async contexts)."""
     try:
         status, error = asyncio.run(_rpc_call_with_error("p2p.getStatus", [], rpc_url=rpc_url))
     except Exception as exc:
@@ -459,7 +473,7 @@ async def _wait_for_connections(
         if elapsed >= timeout_sec:
             break
             
-        status, error = _fetch_peer_status(rpc_url)
+        status, error = await _fetch_peer_status_async(rpc_url)
         if error:
             return False, initial_connected, error
             
@@ -483,7 +497,7 @@ async def _wait_for_connections(
         check_interval = min(check_interval * backoff_factor, max_interval)
     
     # Timeout
-    final_status, _ = _fetch_peer_status(rpc_url)
+    final_status, _ = await _fetch_peer_status_async(rpc_url)
     final_connected = final_status.get("peers_connected", initial_connected) if final_status else initial_connected
     return False, final_connected, f"timeout after {timeout_sec}s"
 
