@@ -234,7 +234,6 @@ def test_genesis_hash_format_mismatch_bug():
 
 
 def test_case_insensitive_genesis_hash():
-
     """Verify that genesis_hash comparison is case-insensitive."""
     registry = PeerRegistry()
     manager = HandshakeManager(

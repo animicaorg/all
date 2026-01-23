@@ -12592,7 +12592,10 @@ class P2PService:
                         self._peer_head_poll_at.get(peer.remote, 0.0)
                         for peer in self._peers.values()
                     ]
-                    time_since_last_poll = now - max(peer_times) if peer_times else float('inf')
+                    # FIX: If all peers have never been polled (all zeros), use 0.0 as base
+                    # Otherwise use max to find most recent poll time
+                    last_poll_time = max(peer_times) if any(peer_times) else 0.0
+                    time_since_last_poll = now - last_poll_time
                     
                     # Only poll if last poll was more than 5 seconds ago
                     if time_since_last_poll > 5.0:
