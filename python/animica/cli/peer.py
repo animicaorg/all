@@ -402,7 +402,7 @@ async def _fetch_peer_status_async(rpc_url: str) -> tuple[Optional[Dict[str, Any
 
 
 def _fetch_peer_status(rpc_url: str) -> tuple[Optional[Dict[str, Any]], Optional[str]]:
-    """Sync wrapper for _fetch_peer_status_async for use in non-async contexts."""
+    """Fetch peer status from RPC (sync version for use in non-async contexts)."""
     try:
         status, error = asyncio.run(_rpc_call_with_error("p2p.getStatus", [], rpc_url=rpc_url))
     except Exception as exc:
