@@ -454,12 +454,14 @@ async def sync_get_status(opts: dict[str, t.Any] | str | None = None) -> dict[st
                 snap["p2p_init_error"] = fatal_error
             return snap
     head_height = int(chain_head_height or 0)
+    init_failed = bool(fatal_error)
+    sync_status_reason = "p2p_init_failed" if init_failed else "p2p_unavailable"
     return {
         "phase": "IDLE",
         "head_height": head_height,
         "head_hash": chain_head_hash,
-        "best_header_height": 0,
-        "best_header_hash": None,
+        "best_header_height": head_height,
+        "best_header_hash": chain_head_hash,
         "best_block_height": head_height,
         "best_block_hash": chain_head_hash,
         "network_best_height": None,
@@ -487,8 +489,9 @@ async def sync_get_status(opts: dict[str, t.Any] | str | None = None) -> dict[st
         "last_header_error_at": None,
         "last_block_error": None,
         "fatal_error": fatal_error,
-        "p2p_init_failed": bool(fatal_error),
+        "p2p_init_failed": init_failed,
         "p2p_init_error": fatal_error,
+        "sync_status_reason": sync_status_reason,
         "active_peer_for_headers": None,
         "active_peer_for_blocks": None,
         "active_peers_for_headers": [],

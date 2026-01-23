@@ -792,7 +792,7 @@ async def get_status() -> dict[str, t.Any]:
         except Exception:
             pass
         return {
-            "p2p_running": True,
+            "p2p_running": not bool(startup_error),
             "listen_addrs": [],
             "peers_total": peers_total,
             "peers_inbound": inbound,
