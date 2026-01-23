@@ -376,9 +376,13 @@ async def discover_all(
     static_addrs: Sequence[str] = (),
     resolve: bool = True,
     include_fallbacks: bool = True,
+    max_retries: int = 3,  # CRITICAL FIX: Add retry support
+    retry_delay: float = 1.0,  # CRITICAL FIX: Delay between retries
 ) -> SeedBundle:
     """
     Run discovery across DNS, HTTPS, and static lists; merge & dedupe.
+    
+    Enhanced with retry logic for better resilience.
     
     Args:
         dns_names: DNS TXT record names to query
@@ -386,29 +390,49 @@ async def discover_all(
         static_addrs: Static seed addresses
         resolve: Whether to resolve hostnames to IPs
         include_fallbacks: Whether to include embedded fallback seeds (default: True)
+        max_retries: Number of retry attempts for failed discovery (default: 3)
+        retry_delay: Delay between retries in seconds (default: 1.0)
     """
     bundles: List[SeedBundle] = []
 
-    # DNS
+    # CRITICAL FIX: Add retry logic for DNS discovery
     for name in dns_names:
-        try:
-            bundles.append(await discover_from_dns_txt(name))
-        except Exception:
-            bundles.append(SeedBundle(endpoints=[], source=f"dns:{name} (error)"))
+        bundle = None
+        for attempt in range(max_retries):
+            try:
+                bundle = await discover_from_dns_txt(name)
+                if len(bundle.endpoints) > 0:
+                    break  # Success - got endpoints
+            except Exception as e:
+                if attempt == max_retries - 1:  # Last attempt
+                    bundles.append(SeedBundle(endpoints=[], source=f"dns:{name} (error after {max_retries} attempts)"))
+                else:
+                    await asyncio.sleep(retry_delay * (attempt + 1))  # Exponential backoff
+        if bundle and len(bundle.endpoints) > 0:
+            bundles.append(bundle)
 
-    # HTTPS
+    # CRITICAL FIX: Add retry logic for HTTPS discovery
     for url in https_urls:
-        try:
-            bundles.append(await discover_from_https_json(url))
-        except Exception:
-            bundles.append(SeedBundle(endpoints=[], source=f"https:{url} (error)"))
+        bundle = None
+        for attempt in range(max_retries):
+            try:
+                bundle = await discover_from_https_json(url)
+                if len(bundle.endpoints) > 0:
+                    break  # Success - got endpoints
+            except Exception as e:
+                if attempt == max_retries - 1:  # Last attempt
+                    bundles.append(SeedBundle(endpoints=[], source=f"https:{url} (error after {max_retries} attempts)"))
+                else:
+                    await asyncio.sleep(retry_delay * (attempt + 1))  # Exponential backoff
+        if bundle and len(bundle.endpoints) > 0:
+            bundles.append(bundle)
 
     # Static
     if static_addrs:
         bundles.append(discover_from_static(static_addrs))
     
-    # Add embedded fallback seeds if enabled and no viable seeds found
-    # Check if any bundle has endpoints (efficient early-exit)
+    # CRITICAL FIX: Always add embedded fallback seeds if no viable seeds found
+    # This ensures nodes can always connect even if all dynamic discovery fails
     if include_fallbacks:
         has_any_endpoints = any(len(b.endpoints) > 0 for b in bundles)
         if not has_any_endpoints:
@@ -423,12 +447,19 @@ async def discover_all(
 
     endpoints = _dedupe(endpoints)
 
-    # Optionally (re)resolve any new hosts
+    # CRITICAL FIX: Always try to resolve, with retry on failure
     if resolve:
         need = {ep.host for ep in endpoints if ep.host not in resolved_ips}
         if need:
-            extra = await resolve_hosts(need)
-            resolved_ips.update(extra)
+            for attempt in range(max_retries):
+                try:
+                    extra = await resolve_hosts(need)
+                    resolved_ips.update(extra)
+                    break  # Success
+                except Exception:
+                    if attempt < max_retries - 1:
+                        await asyncio.sleep(retry_delay)
+                    # On final failure, continue with unresolved hosts - transport will resolve them
 
     return SeedBundle(
         endpoints=endpoints, resolved_ips=resolved_ips, source="composite"
@@ -454,16 +485,21 @@ async def discover_for_network(
     chain_id: int,
     resolve: bool = True,
     include_fallbacks: bool = True,
+    max_retries: int = 3,  # CRITICAL FIX: Add retry support
+    retry_delay: float = 1.0,  # CRITICAL FIX: Delay between retries
 ) -> SeedBundle:
     """
     Discover seeds for a specific network (chain_id).
     
     Tries DNS and HTTPS discovery for the network, falling back to embedded seeds.
+    Enhanced with retry logic for better resilience.
     
     Args:
         chain_id: Network chain ID (1=mainnet, 2=testnet, 1337=devnet)
         resolve: Whether to resolve hostnames to IPs
         include_fallbacks: Whether to include embedded fallback seeds
+        max_retries: Number of retry attempts for failed discovery (default: 3)
+        retry_delay: Delay between retries in seconds (default: 1.0)
     
     Returns:
         SeedBundle with discovered endpoints
@@ -477,6 +513,8 @@ async def discover_for_network(
         static_addrs=[],
         resolve=resolve,
         include_fallbacks=include_fallbacks,
+        max_retries=max_retries,
+        retry_delay=retry_delay,
     )
 
 
