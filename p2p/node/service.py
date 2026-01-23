@@ -11,7 +11,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import (Any, Awaitable, Callable, Dict, Iterable, List, Optional,
-                    Tuple)
+                    Set, Tuple)
 from urllib.parse import urlparse
 
 # Local imports are intentionally late/dynamic in a few places to avoid import cycles.
@@ -780,7 +780,7 @@ class NodeService:
         
         # Track addresses we've already seen in this call
         # Normalize existing seeds to canonical form for proper deduplication
-        seen_addrs: set[str] = set()
+        seen_addrs: Set[str] = set()
         if self.cfg.seeds:
             for seed in self.cfg.seeds:
                 result = normalize_peer_addr(seed, allow_quic=True, allow_ws=True, allow_tcp=True)
@@ -1443,6 +1443,7 @@ class P2PServiceLegacy:
                     self._log.warning("Failed to add to peerstore: %s", e)
             
             # Trigger immediate dial attempt
+            # Convert normalized multiaddr back to tcp:// format for the transport layer
             dial_attempted += 1
             tcp_addr = f"tcp://{parsed.host}:{parsed.port}"
             self.loop.create_task(self._dial(tcp_addr), name=f"import-dial@{tcp_addr}")
