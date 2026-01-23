@@ -1377,7 +1377,7 @@ class P2PServiceLegacy:
         3. Triggers immediate dial attempts
         
         Args:
-            addresses: List of peer addresses (multiaddr format)
+            addresses: List of peer addresses (multiaddr, tcp://, or host:port format)
         
         Returns:
             Dict with import results (imported, skipped, invalid counts)
@@ -1389,9 +1389,16 @@ class P2PServiceLegacy:
         errors: list[str] = []
         
         for addr in addresses:
-            # Validate address format
+            # Normalize address to multiaddr format
+            normalized = self._normalize_peer_addr(addr)
+            if not normalized:
+                invalid += 1
+                errors.append(f"invalid address: {addr}")
+                continue
+            
+            # Validate the normalized multiaddr
             try:
-                parsed = self._parse_multiaddr(addr)
+                parsed = self._parse_multiaddr(normalized)
                 if not parsed.host or not parsed.port or parsed.transport != "tcp":
                     invalid += 1
                     errors.append(f"invalid or unsupported address: {addr}")
@@ -1402,28 +1409,29 @@ class P2PServiceLegacy:
                 continue
             
             # Add to runtime seed list if not already present
-            if addr in self.seeds:
+            # Use normalized address for consistency
+            if normalized in self.seeds:
                 skipped += 1
-                self._log.debug("Skipping already-known seed: %s", addr)
+                self._log.debug("Skipping already-known seed: %s", normalized)
                 continue
             
-            self.seeds.append(addr)
-            self._log.info("Added seed to runtime: %s", addr)
+            self.seeds.append(normalized)
+            self._log.info("Added seed to runtime: %s (from %s)", normalized, addr)
             imported += 1
             
             # Add to peerstore if available
             if hasattr(self, '_peerstore') and self._peerstore is not None:
                 try:
-                    # Generate a deterministic peer ID from the address using full hash
-                    peer_id_hash = hashlib.sha256(addr.encode()).hexdigest()
+                    # Generate a deterministic peer ID from the normalized address using full hash
+                    peer_id_hash = hashlib.sha256(normalized.encode()).hexdigest()
                     
                     self._peerstore.add(
                         peer_id=peer_id_hash,
-                        addrs=[addr],
+                        addrs=[normalized],
                         score=10.0,  # Higher score for manually added seeds
                         direction="outbound"
                     )
-                    self._peerstore.record_seen(peer_id_hash, addr)
+                    self._peerstore.record_seen(peer_id_hash, normalized)
                 except Exception as e:
                     self._log.warning("Failed to add to peerstore: %s", e)
             
