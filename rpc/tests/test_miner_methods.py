@@ -451,3 +451,76 @@ def test_get_block_template_with_mempool_disabled(monkeypatch: pytest.MonkeyPatc
     assert res["result"] is not None
     assert "templateId" in res["result"]
     assert "header" in res["result"]
+
+
+def test_get_block_template_accepts_min_peers_override(monkeypatch: pytest.MonkeyPatch):
+    """Test that min_peers parameter overrides environment variable."""
+    class _Snap:
+        def __init__(self, data):
+            self._data = data
+
+        def to_dict(self):
+            return dict(self._data)
+
+    class _Svc:
+        def status_snapshot(self):
+            # No connected peers
+            return _Snap({"peers_connected": 0, "peers_total": 0, "peers_handshaking": 0, "peers_connected_outbound": 0})
+
+        def sync_status_snapshot(self):
+            return _Snap(
+                {
+                    "phase": "SYNCED",
+                    "head_height": 10,
+                    "best_header_height": 10,
+                    "best_block_height": 10,
+                    "fatal_error": None,
+                }
+            )
+
+    import p2p
+
+    # Set environment to require peers (default behavior)
+    monkeypatch.setenv("ANIMICA_MINING_MIN_PEERS", "1")
+    monkeypatch.setattr(p2p, "get_service", lambda: _Svc())
+
+    client, _, _ = new_test_client()
+    payout_address = MAINNET_PREMINE_DISTRIBUTION[0][0]
+
+    # First test: with min_peers=0, should succeed even without peers
+    res = rpc_call(
+        client,
+        "miner.getBlockTemplate",
+        {"address": payout_address, "min_peers": 0},
+    )
+
+    assert res["result"] is not None
+    assert res["result"].get("enabled") is not False
+    assert "templateId" in res["result"]
+
+    # Second test: without min_peers override, should fail (respects env var)
+    res2 = rpc_call(
+        client,
+        "miner.getBlockTemplate",
+        {"address": payout_address},
+    )
+
+    assert res2["result"]["enabled"] is False
+    assert "insufficient_peers" in res2["result"]["reason"]
+
+
+def test_get_block_template_min_peers_validation():
+    """Test that min_peers parameter is validated correctly."""
+    client, _, _ = new_test_client()
+    payout_address = MAINNET_PREMINE_DISTRIBUTION[0][0]
+
+    # Test invalid min_peers (negative)
+    res = rpc_call(
+        client,
+        "miner.getBlockTemplate",
+        {"address": payout_address, "min_peers": -1},
+        expect_error=True,
+    )
+
+    assert res["error"]["code"] == -32602
+    assert "min_peers must be >= 0" in res["error"]["data"]["detail"]
