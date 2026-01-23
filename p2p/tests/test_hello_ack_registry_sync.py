@@ -65,11 +65,13 @@ def test_hello_ack_updates_peer_registry_identity_ok():
     assert registry.peer_count() == 1
 
 
-def test_hello_ack_missing_update_meta_causes_zero_connected():
+def test_mark_identity_validated_sets_both_state_and_flag():
     """
-    Test that WITHOUT the update_meta call, peer_count() returns 0.
+    Test that mark_identity_validated() properly sets both state and identity_ok.
     
-    This demonstrates the bug that was fixed.
+    This verifies that the PeerRegistry correctly maintains peer state when
+    identity validation succeeds. The test ensures both the CONNECTED state
+    and identity_ok flag are set, which are both required for peer_count().
     """
     # Create a real PeerRegistry
     registry = PeerRegistry()
@@ -78,33 +80,22 @@ def test_hello_ack_missing_update_meta_causes_zero_connected():
     session = registry.register("tcp://peer:30333", "outbound")
     session_id = session.session_id
     
-    # Mark peer as identified
+    # Mark peer as identified (moves to HANDSHAKING state)
     registry.mark_identified(session_id, "peer123")
+    assert session.state == PeerState.HANDSHAKING
+    assert session.identity_ok is False
     
-    # Simulate identity validation (sets state to CONNECTED)
+    # Validate identity (should set both state and flag)
     registry.mark_identity_validated(
         session_id,
         chain_id=1337,
         genesis_hash="0x1234567890abcdef",
     )
     
-    # State is CONNECTED but identity_ok is still False in the session
+    # Verify both conditions are met for counting as connected
     assert session.state == PeerState.CONNECTED
-    # Note: mark_identity_validated() DOES set session.identity_ok = True
-    # So this test needs to be adjusted
-    
-    # Actually, let me check what mark_identity_validated does
-    # Looking at peer_registry.py line 234: session.identity_ok = True
-    # So mark_identity_validated() already sets it!
-    
-    # The bug was actually in the legacy _PeerState tracking, not PeerRegistry
-    # The issue was that _handle_hello_ack set peer.identity_ok on _PeerState
-    # but never called update_meta() to sync any additional metadata
-    
-    # Let me refocus this test on what matters:
-    # peer_count() requires state==CONNECTED AND identity_ok==True
-    assert session.identity_ok is True  # This IS set by mark_identity_validated
-    assert registry.peer_count() == 1  # So this works
+    assert session.identity_ok is True
+    assert registry.peer_count() == 1
 
 
 def test_responder_and_initiator_both_counted():
