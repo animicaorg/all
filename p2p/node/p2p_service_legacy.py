@@ -353,9 +353,9 @@ class P2PStatusSnapshot:
     advertise_port: Optional[int]
     external_ip: Optional[str]
     peers_total: int
-    peerstore_total: Optional[int] = None
     peers_inbound: int
     peers_outbound: int
+    peerstore_total: Optional[int] = None
     # NEW: Track CONNECTED peers separately from total active sessions
     peers_connected: int = 0  # Only peers in CONNECTED state (identity verified)
     peers_handshaking: int = 0  # Peers still in handshake
@@ -1754,151 +1754,180 @@ class P2PService:
         try:
             from rpc.methods import tx as tx_methods
 
-            mempool_service = tx_methods._get_mempool_service()  # type: ignore[attr-defined]
-            if mempool_service is not None:
-                pending_path = getattr(mempool_service, "_persist_path", None)
-                log.info(
-                    "Tx relay mempool binding",
-                    extra={
-                        "chain_id": self.chain_id,
-                        "mempool_id": hex(id(mempool_service)),
-                        "pending_path": str(pending_path) if pending_path else None,
-                    },
+            try:
+                mempool_service = tx_methods._get_mempool_service()  # type: ignore[attr-defined]
+                if mempool_service is not None:
+                    pending_path = getattr(mempool_service, "_persist_path", None)
+                    log.info(
+                        "Tx relay mempool binding",
+                        extra={
+                            "chain_id": self.chain_id,
+                            "mempool_id": hex(id(mempool_service)),
+                            "pending_path": str(pending_path) if pending_path else None,
+                        },
+                    )
+                    # Set up P2P broadcast callback for reliable propagation
+                    if hasattr(mempool_service, "set_p2p_broadcast_callback"):
+                        try:
+                            mempool_service.set_p2p_broadcast_callback(
+                                self._txrelay.on_mempool_add
+                            )
+                            log.info(
+                                "P2P broadcast callback registered",
+                                extra={"mempool_id": hex(id(mempool_service))}
+                            )
+                        except Exception as e:
+                            log.warning(
+                                "Failed to set P2P broadcast callback",
+                                extra={"error": str(e)}
+                            )
+            except Exception:
+                pass
+            await self._maybe_detect_external_ip()
+
+            if self._peerstore_fallback_path:
+                fallback_snapshot = self._peerstore_fallback_path / "peers.json"
+                merged = merge_peer_files(self._peers_json_path, [fallback_snapshot])
+                if merged:
+                    log.info("Merged fallback peer snapshot into primary store")
+
+            if self._ban_enabled:
+                self._load_banlist()
+            else:
+                self._banlist.clear()
+
+            if self._tx_inv_reannounce_interval_s > 0:
+                self._tx_rebroadcast_task = self._create_child_task(
+                    self._tx_rebroadcast_supervisor(),
+                    name="p2p.pending_tx_rebroadcast",
                 )
-                # Set up P2P broadcast callback for reliable propagation
-                if hasattr(mempool_service, "set_p2p_broadcast_callback"):
-                    try:
-                        mempool_service.set_p2p_broadcast_callback(
-                            self._txrelay.on_mempool_add
-                        )
-                        log.info(
-                            "P2P broadcast callback registered",
-                            extra={"mempool_id": hex(id(mempool_service))}
-                        )
-                    except Exception as e:
-                        log.warning(
-                            "Failed to set P2P broadcast callback",
-                            extra={"error": str(e)}
-                        )
-        except Exception:
-            pass
-        await self._maybe_detect_external_ip()
 
-        if self._peerstore_fallback_path:
-            fallback_snapshot = self._peerstore_fallback_path / "peers.json"
-            merged = merge_peer_files(self._peers_json_path, [fallback_snapshot])
-            if merged:
-                log.info("Merged fallback peer snapshot into primary store")
-
-        if self._ban_enabled:
-            self._load_banlist()
-        else:
-            self._banlist.clear()
-
-        if self._tx_inv_reannounce_interval_s > 0:
-            self._tx_rebroadcast_task = self._create_child_task(
-                self._tx_rebroadcast_supervisor(),
-                name="p2p.pending_tx_rebroadcast",
+            # Persist configured seeds so a restarted node reuses them immediately
+            if self.seeds:
+                self._seed_peerstore(self.seeds)
+            self._load_addrman_from_peerstore()
+            for addr in self._advertised_addrs():
+                self._addrman.add(addr)
+            discovered = await self._discover_seed_peers()
+            if discovered:
+                self._seed_peerstore(discovered)
+                for addr in discovered:
+                    if addr not in self.seeds:
+                        self.seeds.append(addr)
+                self._seed_keys.update({self._addr_key(a) for a in discovered})
+                self._seed_sources.setdefault("discovery", []).extend(discovered)
+            log.info(
+                "Loaded %d seed(s)",
+                len(self.seeds),
+                extra={"seed_sources": self._seed_sources},
+            )
+            advertise_host = self._resolve_advertise_host()
+            advertise_port = self._advertise_port or self._local_listen_port()
+            log.info(
+                "P2P listen configuration",
+                extra={"listen_addrs": self.listen_addrs},
+            )
+            log.info(
+                "P2P advertise configuration",
+                extra={
+                    "advertise_host": advertise_host,
+                    "advertise_port": advertise_port,
+                    "advertised_addrs": self._advertised_addrs(),
+                    "external_ip": self._external_ip,
+                },
             )
 
-        # Persist configured seeds so a restarted node reuses them immediately
-        if self.seeds:
-            self._seed_peerstore(self.seeds)
-        self._load_addrman_from_peerstore()
-        for addr in self._advertised_addrs():
-            self._addrman.add(addr)
-        discovered = await self._discover_seed_peers()
-        if discovered:
-            self._seed_peerstore(discovered)
-            for addr in discovered:
-                if addr not in self.seeds:
-                    self.seeds.append(addr)
-            self._seed_keys.update({self._addr_key(a) for a in discovered})
-            self._seed_sources.setdefault("discovery", []).extend(discovered)
-        log.info(
-            "Loaded %d seed(s)",
-            len(self.seeds),
-            extra={"seed_sources": self._seed_sources},
-        )
-        advertise_host = self._resolve_advertise_host()
-        advertise_port = self._advertise_port or self._local_listen_port()
-        log.info(
-            "P2P listen configuration",
-            extra={"listen_addrs": self.listen_addrs},
-        )
-        log.info(
-            "P2P advertise configuration",
-            extra={
-                "advertise_host": advertise_host,
-                "advertise_port": advertise_port,
-                "advertised_addrs": self._advertised_addrs(),
-                "external_ip": self._external_ip,
-            },
-        )
+            # Listen
+            for ma in self.listen_addrs:
+                parsed = parse_multiaddr(ma)
+                if parsed.transport != "tcp":
+                    continue
+                host = parsed.host or "0.0.0.0"
+                port = int(parsed.port or 0)
+                log.info(
+                    "[p2p][listen] binding",
+                    extra={"host": host, "port": port, "addr": ma},
+                )
+                cfg = ListenConfig(
+                    addr=f"tcp://{host}:{port}", max_frame_bytes=8 * 1024 * 1024
+                )
+                try:
+                    await self._transport.listen(cfg)
+                except Exception as exc:
+                    log.error(
+                        "[p2p][listen][ERROR] failed to bind",
+                        extra={
+                            "host": host,
+                            "port": port,
+                            "addr": ma,
+                            "error": str(exc),
+                        },
+                        exc_info=True,
+                    )
+                    raise
+                log.info(
+                    "[p2p][listen] listening",
+                    extra={"host": host, "port": port, "addr": ma},
+                )
 
-        # Listen
-        for ma in self.listen_addrs:
-            parsed = parse_multiaddr(ma)
-            if parsed.transport != "tcp":
-                continue
-            host = parsed.host or "0.0.0.0"
-            port = int(parsed.port or 0)
-            cfg = ListenConfig(
-                addr=f"tcp://{host}:{port}", max_frame_bytes=8 * 1024 * 1024
-            )
-            await self._transport.listen(cfg)
-
-        self._tasks = [
-            asyncio.create_task(self._accept_loop(), name="p2p.accept"),
-            asyncio.create_task(self._dial_loop(), name="p2p.dial"),
-            asyncio.create_task(self._head_watch_loop(), name="p2p.head_watch"),
-            asyncio.create_task(self._sync_loop(), name="p2p.sync"),
-            *(
-                [asyncio.create_task(self._sync_cache_loop(), name="p2p.sync_cache")]
-                if self._sync_cache is not None
-                else []
-            ),
-            asyncio.create_task(self._addr_request_loop(), name="p2p.addr_request"),
-            asyncio.create_task(self._feeler_loop(), name="p2p.feeler"),
-            asyncio.create_task(self._addr_relay_loop(), name="p2p.addr_relay"),
-            asyncio.create_task(self._persist_peers_loop(), name="p2p.peer_persist"),
-            *(
-                [asyncio.create_task(self._persist_banlist_loop(), name="p2p.ban_persist")]
-                if self._ban_enabled
-                else []
-            ),
-            asyncio.create_task(self._score_decay_loop(), name="p2p.score_decay"),
-            asyncio.create_task(self._metrics_loop(), name="p2p.metrics"),
-            asyncio.create_task(self._task_watchdog_loop(), name="p2p.task_watchdog"),
-            asyncio.create_task(self._startup_sync_kick(), name="p2p.startup_sync"),
-        ]
-        self._txrelay_inv_flush_task = asyncio.create_task(
-            self._txrelay.inv_flush_loop(), name="p2p.txrelay.inv_flush"
-        )
-        self._txrelay_inflight_task = asyncio.create_task(
-            self._txrelay.inflight_timeout_loop(), name="p2p.txrelay.inflight"
-        )
-        self._txrelay_sync_task = asyncio.create_task(
-            self._txrelay.mempool_sync_loop(), name="p2p.txrelay.mempool_sync"
-        )
-        self._tasks.extend(
-            [
-                self._txrelay_inv_flush_task,
-                self._txrelay_inflight_task,
-                self._txrelay_sync_task,
+            self._tasks = [
+                asyncio.create_task(self._accept_loop(), name="p2p.accept"),
+                asyncio.create_task(self._dial_loop(), name="p2p.dial"),
+                asyncio.create_task(self._head_watch_loop(), name="p2p.head_watch"),
+                asyncio.create_task(self._sync_loop(), name="p2p.sync"),
+                *(
+                    [asyncio.create_task(self._sync_cache_loop(), name="p2p.sync_cache")]
+                    if self._sync_cache is not None
+                    else []
+                ),
+                asyncio.create_task(self._addr_request_loop(), name="p2p.addr_request"),
+                asyncio.create_task(self._feeler_loop(), name="p2p.feeler"),
+                asyncio.create_task(self._addr_relay_loop(), name="p2p.addr_relay"),
+                asyncio.create_task(self._persist_peers_loop(), name="p2p.peer_persist"),
+                *(
+                    [
+                        asyncio.create_task(
+                            self._persist_banlist_loop(), name="p2p.ban_persist"
+                        )
+                    ]
+                    if self._ban_enabled
+                    else []
+                ),
+                asyncio.create_task(self._score_decay_loop(), name="p2p.score_decay"),
+                asyncio.create_task(self._metrics_loop(), name="p2p.metrics"),
+                asyncio.create_task(self._task_watchdog_loop(), name="p2p.task_watchdog"),
+                asyncio.create_task(self._startup_sync_kick(), name="p2p.startup_sync"),
             ]
-        )
-        self._sync_wakeup.set()
-        log.info(
-            "P2P started",
-            extra={
-                "peer_id": self._peer_id_bytes.hex(),
-                "chain_id": self.chain_id,
-                "listen_addrs": self.listen_addrs,
-                "seeds": len(self.seeds),
-                "peerstore": str(self.peerstore.path),
-            },
-        )
+            self._txrelay_inv_flush_task = asyncio.create_task(
+                self._txrelay.inv_flush_loop(), name="p2p.txrelay.inv_flush"
+            )
+            self._txrelay_inflight_task = asyncio.create_task(
+                self._txrelay.inflight_timeout_loop(), name="p2p.txrelay.inflight"
+            )
+            self._txrelay_sync_task = asyncio.create_task(
+                self._txrelay.mempool_sync_loop(), name="p2p.txrelay.mempool_sync"
+            )
+            self._tasks.extend(
+                [
+                    self._txrelay_inv_flush_task,
+                    self._txrelay_inflight_task,
+                    self._txrelay_sync_task,
+                ]
+            )
+            self._sync_wakeup.set()
+            log.info(
+                "P2P started",
+                extra={
+                    "peer_id": self._peer_id_bytes.hex(),
+                    "chain_id": self.chain_id,
+                    "listen_addrs": self.listen_addrs,
+                    "seeds": len(self.seeds),
+                    "peerstore": str(self.peerstore.path),
+                },
+            )
+        except Exception:
+            self._running = False
+            raise
 
     async def stop(self) -> None:
         if not self._running:

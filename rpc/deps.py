@@ -42,6 +42,7 @@ import shutil
 import threading
 import time
 import typing as t
+import traceback
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -56,6 +57,18 @@ def _import(path: str):
         return importlib.import_module(path)
     except Exception as e:
         raise RuntimeError(f"Failed to import {path}: {e}") from e
+
+
+def _format_p2p_error(prefix: str, exc: BaseException) -> str:
+    location = None
+    tb = traceback.extract_tb(exc.__traceback__)
+    if tb:
+        last = tb[-1]
+        location = f"{last.filename}:{last.lineno}"
+    detail = f"{type(exc).__name__}: {exc}"
+    if location:
+        detail = f"{detail} ({location})"
+    return f"{prefix}: {detail}"
 
 
 # ---- repo root & spec loading ----------------------------------------------
@@ -904,7 +917,7 @@ def _init_p2p_service(
             log_msg += ", no seeds configured"
         log.info(log_msg)
     except Exception as e:
-        p2p_start_error = f"init_failed: {type(e).__name__}: {e}"
+        p2p_start_error = _format_p2p_error("init_failed", e)
         log.error(f"Failed to initialize P2P service: {p2p_start_error}", exc_info=True)
         p2p_service = None
         p2p_deps_sync = None
@@ -987,7 +1000,7 @@ async def _p2p_supervisor(ctx: RpcContext) -> None:
             next_attempt_at = 0.0
             log.info("P2P supervisor restarted service successfully")
         except Exception as exc:
-            ctx.p2p_start_error = f"start_failed: {type(exc).__name__}: {exc}"
+            ctx.p2p_start_error = _format_p2p_error("start_failed", exc)
             log.warning("P2P supervisor restart failed", exc_info=exc)
             backoff_s = min(max_backoff_s, backoff_s * 2)
             ctx.p2p_restart_backoff_s = backoff_s
@@ -1538,7 +1551,7 @@ async def startup(cfg: t.Any | None = None) -> RpcContext:
                     )
                     
             except Exception as e:
-                _CTX.p2p_start_error = f"start_failed: {type(e).__name__}: {e}"
+                _CTX.p2p_start_error = _format_p2p_error("start_failed", e)
                 log = logging.getLogger("animica.rpc.deps")
                 if not _CTX.p2p_required:
                     log.warning(
