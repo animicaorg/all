@@ -24,6 +24,7 @@ from ..peer import connection_manager as conman
 from ..peer import identify as idsvc
 from ..peer import peerstore as pstore
 from ..peer.p2p_store import apply_umask_from_env, ensure_writable
+from ..peer.peer_addr import normalize_peer_addr
 from ..peer import ping as pingsvc
 from ..peer import ratelimit as prlimit
 from ..transport import base as tbase
@@ -766,7 +767,7 @@ class NodeService:
         3. Triggers immediate dial attempts
         
         Args:
-            addresses: List of peer addresses (multiaddr format)
+            addresses: List of peer addresses (multiaddr, tcp://, or host:port format)
         
         Returns:
             Dict with import results (imported, skipped, invalid counts)
@@ -781,46 +782,47 @@ class NodeService:
         seen_addrs = set(self.cfg.seeds) if self.cfg.seeds else set()
         
         for addr in addresses:
-            # Validate address format
-            try:
-                parsed = ma.parse(addr)
-                if not parsed.host or not parsed.port:
-                    invalid += 1
-                    errors.append(f"invalid address: {addr}")
-                    continue
-            except Exception as e:
+            # Normalize and validate address format
+            # This handles multiaddr (/ip4/...), URI (tcp://...), and host:port formats
+            normalized_result = normalize_peer_addr(addr, allow_quic=True, allow_ws=True, allow_tcp=True)
+            if not normalized_result.addr:
                 invalid += 1
-                errors.append(f"invalid address {addr}: {e}")
+                reason = normalized_result.reason or "unknown"
+                errors.append(f"invalid address: {addr} ({reason})")
+                log.debug(f"[import_peers] Rejected address: {addr} (reason: {reason})")
                 continue
             
+            # Use canonical form for consistency
+            canonical_addr = normalized_result.addr.canonical
+            
             # Skip if already in seed list (dedupe within this call)
-            if addr in seen_addrs:
+            if canonical_addr in seen_addrs or addr in seen_addrs:
                 skipped += 1
                 log.debug(f"[import_peers] Skipping already-known seed: {addr}")
                 continue
             
-            seen_addrs.add(addr)
-            log.info(f"[import_peers] Adding seed to runtime: {addr}")
+            seen_addrs.add(canonical_addr)
+            log.info(f"[import_peers] Adding seed to runtime: {canonical_addr} (from {addr})")
             imported += 1
             
             # Add to peerstore
             try:
-                # Generate a deterministic peer ID from the address using full hash
-                peer_id_hash = hashlib.sha256(addr.encode()).hexdigest()
+                # Generate a deterministic peer ID from the canonical address using full hash
+                peer_id_hash = hashlib.sha256(canonical_addr.encode()).hexdigest()
                 
                 self.peerstore.add(
                     peer_id=peer_id_hash,
-                    addrs=[addr],
+                    addrs=[canonical_addr],
                     score=10.0,  # Higher score for manually added seeds
                     direction="outbound"
                 )
-                self.peerstore.record_seen(peer_id_hash, addr)
+                self.peerstore.record_seen(peer_id_hash, canonical_addr)
             except Exception as e:
                 log.warning(f"[import_peers] Failed to add to peerstore: {e}")
             
-            # Trigger immediate dial attempt
+            # Trigger immediate dial attempt with canonical address
             dial_attempted += 1
-            self.loop.create_task(self._dial(addr), name=f"import-dial@{addr}")
+            self.loop.create_task(self._dial(canonical_addr), name=f"import-dial@{canonical_addr}")
         
         return {
             "ok": imported > 0 or skipped > 0,
