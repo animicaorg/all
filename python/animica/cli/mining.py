@@ -834,6 +834,11 @@ def mine_blocks(
         "--include-mempool/--no-include-mempool",
         help="Include pending mempool transactions when mining (default: include).",
     ),
+    min_peers: Optional[int] = typer.Option(
+        None,
+        "--min-peers",
+        help="Minimum connected peers required for mining (default: use ANIMICA_MINING_MIN_PEERS or 1). Set to 0 for local development without peers.",
+    ),
 ) -> None:
     """
     Mine blocks with proof-of-work to a specified payout address.
@@ -933,11 +938,15 @@ def mine_blocks(
 
         # Mine payout-only blocks (skip mempool)
         animica miner mine-blocks --address premine --count 3 --no-include-mempool
+        
+        # Mine locally without peer connections (for development/testing)
+        animica miner mine-blocks --address premine --count 1 --min-peers 0
     
     Environment variables:
         ANIMICA_RPC_URL             - Node RPC endpoint (default: http://127.0.0.1:8545/rpc)
         ANIMICA_MINER_ADDRESS       - Default payout address if --address not specified
         ANIMICA_MINER_DEVICE        - Default mining device (default: cpu)
+        ANIMICA_MINING_MIN_PEERS    - Default minimum peers required (default: 1, can be overridden with --min-peers)
         ANIMICA_MINER_MAX_NONCE     - Max nonce iterations per window (default: 10,000,000)
         ANIMICA_MINER_MAX_TOTAL_NONCE - Max total nonce attempts (default: 50,000,000)
         ANIMICA_MINER_POW_RETRY_WINDOWS - Number of retry windows (default: 4)
@@ -981,6 +990,26 @@ def mine_blocks(
             err=True,
         )
         raise typer.Exit(2)
+    
+    # Validate and convert min_peers if provided
+    if min_peers is not None:
+        if isinstance(min_peers, str):
+            try:
+                min_peers = int(min_peers)
+            except ValueError:
+                typer.secho(
+                    f"Error: min-peers must be a valid integer, got {min_peers}",
+                    fg=typer.colors.RED,
+                    err=True,
+                )
+                raise typer.Exit(2)
+        if min_peers < 0:
+            typer.secho(
+                f"Error: min-peers must be >= 0, got {min_peers}",
+                fg=typer.colors.RED,
+                err=True,
+            )
+            raise typer.Exit(2)
     
     # Validate device parameter
     if gpu:
@@ -1252,6 +1281,9 @@ def mine_blocks(
                             "address": resolved_address,
                             "include_mempool": include_mempool,
                         }
+                        # Add min_peers if specified by user
+                        if min_peers is not None:
+                            payload["min_peers"] = min_peers
                         try:
                             return client.request("miner.getBlockTemplate", payload)
                         except Exception as exc:
@@ -1271,6 +1303,8 @@ def mine_blocks(
                                     "payout_address": resolved_address,
                                     "include_mempool": include_mempool,
                                 }
+                                if min_peers is not None:
+                                    legacy_payload["min_peers"] = min_peers
                                 try:
                                     return client.request("miner.getBlockTemplate", legacy_payload)
                                 except Exception as legacy_exc:
@@ -1292,12 +1326,15 @@ def mine_blocks(
                     if proxy:
                         if verbose:
                             typer.echo("  [Proxy] Forwarding block template request to trusted RPC")
+                        proxy_payload = {
+                            "address": resolved_address,
+                            "include_mempool": include_mempool,
+                        }
+                        if min_peers is not None:
+                            proxy_payload["min_peers"] = min_peers
                         template = proxy.sync_forward_request(
                             "miner.getBlockTemplate",
-                            {
-                                "address": resolved_address,
-                                "include_mempool": include_mempool,
-                            },
+                            proxy_payload,
                             fallback_handler=get_template_via_local,
                         )
                     else:
