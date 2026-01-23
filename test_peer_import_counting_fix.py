@@ -3,9 +3,17 @@ Test to verify the peer import counting bug fix.
 
 This test validates that the import_peers RPC method correctly counts
 imported, skipped, and invalid addresses without double-counting.
+
+Bug fixed: In rpc/methods/p2p.py line 1263, invalid addresses were being
+counted as both "skipped" and "invalid", causing the total to exceed input count.
 """
-import pytest
-import asyncio
+import sys
+from pathlib import Path
+
+# Add repo root to path to enable imports
+sys.path.insert(0, str(Path(__file__).parent))
+
+from p2p.peer.peer_addr import normalize_peer_addr
 
 
 def test_import_peers_counting():
@@ -34,13 +42,6 @@ def test_import_peers_counting():
     # - 2 duplicates skipped
     # - 0 invalid
     # Total: 3 + 2 + 0 = 5 ✓
-    
-    # Import the module to test
-    import sys
-    from pathlib import Path
-    sys.path.insert(0, str(Path(__file__).parent))
-    
-    from p2p.peer.peer_addr import normalize_peer_addr
     
     # Simulate the import logic
     imported = 0
@@ -84,12 +85,10 @@ def test_import_peers_counting():
 def test_import_peers_with_invalid_addresses():
     """
     Test that invalid addresses are counted correctly (not double-counted).
-    """
-    import sys
-    from pathlib import Path
-    sys.path.insert(0, str(Path(__file__).parent))
     
-    from p2p.peer.peer_addr import normalize_peer_addr
+    Fixed: Only increment invalid counter for invalid addresses 
+    (was previously incrementing both skipped and invalid counters)
+    """
     
     test_addresses = [
         "/ip4/192.168.1.1/tcp/30333",  # Valid
@@ -108,7 +107,8 @@ def test_import_peers_with_invalid_addresses():
         result = normalize_peer_addr(addr, allow_quic=True, allow_ws=True, allow_tcp=True)
         
         if not result.addr:
-            # BUG FIX: Only increment invalid, not skipped AND invalid
+            # Fixed: Only increment invalid counter for invalid addresses 
+            # (was previously incrementing both skipped and invalid counters)
             invalid += 1
             continue
         
