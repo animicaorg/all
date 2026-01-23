@@ -1433,6 +1433,7 @@ class P2PServiceLegacy:
                 continue
             
             self.seeds.append(normalized)
+            existing_normalized.add(normalized)  # Also add to set to prevent duplicates in this import call
             self._log.info("Added seed to runtime: %s (from %s)", normalized, addr)
             imported += 1
             

@@ -158,7 +158,9 @@ def _normalize_peer_address(address: str) -> str | None:
         ip_obj = ipaddress.ip_address(host)
         ip_tag = "ip6" if ip_obj.version == 6 else "ip4"
     except ValueError:
-        ip_tag = "dns4"
+        # Use 'dns' instead of 'dns4' to match multiaddr normalization
+        # This ensures consistency across the codebase
+        ip_tag = "dns"
     return f"/{ip_tag}/{host}/tcp/{port}"
 
 

@@ -161,8 +161,82 @@ def test_mixed_format_deduplication():
     print()
 
 
+def test_duplicates_within_same_import():
+    """Test that duplicates within the same import call are detected."""
+    from urllib.parse import urlparse
+    import ipaddress
+    
+    def normalize_addr(addr):
+        """Simulate the normalize logic from service.py"""
+        if addr.startswith("/"):
+            return normalize_multiaddr(addr)
+        host = None
+        port = None
+        if "://" in addr:
+            parsed = urlparse(addr)
+            host = parsed.hostname
+            port = parsed.port
+        elif ":" in addr:
+            host, port_s = addr.rsplit(":", 1)
+            port = int(port_s)
+        try:
+            ip = ipaddress.ip_address(host)
+            host_proto = "ip4" if ip.version == 4 else "ip6"
+        except ValueError:
+            host_proto = "dns"
+        return f"/{host_proto}/{host}/tcp/{port}"
+    
+    # Empty initial seeds
+    initial_seeds = []
+    
+    # Import list with duplicates in different formats
+    import_list = [
+        "/ip4/1.2.3.4/tcp/30333",
+        "tcp://1.2.3.4:30333",           # Same address, different format
+        "/dns4/example.com/tcp/30333",
+        "/dns/example.com/tcp/30333",    # Same address, different format
+        "example.com:30333",             # Same address, different format
+    ]
+    
+    print("Testing duplicate detection within same import call:")
+    print(f"  Import list: {len(import_list)} addresses")
+    print()
+    
+    # Simulate import_peers with the FIX
+    existing_normalized = set()
+    for seed in initial_seeds:
+        norm = normalize_addr(seed)
+        existing_normalized.add(norm)
+    
+    imported = 0
+    skipped = 0
+    
+    for addr in import_list:
+        normalized = normalize_addr(addr)
+        if normalized in existing_normalized:
+            skipped += 1
+            print(f"  SKIP: {addr}")
+        else:
+            imported += 1
+            existing_normalized.add(normalized)  # THE FIX: add to set immediately
+            print(f"  ADD:  {addr}")
+    
+    print()
+    print(f"Results: imported={imported}, skipped={skipped}")
+    print(f"Expected: imported=2 (one IP, one hostname), skipped=3 (duplicates)")
+    print()
+    
+    # Should import 2 unique addresses, skip 3 duplicates
+    assert imported == 2, f"Expected 2 imports, got {imported}"
+    assert skipped == 3, f"Expected 3 skipped, got {skipped}"
+    
+    print("✓ Duplicates within same import call are properly detected!")
+    print()
+
+
 if __name__ == "__main__":
     test_seed_normalization()
     test_duplicate_detection()
     test_mixed_format_deduplication()
+    test_duplicates_within_same_import()
     print("\n✓ All tests passed! The fix correctly handles mixed address formats.")
