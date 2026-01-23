@@ -14,7 +14,44 @@ These were not detected as duplicates.
 Fix: Pre-normalize existing seeds before comparison in import_peers().
 """
 
+import ipaddress
+from urllib.parse import urlparse
+
 from p2p.transport.multiaddr import normalize_multiaddr
+
+
+def normalize_addr(addr):
+    """
+    Simulate the normalize logic from service.py.
+    
+    Converts various address formats to canonical multiaddr format:
+    - Multiaddr: /ip4/.../tcp/... or /dns/.../tcp/...
+    - tcp:// URLs: tcp://host:port
+    - host:port: host:port
+    
+    Args:
+        addr: Address in any supported format
+    
+    Returns:
+        Canonical multiaddr string (e.g., /ip4/1.2.3.4/tcp/30333)
+    """
+    if addr.startswith("/"):
+        return normalize_multiaddr(addr)
+    host = None
+    port = None
+    if "://" in addr:
+        parsed = urlparse(addr)
+        host = parsed.hostname
+        port = parsed.port
+    elif ":" in addr:
+        host, port_s = addr.rsplit(":", 1)
+        port = int(port_s)
+    try:
+        ip = ipaddress.ip_address(host)
+        host_proto = "ip4" if ip.version == 4 else "ip6"
+    except ValueError:
+        host_proto = "dns"
+    return f"/{host_proto}/{host}/tcp/{port}"
 
 
 def test_seed_normalization():
@@ -40,28 +77,6 @@ def test_seed_normalization():
 
 def test_duplicate_detection():
     """Test that our fix correctly detects duplicates across different formats."""
-    from urllib.parse import urlparse
-    import ipaddress
-    
-    def normalize_addr(addr):
-        """Simulate the normalize logic from service.py"""
-        if addr.startswith("/"):
-            return normalize_multiaddr(addr)
-        host = None
-        port = None
-        if "://" in addr:
-            parsed = urlparse(addr)
-            host = parsed.hostname
-            port = parsed.port
-        elif ":" in addr:
-            host, port_s = addr.rsplit(":", 1)
-            port = int(port_s)
-        try:
-            ip = ipaddress.ip_address(host)
-            host_proto = "ip4" if ip.version == 4 else "ip6"
-        except ValueError:
-            host_proto = "dns"
-        return f"/{host_proto}/{host}/tcp/{port}"
     
     # Initial seeds (as stored in self.seeds, un-normalized)
     initial_seeds = [
@@ -117,28 +132,6 @@ def test_duplicate_detection():
 
 def test_mixed_format_deduplication():
     """Test that tcp:// URLs are properly converted and deduplicated."""
-    from urllib.parse import urlparse
-    import ipaddress
-    
-    def normalize_addr(addr):
-        """Simulate the normalize logic from service.py"""
-        if addr.startswith("/"):
-            return normalize_multiaddr(addr)
-        host = None
-        port = None
-        if "://" in addr:
-            parsed = urlparse(addr)
-            host = parsed.hostname
-            port = parsed.port
-        elif ":" in addr:
-            host, port_s = addr.rsplit(":", 1)
-            port = int(port_s)
-        try:
-            ip = ipaddress.ip_address(host)
-            host_proto = "ip4" if ip.version == 4 else "ip6"
-        except ValueError:
-            host_proto = "dns"
-        return f"/{host_proto}/{host}/tcp/{port}"
     
     print("Testing that tcp:// URLs normalize to /ip4/ format:")
     
@@ -163,28 +156,6 @@ def test_mixed_format_deduplication():
 
 def test_duplicates_within_same_import():
     """Test that duplicates within the same import call are detected."""
-    from urllib.parse import urlparse
-    import ipaddress
-    
-    def normalize_addr(addr):
-        """Simulate the normalize logic from service.py"""
-        if addr.startswith("/"):
-            return normalize_multiaddr(addr)
-        host = None
-        port = None
-        if "://" in addr:
-            parsed = urlparse(addr)
-            host = parsed.hostname
-            port = parsed.port
-        elif ":" in addr:
-            host, port_s = addr.rsplit(":", 1)
-            port = int(port_s)
-        try:
-            ip = ipaddress.ip_address(host)
-            host_proto = "ip4" if ip.version == 4 else "ip6"
-        except ValueError:
-            host_proto = "dns"
-        return f"/{host_proto}/{host}/tcp/{port}"
     
     # Empty initial seeds
     initial_seeds = []
