@@ -1182,7 +1182,7 @@ def _ctx():
 
 
 def _mining_gate(
-    *, allow_offline_mining: bool = False, allow_unsynced: bool = False
+    *, allow_offline_mining: bool = False, allow_unsynced: bool = False, min_peers_override: int | None = None
 ) -> tuple[bool, str | None]:
     """
     Determine if mining/template generation is allowed based on sync readiness.
@@ -1196,6 +1196,7 @@ def _mining_gate(
     Args:
         allow_offline_mining: Requested offline override (ignored; unsafe overrides disabled)
         allow_unsynced: Requested unsynced override (ignored; unsafe overrides disabled)
+        min_peers_override: Optional override for minimum peers requirement (0 allows mining without peers)
         
     Returns:
         (allowed: bool, reason: str | None)
@@ -1262,7 +1263,21 @@ def _mining_gate(
     peers_total = int(p2p_status.get("peers_total", 0))
     peers_handshaking = int(p2p_status.get("peers_handshaking", 0))
     outbound_connected = int(p2p_status.get("peers_connected_outbound", 0))
-    min_peers = int(os.getenv("ANIMICA_MINING_MIN_PEERS", "1"))
+    
+    # Use override if provided, otherwise fall back to environment variable
+    env_min_peers = int(os.getenv("ANIMICA_MINING_MIN_PEERS", "1"))
+    if min_peers_override is not None:
+        min_peers = min_peers_override
+        log.info(
+            "Using min_peers override from RPC parameter",
+            extra={
+                "min_peers_override": min_peers,
+                "env_min_peers": env_min_peers,
+                "source": "rpc_parameter",
+            },
+        )
+    else:
+        min_peers = env_min_peers
     
     # Helper for consistent peer-related error messages
     def _peer_error_guidance(status: dict[str, t.Any]) -> str:
@@ -4368,6 +4383,7 @@ def miner_get_block_template(*args: Any, **kwargs: Any) -> Dict[str, Any]:
     allow_offline_mining = False
     allow_unsynced_mining = False
     force_empty_template = False
+    min_peers_override: int | None = None
     raw_params: dict[str, Any] | list[Any] | None = None
 
     if args:
@@ -4405,6 +4421,16 @@ def miner_get_block_template(*args: Any, **kwargs: Any) -> Dict[str, Any]:
         force_empty_template = bool(
             payload.get("force_empty_template", payload.get("forceEmptyTemplate", False))
         )
+        # Extract min_peers if provided
+        if "min_peers" in payload or "minPeers" in payload:
+            min_peers_val = payload.get("min_peers", payload.get("minPeers"))
+            if min_peers_val is not None:
+                try:
+                    min_peers_override = int(min_peers_val)
+                    if min_peers_override < 0:
+                        raise rpc_errors.InvalidParams("min_peers must be >= 0")
+                except (ValueError, TypeError):
+                    raise rpc_errors.InvalidParams("min_peers must be an integer")
         unknown = set(payload.keys()) - {
             "address",
             "payout_address",
@@ -4416,6 +4442,8 @@ def miner_get_block_template(*args: Any, **kwargs: Any) -> Dict[str, Any]:
             "allowUnsyncedMining",
             "force_empty_template",
             "forceEmptyTemplate",
+            "min_peers",
+            "minPeers",
         }
         if unknown:
             raise rpc_errors.InvalidParams(
@@ -4446,6 +4474,7 @@ def miner_get_block_template(*args: Any, **kwargs: Any) -> Dict[str, Any]:
             "allow_unsynced_mining": allow_unsynced_mining,
             "force_empty_template": force_empty_template,
             "payout_address": payout_address,
+            "min_peers_override": min_peers_override,
         },
     )
 
@@ -4459,6 +4488,7 @@ def miner_get_block_template(*args: Any, **kwargs: Any) -> Dict[str, Any]:
     allowed, reason = _mining_gate(
         allow_offline_mining=allow_offline_mining,
         allow_unsynced=allow_unsynced_mining,
+        min_peers_override=min_peers_override,
     )
     if not allowed:
         if reason and reason.startswith("sync_phase:"):

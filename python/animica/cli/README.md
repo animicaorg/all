@@ -367,6 +367,15 @@ Mining Operations
   # Auto-detection priority: CUDA > ROCm > OpenCL > Metal > CPU
   # Falls back to CPU if no GPU detected or if detection fails
   
+  # Mine without peer connections (for local development/testing)
+  # By default, mining requires at least 1 connected peer
+  # Use --min-peers 0 to mine locally without peer connections
+  animica miner mine-blocks --count 1 --min-peers 0
+  
+  # Alternative: set environment variable (applies to all mining operations)
+  export ANIMICA_MINING_MIN_PEERS=0
+  animica miner mine-blocks --count 5
+  
   # If ANIMICA_MINER_ADDRESS is not set, rewards go to:
   # 1. The premine address (for devnet/mainnet)
   # 2. Zero address (fallback)
