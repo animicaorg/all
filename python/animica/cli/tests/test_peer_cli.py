@@ -1042,6 +1042,10 @@ def test_bootstrap_local_rpc_injects(monkeypatch: Any, tmp_path: Any) -> None:
                         "peers_total": 2,
                         "peers_inbound": 1,
                         "peers_outbound": 1,
+                        "peers_connected": 2,
+                        "peers_handshaking": 0,
+                        "peers_connected_inbound": 1,
+                        "peers_connected_outbound": 1,
                         "dial_last_error": None,
                     },
                 },
@@ -1053,6 +1057,15 @@ def test_bootstrap_local_rpc_injects(monkeypatch: Any, tmp_path: Any) -> None:
     assert result.exit_code == 0
     assert "Pushed 1 seed(s) into running node" in result.output
     assert "Peers: 2 total (inbound 1 / outbound 1)" in result.output
+
+
+def test_rpc_operation_succeeded_rejects_zero_dial_attempts() -> None:
+    """Success cannot be true when dial attempts are zero."""
+    ok, err = peer._rpc_operation_succeeded(
+        {"dial_attempted": 0, "dial_success": 0, "errors": []}
+    )
+    assert ok is False
+    assert err == "no dial attempts started"
 
 
 @respx_mock

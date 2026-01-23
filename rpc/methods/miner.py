@@ -1292,11 +1292,35 @@ def _mining_gate(
         dial_error = status.get("dial_last_error") if status else None
         if dial_error and isinstance(dial_error, dict):
             error_msg = dial_error.get("error") or dial_error.get("message")
-            error_peer = dial_error.get("peer") or dial_error.get("address")
+            error_peer = dial_error.get("peer") or dial_error.get("address") or dial_error.get("addr")
             if error_msg and error_peer:
                 guidance += f". Last dial failed: {error_peer} ({error_msg})"
             elif error_msg:
                 guidance += f". Last dial error: {error_msg}"
+
+        dial_history = status.get("dial_history") if status else None
+        if isinstance(dial_history, list):
+            recent_failures = [
+                entry for entry in dial_history if isinstance(entry, dict) and entry.get("status") == "failed"
+            ]
+            if recent_failures:
+                recent = recent_failures[-3:]
+                details = []
+                for entry in recent:
+                    addr = entry.get("addr") or entry.get("peer") or "unknown"
+                    err = entry.get("error") or "unknown_error"
+                    attempts = entry.get("attempts")
+                    next_retry = entry.get("next_retry_at")
+                    retry_hint = ""
+                    if next_retry:
+                        try:
+                            retry_hint = f", next_retry_at={int(next_retry)}"
+                        except Exception:
+                            retry_hint = f", next_retry_at={next_retry}"
+                    attempts_hint = f", attempts={attempts}" if attempts is not None else ""
+                    details.append(f"{addr} ({err}{attempts_hint}{retry_hint})")
+                if details:
+                    guidance += f". Recent dial errors: " + "; ".join(details)
         
         guidance += ". Check: 'animica p2p doctor' for diagnostics, or set ANIMICA_MINING_MIN_PEERS=0 for local development."
         return guidance
@@ -1317,7 +1341,7 @@ def _mining_gate(
     if min_peers > 0 and peers_connected < min_peers:
         if allow_offline_mining:
             log.warning(
-                "MINER_ALLOW_OFFLINE - insufficient connected peers",
+                "[mining][template] allow_offline_mining ignored; insufficient connected peers",
                 extra={
                     "peers_connected": peers_connected,
                     "peers_handshaking": peers_handshaking,
@@ -1326,11 +1350,12 @@ def _mining_gate(
             )
         else:
             log.info(
-                "Mining template unavailable - insufficient connected peers",
+                "[mining][template] insufficient connected peers",
                 extra={
                     "peers_connected": peers_connected,
                     "peers_handshaking": peers_handshaking,
                     "peers_total": peers_total,
+                    "peerstore_total": int(p2p_status.get("peerstore_total") or 0),
                     "min_peers": min_peers,
                     "reason": "insufficient_peers",
                 },
@@ -1348,7 +1373,7 @@ def _mining_gate(
     # Skip this check if min_peers is set to 0 (local development mode)
     if not allow_offline_mining and min_peers > 0 and outbound_connected <= 0 and peers_connected <= 0:
         log.info(
-            "Mining template unavailable - no outbound connected peers",
+            "[mining][template] no outbound connected peers",
             extra={
                 "peers_connected": peers_connected,
                 "outbound_connected": outbound_connected,
@@ -3455,6 +3480,15 @@ def _mine_once(
         # State changes (balance transfers, nonce increments) are persisted via state_db
         # Coinbase transactions are executed first (they're prepended to txs list)
         log.info(f"Executing {len(txs)} transactions for block at height {header.height}")
+        state_snapshot = None
+        if ctx.state_db is not None and hasattr(ctx.state_db, "snapshot"):
+            try:
+                state_snapshot = ctx.state_db.snapshot()
+            except Exception as exc:
+                log.warning(
+                    "[chain][apply] failed to snapshot state before mining execution",
+                    extra={"error": str(exc)},
+                )
         receipts_dict = _execute_transactions(
             txs=txs,
             state_db=ctx.state_db,
@@ -3515,6 +3549,15 @@ def _mine_once(
                 nonce=header.nonce,
                 extra=header.extra,
             )
+        if state_snapshot is not None and ctx.state_db is not None and hasattr(ctx.state_db, "revert"):
+            try:
+                ctx.state_db.revert(state_snapshot)
+                log.debug("[chain][apply] reverted mining execution state snapshot")
+            except Exception as exc:
+                log.warning(
+                    "[chain][apply] failed to revert mining execution state snapshot",
+                    extra={"error": str(exc)},
+                )
 
         # Re-check PoW after header roots are finalized (state/receipts updates change hash).
         final_hash_bytes = header.hash()
@@ -3607,7 +3650,7 @@ def _mine_once(
             
             if accepted:
                 log.info(
-                    f"Block imported successfully via block importer at height {header.height}",
+                    "[chain][apply] block imported via BlockImporter",
                     extra={
                         "height": header.height,
                         "hash": "0x" + block_hash_bytes.hex()[:16] + "...",
@@ -3768,6 +3811,15 @@ def _mine_once(
                     f"credited={credited_label} | "
                     f"new_balance={final_balance} nANM | "
                     f"txs={len(txs)} | receipts={len(receipts) if receipts else 0}"
+                )
+                log.info(
+                    "[wallet][index] balance updated after mining",
+                    extra={
+                        "height": header.height,
+                        "coinbase": payout_addr_bytes.hex(),
+                        "balance": final_balance,
+                        "credited_nanm": credited_nanm,
+                    },
                 )
                 
             except Exception as e:

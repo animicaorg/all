@@ -69,6 +69,8 @@ async def test_p2p_bootstrap_and_status_reflects_peers(tmp_path):
         assert snap_b.p2p_running is True
         assert snap_b.peers_total >= 1
         assert snap_b.peers_outbound >= 1
+        assert snap_b.peers_connected >= 1
+        assert snap_b.peers_connected_outbound >= 1
         assert snap_b.bootstrap_attempts_last_5m >= 1
         assert snap_b.last_peer_connect_at is not None
         assert "config" in snap_b.seed_sources
@@ -77,6 +79,8 @@ async def test_p2p_bootstrap_and_status_reflects_peers(tmp_path):
         assert rpc_status["p2p_running"] is True
         assert rpc_status["peers_total"] >= 1
         assert rpc_status["peers_outbound"] >= 1
+        assert rpc_status["peers_connected"] >= 1
+        assert rpc_status["peers_connected_outbound"] >= 1
     finally:
         p2p.clear_service()
         await node_b.stop()

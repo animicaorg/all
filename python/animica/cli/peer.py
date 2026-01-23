@@ -347,6 +347,9 @@ def _rpc_operation_succeeded(result: Any) -> tuple[bool, Optional[str]]:
             dial_attempted = result.get("dial_attempted") or result.get("dial_attempts_started") or 0
             dial_success = result.get("dial_success") or 0
             errors = result.get("errors") or []
+            if dial_attempted <= 0 and dial_success <= 0:
+                error_msg = "no dial attempts started"
+                return False, error_msg
             success = bool(added or dial_attempted or dial_success)
             error_msg = None
             if errors:
@@ -1502,6 +1505,12 @@ def bootstrap_peers(
                 # Show dial attempt counters if available
                 if dial_attempted > 0:
                     typer.echo(f"  Dial attempts: {dial_attempted}, succeeded: {dial_success}")
+                else:
+                    typer.secho(
+                        "✗ Bootstrap reported success but dial_attempted=0 (no outbound dials were started).",
+                        fg=typer.colors.RED,
+                    )
+                    raise typer.Exit(code=1)
                 
                 # Get initial peer status
                 initial_status, status_error = _fetch_peer_status(target_rpc)
