@@ -35,7 +35,7 @@ import signal
 import time
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Optional
+from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Optional, Tuple
 
 JSON = Dict[str, Any]
 
@@ -128,6 +128,16 @@ class OrchestratorConfig:
     submit_backoff_max: float = float(
         os.getenv("ANIMICA_MINER_SUBMIT_BACKOFF_MAX", "3.0")
     )
+    # CRITICAL FIX: Add sync checking before mining
+    check_sync_before_submit: bool = os.getenv(
+        "ANIMICA_MINER_CHECK_SYNC", "true"
+    ).lower() in ("true", "1", "yes")
+    min_peers_for_mining: int = int(
+        os.getenv("ANIMICA_MINER_MIN_PEERS", "1")
+    )  # Minimum peers required for mining
+    max_height_lag: int = int(
+        os.getenv("ANIMICA_MINER_MAX_HEIGHT_LAG", "5")
+    )  # Maximum blocks behind network to still mine
 
     # Scanner
     device_kind: str = os.getenv(
@@ -338,6 +348,7 @@ class ScannerAdapter:
 class SubmitPipe:
     """
     Concurrent submitter that pulls shares from a queue and submits over RPC.
+    Enhanced with sync status checking to prevent mining when node is behind.
     """
 
     def __init__(
@@ -347,12 +358,21 @@ class SubmitPipe:
         max_concurrency: int,
         backoff_initial: float,
         backoff_max: float,
+        check_sync: bool = True,  # CRITICAL FIX: Add sync checking
+        min_peers: int = 1,  # CRITICAL FIX: Minimum peers required
+        max_height_lag: int = 5,  # CRITICAL FIX: Maximum acceptable lag
     ) -> None:
         self._submitter = submitter
         self._sem = asyncio.Semaphore(max(1, max_concurrency))
         self._b0 = max(0.01, backoff_initial)
         self._bmax = max(self._b0, backoff_max)
         self._warned_at: Dict[str, float] = {}
+        # CRITICAL FIX: Sync checking config
+        self._check_sync = check_sync
+        self._min_peers = min_peers
+        self._max_height_lag = max_height_lag
+        self._last_sync_check: float = 0.0
+        self._sync_check_interval: float = 10.0  # Check every 10 seconds
 
     async def run(
         self, in_queue: "asyncio.Queue[JSON]", stop_evt: asyncio.Event
@@ -382,6 +402,16 @@ class SubmitPipe:
                 "invalid-share-shape", "Dropping share with unexpected shape"
             )
             return
+        
+        # CRITICAL FIX: Check if node is ready for mining
+        is_ready, reason = await self._check_node_ready_for_mining()
+        if not is_ready:
+            self._warn_throttled(
+                "node-not-ready",
+                f"Skipping share submission: {reason}",
+            )
+            return
+        
         work_source = str(
             share.get("workSource")
             or share.get("work_source")
@@ -422,6 +452,12 @@ class SubmitPipe:
                 MINER_SUBMIT_LATENCY_SEC.observe(dt)  # type: no cover
                 if res.get("accepted"):
                     MINER_SUBMIT_OK.inc()  # type: ignore
+                    # CRITICAL FIX: Log successful submissions for reward tracking
+                    credited = res.get("creditedAmount") or res.get("credited_amount")
+                    if credited:
+                        log.info(f"Share accepted and reward credited: {credited} nANM")
+                    else:
+                        log.info("Share accepted (pool mode or reward not yet confirmed)")
                 else:
                     MINER_SUBMIT_REJECT.inc()  # type: ignore
                     reason = res.get("reason", "unknown")
@@ -440,6 +476,60 @@ class SubmitPipe:
         if now - last >= 10.0:
             self._warned_at[key] = now
             log.warning(message, *args)
+    
+    async def _check_node_ready_for_mining(self) -> Tuple[bool, Optional[str]]:
+        """
+        CRITICAL FIX: Check if node is ready for mining by verifying:
+        1. Node has minimum required peers
+        2. Node is synced (not too far behind network)
+        3. Node is responsive
+        
+        Returns (is_ready, reason_if_not_ready)
+        """
+        if not self._check_sync:
+            return True, None
+        
+        # Rate limit sync checks
+        now = time.time()
+        if now - self._last_sync_check < self._sync_check_interval:
+            return True, None  # Assume OK until next check
+        self._last_sync_check = now
+        
+        try:
+            # Check peer count via RPC (if submitter has get_peer_count method)
+            peer_count = 0
+            if hasattr(self._submitter, 'get_peer_count'):
+                try:
+                    peer_count = await _maybe_await(self._submitter, 'get_peer_count')
+                except Exception:
+                    pass  # Ignore peer count errors, continue to sync check
+            
+            if peer_count < self._min_peers:
+                return False, f"insufficient_peers (have {peer_count}, need {self._min_peers})"
+            
+            # Check sync status via RPC (if submitter has get_sync_status method)
+            if hasattr(self._submitter, 'get_sync_status'):
+                try:
+                    sync_status = await _maybe_await(self._submitter, 'get_sync_status')
+                    if isinstance(sync_status, dict):
+                        is_syncing = sync_status.get('syncing', False)
+                        current_height = sync_status.get('current_block', sync_status.get('current_height', 0))
+                        highest_height = sync_status.get('highest_block', sync_status.get('network_height', 0))
+                        
+                        if is_syncing:
+                            height_lag = highest_height - current_height
+                            if height_lag > self._max_height_lag:
+                                return False, f"syncing (behind by {height_lag} blocks)"
+                except Exception as e:
+                    log.debug(f"Sync status check failed: {e}")
+                    # If sync check fails, continue mining (don't block on temporary RPC issues)
+            
+            return True, None
+            
+        except Exception as e:
+            log.debug(f"Node readiness check failed: {e}")
+            # On error, allow mining (don't block on temporary issues)
+            return True, None
 
     async def _submit_block(self, share: JSON) -> None:
         header = share.get("header")
@@ -595,6 +685,9 @@ class MinerOrchestrator:
             max_concurrency=self.config.submit_max_concurrency,
             backoff_initial=self.config.submit_backoff_initial,
             backoff_max=self.config.submit_backoff_max,
+            check_sync=self.config.check_sync_before_submit,  # CRITICAL FIX
+            min_peers=self.config.min_peers_for_mining,  # CRITICAL FIX
+            max_height_lag=self.config.max_height_lag,  # CRITICAL FIX
         )
         self._tasks.append(
             asyncio.create_task(
