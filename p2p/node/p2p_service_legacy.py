@@ -353,6 +353,7 @@ class P2PStatusSnapshot:
     advertise_port: Optional[int]
     external_ip: Optional[str]
     peers_total: int
+    peerstore_total: Optional[int] = None
     peers_inbound: int
     peers_outbound: int
     # NEW: Track CONNECTED peers separately from total active sessions
@@ -388,6 +389,7 @@ class P2PStatusSnapshot:
             "advertise_port": self.advertise_port,
             "external_ip": self.external_ip,
             "peers_total": self.peers_total,
+            "peerstore_total": self.peerstore_total,
             "peers_inbound": self.peers_inbound,
             "peers_outbound": self.peers_outbound,
             # NEW: Include CONNECTED peer counts for mining/sync gating
@@ -3294,8 +3296,10 @@ class P2PService:
 
     def _mark_dial_failure(self, addr: str, *, is_seed: bool, error: str) -> None:
         addr_key = self._addr_key(addr)
-        attempts = self._dial_attempts.get(addr_key, 0) + 1
-        self._dial_attempts[addr_key] = attempts
+        attempts = self._dial_attempts.get(addr_key, 0)
+        if attempts <= 0:
+            attempts = 1
+            self._dial_attempts[addr_key] = attempts
         self._dial_last_error = {
             "addr": addr,
             "error": error,
@@ -3331,10 +3335,18 @@ class P2PService:
                 addr, success=False, error=error, record_error=not recent_success
             )
             log.warning(
-                "Seed %s failed: %s; next retry in %.1fs", addr, error, delay
+                "[p2p][dial] seed failed: %s; next retry in %.1fs",
+                error,
+                delay,
+                extra={"addr": addr, "attempts": attempts},
             )
         else:
-            log.info("Dial to %s failed: %s (retry in %.1fs)", addr, error, delay)
+            log.info(
+                "[p2p][dial] failed: %s (retry in %.1fs)",
+                error,
+                delay,
+                extra={"addr": addr, "attempts": attempts},
+            )
             lowered = error.lower()
             if "connectionrefusederror" in lowered or "econnrefused" in lowered:
                 log.warning(
@@ -3352,7 +3364,7 @@ class P2PService:
 
     def _mark_dial_success(self, addr: str, *, is_seed: bool) -> None:
         addr_key = self._addr_key(addr)
-        attempts = self._dial_attempts.get(addr_key, 0)
+        attempts = self._dial_attempts.get(addr_key, 0) or 1
         self._dial_attempts.pop(addr_key, None)
         self._dial_backoff.pop(addr_key, None)
         self._dial_success_total += 1
@@ -3364,8 +3376,16 @@ class P2PService:
             self._addrman.mark_success(normalized)
         if is_seed:
             self._record_bootstrap_attempt(addr, success=True)
-            log.info("Seed %s handshake complete", addr)
+            log.info(
+                "[p2p][bootstrap] seed handshake complete",
+                extra={"addr": addr, "attempts": attempts},
+            )
             self._sync_wakeup.set()
+        else:
+            log.info(
+                "[p2p][dial] success",
+                extra={"addr": addr, "attempts": attempts},
+            )
 
     def bootstrap_peer_bonus(self) -> int:
         last = self._last_bootstrap_success
@@ -3411,6 +3431,11 @@ class P2PService:
             1 for entry in self._bootstrap_attempts if now - entry.get("at", 0) <= 300
         )
         addrman_size = self._addrman.size()
+        peerstore_total = None
+        try:
+            peerstore_total = self.peerstore.count_known() if self.peerstore is not None else None
+        except Exception:
+            peerstore_total = None
         learned_1m = self._addr_events_last_minute(self._addr_learned_events)
         announced_1m = self._addr_events_last_minute(self._addr_announced_events)
 
@@ -3425,6 +3450,7 @@ class P2PService:
             external_ip=self._external_ip,
             # FIX: peers_total includes handshaking peers for visibility
             peers_total=self._peer_registry.total_active_sessions(include_handshaking=True) + bootstrap_bonus,
+            peerstore_total=peerstore_total,
             peers_inbound=inbound,
             peers_outbound=outbound + bootstrap_bonus,
             # NEW: Track CONNECTED peers separately for mining/sync gating
@@ -5938,6 +5964,11 @@ class P2PService:
         addr = parsed.addr.canonical
         addr_key = self._addr_key(addr)
         self._dial_attempt_total += 1
+        self._dial_attempts[addr_key] = self._dial_attempts.get(addr_key, 0) + 1
+        log.debug(
+            "[p2p][dial] attempt",
+            extra={"addr": addr, "attempts": self._dial_attempts[addr_key], "is_seed": is_seed},
+        )
         if is_seed:
             resolved = await self._resolve_seed_host(addr)
             if not resolved:
@@ -7111,6 +7142,20 @@ class P2PService:
             protocol_version=normalized.get("protocol_version"),
             network_params_hash=self._canon_hash0x(normalized.get("network_params_hash")),
         )
+        try:
+            chain_id = int(normalized.get("chain_id") or 0)
+        except (TypeError, ValueError):
+            chain_id = 0
+        genesis_hash = self._canon_hash0x(
+            normalized.get("genesis_hash")
+            or normalized.get("genesis_header_hash")
+            or normalized.get("genesis_block_hash")
+        ) or ""
+        self._peer_registry.mark_identity_validated(
+            peer.session_id,
+            chain_id=chain_id,
+            genesis_hash=genesis_hash,
+        )
         self._update_peer_meta(peer)
 
         # Track duplicate peer_id sessions; drop older duplicates.
@@ -7312,6 +7357,20 @@ class P2PService:
                 self._peer_registry.update_meta(
                     peer.session_id,
                     identity_ok=True,
+                )
+                try:
+                    chain_id = int(peer.hello.get("chain_id", 0)) if peer.hello else 0
+                except (TypeError, ValueError):
+                    chain_id = 0
+                genesis_hash = self._canon_hash0x(
+                    (peer.hello or {}).get("genesis_header_hash")
+                    or (peer.hello or {}).get("genesis_hash")
+                    or (peer.hello or {}).get("genesis_block_hash")
+                ) or ""
+                self._peer_registry.mark_identity_validated(
+                    peer.session_id,
+                    chain_id=chain_id,
+                    genesis_hash=genesis_hash,
                 )
                 
                 log.info(

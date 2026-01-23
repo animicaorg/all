@@ -297,8 +297,13 @@ def _peer_counts_snapshot() -> dict[str, int]:
                 if isinstance(snap, dict):
                     return {
                         "peers_total": int(snap.get("peers_total") or 0),
+                        "peerstore_total": int(snap.get("peerstore_total") or 0),
                         "peers_inbound": int(snap.get("peers_inbound") or 0),
                         "peers_outbound": int(snap.get("peers_outbound") or 0),
+                        "peers_connected": int(snap.get("peers_connected") or 0),
+                        "peers_handshaking": int(snap.get("peers_handshaking") or 0),
+                        "peers_connected_inbound": int(snap.get("peers_connected_inbound") or 0),
+                        "peers_connected_outbound": int(snap.get("peers_connected_outbound") or 0),
                     }
             except Exception:
                 pass
@@ -308,8 +313,13 @@ def _peer_counts_snapshot() -> dict[str, int]:
                 if isinstance(status, dict):
                     return {
                         "peers_total": int(status.get("peers_total") or 0),
+                        "peerstore_total": int(status.get("peerstore_total") or 0),
                         "peers_inbound": int(status.get("peers_inbound") or 0),
                         "peers_outbound": int(status.get("peers_outbound") or 0),
+                        "peers_connected": int(status.get("peers_connected") or 0),
+                        "peers_handshaking": int(status.get("peers_handshaking") or 0),
+                        "peers_connected_inbound": int(status.get("peers_connected_inbound") or 0),
+                        "peers_connected_outbound": int(status.get("peers_connected_outbound") or 0),
                     }
             except Exception:
                 pass

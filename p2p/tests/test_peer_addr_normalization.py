@@ -54,3 +54,9 @@ def test_normalize_peer_addr_unknown_scheme() -> None:
     parsed = normalize_peer_addr("udp://example.com:1234")
     assert parsed.addr is None
     assert parsed.reason == "unsupported_scheme:udp"
+
+
+def test_normalize_peer_addr_missing_port() -> None:
+    parsed = normalize_peer_addr("tcp://example.com")
+    assert parsed.addr is None
+    assert parsed.reason == "missing_port"
