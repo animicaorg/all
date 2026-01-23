@@ -779,7 +779,13 @@ class NodeService:
         errors: List[str] = []
         
         # Track addresses we've already seen in this call
-        seen_addrs = set(self.cfg.seeds) if self.cfg.seeds else set()
+        # Normalize existing seeds to canonical form for proper deduplication
+        seen_addrs: set[str] = set()
+        if self.cfg.seeds:
+            for seed in self.cfg.seeds:
+                result = normalize_peer_addr(seed, allow_quic=True, allow_ws=True, allow_tcp=True)
+                if result.addr:
+                    seen_addrs.add(result.addr.canonical)
         
         for addr in addresses:
             # Normalize and validate address format
@@ -796,9 +802,10 @@ class NodeService:
             canonical_addr = normalized_result.addr.canonical
             
             # Skip if already in seed list (dedupe within this call)
-            if canonical_addr in seen_addrs or addr in seen_addrs:
+            # Only check canonical form since different formats can resolve to same address
+            if canonical_addr in seen_addrs:
                 skipped += 1
-                log.debug(f"[import_peers] Skipping already-known seed: {addr}")
+                log.debug(f"[import_peers] Skipping already-known seed: {canonical_addr} (from {addr})")
                 continue
             
             seen_addrs.add(canonical_addr)
