@@ -12581,23 +12581,31 @@ class P2PService:
                 # immediately poll peer heads to get fresh tip information.
                 # This prevents the node from getting stuck with "no_fresh_peer_tips".
                 if network_best_height is None and len(self._peers) > 0:
+                    # Enhanced fix: Check ALL peers (not just those with hello_done)
+                    # This helps detect if peers are stuck in handshake
+                    handshake_done_count = sum(1 for peer in self._peers.values() if peer.hello_done.is_set())
+                    
                     # Check if we recently polled to avoid excessive polling
-                    time_since_last_poll = min(
-                        (now - self._peer_head_poll_at.get(peer.remote, 0.0))
+                    # Look at ALL peers to see when we last attempted communication
+                    peer_times = [
+                        self._peer_head_poll_at.get(peer.remote, 0.0)
                         for peer in self._peers.values()
-                        if peer.hello_done.is_set()
-                    ) if any(peer.hello_done.is_set() for peer in self._peers.values()) else float('inf')
+                    ]
+                    time_since_last_poll = now - max(peer_times) if peer_times else float('inf')
                     
                     # Only poll if last poll was more than 5 seconds ago
                     if time_since_last_poll > 5.0:
-                        log.info(
+                        log.warning(
                             "No network best height available - polling peer heads",
                             extra={
                                 "peers_count": len(self._peers),
-                                "time_since_last_poll": time_since_last_poll,
+                                "handshake_done_count": handshake_done_count,
+                                "time_since_last_poll": f"{time_since_last_poll:.1f}s",
+                                "issue": "Peers may be stuck in handshake or identity validation failing",
                             },
                         )
                         # Schedule async poll without blocking sync loop
+                        # Force=True will poll even peers that were recently polled
                         self._create_child_task(
                             self._poll_peer_heads(reason="no_network_best_height", force=True),
                             name="p2p.poll_peer_heads_recovery",
@@ -13955,9 +13963,11 @@ class P2PService:
                 stale += 1
         
         # Log diagnostic summary if no peers pass filters
+        # FIX: Always log this condition (not just in verbose mode) since it directly causes sync stalls
+        # This helps diagnose why nodes show "no_fresh_peer_tips" despite having peer connections
         if total == 0 and len(self._peers) > 0:
             log.warning(
-                "No peers passed tip freshness filters",
+                "No peers passed tip freshness filters - sync will stall",
                 extra={
                     "total_peers": len(self._peers),
                     "filtered_hello_not_done": filtered_hello_not_done,
@@ -13965,8 +13975,38 @@ class P2PService:
                     "filtered_repo_state_not_ok": filtered_repo_state_not_ok,
                     "filtered_chain_mismatch": filtered_chain_mismatch,
                     "chain_id_filter": chain_id,
+                    "issue": "All peers filtered - check handshake completion and identity validation",
                 },
             )
+            
+            # Enhanced diagnostic: log details about each peer that was filtered
+            for peer in self._peers.values():
+                filter_reason = []
+                if not peer.hello_done.is_set():
+                    filter_reason.append("hello_not_done")
+                if not peer.identity_ok:
+                    filter_reason.append("identity_not_ok")
+                if not peer.repo_state_ok:
+                    filter_reason.append("repo_state_not_ok")
+                if chain_id is not None and not self._peer_chain_matches(peer):
+                    filter_reason.append("chain_mismatch")
+                
+                log.warning(
+                    "Peer filtered from tip freshness check",
+                    extra={
+                        "remote": peer.remote,
+                        "peer_id": peer.peer_id or "(no_peer_id)",
+                        "direction": peer.direction,
+                        "filter_reasons": filter_reason,
+                        "hello_done": peer.hello_done.is_set(),
+                        "identity_ok": peer.identity_ok,
+                        "repo_state_ok": peer.repo_state_ok,
+                        "peer_chain_id": (peer.hello or {}).get("chain_id") if peer.hello else None,
+                        "local_chain_id": chain_id,
+                        "connected_at": peer.connected_at,
+                        "age_s": f"{now - peer.connected_at:.1f}" if peer.connected_at else "unknown",
+                    },
+                )
         
         return total, fresh, stale
 
