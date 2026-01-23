@@ -6898,9 +6898,10 @@ class P2PService:
         ) or data.get("network_params_hash") or data.get("networkParamsHash")
         peer.hello = normalized
         peer.hello_received_at = time.time()  # Track when hello was received
-        peer.identity_ok = True
         
         # PHASE 4: Notify HandshakeManager of successful identity validation
+        # FIX: Only set identity_ok=True if validation succeeds
+        identity_validated = False
         try:
             success, error = self._handshake_manager.on_identity_received(
                 session_id=peer.session_id,
@@ -6912,6 +6913,9 @@ class P2PService:
                 ) or "",
             )
             if success:
+                # Only set identity_ok=True on successful validation
+                peer.identity_ok = True
+                identity_validated = True
                 log.info(
                     "HandshakeManager: identity validation complete",
                     extra={
@@ -6921,6 +6925,8 @@ class P2PService:
                     },
                 )
             else:
+                # Ensure identity_ok remains False on validation failure
+                peer.identity_ok = False
                 log.warning(
                     "HandshakeManager: identity validation rejected",
                     extra={
@@ -6930,6 +6936,8 @@ class P2PService:
                     },
                 )
         except Exception as e:
+            # Ensure identity_ok remains False on exception
+            peer.identity_ok = False
             log.warning(
                 "HandshakeManager identity validation failed",
                 extra={
@@ -6939,29 +6947,42 @@ class P2PService:
                 },
             )
         
-        log.info(
-            "Peer handshake completed successfully",
-            extra={
-                "remote": peer.remote,
-                "peer_id": peer.peer_id,
-                "direction": peer.direction,
-                "chain_id": normalized.get("chain_id"),
-                "genesis_hash": self._canon_hash0x(
-                    normalized.get("genesis_header_hash")
-                    or normalized.get("genesis_hash")
-                    or normalized.get("genesis_block_hash")
-                ),
-                "fork_id": normalized.get("fork_id"),
-                "consensus_id": normalized.get("consensus_id"),
-                "protocol_version": normalized.get("protocol_version"),
-                "repo_state": normalized.get("repo_state"),
-                "network_params_hash": self._canon_hash0x(
-                    normalized.get("network_params_hash")
-                ),
-                "head_height": normalized.get("head_height"),
-                "state_transition": "handshaking -> connected",
-            },
-        )
+        # Only log success if identity validation passed
+        if identity_validated:
+            log.info(
+                "Peer handshake completed successfully",
+                extra={
+                    "remote": peer.remote,
+                    "peer_id": peer.peer_id,
+                    "direction": peer.direction,
+                    "chain_id": normalized.get("chain_id"),
+                    "genesis_hash": self._canon_hash0x(
+                        normalized.get("genesis_header_hash")
+                        or normalized.get("genesis_hash")
+                        or normalized.get("genesis_block_hash")
+                    ),
+                    "fork_id": normalized.get("fork_id"),
+                    "consensus_id": normalized.get("consensus_id"),
+                    "protocol_version": normalized.get("protocol_version"),
+                    "repo_state": normalized.get("repo_state"),
+                    "network_params_hash": self._canon_hash0x(
+                        normalized.get("network_params_hash")
+                    ),
+                    "head_height": normalized.get("head_height"),
+                    "state_transition": "handshaking -> connected",
+                },
+            )
+        else:
+            log.warning(
+                "Peer handshake failed - identity validation rejected",
+                extra={
+                    "remote": peer.remote,
+                    "peer_id": peer.peer_id,
+                    "direction": peer.direction,
+                    "chain_id": normalized.get("chain_id"),
+                    "state_transition": "handshaking -> failed",
+                },
+            )
         # NOTE: Do NOT set hello_done here - moved to end of function after all validations
         if normalized.get("head_height") is not None:
             self._update_peer_head_table(
@@ -7242,20 +7263,8 @@ class P2PService:
         
         # HELLO_ACK accepted - complete handshake for initiator side
         if not peer.identity_ok:
-            peer.identity_ok = True
-            peer.hello_done.set()
-            
-            log.info(
-                "HELLO_ACK received, handshake complete (initiator side)",
-                extra={
-                    "remote": peer.remote,
-                    "peer_id": peer.peer_id,
-                    "session_id": peer.session_id,
-                    "direction": peer.direction,
-                },
-            )
-            
-            # Notify HandshakeManager of identity validation
+            # Notify HandshakeManager of identity validation FIRST
+            validation_success = False
             if peer.hello:
                 # We already received their HELLO message, now confirming handshake with their ACK
                 try:
@@ -7278,15 +7287,33 @@ class P2PService:
                             },
                         )
                         raise PeerMisbehavior(f"identity_failed:{error}", points=10)
+                    validation_success = True
                 except Exception as e:
-                    log.warning(
-                        "HandshakeManager notification failed in HELLO_ACK flow",
-                        extra={
-                            "remote": peer.remote,
-                            "peer_id": peer.peer_id,
-                            "error": str(e),
-                        },
-                    )
+                    if not isinstance(e, PeerMisbehavior):
+                        log.warning(
+                            "HandshakeManager notification failed in HELLO_ACK flow",
+                            extra={
+                                "remote": peer.remote,
+                                "peer_id": peer.peer_id,
+                                "error": str(e),
+                            },
+                        )
+                    raise
+            
+            # Only set identity_ok=True if validation passed
+            if validation_success:
+                peer.identity_ok = True
+                peer.hello_done.set()
+                
+                log.info(
+                    "HELLO_ACK received, handshake complete (initiator side)",
+                    extra={
+                        "remote": peer.remote,
+                        "peer_id": peer.peer_id,
+                        "session_id": peer.session_id,
+                        "direction": peer.direction,
+                    },
+                )
             
             # Notify TipManager
             try:
