@@ -1395,6 +1395,17 @@ class P2PServiceLegacy:
         dial_attempted = 0
         errors: list[str] = []
         
+        # Pre-normalize existing seeds once for efficient duplicate detection
+        # (seeds may be stored in various formats like /dns4/ vs /dns/)
+        existing_normalized = set()
+        for seed in self.seeds:
+            try:
+                norm = self._normalize_peer_addr(seed)
+                if norm:
+                    existing_normalized.add(norm)
+            except Exception:
+                existing_normalized.add(seed)  # Keep original if normalization fails
+        
         for addr in addresses:
             # Normalize address to multiaddr format
             normalized = self._normalize_peer_addr(addr)
@@ -1416,13 +1427,13 @@ class P2PServiceLegacy:
                 continue
             
             # Add to runtime seed list if not already present
-            # Use normalized address for consistency
-            if normalized in self.seeds:
+            if normalized in existing_normalized:
                 skipped += 1
                 self._log.debug("Skipping already-known seed: %s", normalized)
                 continue
             
             self.seeds.append(normalized)
+            existing_normalized.add(normalized)  # Also add to set to prevent duplicates in this import call
             self._log.info("Added seed to runtime: %s (from %s)", normalized, addr)
             imported += 1
             

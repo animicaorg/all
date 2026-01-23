@@ -113,6 +113,21 @@ def _get_core_p2p_service() -> t.Any | None:
 
 
 def _resolve_core_host(host: str) -> str | None:
+    """
+    Resolve a hostname to an IP address, or return the IP if already valid.
+    
+    Returns:
+        IP address string if resolution succeeds or input is already an IP
+        None if resolution fails for a hostname
+    """
+    # Fast path: if it's already an IP address, return it immediately
+    try:
+        ipaddress.ip_address(host)
+        return host
+    except ValueError:
+        pass
+    
+    # Try DNS resolution for hostnames
     try:
         infos = socket.getaddrinfo(host, None, proto=socket.IPPROTO_TCP)
     except OSError:
@@ -143,7 +158,9 @@ def _normalize_peer_address(address: str) -> str | None:
         ip_obj = ipaddress.ip_address(host)
         ip_tag = "ip6" if ip_obj.version == 6 else "ip4"
     except ValueError:
-        ip_tag = "dns4"
+        # Use 'dns' instead of 'dns4' to match multiaddr normalization
+        # This ensures consistency across the codebase
+        ip_tag = "dns"
     return f"/{ip_tag}/{host}/tcp/{port}"
 
 
