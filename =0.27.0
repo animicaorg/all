@@ -1,0 +1,21 @@
+Defaulting to user installation because normal site-packages is not writeable
+Collecting httpx
+  Downloading httpx-0.28.1-py3-none-any.whl.metadata (7.1 kB)
+Collecting anyio (from httpx)
+  Downloading anyio-4.12.1-py3-none-any.whl.metadata (4.3 kB)
+Requirement already satisfied: certifi in /usr/lib/python3/dist-packages (from httpx) (2023.11.17)
+Collecting httpcore==1.* (from httpx)
+  Downloading httpcore-1.0.9-py3-none-any.whl.metadata (21 kB)
+Requirement already satisfied: idna in /usr/lib/python3/dist-packages (from httpx) (3.6)
+Collecting h11>=0.16 (from httpcore==1.*->httpx)
+  Downloading h11-0.16.0-py3-none-any.whl.metadata (8.3 kB)
+Requirement already satisfied: typing_extensions>=4.5 in /usr/lib/python3/dist-packages (from anyio->httpx) (4.10.0)
+Downloading httpx-0.28.1-py3-none-any.whl (73 kB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 73.5/73.5 kB 8.8 MB/s eta 0:00:00
+Downloading httpcore-1.0.9-py3-none-any.whl (78 kB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 78.8/78.8 kB 17.2 MB/s eta 0:00:00
+Downloading anyio-4.12.1-py3-none-any.whl (113 kB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 113.6/113.6 kB 20.0 MB/s eta 0:00:00
+Downloading h11-0.16.0-py3-none-any.whl (37 kB)
+Installing collected packages: h11, anyio, httpcore, httpx
+Successfully installed anyio-4.12.1 h11-0.16.0 httpcore-1.0.9 httpx-0.28.1
