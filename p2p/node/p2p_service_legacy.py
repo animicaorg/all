@@ -7306,6 +7306,14 @@ class P2PService:
                 peer.identity_ok = True
                 peer.hello_done.set()
                 
+                # FIX: Sync identity_ok state to PeerRegistry so peer counts correctly
+                # This was missing in the initiator flow, causing outbound peers to never
+                # be counted as "connected" even after successful handshake
+                self._peer_registry.update_meta(
+                    peer.session_id,
+                    identity_ok=True,
+                )
+                
                 log.info(
                     "HELLO_ACK received, handshake complete (initiator side)",
                     extra={
