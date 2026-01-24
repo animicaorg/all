@@ -121,6 +121,7 @@ from PyInstaller.utils.hooks.qt import collect_qt_plugins
 # Use absolute paths injected by the build script instead.
 SPEC_DIR = Path(r"${BUILD_DIR}").resolve()
 APP_DIR  = Path(r"${APP_DIR}").resolve()
+REPO_ROOT = Path(r"${REPO_ROOT}").resolve()
 ENTRY    = Path(r"${ENTRY}").resolve()
 
 block_cipher = None
@@ -129,6 +130,11 @@ logo = APP_DIR / "logo.png"
 datas = []
 if logo.exists():
     datas.append((str(logo), "."))
+
+schemas_dir = REPO_ROOT / "apps" / "miner-gui" / "animica_miner_gui" / "ide" / "toolchain" / "schemas"
+if schemas_dir.exists():
+    datas.append((str(schemas_dir / "manifest.schema.json"), "animica_miner_gui/ide/toolchain/schemas"))
+    datas.append((str(schemas_dir / "abi.schema.json"), "animica_miner_gui/ide/toolchain/schemas"))
 
 datas += collect_qt_plugins("PySide6")
 
@@ -143,11 +149,16 @@ hiddenimports = [
     "matplotlib.backends.backend_qt5agg",
     "pydantic",
     "httpx",
+    "vm_py",
+    "vm_py.abi",
+    "vm_py.compiler",
+    "vm_py.runtime",
+    "vm_py.stdlib",
 ]
 
 a = Analysis(
     [str(ENTRY)],
-    pathex=[str(APP_DIR)],
+    pathex=[str(APP_DIR), str(REPO_ROOT)],
     binaries=[],
     datas=datas,
     hiddenimports=hiddenimports,

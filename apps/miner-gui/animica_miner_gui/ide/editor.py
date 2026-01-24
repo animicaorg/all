@@ -435,3 +435,18 @@ class EditorWidget(QWidget):
                 cursor = QTextCursor(block)
                 self.editor.setTextCursor(cursor)
                 self.editor.centerCursor()
+
+    def go_to_line_column(self, line_number: int, column: int) -> None:
+        if line_number < 1:
+            return
+        column = max(0, column - 1)
+        if QSCINTILLA_AVAILABLE:
+            self.editor.setCursorPosition(line_number - 1, column)
+            self.editor.ensureLineVisible(line_number - 1)
+        else:
+            block = self.editor.document().findBlockByNumber(line_number - 1)
+            if block.isValid():
+                cursor = QTextCursor(block)
+                cursor.movePosition(QTextCursor.Right, QTextCursor.MoveAnchor, column)
+                self.editor.setTextCursor(cursor)
+                self.editor.centerCursor()
