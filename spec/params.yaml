@@ -77,8 +77,8 @@ networks:
           aicf: 10
     consensus:
       poies:
-        theta_initial_munats: 16000000         # Θ₀ in µ-nats
-        theta_min_munats: 8000000
+        theta_initial_munats: 24000000         # Θ₀ in µ-nats
+        theta_min_munats: 12000000
         theta_max_munats: 3000000000           # Hard cap at 3B µ-nats (3,000 nats) for network stability
         retarget:
           window_blocks: 720                   # ~60 hours at 300s
@@ -162,7 +162,7 @@ networks:
             amount_anm: 250000.0
             vesting: { cliff_days: 0, linear_months: 0 }
       issuance:
-        target_block_interval_ms: 2000
+        target_block_interval_ms: 300000
         subsidy:
           start_nANM_per_block: 5000000000    # 5 ANM per block base reward
           epoch_length_blocks: 1350000         # 1.35M blocks per halving epoch
@@ -175,8 +175,8 @@ networks:
         tips_split_pct: { miner: 80, aicf: 20 }
     consensus:
       poies:
-        theta_initial_munats: 12000000
-        theta_min_munats: 6000000
+        theta_initial_munats: 18000000
+        theta_min_munats: 9000000
         theta_max_munats: 3000000000           # Hard cap at 3B µ-nats (3,000 nats) for network stability
         retarget: { window_blocks: 900, ema_beta: 0.25, clamp_ratio_per_window: { min: 0.5, max: 2.0 } }
         share_target_munats: 3000000
@@ -234,7 +234,7 @@ networks:
             amount_anm: 50000.0
             vesting: { cliff_days: 0, linear_months: 0 }
       issuance:
-        target_block_interval_ms: 2000
+        target_block_interval_ms: 300000
         subsidy:
           start_nANM_per_block: 5000000000    # 5 ANM per block base reward
           epoch_length_blocks: 1350000         # 1.35M blocks per halving epoch
@@ -247,8 +247,8 @@ networks:
         tips_split_pct: { miner: 70, aicf: 30 }
     consensus:
       poies:
-        theta_initial_munats: 2000000
-        theta_min_munats: 1000000
+        theta_initial_munats: 8000000
+        theta_min_munats: 4000000
         theta_max_munats: 3000000000           # Hard cap at 3B µ-nats (3,000 nats) for network stability
         retarget: { window_blocks: 90, ema_beta: 0.45, clamp_ratio_per_window: { min: 0.98, max: 1.15 } }
         share_target_munats: 600000
