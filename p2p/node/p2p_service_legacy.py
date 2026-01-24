@@ -26,7 +26,7 @@ from core.config import DEFAULT_DB_FILENAME
 from p2p.crypto import keys as keys_mod
 from p2p.crypto import peer_id as peer_id_mod
 from p2p.peer import peerstore as pstore
-from p2p.peer.peer_addr import PeerAddrParseResult, normalize_peer_addr
+from p2p.peer.peer_addr import PeerAddrParseResult, normalize_peer_addr, parse_peer_endpoint
 from p2p.peer.p2p_store import (
     apply_umask_from_env,
     ensure_writable,
@@ -374,6 +374,7 @@ class P2PStatusSnapshot:
     persisted_peer_count: Optional[int] = None
     dial_history: list[dict[str, Any]] = field(default_factory=list)
     dial_inflight: list[str] = field(default_factory=list)
+    connection_events: list[dict[str, Any]] = field(default_factory=list)
     invalid_seeds: dict[str, str] = field(default_factory=dict)
     dial_last_error: Optional[dict[str, Any]] = None
     bootstrap_last_attempt: Optional[dict[str, Any]] = None
@@ -410,6 +411,7 @@ class P2PStatusSnapshot:
             "persisted_peer_count": self.persisted_peer_count,
             "dial_history": list(self.dial_history),
             "dial_inflight": list(self.dial_inflight),
+            "connection_events": list(self.connection_events),
             "invalid_seeds": dict(self.invalid_seeds),
             "dial_last_error": self.dial_last_error,
             "bootstrap_last_attempt": self.bootstrap_last_attempt,
@@ -990,6 +992,7 @@ class P2PService:
         self._dial_success_total: int = 0
         self._dial_last_error: Optional[dict[str, Any]] = None
         self._dial_history: deque[dict[str, Any]] = deque(maxlen=50)
+        self._connection_events: deque[dict[str, Any]] = deque(maxlen=200)
         # Increased from 6 to 20 per 5min window for faster bootstrap peer discovery
         self._bootstrap_seed_rate_limit = int(
             os.environ.get("ANIMICA_P2P_SEED_RATE_LIMIT", "20") or 20
@@ -2077,6 +2080,7 @@ class P2PService:
                 "peerstore_dir": str(self._peerstore_dir),
                 "chain_data_dir": str(self._chain_data_dir),
                 "dial_history": list(self._dial_history)[-limit:],
+                "connection_events": list(self._connection_events)[-limit:],
                 "peers": self.peer_state_snapshot(limit_failed=limit),
                 "docker_detected": self._is_docker_env(),
             }
@@ -3323,6 +3327,14 @@ class P2PService:
             entry["next_retry_at"] = next_retry
         self._dial_history.append(entry)
 
+    def _record_connection_event(self, event: str, **extra: Any) -> None:
+        payload = {
+            "at": time.time(),
+            "event": event,
+        }
+        payload.update(extra)
+        self._connection_events.append(payload)
+
     def _mark_dial_failure(self, addr: str, *, is_seed: bool, error: str) -> None:
         addr_key = self._addr_key(addr)
         attempts = self._dial_attempts.get(addr_key, 0)
@@ -3500,6 +3512,7 @@ class P2PService:
             persisted_peer_count=self._persisted_peer_count,
             dial_history=list(self._dial_history),
             dial_inflight=sorted(self._dial_inflight),
+            connection_events=list(self._connection_events),
             invalid_seeds=dict(self._invalid_seed_errors),
             dial_last_error=self._dial_last_error,
             bootstrap_last_attempt=self._last_bootstrap_attempt,
@@ -4201,39 +4214,53 @@ class P2PService:
         return result
 
     def _normalize_seed(self, address: str) -> Optional[str]:
-        result = self._normalize_peer_addr(
-            address,
-            fallback_port=self._local_listen_port(),
-            source="seed",
-        )
-        if not result.addr:
-            reason = result.reason or "invalid_seed"
+        try:
+            endpoint = parse_peer_endpoint(
+                address,
+                fallback_port=self._local_listen_port(),
+                allow_ws=self._allow_ws_addrs,
+                allow_quic=self._allow_quic_addrs,
+                allow_tcp=True,
+            )
+        except ValueError as exc:
+            reason = str(exc) or "invalid_seed"
             self._invalid_seed_errors[address] = reason
             log.warning("Invalid seed %s: %s", address, reason)
             return None
-        if result.addr.port == 443:
+        if endpoint.port == 443:
             seed_hosts = {"144.126.133.21"}
-            if result.addr.host in seed_hosts:
-                upgraded = self._normalize_peer_addr(
-                    f"{result.addr.host}:{DEFAULT_TCP_PORT}",
-                    fallback_port=DEFAULT_TCP_PORT,
-                    source="seed_https_upgrade",
-                )
-                if upgraded.addr:
-                    return upgraded.addr.canonical
+            if endpoint.host in seed_hosts:
+                try:
+                    upgraded = parse_peer_endpoint(
+                        f"{endpoint.host}:{DEFAULT_TCP_PORT}",
+                        fallback_port=DEFAULT_TCP_PORT,
+                        allow_ws=False,
+                        allow_quic=False,
+                        allow_tcp=True,
+                    )
+                    return upgraded.canonical
+                except ValueError:
+                    return None
             log.warning("Ignoring HTTPS seed for P2P transport: %s", address)
             return None
-        return result.addr.canonical
+        return endpoint.canonical
 
     def _seed_hostnames(self, seeds: list[str]) -> set[str]:
         hosts: set[str] = set()
         fallback_port = self._local_listen_port()
         for seed in seeds:
-            parsed = self._normalize_peer_addr(
-                seed, fallback_port=fallback_port, source="seed_host"
-            )
-            if parsed.addr and parsed.addr.host:
-                hosts.add(parsed.addr.host)
+            try:
+                endpoint = parse_peer_endpoint(
+                    seed,
+                    fallback_port=fallback_port,
+                    allow_ws=self._allow_ws_addrs,
+                    allow_quic=self._allow_quic_addrs,
+                    allow_tcp=True,
+                )
+            except ValueError:
+                continue
+            if endpoint.host:
+                hosts.add(endpoint.host)
         return hosts
 
     def _addr_key(self, address: str) -> str:
@@ -5435,24 +5462,41 @@ class P2PService:
                 "added": 0,
                 "skipped": 0,
                 "invalid": 0,
+                "parse_ok": 0,
+                "parse_failed": 0,
                 "dial_attempted": 0,
                 "dial_success": 0,
+                "dial_connected": 0,
+                "handshake_succeeded": 0,
+                "invalid_seeds": [],
                 "errors": ["no addresses provided"],
             }
 
         fallback_port = self._local_listen_port()
         normalized: list[str] = []
+        invalid_seeds: list[dict[str, str]] = []
         errors: list[str] = []
         skipped = 0
         invalid = 0
+        parse_ok = 0
+        parse_failed = 0
         for raw in addresses:
-            addr = self._sanitize_peer_addr(raw, fallback_port=fallback_port)
-            if not addr:
+            try:
+                endpoint = parse_peer_endpoint(
+                    raw,
+                    fallback_port=fallback_port,
+                    allow_ws=self._allow_ws_addrs,
+                    allow_quic=self._allow_quic_addrs,
+                    allow_tcp=True,
+                )
+            except ValueError as exc:
                 skipped += 1
                 invalid += 1
-                errors.append(f"invalid address: {raw}")
+                parse_failed += 1
+                invalid_seeds.append({"address": raw, "error": str(exc) or "invalid"})
                 continue
-            normalized.append(addr)
+            parse_ok += 1
+            normalized.append(endpoint.canonical)
 
         deduped = list(dict.fromkeys(normalized))
         added = self._seed_peerstore(deduped)
@@ -5462,7 +5506,7 @@ class P2PService:
             for addr in deduped
         ]
         dial_attempted = len(tasks)
-        dial_success = 0
+        dial_connected = 0
         if tasks:
             results = await asyncio.gather(*tasks, return_exceptions=True)
             for addr, result in zip(deduped, results):
@@ -5470,9 +5514,21 @@ class P2PService:
                     errors.append(f"{addr}: {result}")
                     continue
                 if result:
-                    dial_success += 1
+                    dial_connected += 1
                 else:
                     errors.append(f"{addr}: dial failed")
+
+        def _handshake_completed(addr: str) -> bool:
+            addr_key = self._addr_key(addr)
+            for snap in self._peer_registry.snapshot():
+                remote = str(snap.get("remote", ""))
+                if self._addr_key(remote) != addr_key:
+                    continue
+                if snap.get("state") == "CONNECTED" and snap.get("identity_ok"):
+                    return True
+            return False
+
+        handshake_succeeded = sum(1 for addr in deduped if _handshake_completed(addr))
 
         self._sync_wakeup.set()
         return {
@@ -5481,7 +5537,12 @@ class P2PService:
             "skipped": skipped,
             "invalid": invalid,
             "dial_attempted": dial_attempted,
-            "dial_success": dial_success,
+            "dial_success": handshake_succeeded,
+            "dial_connected": dial_connected,
+            "handshake_succeeded": handshake_succeeded,
+            "parse_ok": parse_ok,
+            "parse_failed": parse_failed,
+            "invalid_seeds": invalid_seeds,
             "errors": errors,
         }
 
@@ -5977,20 +6038,32 @@ class P2PService:
     async def _dial(
         self, addr: str, *, is_seed: bool = False, feeler: bool = False
     ) -> bool:
-        parsed = self._normalize_peer_addr(
-            addr, fallback_port=self._local_listen_port(), source="dial"
-        )
-        if not parsed.addr:
+        try:
+            endpoint = parse_peer_endpoint(
+                addr,
+                fallback_port=self._local_listen_port(),
+                allow_ws=self._allow_ws_addrs,
+                allow_quic=self._allow_quic_addrs,
+                allow_tcp=True,
+            )
+        except ValueError as exc:
+            reason = str(exc) or "invalid"
             log.info(
                 "Skipping unsupported dial target %s (%s)",
                 addr,
-                parsed.reason or "invalid",
+                reason,
+            )
+            self._record_connection_event(
+                "dial_rejected",
+                addr=addr,
+                reason=reason,
+                is_seed=is_seed,
             )
             return False
-        if self._is_self_address(parsed.addr.host, parsed.addr.port):
-            log.info("Skipping self dial target %s", parsed.addr.canonical)
+        if self._is_self_address(endpoint.host, endpoint.port):
+            log.info("Skipping self dial target %s", endpoint.canonical)
             return False
-        addr = parsed.addr.canonical
+        addr = endpoint.canonical
         addr_key = self._addr_key(addr)
         self._dial_attempt_total += 1
         self._dial_attempts[addr_key] = self._dial_attempts.get(addr_key, 0) + 1
@@ -5998,10 +6071,22 @@ class P2PService:
             "[p2p][dial] attempt",
             extra={"addr": addr, "attempts": self._dial_attempts[addr_key], "is_seed": is_seed},
         )
+        self._record_connection_event(
+            "dial_start",
+            addr=addr,
+            attempts=self._dial_attempts[addr_key],
+            is_seed=is_seed,
+        )
         if is_seed:
             resolved = await self._resolve_seed_host(addr)
             if not resolved:
                 self._mark_dial_failure(addr, is_seed=True, error="dns_lookup_failed")
+                self._record_connection_event(
+                    "dial_failed",
+                    addr=addr,
+                    error="dns_lookup_failed",
+                    is_seed=is_seed,
+                )
                 self._dial_inflight.discard(addr_key)
                 return False
         try:
@@ -6011,9 +6096,21 @@ class P2PService:
         except Exception as exc:
             err = f"{exc.__class__.__name__}: {exc}"
             self._mark_dial_failure(addr, is_seed=is_seed, error=err)
+            self._record_connection_event(
+                "dial_failed",
+                addr=addr,
+                error=err,
+                is_seed=is_seed,
+            )
             return False
         finally:
             self._dial_inflight.discard(addr_key)
+        self._record_connection_event(
+            "tcp_connected",
+            addr=addr,
+            remote=getattr(getattr(conn, "info", None), "remote_addr", None),
+            is_seed=is_seed,
+        )
         self._mark_dial_success(addr, is_seed=is_seed)
         await self._register_conn(conn, direction="outbound", feeler=feeler)
         return True
@@ -6134,6 +6231,12 @@ class P2PService:
 
     async def _peer_loop(self, peer: _PeerState) -> None:
         # Send HELLO immediately (both sides do this; handler is symmetric).
+        self._record_connection_event(
+            "handshake_start",
+            remote=peer.remote,
+            peer_id=peer.peer_id,
+            direction=peer.direction,
+        )
         try:
             await self._send_hello(peer)
         except Exception as exc:
@@ -6188,6 +6291,13 @@ class P2PService:
             await self._drop_peer(peer, reason=disconnect_reason)
 
     async def _drop_peer(self, peer: _PeerState, *, reason: str) -> None:
+        self._record_connection_event(
+            "disconnected",
+            remote=peer.remote,
+            peer_id=peer.peer_id,
+            direction=peer.direction,
+            reason=reason,
+        )
         with contextlib.suppress(Exception):
             await peer.conn.close()
         self._peer_registry.remove(peer.session_id)
@@ -6963,6 +7073,7 @@ class P2PService:
         # PHASE 4: Notify HandshakeManager of successful identity validation
         # FIX: Only set identity_ok=True if validation succeeds
         identity_validated = False
+        identity_error: str | None = None
         try:
             success, error = self._handshake_manager.on_identity_received(
                 session_id=peer.session_id,
@@ -6988,6 +7099,7 @@ class P2PService:
             else:
                 # Ensure identity_ok remains False on validation failure
                 peer.identity_ok = False
+                identity_error = error or "identity_rejected"
                 log.warning(
                     "HandshakeManager: identity validation rejected",
                     extra={
@@ -6999,6 +7111,7 @@ class P2PService:
         except Exception as e:
             # Ensure identity_ok remains False on exception
             peer.identity_ok = False
+            identity_error = str(e)
             log.warning(
                 "HandshakeManager identity validation failed",
                 extra={
@@ -7033,6 +7146,12 @@ class P2PService:
                     "state_transition": "handshaking -> connected",
                 },
             )
+            self._record_connection_event(
+                "handshake_ok",
+                remote=peer.remote,
+                peer_id=peer.peer_id,
+                direction=peer.direction,
+            )
         else:
             log.warning(
                 "Peer handshake failed - identity validation rejected",
@@ -7043,6 +7162,13 @@ class P2PService:
                     "chain_id": normalized.get("chain_id"),
                     "state_transition": "handshaking -> failed",
                 },
+            )
+            self._record_connection_event(
+                "handshake_failed",
+                remote=peer.remote,
+                peer_id=peer.peer_id,
+                direction=peer.direction,
+                reason=identity_error or "identity_rejected",
             )
         # NOTE: Do NOT set hello_done here - moved to end of function after all validations
         if normalized.get("head_height") is not None:
@@ -7410,6 +7536,12 @@ class P2PService:
                         "session_id": peer.session_id,
                         "direction": peer.direction,
                     },
+                )
+                self._record_connection_event(
+                    "handshake_ok",
+                    remote=peer.remote,
+                    peer_id=peer.peer_id,
+                    direction=peer.direction,
                 )
             
             # Notify TipManager

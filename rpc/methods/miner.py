@@ -1321,6 +1321,24 @@ def _mining_gate(
                     details.append(f"{addr} ({err}{attempts_hint}{retry_hint})")
                 if details:
                     guidance += f". Recent dial errors: " + "; ".join(details)
+
+        conn_events = status.get("connection_events") if status else None
+        if isinstance(conn_events, list):
+            recent_events = [
+                entry
+                for entry in conn_events
+                if isinstance(entry, dict)
+                and entry.get("event") in {"handshake_failed", "disconnected"}
+            ]
+            if recent_events:
+                details = []
+                for entry in recent_events[-3:]:
+                    event = entry.get("event")
+                    remote = entry.get("remote") or entry.get("addr") or "unknown"
+                    reason = entry.get("reason") or entry.get("error") or "unknown"
+                    details.append(f"{event} {remote} ({reason})")
+                if details:
+                    guidance += f". Recent handshake/disconnects: " + "; ".join(details)
         
         guidance += ". Check: 'animica p2p doctor' for diagnostics, or set ANIMICA_MINING_MIN_PEERS=0 for local development."
         return guidance
@@ -1366,7 +1384,10 @@ def _mining_gate(
             if peers_handshaking > 0:
                 peer_status += f", handshaking: {peers_handshaking}"
             peer_status += f", required: {min_peers}"
-            reason_msg = f"insufficient_peers ({peer_status}). {_peer_error_guidance(p2p_status)}"
+            reason_msg = f"insufficient_peers ({peer_status})."
+            if peers_handshaking > 0 and peers_connected == 0:
+                reason_msg += " Peers are handshaking; waiting for handshake to complete…"
+            reason_msg += f" {_peer_error_guidance(p2p_status)}"
             return False, reason_msg
     
     # Offline mining check - require at least one outbound CONNECTED peer

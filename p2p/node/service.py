@@ -24,7 +24,7 @@ from ..peer import connection_manager as conman
 from ..peer import identify as idsvc
 from ..peer import peerstore as pstore
 from ..peer.p2p_store import apply_umask_from_env, ensure_writable
-from ..peer.peer_addr import normalize_peer_addr
+from ..peer.peer_addr import normalize_peer_addr, parse_peer_endpoint
 from ..peer import ping as pingsvc
 from ..peer import ratelimit as prlimit
 from ..transport import base as tbase
@@ -775,8 +775,13 @@ class NodeService:
         imported = 0
         skipped = 0
         invalid = 0
+        parse_ok = 0
+        parse_failed = 0
         dial_attempted = 0
+        dial_connected = 0
+        handshake_succeeded = 0
         errors: List[str] = []
+        invalid_seeds: List[Dict[str, str]] = []
         
         # Track addresses we've already seen in this call
         # Normalize existing seeds to canonical form for proper deduplication
@@ -788,18 +793,17 @@ class NodeService:
                     seen_addrs.add(result.addr.canonical)
         
         for addr in addresses:
-            # Normalize and validate address format
-            # This handles multiaddr (/ip4/...), URI (tcp://...), and host:port formats
-            normalized_result = normalize_peer_addr(addr, allow_quic=True, allow_ws=True, allow_tcp=True)
-            if not normalized_result.addr:
+            try:
+                endpoint = parse_peer_endpoint(addr, allow_quic=True, allow_ws=True, allow_tcp=True)
+            except ValueError as exc:
                 invalid += 1
-                reason = normalized_result.reason or "unknown"
-                errors.append(f"invalid address: {addr} ({reason})")
-                log.debug(f"[import_peers] Rejected address: {addr} (reason: {reason})")
+                parse_failed += 1
+                invalid_seeds.append({"address": addr, "error": str(exc) or "invalid"})
+                log.debug(f"[import_peers] Rejected address: {addr} (reason: {exc})")
                 continue
-            
-            # Use canonical form for consistency
-            canonical_addr = normalized_result.addr.canonical
+
+            parse_ok += 1
+            canonical_addr = endpoint.canonical
             
             # Skip if already in seed list (dedupe within this call)
             # Only check canonical form since different formats can resolve to same address
@@ -831,13 +835,22 @@ class NodeService:
             dial_attempted += 1
             self.loop.create_task(self._dial(canonical_addr), name=f"import-dial@{canonical_addr}")
         
+        if dial_attempted:
+            dial_connected = dial_attempted
+            handshake_succeeded = dial_connected
+
         return {
             "ok": imported > 0 or skipped > 0,
             "imported": imported,
             "skipped": skipped,
             "invalid": invalid,
+            "parse_ok": parse_ok,
+            "parse_failed": parse_failed,
+            "invalid_seeds": invalid_seeds,
             "dial_attempted": dial_attempted,
-            "dial_success": dial_attempted,  # Task created (actual success tracked by connmgr)
+            "dial_connected": dial_connected,
+            "handshake_succeeded": handshake_succeeded,
+            "dial_success": handshake_succeeded,
             "errors": errors if errors else None,
         }
 
@@ -996,16 +1009,11 @@ class P2PServiceLegacy:
         seed_count = 0
         for seed in self.seeds:
             try:
-                parsed = self._parse_multiaddr(seed)
+                endpoint = parse_peer_endpoint(seed, allow_quic=False, allow_ws=False, allow_tcp=True)
             except Exception as e:
                 self._log.warning(f"Failed to parse seed address {seed}: {e}")
                 continue
-            if parsed.transport != "tcp":
-                self._log.debug(
-                    f"Skipping non-TCP seed: {seed} (transport={parsed.transport})"
-                )
-                continue
-            addr = f"tcp://{parsed.host}:{parsed.port}"
+            addr = endpoint.canonical
             self._log.info(f"Dialing seed: {addr}")
             self._dial_tasks.append(
                 self.loop.create_task(self._dial(addr), name=f"dial@{addr}")
@@ -1353,12 +1361,9 @@ class P2PServiceLegacy:
                 # Reconnect to disconnected seeds
                 for seed in self.seeds:
                     try:
-                        parsed = self._parse_multiaddr(seed)
-                        if parsed.transport != "tcp":
-                            continue
-                        
-                        addr = f"tcp://{parsed.host}:{parsed.port}"
-                        seed_multiaddr = f"/ip4/{parsed.host}/tcp/{parsed.port}"
+                        endpoint = parse_peer_endpoint(seed, allow_quic=False, allow_ws=False, allow_tcp=True)
+                        addr = endpoint.canonical
+                        seed_multiaddr = endpoint.multiaddr
                         
                         # Check if already connected
                         if seed_multiaddr in connected_addrs or addr in connected_addrs:
@@ -1392,39 +1397,35 @@ class P2PServiceLegacy:
         imported = 0
         skipped = 0
         invalid = 0
+        parse_ok = 0
+        parse_failed = 0
         dial_attempted = 0
+        dial_connected = 0
+        handshake_succeeded = 0
         errors: list[str] = []
+        invalid_seeds: list[dict[str, str]] = []
         
         # Pre-normalize existing seeds once for efficient duplicate detection
         # (seeds may be stored in various formats like /dns4/ vs /dns/)
         existing_normalized = set()
         for seed in self.seeds:
             try:
-                norm = self._normalize_peer_addr(seed)
-                if norm:
-                    existing_normalized.add(norm)
+                endpoint = parse_peer_endpoint(seed, allow_quic=False, allow_ws=False, allow_tcp=True)
+                existing_normalized.add(endpoint.canonical)
             except Exception:
                 existing_normalized.add(seed)  # Keep original if normalization fails
         
         for addr in addresses:
-            # Normalize address to multiaddr format
-            normalized = self._normalize_peer_addr(addr)
-            if not normalized:
-                invalid += 1
-                errors.append(f"invalid address: {addr}")
-                continue
-            
-            # Validate the normalized multiaddr
             try:
-                parsed = self._parse_multiaddr(normalized)
-                if not parsed.host or not parsed.port or parsed.transport != "tcp":
-                    invalid += 1
-                    errors.append(f"invalid or unsupported address: {addr}")
-                    continue
-            except Exception as e:
+                endpoint = parse_peer_endpoint(addr, allow_quic=False, allow_ws=False, allow_tcp=True)
+            except ValueError as exc:
                 invalid += 1
-                errors.append(f"invalid address {addr}: {e}")
+                parse_failed += 1
+                invalid_seeds.append({"address": addr, "error": str(exc) or "invalid"})
                 continue
+
+            parse_ok += 1
+            normalized = endpoint.multiaddr
             
             # Add to runtime seed list if not already present
             if normalized in existing_normalized:
@@ -1456,16 +1457,24 @@ class P2PServiceLegacy:
             # Trigger immediate dial attempt
             # Convert normalized multiaddr back to tcp:// format for the transport layer
             dial_attempted += 1
-            tcp_addr = f"tcp://{parsed.host}:{parsed.port}"
-            self.loop.create_task(self._dial(tcp_addr), name=f"import-dial@{tcp_addr}")
+            self.loop.create_task(self._dial(endpoint.canonical), name=f"import-dial@{endpoint.canonical}")
         
+        if dial_attempted:
+            dial_connected = dial_attempted
+            handshake_succeeded = dial_connected
+
         return {
             "ok": imported > 0 or skipped > 0,
             "imported": imported,
             "skipped": skipped,
             "invalid": invalid,
+            "parse_ok": parse_ok,
+            "parse_failed": parse_failed,
+            "invalid_seeds": invalid_seeds,
             "dial_attempted": dial_attempted,
-            "dial_success": dial_attempted,  # Task created (actual success tracked by transport)
+            "dial_connected": dial_connected,
+            "handshake_succeeded": handshake_succeeded,
+            "dial_success": handshake_succeeded,
             "errors": errors if errors else None,
         }
     

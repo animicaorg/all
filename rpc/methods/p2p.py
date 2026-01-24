@@ -25,6 +25,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from rpc.methods import method
+from p2p.peer.peer_addr import parse_peer_endpoint
 
 log = logging.getLogger("animica.rpc.p2p")
 
@@ -269,10 +270,12 @@ def _persist_peers_to_store(addresses: list[str]) -> tuple[int, int, int, list[s
     store = PeerStore(store_path)
 
     for raw in addresses:
-        normalized = _normalize_peer_address(raw)
-        if not normalized:
+        try:
+            endpoint = parse_peer_endpoint(raw, allow_quic=False, allow_ws=False, allow_tcp=True)
+            normalized = endpoint.multiaddr
+        except ValueError as exc:
             invalid += 1
-            errors.append(f"invalid address: {raw}")
+            errors.append(f"invalid address: {raw} ({exc})")
             continue
         peer_id = _generate_peer_id(normalized)
         try:
@@ -1226,6 +1229,11 @@ async def import_peers(addresses: list[str]) -> dict[str, t.Any]:
                     extra={
                         "dial_attempted": result.get("dial_attempted", 0),
                         "dial_success": result.get("dial_success", 0),
+                        "dial_connected": result.get("dial_connected", 0),
+                        "handshake_succeeded": result.get("handshake_succeeded", 0),
+                        "parse_ok": result.get("parse_ok", 0),
+                        "parse_failed": result.get("parse_failed", 0),
+                        "invalid_seeds": result.get("invalid_seeds", []),
                         "seeds_added": imported,
                         "seeds_skipped": result.get("skipped", 0),
                         "dial_attempts_started": result.get("dial_attempted", 0),
@@ -1254,6 +1262,11 @@ async def import_peers(addresses: list[str]) -> dict[str, t.Any]:
                     extra={
                         "dial_attempted": 0,
                         "dial_success": 0,
+                        "dial_connected": 0,
+                        "handshake_succeeded": 0,
+                        "parse_ok": imported + skipped,
+                        "parse_failed": invalid,
+                        "invalid_seeds": [],
                         "seeds_added": imported,
                         "seeds_skipped": skipped,
                         "dial_attempts_started": 0,
@@ -1271,6 +1284,11 @@ async def import_peers(addresses: list[str]) -> dict[str, t.Any]:
                 extra={
                     "dial_attempted": 0,
                     "dial_success": 0,
+                    "dial_connected": 0,
+                    "handshake_succeeded": 0,
+                    "parse_ok": 0,
+                    "parse_failed": 0,
+                    "invalid_seeds": [],
                     "seeds_added": 0,
                     "seeds_skipped": 0,
                     "dial_attempts_started": 0,
@@ -1280,16 +1298,22 @@ async def import_peers(addresses: list[str]) -> dict[str, t.Any]:
         added = 0
         skipped = 0
         invalid = 0
+        parse_ok = 0
+        parse_failed = 0
         dial_attempted = 0
         dial_success = 0
         errors: list[str] = []
+        invalid_seeds: list[dict[str, str]] = []
         seen: set[tuple[str, int]] = set()
         for addr in addresses:
             net_addr, err = _parse_core_address(addr)
             if net_addr is None:
                 invalid += 1
+                parse_failed += 1
+                invalid_seeds.append({"address": addr, "error": err or "invalid"})
                 errors.append(err or f"invalid address {addr}")
                 continue
+            parse_ok += 1
             key = (str(net_addr.ip), int(net_addr.port))
             if key in seen:
                 skipped += 1
@@ -1320,6 +1344,11 @@ async def import_peers(addresses: list[str]) -> dict[str, t.Any]:
             extra={
                 "dial_attempted": dial_attempted,
                 "dial_success": dial_success,
+                "dial_connected": dial_success,
+                "handshake_succeeded": dial_success,
+                "parse_ok": parse_ok,
+                "parse_failed": parse_failed,
+                "invalid_seeds": invalid_seeds,
                 "seeds_added": added,
                 "seeds_skipped": skipped,
                 "dial_attempts_started": dial_attempted,
@@ -1344,6 +1373,11 @@ async def import_peers(addresses: list[str]) -> dict[str, t.Any]:
             extra = {
                 "dial_attempted": result.get("dial_attempted", 0),
                 "dial_success": result.get("dial_success", 0),
+                "dial_connected": result.get("dial_connected", 0),
+                "handshake_succeeded": result.get("handshake_succeeded", 0),
+                "parse_ok": result.get("parse_ok", 0),
+                "parse_failed": result.get("parse_failed", 0),
+                "invalid_seeds": result.get("invalid_seeds", []),
                 "seeds_added": result.get("seeds_added", imported),
                 "seeds_skipped": result.get("seeds_skipped", skipped),
                 "dial_attempts_started": result.get("dial_attempts_started", result.get("dial_attempted", 0)),
