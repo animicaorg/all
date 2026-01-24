@@ -37,6 +37,7 @@ from animica_miner_gui.ui.tabs.logs import LogsTab
 from animica_miner_gui.ui.tabs.stats import StatsTab
 from animica_miner_gui.ui.tabs.wallet import WalletTab
 from animica_miner_gui.ui.tabs.console import ConsoleTab
+from animica_miner_gui.ui.tabs.ide import IDETab
 
 logger = logging.getLogger(__name__)
 
@@ -162,6 +163,7 @@ class MainWindow(QMainWindow):
         self.logs_tab = LogsTab()
         self.stats_tab = StatsTab()
         self.console_tab = ConsoleTab(self.node_controller)
+        self.ide_tab = IDETab()
         
         # Add tabs
         self.tabs.addTab(self.dashboard_tab, "Dashboard")
@@ -172,6 +174,7 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.logs_tab, "Logs")
         self.tabs.addTab(self.stats_tab, "Stats/Graphs")
         self.tabs.addTab(self.console_tab, "Console")
+        self.tabs.addTab(self.ide_tab, "IDE")
         
         layout.addWidget(self.tabs)
         central_widget.setLayout(layout)
@@ -184,6 +187,13 @@ class MainWindow(QMainWindow):
         self.node_controller.statusUpdated.connect(self.logs_tab.update_node_log_line)
 
         self.node_controller.start()
+
+    def closeEvent(self, event) -> None:  # noqa: D401 - Qt override
+        """Prompt for unsaved IDE changes on close."""
+        if hasattr(self, "ide_tab") and not self.ide_tab.prompt_close():
+            event.ignore()
+            return
+        super().closeEvent(event)
     
     def setup_menu(self) -> None:
         """Set up the menu bar."""
