@@ -4982,12 +4982,16 @@ class P2PService:
         allowed = set(Hello.__dataclass_fields__)
         hello = Hello(**{k: v for k, v in data.items() if k in allowed})
 
+        def _hash_bytes(value: Any) -> bytes:
+            parsed = self._parse_hash_bytes(value)
+            return parsed or b""
+
         if int(hello.chain_id) != int(self.chain_id):
             self._log_handshake_mismatch(
                 peer,
                 reason="chain_id_mismatch",
                 peer_chain_id=int(hello.chain_id or 0),
-                peer_genesis_hash=bytes(hello.genesis_hash or b""),
+                peer_genesis_hash=_hash_bytes(getattr(hello, "genesis_hash", None)),
             )
             await self._send(
                 peer,
@@ -4998,10 +5002,10 @@ class P2PService:
                 "chain_id_mismatch", points=0
             )
 
-        peer_genesis_header = bytes(getattr(hello, "genesis_header_hash", b"")) or bytes(
-            getattr(hello, "genesis_hash", b"")
-        )
-        peer_genesis_block = bytes(getattr(hello, "genesis_block_hash", b""))
+        peer_genesis_header = _hash_bytes(
+            getattr(hello, "genesis_header_hash", None)
+        ) or _hash_bytes(getattr(hello, "genesis_hash", None))
+        peer_genesis_block = _hash_bytes(getattr(hello, "genesis_block_hash", None))
         local_genesis_header = self._genesis_header_hash()
         local_genesis_block = self._genesis_block_hash()
 
@@ -5209,7 +5213,8 @@ class P2PService:
                 )
         peer.repo_state_ok = True
 
-        if not hello.genesis_identity:
+        peer_genesis_identity = _hash_bytes(getattr(hello, "genesis_identity", None))
+        if not peer_genesis_identity:
             self._log_handshake_mismatch(
                 peer,
                 reason="genesis_identity_missing",
@@ -5226,13 +5231,13 @@ class P2PService:
                 points=self._score_points["wrong_chain"],
             )
 
-        if bytes(hello.genesis_identity) != self._genesis_identity():
+        if peer_genesis_identity != self._genesis_identity():
             self._log_handshake_mismatch(
                 peer,
                 reason="genesis_identity_mismatch",
                 peer_chain_id=int(hello.chain_id or 0),
                 peer_genesis_hash=peer_genesis_header or peer_genesis_block or b"",
-                peer_genesis_identity=bytes(hello.genesis_identity or b""),
+                peer_genesis_identity=peer_genesis_identity,
             )
             await self._send(
                 peer,
@@ -5244,13 +5249,16 @@ class P2PService:
                 points=self._score_points["wrong_chain"],
             )
 
-        if not hello.network_params_hash:
+        peer_network_params_hash = _hash_bytes(
+            getattr(hello, "network_params_hash", None)
+        )
+        if not peer_network_params_hash:
             self._log_handshake_mismatch(
                 peer,
                 reason="network_params_missing",
                 peer_chain_id=int(hello.chain_id or 0),
                 peer_genesis_hash=peer_genesis_header or peer_genesis_block or b"",
-                peer_genesis_identity=bytes(hello.genesis_identity or b""),
+                peer_genesis_identity=peer_genesis_identity,
             )
             await self._send(
                 peer,
@@ -5262,14 +5270,14 @@ class P2PService:
                 points=self._score_points["wrong_chain"],
             )
 
-        if bytes(hello.network_params_hash) != self._network_params_hash():
+        if peer_network_params_hash != self._network_params_hash():
             self._log_handshake_mismatch(
                 peer,
                 reason="network_params_mismatch",
                 peer_chain_id=int(hello.chain_id or 0),
                 peer_genesis_hash=peer_genesis_header or peer_genesis_block or b"",
-                peer_genesis_identity=bytes(hello.genesis_identity or b""),
-                peer_network_params_hash=bytes(hello.network_params_hash or b""),
+                peer_genesis_identity=peer_genesis_identity,
+                peer_network_params_hash=peer_network_params_hash,
             )
             await self._send(
                 peer,
@@ -5302,7 +5310,8 @@ class P2PService:
             )
             raise PeerMisbehavior("clock_skew", points=20)
 
-        peer.peer_id = bytes(hello.peer_id).hex()
+        peer_id_bytes = _hash_bytes(getattr(hello, "peer_id", None))
+        peer.peer_id = peer_id_bytes.hex()
         if (
             not self._allow_self_peers
             and peer.peer_id
@@ -5344,24 +5353,22 @@ class P2PService:
             or data.get("height")
             or 0
         )
-        normalized["head_hash"] = bytes(getattr(hello, "head_hash", b"")) or data.get(
-            "head_hash"
-        ) or data.get("headHash")
+        peer_head_hash = _hash_bytes(getattr(hello, "head_hash", None))
+        normalized["head_hash"] = peer_head_hash or _hash_bytes(
+            data.get("head_hash") or data.get("headHash")
+        )
         normalized["genesis_hash"] = (
             peer_genesis_header
             or peer_genesis_block
-            or data.get("genesis_hash")
-            or data.get("genesisHash")
+            or _hash_bytes(data.get("genesis_hash") or data.get("genesisHash"))
         )
         normalized["genesis_header_hash"] = (
             peer_genesis_header
-            or data.get("genesis_header_hash")
-            or data.get("genesisHeaderHash")
+            or _hash_bytes(data.get("genesis_header_hash") or data.get("genesisHeaderHash"))
         )
         normalized["genesis_block_hash"] = (
             peer_genesis_block
-            or data.get("genesis_block_hash")
-            or data.get("genesisBlockHash")
+            or _hash_bytes(data.get("genesis_block_hash") or data.get("genesisBlockHash"))
         )
         normalized["fork_id"] = int(
             getattr(hello, "fork_id", 0)
@@ -5382,12 +5389,12 @@ class P2PService:
             or ""
         )
         normalized["repo_state"] = peer_repo_state
-        normalized["genesis_identity"] = bytes(
-            getattr(hello, "genesis_identity", b"")
-        ) or data.get("genesis_identity") or data.get("genesisIdentity")
-        normalized["network_params_hash"] = bytes(
-            getattr(hello, "network_params_hash", b"")
-        ) or data.get("network_params_hash") or data.get("networkParamsHash")
+        normalized["genesis_identity"] = peer_genesis_identity or _hash_bytes(
+            data.get("genesis_identity") or data.get("genesisIdentity")
+        )
+        normalized["network_params_hash"] = peer_network_params_hash or _hash_bytes(
+            data.get("network_params_hash") or data.get("networkParamsHash")
+        )
         peer.hello = normalized
         peer.hello_done.set()
         if normalized.get("head_height"):
