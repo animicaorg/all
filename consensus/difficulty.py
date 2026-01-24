@@ -150,7 +150,7 @@ class RetargetParams:
         Default is None (uses hard cap).
     """
 
-    target_block_time_s: float = 120.0
+    target_block_time_s: float = 300.0
     half_life_blocks: float = 24.0
     gain_beta: float = 0.75
     step_clamp_micro: MicroNat = 400_000  # ~0.4 nats per step max
@@ -452,7 +452,7 @@ if __name__ == "__main__":
     # Simulate a short series where blocks are 20% faster than target for a while,
     # then 30% slower, and observe Θ react smoothly within clamps.
     params = RetargetParams(
-        target_block_time_s=120.0,
+        target_block_time_s=300.0,
         half_life_blocks=24.0,  # ~smooth over a day at 12s blocks
         gain_beta=0.9,
         step_clamp_micro=500_000,

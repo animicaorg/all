@@ -27,7 +27,7 @@ networks:
     name: "Animica Mainnet"
     symbol: "ANM"
     decimals: 9                # 1 ANM = 1_000_000_000 nANM
-    genesis_time_utc: "TBD"
+    genesis_time_utc: "2026-05-01T00:00:00Z"
     # Addresses below are placeholders; final values are set at genesis build
     system_addresses:
       treasury: "anim1treasuryxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
@@ -54,7 +54,7 @@ networks:
             vesting: { cliff_days: 0, linear_months: 0 }
       issuance:
         # Target block time (consensus retarget aims to meet this)
-        target_block_interval_ms: 120000
+        target_block_interval_ms: 300000
         # Block subsidy schedule: exponential decay toward a tail emission
         subsidy:
           start_nANM_per_block: 300000000000  # 300 ANM per block base reward
@@ -81,7 +81,7 @@ networks:
         theta_min_munats: 8000000
         theta_max_munats: 3000000000           # Hard cap at 3B µ-nats (3,000 nats) for network stability
         retarget:
-          window_blocks: 1800                  # ~60 hours at 120s
+          window_blocks: 720                   # ~60 hours at 300s
           ema_beta: 0.15                       # fractional step toward target
           clamp_ratio_per_window:
             min: 0.5
@@ -127,7 +127,7 @@ networks:
       max_code_bytes: 131072
       max_stack_depth: 1024
     randomness:
-      round_seconds: 120
+      round_seconds: 300
       reveal_grace_seconds: 30
       vdf:
         iterations: 1000000

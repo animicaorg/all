@@ -877,6 +877,32 @@ def _resolve_theta() -> int:
     return _DEFAULT_THETA_MICRO
 
 
+def _ctx():
+    try:
+        return deps.get_ctx()
+    except Exception:
+        # In tests the FastAPI lifecycle may not have run yet; fall back to a
+        # one-off context.
+        return deps.build_context()
+
+
+def _target_block_time_s(default: float = 300.0) -> float:
+    try:
+        ctx = _ctx()
+        params = getattr(ctx, "params", {}) or {}
+        monetary = params.get("monetary") or {}
+        issuance = monetary.get("issuance") or {}
+        target_ms = issuance.get("target_block_interval_ms")
+        if target_ms is not None:
+            return float(target_ms) / 1000.0
+        block = params.get("block") or params.get("blocks") or {}
+        if "target_seconds" in block:
+            return float(block["target_seconds"])
+    except Exception:
+        pass
+    return float(os.getenv("ANIMICA_TARGET_BLOCK_TIME_S", default))
+
+
 def _adjust_theta_for_mining(dt_seconds: float | None = None) -> int:
     """
     Dynamically adjust theta micro during mining based on observed block times.
@@ -918,8 +944,9 @@ def _adjust_theta_for_mining(dt_seconds: float | None = None) -> int:
                 # Theta is capped at THETA_HARD_CAP_MICRO (3B µ-nats = 3,000 nats)
                 # to maintain network stability and prevent runaway values
                 # Stability is ensured by hard cap, step_clamp_micro, and overflow protection
+                target_block_time_s = _target_block_time_s()
                 params = RetargetParams(
-                    target_block_time_s=12.0,        # Target 12s blocks
+                    target_block_time_s=target_block_time_s,
                     half_life_blocks=8.0,            # Faster adaptation for mining (vs 24 for consensus)
                     gain_beta=0.9,                   # More aggressive response (vs 0.75 for consensus)
                     step_clamp_micro=2_000_000,      # Allow larger steps (~2.0 nats per update)
@@ -1041,15 +1068,6 @@ def _network_block_interval(head_height: int, head_timestamp: int) -> float | No
     if dt_seconds <= 0:
         return None
     return float(dt_seconds)
-
-
-def _ctx():
-    try:
-        return deps.get_ctx()
-    except Exception:
-        # In tests the FastAPI lifecycle may not have run yet; fall back to a
-        # one-off context.
-        return deps.build_context()
 
 
 def _mining_gate(

@@ -1,12 +1,12 @@
 {
   "meta": {
     "version": 2,
-    "genesis_version": "reset-2026-01",
+    "genesis_version": "reset-2026-05",
     "description": "Animica mainnet reset genesis (chainId=1). Premine + system accounts only."
   },
   "chainId": 1,
   "network": "animica-mainnet",
-  "genesisTime": "2026-01-01T00:00:00Z",
+  "genesisTime": "2026-05-01T00:00:00Z",
 
   "unit": {
     "symbol": "ANM",
@@ -21,7 +21,7 @@
   "algPolicyRoot": "0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
 
   "beacon": {
-    "seed": "0x1111111111111111111111111111111111111111111111111111111111111111",
+    "seed": "0x24b16f0df1b9e55dba52f27576714d8ed3f9be79b4501165df14026fad390858",
     "round": 0
   },
 
@@ -36,9 +36,10 @@
     }
   },
 
-"alloc": [
-  { "address": "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz", "nonce": 0, "balance": "81000000000000000" }
-],
+  "alloc": [
+    { "address": "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz", "nonce": 0, "balance": "81000000000000000" },
+    { "address": "system:genesis-marker", "nonce": 0, "balance": "0" }
+  ],
 
   "consensus": {
     "initialThetaMicro": 1000000,
