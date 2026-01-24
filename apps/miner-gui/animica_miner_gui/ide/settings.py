@@ -24,6 +24,7 @@ class IDESettings:
     active_file: str = ""
     autosave_enabled: bool = True
     autosave_interval_ms: int = 5000
+    explorer_url: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -33,6 +34,7 @@ class IDESettings:
             "active_file": self.active_file,
             "autosave_enabled": self.autosave_enabled,
             "autosave_interval_ms": self.autosave_interval_ms,
+            "explorer_url": self.explorer_url,
         }
 
     @classmethod
@@ -44,6 +46,7 @@ class IDESettings:
             active_file=data.get("active_file", ""),
             autosave_enabled=bool(data.get("autosave_enabled", True)),
             autosave_interval_ms=int(data.get("autosave_interval_ms", 5000)),
+            explorer_url=str(data.get("explorer_url", "")),
         )
 
 
