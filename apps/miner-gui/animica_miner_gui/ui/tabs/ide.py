@@ -13,6 +13,7 @@ from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
+    QFileDialog,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
@@ -40,6 +41,7 @@ from animica_miner_gui.ide.deploy_manager import (
     load_wallet_entries,
 )
 from animica_miner_gui.ide.editor_tabs import EditorTabs
+from animica_miner_gui.ide.git_panel import GitPanel
 from animica_miner_gui.ide.manifest_editor import ManifestEditor
 from animica_miner_gui.ide.output_panel import OutputPanels
 from animica_miner_gui.ide.project_tree import ProjectTree
@@ -54,6 +56,7 @@ from animica_miner_gui.ide.toolchain.manifest import (
     resolve_source_path,
 )
 from animica_miner_gui.ide.toolchain.utils import canonical_json_str
+from animica_miner_gui.ide.toolchain.preflight import PreflightResult
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +85,9 @@ class IDETab(QWidget):
         self._load_recent_projects(self.settings.recent_projects)
         self.workspace_picker.currentTextChanged.connect(self._on_workspace_selected)
 
+        new_button = QPushButton("New Project")
+        new_button.clicked.connect(self.open_new_project_wizard)
+
         open_button = QPushButton("Open Folder")
         open_button.clicked.connect(self.select_workspace)
 
@@ -89,26 +95,34 @@ class IDETab(QWidget):
         refresh_button.setText("↻")
         refresh_button.clicked.connect(self.refresh_workspace)
 
-        build_button = QPushButton("Build Contract")
-        build_button.clicked.connect(self.run_build)
-
-        simulate_call_button = QPushButton("Simulate Call")
-        simulate_call_button.clicked.connect(self.run_simulate_call)
-
-        simulate_tx_button = QPushButton("Simulate Tx")
-        simulate_tx_button.clicked.connect(self.run_simulate_tx)
-
         top_bar = QHBoxLayout()
         top_bar.addWidget(QLabel("Workspace:"))
         top_bar.addWidget(self.workspace_picker, stretch=1)
+        top_bar.addWidget(new_button)
         top_bar.addWidget(open_button)
         top_bar.addWidget(refresh_button)
-        top_bar.addWidget(build_button)
-        top_bar.addWidget(simulate_call_button)
-        top_bar.addWidget(simulate_tx_button)
+
+        quickstart_group = QGroupBox("Quickstart")
+        quickstart_layout = QHBoxLayout(quickstart_group)
+        quick_build_button = QPushButton("Build")
+        quick_build_button.clicked.connect(self.run_build)
+        quick_simulate_button = QPushButton("Simulate")
+        quick_simulate_button.clicked.connect(self.run_simulate_call)
+        quick_deploy_button = QPushButton("Deploy")
+        quick_deploy_button.clicked.connect(self.run_deploy)
+        quick_interact_button = QPushButton("Interact")
+        quick_interact_button.clicked.connect(self.run_interact)
+        preflight_button = QPushButton("Preflight")
+        preflight_button.clicked.connect(self.run_preflight)
+        quickstart_layout.addWidget(quick_build_button)
+        quickstart_layout.addWidget(quick_simulate_button)
+        quickstart_layout.addWidget(quick_deploy_button)
+        quickstart_layout.addWidget(quick_interact_button)
+        quickstart_layout.addWidget(preflight_button)
 
         self.project_tree = ProjectTree(self)
         self.project_tree.fileOpenRequested.connect(self._open_file)
+        self.project_tree.rootChanged.connect(self._on_workspace_root_changed)
 
         self.editor_tabs = EditorTabs(autosave_interval_ms=self.settings.autosave_interval_ms, parent=self)
         self.editor_tabs.fileOpened.connect(self._register_open_file)
@@ -123,6 +137,8 @@ class IDETab(QWidget):
         inspector_layout = QVBoxLayout(inspector)
         self.manifest_editor = ManifestEditor(inspector)
         inspector_layout.addWidget(self.manifest_editor)
+        self.git_panel = GitPanel(inspector)
+        inspector_layout.addWidget(self.git_panel)
 
         horizontal_split = QSplitter(Qt.Horizontal)
         horizontal_split.addWidget(self.project_tree)
@@ -138,6 +154,7 @@ class IDETab(QWidget):
 
         layout = QVBoxLayout(self)
         layout.addLayout(top_bar)
+        layout.addWidget(quickstart_group)
         layout.addWidget(vertical_split)
 
         self._setup_actions()
@@ -172,6 +189,11 @@ class IDETab(QWidget):
         self.deploy_action.triggered.connect(self.run_deploy)
         self.addAction(self.deploy_action)
 
+        self.preflight_action = QAction("Preflight", self)
+        self.preflight_action.setShortcut(QKeySequence("Ctrl+Shift+F"))
+        self.preflight_action.triggered.connect(self.run_preflight)
+        self.addAction(self.preflight_action)
+
         self.save_action = QAction("Save", self)
         self.save_action.setShortcut(QKeySequence.Save)
         self.save_action.triggered.connect(self.editor_tabs.save_current)
@@ -194,6 +216,7 @@ class IDETab(QWidget):
 
     def _connect_controller(self) -> None:
         self.controller.buildFinished.connect(self._on_build_finished)
+        self.controller.preflightFinished.connect(self._on_preflight_finished)
         self.controller.deployFinished.connect(self._on_deploy_finished)
         self.controller.deployProgress.connect(self._on_deploy_progress)
         self.controller.simulateFinished.connect(self._on_simulation_finished)
@@ -202,6 +225,7 @@ class IDETab(QWidget):
         if self.settings.last_workspace:
             self.workspace_picker.setCurrentText(self.settings.last_workspace)
             self.project_tree.set_root(self.settings.last_workspace)
+            self.git_panel.set_workspace(self.settings.last_workspace)
 
     def _restore_open_tabs(self) -> None:
         for file_path in self.settings.open_files:
@@ -223,6 +247,7 @@ class IDETab(QWidget):
             self._add_recent_project(path)
             self._persist_settings()
             self._sync_manifest_editor()
+            self.git_panel.set_workspace(path)
 
     def select_workspace(self) -> None:
         directory = self.project_tree.open_workspace_dialog()
@@ -233,6 +258,7 @@ class IDETab(QWidget):
         path = self.workspace_picker.currentText()
         if path:
             self.project_tree.set_root(path)
+            self.git_panel.set_workspace(path)
 
     def _add_recent_project(self, path: str) -> None:
         if path in self.settings.recent_projects:
@@ -266,6 +292,7 @@ class IDETab(QWidget):
             PaletteCommand("Simulate Call", self.run_simulate_call),
             PaletteCommand("Simulate Tx", self.run_simulate_tx),
             PaletteCommand("Deploy Project", self.run_deploy),
+            PaletteCommand("Preflight Check", self.run_preflight),
         ]
         palette = CommandPalette(commands, self)
         palette.exec()
@@ -295,6 +322,15 @@ class IDETab(QWidget):
         self.output_panels.append_output("Build", "Starting build...")
         self.output_panels.clear_problems()
         self.controller.build_project(self.workspace_picker.currentText())
+
+    def run_preflight(self) -> None:
+        workspace = self.workspace_picker.currentText()
+        if not workspace:
+            QMessageBox.warning(self, "Preflight", "Select a workspace first.")
+            return
+        self.output_panels.append_output("Preflight", "Running preflight checks...")
+        self.output_panels.clear_problems()
+        self.controller.preflight_project(workspace, self.rpc_client)
 
     def run_deploy(self) -> None:
         workspace = Path(self.workspace_picker.currentText())
@@ -360,6 +396,19 @@ class IDETab(QWidget):
             for diag in diagnostics:
                 self.output_panels.append_output("Build", f"⚠️ {diag.display_text()}")
 
+    def _on_preflight_finished(self, result: PreflightResult) -> None:
+        status = "✅" if result.ok else "❌"
+        self.output_panels.append_output("Preflight", f"{status} {result.message}")
+        for check in result.checks:
+            icon = "✅" if check.ok else "❌"
+            self.output_panels.append_output("Preflight", f"{icon} {check.name}: {check.message}")
+        diagnostics = list(result.diagnostics or [])
+        if diagnostics:
+            self.output_panels.set_problems(diagnostics)
+            for diag in diagnostics:
+                label = "ℹ️" if diag.severity == "info" else "⚠️"
+                self.output_panels.append_output("Preflight", f"{label} {diag.display_text()}")
+
     def _on_deploy_finished(self, success: bool, message: str, result_obj: object) -> None:
         status = "✅" if success else "❌"
         self.output_panels.append_output("Deploy", f"{status} {message}")
@@ -379,6 +428,29 @@ class IDETab(QWidget):
 
     def run_simulate_tx(self) -> None:
         self._run_simulation(is_tx=True)
+
+    def run_interact(self) -> None:
+        if not self.rpc_client:
+            QMessageBox.warning(self, "Interact", "RPC client not connected. Start the local node first.")
+            return
+        manifest, abi, _ = self._load_project_manifest()
+        if not manifest or not abi:
+            return
+        functions = [fn.get("name") for fn in abi.get("functions", []) if fn.get("name")]
+        if not functions:
+            QMessageBox.warning(self, "Interact", "No ABI functions found.")
+            return
+        dialog = InteractDialog(functions=functions, parent=self)
+        if dialog.exec() != QDialog.Accepted:
+            return
+        address, method, args = dialog.values
+        try:
+            result = self.rpc_client.call_contract(address=address, method=method, args=args, abi=abi)
+        except Exception as exc:
+            QMessageBox.warning(self, "Interact", f"RPC call failed: {exc}")
+            return
+        payload = canonical_json_str(result)
+        self.output_panels.append_output("Console", payload)
 
     def _run_simulation(self, *, is_tx: bool) -> None:
         manifest, abi, source_path = self._load_project_manifest()
@@ -567,6 +639,9 @@ class IDETab(QWidget):
         manifest_path = resolve_manifest_path(Path(workspace))
         self.manifest_editor.set_manifest_path(manifest_path)
 
+    def _on_workspace_root_changed(self, path: str) -> None:
+        self.git_panel.set_workspace(path)
+
     def prompt_close(self) -> bool:
         if not self.editor_tabs.close_all():
             return False
@@ -579,6 +654,15 @@ class IDETab(QWidget):
         self.settings.open_files = self.editor_tabs.open_files()
         self.settings.active_file = self.editor_tabs.active_file()
         save_ide_settings(self.settings)
+
+    def open_new_project_wizard(self) -> None:
+        dialog = NewProjectDialog(parent=self)
+        if dialog.exec() != QDialog.Accepted:
+            return
+        workspace_path = dialog.created_path
+        if workspace_path:
+            self.workspace_picker.setCurrentText(str(workspace_path))
+            self.editor_tabs.open_file(workspace_path / "contract.py")
 
 
 class DeployDialog(QDialog):
@@ -726,3 +810,172 @@ class SimulationDialog(QDialog):
             return
         self.values = (self.method_picker.currentText(), args, tx_env)
         self.accept()
+
+
+class InteractDialog(QDialog):
+    """Dialog for calling a deployed contract via RPC."""
+
+    def __init__(self, functions: List[str], parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Interact with Contract")
+        self.values: tuple[str, str, list] = ("", "", [])
+
+        self.address_input = QLineEdit()
+        self.address_input.setPlaceholderText("Contract address")
+        self.method_picker = QComboBox()
+        self.method_picker.addItems(functions)
+        self.args_editor = QPlainTextEdit("[]")
+        self.args_editor.setPlaceholderText("Args JSON array (e.g., [1, \"hi\"])")
+
+        run_button = QPushButton("Call")
+        run_button.clicked.connect(self._accept)
+        cancel_button = QPushButton("Cancel")
+        cancel_button.clicked.connect(self.reject)
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(QLabel("Contract address"))
+        layout.addWidget(self.address_input)
+        layout.addWidget(QLabel("Method"))
+        layout.addWidget(self.method_picker)
+        layout.addWidget(QLabel("Arguments (JSON array)"))
+        layout.addWidget(self.args_editor)
+
+        button_row = QHBoxLayout()
+        button_row.addStretch(1)
+        button_row.addWidget(cancel_button)
+        button_row.addWidget(run_button)
+        layout.addLayout(button_row)
+
+    def _accept(self) -> None:
+        address = self.address_input.text().strip()
+        if not address:
+            QMessageBox.warning(self, "Interact", "Contract address is required.")
+            return
+        try:
+            args = json.loads(self.args_editor.toPlainText() or "[]")
+        except json.JSONDecodeError as exc:
+            QMessageBox.warning(self, "Interact", f"Invalid JSON: {exc}")
+            return
+        if not isinstance(args, list):
+            QMessageBox.warning(self, "Interact", "Arguments must be a JSON array.")
+            return
+        self.values = (address, self.method_picker.currentText(), args)
+        self.accept()
+
+
+class NewProjectDialog(QDialog):
+    """Wizard to scaffold a new contract project."""
+
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("New Contract Project")
+        self.created_path: Optional[Path] = None
+
+        self.name_input = QLineEdit()
+        self.name_input.setPlaceholderText("Counter")
+        self.location_input = QLineEdit()
+        self.location_input.setText(str(Path.home()))
+        browse_button = QPushButton("Browse")
+        browse_button.clicked.connect(self._browse)
+
+        form = QFormLayout()
+        form.addRow("Project name:", self.name_input)
+
+        location_row = QHBoxLayout()
+        location_row.addWidget(self.location_input)
+        location_row.addWidget(browse_button)
+        form.addRow("Location:", location_row)
+
+        create_button = QPushButton("Create")
+        create_button.clicked.connect(self._create)
+        cancel_button = QPushButton("Cancel")
+        cancel_button.clicked.connect(self.reject)
+
+        button_row = QHBoxLayout()
+        button_row.addStretch(1)
+        button_row.addWidget(cancel_button)
+        button_row.addWidget(create_button)
+
+        layout = QVBoxLayout(self)
+        layout.addLayout(form)
+        layout.addLayout(button_row)
+
+    def _browse(self) -> None:
+        directory = QFileDialog.getExistingDirectory(self, "Select Location")
+        if directory:
+            self.location_input.setText(directory)
+
+    def _create(self) -> None:
+        name = self.name_input.text().strip() or "Counter"
+        location = Path(self.location_input.text().strip() or Path.home())
+        slug = _slugify(name)
+        workspace = location / slug
+        if workspace.exists():
+            QMessageBox.warning(self, "New Project", f"{workspace} already exists.")
+            return
+        try:
+            workspace.mkdir(parents=True, exist_ok=False)
+            (workspace / "contract.py").write_text(_default_contract(name), encoding="utf-8")
+            (workspace / "manifest.json").write_text(_default_manifest(name), encoding="utf-8")
+        except OSError as exc:
+            QMessageBox.warning(self, "New Project", f"Failed to create project: {exc}")
+            return
+        self.created_path = workspace
+        self.accept()
+
+
+def _slugify(value: str) -> str:
+    slug = "".join(ch.lower() if ch.isalnum() else "-" for ch in value).strip("-")
+    return slug or "contract"
+
+
+def _default_contract(name: str) -> str:
+    return (
+        "# -*- coding: utf-8 -*-\n"
+        f'"""Deterministic {name} contract scaffold."""\n'
+        "from __future__ import annotations\n\n"
+        "from stdlib import abi, storage\n\n"
+        "KEY_COUNTER = b\"counter\"\n\n"
+        "def _get_counter() -> int:\n"
+        "    data = storage.get(KEY_COUNTER)\n"
+        "    if data is None:\n"
+        "        return 0\n"
+        "    return abi.decode_int(data)\n\n"
+        "def get() -> int:\n"
+        "    \"\"\"Return the current counter value.\"\"\"\n"
+        "    return _get_counter()\n\n"
+        "def increment() -> int:\n"
+        "    \"\"\"Increment the counter and return the new value.\"\"\"\n"
+        "    value = _get_counter() + 1\n"
+        "    storage.set(KEY_COUNTER, abi.encode_int(value))\n"
+        "    return value\n"
+    )
+
+
+def _default_manifest(name: str) -> str:
+    safe_name = "".join(ch for ch in name if ch.isalnum() or ch == "_") or "Counter"
+    manifest = {
+        "name": safe_name,
+        "version": "0.1.0",
+        "language": "python",
+        "source": "contract.py",
+        "abi": {
+            "abiVersion": 1,
+            "name": safe_name,
+            "functions": [
+                {
+                    "name": "get",
+                    "inputs": [],
+                    "outputs": [{"name": "value", "type": "int"}],
+                    "stateMutability": "view",
+                },
+                {
+                    "name": "increment",
+                    "inputs": [],
+                    "outputs": [{"name": "value", "type": "int"}],
+                    "stateMutability": "nonpayable",
+                },
+            ],
+        },
+    }
+    return json.dumps(manifest, indent=2)

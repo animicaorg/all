@@ -149,6 +149,17 @@ hiddenimports = [
     "matplotlib.backends.backend_qt5agg",
     "pydantic",
     "httpx",
+    "jsonschema",
+    "omni_sdk",
+    "omni_sdk.contracts.deployer",
+    "omni_sdk.tx",
+    "omni_sdk.tx.encode",
+    "omni_sdk.wallet.signer",
+    "animica_miner_gui.ide",
+    "animica_miner_gui.ide.git_integration",
+    "animica_miner_gui.ide.git_panel",
+    "animica_miner_gui.ide.toolchain.preflight",
+    "animica_miner_gui.packaging.verify",
     "vm_py",
     "vm_py.abi",
     "vm_py.compiler",
@@ -256,6 +267,14 @@ log "Generating manifests..."
   --app-bundle "$APP_BUNDLE" \
   --node-out "$APP_BUNDLE/Contents/Resources/node-manifest.json" \
   --gui-out "$APP_BUNDLE/Contents/Resources/gui-manifest.json"
+
+if [[ "${ANIMICA_SKIP_VERIFY:-0}" != "1" ]]; then
+  log "Running packaged verification..."
+  "$APP_BUNDLE/Contents/MacOS/Animica Miner GUI" --verify-packaged \
+    --resources "$APP_BUNDLE/Contents/Resources" || die "Packaged verification failed"
+else
+  log "Skipping packaged verification (ANIMICA_SKIP_VERIFY=1)"
+fi
 
 # ---- Create DMG ----
 DMG_NAME="Animica-Miner-GUI-${VERSION}-macOS-$(uname -m).dmg"
