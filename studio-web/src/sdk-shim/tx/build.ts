@@ -9,6 +9,18 @@ export type DeployArgs = {
   nonce?: bigint;
 };
 
+export type CallArgs = {
+  to: string;
+  from: string;
+  chainId?: string | number;
+  method: string;
+  args?: unknown[];
+  gasLimit?: bigint | number | string;
+  maxFee?: bigint | number | string;
+  value?: bigint | number | string;
+  nonce?: bigint;
+};
+
 export async function buildDeploy(args: DeployArgs) {
   const meta = {
     from: args.from,
@@ -34,4 +46,35 @@ export async function deployTx(args: DeployArgs) {
 
 export async function estimateDeployGas(): Promise<bigint> {
   return 500_000n;
+}
+
+export async function buildCall(args: CallArgs) {
+  const payload = JSON.stringify({
+    to: args.to,
+    from: args.from,
+    method: args.method,
+    args: args.args ?? [],
+    gasLimit: args.gasLimit ?? null,
+    maxFee: args.maxFee ?? null,
+    value: args.value ?? null,
+    nonce: args.nonce ?? null,
+  });
+  const signBytes = sha3_256(payload);
+  return { tx: { kind: "call", to: args.to, from: args.from, data: payload }, signBytes };
+}
+
+export async function buildCallTx(args: CallArgs) {
+  return buildCall(args);
+}
+
+export async function callTx(args: CallArgs) {
+  return buildCall(args);
+}
+
+export async function call(args: CallArgs) {
+  return buildCall(args);
+}
+
+export async function estimateCallGas(): Promise<bigint> {
+  return 120_000n;
 }
