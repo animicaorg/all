@@ -21,6 +21,7 @@ import typer
 from animica.config import load_network_config
 from animica.cli.peer import (
     _generate_peer_id,
+    _normalize_seed_addresses,
     _rpc_call_with_error,
     _rpc_error_message,
     _is_method_not_found_error,
@@ -856,6 +857,7 @@ def _seed_local_peerstores(
     seeds, fetch_errors = _fetch_bootstrap_seeds(
         net_cfg, bootstrap_url, allow_bootstrap_rpc=allow_bootstrap_rpc
     )
+    seeds = _normalize_seed_addresses(seeds)
     store_path = Path(net_cfg.data_dir).expanduser() / "p2p" / "peers.json"
 
     if not seeds:

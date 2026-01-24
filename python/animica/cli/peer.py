@@ -279,6 +279,28 @@ def _normalize_to_multiaddr(address: str) -> str:
     return f"/{ip_tag}/{host}/tcp/{port}"
 
 
+def _normalize_seed_addresses(seeds: list[str]) -> list[str]:
+    """
+    Normalize seed addresses to multiaddr format and de-duplicate entries.
+
+    Args:
+        seeds: Raw seed address list.
+
+    Returns:
+        A list of normalized, unique seed addresses.
+    """
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for seed in seeds:
+        if not seed:
+            continue
+        normalized_seed = _normalize_to_multiaddr(seed)
+        if normalized_seed not in seen:
+            normalized.append(normalized_seed)
+            seen.add(normalized_seed)
+    return normalized
+
+
 def _write_peer_to_sqlite(store_path: Path, peer_id: str, address: str, direction: Optional[str] = None) -> None:
     """
     Persist a peer into the SQLite peer store used by the P2P stack.
@@ -530,9 +552,10 @@ def _generate_peer_id(address: str) -> str:
         if len(parts) > 1:
             return parts[1].split("/")[0]
     
-    # Generate a deterministic peer ID from the address
+    # Generate a deterministic peer ID from the normalized address
     # Use first 32 chars of hex hash for adequate collision resistance
-    hash_obj = hashlib.sha256(address.encode())
+    normalized = _normalize_to_multiaddr(address)
+    hash_obj = hashlib.sha256(normalized.encode())
     return f"peer_{hash_obj.hexdigest()[:32]}"
 
 
@@ -561,6 +584,8 @@ def _write_peer_to_store(store_path: Path, peer_id: str, address: str) -> None:
         except (json.JSONDecodeError, IOError):
             pass
     
+    normalized_address = _normalize_to_multiaddr(address)
+
     # Find existing peer or create new entry
     peers = data.get("peers", [])
     existing_peer = None
@@ -571,14 +596,14 @@ def _write_peer_to_store(store_path: Path, peer_id: str, address: str) -> None:
     
     if existing_peer:
         # Update existing peer
-        if address not in existing_peer.get("addrs", []):
-            existing_peer.setdefault("addrs", []).append(address)
+        if normalized_address not in existing_peer.get("addrs", []):
+            existing_peer.setdefault("addrs", []).append(normalized_address)
         existing_peer["last_seen"] = time.time()
     else:
         # Add new peer
         peers.append({
             "peer_id": peer_id,
-            "addrs": [address],
+            "addrs": [normalized_address],
             "score": 0.0,
             "last_seen": time.time(),
             "connected": False,
@@ -1411,6 +1436,9 @@ def bootstrap_peers(
         return
 
     seeds = list(dict.fromkeys(seeds))
+    normalized_seeds = _normalize_seed_addresses(seeds)
+    if normalized_seeds:
+        seeds = normalized_seeds
 
     if fetch_errors:
         typer.secho("Bootstrap RPC errors (using fallback seeds):", fg=typer.colors.YELLOW)
