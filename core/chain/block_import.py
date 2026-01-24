@@ -518,8 +518,8 @@ class BlockImporter:
                 half_life_blocks=half_life_blocks,
                 gain_beta=gain_beta,
                 step_clamp_micro=step_clamp_micro,
-                theta_min_micro=500_000,  # 0.5 nats - very easy
-                theta_max_micro=30_000_000,  # 30 nats - very hard
+                theta_min_micro=int(self.params.theta_min),
+                theta_max_micro=int(self.params.theta_max),
             )
         except Exception as e:  # pragma: no cover
             import logging

@@ -55,6 +55,8 @@ def make_test_params() -> ChainParams:
         alg_policy_root=b"\x01" * 32,
         poies_policy_root=b"\x02" * 32,
         theta_initial=3_000_000,  # 3.0 nats
+        theta_min=1_000_000,
+        theta_max=50_000_000,
         gamma_total_cap=1_000_000,
         retarget=RetargetParams(
             window=24,
