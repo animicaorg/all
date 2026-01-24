@@ -90,6 +90,21 @@ cd apps/miner-gui
 ./scripts/run_dev.sh
 ```
 
+## IDE Workflow
+
+The IDE tab provides an end-to-end contract flow:
+
+- **New Contract Project** creates a ready-to-build `contract.py` + `manifest.json` scaffold.
+- **Quickstart buttons** walk through Build → Simulate → Deploy → Interact.
+- **Preflight** runs build, local simulation checks, manifest validation, and RPC reachability, with findings in the Problems panel.
+- **Git integration** (no token storage) shows branch/dirty state, supports stage/unstage, commit, push, and a PR helper link. If `git` is not installed, the panel disables itself gracefully.
+
+Requirements:
+
+- `git` installed if you want Git features.
+- `vm_py` and `omni_sdk` available for builds, simulation, and deploy tooling.
+- Local node running for deploy + interact; the IDE restricts deploy to `localhost` RPC.
+
 ## Configuration
 
 Configuration is stored in `~/.animica/gui-miner/config.json` with secure permissions (0600).

@@ -48,6 +48,8 @@ cd apps/miner-gui/build-scripts
 open "dist/Animica Miner GUI.app"
 ```
 
+`build_macos.sh` runs a packaged verification pass (build + simulate + RPC check) using the bundled app. To skip this step, set `ANIMICA_SKIP_VERIFY=1`.
+
 ### Building for Windows
 
 #### Option 1: Native Windows Build
