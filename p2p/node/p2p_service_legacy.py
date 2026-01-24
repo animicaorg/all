@@ -6164,6 +6164,11 @@ class P2PService:
             with contextlib.suppress(Exception):
                 await conn.close()
             return
+        self._handshake_manager.track_session(
+            session_id=session.session_id,
+            remote=remote,
+            direction=direction,
+        )
 
         netgroup = self._netgroup_key(remote)
         async with self._peer_lock:
