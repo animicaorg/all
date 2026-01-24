@@ -6,8 +6,8 @@ chain:
   name: "Animica Mainnet"
 
 genesis:
-  time: "2026-05-01T00:00:00Z"
-  hash: "0xe523e0e6871d792e05b602e1eb74d52457f7188fdac7a5c4086dcd56dced44ec"
+  time: "2026-01-24T17:35:33Z"
+  hash: "0xc0a3b0c6faaf0af136784e9dbeeea360477bfc4fb4a6f950d6de5e05f6b66f74"
 
 policy_roots:
   alg_policy_root: "0x0000000000000000000000000000000000000000000000000000000000000000"
