@@ -287,6 +287,36 @@ class RPCClient:
         """Return available RPC methods, if exposed."""
         return self._call_first(["rpc.methods", "rpc_methods", "rpc.listMethods"])
 
+    def call_contract(
+        self,
+        *,
+        address: str,
+        method: str,
+        args: list,
+        abi: Optional[dict] = None,
+    ) -> Dict[str, Any]:
+        """Call a contract method using best-effort RPC fallbacks."""
+        payloads = [
+            ("animica_callContract", [{"to": address, "method": method, "args": args, "abi": abi}]),
+            ("state.call", [{"to": address, "method": method, "args": args, "abi": abi}]),
+            ("state.call", [{"to": address, "func": method, "args": args, "abi": abi}]),
+            ("contract.call", [{"to": address, "method": method, "args": args, "abi": abi}]),
+            ("vm.call", [{"to": address, "method": method, "args": args, "abi": abi}]),
+            ("contracts.call", [address, method, args]),
+            ("eth_call", [{"to": address, "data": method, "args": args}]),
+        ]
+        last_exc: Optional[Exception] = None
+        for rpc_method, params in payloads:
+            try:
+                result = self._call(rpc_method, params)
+                return {"method": rpc_method, "result": result}
+            except Exception as exc:
+                last_exc = exc
+                continue
+        if last_exc:
+            raise RPCError(f"All contract call RPC methods failed: {last_exc}")
+        raise RPCError("No contract call RPC method succeeded.")
+
     def get_peer_summary(self) -> Dict[str, Any]:
         """Return peer summary information."""
         peers = self._call_first(

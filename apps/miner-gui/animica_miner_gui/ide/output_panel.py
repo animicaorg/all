@@ -19,7 +19,7 @@ class OutputPanels(QTabWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._panes: Dict[str, QPlainTextEdit] = {}
-        for name in ("Build", "Deploy", "Console", "Simulation"):
+        for name in ("Build", "Deploy", "Preflight", "Console", "Simulation"):
             pane = QPlainTextEdit()
             pane.setReadOnly(True)
             self._panes[name] = pane
