@@ -109,18 +109,26 @@ from pathlib import Path
 
 block_cipher = None
 
+# Resolve repository root for bundled toolchain assets.
+repo_root = Path(__file__).resolve().parents[3]
+app_dir = repo_root / "apps" / "miner-gui"
+
 # Get the logo path
-logo_path = Path('logo.png')
+logo_path = app_dir / "logo.png"
 if not logo_path.exists():
     print("Warning: logo.png not found")
     logo_path = None
 
+schemas_dir = app_dir / "animica_miner_gui" / "ide" / "toolchain" / "schemas"
+
 a = Analysis(
     ['animica_miner_gui/main.py'],
-    pathex=[],
+    pathex=[str(repo_root), str(app_dir)],
     binaries=[],
     datas=[
-        ('logo.png', '.') if logo_path else None,
+        (str(logo_path), '.') if logo_path else None,
+        (str(schemas_dir / 'manifest.schema.json'), 'animica_miner_gui/ide/toolchain/schemas'),
+        (str(schemas_dir / 'abi.schema.json'), 'animica_miner_gui/ide/toolchain/schemas'),
     ],
     hiddenimports=[
         'PySide6.QtCore',
@@ -130,6 +138,11 @@ a = Analysis(
         'matplotlib.backends.backend_qt5agg',
         'pydantic',
         'httpx',
+        'vm_py',
+        'vm_py.abi',
+        'vm_py.compiler',
+        'vm_py.runtime',
+        'vm_py.stdlib',
     ],
     hookspath=[],
     hooksconfig={},

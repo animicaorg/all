@@ -1,0 +1,273 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.animica.dev/contract/manifest.schema.json",
+  "title": "Animica Contract Manifest",
+  "description": "Canonical manifest for a deployable Animica Python-VM contract bundle. Includes identifying metadata, ABI, code hash, toolchain provenance, and optional capability declarations. Designed for deterministic verification by nodes, studio-services, and explorers.",
+  "$comment": "Schema version 1.0.0",
+  "type": "object",
+  "additionalProperties": false,
+
+  "required": ["manifestVersion", "name", "version", "vm", "abi", "code"],
+
+  "properties": {
+    "manifestVersion": {
+      "description": "Monotonically increasing manifest schema version. Current: 1.",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1
+    },
+
+    "name": {
+      "description": "Human-readable contract name (stable identifier; no spaces).",
+      "type": "string",
+      "pattern": "^[A-Za-z][A-Za-z0-9_]{2,64}$",
+      "examples": ["Counter", "Escrow_v1"]
+    },
+
+    "version": {
+      "description": "SemVer of the contract source/ABI pair.",
+      "type": "string",
+      "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$",
+      "examples": ["1.0.0", "1.1.0-rc.1+build.meta"]
+    },
+
+    "description": {
+      "description": "Short description of the contract.",
+      "type": "string",
+      "maxLength": 512
+    },
+
+    "authors": {
+      "description": "List of authors or organizations.",
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "maxItems": 16
+    },
+
+    "license": {
+      "description": "SPDX license identifier (or license string).",
+      "type": "string",
+      "maxLength": 128
+    },
+
+    "language": {
+      "description": "Source language for the contract.",
+      "type": "string",
+      "enum": ["python"],
+      "default": "python"
+    },
+
+    "vm": {
+      "description": "Target VM and gas-table provenance.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "enum": ["vm_py"]
+        },
+        "version": {
+          "description": "SemVer of vm_py toolchain used to build/validate.",
+          "type": "string",
+          "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$"
+        },
+        "gasTable": {
+          "description": "Identifier or content hash of the gas table used.",
+          "type": "string",
+          "maxLength": 128
+        }
+      }
+    },
+
+    "abi": {
+      "description": "Contract ABI object (must conform to spec/abi.schema.json). Inline is preferred; a stable hash/URI may be included under abiMeta.",
+      "type": "object"
+    },
+
+    "abiMeta": {
+      "description": "Optional metadata for the ABI, including hash and a retrieval URI.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "hash": { "$ref": "#/$defs/Hex256" },
+        "alg": {
+          "description": "Hash algorithm for abiMeta.hash.",
+          "type": "string",
+          "enum": ["sha3_256", "sha3_512", "blake3"]
+        },
+        "uri": {
+          "description": "Where the ABI can be fetched (e.g., IPFS, HTTPS).",
+          "type": "string",
+          "format": "uri"
+        }
+      }
+    },
+
+    "code": {
+      "description": "Code artifact description and content hash used for verification.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "hash", "alg"],
+      "properties": {
+        "kind": {
+          "description": "Artifact kind. 'vm_py/source' is canonical source; 'vm_py/ir' is compiled IR bytes.",
+          "type": "string",
+          "enum": ["vm_py/source", "vm_py/ir"]
+        },
+        "hash": { "$ref": "#/$defs/Hex256" },
+        "alg": {
+          "description": "Hash algorithm for code.hash.",
+          "type": "string",
+          "enum": ["sha3_256", "sha3_512", "blake3"]
+        },
+        "size": {
+          "description": "Size in bytes of the code artifact (for sanity; not consensus).",
+          "type": "integer",
+          "minimum": 0
+        },
+        "encoding": {
+          "description": "Encoding of the artifact payload if inlined or referenced.",
+          "type": "string",
+          "enum": ["utf-8", "cbor", "base64"],
+          "default": "utf-8"
+        },
+        "entry": {
+          "description": "Entry module or file path inside the bundle (e.g., contract.py).",
+          "type": "string",
+          "maxLength": 256
+        },
+        "uri": {
+          "description": "Optional retrieval URI for the exact artifact whose hash is declared (e.g., ipfs://, https://).",
+          "type": "string",
+          "format": "uri"
+        }
+      }
+    },
+
+    "capabilities": {
+      "description": "Optional declaration of off-chain capability use to aid audits and tools. Enforced by contract logic; listed here for clarity.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "usesDA": { "type": "boolean", "default": false },
+        "usesAI": { "type": "boolean", "default": false },
+        "usesQuantum": { "type": "boolean", "default": false },
+        "usesZk": { "type": "boolean", "default": false },
+        "limits": {
+          "description": "Soft limits as declared by the author (tools may warn if exceeded at runtime).",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "maxBlobBytes": { "type": "integer", "minimum": 0 },
+            "maxAiPromptBytes": { "type": "integer", "minimum": 0 },
+            "maxQuantumCircuitBytes": { "type": "integer", "minimum": 0 }
+          }
+        }
+      }
+    },
+
+    "deploy": {
+      "description": "Optional deployment constraints and constructor parameters.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "chain": {
+          "description": "Target chain identifier (CAIP-2 like 'animica:1') or numeric chainId.",
+          "oneOf": [
+            { "type": "string", "pattern": "^[a-z0-9]+:[a-zA-Z0-9-]+$" },
+            { "type": "integer", "minimum": 1 }
+          ]
+        },
+        "constructor": {
+          "description": "Constructor call descriptor if the contract requires initialization.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "method": { "type": "string", "maxLength": 64 },
+            "args": {
+              "description": "Constructor arguments in their canonical JSON form (pre-encoding).",
+              "type": "array"
+            }
+          }
+        }
+      }
+    },
+
+    "addresses": {
+      "description": "Known deployed addresses per network.",
+      "type": "object",
+      "additionalProperties": {
+        "description": "Map of chain key → bech32m address.",
+        "type": "string",
+        "minLength": 8,
+        "maxLength": 128
+      },
+      "examples": [
+        { "animica:1": "anim1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqp2t8" }
+      ]
+    },
+
+    "metadata": {
+      "description": "Provenance metadata for reproducibility.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "repository": { "type": "string", "format": "uri" },
+        "commit": { "type": "string", "maxLength": 64 },
+        "buildTime": { "type": "string", "format": "date-time" },
+        "tooling": {
+          "description": "Tool versions used during build.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "vm_py": { "type": "string" },
+            "sdk": { "type": "string" },
+            "python": { "type": "string" }
+          }
+        }
+      }
+    },
+
+    "publisher": {
+      "description": "Optional publisher attestation over the manifest (non-consensus).",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "address": {
+          "description": "Publisher address (bech32m).",
+          "type": "string",
+          "minLength": 8,
+          "maxLength": 128
+        },
+        "alg_id": {
+          "description": "PQ signature algorithm identifier (e.g., dilithium3, sphincs_shake_128s).",
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 64
+        },
+        "signature": { "$ref": "#/$defs/Hex" }
+      }
+    },
+
+    "examples": {
+      "description": "Non-normative examples aiding UI tooling.",
+      "type": "array",
+      "items": { "type": "object" },
+      "maxItems": 8
+    }
+  },
+
+  "$defs": {
+    "Hex": {
+      "description": "Hex-encoded bytes with 0x prefix.",
+      "type": "string",
+      "pattern": "^0x[0-9a-fA-F]+$"
+    },
+    "Hex256": {
+      "description": "256-bit or 512-bit hex (0x…) commonly used for hashes. Length is validated by consumers; schema ensures hex form.",
+      "type": "string",
+      "pattern": "^0x[0-9a-fA-F]{64,128}$"
+    }
+  }
+}
