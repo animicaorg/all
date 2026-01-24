@@ -265,6 +265,12 @@ class EditorTabs(QWidget):
                 self.tabs.setCurrentIndex(index)
                 return
 
+    def open_file_at(self, path: Path, line: int, column: int = 1) -> None:
+        self.open_file(path)
+        editor = self.current_editor()
+        if editor:
+            editor.go_to_line_column(line, column)
+
     def _update_tab_title(self, editor: EditorWidget, modified: bool) -> None:
         index = self.tabs.indexOf(editor)
         if index == -1:

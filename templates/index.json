@@ -12,6 +12,13 @@
       "path": "contract-python-basic"
     },
     {
+      "id": "contract-python-ide-sample",
+      "name": "Python Contract (IDE Sample)",
+      "version": "0.1.0",
+      "description": "Minimal Animica Python-VM contract project aligned with the IDE toolchain build/simulate workflow.",
+      "path": "contract-python-ide-sample"
+    },
+    {
       "id": "fullstack-monorepo",
       "name": "Fullstack Monorepo (Animica)",
       "version": "0.1.0",
