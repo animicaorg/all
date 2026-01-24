@@ -6,8 +6,8 @@ Minimal fork choice
 
 Rule:
   1) Prefer the candidate with the higher `height`.
-  2) If heights are equal, prefer the candidate with the larger block hash when
-     interpreted as a big-endian integer (equivalently: lexicographically larger
+  2) If heights are equal, prefer the candidate with the smaller block hash when
+     interpreted as a big-endian integer (equivalently: lexicographically smaller
      bytes for equal-length digests).
 
 Notes
@@ -16,8 +16,8 @@ Notes
   block import, P2P header sync, and tests without pulling the whole stack.
 - Hashes are treated as opaque bytes; callers should provide canonical header
   digests (e.g., sha3_256 over the canonical header encoding).
-- If hash lengths differ, the longer length wins (to avoid accidental prefix
-  ordering), then bytes lexicographically.
+- If hash lengths differ, the shorter length wins (smaller big-endian integer),
+  then bytes lexicographically.
 
 The policy is deterministic and stable across processes and platforms.
 """
@@ -46,14 +46,14 @@ def _hash_better(a: bytes, b: bytes) -> bool:
     Return True iff `a` is strictly preferred to `b` under the tie-break policy.
 
     Policy:
-      - Prefer longer length.
-      - If equal length, prefer lexicographically larger bytes (which equals
-        larger big-endian integer).
+      - Prefer shorter length (smaller big-endian integer).
+      - If equal length, prefer lexicographically smaller bytes (which equals
+        smaller big-endian integer).
     """
     if len(a) != len(b):
-        return len(a) > len(b)
+        return len(a) < len(b)
     # same length -> lexicographic (big-endian numeric) compare
-    return a > b
+    return a < b
 
 
 def better(a: HeadCandidate, b: HeadCandidate) -> bool:
