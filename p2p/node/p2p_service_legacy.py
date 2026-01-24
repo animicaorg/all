@@ -34,7 +34,15 @@ from p2p.peer.p2p_store import (
     read_peers_json,
 )
 from p2p.transport.base import ListenConfig
-from p2p.constants import DEFAULT_TCP_PORT, MAX_INV_PER_MSG, MAX_TX_BYTES, NETWORK_MAGIC
+from p2p.constants import (
+    DEFAULT_TCP_PORT,
+    HANDSHAKE_TIMEOUT,
+    MAX_INV_PER_MSG,
+    MAX_TX_BYTES,
+    NETWORK_MAGIC,
+    PING_INTERVAL,
+    PING_TIMEOUT,
+)
 from p2p.transport.multiaddr import parse_multiaddr
 from p2p.transport.tcp import TcpTransport
 from p2p.wire.encoding import decode_payload, encode_payload
@@ -68,6 +76,8 @@ from p2p.wire.messages import (
     InvItem,
     InvType,
     Peers,
+    Ping,
+    Pong,
     Tx,
 )
 try:
@@ -214,6 +224,10 @@ class _PeerState:
     last_tx_data_sent_at: Optional[float] = None
     last_tx_data_recv_at: Optional[float] = None
     identity_ok: bool = False
+    handshake_recorded: bool = False
+    last_ping_at: float = 0.0
+    last_pong_at: float = 0.0
+    last_ping_nonce: Optional[int] = None
     # Throughput tracking for peer quality scoring (ultra-fast sync)
     blocks_delivered: int = 0  # Total blocks successfully delivered
     headers_delivered: int = 0  # Total headers successfully delivered
@@ -1001,13 +1015,29 @@ class P2PService:
             os.environ.get("ANIMICA_P2P_SEED_RATE_WINDOW", "300") or 300
         )
         self._seed_hosts = self._seed_hostnames(self.seeds)
+        self._ping_interval_s = float(
+            os.environ.get("ANIMICA_P2P_PING_INTERVAL", str(PING_INTERVAL))
+            or PING_INTERVAL
+        )
+        self._ping_timeout_s = float(
+            os.environ.get("ANIMICA_P2P_PING_TIMEOUT", str(PING_TIMEOUT)) or PING_TIMEOUT
+        )
 
         self._peer_lock = asyncio.Lock()
         self._peers: dict[tuple[str, str], _PeerState] = {}  # (remote, direction) -> state
         self._peers_by_session: dict[str, _PeerState] = {}
+        handshake_timeout_default = max(5.0, float(HANDSHAKE_TIMEOUT))
         self._peer_registry = PeerRegistry(
             max_inbound_per_ip=int(os.environ.get("ANIMICA_P2P_MAX_INBOUND_PER_IP", "10") or 10),
-            handshake_timeout_s=float(os.environ.get("ANIMICA_P2P_HANDSHAKE_TIMEOUT", "3.0") or 3.0),
+            handshake_timeout_s=max(
+                5.0,
+                float(
+                    os.environ.get(
+                        "ANIMICA_P2P_HANDSHAKE_TIMEOUT", str(handshake_timeout_default)
+                    )
+                    or handshake_timeout_default
+                ),
+            ),
             handshake_rate_limit_per_ip=int(
                 os.environ.get("ANIMICA_P2P_HANDSHAKE_RATE_PER_IP", "30") or 30
             ),
@@ -1886,6 +1916,7 @@ class P2PService:
                 asyncio.create_task(self._addr_request_loop(), name="p2p.addr_request"),
                 asyncio.create_task(self._feeler_loop(), name="p2p.feeler"),
                 asyncio.create_task(self._addr_relay_loop(), name="p2p.addr_relay"),
+                asyncio.create_task(self._ping_loop(), name="p2p.ping"),
                 asyncio.create_task(self._persist_peers_loop(), name="p2p.peer_persist"),
                 *(
                     [
@@ -2909,6 +2940,47 @@ class P2PService:
         except asyncio.CancelledError:
             return
 
+    async def _ping_loop(self) -> None:
+        try:
+            while self._running:
+                await asyncio.sleep(max(1.0, self._ping_interval_s))
+                if not self._running:
+                    return
+                now = time.time()
+                async with self._peer_lock:
+                    peers = list(self._peers.values())
+                for peer in peers:
+                    if not peer.identity_ok or not peer.hello_done.is_set():
+                        continue
+                    if peer.last_ping_at and now - peer.last_ping_at < self._ping_interval_s:
+                        continue
+                    peer.last_ping_at = now
+                    peer.last_ping_nonce = int(now)
+                    try:
+                        await self._send(peer, MsgID.PING, Ping(nonce=peer.last_ping_nonce))
+                    except Exception:
+                        # Ignore ping send errors; peer loop will handle disconnects.
+                        continue
+                for peer in peers:
+                    if not peer.identity_ok or not peer.hello_done.is_set():
+                        continue
+                    if peer.last_ping_at and now - peer.last_ping_at > self._ping_timeout_s:
+                        if peer.last_pong_at < peer.last_ping_at:
+                            self._record_connection_event(
+                                "handshake_failed",
+                                remote=peer.remote,
+                                peer_id=peer.peer_id,
+                                direction=peer.direction,
+                                reason="ping_timeout",
+                                stage="keepalive",
+                            )
+                            self._create_child_task(
+                                self._drop_peer(peer, reason="ping_timeout"),
+                                name=f"p2p.drop_peer@{peer.remote}",
+                            )
+        except asyncio.CancelledError:
+            return
+
     async def _persist_peers_loop(self) -> None:
         try:
             while self._running:
@@ -3310,6 +3382,9 @@ class P2PService:
         attempts: int,
         error: Optional[str] = None,
         is_seed: bool = False,
+        tcp_connected: Optional[bool] = None,
+        handshake_ok: Optional[bool] = None,
+        stage: Optional[str] = None,
     ) -> None:
         addr_key = self._addr_key(addr)
         entry: dict[str, Any] = {
@@ -3322,6 +3397,12 @@ class P2PService:
             entry["error"] = error
         if is_seed:
             entry["is_seed"] = True
+        if tcp_connected is not None:
+            entry["tcp_connected"] = tcp_connected
+        if handshake_ok is not None:
+            entry["handshake_ok"] = handshake_ok
+        if stage is not None:
+            entry["stage"] = stage
         next_retry = self._dial_backoff.get(addr_key)
         if next_retry:
             entry["next_retry_at"] = next_retry
@@ -3335,7 +3416,36 @@ class P2PService:
         payload.update(extra)
         self._connection_events.append(payload)
 
-    def _mark_dial_failure(self, addr: str, *, is_seed: bool, error: str) -> None:
+    def _record_handshake_reject(
+        self, peer: _PeerState, *, reason: str, stage: str
+    ) -> None:
+        self._record_connection_event(
+            "handshake_rejected",
+            remote=peer.remote,
+            peer_id=peer.peer_id,
+            direction=peer.direction,
+            reason=reason,
+            stage=stage,
+        )
+
+    def _record_handshake_success(self, peer: _PeerState, *, stage: str) -> None:
+        if peer.handshake_recorded:
+            return
+        peer.handshake_recorded = True
+        self._record_connection_event(
+            "handshake_ok",
+            remote=peer.remote,
+            peer_id=peer.peer_id,
+            direction=peer.direction,
+            stage=stage,
+        )
+        if peer.direction == "outbound":
+            is_seed = self._addr_key(peer.remote) in self._seed_keys
+            self._mark_dial_success(peer.remote, is_seed=is_seed)
+
+    def _mark_dial_failure(
+        self, addr: str, *, is_seed: bool, error: str, tcp_connected: bool = False
+    ) -> None:
         addr_key = self._addr_key(addr)
         attempts = self._dial_attempts.get(addr_key, 0)
         if attempts <= 0:
@@ -3351,7 +3461,13 @@ class P2PService:
         next_retry = time.time() + delay
         self._dial_backoff[addr_key] = next_retry
         self._record_dial_event(
-            addr, status="failed", attempts=attempts, error=error, is_seed=is_seed
+            addr,
+            status="failed",
+            attempts=attempts,
+            error=error,
+            is_seed=is_seed,
+            tcp_connected=tcp_connected,
+            handshake_ok=False,
         )
         normalized = self._sanitize_peer_addr(addr, fallback_port=self._local_listen_port())
         if normalized:
@@ -3403,6 +3519,20 @@ class P2PService:
                         self.peerstore.increment_score(peer_id, -1.0)
                         self.peerstore.record_seen(peer_id, normalized)
 
+    def _mark_dial_tcp_connected(self, addr: str, *, is_seed: bool) -> None:
+        addr_key = self._addr_key(addr)
+        attempts = self._dial_attempts.get(addr_key, 0) or 1
+        self._record_dial_event(
+            addr,
+            status="tcp_connected",
+            attempts=attempts,
+            error=None,
+            is_seed=is_seed,
+            tcp_connected=True,
+            handshake_ok=False,
+            stage="tcp",
+        )
+
     def _mark_dial_success(self, addr: str, *, is_seed: bool) -> None:
         addr_key = self._addr_key(addr)
         attempts = self._dial_attempts.get(addr_key, 0) or 1
@@ -3410,7 +3540,14 @@ class P2PService:
         self._dial_backoff.pop(addr_key, None)
         self._dial_success_total += 1
         self._record_dial_event(
-            addr, status="success", attempts=attempts, error=None, is_seed=is_seed
+            addr,
+            status="handshake_ok",
+            attempts=attempts,
+            error=None,
+            is_seed=is_seed,
+            tcp_connected=True,
+            handshake_ok=True,
+            stage="handshake",
         )
         normalized = self._sanitize_peer_addr(addr, fallback_port=self._local_listen_port())
         if normalized:
@@ -3418,13 +3555,13 @@ class P2PService:
         if is_seed:
             self._record_bootstrap_attempt(addr, success=True)
             log.info(
-                "[p2p][bootstrap] seed handshake complete",
+                "[p2p][bootstrap] seed handshake ok",
                 extra={"addr": addr, "attempts": attempts},
             )
             self._sync_wakeup.set()
         else:
             log.info(
-                "[p2p][dial] success",
+                "[p2p][dial] handshake ok",
                 extra={"addr": addr, "attempts": attempts},
             )
 
@@ -6111,7 +6248,7 @@ class P2PService:
             remote=getattr(getattr(conn, "info", None), "remote_addr", None),
             is_seed=is_seed,
         )
-        self._mark_dial_success(addr, is_seed=is_seed)
+        self._mark_dial_tcp_connected(addr, is_seed=is_seed)
         await self._register_conn(conn, direction="outbound", feeler=feeler)
         return True
 
@@ -6232,6 +6369,14 @@ class P2PService:
                     "state_transition": "handshaking -> failed (timeout)",
                 },
             )
+            self._record_connection_event(
+                "handshake_failed",
+                remote=peer.remote,
+                peer_id=peer.peer_id,
+                direction=peer.direction,
+                reason="handshake_timeout",
+                stage="timeout",
+            )
             await self._drop_peer(peer, reason="handshake_timeout")
 
     async def _peer_loop(self, peer: _PeerState) -> None:
@@ -6244,6 +6389,7 @@ class P2PService:
         )
         try:
             await self._send_hello(peer)
+            self._handshake_manager.on_hello_sent(peer.session_id)
         except Exception as exc:
             log.warning(
                 "Failed to send HELLO",
@@ -6259,6 +6405,15 @@ class P2PService:
                 data = await peer.stream.recv()
                 if data == b"":
                     disconnect_reason = "remote_closed"
+                    if not peer.hello_done.is_set():
+                        self._record_connection_event(
+                            "handshake_failed",
+                            remote=peer.remote,
+                            peer_id=peer.peer_id,
+                            direction=peer.direction,
+                            reason="remote_closed",
+                            stage="pre_handshake",
+                        )
                     break
                 self._peer_registry.mark_seen(peer.session_id)
                 peer.last_msg_at = time.time()
@@ -6303,6 +6458,11 @@ class P2PService:
             direction=peer.direction,
             reason=reason,
         )
+        if peer.direction == "outbound" and not peer.identity_ok and not peer.handshake_recorded:
+            is_seed = self._addr_key(peer.remote) in self._seed_keys
+            self._mark_dial_failure(
+                peer.remote, is_seed=is_seed, error=reason, tcp_connected=True
+            )
         with contextlib.suppress(Exception):
             await peer.conn.close()
         self._peer_registry.remove(peer.session_id)
@@ -6443,6 +6603,7 @@ class P2PService:
             version="2",
             agent=f"animica-p2p/{p2p_version.__version__}",
             repo_state=self._repo_state,
+            network_name=self._network_name(),
             chain_id=self.chain_id,
             network_magic=NETWORK_MAGIC,
             listen_port=listen_port,
@@ -6519,6 +6680,12 @@ class P2PService:
             return
         if mid == int(MsgID.HELLO_ACK):
             await self._handle_hello_ack(peer, payload)
+            return
+        if mid == int(MsgID.PING):
+            await self._handle_ping(peer, payload)
+            return
+        if mid == int(MsgID.PONG):
+            await self._handle_pong(peer, payload)
             return
         if mid == int(MsgID.GET_PEERS):
             await self._handle_get_peers(peer, payload)
@@ -6610,6 +6777,7 @@ class P2PService:
             MsgID.HELLO_ACK,
             HelloAck(accepted=False, reason=reason),
         )
+        self._record_handshake_reject(peer, reason=reason, stage="hello")
         raise PeerMisbehavior(reason, points=points)
 
     def _log_handshake_mismatch(
@@ -6629,6 +6797,8 @@ class P2PService:
         peer_protocol_version: Optional[str] = None,
         peer_repo_state: Optional[str] = None,
         local_repo_state: Optional[str] = None,
+        peer_network_name: Optional[str] = None,
+        local_network_name: Optional[str] = None,
     ) -> None:
         local_genesis = self._genesis_hash()
         local_genesis_header = self._genesis_header_hash()
@@ -6674,13 +6844,51 @@ class P2PService:
                 "peer_consensus_id": peer_consensus_id,
                 "peer_protocol_version": peer_protocol_version,
                 "peer_repo_state": peer_repo_state,
+                "peer_network_name": peer_network_name,
+                "local_network_name": local_network_name,
             },
         )
 
     async def _handle_hello(self, peer: _PeerState, payload: bytes) -> None:
-        data = self._decode_map(payload)
+        if log.isEnabledFor(logging.DEBUG):
+            log.debug(
+                "HELLO payload received",
+                extra={
+                    "remote": peer.remote,
+                    "direction": peer.direction,
+                    "payload_len": len(payload),
+                    "payload_hex": payload[:256].hex(),
+                },
+            )
+        try:
+            data = self._decode_map(payload)
+        except PeerMisbehavior as exc:
+            self._record_connection_event(
+                "handshake_parse_error",
+                remote=peer.remote,
+                direction=peer.direction,
+                reason=str(exc),
+                stage="hello",
+            )
+            raise
         allowed = set(Hello.__dataclass_fields__)
         hello = Hello(**{k: v for k, v in data.items() if k in allowed})
+
+        if log.isEnabledFor(logging.DEBUG):
+            log.debug(
+                "HELLO parsed",
+                extra={
+                    "remote": peer.remote,
+                    "direction": peer.direction,
+                    "chain_id": int(getattr(hello, "chain_id", 0) or 0),
+                    "network_name": str(getattr(hello, "network_name", "") or ""),
+                    "protocol_version": str(getattr(hello, "protocol_version", "") or ""),
+                    "genesis_header_hash": bytes(getattr(hello, "genesis_header_hash", b"") or b"").hex(),
+                    "genesis_block_hash": bytes(getattr(hello, "genesis_block_hash", b"") or b"").hex(),
+                    "genesis_identity": bytes(getattr(hello, "genesis_identity", b"") or b"").hex(),
+                    "network_params_hash": bytes(getattr(hello, "network_params_hash", b"") or b"").hex(),
+                },
+            )
 
         if bytes(getattr(hello, "network_magic", b"")) != NETWORK_MAGIC:
             self._log_handshake_mismatch(
@@ -6694,6 +6902,9 @@ class P2PService:
                 peer,
                 MsgID.HELLO_ACK,
                 HelloAck(accepted=False, reason="network_magic_mismatch"),
+            )
+            self._record_handshake_reject(
+                peer, reason="network_magic_mismatch", stage="hello"
             )
             raise PeerMisbehavior(
                 "network_magic_mismatch",
@@ -6713,9 +6924,37 @@ class P2PService:
                 MsgID.HELLO_ACK,
                 HelloAck(accepted=False, reason="chain_id_mismatch"),
             )
+            self._record_handshake_reject(peer, reason="chain_id_mismatch", stage="hello")
             raise PeerMisbehavior(
                 "chain_id_mismatch", points=0
             )
+
+        peer_network_name = str(
+            getattr(hello, "network_name", "")
+            or data.get("network_name")
+            or data.get("networkName")
+            or ""
+        ).strip()
+        local_network_name = self._network_name()
+        if peer_network_name and local_network_name and peer_network_name != local_network_name:
+            self._log_handshake_mismatch(
+                peer,
+                reason="network_name_mismatch",
+                peer_chain_id=int(hello.chain_id or 0),
+                peer_genesis_hash=bytes(hello.genesis_hash or b""),
+                peer_network_magic=bytes(getattr(hello, "network_magic", b"") or b""),
+                peer_network_name=peer_network_name,
+                local_network_name=local_network_name,
+            )
+            await self._send(
+                peer,
+                MsgID.HELLO_ACK,
+                HelloAck(accepted=False, reason="network_name_mismatch"),
+            )
+            self._record_handshake_reject(
+                peer, reason="network_name_mismatch", stage="hello"
+            )
+            raise PeerMisbehavior("network_name_mismatch", points=0)
 
         peer_genesis_header = bytes(getattr(hello, "genesis_header_hash", b"")) or bytes(
             getattr(hello, "genesis_hash", b"")
@@ -6737,6 +6976,7 @@ class P2PService:
                 MsgID.HELLO_ACK,
                 HelloAck(accepted=False, reason="genesis_missing"),
             )
+            self._record_handshake_reject(peer, reason="genesis_missing", stage="hello")
             raise PeerMisbehavior(
                 "genesis_missing",
                 points=self._score_points["wrong_genesis"],
@@ -6774,6 +7014,9 @@ class P2PService:
                     MsgID.HELLO_ACK,
                     HelloAck(accepted=False, reason="genesis_mismatch"),
                 )
+                self._record_handshake_reject(
+                    peer, reason="genesis_mismatch", stage="hello"
+                )
                 raise PeerMisbehavior(
                     "genesis_mismatch",
                     points=self._score_points["wrong_genesis"],
@@ -6793,6 +7036,9 @@ class P2PService:
                     peer,
                     MsgID.HELLO_ACK,
                     HelloAck(accepted=False, reason="genesis_mismatch"),
+                )
+                self._record_handshake_reject(
+                    peer, reason="genesis_mismatch", stage="hello"
                 )
                 raise PeerMisbehavior(
                     "genesis_mismatch",
@@ -6822,6 +7068,7 @@ class P2PService:
                 MsgID.HELLO_ACK,
                 HelloAck(accepted=False, reason="fork_id_mismatch"),
             )
+            self._record_handshake_reject(peer, reason="fork_id_mismatch", stage="hello")
             raise PeerMisbehavior(
                 "fork_id_mismatch",
                 points=self._score_points["wrong_chain"],
@@ -6867,6 +7114,7 @@ class P2PService:
                 MsgID.HELLO_ACK,
                 HelloAck(accepted=False, reason="protocol_missing"),
             )
+            self._record_handshake_reject(peer, reason="protocol_missing", stage="hello")
             raise PeerMisbehavior(
                 "protocol_missing",
                 points=self._score_points["wrong_chain"],
@@ -6885,6 +7133,7 @@ class P2PService:
                 MsgID.HELLO_ACK,
                 HelloAck(accepted=False, reason="protocol_mismatch"),
             )
+            self._record_handshake_reject(peer, reason="protocol_mismatch", stage="hello")
             raise PeerMisbehavior(
                 "protocol_mismatch",
                 points=self._score_points["wrong_chain"],
@@ -6968,6 +7217,7 @@ class P2PService:
                 MsgID.HELLO_ACK,
                 HelloAck(accepted=False, reason="version_mismatch"),
             )
+            self._record_handshake_reject(peer, reason="version_mismatch", stage="hello")
             raise PeerMisbehavior("version_mismatch", points=50)
 
         now = time.time()
@@ -6981,9 +7231,16 @@ class P2PService:
                 MsgID.HELLO_ACK,
                 HelloAck(accepted=False, reason="clock_skew"),
             )
+            self._record_handshake_reject(peer, reason="clock_skew", stage="hello")
             raise PeerMisbehavior("clock_skew", points=20)
 
         peer.peer_id = bytes(hello.peer_id).hex()
+        self._handshake_manager.on_hello_received(
+            peer.session_id,
+            peer_id=peer.peer_id,
+            version=str(getattr(hello, "version", "")),
+            agent=str(getattr(hello, "agent", "")),
+        )
         if (
             not self._allow_self_peers
             and peer.peer_id
@@ -7072,6 +7329,7 @@ class P2PService:
         normalized["network_params_hash"] = bytes(
             getattr(hello, "network_params_hash", b"")
         ) or data.get("network_params_hash") or data.get("networkParamsHash")
+        normalized["network_name"] = peer_network_name
         peer.hello = normalized
         peer.hello_received_at = time.time()  # Track when hello was received
         
@@ -7151,12 +7409,7 @@ class P2PService:
                     "state_transition": "handshaking -> connected",
                 },
             )
-            self._record_connection_event(
-                "handshake_ok",
-                remote=peer.remote,
-                peer_id=peer.peer_id,
-                direction=peer.direction,
-            )
+            self._record_handshake_success(peer, stage="hello")
         else:
             log.warning(
                 "Peer handshake failed - identity validation rejected",
@@ -7174,6 +7427,7 @@ class P2PService:
                 peer_id=peer.peer_id,
                 direction=peer.direction,
                 reason=identity_error or "identity_rejected",
+                stage="hello",
             )
         # NOTE: Do NOT set hello_done here - moved to end of function after all validations
         if normalized.get("head_height") is not None:
@@ -7301,6 +7555,7 @@ class P2PService:
             consensus_id=normalized.get("consensus_id"),
             protocol_version=normalized.get("protocol_version"),
             network_params_hash=self._canon_hash0x(normalized.get("network_params_hash")),
+            network_name=normalized.get("network_name"),
         )
         try:
             chain_id = int(normalized.get("chain_id") or 0)
@@ -7445,6 +7700,13 @@ class P2PService:
             allowed = set(HelloAck.__dataclass_fields__)
             ack = HelloAck(**{k: v for k, v in data.items() if k in allowed})
         except Exception as e:
+            self._record_connection_event(
+                "handshake_parse_error",
+                remote=peer.remote,
+                direction=peer.direction,
+                reason=str(e),
+                stage="hello_ack",
+            )
             log.warning(
                 "Failed to decode HELLO_ACK",
                 extra={
@@ -7465,6 +7727,7 @@ class P2PService:
                     "reason": reason,
                 },
             )
+            self._record_handshake_reject(peer, reason=reason, stage="hello_ack")
             raise PeerMisbehavior(f"hello_rejected:{reason}", points=0)
         
         # HELLO_ACK accepted - complete handshake for initiator side
@@ -7542,12 +7805,7 @@ class P2PService:
                         "direction": peer.direction,
                     },
                 )
-                self._record_connection_event(
-                    "handshake_ok",
-                    remote=peer.remote,
-                    peer_id=peer.peer_id,
-                    direction=peer.direction,
-                )
+                self._record_handshake_success(peer, stage="hello_ack")
             
             # Notify TipManager
             try:
@@ -7568,6 +7826,42 @@ class P2PService:
             
             # Wake sync to start processing this peer
             self._sync_wakeup.set()
+
+    async def _handle_ping(self, peer: _PeerState, payload: bytes) -> None:
+        try:
+            data = self._decode_map(payload)
+            allowed = set(Ping.__dataclass_fields__)
+            ping = Ping(**{k: v for k, v in data.items() if k in allowed})
+        except Exception as exc:
+            log.warning(
+                "Failed to decode PING",
+                extra={"remote": peer.remote, "peer_id": peer.peer_id, "error": str(exc)},
+            )
+            raise PeerMisbehavior("invalid_ping", points=10)
+        await self._send(peer, MsgID.PONG, Pong(nonce=int(ping.nonce)))
+
+    async def _handle_pong(self, peer: _PeerState, payload: bytes) -> None:
+        try:
+            data = self._decode_map(payload)
+            allowed = set(Pong.__dataclass_fields__)
+            pong = Pong(**{k: v for k, v in data.items() if k in allowed})
+        except Exception as exc:
+            log.warning(
+                "Failed to decode PONG",
+                extra={"remote": peer.remote, "peer_id": peer.peer_id, "error": str(exc)},
+            )
+            raise PeerMisbehavior("invalid_pong", points=10)
+        peer.last_pong_at = time.time()
+        if pong.nonce and peer.last_ping_at:
+            try:
+                latency = max(0.0, time.time() - float(pong.nonce))
+                peer.latency_ewma = (
+                    latency
+                    if peer.latency_ewma is None
+                    else (peer.latency_ewma * 0.7 + latency * 0.3)
+                )
+            except Exception:
+                pass
 
     async def _handle_get_peers(self, peer: _PeerState, payload: bytes) -> None:
         now = time.time()
@@ -14685,6 +14979,14 @@ class P2PService:
         h0 = bdb.get_canonical_hash(0)
         if h0:
             return bytes(h0)
+        try:
+            from core.network_params import get_pinned_genesis_hash
+
+            pinned = get_pinned_genesis_hash(chain_id=int(self.chain_id))
+            if pinned:
+                return bytes(pinned)
+        except Exception:
+            pass
         params_hash = self._genesis_hash_from_params()
         if params_hash:
             return params_hash
@@ -14754,6 +15056,23 @@ class P2PService:
             return compute_network_params_hash(self.chain_id)
         except Exception:
             return b"\x00" * 32
+
+    def _network_name(self) -> str:
+        try:
+            from core.network_params import get_network_params
+
+            params = get_network_params(chain_id=int(self.chain_id))
+            if params and getattr(params, "name", None):
+                return str(params.name)
+        except Exception:
+            pass
+        if int(self.chain_id) == 1:
+            return "mainnet"
+        if int(self.chain_id) == 2:
+            return "testnet"
+        if int(self.chain_id) == 1337:
+            return "devnet"
+        return ""
 
     def _genesis_hash_from_params(self) -> Optional[bytes]:
         params = getattr(self.deps, "params", None)

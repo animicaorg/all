@@ -836,8 +836,8 @@ class NodeService:
             self.loop.create_task(self._dial(canonical_addr), name=f"import-dial@{canonical_addr}")
         
         if dial_attempted:
-            dial_connected = dial_attempted
-            handshake_succeeded = dial_connected
+            dial_connected = 0
+            handshake_succeeded = 0
 
         return {
             "ok": imported > 0 or skipped > 0,
@@ -1460,8 +1460,8 @@ class P2PServiceLegacy:
             self.loop.create_task(self._dial(endpoint.canonical), name=f"import-dial@{endpoint.canonical}")
         
         if dial_attempted:
-            dial_connected = dial_attempted
-            handshake_succeeded = dial_connected
+            dial_connected = 0
+            handshake_succeeded = 0
 
         return {
             "ok": imported > 0 or skipped > 0,

@@ -124,7 +124,7 @@ class PeerRegistry:
         self,
         *,
         max_inbound_per_ip: int = 8,
-        handshake_timeout_s: float = 3.0,
+        handshake_timeout_s: float = 8.0,
         handshake_rate_limit_per_ip: int = 30,
         handshake_rate_limit_per_netgroup: int = 120,
         handshake_rate_window_s: float = 60.0,
@@ -134,7 +134,7 @@ class PeerRegistry:
         self._sessions: Dict[str, PeerSession] = {}
         self._sessions_by_peer_key: Dict[tuple[str, str], PeerSession] = {}
         self._max_inbound_per_ip = max(1, int(max_inbound_per_ip))
-        self.handshake_timeout_s = max(0.01, float(handshake_timeout_s))
+        self.handshake_timeout_s = max(5.0, float(handshake_timeout_s))
         self._handshake_rate_limit_per_ip = max(0, int(handshake_rate_limit_per_ip))
         self._handshake_rate_limit_per_netgroup = max(
             0, int(handshake_rate_limit_per_netgroup)

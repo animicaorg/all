@@ -383,6 +383,8 @@ async def peer_count() -> int:
     """
     try:
         counts = _peer_counts_snapshot()
+        if "peers_connected" in counts:
+            return counts.get("peers_connected", 0)
         return counts.get("peers_total", 0)
     except Exception as e:
         # If peer counts unavailable, return 0 (no peers)

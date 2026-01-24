@@ -1387,6 +1387,24 @@ def _mining_gate(
             reason_msg = f"insufficient_peers ({peer_status})."
             if peers_handshaking > 0 and peers_connected == 0:
                 reason_msg += " Peers are handshaking; waiting for handshake to complete…"
+            if peers_connected == 0:
+                recent_events = []
+                conn_events = p2p_status.get("connection_events") if p2p_status else None
+                if isinstance(conn_events, list):
+                    recent_events = [
+                        entry
+                        for entry in conn_events
+                        if isinstance(entry, dict)
+                        and entry.get("event") in {"handshake_failed", "handshake_rejected"}
+                    ]
+                try:
+                    from rpc import deps as _deps
+
+                    chain_id = int(_deps.get_chain_id())
+                except Exception:
+                    chain_id = 0
+                if chain_id == 1 and (peers_handshaking > 0 or recent_events):
+                    reason_msg += " P2P handshake failing; cannot mine on mainnet."
             reason_msg += f" {_peer_error_guidance(p2p_status)}"
             return False, reason_msg
     
