@@ -85,6 +85,12 @@ def test_multiple_blocks_show_incrementing_heights() -> None:
         assert "height: 1001" in result.output, f"Missing 1001 in output:\n{result.output}"
         assert "height: 1002" in result.output, f"Missing 1002 in output:\n{result.output}"
         assert "height: 1003" in result.output, f"Missing 1003 in output:\n{result.output}"
+        assert "FOUND: Block 2/3 PoW (height: 1002" in result.output, (
+            f"Missing FOUND height 1002 in output:\n{result.output}"
+        )
+        assert "FOUND: Block 3/3 PoW (height: 1003" in result.output, (
+            f"Missing FOUND height 1003 in output:\n{result.output}"
+        )
         
         # Verify we don't show the template height (1000) in ACCEPTED messages
         # Count how many times "ACCEPTED" appears with height 1000
