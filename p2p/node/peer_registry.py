@@ -50,6 +50,7 @@ class PeerSession:
     peer_id: Optional[str] = None
     last_seen: float = field(default_factory=time.time)
     meta: Dict[str, object] = field(default_factory=dict)
+    stage: str = "DIALING"
     
     # State machine fields
     state: PeerState = PeerState.DIALING
@@ -81,6 +82,7 @@ class PeerSession:
             "last_seen": self.last_seen,
             "peer_id": self.peer_id or "(handshaking)",
             "state": self.state.value,
+            "stage": self.stage,
             "state_since": self.state_since,
             "identity_ok": self.identity_ok,
         }
@@ -171,6 +173,12 @@ class PeerRegistry:
         self._sessions[session.session_id] = session
         return session
 
+    def get_session(self, session_id: str) -> Optional[PeerSession]:
+        return self._sessions.get(session_id)
+
+    def sessions(self) -> Dict[str, PeerSession]:
+        return dict(self._sessions)
+
     def transition_state(self, session_id: str, new_state: PeerState) -> None:
         """
         Transition a peer session to a new state.
@@ -198,6 +206,7 @@ class PeerRegistry:
         if session.state in (PeerState.DIALING, PeerState.TCP_CONNECTED):
             session.state = PeerState.HANDSHAKING
             session.state_since = time.time()
+            session.stage = "HELLO_RECEIVED"
 
         replaced: List[str] = []
         peer_key = (peer_id, session.direction)
@@ -252,6 +261,7 @@ class PeerRegistry:
         session.state = PeerState.TCP_CONNECTED
         session.state_since = time.time()
         session.last_seen = time.time()
+        session.stage = "TCP_CONNECTED"
     
     def mark_identity_failed(
         self,
@@ -396,6 +406,8 @@ class PeerRegistry:
             # Must be in CONNECTED state
             if session.state != PeerState.CONNECTED:
                 continue
+            if session.stage != "PEER_READY":
+                continue
             key = (session.peer_id, session.direction)
             seen_keys.add(key)
         
@@ -422,6 +434,8 @@ class PeerRegistry:
             if not session.identity_ok:
                 continue
             if session.state != PeerState.CONNECTED:
+                continue
+            if session.stage != "PEER_READY":
                 continue
             if session.tip_height is None:
                 continue
@@ -456,6 +470,8 @@ class PeerRegistry:
             if not session.identity_ok:
                 continue
             if session.state != PeerState.CONNECTED:
+                continue
+            if session.stage != "PEER_READY":
                 continue
             if session.tip_height is None:
                 continue

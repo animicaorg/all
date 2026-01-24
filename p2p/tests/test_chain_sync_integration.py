@@ -134,6 +134,48 @@ async def test_two_nodes_sync_from_genesis(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_two_nodes_tip_sync_height_one(tmp_path: Path) -> None:
+    deps_a_sync, deps_a = _make_deps(tmp_path, "node_a_one")
+    deps_b_sync, deps_b = _make_deps(tmp_path, "node_b_one")
+
+    port_a = free_port()
+    port_b = free_port()
+
+    addr_a = tcp_multiaddr(port_a)
+    addr_b = tcp_multiaddr(port_b)
+
+    node_a = P2PService(
+        listen_addrs=[addr_a],
+        seeds=[],
+        chain_id=deps_a_sync.chain_id,
+        deps=deps_a,
+        peerstore_path=str(tmp_path / "node_a_one" / "p2p"),
+    )
+    node_b = P2PService(
+        listen_addrs=[addr_b],
+        seeds=[addr_a],
+        chain_id=deps_b_sync.chain_id,
+        deps=deps_b,
+        peerstore_path=str(tmp_path / "node_b_one" / "p2p"),
+    )
+
+    await node_a.start()
+    await node_b.start()
+    try:
+        _mine_blocks(deps_a_sync, 1)
+        await node_b.dial(addr_a)
+        assert await _wait_for_peers(node_b, 1)
+        assert await _wait_for_height(deps_b, 1, timeout=20.0)
+        status = node_b.sync_status_snapshot()
+        assert status.best_remote_height is not None
+        assert status.best_remote_height >= 1
+        assert status.peer_tips_total > 0
+    finally:
+        await node_a.stop()
+        await node_b.stop()
+
+
+@pytest.mark.asyncio
 async def test_three_nodes_converge_headers_first(tmp_path: Path) -> None:
     deps_a_sync, deps_a = _make_deps(tmp_path, "node_a")
     deps_b_sync, deps_b = _make_deps(tmp_path, "node_b")

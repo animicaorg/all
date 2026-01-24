@@ -86,6 +86,7 @@ try:
 except Exception:  # pragma: no cover - optional
     proto_blk = None
 from p2p.node.peer_registry import PeerRegistry
+from p2p.node.runtime import ConnectionStage, P2PRuntime
 from p2p.node.handshake import HandshakeManager
 from p2p.node.tip_manager import TipManager
 from p2p.protocol import handshake_v1 as hs_v1
@@ -1068,6 +1069,23 @@ class P2PService:
                 os.environ.get("ANIMICA_P2P_HANDSHAKE_RATE_NETGROUP_V6", "48") or 48
             ),
         )
+        self._runtime = P2PRuntime(self._peer_registry, peerstore=self.peerstore)
+        self._connection_events = self._runtime._events
+        self._dial_budget_per_min = int(
+            os.environ.get("ANIMICA_P2P_DIAL_BUDGET_PER_MIN", "60") or 60
+        )
+        self._dial_budget_window_s = float(
+            os.environ.get("ANIMICA_P2P_DIAL_BUDGET_WINDOW_S", "60") or 60.0
+        )
+        self._dial_budget_events: Deque[float] = deque(maxlen=5000)
+        self._promote_failure_quarantine_s = float(
+            os.environ.get("ANIMICA_P2P_PROMOTE_QUARANTINE_S", "120") or 120.0
+        )
+        self._promote_failure_max = int(
+            os.environ.get("ANIMICA_P2P_PROMOTE_QUARANTINE_MAX", "3") or 3
+        )
+        self._promote_failures: dict[str, int] = {}
+        self._promote_quarantine_until: dict[str, float] = {}
 
         # Seen LRU (dedupe + rebroadcast suppression)
         self._seen_tx: "OrderedDict[bytes, float]" = OrderedDict()
@@ -1091,6 +1109,10 @@ class P2PService:
             os.environ.get("ANIMICA_P2P_PEER_HEAD_POLL_CONCURRENCY", "10") or 10
         )
         self._peer_head_poll_at: dict[str, float] = {}
+        self._tip_response_timeout_s = float(
+            os.environ.get("ANIMICA_P2P_TIP_RESPONSE_TIMEOUT_S", "3.0") or 3.0
+        )
+        self._tip_pending: dict[str, float] = {}
         self._tx_recent_rejects: Deque[dict[str, Any]] = deque(
             maxlen=int(os.environ.get("ANIMICA_P2P_TX_REJECT_LOG", "50") or 50)
         )
@@ -1284,6 +1306,7 @@ class P2PService:
             "handshake_started": 0,
             "handshake_succeeded": 0,
             "connected_promoted": 0,
+            "promote_failed_total": 0,
             "disconnects": 0,
             "inv_tx_sent": 0,
             "inv_tx_recv": 0,
@@ -2131,7 +2154,7 @@ class P2PService:
                 "peerstore_dir": str(self._peerstore_dir),
                 "chain_data_dir": str(self._chain_data_dir),
                 "dial_history": list(self._dial_history)[-limit:],
-                "connection_events": list(self._connection_events)[-limit:],
+                "connection_events": self._runtime.events()[-limit:],
                 "peers": self.peer_state_snapshot(limit_failed=limit),
                 "docker_detected": self._is_docker_env(),
             }
@@ -3390,6 +3413,29 @@ class P2PService:
             delay = min(300.0, delay * 4.0)
         return delay
 
+    def _consume_dial_budget(self) -> bool:
+        if self._dial_budget_per_min <= 0:
+            return True
+        now = time.time()
+        window = max(1.0, float(self._dial_budget_window_s))
+        while self._dial_budget_events and now - self._dial_budget_events[0] > window:
+            self._dial_budget_events.popleft()
+        if len(self._dial_budget_events) >= self._dial_budget_per_min:
+            return False
+        self._dial_budget_events.append(now)
+        return True
+
+    def _is_quarantined(self, key: str) -> bool:
+        if not key:
+            return False
+        until = self._promote_quarantine_until.get(key)
+        if not until:
+            return False
+        if until <= time.time():
+            self._promote_quarantine_until.pop(key, None)
+            return False
+        return True
+
     def _is_invalid_seed_error(self, error: str) -> bool:
         lowered = error.lower()
         return "invalid handshake magic" in lowered or "handshakeerror" in lowered
@@ -3429,12 +3475,7 @@ class P2PService:
         self._dial_history.append(entry)
 
     def _record_connection_event(self, event: str, **extra: Any) -> None:
-        payload = {
-            "at": time.time(),
-            "event": event,
-        }
-        payload.update(extra)
-        self._connection_events.append(payload)
+        self._runtime.record_event(event, **extra)
 
     def _record_handshake_exception(
         self,
@@ -3650,19 +3691,11 @@ class P2PService:
         # Count inbound/outbound for all active sessions (includes handshaking)
         inbound = sum(1 for p in snapshot if p.get("direction") == "inbound")
         outbound = sum(1 for p in snapshot if p.get("direction") == "outbound")
-        
-        # NEW: Count CONNECTED peers separately (identity verified, fully connected)
-        connected_peers = [p for p in snapshot if p.get("state") == "CONNECTED" and p.get("identity_ok")]
-        connected_total = len(connected_peers)
-        connected_inbound = sum(1 for p in connected_peers if p.get("direction") == "inbound")
-        connected_outbound = sum(1 for p in connected_peers if p.get("direction") == "outbound")
-        
-        # NEW: Count handshaking peers (not yet fully connected)
-        handshaking_total = sum(
-            1
-            for p in snapshot
-            if p.get("state") in ("DIALING", "TCP_CONNECTED", "HANDSHAKING")
-        )
+        runtime_counts = self._runtime.counts()
+        connected_total = runtime_counts.connected_total
+        connected_inbound = runtime_counts.connected_inbound
+        connected_outbound = runtime_counts.connected_outbound
+        handshaking_total = runtime_counts.handshaking
         
         bootstrap_bonus = self.bootstrap_peer_bonus()
         now = time.time()
@@ -3716,7 +3749,7 @@ class P2PService:
             persisted_peer_count=self._persisted_peer_count,
             dial_history=list(self._dial_history),
             dial_inflight=sorted(self._dial_inflight),
-            connection_events=list(self._connection_events),
+            connection_events=self._runtime.events(),
             invalid_seeds=dict(self._invalid_seed_errors),
             dial_last_error=self._dial_last_error,
             bootstrap_last_attempt=self._last_bootstrap_attempt,
@@ -3941,6 +3974,9 @@ class P2PService:
             if not peer.hello_done.is_set():
                 continue
             if not peer.identity_ok:
+                continue
+            session = self._peer_registry.get_session(peer.session_id)
+            if session is None or session.stage != ConnectionStage.PEER_READY.value:
                 continue
             if not peer.repo_state_ok:
                 continue
@@ -6269,6 +6305,25 @@ class P2PService:
             return False
         addr = endpoint.canonical
         addr_key = self._addr_key(addr)
+        if self._is_quarantined(addr_key):
+            self._record_connection_event(
+                "dial_quarantined",
+                addr=addr,
+                reason="promote_failed_quarantine",
+                is_seed=is_seed,
+            )
+            return False
+        if not self._consume_dial_budget():
+            delay = self._dial_delay(addr_key)
+            self._dial_backoff[addr_key] = time.time() + delay
+            self._record_connection_event(
+                "dial_rate_limited",
+                addr=addr,
+                reason="dial_budget_exhausted",
+                next_retry_at=self._dial_backoff.get(addr_key),
+                is_seed=is_seed,
+            )
+            return False
         self._dial_attempt_total += 1
         self._stats["dial_attempted"] += 1
         self._dial_attempts[addr_key] = self._dial_attempts.get(addr_key, 0) + 1
@@ -6325,6 +6380,11 @@ class P2PService:
         self, conn: Any, *, direction: str, feeler: bool = False
     ) -> None:
         remote = getattr(conn.info, "remote_addr", None) or "unknown"
+        if self._is_quarantined(self._addr_key(remote)):
+            log.info("Rejecting quarantined peer %s", remote)
+            with contextlib.suppress(Exception):
+                await conn.close()
+            return
         if (
             not self._allow_self_peers
             and self._is_self_address(
@@ -6371,6 +6431,7 @@ class P2PService:
                 await conn.close()
             return
         self._peer_registry.mark_tcp_connected(session.session_id)
+        self._runtime.set_stage(session.session_id, ConnectionStage.TCP_CONNECTED)
         if direction == "inbound":
             self._stats["tcp_connected"] += 1
         self._handshake_manager.track_session(
@@ -6468,6 +6529,7 @@ class P2PService:
         try:
             await self._send_hello(peer)
             self._handshake_manager.on_hello_sent(peer.session_id)
+            self._runtime.set_stage(peer.session_id, ConnectionStage.HELLO_SENT)
         except Exception as exc:
             self._record_handshake_exception(peer, stage="handshake_send", exc=exc)
             self._record_connection_event(
@@ -6528,7 +6590,17 @@ class P2PService:
         except asyncio.CancelledError:
             disconnect_reason = "cancelled"
         except Exception as exc:
-            disconnect_reason = f"error:{type(exc).__name__}"
+            disconnect_reason = f"exception:{type(exc).__name__}"
+            self._record_connection_event(
+                "peer_exception",
+                remote=peer.remote,
+                peer_id=peer.peer_id,
+                direction=peer.direction,
+                reason=disconnect_reason,
+                exception_type=exc.__class__.__name__,
+                exception_msg=str(exc),
+                exception_trace=traceback.format_exc(),
+            )
             log.warning(
                 "peer loop error",
                 extra={"remote": peer.remote, "reason": disconnect_reason},
@@ -7111,6 +7183,7 @@ class P2PService:
             version=str(handshake.protocol_version),
             agent=str(handshake.capabilities.get("agent") or ""),
         )
+        self._runtime.set_stage(peer.session_id, ConnectionStage.HELLO_RECEIVED)
         if (
             not self._allow_self_peers
             and peer.peer_id
@@ -7269,6 +7342,59 @@ class P2PService:
                 f"identity_failed:{identity_error or 'identity_rejected'}",
                 points=self._score_points["wrong_chain"],
             )
+        try:
+            await self._promote_peer_after_hello(peer, handshake, normalized)
+        except Exception as exc:
+            self._record_promote_failure(peer, stage="hello", exc=exc)
+            await self._drop_peer(peer, reason=f"promote_failed:{exc.__class__.__name__}")
+            return
+
+    def _record_promote_failure(self, peer: _PeerState, *, stage: str, exc: Exception) -> None:
+        self._stats["promote_failed_total"] += 1
+        key = peer.peer_id or peer.remote
+        failures = self._promote_failures.get(key, 0) + 1 if key else 0
+        if key:
+            self._promote_failures[key] = failures
+            if failures >= self._promote_failure_max:
+                quarantine_until = time.time() + self._promote_failure_quarantine_s
+                self._promote_quarantine_until[key] = quarantine_until
+                self._record_connection_event(
+                    "peer_quarantined",
+                    remote=peer.remote,
+                    peer_id=peer.peer_id,
+                    direction=peer.direction,
+                    reason="promote_failed",
+                    failures=failures,
+                    quarantine_until=quarantine_until,
+                )
+        self._record_connection_event(
+            "promote_failed",
+            remote=peer.remote,
+            peer_id=peer.peer_id,
+            direction=peer.direction,
+            stage=stage,
+            exception_type=exc.__class__.__name__,
+            exception_msg=str(exc),
+            exception_trace=traceback.format_exc(),
+        )
+        log.error(
+            "Peer promotion failed",
+            extra={
+                "remote": peer.remote,
+                "peer_id": peer.peer_id,
+                "stage": stage,
+                "exception_type": exc.__class__.__name__,
+                "failures": failures,
+            },
+            exc_info=exc,
+        )
+
+    async def _promote_peer_after_hello(
+        self,
+        peer: _PeerState,
+        handshake: Any,
+        normalized: dict[str, Any],
+    ) -> None:
         # NOTE: Do NOT set hello_done here - moved to end of function after all validations
         if normalized.get("head_height") is not None:
             self._update_peer_head_table(
@@ -7284,7 +7410,9 @@ class P2PService:
                         "remote": peer.remote,
                         "peer_id": peer.peer_id,
                         "head_height": int(normalized["head_height"]),
-                        "head_hash": self._canon_hash0x(bytes(normalized.get("head_hash") or b"")),
+                        "head_hash": self._canon_hash0x(
+                            bytes(normalized.get("head_hash") or b"")
+                        ),
                     },
                 )
         else:
@@ -7304,7 +7432,9 @@ class P2PService:
                         "head_height": 0,
                     },
                 )
-        
+
+        self._runtime.set_stage(peer.session_id, ConnectionStage.SESSION_CREATED)
+
         peer.ready_for_sync = True
         log.info(
             "Peer ready for sync - tip tracking initialized",
@@ -7315,10 +7445,10 @@ class P2PService:
                 "state_transition": "connected -> ready_for_sync",
             },
         )
-        
+
         # Wake sync loop to notice new peer with fresh tips
         self._sync_wakeup.set()
-        
+
         peer_key = self._peer_tx_key(peer)
         self._txrelay.register_peer(
             peer_key,
@@ -7326,6 +7456,7 @@ class P2PService:
             direction=peer.direction,
             remote=peer.remote,
         )
+        self._runtime.set_stage(peer.session_id, ConnectionStage.ROUTES_BOUND)
         self._create_child_task(
             self._txrelay.request_mempool_sync(peer_key),
             name=f"p2p.txrelay.mempool_sync@{peer_key}",
@@ -7394,7 +7525,9 @@ class P2PService:
             fork_id=normalized.get("fork_id"),
             consensus_id=normalized.get("consensus_id"),
             protocol_version=normalized.get("protocol_version"),
-            network_params_hash=self._canon_hash0x(normalized.get("network_params_hash")),
+            network_params_hash=self._canon_hash0x(
+                normalized.get("network_params_hash")
+            ),
             network_name=normalized.get("network_name"),
         )
         try:
@@ -7449,11 +7582,11 @@ class P2PService:
             self._schedule_peer_persist()
 
         await self._send(peer, MsgID.HELLO_ACK, HelloAck(accepted=True, reason=None))
-        
+
         # Set hello_done ONLY after all validations pass and HELLO_ACK is sent
         # This ensures the timeout watchdog doesn't stop monitoring if validation fails
         peer.hello_done.set()
-        
+
         self._sync_wakeup.set()
         self._create_child_task(
             self._announce_pending_txs(peer),
@@ -7483,7 +7616,7 @@ class P2PService:
             self._send_get_peers(peer),
             name=f"p2p.get_peers@{peer.remote}",
         )
-        
+
         # PHASE 4: Notify TipManager of handshake completion - triggers initial tip request
         try:
             should_request_tip = self._tip_manager.on_handshake_complete(peer.session_id)
@@ -7505,12 +7638,13 @@ class P2PService:
                     "error": str(e),
                 },
             )
-        
-        self._create_child_task(
-            self._request_peer_head_status(peer, reason="hello"),
-            name=f"p2p.head_status_request@{peer.remote}",
-        )
-        
+
+        tip_sent = await self._request_peer_head_status(peer, reason="hello")
+        if tip_sent:
+            self._runtime.set_stage(peer.session_id, ConnectionStage.TIP_QUERY_SENT)
+
+        self._runtime.set_stage(peer.session_id, ConnectionStage.PEER_READY)
+
         # PHASE 5: For outbound connections, proactively request headers to start sync immediately
         # This matches core_p2p behavior and ensures outbound connections trigger sync
         if peer.direction == "outbound":
@@ -7518,12 +7652,23 @@ class P2PService:
                 self._request_headers_on_outbound_hello(peer),
                 name=f"p2p.headers_request_outbound@{peer.remote}",
             )
-        
+
         if peer.feeler:
             self._create_child_task(
                 self._close_feeler_after_delay(peer),
                 name=f"p2p.feeler_close@{peer.remote}",
             )
+
+    async def _finalize_peer_ready_after_ack(self, peer: _PeerState) -> None:
+        if not peer.peer_id:
+            return
+        self._runtime.set_stage(peer.session_id, ConnectionStage.SESSION_CREATED)
+        if not peer.ready_for_sync:
+            peer.ready_for_sync = True
+        tip_sent = await self._request_peer_head_status(peer, reason="hello_ack")
+        if tip_sent:
+            self._runtime.set_stage(peer.session_id, ConnectionStage.TIP_QUERY_SENT)
+        self._runtime.set_stage(peer.session_id, ConnectionStage.PEER_READY)
 
     async def _handle_hello_ack(self, peer: _PeerState, payload: bytes) -> None:
         """
@@ -7654,6 +7799,14 @@ class P2PService:
                     },
                 )
                 self._record_handshake_success(peer, stage="hello_ack")
+                try:
+                    await self._finalize_peer_ready_after_ack(peer)
+                except Exception as exc:
+                    self._record_promote_failure(peer, stage="hello_ack", exc=exc)
+                    await self._drop_peer(
+                        peer, reason=f"promote_failed:{exc.__class__.__name__}"
+                    )
+                    return
             
             # Notify TipManager
             try:
@@ -7840,7 +7993,40 @@ class P2PService:
                 },
             )
             return False
+        self._tip_manager.mark_poll_attempted(peer.session_id, now=now)
+        self._tip_pending[peer.session_id] = now
+        self._runtime.record_event(
+            "tip_query_sent",
+            remote=peer.remote,
+            peer_id=peer.peer_id,
+            session_id=peer.session_id,
+            reason=reason,
+        )
+        self._create_child_task(
+            self._watch_tip_timeout(peer.session_id, requested_at=now),
+            name=f"p2p.tip_timeout@{peer.remote}",
+        )
         return True
+
+    async def _watch_tip_timeout(self, session_id: str, *, requested_at: float) -> None:
+        await asyncio.sleep(max(0.1, self._tip_response_timeout_s))
+        session = self._peer_registry.get_session(session_id)
+        if session is None:
+            return
+        if session.tip_updated_at and session.tip_updated_at >= requested_at:
+            return
+        self._peer_registry.update_meta(
+            session_id,
+            tip_status="no_tip",
+            tip_timeout_at=time.time(),
+        )
+        self._tip_manager.mark_poll_failed(session_id, reason="tip_timeout")
+        self._runtime.record_event(
+            "tip_timeout",
+            remote=session.remote,
+            peer_id=session.peer_id,
+            session_id=session_id,
+        )
 
     async def _request_headers_on_outbound_hello(self, peer: _PeerState) -> None:
         """
@@ -8039,6 +8225,12 @@ class P2PService:
                 height=peer_height,
                 hash_hex=peer_hash_hex,
                 tip_time=float(peer_timestamp_ms / 1000.0) if peer_timestamp_ms else None,
+            )
+            self._tip_pending.pop(peer.session_id, None)
+            self._peer_registry.update_meta(
+                peer.session_id,
+                tip_status="ok",
+                tip_last_response_at=time.time(),
             )
             log.info(
                 "TipManager: tip received and recorded",
@@ -13586,7 +13778,8 @@ class P2PService:
             return False, "peer_id_missing"
         if not peer.identity_ok:
             return False, "identity_unverified"
-        if not peer.ready_for_sync:
+        session = self._peer_registry.get_session(peer.session_id)
+        if session is None or session.stage != ConnectionStage.PEER_READY.value:
             return False, "not_ready"
         if self._is_self_address(
             self._extract_host(peer.remote), self._extract_port(peer.remote) or 0
@@ -14308,6 +14501,9 @@ class P2PService:
                 continue
             if not peer.identity_ok:
                 filtered_identity_not_ok += 1
+                continue
+            session = self._peer_registry.get_session(peer.session_id)
+            if session is None or session.stage != ConnectionStage.PEER_READY.value:
                 continue
             if not peer.repo_state_ok:
                 filtered_repo_state_not_ok += 1

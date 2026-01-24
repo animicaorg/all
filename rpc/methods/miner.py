@@ -1333,6 +1333,7 @@ def _mining_gate(
                     "handshake_failed",
                     "handshake_rejected",
                     "handshake_exception",
+                    "promote_failed",
                     "disconnected",
                 }
             ]
@@ -1444,6 +1445,14 @@ def _mining_gate(
     exec_head_height = int(sync_status.get("head_height") or 0)
     best_header_height = int(sync_status.get("best_header_height") or 0)
     best_block_height = int(sync_status.get("best_block_height") or 0)
+    best_remote_height = sync_status.get("best_remote_height")
+    network_best_height = sync_status.get("network_best_height")
+    allow_isolated_mining = os.getenv("ANIMICA_ALLOW_ISOLATED_MINING", "").lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
 
     # Use best_block_height as proxy for exec_head (blocks we've fully applied)
     # In the future, track exec_head separately from header_head
@@ -1452,6 +1461,12 @@ def _mining_gate(
     # Check if execution head is initialized (height >= 0 means we have genesis or later)
     if exec_head < 0:
         return False, "exec_head_uninitialized"
+
+    if not allow_isolated_mining:
+        if exec_head == 0 and isinstance(network_best_height, int) and network_best_height > 0:
+            return False, "genesis_out_of_sync:network_height_known"
+        if best_remote_height is None:
+            return False, "no_peer_tips_yet"
 
     # Check for fatal sync errors (indicates corrupted state or DB issues)
     fatal_error = sync_status.get("fatal_error")

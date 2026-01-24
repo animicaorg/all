@@ -19,6 +19,7 @@ from animica.config import load_network_config
 from .timeouts import DEFAULT_RPC_TIMEOUT, RPC_TIMEOUT_ENV, resolve_timeout
 
 app = typer.Typer(name="debug", help="Debugging utilities.", no_args_is_help=True)
+sync_app = typer.Typer(name="sync", help="Sync debug helpers.", no_args_is_help=True)
 
 DEFAULT_RPC_URL = load_network_config().rpc_url
 RPC_ENV = "ANIMICA_RPC_URL"
@@ -310,6 +311,17 @@ def sync_dump(
 
     peers = dump.get("peers", {}).get("connected", [])
     best_peer_height, best_peer_hash, best_peer = _best_peer_head(peers)
+    best_peer_reason = None
+    if best_peer_height is None:
+        if not peers:
+            best_peer_reason = "no_connected_peers"
+        else:
+            eligible = [peer for peer in peers if peer.get("ready_for_sync")]
+            if not eligible:
+                best_peer_reason = "no_eligible_peers"
+            else:
+                any_head = any(peer.get("head_height") is not None for peer in eligible)
+                best_peer_reason = "no_tip_responses_received" if not any_head else "no_fresh_tips"
 
     head = dump.get("head", {})
     sync_status = dump.get("sync", {})
@@ -327,6 +339,7 @@ def sync_dump(
         "best_peer_height": best_peer_height,
         "best_peer_hash": best_peer_hash,
         "best_peer": best_peer,
+        "best_peer_reason": best_peer_reason,
         "sync_phase": sync_status.get("phase") or sync_status.get("state"),
         "in_flight_headers": inflight.get("in_flight_headers"),
         "in_flight_blocks": inflight.get("in_flight_blocks"),
@@ -362,6 +375,11 @@ def sync_dump(
         typer.echo("   This is a special case requiring aggressive sync recovery.")
     
     typer.echo(f"Best peer head:   {best_peer_height} ({best_peer_hash}) from {best_peer}")
+    if best_peer_height is None and best_peer_reason:
+        typer.secho(
+            f"   Reason:        {best_peer_reason}",
+            fg=typer.colors.YELLOW,
+        )
     
     if best_peer_height and local_head_height is not None:
         gap = best_peer_height - int(local_head_height)
@@ -495,3 +513,22 @@ def sync_dump(
         typer.echo("   Requests should timeout after 15-20s and retry")
         typer.echo("   If stuck > 30s, watchdog will force recovery")
         typer.echo("   You can manually force: animica sync force --clear-cache")
+
+
+@sync_app.command("dump")
+def sync_dump_alias(
+    rpc_url: Optional[str] = typer.Option(
+        None, "--rpc", envvar=RPC_ENV, help="RPC endpoint URL"
+    ),
+    timeout: Optional[float] = typer.Option(
+        None, "--timeout", help="RPC timeout in seconds"
+    ),
+    json_output: bool = typer.Option(
+        False, "--json", help="Output JSON instead of formatted text"
+    ),
+) -> None:
+    """Alias for `animica debug sync-dump`."""
+    sync_dump(rpc_url=rpc_url, timeout=timeout, json_output=json_output)
+
+
+app.add_typer(sync_app, name="sync")
