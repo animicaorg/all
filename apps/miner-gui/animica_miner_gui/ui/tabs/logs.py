@@ -31,6 +31,7 @@ class LogsTab(QWidget):
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.log_buffer = deque(maxlen=1000)  # Keep last 1000 log entries
+        self._last_node_log_line: Optional[str] = None
         self.setup_ui()
         
         # Connect signal to slot for thread-safe UI updates
@@ -188,3 +189,14 @@ class LogsTab(QWidget):
         """
         recent = list(self.log_buffer)[-count:]
         return [msg for msg, _ in recent]
+
+    def update_node_log_line(self, status: dict) -> None:
+        """Update logs with the latest node log line."""
+        line = status.get("last_log_line")
+        if not line or line == self._last_node_log_line:
+            return
+        self._last_node_log_line = line
+        import time
+        timestamp = time.strftime("%H:%M:%S", time.localtime())
+        log_entry = f"[{timestamp}] [INFO] node: {line}"
+        self.add_log(log_entry, "info")

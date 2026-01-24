@@ -33,16 +33,18 @@ class RPCError(Exception):
 class RPCClient:
     """Simple RPC client for Animica node."""
     
-    def __init__(self, rpc_url: str, timeout: float = 10.0):
+    def __init__(self, rpc_url: str, timeout: float = 10.0, token: Optional[str] = None):
         """Initialize RPC client.
         
         Args:
             rpc_url: RPC endpoint URL
             timeout: Request timeout in seconds
+            token: Optional admin token for Authorization header
         """
         self.rpc_url = rpc_url
         self.timeout = timeout
         self._request_id = 0
+        self.token = token
     
     def _call(self, method: str, params: Optional[list] = None) -> Any:
         """Make an RPC call.
@@ -68,6 +70,11 @@ class RPCClient:
             "params": params
         }
         
+        headers = {}
+        if self.token:
+            headers["Authorization"] = f"Bearer {self.token}"
+            headers["X-Animica-Admin-Token"] = self.token
+
         try:
             if HAVE_HTTPX:
                 # httpx won't follow redirects by default - this causes connection failures
@@ -76,7 +83,8 @@ class RPCClient:
                     self.rpc_url,
                     json=payload,
                     timeout=self.timeout,
-                    follow_redirects=True
+                    follow_redirects=True,
+                    headers=headers,
                 )
                 response.raise_for_status()
                 data = response.json()
@@ -88,7 +96,8 @@ class RPCClient:
                     self.rpc_url,
                     json=payload,
                     timeout=self.timeout,
-                    allow_redirects=True
+                    allow_redirects=True,
+                    headers=headers,
                 )
                 response.raise_for_status()
                 data = response.json()
@@ -125,8 +134,7 @@ class RPCClient:
         Returns:
             Dictionary with head block info
         """
-        result = self._call("chain_getHead", [])
-        return result or {}
+        return self._call_first(["chain.getHead", "chain_getHead", "chain.head", "chain_head"]) or {}
     
     def get_chain_id(self) -> Optional[int]:
         """Get chain ID.
@@ -148,7 +156,7 @@ class RPCClient:
             Dictionary with sync info
         """
         try:
-            result = self._call("chain_getSyncStatus", [])
+            result = self._call_first(["sync.getStatus", "sync.get_status", "sync.dump", "chain_getSyncStatus"])
             return result or {}
         except Exception:
             # Fallback: just return head info
@@ -166,7 +174,7 @@ class RPCClient:
             Dictionary with mempool stats
         """
         try:
-            result = self._call("mempool_stats", [])
+            result = self._call_first(["mempool.stats", "mempool_stats", "mempool.stats.get"])
             return result or {"total": 0, "pending": 0}
         except Exception:
             return {"total": 0, "pending": 0}
@@ -180,7 +188,7 @@ class RPCClient:
         Returns:
             Block template dictionary
         """
-        result = self._call("mining_getTemplate", [payout_address])
+        result = self._call_first(["mining.getTemplate", "mining_getTemplate"], [payout_address])
         return result or {}
     
     def submit_block(self, block_data: Dict[str, Any]) -> bool:
@@ -193,7 +201,7 @@ class RPCClient:
             True if accepted, False otherwise
         """
         try:
-            result = self._call("mining_submitBlock", [block_data])
+            result = self._call_first(["mining.submitBlock", "mining_submitBlock"], [block_data])
             return result is True or result == "accepted"
         except Exception as e:
             logger.error(f"Error submitting block: {e}")
@@ -265,4 +273,52 @@ class RPCClient:
             except Exception as e:
                 logger.debug(f"Method {method} failed: {e}")
                 continue
+        return None
+
+    def get_rpc_methods(self) -> Optional[list]:
+        """Return available RPC methods, if exposed."""
+        return self._call_first(["rpc.methods", "rpc_methods", "rpc.listMethods"])
+
+    def get_peer_summary(self) -> Dict[str, Any]:
+        """Return peer summary information."""
+        peers = self._call_first(
+            [
+                "p2p.listPeers",
+                "p2p.getPeers",
+                "p2p.peers",
+                "net.peers",
+                "net_peers",
+            ]
+        )
+        if isinstance(peers, list):
+            total = len(peers)
+            inbound = len([p for p in peers if isinstance(p, dict) and p.get("direction") == "in"])
+            outbound = len([p for p in peers if isinstance(p, dict) and p.get("direction") == "out"])
+            return {"total": total, "inbound": inbound, "outbound": outbound, "peers": peers}
+
+        counts = self._call_first(
+            [
+                "net.peerCount",
+                "p2p.peerCount",
+                "p2p.peer_count",
+                "net_peerCount",
+            ]
+        )
+        if isinstance(counts, dict):
+            return counts
+        if isinstance(counts, int):
+            return {"total": counts, "inbound": None, "outbound": None}
+        return {"total": 0, "inbound": None, "outbound": None}
+
+    def _call_first(self, methods: list[str], params: Optional[list] = None) -> Any:
+        """Try multiple RPC method names in order."""
+        last_exc: Optional[Exception] = None
+        for method in methods:
+            try:
+                return self._call(method, params)
+            except Exception as exc:
+                last_exc = exc
+                continue
+        if last_exc:
+            raise last_exc
         return None
