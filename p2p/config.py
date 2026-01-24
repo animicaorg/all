@@ -41,6 +41,7 @@ Key env vars (examples):
 from __future__ import annotations
 
 import ipaddress
+import logging
 import os
 from pathlib import Path
 from dataclasses import asdict, dataclass, field
@@ -51,7 +52,7 @@ from .constants import MAX_INBOUND_PEERS as CONST_MAX_INBOUND
 from .constants import MAX_OUTBOUND_PEERS as CONST_MAX_OUTBOUND
 from .constants import MAX_PEERS as CONST_MAX_PEERS
 from .constants import PROTOCOL_ID
-from .peer.peer_addr import normalize_peer_addr
+from .peer.peer_addr import normalize_peer_addr, parse_peer_endpoint
 
 # Default fallback seeds (mainnet).
 # Use a neutral bootstrap IP so the network does not depend on domain seeds.
@@ -444,9 +445,26 @@ def load_config() -> P2PConfig:
             advertised_raw = f"{advertise_host}:{advertise_port}"
 
     advertised_addrs = tuple(_validate_advertised_addrs(_csv(advertised_raw)))
+    log = logging.getLogger("animica.p2p.config")
     # Try to get chain_id for network-specific seeds (best effort)
     chain_id = _parse_chain_id(_getenv("ANIMICA_P2P_CHAIN_ID"))
     seeds = _load_seeds_from_env(chain_id)
+    normalized_seeds: list[str] = []
+    invalid_seeds: dict[str, str] = {}
+    if seeds:
+        for seed in seeds:
+            try:
+                endpoint = parse_peer_endpoint(seed, allow_quic=True, allow_ws=True, allow_tcp=True)
+                normalized_seeds.append(endpoint.multiaddr)
+            except ValueError as exc:
+                invalid_seeds[seed] = str(exc) or "invalid_seed"
+    if invalid_seeds:
+        log.warning(
+            "Invalid P2P seed entries detected",
+            extra={"invalid_seeds": invalid_seeds},
+        )
+    if normalized_seeds:
+        seeds = tuple(dict.fromkeys(normalized_seeds))
 
     max_peers = _getenv_int("ANIMICA_P2P_MAX_PEERS", CONST_MAX_PEERS)
     max_outbound = _getenv_int("ANIMICA_P2P_MAX_OUTBOUND", CONST_MAX_OUTBOUND)

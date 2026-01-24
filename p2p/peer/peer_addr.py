@@ -18,6 +18,16 @@ class PeerAddr:
 
 
 @dataclass(frozen=True)
+class PeerEndpoint:
+    original: str
+    scheme: str
+    host: str
+    port: int
+    canonical: str
+    multiaddr: str
+
+
+@dataclass(frozen=True)
 class PeerAddrParseResult:
     addr: Optional[PeerAddr]
     reason: Optional[str] = None
@@ -41,6 +51,51 @@ def _build_canonical(scheme: str, host: str, port: int, query: str = "") -> str:
     host_disp = _bracket_ipv6(host)
     suffix = f"?{query}" if query else ""
     return f"{scheme}://{host_disp}:{port}{suffix}"
+
+
+def _build_multiaddr(host: str, port: int, scheme: str) -> str:
+    try:
+        ip_obj = ipaddress.ip_address(host)
+        host_proto = "ip6" if ip_obj.version == 6 else "ip4"
+    except ValueError:
+        host_proto = "dns4"
+    if scheme in ("ws", "wss"):
+        return f"/{host_proto}/{host}/tcp/{port}/{scheme}"
+    if scheme == "quic":
+        return f"/{host_proto}/{host}/udp/{port}/quic-v1"
+    return f"/{host_proto}/{host}/tcp/{port}"
+
+
+def parse_peer_endpoint(
+    raw: str,
+    *,
+    fallback_port: Optional[int] = None,
+    allow_ws: bool = True,
+    allow_quic: bool = True,
+    allow_tcp: bool = True,
+) -> PeerEndpoint:
+    result = normalize_peer_addr(
+        raw,
+        fallback_port=fallback_port,
+        allow_ws=allow_ws,
+        allow_quic=allow_quic,
+        allow_tcp=allow_tcp,
+    )
+    if not result.addr:
+        reason = result.reason or "invalid_address"
+        raise ValueError(reason)
+    addr = result.addr
+    if not addr.host or not addr.port:
+        raise ValueError("missing_host_or_port")
+    multiaddr = _build_multiaddr(addr.host, addr.port, addr.scheme)
+    return PeerEndpoint(
+        original=raw,
+        scheme=addr.scheme,
+        host=addr.host,
+        port=addr.port,
+        canonical=addr.canonical,
+        multiaddr=multiaddr,
+    )
 
 
 def normalize_peer_addr(

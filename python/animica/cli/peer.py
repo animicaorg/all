@@ -24,6 +24,7 @@ from animica.cli.rpc_guard import guard_bootstrap_rpc
 from animica.cli.rpc_utils import is_local_rpc_url
 from animica.config import load_network_config
 from animica.seeds import get_default_ports, get_seed_nodes
+from p2p.peer.peer_addr import parse_peer_endpoint
 from .timeouts import DEFAULT_RPC_TIMEOUT, RPC_TIMEOUT_ENV, resolve_timeout
 
 app = typer.Typer(help="Manage P2P network peers.")
@@ -763,6 +764,11 @@ def _parse_address(address: str) -> Tuple[str, Optional[int]]:
     Returns:
         Tuple of (host, port) where port may be None if not specified
     """
+    try:
+        endpoint = parse_peer_endpoint(address, allow_quic=False, allow_ws=False, allow_tcp=True)
+        return endpoint.host, endpoint.port
+    except Exception:
+        pass
     # Handle multiaddr format
     if address.startswith("/"):
         parts = address.split("/")
@@ -1493,6 +1499,11 @@ def bootstrap_peers(
                 imported = last_import_result.get("imported", 0) if isinstance(last_import_result, dict) else 0
                 dial_attempted = last_import_result.get("dial_attempted", 0) if isinstance(last_import_result, dict) else 0
                 dial_success = last_import_result.get("dial_success", 0) if isinstance(last_import_result, dict) else 0
+                dial_connected = last_import_result.get("dial_connected", 0) if isinstance(last_import_result, dict) else 0
+                handshake_succeeded = last_import_result.get("handshake_succeeded", dial_success) if isinstance(last_import_result, dict) else 0
+                parse_ok = last_import_result.get("parse_ok", 0) if isinstance(last_import_result, dict) else 0
+                parse_failed = last_import_result.get("parse_failed", 0) if isinstance(last_import_result, dict) else 0
+                invalid_seeds = last_import_result.get("invalid_seeds", []) if isinstance(last_import_result, dict) else []
                 
                 # Show detailed import summary
                 summary = _rpc_import_summary(last_import_result)
@@ -1504,13 +1515,31 @@ def bootstrap_peers(
                 
                 # Show dial attempt counters if available
                 if dial_attempted > 0:
-                    typer.echo(f"  Dial attempts: {dial_attempted}, succeeded: {dial_success}")
+                    typer.echo(
+                        "  Dial attempts: {attempted}, tcp_connected: {connected}, handshake_succeeded: {handshake}".format(
+                            attempted=dial_attempted,
+                            connected=dial_connected,
+                            handshake=handshake_succeeded,
+                        )
+                    )
                 else:
                     typer.secho(
                         "✗ Bootstrap reported success but dial_attempted=0 (no outbound dials were started).",
                         fg=typer.colors.RED,
                     )
                     raise typer.Exit(code=1)
+                
+                if parse_failed:
+                    typer.echo(f"  Parsed seeds: {parse_ok} ok, {parse_failed} invalid")
+                    if invalid_seeds:
+                        typer.secho("  Invalid seeds:", fg=typer.colors.YELLOW)
+                        for entry in invalid_seeds[:5]:
+                            if isinstance(entry, dict):
+                                seed_addr = entry.get("address") or "unknown"
+                                seed_error = entry.get("error") or "invalid"
+                                typer.echo(f"    - {seed_addr}: {seed_error}")
+                            else:
+                                typer.echo(f"    - {entry}")
                 
                 # Get initial peer status
                 initial_status, status_error = _fetch_peer_status(target_rpc)
@@ -1559,7 +1588,18 @@ def bootstrap_peers(
                                     typer.echo(f"  - {err}")
                                 if len(errors) > 5:
                                     typer.echo(f"  ... and {len(errors) - 5} more")
-                        
+                            invalid_seeds = last_import_result.get("invalid_seeds", [])
+                            if invalid_seeds:
+                                typer.echo()
+                                typer.secho("Invalid seeds:", fg=typer.colors.YELLOW)
+                                for entry in invalid_seeds[:5]:
+                                    if isinstance(entry, dict):
+                                        seed_addr = entry.get("address") or "unknown"
+                                        seed_error = entry.get("error") or "invalid"
+                                        typer.echo(f"  - {seed_addr}: {seed_error}")
+                                    else:
+                                        typer.echo(f"  - {entry}")
+                                
                         typer.echo()
                         typer.secho(
                             "Suggestions:",

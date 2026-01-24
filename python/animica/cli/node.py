@@ -3714,6 +3714,7 @@ def p2p_doctor(
     external_ip = doctor_payload.get("external_ip")
     dial_history = doctor_payload.get("dial_history") or []
     pending = doctor_payload.get("dial_inflight") or []
+    connection_events = doctor_payload.get("connection_events") or []
 
     typer.echo(f"RPC URL: {url}")
     typer.echo(f"P2P running: {doctor_payload.get('p2p_running')}")
@@ -3762,6 +3763,19 @@ def p2p_doctor(
             typer.echo(
                 f"  {status} addr={addr} attempts={attempts} at={at} error={error}"
             )
+    if connection_events:
+        typer.echo("Recent connection events:")
+        for entry in connection_events[-limit:]:
+            if not isinstance(entry, dict):
+                continue
+            event = entry.get("event")
+            remote = entry.get("remote") or entry.get("addr")
+            reason = entry.get("reason") or entry.get("error")
+            at = entry.get("at")
+            details = f" remote={remote}" if remote else ""
+            if reason:
+                details += f" reason={reason}"
+            typer.echo(f"  {event} at={at}{details}")
 
     suggestions: list[str] = []
     for host, port in endpoints:
