@@ -66,6 +66,7 @@ class Hello:
     version: str = "1"
     agent: str = "animica-node/unknown"
     repo_state: str = ""
+    network_name: str = ""
     chain_id: ChainId = 0
     network_magic: bytes = NETWORK_MAGIC
     listen_port: int = 0

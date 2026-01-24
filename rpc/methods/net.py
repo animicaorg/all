@@ -334,6 +334,15 @@ async def net_peer_count() -> int:
                 svc = p2p.get_service()
             if svc is not None and hasattr(svc, "bootstrap_peer_bonus"):
                 bootstrap_bonus = int(getattr(svc, "bootstrap_peer_bonus")())
+            if svc is not None and hasattr(svc, "status_snapshot"):
+                try:
+                    status = svc.status_snapshot()
+                    if hasattr(status, "to_dict"):
+                        status = status.to_dict()
+                    if isinstance(status, dict) and "peers_connected" in status:
+                        return int(status.get("peers_connected") or 0) + bootstrap_bonus
+                except Exception:
+                    pass
         except Exception:
             bootstrap_bonus = 0
         if snapshot:
