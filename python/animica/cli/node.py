@@ -3709,6 +3709,11 @@ def p2p_doctor(
     peers_total = doctor_payload.get("peers_total")
     peers_inbound = doctor_payload.get("peers_inbound")
     peers_outbound = doctor_payload.get("peers_outbound")
+    dial_attempted = doctor_payload.get("dial_attempted")
+    tcp_connected = doctor_payload.get("tcp_connected")
+    handshake_started = doctor_payload.get("handshake_started")
+    handshake_succeeded = doctor_payload.get("handshake_succeeded")
+    connected_promoted = doctor_payload.get("connected_promoted")
     advertise_host = doctor_payload.get("advertise_host")
     advertise_port = doctor_payload.get("advertise_port")
     external_ip = doctor_payload.get("external_ip")
@@ -3725,6 +3730,26 @@ def p2p_doctor(
             outbound=peers_outbound,
         )
     )
+    if any(
+        metric is not None
+        for metric in (
+            dial_attempted,
+            tcp_connected,
+            handshake_started,
+            handshake_succeeded,
+            connected_promoted,
+        )
+    ):
+        typer.echo(
+            "Handshake milestones: dial_attempted={dial} tcp_connected={tcp} "
+            "handshake_started={hs} handshake_succeeded={ok} connected_promoted={promoted}".format(
+                dial=dial_attempted,
+                tcp=tcp_connected,
+                hs=handshake_started,
+                ok=handshake_succeeded,
+                promoted=connected_promoted,
+            )
+        )
     typer.echo(f"Listen addrs: {listen_addrs}")
     typer.echo(f"Advertised addrs: {advertised_addrs}")
     typer.echo(f"Advertise host: {advertise_host}")
@@ -3771,10 +3796,16 @@ def p2p_doctor(
             event = entry.get("event")
             remote = entry.get("remote") or entry.get("addr")
             reason = entry.get("reason") or entry.get("error")
+            stage = entry.get("stage")
+            exc_type = entry.get("exception_type")
             at = entry.get("at")
             details = f" remote={remote}" if remote else ""
             if reason:
                 details += f" reason={reason}"
+            if stage:
+                details += f" stage={stage}"
+            if exc_type:
+                details += f" exc={exc_type}"
             typer.echo(f"  {event} at={at}{details}")
 
     suggestions: list[str] = []

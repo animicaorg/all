@@ -1328,7 +1328,13 @@ def _mining_gate(
                 entry
                 for entry in conn_events
                 if isinstance(entry, dict)
-                and entry.get("event") in {"handshake_failed", "disconnected"}
+                and entry.get("event")
+                in {
+                    "handshake_failed",
+                    "handshake_rejected",
+                    "handshake_exception",
+                    "disconnected",
+                }
             ]
             if recent_events:
                 details = []
@@ -1336,7 +1342,14 @@ def _mining_gate(
                     event = entry.get("event")
                     remote = entry.get("remote") or entry.get("addr") or "unknown"
                     reason = entry.get("reason") or entry.get("error") or "unknown"
-                    details.append(f"{event} {remote} ({reason})")
+                    stage = entry.get("stage")
+                    exc_type = entry.get("exception_type")
+                    suffix = f"{reason}"
+                    if stage:
+                        suffix += f", stage={stage}"
+                    if exc_type:
+                        suffix += f", exc={exc_type}"
+                    details.append(f"{event} {remote} ({suffix})")
                 if details:
                     guidance += f". Recent handshake/disconnects: " + "; ".join(details)
         

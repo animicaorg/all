@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import contextlib
 import hashlib
 import ipaddress
@@ -14,6 +15,7 @@ import os
 import random
 import socket
 import time
+import traceback
 import uuid
 from collections import OrderedDict, deque
 from dataclasses import dataclass, field
@@ -70,7 +72,6 @@ from p2p.wire.messages import (
     HeaderCompact,
     Headers,
     HeadStatus,
-    Hello,
     HelloAck,
     Inv,
     InvItem,
@@ -87,6 +88,7 @@ except Exception:  # pragma: no cover - optional
 from p2p.node.peer_registry import PeerRegistry
 from p2p.node.handshake import HandshakeManager
 from p2p.node.tip_manager import TipManager
+from p2p.protocol import handshake_v1 as hs_v1
 from p2p.sync.cache_store import SyncCacheConfig, SyncCacheState, SyncCacheStore
 
 log = logging.getLogger("animica.p2p.service")
@@ -383,6 +385,12 @@ class P2PStatusSnapshot:
     addrman_size: Optional[int] = None
     dial_attempts: int = 0
     dial_successes: int = 0
+    dial_attempted: int = 0
+    tcp_connected: int = 0
+    handshake_started: int = 0
+    handshake_succeeded: int = 0
+    connected_promoted: int = 0
+    disconnects: int = 0
     learned_addrs_1m: int = 0
     announced_addrs_1m: int = 0
     persisted_peer_count: Optional[int] = None
@@ -420,6 +428,12 @@ class P2PStatusSnapshot:
             "addrman_size": self.addrman_size,
             "dial_attempts": self.dial_attempts,
             "dial_successes": self.dial_successes,
+            "dial_attempted": self.dial_attempted,
+            "tcp_connected": self.tcp_connected,
+            "handshake_started": self.handshake_started,
+            "handshake_succeeded": self.handshake_succeeded,
+            "connected_promoted": self.connected_promoted,
+            "disconnects": self.disconnects,
             "learned_addrs_1m": self.learned_addrs_1m,
             "announced_addrs_1m": self.announced_addrs_1m,
             "persisted_peer_count": self.persisted_peer_count,
@@ -1265,6 +1279,12 @@ class P2PService:
         # Tiny metrics snapshot used by RPC/CLI
         self._stats: dict[str, int] = {
             "peers": 0,
+            "dial_attempted": 0,
+            "tcp_connected": 0,
+            "handshake_started": 0,
+            "handshake_succeeded": 0,
+            "connected_promoted": 0,
+            "disconnects": 0,
             "inv_tx_sent": 0,
             "inv_tx_recv": 0,
             "tx_inv_sent_total": 0,
@@ -3359,8 +3379,8 @@ class P2PService:
 
     def _dial_delay(self, addr_key: str) -> float:
         attempts = self._dial_attempts.get(addr_key, 0)
-        base = 2.0 * (2 ** min(attempts, 5))
-        jitter = random.uniform(0.6, 1.4)
+        base = 1.0 * (2 ** min(attempts, 6))
+        jitter = random.uniform(0.8, 1.2)
         return min(60.0, base * jitter)
 
     def _dial_delay_for_error(self, addr_key: str, error: str) -> float:
@@ -3416,6 +3436,42 @@ class P2PService:
         payload.update(extra)
         self._connection_events.append(payload)
 
+    def _record_handshake_exception(
+        self,
+        peer: _PeerState,
+        *,
+        stage: str,
+        exc: Exception,
+    ) -> None:
+        location = None
+        try:
+            tb = traceback.extract_tb(exc.__traceback__)
+            if tb:
+                location = f"{tb[-1].filename}:{tb[-1].lineno}"
+        except Exception:
+            location = None
+        self._record_connection_event(
+            "handshake_exception",
+            remote=peer.remote,
+            peer_id=peer.peer_id,
+            direction=peer.direction,
+            stage=stage,
+            exception_type=exc.__class__.__name__,
+            exception_msg=str(exc),
+            exception_loc=location,
+        )
+        if log.isEnabledFor(logging.DEBUG):
+            log.debug(
+                "Handshake exception",
+                extra={
+                    "remote": peer.remote,
+                    "stage": stage,
+                    "exception_type": exc.__class__.__name__,
+                    "exception_loc": location,
+                },
+                exc_info=exc,
+            )
+
     def _record_handshake_reject(
         self, peer: _PeerState, *, reason: str, stage: str
     ) -> None:
@@ -3432,6 +3488,7 @@ class P2PService:
         if peer.handshake_recorded:
             return
         peer.handshake_recorded = True
+        self._stats["handshake_succeeded"] += 1
         self._record_connection_event(
             "handshake_ok",
             remote=peer.remote,
@@ -3601,7 +3658,11 @@ class P2PService:
         connected_outbound = sum(1 for p in connected_peers if p.get("direction") == "outbound")
         
         # NEW: Count handshaking peers (not yet fully connected)
-        handshaking_total = sum(1 for p in snapshot if p.get("state") in ("DIALING", "HANDSHAKING"))
+        handshaking_total = sum(
+            1
+            for p in snapshot
+            if p.get("state") in ("DIALING", "TCP_CONNECTED", "HANDSHAKING")
+        )
         
         bootstrap_bonus = self.bootstrap_peer_bonus()
         now = time.time()
@@ -3644,6 +3705,12 @@ class P2PService:
             addrman_size=addrman_size,
             dial_attempts=self._dial_attempt_total,
             dial_successes=self._dial_success_total,
+            dial_attempted=int(self._stats.get("dial_attempted", 0)),
+            tcp_connected=int(self._stats.get("tcp_connected", 0)),
+            handshake_started=int(self._stats.get("handshake_started", 0)),
+            handshake_succeeded=int(self._stats.get("handshake_succeeded", 0)),
+            connected_promoted=int(self._stats.get("connected_promoted", 0)),
+            disconnects=int(self._stats.get("disconnects", 0)),
             learned_addrs_1m=learned_1m,
             announced_addrs_1m=announced_1m,
             persisted_peer_count=self._persisted_peer_count,
@@ -6203,6 +6270,7 @@ class P2PService:
         addr = endpoint.canonical
         addr_key = self._addr_key(addr)
         self._dial_attempt_total += 1
+        self._stats["dial_attempted"] += 1
         self._dial_attempts[addr_key] = self._dial_attempts.get(addr_key, 0) + 1
         log.debug(
             "[p2p][dial] attempt",
@@ -6249,6 +6317,7 @@ class P2PService:
             is_seed=is_seed,
         )
         self._mark_dial_tcp_connected(addr, is_seed=is_seed)
+        self._stats["tcp_connected"] += 1
         await self._register_conn(conn, direction="outbound", feeler=feeler)
         return True
 
@@ -6301,8 +6370,16 @@ class P2PService:
             with contextlib.suppress(Exception):
                 await conn.close()
             return
+        self._peer_registry.mark_tcp_connected(session.session_id)
+        if direction == "inbound":
+            self._stats["tcp_connected"] += 1
         self._handshake_manager.track_session(
             session_id=session.session_id,
+            remote=remote,
+            direction=direction,
+        )
+        self._record_connection_event(
+            "tcp_connected",
             remote=remote,
             direction=direction,
         )
@@ -6387,10 +6464,20 @@ class P2PService:
             peer_id=peer.peer_id,
             direction=peer.direction,
         )
+        self._stats["handshake_started"] += 1
         try:
             await self._send_hello(peer)
             self._handshake_manager.on_hello_sent(peer.session_id)
         except Exception as exc:
+            self._record_handshake_exception(peer, stage="handshake_send", exc=exc)
+            self._record_connection_event(
+                "handshake_failed",
+                remote=peer.remote,
+                peer_id=peer.peer_id,
+                direction=peer.direction,
+                reason="handshake_send_error",
+                stage="handshake_send",
+            )
             log.warning(
                 "Failed to send HELLO",
                 extra={"remote": peer.remote, "direction": peer.direction},
@@ -6458,6 +6545,8 @@ class P2PService:
             direction=peer.direction,
             reason=reason,
         )
+        self._stats["disconnects"] += 1
+        self._peer_registry.mark_disconnected(peer.session_id, reason=reason)
         if peer.direction == "outbound" and not peer.identity_ok and not peer.handshake_recorded:
             is_seed = self._addr_key(peer.remote) in self._seed_keys
             self._mark_dial_failure(
@@ -6582,49 +6671,73 @@ class P2PService:
             )
         return obj
 
-    async def _send_hello(self, peer: _PeerState) -> None:
+    def _build_handshake_v1(self) -> hs_v1.HandshakeV1:
         height, head_hash_hex = self._local_head()
-        head_hash = self._parse_hash_bytes(head_hash_hex) or (b"\x00" * 32)
         best_header = self._sync_best_header
         if best_header is not None and best_header.height > int(height or 0):
             height = int(best_header.height)
-            head_hash = bytes(best_header.hash)
-        
-        # Compute network best height: max of our height and what we've seen from peers
+            head_hash_hex = bytes(best_header.hash).hex()
+
         network_best = self._network_best_height()
         if network_best is None or network_best < int(height or 0):
             network_best = int(height or 0)
-        
-        genesis_header_hash = self._genesis_header_hash()
-        genesis_block_hash = self._genesis_block_hash()
-        listen_port = self._local_listen_port()
+
+        genesis_header_hash = self._genesis_header_hash().hex()
         listen_addrs = self._advertised_addrs()
-        hello = Hello(
-            version="2",
-            agent=f"animica-p2p/{p2p_version.__version__}",
-            repo_state=self._repo_state,
-            network_name=self._network_name(),
-            chain_id=self.chain_id,
-            network_magic=NETWORK_MAGIC,
-            listen_port=listen_port,
-            listen_addrs=listen_addrs,
+        if self._identity is not None:
+            pubkey_bytes = bytes(self._identity.pubkey)
+        else:
+            pubkey_bytes = b""
+        pubkey_b64 = base64.b64encode(pubkey_bytes).decode("utf-8")
+        node_id = self._peer_id_bytes.hex()
+        head_hash = (head_hash_hex or "").removeprefix("0x").lower()
+
+        return hs_v1.HandshakeV1(
+            protocol_version=hs_v1.HANDSHAKE_VERSION,
+            network=self._network_name(),
+            chain_id=int(self.chain_id),
             genesis_hash=genesis_header_hash,
-            genesis_header_hash=genesis_header_hash,
-            genesis_block_hash=genesis_block_hash,
-            fork_id=self._fork_id(),
-            consensus_id=self._consensus_id(),
-            protocol_version=self._protocol_version(),
-            genesis_identity=self._genesis_identity(),
-            network_params_hash=self._network_params_hash(),
-            peer_id=self._peer_id_bytes,
-            head_height=height,
-            head_hash=head_hash,
-            alg_policy_root=b"",
-            capabilities=["tx", "blocks", "sync"],
+            node_id=node_id,
+            pubkey=pubkey_b64,
+            listen_addrs=listen_addrs,
             timestamp=int(time.time()),
+            nonce=random.randint(0, 2**31 - 1),
+            capabilities={
+                "agent": f"animica-p2p/{p2p_version.__version__}",
+                "roles": ["full"],
+                "transports": ["tcp"],
+                "capabilities": ["tx", "blocks", "sync"],
+            },
+            head_height=int(height or 0),
+            head_hash=head_hash or None,
             network_best_height=network_best,
+            consensus_id=self._consensus_id(),
+            fork_id=self._fork_id(),
+            protocol_version_str=self._protocol_version(),
+            network_magic=NETWORK_MAGIC.hex(),
         )
-        await self._send(peer, MsgID.HELLO, hello)
+
+    async def _send_handshake_error(
+        self, peer: _PeerState, *, code: str, reason: str, details: Optional[dict[str, Any]] = None
+    ) -> None:
+        try:
+            payload_details = json.dumps(details or {}, separators=(",", ":"))
+            await self._send(
+                peer,
+                MsgID.ERROR,
+                Error(code=0, message=f"{code}: {reason}", details=payload_details),
+            )
+        except Exception:
+            log.debug(
+                "Failed to send handshake error",
+                extra={"remote": peer.remote, "code": code, "reason": reason},
+                exc_info=True,
+            )
+
+    async def _send_hello(self, peer: _PeerState) -> None:
+        handshake = self._build_handshake_v1()
+        payload = hs_v1.encode_handshake(handshake)
+        await self._send_raw(peer, MsgID.HELLO, payload)
 
     async def _maybe_announce_headers_on_hello(
         self, peer: _PeerState, *, remote_height: int, remote_head_hash: Optional[bytes]
@@ -6680,6 +6793,9 @@ class P2PService:
             return
         if mid == int(MsgID.HELLO_ACK):
             await self._handle_hello_ack(peer, payload)
+            return
+        if mid == int(MsgID.ERROR):
+            await self._handle_error(peer, payload)
             return
         if mid == int(MsgID.PING):
             await self._handle_ping(peer, payload)
@@ -6861,477 +6977,185 @@ class P2PService:
                 },
             )
         try:
-            data = self._decode_map(payload)
-        except PeerMisbehavior as exc:
+            handshake = hs_v1.decode_handshake(payload)
+        except Exception as exc:
+            self._record_handshake_exception(peer, stage="handshake_decode", exc=exc)
             self._record_connection_event(
                 "handshake_parse_error",
                 remote=peer.remote,
                 direction=peer.direction,
                 reason=str(exc),
-                stage="hello",
+                stage="handshake_decode",
             )
-            raise
-        allowed = set(Hello.__dataclass_fields__)
-        hello = Hello(**{k: v for k, v in data.items() if k in allowed})
+            await self._send_handshake_error(
+                peer,
+                code="handshake_decode_error",
+                reason=str(exc),
+                details={"stage": "handshake_decode"},
+            )
+            raise PeerMisbehavior(
+                "handshake_parse_error",
+                points=self._score_points["malformed_message"],
+            )
 
         if log.isEnabledFor(logging.DEBUG):
             log.debug(
-                "HELLO parsed",
+                "Handshake decoded",
                 extra={
                     "remote": peer.remote,
                     "direction": peer.direction,
-                    "chain_id": int(getattr(hello, "chain_id", 0) or 0),
-                    "network_name": str(getattr(hello, "network_name", "") or ""),
-                    "protocol_version": str(getattr(hello, "protocol_version", "") or ""),
-                    "genesis_header_hash": bytes(getattr(hello, "genesis_header_hash", b"") or b"").hex(),
-                    "genesis_block_hash": bytes(getattr(hello, "genesis_block_hash", b"") or b"").hex(),
-                    "genesis_identity": bytes(getattr(hello, "genesis_identity", b"") or b"").hex(),
-                    "network_params_hash": bytes(getattr(hello, "network_params_hash", b"") or b"").hex(),
+                    "chain_id": int(handshake.chain_id),
+                    "network": handshake.network,
+                    "protocol_version": handshake.protocol_version,
+                    "genesis_hash": handshake.genesis_hash,
+                    "node_id": handshake.node_id,
                 },
             )
 
-        if bytes(getattr(hello, "network_magic", b"")) != NETWORK_MAGIC:
-            self._log_handshake_mismatch(
-                peer,
-                reason="network_magic_mismatch",
-                peer_chain_id=int(hello.chain_id or 0),
-                peer_genesis_hash=bytes(hello.genesis_hash or b""),
-                peer_network_magic=bytes(getattr(hello, "network_magic", b"") or b""),
-            )
+        async def _reject(reason: str, *, points: int, code: str) -> None:
             await self._send(
                 peer,
                 MsgID.HELLO_ACK,
-                HelloAck(accepted=False, reason="network_magic_mismatch"),
+                HelloAck(accepted=False, reason=reason),
             )
-            self._record_handshake_reject(
-                peer, reason="network_magic_mismatch", stage="hello"
+            await self._send_handshake_error(
+                peer,
+                code=code,
+                reason=reason,
+                details={"stage": "handshake_validate"},
             )
-            raise PeerMisbehavior(
+            self._record_handshake_reject(peer, reason=reason, stage="handshake_validate")
+            raise PeerMisbehavior(reason, points=points)
+
+        if handshake.network_magic and handshake.network_magic != NETWORK_MAGIC.hex():
+            await _reject(
                 "network_magic_mismatch",
                 points=self._score_points["wrong_chain"],
+                code="handshake_validation_error",
             )
 
-        if int(hello.chain_id) != int(self.chain_id):
-            self._log_handshake_mismatch(
-                peer,
-                reason="chain_id_mismatch",
-                peer_chain_id=int(hello.chain_id or 0),
-                peer_genesis_hash=bytes(hello.genesis_hash or b""),
-                peer_network_magic=bytes(getattr(hello, "network_magic", b"") or b""),
-            )
-            await self._send(
-                peer,
-                MsgID.HELLO_ACK,
-                HelloAck(accepted=False, reason="chain_id_mismatch"),
-            )
-            self._record_handshake_reject(peer, reason="chain_id_mismatch", stage="hello")
-            raise PeerMisbehavior(
-                "chain_id_mismatch", points=0
+        if int(handshake.chain_id) != int(self.chain_id):
+            await _reject(
+                "chain_id_mismatch",
+                points=0,
+                code="handshake_validation_error",
             )
 
-        peer_network_name = str(
-            getattr(hello, "network_name", "")
-            or data.get("network_name")
-            or data.get("networkName")
-            or ""
-        ).strip()
         local_network_name = self._network_name()
-        if peer_network_name and local_network_name and peer_network_name != local_network_name:
-            self._log_handshake_mismatch(
-                peer,
-                reason="network_name_mismatch",
-                peer_chain_id=int(hello.chain_id or 0),
-                peer_genesis_hash=bytes(hello.genesis_hash or b""),
-                peer_network_magic=bytes(getattr(hello, "network_magic", b"") or b""),
-                peer_network_name=peer_network_name,
-                local_network_name=local_network_name,
+        if handshake.network and local_network_name and handshake.network != local_network_name:
+            await _reject(
+                "network_name_mismatch",
+                points=0,
+                code="handshake_validation_error",
             )
-            await self._send(
-                peer,
-                MsgID.HELLO_ACK,
-                HelloAck(accepted=False, reason="network_name_mismatch"),
-            )
-            self._record_handshake_reject(
-                peer, reason="network_name_mismatch", stage="hello"
-            )
-            raise PeerMisbehavior("network_name_mismatch", points=0)
 
-        peer_genesis_header = bytes(getattr(hello, "genesis_header_hash", b"")) or bytes(
-            getattr(hello, "genesis_hash", b"")
-        )
-        peer_genesis_block = bytes(getattr(hello, "genesis_block_hash", b""))
         local_genesis_header = self._genesis_header_hash()
-        local_genesis_block = self._genesis_block_hash()
-
-        if not peer_genesis_header and not peer_genesis_block:
-            self._stats["p2p_peers_rejected_genesis_mismatch"] += 1
-            self._log_handshake_mismatch(
-                peer,
-                reason="genesis_missing",
-                peer_chain_id=int(hello.chain_id or 0),
-                peer_genesis_hash=None,
-            )
-            await self._send(
-                peer,
-                MsgID.HELLO_ACK,
-                HelloAck(accepted=False, reason="genesis_missing"),
-            )
-            self._record_handshake_reject(peer, reason="genesis_missing", stage="hello")
-            raise PeerMisbehavior(
+        local_is_fallback = local_genesis_header == GENESIS_FALLBACK
+        peer_genesis_header = bytes.fromhex(handshake.genesis_hash) if handshake.genesis_hash else b""
+        if not peer_genesis_header:
+            await _reject(
                 "genesis_missing",
                 points=self._score_points["wrong_genesis"],
+                code="handshake_validation_error",
             )
-
-        # FIX: Be permissive when local genesis is fallback (all zeros)
-        # This allows nodes with missing genesis config to learn from peers
-        local_is_fallback = local_genesis_header == GENESIS_FALLBACK
-        
-        if peer_genesis_header and peer_genesis_header != local_genesis_header:
-            # If local genesis is fallback and peer has non-zero genesis, learn from peer
-            if local_is_fallback and peer_genesis_header != GENESIS_FALLBACK:
-                log.info(
-                    "Accepting peer with different genesis (local is fallback)",
-                    extra={
-                        "remote": peer.remote,
-                        "peer_genesis": peer_genesis_header.hex(),
-                        "local_genesis_fallback": local_genesis_header.hex(),
-                    },
-                )
-                # Continue handshake - don't reject
-            else:
-                # Normal case: both have real genesis hashes that don't match
-                self._stats["p2p_peers_rejected_genesis_mismatch"] += 1
-                self._log_handshake_mismatch(
-                    peer,
-                    reason="genesis_mismatch",
-                    peer_chain_id=int(hello.chain_id or 0),
-                    peer_genesis_hash=peer_genesis_header,
-                    peer_genesis_header_hash=peer_genesis_header,
-                    peer_genesis_block_hash=peer_genesis_block or None,
-                )
-                await self._send(
-                    peer,
-                    MsgID.HELLO_ACK,
-                    HelloAck(accepted=False, reason="genesis_mismatch"),
-                )
-                self._record_handshake_reject(
-                    peer, reason="genesis_mismatch", stage="hello"
-                )
-                raise PeerMisbehavior(
+        if peer_genesis_header != local_genesis_header:
+            if not local_is_fallback or peer_genesis_header == GENESIS_FALLBACK:
+                await _reject(
                     "genesis_mismatch",
                     points=self._score_points["wrong_genesis"],
-                )
-        if not peer_genesis_header and peer_genesis_block:
-            if peer_genesis_block != local_genesis_block:
-                self._stats["p2p_peers_rejected_genesis_mismatch"] += 1
-                self._log_handshake_mismatch(
-                    peer,
-                    reason="genesis_mismatch",
-                    peer_chain_id=int(hello.chain_id or 0),
-                    peer_genesis_hash=peer_genesis_block,
-                    peer_genesis_header_hash=peer_genesis_header or None,
-                    peer_genesis_block_hash=peer_genesis_block,
-                )
-                await self._send(
-                    peer,
-                    MsgID.HELLO_ACK,
-                    HelloAck(accepted=False, reason="genesis_mismatch"),
-                )
-                self._record_handshake_reject(
-                    peer, reason="genesis_mismatch", stage="hello"
-                )
-                raise PeerMisbehavior(
-                    "genesis_mismatch",
-                    points=self._score_points["wrong_genesis"],
+                    code="handshake_validation_error",
                 )
             log.info(
-                "Peer provided legacy genesis block hash",
+                "Accepting peer with different genesis (local is fallback)",
                 extra={
                     "remote": peer.remote,
-                    "peer_genesis_block_hash": peer_genesis_block.hex(),
-                    "local_genesis_block_hash": local_genesis_block.hex(),
+                    "peer_genesis": peer_genesis_header.hex(),
+                    "local_genesis_fallback": local_genesis_header.hex(),
                 },
             )
 
-        peer_fork_id = int(getattr(hello, "fork_id", 0) or 0)
         local_fork_id = int(self._fork_id() or 0)
+        peer_fork_id = int(handshake.fork_id or 0)
         if peer_fork_id and local_fork_id and peer_fork_id != local_fork_id:
-            self._log_handshake_mismatch(
-                peer,
-                reason="fork_id_mismatch",
-                peer_chain_id=int(hello.chain_id or 0),
-                peer_genesis_hash=peer_genesis_header or peer_genesis_block or b"",
-                peer_fork_id=peer_fork_id,
-            )
-            await self._send(
-                peer,
-                MsgID.HELLO_ACK,
-                HelloAck(accepted=False, reason="fork_id_mismatch"),
-            )
-            self._record_handshake_reject(peer, reason="fork_id_mismatch", stage="hello")
-            raise PeerMisbehavior(
+            await _reject(
                 "fork_id_mismatch",
                 points=self._score_points["wrong_chain"],
-            )
-        if not peer_fork_id and local_fork_id:
-            self._log_handshake_mismatch(
-                peer,
-                reason="fork_id_missing",
-                peer_chain_id=int(hello.chain_id or 0),
-                peer_genesis_hash=peer_genesis_header or peer_genesis_block or b"",
-                peer_fork_id=peer_fork_id,
+                code="handshake_validation_error",
             )
 
-        peer_consensus = str(getattr(hello, "consensus_id", "") or "").strip()
         local_consensus = str(self._consensus_id() or "").strip()
-        if not peer_consensus:
-            self._log_handshake_mismatch(
-                peer,
-                reason="consensus_missing",
-                peer_chain_id=int(hello.chain_id or 0),
-                peer_genesis_hash=peer_genesis_header or peer_genesis_block or b"",
-                peer_consensus_id=None,
-            )
-        elif local_consensus and peer_consensus != local_consensus:
-            self._log_handshake_mismatch(
-                peer,
-                reason="consensus_mismatch",
-                peer_chain_id=int(hello.chain_id or 0),
-                peer_genesis_hash=peer_genesis_header or peer_genesis_block or b"",
-                peer_consensus_id=peer_consensus,
-            )
-
-        if not getattr(hello, "protocol_version", None):
-            self._log_handshake_mismatch(
-                peer,
-                reason="protocol_missing",
-                peer_chain_id=int(hello.chain_id or 0),
-                peer_genesis_hash=peer_genesis_header or peer_genesis_block or b"",
-                peer_protocol_version=getattr(hello, "protocol_version", None),
-            )
-            await self._send(
-                peer,
-                MsgID.HELLO_ACK,
-                HelloAck(accepted=False, reason="protocol_missing"),
-            )
-            self._record_handshake_reject(peer, reason="protocol_missing", stage="hello")
-            raise PeerMisbehavior(
-                "protocol_missing",
-                points=self._score_points["wrong_chain"],
-            )
-
-        if str(getattr(hello, "protocol_version", "")) != str(self._protocol_version()):
-            self._log_handshake_mismatch(
-                peer,
-                reason="protocol_mismatch",
-                peer_chain_id=int(hello.chain_id or 0),
-                peer_genesis_hash=peer_genesis_header or peer_genesis_block or b"",
-                peer_protocol_version=str(getattr(hello, "protocol_version", "")),
-            )
-            await self._send(
-                peer,
-                MsgID.HELLO_ACK,
-                HelloAck(accepted=False, reason="protocol_mismatch"),
-            )
-            self._record_handshake_reject(peer, reason="protocol_mismatch", stage="hello")
-            raise PeerMisbehavior(
-                "protocol_mismatch",
-                points=self._score_points["wrong_chain"],
-            )
-
-        local_repo_state = self._repo_state
-        peer_repo_state = str(
-            getattr(hello, "repo_state", "")
-            or data.get("repo_state")
-            or data.get("repoState")
-            or ""
-        ).strip()
-        if local_repo_state and peer_repo_state and peer_repo_state != local_repo_state:
+        peer_consensus = str(handshake.consensus_id or "").strip()
+        if peer_consensus and local_consensus and peer_consensus != local_consensus:
             log.warning(
-                "Peer repo_state differs; continuing handshake",
+                "Consensus mismatch; continuing handshake",
                 extra={
                     "remote": peer.remote,
-                    "peer_repo_state": peer_repo_state,
-                    "local_repo_state": local_repo_state,
+                    "peer_consensus": peer_consensus,
+                    "local_consensus": local_consensus,
                 },
             )
-        peer.repo_state_ok = True
 
-        if not hello.genesis_identity:
-            self._log_handshake_mismatch(
-                peer,
-                reason="genesis_identity_missing",
-                peer_chain_id=int(hello.chain_id or 0),
-                peer_genesis_hash=peer_genesis_header or peer_genesis_block or b"",
-            )
-            await self._reject_handshake_mismatch(
-                peer,
-                reason="genesis_identity_missing",
+        if handshake.protocol_version_str and str(handshake.protocol_version_str) != str(
+            self._protocol_version()
+        ):
+            await _reject(
+                "protocol_mismatch",
                 points=self._score_points["wrong_chain"],
-            )
-        elif bytes(hello.genesis_identity) != self._genesis_identity():
-            self._log_handshake_mismatch(
-                peer,
-                reason="genesis_identity_mismatch",
-                peer_chain_id=int(hello.chain_id or 0),
-                peer_genesis_hash=peer_genesis_header or peer_genesis_block or b"",
-                peer_genesis_identity=bytes(hello.genesis_identity or b""),
-            )
-            await self._reject_handshake_mismatch(
-                peer,
-                reason="genesis_identity_mismatch",
-                points=self._score_points["wrong_chain"],
+                code="handshake_validation_error",
             )
 
-        if not hello.network_params_hash:
-            self._log_handshake_mismatch(
-                peer,
-                reason="network_params_missing",
-                peer_chain_id=int(hello.chain_id or 0),
-                peer_genesis_hash=peer_genesis_header or peer_genesis_block or b"",
-                peer_genesis_identity=bytes(hello.genesis_identity or b""),
-            )
-            await self._reject_handshake_mismatch(
-                peer,
-                reason="network_params_missing",
-                points=self._score_points["wrong_chain"],
-            )
-        elif bytes(hello.network_params_hash) != self._network_params_hash():
-            self._log_handshake_mismatch(
-                peer,
-                reason="network_params_mismatch",
-                peer_chain_id=int(hello.chain_id or 0),
-                peer_genesis_hash=peer_genesis_header or peer_genesis_block or b"",
-                peer_genesis_identity=bytes(hello.genesis_identity or b""),
-                peer_network_params_hash=bytes(hello.network_params_hash or b""),
-            )
-            await self._reject_handshake_mismatch(
-                peer,
-                reason="network_params_mismatch",
-                points=self._score_points["wrong_chain"],
-            )
-
-        if hello.version and str(hello.version) not in {"1", "2"}:
-            await self._send(
-                peer,
-                MsgID.HELLO_ACK,
-                HelloAck(accepted=False, reason="version_mismatch"),
-            )
-            self._record_handshake_reject(peer, reason="version_mismatch", stage="hello")
-            raise PeerMisbehavior("version_mismatch", points=50)
-
-        now = time.time()
-        try:
-            peer_ts = int(getattr(hello, "timestamp", 0) or 0)
-        except Exception:
-            peer_ts = 0
-        if peer_ts and abs(now - peer_ts) > self._clock_skew_s:
-            await self._send(
-                peer,
-                MsgID.HELLO_ACK,
-                HelloAck(accepted=False, reason="clock_skew"),
-            )
-            self._record_handshake_reject(peer, reason="clock_skew", stage="hello")
-            raise PeerMisbehavior("clock_skew", points=20)
-
-        peer.peer_id = bytes(hello.peer_id).hex()
+        peer.peer_id = handshake.node_id
         self._handshake_manager.on_hello_received(
             peer.session_id,
             peer_id=peer.peer_id,
-            version=str(getattr(hello, "version", "")),
-            agent=str(getattr(hello, "agent", "")),
+            version=str(handshake.protocol_version),
+            agent=str(handshake.capabilities.get("agent") or ""),
         )
         if (
             not self._allow_self_peers
             and peer.peer_id
             and peer.peer_id == self._peer_id_bytes.hex()
         ):
-            await self._send(
-                peer,
-                MsgID.HELLO_ACK,
-                HelloAck(accepted=False, reason="self_peer"),
-            )
-            raise PeerMisbehavior("self_peer", points=0)
+            await _reject("self_peer", points=0, code="handshake_validation_error")
         if (
             not self._is_peer_exempt(peer.remote)
             and peer.peer_id
             and self._is_banned(peer.peer_id)
         ):
-            await self._send(
-                peer,
-                MsgID.HELLO_ACK,
-                HelloAck(accepted=False, reason="banned"),
-            )
-            raise PeerMisbehavior("banned", points=0)
+            await _reject("banned", points=0, code="handshake_validation_error")
+
         remote_host = self._extract_host(peer.remote)
         remote_port = self._extract_port(peer.remote) or 0
         self._maybe_enable_private_network(remote_host, reason="connected_peer")
         if not self._allow_self_peers and self._is_self_address(remote_host, remote_port):
-            await self._send(
-                peer,
-                MsgID.HELLO_ACK,
-                HelloAck(accepted=False, reason="self_peer"),
-            )
-            raise PeerMisbehavior("self_peer", points=0)
-        normalized = dict(data)
-        normalized["chain_id"] = int(getattr(hello, "chain_id", 0) or 0)
-        normalized["network_magic"] = bytes(
-            getattr(hello, "network_magic", b"")
-        ) or data.get("network_magic") or data.get("networkMagic")
-        normalized["head_height"] = int(
-            getattr(hello, "head_height", 0)
-            or data.get("head_height")
-            or data.get("headHeight")
-            or data.get("height")
-            or 0
-        )
-        normalized["head_hash"] = bytes(getattr(hello, "head_hash", b"")) or data.get(
-            "head_hash"
-        ) or data.get("headHash")
-        normalized["genesis_hash"] = (
-            peer_genesis_header
-            or peer_genesis_block
-            or data.get("genesis_hash")
-            or data.get("genesisHash")
-        )
-        normalized["genesis_header_hash"] = (
-            peer_genesis_header
-            or data.get("genesis_header_hash")
-            or data.get("genesisHeaderHash")
-        )
-        normalized["genesis_block_hash"] = (
-            peer_genesis_block
-            or data.get("genesis_block_hash")
-            or data.get("genesisBlockHash")
-        )
-        normalized["fork_id"] = int(
-            getattr(hello, "fork_id", 0)
-            or data.get("fork_id")
-            or data.get("forkId")
-            or 0
-        )
-        normalized["consensus_id"] = str(
-            getattr(hello, "consensus_id", "")
-            or data.get("consensus_id")
-            or data.get("consensusId")
-            or ""
-        )
-        normalized["protocol_version"] = str(
-            getattr(hello, "protocol_version", "")
-            or data.get("protocol_version")
-            or data.get("protocolVersion")
-            or ""
-        )
-        normalized["repo_state"] = peer_repo_state
-        normalized["genesis_identity"] = bytes(
-            getattr(hello, "genesis_identity", b"")
-        ) or data.get("genesis_identity") or data.get("genesisIdentity")
-        normalized["network_params_hash"] = bytes(
-            getattr(hello, "network_params_hash", b"")
-        ) or data.get("network_params_hash") or data.get("networkParamsHash")
-        normalized["network_name"] = peer_network_name
+            await _reject("self_peer", points=0, code="handshake_validation_error")
+
+        normalized: dict[str, Any] = {
+            "version": str(handshake.protocol_version),
+            "agent": str(handshake.capabilities.get("agent") or ""),
+            "chain_id": int(handshake.chain_id),
+            "network_magic": bytes.fromhex(handshake.network_magic)
+            if handshake.network_magic
+            else NETWORK_MAGIC,
+            "head_height": int(handshake.head_height or 0),
+            "head_hash": bytes.fromhex(handshake.head_hash) if handshake.head_hash else b"",
+            "genesis_hash": peer_genesis_header,
+            "genesis_header_hash": peer_genesis_header,
+            "genesis_block_hash": b"",
+            "fork_id": int(handshake.fork_id or 0),
+            "consensus_id": str(handshake.consensus_id or ""),
+            "protocol_version": str(handshake.protocol_version_str or handshake.protocol_version),
+            "repo_state": "",
+            "genesis_identity": b"",
+            "network_params_hash": b"",
+            "network_name": handshake.network,
+            "network_best_height": handshake.network_best_height,
+            "capabilities": list(handshake.capabilities.get("capabilities") or []),
+            "listen_addrs": list(handshake.listen_addrs),
+        }
+
         peer.hello = normalized
-        peer.hello_received_at = time.time()  # Track when hello was received
+        peer.hello_received_at = time.time()
         
         # PHASE 4: Notify HandshakeManager of successful identity validation
         # FIX: Only set identity_ok=True if validation succeeds
@@ -7351,6 +7175,7 @@ class P2PService:
                 # Only set identity_ok=True on successful validation
                 peer.identity_ok = True
                 identity_validated = True
+                self._stats["connected_promoted"] += 1
                 log.info(
                     "HandshakeManager: identity validation complete",
                     extra={
@@ -7429,6 +7254,21 @@ class P2PService:
                 reason=identity_error or "identity_rejected",
                 stage="hello",
             )
+            await self._send(
+                peer,
+                MsgID.HELLO_ACK,
+                HelloAck(accepted=False, reason=identity_error or "identity_rejected"),
+            )
+            await self._send_handshake_error(
+                peer,
+                code="handshake_validation_error",
+                reason=identity_error or "identity_rejected",
+                details={"stage": "identity_validation"},
+            )
+            raise PeerMisbehavior(
+                f"identity_failed:{identity_error or 'identity_rejected'}",
+                points=self._score_points["wrong_chain"],
+            )
         # NOTE: Do NOT set hello_done here - moved to end of function after all validations
         if normalized.get("head_height") is not None:
             self._update_peer_head_table(
@@ -7491,8 +7331,8 @@ class P2PService:
             name=f"p2p.txrelay.mempool_sync@{peer_key}",
         )
 
-        listen_port = int(getattr(hello, "listen_port", 0) or 0)
-        reported_addr = self._reported_peer_addr(peer.remote, listen_port)
+        listen_port = 0
+        reported_addr = None
         if reported_addr:
             parsed = self._normalize_peer_addr(
                 reported_addr, fallback_port=self._local_listen_port()
@@ -7512,7 +7352,7 @@ class P2PService:
         if reported_addr:
             reported_addrs.append(reported_addr)
         fallback_port = self._local_listen_port()
-        for addr in list(getattr(hello, "listen_addrs", []) or []):
+        for addr in list(handshake.listen_addrs or []):
             parsed = self._normalize_peer_addr(
                 addr, fallback_port=fallback_port, source=f"hello:{peer.remote}"
             )
@@ -7700,12 +7540,19 @@ class P2PService:
             allowed = set(HelloAck.__dataclass_fields__)
             ack = HelloAck(**{k: v for k, v in data.items() if k in allowed})
         except Exception as e:
+            self._record_handshake_exception(peer, stage="hello_ack_decode", exc=e)
             self._record_connection_event(
                 "handshake_parse_error",
                 remote=peer.remote,
                 direction=peer.direction,
                 reason=str(e),
                 stage="hello_ack",
+            )
+            await self._send_handshake_error(
+                peer,
+                code="handshake_decode_error",
+                reason=str(e),
+                details={"stage": "hello_ack"},
             )
             log.warning(
                 "Failed to decode HELLO_ACK",
@@ -7773,6 +7620,7 @@ class P2PService:
             if validation_success:
                 peer.identity_ok = True
                 peer.hello_done.set()
+                self._stats["connected_promoted"] += 1
                 
                 # FIX: Sync identity_ok state to PeerRegistry so peer counts correctly
                 # This was missing in the initiator flow, causing outbound peers to never
@@ -7826,6 +7674,36 @@ class P2PService:
             
             # Wake sync to start processing this peer
             self._sync_wakeup.set()
+
+    async def _handle_error(self, peer: _PeerState, payload: bytes) -> None:
+        try:
+            data = self._decode_map(payload)
+            allowed = set(Error.__dataclass_fields__)
+            err = Error(**{k: v for k, v in data.items() if k in allowed})
+        except Exception as exc:
+            self._record_handshake_exception(peer, stage="error_decode", exc=exc)
+            log.warning(
+                "Failed to decode ERROR message",
+                extra={"remote": peer.remote, "peer_id": peer.peer_id},
+                exc_info=exc,
+            )
+            return
+        self._record_connection_event(
+            "peer_error",
+            remote=peer.remote,
+            peer_id=peer.peer_id,
+            direction=peer.direction,
+            reason=err.message,
+        )
+        log.warning(
+            "Peer error message",
+            extra={
+                "remote": peer.remote,
+                "peer_id": peer.peer_id,
+                "message": err.message,
+                "details": err.details,
+            },
+        )
 
     async def _handle_ping(self, peer: _PeerState, payload: bytes) -> None:
         try:

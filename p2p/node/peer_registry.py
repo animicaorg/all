@@ -34,9 +34,11 @@ def _extract_ip(remote: str) -> str:
 class PeerState(str, Enum):
     """Canonical peer connection states."""
     DIALING = "DIALING"
+    TCP_CONNECTED = "TCP_CONNECTED"
     HANDSHAKING = "HANDSHAKING"
     CONNECTED = "CONNECTED"
     FAILED = "FAILED"
+    DISCONNECTED = "DISCONNECTED"
 
 
 @dataclass
@@ -193,7 +195,7 @@ class PeerRegistry:
         session.peer_id = peer_id
         session.last_seen = time.time()
         # Transition to HANDSHAKING state when peer_id is identified
-        if session.state == PeerState.DIALING:
+        if session.state in (PeerState.DIALING, PeerState.TCP_CONNECTED):
             session.state = PeerState.HANDSHAKING
             session.state_since = time.time()
 
@@ -239,6 +241,17 @@ class PeerRegistry:
         session.last_seen = time.time()
         # Also update meta for backward compatibility
         session.meta["identity_ok"] = True
+
+    def mark_tcp_connected(self, session_id: str) -> None:
+        """
+        Mark a peer session as having completed the TCP connection stage.
+        """
+        session = self._sessions.get(session_id)
+        if session is None:
+            return
+        session.state = PeerState.TCP_CONNECTED
+        session.state_since = time.time()
+        session.last_seen = time.time()
     
     def mark_identity_failed(
         self,
@@ -263,6 +276,18 @@ class PeerRegistry:
         session.last_error = reason
         session.last_error_at = time.time()
         session.penalty_score += 1
+
+    def mark_disconnected(self, session_id: str, *, reason: Optional[str] = None) -> None:
+        """
+        Mark a session as disconnected without removing it immediately.
+        """
+        session = self._sessions.get(session_id)
+        if session is None:
+            return
+        session.state = PeerState.DISCONNECTED
+        session.state_since = time.time()
+        session.last_error = reason
+        session.last_error_at = time.time()
     
     def update_peer_tip(
         self,
