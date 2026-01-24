@@ -1368,6 +1368,14 @@ class BlockImporter:
         # Get block info
         height = int(getattr(block.header, "height", 0))
         chain_id = int(getattr(block.header, "chainId", self.params.chain_id))
+
+        # Instant blocks (tx.sendRawTransaction) must never receive rewards
+        if _is_instant_block(block.header):
+            log.debug(
+                "Skipping reward application for instant block",
+                extra={"height": height},
+            )
+            return
         
         # Get coinbase address from block header
         # The coinbase is stored in BlockEnv but we reconstruct it here
