@@ -115,7 +115,7 @@ log "Creating PyInstaller spec file..."
 cat > "$SPEC_FILE" <<SPEC_EOF
 # -*- mode: python ; coding: utf-8 -*-
 from pathlib import Path
-from PyInstaller.utils.hooks import collect_qt_plugins
+from PyInstaller.utils.hooks.qt import collect_qt_plugins
 
 # PyInstaller does NOT guarantee __file__ exists in the spec exec namespace.
 # Use absolute paths injected by the build script instead.
