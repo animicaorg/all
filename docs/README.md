@@ -4,6 +4,16 @@ This `docs/` tree is the **single source of truth** for concepts, specs, and how
 
 ---
 
+## Chain Reset Notice (Mainnet)
+
+Mainnet has undergone a **full chain reset** while keeping **chain_id = 1**. The canonical genesis hash is now:
+
+`0xe523e0e6871d792e05b602e1eb74d52457f7188fdac7a5c4086dcd56dced44ec`
+
+**Action required:** delete old data directories before starting, or enable auto-reset (`ANIMICA_AUTO_RESET_GENESIS_MISMATCH=1` or `animica node up --auto-reset-genesis-mismatch`). Nodes will refuse to start if the DB genesis does not match.
+
+---
+
 ## Getting Started
 
 - **Run a node (devnet stack):** Follow [quickstart-devnet.md](quickstart-devnet.md) to clone the repo, create a venv, and launch the node + miner + dashboard with `ops/run.sh --profile devnet all`.

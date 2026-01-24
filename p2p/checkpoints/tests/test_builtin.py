@@ -12,11 +12,11 @@ def test_mainnet_builtin_checkpoint_exists():
     
     assert len(checkpoints) >= 1, "Mainnet should have at least one built-in checkpoint"
     
-    # Find the checkpoint at height 55795
-    cp_55795 = next((cp for cp in checkpoints if cp.height == 55795), None)
+    # Find the checkpoint at genesis height 0
+    cp_0 = next((cp for cp in checkpoints if cp.height == 0), None)
     
-    assert cp_55795 is not None, "Mainnet should have checkpoint at height 55795"
-    assert cp_55795.hash == "0x0a3205eb3aca078a9c6e8415e5970e198b43c087bff7b71371054bbbc99d8938"
+    assert cp_0 is not None, "Mainnet should have checkpoint at height 0"
+    assert cp_0.hash == "0xe523e0e6871d792e05b602e1eb74d52457f7188fdac7a5c4086dcd56dced44ec"
 
 
 def test_mainnet_checkpoint_properties():
@@ -28,8 +28,8 @@ def test_mainnet_checkpoint_properties():
     # Verify type
     assert isinstance(cp, Checkpoint)
     
-    # Verify height is positive
-    assert cp.height > 0
+    # Verify height is non-negative (genesis is height 0)
+    assert cp.height >= 0
     
     # Verify hash format
     assert cp.hash.startswith("0x")
@@ -97,11 +97,11 @@ def test_builtin_mainnet_checkpoints_constant():
     assert len(mainnet_checkpoints) >= 1
     
     # Find the specific checkpoint
-    cp_55795 = next((cp for cp in mainnet_checkpoints if cp.height == 55795), None)
+    cp_0 = next((cp for cp in mainnet_checkpoints if cp.height == 0), None)
     
-    assert cp_55795 is not None
-    assert cp_55795.height == 55795
-    assert cp_55795.hash == "0x0a3205eb3aca078a9c6e8415e5970e198b43c087bff7b71371054bbbc99d8938"
+    assert cp_0 is not None
+    assert cp_0.height == 0
+    assert cp_0.hash == "0xe523e0e6871d792e05b602e1eb74d52457f7188fdac7a5c4086dcd56dced44ec"
 
 
 def test_builtin_checkpoints_sorted():

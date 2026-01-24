@@ -237,8 +237,9 @@ def validate_mainnet_genesis_coinbase(
         )
 
     # Check distribution (order-independent comparison)
+    # Ignore zero-balance outputs so genesis marker accounts don't invalidate premine checks.
     expected_map = {addr: amt for addr, amt in MAINNET_PREMINE_DISTRIBUTION}
-    actual_map = {addr: amt for addr, amt in coinbase_outputs}
+    actual_map = {addr: amt for addr, amt in coinbase_outputs if int(amt) > 0}
 
     if expected_map != actual_map:
         return (
