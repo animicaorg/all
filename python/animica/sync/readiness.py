@@ -143,6 +143,16 @@ def assess_tx_submission_readiness(
         if head_height >= best_header_height and empty_inflight:
             return True, info
 
+        header_probe_inflight = (
+            pending_header_batches == 0
+            and in_flight_blocks == 0
+            and queued_blocks_count == 0
+            and in_flight_headers <= 1
+        )
+
+        if head_height >= best_header_height and header_probe_inflight:
+            return True, info
+
     if (
         last_header_error == "at_tip"
         and head_height is not None
