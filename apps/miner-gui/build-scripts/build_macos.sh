@@ -115,6 +115,7 @@ log "Creating PyInstaller spec file..."
 cat > "$SPEC_FILE" <<SPEC_EOF
 # -*- mode: python ; coding: utf-8 -*-
 from pathlib import Path
+from PyInstaller.utils.hooks import collect_qt_plugins
 
 # PyInstaller does NOT guarantee __file__ exists in the spec exec namespace.
 # Use absolute paths injected by the build script instead.
@@ -129,10 +130,13 @@ datas = []
 if logo.exists():
     datas.append((str(logo), "."))
 
+datas += collect_qt_plugins("PySide6")
+
 hiddenimports = [
     "PySide6.QtCore",
     "PySide6.QtGui",
     "PySide6.QtWidgets",
+    "PySide6.QtNetwork",
     "shiboken6",
     "matplotlib",
     "matplotlib.backends.backend_qtagg",
@@ -220,6 +224,27 @@ if [[ ! -d "$APP_BUNDLE" ]]; then
 fi
 
 log "App bundle created successfully at: $APP_BUNDLE"
+
+# ---- Embed node payload (offline install requirement) ----
+NODE_PAYLOAD_DIR="${ANIMICA_NODE_PAYLOAD:-$REPO_ROOT/dist/animica-node}"
+NODE_BIN="$NODE_PAYLOAD_DIR/animica-node"
+if [[ ! -x "$NODE_BIN" ]]; then
+  die "Node payload missing or not executable at: $NODE_BIN (set ANIMICA_NODE_PAYLOAD)"
+fi
+
+NODE_DEST="$APP_BUNDLE/Contents/Resources/node/animica-node"
+log "Embedding node payload from $NODE_PAYLOAD_DIR -> $NODE_DEST"
+rm -rf "$NODE_DEST"
+mkdir -p "$(dirname "$NODE_DEST")"
+rsync -a "$NODE_PAYLOAD_DIR/" "$NODE_DEST/"
+chmod +x "$NODE_DEST/animica-node"
+
+log "Generating manifests..."
+"$PY" -m animica_miner_gui.backend.manifest \
+  --node-root "$NODE_DEST" \
+  --app-bundle "$APP_BUNDLE" \
+  --node-out "$APP_BUNDLE/Contents/Resources/node-manifest.json" \
+  --gui-out "$APP_BUNDLE/Contents/Resources/gui-manifest.json"
 
 # ---- Create DMG ----
 DMG_NAME="Animica-Miner-GUI-${VERSION}-macOS-$(uname -m).dmg"

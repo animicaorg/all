@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
 
 from animica_miner_gui.backend.config import load_config, MiningAppConfig
 from animica_miner_gui.backend.miner_runner import get_runner, MiningEvent
+from animica_miner_gui.backend.node_controller import NodeController
 from animica_miner_gui.ui.tabs.dashboard import DashboardTab
 from animica_miner_gui.ui.tabs.devices import DevicesTab
 from animica_miner_gui.ui.tabs.pools import PoolsTab
@@ -35,6 +36,7 @@ from animica_miner_gui.ui.tabs.configuration import ConfigurationTab
 from animica_miner_gui.ui.tabs.logs import LogsTab
 from animica_miner_gui.ui.tabs.stats import StatsTab
 from animica_miner_gui.ui.tabs.wallet import WalletTab
+from animica_miner_gui.ui.tabs.console import ConsoleTab
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +58,12 @@ class MainWindow(QMainWindow):
         
         # Load configuration
         self.config = load_config()
+
+        # Node controller
+        self.node_controller = NodeController(self)
+        self.node_controller.nodeStarted.connect(self.on_node_started)
+        self.node_controller.nodeFailed.connect(self.on_node_failed)
+        self.node_controller.statusUpdated.connect(self.on_node_status)
         
         # Apply theme
         self.apply_theme()
@@ -146,13 +154,14 @@ class MainWindow(QMainWindow):
         self.tabs = QTabWidget()
         
         # Create tabs
-        self.dashboard_tab = DashboardTab(self.config)
+        self.dashboard_tab = DashboardTab(self.config, self.node_controller)
         self.devices_tab = DevicesTab(self.config)
         self.pools_tab = PoolsTab(self.config)
-        self.wallet_tab = WalletTab(self.config)
+        self.wallet_tab = WalletTab(self.config, self.node_controller)
         self.config_tab = ConfigurationTab(self.config)
         self.logs_tab = LogsTab()
         self.stats_tab = StatsTab()
+        self.console_tab = ConsoleTab(self.node_controller)
         
         # Add tabs
         self.tabs.addTab(self.dashboard_tab, "Dashboard")
@@ -162,6 +171,7 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.config_tab, "Configuration")
         self.tabs.addTab(self.logs_tab, "Logs")
         self.tabs.addTab(self.stats_tab, "Stats/Graphs")
+        self.tabs.addTab(self.console_tab, "Console")
         
         layout.addWidget(self.tabs)
         central_widget.setLayout(layout)
@@ -170,6 +180,10 @@ class MainWindow(QMainWindow):
         # Connect dashboard signals
         self.dashboard_tab.start_mining_requested.connect(self.start_mining)
         self.dashboard_tab.stop_mining_requested.connect(self.stop_mining)
+
+        self.node_controller.statusUpdated.connect(self.logs_tab.update_node_log_line)
+
+        self.node_controller.start()
     
     def setup_menu(self) -> None:
         """Set up the menu bar."""
@@ -438,6 +452,30 @@ class MainWindow(QMainWindow):
                 self.close()
         else:
             self.close()
+
+    def raise_and_activate(self) -> None:
+        """Raise the main window and bring it to foreground."""
+        self.show()
+        self.raise_()
+        self.activateWindow()
+
+    def on_node_started(self, rpc_url: str, token: str) -> None:
+        """Handle node started event."""
+        self.config.network.rpc_url = rpc_url
+        logger.info("Node started. rpc_url=%s", rpc_url)
+
+    def on_node_failed(self, error: str) -> None:
+        """Handle node start failure."""
+        logger.error("Node failed: %s", error)
+        QMessageBox.critical(
+            self,
+            "Node Error",
+            f"Node bundle missing/broken or failed to start.\n{error}",
+        )
+
+    def on_node_status(self, status: dict) -> None:
+        """Update status bar with node info if available."""
+        _ = status
     
     def restart_wizard(self) -> None:
         """Restart the setup wizard."""
@@ -509,4 +547,5 @@ class MainWindow(QMainWindow):
             # Stop mining before closing
             if self.miner_runner.is_running():
                 self.stop_mining()
+            self.node_controller.stop()
             event.accept()
