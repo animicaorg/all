@@ -124,6 +124,35 @@ class HandshakeManager:
         )
         
         return session_id
+
+    def track_session(self, session_id: str, remote: str, direction: str) -> None:
+        """
+        Register an existing PeerRegistry session for handshake tracking.
+
+        This is used when the caller creates registry sessions directly and still
+        wants HandshakeManager to manage identity validation and timeouts.
+
+        Args:
+            session_id: Existing PeerRegistry session ID
+            remote: Remote peer address (e.g., "tcp://host:port")
+            direction: Connection direction ("inbound" or "outbound")
+        """
+        if session_id in self._sessions:
+            return
+
+        self._sessions[session_id] = HandshakeSession(
+            session_id=session_id,
+            remote=remote,
+            direction=direction,
+        )
+        log.debug(
+            "Handshake tracking registered for existing session",
+            extra={
+                "session_id": session_id,
+                "remote": remote,
+                "direction": direction,
+            },
+        )
     
     def on_hello_sent(self, session_id: str) -> None:
         """Mark that Hello message was sent to peer."""
