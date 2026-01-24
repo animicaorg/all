@@ -142,6 +142,7 @@ a = Analysis(
         'PySide6.QtCore',
         'PySide6.QtGui',
         'PySide6.QtWidgets',
+        'PySide6.QtNetwork',
         'matplotlib.backends.backend_qt5agg',
         'pydantic',
         'httpx',

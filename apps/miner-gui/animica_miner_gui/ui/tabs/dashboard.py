@@ -4,7 +4,7 @@ import logging
 import math
 from typing import Optional
 
-from PySide6.QtCore import Signal, Slot, QTimer
+from PySide6.QtCore import Qt, Signal, Slot
 from PySide6.QtWidgets import (
     QGridLayout,
     QGroupBox,
@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
 
 from animica_miner_gui.backend.config import MiningAppConfig
 from animica_miner_gui.backend.miner_runner import MiningEvent, EventType
+from animica_miner_gui.backend.node_controller import NodeController
 from animica_miner_gui.backend.rpc_client import RPCClient
 
 logger = logging.getLogger(__name__)
@@ -34,15 +35,17 @@ class DashboardTab(QWidget):
     # Signal for thread-safe event handling
     mining_event_received = Signal(object)  # MiningEvent
     
-    def __init__(self, config: MiningAppConfig, parent: Optional[QWidget] = None):
+    def __init__(self, config: MiningAppConfig, node_controller: NodeController, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.config = config
+        self.node_controller = node_controller
         self.rpc_client: Optional[RPCClient] = None
         self.current_hashrate = 0.0
         self.current_theta_micro = 0
         self.current_share_target = 0.25
         self.setup_ui()
-        self.setup_rpc_timer()
+        self.node_controller.rpcChanged.connect(self.on_rpc_changed)
+        self.node_controller.statusUpdated.connect(self.on_status_updated)
         
         # Connect signal to slot for thread-safe UI updates
         self.mining_event_received.connect(self._handle_mining_event_in_main_thread)
@@ -51,8 +54,8 @@ class DashboardTab(QWidget):
         """Set up the UI."""
         layout = QVBoxLayout()
         
-        # Status group
-        status_group = QGroupBox("Status")
+        # Node status group
+        status_group = QGroupBox("Node Status")
         status_layout = QGridLayout()
         
         # Chain info
@@ -60,13 +63,36 @@ class DashboardTab(QWidget):
         self.chain_id_label = QLabel("--")
         status_layout.addWidget(self.chain_id_label, 0, 1)
         
-        status_layout.addWidget(QLabel("Block Height:"), 1, 0)
+        status_layout.addWidget(QLabel("Head Height:"), 1, 0)
         self.height_label = QLabel("--")
         status_layout.addWidget(self.height_label, 1, 1)
+
+        status_layout.addWidget(QLabel("Head Hash:"), 2, 0)
+        self.head_hash_label = QLabel("--")
+        self.head_hash_label.setWordWrap(True)
+        status_layout.addWidget(self.head_hash_label, 2, 1)
         
-        status_layout.addWidget(QLabel("Sync Status:"), 2, 0)
+        status_layout.addWidget(QLabel("Sync Status:"), 3, 0)
         self.sync_label = QLabel("--")
-        status_layout.addWidget(self.sync_label, 2, 1)
+        status_layout.addWidget(self.sync_label, 3, 1)
+
+        status_layout.addWidget(QLabel("Peers (in/out/total):"), 4, 0)
+        self.peers_label = QLabel("--")
+        status_layout.addWidget(self.peers_label, 4, 1)
+
+        status_layout.addWidget(QLabel("Node PID:"), 5, 0)
+        self.node_pid_label = QLabel("--")
+        status_layout.addWidget(self.node_pid_label, 5, 1)
+
+        status_layout.addWidget(QLabel("RPC URL:"), 6, 0)
+        self.rpc_url_label = QLabel("--")
+        self.rpc_url_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        status_layout.addWidget(self.rpc_url_label, 6, 1)
+
+        status_layout.addWidget(QLabel("Logs:"), 7, 0)
+        self.logs_label = QLabel("--")
+        self.logs_label.setWordWrap(True)
+        status_layout.addWidget(self.logs_label, 7, 1)
         
         status_group.setLayout(status_layout)
         layout.addWidget(status_group)
@@ -146,77 +172,62 @@ class DashboardTab(QWidget):
         layout.addStretch()
         self.setLayout(layout)
     
-    def setup_rpc_timer(self) -> None:
-        """Set up timer to periodically query RPC for chain data."""
-        # Initialize RPC client
+    def on_rpc_changed(self, rpc_url: str, token: str) -> None:
+        """Update the RPC client when the node changes."""
         try:
-            self.rpc_client = RPCClient(self.config.network.rpc_url)
+            self.rpc_client = RPCClient(rpc_url, token=token)
+            self.rpc_url_label.setText(rpc_url)
         except Exception as e:
             logger.error(f"Failed to initialize RPC client: {e}")
-            return
-        
-        # Set up timer to update chain info every 5 seconds
-        self.rpc_timer = QTimer()
-        self.rpc_timer.timeout.connect(self.update_chain_info)
-        self.rpc_timer.start(5000)
-        
-        # Do initial update
-        self.update_chain_info()
-    
-    def update_chain_info(self) -> None:
-        """Query RPC for current chain head and update display."""
-        if not self.rpc_client:
-            return
-        
-        try:
-            head = self.rpc_client.get_chain_head()
-            
-            # Update chain ID
-            chain_id = head.get("chainId") or head.get("chain_id")
-            if chain_id:
-                self.chain_id_label.setText(str(chain_id))
-            
-            # Update height
-            height = head.get("number") or head.get("height")
-            if height is not None:
-                self.height_label.setText(str(height))
-            
-            # Update sync status
-            try:
-                sync_status = self.rpc_client.get_sync_status()
-                if sync_status.get("syncing"):
-                    current = sync_status.get("currentBlock", 0)
-                    highest = sync_status.get("highestBlock", 0)
-                    self.sync_label.setText(f"Syncing: {current}/{highest}")
-                else:
-                    self.sync_label.setText("Synced")
-            except Exception:
-                self.sync_label.setText("Unknown")
-            
-            # Try to get template info to extract theta if we don't have it yet
-            if self.current_theta_micro == 0:
-                try:
-                    payout_address = self.config.miner.payout_address
-                    if payout_address:
-                        template = self.rpc_client.get_block_template(payout_address)
-                        theta_micro = template.get("thetaMicro") or template.get("theta_micro")
-                        if theta_micro:
-                            self.current_theta_micro = int(theta_micro)
-                            theta_nats = theta_micro / 1_000_000
-                            self.difficulty_label.setText(f"{theta_nats:.2f} nats")
-                            # Update time to block when we get difficulty
-                            self._update_time_to_block()
-                        
-                        # Also try to get share target if available
-                        share_target = template.get("shareTarget") or template.get("share_target")
-                        if share_target:
-                            self.current_share_target = float(share_target)
-                except Exception as e:
-                    logger.debug(f"Could not fetch template info: {e}")
-            
-        except Exception as e:
-            logger.debug(f"Failed to update chain info: {e}")
-            # Don't update labels if RPC fails - keep previous values
+
+    def on_status_updated(self, status: dict) -> None:
+        """Update node status from backend polling."""
+        head = status.get("head") or {}
+        chain_id = head.get("chainId") or head.get("chain_id")
+        if chain_id:
+            self.chain_id_label.setText(str(chain_id))
+
+        height = head.get("number") or head.get("height")
+        if height is not None:
+            self.height_label.setText(str(height))
+
+        head_hash = head.get("hash") or head.get("blockHash") or head.get("block_hash")
+        if head_hash:
+            self.head_hash_label.setText(str(head_hash))
+
+        sync_status = status.get("sync") or {}
+        if sync_status.get("syncing"):
+            current = sync_status.get("currentBlock", 0)
+            highest = sync_status.get("highestBlock", 0)
+            self.sync_label.setText(f"Syncing: {current}/{highest}")
+        elif sync_status:
+            self.sync_label.setText("Synced")
+        else:
+            self.sync_label.setText("Unknown")
+
+        peers = status.get("peers") or {}
+        if isinstance(peers, dict):
+            inbound = peers.get("inbound")
+            outbound = peers.get("outbound")
+            total = peers.get("total")
+            if total is not None:
+                self.peers_label.setText(f"{inbound or 0}/{outbound or 0}/{total}")
+
+        pid = status.get("pid")
+        if pid:
+            self.node_pid_label.setText(str(pid))
+
+        rpc_url = status.get("rpc_url")
+        if rpc_url:
+            self.rpc_url_label.setText(rpc_url)
+
+        logs_dir = status.get("logs_dir")
+        last_log = status.get("last_log_line")
+        if logs_dir:
+            display = f"{logs_dir}"
+            if last_log:
+                display = f"{logs_dir}\n{last_log}"
+            self.logs_label.setText(display)
     
     def refresh_balance(self) -> None:
         """Query RPC for wallet balance."""
