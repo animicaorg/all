@@ -1153,6 +1153,7 @@ def mine_blocks(
             pending_before = 0
             aggregated_rejected: dict[str, int] = {}
             rejected_by_hash_sample: dict[str, str] = {}
+            last_accepted_height: int | None = None
             
             # Mine blocks one at a time with delay between them
             for i in range(count):
@@ -1374,8 +1375,11 @@ def mine_blocks(
                     # PoW FOUND - hash meets target
                     digest_int = int.from_bytes(digest, "big")
                     pow_valid = digest_int <= target_int
+                    display_height = header.height
+                    if last_accepted_height is not None and display_height <= last_accepted_height:
+                        display_height = last_accepted_height + 1
                     typer.secho(
-                        f"  FOUND: Block {i + 1}/{count} PoW (height: {header.height}, "
+                        f"  FOUND: Block {i + 1}/{count} PoW (height: {display_height}, "
                         f"nonce: {nonce}, hash: 0x{digest.hex()[:16]}...)",
                         fg=typer.colors.CYAN,
                     )
@@ -1508,6 +1512,8 @@ def mine_blocks(
                     credited_amount = submit_result.get("credited_amount", block_reward)
                     new_head_hash = submit_result.get("new_head") or submit_result.get("block_hash")
                     final_height = int(submit_result.get("new_head", 0))
+                    if final_height > 0:
+                        last_accepted_height = final_height
 
                     typer.secho(
                         f"  ACCEPTED: Block {i + 1}/{count} (height: {final_height}, "
