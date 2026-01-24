@@ -1384,6 +1384,48 @@ def mine_blocks(
                         fg=typer.colors.CYAN,
                     )
 
+                    parent_info = template.get("parent", {}) if isinstance(template, dict) else {}
+                    parent_hash = parent_info.get("hash") or template.get("parentHash")
+                    if not parent_hash:
+                        parent_hash = "0x" + header.parentHash.hex()
+
+                    try:
+                        head_snapshot = call_rpc("chain_getHead", [], url)
+                    except Exception as exc:
+                        if verbose:
+                            typer.secho(
+                                f"  Warning: Unable to verify head before submit ({exc})",
+                                fg=typer.colors.YELLOW,
+                            )
+                        head_snapshot = None
+
+                    head_hash = None
+                    if isinstance(head_snapshot, dict):
+                        head_hash = (
+                            head_snapshot.get("hash")
+                            or head_snapshot.get("block_hash")
+                            or head_snapshot.get("head")
+                        )
+
+                    if (
+                        isinstance(head_hash, str)
+                        and isinstance(parent_hash, str)
+                        and head_hash.lower() != parent_hash.lower()
+                    ):
+                        typer.secho(
+                            f"  REJECTED: Block {i + 1}/{count} (reason: stale_template)",
+                            fg=typer.colors.RED,
+                        )
+                        if stale_attempts < 3:
+                            stale_attempts += 1
+                            typer.secho(
+                                f"  Retrying with fresh template (stale attempt {stale_attempts}/3)",
+                                fg=typer.colors.YELLOW,
+                            )
+                            continue
+                        stale_attempts = 0
+                        break
+
                     header = header.__class__(
                         v=header.v,
                         chainId=header.chainId,
@@ -1409,10 +1451,6 @@ def mine_blocks(
                         k: ("0x" + v.hex() if isinstance(v, (bytes, bytearray)) else v)
                         for k, v in header.to_obj().items()
                     }
-                    parent_info = template.get("parent", {}) if isinstance(template, dict) else {}
-                    parent_hash = parent_info.get("hash") or template.get("parentHash")
-                    if not parent_hash:
-                        parent_hash = "0x" + header.parentHash.hex()
                     parent_height = parent_info.get("height")
                     template_id = template.get("templateId") or template.get("template_id")
                     block_payload = {
