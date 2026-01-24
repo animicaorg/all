@@ -25,6 +25,7 @@ type Item = {
 const NAV_ITEMS: Item[] = [
   { to: "/edit", label: "Edit & Sim", icon: <Emoji>🧪</Emoji> },
   { to: "/deploy", label: "Deploy", icon: <Emoji>🚀</Emoji> },
+  { to: "/interact", label: "Interact", icon: <Emoji>🧩</Emoji> },
   { to: "/verify", label: "Verify", icon: <Emoji>🔍</Emoji> },
   { to: "/ai", label: "AI Jobs", icon: <Emoji>🤖</Emoji> },
   { to: "/quantum", label: "Quantum", icon: <Emoji>⚛️</Emoji> },

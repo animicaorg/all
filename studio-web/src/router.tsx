@@ -9,6 +9,7 @@ const VerifyPage = lazy(() => import('./pages/Verify/VerifyPage'));
 const AIJobsPage = lazy(() => import('./pages/AI/AIJobsPage'));
 const QuantumJobsPage = lazy(() => import('./pages/Quantum/QuantumJobsPage'));
 const BeaconPage = lazy(() => import('./pages/Randomness/BeaconPage'));
+const InteractPage = lazy(() => import('./pages/Interact/InteractPage'));
 // For DA we reuse the Edit panel as a standalone page for convenience.
 const DaPanel = lazy(() => import('./pages/Edit/Panels/DaPanel'));
 
@@ -44,6 +45,7 @@ export const router = createBrowserRouter(
         // Deploy / Verify flows
         { path: 'deploy', element: <DeployPage /> },
         { path: 'verify', element: <VerifyPage /> },
+        { path: 'interact', element: <InteractPage /> },
 
         // AI / Quantum job tools
         { path: 'ai', element: <AIJobsPage /> },
