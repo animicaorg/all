@@ -1179,6 +1179,15 @@ class BlockImporter:
         canonical_height = self.block_db.get_canonical_height()
         if canonical_height is None:
             canonical_height = 0
+
+        # Remove canonical height contributions for detached non-instant blocks
+        for h in detached_list:
+            header = self.block_db.get_header_by_hash(h)
+            if header is None:
+                continue
+            if not _is_instant_block(header):
+                canonical_height = max(0, canonical_height - 1)
+        self.block_db.set_canonical_height(canonical_height)
         
         for h in attached_list:
             header = self.block_db.get_header_by_hash(h)
