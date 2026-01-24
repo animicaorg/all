@@ -19,6 +19,8 @@ def _params() -> ChainParams:
         alg_policy_root=b"\x01" * 32,
         poies_policy_root=b"\x02" * 32,
         theta_initial=100,
+        theta_min=100,
+        theta_max=1_000_000,
         gamma_total_cap=1_000_000,
         retarget=RetargetParams(
             window=24,
