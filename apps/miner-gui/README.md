@@ -22,6 +22,9 @@ Production-quality Qt (PySide6) desktop GUI miner for Animica blockchain with ex
 
 Pre-built executables are available for macOS, Windows, and Linux. Download the latest release from the [Releases page](https://github.com/animicaorg/all/releases).
 
+macOS DMGs include the bundled node payload for offline installs. The node is embedded inside the app bundle at:
+`Animica Miner GUI.app/Contents/Resources/node/animica-node/animica-node`.
+
 ### Building from Source
 
 See [build-scripts/README.md](build-scripts/README.md) for instructions on building standalone executables for:
@@ -180,6 +183,18 @@ The miner automatically detects available mining hardware:
 1. Check log level in Configuration tab (default: INFO)
 2. Increase to DEBUG for more detail
 3. Use Export button to save logs for analysis
+
+### macOS Startup Debugging
+
+Run the packaged binary directly to capture startup logs:
+```
+/Applications/Animica Miner GUI.app/Contents/MacOS/Animica Miner GUI
+```
+
+To debug Qt plugin loading:
+```
+QT_DEBUG_PLUGINS=1 /Applications/Animica Miner GUI.app/Contents/MacOS/Animica Miner GUI
+```
 
 ## Architecture
 
