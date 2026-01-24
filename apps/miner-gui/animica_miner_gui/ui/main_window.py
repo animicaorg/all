@@ -163,7 +163,7 @@ class MainWindow(QMainWindow):
         self.logs_tab = LogsTab()
         self.stats_tab = StatsTab()
         self.console_tab = ConsoleTab(self.node_controller)
-        self.ide_tab = IDETab()
+        self.ide_tab = IDETab(self.config, self.node_controller)
         
         # Add tabs
         self.tabs.addTab(self.dashboard_tab, "Dashboard")

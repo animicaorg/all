@@ -27,7 +27,11 @@ logger = logging.getLogger(__name__)
 
 class RPCError(Exception):
     """RPC request error."""
-    pass
+
+    def __init__(self, message: str, *, code: Optional[int] = None, data: Optional[dict] = None) -> None:
+        super().__init__(message)
+        self.code = code
+        self.data = data
 
 
 class RPCClient:
@@ -105,7 +109,11 @@ class RPCClient:
                 raise RPCError("No HTTP client available (install httpx or requests)")
             
             if "error" in data:
-                error = data["error"]
+                error = data["error"] or {}
+                if isinstance(error, dict):
+                    message = error.get("message") or str(error)
+                    code = error.get("code")
+                    raise RPCError(f"RPC error: {message}", code=code, data=error)
                 raise RPCError(f"RPC error: {error}")
             
             return data.get("result")
