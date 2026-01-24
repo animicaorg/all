@@ -2,18 +2,21 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
     QComboBox,
+    QDialog,
     QHBoxLayout,
     QInputDialog,
     QLabel,
     QMessageBox,
+    QPlainTextEdit,
     QPushButton,
     QSplitter,
     QToolButton,
@@ -24,9 +27,19 @@ from PySide6.QtWidgets import (
 from animica_miner_gui.ide.command_palette import CommandPalette, PaletteCommand
 from animica_miner_gui.ide.controller import IDEController
 from animica_miner_gui.ide.editor_tabs import EditorTabs
+from animica_miner_gui.ide.manifest_editor import ManifestEditor
 from animica_miner_gui.ide.output_panel import OutputPanels
 from animica_miner_gui.ide.project_tree import ProjectTree
 from animica_miner_gui.ide.settings import IDESettings, load_ide_settings, save_ide_settings
+from animica_miner_gui.ide.toolchain.diagnostics import Diagnostic
+from animica_miner_gui.ide.toolchain.manifest import (
+    ManifestLoadError,
+    load_manifest,
+    resolve_abi,
+    resolve_manifest_path,
+    resolve_source_path,
+)
+from animica_miner_gui.ide.toolchain.utils import canonical_json_str
 
 logger = logging.getLogger(__name__)
 
@@ -52,11 +65,23 @@ class IDETab(QWidget):
         refresh_button.setText("↻")
         refresh_button.clicked.connect(self.refresh_workspace)
 
+        build_button = QPushButton("Build Contract")
+        build_button.clicked.connect(self.run_build)
+
+        simulate_call_button = QPushButton("Simulate Call")
+        simulate_call_button.clicked.connect(self.run_simulate_call)
+
+        simulate_tx_button = QPushButton("Simulate Tx")
+        simulate_tx_button.clicked.connect(self.run_simulate_tx)
+
         top_bar = QHBoxLayout()
         top_bar.addWidget(QLabel("Workspace:"))
         top_bar.addWidget(self.workspace_picker, stretch=1)
         top_bar.addWidget(open_button)
         top_bar.addWidget(refresh_button)
+        top_bar.addWidget(build_button)
+        top_bar.addWidget(simulate_call_button)
+        top_bar.addWidget(simulate_tx_button)
 
         self.project_tree = ProjectTree(self)
         self.project_tree.fileOpenRequested.connect(self._open_file)
@@ -68,11 +93,12 @@ class IDETab(QWidget):
             self.editor_tabs.autosave_timer.stop()
 
         self.output_panels = OutputPanels(self)
+        self.output_panels.problemActivated.connect(self._open_problem_location)
 
         inspector = QWidget()
         inspector_layout = QVBoxLayout(inspector)
-        inspector_layout.addWidget(QLabel("Inspector"))
-        inspector_layout.addStretch(1)
+        self.manifest_editor = ManifestEditor(inspector)
+        inspector_layout.addWidget(self.manifest_editor)
 
         horizontal_split = QSplitter(Qt.Horizontal)
         horizontal_split.addWidget(self.project_tree)
@@ -94,6 +120,7 @@ class IDETab(QWidget):
         self._connect_controller()
         self._restore_workspace()
         self._restore_open_tabs()
+        self._sync_manifest_editor()
 
     def _setup_actions(self) -> None:
         self.command_palette_action = QAction("Command Palette", self)
@@ -101,10 +128,20 @@ class IDETab(QWidget):
         self.command_palette_action.triggered.connect(self.open_command_palette)
         self.addAction(self.command_palette_action)
 
-        self.build_action = QAction("Build", self)
+        self.build_action = QAction("Build Contract", self)
         self.build_action.setShortcut(QKeySequence("Ctrl+B"))
         self.build_action.triggered.connect(self.run_build)
         self.addAction(self.build_action)
+
+        self.simulate_call_action = QAction("Simulate Call", self)
+        self.simulate_call_action.setShortcut(QKeySequence("Ctrl+Shift+C"))
+        self.simulate_call_action.triggered.connect(self.run_simulate_call)
+        self.addAction(self.simulate_call_action)
+
+        self.simulate_tx_action = QAction("Simulate Tx", self)
+        self.simulate_tx_action.setShortcut(QKeySequence("Ctrl+Shift+T"))
+        self.simulate_tx_action.triggered.connect(self.run_simulate_tx)
+        self.addAction(self.simulate_tx_action)
 
         self.deploy_action = QAction("Deploy", self)
         self.deploy_action.setShortcut(QKeySequence("Ctrl+Shift+D"))
@@ -134,6 +171,7 @@ class IDETab(QWidget):
     def _connect_controller(self) -> None:
         self.controller.buildFinished.connect(self._on_build_finished)
         self.controller.deployFinished.connect(self._on_deploy_finished)
+        self.controller.simulateFinished.connect(self._on_simulation_finished)
 
     def _restore_workspace(self) -> None:
         if self.settings.last_workspace:
@@ -159,6 +197,7 @@ class IDETab(QWidget):
             self.settings.last_workspace = path
             self._add_recent_project(path)
             self._persist_settings()
+            self._sync_manifest_editor()
 
     def select_workspace(self) -> None:
         directory = self.project_tree.open_workspace_dialog()
@@ -198,7 +237,9 @@ class IDETab(QWidget):
             PaletteCommand("Save All", self.editor_tabs.save_all),
             PaletteCommand("Find", lambda: self.editor_tabs.toggle_find(True)),
             PaletteCommand("Replace", lambda: self.editor_tabs.toggle_find(True)),
-            PaletteCommand("Build Project", self.run_build),
+            PaletteCommand("Build Contract", self.run_build),
+            PaletteCommand("Simulate Call", self.run_simulate_call),
+            PaletteCommand("Simulate Tx", self.run_simulate_tx),
             PaletteCommand("Deploy Project", self.run_deploy),
         ]
         palette = CommandPalette(commands, self)
@@ -227,19 +268,97 @@ class IDETab(QWidget):
 
     def run_build(self) -> None:
         self.output_panels.append_output("Build", "Starting build...")
+        self.output_panels.clear_problems()
         self.controller.build_project(self.workspace_picker.currentText())
 
     def run_deploy(self) -> None:
         self.output_panels.append_output("Deploy", "Starting deploy...")
         self.controller.deploy_project(self.workspace_picker.currentText())
 
-    def _on_build_finished(self, success: bool, message: str) -> None:
-        status = "✅" if success else "❌"
-        self.output_panels.append_output("Build", f"{status} {message}")
+    def _on_build_finished(self, result) -> None:
+        status = "✅" if result.success else "❌"
+        self.output_panels.append_output("Build", f"{status} {result.message}")
+        if result.artifacts:
+            self.output_panels.append_output(
+                "Build",
+                f"Artifacts: {result.artifacts.manifest_path} (hash {result.artifacts.code_hash})",
+            )
+        diagnostics: List[Diagnostic] = result.diagnostics or []
+        if diagnostics:
+            self.output_panels.set_problems(diagnostics)
+            for diag in diagnostics:
+                self.output_panels.append_output("Build", f"⚠️ {diag.display_text()}")
 
     def _on_deploy_finished(self, success: bool, message: str) -> None:
         status = "✅" if success else "❌"
         self.output_panels.append_output("Deploy", f"{status} {message}")
+
+    def run_simulate_call(self) -> None:
+        self._run_simulation(is_tx=False)
+
+    def run_simulate_tx(self) -> None:
+        self._run_simulation(is_tx=True)
+
+    def _run_simulation(self, *, is_tx: bool) -> None:
+        manifest, abi, source_path = self._load_project_manifest()
+        if not manifest or not abi or not source_path:
+            return
+        functions = [fn.get("name") for fn in abi.get("functions", []) if fn.get("name")]
+        if not functions:
+            QMessageBox.warning(self, "Simulate", "No ABI functions found.")
+            return
+        dialog = SimulationDialog(functions=functions, is_tx=is_tx, parent=self)
+        if dialog.exec() != QDialog.Accepted:
+            return
+        method, args, tx_env = dialog.values
+        self.output_panels.append_output(
+            "Simulation",
+            f"Running {'tx' if is_tx else 'call'} {method}...",
+        )
+        manifest_with_source = dict(manifest)
+        manifest_with_source["source"] = str(source_path)
+        manifest_with_source["abi"] = abi
+        if is_tx:
+            self.controller.run_simulation_tx(manifest_with_source, method, args, tx_env)
+        else:
+            self.controller.run_simulation_call(manifest_with_source, method, args)
+
+    def _on_simulation_finished(self, kind: str, result) -> None:
+        status = "✅" if result.ok else "❌"
+        self.output_panels.append_output("Simulation", f"{status} {result.message}")
+        if result.payload:
+            payload = canonical_json_str(result.payload)
+            self.output_panels.append_output("Simulation", payload)
+
+    def _open_problem_location(self, path: str, line: int, column: int) -> None:
+        self.editor_tabs.open_file_at(Path(path), line, column)
+
+    def _load_project_manifest(
+        self,
+    ) -> tuple[Optional[dict], Optional[dict], Optional[Path]]:
+        workspace = Path(self.workspace_picker.currentText())
+        manifest_path = resolve_manifest_path(workspace)
+        if not manifest_path:
+            QMessageBox.warning(self, "Manifest", "No manifest.json found.")
+            return None, None, None
+        try:
+            manifest = load_manifest(manifest_path)
+            source_path = resolve_source_path(manifest, manifest_path)
+            abi = resolve_abi(manifest, manifest_path)
+            if not abi:
+                raise ManifestLoadError("Manifest missing ABI definition")
+        except ManifestLoadError as exc:
+            QMessageBox.warning(self, "Manifest", str(exc))
+            return None, None, None
+        return manifest, abi, source_path
+
+    def _sync_manifest_editor(self) -> None:
+        workspace = self.workspace_picker.currentText()
+        if not workspace:
+            self.manifest_editor.set_manifest_path(None)
+            return
+        manifest_path = resolve_manifest_path(Path(workspace))
+        self.manifest_editor.set_manifest_path(manifest_path)
 
     def prompt_close(self) -> bool:
         if not self.editor_tabs.close_all():
@@ -253,3 +372,56 @@ class IDETab(QWidget):
         self.settings.open_files = self.editor_tabs.open_files()
         self.settings.active_file = self.editor_tabs.active_file()
         save_ide_settings(self.settings)
+
+
+class SimulationDialog(QDialog):
+    """Dialog for running a call or tx simulation."""
+
+    def __init__(self, functions: List[str], is_tx: bool, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Simulate Tx" if is_tx else "Simulate Call")
+        self.values: tuple[str, dict, dict] = ("", {}, {})
+
+        self.method_picker = QComboBox()
+        self.method_picker.addItems(functions)
+
+        self.args_editor = QPlainTextEdit("{}")
+        self.args_editor.setPlaceholderText("Args JSON")
+        self.tx_editor = QPlainTextEdit("{}")
+        self.tx_editor.setPlaceholderText("Tx env JSON")
+        self.tx_editor.setVisible(is_tx)
+
+        run_button = QPushButton("Run")
+        run_button.clicked.connect(self._accept)
+        cancel_button = QPushButton("Cancel")
+        cancel_button.clicked.connect(self.reject)
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(QLabel("Method"))
+        layout.addWidget(self.method_picker)
+        layout.addWidget(QLabel("Arguments (JSON)"))
+        layout.addWidget(self.args_editor)
+        if is_tx:
+            layout.addWidget(QLabel("Tx Env (JSON)"))
+            layout.addWidget(self.tx_editor)
+        button_row = QHBoxLayout()
+        button_row.addStretch(1)
+        button_row.addWidget(cancel_button)
+        button_row.addWidget(run_button)
+        layout.addLayout(button_row)
+
+    def _accept(self) -> None:
+        try:
+            args = json.loads(self.args_editor.toPlainText() or "{}")
+            tx_env = json.loads(self.tx_editor.toPlainText() or "{}")
+        except json.JSONDecodeError as exc:
+            QMessageBox.warning(self, "Simulation", f"Invalid JSON: {exc}")
+            return
+        if not isinstance(args, dict):
+            QMessageBox.warning(self, "Simulation", "Arguments must be a JSON object.")
+            return
+        if not isinstance(tx_env, dict):
+            QMessageBox.warning(self, "Simulation", "Tx env must be a JSON object.")
+            return
+        self.values = (self.method_picker.currentText(), args, tx_env)
+        self.accept()
