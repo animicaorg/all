@@ -63,6 +63,8 @@ def test_block_importer_initializes_with_full_params():
         alg_policy_root=b"\x00" * 32,
         poies_policy_root=b"\x00" * 32,
         theta_initial=1_000_000,
+        theta_min=1_000_000,
+        theta_max=3_000_000,
         gamma_total_cap=1_000_000,
         retarget=RetargetParams(
             window=2048,
@@ -129,6 +131,8 @@ def test_block_importer_full_params_dict_fallback():
         alg_policy_root=b"\x00" * 32,
         poies_policy_root=b"\x00" * 32,
         theta_initial=1_000_000,
+        theta_min=1_000_000,
+        theta_max=3_000_000,
         gamma_total_cap=1_000_000,
         retarget=RetargetParams(
             window=2048,

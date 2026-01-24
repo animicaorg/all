@@ -22,6 +22,8 @@ policy_roots:
   poies_policy_root:"0x…"  # 32-byte hex
 consensus:
   theta_initial:  1450000        # µ-nats threshold at genesis (example)
+  theta_min: 500000              # µ-nats minimum threshold
+  theta_max: 3000000000          # µ-nats maximum threshold (hard cap)
   gamma_total_cap: 900000         # total Γ cap in µ-nats-equivalent units
   retarget:
     window:  2048                 # blocks per EMA window
@@ -163,6 +165,8 @@ class ChainParams:
 
     # Consensus knobs
     theta_initial: int  # micro-nats (µ-nats) threshold at genesis
+    theta_min: int  # micro-nats (µ-nats) lower bound for Θ
+    theta_max: int  # micro-nats (µ-nats) upper bound for Θ
     gamma_total_cap: int  # total Γ cap (same unit scale as ψ inputs)
     retarget: RetargetParams
 
@@ -189,6 +193,14 @@ class ChainParams:
         theta_initial = int(cons["theta_initial"])
         if theta_initial <= 0:
             raise ValueError("consensus.theta_initial must be > 0")
+        theta_min = int(cons.get("theta_min", theta_initial))
+        if theta_min <= 0:
+            raise ValueError("consensus.theta_min must be > 0")
+        theta_max = int(cons.get("theta_max", theta_min))
+        if theta_max <= 0:
+            raise ValueError("consensus.theta_max must be > 0")
+        if theta_max < theta_min:
+            raise ValueError("consensus.theta_max must be ≥ consensus.theta_min")
 
         gamma_total_cap = int(cons["gamma_total_cap"])
         if gamma_total_cap <= 0:
@@ -206,6 +218,8 @@ class ChainParams:
                 roots["poies_policy_root"], field="policy_roots.poies_policy_root"
             ),
             theta_initial=theta_initial,
+            theta_min=theta_min,
+            theta_max=theta_max,
             gamma_total_cap=gamma_total_cap,
             retarget=RetargetParams.from_mapping(cons["retarget"]),
             block=BlockLimits.from_mapping(block),
@@ -300,6 +314,14 @@ class ChainParams:
         theta_initial = int(cons.get("theta_initial_munats", 1_000_000))
         if theta_initial <= 0:
             raise ValueError("consensus.theta_initial must be > 0")
+        theta_min = int(cons.get("theta_min_munats", theta_initial))
+        if theta_min <= 0:
+            raise ValueError("consensus.theta_min must be > 0")
+        theta_max = int(cons.get("theta_max_munats", theta_min))
+        if theta_max <= 0:
+            raise ValueError("consensus.theta_max must be > 0")
+        if theta_max < theta_min:
+            raise ValueError("consensus.theta_max must be ≥ consensus.theta_min")
         gamma_cfg = cons.get("gamma") or {}
         gamma_total_cap = int(gamma_cfg.get("total_cap_munats", 1_000_000))
         if gamma_total_cap <= 0:
@@ -341,6 +363,8 @@ class ChainParams:
             alg_policy_root=alg_root,
             poies_policy_root=poies_root,
             theta_initial=theta_initial,
+            theta_min=theta_min,
+            theta_max=theta_max,
             gamma_total_cap=gamma_total_cap,
             retarget=retarget,
             block=block_limits,
@@ -396,6 +420,8 @@ class ChainParams:
             },
             "consensus": {
                 "theta_initial": self.theta_initial,
+                "theta_min": self.theta_min,
+                "theta_max": self.theta_max,
                 "gamma_total_cap": self.gamma_total_cap,
                 "retarget": {
                     "window": self.retarget.window,
