@@ -2326,6 +2326,8 @@ def _timestamp_bounds(parent_header: Any) -> tuple[int, int | None, int]:
     now = int(time.time())
     max_future = int(os.getenv("ANIMICA_MAX_FUTURE_SECONDS", "5"))
     timestamp_max = now + max_future if max_future > 0 else None
+    if timestamp_max is not None and parent_ts > timestamp_max:
+        timestamp_max = parent_ts
     candidate = max(now, timestamp_min)
     if timestamp_max is not None and candidate > timestamp_max:
         candidate = max(timestamp_min, timestamp_max)
