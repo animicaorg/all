@@ -47,6 +47,11 @@ def main() -> int:
         _setup_logging()
         install_exception_hooks()
 
+        if "--verify-packaged" in sys.argv:
+            from animica_miner_gui.packaging.verify import main as verify_main
+            args = [arg for arg in sys.argv[1:] if arg != "--verify-packaged"]
+            return verify_main(args)
+
         # Ensure config directory exists
         from animica_miner_gui.backend.config import get_default_config_dir
         config_dir = get_default_config_dir()

@@ -10,6 +10,7 @@ from animica_miner_gui.backend.rpc_client import RPCClient
 from animica_miner_gui.ide.deploy_manager import DeploymentManager, DeploymentOptions, DeploymentResult
 
 from animica_miner_gui.ide.toolchain.builder import BuildResult, build_contract
+from animica_miner_gui.ide.toolchain.preflight import PreflightResult, run_preflight
 from animica_miner_gui.ide.toolchain.simulator import SimulationResult, simulate_call, simulate_tx
 
 
@@ -17,6 +18,7 @@ class IDEController(QObject):
     """Controller for IDE actions (build/deploy/simulate) with signals."""
 
     buildFinished = Signal(BuildResult)
+    preflightFinished = Signal(PreflightResult)
     deployFinished = Signal(bool, str, object)
     deployProgress = Signal(str)
     simulateFinished = Signal(str, SimulationResult)
@@ -28,6 +30,17 @@ class IDEController(QObject):
         """Run a deterministic build for the current workspace."""
         result = build_contract(Path(workspace))
         self.buildFinished.emit(result)
+
+    def preflight_project(self, workspace: str, rpc_client: RPCClient | None) -> None:
+        """Run preflight checks for build, simulate, and RPC reachability."""
+
+        def _run() -> None:
+            result = run_preflight(Path(workspace), rpc_client)
+            self.preflightFinished.emit(result)
+
+        import threading
+
+        threading.Thread(target=_run, daemon=True).start()
 
     def deploy_project(
         self,
