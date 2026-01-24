@@ -53,8 +53,8 @@
   },
 
   "genesis": {
-    "hash": "0x00000000000000000000000000000000",
-    "timestamp": "2026-01-01T00:00:00Z",
+    "hash": "0xe523e0e6871d792e05b602e1eb74d52457f7188fdac7a5c4086dcd56dced44ec",
+    "timestamp": "2026-05-01T00:00:00Z",
     "initialHeight": 0
   },
 
