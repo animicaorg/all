@@ -1825,7 +1825,10 @@ class BlockImporter:
             return "timestamp regression"
         if self._max_future_seconds > 0:
             now = int(time.time())
-            if ts > now + self._max_future_seconds:
+            future_cap = now + self._max_future_seconds
+            if parent_ts is not None and parent_ts > future_cap:
+                future_cap = parent_ts
+            if ts > future_cap:
                 return "timestamp too far in future"
         if self._min_block_spacing_ms > 0 and parent_ts is not None:
             delta_ms = (ts - parent_ts) * 1000
