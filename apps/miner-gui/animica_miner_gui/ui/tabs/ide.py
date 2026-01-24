@@ -6,15 +6,19 @@ import json
 import logging
 from pathlib import Path
 from typing import List, Optional
+from urllib.parse import urlparse
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
+    QFormLayout,
+    QGroupBox,
     QHBoxLayout,
     QInputDialog,
     QLabel,
+    QLineEdit,
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
@@ -25,13 +29,23 @@ from PySide6.QtWidgets import (
 )
 
 from animica_miner_gui.ide.command_palette import CommandPalette, PaletteCommand
+from animica_miner_gui.backend.config import MiningAppConfig, NetworkType
+from animica_miner_gui.backend.node_controller import NodeController
+from animica_miner_gui.backend.rpc_client import RPCClient
 from animica_miner_gui.ide.controller import IDEController
+from animica_miner_gui.ide.deploy_manager import (
+    DeploymentOptions,
+    DeploymentResult,
+    WalletEntry,
+    load_wallet_entries,
+)
 from animica_miner_gui.ide.editor_tabs import EditorTabs
 from animica_miner_gui.ide.manifest_editor import ManifestEditor
 from animica_miner_gui.ide.output_panel import OutputPanels
 from animica_miner_gui.ide.project_tree import ProjectTree
-from animica_miner_gui.ide.settings import IDESettings, load_ide_settings, save_ide_settings
+from animica_miner_gui.ide.settings import load_ide_settings, save_ide_settings
 from animica_miner_gui.ide.toolchain.diagnostics import Diagnostic
+from animica_miner_gui.ide.toolchain.builder import BuildResult, build_contract
 from animica_miner_gui.ide.toolchain.manifest import (
     ManifestLoadError,
     load_manifest,
@@ -47,11 +61,21 @@ logger = logging.getLogger(__name__)
 class IDETab(QWidget):
     """IDE tab with project explorer and editor."""
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        config: Optional[MiningAppConfig] = None,
+        node_controller: Optional[NodeController] = None,
+        parent: QWidget | None = None,
+    ) -> None:
         super().__init__(parent)
 
         self.settings = load_ide_settings()
         self.controller = IDEController(self)
+        self.config = config
+        self.node_controller = node_controller
+        self.rpc_client: Optional[RPCClient] = None
+        if self.node_controller is not None:
+            self.node_controller.rpcChanged.connect(self._on_rpc_changed)
 
         self.workspace_picker = QComboBox()
         self.workspace_picker.setEditable(True)
@@ -171,6 +195,7 @@ class IDETab(QWidget):
     def _connect_controller(self) -> None:
         self.controller.buildFinished.connect(self._on_build_finished)
         self.controller.deployFinished.connect(self._on_deploy_finished)
+        self.controller.deployProgress.connect(self._on_deploy_progress)
         self.controller.simulateFinished.connect(self._on_simulation_finished)
 
     def _restore_workspace(self) -> None:
@@ -272,8 +297,54 @@ class IDETab(QWidget):
         self.controller.build_project(self.workspace_picker.currentText())
 
     def run_deploy(self) -> None:
+        workspace = Path(self.workspace_picker.currentText())
+        if not workspace.exists():
+            QMessageBox.warning(self, "Deploy", "Select a valid workspace.")
+            return
+        if not self.rpc_client:
+            QMessageBox.warning(self, "Deploy", "RPC client not connected. Start the local node first.")
+            return
+        if not self._rpc_is_local(self.rpc_client.rpc_url):
+            QMessageBox.warning(self, "Deploy", "Deploy is restricted to the bundled local node (localhost RPC).")
+            return
+
+        build_result = build_contract(workspace)
+        if not build_result.success or not build_result.artifacts:
+            self._on_build_finished(build_result)
+            return
+
+        wallet_path = self._resolve_wallet_path()
+        wallets = load_wallet_entries(wallet_path)
+        if not wallets:
+            QMessageBox.warning(self, "Deploy", "No wallets found. Configure a wallet first.")
+            return
+
+        dialog = DeployDialog(
+            build_result=build_result,
+            wallets=wallets,
+            network=self._current_network_label(),
+            parent=self,
+        )
+        if dialog.exec() != QDialog.Accepted:
+            return
+
+        if not self._ensure_sync_ready():
+            return
+
+        if not self._warn_if_no_peers():
+            return
+
+        options = dialog.options(self.settings.explorer_url)
+        if not self._confirm_deploy(options, build_result):
+            return
+
         self.output_panels.append_output("Deploy", "Starting deploy...")
-        self.controller.deploy_project(self.workspace_picker.currentText())
+        self.controller.deploy_project(
+            str(workspace),
+            rpc_client=self.rpc_client,
+            wallet_path=wallet_path,
+            options=options,
+        )
 
     def _on_build_finished(self, result) -> None:
         status = "✅" if result.success else "❌"
@@ -289,9 +360,19 @@ class IDETab(QWidget):
             for diag in diagnostics:
                 self.output_panels.append_output("Build", f"⚠️ {diag.display_text()}")
 
-    def _on_deploy_finished(self, success: bool, message: str) -> None:
+    def _on_deploy_finished(self, success: bool, message: str, result_obj: object) -> None:
         status = "✅" if success else "❌"
         self.output_panels.append_output("Deploy", f"{status} {message}")
+        if isinstance(result_obj, DeploymentResult) and result_obj.tx_hash:
+            self.output_panels.append_output("Deploy", f"Tx hash: {result_obj.tx_hash}")
+            if result_obj.contract_address:
+                self.output_panels.append_output("Deploy", f"Contract: {result_obj.contract_address}")
+            if result_obj.block_height is not None:
+                self.output_panels.append_output("Deploy", f"Block height: {result_obj.block_height}")
+            self._show_deploy_result_dialog(result_obj)
+
+    def _on_deploy_progress(self, message: str) -> None:
+        self.output_panels.append_output("Deploy", message)
 
     def run_simulate_call(self) -> None:
         self._run_simulation(is_tx=False)
@@ -330,6 +411,9 @@ class IDETab(QWidget):
             payload = canonical_json_str(result.payload)
             self.output_panels.append_output("Simulation", payload)
 
+    def _on_rpc_changed(self, rpc_url: str, token: str) -> None:
+        self.rpc_client = RPCClient(rpc_url, token=token)
+
     def _open_problem_location(self, path: str, line: int, column: int) -> None:
         self.editor_tabs.open_file_at(Path(path), line, column)
 
@@ -352,6 +436,129 @@ class IDETab(QWidget):
             return None, None, None
         return manifest, abi, source_path
 
+    def _resolve_wallet_path(self) -> Path:
+        if self.config and self.config.miner.wallet_file:
+            return Path(self.config.miner.wallet_file).expanduser()
+        return Path.home() / ".animica" / "wallets.json"
+
+    def _current_network_label(self) -> str:
+        if not self.config:
+            return "devnet"
+        network_type = self.config.network.network_type
+        if isinstance(network_type, NetworkType):
+            return network_type.value if network_type != NetworkType.CUSTOM else "devnet"
+        return str(network_type or "devnet")
+
+    def _rpc_is_local(self, rpc_url: str) -> bool:
+        try:
+            parsed = urlparse(rpc_url)
+        except Exception:
+            return False
+        host = parsed.hostname or ""
+        return host in {"127.0.0.1", "localhost"}
+
+    def _ensure_sync_ready(self) -> bool:
+        if not self.rpc_client:
+            return False
+        sync = self.rpc_client.get_sync_status()
+        syncing = bool(sync.get("syncing"))
+        current = sync.get("currentBlock") or sync.get("current_block")
+        highest = sync.get("highestBlock") or sync.get("highest_block")
+        if highest is not None and current is not None and int(current) < int(highest):
+            syncing = True
+        if not syncing:
+            return True
+        dialog = QMessageBox(self)
+        dialog.setWindowTitle("Sync Required")
+        dialog.setText("Node is still syncing. Deployments require a synced node.")
+        open_button = dialog.addButton("Open Sync Panel", QMessageBox.ActionRole)
+        dialog.addButton("Cancel", QMessageBox.RejectRole)
+        dialog.exec()
+        if dialog.clickedButton() == open_button:
+            self._open_sync_panel()
+        return False
+
+    def _open_sync_panel(self) -> None:
+        window = self.window()
+        if not window:
+            return
+        tabs = getattr(window, "tabs", None)
+        if tabs is None:
+            return
+        for idx in range(tabs.count()):
+            if tabs.tabText(idx) == "Dashboard":
+                tabs.setCurrentIndex(idx)
+                return
+
+    def _warn_if_no_peers(self) -> bool:
+        if not self.rpc_client:
+            return False
+        peers = self.rpc_client.get_peer_summary()
+        total = peers.get("total")
+        if total not in (None, 0):
+            return True
+        choice = QMessageBox.warning(
+            self,
+            "No Peers Connected",
+            "Peer count is 0. You can still deploy locally, but the transaction may not propagate.",
+            QMessageBox.Ok | QMessageBox.Cancel,
+        )
+        return choice == QMessageBox.Ok
+
+    def _confirm_deploy(self, options: DeploymentOptions, build_result) -> bool:
+        manifest = build_result.manifest or {}
+        summary = [
+            f"Network: {options.network}",
+            f"From: {options.from_address}",
+            f"Max fee: {options.max_fee}",
+            f"Gas limit: {options.gas_limit or 'auto'}",
+            f"Contract: {manifest.get('name', 'Unknown')}@{manifest.get('version', '0.0.0')}",
+            f"Code hash: {build_result.artifacts.code_hash}",
+        ]
+        confirm = QMessageBox.question(
+            self,
+            "Confirm Deploy",
+            "Sign and deploy this contract?\n\n" + "\n".join(summary),
+            QMessageBox.Yes | QMessageBox.No,
+        )
+        return confirm == QMessageBox.Yes
+
+    def _show_deploy_result_dialog(self, result: DeploymentResult) -> None:
+        if not result.tx_hash:
+            return
+        explorer_url = (self.settings.explorer_url or "").strip().rstrip("/")
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Deployment Result")
+        layout = QVBoxLayout(dialog)
+
+        tx_label = QLabel(f"Tx hash: {result.tx_hash}")
+        tx_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        layout.addWidget(tx_label)
+
+        if result.contract_address:
+            addr_label = QLabel(f"Contract: {result.contract_address}")
+            addr_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+            layout.addWidget(addr_label)
+
+        if result.block_height is not None:
+            layout.addWidget(QLabel(f"Block height: {result.block_height}"))
+
+        if explorer_url:
+            tx_link = f"{explorer_url}/tx/{result.tx_hash}"
+            tx_link_label = QLabel(f'<a href="{tx_link}">View transaction</a>')
+            tx_link_label.setOpenExternalLinks(True)
+            layout.addWidget(tx_link_label)
+            if result.contract_address:
+                contract_link = f"{explorer_url}/contract/{result.contract_address}"
+                contract_label = QLabel(f'<a href="{contract_link}">View contract</a>')
+                contract_label.setOpenExternalLinks(True)
+                layout.addWidget(contract_label)
+
+        close_button = QPushButton("Close")
+        close_button.clicked.connect(dialog.accept)
+        layout.addWidget(close_button)
+        dialog.exec()
+
     def _sync_manifest_editor(self) -> None:
         workspace = self.workspace_picker.currentText()
         if not workspace:
@@ -372,6 +579,100 @@ class IDETab(QWidget):
         self.settings.open_files = self.editor_tabs.open_files()
         self.settings.active_file = self.editor_tabs.active_file()
         save_ide_settings(self.settings)
+
+
+class DeployDialog(QDialog):
+    """Dialog to configure contract deployment options."""
+
+    def __init__(
+        self,
+        *,
+        build_result: BuildResult,
+        wallets: List[WalletEntry],
+        network: str,
+        parent: Optional[QWidget] = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Deploy Contract")
+        self._wallets = wallets
+        self._default_max_fee = 2_000_000
+
+        summary_group = QGroupBox("Artifact Summary")
+        summary_layout = QFormLayout(summary_group)
+        manifest = build_result.manifest or {}
+        summary_layout.addRow("Name:", QLabel(str(manifest.get("name", "Unknown"))))
+        summary_layout.addRow("Version:", QLabel(str(manifest.get("version", "0.0.0"))))
+        summary_layout.addRow("Entry:", QLabel(str(manifest.get("entry", "contract.py"))))
+        summary_layout.addRow("Code hash:", QLabel(build_result.artifacts.code_hash))
+
+        self.network_picker = QComboBox()
+        self.network_picker.addItems(["mainnet", "testnet", "devnet"])
+        if network in {"mainnet", "testnet", "devnet"}:
+            self.network_picker.setCurrentText(network)
+
+        self.from_picker = QComboBox()
+        for entry in wallets:
+            label = entry.label or "Wallet"
+            self.from_picker.addItem(f"{label} — {entry.address}", entry.address)
+
+        advanced_group = QGroupBox("Advanced (fee/gas)")
+        advanced_group.setCheckable(True)
+        advanced_group.setChecked(False)
+        advanced_layout = QFormLayout(advanced_group)
+
+        self.gas_input = QLineEdit()
+        self.gas_input.setPlaceholderText("auto")
+        self.max_fee_input = QLineEdit(str(self._default_max_fee))
+
+        advanced_layout.addRow("Gas limit:", self.gas_input)
+        advanced_layout.addRow("Max fee:", self.max_fee_input)
+
+        deploy_button = QPushButton("Deploy")
+        deploy_button.clicked.connect(self.accept)
+        cancel_button = QPushButton("Cancel")
+        cancel_button.clicked.connect(self.reject)
+
+        button_row = QHBoxLayout()
+        button_row.addStretch(1)
+        button_row.addWidget(cancel_button)
+        button_row.addWidget(deploy_button)
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(summary_group)
+
+        form_group = QGroupBox("Deployment")
+        form_layout = QFormLayout(form_group)
+        form_layout.addRow("Network:", self.network_picker)
+        form_layout.addRow("From address:", self.from_picker)
+        layout.addWidget(form_group)
+
+        layout.addWidget(advanced_group)
+        layout.addLayout(button_row)
+
+    def options(self, explorer_url: str) -> DeploymentOptions:
+        gas_limit = None
+        gas_text = self.gas_input.text().strip()
+        if gas_text:
+            try:
+                gas_limit = int(gas_text)
+            except ValueError:
+                gas_limit = None
+
+        max_fee = self._default_max_fee
+        max_fee_text = self.max_fee_input.text().strip()
+        if max_fee_text:
+            try:
+                max_fee = int(max_fee_text)
+            except ValueError:
+                max_fee = self._default_max_fee
+
+        return DeploymentOptions(
+            from_address=str(self.from_picker.currentData()),
+            network=self.network_picker.currentText(),
+            gas_limit=gas_limit,
+            max_fee=max_fee,
+            explorer_url=explorer_url.strip() if explorer_url else None,
+        )
 
 
 class SimulationDialog(QDialog):

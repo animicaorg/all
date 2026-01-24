@@ -6,6 +6,9 @@ from pathlib import Path
 
 from PySide6.QtCore import QObject, Signal
 
+from animica_miner_gui.backend.rpc_client import RPCClient
+from animica_miner_gui.ide.deploy_manager import DeploymentManager, DeploymentOptions, DeploymentResult
+
 from animica_miner_gui.ide.toolchain.builder import BuildResult, build_contract
 from animica_miner_gui.ide.toolchain.simulator import SimulationResult, simulate_call, simulate_tx
 
@@ -14,7 +17,8 @@ class IDEController(QObject):
     """Controller for IDE actions (build/deploy/simulate) with signals."""
 
     buildFinished = Signal(BuildResult)
-    deployFinished = Signal(bool, str)
+    deployFinished = Signal(bool, str, object)
+    deployProgress = Signal(str)
     simulateFinished = Signal(str, SimulationResult)
 
     def __init__(self, parent: QObject | None = None) -> None:
@@ -25,10 +29,29 @@ class IDEController(QObject):
         result = build_contract(Path(workspace))
         self.buildFinished.emit(result)
 
-    def deploy_project(self, workspace: str) -> None:
-        """Simulate a deploy operation for now."""
-        message = f"Deploy queued for workspace: {workspace or 'No workspace'}"
-        self.deployFinished.emit(True, message)
+    def deploy_project(
+        self,
+        workspace: str,
+        *,
+        rpc_client: RPCClient,
+        wallet_path: Path,
+        options: DeploymentOptions,
+    ) -> None:
+        """Deploy a contract package from the workspace."""
+
+        def _run() -> None:
+            manager = DeploymentManager(
+                rpc_client,
+                workspace=Path(workspace),
+                wallet_path=wallet_path,
+                on_progress=self.deployProgress.emit,
+            )
+            result = manager.deploy(options)
+            self.deployFinished.emit(result.success, result.message, result)
+
+        import threading
+
+        threading.Thread(target=_run, daemon=True).start()
 
     def run_simulation_call(self, manifest: dict, method: str, args: dict) -> None:
         result = simulate_call(manifest, method, args)
