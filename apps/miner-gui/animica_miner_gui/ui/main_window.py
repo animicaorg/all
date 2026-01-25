@@ -26,9 +26,15 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from animica_miner_gui.backend.config import load_config, MiningAppConfig
+from animica_miner_gui.backend.config import (
+    load_config,
+    get_default_config_path,
+    MiningAppConfig,
+    NetworkMode,
+)
 from animica_miner_gui.backend.miner_runner import get_runner, MiningEvent
 from animica_miner_gui.backend.node_controller import NodeController
+from animica_miner_gui.backend.app_paths import get_startup_log_path
 from animica_miner_gui.ui.tabs.dashboard import DashboardTab
 from animica_miner_gui.ui.tabs.devices import DevicesTab
 from animica_miner_gui.ui.tabs.pools import PoolsTab
@@ -59,6 +65,8 @@ class MainWindow(QMainWindow):
         
         # Load configuration
         self.config = load_config()
+        if self.config._load_warnings:
+            self._show_config_repair_notice()
 
         # Node controller
         self.node_controller = NodeController(self)
@@ -84,6 +92,9 @@ class MainWindow(QMainWindow):
         self.update_timer.timeout.connect(self.update_ui)
         self.update_timer.start(1000)  # Update every second
         
+        # Start network services
+        self.start_network_services()
+
         # Auto-start mining if configured
         if self.config.miner.auto_start:
             logger.info("Auto-starting mining")
@@ -185,8 +196,6 @@ class MainWindow(QMainWindow):
         self.dashboard_tab.stop_mining_requested.connect(self.stop_mining)
 
         self.node_controller.statusUpdated.connect(self.logs_tab.update_node_log_line)
-
-        self.node_controller.start()
 
     def closeEvent(self, event) -> None:  # noqa: D401 - Qt override
         """Prompt for unsaved IDE changes on close."""
@@ -407,7 +416,7 @@ class MainWindow(QMainWindow):
         # Config summary
         diagnostics.append("=== Configuration ===")
         diagnostics.append(f"Network: {self.config.network.network_type.value}")
-        diagnostics.append(f"RPC URL: {self.config.network.rpc_url}")
+        diagnostics.append(f"RPC URL: {self.config.network.resolved_rpc_url()}")
         diagnostics.append(f"Mining Mode: {self.config.miner.mining_mode.value}")
         diagnostics.append(f"CPU Threads: {self.config.cpu.threads}")
         diagnostics.append(f"GPU Count: {len(self.config.gpus)}")
@@ -472,7 +481,37 @@ class MainWindow(QMainWindow):
     def on_node_started(self, rpc_url: str, token: str) -> None:
         """Handle node started event."""
         self.config.network.rpc_url = rpc_url
+        self.config.network.mode = NetworkMode.LOCAL
         logger.info("Node started. rpc_url=%s", rpc_url)
+
+    def start_network_services(self) -> None:
+        """Initialize RPC connectivity based on config mode."""
+        if self.config.network.mode == NetworkMode.EXTERNAL:
+            external_url = self.config.network.external_rpc_url or self.config.network.custom_rpc_url
+            if external_url:
+                self.config.network.rpc_url = external_url
+                logger.info("network_mode=external rpc_url=%s", external_url)
+                self.status_bar.showMessage("Connecting to external RPC...")
+                self.node_controller.connect_external_rpc(external_url)
+            else:
+                logger.warning("network_mode=external but no RPC URL configured")
+                self.status_bar.showMessage("External RPC not configured")
+            return
+
+        logger.info("network_mode=local")
+        self.status_bar.showMessage("Starting node...")
+        self.node_controller.start()
+
+    def _show_config_repair_notice(self) -> None:
+        """Show dialog about repaired config file."""
+        config_path = get_default_config_path()
+        startup_log = get_startup_log_path()
+        message = (
+            "Config invalid, repaired defaults applied.\n\n"
+            f"Config path: {config_path}\n"
+            f"Startup log: {startup_log}"
+        )
+        QMessageBox.warning(self, "Configuration Repaired", message)
 
     def on_node_failed(self, error: str) -> None:
         """Handle node start failure."""
@@ -515,6 +554,8 @@ class MainWindow(QMainWindow):
             # Reload configuration
             from animica_miner_gui.backend.config import load_config
             self.config = load_config()
+            if self.config._load_warnings:
+                self._show_config_repair_notice()
             
             # Update all tabs with new config
             self.dashboard_tab.config = self.config

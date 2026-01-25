@@ -5,7 +5,8 @@ from unittest.mock import MagicMock, patch
 
 from PySide6.QtWidgets import QApplication
 
-from animica_miner_gui.backend.config import MiningAppConfig
+from animica_miner_gui.backend.config import MiningAppConfig, NetworkMode
+from animica_miner_gui.backend.node_controller import NodeController
 from animica_miner_gui.ui.tabs.wallet import WalletTab
 
 # Test constants
@@ -28,8 +29,15 @@ def config_with_address():
     """Config with a valid payout address."""
     config = MiningAppConfig()
     config.miner.payout_address = TEST_WALLET_ADDRESS
-    config.network.rpc_url = TEST_RPC_URL
+    config.network.mode = NetworkMode.EXTERNAL
+    config.network.external_rpc_url = TEST_RPC_URL
     return config
+
+
+@pytest.fixture
+def node_controller(qapp):
+    """Node controller stub for tabs."""
+    return NodeController()
 
 
 @pytest.fixture
@@ -40,10 +48,10 @@ def config_no_address():
     return config
 
 
-def test_wallet_tab_creation_with_address(qapp, config_with_address):
+def test_wallet_tab_creation_with_address(qapp, config_with_address, node_controller):
     """Test wallet tab creation with configured address."""
     with patch('animica_miner_gui.ui.tabs.wallet.RPCClient'):
-        tab = WalletTab(config_with_address)
+        tab = WalletTab(config_with_address, node_controller)
         
         # Check address label is set
         assert config_with_address.miner.payout_address in tab.address_label.text()
@@ -55,10 +63,10 @@ def test_wallet_tab_creation_with_address(qapp, config_with_address):
         assert tab.refresh_balance_button.isEnabled()
 
 
-def test_wallet_tab_creation_without_address(qapp, config_no_address):
+def test_wallet_tab_creation_without_address(qapp, config_no_address, node_controller):
     """Test wallet tab creation without address."""
     with patch('animica_miner_gui.ui.tabs.wallet.RPCClient'):
-        tab = WalletTab(config_no_address)
+        tab = WalletTab(config_no_address, node_controller)
         
         # Check address label shows "Not configured"
         assert "Not configured" in tab.address_label.text()
@@ -70,10 +78,10 @@ def test_wallet_tab_creation_without_address(qapp, config_no_address):
         assert not tab.refresh_balance_button.isEnabled()
 
 
-def test_copy_address_to_clipboard(qapp, config_with_address):
+def test_copy_address_to_clipboard(qapp, config_with_address, node_controller):
     """Test copying address to clipboard."""
     with patch('animica_miner_gui.ui.tabs.wallet.RPCClient'):
-        tab = WalletTab(config_with_address)
+        tab = WalletTab(config_with_address, node_controller)
         
         # Mock clipboard and message box
         with patch.object(QApplication, 'clipboard') as mock_clipboard, \
@@ -94,10 +102,10 @@ def test_copy_address_to_clipboard(qapp, config_with_address):
             mock_info.assert_called_once()
 
 
-def test_tx_send_command_uses_correct_rpc_option(qapp, config_with_address):
+def test_tx_send_command_uses_correct_rpc_option(qapp, config_with_address, node_controller):
     """Test that transaction send uses --rpc-url (not --rpc)."""
     with patch('animica_miner_gui.ui.tabs.wallet.RPCClient'):
-        tab = WalletTab(config_with_address)
+        tab = WalletTab(config_with_address, node_controller)
         
         # Set up valid inputs
         tab.recipient_input.setText(TEST_RECIPIENT_ADDRESS)
@@ -145,13 +153,13 @@ def test_tx_send_command_uses_correct_rpc_option(qapp, config_with_address):
                 
                 # Verify RPC URL is passed
                 rpc_idx = cmd.index("--rpc-url")
-                assert cmd[rpc_idx + 1] == config_with_address.network.rpc_url
+                assert cmd[rpc_idx + 1] == config_with_address.network.resolved_rpc_url()
 
 
-def test_tx_send_validation_no_address(qapp, config_no_address):
+def test_tx_send_validation_no_address(qapp, config_no_address, node_controller):
     """Test that send fails gracefully without configured address."""
     with patch('animica_miner_gui.ui.tabs.wallet.RPCClient'):
-        tab = WalletTab(config_no_address)
+        tab = WalletTab(config_no_address, node_controller)
         
         with patch('animica_miner_gui.ui.tabs.wallet.QMessageBox.warning') as mock_warning:
             tab.send_transaction()
@@ -162,10 +170,10 @@ def test_tx_send_validation_no_address(qapp, config_no_address):
             assert "No Wallet" in call_args or "payout address" in str(call_args)
 
 
-def test_tx_send_validation_invalid_recipient(qapp, config_with_address):
+def test_tx_send_validation_invalid_recipient(qapp, config_with_address, node_controller):
     """Test transaction validation for invalid recipient."""
     with patch('animica_miner_gui.ui.tabs.wallet.RPCClient'):
-        tab = WalletTab(config_with_address)
+        tab = WalletTab(config_with_address, node_controller)
         
         # Set invalid recipient (too short)
         tab.recipient_input.setText("anim1short")
@@ -178,10 +186,10 @@ def test_tx_send_validation_invalid_recipient(qapp, config_with_address):
             mock_warning.assert_called()
 
 
-def test_tx_send_validation_invalid_amount(qapp, config_with_address):
+def test_tx_send_validation_invalid_amount(qapp, config_with_address, node_controller):
     """Test transaction validation for invalid amount."""
     with patch('animica_miner_gui.ui.tabs.wallet.RPCClient'):
-        tab = WalletTab(config_with_address)
+        tab = WalletTab(config_with_address, node_controller)
         
         tab.recipient_input.setText(TEST_RECIPIENT_ADDRESS)
         
@@ -204,7 +212,7 @@ def test_tx_send_validation_invalid_amount(qapp, config_with_address):
             mock_warning.assert_called()
 
 
-def test_wallet_info_refresh(qapp, config_with_address):
+def test_wallet_info_refresh(qapp, config_with_address, node_controller):
     """Test wallet info refresh functionality."""
     with patch('animica_miner_gui.ui.tabs.wallet.RPCClient') as mock_rpc_class:
         # Mock the RPC client instance
@@ -215,7 +223,7 @@ def test_wallet_info_refresh(qapp, config_with_address):
         mock_rpc_instance.get_balance.return_value = 1_500_000_000  # 1.5 ANM in base units
         mock_rpc_instance.get_nonce.return_value = 5
         
-        tab = WalletTab(config_with_address)
+        tab = WalletTab(config_with_address, node_controller)
         
         # Trigger refresh
         tab.refresh_wallet_info()
@@ -225,10 +233,10 @@ def test_wallet_info_refresh(qapp, config_with_address):
         assert "5" in tab.nonce_label.text() or tab.nonce_label.text() != "--"
 
 
-def test_wallet_info_refresh_no_address(qapp, config_no_address):
+def test_wallet_info_refresh_no_address(qapp, config_no_address, node_controller):
     """Test wallet info refresh when no address is configured."""
     with patch('animica_miner_gui.ui.tabs.wallet.RPCClient'):
-        tab = WalletTab(config_no_address)
+        tab = WalletTab(config_no_address, node_controller)
         
         # Trigger refresh
         tab.refresh_wallet_info()
@@ -238,7 +246,7 @@ def test_wallet_info_refresh_no_address(qapp, config_no_address):
         assert tab.nonce_label.text() == "--"
 
 
-def test_wallet_info_refresh_zero_balance_and_nonce(qapp, config_with_address):
+def test_wallet_info_refresh_zero_balance_and_nonce(qapp, config_with_address, node_controller):
     """Test wallet info refresh handles zero balance and nonce correctly."""
     with patch('animica_miner_gui.ui.tabs.wallet.RPCClient') as mock_rpc_class:
         # Mock the RPC client instance
@@ -249,7 +257,7 @@ def test_wallet_info_refresh_zero_balance_and_nonce(qapp, config_with_address):
         mock_rpc_instance.get_balance.return_value = 0
         mock_rpc_instance.get_nonce.return_value = 0
         
-        tab = WalletTab(config_with_address)
+        tab = WalletTab(config_with_address, node_controller)
         
         # Trigger refresh
         tab.refresh_wallet_info()
