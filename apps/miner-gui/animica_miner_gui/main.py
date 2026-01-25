@@ -12,8 +12,6 @@ from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from animica_miner_gui.backend.app_paths import (
-    get_node_executable,
-    get_node_payload_dir,
     get_node_token_path,
     get_resources_dir,
     get_startup_log_path,
@@ -21,6 +19,7 @@ from animica_miner_gui.backend.app_paths import (
     get_last_crash_log,
 )
 from animica_miner_gui.backend.crash_reporter import clear_crash_marker, install_exception_hooks, load_last_crash
+from animica_miner_gui.backend.node_paths import resolve_node_executable
 from animica_miner_gui.backend.single_instance import SingleInstance
 
 
@@ -93,8 +92,11 @@ def main() -> int:
         logger.info("platform=%s", platform.platform())
         logger.info("arch=%s", platform.machine())
         logger.info("resources=%s", get_resources_dir())
-        logger.info("node_payload=%s", get_node_payload_dir())
-        logger.info("node_executable=%s", get_node_executable())
+        node_paths = resolve_node_executable()
+        logger.info("node_payload=%s", node_paths.base_dir)
+        logger.info("node_executable=%s", node_paths.exe_path)
+        logger.info("node_resolve_mode=%s", node_paths.mode)
+        logger.info("node_resolve_reason=%s", node_paths.reason)
         logger.info("token_path=%s", get_node_token_path())
         logger.info("selected_rpc_port=%s", "pending")
         logger.info("final_rpc_url=%s", "pending")

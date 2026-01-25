@@ -16,14 +16,13 @@ from PySide6.QtCore import QObject, QTimer, Signal
 from animica_miner_gui.backend.app_paths import (
     ensure_dirs,
     get_node_data_dir,
-    get_node_executable,
     get_node_logs_dir,
     get_node_manifest_path,
-    get_node_payload_dir,
     get_node_token_path,
     is_frozen,
 )
 from animica_miner_gui.backend.manifest import load_manifest, verify_manifest
+from animica_miner_gui.backend.node_paths import resolve_node_executable
 from animica_miner_gui.backend.rpc_client import RPCClient, RPCError
 
 logger = logging.getLogger(__name__)
@@ -57,11 +56,14 @@ class NodeController(QObject):
             return
 
         self.nodeStarting.emit()
-        node_exe = get_node_executable()
-        node_root = get_node_payload_dir()
+        node_paths = resolve_node_executable()
+        node_exe = node_paths.exe_path
+        node_root = node_paths.base_dir
+        logger.info("node_resolve_mode=%s", node_paths.mode)
+        logger.info("node_resolve_reason=%s", node_paths.reason)
 
-        if not node_exe.exists():
-            self.nodeFailed.emit(f"Node payload missing: {node_exe}")
+        if not node_exe or not node_exe.exists() or not node_root:
+            self.nodeFailed.emit(f"{node_paths.reason}")
             return
 
         manifest_path = get_node_manifest_path()
