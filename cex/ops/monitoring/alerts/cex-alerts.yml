@@ -1,0 +1,223 @@
+groups:
+  - name: service_health
+    interval: 30s
+    rules:
+      - alert: ServiceDown
+        expr: up == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Service {{ $labels.job }} is down"
+          description: "{{ $labels.job }} on {{ $labels.instance }} has been down for more than 2 minutes."
+
+      - alert: HighErrorRate
+        expr: |
+          rate(http_requests_total{status=~"5.."}[5m]) /
+          rate(http_requests_total[5m]) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High error rate detected"
+          description: "Service {{ $labels.job }} has error rate above 5% for 5 minutes."
+
+  - name: matching_engine
+    interval: 30s
+    rules:
+      - alert: OrderbookEventLag
+        expr: matching_engine_event_lag_seconds > 60
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Matching engine event lag high"
+          description: "Event processing lag is {{ $value }}s, above 60s threshold."
+
+      - alert: OrderbookEventLagCritical
+        expr: matching_engine_event_lag_seconds > 300
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Matching engine event lag critical"
+          description: "Event processing lag is {{ $value }}s, above 300s threshold."
+
+  - name: ledger
+    interval: 30s
+    rules:
+      - alert: LedgerReconciliationFailure
+        expr: increase(ledger_reconciliation_failures_total[10m]) > 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Ledger reconciliation failures detected"
+          description: "{{ $value }} reconciliation failures in the last 10 minutes."
+
+  - name: withdrawals
+    interval: 30s
+    rules:
+      - alert: WithdrawalsStuckPending
+        expr: withdrawals_pending_approval_count > 100
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High number of pending withdrawals"
+          description: "{{ $value }} withdrawals stuck in pending_approval state."
+
+      - alert: WithdrawalsProcessingStalled
+        expr: rate(withdrawals_processed_total[10m]) == 0 and withdrawals_queue_size > 0
+        for: 15m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Withdrawal processing stalled"
+          description: "No withdrawals processed in 10m despite non-empty queue."
+
+  - name: deposits
+    interval: 30s
+    rules:
+      - alert: DepositScannerLag
+        expr: animica_indexer_block_lag > 100
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Deposit scanner block lag high"
+          description: "Scanner is {{ $value }} blocks behind, above 100 block threshold."
+
+      - alert: DepositScannerStuck
+        expr: rate(animica_indexer_blocks_scanned_total[10m]) == 0
+        for: 15m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Deposit scanner appears stuck"
+          description: "No blocks scanned in the last 10 minutes."
+
+  - name: database
+    interval: 30s
+    rules:
+      - alert: PostgresDown
+        expr: pg_up == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "PostgreSQL is down"
+          description: "PostgreSQL database is not responding."
+
+      - alert: PostgresDiskUsageHigh
+        expr: pg_database_size_bytes / 1e9 > 80
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "PostgreSQL disk usage high"
+          description: "Database size is {{ $value }}GB, approaching limits."
+
+      - alert: PostgresSlowQueries
+        expr: rate(pg_stat_statements_mean_exec_time_ms[5m]) > 1000
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "PostgreSQL slow queries detected"
+          description: "Average query execution time is {{ $value }}ms."
+
+      - alert: PostgresConnectionsHigh
+        expr: |
+          pg_stat_database_numbackends /
+          pg_settings_max_connections > 0.8
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "PostgreSQL connections near limit"
+          description: "Using {{ $value | humanizePercentage }} of max connections."
+
+  - name: redis
+    interval: 30s
+    rules:
+      - alert: RedisDown
+        expr: redis_up == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Redis is down"
+          description: "Redis cache is not responding."
+
+      - alert: RedisMemoryHigh
+        expr: redis_memory_used_bytes / redis_memory_max_bytes > 0.9
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Redis memory usage high"
+          description: "Redis using {{ $value | humanizePercentage }} of allocated memory."
+
+      - alert: RedisRejectedConnections
+        expr: increase(redis_rejected_connections_total[5m]) > 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Redis rejecting connections"
+          description: "{{ $value }} connections rejected in last 5 minutes."
+
+  - name: nats
+    interval: 30s
+    rules:
+      - alert: NatsDown
+        expr: nats_up == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "NATS is down"
+          description: "NATS message broker is not responding."
+
+      - alert: NatsQueueBacklog
+        expr: nats_stream_messages > 10000
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "NATS queue backlog high"
+          description: "Stream has {{ $value }} pending messages."
+
+  - name: system
+    interval: 30s
+    rules:
+      - alert: HighCPUUsage
+        expr: 100 - (avg by(instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 80
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High CPU usage"
+          description: "CPU usage is {{ $value }}% on {{ $labels.instance }}."
+
+      - alert: HighMemoryUsage
+        expr: |
+          (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100 > 80
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High memory usage"
+          description: "Memory usage is {{ $value }}% on {{ $labels.instance }}."
+
+      - alert: DiskSpaceLow
+        expr: |
+          (node_filesystem_avail_bytes{mountpoint="/"} /
+          node_filesystem_size_bytes{mountpoint="/"}) * 100 < 20
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Low disk space"
+          description: "Only {{ $value }}% disk space remaining on {{ $labels.instance }}."

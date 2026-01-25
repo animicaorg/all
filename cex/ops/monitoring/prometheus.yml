@@ -1,0 +1,95 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: 'cex-dev'
+    environment: 'development'
+
+# Alertmanager configuration
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            - alertmanager:9093
+
+# Load rules once and periodically evaluate them
+rule_files:
+  - "/etc/prometheus/alerts/*.yml"
+
+# Scrape configurations
+scrape_configs:
+  # Prometheus itself
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # Node exporter for host metrics
+  - job_name: 'node-exporter'
+    static_configs:
+      - targets: ['node-exporter:9100']
+
+  # PostgreSQL exporter
+  - job_name: 'postgres'
+    static_configs:
+      - targets: ['postgres-exporter:9187']
+
+  # Redis exporter
+  - job_name: 'redis'
+    static_configs:
+      - targets: ['redis-exporter:9121']
+
+  # NATS monitoring
+  - job_name: 'nats'
+    static_configs:
+      - targets: ['nats:8222']
+
+  # Application services
+  - job_name: 'api-gateway'
+    static_configs:
+      - targets: ['api-gateway:3000']
+    metrics_path: '/metrics'
+
+  - job_name: 'auth-service'
+    static_configs:
+      - targets: ['auth-service:3100']
+    metrics_path: '/metrics'
+
+  - job_name: 'matching-engine'
+    static_configs:
+      - targets: ['matching-engine:3200']
+    metrics_path: '/metrics'
+
+  - job_name: 'ledger-service'
+    static_configs:
+      - targets: ['ledger-service:3300']
+    metrics_path: '/metrics'
+
+  - job_name: 'wallet-router'
+    static_configs:
+      - targets: ['wallet-router:3400']
+    metrics_path: '/metrics'
+
+  - job_name: 'animica-indexer'
+    static_configs:
+      - targets: ['animica-indexer:3500']
+    metrics_path: '/metrics'
+
+  - job_name: 'animica-asset-service'
+    static_configs:
+      - targets: ['animica-asset-service:3600']
+    metrics_path: '/metrics'
+
+  - job_name: 'risk-service'
+    static_configs:
+      - targets: ['risk-service:3700']
+    metrics_path: '/metrics'
+
+  - job_name: 'withdrawals-service'
+    static_configs:
+      - targets: ['withdrawals-service:3800']
+    metrics_path: '/metrics'
+
+  - job_name: 'admin-service'
+    static_configs:
+      - targets: ['admin-service:3001']
+    metrics_path: '/metrics'

@@ -1,0 +1,36 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cex-config
+  namespace: cex-prod
+data:
+  # Service configuration
+  NODE_ENV: "production"
+  LOG_LEVEL: "info"
+  LOG_FORMAT: "json"
+  
+  # Database configuration
+  DB_HOST: "postgres"
+  DB_PORT: "5432"
+  DB_NAME: "cex_exchange"
+  DB_SSL: "true"
+  
+  # Redis configuration
+  REDIS_HOST: "redis"
+  REDIS_PORT: "6379"
+  
+  # NATS configuration
+  NATS_URL: "nats://nats:4222"
+  NATS_CLUSTER_ID: "cex-prod-cluster"
+  
+  # Monitoring
+  METRICS_ENABLED: "true"
+  METRICS_PORT: "9090"
+  
+  # Scanner configuration
+  SCANNER_POLL_INTERVAL_MS: "10000"
+  SCANNER_CONFIRMATIONS: "12"
+  
+  # Rate limiting
+  RATE_LIMIT_WINDOW_MS: "60000"
+  RATE_LIMIT_MAX_REQUESTS: "100"
