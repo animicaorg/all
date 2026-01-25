@@ -1,104 +1,30 @@
 /**
  * Authentication Middleware
  * 
- * Verifies BitGo webhook signatures and prevents replay attacks
+ * Provides authentication for admin and internal service endpoints
  */
 
 import type { Request, Response, NextFunction } from "express";
-import type { Logger } from "pino";
-import { verifyBitGoSignature, verifyWebhookTimestamp } from "../../bitgo/verify.js";
-
-export interface AuthConfig {
-  webhookSecret?: string;
-  replayWindowSeconds: number;
-  requireAuth: boolean;
-}
-
-/**
- * Verify BitGo webhook signature
- */
-export function createBitGoAuthMiddleware(
-  config: AuthConfig,
-  logger: Logger
-) {
-  return async (req: Request, res: Response, next: NextFunction) => {
-    // Skip auth if not required (dev/testing)
-    if (!config.requireAuth) {
-      logger.debug("Auth disabled, skipping verification");
-      next();
-      return;
-    }
-
-    // Check if secret is configured
-    if (!config.webhookSecret) {
-      logger.error("Webhook secret not configured but auth is required");
-      res.status(500).json({
-        error: "Internal Server Error",
-        message: "Webhook authentication not configured",
-      });
-      return;
-    }
-
-    // Get signature from header
-    const signature = req.header("x-bitgo-signature");
-    if (!signature) {
-      logger.warn("Missing BitGo signature header");
-      res.status(401).json({
-        error: "Unauthorized",
-        message: "Missing signature header",
-      });
-      return;
-    }
-
-    // Verify signature
-    const rawBody = JSON.stringify(req.body);
-    const isValidSignature = verifyBitGoSignature(
-      rawBody,
-      signature,
-      config.webhookSecret
-    );
-
-    if (!isValidSignature) {
-      logger.warn({ signature }, "Invalid BitGo signature");
-      res.status(401).json({
-        error: "Unauthorized",
-        message: "Invalid signature",
-      });
-      return;
-    }
-
-    // Verify timestamp to prevent replay attacks
-    const timestamp = req.body?.transfer?.date || req.body?.timestamp;
-    const isValidTimestamp = verifyWebhookTimestamp(
-      timestamp,
-      config.replayWindowSeconds,
-      logger
-    );
-
-    if (!isValidTimestamp) {
-      logger.warn({ timestamp }, "Invalid or expired webhook timestamp");
-      res.status(401).json({
-        error: "Unauthorized",
-        message: "Webhook timestamp invalid or expired",
-      });
-      return;
-    }
-
-    logger.debug("BitGo webhook authenticated successfully");
-    next();
-  };
-}
+import type { Logger } from "@cex/observability";
 
 /**
  * Admin API key authentication
+ * 
+ * Verifies Bearer token against configured admin key
  */
 export function createAdminAuthMiddleware(
   adminKey: string | undefined,
   logger: Logger
 ) {
   return (req: Request, res: Response, next: NextFunction) => {
+    const requestLogger = logger.child({
+      middleware: "admin_auth",
+      path: req.path,
+      method: req.method,
+    });
+
     if (!adminKey) {
-      logger.warn("Admin key not configured");
+      requestLogger.warn("Admin key not configured");
       res.status(503).json({
         error: "Service Unavailable",
         message: "Admin endpoints not configured",
@@ -107,10 +33,20 @@ export function createAdminAuthMiddleware(
     }
 
     const authHeader = req.header("Authorization");
-    const providedKey = authHeader?.replace(/^Bearer\s+/i, "");
+    if (!authHeader) {
+      requestLogger.warn("Missing Authorization header");
+      res.status(401).json({
+        error: "Unauthorized",
+        message: "Authorization header required",
+      });
+      return;
+    }
+
+    // Extract token from "Bearer <token>" format
+    const providedKey = authHeader.replace(/^Bearer\s+/i, "");
 
     if (!providedKey || providedKey !== adminKey) {
-      logger.warn("Invalid admin authentication");
+      requestLogger.warn("Invalid admin key provided");
       res.status(401).json({
         error: "Unauthorized",
         message: "Invalid admin key",
@@ -118,6 +54,8 @@ export function createAdminAuthMiddleware(
       return;
     }
 
+    requestLogger.debug("Admin authenticated successfully");
     next();
   };
 }
+
