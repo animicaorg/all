@@ -109,7 +109,7 @@ export class AnimicaRpcClient {
   /**
    * Raw JSON-RPC call with retry logic
    */
-  private async call<T = any>(method: string, params: any[] = []): Promise<T> {
+  async call<T = any>(method: string, params: any[] = []): Promise<T> {
     const correlationId = `rpc-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     
     return retryWithBackoff(
