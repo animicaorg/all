@@ -27,6 +27,10 @@ import {
 } from "../db/repositories/index.js";
 import { writeOrderEvent, writeTradeEvent } from "../outbox/outbox.js";
 
+// Constants for market order price limits
+const MAX_PRICE_ATOMS = BigInt("999999999999999999"); // High price for market buy orders
+const MIN_PRICE_ATOMS = 1n; // Low price for market sell orders
+
 export class MarketWorker {
   private engine: MatchingEngine | null = null;
   private marketConfig: MarketConfig | null = null;
@@ -377,9 +381,9 @@ export class MarketWorker {
 
       // Set price to infinity for matching
       if (cmd.side === "BUY") {
-        order.priceAtoms = BigInt("999999999999999999"); // High price for buying
+        order.priceAtoms = MAX_PRICE_ATOMS; // High price for buying
       } else {
-        order.priceAtoms = 1n; // Low price for selling
+        order.priceAtoms = MIN_PRICE_ATOMS; // Low price for selling
       }
 
       // Write ACCEPTED event
@@ -431,7 +435,7 @@ export class MarketWorker {
           marketId: this.marketId,
           eventType,
           sequence: makerSeq,
-          payload: { order: makerOrder }
+          payload: { order: makerOrder, fills: matchResult.fills }
         });
         await writeOrderEvent(outboxRepo, this.marketId, makerSeq, eventType, makerOrder);
       }
@@ -453,7 +457,7 @@ export class MarketWorker {
           marketId: this.marketId,
           eventType,
           sequence: takerSeq,
-          payload: { order: matchResult.takerOrder }
+          payload: { order: matchResult.takerOrder, fills: matchResult.fills }
         });
         await writeOrderEvent(
           outboxRepo,
