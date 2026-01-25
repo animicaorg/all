@@ -10,6 +10,7 @@ Provides tabbed interface for:
 """
 
 import logging
+import subprocess
 from pathlib import Path
 from typing import Optional
 
@@ -30,6 +31,7 @@ from animica_miner_gui.backend.config import load_config, get_default_config_pat
 from animica_miner_gui.backend.miner_runner import get_runner, MiningEvent
 from animica_miner_gui.backend.node_controller import NodeController
 from animica_miner_gui.backend.app_paths import get_startup_log_path
+from animica_miner_gui.backend.node_paths import resolve_node_executable
 from animica_miner_gui.ui.tabs.dashboard import DashboardTab
 from animica_miner_gui.ui.tabs.devices import DevicesTab
 from animica_miner_gui.ui.tabs.pools import PoolsTab
@@ -497,6 +499,10 @@ class MainWindow(QMainWindow):
     def on_node_failed(self, error: str) -> None:
         """Handle node start failure."""
         logger.error("Node failed: %s", error)
+        node_paths = resolve_node_executable()
+        if node_paths.exe_path is None:
+            self._show_node_missing_dialog(error, node_paths.reason, node_paths.mode)
+            return
         QMessageBox.critical(
             self,
             "Node Error",
@@ -506,6 +512,56 @@ class MainWindow(QMainWindow):
     def on_node_status(self, status: dict) -> None:
         """Update status bar with node info if available."""
         _ = status
+
+    def _show_node_missing_dialog(self, error: str, details: str, mode: str) -> None:
+        log_path = get_startup_log_path()
+        message = (
+            "Node bundle missing/broken or failed to start.\n\n"
+            f"{error}\n\n"
+            f"Startup log: {log_path}\n"
+        )
+        if mode != "dev":
+            message += (
+                "\nThe packaged app is missing its bundled node payload. "
+                "Please reinstall or rebuild the application."
+            )
+            QMessageBox.critical(self, "Node Missing", message)
+            return
+
+        message += (
+            "\nThis is a development build. You can build and install the bundled node now."
+        )
+        dialog = QMessageBox(self)
+        dialog.setWindowTitle("Node Missing")
+        dialog.setIcon(QMessageBox.Icon.Critical)
+        dialog.setText(message)
+        dialog.setDetailedText(details)
+        build_button = dialog.addButton("Build node now", QMessageBox.ButtonRole.AcceptRole)
+        dialog.addButton(QMessageBox.StandardButton.Close)
+        dialog.exec()
+
+        if dialog.clickedButton() is not build_button:
+            return
+
+        repo_root = Path(__file__).resolve().parents[4]
+        script_path = repo_root / "ops" / "build" / "install_node_payload_for_gui.sh"
+        try:
+            subprocess.run([str(script_path)], check=True, cwd=str(repo_root))
+        except Exception as exc:
+            QMessageBox.critical(
+                self,
+                "Node Build Failed",
+                f"Failed to build/install node payload.\n{exc}\n\n"
+                f"See logs at: {log_path}",
+            )
+            return
+
+        QMessageBox.information(
+            self,
+            "Node Installed",
+            "Node payload installed. The GUI will retry starting the node.",
+        )
+        self.node_controller.start()
     
     def restart_wizard(self) -> None:
         """Restart the setup wizard."""

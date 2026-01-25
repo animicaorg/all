@@ -98,6 +98,15 @@ def _check_node_rpc(resources_dir: Path) -> bool:
     if not node_exe.exists():
         print(f"[verify] Node executable missing: {node_exe}")
         return False
+    if not os.access(node_exe, os.X_OK):
+        print(f"[verify] Node executable is not executable: {node_exe}")
+        return False
+
+    try:
+        subprocess.run([str(node_exe), "--preflight-imports"], check=True)
+    except Exception as exc:
+        print(f"[verify] Node preflight imports failed: {exc}")
+        return False
 
     data_dir = Path(tempfile.mkdtemp(prefix="animica-node-data-"))
     logs_dir = Path(tempfile.mkdtemp(prefix="animica-node-logs-"))
