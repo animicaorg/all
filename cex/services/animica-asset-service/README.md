@@ -1,30 +1,47 @@
 # Animica Asset Service
 
-Centralized exchange integration for Animica blockchain.
+Native Animica (ANM) asset support for the centralized exchange, providing deposit and withdrawal functionality using a locally-run Animica node.
 
-## Components Implemented
+## Features
 
-### 1. Withdrawals (`src/withdrawals/`)
+- ✅ **Deposit Detection**: Block scanning with confirmation tracking
+- ✅ **Reorg Safety**: Automatic rollback and deposit invalidation on chain reorganizations
+- ✅ **Withdrawal Broadcasting**: Native transaction building and broadcasting
+- ✅ **Fee Management**: Dynamic fee estimation with configurable bounds
+- ✅ **Idempotent Operations**: Safe retries and duplicate detection
+- ✅ **Leader Election**: Multi-instance deployment with automatic failover
+- ✅ **Comprehensive Monitoring**: Health checks, metrics, and audit logs
+
+## Architecture
+
+### Components
+
+#### 1. Withdrawals (`src/withdrawals/`)
 - **`fees.ts`**: Dynamic and fixed fee estimation
 - **`build_tx.ts`**: Account-based transaction building with nonce tracking
 - **`broadcast.ts`**: Transaction broadcasting via RPC
 - **`tracker.ts`**: Status tracking and confirmation polling
 
-### 2. Background Jobs (`src/jobs/`)
+#### 2. Deposits (`src/deposits/`)
+- **`scanner.ts`**: Block scanning with reorg detection
+- **`parser.ts`**: Transaction parsing for deposits
+- **`reorg.ts`**: Reorg handling and rollback logic
+- **`address_assign.ts`**: User deposit address creation
+
+#### 3. Background Jobs (`src/jobs/`)
 - **`scan_loop.ts`**: Blockchain scanning with leader election
 - **`poll_withdrawals.ts`**: Pending withdrawal status updates
-- **`reconcile.ts`**: Periodic reconciliation of deposits/withdrawals
+- **`reconcile.ts`**: Periodic reconciliation
 
-### 3. Deposit Address Assignment (`src/deposits/`)
-- **`address_assign.ts`**: User deposit address creation and management
+#### 4. RPC Client (`src/rpc/`)
+- **`client.ts`**: Robust JSON-RPC client with retries
+- **`errors.ts`**: Error types and handling
+- **`retry.ts`**: Exponential backoff retry logic
+- **`types.ts`**: Type definitions
 
-### 4. HTTP API (`src/api/`)
-- **`server.ts`**: Express server setup
-- **`routes.ts`**: RESTful endpoints for deposits and withdrawals
-
-### 5. Database
-- **`db/repositories/withdrawals_repo.ts`**: Withdrawal data access
-- Uses existing `withdrawals` table with `provider="ANIMICA_NODE"`
+#### 5. Database (`src/db/`)
+- **`repositories/`**: Data access layer for all entities
+- Uses existing tables with Animica-specific extensions
 
 ## API Endpoints
 
