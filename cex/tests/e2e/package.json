@@ -1,0 +1,32 @@
+{
+  "name": "@cex/e2e-tests",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "description": "End-to-end test harness with simulation for centralized exchange",
+  "scripts": {
+    "e2e": "tsx src/runner.ts",
+    "e2e:smoke": "tsx src/runner.ts --scenario smoke",
+    "e2e:mm": "tsx src/runner.ts --scenario market_maker",
+    "e2e:stress": "tsx src/runner.ts --scenario stress",
+    "e2e:reconcile": "tsx src/runner.ts --scenario reconciliation_proof",
+    "e2e:all": "tsx src/runner.ts --scenario all",
+    "build": "tsc -p tsconfig.json",
+    "lint": "echo 'no lint configured'"
+  },
+  "dependencies": {
+    "@cex/common": "workspace:*",
+    "ws": "^8.18.0",
+    "uuid": "^10.0.0",
+    "zod": "^3.23.8",
+    "dockerode": "^4.0.2",
+    "chalk": "^5.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.10",
+    "@types/ws": "^8.5.12",
+    "@types/dockerode": "^3.3.31",
+    "tsx": "^4.16.2",
+    "typescript": "^5.5.4"
+  }
+}
