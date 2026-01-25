@@ -5,8 +5,9 @@ import multiprocessing
 import os
 import platform
 import sys
+from pathlib import Path
 
-from PySide6.QtCore import QCoreApplication
+from PySide6.QtCore import QCoreApplication, QLibraryInfo
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication, QMessageBox
 
@@ -41,6 +42,32 @@ def _setup_logging() -> None:
 logger = logging.getLogger(__name__)
 
 
+def _configure_qt_plugins() -> None:
+    plugins_dir: Path | None = None
+    if getattr(sys, "frozen", False):
+        candidate = get_resources_dir() / "PySide6" / "Qt" / "plugins"
+        if candidate.exists():
+            plugins_dir = candidate
+    else:
+        plugins_path = ""
+        try:
+            plugins_path = QLibraryInfo.path(QLibraryInfo.LibraryPath.PluginsPath)
+        except AttributeError:
+            plugins_path = QLibraryInfo.location(QLibraryInfo.PluginsPath)
+        if plugins_path:
+            plugins_dir = Path(plugins_path)
+
+    if plugins_dir and plugins_dir.exists():
+        platforms_dir = plugins_dir / "platforms"
+        os.environ["QT_PLUGIN_PATH"] = str(plugins_dir)
+        if platforms_dir.exists():
+            os.environ["QT_QPA_PLATFORM_PLUGIN_PATH"] = str(platforms_dir)
+        QCoreApplication.setLibraryPaths([str(plugins_dir)])
+        logger.info("qt_plugins_dir=%s", plugins_dir)
+        if platforms_dir.exists():
+            logger.info("qt_platforms_dir=%s", platforms_dir)
+
+
 def main() -> int:
     """Main entry point for the GUI miner."""
     try:
@@ -73,17 +100,14 @@ def main() -> int:
         logger.info("final_rpc_url=%s", "pending")
         last_crash = get_last_crash_log()
         logger.info("last_crash=%s", last_crash if last_crash else "none")
-        
+
+        _configure_qt_plugins()
+
         # Create Qt application
         app = QApplication(sys.argv)
         app.setApplicationName("Animica Miner")
         app.setOrganizationName("Animica")
         app.setOrganizationDomain("animica.org")
-
-        if getattr(sys, "frozen", False):
-            plugins_dir = get_resources_dir() / "PySide6" / "Qt" / "plugins"
-            if plugins_dir.exists():
-                QCoreApplication.setLibraryPaths([str(plugins_dir)])
         
         # Set application icon
         from animica_miner_gui.resources import get_logo_path
