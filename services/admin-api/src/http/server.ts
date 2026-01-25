@@ -20,6 +20,8 @@ import {
   notFoundHandler,
 } from './middleware/index.js';
 import { createAuthRouter } from './routes/auth.js';
+import { createUsersRouter } from './routes/users.js';
+import { createHealthRouter } from './routes/health.js';
 
 export interface ServerDependencies {
   prisma: PrismaClient;
@@ -76,9 +78,13 @@ export function createApp(deps: ServerDependencies): Express {
 
   // Mount routers
   app.use('/admin/v1/auth', createAuthRouter(prisma, config, logger));
+  app.use('/admin/v1/health', createHealthRouter(prisma, config, logger));
 
   // Protected routes require authentication and rate limiting
   app.use('/admin/v1', authMiddleware, rateLimiter);
+  
+  // Protected route groups
+  app.use('/admin/v1/users', createUsersRouter(prisma, config, logger));
 
   // TODO: Add more route groups here
   // app.use('/admin/v1/admins', createAdminsRouter(...));
