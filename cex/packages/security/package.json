@@ -1,0 +1,33 @@
+{
+  "name": "@cex/security",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": "./dist/index.js",
+    "./secrets": "./dist/secrets/index.js",
+    "./auth": "./dist/auth/index.js",
+    "./signing": "./dist/signing/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@aws-sdk/client-secrets-manager": "^3.700.0",
+    "@google-cloud/secret-manager": "^5.8.0",
+    "@noble/hashes": "^1.5.0",
+    "argon2": "^0.41.1",
+    "otpauth": "^9.3.4",
+    "nanoid": "^5.0.9"
+  },
+  "devDependencies": {
+    "@types/node": "^20.12.7",
+    "typescript": "^5.5.4",
+    "vitest": "^2.1.8"
+  }
+}
