@@ -114,6 +114,44 @@ export class IdempotencyRepo {
     return new Set(result.rows.map((row) => row.event_id));
   }
 
+  /**
+   * Get idempotency key (for deposit credits, etc.)
+   */
+  async get(key: string): Promise<{ result: any; createdAt: Date } | null> {
+    const result = await this.client.query(
+      `SELECT result, created_at FROM idempotency_keys WHERE key = $1`,
+      [key]
+    );
+
+    if (result.rowCount === 0) return null;
+
+    return {
+      result: result.rows[0].result,
+      createdAt: result.rows[0].created_at,
+    };
+  }
+
+  /**
+   * Set idempotency key with result
+   */
+  async set(
+    key: string,
+    consumer: string,
+    result: Record<string, unknown>,
+    ttlSeconds?: number
+  ): Promise<void> {
+    const expiresAt = ttlSeconds
+      ? new Date(Date.now() + ttlSeconds * 1000)
+      : null;
+
+    await this.client.query(
+      `INSERT INTO idempotency_keys (key, consumer, result, expires_at)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (key) DO NOTHING`,
+      [key, consumer, JSON.stringify(result), expiresAt]
+    );
+  }
+
   private mapOffsetRow(row: any): LedgerEventOffset {
     return {
       marketId: row.market_id,

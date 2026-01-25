@@ -224,6 +224,58 @@ export class LedgerConsumer {
   }
 
   /**
+   * Start consuming deposit credit commands
+   */
+  async startDepositCredits(): Promise<void> {
+    this.logger.info("Starting deposit credit consumer");
+
+    const depositSub = this.nats.subscribe("ledger.deposit.credit", {
+      queue: "ledger-service"
+    });
+    this.subscriptions.push(depositSub);
+
+    // Process deposit credit commands
+    (async () => {
+      for await (const msg of depositSub) {
+        await this.processDepositCreditMessage(msg);
+      }
+    })().catch((error) => {
+      this.logger.error({ error }, "Deposit credit subscription error");
+    });
+  }
+
+  /**
+   * Process a deposit credit message
+   */
+  private async processDepositCreditMessage(msg: Msg): Promise<void> {
+    try {
+      const decoded = jsonCodec.decode(msg.data);
+      const command = decoded as any; // DepositCreditCommand
+
+      this.logger.info(
+        { depositId: command.depositId, userId: command.userId, assetId: command.assetId },
+        "Processing deposit credit command"
+      );
+
+      const { handleDepositCredit } = await import("./handlers/deposit_credit.js");
+
+      const result = await withSerializableTransaction(this.pool, async (client) => {
+        await handleDepositCredit(command, client, this.logger);
+        return { ok: true };
+      });
+
+      if (result.ok) {
+        this.logger.info(
+          { depositId: command.depositId, idempotencyKey: command.idempotencyKey },
+          "Deposit credit processed successfully"
+        );
+      }
+    } catch (error) {
+      this.logger.error({ error, msg: msg.subject }, "Failed to process deposit credit message");
+    }
+  }
+
+  /**
    * Stop all subscriptions
    */
   async stop(): Promise<void> {
