@@ -9,6 +9,7 @@
     "studio-web",
     "wallet",
     "apps/miner-dashboard",
+    "apps/admin-web",
     "explorer2",
     "explorer2/*",
     "services/exchange-api",
