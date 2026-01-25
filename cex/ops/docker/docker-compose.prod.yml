@@ -1,0 +1,426 @@
+version: "3.9"
+
+# Production-like environment
+# Use: docker compose -f docker-compose.prod.yml up
+
+networks:
+  cex-internal:
+    driver: bridge
+    internal: true
+  cex-edge:
+    driver: bridge
+
+volumes:
+  postgres-data:
+  redis-data:
+  nats-data:
+  nginx-cache:
+
+x-logging: &default-logging
+  driver: "json-file"
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-deploy: &default-deploy
+  restart_policy:
+    condition: on-failure
+    delay: 5s
+    max_attempts: 3
+    window: 120s
+
+x-service-defaults: &service-defaults
+  networks:
+    - cex-internal
+  logging: *default-logging
+  restart: unless-stopped
+
+services:
+  # ============================================================================
+  # INFRASTRUCTURE
+  # ============================================================================
+  
+  postgres:
+    <<: *service-defaults
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+      POSTGRES_DB: ${DB_NAME}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    secrets:
+      - db_password
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '1'
+          memory: 1G
+
+  redis:
+    <<: *service-defaults
+    image: redis:7-alpine
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD}
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+
+  nats:
+    <<: *service-defaults
+    image: nats:2.10-alpine
+    command: 
+      - "-js"
+      - "-m"
+      - "8222"
+      - "--store_dir=/data"
+    volumes:
+      - nats-data:/data
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8222/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+
+  # ============================================================================
+  # APPLICATION SERVICES (Built Images)
+  # ============================================================================
+
+  api-gateway:
+    <<: *service-defaults
+    image: ${REGISTRY:-localhost}/cex-api-gateway:${VERSION:-latest}
+    build:
+      context: ../..
+      dockerfile: services/api-gateway/Dockerfile
+    environment:
+      SERVICE_NAME: api-gateway
+      PORT: 3000
+      NODE_ENV: production
+      DB_HOST: postgres
+      REDIS_HOST: redis
+      NATS_URL: nats://nats:4222
+    env_file:
+      - ./env/.env.prod
+    depends_on:
+      - postgres
+      - redis
+      - nats
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+
+  auth-service:
+    <<: *service-defaults
+    image: ${REGISTRY:-localhost}/cex-auth-service:${VERSION:-latest}
+    build:
+      context: ../..
+      dockerfile: services/auth-service/Dockerfile
+    environment:
+      SERVICE_NAME: auth-service
+      PORT: 3100
+      NODE_ENV: production
+      DB_HOST: postgres
+      REDIS_HOST: redis
+    env_file:
+      - ./env/.env.prod
+    depends_on:
+      - postgres
+      - redis
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+
+  matching-engine:
+    <<: *service-defaults
+    image: ${REGISTRY:-localhost}/cex-matching-engine:${VERSION:-latest}
+    build:
+      context: ../..
+      dockerfile: services/matching-engine/Dockerfile
+    environment:
+      SERVICE_NAME: matching-engine
+      PORT: 3200
+      NODE_ENV: production
+      DB_HOST: postgres
+      REDIS_HOST: redis
+      NATS_URL: nats://nats:4222
+    env_file:
+      - ./env/.env.prod
+    depends_on:
+      - postgres
+      - redis
+      - nats
+    deploy:
+      replicas: 1  # Stateful, scale carefully
+      resources:
+        limits:
+          cpus: '2'
+          memory: 1G
+        reservations:
+          cpus: '1'
+          memory: 512M
+
+  ledger-service:
+    <<: *service-defaults
+    image: ${REGISTRY:-localhost}/cex-ledger-service:${VERSION:-latest}
+    build:
+      context: ../..
+      dockerfile: services/ledger-service/Dockerfile
+    environment:
+      SERVICE_NAME: ledger-service
+      PORT: 3300
+      NODE_ENV: production
+      DB_HOST: postgres
+      REDIS_HOST: redis
+      NATS_URL: nats://nats:4222
+    env_file:
+      - ./env/.env.prod
+    depends_on:
+      - postgres
+      - redis
+      - nats
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+
+  wallet-router:
+    <<: *service-defaults
+    image: ${REGISTRY:-localhost}/cex-wallet-router:${VERSION:-latest}
+    build:
+      context: ../..
+      dockerfile: services/wallet-router/Dockerfile
+    environment:
+      SERVICE_NAME: wallet-router
+      PORT: 3400
+      NODE_ENV: production
+      DB_HOST: postgres
+      NATS_URL: nats://nats:4222
+    env_file:
+      - ./env/.env.prod
+    secrets:
+      - bitgo_token
+      - bitgo_webhook_secret
+    depends_on:
+      - postgres
+      - nats
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+
+  bitgo-webhook-ingestor:
+    <<: *service-defaults
+    image: ${REGISTRY:-localhost}/cex-bitgo-webhook-ingestor:${VERSION:-latest}
+    build:
+      context: ../..
+      dockerfile: services/bitgo-webhook-ingestor/Dockerfile
+    environment:
+      SERVICE_NAME: bitgo-webhook-ingestor
+      PORT: 3002
+      NODE_ENV: production
+      NATS_URL: nats://nats:4222
+    env_file:
+      - ./env/.env.prod
+    secrets:
+      - bitgo_webhook_secret
+    depends_on:
+      - nats
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+
+  animica-indexer:
+    <<: *service-defaults
+    image: ${REGISTRY:-localhost}/cex-animica-indexer:${VERSION:-latest}
+    build:
+      context: ../..
+      dockerfile: services/animica-indexer/Dockerfile
+    environment:
+      SERVICE_NAME: animica-indexer
+      PORT: 3500
+      NODE_ENV: production
+      DB_HOST: postgres
+      NATS_URL: nats://nats:4222
+    env_file:
+      - ./env/.env.prod
+    depends_on:
+      - postgres
+      - nats
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+
+  animica-asset-service:
+    <<: *service-defaults
+    image: ${REGISTRY:-localhost}/cex-animica-asset-service:${VERSION:-latest}
+    build:
+      context: ../..
+      dockerfile: services/animica-asset-service/Dockerfile
+    environment:
+      SERVICE_NAME: animica-asset-service
+      PORT: 3600
+      NODE_ENV: production
+      DB_HOST: postgres
+      NATS_URL: nats://nats:4222
+    env_file:
+      - ./env/.env.prod
+    depends_on:
+      - postgres
+      - nats
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+
+  risk-service:
+    <<: *service-defaults
+    image: ${REGISTRY:-localhost}/cex-risk-service:${VERSION:-latest}
+    build:
+      context: ../..
+      dockerfile: services/risk-service/Dockerfile
+    environment:
+      SERVICE_NAME: risk-service
+      PORT: 3700
+      NODE_ENV: production
+      DB_HOST: postgres
+      REDIS_HOST: redis
+    env_file:
+      - ./env/.env.prod
+    depends_on:
+      - postgres
+      - redis
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+
+  admin-service:
+    <<: *service-defaults
+    image: ${REGISTRY:-localhost}/cex-admin-service:${VERSION:-latest}
+    build:
+      context: ../..
+      dockerfile: services/admin-service/Dockerfile
+    environment:
+      SERVICE_NAME: admin-service
+      PORT: 3001
+      NODE_ENV: production
+      DB_HOST: postgres
+      REDIS_HOST: redis
+    env_file:
+      - ./env/.env.prod
+    depends_on:
+      - postgres
+      - redis
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+
+  withdrawals-service:
+    <<: *service-defaults
+    image: ${REGISTRY:-localhost}/cex-withdrawals-service:${VERSION:-latest}
+    build:
+      context: ../..
+      dockerfile: services/withdrawals-service/Dockerfile
+    environment:
+      SERVICE_NAME: withdrawals-service
+      PORT: 3800
+      NODE_ENV: production
+      DB_HOST: postgres
+      REDIS_HOST: redis
+      NATS_URL: nats://nats:4222
+    env_file:
+      - ./env/.env.prod
+    depends_on:
+      - postgres
+      - redis
+      - nats
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+
+  # ============================================================================
+  # REVERSE PROXY
+  # ============================================================================
+
+  nginx:
+    <<: *service-defaults
+    image: nginx:alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ../nginx/nginx.prod.conf:/etc/nginx/nginx.conf:ro
+      - ./tls:/etc/nginx/tls:ro
+      - nginx-cache:/var/cache/nginx
+    networks:
+      - cex-edge
+      - cex-internal
+    depends_on:
+      - api-gateway
+      - admin-service
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 128M
+
+secrets:
+  db_password:
+    file: ./secrets/db_password.txt
+  bitgo_token:
+    file: ./secrets/bitgo_token.txt
+  bitgo_webhook_secret:
+    file: ./secrets/bitgo_webhook_secret.txt
