@@ -1,0 +1,212 @@
+version: "3.9"
+
+# E2E Test Stack
+# Complete exchange environment with:
+# - Infrastructure (postgres, redis, nats)
+# - Exchange services
+# - Animica devnet node
+# - Optional chaos tools (toxiproxy)
+
+x-node-service: &node-service
+  image: node:20-alpine
+  working_dir: /app
+  volumes:
+    - ../..:/app
+  environment:
+    NODE_ENV: test
+    DB_HOST: postgres
+    DB_PORT: 5432
+    DB_NAME: cex_e2e
+    DB_USER: cex
+    DB_PASSWORD: e2e_secret
+    REDIS_HOST: redis
+    REDIS_PORT: 6379
+    NATS_URL: nats://nats:4222
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+    nats:
+      condition: service_started
+
+services:
+  # ═══════════════════════════════════════════════════════════════
+  # Infrastructure
+  # ═══════════════════════════════════════════════════════════════
+  
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: cex
+      POSTGRES_PASSWORD: e2e_secret
+      POSTGRES_DB: cex_e2e
+    ports:
+      - "15432:5432"
+    volumes:
+      - postgres-e2e-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cex"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+  
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "16379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+  
+  nats:
+    image: nats:2.10-alpine
+    command: ["-js", "-m", "8222"]
+    ports:
+      - "14222:4222"
+      - "18222:8222"
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8222/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+  
+  # ═══════════════════════════════════════════════════════════════
+  # Exchange Services
+  # ═══════════════════════════════════════════════════════════════
+  
+  api-gateway:
+    <<: *node-service
+    command: sh -c "corepack enable && cd cex && pnpm install && pnpm --filter @cex/api-gateway dev"
+    environment:
+      SERVICE_NAME: api-gateway
+      PORT: 3000
+      LOG_LEVEL: info
+    ports:
+      - "13000:3000"
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+  
+  admin-service:
+    <<: *node-service
+    command: sh -c "corepack enable && cd cex && pnpm install && pnpm --filter @cex/admin-service dev"
+    environment:
+      SERVICE_NAME: admin-service
+      PORT: 3001
+      LOG_LEVEL: info
+    ports:
+      - "13001:3001"
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3001/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+  
+  matching-engine:
+    <<: *node-service
+    command: sh -c "corepack enable && cd cex && pnpm install && pnpm --filter @cex/matching-engine dev"
+    environment:
+      SERVICE_NAME: matching-engine
+      LOG_LEVEL: info
+  
+  ledger-service:
+    <<: *node-service
+    command: sh -c "corepack enable && cd cex && pnpm install && pnpm --filter @cex/ledger-service dev"
+    environment:
+      SERVICE_NAME: ledger-service
+      LOG_LEVEL: info
+  
+  animica-asset-service:
+    <<: *node-service
+    command: sh -c "corepack enable && cd cex && pnpm install && pnpm --filter @cex/animica-asset-service dev"
+    environment:
+      SERVICE_NAME: animica-asset-service
+      LOG_LEVEL: info
+      ANIMICA_RPC: http://animica-devnet:8545
+  
+  withdrawals-service:
+    <<: *node-service
+    command: sh -c "corepack enable && cd cex && pnpm install && pnpm --filter @cex/withdrawals-service dev"
+    environment:
+      SERVICE_NAME: withdrawals-service
+      LOG_LEVEL: info
+      BITGO_ENV: ${BITGO_ENV:-mock}
+      BITGO_ACCESS_TOKEN: ${BITGO_ACCESS_TOKEN:-}
+      BITGO_WEBHOOK_SECRET: ${BITGO_WEBHOOK_SECRET:-}
+  
+  bitgo-webhook-ingestor:
+    <<: *node-service
+    command: sh -c "corepack enable && cd cex && pnpm install && pnpm --filter @cex/bitgo-webhook-ingestor dev"
+    environment:
+      SERVICE_NAME: bitgo-webhook-ingestor
+      LOG_LEVEL: info
+      PORT: 3002
+    ports:
+      - "13002:3002"
+  
+  # ═══════════════════════════════════════════════════════════════
+  # Animica Devnet
+  # ═══════════════════════════════════════════════════════════════
+  
+  animica-devnet:
+    image: python:3.11-slim
+    working_dir: /app
+    volumes:
+      - ../..:/app
+    command: >
+      bash -c "
+        pip install -e . &&
+        python -m animica.cli.node --chain-id 31337 --rpc-port 8545 --block-interval 2 --devnet
+      "
+    environment:
+      PYTHONUNBUFFERED: 1
+    ports:
+      - "18545:8545"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8545/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+  
+  # ═══════════════════════════════════════════════════════════════
+  # Chaos Tools (Optional)
+  # ═══════════════════════════════════════════════════════════════
+  
+  toxiproxy:
+    image: ghcr.io/shopify/toxiproxy:2.9.0
+    ports:
+      - "18474:8474"
+      - "18666:8666"
+    profiles:
+      - chaos
+  
+  # ═══════════════════════════════════════════════════════════════
+  # Storage for Proof Bundles (Optional)
+  # ═══════════════════════════════════════════════════════════════
+  
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "19000:9000"
+      - "19001:9001"
+    volumes:
+      - minio-e2e-data:/data
+    profiles:
+      - storage
+
+volumes:
+  postgres-e2e-data:
+  minio-e2e-data:
+
+networks:
+  default:
+    name: cex-e2e-network

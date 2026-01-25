@@ -1,0 +1,286 @@
+name: E2E Tests
+
+on:
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'cex/**'
+      - '.github/workflows/e2e-tests.yml'
+  push:
+    branches: [main, develop]
+    paths:
+      - 'cex/**'
+  schedule:
+    # Run full suite daily at 2 AM UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    inputs:
+      scenario:
+        description: 'Scenario to run (smoke, all, etc.)'
+        required: false
+        default: 'smoke'
+      duration:
+        description: 'Test duration in seconds'
+        required: false
+        default: '120'
+
+jobs:
+  e2e-smoke:
+    name: E2E Smoke Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install Python dependencies
+        run: |
+          pip install -e .
+      
+      - name: Start E2E stack
+        run: |
+          cd cex/ops/docker/scripts
+          ./e2e_up.sh
+        env:
+          BITGO_ENV: mock
+          ENABLE_CHAOS: false
+      
+      - name: Run smoke test
+        run: |
+          cd cex/tests/e2e
+          pnpm install
+          pnpm e2e:smoke
+        env:
+          API_GATEWAY_URL: http://localhost:13000
+          ADMIN_API_URL: http://localhost:13001
+          WS_URL: ws://localhost:13000
+          ANIMICA_RPC: http://localhost:18545
+      
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-smoke-reports
+          path: |
+            cex/tests/e2e/artifacts/*.json
+            cex/tests/e2e/artifacts/*.md
+            cex/tests/e2e/artifacts/*.txt
+          retention-days: 30
+      
+      - name: Tear down stack
+        if: always()
+        run: |
+          cd cex/ops/docker/scripts
+          ./e2e_down.sh
+  
+  e2e-reconciliation:
+    name: E2E Reconciliation Proof
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install Python dependencies
+        run: |
+          pip install -e .
+      
+      - name: Start E2E stack
+        run: |
+          cd cex/ops/docker/scripts
+          ./e2e_up.sh
+        env:
+          BITGO_ENV: mock
+          ENABLE_CHAOS: false
+      
+      - name: Run reconciliation proof
+        run: |
+          cd cex/tests/e2e
+          pnpm install
+          pnpm e2e:reconcile
+        env:
+          API_GATEWAY_URL: http://localhost:13000
+          ADMIN_API_URL: http://localhost:13001
+          WS_URL: ws://localhost:13000
+          ANIMICA_RPC: http://localhost:18545
+      
+      - name: Upload proof bundle
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reconciliation-proof
+          path: |
+            cex/tests/e2e/artifacts/proof-*.json
+            cex/tests/e2e/artifacts/report-*.json
+            cex/tests/e2e/artifacts/report-*.md
+          retention-days: 90
+      
+      - name: Comment PR with proof
+        if: github.event_name == 'pull_request' && always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const glob = require('glob');
+            
+            // Find latest report
+            const reports = glob.sync('cex/tests/e2e/artifacts/report-*.md');
+            if (reports.length === 0) return;
+            
+            const report = fs.readFileSync(reports[reports.length - 1], 'utf8');
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `## E2E Reconciliation Proof\n\n${report}`
+            });
+      
+      - name: Tear down stack
+        if: always()
+        run: |
+          cd cex/ops/docker/scripts
+          ./e2e_down.sh
+  
+  e2e-full:
+    name: E2E Full Suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    
+    strategy:
+      fail-fast: false
+      matrix:
+        scenario:
+          - market_maker
+          - stress
+          - deposits_bitgo
+          - deposits_animica
+          - withdrawals_bitgo
+          - withdrawals_animica
+          - chaos_kill_restart
+          - chaos_partition
+          - reorg_animica
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install Python dependencies
+        run: |
+          pip install -e .
+      
+      - name: Start E2E stack
+        run: |
+          cd cex/ops/docker/scripts
+          ./e2e_up.sh
+        env:
+          BITGO_ENV: mock
+          ENABLE_CHAOS: ${{ contains(matrix.scenario, 'chaos') && 'true' || 'false' }}
+      
+      - name: Run scenario
+        run: |
+          cd cex/tests/e2e
+          pnpm install
+          pnpm e2e -- --scenario ${{ matrix.scenario }} --duration ${{ github.event.inputs.duration || '180' }}
+        env:
+          API_GATEWAY_URL: http://localhost:13000
+          ADMIN_API_URL: http://localhost:13001
+          WS_URL: ws://localhost:13000
+          ANIMICA_RPC: http://localhost:18545
+      
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-${{ matrix.scenario }}-artifacts
+          path: |
+            cex/tests/e2e/artifacts/*.json
+            cex/tests/e2e/artifacts/*.md
+            cex/tests/e2e/artifacts/*.txt
+          retention-days: 30
+      
+      - name: Tear down stack
+        if: always()
+        run: |
+          cd cex/ops/docker/scripts
+          ./e2e_down.sh
+  
+  e2e-summary:
+    name: E2E Test Summary
+    runs-on: ubuntu-latest
+    needs: [e2e-smoke, e2e-reconciliation]
+    if: always()
+    
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4.1.3
+        with:
+          path: artifacts
+      
+      - name: Generate summary
+        run: |
+          echo "# E2E Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Test | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Smoke Test | ${{ needs.e2e-smoke.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Reconciliation | ${{ needs.e2e-reconciliation.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Find and display latest reconciliation report
+          if [ -d "artifacts/reconciliation-proof" ]; then
+            REPORT=$(find artifacts/reconciliation-proof -name "report-*.md" | head -1)
+            if [ -f "$REPORT" ]; then
+              echo "## Reconciliation Proof Details" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              cat "$REPORT" >> $GITHUB_STEP_SUMMARY
+            fi
+          fi
