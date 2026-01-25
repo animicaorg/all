@@ -5,10 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from animica_miner_gui.backend.config import (
-    NetworkMode,
-    load_config,
-)
+from animica_miner_gui.backend.config import load_config
 
 
 def _load_json(path: Path) -> dict:
@@ -26,9 +23,7 @@ def test_load_config_missing_rpc_url(tmp_path):
 
     config = load_config(config_path)
 
-    assert config.network.mode == NetworkMode.LOCAL
     assert config.network.rpc_url is None
-    assert config.network.external_rpc_url is None
 
 
 def test_load_config_null_rpc_url_repro(tmp_path):
@@ -39,16 +34,14 @@ def test_load_config_null_rpc_url_repro(tmp_path):
 
     config = load_config(config_path)
 
-    assert config.network.mode == NetworkMode.LOCAL
     assert config.network.rpc_url is None
 
     repaired = _load_json(config_path)
-    assert repaired["network"]["mode"] == NetworkMode.LOCAL.value
     assert repaired["network"]["rpc_url"] is None
 
 
-def test_load_config_migrates_external_rpc(tmp_path):
-    """Old rpc_url string should migrate to external mode."""
+def test_load_config_strips_external_rpc(tmp_path):
+    """Old external rpc_url should be stripped in favor of local node."""
     config_path = tmp_path / "config.json"
     config_path.write_text(
         json.dumps(
@@ -62,9 +55,7 @@ def test_load_config_migrates_external_rpc(tmp_path):
 
     config = load_config(config_path)
 
-    assert config.network.mode == NetworkMode.EXTERNAL
-    assert config.network.external_rpc_url == "https://rpc.example.com"
+    assert config.network.rpc_url is None
 
     repaired = _load_json(config_path)
-    assert repaired["network"]["mode"] == NetworkMode.EXTERNAL.value
-    assert repaired["network"]["external_rpc_url"] == "https://rpc.example.com"
+    assert repaired["network"]["rpc_url"] is None

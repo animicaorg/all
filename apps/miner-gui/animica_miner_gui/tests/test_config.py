@@ -8,7 +8,6 @@ import pytest
 
 from animica_miner_gui.backend.config import (
     MiningAppConfig,
-    NetworkMode,
     NetworkType,
     MiningMode,
     DeviceType,
@@ -23,7 +22,6 @@ def test_config_defaults():
     
     assert config.version == "1.0"
     assert config.network.network_type == NetworkType.DEVNET
-    assert config.network.mode == NetworkMode.LOCAL
     assert config.network.rpc_url is None
     assert config.miner.mining_mode == MiningMode.SOLO
     assert config.cpu.enabled is True

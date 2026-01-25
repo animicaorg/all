@@ -353,7 +353,7 @@ class WalletTab(QWidget):
                 QMessageBox.warning(
                     self,
                     "RPC Not Ready",
-                    "RPC is not ready yet. Start the local node or configure an external RPC.",
+                    "RPC is not ready yet. Start the local node to continue.",
                 )
                 return
             
