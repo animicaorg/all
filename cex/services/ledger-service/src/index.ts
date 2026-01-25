@@ -1,137 +1,133 @@
+/**
+ * Ledger Service - Main Entry Point
+ * 
+ * Double-entry accounting service that consumes trade and order events
+ * from the matching engine and maintains accurate user balances.
+ */
+
 import express from "express";
-import { v4 as uuidv4 } from "uuid";
-import { z } from "zod";
-import {
-  baseEnvSchema,
-  connectNats,
-  createLogger,
-  createPgPool,
-  createRedis,
-  jsonCodec,
-  loadEnv,
-  orderAcceptedSchema,
-  subjects
-} from "@cex/common";
+import { loadConfig } from "./config.js";
+import { createLogger, createPgPool, connectNats } from "@cex/common";
+import { LedgerConsumer } from "./consumers/nats_consumer.js";
+import { setupAdminAPI } from "./api/http.js";
+import { runReconciliation, checkHealth } from "./jobs/index.js";
+import type { Market } from "./domain/types.js";
 
-const env = loadEnv(
-  baseEnvSchema.extend({
-    SERVICE_NAME: z.string().default("ledger-service")
-  })
-);
+const config = loadConfig();
+const logger = createLogger(config.SERVICE_NAME, config.LOG_LEVEL);
 
-const logger = createLogger(env.SERVICE_NAME, env.LOG_LEVEL);
+async function start() {
+  logger.info({ config: { ...config, ADMIN_KEY: config.ADMIN_KEY ? "***" : undefined } }, "Starting ledger service");
 
-const start = async () => {
+  // Initialize connections
+  const pool = createPgPool({
+    DATABASE_URL: config.DATABASE_URL
+  } as any);
+  
+  const nats = await connectNats({
+    NATS_URL: config.NATS_URL
+  } as any);
+
+  // Setup HTTP server
   const app = express();
   app.use(express.json());
 
-  const pgPool = createPgPool(env);
-  const redis = createRedis(env);
-  const nats = await connectNats(env);
+  // Setup admin API
+  setupAdminAPI(app, pool, logger, config.ADMIN_KEY);
 
-  app.get("/healthz", async (_req, res) => {
-    const pgOk = await pgPool
-      .query("SELECT 1")
-      .then(() => true)
-      .catch(() => false);
-    const redisOk = await redis
-      .ping()
-      .then(() => true)
-      .catch(() => false);
-    res.json({
-      status: "ok",
-      service: env.SERVICE_NAME,
-      postgres: pgOk,
-      redis: redisOk,
-      nats: nats.isClosed() ? "closed" : "open"
-    });
+  const server = app.listen(config.PORT, () => {
+    logger.info({ port: config.PORT }, "HTTP server listening");
   });
 
-  const server = app.listen(env.PORT, () => {
-    logger.info({ port: env.PORT }, "ledger-service listening");
-  });
+  // Load markets from database
+  const markets = await loadMarkets(pool);
+  logger.info({ count: markets.length }, "Loaded markets");
 
-  const subscription = nats.subscribe(subjects.orderAccepted, {
-    queue: "ledger-service"
-  });
+  // Start consumer for each market
+  const consumer = new LedgerConsumer(pool, nats, logger);
+  for (const market of markets) {
+    await consumer.startMarket(market);
+  }
 
-  (async () => {
-    for await (const msg of subscription) {
-      const decoded = jsonCodec.decode(msg.data);
-      const parsed = orderAcceptedSchema.safeParse(decoded);
-      if (!parsed.success) {
-        logger.warn({ errors: parsed.error.flatten() }, "invalid order accepted payload");
-        continue;
+  // Start periodic reconciliation job
+  const reconcileInterval = setInterval(async () => {
+    try {
+      logger.info("Running scheduled reconciliation");
+      const report = await runReconciliation(pool, logger);
+      if (!report.ok) {
+        logger.warn({ mismatchCount: report.mismatches.length }, "Reconciliation found mismatches");
+      } else {
+        logger.info("Reconciliation completed successfully");
       }
-
-      const event = parsed.data;
-      const client = await pgPool.connect();
-      try {
-        await client.query("BEGIN");
-        const processed = await client.query(
-          "SELECT event_id FROM processed_events WHERE event_id = $1",
-          [event.event_id]
-        );
-        if (processed.rowCount) {
-          await client.query("ROLLBACK");
-          logger.info({ eventId: event.event_id }, "event already processed");
-          continue;
-        }
-
-        await client.query(
-          "INSERT INTO journal_entries (id, event_id, account_id, asset, amount, direction, description) VALUES ($1, $2, $3, $4, $5, $6, $7)",
-          [
-            uuidv4(),
-            event.event_id,
-            event.user_id,
-            event.side === "buy" ? "USDT" : "ANM",
-            event.quantity,
-            "debit",
-            `Order accepted ${event.order_id}`
-          ]
-        );
-
-        await client.query(
-          "INSERT INTO processed_events (event_id, consumer) VALUES ($1, $2)",
-          [event.event_id, env.SERVICE_NAME]
-        );
-        await client.query("COMMIT");
-
-        nats.publish(
-          subjects.ledgerEntryPosted,
-          jsonCodec.encode({
-            event_id: uuidv4(),
-            correlation_id: event.correlation_id ?? event.event_id,
-            causation_id: event.event_id,
-            created_at: new Date().toISOString(),
-            type: "LedgerEntryPosted",
-            journal_event_id: event.event_id
-          })
-        );
-      } catch (error) {
-        await client.query("ROLLBACK");
-        logger.error({ error }, "failed to post journal entry");
-      } finally {
-        client.release();
-      }
+    } catch (error) {
+      logger.error({ error }, "Reconciliation job failed");
     }
-  })().catch((error) => {
-    logger.error({ error }, "subscription error");
-  });
+  }, config.RECONCILE_INTERVAL_MS);
 
+  // Start periodic health check
+  const healthInterval = setInterval(async () => {
+    try {
+      const health = await checkHealth(pool, logger);
+      if (!health.ok) {
+        logger.warn({ health }, "Health check failed");
+      }
+    } catch (error) {
+      logger.error({ error }, "Health check failed");
+    }
+  }, config.HEALTH_CHECK_INTERVAL_MS);
+
+  // Graceful shutdown
   const shutdown = async () => {
-    subscription.unsubscribe();
+    logger.info("Shutting down ledger service");
+    
+    clearInterval(reconcileInterval);
+    clearInterval(healthInterval);
+    
+    await consumer.stop();
     await nats.drain();
-    await pgPool.end();
-    redis.disconnect();
-    server.close();
+    await pool.end();
+    
+    server.close(() => {
+      logger.info("HTTP server closed");
+      process.exit(0);
+    });
   };
 
   process.on("SIGTERM", shutdown);
   process.on("SIGINT", shutdown);
-};
 
+  logger.info("Ledger service started successfully");
+}
+
+/**
+ * Load markets from database
+ */
+async function loadMarkets(pool: any): Promise<Market[]> {
+  const client = await pool.connect();
+  try {
+    const result = await client.query(
+      `SELECT id, symbol, base_asset, quote_asset, maker_fee_bps, taker_fee_bps, fee_asset
+       FROM markets
+       WHERE active = true
+       ORDER BY symbol`
+    );
+
+    return result.rows.map((row: any) => ({
+      id: row.id,
+      symbol: row.symbol,
+      baseAsset: row.base_asset,
+      quoteAsset: row.quote_asset,
+      makerFeeBps: row.maker_fee_bps,
+      takerFeeBps: row.taker_fee_bps,
+      feeAsset: row.fee_asset
+    }));
+  } finally {
+    client.release();
+  }
+}
+
+// Start the service
 start().catch((error) => {
-  logger.error({ error }, "failed to start ledger-service");
+  logger.error({ error }, "Failed to start ledger service");
   process.exit(1);
 });
