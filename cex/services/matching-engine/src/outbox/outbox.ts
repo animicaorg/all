@@ -1,7 +1,3 @@
-/**
- * Outbox helper functions
- */
-
 import { generateEventKey } from "../engine/deterministic.js";
 import type { Order, Trade } from "../engine/types.js";
 import type { OutboxRepo } from "../db/repositories/index.js";
@@ -13,7 +9,7 @@ export async function writeOrderEvent(
   eventType: string,
   order: Order
 ): Promise<void> {
-  const key = generateEventKey(marketId, eventType, sequence);
+  const key = generateEventKey(marketId, eventType, sequence, order.id);
   
   await repo.writeEvent({
     marketId,

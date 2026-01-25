@@ -126,12 +126,10 @@ export function generateTradeId(
 export function generateEventKey(
   marketId: string,
   eventType: string,
-  sequence: bigint
+  sequence: bigint,
+  orderId?: string
 ): string {
-  return `${marketId}:${eventType}:${sequence}`;
-}
-
-interface Order {
-  id: string;
-  acceptedAt: Date;
+  return orderId 
+    ? `${marketId}:${eventType}:${sequence}:${orderId}`
+    : `${marketId}:${eventType}:${sequence}`;
 }
