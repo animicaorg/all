@@ -1,0 +1,30 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: cex-dev
+
+resources:
+  - ../../base/namespace.yaml
+  - ../../base/configmaps.yaml
+  - ../../base/postgres/statefulset.yaml
+  - ../../base/postgres/service.yaml
+  - ../../base/redis/deployment.yaml
+  - ../../base/redis/service.yaml
+  - ../../base/nats/statefulset.yaml
+  - ../../base/nats/service.yaml
+  - ../../base/services/api-gateway.yaml
+
+images:
+  - name: registry.animica.io/cex-api-gateway
+    newTag: dev-latest
+
+configMapGenerator:
+  - name: cex-config-dev
+    behavior: merge
+    literals:
+      - NODE_ENV=development
+      - LOG_LEVEL=debug
+
+replicas:
+  - name: api-gateway
+    count: 1

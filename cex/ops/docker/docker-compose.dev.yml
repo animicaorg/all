@@ -1,0 +1,365 @@
+version: "3.9"
+
+# Development environment with all services and dependencies
+# Use: ./scripts/up_dev.sh
+
+networks:
+  cex-internal:
+    driver: bridge
+  cex-edge:
+    driver: bridge
+
+volumes:
+  postgres-data:
+  redis-data:
+  nats-data:
+  minio-data:
+
+x-node-base: &node-base
+  image: node:20-alpine
+  working_dir: /app
+  volumes:
+    - ../..:/app
+  networks:
+    - cex-internal
+  restart: unless-stopped
+
+x-health-defaults: &health-defaults
+  interval: 10s
+  timeout: 5s
+  retries: 5
+  start_period: 30s
+
+services:
+  # ============================================================================
+  # INFRASTRUCTURE
+  # ============================================================================
+  
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${DB_USER:-cex}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-cex_dev_password}
+      POSTGRES_DB: ${DB_NAME:-cex_exchange}
+      POSTGRES_INITDB_ARGS: "-c shared_preload_libraries=pg_stat_statements"
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./scripts/postgres-init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    networks:
+      - cex-internal
+    healthcheck:
+      <<: *health-defaults
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-cex} -d ${DB_NAME:-cex_exchange}"]
+    command: 
+      - "postgres"
+      - "-c"
+      - "max_connections=200"
+      - "-c"
+      - "shared_buffers=256MB"
+      - "-c"
+      - "effective_cache_size=1GB"
+      - "-c"
+      - "log_statement=mod"
+      - "-c"
+      - "log_duration=on"
+      - "-c"
+      - "log_min_duration_statement=1000"
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - cex-internal
+    healthcheck:
+      <<: *health-defaults
+      test: ["CMD", "redis-cli", "ping"]
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+
+  nats:
+    image: nats:2.10-alpine
+    command: 
+      - "-js"
+      - "-m"
+      - "8222"
+      - "--store_dir=/data"
+      - "--max_payload=8MB"
+      - "--max_pending=128MB"
+    ports:
+      - "${NATS_PORT:-4222}:4222"
+      - "8222:8222"  # Monitoring
+    volumes:
+      - nats-data:/data
+    networks:
+      - cex-internal
+    healthcheck:
+      <<: *health-defaults
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8222/healthz"]
+
+  # MinIO for S3-compatible storage (backups, audit logs)
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio-data:/data
+    networks:
+      - cex-internal
+    healthcheck:
+      <<: *health-defaults
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+
+  # MailHog for email testing
+  mailhog:
+    image: mailhog/mailhog:latest
+    ports:
+      - "1025:1025"  # SMTP
+      - "8025:8025"  # Web UI
+    networks:
+      - cex-internal
+
+  # ============================================================================
+  # DATABASE MIGRATION
+  # ============================================================================
+
+  migrate:
+    <<: *node-base
+    env_file:
+      - ./env/.env
+    command: sh -c "corepack enable && pnpm install && pnpm migrate"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    profiles:
+      - migration
+
+  # ============================================================================
+  # CORE SERVICES
+  # ============================================================================
+
+  api-gateway:
+    <<: *node-base
+    env_file:
+      - ./env/.env
+    environment:
+      SERVICE_NAME: api-gateway
+      PORT: ${API_GATEWAY_PORT:-3000}
+      NODE_ENV: development
+    command: sh -c "corepack enable && pnpm install && pnpm --filter @cex/api-gateway dev"
+    ports:
+      - "${API_GATEWAY_PORT:-3000}:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+    healthcheck:
+      <<: *health-defaults
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/health"]
+
+  auth-service:
+    <<: *node-base
+    env_file:
+      - ./env/.env
+    environment:
+      SERVICE_NAME: auth-service
+      PORT: ${AUTH_SERVICE_PORT:-3100}
+      NODE_ENV: development
+    command: sh -c "corepack enable && pnpm install && pnpm --filter @cex/auth-service dev"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      <<: *health-defaults
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3100/health"]
+
+  matching-engine:
+    <<: *node-base
+    env_file:
+      - ./env/.env
+    environment:
+      SERVICE_NAME: matching-engine
+      PORT: ${MATCHING_ENGINE_PORT:-3200}
+      NODE_ENV: development
+    command: sh -c "corepack enable && pnpm install && pnpm --filter @cex/matching-engine dev"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+    healthcheck:
+      <<: *health-defaults
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3200/health"]
+
+  ledger-service:
+    <<: *node-base
+    env_file:
+      - ./env/.env
+    environment:
+      SERVICE_NAME: ledger-service
+      PORT: ${LEDGER_SERVICE_PORT:-3300}
+      NODE_ENV: development
+    command: sh -c "corepack enable && pnpm install && pnpm --filter @cex/ledger-service dev"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+    healthcheck:
+      <<: *health-defaults
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3300/health"]
+
+  wallet-router:
+    <<: *node-base
+    env_file:
+      - ./env/.env
+    environment:
+      SERVICE_NAME: wallet-router
+      PORT: ${WALLET_ROUTER_PORT:-3400}
+      NODE_ENV: development
+      BITGO_ENV: ${BITGO_ENV:-test}
+      BITGO_ACCESS_TOKEN: ${BITGO_ACCESS_TOKEN}
+      BITGO_WEBHOOK_SECRET: ${BITGO_WEBHOOK_SECRET}
+      BITGO_BASE_URL: ${BITGO_BASE_URL}
+      ANIMICA_RPC_URL: ${ANIMICA_RPC_URL}
+    command: sh -c "corepack enable && pnpm install && pnpm --filter @cex/wallet-router dev"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+    healthcheck:
+      <<: *health-defaults
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3400/health"]
+
+  bitgo-webhook-ingestor:
+    <<: *node-base
+    env_file:
+      - ./env/.env
+    environment:
+      SERVICE_NAME: bitgo-webhook-ingestor
+      PORT: ${BITGO_INGESTOR_PORT:-3002}
+      NODE_ENV: development
+      BITGO_WEBHOOK_SECRET: ${BITGO_WEBHOOK_SECRET}
+    command: sh -c "corepack enable && pnpm install && pnpm --filter @cex/bitgo-webhook-ingestor dev"
+    ports:
+      - "${BITGO_INGESTOR_PORT:-3002}:3002"
+    depends_on:
+      nats:
+        condition: service_healthy
+    healthcheck:
+      <<: *health-defaults
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3002/health"]
+
+  animica-indexer:
+    <<: *node-base
+    env_file:
+      - ./env/.env
+    environment:
+      SERVICE_NAME: animica-indexer
+      PORT: ${ANIMICA_INDEXER_PORT:-3500}
+      NODE_ENV: development
+      ANIMICA_RPC_URL: ${ANIMICA_RPC_URL}
+    command: sh -c "corepack enable && pnpm install && pnpm --filter @cex/animica-indexer dev"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+    healthcheck:
+      <<: *health-defaults
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3500/health"]
+
+  animica-asset-service:
+    <<: *node-base
+    env_file:
+      - ./env/.env
+    environment:
+      SERVICE_NAME: animica-asset-service
+      PORT: ${ANIMICA_ASSET_PORT:-3600}
+      NODE_ENV: development
+      ANIMICA_RPC_URL: ${ANIMICA_RPC_URL}
+    command: sh -c "corepack enable && pnpm install && pnpm --filter @cex/animica-asset-service dev"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+    healthcheck:
+      <<: *health-defaults
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3600/health"]
+
+  risk-service:
+    <<: *node-base
+    env_file:
+      - ./env/.env
+    environment:
+      SERVICE_NAME: risk-service
+      PORT: ${RISK_SERVICE_PORT:-3700}
+      NODE_ENV: development
+    command: sh -c "corepack enable && pnpm install && pnpm --filter @cex/risk-service dev"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      <<: *health-defaults
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3700/health"]
+
+  admin-service:
+    <<: *node-base
+    env_file:
+      - ./env/.env
+    environment:
+      SERVICE_NAME: admin-service
+      PORT: ${ADMIN_SERVICE_PORT:-3001}
+      NODE_ENV: development
+    command: sh -c "corepack enable && pnpm install && pnpm --filter @cex/admin-service dev"
+    ports:
+      - "${ADMIN_SERVICE_PORT:-3001}:3001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      <<: *health-defaults
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3001/health"]
+
+  withdrawals-service:
+    <<: *node-base
+    env_file:
+      - ./env/.env
+    environment:
+      SERVICE_NAME: withdrawals-service
+      PORT: ${WITHDRAWALS_SERVICE_PORT:-3800}
+      NODE_ENV: development
+    command: sh -c "corepack enable && pnpm install && pnpm --filter @cex/withdrawals-service dev"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+    healthcheck:
+      <<: *health-defaults
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3800/health"]
