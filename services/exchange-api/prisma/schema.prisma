@@ -266,6 +266,7 @@ model ApiKey {
   secretHash  String    @map("secret_hash")
   scopes      Json      @default("[]")
   ipAllowlist Json?     @map("ip_allowlist")
+  lastUsedAt  DateTime? @map("last_used_at") @db.Timestamptz(3)
   revokedAt   DateTime? @map("revoked_at") @db.Timestamptz(3)
   createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
 
@@ -451,6 +452,7 @@ model Market {
   orders       Order[]
   trades       Trade[]
   feeSchedules FeeSchedule[]
+  candles      Candle[]
 
   @@unique([baseAssetId, quoteAssetId])
   @@index([status])
@@ -744,4 +746,58 @@ model IdempotencyKey {
   @@index([scope, createdAt])
   @@index([expiresAt])
   @@map("idempotency_keys")
+}
+
+// ============================================================================
+// CANDLES (OHLCV Data)
+// ============================================================================
+
+enum CandleInterval {
+  ONE_MINUTE
+  FIVE_MINUTES
+  FIFTEEN_MINUTES
+  ONE_HOUR
+  FOUR_HOURS
+  ONE_DAY
+}
+
+model Candle {
+  id         String         @id @default(uuid()) @db.Uuid
+  marketId   String         @map("market_id") @db.Uuid
+  interval   CandleInterval
+  openTime   DateTime       @map("open_time") @db.Timestamptz(3)
+  closeTime  DateTime       @map("close_time") @db.Timestamptz(3)
+  open       String         @db.Decimal(36, 18)
+  high       String         @db.Decimal(36, 18)
+  low        String         @db.Decimal(36, 18)
+  close      String         @db.Decimal(36, 18)
+  volume     String         @db.Decimal(36, 18)
+  quoteVolume String?       @map("quote_volume") @db.Decimal(36, 18)
+  trades     Int            @default(0)
+  createdAt  DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt  DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  market Market @relation(fields: [marketId], references: [id])
+
+  @@unique([marketId, interval, openTime])
+  @@index([marketId, interval, openTime])
+  @@map("candles")
+}
+
+// ============================================================================
+// API NONCE TRACKING (for replay protection)
+// ============================================================================
+
+model ApiNonce {
+  id        String   @id @default(uuid()) @db.Uuid
+  apiKeyId  String   @map("api_key_id") @db.Uuid
+  nonce     String
+  timestamp BigInt
+  expiresAt DateTime @map("expires_at") @db.Timestamptz(3)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@unique([apiKeyId, nonce])
+  @@index([apiKeyId, timestamp])
+  @@index([expiresAt])
+  @@map("api_nonces")
 }
