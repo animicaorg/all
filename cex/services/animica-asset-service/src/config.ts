@@ -5,8 +5,12 @@
 import { z } from "zod";
 import { baseEnvSchema, loadEnv } from "@cex/common";
 
-const configSchema = baseEnvSchema.extend({
+const configSchema = baseEnvSchema.partial().extend({
   SERVICE_NAME: z.string().default("animica-asset-service"),
+  
+  // Optional common fields (not needed for this service)
+  NATS_URL: z.string().url().optional(),
+  REDIS_URL: z.string().url().optional(),
   
   // Animica RPC configuration
   ANIMICA_RPC_URL: z.string().default("http://127.0.0.1:8545/rpc"),

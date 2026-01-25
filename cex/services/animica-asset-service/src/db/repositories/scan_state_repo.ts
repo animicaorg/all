@@ -59,7 +59,7 @@ export class ScanStateRepository {
     
     const result = await this.pool.query(query, [assetNetworkId, lockOwner, lockExpiresAt]);
     
-    const acquired = result.rowCount > 0;
+    const acquired = (result.rowCount ?? 0) > 0;
     if (acquired) {
       this.logger.debug({ assetNetworkId, lockOwner }, "Scan lock acquired");
     }
@@ -85,7 +85,7 @@ export class ScanStateRepository {
     `;
     
     const result = await this.pool.query(query, [assetNetworkId, lockOwner, lockExpiresAt]);
-    return result.rowCount > 0;
+    return (result.rowCount ?? 0) > 0;
   }
   
   /**
