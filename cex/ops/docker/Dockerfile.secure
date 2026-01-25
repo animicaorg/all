@@ -1,0 +1,112 @@
+# Animica CEX - Secure Docker Base Template
+# Production-ready security-hardened container image
+
+# Multi-stage build for minimal attack surface
+ARG PYTHON_VERSION=3.11
+FROM python:${PYTHON_VERSION}-slim-bookworm AS builder
+
+# Security: Update base packages and remove unnecessary tools
+RUN apt-get update && \
+    apt-get upgrade -y && \
+    apt-get install -y --no-install-recommends \
+        gcc \
+        g++ \
+        make \
+        libffi-dev \
+        libssl-dev \
+        curl \
+        git && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+# Create build directory
+WORKDIR /build
+
+# Copy dependency files first for layer caching
+COPY requirements.txt requirements-dev.txt* ./
+
+# Install dependencies in a virtual environment
+RUN python -m venv /opt/venv && \
+    /opt/venv/bin/pip install --no-cache-dir --upgrade pip setuptools wheel && \
+    /opt/venv/bin/pip install --no-cache-dir -r requirements.txt
+
+# Copy application code
+COPY . .
+
+# Build application if needed
+RUN if [ -f setup.py ]; then /opt/venv/bin/pip install --no-cache-dir -e .; fi
+
+# Final stage - minimal runtime image
+FROM python:${PYTHON_VERSION}-slim-bookworm
+
+# Metadata
+LABEL maintainer="security@animica.exchange" \
+      description="Secure base image for Animica CEX services" \
+      version="1.0.0"
+
+# Security: Install only runtime dependencies and security updates
+RUN apt-get update && \
+    apt-get upgrade -y && \
+    apt-get install -y --no-install-recommends \
+        ca-certificates \
+        libssl3 \
+        libffi8 \
+        tini && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+
+# Security: Create non-root user with no login shell
+RUN groupadd -r -g 1000 appuser && \
+    useradd -r -u 1000 -g appuser -s /sbin/nologin -d /app -c "Application User" appuser
+
+# Copy virtual environment from builder
+COPY --from=builder --chown=appuser:appuser /opt/venv /opt/venv
+
+# Set up application directory
+WORKDIR /app
+
+# Copy application from builder
+COPY --from=builder --chown=appuser:appuser /build /app
+
+# Security: Set restrictive permissions
+RUN chmod -R 755 /app && \
+    chmod -R 550 /app/scripts 2>/dev/null || true && \
+    find /app -type f -name "*.sh" -exec chmod 550 {} \; 2>/dev/null || true
+
+# Create directories with proper permissions
+RUN mkdir -p /app/logs /app/data /app/tmp && \
+    chown -R appuser:appuser /app/logs /app/data /app/tmp && \
+    chmod 755 /app/logs /app/data /app/tmp
+
+# Environment variables
+ENV PATH="/opt/venv/bin:$PATH" \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONHASHSEED=random \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+# Security: Drop to non-root user
+USER appuser
+
+# Health check (override in specific service Dockerfiles)
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD python -c "import sys; sys.exit(0)"
+
+# Use tini as init system to handle signals properly
+ENTRYPOINT ["/usr/bin/tini", "--"]
+
+# Default command (override in specific service Dockerfiles)
+CMD ["python", "--version"]
+
+# Security notes for extending this image:
+# 1. Always use --read-only flag when possible with Docker run
+# 2. Drop all capabilities and add only required ones
+# 3. Use --security-opt=no-new-privileges
+# 4. Mount volumes as read-only when possible
+# 5. Set resource limits (memory, CPU, PIDs)
+# 6. Use --network with custom networks, never use host network
+# 7. Scan images regularly with security scanners (Trivy, Grype, etc.)
+# 8. Pin all dependency versions
+# 9. Keep base images updated
+# 10. Use secrets management, never environment variables for secrets
