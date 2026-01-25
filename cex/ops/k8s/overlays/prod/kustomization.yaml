@@ -1,0 +1,36 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: cex-prod
+
+resources:
+  - ../../base/namespace.yaml
+  - ../../base/configmaps.yaml
+  - ../../base/postgres/statefulset.yaml
+  - ../../base/postgres/service.yaml
+  - ../../base/postgres/pdb.yaml
+  - ../../base/postgres/backup-cronjob.yaml
+  - ../../base/redis/deployment.yaml
+  - ../../base/redis/service.yaml
+  - ../../base/nats/statefulset.yaml
+  - ../../base/nats/service.yaml
+  - ../../base/services/api-gateway.yaml
+  - ../../base/ingress/ingress.yaml
+  - ../../base/ingress/certificates.yaml
+  - ../../base/networkpolicies/default-deny.yaml
+  - ../../base/networkpolicies/allow-internal.yaml
+
+images:
+  - name: registry.animica.io/cex-api-gateway
+    newTag: latest
+
+configMapGenerator:
+  - name: cex-config-prod
+    behavior: merge
+    literals:
+      - NODE_ENV=production
+      - LOG_LEVEL=info
+
+replicas:
+  - name: api-gateway
+    count: 3
