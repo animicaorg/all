@@ -23,12 +23,6 @@ class NetworkType(str, Enum):
     CUSTOM = "custom"
 
 
-class NetworkMode(str, Enum):
-    """RPC routing mode."""
-    LOCAL = "local"
-    EXTERNAL = "external"
-
-
 class DeviceType(str, Enum):
     """Mining device types."""
     CPU = "cpu"
@@ -97,13 +91,10 @@ class PoolConfig(BaseModel):
 class NetworkConfig(BaseModel):
     """Network and RPC configuration."""
     network_type: NetworkType = Field(default=NetworkType.DEVNET, description="Network type")
-    mode: NetworkMode = Field(default=NetworkMode.LOCAL, description="RPC selection mode")
     rpc_url: Optional[str] = Field(default=None, description="Resolved RPC endpoint URL (runtime)")
-    external_rpc_url: Optional[str] = Field(default=None, description="External RPC URL (mode=external)")
-    custom_rpc_url: Optional[str] = Field(default=None, description="Custom RPC URL (when network_type=custom)")
     chain_id: Optional[int] = Field(default=None, ge=1, description="Chain ID (None=auto-detect)")
 
-    @field_validator("rpc_url", "external_rpc_url", "custom_rpc_url", mode="before")
+    @field_validator("rpc_url", mode="before")
     @classmethod
     def normalize_optional_url(cls, value: Any) -> Any:
         if value is None:
@@ -115,8 +106,6 @@ class NetworkConfig(BaseModel):
 
     def resolved_rpc_url(self) -> Optional[str]:
         """Return the effective RPC URL based on mode and configured values."""
-        if self.mode == NetworkMode.EXTERNAL:
-            return self.external_rpc_url or self.rpc_url
         return self.rpc_url
 
 
@@ -224,55 +213,33 @@ def migrate_config_dict(raw: Any) -> Tuple[Dict[str, Any], bool, List[str]]:
         changed = True
 
     network = dict(network_raw)
-    mode = network.get("mode")
     rpc_url = network.get("rpc_url")
     external_rpc_url = network.get("external_rpc_url")
     custom_rpc_url = network.get("custom_rpc_url")
 
-    if mode is None:
-        if isinstance(external_rpc_url, str) and external_rpc_url.strip():
-            mode = NetworkMode.EXTERNAL.value
-        elif isinstance(rpc_url, str) and rpc_url.strip():
-            mode = NetworkMode.EXTERNAL.value
-            external_rpc_url = rpc_url.strip()
-        else:
-            mode = NetworkMode.LOCAL.value
-        changed = True
-    elif isinstance(mode, str):
-        mode = mode.strip().lower()
-
-    if mode not in {NetworkMode.LOCAL.value, NetworkMode.EXTERNAL.value}:
-        warnings.append(f"Unknown network mode '{mode}', defaulting to local.")
-        mode = NetworkMode.LOCAL.value
+    if "mode" in network:
+        warnings.append("Removed deprecated external RPC mode configuration.")
+        network.pop("mode", None)
         changed = True
 
-    if mode == NetworkMode.EXTERNAL.value:
-        if not (isinstance(external_rpc_url, str) and external_rpc_url.strip()):
-            if isinstance(custom_rpc_url, str) and custom_rpc_url.strip():
-                external_rpc_url = custom_rpc_url.strip()
-                changed = True
-            elif isinstance(rpc_url, str) and rpc_url.strip():
-                external_rpc_url = rpc_url.strip()
-                changed = True
-            else:
-                external_rpc_url = None
-        if isinstance(external_rpc_url, str) and not external_rpc_url.strip():
-            external_rpc_url = None
-            changed = True
-        if rpc_url == external_rpc_url:
-            rpc_url = None
-            changed = True
-    else:
-        if isinstance(rpc_url, str) and not rpc_url.strip():
-            rpc_url = None
-            changed = True
+    if external_rpc_url is not None:
+        warnings.append("External RPC configuration has been removed; using the bundled node.")
+        network.pop("external_rpc_url", None)
+        changed = True
 
-    if network.get("mode") != mode:
-        network["mode"] = mode
+    if custom_rpc_url is not None:
+        warnings.append("Custom RPC configuration has been removed; using the bundled node.")
+        network.pop("custom_rpc_url", None)
         changed = True
-    if network.get("external_rpc_url") != external_rpc_url:
-        network["external_rpc_url"] = external_rpc_url
+
+    if isinstance(rpc_url, str):
+        rpc_url = rpc_url.strip() or None
+
+    if rpc_url and not _is_local_rpc_url(rpc_url):
+        warnings.append("External RPC URL ignored; the GUI now uses the bundled node only.")
+        rpc_url = None
         changed = True
+
     if network.get("rpc_url") != rpc_url:
         network["rpc_url"] = rpc_url
         changed = True
@@ -335,7 +302,16 @@ def resolve_rpc_url(config_data: Dict[str, Any]) -> Optional[str]:
     network = config_data.get("network") if isinstance(config_data, dict) else None
     if not isinstance(network, dict):
         return None
-    mode = (network.get("mode") or NetworkMode.LOCAL.value).strip().lower()
-    if mode == NetworkMode.EXTERNAL.value:
-        return network.get("external_rpc_url") or network.get("rpc_url")
     return network.get("rpc_url")
+
+
+def _is_local_rpc_url(rpc_url: str) -> bool:
+    """Return True if RPC URL points to localhost."""
+    from urllib.parse import urlparse
+
+    try:
+        parsed = urlparse(rpc_url)
+    except Exception:
+        return False
+    host = (parsed.hostname or "").lower()
+    return host in {"127.0.0.1", "localhost", "::1"}
