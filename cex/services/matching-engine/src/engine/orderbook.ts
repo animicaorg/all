@@ -152,9 +152,11 @@ export class OrderBook {
   wouldCross(side: "BUY" | "SELL", priceAtoms: bigint): boolean {
     if (side === "BUY") {
       const bestAsk = this.getBestAsk();
+      // Buy crosses if bid price >= best ask price
       return bestAsk !== undefined && priceAtoms >= bestAsk.priceAtoms;
     } else {
       const bestBid = this.getBestBid();
+      // Sell crosses if ask price <= best bid price
       return bestBid !== undefined && priceAtoms <= bestBid.priceAtoms;
     }
   }
