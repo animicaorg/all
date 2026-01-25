@@ -154,6 +154,12 @@ export class LedgerService {
 
   /**
    * Calculate account balance from ledger entries
+   * 
+   * Note: This calculates the raw balance for a single account.
+   * For user-facing balance queries, you should aggregate across account types:
+   * - AVAILABLE accounts: represent spendable balance
+   * - LOCKED accounts: represent funds locked in orders
+   * Total balance = sum(AVAILABLE) + sum(LOCKED)
    */
   private async calculateAccountBalance(
     tx: Omit<PrismaClient, '$connect' | '$disconnect' | '$on' | '$transaction' | '$use' | '$extends'>,
@@ -178,8 +184,8 @@ export class LedgerService {
       }
     }
 
-    // For simplicity, we're treating all balance as available here
-    // In a real system, you'd need to track locked vs available separately
+    // Return balance based on account type
+    // LOCKED accounts report as locked, all others as available
     if (account.accountType === LedgerAccountType.LOCKED) {
       return { available: new Decimal(0), locked: balance };
     }
@@ -196,11 +202,14 @@ export class LedgerService {
     accountType: LedgerAccountType,
     assetId: string
   ): Promise<{ accountId: string }> {
+    // For SYSTEM accounts, use a special sentinel value to handle the unique constraint
+    const ownerIdForQuery = ownerId ?? '__SYSTEM__';
+    
     const account = await this.prisma.ledgerAccount.upsert({
       where: {
         ownerType_ownerId_accountType_assetId: {
           ownerType,
-          ownerId: ownerId ?? '',
+          ownerId: ownerIdForQuery,
           accountType,
           assetId,
         },
@@ -478,5 +487,39 @@ export class LedgerService {
 
     // If no cache, calculate from entries
     return this.calculateAccountBalance(this.prisma, accountId);
+  }
+
+  /**
+   * Get total user balance for an asset (aggregated across AVAILABLE and LOCKED accounts)
+   * 
+   * Use this method for user-facing balance queries to get the complete picture.
+   */
+  async getUserBalance(
+    userId: string,
+    assetId: string
+  ): Promise<{ available: Decimal; locked: Decimal; total: Decimal }> {
+    // Get available account balance
+    const availableAccount = await this.getOrCreateAccount(
+      userId,
+      LedgerAccountOwnerType.USER,
+      LedgerAccountType.AVAILABLE,
+      assetId
+    );
+    const availableBalance = await this.getBalance(availableAccount.accountId);
+
+    // Get locked account balance
+    const lockedAccount = await this.getOrCreateAccount(
+      userId,
+      LedgerAccountOwnerType.USER,
+      LedgerAccountType.LOCKED,
+      assetId
+    );
+    const lockedBalance = await this.getBalance(lockedAccount.accountId);
+
+    const available = availableBalance.available;
+    const locked = lockedBalance.locked;
+    const total = available.add(locked);
+
+    return { available, locked, total };
   }
 }
