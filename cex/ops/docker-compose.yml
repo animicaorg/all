@@ -1,0 +1,139 @@
+version: "3.9"
+
+x-node-service: &node-service
+  image: node:20-alpine
+  working_dir: /app
+  volumes:
+    - ..:/app
+  env_file:
+    - ./env/.env
+  command: sh -c "corepack enable && pnpm install && pnpm -C /app dev"
+  depends_on:
+    - postgres
+    - redis
+    - nats
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  nats:
+    image: nats:2.10-alpine
+    command: ["-js", "-m", "8222"]
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+
+  api-gateway:
+    <<: *node-service
+    command: sh -c "corepack enable && pnpm install && pnpm --filter @cex/api-gateway dev"
+    environment:
+      SERVICE_NAME: api-gateway
+      PORT: ${API_GATEWAY_PORT}
+    ports:
+      - "${API_GATEWAY_PORT}:3000"
+
+  auth-service:
+    <<: *node-service
+    command: sh -c "corepack enable && pnpm install && pnpm --filter @cex/auth-service dev"
+    environment:
+      SERVICE_NAME: auth-service
+      PORT: ${AUTH_SERVICE_PORT}
+
+  matching-engine:
+    <<: *node-service
+    command: sh -c "corepack enable && pnpm install && pnpm --filter @cex/matching-engine dev"
+    environment:
+      SERVICE_NAME: matching-engine
+      PORT: ${MATCHING_ENGINE_PORT}
+
+  ledger-service:
+    <<: *node-service
+    command: sh -c "corepack enable && pnpm install && pnpm --filter @cex/ledger-service dev"
+    environment:
+      SERVICE_NAME: ledger-service
+      PORT: ${LEDGER_SERVICE_PORT}
+
+  wallet-router:
+    <<: *node-service
+    command: sh -c "corepack enable && pnpm install && pnpm --filter @cex/wallet-router dev"
+    environment:
+      SERVICE_NAME: wallet-router
+      PORT: ${WALLET_ROUTER_PORT}
+      BITGO_ENV: ${BITGO_ENV}
+      BITGO_ACCESS_TOKEN: ${BITGO_ACCESS_TOKEN}
+      BITGO_WEBHOOK_SECRET: ${BITGO_WEBHOOK_SECRET}
+      BITGO_BASE_URL: ${BITGO_BASE_URL}
+      ANIMICA_RPC_URL: ${ANIMICA_RPC_URL}
+
+  bitgo-webhook-ingestor:
+    <<: *node-service
+    command: sh -c "corepack enable && pnpm install && pnpm --filter @cex/bitgo-webhook-ingestor dev"
+    environment:
+      SERVICE_NAME: bitgo-webhook-ingestor
+      PORT: ${BITGO_INGESTOR_PORT}
+      BITGO_WEBHOOK_SECRET: ${BITGO_WEBHOOK_SECRET}
+    ports:
+      - "${BITGO_INGESTOR_PORT}:3002"
+
+  animica-indexer:
+    <<: *node-service
+    command: sh -c "corepack enable && pnpm install && pnpm --filter @cex/animica-indexer dev"
+    environment:
+      SERVICE_NAME: animica-indexer
+      PORT: ${ANIMICA_INDEXER_PORT}
+      ANIMICA_RPC_URL: ${ANIMICA_RPC_URL}
+
+  risk-service:
+    <<: *node-service
+    command: sh -c "corepack enable && pnpm install && pnpm --filter @cex/risk-service dev"
+    environment:
+      SERVICE_NAME: risk-service
+      PORT: ${RISK_SERVICE_PORT}
+
+  admin-service:
+    <<: *node-service
+    command: sh -c "corepack enable && pnpm install && pnpm --filter @cex/admin-service dev"
+    environment:
+      SERVICE_NAME: admin-service
+      PORT: ${ADMIN_SERVICE_PORT}
+    ports:
+      - "${ADMIN_SERVICE_PORT}:3001"
+
+  migrate:
+    image: node:20-alpine
+    working_dir: /app
+    volumes:
+      - ..:/app
+    env_file:
+      - ./env/.env
+    command: sh -c "corepack enable && pnpm install && pnpm --filter @cex/db migrate"
+    depends_on:
+      - postgres
+
+  seed:
+    image: node:20-alpine
+    working_dir: /app
+    volumes:
+      - ..:/app
+    env_file:
+      - ./env/.env
+    command: sh -c "corepack enable && pnpm install && pnpm --filter @cex/db seed"
+    depends_on:
+      - postgres
+
+volumes:
+  postgres-data:
