@@ -55,13 +55,16 @@ export async function estimateFee(
   // Fixed fee policy or fallback
   const fixedFee = config.ANIMICA_MIN_FEE_ATOMS;
   const gasLimit = 21000;
-  const gasPrice = (BigInt(fixedFee) / BigInt(gasLimit)).toString();
   
-  logger.debug({ fixedFee, gasLimit, gasPrice }, "Using fixed fee policy");
+  // Calculate gas price ensuring no truncation
+  // gasPrice = fixedFee / gasLimit (rounded up)
+  const gasPrice = (BigInt(fixedFee) + BigInt(gasLimit) - 1n) / BigInt(gasLimit);
+  
+  logger.debug({ fixedFee, gasLimit, gasPrice: gasPrice.toString() }, "Using fixed fee policy");
   
   return {
     gas_limit: gasLimit,
-    gas_price: gasPrice,
+    gas_price: gasPrice.toString(),
     estimated_fee: fixedFee,
   };
 }

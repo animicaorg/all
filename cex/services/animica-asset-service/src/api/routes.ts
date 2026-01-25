@@ -180,26 +180,31 @@ export function setupRoutes(
         );
       });
 
-      // Broadcast transaction
+      // Broadcast transaction (outside transaction - external operation)
       const broadcastResult = await broadcastTransaction(tx.raw_tx, rpcClient, logger);
 
-      if (broadcastResult.success) {
-        await withdrawalsRepo.updateStatus(withdrawal_id, "BROADCAST", {
-          txid: broadcastResult.txid,
-          broadcast_at: new Date(),
-        });
+      // Update status based on broadcast result (atomic)
+      await transact(pool, logger, async (client) => {
+        if (broadcastResult.success) {
+          await withdrawalsRepo.updateStatus(withdrawal_id, "BROADCAST", {
+            txid: broadcastResult.txid,
+            broadcast_at: new Date(),
+          }, client);
+        } else {
+          await withdrawalsRepo.updateStatus(withdrawal_id, "FAILED", {
+            failure_code: "BROADCAST_FAILED",
+            failure_message: broadcastResult.error,
+          }, client);
+        }
+      });
 
+      if (broadcastResult.success) {
         res.json({
           success: true,
           txid: broadcastResult.txid,
           withdrawal_id,
         });
       } else {
-        await withdrawalsRepo.updateStatus(withdrawal_id, "FAILED", {
-          failure_code: "BROADCAST_FAILED",
-          failure_message: broadcastResult.error,
-        });
-
         res.status(500).json({
           error: "Broadcast Failed",
           message: broadcastResult.error,
