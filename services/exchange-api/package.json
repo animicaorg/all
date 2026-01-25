@@ -8,8 +8,11 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
-    "dev": "tsx watch src/index.ts",
-    "dev:server": "tsx watch src/http/server.ts",
+    "dev": "tsx watch src/main.ts",
+    "dev:http": "tsx watch src/http_main.ts",
+    "dev:ws": "tsx watch src/ws/server.ts",
+    "start": "node dist/main.js",
+    "start:http": "node dist/http_main.js",
     "build": "tsc",
     "test": "vitest run",
     "test:watch": "vitest",
