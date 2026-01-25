@@ -11,7 +11,8 @@
     "apps/miner-dashboard",
     "explorer2",
     "explorer2/*",
-    "services/exchange-api"
+    "services/exchange-api",
+    "services/admin-api"
   ],
   "pnpm": {
     "overrides": {
