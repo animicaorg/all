@@ -1,24 +1,18 @@
+/**
+ * Matching Engine Service
+ * 
+ * Entry point for the matching engine service.
+ * Currently configured to process commands for a single market.
+ * For production, extend to handle multiple markets with worker pools.
+ */
+
 import express from "express";
-import { v4 as uuidv4 } from "uuid";
-import { z } from "zod";
-import {
-  baseEnvSchema,
-  connectNats,
-  createLogger,
-  createPgPool,
-  createRedis,
-  jsonCodec,
-  loadEnv,
-  orderSubmitSchema,
-  subjects
-} from "@cex/common";
+import { createLogger, createPgPool, connectNats, createRedis } from "@cex/common";
+import { loadEnv } from "./config.js";
+import { MarketWorker } from "./workers/market_worker.js";
+import { OutboxPublisher } from "./outbox/publisher.js";
 
-const env = loadEnv(
-  baseEnvSchema.extend({
-    SERVICE_NAME: z.string().default("matching-engine")
-  })
-);
-
+const env = loadEnv();
 const logger = createLogger(env.SERVICE_NAME, env.LOG_LEVEL);
 
 const start = async () => {
@@ -29,6 +23,7 @@ const start = async () => {
   const redis = createRedis(env);
   const nats = await connectNats(env);
 
+  // Health check endpoint
   app.get("/healthz", async (_req, res) => {
     const pgOk = await pgPool
       .query("SELECT 1")
@@ -51,45 +46,26 @@ const start = async () => {
     logger.info({ port: env.PORT }, "matching-engine listening");
   });
 
-  const subscription = nats.subscribe(subjects.orderSubmit, {
-    queue: "matching-engine"
+  // Start outbox publisher
+  const outboxPublisher = new OutboxPublisher(pgPool, nats, logger);
+  outboxPublisher.start().catch((error) => {
+    logger.error({ error }, "Outbox publisher error");
   });
 
-  (async () => {
-    for await (const msg of subscription) {
-      const decoded = jsonCodec.decode(msg.data);
-      const parsed = orderSubmitSchema.safeParse(decoded);
-      if (!parsed.success) {
-        logger.warn({ errors: parsed.error.flatten() }, "invalid order submit payload");
-        continue;
-      }
+  // TODO: Initialize market workers based on configuration
+  // For now, this is a stub. In production:
+  // 1. Query active markets from DB
+  // 2. Create MarketWorker for each market
+  // 3. Subscribe to NATS command subjects per market
+  // 4. Process commands via worker.placeLimitOrder(), etc.
+  // 5. Implement worker pool management and failover
 
-      const order = parsed.data;
-      const accepted = {
-        event_id: uuidv4(),
-        correlation_id: order.correlation_id ?? order.event_id,
-        causation_id: order.event_id,
-        created_at: new Date().toISOString(),
-        idempotency_key: order.client_order_id,
-        type: "OrderAccepted",
-        order_id: uuidv4(),
-        user_id: order.user_id,
-        client_order_id: order.client_order_id,
-        market: order.market,
-        side: order.side,
-        price: order.price,
-        quantity: order.quantity
-      };
-
-      nats.publish(subjects.orderAccepted, jsonCodec.encode(accepted));
-      logger.info({ orderId: accepted.order_id }, "order accepted");
-    }
-  })().catch((error) => {
-    logger.error({ error }, "subscription error");
-  });
+  logger.info("Matching engine initialized (stub - no active workers)");
+  logger.info("To process orders, implement worker initialization and NATS subscriptions");
 
   const shutdown = async () => {
-    subscription.unsubscribe();
+    logger.info("Shutting down matching engine");
+    outboxPublisher.stop();
     await nats.drain();
     await pgPool.end();
     redis.disconnect();
@@ -101,6 +77,6 @@ const start = async () => {
 };
 
 start().catch((error) => {
-  logger.error({ error }, "failed to start matching-engine");
+  logger.error({ error }, "Failed to start matching-engine");
   process.exit(1);
 });
