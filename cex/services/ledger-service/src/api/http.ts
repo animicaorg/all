@@ -157,13 +157,13 @@ export function setupAdminAPI(app: Express, pool: Pool, logger: Logger, adminKey
         }));
 
         res.json({
-          id: transaction.id,
-          txType: transaction.txType,
-          marketId: transaction.marketId,
-          seq: transaction.seq?.toString(),
-          metadata: transaction.metadata,
+          id: transaction.transaction.id,
+          txType: transaction.transaction.txType,
+          marketId: transaction.transaction.marketId,
+          seq: transaction.transaction.seq?.toString(),
+          metadata: transaction.transaction.metadata,
           entries: formattedEntries,
-          createdAt: transaction.createdAt
+          createdAt: transaction.transaction.createdAt
         });
       } finally {
         client.release();

@@ -42,13 +42,13 @@ describe("money utilities", () => {
 
   describe("calculateFeeBps", () => {
     it("calculates fee with basis points", () => {
-      // 1_000_000 atoms * 20 bps = 200 atoms (0.2%)
-      expect(calculateFeeBps(1_000_000n, 20)).toBe(200n);
+      // 1_000_000 atoms * 20 bps = 2000 atoms (0.2%)
+      expect(calculateFeeBps(1_000_000n, 20)).toBe(2000n);
     });
 
     it("rounds up when there's a remainder", () => {
-      // 1_000_001 atoms * 20 bps = 200.0002 atoms => rounds to 201
-      expect(calculateFeeBps(1_000_001n, 20)).toBe(201n);
+      // 1_000_001 atoms * 20 bps = 2000.002 atoms => rounds to 2001
+      expect(calculateFeeBps(1_000_001n, 20)).toBe(2001n);
     });
 
     it("handles zero", () => {

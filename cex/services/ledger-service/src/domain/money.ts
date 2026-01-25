@@ -65,9 +65,10 @@ export function atomsToDecimal(atoms: bigint, decimals: number): string {
  * Rounds UP to favor the exchange
  */
 export function calculateFeeBps(amountAtoms: bigint, bps: number): bigint {
-  const fee = (amountAtoms * BigInt(bps)) / 10000n;
+  const numerator = amountAtoms * BigInt(bps);
+  const fee = numerator / 10000n;
   // Round up if there's a remainder
-  const remainder = (amountAtoms * BigInt(bps)) % 10000n;
+  const remainder = numerator % 10000n;
   return remainder > 0n ? fee + 1n : fee;
 }
 
