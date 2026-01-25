@@ -13,9 +13,9 @@ const createTestMarketConfig = (): MarketConfig => ({
   symbol: "BTC/USDT",
   baseAsset: "BTC",
   quoteAsset: "USDT",
-  priceTick: decimalToAtoms("0.01", 8),
-  sizeStep: decimalToAtoms("0.001", 8),
-  minOrderSize: decimalToAtoms("0.001", 8),
+  priceTick: 1n, // 1 atom = smallest unit
+  sizeStep: 1n, // 1 atom = smallest unit
+  minOrderSize: 1n,
   makerFeeBps: 10,
   takerFeeBps: 20,
   feeAsset: "USDT",
@@ -116,12 +116,16 @@ describe("OrderBook", () => {
     book.add(createTestOrder("1", "BUY", 10000n, 100n));
     book.add(createTestOrder("2", "SELL", 10100n, 100n));
 
+    // Sell at 10000 or below crosses with bid at 10000
     expect(book.wouldCross("SELL", 10000n)).toBe(true);
-    expect(book.wouldCross("SELL", 10050n)).toBe(true);
+    expect(book.wouldCross("SELL", 9900n)).toBe(true);
+    expect(book.wouldCross("SELL", 10001n)).toBe(false);
     expect(book.wouldCross("SELL", 10100n)).toBe(false);
 
+    // Buy at 10100 or above crosses with ask at 10100
     expect(book.wouldCross("BUY", 10100n)).toBe(true);
-    expect(book.wouldCross("BUY", 10050n)).toBe(false);
+    expect(book.wouldCross("BUY", 10200n)).toBe(true);
+    expect(book.wouldCross("BUY", 10099n)).toBe(false);
     expect(book.wouldCross("BUY", 10000n)).toBe(false);
   });
 
@@ -207,11 +211,9 @@ describe("MatchingEngine - Basic Matching", () => {
 
     expect(result.fills.length).toBe(3);
     expect(result.trades.length).toBe(3);
-    expect(result.takerOrder.status).toBe("PARTIAL_FILL");
-    expect(result.takerOrder.filledAtoms).toBe(120n); // 30 + 40 + 50
-    expect(result.takerOrder.remainingAtoms).toBe(-20n); // Oops, bug! Should be 0n max
-
-    // Note: The test reveals we need to cap fills
+    expect(result.takerOrder.status).toBe("FILLED"); // 30 + 40 + 30 = 100
+    expect(result.takerOrder.filledAtoms).toBe(100n);
+    expect(result.takerOrder.remainingAtoms).toBe(0n);
   });
 
   test("should not match when limit price prevents it", () => {
@@ -238,20 +240,20 @@ describe("MatchingEngine - Basic Matching", () => {
   });
 
   test("should calculate fees correctly", () => {
-    const maker = createTestOrder("maker", "SELL", 10000n, 100n);
+    // Use larger values to ensure fees are > 0
+    const maker = createTestOrder("maker", "SELL", 100000000n, 100000000n); // 100M x 100M
     engine.addOrder(maker);
 
-    const taker = createTestOrder("taker", "BUY", 10000n, 100n);
+    const taker = createTestOrder("taker", "BUY", 100000000n, 100000000n);
     const result = engine.match(taker);
 
     const fill = result.fills[0];
     const trade = result.trades[0];
 
-    // Quote amount = 10000 * 100 / 10^8 = 10000
-    // Maker fee = 10000 * 10 / 10000 = 10 (0.1%)
-    // Taker fee = 10000 * 20 / 10000 = 20 (0.2%)
+    // With larger values, fees should be > 0
     expect(fill.makerFeeAtoms).toBeGreaterThan(0n);
     expect(fill.takerFeeAtoms).toBeGreaterThan(0n);
+    expect(fill.takerFeeAtoms).toBeGreaterThan(fill.makerFeeAtoms); // Taker fee is 2x maker
     expect(trade.makerFeeAtoms).toBe(fill.makerFeeAtoms);
     expect(trade.takerFeeAtoms).toBe(fill.takerFeeAtoms);
   });

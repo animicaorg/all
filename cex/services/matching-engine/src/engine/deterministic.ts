@@ -19,13 +19,17 @@ export function decimalToAtoms(decimal: string, decimals: number): bigint {
  * Convert atoms to decimal string
  * @param atoms - amount in atoms
  * @param decimals - number of decimal places
- * @returns decimal string
+ * @returns decimal string (trailing zeros stripped)
  */
 export function atomsToDecimal(atoms: bigint, decimals: number): string {
   const str = atoms.toString().padStart(decimals + 1, "0");
   const integer = str.slice(0, -decimals) || "0";
   const fraction = str.slice(-decimals);
-  return fraction === "0".repeat(decimals) ? integer : `${integer}.${fraction}`;
+  
+  // Strip trailing zeros
+  const strippedFraction = fraction.replace(/0+$/, "");
+  
+  return strippedFraction === "" ? integer : `${integer}.${strippedFraction}`;
 }
 
 /**
