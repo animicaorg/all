@@ -5,14 +5,14 @@ from unittest.mock import MagicMock, patch
 
 from PySide6.QtWidgets import QApplication
 
-from animica_miner_gui.backend.config import MiningAppConfig, NetworkMode
+from animica_miner_gui.backend.config import MiningAppConfig
 from animica_miner_gui.backend.node_controller import NodeController
 from animica_miner_gui.ui.tabs.wallet import WalletTab
 
 # Test constants
 TEST_WALLET_ADDRESS = "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz"
 TEST_RECIPIENT_ADDRESS = "anim1zqp2pg8s9mjhyfkmkdwfxzyaw6tzn3afqt2jj4kd2un3uz89e7n2rggxgsw3p"
-TEST_RPC_URL = "https://rpc.mainnet.animica.org/rpc"
+TEST_RPC_URL = "http://127.0.0.1:8545/rpc"
 
 
 @pytest.fixture
@@ -29,8 +29,7 @@ def config_with_address():
     """Config with a valid payout address."""
     config = MiningAppConfig()
     config.miner.payout_address = TEST_WALLET_ADDRESS
-    config.network.mode = NetworkMode.EXTERNAL
-    config.network.external_rpc_url = TEST_RPC_URL
+    config.network.rpc_url = TEST_RPC_URL
     return config
 
 
