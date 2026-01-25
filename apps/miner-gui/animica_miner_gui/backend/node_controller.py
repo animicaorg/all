@@ -153,18 +153,6 @@ class NodeController(QObject):
         self._token = None
         self._start_time = None
 
-    def connect_external_rpc(self, rpc_url: str, token: str = "") -> None:
-        """Use an external RPC endpoint without starting a local node."""
-        self.stop()
-        self.nodeStarting.emit()
-        self._rpc_url = rpc_url
-        self._token = token or ""
-        self._rpc_client = RPCClient(rpc_url, token=token or None)
-        self._start_time = time.time()
-        self.rpcChanged.emit(rpc_url, token or "")
-        self.nodeStarted.emit(rpc_url, token or "")
-        self._status_timer.start()
-
     def _pick_port(self, preferred: int) -> int:
         if not self._port_in_use(preferred):
             return preferred

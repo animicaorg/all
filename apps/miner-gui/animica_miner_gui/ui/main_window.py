@@ -26,12 +26,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from animica_miner_gui.backend.config import (
-    load_config,
-    get_default_config_path,
-    MiningAppConfig,
-    NetworkMode,
-)
+from animica_miner_gui.backend.config import load_config, get_default_config_path, MiningAppConfig
 from animica_miner_gui.backend.miner_runner import get_runner, MiningEvent
 from animica_miner_gui.backend.node_controller import NodeController
 from animica_miner_gui.backend.app_paths import get_startup_log_path
@@ -481,24 +476,10 @@ class MainWindow(QMainWindow):
     def on_node_started(self, rpc_url: str, token: str) -> None:
         """Handle node started event."""
         self.config.network.rpc_url = rpc_url
-        self.config.network.mode = NetworkMode.LOCAL
         logger.info("Node started. rpc_url=%s", rpc_url)
 
     def start_network_services(self) -> None:
         """Initialize RPC connectivity based on config mode."""
-        if self.config.network.mode == NetworkMode.EXTERNAL:
-            external_url = self.config.network.external_rpc_url or self.config.network.custom_rpc_url
-            if external_url:
-                self.config.network.rpc_url = external_url
-                logger.info("network_mode=external rpc_url=%s", external_url)
-                self.status_bar.showMessage("Connecting to external RPC...")
-                self.node_controller.connect_external_rpc(external_url)
-            else:
-                logger.warning("network_mode=external but no RPC URL configured")
-                self.status_bar.showMessage("External RPC not configured")
-            return
-
-        logger.info("network_mode=local")
         self.status_bar.showMessage("Starting node...")
         self.node_controller.start()
 
