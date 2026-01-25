@@ -81,16 +81,23 @@ export async function getNextNonce(
   logger: Logger
 ): Promise<number> {
   try {
-    // Try to get pending nonce from node
-    // This is a placeholder - actual implementation depends on RPC methods available
     logger.debug({ address }, "Getting next nonce");
     
-    // For now, we'll use a simple counter approach
-    // In production, query the node for account nonce
-    const result = await rpcClient.call<{ nonce: number }>("account.getNonce", [address]);
-    return result.nonce;
-  } catch (error) {
-    logger.warn({ error, address }, "Failed to get nonce from node, using 0");
+    // Try to get pending nonce from node
+    // This is a placeholder - actual implementation depends on RPC methods available
+    try {
+      const result = await rpcClient.call<{ nonce: number }>("account.getNonce", [address]);
+      return result.nonce;
+    } catch (rpcError: any) {
+      // If method not found, fall back to 0
+      if (rpcError.message?.includes("not found") || rpcError.code === -32601) {
+        logger.warn({ address }, "account.getNonce not available, using nonce 0");
+        return 0;
+      }
+      throw rpcError;
+    }
+  } catch (error: any) {
+    logger.error({ error, address }, "Failed to get nonce, using 0 as fallback");
     return 0;
   }
 }

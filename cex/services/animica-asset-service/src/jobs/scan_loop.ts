@@ -9,7 +9,7 @@ import type { Logger } from "pino";
 import type { Config } from "../config.js";
 import type { AnimicaRpcClient } from "../rpc/client.js";
 import { ScanStateRepository } from "../db/repositories/scan_state_repo.js";
-import { BlockScanner } from "../deposits/scanner.js";
+import { BlockScanner, type ScannerConfig } from "../deposits/scanner.js";
 
 export class ScanLoopJob {
   private intervalId: NodeJS.Timeout | null = null;
@@ -24,7 +24,17 @@ export class ScanLoopJob {
     private logger: Logger
   ) {
     this.scanStateRepo = new ScanStateRepository(pool, logger);
-    this.scanner = new BlockScanner(pool, rpcClient, config, logger);
+    
+    // Create scanner config from main config
+    const scannerConfig = {
+      assetNetworkId: config.ANIMICA_ASSET_NETWORK_ID,
+      confirmationsRequired: config.ANIMICA_CONFIRMATIONS_REQUIRED,
+      scanBatch: config.ANIMICA_SCAN_BATCH,
+      maxReorgDepth: config.ANIMICA_MAX_REORG_DEPTH,
+      walletId: "ANIMICA_NODE", // provider identifier
+    };
+    
+    this.scanner = new BlockScanner(pool, rpcClient, scannerConfig, logger);
   }
 
   /**
