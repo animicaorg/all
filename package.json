@@ -10,7 +10,8 @@
     "wallet",
     "apps/miner-dashboard",
     "explorer2",
-    "explorer2/*"
+    "explorer2/*",
+    "services/exchange-api"
   ],
   "pnpm": {
     "overrides": {
