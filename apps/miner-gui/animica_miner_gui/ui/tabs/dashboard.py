@@ -93,6 +93,9 @@ class DashboardTab(QWidget):
         self.logs_label = QLabel("--")
         self.logs_label.setWordWrap(True)
         status_layout.addWidget(self.logs_label, 7, 1)
+
+        if not self.config.network.resolved_rpc_url():
+            self.rpc_url_label.setText("Starting node...")
         
         status_group.setLayout(status_layout)
         layout.addWidget(status_group)

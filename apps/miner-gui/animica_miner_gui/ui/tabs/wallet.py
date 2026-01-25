@@ -348,7 +348,14 @@ class WalletTab(QWidget):
         try:
             # Build the tx send command
             # Use the animica CLI: animica tx send --from <addr> --to <addr> --value <amount>
-            rpc_url = self.config.network.rpc_url
+            rpc_url = self.config.network.resolved_rpc_url()
+            if not rpc_url:
+                QMessageBox.warning(
+                    self,
+                    "RPC Not Ready",
+                    "RPC is not ready yet. Start the local node or configure an external RPC.",
+                )
+                return
             
             cmd = [
                 sys.executable, "-m", "animica", "tx", "send",
