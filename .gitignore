@@ -58,3 +58,14 @@ logs/
 Thumbs.db
 test_mining_gate_fix.py
 test_coinbase_encoding.py
+
+# E2E Test Artifacts
+cex/tests/e2e/artifacts/*.json
+cex/tests/e2e/artifacts/*.md
+cex/tests/e2e/artifacts/*.txt
+cex/tests/e2e/artifacts/logs-*
+cex/tests/e2e/artifacts/proof-*
+cex/tests/e2e/artifacts/report-*
+cex/tests/e2e/dist/
+cex/tests/e2e/node_modules/
+
