@@ -200,7 +200,7 @@ export class LedgerService {
       where: {
         ownerType_ownerId_accountType_assetId: {
           ownerType,
-          ownerId,
+          ownerId: ownerId ?? '',
           accountType,
           assetId,
         },
