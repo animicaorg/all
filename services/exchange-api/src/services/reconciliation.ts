@@ -130,17 +130,21 @@ export class ReconciliationService {
     const violations: Array<{ entryId: string; issue: string }> = [];
 
     // Check for any orphaned entries (entries without transactions)
-    const orphanedEntries = await this.prisma.ledgerEntry.findMany({
-      where: {
-        transaction: null,
+    // Since we have required foreign keys, this should never happen
+    // but we check anyway for safety
+    const allEntries = await this.prisma.ledgerEntry.findMany({
+      include: {
+        transaction: true,
       },
     });
 
-    for (const entry of orphanedEntries) {
-      violations.push({
-        entryId: entry.id,
-        issue: 'Entry missing transaction reference',
-      });
+    for (const entry of allEntries) {
+      if (!entry.transaction) {
+        violations.push({
+          entryId: entry.id,
+          issue: 'Entry missing transaction reference',
+        });
+      }
     }
 
     return {
