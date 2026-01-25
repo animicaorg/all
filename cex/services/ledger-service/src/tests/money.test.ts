@@ -1,0 +1,95 @@
+/**
+ * Tests for money/atom utilities
+ */
+
+import { describe, it, expect } from "vitest";
+import {
+  decimalToAtoms,
+  atomsToDecimal,
+  calculateFeeBps,
+  multiplyAtoms,
+  addAtoms,
+  subtractAtoms,
+  formatAtoms,
+  parseAtoms
+} from "../domain/money.js";
+
+describe("money utilities", () => {
+  describe("decimalToAtoms", () => {
+    it("converts decimal string to atoms", () => {
+      expect(decimalToAtoms("1.5", 6)).toBe(1_500_000n);
+      expect(decimalToAtoms("0.01", 6)).toBe(10_000n);
+      expect(decimalToAtoms("1000", 6)).toBe(1_000_000_000n);
+    });
+
+    it("handles different decimal places", () => {
+      expect(decimalToAtoms("1.0", 8)).toBe(100_000_000n);
+      expect(decimalToAtoms("0.00000001", 8)).toBe(1n);
+    });
+  });
+
+  describe("atomsToDecimal", () => {
+    it("converts atoms to decimal string", () => {
+      expect(atomsToDecimal(1_500_000n, 6)).toBe("1.500000");
+      expect(atomsToDecimal(10_000n, 6)).toBe("0.010000");
+      expect(atomsToDecimal(1_000_000_000n, 6)).toBe("1000.000000");
+    });
+
+    it("handles zero", () => {
+      expect(atomsToDecimal(0n, 6)).toBe("0.000000");
+    });
+  });
+
+  describe("calculateFeeBps", () => {
+    it("calculates fee with basis points", () => {
+      // 1_000_000 atoms * 20 bps = 200 atoms (0.2%)
+      expect(calculateFeeBps(1_000_000n, 20)).toBe(200n);
+    });
+
+    it("rounds up when there's a remainder", () => {
+      // 1_000_001 atoms * 20 bps = 200.0002 atoms => rounds to 201
+      expect(calculateFeeBps(1_000_001n, 20)).toBe(201n);
+    });
+
+    it("handles zero", () => {
+      expect(calculateFeeBps(0n, 20)).toBe(0n);
+    });
+  });
+
+  describe("multiplyAtoms", () => {
+    it("multiplies atoms by price", () => {
+      // 1.5 BTC (8 decimals) * 50_000 USDT/BTC (6 decimals)
+      const sizeAtoms = 150_000_000n; // 1.5 BTC
+      const priceAtoms = 50_000_000_000n; // 50_000 USDT (6 decimals)
+      const result = multiplyAtoms(sizeAtoms, priceAtoms, 8);
+      expect(result).toBe(75_000_000_000n); // 75_000 USDT
+    });
+  });
+
+  describe("addAtoms", () => {
+    it("adds two atom values", () => {
+      expect(addAtoms(1_000_000n, 500_000n)).toBe(1_500_000n);
+    });
+  });
+
+  describe("subtractAtoms", () => {
+    it("subtracts atoms", () => {
+      expect(subtractAtoms(1_000_000n, 500_000n)).toBe(500_000n);
+    });
+
+    it("throws on negative result", () => {
+      expect(() => subtractAtoms(500_000n, 1_000_000n)).toThrow("Negative balance");
+    });
+  });
+
+  describe("formatAtoms and parseAtoms", () => {
+    it("formats and parses round-trip", () => {
+      const atoms = 1_500_000n;
+      const formatted = formatAtoms(atoms, "USDT");
+      expect(formatted).toBe("1.500000 USDT");
+      
+      const parsed = parseAtoms(formatted, "USDT");
+      expect(parsed).toBe(atoms);
+    });
+  });
+});
