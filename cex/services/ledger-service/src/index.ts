@@ -49,6 +49,9 @@ async function start() {
     await consumer.startMarket(market);
   }
 
+  // Start deposit credit consumer
+  await consumer.startDepositCredits();
+
   // Start periodic reconciliation job
   const reconcileInterval = setInterval(async () => {
     try {
