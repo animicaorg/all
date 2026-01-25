@@ -29,7 +29,7 @@ export class SeenTxsRepository {
   async hasSeen(key: string): Promise<boolean> {
     const query = `SELECT 1 FROM animica_seen_txs WHERE key = $1`;
     const result = await this.pool.query(query, [key]);
-    return result.rowCount > 0;
+    return (result.rowCount ?? 0) > 0;
   }
   
   /**
