@@ -4,17 +4,20 @@
 
 import express, { type Express } from "express";
 import type { Pool } from "pg";
-import type { Logger } from "pino";
+import type { Logger } from "@cex/observability";
 import type { RedisClientType } from "redis";
+import { createRateLimiter } from "@cex/middleware";
 import type { Config } from "../config.js";
 import {
-  createRateLimiter,
   createInMemoryRateLimiter,
-  createBitGoAuthMiddleware,
+  createWebhookVerificationMiddleware,
   createAdminAuthMiddleware,
 } from "./middleware/index.js";
 import { setupWebhookRoutes } from "./routes/webhooks.js";
 import { setupAdminRoutes } from "./routes/admin.js";
+
+// Rate limiting constants
+const WEBHOOK_RATE_LIMIT_WINDOW_MS = 60 * 1000; // 1 minute
 
 /**
  * Create and configure Express server
@@ -31,15 +34,35 @@ export function createServer(
   app.use(express.json());
 
   // Request logging middleware
-  app.use((req, _res, next) => {
-    logger.debug(
-      {
-        method: req.method,
-        path: req.path,
-        ip: req.ip,
-      },
-      "HTTP request"
-    );
+  app.use((req, res, next) => {
+    const startTime = Date.now();
+    
+    // Add request ID
+    req.id = req.id || req.headers["x-request-id"] || generateRequestId();
+    res.setHeader("X-Request-ID", req.id);
+
+    // Create request logger
+    const requestLogger = logger.child({
+      request_id: req.id,
+      method: req.method,
+      path: req.path,
+      ip: req.ip || req.socket.remoteAddress,
+    });
+
+    requestLogger.debug("Incoming request");
+
+    // Log response on finish
+    res.on("finish", () => {
+      const duration = Date.now() - startTime;
+      requestLogger.info(
+        {
+          status: res.statusCode,
+          latency_ms: duration,
+        },
+        "Request completed"
+      );
+    });
+
     next();
   });
 
@@ -72,39 +95,37 @@ export function createServer(
     }
   });
 
-  // Webhook routes with rate limiting and auth
+  // Webhook routes with rate limiting and signature verification
   const webhookRouter = express.Router();
 
   // Apply rate limiting
   if (redis) {
     webhookRouter.use(
-      createRateLimiter(
+      createRateLimiter({
+        windowMs: WEBHOOK_RATE_LIMIT_WINDOW_MS,
+        max: config.WEBHOOK_RATE_LIMIT_PER_MINUTE,
+        keyPrefix: "webhook_rl",
         redis,
-        {
-          windowMs: 60 * 1000, // 1 minute
-          maxRequests: config.WEBHOOK_RATE_LIMIT_PER_MINUTE,
-          keyPrefix: "webhook:ratelimit",
-        },
-        logger
-      )
+        logger,
+      })
     );
   } else {
     // Fallback to in-memory rate limiter
     webhookRouter.use(
       createInMemoryRateLimiter(
         {
-          windowMs: 60 * 1000,
+          windowMs: WEBHOOK_RATE_LIMIT_WINDOW_MS,
           maxRequests: config.WEBHOOK_RATE_LIMIT_PER_MINUTE,
-          keyPrefix: "webhook:ratelimit",
+          keyPrefix: "webhook_rl",
         },
         logger
       )
     );
   }
 
-  // Apply BitGo auth
+  // Apply webhook signature verification
   webhookRouter.use(
-    createBitGoAuthMiddleware(
+    createWebhookVerificationMiddleware(
       {
         webhookSecret: config.BITGO_WEBHOOK_SECRET,
         replayWindowSeconds: config.WEBHOOK_REPLAY_WINDOW_SECONDS,
@@ -132,8 +153,8 @@ export function createServer(
   });
 
   // Error handler
-  app.use((err: any, _req: any, res: any, _next: any) => {
-    logger.error({ error: err }, "Unhandled error");
+  app.use((err: any, req: any, res: any, _next: any) => {
+    logger.error({ error: err, path: req.path, method: req.method }, "Unhandled error");
     res.status(500).json({
       error: "Internal Server Error",
       message: err.message || "An unexpected error occurred",
@@ -142,3 +163,11 @@ export function createServer(
 
   return app;
 }
+
+/**
+ * Generate a unique request ID
+ */
+function generateRequestId(): string {
+  return `req_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
+}
+

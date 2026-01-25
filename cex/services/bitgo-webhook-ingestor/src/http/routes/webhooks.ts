@@ -6,7 +6,7 @@
 
 import type { Router } from "express";
 import type { Pool } from "pg";
-import type { Logger } from "pino";
+import type { Logger } from "@cex/observability";
 import { normalizeBitGoWebhook } from "../../bitgo/normalize.js";
 import { ingestDeposit } from "../../pipeline/ingest.js";
 
@@ -24,23 +24,28 @@ export function setupWebhookRoutes(
    * Main webhook endpoint for BitGo callbacks
    * 
    * Expected headers:
-   * - x-bitgo-signature: HMAC signature for verification
+   * - x-bitgo-signature: HMAC-SHA256 signature for verification
+   * - x-request-id: Optional request tracking ID
    * 
    * Expected body: BitGoWebhookPayload
    */
   router.post("/webhook", async (req, res) => {
-    const requestId = req.header("x-request-id") || Math.random().toString(36).slice(2);
-    const webhookLogger = logger.child({ requestId, endpoint: "webhook" });
+    const requestId = req.header("x-request-id") || req.id || Math.random().toString(36).slice(2);
+    const webhookLogger = logger.child({ 
+      request_id: requestId,
+      endpoint: "webhook",
+      handler: "bitgo_webhook",
+    });
 
     try {
       webhookLogger.info(
         {
           type: req.body?.type,
-          walletId: req.body?.walletId,
+          wallet_id: req.body?.walletId,
           coin: req.body?.coin,
-          transferId: req.body?.transfer?.id,
+          transfer_id: req.body?.transfer?.id,
         },
-        "Received BitGo webhook"
+        "Processing BitGo webhook"
       );
 
       // Normalize webhook payload
@@ -81,15 +86,15 @@ export function setupWebhookRoutes(
 
           webhookLogger.info(
             {
-              depositId: result.depositId,
+              deposit_id: result.depositId,
               status: result.status,
-              isNew: result.isNew,
-              userId: result.userId,
+              is_new: result.isNew,
+              user_id: result.userId,
               unassigned: result.unassigned,
-              riskHold: result.riskHold,
+              risk_hold: result.riskHold,
               txid: observation.txid,
               address: observation.address,
-              amountAtoms: observation.amountAtoms.toString(),
+              amount_atoms: observation.amountAtoms.toString(),
             },
             result.isNew ? "Deposit detected" : "Deposit updated"
           );

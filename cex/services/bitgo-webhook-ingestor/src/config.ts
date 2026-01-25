@@ -8,7 +8,10 @@ import { baseEnvSchema, loadEnv } from "@cex/common";
 const configSchema = baseEnvSchema.extend({
   SERVICE_NAME: z.string().default("bitgo-webhook-ingestor"),
   
-  // BitGo configuration
+  // Environment
+  NODE_ENV: z.enum(["development", "staging", "production"]).default("development"),
+  
+  // BitGo configuration (will be loaded from secrets)
   BITGO_WEBHOOK_SECRET: z.string().optional(),
   BITGO_API_TOKEN: z.string().optional(),
   BITGO_ENV: z.enum(["prod", "test"]).default("test"),
@@ -21,8 +24,9 @@ const configSchema = baseEnvSchema.extend({
   CONFIRMATION_BACKFILL_INTERVAL_MS: z.coerce.number().default(60000), // 1 minute
   OUTBOX_PROCESSOR_INTERVAL_MS: z.coerce.number().default(5000), // 5 seconds
   
-  // Admin
+  // Admin and service auth
   ADMIN_KEY: z.string().optional(),
+  SERVICE_AUTH_KEY: z.string().optional(), // For internal service-to-service calls
   
   // Ledger service integration
   LEDGER_SERVICE_URL: z.string().default("http://localhost:3002"),
