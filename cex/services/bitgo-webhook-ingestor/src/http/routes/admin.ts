@@ -6,7 +6,7 @@
 
 import type { Router } from "express";
 import type { Pool } from "pg";
-import type { Logger } from "pino";
+import type { Logger } from "@cex/observability";
 import { DepositsRepo, OutboxRepo, AuditRepo } from "../../db/repositories/index.js";
 
 /**

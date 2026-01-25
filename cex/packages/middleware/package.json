@@ -1,0 +1,29 @@
+{
+  "name": "@cex/middleware",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@cex/security": "workspace:*",
+    "@cex/observability": "workspace:*",
+    "express": "^4.21.2",
+    "jsonwebtoken": "^9.0.2",
+    "express-rate-limit": "^7.4.1",
+    "redis": "^4.7.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/jsonwebtoken": "^9.0.7",
+    "@types/node": "^20.12.7",
+    "typescript": "^5.5.4",
+    "vitest": "^2.1.8"
+  }
+}

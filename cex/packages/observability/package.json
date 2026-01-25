@@ -1,0 +1,30 @@
+{
+  "name": "@cex/observability",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@opentelemetry/api": "^1.9.0",
+    "@opentelemetry/sdk-node": "^0.54.2",
+    "@opentelemetry/instrumentation-http": "^0.54.2",
+    "@opentelemetry/instrumentation-express": "^0.43.0",
+    "@opentelemetry/exporter-trace-otlp-http": "^0.54.2",
+    "@opentelemetry/resources": "^1.28.0",
+    "@opentelemetry/semantic-conventions": "^1.28.0",
+    "pino": "^9.5.0",
+    "pino-pretty": "^13.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.12.7",
+    "typescript": "^5.5.4",
+    "vitest": "^2.1.8"
+  }
+}

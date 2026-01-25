@@ -1,0 +1,416 @@
+version: '3.9'
+
+# Animica CEX - Secure Docker Compose Configuration
+# Production-ready security-hardened service definitions
+
+networks:
+  # Network isolation: separate networks for different service tiers
+  frontend:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/24
+  backend:
+    driver: bridge
+    internal: true  # No external access
+    ipam:
+      config:
+        - subnet: 172.20.1.0/24
+  database:
+    driver: bridge
+    internal: true  # No external access
+    ipam:
+      config:
+        - subnet: 172.20.2.0/24
+  monitoring:
+    driver: bridge
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.20.3.0/24
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  nginx_logs:
+    driver: local
+  app_logs:
+    driver: local
+  ssl_certs:
+    driver: local
+
+services:
+  # Nginx - Reverse Proxy with Security
+  nginx:
+    image: nginx:1.25-alpine
+    container_name: cex_nginx
+    restart: unless-stopped
+    networks:
+      - frontend
+      - backend
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/secure.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ssl_certs:/etc/nginx/ssl:ro
+      - nginx_logs:/var/log/nginx
+    environment:
+      - TZ=UTC
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+      - CHOWN
+      - SETGID
+      - SETUID
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    depends_on:
+      - exchange-api
+      - admin-api
+      - admin-web
+
+  # Exchange API - Main Trading Service
+  exchange-api:
+    build:
+      context: ../../
+      dockerfile: cex/ops/docker/Dockerfile.secure
+      args:
+        PYTHON_VERSION: 3.11
+    image: cex/exchange-api:secure
+    container_name: cex_exchange_api
+    restart: unless-stopped
+    networks:
+      - backend
+      - database
+    expose:
+      - "8000"
+    volumes:
+      - ../../cex:/app/cex:ro
+      - app_logs:/app/logs
+    env_file:
+      - .env.exchange-api
+    environment:
+      - SERVICE_NAME=exchange-api
+      - ENVIRONMENT=production
+      - TZ=UTC
+      - PYTHONUNBUFFERED=1
+    command: ["uvicorn", "cex.api.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4", "--log-level", "info"]
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+          pids: 100
+        reservations:
+          cpus: '1'
+          memory: 1G
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,nosuid,size=100m
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/health', timeout=2)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # Admin API - Management Service
+  admin-api:
+    build:
+      context: ../../
+      dockerfile: cex/ops/docker/Dockerfile.secure
+      args:
+        PYTHON_VERSION: 3.11
+    image: cex/admin-api:secure
+    container_name: cex_admin_api
+    restart: unless-stopped
+    networks:
+      - backend
+      - database
+      - monitoring
+    expose:
+      - "8001"
+    volumes:
+      - ../../cex:/app/cex:ro
+      - app_logs:/app/logs
+    env_file:
+      - .env.admin-api
+    environment:
+      - SERVICE_NAME=admin-api
+      - ENVIRONMENT=production
+      - TZ=UTC
+      - PYTHONUNBUFFERED=1
+    command: ["uvicorn", "cex.admin.main:app", "--host", "0.0.0.0", "--port", "8001", "--workers", "2", "--log-level", "info"]
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+          pids: 50
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,nosuid,size=50m
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8001/health', timeout=2)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # Admin Web - Management UI
+  admin-web:
+    image: node:20-alpine
+    container_name: cex_admin_web
+    restart: unless-stopped
+    networks:
+      - backend
+    expose:
+      - "3000"
+    volumes:
+      - ../../cex/admin-web:/app:ro
+      - /app/node_modules
+    working_dir: /app
+    environment:
+      - NODE_ENV=production
+      - TZ=UTC
+    command: ["node", "server.js"]
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+          pids: 50
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    user: "node"
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,nosuid,size=50m
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # PostgreSQL - Primary Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: cex_postgres
+    restart: unless-stopped
+    networks:
+      - database
+    expose:
+      - "5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    env_file:
+      - .env.postgres
+    environment:
+      - POSTGRES_INITDB_ARGS=--encoding=UTF8 --locale=C
+      - TZ=UTC
+    command:
+      - postgres
+      - -c
+      - max_connections=200
+      - -c
+      - shared_buffers=256MB
+      - -c
+      - effective_cache_size=1GB
+      - -c
+      - maintenance_work_mem=64MB
+      - -c
+      - checkpoint_completion_target=0.9
+      - -c
+      - wal_buffers=16MB
+      - -c
+      - default_statistics_target=100
+      - -c
+      - random_page_cost=1.1
+      - -c
+      - effective_io_concurrency=200
+      - -c
+      - work_mem=2MB
+      - -c
+      - min_wal_size=1GB
+      - -c
+      - max_wal_size=4GB
+      - -c
+      - max_worker_processes=4
+      - -c
+      - max_parallel_workers_per_gather=2
+      - -c
+      - max_parallel_workers=4
+      - -c
+      - max_parallel_maintenance_workers=2
+      - -c
+      - log_statement=mod
+      - -c
+      - log_duration=on
+      - -c
+      - ssl=off
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+          pids: 250
+        reservations:
+          cpus: '1'
+          memory: 1G
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+      - DAC_OVERRIDE
+    shm_size: 256mb
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-cex}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # Redis - Cache and Session Store
+  redis:
+    image: redis:7-alpine
+    container_name: cex_redis
+    restart: unless-stopped
+    networks:
+      - database
+    expose:
+      - "6379"
+    volumes:
+      - redis_data:/data
+      - ./redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
+    command: ["redis-server", "/usr/local/etc/redis/redis.conf", "--requirepass", "${REDIS_PASSWORD}"]
+    environment:
+      - TZ=UTC
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+          pids: 50
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - SETGID
+      - SETUID
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+  # Prometheus - Metrics Collection (Optional)
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: cex_prometheus
+    restart: unless-stopped
+    networks:
+      - monitoring
+    expose:
+      - "9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=30d'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+      - '--web.enable-lifecycle'
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+          pids: 50
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    user: "nobody"
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+# Security Best Practices:
+# 1. Never expose database ports externally
+# 2. Use separate networks for service isolation
+# 3. Always use env_file for secrets, never hardcode
+# 4. Set resource limits to prevent resource exhaustion
+# 5. Drop all capabilities and add only required ones
+# 6. Use read-only root filesystem where possible
+# 7. Run containers as non-root users
+# 8. Enable security options (no-new-privileges)
+# 9. Implement health checks for all services
+# 10. Use internal networks for inter-service communication
+# 11. Regular security updates and vulnerability scanning
+# 12. Implement monitoring and logging
+# 13. Use secrets management (Docker secrets, Vault, etc.)
+# 14. Implement backup strategies for data volumes
+# 15. Test disaster recovery procedures
