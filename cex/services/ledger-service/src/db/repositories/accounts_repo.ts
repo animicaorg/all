@@ -68,7 +68,7 @@ export class AccountsRepo {
     );
 
     // If insert returned a row, we created it. Otherwise, fetch existing.
-    if (result.rowCount > 0) {
+    if (result.rowCount && result.rowCount > 0) {
       return this.mapRow(result.rows[0]);
     }
 

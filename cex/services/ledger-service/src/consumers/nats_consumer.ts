@@ -5,7 +5,7 @@
  * Ensures exactly-once processing with idempotency checks
  */
 
-import type { NatsConnection, JsMsg } from "nats";
+import type { NatsConnection, Msg } from "nats";
 import type { Pool } from "pg";
 import type { Logger } from "pino";
 import { jsonCodec } from "@cex/common";
@@ -70,7 +70,7 @@ export class LedgerConsumer {
   /**
    * Process a trade event message
    */
-  private async processTradeMessage(msg: JsMsg, market: Market): Promise<void> {
+  private async processTradeMessage(msg: Msg, market: Market): Promise<void> {
     try {
       const decoded = jsonCodec.decode(msg.data);
       const tradeEvent = decoded as TradeEvent;
@@ -93,6 +93,10 @@ export class LedgerConsumer {
 
         // Check sequence is valid (monotonic)
         const offset = await idempotencyRepo.getOffset(market.id);
+        if (!offset) {
+          this.logger.error({ marketId: market.id }, "No offset found for market");
+          return { ok: false, error: "no_offset_found" };
+        }
         const seq = BigInt(tradeEvent.sequence);
 
         if (seq <= offset.lastTradeSeq) {
@@ -121,28 +125,28 @@ export class LedgerConsumer {
         return { ok: true };
       });
 
-      if (result.ok) {
-        msg.ack();
+      if (result.ok || (result as any).alreadyProcessed) {
+        // ACK not needed for core NATS, only for JetStream
+        // msg.ack();
       } else {
         // For errors, we could:
-        // 1. NACK and retry (msg.nak())
+        // 1. NACK and retry (msg.nak()) - only for JetStream
         // 2. ACK and log to dead letter queue
         // 3. Exponential backoff
-        // For now, ACK to prevent infinite retries
-        this.logger.error({ error: result.error }, "Trade processing failed, acking to prevent retry loop");
-        msg.ack();
+        // For now, just log the error
+        this.logger.error({ error: (result as any).error }, "Trade processing failed");
       }
     } catch (error) {
       this.logger.error({ error }, "Error processing trade message");
-      // Don't ack on exception - will be redelivered
-      msg.nak();
+      // Don't nak on exception for core NATS
+      // msg.nak();
     }
   }
 
   /**
    * Process an order event message
    */
-  private async processOrderMessage(msg: JsMsg, market: Market): Promise<void> {
+  private async processOrderMessage(msg: Msg, market: Market): Promise<void> {
     try {
       const decoded = jsonCodec.decode(msg.data);
       const orderEvent = decoded as OrderEvent;
@@ -165,6 +169,10 @@ export class LedgerConsumer {
 
         // Check sequence
         const offset = await idempotencyRepo.getOffset(market.id);
+        if (!offset) {
+          this.logger.error({ marketId: market.id }, "No offset found for market");
+          return { ok: false, error: "no_offset_found" };
+        }
         const seq = BigInt(orderEvent.sequence);
 
         if (seq <= offset.lastOrderSeq) {
@@ -203,15 +211,15 @@ export class LedgerConsumer {
         return { ok: true };
       });
 
-      if (result.ok) {
-        msg.ack();
+      if (result.ok || (result as any).alreadyProcessed) {
+        // ACK not needed for core NATS
+        // msg.ack();
       } else {
-        this.logger.error({ error: result.error }, "Order processing failed, acking to prevent retry loop");
-        msg.ack();
+        this.logger.error({ error: (result as any).error }, "Order processing failed");
       }
     } catch (error) {
       this.logger.error({ error }, "Error processing order message");
-      msg.nak();
+      // msg.nak();
     }
   }
 
