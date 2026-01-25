@@ -10,6 +10,9 @@
   },
   "dependencies": {
     "@cex/common": "workspace:*",
+    "@cex/security": "workspace:*",
+    "@cex/observability": "workspace:*",
+    "@cex/middleware": "workspace:*",
     "express": "^4.19.2",
     "nats": "^2.15.0",
     "pg": "^8.11.3",

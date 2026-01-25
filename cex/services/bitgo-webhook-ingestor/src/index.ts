@@ -4,45 +4,88 @@
  * Main entry point - sets up HTTP server and background jobs
  */
 
-import { createLogger, createPgPool, createRedis, connectNats } from "@cex/common";
+import { createLogger as createBaseLogger, createPgPool, createRedis, connectNats } from "@cex/common";
+import { createLogger } from "@cex/observability";
+import { configureSecrets, getSecret } from "@cex/security/secrets";
 import { loadConfig } from "./config.js";
 import { createServer } from "./http/server.js";
 import { OutboxProcessor, ConfirmationBackfill } from "./jobs/index.js";
 
 const config = loadConfig();
-const logger = createLogger(config.SERVICE_NAME, config.LOG_LEVEL);
+
+// Initialize structured logger
+const logger = createLogger({
+  service: config.SERVICE_NAME,
+  environment: config.NODE_ENV,
+  level: config.LOG_LEVEL,
+  prettyPrint: config.NODE_ENV === "development",
+  redact: true, // Enable automatic redaction of sensitive data
+});
 
 async function start() {
   logger.info(
     {
-      config: {
-        ...config,
-        BITGO_WEBHOOK_SECRET: config.BITGO_WEBHOOK_SECRET ? "***" : undefined,
-        BITGO_API_TOKEN: config.BITGO_API_TOKEN ? "***" : undefined,
-        ADMIN_KEY: config.ADMIN_KEY ? "***" : undefined,
-      },
+      service: config.SERVICE_NAME,
+      environment: config.NODE_ENV,
+      port: config.PORT,
     },
     "Starting BitGo webhook ingestor service"
   );
 
+  // Initialize secrets management
+  // Default: uses environment variables via EnvSecretProvider
+  // For production, consider upgrading to cloud secret managers:
+  // 
+  // AWS Secrets Manager:
+  //   import { AwsSecretProvider } from "@cex/security/secrets";
+  //   configureSecrets(new AwsSecretProvider({ region: "us-east-1", secretName: "bitgo-webhook-ingestor/prod" }));
+  //
+  // GCP Secret Manager:
+  //   import { GcpSecretProvider } from "@cex/security/secrets";
+  //   configureSecrets(new GcpSecretProvider({ projectId: "my-project", prefix: "bitgo-webhook-ingestor-prod" }));
+  
+  // Load sensitive configuration from secrets
+  const bitgoWebhookSecret = await getSecret("BITGO_WEBHOOK_SECRET");
+  const bitgoApiToken = await getSecret("BITGO_API_TOKEN");
+  const adminKey = await getSecret("ADMIN_KEY");
+  const serviceAuthKey = await getSecret("SERVICE_AUTH_KEY");
+
+  // Update config with loaded secrets
+  const runtimeConfig = {
+    ...config,
+    BITGO_WEBHOOK_SECRET: bitgoWebhookSecret || config.BITGO_WEBHOOK_SECRET,
+    BITGO_API_TOKEN: bitgoApiToken || config.BITGO_API_TOKEN,
+    ADMIN_KEY: adminKey || config.ADMIN_KEY,
+    SERVICE_AUTH_KEY: serviceAuthKey || config.SERVICE_AUTH_KEY,
+  };
+
+  logger.info(
+    {
+      bitgoSecretConfigured: !!runtimeConfig.BITGO_WEBHOOK_SECRET,
+      adminKeyConfigured: !!runtimeConfig.ADMIN_KEY,
+      serviceAuthConfigured: !!runtimeConfig.SERVICE_AUTH_KEY,
+    },
+    "Secrets loaded"
+  );
+
   // Initialize connections
-  const pool = createPgPool(config as any);
-  const redis = createRedis(config as any);
-  const nats = await connectNats(config as any);
+  const pool = createPgPool(runtimeConfig as any);
+  const redis = createRedis(runtimeConfig as any);
+  const nats = await connectNats(runtimeConfig as any);
 
   logger.info("Database and message bus connections established");
 
   // Create HTTP server
-  const app = createServer(pool, redis, config, logger);
-  const server = app.listen(config.PORT, () => {
-    logger.info({ port: config.PORT }, "HTTP server listening");
+  const app = createServer(pool, redis, runtimeConfig, logger);
+  const server = app.listen(runtimeConfig.PORT, () => {
+    logger.info({ port: runtimeConfig.PORT }, "HTTP server listening");
   });
 
   // Start background jobs
-  const outboxProcessor = new OutboxProcessor(pool, nats, config, logger);
+  const outboxProcessor = new OutboxProcessor(pool, nats, runtimeConfig, logger);
   outboxProcessor.start();
 
-  const confirmationBackfill = new ConfirmationBackfill(pool, config, logger);
+  const confirmationBackfill = new ConfirmationBackfill(pool, runtimeConfig, logger);
   confirmationBackfill.start();
 
   logger.info("Background jobs started");
