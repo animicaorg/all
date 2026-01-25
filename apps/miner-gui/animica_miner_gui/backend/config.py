@@ -10,9 +10,9 @@ import json
 import os
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, PrivateAttr, ValidationError, field_validator
 
 
 class NetworkType(str, Enum):
@@ -21,6 +21,12 @@ class NetworkType(str, Enum):
     TESTNET = "testnet"
     DEVNET = "devnet"
     CUSTOM = "custom"
+
+
+class NetworkMode(str, Enum):
+    """RPC routing mode."""
+    LOCAL = "local"
+    EXTERNAL = "external"
 
 
 class DeviceType(str, Enum):
@@ -91,9 +97,27 @@ class PoolConfig(BaseModel):
 class NetworkConfig(BaseModel):
     """Network and RPC configuration."""
     network_type: NetworkType = Field(default=NetworkType.DEVNET, description="Network type")
-    rpc_url: str = Field(default="http://127.0.0.1:8545/rpc", description="RPC endpoint URL")
+    mode: NetworkMode = Field(default=NetworkMode.LOCAL, description="RPC selection mode")
+    rpc_url: Optional[str] = Field(default=None, description="Resolved RPC endpoint URL (runtime)")
+    external_rpc_url: Optional[str] = Field(default=None, description="External RPC URL (mode=external)")
     custom_rpc_url: Optional[str] = Field(default=None, description="Custom RPC URL (when network_type=custom)")
     chain_id: Optional[int] = Field(default=None, ge=1, description="Chain ID (None=auto-detect)")
+
+    @field_validator("rpc_url", "external_rpc_url", "custom_rpc_url", mode="before")
+    @classmethod
+    def normalize_optional_url(cls, value: Any) -> Any:
+        if value is None:
+            return None
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return value
+
+    def resolved_rpc_url(self) -> Optional[str]:
+        """Return the effective RPC URL based on mode and configured values."""
+        if self.mode == NetworkMode.EXTERNAL:
+            return self.external_rpc_url or self.rpc_url
+        return self.rpc_url
 
 
 class MinerConfig(BaseModel):
@@ -141,6 +165,8 @@ class MiningAppConfig(BaseModel):
     
     # Logging
     log_level: LogLevel = Field(default=LogLevel.INFO, description="Logging level")
+
+    _load_warnings: List[str] = PrivateAttr(default_factory=list)
     
     @classmethod
     def get_schema_json(cls) -> str:
@@ -181,16 +207,120 @@ def get_default_config_path() -> Path:
     return get_default_config_dir() / "config.json"
 
 
+def migrate_config_dict(raw: Any) -> Tuple[Dict[str, Any], bool, List[str]]:
+    """Migrate raw config dict into the latest schema."""
+    warnings: List[str] = []
+    changed = False
+
+    if not isinstance(raw, dict):
+        warnings.append("Config root was not a mapping. Replacing with defaults.")
+        return {}, True, warnings
+
+    data: Dict[str, Any] = dict(raw)
+    network_raw = data.get("network", {})
+    if not isinstance(network_raw, dict):
+        warnings.append("Config network section was invalid. Resetting network config.")
+        network_raw = {}
+        changed = True
+
+    network = dict(network_raw)
+    mode = network.get("mode")
+    rpc_url = network.get("rpc_url")
+    external_rpc_url = network.get("external_rpc_url")
+    custom_rpc_url = network.get("custom_rpc_url")
+
+    if mode is None:
+        if isinstance(external_rpc_url, str) and external_rpc_url.strip():
+            mode = NetworkMode.EXTERNAL.value
+        elif isinstance(rpc_url, str) and rpc_url.strip():
+            mode = NetworkMode.EXTERNAL.value
+            external_rpc_url = rpc_url.strip()
+        else:
+            mode = NetworkMode.LOCAL.value
+        changed = True
+    elif isinstance(mode, str):
+        mode = mode.strip().lower()
+
+    if mode not in {NetworkMode.LOCAL.value, NetworkMode.EXTERNAL.value}:
+        warnings.append(f"Unknown network mode '{mode}', defaulting to local.")
+        mode = NetworkMode.LOCAL.value
+        changed = True
+
+    if mode == NetworkMode.EXTERNAL.value:
+        if not (isinstance(external_rpc_url, str) and external_rpc_url.strip()):
+            if isinstance(custom_rpc_url, str) and custom_rpc_url.strip():
+                external_rpc_url = custom_rpc_url.strip()
+                changed = True
+            elif isinstance(rpc_url, str) and rpc_url.strip():
+                external_rpc_url = rpc_url.strip()
+                changed = True
+            else:
+                external_rpc_url = None
+        if isinstance(external_rpc_url, str) and not external_rpc_url.strip():
+            external_rpc_url = None
+            changed = True
+        if rpc_url == external_rpc_url:
+            rpc_url = None
+            changed = True
+    else:
+        if isinstance(rpc_url, str) and not rpc_url.strip():
+            rpc_url = None
+            changed = True
+
+    if network.get("mode") != mode:
+        network["mode"] = mode
+        changed = True
+    if network.get("external_rpc_url") != external_rpc_url:
+        network["external_rpc_url"] = external_rpc_url
+        changed = True
+    if network.get("rpc_url") != rpc_url:
+        network["rpc_url"] = rpc_url
+        changed = True
+
+    data["network"] = network
+    return data, changed, warnings
+
+
 def load_config(path: Optional[Path] = None) -> MiningAppConfig:
     """Load configuration from file or create default."""
     if path is None:
         path = get_default_config_path()
-    
+
+    raw: Dict[str, Any] = {}
+    changed = False
+    warnings: List[str] = []
+
     if path.exists():
-        return MiningAppConfig.from_file(path)
+        try:
+            with open(path, "r") as f:
+                raw = json.load(f)
+        except json.JSONDecodeError:
+            warnings.append("Config file was not valid JSON. Rebuilding with defaults.")
+            raw = {}
+            changed = True
     else:
-        # Return default config
-        return MiningAppConfig()
+        changed = True
+
+    migrated, migrated_changed, migration_warnings = migrate_config_dict(raw)
+    warnings.extend(migration_warnings)
+    changed = changed or migrated_changed
+
+    try:
+        config = MiningAppConfig(**migrated)
+    except ValidationError as exc:
+        warnings.append(f"Config validation failed: {exc}")
+        config = MiningAppConfig()
+        changed = True
+
+    if changed:
+        try:
+            config.to_file(path)
+        except Exception:
+            warnings.append(f"Failed to write repaired config to {path}")
+
+    config._load_warnings = warnings
+
+    return config
 
 
 def save_config(config: MiningAppConfig, path: Optional[Path] = None) -> None:
@@ -198,3 +328,14 @@ def save_config(config: MiningAppConfig, path: Optional[Path] = None) -> None:
     if path is None:
         path = get_default_config_path()
     config.to_file(path)
+
+
+def resolve_rpc_url(config_data: Dict[str, Any]) -> Optional[str]:
+    """Resolve the effective RPC URL from a serialized config dict."""
+    network = config_data.get("network") if isinstance(config_data, dict) else None
+    if not isinstance(network, dict):
+        return None
+    mode = (network.get("mode") or NetworkMode.LOCAL.value).strip().lower()
+    if mode == NetworkMode.EXTERNAL.value:
+        return network.get("external_rpc_url") or network.get("rpc_url")
+    return network.get("rpc_url")

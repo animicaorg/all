@@ -38,6 +38,7 @@ from PySide6.QtWidgets import (
 
 from animica_miner_gui.backend.config import (
     MiningAppConfig,
+    NetworkMode,
     NetworkType,
     save_config,
 )
@@ -895,17 +896,20 @@ class FirstRunWizard(QWizard):
             # Network configuration
             if self.field("custom"):
                 config.network.network_type = NetworkType.CUSTOM
+                config.network.mode = NetworkMode.EXTERNAL
                 config.network.custom_rpc_url = self.field("custom_rpc")
-                config.network.rpc_url = self.field("custom_rpc")
+                config.network.external_rpc_url = self.field("custom_rpc")
             elif self.field("mainnet"):
                 config.network.network_type = NetworkType.MAINNET
-                config.network.rpc_url = "https://rpc.mainnet.animica.org/rpc"
+                config.network.mode = NetworkMode.EXTERNAL
+                config.network.external_rpc_url = "https://rpc.mainnet.animica.org/rpc"
             elif self.field("testnet"):
                 config.network.network_type = NetworkType.TESTNET
-                config.network.rpc_url = "https://rpc.testnet.animica.org/rpc"
+                config.network.mode = NetworkMode.EXTERNAL
+                config.network.external_rpc_url = "https://rpc.testnet.animica.org/rpc"
             else:
                 config.network.network_type = NetworkType.DEVNET
-                config.network.rpc_url = "http://127.0.0.1:8545/rpc"
+                config.network.mode = NetworkMode.LOCAL
             
             # Payout address
             config.miner.payout_address = self.field("payout_address")

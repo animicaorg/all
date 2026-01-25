@@ -282,7 +282,8 @@ class MinerRunner:
                 ))
                 return
             
-            rpc_url = config.get('network', {}).get('rpc_url', 'http://127.0.0.1:8545')
+            from animica_miner_gui.backend.config import resolve_rpc_url
+            rpc_url = resolve_rpc_url(config) or "http://127.0.0.1:8545"
             threads = config.get('cpu', {}).get('threads', 1)
             blocks_per_batch = config.get('miner', {}).get('blocks_per_batch', 10)
             

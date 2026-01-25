@@ -1,0 +1,11 @@
+{
+  "version": "1.0",
+  "network": {
+    "network_type": "devnet",
+    "rpc_url": null
+  },
+  "miner": {
+    "mining_mode": "solo",
+    "payout_address": ""
+  }
+}
