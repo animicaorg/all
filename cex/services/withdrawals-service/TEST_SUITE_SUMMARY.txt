@@ -1,0 +1,185 @@
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                   WITHDRAWALS SERVICE TEST SUITE                             ║
+║                           IMPLEMENTATION COMPLETE                            ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+📊 STATISTICS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  Test Files:       7
+  Test Cases:       89+
+  Lines of Code:    3,486
+  Documentation:    3 files (27KB)
+  Coverage Areas:   6 major functional areas
+
+📁 FILES CREATED
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+TEST FILES (src/tests/)
+┌───────────────────────────────┬───────┬───────┬─────────────────────────────┐
+│ File                          │ Lines │ Tests │ Coverage                    │
+├───────────────────────────────┼───────┼───────┼─────────────────────────────┤
+│ helpers.ts                    │   548 │   -   │ Mocks & fixtures            │
+│ request.lock.test.ts          │   431 │   17  │ Request & ledger lock       │
+│ risk.policy.test.ts           │   452 │   15  │ Risk eval & policy          │
+│ approve.submit.test.ts        │   481 │   14  │ Approvals & BitGo           │
+│ webhook.status.test.ts        │   482 │   14  │ Webhook processing          │
+│ idempotency.test.ts           │   500 │   14  │ End-to-end idempotency      │
+│ outbox.worker.test.ts         │   592 │   15  │ Outbox pattern & retries    │
+└───────────────────────────────┴───────┴───────┴─────────────────────────────┘
+
+DOCUMENTATION
+┌───────────────────────────────┬───────┬─────────────────────────────────────┐
+│ File                          │ Size  │ Purpose                             │
+├───────────────────────────────┼───────┼─────────────────────────────────────┤
+│ src/tests/README.md           │  9.7K │ Comprehensive test documentation    │
+│ TEST_SUITE_COMPLETE.md        │  12K  │ Implementation summary              │
+│ QUICK_REFERENCE.md            │  5.7K │ Quick reference guide               │
+└───────────────────────────────┴───────┴─────────────────────────────────────┘
+
+✅ ACCEPTANCE CRITERIA COVERAGE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+REQUEST & LOCK (request.lock.test.ts)
+  ✓ Request creates withdrawal + locks funds once
+  ✓ Idempotency: same key returns same withdrawal, no relock
+  ✓ Validation: amount > 0, min/max, network enabled
+  ✓ Fee calculation from policy
+  ✓ Total debit = amount + fee
+  ✓ Outbox entry created
+
+RISK & POLICY (risk.policy.test.ts)
+  ✓ Risk blocks: withdrawal rejected, lock released
+  ✓ Velocity limits: 24h amount check
+  ✓ Velocity limits: 24h count check
+  ✓ Address whitelist enforcement (if enabled)
+  ✓ Large amount threshold triggers extra approvals
+  ✓ Risk scoring calculation
+  ✓ Multiple risk flags combine
+
+APPROVAL & SUBMIT (approve.submit.test.ts)
+  ✓ Approval threshold: N approvals → submission enqueued
+  ✓ Prevent same approver from approving twice
+  ✓ Submit to BitGo creates transfer, stores provider_ref
+  ✓ Idempotency: no duplicate BitGo transfers
+  ✓ Rejection flow queues ledger cancel
+  ✓ Cancel flow
+
+WEBHOOK & STATUS (webhook.status.test.ts)
+  ✓ Webhook BROADCAST triggers ledger broadcast exactly once
+  ✓ Webhook FAILED pre-broadcast releases lock
+  ✓ Webhook CONFIRMED updates status
+  ✓ State transitions correct (APPROVED → SIGNING → BROADCAST → CONFIRMED)
+  ✓ No state regression
+  ✓ Idempotent webhook handling
+
+IDEMPOTENCY (idempotency.test.ts)
+  ✓ HTTP idempotency key prevents duplicates
+  ✓ Outbox operations are idempotent
+  ✓ Ledger operations use unique keys
+  ✓ BitGo submission is idempotent
+  ✓ End-to-end idempotency maintained
+
+OUTBOX WORKER (outbox.worker.test.ts)
+  ✓ Retry: BitGo fails → outbox retries → eventually succeeds
+  ✓ Exponential backoff
+  ✓ Dead letter after max attempts (10)
+  ✓ SKIP LOCKED prevents duplicate processing
+  ✓ Processes all operation types (LOCK, SUBMIT, BROADCAST, CANCEL)
+
+🏗️ MOCK INFRASTRUCTURE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+MockDatabase
+  • In-memory state for withdrawals, policies, networks, wallets, approvals
+  • Handles 20+ SQL query patterns
+  • Transaction support (BEGIN/COMMIT/ROLLBACK)
+  • Velocity calculations (SUM, COUNT with time windows)
+  • Audit log tracking
+
+Mock Clients
+  • PostgreSQL: Full CRUD + FOR UPDATE SKIP LOCKED
+  • BitGo: Transfer tracking with sequenceId
+  • Ledger Service: Lock/broadcast/cancel operations
+  • Redis: Distributed state
+  • Logger: Silent logger for tests
+
+Test Fixtures
+  • Users: alice, bob, charlie
+  • Approvers: admin1, admin2, admin3
+  • Addresses: BTC & ETH (valid, new, another)
+  • Amounts: small, medium, large, overLimit
+  • Networks: BTC mainnet, ETH mainnet
+  • Policies: Fully configured with limits
+
+🧪 TEST QUALITY
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Edge Cases Covered
+  • Zero/negative amounts
+  • Disabled networks/policies
+  • Missing configurations
+  • API timeouts and errors
+  • Concurrent operations
+  • Out-of-order webhooks
+  • Duplicate requests
+  • Max retries exceeded
+  • State regressions
+
+Test Patterns
+  • Arrange-Act-Assert structure
+  • beforeEach setup and teardown
+  • Descriptive test names
+  • Both happy path and error cases
+  • Async/await properly used
+  • TypeScript type safety
+
+📖 DOCUMENTATION
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+src/tests/README.md
+  • Overview and architecture
+  • Detailed test descriptions
+  • Running instructions
+  • Test patterns and examples
+  • Edge cases documented
+  • Troubleshooting guide
+
+TEST_SUITE_COMPLETE.md
+  • Implementation summary
+  • Statistics and metrics
+  • Coverage matrix
+  • Key patterns used
+  • Verification steps
+
+QUICK_REFERENCE.md
+  • Fast lookup guide
+  • Common patterns
+  • Test checklist
+  • Mock usage examples
+
+🚀 USAGE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Install Dependencies (from monorepo root):
+  $ pnpm install
+
+Or directly:
+  $ cd cex/services/withdrawals-service
+  $ npm install
+
+Run Tests:
+  $ npm test                                    # All tests
+  $ npx vitest run src/tests/request.lock.test.ts  # Specific file
+  $ npx vitest watch                            # Watch mode
+  $ npx vitest run --coverage                   # With coverage
+
+Verify Structure:
+  $ tree src/tests
+  $ grep -r "it(" src/tests/*.test.ts | wc -l  # Count tests
+
+✨ STATUS: COMPLETE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+All acceptance criteria covered with comprehensive test suite.
+Ready for use - install dependencies and run 'npm test'.
+
