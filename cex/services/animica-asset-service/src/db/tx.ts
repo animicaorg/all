@@ -3,6 +3,7 @@
  */
 
 import { Pool, PoolClient } from "pg";
+import type { Logger } from "pino";
 
 export { Pool, PoolClient };
 
@@ -21,6 +22,29 @@ export async function withTransaction<T>(
     return result;
   } catch (error) {
     await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * Execute a query within a transaction with logging
+ */
+export async function transact<T>(
+  pool: Pool,
+  logger: Logger,
+  callback: (client: PoolClient) => Promise<T>
+): Promise<T> {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const result = await callback(client);
+    await client.query("COMMIT");
+    return result;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    logger.error({ error }, "Transaction rolled back");
     throw error;
   } finally {
     client.release();
