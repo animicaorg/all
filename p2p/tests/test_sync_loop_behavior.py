@@ -214,6 +214,108 @@ def test_inflight_block_expiry_requeues(tmp_path: Path) -> None:
     assert peer.sync_timeouts == 1
 
 
+def test_peer_broadcast_score_prefers_broadcaster(tmp_path: Path) -> None:
+    deps_sync, deps = _make_deps(tmp_path, "broadcast-score")
+    node = P2PService(
+        listen_addrs=[tcp_multiaddr(free_port())],
+        seeds=[],
+        chain_id=deps_sync.chain_id,
+        deps=deps,
+        peerstore_path=str(tmp_path / "broadcast-score" / "p2p"),
+    )
+    peer_a = _register_peer(node, "peer:5001")
+    peer_b = _register_peer(node, "peer:5002")
+
+    peer_a.hello["head_height"] = 10
+    peer_b.hello["head_height"] = 10
+    node._update_peer_head_table(peer_a, height=10, source="test", head_hash=None)
+    node._update_peer_head_table(peer_b, height=10, source="test", head_hash=None)
+
+    now = time.time()
+    peer_a.broadcast.last_inventory_at = now
+    peer_a.broadcast.successful_headers_served = 2
+    peer_b.broadcast.duplicate_header_batches = 3
+
+    selected = node._select_sync_peer()
+    assert selected == peer_a
+
+
+def test_watchdog_resets_from_highest_next_height(tmp_path: Path) -> None:
+    deps_sync, deps = _make_deps(tmp_path, "reset-next-height")
+    node = P2PService(
+        listen_addrs=[tcp_multiaddr(free_port())],
+        seeds=[],
+        chain_id=deps_sync.chain_id,
+        deps=deps,
+        peerstore_path=str(tmp_path / "reset-next-height" / "p2p"),
+    )
+    peer_good = _register_peer(node, "peer:6001")
+    peer_silent = _register_peer(node, "peer:6002")
+
+    peer_good.hello["head_height"] = 5
+    peer_silent.hello["head_height"] = 5
+    node._update_peer_head_table(peer_good, height=5, source="test", head_hash=None)
+    node._update_peer_head_table(peer_silent, height=5, source="test", head_hash=None)
+
+    peer_good.broadcast.last_inventory_at = time.time()
+    peer_good.broadcast.successful_headers_served = 1
+
+    local_height, local_hash = node._local_head()
+    node._sync_watchdog_last_height = int(local_height or 0)
+    node._sync_watchdog_last_hash = local_hash
+    node._sync_watchdog_timeout = 0.01
+    node._sync_stall_timeout = 0.01
+    node._sync_last_progress_at = time.time() - 1.0
+    node._sync_watchdog_last_progress_at = time.time() - 1.0
+
+    node._sync_watchdog_attempts = 1
+    node._sync_watchdog_check(
+        now=time.time(),
+        head_height=int(local_height or 0),
+        head_hash=local_hash,
+    )
+
+    assert node._sync_last_recovery_action == "reset_from_highest_next_height"
+    assert node._sync_header_retry_queue
+    request = node._sync_header_retry_queue[-1]
+    assert request.start_height == int(local_height or 0) + 1
+    assert request.peer_id == peer_good.remote
+
+
+def test_watchdog_skip_reset_when_synced(tmp_path: Path) -> None:
+    deps_sync, deps = _make_deps(tmp_path, "watchdog-synced")
+    node = P2PService(
+        listen_addrs=[tcp_multiaddr(free_port())],
+        seeds=[],
+        chain_id=deps_sync.chain_id,
+        deps=deps,
+        peerstore_path=str(tmp_path / "watchdog-synced" / "p2p"),
+    )
+    peer = _register_peer(node, "peer:7001")
+    local_height, local_hash = node._local_head()
+
+    peer.hello["head_height"] = int(local_height or 0)
+    node._update_peer_head_table(
+        peer, height=int(local_height or 0), source="test", head_hash=None
+    )
+
+    node._sync_watchdog_last_height = int(local_height or 0)
+    node._sync_watchdog_last_hash = local_hash
+    node._sync_watchdog_timeout = 0.01
+    node._sync_stall_timeout = 0.01
+    node._sync_last_progress_at = time.time() - 1.0
+    node._sync_watchdog_last_progress_at = time.time() - 1.0
+
+    node._sync_watchdog_attempts = 1
+    node._sync_watchdog_check(
+        now=time.time(),
+        head_height=int(local_height or 0),
+        head_hash=local_hash,
+    )
+
+    assert node._sync_last_recovery_action != "reset_from_highest_next_height"
+
+
 @pytest.mark.asyncio
 async def test_inflight_header_expiry_requeues(tmp_path: Path) -> None:
     deps_sync, deps = _make_deps(tmp_path, "inflight-header-expiry")
