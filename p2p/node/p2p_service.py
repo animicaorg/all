@@ -4466,24 +4466,24 @@ class P2PService:
             [InvItem(typ=InvType.BLOCK, h=block_hash)], exclude_remote=None, is_tx=False
         )
         await self._broadcast_block_announce(block_hash, exclude_remote=None)
-    
+
     async def _propagate_network_height_update(self, network_best_height: int) -> None:
         """
         Propagate network best height updates to peers to ensure multi-hop height awareness.
-        
+
         This is called when we discover a significantly higher network height, ensuring
         all peers in the network stay informed about the true highest height even if
         they're not directly connected to the node with that height.
         """
         async with self._peer_lock:
             peers = list(self._peers.values())
-        
+
         for peer in peers:
             if not peer.hello_done.is_set():
                 continue
             if not peer.hello:
                 continue
-            
+
             # Update peer's hello with new network best if it's higher
             try:
                 peer_network_best = peer.hello.get("network_best_height")
@@ -4937,12 +4937,12 @@ class P2PService:
         if best_header is not None and best_header.height > int(height or 0):
             height = int(best_header.height)
             head_hash = bytes(best_header.hash)
-        
+
         # Compute network best height: max of our height and what we've seen from peers
         network_best = self._network_best_height()
         if network_best is None or network_best < int(height or 0):
             network_best = int(height or 0)
-        
+
         genesis_header_hash = self._genesis_header_hash()
         genesis_block_hash = self._genesis_block_hash()
         listen_port = self._local_listen_port()
@@ -5800,27 +5800,27 @@ class P2PService:
     ) -> Optional[list[dict[str, Any]]]:
         """
         Query a peer for available snapshots via P2P.
-        
+
         Args:
             peer: Peer state object
             chain_id: Optional chain ID filter
             timeout: Timeout in seconds
-            
+
         Returns:
             List of snapshot info dicts, or None if request failed/timed out
         """
         try:
             from p2p.wire.messages import GetSnapshots
             from p2p.wire.message_ids import MsgID
-            
+
             # Create future for response
             fut: asyncio.Future = asyncio.get_event_loop().create_future()
             peer.pending_snapshot_list = fut
-            
+
             # Send GET_SNAPSHOTS request
             req = GetSnapshots(chain_id=chain_id)
             await self._send(peer, MsgID.GET_SNAPSHOTS, req)
-            
+
             # Wait for response
             try:
                 response = await asyncio.wait_for(fut, timeout=timeout)
@@ -5830,7 +5830,7 @@ class P2PService:
                 return None
             finally:
                 peer.pending_snapshot_list = None
-                
+
         except Exception as e:
             self._log.warning(f"Error querying peer {peer.remote} for snapshots: {e}")
             peer.pending_snapshot_list = None
@@ -5846,25 +5846,25 @@ class P2PService:
     ) -> Optional[tuple[bytes, bool]]:
         """
         Query a peer for a specific snapshot chunk via P2P.
-        
+
         Args:
             peer: Peer state object
             chain_id: Chain ID
             checkpoint_height: Snapshot checkpoint height
             chunk_name: Name of the chunk (e.g., "blocks.tar.zst")
             timeout: Timeout in seconds
-            
+
         Returns:
             Tuple of (chunk_data, found) or None if request failed/timed out
         """
         try:
             from p2p.wire.messages import GetSnapshotChunk
             from p2p.wire.message_ids import MsgID
-            
+
             # Create future for response
             fut: asyncio.Future = asyncio.get_event_loop().create_future()
             peer.pending_snapshot_chunk = fut
-            
+
             # Send GET_SNAPSHOT_CHUNK request
             req = GetSnapshotChunk(
                 chain_id=chain_id,
@@ -5872,7 +5872,7 @@ class P2PService:
                 chunk_name=chunk_name,
             )
             await self._send(peer, MsgID.GET_SNAPSHOT_CHUNK, req)
-            
+
             # Wait for response
             try:
                 response = await asyncio.wait_for(fut, timeout=timeout)
@@ -5885,7 +5885,7 @@ class P2PService:
                 return None
             finally:
                 peer.pending_snapshot_chunk = None
-                
+
         except Exception as e:
             self._log.warning(
                 f"Error querying peer {peer.remote} for snapshot chunk {chunk_name}: {e}"
@@ -6454,10 +6454,10 @@ class P2PService:
                     if isinstance(value, (bytes, bytearray)):
                         snapshot_dict[key] = "0x" + bytes(value).hex()
                 return snapshot_dict
-            
+
             data = self._decode_map(payload)
             raw_snapshots = data.get("snapshots") or []
-            
+
             # Convert raw snapshot data to dicts
             snapshots = []
             for snap_data in raw_snapshots:
@@ -6485,16 +6485,16 @@ class P2PService:
                     except Exception as e:
                         self._log.debug(f"Failed to convert snapshot data: {e}")
                         continue
-            
+
             self._log.debug(
                 f"Received {len(snapshots)} snapshot(s) from {peer.remote}"
             )
-            
+
             # If we have a pending request, fulfill it
             fut = peer.pending_snapshot_list
             if fut is not None and not fut.done():
                 fut.set_result(snapshots)
-                
+
         except Exception as e:
             self._log.warning(f"Error handling SNAPSHOTS from {peer.remote}: {e}")
             fut = peer.pending_snapshot_list
@@ -6507,17 +6507,17 @@ class P2PService:
             data = self._decode_map(payload)
             chunk_data = data.get("data") or b""
             found = data.get("found", False)
-            
+
             self._log.debug(
                 f"Received snapshot chunk from {peer.remote}: "
                 f"{len(chunk_data)} bytes, found={found}"
             )
-            
+
             # If we have a pending request, fulfill it
             fut = peer.pending_snapshot_chunk
             if fut is not None and not fut.done():
                 fut.set_result((chunk_data, found))
-                
+
         except Exception as e:
             self._log.warning(f"Error handling SNAPSHOT_CHUNK from {peer.remote}: {e}")
             fut = peer.pending_snapshot_chunk
@@ -6529,24 +6529,24 @@ class P2PService:
         try:
             from p2p.wire.messages import GetSnapshots, Snapshots, SnapshotInfo
             from p2p.wire.message_ids import MsgID
-            
+
             # Decode request
             data = self._decode_map(payload)
             req = GetSnapshots(**data)
-            
+
             self._log.debug(
                 f"Received GET_SNAPSHOTS request from {peer.remote}, chain_id={req.chain_id}"
             )
-            
+
             # List available snapshots
             snapshots = self._list_local_snapshots(req.chain_id)
-            
+
             # Build and send response
             response = Snapshots(snapshots=snapshots)
             await self._send(peer, MsgID.SNAPSHOTS, response)
-            
+
             self._log.debug(f"Sent {len(snapshots)} snapshot(s) to {peer.remote}")
-            
+
         except Exception as e:
             self._log.warning(f"Error handling GET_SNAPSHOTS from {peer.remote}: {e}", exc_info=True)
             # Send empty response on error
@@ -6564,28 +6564,28 @@ class P2PService:
         req_chain_id = 0
         req_height = 0
         req_chunk_name = ""
-        
+
         try:
             from p2p.wire.messages import GetSnapshotChunk, SnapshotChunk
             from p2p.wire.message_ids import MsgID
-            
+
             # Decode request
             data = self._decode_map(payload)
             req = GetSnapshotChunk(**data)
             req_chain_id = req.chain_id
             req_height = req.checkpoint_height
             req_chunk_name = req.chunk_name
-            
+
             self._log.debug(
                 f"Received GET_SNAPSHOT_CHUNK request from {peer.remote}: "
                 f"chain_id={req.chain_id}, height={req.checkpoint_height}, chunk={req.chunk_name}"
             )
-            
+
             # Read the chunk file
             chunk_data, found = self._read_snapshot_chunk(
                 req.chain_id, req.checkpoint_height, req.chunk_name
             )
-            
+
             # Build and send response
             response = SnapshotChunk(
                 chain_id=req.chain_id,
@@ -6595,7 +6595,7 @@ class P2PService:
                 found=found,
             )
             await self._send(peer, MsgID.SNAPSHOT_CHUNK, response)
-            
+
             if found:
                 self._log.info(
                     f"Sent snapshot chunk {req.chunk_name} ({len(chunk_data)} bytes) "
@@ -6603,7 +6603,7 @@ class P2PService:
                 )
             else:
                 self._log.debug(f"Snapshot chunk {req.chunk_name} not found for {peer.remote}")
-            
+
         except Exception as e:
             self._log.warning(f"Error handling GET_SNAPSHOT_CHUNK from {peer.remote}: {e}", exc_info=True)
             # Send not-found response on error using captured values
@@ -6636,10 +6636,10 @@ class P2PService:
     def _list_local_snapshots(self, chain_id: Optional[int] = None) -> list:
         """
         List available snapshots from the local snapshots directory.
-        
+
         Args:
             chain_id: Optional chain ID filter
-            
+
         Returns:
             List of SnapshotInfo objects
         """
@@ -6679,19 +6679,19 @@ class P2PService:
     ) -> tuple[bytes, bool]:
         """
         Read a snapshot chunk file.
-        
+
         Args:
             chain_id: Chain ID
             checkpoint_height: Snapshot checkpoint height
             chunk_name: Name of the chunk file (e.g., "blocks.tar.zst")
-            
+
         Returns:
             Tuple of (chunk_data, found)
         """
         snapshots_dirs = self._get_snapshots_dirs()
         if not snapshots_dirs:
             return b"", False
-        
+
         # Construct snapshot directory name
         snapshot_dir = None
         for candidate_root in snapshots_dirs:
@@ -6706,13 +6706,13 @@ class P2PService:
                 f"Snapshot directory not found for chain {chain_id} height {checkpoint_height}"
             )
             return b"", False
-        
+
         # Read the chunk file
         chunk_path = snapshot_dir / chunk_name
         if not chunk_path.exists() or not chunk_path.is_file():
             self._log.debug(f"Chunk file not found: {chunk_path}")
             return b"", False
-        
+
         try:
             with open(chunk_path, "rb") as f:
                 data = f.read()
@@ -6982,7 +6982,7 @@ class P2PService:
                         block_hash = self._parse_hash_bytes(hh)
                         if block_hash:
                             await self.relay_block(block_hash)
-                
+
                 # Propagate network best height updates to keep all peers informed
                 current_network_best = self._network_best_height() or 0
                 if current_network_best > last_network_best + 10:  # Significant change threshold
@@ -8549,7 +8549,7 @@ class P2PService:
                 self._sync_inflight_blocks.clear()
                 self._sync_inflight_peers.clear()
                 self._sync_inflight_block_requests.clear()
-            
+
             # When forcing sync, clear "at_tip" error to allow re-requesting headers
             # This helps when the node is stuck because all connected peers are at the same
             # height, but there are actually higher blocks available on the network
@@ -9205,7 +9205,7 @@ class P2PService:
                         self._sync_last_block_error = stall_reason
                         self._sync_last_block_error_at = now
                         self._sync_kick(reason=f"stall:{stall_reason}", aggressive=True)
-                
+
                 # Detect when headers == blocks and we're not making progress
                 # This indicates we're stuck because all connected peers are at the same height
                 # even though the network might have higher blocks available
@@ -9232,7 +9232,7 @@ class P2PService:
                         self._sync_block_stalled_reason = "headers_blocks_equal_stall"
                         # Force sync on next iteration to try different peers
                         self._sync_requested = True
-                
+
                 if (
                     network_best_height is not None
                     and best_block_height < int(network_best_height)
@@ -9921,11 +9921,11 @@ class P2PService:
     def _is_peer_responsive(self, info: Optional[_PeerHeadInfo], now: float) -> bool:
         """
         Check if a peer is responsive (not stale and not in cooldown).
-        
+
         Args:
             info: The peer head info to check
             now: Current timestamp
-            
+
         Returns:
             True if peer is responsive, False otherwise
         """
@@ -9940,11 +9940,11 @@ class P2PService:
     def _network_best_height(self) -> Optional[int]:
         """
         Compute the highest height we know about in the network.
-        
+
         This considers:
         1. Direct peer heights (head_height)
         2. Peer's network views (network_best_height) - enabling multi-hop propagation
-        
+
         Only heights from responsive peers (not stale or in cooldown) are considered.
         This prevents unresponsive high-height nodes from blocking chain reorganization
         to active seed nodes.
@@ -9957,12 +9957,12 @@ class P2PService:
             if not peer.repo_state_ok:
                 continue
             info = self._sync_peer_heads.get(peer.remote)
-            
+
             # Check if peer is responsive (not stale and not in cooldown)
             if self._is_peer_responsive(info, now):
                 # Add peer's direct height
                 heights.append(int(info.height))
-                
+
                 # Only accept network_best_height from responsive peers
                 # This prevents stalled high-height nodes from blocking reorg to active chains
                 try:
@@ -12371,7 +12371,7 @@ class P2PService:
         if isinstance(res, tuple):
             ok = bool(res[0]) if res else False
             reason = res[1] if len(res) > 1 else None
-            
+
             return ok, reason
         return bool(res), None
 
