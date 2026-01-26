@@ -173,7 +173,16 @@ ensure_postgres_role_and_db() {
   compose="$(compose_cmd)"
   log_info "Ensuring PostgreSQL role/database exist..."
   local admin_user
-  admin_user="${DB_ADMIN_USER:-postgres}"
+  admin_user="${DB_ADMIN_USER:-$DB_USER}"
+  if ! $compose -f "$COMPOSE_FILE" exec -T postgres \
+    psql -U "$admin_user" -d postgres -tAc "SELECT 1" >/dev/null 2>&1; then
+    if $compose -f "$COMPOSE_FILE" exec -T postgres \
+      psql -U "$DB_USER" -d postgres -tAc "SELECT 1" >/dev/null 2>&1; then
+      admin_user="$DB_USER"
+    else
+      admin_user="postgres"
+    fi
+  fi
   local role_exists
   role_exists="$($compose -f "$COMPOSE_FILE" exec -T postgres \
     psql -U "$admin_user" -d postgres -tAc "SELECT 1 FROM pg_roles WHERE rolname='${DB_USER}'" || true)"
