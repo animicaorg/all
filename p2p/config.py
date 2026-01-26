@@ -81,6 +81,15 @@ NETWORK_NAME_TO_CHAIN_ID: Final[dict[str, int]] = {
     "devnet": 1337,
 }
 
+# Trusted verifier seed nodes for height validation
+# These nodes are considered authoritative for determining the highest block height.
+# Other nodes can only be at most 1 block ahead of these verifier seeds (the miner
+# who just found the next block), or behind them (still syncing).
+VERIFIER_SEED_IPS: Final[tuple[str, ...]] = (
+    "144.126.133.21",
+    "3.12.224.189",
+)
+
 
 # ---------- parsing helpers ----------------------------------------------------
 
@@ -304,6 +313,10 @@ class P2PConfig:
     max_outbound: int = CONST_MAX_OUTBOUND
     max_inbound: int = CONST_MAX_INBOUND
 
+    # Height verification - use verifier seed nodes to constrain network height
+    enable_verifier_seeds: bool = True
+    verifier_seed_ips: Tuple[str, ...] = field(default_factory=lambda: VERIFIER_SEED_IPS)
+
     # NAT & external reachability
     nat_upnp: bool = False
     nat_pmp: bool = False
@@ -387,6 +400,16 @@ def load_config() -> P2PConfig:
     max_outbound = _getenv_int("ANIMICA_P2P_MAX_OUTBOUND", CONST_MAX_OUTBOUND)
     max_inbound = _getenv_int("ANIMICA_P2P_MAX_INBOUND", max_peers - max_outbound)
 
+    # Height verification with verifier seed nodes
+    enable_verifier_seeds = _getenv_bool("ANIMICA_P2P_ENABLE_VERIFIER_SEEDS", True)
+    verifier_seed_ips_raw = _getenv("ANIMICA_P2P_VERIFIER_SEED_IPS")
+    if verifier_seed_ips_raw:
+        verifier_seed_ips = tuple(
+            ip.strip() for ip in verifier_seed_ips_raw.split(",") if ip.strip()
+        )
+    else:
+        verifier_seed_ips = VERIFIER_SEED_IPS
+
     nat_upnp = _getenv_bool("ANIMICA_P2P_NAT_UPNP", False)
     nat_pmp = _getenv_bool("ANIMICA_P2P_NAT_PMP", False)
     nat_hairpinning_fix = _getenv_bool("ANIMICA_P2P_NAT_HAIRPIN_FIX", True)
@@ -465,6 +488,8 @@ def load_config() -> P2PConfig:
         max_peers=max_peers,
         max_outbound=max_outbound,
         max_inbound=max_inbound,
+        enable_verifier_seeds=enable_verifier_seeds,
+        verifier_seed_ips=verifier_seed_ips,
         nat_upnp=nat_upnp,
         nat_pmp=nat_pmp,
         nat_hairpinning_fix=nat_hairpinning_fix,
