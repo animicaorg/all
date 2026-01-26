@@ -6,21 +6,24 @@ other nodes can reorganize to the active seed nodes instead of being stuck waiti
 the unresponsive peer.
 """
 
+import asyncio
 import time
 from pathlib import Path
 
 import pytest
 
-from p2p.node.p2p_service import P2PService, _PeerHeadInfo
+from p2p.node.p2p_service import P2PService, _PeerHeadInfo, _PeerState
 from p2p.tests import free_port, tcp_multiaddr
 from p2p.tests.test_sync_loop_behavior import _make_deps
 
 
+# Test configuration - aligned with P2PService defaults
+STALE_THRESHOLD_SEC = 60.0  # Default value from P2PService._sync_peer_head_stale_sec
+COOLDOWN_SEC = 120.0  # Default value from P2PService._sync_peer_head_cooldown_sec
+
+
 def _register_peer(node, peer_addr: str):
     """Helper to register a peer for testing."""
-    from p2p.node.p2p_service import _PeerState
-    import asyncio
-    
     session = node._peer_registry.register(peer_addr, "outbound")
     peer = _PeerState(
         session_id=session.session_id,
@@ -54,11 +57,12 @@ def test_stale_peer_height_excluded_from_network_best(tmp_path: Path) -> None:
     peer_stale = _register_peer(node, "peer:stale")
     peer_active = _register_peer(node, "peer:active")
     
-    # Stale peer advertises high height but hasn't updated in 120s (> 60s stale threshold)
+    # Stale peer advertises high height but hasn't updated recently
+    # Using 2x the stale threshold to ensure it's clearly stale
     now = time.time()
     node._sync_peer_heads[peer_stale.remote] = _PeerHeadInfo(
         height=100,
-        updated_at=now - 120.0,  # Stale: 120s ago
+        updated_at=now - (STALE_THRESHOLD_SEC * 2),  # Clearly stale
         source="test",
     )
     peer_stale.hello = {"head_height": 100}
@@ -97,7 +101,7 @@ def test_cooldown_peer_height_excluded_from_network_best(tmp_path: Path) -> None
         height=100,
         updated_at=now,
         source="test",
-        cooldown_until=now + 60.0,  # In cooldown for 60s
+        cooldown_until=now + COOLDOWN_SEC,  # In cooldown
     )
     peer_cooldown.hello = {"head_height": 100}
     
@@ -134,7 +138,7 @@ def test_stale_peer_network_best_height_excluded(tmp_path: Path) -> None:
     now = time.time()
     node._sync_peer_heads[peer_stale.remote] = _PeerHeadInfo(
         height=80,
-        updated_at=now - 120.0,  # Stale: 120s ago
+        updated_at=now - (STALE_THRESHOLD_SEC * 2),  # Clearly stale
         source="test",
     )
     peer_stale.hello = {
@@ -179,7 +183,7 @@ def test_cooldown_peer_network_best_height_excluded(tmp_path: Path) -> None:
         height=80,
         updated_at=now,
         source="test",
-        cooldown_until=now + 60.0,  # In cooldown
+        cooldown_until=now + COOLDOWN_SEC,  # In cooldown
     )
     peer_cooldown.hello = {
         "head_height": 80,
@@ -221,14 +225,14 @@ def test_all_peers_stale_returns_none(tmp_path: Path) -> None:
     now = time.time()
     node._sync_peer_heads[peer1.remote] = _PeerHeadInfo(
         height=100,
-        updated_at=now - 200.0,  # Very stale
+        updated_at=now - (STALE_THRESHOLD_SEC * 3),  # Very stale
         source="test",
     )
     peer1.hello = {"head_height": 100}
     
     node._sync_peer_heads[peer2.remote] = _PeerHeadInfo(
         height=90,
-        updated_at=now - 150.0,  # Also stale
+        updated_at=now - (STALE_THRESHOLD_SEC * 2.5),  # Also stale
         source="test",
     )
     peer2.hello = {"head_height": 90}
@@ -255,7 +259,7 @@ def test_peer_becomes_responsive_again(tmp_path: Path) -> None:
     now = time.time()
     node._sync_peer_heads[peer.remote] = _PeerHeadInfo(
         height=100,
-        updated_at=now - 120.0,  # Stale
+        updated_at=now - (STALE_THRESHOLD_SEC * 2),  # Stale
         source="test",
     )
     peer.hello = {"head_height": 100}
