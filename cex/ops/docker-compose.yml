@@ -42,7 +42,7 @@ services:
       SERVICE_NAME: api-gateway
       PORT: ${API_GATEWAY_PORT}
     ports:
-      - "${API_GATEWAY_PORT}:3000"
+      - "${API_GATEWAY_PORT}:${API_GATEWAY_PORT}"
 
   auth-service:
     <<: *node-service
@@ -50,6 +50,8 @@ services:
     environment:
       SERVICE_NAME: auth-service
       PORT: ${AUTH_SERVICE_PORT}
+    ports:
+      - "${AUTH_SERVICE_PORT}:${AUTH_SERVICE_PORT}"
 
   matching-engine:
     <<: *node-service
@@ -57,6 +59,8 @@ services:
     environment:
       SERVICE_NAME: matching-engine
       PORT: ${MATCHING_ENGINE_PORT}
+    ports:
+      - "${MATCHING_ENGINE_PORT}:${MATCHING_ENGINE_PORT}"
 
   ledger-service:
     <<: *node-service
@@ -64,6 +68,8 @@ services:
     environment:
       SERVICE_NAME: ledger-service
       PORT: ${LEDGER_SERVICE_PORT}
+    ports:
+      - "${LEDGER_SERVICE_PORT}:${LEDGER_SERVICE_PORT}"
 
   wallet-router:
     <<: *node-service
@@ -76,6 +82,8 @@ services:
       BITGO_WEBHOOK_SECRET: ${BITGO_WEBHOOK_SECRET}
       BITGO_BASE_URL: ${BITGO_BASE_URL}
       ANIMICA_RPC_URL: ${ANIMICA_RPC_URL}
+    ports:
+      - "${WALLET_ROUTER_PORT}:${WALLET_ROUTER_PORT}"
 
   bitgo-webhook-ingestor:
     <<: *node-service
@@ -85,7 +93,7 @@ services:
       PORT: ${BITGO_INGESTOR_PORT}
       BITGO_WEBHOOK_SECRET: ${BITGO_WEBHOOK_SECRET}
     ports:
-      - "${BITGO_INGESTOR_PORT}:3002"
+      - "${BITGO_INGESTOR_PORT}:${BITGO_INGESTOR_PORT}"
 
   animica-indexer:
     <<: *node-service
@@ -94,6 +102,8 @@ services:
       SERVICE_NAME: animica-indexer
       PORT: ${ANIMICA_INDEXER_PORT}
       ANIMICA_RPC_URL: ${ANIMICA_RPC_URL}
+    ports:
+      - "${ANIMICA_INDEXER_PORT}:${ANIMICA_INDEXER_PORT}"
 
   risk-service:
     <<: *node-service
@@ -101,6 +111,8 @@ services:
     environment:
       SERVICE_NAME: risk-service
       PORT: ${RISK_SERVICE_PORT}
+    ports:
+      - "${RISK_SERVICE_PORT}:${RISK_SERVICE_PORT}"
 
   admin-service:
     <<: *node-service
@@ -109,7 +121,7 @@ services:
       SERVICE_NAME: admin-service
       PORT: ${ADMIN_SERVICE_PORT}
     ports:
-      - "${ADMIN_SERVICE_PORT}:3001"
+      - "${ADMIN_SERVICE_PORT}:${ADMIN_SERVICE_PORT}"
 
   migrate:
     image: node:20-alpine
