@@ -1,0 +1,113 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$SCRIPT_DIR"
+CEX_DIR="$ROOT_DIR/cex"
+COMPOSE_FILE="$CEX_DIR/ops/docker-compose.yml"
+PID_FILE="$ROOT_DIR/.cex_pids"
+LOG_DIR="$ROOT_DIR/.cex_logs"
+
+WIPE=false
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+log_info() { echo -e "${BLUE}ℹ${NC} $1"; }
+log_success() { echo -e "${GREEN}✓${NC} $1"; }
+log_warning() { echo -e "${YELLOW}⚠${NC} $1"; }
+log_error() { echo -e "${RED}✗${NC} $1"; }
+
+usage() {
+  cat <<'EOF'
+Usage: ./cex_down [options]
+
+Options:
+  --wipe    Remove docker volumes and local dev data directories.
+  --help    Show this help message.
+EOF
+}
+
+compose_cmd() {
+  if docker compose version >/dev/null 2>&1; then
+    echo "docker compose"
+    return
+  fi
+  if command -v docker-compose >/dev/null 2>&1; then
+    echo "docker-compose"
+    return
+  fi
+  log_error "Docker Compose not found."
+  exit 1
+}
+
+stop_dev_processes() {
+  if [[ -f "$PID_FILE" ]]; then
+    log_info "Stopping local dev processes..."
+    while read -r pid; do
+      if [[ -n "$pid" ]] && kill -0 "$pid" >/dev/null 2>&1; then
+        kill "$pid" || true
+      fi
+    done < "$PID_FILE"
+    rm -f "$PID_FILE"
+    log_success "Local dev processes stopped."
+  else
+    log_info "No local dev PID file found. Skipping."
+  fi
+}
+
+stop_docker() {
+  local compose
+  compose="$(compose_cmd)"
+  if [[ "$WIPE" == "true" ]]; then
+    log_warning "Stopping docker compose and removing volumes..."
+    $compose -f "$COMPOSE_FILE" down -v
+  else
+    log_info "Stopping docker compose services..."
+    $compose -f "$COMPOSE_FILE" down
+  fi
+  log_success "Docker compose services stopped."
+}
+
+wipe_local_data() {
+  if [[ "$WIPE" != "true" ]]; then
+    return
+  fi
+  log_warning "Removing local dev data directories..."
+  rm -rf "$LOG_DIR"
+  rm -rf "$CEX_DIR/ops/docker/data" \
+    "$CEX_DIR/ops/docker/pgdata" \
+    "$CEX_DIR/ops/docker/redisdata"
+  log_success "Local dev data directories removed (if present)."
+}
+
+main() {
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --wipe)
+        WIPE=true
+        shift
+        ;;
+      --help)
+        usage
+        exit 0
+        ;;
+      *)
+        log_error "Unknown option: $1"
+        usage
+        exit 1
+        ;;
+    esac
+  done
+
+  stop_dev_processes
+  stop_docker
+  wipe_local_data
+
+  log_success "CEX services stopped."
+}
+
+main "$@"

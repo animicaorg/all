@@ -12,6 +12,11 @@
     "migrate": "pnpm --filter @cex/db migrate",
     "seed": "pnpm --filter @cex/db seed"
   },
+  "pnpm": {
+    "overrides": {
+      "@google-cloud/secret-manager": "^6.1.1"
+    }
+  },
   "devDependencies": {
     "typescript": "^5.5.4"
   }
