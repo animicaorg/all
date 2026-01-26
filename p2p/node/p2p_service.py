@@ -3627,7 +3627,9 @@ class P2PService:
         network_best_height = self._network_best_height()
         if network_best_height is None:
             return False
-        if int(network_best_height) <= int(head_height):
+        # Only reset if we're at least 2 blocks behind to avoid false positives
+        # when verifier+1 allows miners but no one is at that height yet
+        if int(network_best_height) <= int(head_height) + 1:
             return False
         stalled = now - self._sync_last_progress_at > self._sync_stall_timeout
         duplicate_headers = (
@@ -9286,6 +9288,11 @@ class P2PService:
                 self._sync_watchdog_check(
                     now=now, head_height=best_block_height, head_hash=head_hash
                 )
+                
+                # Check if local chain has blocks past verifier's highest height
+                # and discount them if necessary
+                self._check_and_discount_blocks_past_verifier()
+                
                 network_best_height = self._network_best_height()
                 previous_target = self._sync_target_height
                 target_height = best_peer_height
@@ -10246,6 +10253,83 @@ class P2PService:
         except Exception:
             return False
 
+    def _get_max_verifier_height(self) -> Optional[int]:
+        """
+        Get the maximum height from verifier seed peers.
+        
+        Returns:
+            Maximum height from verifier seeds, or None if no verifier seeds are present
+        """
+        if not self._enable_verifier_seeds or not self._verifier_seed_ips:
+            return None
+        
+        verifier_heights: list[int] = []
+        now = time.time()
+        
+        for peer in self._peers.values():
+            if not peer.hello_done.is_set():
+                continue
+            if not peer.repo_state_ok:
+                continue
+            
+            info = self._sync_peer_heads.get(peer.remote)
+            if self._is_peer_responsive(info, now):
+                is_verifier = self._is_verifier_seed_peer(peer.remote)
+                if is_verifier:
+                    peer_height = int(info.height)
+                    verifier_heights.append(peer_height)
+        
+        if not verifier_heights:
+            return None
+        
+        return max(verifier_heights)
+
+    def _check_and_discount_blocks_past_verifier(self) -> None:
+        """
+        Check if local chain has blocks past the verifier's highest height.
+        If so, discount those blocks and reset the chain back to the verifier's height.
+        
+        This ensures the node doesn't get stuck on blocks that are ahead of the
+        trusted verifier seeds, which could indicate a fork or invalid chain.
+        
+        This check only triggers when:
+        1. Verifier seeds are enabled
+        2. At least one verifier seed is present and responsive
+        3. Local height is GREATER than verifier height (not equal)
+        4. Local height is at least 2 blocks ahead (to avoid false positives during mining)
+        """
+        if not self._enable_verifier_seeds:
+            return
+        
+        max_verifier_height = self._get_max_verifier_height()
+        if max_verifier_height is None:
+            # No verifier seeds present - skip check
+            return
+        
+        local_height, local_hash = self._local_head()
+        
+        # Only trigger if local is significantly ahead (2+ blocks)
+        # This avoids false positives during normal mining when a miner finds a block
+        if local_height <= max_verifier_height + 1:
+            return
+        
+        # Local chain is ahead of verifier - this shouldn't happen
+        # Log and reset to verifier's height
+        log.warning(
+            "Local chain exceeds verifier highest height - discounting blocks and resetting",
+            extra={
+                "local_height": local_height,
+                "max_verifier_height": max_verifier_height,
+                "blocks_to_discount": local_height - max_verifier_height,
+            }
+        )
+        
+        # Reset the chain by triggering a reorg to verifier's height
+        # Clear the sync state to force resync from verifier's height
+        self._reset_from_highest_next_height(
+            reason="blocks_past_verifier_height"
+        )
+
     def _network_best_height(self) -> Optional[int]:
         """
         Compute the highest height we know about in the network.
@@ -10321,12 +10405,14 @@ class P2PService:
                         extra={
                             "max_verifier_height": max_verifier_height,
                             "unconstrained_height": unconstrained_max,
-                            "constrained_height": constrained_max,
+                            "constrained_height": max_allowed_height,
                             "verifier_count": len(verifier_heights),
                         }
                     )
                 
-                return constrained_max
+                # Always return at least max_allowed_height to allow miners to mine next block
+                # even if no peer is currently at that height
+                return max(constrained_max, max_allowed_height)
             else:
                 # If all heights are filtered out, fall back to verifier max + 1
                 return max_allowed_height
