@@ -99,7 +99,7 @@ exports.up = async function up(knex) {
     
     table.index(["expires_at"]);
   });
-}
+};
 
 exports.down = async function down(knex) {
   await knex.schema.dropTableIfExists("idempotency_keys");
@@ -129,4 +129,4 @@ exports.down = async function down(knex) {
     table.dropColumn("taker_fee_bps");
     table.dropColumn("fee_asset");
   });
-}
+};
