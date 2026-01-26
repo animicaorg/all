@@ -21,6 +21,8 @@ from typing import (
 
 import httpx
 
+from .cooldown import BlockFoundCooldown, get_block_found_cooldown
+
 
 Json = Union[dict, list, str, int, float, None]
 
@@ -444,6 +446,7 @@ class ShareSubmitter:
         block_encoder: Callable[[Any], Dict[str, Any]] = _default_block_encoder,
         logger: Optional[logging.Logger] = None,
         http_client: Optional[httpx.AsyncClient] = None,
+        cooldown: BlockFoundCooldown | None = None,
     ) -> None:
         self.cfg = cfg
         self.rpc = JsonRpcClient(cfg.rpc_url, cfg.http_headers, cfg.timeout_s)
@@ -467,6 +470,7 @@ class ShareSubmitter:
         self._closed = False
         self._thread: Optional[threading.Thread] = None
         self._stop_evt = threading.Event()
+        self._cooldown = cooldown or get_block_found_cooldown()
 
     # ──────────────────────────────────────────────────────────────────────
     # Public stats/lifecycle
@@ -515,6 +519,9 @@ class ShareSubmitter:
                         self._stats.shares_accepted += 1
                         if res.get("isBlock"):
                             self._stats.blocks_accepted += 1
+                            self._cooldown.notify_block_accepted(
+                                height=res.get("height"), block_hash=res.get("hash")
+                            )
                     else:
                         self._stats.shares_rejected += 1
                         if res.get("isBlock"):
@@ -560,6 +567,11 @@ class ShareSubmitter:
                                 accepted = bool(out.get("accepted", False))
                                 if accepted:
                                     self._stats.shares_accepted += 1
+                                    if out.get("isBlock"):
+                                        self._cooldown.notify_block_accepted(
+                                            height=out.get("height"),
+                                            block_hash=out.get("hash"),
+                                        )
                                 else:
                                     self._stats.shares_rejected += 1
                                 return ShareResult(
@@ -632,6 +644,9 @@ class ShareSubmitter:
                         self._stats.shares_accepted += 1
                         if res.get("isBlock"):
                             self._stats.blocks_accepted += 1
+                            self._cooldown.notify_block_accepted(
+                                height=res.get("height"), block_hash=res.get("hash")
+                            )
                     else:
                         self._stats.shares_rejected += 1
                         if res.get("isBlock"):
@@ -666,6 +681,11 @@ class ShareSubmitter:
                                 accepted = bool(out.get("accepted", False))
                                 if accepted:
                                     self._stats.shares_accepted += 1
+                                    if out.get("isBlock"):
+                                        self._cooldown.notify_block_accepted(
+                                            height=out.get("height"),
+                                            block_hash=out.get("hash"),
+                                        )
                                 else:
                                     self._stats.shares_rejected += 1
                                 return ShareResult(
@@ -739,12 +759,16 @@ class ShareSubmitter:
                     accepted = bool(res.get("accepted", False))
                     if accepted:
                         self._stats.blocks_accepted += 1
+                        self._cooldown.notify_block_accepted(
+                            height=res.get("height"), block_hash=res.get("hash")
+                        )
                     else:
                         self._stats.blocks_rejected += 1
                     return res
                 # Fallback
                 if res is True:
                     self._stats.blocks_accepted += 1
+                    self._cooldown.notify_block_accepted()
                     return {"accepted": True}
                 self._stats.blocks_rejected += 1
                 return {"accepted": False, "reason": "unexpected-result"}
@@ -795,6 +819,9 @@ class ShareSubmitter:
                     accepted = bool(res.get("accepted", False))
                     if accepted:
                         self._stats.blocks_accepted += 1
+                        self._cooldown.notify_block_accepted(
+                            height=res.get("height"), block_hash=res.get("hash")
+                        )
                     else:
                         self._stats.blocks_rejected += 1
                     self._log.info(
@@ -806,6 +833,7 @@ class ShareSubmitter:
                     return res
                 if res is True:
                     self._stats.blocks_accepted += 1
+                    self._cooldown.notify_block_accepted()
                     self._log.info(
                         "submitBlock result accepted=True latency=%.3fs", dt
                     )
