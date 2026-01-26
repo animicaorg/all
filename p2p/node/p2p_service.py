@@ -9918,6 +9918,25 @@ class P2PService:
             return 0, bytes(genesis)
         return None
 
+    def _is_peer_responsive(self, info: Optional[_PeerHeadInfo], now: float) -> bool:
+        """
+        Check if a peer is responsive (not stale and not in cooldown).
+        
+        Args:
+            info: The peer head info to check
+            now: Current timestamp
+            
+        Returns:
+            True if peer is responsive, False otherwise
+        """
+        if info is None:
+            return False
+        if now - info.updated_at > self._sync_peer_head_stale_sec:
+            return False
+        if info.cooldown_until and info.cooldown_until > now:
+            return False
+        return True
+
     def _network_best_height(self) -> Optional[int]:
         """
         Compute the highest height we know about in the network.
@@ -9940,16 +9959,12 @@ class P2PService:
             info = self._sync_peer_heads.get(peer.remote)
             
             # Check if peer is responsive (not stale and not in cooldown)
-            peer_is_responsive = False
-            if info is not None:
-                if now - info.updated_at <= self._sync_peer_head_stale_sec:
-                    if not info.cooldown_until or info.cooldown_until <= now:
-                        peer_is_responsive = True
-                        heights.append(int(info.height))
-            
-            # Only accept network_best_height from responsive peers
-            # This prevents stalled high-height nodes from blocking reorg to active chains
-            if peer_is_responsive:
+            if self._is_peer_responsive(info, now):
+                # Add peer's direct height
+                heights.append(int(info.height))
+                
+                # Only accept network_best_height from responsive peers
+                # This prevents stalled high-height nodes from blocking reorg to active chains
                 try:
                     # Add peer's view of network best height (peers-of-peers)
                     network_height = (peer.hello or {}).get("network_best_height")
