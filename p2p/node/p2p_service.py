@@ -10393,12 +10393,14 @@ class P2PService:
                         extra={
                             "max_verifier_height": max_verifier_height,
                             "unconstrained_height": unconstrained_max,
-                            "constrained_height": constrained_max,
+                            "constrained_height": max_allowed_height,
                             "verifier_count": len(verifier_heights),
                         }
                     )
                 
-                return constrained_max
+                # Always return at least max_allowed_height to allow miners to mine next block
+                # even if no peer is currently at that height
+                return max(constrained_max, max_allowed_height)
             else:
                 # If all heights are filtered out, fall back to verifier max + 1
                 return max_allowed_height
