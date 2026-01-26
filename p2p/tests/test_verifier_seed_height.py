@@ -378,3 +378,175 @@ def test_verifier_network_best_height_propagation(tmp_path: Path) -> None:
     # The 200 from network_best_height should be filtered
     network_best = node._network_best_height()
     assert network_best == 101, f"Expected 101 (constrained), got {network_best}"
+
+
+def test_get_max_verifier_height(tmp_path: Path) -> None:
+    """Test _get_max_verifier_height returns the highest verifier height."""
+    deps_sync, deps = _make_deps(tmp_path, "max-verifier")
+    node = P2PService(
+        listen_addrs=[tcp_multiaddr(free_port())],
+        seeds=[],
+        chain_id=deps_sync.chain_id,
+        deps=deps,
+        peerstore_path=str(tmp_path / "max-verifier" / "p2p"),
+    )
+
+    # Register verifier seeds
+    peer_verifier1 = _register_peer(node, "144.126.133.21:30333")
+    peer_verifier2 = _register_peer(node, "3.12.224.189:30333")
+    peer_regular = _register_peer(node, "192.168.1.1:30333")
+
+    now = time.time()
+    
+    # Set verifier heights
+    node._sync_peer_heads[peer_verifier1.remote] = _PeerHeadInfo(
+        height=100,
+        updated_at=now,
+        source="test",
+    )
+    peer_verifier1.hello = {"head_height": 100}
+
+    node._sync_peer_heads[peer_verifier2.remote] = _PeerHeadInfo(
+        height=110,
+        updated_at=now,
+        source="test",
+    )
+    peer_verifier2.hello = {"head_height": 110}
+
+    # Regular peer height should not affect max verifier height
+    node._sync_peer_heads[peer_regular.remote] = _PeerHeadInfo(
+        height=200,
+        updated_at=now,
+        source="test",
+    )
+    peer_regular.hello = {"head_height": 200}
+
+    # Max verifier height should be 110 (highest verifier)
+    max_verifier = node._get_max_verifier_height()
+    assert max_verifier == 110, f"Expected 110, got {max_verifier}"
+
+
+def test_get_max_verifier_height_no_verifiers(tmp_path: Path) -> None:
+    """Test _get_max_verifier_height returns None when no verifiers present."""
+    deps_sync, deps = _make_deps(tmp_path, "no-verifiers")
+    node = P2PService(
+        listen_addrs=[tcp_multiaddr(free_port())],
+        seeds=[],
+        chain_id=deps_sync.chain_id,
+        deps=deps,
+        peerstore_path=str(tmp_path / "no-verifiers" / "p2p"),
+    )
+
+    # Register only non-verifier peers
+    peer_regular = _register_peer(node, "192.168.1.1:30333")
+
+    now = time.time()
+    
+    node._sync_peer_heads[peer_regular.remote] = _PeerHeadInfo(
+        height=100,
+        updated_at=now,
+        source="test",
+    )
+    peer_regular.hello = {"head_height": 100}
+
+    # Should return None since no verifier seeds present
+    max_verifier = node._get_max_verifier_height()
+    assert max_verifier is None, f"Expected None, got {max_verifier}"
+
+
+def test_get_max_verifier_height_disabled(tmp_path: Path) -> None:
+    """Test _get_max_verifier_height returns None when verifiers disabled."""
+    os.environ["ANIMICA_P2P_ENABLE_VERIFIER_SEEDS"] = "false"
+    try:
+        deps_sync, deps = _make_deps(tmp_path, "verifier-disabled-max")
+        node = P2PService(
+            listen_addrs=[tcp_multiaddr(free_port())],
+            seeds=[],
+            chain_id=deps_sync.chain_id,
+            deps=deps,
+            peerstore_path=str(tmp_path / "verifier-disabled-max" / "p2p"),
+        )
+
+        # Register verifier seed
+        peer_verifier = _register_peer(node, "144.126.133.21:30333")
+
+        now = time.time()
+        
+        node._sync_peer_heads[peer_verifier.remote] = _PeerHeadInfo(
+            height=100,
+            updated_at=now,
+            source="test",
+        )
+        peer_verifier.hello = {"head_height": 100}
+
+        # Should return None since verifiers are disabled
+        max_verifier = node._get_max_verifier_height()
+        assert max_verifier is None, f"Expected None, got {max_verifier}"
+    finally:
+        os.environ.pop("ANIMICA_P2P_ENABLE_VERIFIER_SEEDS", None)
+
+
+def test_check_and_discount_blocks_past_verifier_no_action_when_behind(tmp_path: Path) -> None:
+    """Test that no action is taken when local height is below verifier height."""
+    deps_sync, deps = _make_deps(tmp_path, "behind-verifier")
+    node = P2PService(
+        listen_addrs=[tcp_multiaddr(free_port())],
+        seeds=[],
+        chain_id=deps_sync.chain_id,
+        deps=deps,
+        peerstore_path=str(tmp_path / "behind-verifier" / "p2p"),
+    )
+
+    # Register verifier seed
+    peer_verifier = _register_peer(node, "144.126.133.21:30333")
+
+    now = time.time()
+    
+    # Verifier at height 100
+    node._sync_peer_heads[peer_verifier.remote] = _PeerHeadInfo(
+        height=100,
+        updated_at=now,
+        source="test",
+    )
+    peer_verifier.hello = {"head_height": 100}
+
+    # Mock local head at height 50 (behind verifier)
+    # The _check_and_discount_blocks_past_verifier should do nothing
+    # since local height <= verifier height
+    initial_recovery_count = node._sync_recovery_attempts
+    node._check_and_discount_blocks_past_verifier()
+    
+    # Should not trigger a reset
+    assert node._sync_recovery_attempts == initial_recovery_count
+
+
+def test_check_and_discount_blocks_past_verifier_no_action_when_equal(tmp_path: Path) -> None:
+    """Test that no action is taken when local height equals verifier height."""
+    deps_sync, deps = _make_deps(tmp_path, "equal-verifier")
+    node = P2PService(
+        listen_addrs=[tcp_multiaddr(free_port())],
+        seeds=[],
+        chain_id=deps_sync.chain_id,
+        deps=deps,
+        peerstore_path=str(tmp_path / "equal-verifier" / "p2p"),
+    )
+
+    # Register verifier seed
+    peer_verifier = _register_peer(node, "144.126.133.21:30333")
+
+    now = time.time()
+    
+    # Verifier at height 100
+    node._sync_peer_heads[peer_verifier.remote] = _PeerHeadInfo(
+        height=100,
+        updated_at=now,
+        source="test",
+    )
+    peer_verifier.hello = {"head_height": 100}
+
+    # Local head also at height 100 - should not trigger reset
+    initial_recovery_count = node._sync_recovery_attempts
+    node._check_and_discount_blocks_past_verifier()
+    
+    # Should not trigger a reset
+    assert node._sync_recovery_attempts == initial_recovery_count
