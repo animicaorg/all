@@ -83,10 +83,16 @@ exports.up = async function up(knex) {
     // Indexes
     table.index(["user_id", "status"]);
     table.index(["status", "next_retry_at"]);
-    table.index(["provider_ref"], { predicate: knex.whereNotNull("provider_ref") });
-    table.index(["txid"], { predicate: knex.whereNotNull("txid") });
     table.index(["created_at"]);
   });
+
+  // Partial indexes for provider_ref and txid (only index non-null values)
+  await knex.raw(`
+    CREATE INDEX "withdrawals_provider_ref_index" ON "withdrawals" ("provider_ref") WHERE "provider_ref" IS NOT NULL
+  `);
+  await knex.raw(`
+    CREATE INDEX "withdrawals_txid_index" ON "withdrawals" ("txid") WHERE "txid" IS NOT NULL
+  `);
 
   // Withdrawal approvals table - approval workflow
   await knex.schema.createTable("withdrawal_approvals", (table) => {

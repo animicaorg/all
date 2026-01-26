@@ -123,7 +123,6 @@ exports.up = async function up(knex) {
     
     // Uniqueness: one deposit per economic unit
     table.unique(["asset_network_id", "txid", "address", "tag", "vout"]);
-    table.unique(["provider_event_id"], { predicate: knex.whereNotNull("provider_event_id") });
     
     table.index(["user_id", "status"]);
     table.index(["status", "confirmations"]);
@@ -131,6 +130,11 @@ exports.up = async function up(knex) {
     table.index(["address", "tag"]);
     table.index(["created_at"]);
   });
+
+  // Partial unique index for provider_event_id (only index non-null values)
+  await knex.raw(`
+    CREATE UNIQUE INDEX "deposits_provider_event_id_unique" ON "deposits" ("provider_event_id") WHERE "provider_event_id" IS NOT NULL
+  `);
 
   // Audit Logs table - comprehensive audit trail
   await knex.schema.createTable("audit_logs", (table) => {
