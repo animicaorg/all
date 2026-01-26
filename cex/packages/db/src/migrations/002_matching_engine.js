@@ -1,4 +1,4 @@
-exports.up = async function up(knex) {
+export async function up(knex) {
   // Market configuration with tick/step/fees
   await knex.schema.alterTable("markets", (table) => {
     table.decimal("price_tick", 30, 10).notNullable().defaultTo("0.01");
@@ -99,9 +99,9 @@ exports.up = async function up(knex) {
     
     table.index(["expires_at"]);
   });
-};
+}
 
-exports.down = async function down(knex) {
+export async function down(knex) {
   await knex.schema.dropTableIfExists("idempotency_keys");
   await knex.schema.dropTableIfExists("outbox_events");
   await knex.schema.dropTableIfExists("market_sequence");
@@ -129,4 +129,4 @@ exports.down = async function down(knex) {
     table.dropColumn("taker_fee_bps");
     table.dropColumn("fee_asset");
   });
-};
+}
