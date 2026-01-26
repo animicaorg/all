@@ -1115,6 +1115,22 @@ class P2PService:
             os.environ.get("ANIMICA_P2P_EXTERNAL_IP_ENDPOINT")
             or os.environ.get("ANIMICA_PUBLIC_IP_ENDPOINT")
         )
+        
+        # Verifier seed nodes for height validation
+        # These nodes are considered authoritative for determining the highest block height
+        self._enable_verifier_seeds = _env_flag("ANIMICA_P2P_ENABLE_VERIFIER_SEEDS", default=True)
+        verifier_ips_env = os.environ.get("ANIMICA_P2P_VERIFIER_SEED_IPS", "144.126.133.21,3.12.224.189")
+        self._verifier_seed_ips = {
+            ip.strip() for ip in verifier_ips_env.split(",") if ip.strip()
+        }
+        log.info(
+            "Verifier seed configuration",
+            extra={
+                "enabled": self._enable_verifier_seeds,
+                "verifier_ips": sorted(self._verifier_seed_ips),
+            }
+        )
+        
         self._seeding_mode = True
         self._feeler_interval = float(
             os.environ.get("ANIMICA_P2P_FEELER_INTERVAL", "25") or 25
@@ -10210,6 +10226,26 @@ class P2PService:
             return False
         return True
 
+    def _is_verifier_seed_peer(self, peer_remote: str) -> bool:
+        """
+        Check if a peer is one of the trusted verifier seed nodes.
+        
+        Args:
+            peer_remote: The peer's remote address (e.g., "144.126.133.21:30333")
+            
+        Returns:
+            True if the peer is a verifier seed, False otherwise
+        """
+        if not self._enable_verifier_seeds or not self._verifier_seed_ips:
+            return False
+        
+        # Extract IP from remote address (format: "IP:PORT")
+        try:
+            ip_part = peer_remote.split(":")[0]
+            return ip_part in self._verifier_seed_ips
+        except Exception:
+            return False
+
     def _network_best_height(self) -> Optional[int]:
         """
         Compute the highest height we know about in the network.
@@ -10217,13 +10253,20 @@ class P2PService:
         This considers:
         1. Direct peer heights (head_height)
         2. Peer's network views (network_best_height) - enabling multi-hop propagation
+        3. Verifier seed constraints: non-verifier peers can only be max 1 block ahead
 
         Only heights from responsive peers (not stale or in cooldown) are considered.
         This prevents unresponsive high-height nodes from blocking chain reorganization
         to active seed nodes.
+        
+        When verifier seeds are enabled, the network best height is constrained by:
+        - If verifier seeds are present: max(verifier_heights) + 1 (to allow miners)
+        - Otherwise: max of all peer heights (backward compatible)
         """
         heights: list[int] = []
+        verifier_heights: list[int] = []
         now = time.time()
+        
         for peer in self._peers.values():
             if not peer.hello_done.is_set():
                 continue
@@ -10233,8 +10276,15 @@ class P2PService:
 
             # Check if peer is responsive (not stale and not in cooldown)
             if self._is_peer_responsive(info, now):
+                peer_height = int(info.height)
+                is_verifier = self._is_verifier_seed_peer(peer.remote)
+                
+                # Track verifier seed heights separately
+                if is_verifier:
+                    verifier_heights.append(peer_height)
+                
                 # Add peer's direct height
-                heights.append(int(info.height))
+                heights.append(peer_height)
 
                 # Only accept network_best_height from responsive peers
                 # This prevents stalled high-height nodes from blocking reorg to active chains
@@ -10247,8 +10297,41 @@ class P2PService:
                             heights.append(network_height)
                 except Exception:
                     continue
+        
         if not heights:
             return None
+        
+        # Apply verifier seed constraint if enabled and verifier seeds are present
+        if self._enable_verifier_seeds and verifier_heights:
+            max_verifier_height = max(verifier_heights)
+            # Filter heights to only allow up to 1 block ahead of verifiers
+            # This ensures one or both verifier seeds must be at the highest height,
+            # with only miners who just found the next block being 1 block ahead
+            max_allowed_height = max_verifier_height + 1
+            constrained_heights = [h for h in heights if h <= max_allowed_height]
+            
+            if constrained_heights:
+                constrained_max = max(constrained_heights)
+                unconstrained_max = max(heights)
+                
+                # Log when we constrain heights
+                if constrained_max < unconstrained_max:
+                    log.info(
+                        "Network height constrained by verifier seeds",
+                        extra={
+                            "max_verifier_height": max_verifier_height,
+                            "unconstrained_height": unconstrained_max,
+                            "constrained_height": constrained_max,
+                            "verifier_count": len(verifier_heights),
+                        }
+                    )
+                
+                return constrained_max
+            else:
+                # If all heights are filtered out, fall back to verifier max + 1
+                return max_allowed_height
+        
+        # No verifier constraint, return max height
         return max(heights)
 
     def _register_header_request(
