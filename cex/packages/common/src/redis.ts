@@ -1,4 +1,4 @@
-import Redis from "ioredis";
+import { Redis } from "ioredis";
 import type { BaseEnv } from "./config/env.js";
 
 export const createRedis = (env: BaseEnv) => {
