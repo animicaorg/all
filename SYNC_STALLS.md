@@ -63,6 +63,29 @@ diagnostic summary explaining why no block requests are issued (queue, inflight,
 error, and stall reason). Snapshot recovery attempts are rate-limited with cooldowns
 and per-window caps to avoid endless retry loops.
 
+## Sync target convergence and inflight resets (new)
+
+The sync loop now tracks a single **target tip** derived from the best peer head
+(highest total work if known, otherwise highest height; tie-break by earliest peer
+timestamp and peer score). Sync only considers itself complete when the local head
+**hash** matches this target tip hash — not merely when heights match.
+
+If the local head height equals the target tip height but hashes differ, the node will
+log `Sync target hash mismatch; continuing sync to target tip`, re-request headers from
+the target peer, and proceed with a reorg if the peer chain wins fork choice.
+
+To avoid stuck in-flight state, the watchdog now resets stale in-flight requests when
+no new progress is observed for `SYNC_NO_PROGRESS_TIMEOUT_S` (default 60s). It also
+expires in-flight items older than `SYNC_INFLIGHT_TTL_S` (default 120s) and caps retries
+per item with `SYNC_INFLIGHT_MAX_RETRIES` (default 3). Logs to watch for:
+
+- `Sync target updated` (new target tip selected)
+- `Sync target hash mismatch; continuing sync to target tip`
+- `Missing parent detected`
+- `Sync inflight reset`
+
+These settings are environment overrides and are safe to tune without protocol changes.
+
 ## What to report
 
 When reporting stalls, include:
