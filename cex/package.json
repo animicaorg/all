@@ -14,7 +14,9 @@
   },
   "pnpm": {
     "overrides": {
-      "@google-cloud/secret-manager": "^6.1.1"
+      "@google-cloud/secret-manager": "^6.1.1",
+      "esbuild": "0.27.2",
+      "@esbuild/*": "0.27.2"
     }
   },
   "devDependencies": {
