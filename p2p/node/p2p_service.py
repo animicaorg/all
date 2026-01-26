@@ -3627,7 +3627,9 @@ class P2PService:
         network_best_height = self._network_best_height()
         if network_best_height is None:
             return False
-        if int(network_best_height) <= int(head_height):
+        # Only reset if we're at least 2 blocks behind to avoid false positives
+        # when verifier+1 allows miners but no one is at that height yet
+        if int(network_best_height) <= int(head_height) + 1:
             return False
         stalled = now - self._sync_last_progress_at > self._sync_stall_timeout
         duplicate_headers = (
@@ -10289,16 +10291,26 @@ class P2PService:
         
         This ensures the node doesn't get stuck on blocks that are ahead of the
         trusted verifier seeds, which could indicate a fork or invalid chain.
+        
+        This check only triggers when:
+        1. Verifier seeds are enabled
+        2. At least one verifier seed is present and responsive
+        3. Local height is GREATER than verifier height (not equal)
+        4. Local height is at least 2 blocks ahead (to avoid false positives during mining)
         """
         if not self._enable_verifier_seeds:
             return
         
         max_verifier_height = self._get_max_verifier_height()
         if max_verifier_height is None:
+            # No verifier seeds present - skip check
             return
         
         local_height, local_hash = self._local_head()
-        if local_height <= max_verifier_height:
+        
+        # Only trigger if local is significantly ahead (2+ blocks)
+        # This avoids false positives during normal mining when a miner finds a block
+        if local_height <= max_verifier_height + 1:
             return
         
         # Local chain is ahead of verifier - this shouldn't happen
