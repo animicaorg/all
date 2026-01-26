@@ -128,6 +128,51 @@ See `p2p/gossip/topics.py` and validators in `p2p/gossip/validator.py`.
 
 ---
 
+## Height Verification with Verifier Seeds
+
+Animica uses **verifier seed nodes** to provide authoritative height validation.
+This prevents network split scenarios where nodes could be misled by peers
+claiming very high block heights.
+
+### How it works
+
+1. **Trusted verifier nodes** are designated by IP address (default: `144.126.133.21`, `3.12.224.189`).
+2. The network's best height is constrained to be **at most 1 block ahead** of the highest verifier seed.
+3. This allows:
+   - **Miners** who just found a new block to be 1 block ahead
+   - **Syncing nodes** to be behind the verifier seeds
+4. Nodes claiming to be 2+ blocks ahead of verifier seeds are **ignored** for height calculation.
+
+### Configuration
+
+Enable/disable verifier seeds:
+```bash
+export ANIMICA_P2P_ENABLE_VERIFIER_SEEDS=true  # default: true
+```
+
+Customize verifier seed IPs:
+```bash
+export ANIMICA_P2P_VERIFIER_SEED_IPS="144.126.133.21,3.12.224.189"
+```
+
+### Why this matters
+
+Without verifier seeds, a malicious or misconfigured peer could claim a very
+high block height and cause other nodes to:
+- Wait indefinitely for blocks that don't exist
+- Reject valid blocks from honest peers
+- Experience sync stalls
+
+With verifier seeds enabled, the network height is anchored to trusted nodes,
+ensuring that:
+- One or both verifier seeds must be at the highest height
+- Only miners finding the next block can be 1 block ahead
+- Network remains synchronized to authoritative sources
+
+See `p2p/tests/test_verifier_seed_height.py` for detailed test cases.
+
+---
+
 ## Configuration
 
 See `p2p/config.py`. Example:
