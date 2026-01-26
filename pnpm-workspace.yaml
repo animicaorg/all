@@ -10,3 +10,4 @@ packages:
   - explorer2
   - explorer2/*
   - services/exchange-api
+  - apps/admin-web
