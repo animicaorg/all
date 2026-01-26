@@ -9926,8 +9926,9 @@ class P2PService:
         1. Direct peer heights (head_height)
         2. Peer's network views (network_best_height) - enabling multi-hop propagation
         
-        This fixes the issue where nodes only see their direct peers' heights,
-        causing premature sync stopping and network-wide forks.
+        Only heights from responsive peers (not stale or in cooldown) are considered.
+        This prevents unresponsive high-height nodes from blocking chain reorganization
+        to active seed nodes.
         """
         heights: list[int] = []
         now = time.time()
@@ -9937,19 +9938,27 @@ class P2PService:
             if not peer.repo_state_ok:
                 continue
             info = self._sync_peer_heads.get(peer.remote)
+            
+            # Check if peer is responsive (not stale and not in cooldown)
+            peer_is_responsive = False
             if info is not None:
                 if now - info.updated_at <= self._sync_peer_head_stale_sec:
                     if not info.cooldown_until or info.cooldown_until <= now:
+                        peer_is_responsive = True
                         heights.append(int(info.height))
-            try:
-                # Add peer's view of network best height (peers-of-peers)
-                network_height = (peer.hello or {}).get("network_best_height")
-                if network_height is not None:
-                    network_height = int(network_height)
-                    if network_height > 0:
-                        heights.append(network_height)
-            except Exception:
-                continue
+            
+            # Only accept network_best_height from responsive peers
+            # This prevents stalled high-height nodes from blocking reorg to active chains
+            if peer_is_responsive:
+                try:
+                    # Add peer's view of network best height (peers-of-peers)
+                    network_height = (peer.hello or {}).get("network_best_height")
+                    if network_height is not None:
+                        network_height = int(network_height)
+                        if network_height > 0:
+                            heights.append(network_height)
+                except Exception:
+                    continue
         if not heights:
             return None
         return max(heights)
