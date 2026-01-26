@@ -40,5 +40,20 @@ pnpm seed
 pnpm dev
 ```
 
+If you're running PostgreSQL locally (not via Docker), make sure the configured
+database user exists. You can either:
+
+- Update `DB_USER`/`DB_PASSWORD` in `ops/env/.env` to match an existing role
+  (for example, `postgres`), **or**
+- Create the role/database to match the defaults:
+
+```bash
+# Create the role (adjust password as needed)
+psql -U postgres -c "CREATE ROLE cex WITH LOGIN PASSWORD 'cex_password';"
+
+# Create the database owned by the role
+createdb -U postgres -O cex cex_exchange
+```
+
 ## Environment variables
 See `ops/env/.env.example` for full configuration.
