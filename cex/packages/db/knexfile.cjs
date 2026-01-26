@@ -10,10 +10,12 @@ const baseConfig = {
     database: process.env.DB_NAME
   },
   migrations: {
-    directory: path.join(__dirname, "src", "migrations")
+    directory: path.join(__dirname, "src", "migrations"),
+    loadExtensions: [".cjs"]
   },
   seeds: {
-    directory: path.join(__dirname, "src", "seeds")
+    directory: path.join(__dirname, "src", "seeds"),
+    loadExtensions: [".cjs"]
   }
 };
 
