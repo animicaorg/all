@@ -64,6 +64,8 @@ except Exception:
     MINER_ACTIVE_TEMPLATE_AGE_SEC = _Counter()
     MINER_SCANNER_HASHRATE_ABS = _Counter()
 
+from .cooldown import BlockFoundCooldown, get_block_found_cooldown
+
 
 # --------------------------- Work Sources ---------------------------
 
@@ -162,6 +164,7 @@ class TemplateFeeder:
         interval_sec: float,
         ws_hub: Any | None,
         stale_after_sec: float,
+        cooldown: BlockFoundCooldown | None = None,
     ) -> None:
         self._provider = provider
         self._interval = interval_sec
@@ -172,6 +175,7 @@ class TemplateFeeder:
         self._ws_hub = ws_hub
         self._warned_at: Dict[str, float] = {}
         self._failures: int = 0
+        self._cooldown = cooldown or get_block_found_cooldown()
 
     def stop(self) -> None:
         self._stop.set()
@@ -215,6 +219,7 @@ class TemplateFeeder:
     async def _iter(self) -> AsyncIterator[JSON]:
         while not self._stop.is_set():
             try:
+                await self._cooldown.await_if_cooling_down(self._stop)
                 tpl = await self._refresh()
                 if tpl and isinstance(tpl, dict):
                     ident = self._template_identity(tpl)
@@ -347,12 +352,14 @@ class SubmitPipe:
         max_concurrency: int,
         backoff_initial: float,
         backoff_max: float,
+        cooldown: BlockFoundCooldown | None = None,
     ) -> None:
         self._submitter = submitter
         self._sem = asyncio.Semaphore(max(1, max_concurrency))
         self._b0 = max(0.01, backoff_initial)
         self._bmax = max(self._b0, backoff_max)
         self._warned_at: Dict[str, float] = {}
+        self._cooldown = cooldown or get_block_found_cooldown()
 
     async def run(
         self, in_queue: "asyncio.Queue[JSON]", stop_evt: asyncio.Event
@@ -422,6 +429,10 @@ class SubmitPipe:
                 MINER_SUBMIT_LATENCY_SEC.observe(dt)  # type: no cover
                 if res.get("accepted"):
                     MINER_SUBMIT_OK.inc()  # type: ignore
+                    if res.get("isBlock") or res.get("asBlock") or res.get("is_block"):
+                        self._cooldown.notify_block_accepted(
+                            height=res.get("height"), block_hash=res.get("hash")
+                        )
                 else:
                     MINER_SUBMIT_REJECT.inc()  # type: ignore
                     reason = res.get("reason", "unknown")
@@ -463,6 +474,9 @@ class SubmitPipe:
                 MINER_SUBMIT_LATENCY_SEC.observe(dt)  # type: ignore
                 if res.get("accepted"):
                     MINER_SUBMIT_OK.inc()  # type: ignore
+                    self._cooldown.notify_block_accepted(
+                        height=res.get("height"), block_hash=res.get("hash")
+                    )
                 else:
                     MINER_SUBMIT_REJECT.inc()  # type: ignore
                     reason = res.get("reason", "unknown")
@@ -567,11 +581,13 @@ class MinerOrchestrator:
             device_kind=self.config.device_kind,
             threads=self.config.threads,
         )
+        cooldown = get_block_found_cooldown()
         self._feeder = TemplateFeeder(
             provider=self.template_provider,
             interval_sec=self.config.template_interval_sec,
             ws_hub=self.ws_hub if self.config.broadcast_new_work else None,
             stale_after_sec=self.config.template_stale_after_sec,
+            cooldown=cooldown,
         )
 
     async def start(self) -> None:
@@ -595,6 +611,7 @@ class MinerOrchestrator:
             max_concurrency=self.config.submit_max_concurrency,
             backoff_initial=self.config.submit_backoff_initial,
             backoff_max=self.config.submit_backoff_max,
+            cooldown=get_block_found_cooldown(),
         )
         self._tasks.append(
             asyncio.create_task(

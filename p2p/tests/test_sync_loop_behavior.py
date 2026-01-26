@@ -55,7 +55,7 @@ def _register_peer(node: P2PService, remote: str) -> _PeerState:
     }
     node._peers[remote] = peer
     node._peers_by_session[peer.session_id] = peer
-    node._update_peer_head_table(peer, height=1, source="test")
+    node._update_peer_head_table(peer, height=1, source="test", head_hash=None)
     return peer
 
 
@@ -176,8 +176,8 @@ def test_network_best_height_snapshot(tmp_path: Path) -> None:
     peer_b = _register_peer(node, "peer:2002")
     peer_a.hello["head_height"] = 12
     peer_b.hello["head_height"] = 25
-    node._update_peer_head_table(peer_a, height=12, source="test")
-    node._update_peer_head_table(peer_b, height=25, source="test")
+    node._update_peer_head_table(peer_a, height=12, source="test", head_hash=None)
+    node._update_peer_head_table(peer_b, height=25, source="test", head_hash=None)
 
     snapshot = node.sync_status_snapshot()
     assert snapshot.network_best_height == 25
@@ -302,15 +302,17 @@ def test_best_peer_head_ignores_stale_and_cooldown(tmp_path: Path) -> None:
     peer_fresh = _register_peer(node, "peer:4003")
 
     node._sync_peer_head_stale_sec = 0.01
-    node._update_peer_head_table(peer_stale, height=100, source="test")
-    node._update_peer_head_table(peer_cooldown, height=90, source="test")
-    node._update_peer_head_table(peer_fresh, height=80, source="test")
+    node._update_peer_head_table(peer_stale, height=100, source="test", head_hash=None)
+    node._update_peer_head_table(
+        peer_cooldown, height=90, source="test", head_hash=None
+    )
+    node._update_peer_head_table(peer_fresh, height=80, source="test", head_hash=None)
 
     now = time.time()
     node._sync_peer_heads[peer_stale.remote].updated_at = now - 1.0
     node._sync_peer_heads[peer_cooldown.remote].cooldown_until = now + 60.0
 
-    best_peer, best_height = node._best_peer_head()
+    best_peer, best_height, _best_hash = node._best_peer_head()
     assert best_peer == peer_fresh
     assert best_height == 80
 

@@ -29,11 +29,11 @@ from p2p.node.p2p_service import (
     _SyncHeader,
 )
 from p2p.tests import tcp_multiaddr
-from p2p.wire.encoding import encode_payload
 from p2p.wire.frames import Framer
 from p2p.wire.message_ids import MsgID
 from p2p.wire.messages import Blocks, HeaderCompact, Headers, Hello
 from p2p.wire.messages import GetHeaders
+from p2p.wire.encoding import encode_payload
 
 GENESIS_PATH = Path(__file__).resolve().parents[2] / "core" / "genesis" / "genesis.json"
 
@@ -209,6 +209,57 @@ def _setup_peer_hello(
         "head_height": head_height,
         "head_hash": head_hash or b"\x00" * 32,
     }
+
+
+@pytest.mark.asyncio
+async def test_sync_missing_parent_recovers(tmp_path: Path) -> None:
+    node, deps_sync = _make_service(tmp_path, "missing-parent-recover")
+    peer = _register_peer(node, "peer-missing:0")
+    _setup_peer_hello(node, peer, head_height=2)
+
+    block1 = _make_child_block(deps_sync)
+    block2 = _make_child_block_from_header(block1.header)
+    peer.hello["head_hash"] = block2.header.hash()
+    node._update_peer_head(peer, height=2, head_hash=block2.header.hash())
+
+    await node._handle_blocks(peer, encode_payload(Blocks(blocks=[block2.to_cbor()])))
+    assert block2.header.hash() in node._sync_block_buffer
+
+    await node._handle_blocks(peer, encode_payload(Blocks(blocks=[block1.to_cbor()])))
+    height, head_hash = node._local_head()
+    assert height == 2
+    assert head_hash == block2.header.hash().hex()
+
+
+@pytest.mark.asyncio
+async def test_sync_same_height_hash_reorgs(tmp_path: Path) -> None:
+    node, deps_sync = _make_service(tmp_path, "same-height-reorg")
+    peer = _register_peer(node, "peer-reorg:0")
+    _setup_peer_hello(node, peer, head_height=1)
+
+    block_a = _make_child_block(deps_sync)
+    accepted, _reason = deps_sync.import_block(block_a)
+    assert accepted
+
+    genesis_header = deps_sync.header_by_number(0)
+    assert genesis_header is not None
+    block_b = None
+    for offset in range(2, 40):
+        candidate = _make_child_block_from_header_with_offset(
+            genesis_header, ts_offset=offset
+        )
+        if candidate.header.hash() < block_a.header.hash():
+            block_b = candidate
+            break
+    if block_b is None:
+        pytest.skip("Unable to generate a higher-priority competing block")
+    peer.hello["head_hash"] = block_b.header.hash()
+    node._update_peer_head(peer, height=1, head_hash=block_b.header.hash())
+
+    await node._handle_blocks(peer, encode_payload(Blocks(blocks=[block_b.to_cbor()])))
+    height, head_hash = node._local_head()
+    assert height == 1
+    assert head_hash == block_b.header.hash().hex()
 
 
 def _make_service(tmp_path: Path, name: str) -> tuple[P2PService, P2PDeps]:
