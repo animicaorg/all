@@ -110,28 +110,30 @@ def test_tx_send_instant_block_zero_reward():
     # Test 5: Verify _ensure_tx_persisted_to_chain calls miner_mine with instant_block=True
     print("\n5. Testing _ensure_tx_persisted_to_chain uses instant_block=True")
     try:
-        from rpc.methods import tx as tx_methods
+        # Read the source file directly to avoid import issues
+        with open('rpc/methods/tx.py', 'r') as f:
+            source = f.read()
         
-        # Read the source code of _ensure_tx_persisted_to_chain
-        import inspect
-        source = inspect.getsource(tx_methods._ensure_tx_persisted_to_chain)
-        
-        if 'instant_block=True' in source:
-            print(f"   ✓ PASS: _ensure_tx_persisted_to_chain calls miner_mine with instant_block=True")
+        # Find the _ensure_tx_persisted_to_chain function
+        if '_ensure_tx_persisted_to_chain' in source and 'instant_block=True' in source:
+            # Check that instant_block=True appears after _ensure_tx_persisted_to_chain
+            func_start = source.find('def _ensure_tx_persisted_to_chain')
+            instant_block_pos = source.find('instant_block=True', func_start)
+            next_func_start = source.find('\ndef ', func_start + 1)
+            
+            # If instant_block=True appears before the next function, it's in the right function
+            if func_start < instant_block_pos < next_func_start:
+                print(f"   ✓ PASS: _ensure_tx_persisted_to_chain calls miner_mine with instant_block=True")
+            else:
+                print(f"   ✗ FAIL: instant_block=True not in _ensure_tx_persisted_to_chain function")
+                return False
         else:
-            print(f"   ✗ FAIL: _ensure_tx_persisted_to_chain does not call miner_mine with instant_block=True")
-            print(f"   Source snippet:")
-            # Print the relevant lines
-            lines = source.split('\n')
-            for i, line in enumerate(lines):
-                if 'miner_mine' in line:
-                    start = max(0, i - 2)
-                    end = min(len(lines), i + 8)
-                    print('\n'.join(lines[start:end]))
-                    break
+            print(f"   ✗ FAIL: _ensure_tx_persisted_to_chain or instant_block=True not found")
             return False
     except Exception as e:
         print(f"   ✗ FAIL: Error checking _ensure_tx_persisted_to_chain source: {e}")
+        import traceback
+        traceback.print_exc()
         return False
     
     print(f"\n" + "="*70)
