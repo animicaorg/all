@@ -46,6 +46,9 @@ API_BIND_ENV = "ANIMICA_POOL_API_BIND"
 # Supported mining device backends
 SUPPORTED_DEVICES = ["cpu", "cuda", "rocm", "opencl", "metal", "auto"]
 
+# Mining warning message suffix for verifier seed constraints
+VERIFIER_MINING_WARNING_SUFFIX = "mined blocks may be reorged."
+
 
 def _parse_hex_bytes(value: str) -> bytes:
     hex_value = value[2:] if value.startswith("0x") else value
@@ -348,12 +351,12 @@ def _warn_if_unsynced(rpc_url: str, *, threshold: int = 5) -> bool:
                         f"Warning: You are ahead of verifier seeds "
                         f"(local: {local_height}, max_verifier: {max_verifier_height}, "
                         f"max_allowed: {max_allowed_height}); "
-                        f"mined blocks may be reorged."
+                        f"{VERIFIER_MINING_WARNING_SUFFIX}"
                     )
                 else:
                     typer.echo(
                         f"Warning: Mining blocked by verifier seed constraints "
-                        f"(local: {local_height}); mined blocks may be reorged."
+                        f"(local: {local_height}); {VERIFIER_MINING_WARNING_SUFFIX}"
                     )
                 return True
             

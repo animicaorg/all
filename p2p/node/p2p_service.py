@@ -85,6 +85,10 @@ FORCE_SYNC_HEADER_PEERS = {
     "144.126.133.21:30333",
 }
 
+# Verifier seed mining constraint: allow miners to be at most this many blocks ahead
+# This allows a miner who just found the next block to be 1 block ahead of verifier seeds
+MAX_HEIGHT_AHEAD_OF_VERIFIER = 1
+
 
 def _env_value(*keys: str, default: Optional[str] = None) -> Optional[str]:
     for key in keys:
@@ -10388,10 +10392,10 @@ class P2PService:
         # Apply verifier seed constraint if enabled and verifier seeds are present
         if self._enable_verifier_seeds and verifier_heights:
             max_verifier_height = max(verifier_heights)
-            # Filter heights to only allow up to 1 block ahead of verifiers
+            # Filter heights to only allow up to MAX_HEIGHT_AHEAD_OF_VERIFIER blocks ahead of verifiers
             # This ensures one or both verifier seeds must be at the highest height,
-            # with only miners who just found the next block being 1 block ahead
-            max_allowed_height = max_verifier_height + 1
+            # with only miners who just found the next block being ahead by the allowed amount
+            max_allowed_height = max_verifier_height + MAX_HEIGHT_AHEAD_OF_VERIFIER
             constrained_heights = [h for h in heights if h <= max_allowed_height]
             
             if constrained_heights:
@@ -10455,16 +10459,16 @@ class P2PService:
                             "head_hash": "0x" + info.hash.hex() if info.hash else None,
                         })
         
-        max_allowed = None if max_verifier is None else max_verifier + 1
+        max_allowed = None if max_verifier is None else max_verifier + MAX_HEIGHT_AHEAD_OF_VERIFIER
         
         # Can mine if:
         # 1. Verifier seeds are disabled, OR
         # 2. No verifiers connected (backward compatible), OR
-        # 3. Local height is at verifier height or verifier + 1 (miner who just found a block)
+        # 3. Local height is at verifier height or within MAX_HEIGHT_AHEAD_OF_VERIFIER blocks ahead
         can_mine = (
             not self._enable_verifier_seeds
             or max_verifier is None
-            or local_height <= (max_verifier + 1)
+            or local_height <= (max_verifier + MAX_HEIGHT_AHEAD_OF_VERIFIER)
         )
         
         return {
