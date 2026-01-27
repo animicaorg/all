@@ -339,6 +339,8 @@ def _warn_if_unsynced(rpc_url: str, *, threshold: int = 5) -> bool:
     try:
         verifier_status = call_rpc("p2p.getVerifierSeeds", [], rpc_url)
         if isinstance(verifier_status, dict) and verifier_status.get("enabled"):
+            # can_mine defaults to False for safety - if the key is missing or None,
+            # we should block mining rather than allow it
             can_mine = verifier_status.get("can_mine", False)
             local_height = verifier_status.get("local_height", 0)
             max_verifier_height = verifier_status.get("max_verifier_height")
