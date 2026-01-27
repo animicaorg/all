@@ -77,7 +77,7 @@ async function start() {
 
   // Create HTTP server
   const app = createServer(pool, redis, runtimeConfig, logger);
-  const server = app.listen(runtimeConfig.PORT, () => {
+  const server = app.listen(runtimeConfig.PORT, "0.0.0.0", () => {
     logger.info({ port: runtimeConfig.PORT }, "HTTP server listening");
   });
 
