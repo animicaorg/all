@@ -6,7 +6,7 @@ The genesis hash has changed, so all nodes must start syncing from height 0.
 ## What changed
 
 - Chain ID remains **1**.
-- Genesis hash changed (new genesis): `0xe523e0e6871d792e05b602e1eb74d52457f7188fdac7a5c4086dcd56dced44ec`.
+- Genesis hash changed (new genesis): `0xe020040d488c83dd86a1613c5a8017cf60e7ed725952426cef39ab584ac43fab`.
 - P2P nodes refuse connections to peers with the old genesis.
 - Datadir guard prevents reusing old chain data for chain_id=1.
 - Target block interval updated to **300 seconds** via consensus retarget parameters.

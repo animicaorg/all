@@ -8,7 +8,7 @@ This `docs/` tree is the **single source of truth** for concepts, specs, and how
 
 Mainnet has undergone a **full chain reset** while keeping **chain_id = 1**. The canonical genesis hash is now:
 
-`0xe523e0e6871d792e05b602e1eb74d52457f7188fdac7a5c4086dcd56dced44ec`
+`0xe020040d488c83dd86a1613c5a8017cf60e7ed725952426cef39ab584ac43fab`
 
 **Action required:** delete old data directories before starting, or enable auto-reset (`ANIMICA_AUTO_RESET_GENESIS_MISMATCH=1` or `animica node up --auto-reset-genesis-mismatch`). Nodes will refuse to start if the DB genesis does not match.
 
