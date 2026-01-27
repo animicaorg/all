@@ -10392,9 +10392,10 @@ class P2PService:
         # Apply verifier seed constraint if enabled and verifier seeds are present
         if self._enable_verifier_seeds and verifier_heights:
             max_verifier_height = max(verifier_heights)
-            # Filter heights to only allow up to MAX_HEIGHT_AHEAD_OF_VERIFIER blocks ahead of verifiers
-            # This ensures one or both verifier seeds must be at the highest height,
-            # with only miners who just found the next block being ahead by the allowed amount
+            # Filter heights to only allow up to MAX_HEIGHT_AHEAD_OF_VERIFIER blocks ahead of the highest verifier
+            # This ensures the network is anchored to the verifier seeds' highest height, while allowing
+            # miners who just found a block to be ahead by the configured amount (typically 1 block).
+            # Any peer claiming to be more than MAX_HEIGHT_AHEAD_OF_VERIFIER blocks ahead is ignored.
             max_allowed_height = max_verifier_height + MAX_HEIGHT_AHEAD_OF_VERIFIER
             constrained_heights = [h for h in heights if h <= max_allowed_height]
             
