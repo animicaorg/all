@@ -23,3 +23,26 @@ animica node up
 
 - Nodes will disconnect from peers with mismatched genesis hashes.
 - If you see a genesis mismatch error, wipe the data directory or run `animica node reset`.
+
+## Verifier Node Operators
+
+For verifier nodes (144.126.133.21, 3.12.224.189), see [VERIFIER_NODE_RESTART.md](./VERIFIER_NODE_RESTART.md) for:
+- Step-by-step restart procedures
+- Genesis hash update without full reset
+- State persistence across restarts
+- Troubleshooting guidance
+
+## Auto-Reset Option
+
+To automatically handle genesis mismatches on startup:
+
+```bash
+# Enable auto-reset
+animica node up --auto-reset-genesis-mismatch
+
+# Or set environment variable
+export ANIMICA_AUTO_RESET_GENESIS_MISMATCH=1
+animica node up
+```
+
+This will detect genesis mismatches and automatically wipe old data before syncing with the new genesis.
