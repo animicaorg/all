@@ -68,7 +68,7 @@ def main() -> int:
     if args.genesis_path:
         genesis_path = args.genesis_path
     elif args.network:
-        genesis_path = f"core/genesis/{args.network}.json"
+        genesis_path = str(REPO_ROOT / "core" / "genesis" / f"{args.network}.json")
     else:
         print("Error: Must specify either --network or --genesis-path", file=sys.stderr)
         return 1
@@ -124,6 +124,8 @@ def main() -> int:
     print()
 
     # Open database
+    kv = None
+    block_db = None
     try:
         if db_uri.startswith("sqlite:///"):
             db_path_str = db_uri.replace("sqlite:///", "")
@@ -210,6 +212,13 @@ def main() -> int:
     except Exception as e:
         print(f"\n✗ Error updating genesis hash: {e}", file=sys.stderr)
         return 1
+    finally:
+        # Close database connection
+        if kv is not None and hasattr(kv, "close"):
+            try:
+                kv.close()
+            except Exception:
+                pass  # Best effort cleanup
 
 
 if __name__ == "__main__":

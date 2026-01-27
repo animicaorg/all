@@ -1,4 +1,4 @@
-# Animica Mainnet Chain Reset (Genesis Reset 2026-05)
+# Animica Mainnet Chain Reset (Genesis Reset 2026-01)
 
 This release performs a **hard chain reset** for mainnet while keeping **chain_id = 1**.
 The genesis hash has changed, so all nodes must start syncing from height 0.

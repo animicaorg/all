@@ -1,14 +1,14 @@
 # Verifier Node Restart and Sync Recovery Guide
 
-This guide helps verifier node operators handle node restarts, especially after the mainnet genesis reset (2026-05).
+This guide helps verifier node operators handle node restarts, especially after the mainnet genesis reset (2026-01).
 
 ## Overview
 
 Verifier nodes (144.126.133.21, 3.12.224.189) are trusted seed nodes that anchor the network's block height validation. They can now restart and resume syncing without manual intervention.
 
-## Genesis Hash Update (Mainnet Reset 2026-05)
+## Genesis Hash Update (Mainnet Reset 2026-01)
 
-The mainnet genesis hash changed in the 2026-05 reset:
+The mainnet genesis hash changed in the 2026-01 reset:
 - **New genesis hash**: `0xe020040d488c83dd86a1613c5a8017cf60e7ed725952426cef39ab584ac43fab`
 - **Chain ID**: Remains `1` (mainnet)
 
@@ -37,9 +37,14 @@ If you have an existing node with the old genesis and want to preserve some stat
 # From repository root
 python scripts/update_genesis_hash.py --network mainnet
 
-# Or specify paths explicitly
+# Or specify paths explicitly (use absolute paths or $HOME, not tilde in --db-uri)
 python scripts/update_genesis_hash.py \
-  --db-uri sqlite:///~/.animica/chain-1/animica.db \
+  --db-uri sqlite:///$HOME/.animica/chain-1/animica.db \
+  --genesis-path core/genesis/mainnet.json
+
+# Better: use --data-dir which supports tilde expansion
+python scripts/update_genesis_hash.py \
+  --data-dir ~/.animica/chain-1 \
   --genesis-path core/genesis/mainnet.json
 
 # Dry-run to check what would change
@@ -197,14 +202,17 @@ animica rpc call sync.getStatus
 # Check via RPC
 animica rpc call chain.getHead | jq '.result.height'
 
-# Or inspect database directly
+# Or inspect database directly (note: tilde must be expanded)
 python -c "
+from pathlib import Path
 from core.db.block_db import BlockDB
 from core.db.sqlite import SQLiteKV
-kv = SQLiteKV('~/.animica/chain-1/animica.db')
+db_path = Path('~/.animica/chain-1/animica.db').expanduser()
+kv = SQLiteKV(str(db_path))
 db = BlockDB(kv)
 h = db.get_genesis_hash()
 print(f'Genesis: 0x{h.hex()}' if h else 'Not set')
+kv.close()
 "
 ```
 
