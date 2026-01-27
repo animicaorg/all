@@ -9,6 +9,7 @@ from pathlib import Path
 from decimal import Decimal, InvalidOperation
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
+from datetime import datetime, timezone
 
 import typer
 from rich.console import Console
@@ -16,6 +17,7 @@ from rich.pretty import Pretty
 
 from pq.py.sign import build_sign_bytes, pq_sign_detached, verify_detached  # type: ignore
 from animica.config import load_network_config
+from animica.cli.paths import ensure_file_dir, secure_file
 from animica.cli.rpc_guard import guard_bootstrap_rpc
 from animica.sync.readiness import assess_tx_submission_readiness
 from .timeouts import DEFAULT_RPC_TIMEOUT, RPC_TIMEOUT_ENV, resolve_timeout
@@ -125,12 +127,11 @@ def _cbor(obj: Any) -> bytes:
 
 
 def _load_wallet_entry(address: str) -> dict[str, Any]:
-    wallet_path = os.path.expanduser("~/.animica/wallets.json")
-    with open(wallet_path, "r", encoding="utf-8") as f:
-        data = json.load(f)
+    wallet_path = _wallet_store_path()
+    data = _load_wallet_store(wallet_path)
 
-    # wallets.json shape: {"wallets":[...]} or just list
-    entries = data.get("wallets") if isinstance(data, dict) else data
+    # wallets.json shape: {"wallets":[...]}
+    entries = data.get("wallets")
     if not isinstance(entries, list):
         raise RuntimeError(f"Unexpected wallets.json format at {wallet_path}")
 
@@ -138,6 +139,82 @@ def _load_wallet_entry(address: str) -> dict[str, Any]:
         if str(w.get("address")) == address:
             return w
     raise RuntimeError(f"Address not found in {wallet_path}: {address}")
+
+
+def _wallet_store_path() -> Path:
+    return Path.home() / ".animica" / "wallets.json"
+
+
+def _load_wallet_store(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        raise FileNotFoundError(f"Wallet store not found at {path}")
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise RuntimeError(f"Unexpected wallets.json format at {path}")
+    if "wallets" not in data:
+        raise RuntimeError(f"Malformed wallet store at {path}")
+    return data
+
+
+def _save_wallet_store(path: Path, store: dict[str, Any]) -> None:
+    ensure_file_dir(path, sensitive=True)
+    path.write_text(json.dumps(store, indent=2), encoding="utf-8")
+    secure_file(path)
+
+
+def _record_pending_tx(
+    *,
+    from_addr: str,
+    to_addr: str,
+    tx_hash: str,
+    value_base: int,
+    fee_base: int,
+    chain_id: int,
+    nonce: int,
+    status: str,
+) -> None:
+    wallet_path = _wallet_store_path()
+    store = _load_wallet_store(wallet_path)
+    wallets = store.get("wallets", [])
+    if not isinstance(wallets, list):
+        raise RuntimeError(f"Malformed wallet store at {wallet_path}")
+    target = None
+    for entry in wallets:
+        if str(entry.get("address")) == from_addr:
+            target = entry
+            break
+    if target is None:
+        raise RuntimeError(f"Address not found in {wallet_path}: {from_addr}")
+
+    pending = target.setdefault("pending_txs", [])
+    if not isinstance(pending, list):
+        pending = []
+        target["pending_txs"] = pending
+
+    now = datetime.now(timezone.utc).isoformat()
+    reserve_amount = int(value_base) + int(fee_base)
+    entry_payload = {
+        "tx_hash": tx_hash,
+        "from": from_addr,
+        "to": to_addr,
+        "value": int(value_base),
+        "fee_reserved": int(fee_base),
+        "reserve_amount": reserve_amount,
+        "nonce": int(nonce),
+        "chain_id": int(chain_id),
+        "status": status,
+        "updated_at": now,
+    }
+
+    for existing in pending:
+        if existing.get("tx_hash") == tx_hash:
+            existing.update(entry_payload)
+            break
+    else:
+        entry_payload["created_at"] = now
+        pending.append(entry_payload)
+
+    _save_wallet_store(wallet_path, store)
 
 
 def _hex_to_bytes(h: str) -> bytes:
@@ -1292,6 +1369,7 @@ def send(
     tx_hash = None
     last_body = None
     last_nonce = None
+    tx_in_mempool = False
     nonce_lock = _nonce_lock(from_addr) if nonce_value is None else nullcontext()
 
     with nonce_lock:
@@ -1560,6 +1638,21 @@ def send(
 
     if tx_hash is None or last_body is None or last_nonce is None:
         raise typer.Exit(code=1)
+
+    try:
+        _record_pending_tx(
+            from_addr=from_addr,
+            to_addr=to_addr,
+            tx_hash=tx_hash,
+            value_base=value_base,
+            fee_base=fee,
+            chain_id=cid,
+            nonce=last_nonce,
+            status="mempool_accepted" if tx_in_mempool else "broadcast",
+        )
+    except Exception as exc:
+        if verbose:
+            console.print(f"[dim]Failed to record pending tx in wallet store: {exc}[/dim]")
 
     _maybe_force_sync(rpc, verbose=verbose)
 
