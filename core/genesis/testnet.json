@@ -5,7 +5,7 @@
   },
   "chainId": 2,
   "network": "animica-testnet",
-  "genesisTime": "2025-01-01T00:00:00Z",
+  "genesisTime": "2026-01-27T21:33:16Z",
   "unit": {
     "symbol": "ANM",
     "decimals": 9
@@ -16,17 +16,18 @@
   },
   "algPolicyRoot": "0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
   "beacon": {
-    "seed": "0x1111111111111111111111111111111111111111111111111111111111111111",
+    "seed": "0x7b6bca1c845aa9b493bc1d72047c4fd0b065ef1c04d10d9cd7302671b957e3ea",
     "round": 0
   },
   "economics": {
-    "premineTotal": "81000000000000000",
+    "premineTotal": "581000000000000000",
     "premineBreakdownANM": {
       "treasury": 39600000,
       "aicf": 20250000,
       "foundation": 8100000,
       "faucet": 3240000,
-      "dev_reserve": 9810000
+      "dev_reserve": 9810000,
+      "test_account": 500000000
     }
   },
   "alloc": [
@@ -67,8 +68,8 @@
   },
   "notes": [
     "All balances are integers in base units (10^9 = 1 ANM).",
-    "Premine total: 81,000,000 ANM \u2192 81,000,000 \u00d7 10^9 = 81,000,000,000,000,000 base units.",
+    "Premine total: 581,000,000 ANM → 581,000,000 × 10^9 = 581,000,000,000,000,000 base units.",
     "System addresses use the 'system:<name>' convention and are resolved by execution/runtime/system.py.",
-    "algPolicyRoot and paramsRef.sha3_256 are placeholders\u2014replace with actual roots before launch."
+    "algPolicyRoot and paramsRef.sha3_256 are placeholders—replace with actual roots before launch."
   ]
 }
