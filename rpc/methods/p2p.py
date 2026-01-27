@@ -1731,6 +1731,12 @@ async def p2p_get_verifier_seeds() -> dict[str, t.Any]:
     """
     svc = _get_p2p_service()
     if svc is None:
+        # When P2P service is unavailable, we allow mining as a fallback.
+        # This is safe because:
+        # 1. The node operator has explicitly disabled or failed to start P2P
+        # 2. The node may be in a testing/dev environment without P2P
+        # 3. Traditional sync checks in the mining CLI will still prevent mining if behind
+        # 4. This maintains backward compatibility with nodes that don't use P2P
         return {
             "enabled": False,
             "configured_ips": [],
@@ -1738,7 +1744,7 @@ async def p2p_get_verifier_seeds() -> dict[str, t.Any]:
             "max_verifier_height": None,
             "max_allowed_height": None,
             "local_height": 0,
-            "can_mine": True,  # If P2P is down, allow mining
+            "can_mine": True,  # Allow mining when P2P is explicitly disabled
             "error": P2P_UNAVAILABLE_ERROR,
         }
     
