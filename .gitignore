@@ -43,6 +43,10 @@ model_cache/
 *.sqlite
 *.sqlite3
 
+# Chain data directories
+chain-*/
+.animica/chain-*/
+
 # Logs
 *.log
 logs/

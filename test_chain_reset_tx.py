@@ -7,7 +7,6 @@ This script:
 3. Shows clean state starting from block 0
 """
 import sys
-import os
 from pathlib import Path
 
 # Add repo to path
@@ -37,45 +36,53 @@ def test_chain_reset_with_transactions():
         print(f"Testing {network_name.upper()} (chainId={chain_id})")
         print(f"{'=' * 80}")
         
-        # 1. Load genesis
-        print("\n1. Loading genesis...")
-        params, genesis_header = load_genesis(genesis_path)
-        identity = compute_genesis_identity(genesis_path)
-        
-        print(f"   Genesis block hash: 0x{identity.genesis_block_hash.hex()}")
-        print(f"   Chain ID: {identity.chain_id}")
-        print(f"   Genesis time: {genesis_header.timestamp}")
-        print(f"   Genesis version: {params.genesis_version if hasattr(params, 'genesis_version') else 'N/A'}")
-        
-        # 2. Verify pinned hash matches
-        print("\n2. Verifying pinned genesis hash...")
-        pinned_hash = get_pinned_genesis_hash(chain_id=chain_id)
-        computed_hash = identity.genesis_block_hash
-        
-        if pinned_hash == computed_hash:
-            print(f"   ✓ Pinned hash matches computed hash")
-        else:
-            print(f"   ✗ Hash mismatch!")
-            print(f"     Pinned:   0x{pinned_hash.hex() if pinned_hash else 'None'}")
-            print(f"     Computed: 0x{computed_hash.hex()}")
+        try:
+            # 1. Load genesis
+            print("\n1. Loading genesis...")
+            params, genesis_header = load_genesis(genesis_path)
+            identity = compute_genesis_identity(genesis_path)
+            
+            print(f"   Genesis block hash: 0x{identity.genesis_block_hash.hex()}")
+            print(f"   Chain ID: {identity.chain_id}")
+            print(f"   Genesis time: {genesis_header.timestamp}")
+            print(f"   Genesis version: {params.genesis_version if hasattr(params, 'genesis_version') else 'N/A'}")
+            
+            # 2. Verify pinned hash matches
+            print("\n2. Verifying pinned genesis hash...")
+            pinned_hash = get_pinned_genesis_hash(chain_id=chain_id)
+            computed_hash = identity.genesis_block_hash
+            
+            if pinned_hash == computed_hash:
+                print(f"   ✓ Pinned hash matches computed hash")
+            else:
+                print(f"   ✗ Hash mismatch!")
+                print(f"     Pinned:   0x{pinned_hash.hex() if pinned_hash else 'None'}")
+                print(f"     Computed: 0x{computed_hash.hex()}")
+                all_passed = False
+            
+            # 3. Show genesis allocations
+            print("\n3. Genesis allocations:")
+            print(f"   (Genesis allocations are loaded from genesis file)")
+            print(f"   Chain ready to start from block 0")
+            
+            # 4. Verify clean state
+            print("\n4. Chain state:")
+            print(f"   ✓ Starting from block 0 (genesis)")
+            print(f"   ✓ No previous transactions")
+            print(f"   ✓ Clean state ready for new chain")
+            
+            # 5. Transaction readiness
+            print("\n5. Transaction system readiness:")
+            print(f"   ✓ Genesis identity computed")
+            print(f"   ✓ State allocations defined")
+            print(f"   ✓ Ready to accept transactions")
+            
+        except FileNotFoundError as e:
+            print(f"\n   ✗ Error: Genesis file not found - {e}")
             all_passed = False
-        
-        # 3. Show genesis allocations
-        print("\n3. Genesis allocations:")
-        print(f"   (Genesis allocations are loaded from genesis file)")
-        print(f"   Chain ready to start from block 0")
-        
-        # 4. Verify clean state
-        print("\n4. Chain state:")
-        print(f"   ✓ Starting from block 0 (genesis)")
-        print(f"   ✓ No previous transactions")
-        print(f"   ✓ Clean state ready for new chain")
-        
-        # 5. Transaction readiness
-        print("\n5. Transaction system readiness:")
-        print(f"   ✓ Genesis identity computed")
-        print(f"   ✓ State allocations defined")
-        print(f"   ✓ Ready to accept transactions")
+        except Exception as e:
+            print(f"\n   ✗ Error loading genesis: {e}")
+            all_passed = False
         
     print("\n" + "=" * 80)
     print("VERIFICATION SUMMARY")
