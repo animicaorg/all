@@ -8,15 +8,19 @@ import {
   createLogger,
   createPgPool,
   createRedis,
+  extendWithHostPort,
   jsonCodec,
   loadEnv,
   subjects
 } from "@cex/common";
 
 const env = loadEnv(
-  baseEnvSchema.extend({
-    SERVICE_NAME: z.string().default("api-gateway")
-  })
+  extendWithHostPort(
+    baseEnvSchema.extend({
+      SERVICE_NAME: z.string().default("api-gateway")
+    }),
+    { defaultPort: 3000 }
+  )
 );
 
 const logger = createLogger(env.SERVICE_NAME, env.LOG_LEVEL);
@@ -84,8 +88,41 @@ const start = async () => {
     );
   });
 
-  const server = app.listen(env.PORT, "0.0.0.0", () => {
-    logger.info({ port: env.PORT }, "api-gateway listening");
+  const server = app.listen(env.PORT, env.HOST, () => {
+    const address = server.address();
+    const actualPort = typeof address === "string" ? env.PORT : address?.port ?? env.PORT;
+    const actualHost = typeof address === "string" ? env.HOST : address?.address ?? env.HOST;
+    const version = process.env.APP_VERSION ?? process.env.npm_package_version;
+    logger.info(
+      {
+        service: env.SERVICE_NAME,
+        host: actualHost,
+        port: actualPort,
+        env: process.env.NODE_ENV ?? "unknown",
+        ...(version ? { version } : {})
+      },
+      "api-gateway listening"
+    );
+  });
+  server.on("error", (error) => {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "EADDRINUSE") {
+      logger.error(
+        {
+          service: env.SERVICE_NAME,
+          host: env.HOST,
+          port: env.PORT,
+          error
+        },
+        "Port is already in use. Set PORT to a different value or free the port."
+      );
+      logger.error(
+        `Check usage: lsof -nP -iTCP:${env.PORT} -sTCP:LISTEN || ss -ltnp | grep ":${env.PORT}"`
+      );
+      process.exit(1);
+    }
+    logger.error({ error }, "api-gateway failed to start");
+    process.exit(1);
   });
 
   const orderCommand = {
