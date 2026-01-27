@@ -1486,7 +1486,7 @@ def _get_miner_address() -> bytes:
     return ZERO32
 
 
-def _build_coinbase_transactions(ctx: Any, height: int, payout_address: bytes | None = None, instant_block: bool = False) -> tuple[list, int]:
+def _build_coinbase_transactions(ctx: Any, height: int, payout_address: bytes | None = None, instant_block: bool = False, canonical_height: int | None = None) -> tuple[list, int]:
     """
     Build coinbase transactions for block rewards.
     
@@ -1495,6 +1495,7 @@ def _build_coinbase_transactions(ctx: Any, height: int, payout_address: bytes | 
         height: Block height for reward calculation
         payout_address: Optional 32-byte payout address. If None, uses default miner address.
         instant_block: If True, this is an instant block with zero rewards (default: False)
+        canonical_height: Height counting only non-instant blocks, used for halving calculation
         
     Returns:
         tuple: (list of Tx objects for rewards, total miner reward amount)
@@ -1509,12 +1510,18 @@ def _build_coinbase_transactions(ctx: Any, height: int, payout_address: bytes | 
         chain_id = ctx.cfg.chain_id
         params = getattr(ctx, "params", None) or {}
         
-        rewards = compute_block_reward(chain_id=chain_id, height=height, params=params, instant_block=instant_block)
+        rewards = compute_block_reward(
+            chain_id=chain_id, 
+            height=height, 
+            params=params, 
+            instant_block=instant_block,
+            canonical_height=canonical_height
+        )
         
         # Log warning if rewards are empty when they shouldn't be (height >= 1 and not instant block)
         if not rewards and height >= 1 and not instant_block:
             log.warning(
-                f"Block reward at height {height} is empty. "
+                f"Block reward at height {height} (canonical_height={canonical_height}) is empty. "
                 f"This may indicate missing/invalid consensus params. "
                 f"Check that spec/params.yaml defines proper emission schedule for chain_id={chain_id}."
             )
@@ -2998,8 +3005,23 @@ def _mine_once(
     # Create coinbase transactions for block rewards
     # These must be added BEFORE computing txsRoot since they're part of the block
     next_height = parent_height + 1
+    
+    # Calculate canonical_height (count of non-instant blocks) for halving
+    # This is used to ensure instant blocks don't count towards emission schedule
+    canonical_height = None
+    try:
+        block_db = getattr(ctx, "block_db", None)
+        if block_db is not None and hasattr(block_db, "get_canonical_height"):
+            current_canonical = block_db.get_canonical_height()
+            if current_canonical is not None:
+                # For mining blocks, canonical height increases by 1
+                # For instant blocks, it stays the same (they don't count)
+                canonical_height = current_canonical + (0 if instant_block else 1)
+    except Exception:
+        pass
+    
     coinbase_txs, reward_amount = _build_coinbase_transactions(
-        ctx, next_height, payout_address, instant_block=instant_block
+        ctx, next_height, payout_address, instant_block=instant_block, canonical_height=canonical_height
     )
     
     # Prepend coinbase transactions to the tx list
@@ -3931,6 +3953,8 @@ def miner_mine(
 
     allow_unsynced_flag = bool(allow_unsynced_mining)
     force_empty_flag = bool(force_empty_template)
+    instant_block_flag = bool(instant_block)
+    
     if force_empty_flag:
         include_mempool = False
         log.warning(
@@ -3938,30 +3962,38 @@ def miner_mine(
             extra={"force_empty_template": True},
         )
 
-    if allow_offline_mining or allow_unsynced_flag:
-        log.warning(
-            "Unsafe mining override requested; ignoring.",
-            extra={
-                "allow_offline_mining": bool(allow_offline_mining),
-                "allow_unsynced_mining": bool(allow_unsynced_flag),
-            },
-        )
-    allow_offline_flag = False
-    allow_unsynced_flag = False
+    # Instant blocks bypass all safety checks - they are used for immediate tx persistence
+    # and do not produce rewards or count towards supply
+    if not instant_block_flag:
+        if allow_offline_mining or allow_unsynced_flag:
+            log.warning(
+                "Unsafe mining override requested; ignoring.",
+                extra={
+                    "allow_offline_mining": bool(allow_offline_mining),
+                    "allow_unsynced_mining": bool(allow_unsynced_flag),
+                },
+            )
+        allow_offline_flag = False
+        allow_unsynced_flag = False
 
-    allowed, reason = _mining_gate(
-        allow_offline_mining=allow_offline_flag,
-        allow_unsynced=allow_unsynced_flag,
-    )
-    if not allowed:
-        return {
-            "mined": 0,
-            "height": int(head_before.get("height") or 0),
-            "totalReward": 0,
-            "rewards": [],
-            "disabled": True,
-            "reason": reason,
-        }
+        allowed, reason = _mining_gate(
+            allow_offline_mining=allow_offline_flag,
+            allow_unsynced=allow_unsynced_flag,
+        )
+        if not allowed:
+            return {
+                "mined": 0,
+                "height": int(head_before.get("height") or 0),
+                "totalReward": 0,
+                "rewards": [],
+                "disabled": True,
+                "reason": reason,
+            }
+    else:
+        # Instant blocks always allowed - bypass mining gate
+        log.info("Instant block mode: bypassing mining gate checks")
+        allow_offline_flag = False
+        allow_unsynced_flag = False
     
     include_mempool_flag = True if include_mempool is None else bool(include_mempool)
 
@@ -4010,7 +4042,7 @@ def miner_mine(
             "address": address,
             "head_height": head_before.get("height"),
             "head_hash": head_before.get("hash"),
-            "allow_unsynced_mining": allow_unsynced_flag,
+            "allow_unsynced_mining": allow_unsynced_flag if not instant_block_flag else None,
             "force_empty_template": force_empty_flag,
             "workers": workers,
             "verbose": bool(verbose),
@@ -4024,7 +4056,6 @@ def miner_mine(
     total_included = 0
     aggregated_rejected: dict[str, int] = {}
     rejected_by_hash_sample: dict[str, str] = {}
-    instant_block_flag = bool(instant_block)
     
     for _ in range(target):
         mine_result = _mine_once(
