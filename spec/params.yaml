@@ -27,7 +27,7 @@ networks:
     name: "Animica Mainnet"
     symbol: "ANM"
     decimals: 9                # 1 ANM = 1_000_000_000 nANM
-    genesis_time_utc: "2026-05-01T00:00:00Z"
+    genesis_time_utc: "2026-01-27T00:00:00Z"
     # Addresses below are placeholders; final values are set at genesis build
     system_addresses:
       treasury: "anim1treasuryxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
