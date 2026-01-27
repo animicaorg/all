@@ -3931,6 +3931,8 @@ def miner_mine(
 
     allow_unsynced_flag = bool(allow_unsynced_mining)
     force_empty_flag = bool(force_empty_template)
+    instant_block_flag = bool(instant_block)
+    
     if force_empty_flag:
         include_mempool = False
         log.warning(
@@ -3938,30 +3940,38 @@ def miner_mine(
             extra={"force_empty_template": True},
         )
 
-    if allow_offline_mining or allow_unsynced_flag:
-        log.warning(
-            "Unsafe mining override requested; ignoring.",
-            extra={
-                "allow_offline_mining": bool(allow_offline_mining),
-                "allow_unsynced_mining": bool(allow_unsynced_flag),
-            },
-        )
-    allow_offline_flag = False
-    allow_unsynced_flag = False
+    # Instant blocks bypass all safety checks - they are used for immediate tx persistence
+    # and do not produce rewards or count towards supply
+    if not instant_block_flag:
+        if allow_offline_mining or allow_unsynced_flag:
+            log.warning(
+                "Unsafe mining override requested; ignoring.",
+                extra={
+                    "allow_offline_mining": bool(allow_offline_mining),
+                    "allow_unsynced_mining": bool(allow_unsynced_flag),
+                },
+            )
+        allow_offline_flag = False
+        allow_unsynced_flag = False
 
-    allowed, reason = _mining_gate(
-        allow_offline_mining=allow_offline_flag,
-        allow_unsynced=allow_unsynced_flag,
-    )
-    if not allowed:
-        return {
-            "mined": 0,
-            "height": int(head_before.get("height") or 0),
-            "totalReward": 0,
-            "rewards": [],
-            "disabled": True,
-            "reason": reason,
-        }
+        allowed, reason = _mining_gate(
+            allow_offline_mining=allow_offline_flag,
+            allow_unsynced=allow_unsynced_flag,
+        )
+        if not allowed:
+            return {
+                "mined": 0,
+                "height": int(head_before.get("height") or 0),
+                "totalReward": 0,
+                "rewards": [],
+                "disabled": True,
+                "reason": reason,
+            }
+    else:
+        # Instant blocks always allowed - bypass mining gate
+        log.info("Instant block mode: bypassing mining gate checks")
+        allow_offline_flag = False
+        allow_unsynced_flag = False
     
     include_mempool_flag = True if include_mempool is None else bool(include_mempool)
 
@@ -4010,7 +4020,7 @@ def miner_mine(
             "address": address,
             "head_height": head_before.get("height"),
             "head_hash": head_before.get("hash"),
-            "allow_unsynced_mining": allow_unsynced_flag,
+            "allow_unsynced_mining": allow_unsynced_flag if not instant_block_flag else None,
             "force_empty_template": force_empty_flag,
             "workers": workers,
             "verbose": bool(verbose),
@@ -4024,7 +4034,6 @@ def miner_mine(
     total_included = 0
     aggregated_rejected: dict[str, int] = {}
     rejected_by_hash_sample: dict[str, str] = {}
-    instant_block_flag = bool(instant_block)
     
     for _ in range(target):
         mine_result = _mine_once(
