@@ -38,7 +38,7 @@
     "genesis": {
       "height": 0,
       "time": "2026-01-27T00:00:00Z",
-      "hash": "0xe523e0e6871d792e05b602e1eb74d52457f7188fdac7a5c4086dcd56dced44ec"
+      "hash": "0xe020040d488c83dd86a1613c5a8017cf60e7ed725952426cef39ab584ac43fab"
     },
     "policyRoots": {
       "algPolicyRoot": "0x0000000000000000000000000000000000000000000000000000000000000000",
