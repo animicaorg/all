@@ -50,6 +50,6 @@ exports.seed = async function seed(knex) {
 
   await knex("asset_networks")
     .insert([animicaAssetNetwork])
-    .onConflict(["asset_id", "network_id", "contract_address"])
+    .onConflict("id")
     .ignore();
 };
