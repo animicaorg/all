@@ -144,6 +144,18 @@ Common environment variables (from `@cex/common`):
 - `DB_PASSWORD` - PostgreSQL password
 - `DB_NAME` - PostgreSQL database name
 
+### Service ports & host binding
+
+- `PORT` - HTTP port for each service (service-specific defaults: `api-gateway` 3000, `admin-service` 4000)
+- `HOST` - Bind address for each service (default: `0.0.0.0`)
+
+When using `./cex_up`, configure ports in `cex/ops/env/.env`:
+
+- `API_GATEWAY_PORT` (defaults to 3000)
+- `ADMIN_SERVICE_PORT` (defaults to 4000)
+
+To expose the Vite admin web UI on your network, run with `CEX_EXPOSE=1` so it passes `--host 0.0.0.0`.
+
 ## Testing
 
 ```bash

@@ -108,6 +108,13 @@ load_env() {
   set +a
 }
 
+set_service_defaults() {
+  API_GATEWAY_PORT="${API_GATEWAY_PORT:-3000}"
+  ADMIN_SERVICE_PORT="${ADMIN_SERVICE_PORT:-4000}"
+  API_GATEWAY_HOST="${API_GATEWAY_HOST:-0.0.0.0}"
+  ADMIN_SERVICE_HOST="${ADMIN_SERVICE_HOST:-0.0.0.0}"
+}
+
 setup_corepack() {
   export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
   local pnpm_version
@@ -231,6 +238,41 @@ start_docker_logs() {
   fi
 }
 
+is_port_in_use() {
+  local port="$1"
+  if command -v ss >/dev/null 2>&1; then
+    ss -ltnp | grep -q ":${port}"
+    return $?
+  fi
+  if command -v lsof >/dev/null 2>&1; then
+    lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1
+    return $?
+  fi
+  python - "$port" <<'PY'
+import socket, sys
+port = int(sys.argv[1])
+s = socket.socket()
+try:
+    s.bind(("0.0.0.0", port))
+except OSError:
+    sys.exit(0)
+s.close()
+sys.exit(1)
+PY
+}
+
+ensure_port_available() {
+  local service="$1"
+  local host="$2"
+  local port="$3"
+  if is_port_in_use "$port"; then
+    log_error "${service} cannot start because ${host}:${port} is already in use."
+    log_error "Try: pnpm -C cex ports:check ${port}"
+    log_error "Or free the port (lsof -nP -iTCP:${port} -sTCP:LISTEN || ss -ltnp | grep \":${port}\")."
+    exit 1
+  fi
+}
+
 start_dev_services() {
   log_info "Starting CEX services + admin console..."
   echo "Assumptions:"
@@ -239,23 +281,34 @@ start_dev_services() {
   echo "  - Exchange API is @cex/api-gateway (PORT=${API_GATEWAY_PORT})."
   echo ""
 
+  ensure_port_available "api-gateway" "$API_GATEWAY_HOST" "$API_GATEWAY_PORT"
+  ensure_port_available "admin-service" "$ADMIN_SERVICE_HOST" "$ADMIN_SERVICE_PORT"
+
+  local web_host_args=()
+  if [[ "${CEX_EXPOSE:-0}" == "1" ]]; then
+    web_host_args=(--host 0.0.0.0)
+  fi
+
   if [[ "$DAEMON" == "true" ]]; then
     mkdir -p "$LOG_DIR"
     : > "$PID_FILE"
-    nohup pnpm -C "$CEX_DIR" --filter @cex/api-gateway dev > "$LOG_DIR/api-gateway.log" 2>&1 &
+    PORT="$API_GATEWAY_PORT" HOST="$API_GATEWAY_HOST" \
+      nohup pnpm -C "$CEX_DIR" --filter @cex/api-gateway dev > "$LOG_DIR/api-gateway.log" 2>&1 &
     echo $! >> "$PID_FILE"
-    nohup pnpm -C "$CEX_DIR" --filter @cex/admin-service dev > "$LOG_DIR/admin-service.log" 2>&1 &
+    PORT="$ADMIN_SERVICE_PORT" HOST="$ADMIN_SERVICE_HOST" \
+      nohup pnpm -C "$CEX_DIR" --filter @cex/admin-service dev > "$LOG_DIR/admin-service.log" 2>&1 &
     echo $! >> "$PID_FILE"
-    nohup pnpm -C "$ROOT_DIR" --filter @animica/admin-web dev > "$LOG_DIR/admin-web.log" 2>&1 &
+    nohup pnpm -C "$ROOT_DIR" --filter @animica/admin-web dev "${web_host_args[@]}" \
+      > "$LOG_DIR/admin-web.log" 2>&1 &
     echo $! >> "$PID_FILE"
     log_success "Services started in the background."
     log_info "Logs: $LOG_DIR (and docker compose logs via --logs)."
   else
-    pnpm -C "$CEX_DIR" --filter @cex/api-gateway dev &
+    PORT="$API_GATEWAY_PORT" HOST="$API_GATEWAY_HOST" pnpm -C "$CEX_DIR" --filter @cex/api-gateway dev &
     pid_api=$!
-    pnpm -C "$CEX_DIR" --filter @cex/admin-service dev &
+    PORT="$ADMIN_SERVICE_PORT" HOST="$ADMIN_SERVICE_HOST" pnpm -C "$CEX_DIR" --filter @cex/admin-service dev &
     pid_admin=$!
-    pnpm -C "$ROOT_DIR" --filter @animica/admin-web dev &
+    pnpm -C "$ROOT_DIR" --filter @animica/admin-web dev "${web_host_args[@]}" &
     pid_web=$!
     trap 'kill "$pid_api" "$pid_admin" "$pid_web" 2>/dev/null || true' EXIT
     wait "$pid_api" "$pid_admin" "$pid_web"
@@ -324,6 +377,7 @@ main() {
   ensure_prereqs
   ensure_env_files
   load_env
+  set_service_defaults
 
   if [[ "$RESET_NODE_MODULES" == "true" ]]; then
     reset_node_modules
