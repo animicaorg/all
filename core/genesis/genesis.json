@@ -1,12 +1,12 @@
 {
   "meta": {
-    "version": 2,
-    "genesis_version": "reset-2026-05",
+    "version": 3,
+    "genesis_version": "reset-2026-01-27",
     "description": "Animica mainnet reset genesis (chainId=1). Premine + system accounts only."
   },
   "chainId": 1,
   "network": "animica-mainnet",
-  "genesisTime": "2026-01-27T00:00:00Z",
+  "genesisTime": "2026-01-27T21:33:16Z",
 
   "unit": {
     "symbol": "ANM",
@@ -21,7 +21,7 @@
   "algPolicyRoot": "0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
 
   "beacon": {
-    "seed": "0x24b16f0df1b9e55dba52f27576714d8ed3f9be79b4501165df14026fad390858",
+    "seed": "0x7b6bca1c845aa9b493bc1d72047c4fd0b065ef1c04d10d9cd7302671b957e3ea",
     "round": 0
   },
 
