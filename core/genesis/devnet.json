@@ -68,8 +68,8 @@
   },
   "notes": [
     "All balances are integers in base units (10^9 = 1 ANM).",
-    "Premine total: 81,000,000 ANM \u2192 81,000,000 \u00d7 10^9 = 81,000,000,000,000,000 base units.",
+    "Premine total: 581,000,000 ANM → 581,000,000 × 10^9 = 581,000,000,000,000,000 base units.",
     "System addresses use the 'system:<name>' convention and are resolved by execution/runtime/system.py.",
-    "algPolicyRoot and paramsRef.sha3_256 are placeholders\u2014replace with actual roots before launch."
+    "algPolicyRoot and paramsRef.sha3_256 are placeholders—replace with actual roots before launch."
   ]
 }
