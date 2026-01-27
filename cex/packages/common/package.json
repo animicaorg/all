@@ -7,7 +7,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "tsx watch src/index.ts",
-    "lint": "echo 'no lint configured'"
+    "lint": "echo 'no lint configured'",
+    "test": "vitest run"
   },
   "dependencies": {
     "ioredis": "^5.4.1",
@@ -21,6 +22,7 @@
     "@types/node": "^20.14.10",
     "@types/pg": "^8.16.0",
     "tsx": "^4.16.2",
-    "typescript": "^5.5.4"
+    "typescript": "^5.5.4",
+    "vitest": "^2.1.9"
   }
 }

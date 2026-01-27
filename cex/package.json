@@ -11,7 +11,8 @@
     "lint": "pnpm -r lint",
     "migrate": "pnpm --filter @cex/db migrate",
     "seed": "pnpm --filter @cex/db seed",
-    "postinstall": "pnpm --filter @cex/common build"
+    "postinstall": "pnpm --filter @cex/common build",
+    "ports:check": "bash ./scripts/port_check.sh"
   },
   "pnpm": {
     "overrides": {
