@@ -6,7 +6,7 @@
   },
   "chainId": 1,
   "network": "animica-mainnet",
-  "genesisTime": "2026-05-01T00:00:00Z",
+  "genesisTime": "2026-01-27T00:00:00Z",
 
   "unit": {
     "symbol": "ANM",
