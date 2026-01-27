@@ -55,7 +55,7 @@ async function start() {
 
   // Create HTTP server
   const app = createServer(pool, rpcClient, config, logger);
-  const server = app.listen(config.PORT, () => {
+  const server = app.listen(config.PORT, "0.0.0.0", () => {
     logger.info({ port: config.PORT }, "HTTP server listening");
   });
 
