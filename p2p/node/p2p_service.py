@@ -10420,6 +10420,63 @@ class P2PService:
         # No verifier constraint, return max height
         return max(heights)
 
+    def get_verifier_seed_status(self) -> dict[str, Any]:
+        """
+        Get status information about verifier seed peers.
+        
+        Returns a dict with:
+        - enabled: Whether verifier seeds are enabled
+        - configured_ips: List of configured verifier seed IPs
+        - connected_verifiers: List of connected verifier seed peers with their heights
+        - max_verifier_height: Maximum height among connected verifiers (None if none connected)
+        - max_allowed_height: Maximum height allowed for mining (max_verifier + 1)
+        - local_height: Current local chain height
+        - can_mine: Whether mining is allowed based on verifier constraints
+        """
+        local_height, local_hash = self._local_head()
+        max_verifier = self._get_max_verifier_height()
+        
+        connected_verifiers = []
+        now = time.time()
+        
+        if self._enable_verifier_seeds and self._verifier_seed_ips:
+            for peer in self._peers.values():
+                if not peer.hello_done.is_set():
+                    continue
+                if not peer.repo_state_ok:
+                    continue
+                
+                if self._is_verifier_seed_peer(peer.remote):
+                    info = self._sync_peer_heads.get(peer.remote)
+                    if info and self._is_peer_responsive(info, now):
+                        connected_verifiers.append({
+                            "remote": peer.remote,
+                            "height": int(info.height),
+                            "head_hash": "0x" + info.hash.hex() if info.hash else None,
+                        })
+        
+        max_allowed = None if max_verifier is None else max_verifier + 1
+        
+        # Can mine if:
+        # 1. Verifier seeds are disabled, OR
+        # 2. No verifiers connected (backward compatible), OR
+        # 3. Local height is at verifier height or verifier + 1 (miner who just found a block)
+        can_mine = (
+            not self._enable_verifier_seeds
+            or max_verifier is None
+            or local_height <= (max_verifier + 1)
+        )
+        
+        return {
+            "enabled": self._enable_verifier_seeds,
+            "configured_ips": sorted(list(self._verifier_seed_ips)) if self._verifier_seed_ips else [],
+            "connected_verifiers": connected_verifiers,
+            "max_verifier_height": max_verifier,
+            "max_allowed_height": max_allowed,
+            "local_height": local_height,
+            "can_mine": can_mine,
+        }
+
     def _register_header_request(
         self,
         peer: _PeerState,
