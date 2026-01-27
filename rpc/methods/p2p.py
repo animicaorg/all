@@ -1709,6 +1709,73 @@ async def debug_tx_by_id(tx_hash: str) -> dict[str, t.Any]:
     return result
 
 
+@method("p2p.getVerifierSeeds", desc="Get verifier seed status for height validation")
+async def p2p_get_verifier_seeds() -> dict[str, t.Any]:
+    """
+    Get status information about verifier seed peers.
+    
+    Verifier seeds are trusted nodes that act as authoritative sources for
+    the network's highest block height. The network height is constrained to
+    max(verifier_heights) + 1, allowing only miners who just found a block
+    to be 1 block ahead.
+    
+    Returns:
+        dict with verifier seed status including:
+        - enabled: Whether verifier seeds are enabled
+        - configured_ips: List of configured verifier seed IPs
+        - connected_verifiers: List of connected verifier seeds with heights
+        - max_verifier_height: Maximum height among verifiers
+        - max_allowed_height: Maximum height allowed for mining
+        - local_height: Current local chain height
+        - can_mine: Whether mining is allowed based on constraints
+    """
+    svc = _get_p2p_service()
+    if svc is None:
+        # When P2P service is unavailable, we allow mining as a fallback.
+        # This is safe because:
+        # 1. The node operator has explicitly disabled or failed to start P2P
+        # 2. The node may be in a testing/dev environment without P2P
+        # 3. Traditional sync checks in the mining CLI will still prevent mining if behind
+        # 4. This maintains backward compatibility with nodes that don't use P2P
+        return {
+            "enabled": False,
+            "configured_ips": [],
+            "connected_verifiers": [],
+            "max_verifier_height": None,
+            "max_allowed_height": None,
+            "local_height": 0,
+            "can_mine": True,  # Allow mining when P2P is explicitly disabled
+            "error": P2P_UNAVAILABLE_ERROR,
+        }
+    
+    if hasattr(svc, "get_verifier_seed_status"):
+        try:
+            return await _safe_call_method(svc, "get_verifier_seed_status")
+        except Exception as e:
+            log.warning(f"Failed to get verifier seed status: {e}")
+            return {
+                "enabled": False,
+                "configured_ips": [],
+                "connected_verifiers": [],
+                "max_verifier_height": None,
+                "max_allowed_height": None,
+                "local_height": 0,
+                "can_mine": True,
+                "error": str(e),
+            }
+    
+    return {
+        "enabled": False,
+        "configured_ips": [],
+        "connected_verifiers": [],
+        "max_verifier_height": None,
+        "max_allowed_height": None,
+        "local_height": 0,
+        "can_mine": True,
+        "error": "verifier seed status not available in this P2P implementation",
+    }
+
+
 # Export for RPC method discovery
 __all__ = [
     "list_peers",
@@ -1725,4 +1792,5 @@ __all__ = [
     "get_peer_info",
     "import_peers",
     "add_peers",
+    "p2p_get_verifier_seeds",
 ]

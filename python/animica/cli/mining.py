@@ -46,6 +46,9 @@ API_BIND_ENV = "ANIMICA_POOL_API_BIND"
 # Supported mining device backends
 SUPPORTED_DEVICES = ["cpu", "cuda", "rocm", "opencl", "metal", "auto"]
 
+# Mining warning message suffix for verifier seed constraints
+VERIFIER_MINING_WARNING_SUFFIX = "mined blocks may be reorged."
+
 
 def _parse_hex_bytes(value: str) -> bytes:
     hex_value = value[2:] if value.startswith("0x") else value
@@ -318,6 +321,57 @@ def _check_sync(rpc_url: str, *, force: bool) -> None:
 
 
 def _warn_if_unsynced(rpc_url: str, *, threshold: int = 5) -> bool:
+    """
+    Check if the node is behind the network and warn the user.
+    
+    With verifier seeds enabled, this check ensures mining is only allowed when:
+    1. Node is at the verifier seed height, OR
+    2. Node is at verifier_height + 1 (actively mining the next block)
+    
+    Args:
+        rpc_url: RPC endpoint URL
+        threshold: Height difference threshold for warnings (used for non-verifier checks)
+        
+    Returns:
+        True if node is behind and should not mine, False otherwise
+    """
+    # First check verifier seed status if available
+    try:
+        verifier_status = call_rpc("p2p.getVerifierSeeds", [], rpc_url)
+        if isinstance(verifier_status, dict) and verifier_status.get("enabled"):
+            # can_mine defaults to False for safety - if the key is missing or None,
+            # we should block mining rather than allow it
+            can_mine = verifier_status.get("can_mine", False)
+            local_height = verifier_status.get("local_height", 0)
+            max_verifier_height = verifier_status.get("max_verifier_height")
+            max_allowed_height = verifier_status.get("max_allowed_height")
+            
+            if not can_mine:
+                # Format warning message based on available data
+                if max_verifier_height is not None and max_allowed_height is not None:
+                    typer.echo(
+                        f"Warning: You are ahead of verifier seeds "
+                        f"(local: {local_height}, max_verifier: {max_verifier_height}, "
+                        f"max_allowed: {max_allowed_height}); "
+                        f"{VERIFIER_MINING_WARNING_SUFFIX}"
+                    )
+                else:
+                    typer.echo(
+                        f"Warning: Mining blocked by verifier seed constraints "
+                        f"(local: {local_height}); {VERIFIER_MINING_WARNING_SUFFIX}"
+                    )
+                return True
+            
+            # If verifier seeds are enabled and node can mine, allow it
+            # regardless of other sync status checks
+            if max_verifier_height is not None:
+                # Verifier seeds are connected and we're within allowed range
+                return False
+    except Exception:
+        # If verifier seed check fails, fall back to traditional sync check
+        pass
+    
+    # Fall back to traditional sync status check
     try:
         status = call_rpc("sync.getStatus", [], rpc_url)
     except Exception:
