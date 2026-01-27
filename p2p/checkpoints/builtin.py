@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 
 # Raw checkpoint data (height, hash) as tuples to avoid circular import
 _MAINNET_CHECKPOINTS_RAW = [
-    (0, "0xe523e0e6871d792e05b602e1eb74d52457f7188fdac7a5c4086dcd56dced44ec"),
+    (0, "0xe020040d488c83dd86a1613c5a8017cf60e7ed725952426cef39ab584ac43fab"),
 ]
 
 _TESTNET_CHECKPOINTS_RAW: List[tuple[int, str]] = []
