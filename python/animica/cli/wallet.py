@@ -6,7 +6,7 @@ import os
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import click as _click
 import typer
@@ -192,6 +192,62 @@ def _request_rpc(method: str, params: Optional[List[Any]], rpc_url: str) -> Any:
         if "error" in parsed:
             raise RuntimeError(parsed.get("error"))
         return parsed.get("result")
+
+
+def _wallet_confirmations_required() -> int:
+    try:
+        return max(1, int(os.environ.get("ANIMICA_WALLET_CONFIRMATIONS_REQUIRED", "1")))
+    except Exception:
+        return 1
+
+
+def _refresh_pending_txs(
+    pending: list[dict[str, Any]],
+    rpc_endpoint: str,
+) -> Tuple[list[dict[str, Any]], bool]:
+    changed = False
+    now = datetime.now(timezone.utc).isoformat()
+
+    for entry in pending:
+        tx_hash = entry.get("tx_hash")
+        if not tx_hash:
+            continue
+        try:
+            status = _request_rpc("tx.getStatus", [tx_hash], rpc_endpoint)
+        except Exception:
+            continue
+        if not isinstance(status, dict):
+            continue
+        new_state = status.get("status")
+        confirmations = status.get("confirmations")
+        included_height = status.get("included_height")
+        entry["updated_at"] = now
+        if confirmations is not None:
+            entry["confirmations"] = confirmations
+        if included_height is not None:
+            entry["included_height"] = included_height
+        if new_state == "confirmed":
+            if entry.get("status") != "confirmed":
+                entry["status"] = "confirmed"
+                changed = True
+            continue
+        if new_state == "pending":
+            if entry.get("status") != "mempool_accepted":
+                entry["status"] = "mempool_accepted"
+                changed = True
+            continue
+        if new_state == "reorged_out":
+            if entry.get("status") != "reorged_out":
+                entry["status"] = "reorged_out"
+                changed = True
+            continue
+        if new_state == "not_found":
+            if entry.get("status") != "dropped":
+                entry["status"] = "dropped"
+                entry["drop_reason"] = "not_found"
+                changed = True
+
+    return pending, changed
 
 
 class BalanceQueryError(Exception):
@@ -569,6 +625,11 @@ def show(
     balance_source = source_choice
     head_info: Optional[Dict[str, Any]] = None
     queried_at: Optional[str] = None
+    confirmations_required = _wallet_confirmations_required()
+    pending_entries = raw_entry.get("pending_txs", [])
+    if not isinstance(pending_entries, list):
+        pending_entries = []
+        raw_entry["pending_txs"] = pending_entries
 
     # Query chain for balance and head info
     if source_choice == "chain":
@@ -594,6 +655,14 @@ def show(
         except Exception as exc:
             typer.echo(f"Error: Failed to fetch balance from chain: {exc}", err=True)
             raise typer.Exit(code=1)
+
+        pending_entries, pending_changed = _refresh_pending_txs(pending_entries, rpc_endpoint)
+        if pending_changed:
+            for idx, candidate in enumerate(store.get("wallets", [])):
+                if candidate.get("address") == entry.address:
+                    store["wallets"][idx]["pending_txs"] = pending_entries
+                    break
+            _save_store(path, store)
     else:
         # Cached balance from wallet file
         cached_balance = raw_entry.get("balance")
@@ -623,6 +692,24 @@ def show(
         format_amount(balance_confirmed) if balance_confirmed is not None else None
     )
     output["balance_source"] = balance_source
+    output["confirmations_required"] = confirmations_required
+    output["pending_txs"] = pending_entries
+    reserved_outgoing = 0
+    pending_outgoing_count = 0
+    for pending in pending_entries:
+        status = pending.get("status")
+        if status in {"reserved", "broadcast", "mempool_accepted"}:
+            reserve_amount = pending.get("reserve_amount")
+            try:
+                reserved_outgoing += int(reserve_amount or 0)
+            except Exception:
+                continue
+            pending_outgoing_count += 1
+    output["pending_outgoing"] = reserved_outgoing
+    output["pending_outgoing_count"] = pending_outgoing_count
+    if balance_confirmed is not None:
+        output["available_balance"] = max(0, balance_confirmed - reserved_outgoing)
+        output["available_balance_formatted"] = format_amount(output["available_balance"])
     
     # Add head info if available
     if head_info is not None:
