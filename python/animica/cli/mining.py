@@ -342,12 +342,19 @@ def _warn_if_unsynced(rpc_url: str, *, threshold: int = 5) -> bool:
             max_allowed_height = verifier_status.get("max_allowed_height")
             
             if not can_mine:
-                typer.echo(
-                    f"Warning: You are ahead of verifier seeds "
-                    f"(local: {local_height}, max_verifier: {max_verifier_height}, "
-                    f"max_allowed: {max_allowed_height}); "
-                    f"mined blocks may be reorged."
-                )
+                # Format warning message based on available data
+                if max_verifier_height is not None and max_allowed_height is not None:
+                    typer.echo(
+                        f"Warning: You are ahead of verifier seeds "
+                        f"(local: {local_height}, max_verifier: {max_verifier_height}, "
+                        f"max_allowed: {max_allowed_height}); "
+                        f"mined blocks may be reorged."
+                    )
+                else:
+                    typer.echo(
+                        f"Warning: Mining blocked by verifier seed constraints "
+                        f"(local: {local_height}); mined blocks may be reorged."
+                    )
                 return True
             
             # If verifier seeds are enabled and node can mine, allow it
