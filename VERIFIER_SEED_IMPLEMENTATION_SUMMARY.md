@@ -156,6 +156,42 @@ export ANIMICA_P2P_VERIFIER_SEED_IPS="10.1.2.3,10.4.5.6"
 python -m p2p.cli.listen --listen tcp://0.0.0.0:30333
 ```
 
+### Check Verifier Seed Status and Mining Eligibility
+
+```bash
+# Show verifier seed status and whether mining is allowed
+animica p2p verifier-seeds
+
+# Output as JSON
+animica p2p verifier-seeds --json
+```
+
+This command will show:
+- Whether verifier seeds are enabled
+- Configured verifier IPs
+- Connected verifiers and their heights
+- Local chain height
+- Maximum allowed height for mining
+- Whether mining is currently allowed
+
+### Query Verifier Seeds via RPC
+
+```bash
+# Using curl
+curl -X POST http://127.0.0.1:8545/rpc \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"p2p.getVerifierSeeds","id":1}'
+```
+
+Response includes:
+- `enabled`: Whether verifier seeds are enabled
+- `configured_ips`: List of configured verifier seed IPs
+- `connected_verifiers`: List of connected verifiers with heights
+- `max_verifier_height`: Highest height among verifiers
+- `max_allowed_height`: Maximum height allowed for mining (verifier + 1)
+- `local_height`: Current local chain height
+- `can_mine`: Boolean indicating if mining is allowed
+
 ## Testing
 
 Run the test suite:
