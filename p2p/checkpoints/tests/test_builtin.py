@@ -16,7 +16,7 @@ def test_mainnet_builtin_checkpoint_exists():
     cp_0 = next((cp for cp in checkpoints if cp.height == 0), None)
     
     assert cp_0 is not None, "Mainnet should have checkpoint at height 0"
-    assert cp_0.hash == "0xe523e0e6871d792e05b602e1eb74d52457f7188fdac7a5c4086dcd56dced44ec"
+    assert cp_0.hash == "0xe020040d488c83dd86a1613c5a8017cf60e7ed725952426cef39ab584ac43fab"
 
 
 def test_mainnet_checkpoint_properties():
@@ -101,7 +101,7 @@ def test_builtin_mainnet_checkpoints_constant():
     
     assert cp_0 is not None
     assert cp_0.height == 0
-    assert cp_0.hash == "0xe523e0e6871d792e05b602e1eb74d52457f7188fdac7a5c4086dcd56dced44ec"
+    assert cp_0.hash == "0xe020040d488c83dd86a1613c5a8017cf60e7ed725952426cef39ab584ac43fab"
 
 
 def test_builtin_checkpoints_sorted():
