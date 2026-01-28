@@ -213,4 +213,22 @@ export class RpcChainClient implements ChainClient {
       return '0x0'
     }
   }
+
+  async getRichList(limit: number, offset: number): Promise<unknown> {
+    try {
+      return await this.rpc.call('state.getRichList', [limit, offset])
+    } catch (error) {
+      log.warn({ limit, offset, error }, 'Failed to get rich list')
+      throw new Error(`Failed to get rich list from RPC`)
+    }
+  }
+
+  async getTotalSupply(): Promise<unknown> {
+    try {
+      return await this.rpc.call('state.getTotalSupply', [])
+    } catch (error) {
+      log.warn({ error }, 'Failed to get total supply')
+      throw new Error(`Failed to get total supply from RPC`)
+    }
+  }
 }
