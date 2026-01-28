@@ -391,6 +391,8 @@ class BlockImporter:
         "difficulty_state",
         "_last_block_time",
         "_difficulty_samples",
+        "_timestamp_window",
+        "_window_size",
         "_orphan_pool",
         "_orphan_parents",
         "_max_orphans",
@@ -460,6 +462,10 @@ class BlockImporter:
         self.difficulty_state = None
         self._last_block_time: Optional[int] = None
         self._difficulty_samples = 0
+        # Window of recent timestamps for anti-gaming difficulty adjustment
+        # Use retarget window size from params, defaulting to 10 blocks minimum
+        self._window_size = max(10, int(getattr(params.retarget, 'window', 10)))
+        self._timestamp_window: Deque[int] = deque(maxlen=self._window_size)
         if DIFFICULTY_AVAILABLE:
             self._init_difficulty_state()
         self._orphan_pool: "OrderedDict[bytes, _OrphanBlock]" = OrderedDict()
@@ -557,7 +563,11 @@ class BlockImporter:
 
     def _update_difficulty(self, block_timestamp: int) -> None:
         """
-        Update difficulty state based on the time since the last block.
+        Update difficulty state based on a window of recent block intervals.
+        
+        This prevents gaming by requiring multiple blocks before difficulty adjusts.
+        Miners cannot exploit the system by turning on/off because difficulty is
+        based on the average of the last N blocks, not individual block intervals.
         
         Args:
             block_timestamp: Unix timestamp (seconds) of the current block
@@ -566,19 +576,42 @@ class BlockImporter:
             return
         
         try:
-            # Calculate time delta since last block
-            if self._last_block_time is not None:
-                dt_seconds = float(block_timestamp - self._last_block_time)
-                
-                # Sanity check: ensure positive, non-zero time delta
-                if dt_seconds > 0:
-                    # Update theta using the consensus.difficulty mechanism
-                    self.difficulty_state = diff.update_theta(
-                        self.difficulty_state,
-                        dt_seconds=dt_seconds,
-                        blocks_skipped=1,
-                    )
-                    self._difficulty_samples += 1
+            # Add current timestamp to the window
+            self._timestamp_window.append(block_timestamp)
+            
+            # Only update difficulty when we have a full window of timestamps
+            # This prevents single-block manipulation and requires sustained
+            # hash rate changes before difficulty adjusts
+            if len(self._timestamp_window) < self._window_size:
+                # Not enough data yet, just track the timestamp for next time
+                self._last_block_time = block_timestamp
+                return
+            
+            # Calculate average inter-block time over the window
+            timestamps = list(self._timestamp_window)
+            intervals = []
+            for i in range(1, len(timestamps)):
+                dt = timestamps[i] - timestamps[i-1]
+                if dt > 0:  # Sanity check
+                    intervals.append(dt)
+            
+            if not intervals:
+                # No valid intervals, skip update
+                self._last_block_time = block_timestamp
+                return
+            
+            # Use the average interval over the window
+            avg_dt_seconds = float(sum(intervals)) / len(intervals)
+            
+            # Update theta using the window average
+            # This makes it much harder to game by turning miners on/off
+            # because the window must be filled with consistent intervals
+            self.difficulty_state = diff.update_theta(
+                self.difficulty_state,
+                dt_seconds=avg_dt_seconds,
+                blocks_skipped=len(intervals),  # Account for the window size
+            )
+            self._difficulty_samples += 1
             
             # Update last block time for next iteration
             self._last_block_time = block_timestamp
@@ -616,6 +649,10 @@ class BlockImporter:
             )
             self._last_block_time = int(parent_ts)
             self._difficulty_samples = 0
+            # Clear the timestamp window when reanchoring to start fresh
+            self._timestamp_window.clear()
+            # Add the parent timestamp as the first entry
+            self._timestamp_window.append(int(parent_ts))
         except Exception as e:  # pragma: no cover
             import logging
 
