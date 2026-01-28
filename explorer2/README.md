@@ -2,6 +2,32 @@
 
 Explorer2 is a modern, standalone Animica blockchain explorer with a dedicated API and web UI. It can connect directly to an Animica node via RPC or read from a local database.
 
+## Features
+
+### Web UI
+- **Home Page**: Chain status, network stats, and latest activity
+- **Blocks Page**: Paginated list of recent blocks with auto-refresh
+- **Block Detail**: Full block information with transaction list
+- **Transaction Detail**: Transaction status with confirmation count
+- **Address Page**: Balance and transaction history
+- **Mempool Page**: Real-time pending transactions and mempool stats
+- **Search**: Unified search for blocks (by height or hash), transactions, and addresses
+- **Dark Mode**: Automatic theme switching
+- **Copy to Clipboard**: Quick copy for hashes and addresses
+- **Error Handling**: Retry buttons for failed requests
+
+### API Endpoints
+- `GET /api/health` - Health check
+- `GET /api/meta` - Explorer and network metadata
+- `GET /api/diagnostics` - Connection mode and database info
+- `GET /api/head` - Current chain head and network stats
+- `GET /api/blocks?limit=&cursor=` - Paginated block list
+- `GET /api/block/:hashOrHeight` - Block details
+- `GET /api/tx/:hash` - Transaction details
+- `GET /api/address/:addr?limit=&cursor=` - Address balance and history
+- `GET /api/mempool?limit=&cursor=` - Mempool entries and stats
+- `GET /api/search?q=` - Unified search
+
 ## Prerequisites
 
 - Node.js 18.18+
@@ -71,31 +97,90 @@ Use the **Diagnostics** page in the web UI (`/diagnostics`) to check which mode 
 
 ## Development (API + Web)
 
-Run the full development stack:
+Run the full development stack with hot-reload:
 
 ```bash
+# From the repository root
 pnpm -C explorer2 dev
 ```
 
-- API runs on `http://localhost:8081`
-- Web runs on `http://localhost:3001` and proxies `/api` to the API service
+This starts:
+- **Shared package** in watch mode (TypeScript compilation)
+- **API server** on `http://localhost:8081` (with hot-reload via tsx watch)
+- **Web UI** on `http://localhost:3001` (with Vite dev server)
 
-Run individual services:
+The web UI automatically proxies `/api` requests to the API server.
+
+Run individual services for development:
 
 ```bash
-# API only
+# Build shared package first (required for API)
+pnpm -C explorer2/shared build
+
+# API only (with hot-reload)
 pnpm -C explorer2/api dev
 
 # Web only (requires API to be running)
 pnpm -C explorer2/web dev
+
+# Web with custom host/port for VPS deployment
+pnpm -C explorer2/web dev -- --host 0.0.0.0 --port 5173
 ```
+
+**Development Tips:**
+- Changes to shared types require rebuilding: `pnpm -C explorer2/shared build`
+- API hot-reloads automatically via `tsx watch`
+- Web UI hot-reloads automatically via Vite HMR
+- Use `http://localhost:3001/diagnostics` to check connection status
 
 ## Production build
 
+Build all packages for production:
+
 ```bash
 pnpm -C explorer2 build
+```
+
+This builds:
+1. Shared types (TypeScript → JavaScript)
+2. API server (TypeScript → JavaScript in `dist/`)
+3. Web UI (Vite production build in `dist/`)
+
+Start the API server in production:
+
+```bash
 pnpm -C explorer2/api start
 ```
+
+Serve the web UI with any static file server or reverse proxy.
+
+## Testing
+
+Run all tests:
+
+```bash
+# API tests (33 tests)
+pnpm -C explorer2/api test
+
+# Web UI tests (14 tests)
+pnpm -C explorer2/web test
+
+# Run specific test file
+pnpm -C explorer2/api test search
+
+# Run with coverage
+pnpm -C explorer2/api test --coverage
+```
+
+**Test Structure:**
+- `explorer2/api/tests/` - API endpoint tests, service tests, utility tests
+- `explorer2/web/src/lib/*.test.ts` - Web utility function tests
+
+**Test Coverage:**
+- RPC client (timeouts, retries, errors)
+- Service layer (blocks, txs, addresses, search)
+- API endpoints (health, meta, blocks, tx, address, mempool, search)
+- Utility functions (formatting, pagination, caching)
 
 ## Docker deployment
 
@@ -172,3 +257,62 @@ EXPLORER2_CHAIN_ID=1
 - API and web are reverse-proxy friendly: `/` serves the UI, `/api` serves the API
 - Capabilities detection gracefully handles missing RPC methods
 - Request coalescing prevents duplicate requests
+
+## Usage Examples
+
+### Search for blocks, transactions, or addresses
+
+The `/api/search` endpoint accepts various input formats and returns the appropriate result:
+
+```bash
+# Search by block height
+curl http://localhost:8081/api/search?q=12345
+
+# Search by block or transaction hash
+curl http://localhost:8081/api/search?q=0xabc123...
+
+# Search by address
+curl http://localhost:8081/api/search?q=anim1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq5nvly4
+```
+
+### Get explorer metadata
+
+```bash
+curl http://localhost:8081/api/meta
+```
+
+Returns:
+```json
+{
+  "explorer": {
+    "name": "Animica Explorer",
+    "version": "0.1.0",
+    "mode": "RPC"
+  },
+  "network": {
+    "chainId": 1,
+    "rpcUrl": "http://127.0.0.1:8545/rpc"
+  },
+  "timestamp": "2024-01-28T08:00:00.000Z"
+}
+```
+
+### Monitor mempool
+
+```bash
+# Get mempool stats and transactions
+curl http://localhost:8081/api/mempool?limit=50
+
+# Response includes stats and entries
+{
+  "total": 10,
+  "entries": [
+    { "hash": "0x..." }
+  ],
+  "stats": {
+    "count": 10,
+    "totalBytes": 5420,
+    "oldestAgeSec": 15
+  }
+}
+```
