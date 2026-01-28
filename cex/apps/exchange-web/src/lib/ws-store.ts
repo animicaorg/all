@@ -110,7 +110,7 @@ function handleMessage(message: WSMessage, set: any, get: any) {
     const orderbooks = new Map(get().orderbooks);
     const existing = orderbooks.get(message.symbol);
 
-    if (!existing || (message.data.sequence && message.data.sequence <= existing.sequence)) {
+    if (!existing || (typeof message.data.sequence === 'number' && message.data.sequence <= existing.sequence)) {
       // Sequence gap or old message - ignore
       return;
     }
