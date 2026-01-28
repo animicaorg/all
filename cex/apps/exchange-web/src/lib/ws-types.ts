@@ -120,7 +120,7 @@ const errorMessageSchema = z.object({
   message: z.string(),
 });
 
-export const wsMessageSchema = z.discriminatedUnion("type", [
+export const wsMessageSchema = z.union([
   welcomeMessageSchema,
   pingMessageSchema,
   pongMessageSchema,
