@@ -174,6 +174,21 @@ export function createServer(service: ExplorerService, corsOrigin: string, logLe
     }
   })
 
+  app.get('/api/debug/rpc', async (_req, res) => {
+    if (process.env.NODE_ENV === 'production') {
+      res.status(404).json({ error: 'not_found', message: 'Debug endpoints disabled in production' })
+      return
+    }
+
+    res.json({
+      mode: diagnostics?.mode || 'Unknown',
+      rpcUrl: diagnostics?.rpcUrl || null,
+      timeout: 30000, // From config
+      maxRetries: 3,   // From config
+      timestamp: new Date().toISOString()
+    })
+  })
+
   app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
     if (err instanceof HttpError) {
       const body: ApiError = { error: 'request_failed', message: err.message, detail: err.detail }
