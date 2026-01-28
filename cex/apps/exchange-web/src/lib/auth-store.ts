@@ -1,6 +1,8 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { v4 as uuidv4 } from 'uuid';
+import axios from 'axios';
+
+const API_URL = import.meta.env.VITE_CEX_API_URL || 'http://localhost:3000';
 
 interface AuthState {
   isAuthenticated: boolean;
@@ -14,12 +16,25 @@ export const useAuthStore = create<AuthState>()(
     (set) => ({
       isAuthenticated: false,
       user: null,
-      login: async (email: string, _password: string) => {
-        // Mock authentication - in production this would call the API
-        // For now, accept any credentials for demo purposes
-        set({ isAuthenticated: true, user: { id: uuidv4(), email } });
+      login: async (email: string, password: string) => {
+        // Call the authentication API
+        // Note: This assumes the auth endpoint exists at /auth/login
+        // Adjust the endpoint based on actual API implementation
+        const response = await axios.post(`${API_URL}/auth/login`, {
+          email,
+          password,
+        }, {
+          withCredentials: true,
+        });
+        
+        const { userId, email: userEmail } = response.data;
+        set({ isAuthenticated: true, user: { id: userId, email: userEmail || email } });
       },
       logout: () => {
+        // Optionally call logout endpoint to clear server-side session
+        axios.post(`${API_URL}/auth/logout`, {}, { withCredentials: true }).catch(() => {
+          // Ignore errors on logout
+        });
         set({ isAuthenticated: false, user: null });
       },
     }),
