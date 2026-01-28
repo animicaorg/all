@@ -86,3 +86,26 @@ export interface ApiError {
   message: string
   detail?: string
 }
+
+export interface RichListEntry {
+  rank: number
+  address: Address
+  balance: string
+  pctSupply?: number
+}
+
+export interface RichListResponse {
+  height: number
+  items: RichListEntry[]
+  totalAddresses: number
+  nextOffset?: number
+}
+
+export interface RichListSummary {
+  height: number
+  totalSupply: string
+  addressCount: number
+  top10Pct?: number
+  top100Pct?: number
+  top1000Pct?: number
+}

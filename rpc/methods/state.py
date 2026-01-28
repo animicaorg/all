@@ -487,3 +487,177 @@ def state_get_account(address: str, tag: str = "latest") -> dict:
         "address": addr,
         "balance": _to_hex_quantity(balance),
     }
+
+
+@method(
+    "state.getRichList",
+    desc="Return addresses sorted by balance (descending). Supports pagination with limit/offset.",
+)
+def state_get_rich_list(limit: int = 100, offset: int = 0) -> dict:
+    """
+    Get rich list - addresses sorted by balance in descending order.
+    
+    Args:
+        limit: Maximum number of addresses to return (default: 100, max: 1000)
+        offset: Number of addresses to skip (for pagination)
+        
+    Returns:
+        dict: {
+            "height": int,              # Chain height when list was generated
+            "totalAddresses": int,      # Total number of non-zero balance addresses
+            "items": [
+                {
+                    "rank": int,        # Position in ranking (1-indexed)
+                    "address": str,     # Address in bech32 format
+                    "balance": str,     # Balance in hex (e.g., "0x1234")
+                }
+            ]
+        }
+    """
+    # Validate and clamp parameters
+    limit = max(1, min(int(limit), 1000))  # Max 1000 to prevent excessive load
+    offset = max(0, int(offset))
+    
+    # Get state DB from context
+    try:
+        ctx = deps.get_ctx()
+        sdb = ctx.state_db
+    except Exception:
+        raise rpc_errors.InternalError("State DB not available")
+    
+    if sdb is None:
+        raise rpc_errors.InternalError("State DB not available")
+    
+    # Get current head height
+    try:
+        from rpc.methods.chain import chain_get_head
+        head = chain_get_head()
+        height = head.get("height", 0)
+    except Exception:
+        height = 0
+    
+    # Collect all accounts and balances
+    accounts: list[tuple[bytes, int]] = []
+    
+    try:
+        # Use iter_accounts to enumerate all accounts
+        if hasattr(sdb, "iter_accounts"):
+            for addr_bytes, account in sdb.iter_accounts():
+                balance = account.balance if hasattr(account, "balance") else (
+                    account.get("balance", 0) if isinstance(account, dict) else 0
+                )
+                # Only include accounts with non-zero balance
+                if balance > 0:
+                    accounts.append((addr_bytes, int(balance)))
+        else:
+            raise rpc_errors.InternalError("State DB does not support account iteration")
+    except Exception as e:
+        log.error("Failed to iterate accounts", exc_info=e)
+        raise rpc_errors.InternalError(f"Failed to enumerate accounts: {str(e)}")
+    
+    # Sort by balance descending
+    accounts.sort(key=lambda x: x[1], reverse=True)
+    
+    total_addresses = len(accounts)
+    
+    # Apply pagination
+    start_idx = offset
+    end_idx = min(offset + limit, total_addresses)
+    page_accounts = accounts[start_idx:end_idx]
+    
+    # Format results
+    items = []
+    for idx, (addr_bytes, balance) in enumerate(page_accounts):
+        rank = start_idx + idx + 1  # 1-indexed rank
+        
+        # Convert address to bech32 format
+        try:
+            if _bech32 is not None:
+                # Encode as bech32m with "anim" prefix
+                # Address payload format: 0x00 (version) + 0x01 (algo_id) + addr_bytes
+                # For simplicity, if addr_bytes is 32 bytes, prepend version/algo
+                if len(addr_bytes) == 32:
+                    payload = b'\x00\x01' + addr_bytes  # version 0, algo 1
+                else:
+                    payload = addr_bytes
+                
+                words = _bech32.convertbits(payload, 8, 5)
+                if words is not None:
+                    addr_str = _bech32.encode("anim", 1, words)  # bech32m (variant 1)
+                else:
+                    addr_str = "0x" + addr_bytes.hex()
+            else:
+                addr_str = "0x" + addr_bytes.hex()
+        except Exception:
+            addr_str = "0x" + addr_bytes.hex()
+        
+        items.append({
+            "rank": rank,
+            "address": addr_str,
+            "balance": _to_hex_quantity(balance)
+        })
+    
+    return {
+        "height": height,
+        "totalAddresses": total_addresses,
+        "items": items
+    }
+
+
+@method(
+    "state.getTotalSupply",
+    desc="Return the total supply (sum of all account balances).",
+)
+def state_get_total_supply() -> dict:
+    """
+    Get total supply by summing all account balances.
+    
+    Returns:
+        dict: {
+            "height": int,           # Chain height when computed
+            "totalSupply": str,      # Total supply in hex
+            "addressCount": int,     # Number of accounts with non-zero balance
+        }
+    """
+    # Get state DB from context
+    try:
+        ctx = deps.get_ctx()
+        sdb = ctx.state_db
+    except Exception:
+        raise rpc_errors.InternalError("State DB not available")
+    
+    if sdb is None:
+        raise rpc_errors.InternalError("State DB not available")
+    
+    # Get current head height
+    try:
+        from rpc.methods.chain import chain_get_head
+        head = chain_get_head()
+        height = head.get("height", 0)
+    except Exception:
+        height = 0
+    
+    # Sum all balances
+    total_supply = 0
+    address_count = 0
+    
+    try:
+        if hasattr(sdb, "iter_accounts"):
+            for addr_bytes, account in sdb.iter_accounts():
+                balance = account.balance if hasattr(account, "balance") else (
+                    account.get("balance", 0) if isinstance(account, dict) else 0
+                )
+                if balance > 0:
+                    total_supply += int(balance)
+                    address_count += 1
+        else:
+            raise rpc_errors.InternalError("State DB does not support account iteration")
+    except Exception as e:
+        log.error("Failed to compute total supply", exc_info=e)
+        raise rpc_errors.InternalError(f"Failed to compute total supply: {str(e)}")
+    
+    return {
+        "height": height,
+        "totalSupply": _to_hex_quantity(total_supply),
+        "addressCount": address_count
+    }

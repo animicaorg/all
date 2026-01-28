@@ -13,6 +13,8 @@ export interface ChainClient {
   getMempoolStats: () => Promise<{ count: number; totalBytes: number; oldestAgeSec: number | null }>
   getPeers: () => Promise<unknown[]>
   getBalance: (address: string, tag?: 'latest' | 'pending') => Promise<string>
+  getRichList?: (limit: number, offset: number) => Promise<unknown>
+  getTotalSupply?: () => Promise<unknown>
 }
 
 const RECENT_BLOCK_WINDOW = 20
@@ -189,6 +191,135 @@ export class ExplorerService {
     }
 
     return { type: 'none' }
+  }
+
+  async getRichList(limitInput: number, offset: number = 0): Promise<import('@animica/explorer2-shared').RichListResponse> {
+    const limit = clampLimit(limitInput)
+    const safeOffset = Math.max(0, offset)
+
+    return this.coalescer.run(`richlist:${limit}:${safeOffset}`, async () => {
+      // Try RPC method if available
+      if (this.rpc.getRichList) {
+        try {
+          const raw = await this.safeRpc(() => this.rpc.getRichList!(limit, safeOffset))
+          
+          // Parse response
+          const height = (raw as any).height ?? 0
+          const totalAddresses = (raw as any).totalAddresses ?? 0
+          const items = (raw as any).items ?? []
+          
+          // Get total supply for percentage calculation
+          let totalSupply = BigInt(0)
+          try {
+            const supplyRaw = await this.safeRpc(() => this.rpc.getTotalSupply!())
+            const supplyHex = (supplyRaw as any).totalSupply ?? '0x0'
+            totalSupply = BigInt(supplyHex)
+          } catch {
+            // If total supply fails, percentages will be 0
+          }
+          
+          // Format items with percentages
+          const formattedItems = items.map((item: any) => {
+            const balance = BigInt(item.balance ?? '0x0')
+            const pctSupply = totalSupply > 0 
+              ? Number((balance * BigInt(10000) / totalSupply)) / 100  // 2 decimal places
+              : 0
+            
+            return {
+              rank: item.rank ?? 0,
+              address: item.address ?? '',
+              balance: item.balance ?? '0x0',
+              pctSupply
+            }
+          })
+          
+          return {
+            height,
+            items: formattedItems,
+            totalAddresses,
+            nextOffset: safeOffset + formattedItems.length < totalAddresses 
+              ? safeOffset + formattedItems.length 
+              : undefined
+          }
+        } catch (error) {
+          // Fall through to local implementation if RPC fails
+        }
+      }
+      
+      // Fallback: local implementation would go here
+      // For now, return empty result
+      throw new HttpError(501, 'Rich list not available', 'Node does not support state.getRichList RPC method')
+    })
+  }
+
+  async getRichListSummary(): Promise<import('@animica/explorer2-shared').RichListSummary> {
+    return this.coalescer.run('richlist:summary', async () => {
+      // Try RPC method if available
+      if (this.rpc.getTotalSupply) {
+        try {
+          const raw = await this.safeRpc(() => this.rpc.getTotalSupply!())
+          
+          const height = (raw as any).height ?? 0
+          const totalSupply = (raw as any).totalSupply ?? '0x0'
+          const addressCount = (raw as any).addressCount ?? 0
+          
+          // Get top addresses to compute concentration metrics
+          let top10Pct: number | undefined
+          let top100Pct: number | undefined
+          let top1000Pct: number | undefined
+          
+          try {
+            const totalSupplyBig = BigInt(totalSupply)
+            
+            // Get top 10
+            if (this.rpc.getRichList) {
+              const top10Raw = await this.safeRpc(() => this.rpc.getRichList!(10, 0))
+              const top10Items = (top10Raw as any).items ?? []
+              const top10Sum = top10Items.reduce((sum: bigint, item: any) => 
+                sum + BigInt(item.balance ?? '0x0'), BigInt(0))
+              top10Pct = totalSupplyBig > 0 
+                ? Number((top10Sum * BigInt(10000) / totalSupplyBig)) / 100
+                : 0
+              
+              // Get top 100
+              const top100Raw = await this.safeRpc(() => this.rpc.getRichList!(100, 0))
+              const top100Items = (top100Raw as any).items ?? []
+              const top100Sum = top100Items.reduce((sum: bigint, item: any) => 
+                sum + BigInt(item.balance ?? '0x0'), BigInt(0))
+              top100Pct = totalSupplyBig > 0 
+                ? Number((top100Sum * BigInt(10000) / totalSupplyBig)) / 100
+                : 0
+              
+              // Get top 1000 (if addressCount >= 1000)
+              if (addressCount >= 1000) {
+                const top1000Raw = await this.safeRpc(() => this.rpc.getRichList!(1000, 0))
+                const top1000Items = (top1000Raw as any).items ?? []
+                const top1000Sum = top1000Items.reduce((sum: bigint, item: any) => 
+                  sum + BigInt(item.balance ?? '0x0'), BigInt(0))
+                top1000Pct = totalSupplyBig > 0 
+                  ? Number((top1000Sum * BigInt(10000) / totalSupplyBig)) / 100
+                  : 0
+              }
+            }
+          } catch {
+            // Concentration metrics optional
+          }
+          
+          return {
+            height,
+            totalSupply,
+            addressCount,
+            top10Pct,
+            top100Pct,
+            top1000Pct
+          }
+        } catch (error) {
+          throw new HttpError(501, 'Total supply not available', 'Node does not support state.getTotalSupply RPC method')
+        }
+      }
+      
+      throw new HttpError(501, 'Rich list summary not available', 'Node does not support required RPC methods')
+    })
   }
 
   private async getRecentBlocks(headHeight: number): Promise<BlockSummary[]> {
