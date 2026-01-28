@@ -73,10 +73,10 @@ async def test_mempool_sync_loop_requests_missing_known():
     original_request_missing_known = service.request_missing_known
     call_count = 0
     
-    async def tracked_request_missing_known(limit=128):
+    async def tracked_request_missing_known(limit=128, trigger="test"):
         nonlocal call_count
         call_count += 1
-        return await original_request_missing_known(limit=limit)
+        return await original_request_missing_known(limit=limit, trigger=trigger)
     
     service.request_missing_known = tracked_request_missing_known
     
