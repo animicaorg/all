@@ -24,7 +24,7 @@ export default function Layout({ children }: LayoutProps) {
   ];
 
   return (
-    <div className="min-h-screen bg-slate-900 text-white">
+    <div className="min-h-screen bg-slate-900 text-white flex flex-col">
       {/* Header */}
       <header className="bg-slate-800 border-b border-slate-700">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -91,7 +91,26 @@ export default function Layout({ children }: LayoutProps) {
       </header>
 
       {/* Main content */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">{children}</main>
+      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8">{children}</main>
+
+      {/* Footer */}
+      <footer className="bg-slate-800 border-t border-slate-700 py-4 mt-auto">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+            <div className="text-sm text-slate-400">
+              © {new Date().getFullYear()} Animica Exchange. All rights reserved.
+            </div>
+            <div className="flex items-center gap-4">
+              <Link
+                to="/legal"
+                className="text-sm text-red-400 hover:text-red-300 font-semibold"
+              >
+                ⚠ Legal Disclaimer & Risk Warning
+              </Link>
+            </div>
+          </div>
+        </div>
+      </footer>
     </div>
   );
 }
