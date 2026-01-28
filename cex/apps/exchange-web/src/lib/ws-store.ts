@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { WSClient, WSConnectionState } from "./ws-client";
-import { Orderbook, Trade, Ticker, WSMessage } from "./ws-types";
+import { Orderbook, Trade, Ticker, WSMessage, OrderbookLevel } from "./ws-types";
 
 const WS_URL = import.meta.env.VITE_CEX_WS_URL || "ws://localhost:3000/ws";
 
@@ -110,19 +110,21 @@ function handleMessage(message: WSMessage, set: any, get: any) {
     const orderbooks = new Map(get().orderbooks);
     const existing = orderbooks.get(message.symbol);
 
-    if (!existing || message.data.sequence <= existing.sequence) {
+    if (!existing || (message.data.sequence && message.data.sequence <= existing.sequence)) {
       // Sequence gap or old message - ignore
       return;
     }
 
     // Apply delta update
     const updated: Orderbook = {
-      ...existing,
+      symbol: message.symbol,
+      bids: existing.bids,
+      asks: existing.asks,
       sequence: message.data.sequence,
     };
 
     if (message.data.bids) {
-      const bidsMap = new Map(existing.bids.map((b) => [b.price, b.quantity]));
+      const bidsMap = new Map(existing.bids.map((b: OrderbookLevel) => [b.price, b.quantity]));
       message.data.bids.forEach(([price, quantity]) => {
         if (quantity === 0) {
           bidsMap.delete(price);
@@ -136,7 +138,7 @@ function handleMessage(message: WSMessage, set: any, get: any) {
     }
 
     if (message.data.asks) {
-      const asksMap = new Map(existing.asks.map((a) => [a.price, a.quantity]));
+      const asksMap = new Map(existing.asks.map((a: OrderbookLevel) => [a.price, a.quantity]));
       message.data.asks.forEach(([price, quantity]) => {
         if (quantity === 0) {
           asksMap.delete(price);
@@ -160,7 +162,7 @@ function handleMessage(message: WSMessage, set: any, get: any) {
     const existing = trades.get(message.symbol) || [];
 
     // Add new trade and deduplicate
-    const updated = [message.data, ...existing];
+    const updated = [message.data as Trade, ...existing];
     const seen = new Set<string>();
     const deduplicated = updated.filter((trade) => {
       if (seen.has(trade.id)) {
@@ -188,8 +190,12 @@ function handleMessage(message: WSMessage, set: any, get: any) {
 
     if (existing) {
       const updated: Ticker = {
-        ...existing,
-        ...message.data,
+        symbol: message.symbol,
+        lastPrice: message.data.lastPrice ?? existing.lastPrice,
+        volume24h: message.data.volume24h ?? existing.volume24h,
+        high24h: message.data.high24h ?? existing.high24h,
+        low24h: message.data.low24h ?? existing.low24h,
+        priceChange24h: message.data.priceChange24h ?? existing.priceChange24h,
       };
       tickers.set(message.symbol, updated);
       set({ tickers });
