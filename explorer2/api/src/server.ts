@@ -174,6 +174,26 @@ export function createServer(service: ExplorerService, corsOrigin: string, logLe
     }
   })
 
+  app.get('/api/richlist', async (req, res, next) => {
+    try {
+      const limit = Number(req.query.limit || 100)
+      const offset = Number(req.query.offset || 0)
+      const payload = await service.getRichList(limit, offset)
+      res.json(payload)
+    } catch (err) {
+      next(err)
+    }
+  })
+
+  app.get('/api/richlist/summary', async (_req, res, next) => {
+    try {
+      const payload = await service.getRichListSummary()
+      res.json(payload)
+    } catch (err) {
+      next(err)
+    }
+  })
+
   app.get('/api/debug/rpc', async (_req, res) => {
     if (process.env.NODE_ENV === 'production') {
       res.status(404).json({ error: 'not_found', message: 'Debug endpoints disabled in production' })

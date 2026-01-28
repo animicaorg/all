@@ -10,6 +10,7 @@ Explorer2 is a modern, standalone Animica blockchain explorer with a dedicated A
 - **Block Detail**: Full block information with transaction list
 - **Transaction Detail**: Transaction status with confirmation count
 - **Address Page**: Balance and transaction history
+- **Rich List Page**: Addresses ranked by balance with supply metrics
 - **Mempool Page**: Real-time pending transactions and mempool stats
 - **Search**: Unified search for blocks (by height or hash), transactions, and addresses
 - **Dark Mode**: Automatic theme switching
@@ -25,6 +26,8 @@ Explorer2 is a modern, standalone Animica blockchain explorer with a dedicated A
 - `GET /api/block/:hashOrHeight` - Block details
 - `GET /api/tx/:hash` - Transaction details
 - `GET /api/address/:addr?limit=&cursor=` - Address balance and history
+- `GET /api/richlist?limit=&offset=` - Rich list with pagination
+- `GET /api/richlist/summary` - Total supply and concentration metrics
 - `GET /api/mempool?limit=&cursor=` - Mempool entries and stats
 - `GET /api/search?q=` - Unified search
 
@@ -316,3 +319,54 @@ curl http://localhost:8081/api/mempool?limit=50
   }
 }
 ```
+
+### Get Rich List
+
+```bash
+# Get top 100 addresses by balance
+curl http://localhost:8081/api/richlist?limit=100&offset=0
+
+# Response includes ranked addresses with balances
+{
+  "height": 12345,
+  "totalAddresses": 567,
+  "items": [
+    {
+      "rank": 1,
+      "address": "anim1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq5nvly4",
+      "balance": "0x3b9aca00",
+      "pctSupply": 5.42
+    }
+  ],
+  "nextOffset": 100
+}
+```
+
+### Get Rich List Summary
+
+```bash
+# Get total supply and concentration metrics
+curl http://localhost:8081/api/richlist/summary
+
+# Response includes supply and concentration metrics
+{
+  "height": 12345,
+  "totalSupply": "0x3b9aca00",
+  "addressCount": 567,
+  "top10Pct": 42.5,
+  "top100Pct": 78.3,
+  "top1000Pct": 95.1
+}
+```
+
+### Verify Rich List Accuracy
+
+Use the verification script to cross-check balances:
+
+```bash
+cd explorer2/api
+node scripts/verify_richlist.js --sample 10
+```
+
+This compares rich list balances against direct RPC queries to ensure accuracy.
+
