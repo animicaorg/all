@@ -50,20 +50,17 @@ export function RichListPage() {
 
         if (summaryRes && summaryRes.ok) {
           summaryData = await summaryRes.json()
-        } else if (offset === 0) {
-          // If summary fails but list succeeds, use list data
-          summaryData = state.summary
         }
 
         if (cancelled) return
 
-        setState({
+        setState(prev => ({
           data: listData,
-          summary: summaryData ?? state.summary,
+          summary: summaryData ?? prev.summary,
           loading: false,
           error: null,
-          retryTrigger: state.retryTrigger
-        })
+          retryTrigger: prev.retryTrigger
+        }))
       } catch (err) {
         if (cancelled) return
         const errorMessage = err instanceof Error ? err.message : 'Unknown error occurred'
