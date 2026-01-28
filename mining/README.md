@@ -265,9 +265,26 @@ mining/config.py accepts:
 	•	MINER_TARGET_SHARES_PER_SEC (adaptive micro-target tuning)
 	•	RPC_URL, WS_URL, CHAIN_ID
 	•	ANIMICA_MINER_ADDRESS (bech32 address for block reward payouts; defaults to premine address)
+	•	ANIMICA_MINING_BLOCK_COOLDOWN_SEC (block found cooldown duration; default: 60 seconds)
+	  - Set to 0 to disable cooldown for smooth continuous mining across nodes
+	  - Recommended: 0 for multi-node networks, 60 for single-node testing
 	•	Stratum: STRATUM_LISTEN=0.0.0.0:11333
 	•	Selection policy overlays (local caps tighter than network)
 	•	AICF endpoints for AI/Quantum job queues (devnet-ready)
+
+Block Found Cooldown:
+	When a node successfully mines a block, it can optionally pause mining for a configurable
+	duration (cooldown) before fetching new work templates. This prevents a single fast node
+	from dominating block production:
+	  - ANIMICA_MINING_BLOCK_COOLDOWN_SEC=60 (default): 60-second pause after finding a block
+	  - ANIMICA_MINING_BLOCK_COOLDOWN_SEC=0: No cooldown - continuous mining (recommended for production)
+	  - ANIMICA_MINING_BLOCK_COOLDOWN_SEC=10: 10-second cooldown (light throttling)
+	
+	For smooth mining across multiple nodes without "turn-based" block production, set the cooldown to 0:
+	```bash
+	export ANIMICA_MINING_BLOCK_COOLDOWN_SEC=0
+	python -m mining.cli.miner start
+	```
 
 Device Auto-Detection:
 	When MINER_DEVICE is set to 'auto' (default), the miner automatically detects and uses
@@ -339,6 +356,21 @@ The `--workers` flag controls CPU worker processes used during mining:
 - Accepts any non-negative integer value (0=auto)
 - Example: `--workers 8` uses 8 CPU worker processes for mining
 - Set `ANIMICA_MINER_WORKERS` to change the default worker count
+- **Important**: Thread count is automatically capped at the physical CPU count to prevent oversubscription
+- Setting threads to 20000 will use at most `os.cpu_count()` threads (typically 4-64 cores)
+- Higher thread counts don't improve performance beyond the physical CPU core count
+- The batch size is automatically scaled based on thread count for optimal efficiency
+
+**Thread Performance Optimization:**
+To maximize mining performance:
+- Set `ANIMICA_MINER_THREADS=0` for automatic detection (recommended)
+- Or set `ANIMICA_MINER_THREADS=N` where N equals your CPU core count
+- Avoid setting excessive thread counts (e.g., 20000) as they provide no benefit
+- The system automatically:
+  - Caps threads at physical CPU count to prevent oversubscription
+  - Scales batch size based on thread count to minimize context switching
+  - Distributes work evenly across all threads
+- For continuous smooth mining across multiple nodes: `ANIMICA_MINING_BLOCK_COOLDOWN_SEC=0`
 
 **Dynamic Theta Adjustment:**
 During mining, the acceptance threshold Θ (theta) is dynamically adjusted based on:
