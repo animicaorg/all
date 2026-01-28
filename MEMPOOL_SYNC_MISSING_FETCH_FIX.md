@@ -58,8 +58,8 @@ async def mempool_sync_loop(self) -> None:
 
 ### How It Works
 
-1. **Every 15 seconds** (configurable via `mempool_sync_interval_s`):
-   - The loop calls `request_missing_known(limit=128)`
+1. **Every `mempool_sync_interval_s` (default: 15 seconds)**:
+   - The loop calls `request_missing_known(limit=128, trigger="mempool_sync_loop")`
    - This samples up to 128 transaction IDs from peers' `known_txids` sets
 
 2. **For each sampled txid**, it checks if:
@@ -73,7 +73,7 @@ async def mempool_sync_loop(self) -> None:
    - TX_GET messages are sent to the appropriate peers
    - The `TX_MISSING_FETCH` log event is emitted
 
-This ensures **eventual consistency** - even if initial INV messages or TX_GET responses are lost due to network issues, transactions will be fetched on the next sync cycle.
+This ensures **eventual consistency** - even if initial INV messages or TX_GET responses are lost due to network issues, transactions will be fetched on the next sync cycle (every `mempool_sync_interval_s`, default 15 seconds).
 
 ## Testing
 
