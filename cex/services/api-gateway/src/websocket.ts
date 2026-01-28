@@ -66,7 +66,9 @@ export function createWebSocketServer(
   }, 30000);
 
   wss.on("connection", (ws: WebSocket, req: IncomingMessage) => {
-    // Extract user ID from query params or headers (in production, validate JWT)
+    // ⚠️ SECURITY WARNING: userId from query params is NOT secure!
+    // This is for development only. In production, validate JWT tokens
+    // TODO: Implement proper JWT authentication before production deployment
     const url = new URL(req.url || "", `http://${req.headers.host}`);
     const userId = url.searchParams.get("userId") || undefined;
 

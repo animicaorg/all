@@ -31,8 +31,12 @@ const start = async () => {
   const app = express();
   
   // Middleware
+  // ⚠️ SECURITY WARNING: CORS is configured for development only!
+  // In production, replace `origin: true` with a whitelist of allowed domains
   app.use(cors({
-    origin: true,
+    origin: process.env.NODE_ENV === 'production' 
+      ? process.env.ALLOWED_ORIGINS?.split(',') || false
+      : true,
     credentials: true,
   }));
   app.use(express.json());

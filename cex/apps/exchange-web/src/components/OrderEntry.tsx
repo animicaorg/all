@@ -69,23 +69,27 @@ export function OrderEntry({ market, balances, onSubmit, isSubmitting }: OrderEn
       return `Minimum order size is ${market.minOrderSize}`;
     }
 
-    // Check tick size
+    // Check tick size (use epsilon for floating-point comparison)
     if (market.priceTick && orderType === 'limit') {
-      const remainder = pr % market.priceTick;
-      if (remainder !== 0) {
+      const priceRemainder = pr % market.priceTick;
+      const epsilon = market.priceTick / 1000;
+      if (Math.abs(priceRemainder) > epsilon && Math.abs(priceRemainder - market.priceTick) > epsilon) {
         return `Price must be a multiple of ${market.priceTick}`;
       }
     }
 
-    // Check step size
+    // Check step size (use epsilon for floating-point comparison)
     if (market.sizeStep) {
-      const remainder = qty % market.sizeStep;
-      if (remainder !== 0) {
+      const qtyRemainder = qty % market.sizeStep;
+      const epsilon = market.sizeStep / 1000;
+      if (Math.abs(qtyRemainder) > epsilon && Math.abs(qtyRemainder - market.sizeStep) > epsilon) {
         return `Quantity must be a multiple of ${market.sizeStep}`;
       }
     }
 
     // Check balance
+    // Note: Fee calculation assumes fee is paid in quote asset
+    // In production, check market.feeAsset and adjust accordingly
     if (side === 'buy') {
       const required = orderType === 'limit' ? total + estimatedFee : availableBalance;
       if (required > availableBalance) {
