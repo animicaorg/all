@@ -400,6 +400,7 @@ class BlockImporter:
         "_max_orphans",
         "_max_future_seconds",
         "_min_block_spacing_ms",
+        "_max_block_spacing_ms",
         "_state_snapshots",
         "_state_snapshot_limit",
         "_max_reorg_depth",
@@ -509,6 +510,38 @@ class BlockImporter:
         
         if self._min_block_spacing_ms > 0:
             log.info(f"Minimum block spacing enforced: {self._min_block_spacing_ms} ms ({self._min_block_spacing_ms / 1000:.1f} seconds)")
+        
+        # Read max_block_spacing_ms from params if available, with env var override
+        default_max_spacing = 0
+        if self.full_params_dict:
+            try:
+                # Try to read from network-specific params
+                network_key = f"animica:{params.chain_id}"
+                if "networks" in self.full_params_dict and network_key in self.full_params_dict["networks"]:
+                    network_params = self.full_params_dict["networks"][network_key]
+                    if "monetary" in network_params and "issuance" in network_params["monetary"]:
+                        default_max_spacing = int(network_params["monetary"]["issuance"].get("max_block_spacing_ms", 0))
+                # Fall back to defaults if not in network-specific config
+                if default_max_spacing == 0 and "defaults" in self.full_params_dict:
+                    defaults = self.full_params_dict["defaults"]
+                    if "issuance" in defaults:
+                        default_max_spacing = int(defaults["issuance"].get("max_block_spacing_ms", 0))
+            except (KeyError, ValueError, TypeError) as e:
+                log.warning(f"Failed to read max_block_spacing_ms from params: {e}, using default 0")
+                default_max_spacing = 0
+        
+        # Environment variable can override config file
+        self._max_block_spacing_ms = int(os.getenv("ANIMICA_MAX_BLOCK_SPACING_MS", str(default_max_spacing)))
+        
+        # Validate max_block_spacing_ms is non-negative
+        if self._max_block_spacing_ms < 0:
+            log.warning(
+                f"max_block_spacing_ms must be non-negative, got {self._max_block_spacing_ms}, using 0"
+            )
+            self._max_block_spacing_ms = 0
+        
+        if self._max_block_spacing_ms > 0:
+            log.info(f"Maximum block spacing enforced: {self._max_block_spacing_ms} ms ({self._max_block_spacing_ms / 1000:.1f} seconds)")
         
         self._state_snapshots: Dict[int, Any] = {}
         self._state_snapshot_limit = int(
@@ -1954,6 +1987,10 @@ class BlockImporter:
             delta_ms = (ts - parent_ts) * 1000
             if delta_ms < self._min_block_spacing_ms:
                 return "timestamp spacing too short"
+        if self._max_block_spacing_ms > 0 and parent_ts is not None:
+            delta_ms = (ts - parent_ts) * 1000
+            if delta_ms > self._max_block_spacing_ms:
+                return "timestamp spacing too long"
         return None
 
     def _theta_sanity(
