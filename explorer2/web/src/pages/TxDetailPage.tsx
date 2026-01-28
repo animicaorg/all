@@ -16,13 +16,21 @@ export default function TxDetailPage() {
   useEffect(() => {
     if (!hash) return
     
-    Promise.all([
-      api.getTx(hash),
-      api.getHead()
-    ])
-      .then(([txRes, headRes]) => {
+    // Fetch transaction independently
+    api.getTx(hash)
+      .then((txRes) => {
         setTx(txRes)
-        setHead({ height: headRes.head.height })
+        setError(null)
+        
+        // Try to get head for confirmations, but don't fail if it errors
+        api.getHead()
+          .then((headRes) => {
+            setHead({ height: headRes.head.height })
+          })
+          .catch((err) => {
+            // Ignore head fetch errors - we can still show the tx
+            console.warn('Could not fetch head for confirmations:', err)
+          })
       })
       .catch((err) => setError(String(err)))
   }, [hash])

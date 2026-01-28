@@ -8,6 +8,7 @@ import ErrorDisplay from '../components/ErrorDisplay'
 export default function HomePage() {
   const [data, setData] = useState<Awaited<ReturnType<typeof api.getHead>> | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [refetchTrigger, setRefetchTrigger] = useState(0)
 
   useEffect(() => {
     let mounted = true
@@ -43,7 +44,7 @@ export default function HomePage() {
       mounted = false
       clearInterval(intervalId)
     }
-  }, [])
+  }, [refetchTrigger])
 
   if (error) {
     return (
@@ -52,6 +53,7 @@ export default function HomePage() {
         onRetry={() => {
           setError(null)
           setData(null)
+          setRefetchTrigger(prev => prev + 1)
         }}
       />
     )
