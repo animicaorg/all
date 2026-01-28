@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
+import { AlertTriangle } from 'lucide-react';
 import { useAuthStore } from '../lib/auth-store';
 
 export default function LoginPage() {
@@ -34,6 +35,24 @@ export default function LoginPage() {
             Sign in to your account
           </h2>
         </div>
+
+        {/* Risk Warning */}
+        <div className="bg-red-900/30 border-2 border-red-500 rounded-lg p-4">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="text-red-500 flex-shrink-0 mt-0.5" size={24} />
+            <div className="text-sm">
+              <p className="font-bold text-red-400 mb-1">RISK WARNING</p>
+              <p className="text-red-300">
+                Animica has <span className="font-bold">NO INTRINSIC VALUE</span> and you may{' '}
+                <span className="font-bold">LOSE YOUR ENTIRE INVESTMENT</span>.
+              </p>
+              <Link to="/legal" className="text-red-400 hover:text-red-300 underline block mt-2">
+                Read Full Legal Disclaimer →
+              </Link>
+            </div>
+          </div>
+        </div>
+
         <form className="mt-8 space-y-6" onSubmit={handleSubmit}>
           {error && (
             <div className="bg-red-500/10 border border-red-500 text-red-500 px-4 py-3 rounded">
@@ -83,10 +102,6 @@ export default function LoginPage() {
             >
               {loading ? 'Signing in...' : 'Sign in'}
             </button>
-          </div>
-          
-          <div className="text-center text-sm text-slate-400">
-            <p>Demo Mode: Use any email/password to login</p>
           </div>
         </form>
       </div>
