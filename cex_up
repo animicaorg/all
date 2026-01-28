@@ -109,10 +109,12 @@ load_env() {
 }
 
 set_service_defaults() {
-  API_GATEWAY_PORT="${API_GATEWAY_PORT:-3000}"
+  API_GATEWAY_PORT="${API_GATEWAY_PORT:-2456}"
   ADMIN_SERVICE_PORT="${ADMIN_SERVICE_PORT:-4000}"
+  ADMIN_WEB_PORT="${ADMIN_WEB_PORT:-5173}"
   API_GATEWAY_HOST="${API_GATEWAY_HOST:-0.0.0.0}"
   ADMIN_SERVICE_HOST="${ADMIN_SERVICE_HOST:-0.0.0.0}"
+  ADMIN_WEB_HOST="${ADMIN_WEB_HOST:-0.0.0.0}"
 }
 
 setup_corepack() {
@@ -276,18 +278,16 @@ ensure_port_available() {
 start_dev_services() {
   log_info "Starting CEX services + admin console..."
   echo "Assumptions:"
-  echo "  - Admin console is apps/admin-web (Vite on :5173)."
+  echo "  - Admin console is apps/admin-web (Vite on :${ADMIN_WEB_PORT})."
   echo "  - Admin API is @cex/admin-service (PORT=${ADMIN_SERVICE_PORT})."
   echo "  - Exchange API is @cex/api-gateway (PORT=${API_GATEWAY_PORT})."
   echo ""
 
   ensure_port_available "api-gateway" "$API_GATEWAY_HOST" "$API_GATEWAY_PORT"
   ensure_port_available "admin-service" "$ADMIN_SERVICE_HOST" "$ADMIN_SERVICE_PORT"
+  ensure_port_available "admin-web" "$ADMIN_WEB_HOST" "$ADMIN_WEB_PORT"
 
-  local web_host_args=()
-  if [[ "${CEX_EXPOSE:-0}" == "1" ]]; then
-    web_host_args=(--host 0.0.0.0)
-  fi
+  local web_host_args=(--host "$ADMIN_WEB_HOST" --port "$ADMIN_WEB_PORT")
 
   if [[ "$DAEMON" == "true" ]]; then
     mkdir -p "$LOG_DIR"
@@ -322,7 +322,7 @@ print_next_steps() {
   echo "═══════════════════════════════════════════════════════════════"
   echo "API Gateway:        http://localhost:${API_GATEWAY_PORT}"
   echo "Admin Service:      http://localhost:${ADMIN_SERVICE_PORT}"
-  echo "Admin Console:      http://localhost:5173"
+  echo "Admin Console:      http://localhost:${ADMIN_WEB_PORT}"
   echo "PostgreSQL:         ${DB_USER}@localhost:${DB_PORT}/${DB_NAME}"
   echo "Redis:              ${REDIS_URL}"
   echo "NATS:               ${NATS_URL}"
