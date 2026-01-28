@@ -7,6 +7,7 @@ import type {
   Balance,
   UserTrade,
   CreateOrderRequest,
+  PlatformStats,
 } from '../types';
 
 const API_URL = import.meta.env.VITE_CEX_API_URL || 'http://localhost:3000';
@@ -176,6 +177,16 @@ class ApiClient {
       locked: b.locked,
       total: b.total,
     }));
+  }
+
+  // Platform Statistics
+  async getStats(): Promise<PlatformStats> {
+    const { data } = await this.client.get('/stats');
+    return {
+      volume24h: data.volume24h,
+      activeTraders: data.activeTraders,
+      uptimePercentage: data.uptimePercentage,
+    };
   }
 
 }

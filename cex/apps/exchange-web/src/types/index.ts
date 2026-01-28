@@ -84,3 +84,9 @@ export interface WSMessage {
   symbol?: string;
   data: unknown;
 }
+
+export interface PlatformStats {
+  volume24h: number;
+  activeTraders: number;
+  uptimePercentage: number;
+}
