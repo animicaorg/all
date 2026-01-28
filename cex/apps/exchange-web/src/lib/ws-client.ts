@@ -30,7 +30,7 @@ export class WSClient {
 
   constructor(options: WSClientOptions) {
     this.options = {
-      userId: options.userId,
+      userId: options.userId || undefined,
       onMessage: options.onMessage || (() => {}),
       onStateChange: options.onStateChange || (() => {}),
       onError: options.onError || (() => {}),
