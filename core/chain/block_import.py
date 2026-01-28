@@ -565,9 +565,11 @@ class BlockImporter:
         """
         Update difficulty state based on a window of recent block intervals.
         
-        This prevents gaming by requiring multiple blocks before difficulty adjusts.
-        Miners cannot exploit the system by turning on/off because difficulty is
-        based on the average of the last N blocks, not individual block intervals.
+        This prevents gaming by requiring multiple blocks before updating difficulty.
+        Miners cannot exploit the system by turning on/off because:
+        1. Difficulty only updates every N blocks (window_size)
+        2. Update is based on average of all N blocks in window
+        3. Single fast/slow blocks are smoothed out
         
         Args:
             block_timestamp: Unix timestamp (seconds) of the current block
@@ -579,15 +581,15 @@ class BlockImporter:
             # Add current timestamp to the window
             self._timestamp_window.append(block_timestamp)
             
-            # Only update difficulty when we have a full window of timestamps
-            # This prevents single-block manipulation and requires sustained
-            # hash rate changes before difficulty adjusts
+            # Only update difficulty when window is full
+            # This is the key anti-gaming feature: require sustained pattern
             if len(self._timestamp_window) < self._window_size:
-                # Not enough data yet, just track the timestamp for next time
+                # Window not full yet, don't update difficulty
+                # Just track the timestamp for next time
                 self._last_block_time = block_timestamp
                 return
             
-            # Calculate average inter-block time over the window
+            # Window is full - calculate average interval
             timestamps = list(self._timestamp_window)
             intervals = []
             for i in range(1, len(timestamps)):
@@ -600,18 +602,25 @@ class BlockImporter:
                 self._last_block_time = block_timestamp
                 return
             
-            # Use the average interval over the window
+            # Use the average interval over the entire window
             avg_dt_seconds = float(sum(intervals)) / len(intervals)
             
             # Update theta using the window average
             # This makes it much harder to game by turning miners on/off
-            # because the window must be filled with consistent intervals
+            # because the attacker must sustain a pattern for window_size blocks
             self.difficulty_state = diff.update_theta(
                 self.difficulty_state,
                 dt_seconds=avg_dt_seconds,
                 blocks_skipped=len(intervals),  # Account for the window size
             )
             self._difficulty_samples += 1
+            
+            # IMPORTANT: Clear the window after updating
+            # This means difficulty only updates every window_size blocks
+            # which is the key anti-gaming mechanism
+            self._timestamp_window.clear()
+            # Keep the last timestamp as starting point for next window
+            self._timestamp_window.append(block_timestamp)
             
             # Update last block time for next iteration
             self._last_block_time = block_timestamp
