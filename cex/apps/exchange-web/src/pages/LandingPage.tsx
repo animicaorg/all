@@ -1,7 +1,62 @@
 import { Link } from 'react-router-dom';
 import { TrendingUp, Shield, Zap, Globe, ArrowRight, CheckCircle2 } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { apiClient } from '../lib/api-client';
+import type { PlatformStats } from '../types';
 
 export default function LandingPage() {
+  const [stats, setStats] = useState<PlatformStats | null>(null);
+  const [statsLoading, setStatsLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchStats = async () => {
+      try {
+        const data = await apiClient.getStats();
+        setStats(data);
+      } catch (error) {
+        console.error('Failed to load platform stats:', error);
+        // Keep stats null to show fallback message
+      } finally {
+        setStatsLoading(false);
+      }
+    };
+
+    fetchStats();
+  }, []);
+
+  const formatVolume = (volume: number) => {
+    if (volume >= 1_000_000_000) {
+      return `$${(volume / 1_000_000_000).toFixed(1)}B`;
+    } else if (volume >= 1_000_000) {
+      return `$${(volume / 1_000_000).toFixed(1)}M`;
+    } else if (volume >= 1_000) {
+      return `$${(volume / 1_000).toFixed(1)}K`;
+    } else if (volume > 0) {
+      return `$${volume.toFixed(0)}`;
+    } else {
+      return 'Coming Soon';
+    }
+  };
+
+  const formatTraders = (traders: number) => {
+    if (traders >= 1_000_000) {
+      return `${(traders / 1_000_000).toFixed(1)}M+`;
+    } else if (traders >= 1_000) {
+      return `${(traders / 1_000).toFixed(1)}K+`;
+    } else if (traders > 0) {
+      return `${traders}+`;
+    } else {
+      return 'Growing';
+    }
+  };
+
+  const formatUptime = (uptime: number | null) => {
+    if (uptime === null) {
+      return 'N/A';
+    }
+    return `${uptime.toFixed(1)}%`;
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-blue-950">
       {/* Animated background elements */}
@@ -157,19 +212,19 @@ export default function LandingPage() {
           <div className="grid md:grid-cols-3 gap-8 text-center">
             <div className="space-y-2">
               <div className="text-5xl font-bold bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">
-                $1B+
+                {statsLoading ? '...' : stats ? formatVolume(stats.volume24h) : 'N/A'}
               </div>
               <div className="text-slate-400">24h Trading Volume</div>
             </div>
             <div className="space-y-2">
               <div className="text-5xl font-bold bg-gradient-to-r from-purple-400 to-pink-400 bg-clip-text text-transparent">
-                50K+
+                {statsLoading ? '...' : stats ? formatTraders(stats.activeTraders) : 'N/A'}
               </div>
               <div className="text-slate-400">Active Traders</div>
             </div>
             <div className="space-y-2">
               <div className="text-5xl font-bold bg-gradient-to-r from-pink-400 to-blue-400 bg-clip-text text-transparent">
-                99.9%
+                {statsLoading ? '...' : stats ? formatUptime(stats.uptimePercentage) : 'N/A'}
               </div>
               <div className="text-slate-400">Uptime</div>
             </div>

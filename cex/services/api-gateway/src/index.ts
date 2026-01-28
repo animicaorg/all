@@ -14,6 +14,7 @@ import {
 import metaRouter from "./routes/meta";
 import { createMarketsRouter } from "./routes/markets";
 import { createOrdersRouter } from "./routes/orders";
+import { createStatsRouter } from "./routes/stats";
 import { createWebSocketServer } from "./websocket";
 
 const env = loadEnv(
@@ -106,6 +107,7 @@ const start = async () => {
   app.use(metaRouter);
   app.use(createMarketsRouter(pgPool));
   app.use(createOrdersRouter(pgPool, nats));
+  app.use(createStatsRouter(pgPool));
 
   // Start HTTP server
   const server = app.listen(env.PORT, env.HOST, () => {
