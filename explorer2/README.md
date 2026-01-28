@@ -97,13 +97,41 @@ Use the **Diagnostics** page in the web UI (`/diagnostics`) to check which mode 
 
 ## Development (API + Web)
 
-Run the full development stack:
+Run the full development stack with hot-reload:
 
 ```bash
+# From the repository root
 pnpm -C explorer2 dev
 ```
 
-- API runs on `http://localhost:8081`
+This starts:
+- **Shared package** in watch mode (TypeScript compilation)
+- **API server** on `http://localhost:8081` (with hot-reload via tsx watch)
+- **Web UI** on `http://localhost:3001` (with Vite dev server)
+
+The web UI automatically proxies `/api` requests to the API server.
+
+Run individual services for development:
+
+```bash
+# Build shared package first (required for API)
+pnpm -C explorer2/shared build
+
+# API only (with hot-reload)
+pnpm -C explorer2/api dev
+
+# Web only (requires API to be running)
+pnpm -C explorer2/web dev
+
+# Web with custom host/port for VPS deployment
+pnpm -C explorer2/web dev -- --host 0.0.0.0 --port 5173
+```
+
+**Development Tips:**
+- Changes to shared types require rebuilding: `pnpm -C explorer2/shared build`
+- API hot-reloads automatically via `tsx watch`
+- Web UI hot-reloads automatically via Vite HMR
+- Use `http://localhost:3001/diagnostics` to check connection status
 - Web runs on `http://localhost:3001` and proxies `/api` to the API service
 
 Run individual services:
@@ -118,10 +146,52 @@ pnpm -C explorer2/web dev
 
 ## Production build
 
+Build all packages for production:
+
 ```bash
 pnpm -C explorer2 build
+```
+
+This builds:
+1. Shared types (TypeScript → JavaScript)
+2. API server (TypeScript → JavaScript in `dist/`)
+3. Web UI (Vite production build in `dist/`)
+
+Start the API server in production:
+
+```bash
 pnpm -C explorer2/api start
 ```
+
+Serve the web UI with any static file server or reverse proxy.
+
+## Testing
+
+Run all tests:
+
+```bash
+# API tests (33 tests)
+pnpm -C explorer2/api test
+
+# Web UI tests (14 tests)
+pnpm -C explorer2/web test
+
+# Run specific test file
+pnpm -C explorer2/api test search
+
+# Run with coverage
+pnpm -C explorer2/api test --coverage
+```
+
+**Test Structure:**
+- `explorer2/api/tests/` - API endpoint tests, service tests, utility tests
+- `explorer2/web/src/lib/*.test.ts` - Web utility function tests
+
+**Test Coverage:**
+- RPC client (timeouts, retries, errors)
+- Service layer (blocks, txs, addresses, search)
+- API endpoints (health, meta, blocks, tx, address, mempool, search)
+- Utility functions (formatting, pagination, caching)
 
 ## Docker deployment
 
