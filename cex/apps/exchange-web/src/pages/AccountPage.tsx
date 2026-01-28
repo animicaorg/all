@@ -10,14 +10,15 @@ export default function AccountPage() {
   });
 
   const totalValueUSD = balances.reduce((sum, balance) => {
-    // Mock conversion - in production would use actual market prices
-    const mockPrices: Record<string, number> = {
+    // TODO: Fetch actual market prices from API instead of using static values
+    // For now, using static prices for USD conversion display only
+    const staticPrices: Record<string, number> = {
       USDT: 1,
       ANM: 1.25,
       BTC: 45000,
       ETH: 2800,
     };
-    return sum + balance.total * (mockPrices[balance.asset] || 0);
+    return sum + balance.total * (staticPrices[balance.asset] || 0);
   }, 0);
 
   if (isLoading) {
