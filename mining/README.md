@@ -356,6 +356,21 @@ The `--workers` flag controls CPU worker processes used during mining:
 - Accepts any non-negative integer value (0=auto)
 - Example: `--workers 8` uses 8 CPU worker processes for mining
 - Set `ANIMICA_MINER_WORKERS` to change the default worker count
+- **Important**: Thread count is automatically capped at the physical CPU count to prevent oversubscription
+- Setting threads to 20000 will use at most `os.cpu_count()` threads (typically 4-64 cores)
+- Higher thread counts don't improve performance beyond the physical CPU core count
+- The batch size is automatically scaled based on thread count for optimal efficiency
+
+**Thread Performance Optimization:**
+To maximize mining performance:
+- Set `ANIMICA_MINER_THREADS=0` for automatic detection (recommended)
+- Or set `ANIMICA_MINER_THREADS=N` where N equals your CPU core count
+- Avoid setting excessive thread counts (e.g., 20000) as they provide no benefit
+- The system automatically:
+  - Caps threads at physical CPU count to prevent oversubscription
+  - Scales batch size based on thread count to minimize context switching
+  - Distributes work evenly across all threads
+- For continuous smooth mining across multiple nodes: `ANIMICA_MINING_BLOCK_COOLDOWN_SEC=0`
 
 **Dynamic Theta Adjustment:**
 During mining, the acceptance threshold Θ (theta) is dynamically adjusted based on:
