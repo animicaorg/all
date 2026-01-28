@@ -303,16 +303,21 @@ async def scan_forever(
     """
     Async scan loop that uses mining.device backends to find CPU shares.
     
-    The batch_size is automatically scaled based on thread count to ensure
-    efficient work distribution and minimize context switching overhead.
+    The batch_size is automatically scaled based on the effective thread count
+    (capped at physical CPU count) to ensure efficient work distribution and
+    minimize context switching overhead.
     """
     import asyncio
 
     from mining import device as device_mod
 
-    # Auto-scale batch size based on thread count for better efficiency
-    # More threads need larger batches to avoid excessive context switching
-    effective_threads = threads if threads > 0 else (os.cpu_count() or 1)
+    # Auto-scale batch size based on effective thread count for better efficiency
+    # Effective threads are capped at physical CPU count by the backend
+    if threads > 0:
+        effective_threads = min(threads, os.cpu_count() or 1)
+    else:
+        effective_threads = os.cpu_count() or 1
+    
     # Scale batch size: at least 10k iterations per thread to minimize overhead
     min_batch_per_thread = 10_000
     scaled_batch_size = max(batch_size, effective_threads * min_batch_per_thread)
@@ -433,8 +438,8 @@ async def scan_forever(
                     share_payload["txs"] = current_tpl.get("txs")
                 await out_queue.put(share_payload)
 
-            # Yield control to allow other async tasks to run, but only if needed
-            # This prevents blocking the event loop for too long
+            # Yield control to allow other async tasks to run
+            # This prevents blocking the event loop for too long during mining
             await asyncio.sleep(0)
     finally:
         if next_tpl_task:
