@@ -226,7 +226,17 @@ class _CPUDevice:
             )
 
         # Parallel split across T threads; maintain deterministic ordering
-        T = min(effective_threads, max(1, os.cpu_count() or 1))
+        # Cap at actual CPU count to prevent oversubscription
+        max_physical_threads = max(1, os.cpu_count() or 1)
+        T = min(effective_threads, max_physical_threads)
+        
+        if effective_threads > max_physical_threads:
+            log.info(
+                "CPU scan: requested %d threads, but capping at %d (CPU count) to prevent oversubscription",
+                effective_threads,
+                max_physical_threads,
+            )
+        
         log.info(
             "CPU scan using multi-threaded mode with %d threads (configured=%d, iterations=%d)",
             T,

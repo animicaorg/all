@@ -139,6 +139,11 @@ class OrchestratorConfig:
         os.getenv("ANIMICA_MINER_THREADS", "0")
     )  # 0 => auto (per backend)
 
+    # Block found cooldown (seconds)
+    # Set ANIMICA_MINING_BLOCK_COOLDOWN_SEC=0 to disable cooldown for smooth mining
+    # Default: 60 seconds (backwards compatible)
+    # Note: Cooldown is managed by mining.cooldown.get_block_found_cooldown()
+
     # Useful-work workers
     run_ai_worker: bool = os.getenv("ANIMICA_MINER_AI_WORKER", "1") != "0"
     run_quantum_worker: bool = os.getenv("ANIMICA_MINER_QUANTUM_WORKER", "1") != "0"
