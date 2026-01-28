@@ -125,7 +125,17 @@ def get_block_found_cooldown() -> BlockFoundCooldown:
     global _DEFAULT_COOLDOWN
     if _DEFAULT_COOLDOWN is None:
         # Read from environment, default to 60 for backwards compatibility
-        cooldown_sec = float(os.getenv("ANIMICA_MINING_BLOCK_COOLDOWN_SEC", "60.0"))
+        try:
+            cooldown_sec = float(os.getenv("ANIMICA_MINING_BLOCK_COOLDOWN_SEC", "60.0"))
+        except (ValueError, TypeError):
+            log.warning(
+                "Invalid ANIMICA_MINING_BLOCK_COOLDOWN_SEC value, using default 60.0 seconds"
+            )
+            cooldown_sec = 60.0
+        
+        # Ensure non-negative
+        cooldown_sec = max(0.0, cooldown_sec)
+        
         _DEFAULT_COOLDOWN = BlockFoundCooldown(cooldown_sec=cooldown_sec)
         if cooldown_sec <= 0.0:
             log.info("Block found cooldown is DISABLED - mining will be continuous")

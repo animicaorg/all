@@ -62,3 +62,22 @@ async def test_cooldown_allows_continuous_mining() -> None:
         await cooldown.await_if_cooling_down()
     elapsed = time.monotonic() - start
     assert elapsed < 0.1  # Should be very fast
+
+
+@pytest.mark.asyncio
+async def test_cooldown_negative_value_treated_as_zero() -> None:
+    """Test that negative cooldown values are treated as 0 (disabled)."""
+    cooldown = BlockFoundCooldown(cooldown_sec=-10.0)
+    
+    # Should be treated as 0 (disabled)
+    cooldown.notify_block_accepted(height=100, block_hash="0xnegative")
+    
+    # Should not wait at all
+    start = time.monotonic()
+    await cooldown.await_if_cooling_down()
+    elapsed = time.monotonic() - start
+    
+    # Should be nearly instant (no cooldown)
+    assert elapsed < 0.05
+    assert not cooldown.is_cooling_down()
+    assert cooldown.remaining() == 0.0
