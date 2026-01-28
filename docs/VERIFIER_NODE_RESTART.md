@@ -6,10 +6,11 @@ This guide helps verifier node operators handle node restarts, especially after 
 
 Verifier nodes (144.126.133.21, 3.12.224.189) are trusted seed nodes that anchor the network's block height validation. They can now restart and resume syncing without manual intervention.
 
-## Genesis Hash Update (Mainnet Reset 2026-01)
+## Genesis Hash Update (Mainnet Reset 2026-01-28b)
 
-The mainnet genesis hash changed in the 2026-01 reset:
-- **New genesis hash**: `0xe020040d488c83dd86a1613c5a8017cf60e7ed725952426cef39ab584ac43fab`
+The mainnet genesis hash changed in the 2026-01-28b reset:
+- **New genesis hash**: `0xec3915d93db8586ea7a11e4deb98ca21317ee3772dd1e4a0fd78cb923aa07ca0`
+- **Genesis timestamp**: `2026-01-28T17:18:22Z`
 - **Chain ID**: Remains `1` (mainnet)
 
 ### Automatic Update (Recommended)
