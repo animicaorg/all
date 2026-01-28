@@ -592,7 +592,8 @@ class BlockImporter:
             
             # Determine if we're at an epoch boundary
             # Epoch boundaries occur at multiples of window_size
-            blocks_in_current_epoch = (block_height - self._difficulty_epoch_start_height)
+            # Calculate how many blocks have been processed in the current epoch
+            blocks_in_current_epoch = (block_height - self._difficulty_epoch_start_height) + 1
             
             # Only update difficulty at epoch boundaries
             if blocks_in_current_epoch < self._window_size:
@@ -629,11 +630,11 @@ class BlockImporter:
             )
             self._difficulty_samples += 1
             
-            # Record the new difficulty for this epoch
+            # Record the new difficulty for the NEXT epoch
             self._difficulty_epoch_theta = int(self.difficulty_state.theta_micro)
             
-            # Start a new epoch
-            self._difficulty_epoch_start_height = block_height
+            # Start a new epoch at the NEXT block
+            self._difficulty_epoch_start_height = block_height + 1
             self._timestamp_window.clear()
             # Keep the last timestamp as starting point for next epoch
             self._timestamp_window.append(block_timestamp)
