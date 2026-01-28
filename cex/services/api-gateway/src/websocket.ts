@@ -1,4 +1,4 @@
-import { Server as WebSocketServer, WebSocket } from "ws";
+import { WebSocketServer, WebSocket } from "ws";
 import { IncomingMessage, Server as HttpServer } from "http";
 import { Pool } from "pg";
 import { NatsConnection } from "nats";
