@@ -174,7 +174,7 @@ def test_compute_genesis_hash_consistency():
     # Mainnet should match documented hash from CHAIN_RESET.md
     # NOTE: This hash must be updated if mainnet genesis changes.
     # See docs/CHAIN_RESET.md for the canonical genesis hash.
-    expected_mainnet = bytes.fromhex("e020040d488c83dd86a1613c5a8017cf60e7ed725952426cef39ab584ac43fab")
+    expected_mainnet = bytes.fromhex("ec3915d93db8586ea7a11e4deb98ca21317ee3772dd1e4a0fd78cb923aa07ca0")
     assert identity1.genesis_block_hash == expected_mainnet
     assert identity1.chain_id == 1
 

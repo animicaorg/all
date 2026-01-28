@@ -1,4 +1,4 @@
-# Animica Mainnet Chain Reset (Genesis Reset 2026-01)
+# Animica Mainnet Chain Reset (Genesis Reset 2026-01-28b)
 
 This release performs a **hard chain reset** for mainnet while keeping **chain_id = 1**.
 The genesis hash has changed, so all nodes must start syncing from height 0.
@@ -6,7 +6,9 @@ The genesis hash has changed, so all nodes must start syncing from height 0.
 ## What changed
 
 - Chain ID remains **1**.
-- Genesis hash changed (new genesis): `0xe020040d488c83dd86a1613c5a8017cf60e7ed725952426cef39ab584ac43fab`.
+- Genesis hash changed (new genesis): `0xec3915d93db8586ea7a11e4deb98ca21317ee3772dd1e4a0fd78cb923aa07ca0`.
+- Genesis timestamp: `2026-01-28T17:18:22Z`
+- Genesis version: `reset-2026-01-28b`
 - P2P nodes refuse connections to peers with the old genesis.
 - Datadir guard prevents reusing old chain data for chain_id=1.
 - Target block interval updated to **300 seconds** via consensus retarget parameters.

@@ -1,30 +1,25 @@
 {
   "meta": {
     "version": 5,
-    "genesis_version": "reset-2026-01-28",
+    "genesis_version": "reset-2026-01-28b",
     "description": "Animica mainnet reset genesis (chainId=1). Premine + system accounts only."
   },
   "chainId": 1,
   "network": "animica-mainnet",
-  "genesisTime": "2026-01-28T15:52:36Z",
-
+  "genesisTime": "2026-01-28T17:18:22Z",
   "unit": {
     "symbol": "ANM",
     "decimals": 9
   },
-
   "paramsRef": {
     "path": "spec/params.yaml",
     "sha3_256": "0x0000000000000000000000000000000000000000000000000000000000000000"
   },
-
   "algPolicyRoot": "0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
-
   "beacon": {
-    "seed": "0x3e2c0ecf8dc97b154d51816e643a099b485850f692d7020fae402cdc0c95126d",
+    "seed": "0x01e8e5daac8677a364752309a0595721a7079f3685fccbba2bb16293405a225c",
     "round": 0
   },
-
   "economics": {
     "premineTotal": "81000000000000000",
     "premineBreakdownANM": {
@@ -35,21 +30,24 @@
       "dev_reserve": 9810000
     }
   },
-
   "alloc": [
-    { "address": "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz", "nonce": 0, "balance": "81000000000000000" },
-    { "address": "system:genesis-marker", "nonce": 0, "balance": "0" }
+    {
+      "address": "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz",
+      "nonce": 0,
+      "balance": "81000000000000000"
+    },
+    {
+      "address": "system:genesis-marker",
+      "nonce": 0,
+      "balance": "0"
+    }
   ],
-
   "consensus": {
     "initialThetaMicro": 1000000,
     "gammaCapMicro": 2000000
   },
-
   "notes": [
     "All balances are integers in base units (10^9 = 1 ANM).",
-    "Premine total: 81,000,000 ANM → 81,000,000 × 10^9 = 81,000,000,000,000,000 base units.",
-    "System addresses use the 'system:<name>' convention and are resolved by execution/runtime/system.py.",
-    "algPolicyRoot and paramsRef.sha3_256 are placeholders—replace with actual roots before launch."
+    "Generated via tools/genesis/make_genesis.py for mainnet reset 2026-01-28b"
   ]
 }
