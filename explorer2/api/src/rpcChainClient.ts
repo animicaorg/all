@@ -28,6 +28,7 @@ export class RpcChainClient implements ChainClient {
 
   /**
    * Detect available RPC methods.
+   * This method is memoized - capabilities are detected once and cached.
    */
   async detectCapabilities(): Promise<Capabilities> {
     if (this.capabilities) {
@@ -50,8 +51,8 @@ export class RpcChainClient implements ChainClient {
       hasPeers: checks[1].status === 'fulfilled' || (checks[1].status === 'rejected' && !checks[1].reason?.message?.includes('not found')),
       hasReceipts: checks[2].status === 'fulfilled' || (checks[2].status === 'rejected' && !checks[2].reason?.message?.includes('not found')),
       hasStateBalance: checks[3].status === 'fulfilled' || (checks[3].status === 'rejected' && !checks[3].reason?.message?.includes('not found')),
-      hasRichList: checks[4].status === 'fulfilled',
-      hasTotalSupply: checks[5].status === 'fulfilled'
+      hasRichList: checks[4].status === 'fulfilled' || (checks[4].status === 'rejected' && !checks[4].reason?.message?.includes('not found')),
+      hasTotalSupply: checks[5].status === 'fulfilled' || (checks[5].status === 'rejected' && !checks[5].reason?.message?.includes('not found'))
     }
 
     log.info({ capabilities: this.capabilities }, 'Capabilities detected')
@@ -229,8 +230,9 @@ export class RpcChainClient implements ChainClient {
     try {
       return await this.rpc.call('state.getRichList', [limit, offset])
     } catch (error) {
-      log.warn({ limit, offset, error }, 'Failed to get rich list')
-      throw new Error(`Failed to get rich list from RPC`)
+      const message = error instanceof Error ? error.message : String(error)
+      log.warn({ limit, offset, error: message }, 'Failed to get rich list')
+      throw new Error(`Failed to get rich list from RPC: ${message}`)
     }
   }
 
@@ -243,8 +245,9 @@ export class RpcChainClient implements ChainClient {
     try {
       return await this.rpc.call('state.getTotalSupply', [])
     } catch (error) {
-      log.warn({ error }, 'Failed to get total supply')
-      throw new Error(`Failed to get total supply from RPC`)
+      const message = error instanceof Error ? error.message : String(error)
+      log.warn({ error: message }, 'Failed to get total supply')
+      throw new Error(`Failed to get total supply from RPC: ${message}`)
     }
   }
 }
