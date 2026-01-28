@@ -2,6 +2,32 @@
 
 Explorer2 is a modern, standalone Animica blockchain explorer with a dedicated API and web UI. It can connect directly to an Animica node via RPC or read from a local database.
 
+## Features
+
+### Web UI
+- **Home Page**: Chain status, network stats, and latest activity
+- **Blocks Page**: Paginated list of recent blocks with auto-refresh
+- **Block Detail**: Full block information with transaction list
+- **Transaction Detail**: Transaction status with confirmation count
+- **Address Page**: Balance and transaction history
+- **Mempool Page**: Real-time pending transactions and mempool stats
+- **Search**: Unified search for blocks (by height or hash), transactions, and addresses
+- **Dark Mode**: Automatic theme switching
+- **Copy to Clipboard**: Quick copy for hashes and addresses
+- **Error Handling**: Retry buttons for failed requests
+
+### API Endpoints
+- `GET /api/health` - Health check
+- `GET /api/meta` - Explorer and network metadata
+- `GET /api/diagnostics` - Connection mode and database info
+- `GET /api/head` - Current chain head and network stats
+- `GET /api/blocks?limit=&cursor=` - Paginated block list
+- `GET /api/block/:hashOrHeight` - Block details
+- `GET /api/tx/:hash` - Transaction details
+- `GET /api/address/:addr?limit=&cursor=` - Address balance and history
+- `GET /api/mempool?limit=&cursor=` - Mempool entries and stats
+- `GET /api/search?q=` - Unified search
+
 ## Prerequisites
 
 - Node.js 18.18+
@@ -172,3 +198,62 @@ EXPLORER2_CHAIN_ID=1
 - API and web are reverse-proxy friendly: `/` serves the UI, `/api` serves the API
 - Capabilities detection gracefully handles missing RPC methods
 - Request coalescing prevents duplicate requests
+
+## Usage Examples
+
+### Search for blocks, transactions, or addresses
+
+The `/api/search` endpoint accepts various input formats and returns the appropriate result:
+
+```bash
+# Search by block height
+curl http://localhost:8081/api/search?q=12345
+
+# Search by block or transaction hash
+curl http://localhost:8081/api/search?q=0xabc123...
+
+# Search by address
+curl http://localhost:8081/api/search?q=anim1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq5nvly4
+```
+
+### Get explorer metadata
+
+```bash
+curl http://localhost:8081/api/meta
+```
+
+Returns:
+```json
+{
+  "explorer": {
+    "name": "Animica Explorer",
+    "version": "0.1.0",
+    "mode": "RPC"
+  },
+  "network": {
+    "chainId": 1,
+    "rpcUrl": "http://127.0.0.1:8545/rpc"
+  },
+  "timestamp": "2024-01-28T08:00:00.000Z"
+}
+```
+
+### Monitor mempool
+
+```bash
+# Get mempool stats and transactions
+curl http://localhost:8081/api/mempool?limit=50
+
+# Response includes stats and entries
+{
+  "total": 10,
+  "entries": [
+    { "hash": "0x..." }
+  ],
+  "stats": {
+    "count": 10,
+    "totalBytes": 5420,
+    "oldestAgeSec": 15
+  }
+}
+```
