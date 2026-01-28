@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../lib/api'
-import { formatNumber, shorten, timeAgo } from '../lib/format'
+import { formatNumber, shorten } from '../lib/format'
 import Skeleton from '../components/Skeleton'
 import ErrorDisplay from '../components/ErrorDisplay'
 
@@ -9,6 +9,7 @@ export default function MempoolPage() {
   const [data, setData] = useState<Awaited<ReturnType<typeof api.getMempool>> | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [refetchTrigger, setRefetchTrigger] = useState(0)
 
   useEffect(() => {
     let mounted = true
@@ -46,7 +47,7 @@ export default function MempoolPage() {
       mounted = false
       clearInterval(intervalId)
     }
-  }, [])
+  }, [refetchTrigger])
 
   if (error) {
     return (
@@ -55,6 +56,7 @@ export default function MempoolPage() {
         onRetry={() => {
           setError(null)
           setData(null)
+          setRefetchTrigger(prev => prev + 1)
         }}
       />
     )

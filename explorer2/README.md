@@ -132,17 +132,6 @@ pnpm -C explorer2/web dev -- --host 0.0.0.0 --port 5173
 - API hot-reloads automatically via `tsx watch`
 - Web UI hot-reloads automatically via Vite HMR
 - Use `http://localhost:3001/diagnostics` to check connection status
-- Web runs on `http://localhost:3001` and proxies `/api` to the API service
-
-Run individual services:
-
-```bash
-# API only
-pnpm -C explorer2/api dev
-
-# Web only (requires API to be running)
-pnpm -C explorer2/web dev
-```
 
 ## Production build
 
