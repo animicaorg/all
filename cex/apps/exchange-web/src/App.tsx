@@ -2,7 +2,9 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useAuthStore } from './lib/auth-store';
 import { WSProvider } from './components/WSProvider';
+import LandingPage from './pages/LandingPage';
 import LoginPage from './pages/LoginPage';
+import RegisterPage from './pages/RegisterPage';
 import MarketsPage from './pages/MarketsPage';
 import TradingPage from './pages/TradingPage';
 import AccountPage from './pages/AccountPage';
@@ -26,18 +28,23 @@ function App() {
       <Router>
         <WSProvider>
           <Routes>
-            <Route path="/login" element={<LoginPage />} />
+            {/* Public routes */}
+            <Route path="/" element={!isAuthenticated ? <LandingPage /> : <Navigate to="/markets" replace />} />
+            <Route path="/login" element={!isAuthenticated ? <LoginPage /> : <Navigate to="/markets" replace />} />
+            <Route path="/register" element={!isAuthenticated ? <RegisterPage /> : <Navigate to="/markets" replace />} />
             <Route path="/legal" element={<LegalPage />} />
+            
+            {/* Protected routes */}
             <Route
               path="/*"
               element={
                 isAuthenticated ? (
                   <Layout>
                     <Routes>
-                      <Route path="/" element={<Navigate to="/markets" replace />} />
                       <Route path="/markets" element={<MarketsPage />} />
                       <Route path="/trade/:symbol" element={<TradingPage />} />
                       <Route path="/account" element={<AccountPage />} />
+                      <Route path="*" element={<Navigate to="/markets" replace />} />
                     </Routes>
                   </Layout>
                 ) : (
