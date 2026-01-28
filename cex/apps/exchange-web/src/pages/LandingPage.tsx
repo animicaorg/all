@@ -50,7 +50,10 @@ export default function LandingPage() {
     }
   };
 
-  const formatUptime = (uptime: number) => {
+  const formatUptime = (uptime: number | null) => {
+    if (uptime === null) {
+      return 'N/A';
+    }
     return `${uptime.toFixed(1)}%`;
   };
 
