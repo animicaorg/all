@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useAuthStore } from './lib/auth-store';
 import { WSProvider } from './components/WSProvider';
 import LoginPage from './pages/LoginPage';
+import RegisterPage from './pages/RegisterPage';
 import MarketsPage from './pages/MarketsPage';
 import TradingPage from './pages/TradingPage';
 import AccountPage from './pages/AccountPage';
@@ -27,6 +28,7 @@ function App() {
         <WSProvider>
           <Routes>
             <Route path="/login" element={<LoginPage />} />
+            <Route path="/register" element={<RegisterPage />} />
             <Route path="/legal" element={<LegalPage />} />
             <Route
               path="/*"
