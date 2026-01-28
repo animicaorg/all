@@ -265,9 +265,26 @@ mining/config.py accepts:
 	•	MINER_TARGET_SHARES_PER_SEC (adaptive micro-target tuning)
 	•	RPC_URL, WS_URL, CHAIN_ID
 	•	ANIMICA_MINER_ADDRESS (bech32 address for block reward payouts; defaults to premine address)
+	•	ANIMICA_MINING_BLOCK_COOLDOWN_SEC (block found cooldown duration; default: 60 seconds)
+	  - Set to 0 to disable cooldown for smooth continuous mining across nodes
+	  - Recommended: 0 for multi-node networks, 60 for single-node testing
 	•	Stratum: STRATUM_LISTEN=0.0.0.0:11333
 	•	Selection policy overlays (local caps tighter than network)
 	•	AICF endpoints for AI/Quantum job queues (devnet-ready)
+
+Block Found Cooldown:
+	When a node successfully mines a block, it can optionally pause mining for a configurable
+	duration (cooldown) before fetching new work templates. This prevents a single fast node
+	from dominating block production:
+	  - ANIMICA_MINING_BLOCK_COOLDOWN_SEC=60 (default): 60-second pause after finding a block
+	  - ANIMICA_MINING_BLOCK_COOLDOWN_SEC=0: No cooldown - continuous mining (recommended for production)
+	  - ANIMICA_MINING_BLOCK_COOLDOWN_SEC=10: 10-second cooldown (light throttling)
+	
+	For smooth mining across multiple nodes without "turn-based" block production, set the cooldown to 0:
+	```bash
+	export ANIMICA_MINING_BLOCK_COOLDOWN_SEC=0
+	python -m mining.cli.miner start
+	```
 
 Device Auto-Detection:
 	When MINER_DEVICE is set to 'auto' (default), the miner automatically detects and uses
