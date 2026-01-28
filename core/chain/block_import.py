@@ -391,6 +391,8 @@ class BlockImporter:
         "difficulty_state",
         "_last_block_time",
         "_difficulty_samples",
+        "_timestamp_window",
+        "_window_size",
         "_orphan_pool",
         "_orphan_parents",
         "_max_orphans",
@@ -460,6 +462,10 @@ class BlockImporter:
         self.difficulty_state = None
         self._last_block_time: Optional[int] = None
         self._difficulty_samples = 0
+        # Window of recent timestamps for anti-gaming difficulty adjustment
+        # Use retarget window size from params, defaulting to 10 blocks minimum
+        self._window_size = max(10, int(getattr(params.retarget, 'window', 10)))
+        self._timestamp_window: Deque[int] = deque(maxlen=self._window_size)
         if DIFFICULTY_AVAILABLE:
             self._init_difficulty_state()
         self._orphan_pool: "OrderedDict[bytes, _OrphanBlock]" = OrderedDict()
@@ -557,7 +563,13 @@ class BlockImporter:
 
     def _update_difficulty(self, block_timestamp: int) -> None:
         """
-        Update difficulty state based on the time since the last block.
+        Update difficulty state based on a window of recent block intervals.
+        
+        This prevents gaming by requiring multiple blocks before updating difficulty.
+        Miners cannot exploit the system by turning on/off because:
+        1. Difficulty only updates every N blocks (window_size)
+        2. Update is based on average of all N blocks in window
+        3. Single fast/slow blocks are smoothed out
         
         Args:
             block_timestamp: Unix timestamp (seconds) of the current block
@@ -566,19 +578,49 @@ class BlockImporter:
             return
         
         try:
-            # Calculate time delta since last block
-            if self._last_block_time is not None:
-                dt_seconds = float(block_timestamp - self._last_block_time)
-                
-                # Sanity check: ensure positive, non-zero time delta
-                if dt_seconds > 0:
-                    # Update theta using the consensus.difficulty mechanism
-                    self.difficulty_state = diff.update_theta(
-                        self.difficulty_state,
-                        dt_seconds=dt_seconds,
-                        blocks_skipped=1,
-                    )
-                    self._difficulty_samples += 1
+            # Add current timestamp to the window
+            self._timestamp_window.append(block_timestamp)
+            
+            # Only update difficulty when window is full
+            # This is the key anti-gaming feature: require sustained pattern
+            if len(self._timestamp_window) < self._window_size:
+                # Window not full yet, don't update difficulty
+                # Just track the timestamp for next time
+                self._last_block_time = block_timestamp
+                return
+            
+            # Window is full - calculate average interval
+            timestamps = list(self._timestamp_window)
+            intervals = []
+            for i in range(1, len(timestamps)):
+                dt = timestamps[i] - timestamps[i-1]
+                if dt > 0:  # Sanity check
+                    intervals.append(dt)
+            
+            if not intervals:
+                # No valid intervals, skip update
+                self._last_block_time = block_timestamp
+                return
+            
+            # Use the average interval over the entire window
+            avg_dt_seconds = float(sum(intervals)) / len(intervals)
+            
+            # Update theta using the window average
+            # This makes it much harder to game by turning miners on/off
+            # because the attacker must sustain a pattern for window_size blocks
+            self.difficulty_state = diff.update_theta(
+                self.difficulty_state,
+                dt_seconds=avg_dt_seconds,
+                blocks_skipped=len(intervals),  # Account for the window size
+            )
+            self._difficulty_samples += 1
+            
+            # IMPORTANT: Clear the window after updating
+            # This means difficulty only updates every window_size blocks
+            # which is the key anti-gaming mechanism
+            self._timestamp_window.clear()
+            # Keep the last timestamp as starting point for next window
+            self._timestamp_window.append(block_timestamp)
             
             # Update last block time for next iteration
             self._last_block_time = block_timestamp
@@ -616,6 +658,10 @@ class BlockImporter:
             )
             self._last_block_time = int(parent_ts)
             self._difficulty_samples = 0
+            # Clear the timestamp window when reanchoring to start fresh
+            self._timestamp_window.clear()
+            # Add the parent timestamp as the first entry
+            self._timestamp_window.append(int(parent_ts))
         except Exception as e:  # pragma: no cover
             import logging
 
