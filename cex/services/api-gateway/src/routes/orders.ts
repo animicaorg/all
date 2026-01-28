@@ -19,6 +19,9 @@ const createOrderSchema = z.object({
 });
 
 // Simple auth middleware - in production, use proper JWT/session auth
+// ⚠️ SECURITY WARNING: This is NOT secure for production!
+// The x-user-id header can be spoofed by any client.
+// TODO: Replace with proper JWT authentication before production deployment
 function requireAuth(req: any, res: any, next: any) {
   // For now, mock auth - check for session/token
   const userId = req.headers["x-user-id"] || req.session?.userId;
@@ -70,7 +73,10 @@ export function createOrdersRouter(pgPool: Pool, nats: NatsConnection) {
       // Validate price tick and size step
       if (body.type === "LIMIT" && body.price) {
         const priceTick = parseFloat(market.price_tick);
-        if (body.price % priceTick !== 0) {
+        // Use epsilon comparison for floating-point precision
+        const priceRemainder = body.price % priceTick;
+        const epsilon = priceTick / 1000;
+        if (Math.abs(priceRemainder) > epsilon && Math.abs(priceRemainder - priceTick) > epsilon) {
           return res.status(400).json({
             error: "Invalid price",
             message: `Price must be a multiple of ${priceTick}`,
@@ -79,7 +85,10 @@ export function createOrdersRouter(pgPool: Pool, nats: NatsConnection) {
       }
 
       const sizeStep = parseFloat(market.size_step);
-      if (body.quantity % sizeStep !== 0) {
+      // Use epsilon comparison for floating-point precision
+      const qtyRemainder = body.quantity % sizeStep;
+      const epsilon = sizeStep / 1000;
+      if (Math.abs(qtyRemainder) > epsilon && Math.abs(qtyRemainder - sizeStep) > epsilon) {
         return res.status(400).json({
           error: "Invalid quantity",
           message: `Quantity must be a multiple of ${sizeStep}`,
