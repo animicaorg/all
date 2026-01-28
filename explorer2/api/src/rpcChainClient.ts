@@ -17,6 +17,8 @@ interface Capabilities {
   hasPeers: boolean
   hasReceipts: boolean
   hasStateBalance: boolean
+  hasRichList: boolean
+  hasTotalSupply: boolean
 }
 
 export class RpcChainClient implements ChainClient {
@@ -26,6 +28,7 @@ export class RpcChainClient implements ChainClient {
 
   /**
    * Detect available RPC methods.
+   * This method is memoized - capabilities are detected once and cached.
    */
   async detectCapabilities(): Promise<Capabilities> {
     if (this.capabilities) {
@@ -38,14 +41,18 @@ export class RpcChainClient implements ChainClient {
       this.rpc.call('mempool.getPending', []),
       this.rpc.call('p2p.getPeers', []),
       this.rpc.call('receipt.getReceipt', ['0x0000000000000000000000000000000000000000000000000000000000000000']),
-      this.rpc.call('state.getBalance', ['anim1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq5nvly4'])
+      this.rpc.call('state.getBalance', ['anim1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq5nvly4']),
+      this.rpc.call('state.getRichList', [10, 0]),
+      this.rpc.call('state.getTotalSupply', [])
     ])
 
     this.capabilities = {
       hasMempool: checks[0].status === 'fulfilled' || (checks[0].status === 'rejected' && !checks[0].reason?.message?.includes('not found')),
       hasPeers: checks[1].status === 'fulfilled' || (checks[1].status === 'rejected' && !checks[1].reason?.message?.includes('not found')),
       hasReceipts: checks[2].status === 'fulfilled' || (checks[2].status === 'rejected' && !checks[2].reason?.message?.includes('not found')),
-      hasStateBalance: checks[3].status === 'fulfilled' || (checks[3].status === 'rejected' && !checks[3].reason?.message?.includes('not found'))
+      hasStateBalance: checks[3].status === 'fulfilled' || (checks[3].status === 'rejected' && !checks[3].reason?.message?.includes('not found')),
+      hasRichList: checks[4].status === 'fulfilled' || (checks[4].status === 'rejected' && !checks[4].reason?.message?.includes('not found')),
+      hasTotalSupply: checks[5].status === 'fulfilled' || (checks[5].status === 'rejected' && !checks[5].reason?.message?.includes('not found'))
     }
 
     log.info({ capabilities: this.capabilities }, 'Capabilities detected')
@@ -215,20 +222,32 @@ export class RpcChainClient implements ChainClient {
   }
 
   async getRichList(limit: number, offset: number): Promise<unknown> {
+    const caps = await this.detectCapabilities()
+    if (!caps.hasRichList) {
+      throw new Error('Node does not support state.getRichList')
+    }
+
     try {
       return await this.rpc.call('state.getRichList', [limit, offset])
     } catch (error) {
-      log.warn({ limit, offset, error }, 'Failed to get rich list')
-      throw new Error(`Failed to get rich list from RPC`)
+      const message = error instanceof Error ? error.message : String(error)
+      log.warn({ limit, offset, error: message }, 'Failed to get rich list')
+      throw new Error(`Failed to get rich list from RPC: ${message}`)
     }
   }
 
   async getTotalSupply(): Promise<unknown> {
+    const caps = await this.detectCapabilities()
+    if (!caps.hasTotalSupply) {
+      throw new Error('Node does not support state.getTotalSupply')
+    }
+
     try {
       return await this.rpc.call('state.getTotalSupply', [])
     } catch (error) {
-      log.warn({ error }, 'Failed to get total supply')
-      throw new Error(`Failed to get total supply from RPC`)
+      const message = error instanceof Error ? error.message : String(error)
+      log.warn({ error: message }, 'Failed to get total supply')
+      throw new Error(`Failed to get total supply from RPC: ${message}`)
     }
   }
 }
