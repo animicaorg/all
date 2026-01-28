@@ -45,19 +45,20 @@ monetary:
 defaults:
   issuance:
     target_block_interval_ms: 2000
-    min_block_spacing_ms: 60000       # 60 seconds (NEW)
+    min_block_spacing_ms: 500         # 500ms (fast devnet defaults)
 ```
 
 #### 2. Block Import Logic (`core/chain/block_import.py`)
 
-**Enhanced initialization** (lines 473-498):
+**Enhanced initialization** (lines 476-505):
 - Reads `min_block_spacing_ms` from network-specific config in `full_params_dict`
 - Falls back to defaults if not in network-specific config
 - Environment variable `ANIMICA_MIN_BLOCK_SPACING_MS` can override config
+- Validates that value is non-negative
 - Logs enforcement status at startup
 
-**Existing validation** (lines 1896-1899):
-- The `_timestamp_sanity()` method already checks minimum spacing
+**Existing validation** (lines 1905-1928):
+- The `_timestamp_sanity()` method checks minimum spacing
 - Rejects blocks where `(timestamp - parent_timestamp) * 1000 < _min_block_spacing_ms`
 - Returns error: "timestamp spacing too short"
 
@@ -104,16 +105,21 @@ Created comprehensive test suite (`core/chain/tests/test_min_block_spacing.py`):
    - Verifies environment variable override
    - Tests `ANIMICA_MIN_BLOCK_SPACING_MS=120000` overrides config `60000`
 
+4. **`test_min_block_spacing_validation_rejects_negative`**
+   - Verifies negative values are rejected
+   - Tests that `-1000` is corrected to `0` with warning
+
 ### Test Results
 
 ```
 $ python3 -m pytest core/chain/tests/test_min_block_spacing.py -v
 
-test_min_block_spacing_read_from_config PASSED   [33%]
-test_min_block_spacing_defaults_to_zero PASSED   [66%]
-test_min_block_spacing_from_env_var PASSED       [100%]
+test_min_block_spacing_read_from_config PASSED         [25%]
+test_min_block_spacing_defaults_to_zero PASSED         [50%]
+test_min_block_spacing_from_env_var PASSED             [75%]
+test_min_block_spacing_validation_rejects_negative PASSED [100%]
 
-3 passed in 0.26s ✅
+4 passed in 0.27s ✅
 ```
 
 ## Impact Analysis

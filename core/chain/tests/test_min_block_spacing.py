@@ -163,5 +163,49 @@ def test_min_block_spacing_from_env_var():
             os.environ.pop("ANIMICA_MIN_BLOCK_SPACING_MS", None)
 
 
+def test_min_block_spacing_validation_rejects_negative():
+    """
+    Test that negative min_block_spacing_ms values are rejected with warning.
+    """
+    import os
+    
+    # Set env var to negative value
+    old_value = os.environ.get("ANIMICA_MIN_BLOCK_SPACING_MS")
+    os.environ["ANIMICA_MIN_BLOCK_SPACING_MS"] = "-1000"
+    
+    try:
+        params = make_test_params()
+        full_params_dict = {
+            "networks": {
+                "animica:1337": {
+                    "monetary": {
+                        "issuance": {
+                            "target_block_interval_ms": 300000,
+                            "min_block_spacing_ms": 60000,
+                        }
+                    }
+                }
+            }
+        }
+        
+        block_db = MockBlockDB()
+        
+        importer = BlockImporter(
+            params=params,
+            block_db=block_db,
+            full_params_dict=full_params_dict,
+        )
+        
+        # Negative value should be corrected to 0
+        assert importer._min_block_spacing_ms == 0
+        
+    finally:
+        # Restore env var
+        if old_value is not None:
+            os.environ["ANIMICA_MIN_BLOCK_SPACING_MS"] = old_value
+        else:
+            os.environ.pop("ANIMICA_MIN_BLOCK_SPACING_MS", None)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
