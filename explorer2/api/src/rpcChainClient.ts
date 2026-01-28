@@ -46,20 +46,26 @@ export class RpcChainClient implements ChainClient {
       this.rpc.call('state.getTotalSupply', [])
     ])
 
-    // Helper to check if error is a "method not found" error vs other errors
+    // Helper to check if a method is truly available
+    // A method is available if:
+    // 1. The call succeeded (fulfilled), OR
+    // 2. The call failed but NOT due to "method not found" (meaning the method exists but failed for other reasons like invalid params)
     const isMethodAvailable = (result: PromiseSettledResult<unknown>): boolean => {
       if (result.status === 'fulfilled') {
         return true
       }
-      // Method is considered unavailable only if it's a "method not found" or "not supported" error
+      
+      // For rejected calls, check if it's a "method not found" error
+      // If it IS a "method not found" error, the method is NOT available
+      // If it's any other error, the method exists but failed (so it IS available)
       const errorMsg = result.reason?.message?.toLowerCase() || ''
-      return !(
+      const isMethodNotFoundError = 
         errorMsg.includes('method not found') ||
-        errorMsg.includes('not found') ||
         errorMsg.includes('unknown method') ||
-        errorMsg.includes('not supported') ||
         errorMsg.includes('not implemented')
-      )
+      
+      // Return true (available) if it's NOT a "method not found" error
+      return !isMethodNotFoundError
     }
 
     this.capabilities = {

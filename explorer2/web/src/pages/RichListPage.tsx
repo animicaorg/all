@@ -11,6 +11,7 @@ interface RichListState {
   summary: RichListSummary | null
   loading: boolean
   error: string | null
+  retryTrigger: number
 }
 
 export function RichListPage() {
@@ -18,7 +19,8 @@ export function RichListPage() {
     data: null,
     summary: null,
     loading: true,
-    error: null
+    error: null,
+    retryTrigger: 0
   })
   const [limit] = useState(100)
   const [offset, setOffset] = useState(0)
@@ -59,7 +61,8 @@ export function RichListPage() {
           data: listData,
           summary: summaryData ?? state.summary,
           loading: false,
-          error: null
+          error: null,
+          retryTrigger: state.retryTrigger
         })
       } catch (err) {
         if (cancelled) return
@@ -77,7 +80,7 @@ export function RichListPage() {
     return () => {
       cancelled = true
     }
-  }, [limit, offset])
+  }, [limit, offset, state.retryTrigger])
 
   const formatBalance = (hexBalance: string): string => {
     try {
@@ -119,10 +122,14 @@ export function RichListPage() {
   }
 
   const handleRetry = () => {
-    // Reset to first page and clear error
+    // Reset to first page and trigger a refetch
     setOffset(0)
-    setState(prev => ({ ...prev, error: null, loading: true }))
-    // The useEffect will trigger automatically due to offset change
+    setState(prev => ({ 
+      ...prev, 
+      error: null, 
+      loading: true,
+      retryTrigger: prev.retryTrigger + 1 
+    }))
   }
 
   if (state.error) {
@@ -230,7 +237,7 @@ export function RichListPage() {
                   </tr>
                 ))
               ) : state.data && state.data.items.length > 0 ? (
-                state.data.items.map((entry: RichListEntry, idx: number) => (
+                state.data.items.map((entry: RichListEntry) => (
                   <tr 
                     key={entry.rank} 
                     className="hover:bg-gray-50 dark:hover:bg-gray-900/50 transition-colors"
@@ -277,7 +284,7 @@ export function RichListPage() {
                       <svg className="w-12 h-12 text-gray-400 dark:text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" />
                       </svg>
-                      <p className="text-gray-500 dark:text-gray-400">No addresses with balance found</p>
+                      <p className="text-gray-500 dark:text-gray-400">No addresses found</p>
                     </div>
                   </td>
                 </tr>
