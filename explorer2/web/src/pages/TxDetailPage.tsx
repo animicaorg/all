@@ -10,13 +10,20 @@ import Skeleton from '../components/Skeleton'
 export default function TxDetailPage() {
   const { hash } = useParams()
   const [tx, setTx] = useState<TxDetail | null>(null)
+  const [head, setHead] = useState<{ height: number } | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     if (!hash) return
-    api
-      .getTx(hash)
-      .then((res) => setTx(res))
+    
+    Promise.all([
+      api.getTx(hash),
+      api.getHead()
+    ])
+      .then(([txRes, headRes]) => {
+        setTx(txRes)
+        setHead({ height: headRes.head.height })
+      })
       .catch((err) => setError(String(err)))
   }, [hash])
 
@@ -43,6 +50,8 @@ export default function TxDetailPage() {
     return 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400'
   }
 
+  const confirmations = tx.blockHeight && head ? head.height - tx.blockHeight + 1 : 0
+
   return (
     <div className="space-y-6">
       <div className="rounded-xl border border-day-200 bg-white p-6 shadow-sm dark:border-night-800 dark:bg-night-900">
@@ -58,11 +67,16 @@ export default function TxDetailPage() {
           </div>
           <div>
             <p className="text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-slate-500">Status</p>
-            <p className="mt-2">
+            <div className="mt-2 flex flex-wrap items-center gap-2">
               <span className={`inline-flex rounded-full px-3 py-1 text-xs font-medium ${getStatusColor(tx.status)}`}>
                 {tx.status === 'confirmed' ? 'Confirmed' : tx.status === 'failed' ? 'Failed' : 'Pending'}
               </span>
-            </p>
+              {confirmations > 0 && (
+                <span className="inline-flex rounded-full bg-blue-100 px-3 py-1 text-xs font-medium text-blue-800 dark:bg-blue-900/30 dark:text-blue-400">
+                  {formatNumber(confirmations)} confirmation{confirmations !== 1 ? 's' : ''}
+                </span>
+              )}
+            </div>
           </div>
           <div>
             <p className="text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-slate-500">From</p>

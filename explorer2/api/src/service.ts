@@ -144,6 +144,53 @@ export class ExplorerService {
     }
   }
 
+  async search(query: string): Promise<{ type: 'block' | 'tx' | 'address'; result: unknown } | { type: 'none' }> {
+    const trimmed = query.trim()
+    if (!trimmed) {
+      return { type: 'none' }
+    }
+
+    // Try to detect what the user is searching for
+    // Address: starts with anim1
+    if (/^anim1/i.test(trimmed)) {
+      try {
+        const address = await this.getAddressDetail(trimmed, 10)
+        return { type: 'address', result: address }
+      } catch {
+        return { type: 'none' }
+      }
+    }
+
+    // Block by height: numeric only
+    if (/^[0-9]+$/.test(trimmed)) {
+      try {
+        const block = await this.getBlockDetail(trimmed)
+        return { type: 'block', result: block }
+      } catch {
+        return { type: 'none' }
+      }
+    }
+
+    // Transaction or block hash: 0x...
+    if (/^0x[a-fA-F0-9]+$/.test(trimmed)) {
+      // Try transaction first
+      try {
+        const tx = await this.getTxDetail(trimmed)
+        return { type: 'tx', result: tx }
+      } catch {
+        // Try block hash
+        try {
+          const block = await this.getBlockDetail(trimmed)
+          return { type: 'block', result: block }
+        } catch {
+          return { type: 'none' }
+        }
+      }
+    }
+
+    return { type: 'none' }
+  }
+
   private async getRecentBlocks(headHeight: number): Promise<BlockSummary[]> {
     const heights = Array.from({ length: RECENT_BLOCK_WINDOW }, (_, i) => headHeight - i).filter((h) => h >= 0)
     const blocks = await Promise.all(
