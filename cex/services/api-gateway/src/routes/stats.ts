@@ -10,41 +10,44 @@ export function createStatsRouter(pgPool: Pool) {
    */
   router.get("/stats", async (_req, res) => {
     try {
-      // Calculate 24h trading volume across all markets
-      const volumeResult = await pgPool.query(`
-        SELECT COALESCE(SUM(quote_amount), 0) as volume_24h
-        FROM trades
-        WHERE created_at > NOW() - INTERVAL '24 hours'
-      `);
-
-      // Count active traders in last 24h (users with accepted/filled orders)
-      const tradersResult = await pgPool.query(`
-        SELECT COUNT(DISTINCT user_id) as active_traders
-        FROM orders
-        WHERE accepted_at > NOW() - INTERVAL '24 hours'
-          AND status IN ('PARTIAL_FILL', 'FILLED', 'ACCEPTED')
-      `);
-
-      // Calculate system uptime based on health checks in last 30 days
-      // Using reconciliation_reports as a proxy for system health
-      const uptimeResult = await pgPool.query(`
+      // Use a single query with CTEs for better performance
+      const result = await pgPool.query(`
+        WITH volume AS (
+          SELECT COALESCE(SUM(quote_amount), 0) as volume_24h
+          FROM trades
+          WHERE created_at > NOW() - INTERVAL '24 hours'
+        ),
+        traders AS (
+          SELECT COUNT(DISTINCT user_id) as active_traders
+          FROM orders
+          WHERE accepted_at > NOW() - INTERVAL '24 hours'
+            AND status IN ('PARTIAL_FILL', 'FILLED', 'ACCEPTED')
+        ),
+        uptime AS (
+          SELECT 
+            COUNT(CASE WHEN ok = true THEN 1 END)::float / NULLIF(COUNT(*), 0) * 100 as uptime_percentage,
+            COUNT(*) as total_checks
+          FROM reconciliation_reports
+          WHERE job_type = 'BALANCE_RECOMPUTE'
+            AND run_at > NOW() - INTERVAL '30 days'
+        )
         SELECT 
-          COUNT(CASE WHEN ok = true THEN 1 END)::float / NULLIF(COUNT(*), 0) * 100 as uptime_percentage
-        FROM reconciliation_reports
-        WHERE job_type = 'BALANCE_RECOMPUTE'
-          AND run_at > NOW() - INTERVAL '30 days'
+          volume.volume_24h,
+          traders.active_traders,
+          uptime.uptime_percentage,
+          uptime.total_checks
+        FROM volume, traders, uptime
       `);
 
+      const row = result.rows[0];
+      
       const stats = {
-        volume24h: parseFloat(volumeResult.rows[0]?.volume_24h || '0'),
-        activeTraders: parseInt(tradersResult.rows[0]?.active_traders || '0'),
-        uptimePercentage: parseFloat(uptimeResult.rows[0]?.uptime_percentage || '99.9'),
+        volume24h: parseFloat(row.volume_24h || '0'),
+        activeTraders: parseInt(row.active_traders || '0'),
+        uptimePercentage: row.total_checks > 0 
+          ? (row.uptime_percentage !== null ? parseFloat(row.uptime_percentage) : 0)
+          : null, // null when no health check data available
       };
-
-      // If no health check data is available, default to 99.9%
-      if (!stats.uptimePercentage || isNaN(stats.uptimePercentage)) {
-        stats.uptimePercentage = 99.9;
-      }
 
       res.json(stats);
     } catch (error) {

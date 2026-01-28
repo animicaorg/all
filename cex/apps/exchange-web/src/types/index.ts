@@ -88,5 +88,5 @@ export interface WSMessage {
 export interface PlatformStats {
   volume24h: number;
   activeTraders: number;
-  uptimePercentage: number;
+  uptimePercentage: number | null;
 }
