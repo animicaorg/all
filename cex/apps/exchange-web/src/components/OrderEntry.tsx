@@ -6,7 +6,7 @@ import type { Market, Balance, CreateOrderRequest } from '../types';
 interface OrderEntryProps {
   market: Market;
   balances: Balance[];
-  onSubmit: (order: CreateOrderRequest) => Promise<void>;
+  onSubmit: (order: CreateOrderRequest) => Promise<any>;
   isSubmitting: boolean;
 }
 
