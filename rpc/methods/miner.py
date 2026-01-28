@@ -126,6 +126,11 @@ _MEMPOOL_BINDINGS_LOGGED: set[str] = set()
 _MINING_AUDIT_TRAIL: list[dict[str, Any]] = []
 _MINING_AUDIT_MAX_SIZE = int(os.getenv("ANIMICA_MINING_AUDIT_MAX_SIZE", "1000"))
 
+# Minimum theta for forced blocks (when previous block exceeds max_block_time_s)
+# This value matches theta_min_micro used in _adjust_theta_for_mining() for consistency
+# 100K µ-nats = 0.1 nats = very easy mining (allows quick block production)
+_FORCED_BLOCK_MIN_THETA_MICRO = 100_000
+
 
 def _record_mining_audit(
     height: int,
@@ -2964,6 +2969,23 @@ def _mine_once(
     
     header_template = _build_child_header(parent_height, parent_hash_bytes, parent_header, coinbase=coinbase_bytes, instant_block=instant_block)
     
+    # Check if previous block is older than max_block_time_s (force block if needed)
+    # This ensures the chain progresses even when no miners are active for extended periods
+    force_block_due_to_time = False
+    max_block_time_s = float(os.getenv("ANIMICA_MAX_BLOCK_TIME_S", "3600"))  # 1 hour default
+    if parent_header is not None and max_block_time_s > 0:
+        parent_timestamp = int(getattr(parent_header, "timestamp", 0) or 0)
+        current_time = int(time.time())
+        if parent_timestamp > 0:
+            time_since_last_block = current_time - parent_timestamp
+            if time_since_last_block > max_block_time_s:
+                force_block_due_to_time = True
+                log.warning(
+                    f"Previous block is {time_since_last_block:.0f}s old "
+                    f"(exceeds max_block_time_s={max_block_time_s:.0f}s). "
+                    f"Forcing new block with minimum difficulty to ensure chain progress."
+                )
+    
     # Apply dynamic theta adjustment based on recent block times
     # This adapts mining difficulty to network conditions (hash rate, block times)
     global _MINING_STATE
@@ -2971,7 +2993,29 @@ def _mine_once(
     if parent_header is not None:
         head_timestamp = int(getattr(parent_header, "timestamp", 0) or 0)
         network_dt_seconds = _network_block_interval(parent_height, head_timestamp)
-    if network_dt_seconds is not None:
+    # Force minimum theta if block is being forced due to time
+    if force_block_due_to_time:
+        # Use minimum theta to ensure block can be mined quickly
+        # This matches the theta_min_micro used in mining adjustment (see line 953)
+        try:
+            header_template = replace(header_template, thetaMicro=_FORCED_BLOCK_MIN_THETA_MICRO)
+            log.info(
+                f"Forcing block with minimum theta: {_FORCED_BLOCK_MIN_THETA_MICRO/1e6:.3f} nats "
+                f"(previous block exceeded max_block_time_s)"
+            )
+        except Exception as e:
+            # If we can't set minimum theta, try to use the current minimum from adjustment state
+            # This ensures forcing still works even if replace() fails for some reason
+            log.error(f"Failed to apply minimum theta for forced block: {e}")
+            try:
+                state = _MINING_STATE.get("theta_state")
+                if state and hasattr(state, "params"):
+                    fallback_theta = state.params.theta_min_micro
+                    header_template = replace(header_template, thetaMicro=fallback_theta)
+                    log.warning(f"Using fallback theta: {fallback_theta/1e6:.3f} nats")
+            except Exception as e2:
+                log.error(f"Fallback theta also failed: {e2}. Mining may be difficult.")
+    elif network_dt_seconds is not None:
         adjusted_theta = _adjust_theta_for_mining(network_dt_seconds)
         try:
             header_template = replace(header_template, thetaMicro=adjusted_theta)
