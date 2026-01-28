@@ -46,13 +46,29 @@ export class RpcChainClient implements ChainClient {
       this.rpc.call('state.getTotalSupply', [])
     ])
 
+    // Helper to check if error is a "method not found" error vs other errors
+    const isMethodAvailable = (result: PromiseSettledResult<unknown>): boolean => {
+      if (result.status === 'fulfilled') {
+        return true
+      }
+      // Method is considered unavailable only if it's a "method not found" or "not supported" error
+      const errorMsg = result.reason?.message?.toLowerCase() || ''
+      return !(
+        errorMsg.includes('method not found') ||
+        errorMsg.includes('not found') ||
+        errorMsg.includes('unknown method') ||
+        errorMsg.includes('not supported') ||
+        errorMsg.includes('not implemented')
+      )
+    }
+
     this.capabilities = {
-      hasMempool: checks[0].status === 'fulfilled' || (checks[0].status === 'rejected' && !checks[0].reason?.message?.includes('not found')),
-      hasPeers: checks[1].status === 'fulfilled' || (checks[1].status === 'rejected' && !checks[1].reason?.message?.includes('not found')),
-      hasReceipts: checks[2].status === 'fulfilled' || (checks[2].status === 'rejected' && !checks[2].reason?.message?.includes('not found')),
-      hasStateBalance: checks[3].status === 'fulfilled' || (checks[3].status === 'rejected' && !checks[3].reason?.message?.includes('not found')),
-      hasRichList: checks[4].status === 'fulfilled' || (checks[4].status === 'rejected' && !checks[4].reason?.message?.includes('not found')),
-      hasTotalSupply: checks[5].status === 'fulfilled' || (checks[5].status === 'rejected' && !checks[5].reason?.message?.includes('not found'))
+      hasMempool: isMethodAvailable(checks[0]),
+      hasPeers: isMethodAvailable(checks[1]),
+      hasReceipts: isMethodAvailable(checks[2]),
+      hasStateBalance: isMethodAvailable(checks[3]),
+      hasRichList: isMethodAvailable(checks[4]),
+      hasTotalSupply: isMethodAvailable(checks[5])
     }
 
     log.info({ capabilities: this.capabilities }, 'Capabilities detected')
