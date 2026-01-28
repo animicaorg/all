@@ -112,9 +112,11 @@ set_service_defaults() {
   API_GATEWAY_PORT="${API_GATEWAY_PORT:-2456}"
   ADMIN_SERVICE_PORT="${ADMIN_SERVICE_PORT:-4000}"
   ADMIN_WEB_PORT="${ADMIN_WEB_PORT:-5173}"
+  EXCHANGE_WEB_PORT="${EXCHANGE_WEB_PORT:-5174}"
   API_GATEWAY_HOST="${API_GATEWAY_HOST:-0.0.0.0}"
   ADMIN_SERVICE_HOST="${ADMIN_SERVICE_HOST:-0.0.0.0}"
   ADMIN_WEB_HOST="${ADMIN_WEB_HOST:-0.0.0.0}"
+  EXCHANGE_WEB_HOST="${EXCHANGE_WEB_HOST:-0.0.0.0}"
 }
 
 setup_corepack() {
@@ -276,9 +278,10 @@ ensure_port_available() {
 }
 
 start_dev_services() {
-  log_info "Starting CEX services + admin console..."
+  log_info "Starting CEX services + admin console + exchange web..."
   echo "Assumptions:"
   echo "  - Admin console is apps/admin-web (Vite on :${ADMIN_WEB_PORT})."
+  echo "  - Exchange web is cex/apps/exchange-web (Vite on :${EXCHANGE_WEB_PORT})."
   echo "  - Admin API is @cex/admin-service (PORT=${ADMIN_SERVICE_PORT})."
   echo "  - Exchange API is @cex/api-gateway (PORT=${API_GATEWAY_PORT})."
   echo ""
@@ -286,8 +289,10 @@ start_dev_services() {
   ensure_port_available "api-gateway" "$API_GATEWAY_HOST" "$API_GATEWAY_PORT"
   ensure_port_available "admin-service" "$ADMIN_SERVICE_HOST" "$ADMIN_SERVICE_PORT"
   ensure_port_available "admin-web" "$ADMIN_WEB_HOST" "$ADMIN_WEB_PORT"
+  ensure_port_available "exchange-web" "$EXCHANGE_WEB_HOST" "$EXCHANGE_WEB_PORT"
 
-  local web_host_args=(--host "$ADMIN_WEB_HOST" --port "$ADMIN_WEB_PORT")
+  local admin_web_host_args=(--host "$ADMIN_WEB_HOST" --port "$ADMIN_WEB_PORT")
+  local exchange_web_host_args=(--host "$EXCHANGE_WEB_HOST" --port "$EXCHANGE_WEB_PORT")
 
   if [[ "$DAEMON" == "true" ]]; then
     mkdir -p "$LOG_DIR"
@@ -298,8 +303,11 @@ start_dev_services() {
     PORT="$ADMIN_SERVICE_PORT" HOST="$ADMIN_SERVICE_HOST" \
       nohup pnpm -C "$CEX_DIR" --filter @cex/admin-service dev > "$LOG_DIR/admin-service.log" 2>&1 &
     echo $! >> "$PID_FILE"
-    nohup pnpm -C "$ROOT_DIR" --filter @animica/admin-web dev "${web_host_args[@]}" \
+    nohup pnpm -C "$ROOT_DIR" --filter @animica/admin-web dev "${admin_web_host_args[@]}" \
       > "$LOG_DIR/admin-web.log" 2>&1 &
+    echo $! >> "$PID_FILE"
+    PORT="$EXCHANGE_WEB_PORT" HOST="$EXCHANGE_WEB_HOST" \
+      nohup pnpm -C "$CEX_DIR" --filter @cex/exchange-web dev > "$LOG_DIR/exchange-web.log" 2>&1 &
     echo $! >> "$PID_FILE"
     log_success "Services started in the background."
     log_info "Logs: $LOG_DIR (and docker compose logs via --logs)."
@@ -308,10 +316,12 @@ start_dev_services() {
     pid_api=$!
     PORT="$ADMIN_SERVICE_PORT" HOST="$ADMIN_SERVICE_HOST" pnpm -C "$CEX_DIR" --filter @cex/admin-service dev &
     pid_admin=$!
-    pnpm -C "$ROOT_DIR" --filter @animica/admin-web dev "${web_host_args[@]}" &
-    pid_web=$!
-    trap 'kill "$pid_api" "$pid_admin" "$pid_web" 2>/dev/null || true' EXIT
-    wait "$pid_api" "$pid_admin" "$pid_web"
+    pnpm -C "$ROOT_DIR" --filter @animica/admin-web dev "${admin_web_host_args[@]}" &
+    pid_admin_web=$!
+    PORT="$EXCHANGE_WEB_PORT" HOST="$EXCHANGE_WEB_HOST" pnpm -C "$CEX_DIR" --filter @cex/exchange-web dev &
+    pid_exchange_web=$!
+    trap 'kill "$pid_api" "$pid_admin" "$pid_admin_web" "$pid_exchange_web" 2>/dev/null || true' EXIT
+    wait "$pid_api" "$pid_admin" "$pid_admin_web" "$pid_exchange_web"
   fi
 }
 
@@ -323,6 +333,7 @@ print_next_steps() {
   echo "API Gateway:        http://localhost:${API_GATEWAY_PORT}"
   echo "Admin Service:      http://localhost:${ADMIN_SERVICE_PORT}"
   echo "Admin Console:      http://localhost:${ADMIN_WEB_PORT}"
+  echo "Exchange Web:       http://localhost:${EXCHANGE_WEB_PORT}"
   echo "PostgreSQL:         ${DB_USER}@localhost:${DB_PORT}/${DB_NAME}"
   echo "Redis:              ${REDIS_URL}"
   echo "NATS:               ${NATS_URL}"
@@ -330,6 +341,11 @@ print_next_steps() {
   echo "Seeded user:"
   echo "  Email: test@cex.local (see cex/packages/db/src/seeds/seed.js)"
   echo "  Password: (none - adjust seed if needed)"
+  echo ""
+  echo "Exchange Web (Demo Mode):"
+  echo "  - Login with any email/password"
+  echo "  - Mock data is used for markets, orderbook, trades"
+  echo "  - API endpoints need to be implemented in @cex/api-gateway"
   echo ""
   echo "Next steps:"
   echo "  - Stop services: ./cex_down"
