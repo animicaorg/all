@@ -55,6 +55,8 @@ networks:
       issuance:
         # Target block time (consensus retarget aims to meet this)
         target_block_interval_ms: 300000
+        # Minimum time between blocks (prevents rapid block mining)
+        min_block_spacing_ms: 60000              # 60 seconds (1 minute minimum)
         # Block subsidy schedule: exponential decay toward a tail emission
         subsidy:
           start_nANM_per_block: 300000000000  # 300 ANM per block base reward
@@ -163,6 +165,7 @@ networks:
             vesting: { cliff_days: 0, linear_months: 0 }
       issuance:
         target_block_interval_ms: 300000
+        min_block_spacing_ms: 60000              # 60 seconds (1 minute minimum)
         subsidy:
           start_nANM_per_block: 5000000000    # 5 ANM per block base reward
           epoch_length_blocks: 1350000         # 1.35M blocks per halving epoch
@@ -235,6 +238,7 @@ networks:
             vesting: { cliff_days: 0, linear_months: 0 }
       issuance:
         target_block_interval_ms: 300000
+        min_block_spacing_ms: 60000              # 60 seconds (1 minute minimum)
         subsidy:
           start_nANM_per_block: 5000000000    # 5 ANM per block base reward
           epoch_length_blocks: 1350000         # 1.35M blocks per halving epoch
@@ -293,6 +297,7 @@ defaults:
     decimals: 9
   issuance:
     target_block_interval_ms: 2000
+    min_block_spacing_ms: 500                  # 500ms minimum for fast devnet defaults
   consensus:
     poies:
       nullifier_ttl_blocks: 65536
