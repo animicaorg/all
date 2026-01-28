@@ -126,6 +126,11 @@ _MEMPOOL_BINDINGS_LOGGED: set[str] = set()
 _MINING_AUDIT_TRAIL: list[dict[str, Any]] = []
 _MINING_AUDIT_MAX_SIZE = int(os.getenv("ANIMICA_MINING_AUDIT_MAX_SIZE", "1000"))
 
+# Minimum theta for forced blocks (when previous block exceeds max_block_time_s)
+# This value matches theta_min_micro used in _adjust_theta_for_mining() for consistency
+# 100K µ-nats = 0.1 nats = very easy mining (allows quick block production)
+_FORCED_BLOCK_MIN_THETA_MICRO = 100_000
+
 
 def _record_mining_audit(
     height: int,
@@ -2991,17 +2996,25 @@ def _mine_once(
     # Force minimum theta if block is being forced due to time
     if force_block_due_to_time:
         # Use minimum theta to ensure block can be mined quickly
+        # This matches the theta_min_micro used in mining adjustment (see line 953)
         try:
-            from consensus.difficulty import RetargetParams
-            # Get minimum theta from params (default 100K µ-nats for mining)
-            min_theta = 100_000  # ~0.1 nats - very easy mining
-            header_template = replace(header_template, thetaMicro=min_theta)
+            header_template = replace(header_template, thetaMicro=_FORCED_BLOCK_MIN_THETA_MICRO)
             log.info(
-                f"Forcing block with minimum theta: {min_theta/1e6:.3f} nats "
+                f"Forcing block with minimum theta: {_FORCED_BLOCK_MIN_THETA_MICRO/1e6:.3f} nats "
                 f"(previous block exceeded max_block_time_s)"
             )
         except Exception as e:
-            log.warning(f"Failed to apply minimum theta for forced block: {e}")
+            # If we can't set minimum theta, try to use the current minimum from adjustment state
+            # This ensures forcing still works even if replace() fails for some reason
+            log.error(f"Failed to apply minimum theta for forced block: {e}")
+            try:
+                state = _MINING_STATE.get("theta_state")
+                if state and hasattr(state, "params"):
+                    fallback_theta = state.params.theta_min_micro
+                    header_template = replace(header_template, thetaMicro=fallback_theta)
+                    log.warning(f"Using fallback theta: {fallback_theta/1e6:.3f} nats")
+            except Exception as e2:
+                log.error(f"Fallback theta also failed: {e2}. Mining may be difficult.")
     elif network_dt_seconds is not None:
         adjusted_theta = _adjust_theta_for_mining(network_dt_seconds)
         try:
