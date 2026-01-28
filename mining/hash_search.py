@@ -35,6 +35,7 @@ Interfaces
 
 import hashlib
 import math
+import os
 import struct
 import threading
 import time
@@ -301,12 +302,22 @@ async def scan_forever(
 ) -> None:
     """
     Async scan loop that uses mining.device backends to find CPU shares.
+    
+    The batch_size is automatically scaled based on thread count to ensure
+    efficient work distribution and minimize context switching overhead.
     """
     import asyncio
 
     from mining import device as device_mod
 
-    dev = device_mod.create(device, threads=threads, batch_size=batch_size)
+    # Auto-scale batch size based on thread count for better efficiency
+    # More threads need larger batches to avoid excessive context switching
+    effective_threads = threads if threads > 0 else (os.cpu_count() or 1)
+    # Scale batch size: at least 10k iterations per thread to minimize overhead
+    min_batch_per_thread = 10_000
+    scaled_batch_size = max(batch_size, effective_threads * min_batch_per_thread)
+    
+    dev = device_mod.create(device, threads=threads, batch_size=scaled_batch_size)
     current_tpl: Optional[dict] = None
     current_job_id: Optional[str] = None
     prepared = None
@@ -383,11 +394,11 @@ async def scan_forever(
                 prepared,
                 theta_micro=float(t_share_micro),
                 start_nonce=nonce,
-                iterations=batch_size,
+                iterations=scaled_batch_size,
                 max_found=4,
                 thread_id=0,
             )
-            nonce += batch_size
+            nonce += scaled_batch_size
 
             for share in found:
                 nonce_val = int(share.get("nonce"))
@@ -422,6 +433,8 @@ async def scan_forever(
                     share_payload["txs"] = current_tpl.get("txs")
                 await out_queue.put(share_payload)
 
+            # Yield control to allow other async tasks to run, but only if needed
+            # This prevents blocking the event loop for too long
             await asyncio.sleep(0)
     finally:
         if next_tpl_task:
