@@ -1,5 +1,5 @@
 import express from "express";
-import { v4 as uuidv4 } from "uuid";
+import cors from "cors";
 import { z } from "zod";
 import { OpenAPIRegistry, OpenApiGeneratorV3 } from "@asteasolutions/zod-to-openapi";
 import {
@@ -9,10 +9,12 @@ import {
   createPgPool,
   createRedis,
   extendWithHostPort,
-  jsonCodec,
   loadEnv,
-  subjects
 } from "@cex/common";
+import metaRouter from "./routes/meta";
+import { createMarketsRouter } from "./routes/markets";
+import { createOrdersRouter } from "./routes/orders";
+import { createWebSocketServer } from "./websocket";
 
 const env = loadEnv(
   extendWithHostPort(
@@ -27,6 +29,16 @@ const logger = createLogger(env.SERVICE_NAME, env.LOG_LEVEL);
 
 const start = async () => {
   const app = express();
+  
+  // Middleware
+  // ⚠️ SECURITY WARNING: CORS is configured for development only!
+  // In production, replace `origin: true` with a whitelist of allowed domains
+  app.use(cors({
+    origin: process.env.NODE_ENV === 'production' 
+      ? process.env.ALLOWED_ORIGINS?.split(',') || false
+      : true,
+    credentials: true,
+  }));
   app.use(express.json());
 
   const registry = new OpenAPIRegistry();
@@ -57,6 +69,7 @@ const start = async () => {
   const redis = createRedis(env);
   const nats = await connectNats(env);
 
+  // Health check
   app.get("/healthz", async (_req, res) => {
     const pgOk = await pgPool
       .query("SELECT 1")
@@ -75,6 +88,7 @@ const start = async () => {
     });
   });
 
+  // OpenAPI documentation
   app.get("/openapi.json", (_req, res) => {
     const generator = new OpenApiGeneratorV3(registry.definitions);
     res.json(
@@ -88,6 +102,12 @@ const start = async () => {
     );
   });
 
+  // Routes
+  app.use(metaRouter);
+  app.use(createMarketsRouter(pgPool));
+  app.use(createOrdersRouter(pgPool, nats));
+
+  // Start HTTP server
   const server = app.listen(env.PORT, env.HOST, () => {
     const address = server.address();
     const actualPort = typeof address === "string" ? env.PORT : address?.port ?? env.PORT;
@@ -104,6 +124,7 @@ const start = async () => {
       "api-gateway listening"
     );
   });
+  
   server.on("error", (error) => {
     const code = (error as NodeJS.ErrnoException).code;
     if (code === "EADDRINUSE") {
@@ -125,25 +146,14 @@ const start = async () => {
     process.exit(1);
   });
 
-  const orderCommand = {
-    event_id: uuidv4(),
-    correlation_id: uuidv4(),
-    causation_id: uuidv4(),
-    created_at: new Date().toISOString(),
-    idempotency_key: "client-order-1",
-    type: "OrderSubmit",
-    user_id: uuidv4(),
-    client_order_id: "client-order-1",
-    market: "ANM/USDT",
-    side: "buy",
-    price: 1.25,
-    quantity: 10
-  };
+  // Start WebSocket server
+  const wss = createWebSocketServer(server, pgPool, nats);
+  logger.info({ path: "/ws" }, "WebSocket server started");
 
-  nats.publish(subjects.orderSubmit, jsonCodec.encode(orderCommand));
-  logger.info({ subject: subjects.orderSubmit }, "published sample OrderSubmit");
-
+  // Graceful shutdown
   const shutdown = async () => {
+    logger.info("Shutting down gracefully...");
+    wss.close();
     await nats.drain();
     await pgPool.end();
     redis.disconnect();

@@ -7,6 +7,11 @@ export interface Market {
   volume24h: number;
   high24h: number;
   low24h: number;
+  priceTick?: number;
+  sizeStep?: number;
+  minOrderSize?: number;
+  makerFeeBps?: number;
+  takerFeeBps?: number;
 }
 
 export interface OrderbookEntry {
@@ -40,7 +45,7 @@ export interface Order {
   price?: number;
   quantity: number;
   filledQuantity: number;
-  status: 'pending' | 'open' | 'filled' | 'cancelled';
+  status: 'pending' | 'open' | 'filled' | 'cancelled' | 'rejected';
   createdAt: number;
   updatedAt: number;
 }
@@ -70,6 +75,8 @@ export interface CreateOrderRequest {
   type: 'limit' | 'market';
   price?: number;
   quantity: number;
+  clientOrderId?: string;
+  idempotencyKey?: string;
 }
 
 export interface WSMessage {
