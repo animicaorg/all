@@ -3,10 +3,12 @@ import { api } from '../lib/api'
 import { formatNumber, formatTimestamp, shorten, timeAgo } from '../lib/format'
 import StatCard from '../components/StatCard'
 import Skeleton from '../components/Skeleton'
+import ErrorDisplay from '../components/ErrorDisplay'
 
 export default function HomePage() {
   const [data, setData] = useState<Awaited<ReturnType<typeof api.getHead>> | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [refetchTrigger, setRefetchTrigger] = useState(0)
 
   useEffect(() => {
     let mounted = true
@@ -42,21 +44,18 @@ export default function HomePage() {
       mounted = false
       clearInterval(intervalId)
     }
-  }, [])
+  }, [refetchTrigger])
 
   if (error) {
     return (
-      <div className="rounded-xl border border-red-200 bg-red-50 p-6 text-sm text-red-700 dark:border-red-900/40 dark:bg-red-900/10 dark:text-red-100">
-        <div className="flex items-start gap-3">
-          <svg className="mt-0.5 h-5 w-5 flex-shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24" aria-hidden="true">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-          </svg>
-          <div>
-            <strong className="font-semibold">RPC Connection Error</strong>
-            <p className="mt-1">{error}</p>
-          </div>
-        </div>
-      </div>
+      <ErrorDisplay 
+        error={error}
+        onRetry={() => {
+          setError(null)
+          setData(null)
+          setRefetchTrigger(prev => prev + 1)
+        }}
+      />
     )
   }
 

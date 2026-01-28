@@ -28,6 +28,21 @@ export function createServer(service: ExplorerService, corsOrigin: string, logLe
     res.json({ ok: true, timestamp: new Date().toISOString() })
   })
 
+  app.get('/api/meta', async (_req, res) => {
+    res.json({
+      explorer: {
+        name: 'Animica Explorer',
+        version: '0.1.0',
+        mode: diagnostics?.mode || 'Unknown'
+      },
+      network: {
+        chainId: diagnostics?.chainId || null,
+        rpcUrl: diagnostics?.rpcUrl || null
+      },
+      timestamp: new Date().toISOString()
+    })
+  })
+
   app.get('/api/diagnostics', async (_req, res) => {
     try {
       // Get current head from service
@@ -147,6 +162,31 @@ export function createServer(service: ExplorerService, corsOrigin: string, logLe
     } catch (err) {
       next(err)
     }
+  })
+
+  app.get('/api/search', async (req, res, next) => {
+    try {
+      const query = typeof req.query.q === 'string' ? req.query.q : ''
+      const payload = await service.search(query)
+      res.json(payload)
+    } catch (err) {
+      next(err)
+    }
+  })
+
+  app.get('/api/debug/rpc', async (_req, res) => {
+    if (process.env.NODE_ENV === 'production') {
+      res.status(404).json({ error: 'not_found', message: 'Debug endpoints disabled in production' })
+      return
+    }
+
+    res.json({
+      mode: diagnostics?.mode || 'Unknown',
+      rpcUrl: diagnostics?.rpcUrl || null,
+      timeout: 30000, // From config
+      maxRetries: 3,   // From config
+      timestamp: new Date().toISOString()
+    })
   })
 
   app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
