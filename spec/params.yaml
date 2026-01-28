@@ -297,7 +297,7 @@ defaults:
     decimals: 9
   issuance:
     target_block_interval_ms: 2000
-    min_block_spacing_ms: 60000                # 60 seconds (1 minute minimum)
+    min_block_spacing_ms: 500                  # 500ms minimum for fast devnet defaults
   consensus:
     poies:
       nullifier_ttl_blocks: 65536

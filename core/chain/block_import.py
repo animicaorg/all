@@ -495,6 +495,13 @@ class BlockImporter:
         # Environment variable can override config file
         self._min_block_spacing_ms = int(os.getenv("ANIMICA_MIN_BLOCK_SPACING_MS", str(default_spacing)))
         
+        # Validate min_block_spacing_ms is non-negative
+        if self._min_block_spacing_ms < 0:
+            log.warning(
+                f"min_block_spacing_ms must be non-negative, got {self._min_block_spacing_ms}, using 0"
+            )
+            self._min_block_spacing_ms = 0
+        
         if self._min_block_spacing_ms > 0:
             log.info(f"Minimum block spacing enforced: {self._min_block_spacing_ms} ms ({self._min_block_spacing_ms / 1000:.1f} seconds)")
         
