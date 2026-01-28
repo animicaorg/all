@@ -155,8 +155,8 @@ async def test_request_missing_known_fetches_peer_txids():
         state.known_txids.add(tx2)
         state.known_txids.add(tx3)
     
-    # Now call request_missing_known
-    requested = await service.request_missing_known(limit=10)
+    # Now call request_missing_known with explicit trigger
+    requested = await service.request_missing_known(limit=10, trigger="test")
     
     # Should have requested the 3 transactions
     assert requested == 3, f"Expected 3 txs requested, got {requested}"
