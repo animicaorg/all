@@ -556,6 +556,20 @@ class BlockImporter:
             step_clamp_micro = int(max_change_nats * 1_000_000 / max(1, half_life_blocks))
             step_clamp_micro = max(100_000, min(1_000_000, step_clamp_micro))
 
+            # Read max_block_time_s from params if available
+            max_block_time_s = None
+            try:
+                if self.full_params_dict:
+                    network_key = f"animica:{self.params.chain_id}"
+                    network_params = self.full_params_dict.get("networks", {}).get(network_key, {})
+                    if network_params:
+                        max_block_time_s = network_params.get("monetary", {}).get("issuance", {}).get("max_block_time_s")
+                    if max_block_time_s is None:
+                        defaults = self.full_params_dict.get("defaults", {})
+                        max_block_time_s = defaults.get("issuance", {}).get("max_block_time_s")
+            except Exception as e:
+                log.warning(f"Failed to read max_block_time_s from params: {e}")
+
             return diff.RetargetParams(
                 target_block_time_s=float(self.params.block.target_seconds),
                 half_life_blocks=half_life_blocks,
@@ -563,6 +577,7 @@ class BlockImporter:
                 step_clamp_micro=step_clamp_micro,
                 theta_min_micro=int(self.params.theta_min),
                 theta_max_micro=int(self.params.theta_max),
+                max_block_time_s=float(max_block_time_s) if max_block_time_s is not None else None,
             )
         except Exception as e:  # pragma: no cover
             import logging
