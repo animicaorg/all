@@ -148,6 +148,10 @@ class RetargetParams:
         The hard cap ensures network stability by preventing excessive theta values
         that could negatively impact blockchain performance.
         Default is None (uses hard cap).
+    max_block_time_s : float | None
+        Maximum time allowed between blocks before emergency difficulty reduction.
+        If a block takes longer than this, difficulty drops to minimum to enable
+        fast recovery. Default is None (no maximum). Typical value: 3600 (1 hour).
     """
 
     target_block_time_s: float = 300.0
@@ -156,6 +160,7 @@ class RetargetParams:
     step_clamp_micro: MicroNat = 400_000  # ~0.4 nats per step max
     theta_min_micro: MicroNat = 500_000  # ~0.5 nats (very easy)
     theta_max_micro: MicroNat | None = None  # None = unbounded (default)
+    max_block_time_s: float | None = None  # None = no max block time
 
 
 @dataclass(frozen=True)
@@ -227,12 +232,38 @@ def update_theta(
     -------
     RetargetState
         Updated state with new Θ, τ, and EMA accumulator.
+        
+    Notes
+    -----
+    If max_block_time_s is set and dt_seconds exceeds it, difficulty is
+    immediately reduced to minimum to enable fast block production and
+    network recovery. This prevents the chain from stalling when no blocks
+    are found for extended periods (e.g., > 1 hour).
     """
     if dt_seconds <= 0 or not math.isfinite(dt_seconds):
         # Ignore pathological inputs; return state unchanged.
         return state
 
     p = state.params
+    
+    # Emergency difficulty reduction if block time exceeds maximum
+    # This allows the chain to recover quickly from extended periods without blocks
+    if p.max_block_time_s is not None and dt_seconds > p.max_block_time_s:
+        log.warning(
+            f"Block time {dt_seconds:.0f}s exceeds maximum {p.max_block_time_s:.0f}s. "
+            f"Emergency difficulty reduction activated: theta = {p.theta_min_micro/1e6:.3f} nats"
+        )
+        # Set theta to minimum, reset EMA to reflect very slow blocks
+        # Use a large positive r_hat to indicate blocks are much slower than target
+        emergency_r_hat = _safe_log(dt_seconds / max(1e-9, p.target_block_time_s))
+        return RetargetState(
+            theta_micro=int(p.theta_min_micro),
+            tau_nats=micro_to_nats(p.theta_min_micro),
+            ema_log_dt_over_T=float(emergency_r_hat),
+            alpha=state.alpha,
+            params=state.params,
+        )
+    
     # Sample of ln(dt/T)
     r_k = _safe_log(dt_seconds / max(1e-9, p.target_block_time_s))
     # Skip-aware EMA update: r̂ = (1-α)^m r̂ + (1 - (1-α)^m) r_k
