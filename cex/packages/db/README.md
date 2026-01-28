@@ -61,7 +61,15 @@ DB_NAME=cex_exchange
 
 ```bash
 # Connect to PostgreSQL and create the database
+# Note: You may need to provide a password or configure peer authentication
+# For peer authentication, you may need to run as the postgres user:
+# sudo -u postgres createdb cex_exchange
+
+# Or with password authentication:
 createdb -U your_postgres_user cex_exchange
+
+# Alternatively, use psql:
+psql -U your_postgres_user -c "CREATE DATABASE cex_exchange;"
 ```
 
 4. **Run migrations:**

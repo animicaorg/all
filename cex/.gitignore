@@ -24,9 +24,15 @@ pnpm-debug.log*
 .DS_Store
 Thumbs.db
 
-# IDE
-.vscode/
-.idea/
+# IDE - User-specific settings only
+# Keep shared workspace configs (.vscode/extensions.json, etc.) for team consistency
+.vscode/settings.json
+.vscode/.ropeproject
+.idea/workspace.xml
+.idea/tasks.xml
+.idea/usage.statistics.xml
+.idea/dictionaries
+.idea/shelf
 *.swp
 *.swo
 *~
