@@ -28,6 +28,21 @@ export function createServer(service: ExplorerService, corsOrigin: string, logLe
     res.json({ ok: true, timestamp: new Date().toISOString() })
   })
 
+  app.get('/api/meta', async (_req, res) => {
+    res.json({
+      explorer: {
+        name: 'Animica Explorer',
+        version: '0.1.0',
+        mode: diagnostics?.mode || 'Unknown'
+      },
+      network: {
+        chainId: diagnostics?.chainId || null,
+        rpcUrl: diagnostics?.rpcUrl || null
+      },
+      timestamp: new Date().toISOString()
+    })
+  })
+
   app.get('/api/diagnostics', async (_req, res) => {
     try {
       // Get current head from service
@@ -143,6 +158,16 @@ export function createServer(service: ExplorerService, corsOrigin: string, logLe
       const limit = Number(req.query.limit || 50)
       const cursor = typeof req.query.cursor === 'string' ? req.query.cursor : undefined
       const payload = await service.getMempool(limit, cursor)
+      res.json(payload)
+    } catch (err) {
+      next(err)
+    }
+  })
+
+  app.get('/api/search', async (req, res, next) => {
+    try {
+      const query = typeof req.query.q === 'string' ? req.query.q : ''
+      const payload = await service.search(query)
       res.json(payload)
     } catch (err) {
       next(err)
