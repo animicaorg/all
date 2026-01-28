@@ -127,12 +127,12 @@ class ApiClient {
     console.log('Cancelling order:', orderId);
   }
 
-  async getMyOrders(symbol?: string): Promise<Order[]> {
+  async getMyOrders(_symbol?: string): Promise<Order[]> {
     // Mock data
     return [];
   }
 
-  async getMyTrades(symbol?: string): Promise<UserTrade[]> {
+  async getMyTrades(_symbol?: string): Promise<UserTrade[]> {
     // Mock data
     return [];
   }
