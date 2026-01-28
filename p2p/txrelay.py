@@ -825,7 +825,7 @@ class TxRelayService:
                 # but haven't been fetched yet (e.g., due to lost responses)
                 if now - last_missing_fetch >= self.mempool_sync_interval_s:
                     last_missing_fetch = now
-                    requested = await self.request_missing_known(limit=128)
+                    requested = await self.request_missing_known(limit=128, trigger="mempool_sync_loop")
                     if requested > 0:
                         log.info(
                             "TX_MISSING_FETCH",
@@ -843,7 +843,7 @@ class TxRelayService:
             except Exception:
                 log.warning("tx mempool sync loop error", exc_info=True)
 
-    async def request_missing_known(self, limit: int = 128) -> int:
+    async def request_missing_known(self, limit: int = 128, trigger: str = "request_missing_known") -> int:
         if limit <= 0:
             return 0
         requests_by_peer: Dict[str, List[bytes]] = {}
@@ -886,7 +886,7 @@ class TxRelayService:
                     extra={
                         "peer": conn_id,
                         "count": len(batch),
-                        "trigger": "template_fetch",
+                        "trigger": trigger,
                         **self._peer_log_extra(conn_id),
                     },
                 )
