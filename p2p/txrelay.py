@@ -799,6 +799,7 @@ class TxRelayService:
     async def mempool_sync_loop(self) -> None:
         self._running = True
         last_heartbeat = 0.0
+        last_missing_fetch = 0.0
         while self._running:
             try:
                 await asyncio.sleep(1.0)
@@ -820,6 +821,19 @@ class TxRelayService:
                             **self._peer_log_extra(state.conn_id),
                         },
                     )
+                # Periodically request missing transactions that peers know about
+                # but haven't been fetched yet (e.g., due to lost responses)
+                if now - last_missing_fetch >= self.mempool_sync_interval_s:
+                    last_missing_fetch = now
+                    requested = await self.request_missing_known(limit=128, trigger="mempool_sync_loop")
+                    if requested > 0:
+                        log.info(
+                            "TX_MISSING_FETCH",
+                            extra={
+                                "requested": requested,
+                                "trigger": "mempool_sync_loop",
+                            },
+                        )
                 if now - last_heartbeat >= 10.0:
                     last_heartbeat = now
                     log.info(
@@ -829,7 +843,7 @@ class TxRelayService:
             except Exception:
                 log.warning("tx mempool sync loop error", exc_info=True)
 
-    async def request_missing_known(self, limit: int = 128) -> int:
+    async def request_missing_known(self, limit: int = 128, trigger: str = "request_missing_known") -> int:
         if limit <= 0:
             return 0
         requests_by_peer: Dict[str, List[bytes]] = {}
@@ -872,7 +886,7 @@ class TxRelayService:
                     extra={
                         "peer": conn_id,
                         "count": len(batch),
-                        "trigger": "template_fetch",
+                        "trigger": trigger,
                         **self._peer_log_extra(conn_id),
                     },
                 )
