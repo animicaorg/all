@@ -6,6 +6,7 @@ import LoginPage from './pages/LoginPage';
 import MarketsPage from './pages/MarketsPage';
 import TradingPage from './pages/TradingPage';
 import AccountPage from './pages/AccountPage';
+import LegalPage from './pages/LegalPage';
 import Layout from './components/Layout';
 
 const queryClient = new QueryClient({
@@ -26,6 +27,7 @@ function App() {
         <WSProvider>
           <Routes>
             <Route path="/login" element={<LoginPage />} />
+            <Route path="/legal" element={<LegalPage />} />
             <Route
               path="/*"
               element={
