@@ -3,6 +3,9 @@ import { RequestCoalescer } from './cache.js'
 import { HttpError } from './errors.js'
 import { normalizeBlockDetail, normalizeBlockSummary, normalizeHead, normalizeTxDetail, normalizeTxSummary } from './normalize.js'
 import { clampLimit, nextCursorForHeight, parseCursor } from './pagination.js'
+import pino from 'pino'
+
+const log = pino({ name: 'explorer-service' })
 export interface ChainClient {
   getHead: () => Promise<unknown>
   getBlockByNumber: (height: number | string, includeTxs?: boolean, includeReceipts?: boolean) => Promise<unknown>
@@ -242,6 +245,8 @@ export class ExplorerService {
               : undefined
           }
         } catch (error) {
+          // Log the actual error before falling back
+          log.warn({ error, limit, safeOffset }, 'getRichList RPC call failed')
           // Fall through to local implementation if RPC fails
         }
       }
@@ -302,7 +307,8 @@ export class ExplorerService {
               }
             }
           } catch {
-            // Concentration metrics optional
+            // Concentration metrics optional - if getRichList fails, just skip
+            log.debug('Failed to compute concentration metrics (getRichList unavailable)')
           }
           
           return {
@@ -314,6 +320,7 @@ export class ExplorerService {
             top1000Pct
           }
         } catch (error) {
+          log.warn({ error }, 'getTotalSupply RPC call failed')
           throw new HttpError(501, 'Total supply not available', 'Node does not support state.getTotalSupply RPC method')
         }
       }
