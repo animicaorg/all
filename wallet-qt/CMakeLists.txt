@@ -200,6 +200,8 @@ if(APPLE)
     set(BUNDLE_NODE_DIR "${CMAKE_BINARY_DIR}/bin/AnimicaWallet.app/Contents/Resources/node")
     add_custom_command(TARGET animica-wallet POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E make_directory "${BUNDLE_NODE_DIR}"
+        # Remove existing venv if present to avoid nested directories
+        COMMAND ${CMAKE_COMMAND} -E rm -rf "${BUNDLE_NODE_DIR}/venv"
         # Use native cp on macOS to preserve symlinks in venv
         COMMAND cp -R "${ANIMICA_NODE_VENV}" "${BUNDLE_NODE_DIR}/venv"
         COMMENT "Bundling Animica node into macOS app bundle"
@@ -250,6 +252,8 @@ else()
     set(BUNDLE_NODE_DIR "${CMAKE_BINARY_DIR}/bin/node")
     add_custom_command(TARGET animica-wallet POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E make_directory "${BUNDLE_NODE_DIR}"
+        # Remove existing venv if present to avoid nested directories
+        COMMAND ${CMAKE_COMMAND} -E rm -rf "${BUNDLE_NODE_DIR}/venv"
         # Use native cp on Linux to preserve symlinks in venv
         COMMAND cp -R "${ANIMICA_NODE_VENV}" "${BUNDLE_NODE_DIR}/venv"
         COMMENT "Bundling Animica node for Linux"
