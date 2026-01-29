@@ -76,7 +76,7 @@ def test_get_verifier_seed_status(tmp_path: Path) -> None:
     # Validate response structure
     assert isinstance(status, dict)
     assert status["enabled"] is True
-    assert set(status["configured_ips"]) == {"62.169.17.132", "82.208.20.209"}
+    assert set(status["configured_ips"]) == {"62.169.17.132", "82.208.20.209", "3.12.224.189"}
     assert len(status["connected_verifiers"]) == 2
     assert status["max_verifier_height"] == 105  # Highest verifier
     assert status["max_allowed_height"] == 106  # Verifier + 1

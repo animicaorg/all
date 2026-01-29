@@ -1123,7 +1123,7 @@ class P2PService:
         # Verifier seed nodes for height validation
         # These nodes are considered authoritative for determining the highest block height
         self._enable_verifier_seeds = _env_flag("ANIMICA_P2P_ENABLE_VERIFIER_SEEDS", default=True)
-        verifier_ips_env = os.environ.get("ANIMICA_P2P_VERIFIER_SEED_IPS", "62.169.17.132,82.208.20.209")
+        verifier_ips_env = os.environ.get("ANIMICA_P2P_VERIFIER_SEED_IPS", "62.169.17.132,82.208.20.209,3.12.224.189")
         self._verifier_seed_ips = {
             ip.strip() for ip in verifier_ips_env.split(",") if ip.strip()
         }
