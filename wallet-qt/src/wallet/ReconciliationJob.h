@@ -10,7 +10,7 @@
 class AnimicaRpcClient;
 class WalletDatabase;
 class WalletEngine;
-class WalletAccount;
+struct WalletAccount;
 struct LedgerEntry;
 
 /**
