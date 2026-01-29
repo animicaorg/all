@@ -57,7 +57,10 @@ class BlockFoundCooldown:
                 )
                 return
             
-            until = max(self._state.until, now + self._cooldown_sec)
+            # Fixed: Reset cooldown instead of accumulating to prevent mining from stopping
+            # Previously: until = max(self._state.until, now + self._cooldown_sec)
+            # This caused cooldown to accumulate across multiple blocks, eventually stopping mining
+            until = now + self._cooldown_sec
             self._state.until = until
             if height is not None:
                 self._state.height = int(height)
