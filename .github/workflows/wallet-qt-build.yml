@@ -22,7 +22,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
     
     - name: Install Qt
       uses: jurplel/install-qt-action@v3
@@ -68,7 +68,7 @@ jobs:
     - name: Run MOC syntax test
       run: |
         cd wallet-qt/build
-        ctest -R test_rpc_moc_syntax --output-on-failure || true
+        ctest -R test_rpc_moc_syntax --output-on-failure
     
     - name: Verify binary exists
       run: |
